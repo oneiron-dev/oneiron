@@ -65,6 +65,12 @@ async fn replace_defaults(
     if !auth.is_owner_grade() {
         return refusal(StatusCode::FORBIDDEN, "owner_required");
     }
+    if table.purposes[&oneiron::CallPurpose::Extraction].locality
+        != oneiron::ModelLocality::OnDevice
+        && server.extraction_egress.is_none()
+    {
+        return refusal(StatusCode::BAD_REQUEST, "extraction_egress_unavailable");
+    }
     match server.vault.set_purpose_default_table(&table) {
         Ok(()) => Json(table).into_response(),
         Err(oneiron::Error::InvalidConfig(_)) => {
@@ -124,6 +130,31 @@ fn admit(
         })?
         .ok_or_else(|| Box::new(refusal(StatusCode::BAD_REQUEST, "unknown_model")))?;
     request.envelope.locality = row.catalog.locality;
+    if request.envelope.purpose == oneiron::CallPurpose::Extraction
+        && request.envelope.locality != oneiron::ModelLocality::OnDevice
+    {
+        let policy = server.vault.purpose_default_table().map_err(|_| {
+            Box::new(refusal(
+                StatusCode::SERVICE_UNAVAILABLE,
+                "defaults_unavailable",
+            ))
+        })?;
+        let allowed = oneiron::llm::locality_within_extraction_bound(
+            request.envelope.locality,
+            policy.extraction_max_locality,
+        );
+        if !allowed
+            || !server
+                .extraction_egress
+                .as_ref()
+                .is_some_and(|predicate| predicate.permits(request))
+        {
+            return Err(Box::new(refusal(
+                StatusCode::FORBIDDEN,
+                "extraction_egress_denied",
+            )));
+        }
+    }
     let admission = guard
         .admit_for_request(request)
         .map_err(|e| Box::new(failure(e.into())))?;

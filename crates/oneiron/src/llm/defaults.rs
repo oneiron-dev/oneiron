@@ -16,6 +16,17 @@ pub struct PurposeDefault {
     pub locality: ModelLocality,
 }
 
+/// Host-owned admission for a nonlocal extraction request. The table row is
+/// only a preference: a host must evaluate the actual request at dispatch.
+pub trait ExtractionEgressPredicate: Send + Sync {
+    fn permits(&self, request: &super::LlmRequest) -> bool;
+}
+impl<F: Fn(&super::LlmRequest) -> bool + Send + Sync> ExtractionEgressPredicate for F {
+    fn permits(&self, request: &super::LlmRequest) -> bool {
+        self(request)
+    }
+}
+
 /// Speech routing is distinct from the generic `Voice` call purpose: ASR and
 /// TTS have separate live and deferred latency and custody requirements.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
@@ -36,11 +47,38 @@ pub struct VoiceBackendBinding {
     pub locality: ModelLocality,
 }
 
+/// Editable voice override precedence. Neither mode permits a holder route
+/// wider than the vault row; the owner may disable holder overrides entirely.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum VoicePrecedence {
+    NestedNarrowing,
+    VaultOnly,
+}
+
+/// True only when the selected route stays inside the owner's extraction pin.
+#[must_use]
+pub const fn locality_within_extraction_bound(route: ModelLocality, bound: ModelLocality) -> bool {
+    locality_rank(route) <= locality_rank(bound)
+}
+
+pub(super) const fn locality_rank(locality: ModelLocality) -> u8 {
+    match locality {
+        ModelLocality::OnDevice => 0,
+        ModelLocality::OwnServer => 1,
+        ModelLocality::ThirdParty => 2,
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct PurposeDefaultTable {
     pub purposes: BTreeMap<CallPurpose, PurposeDefault>,
     pub voice: BTreeMap<VoiceLane, PurposeDefault>,
+    pub voice_precedence: VoicePrecedence,
+    /// Owner-authored widest extraction destination. A nonlocal route also
+    /// needs a separate host predicate for the actual request before dispatch.
+    pub extraction_max_locality: ModelLocality,
 }
 
 impl Default for PurposeDefaultTable {
@@ -86,7 +124,8 @@ impl PurposeDefaultTable {
                 .values()
                 .chain(self.voice.values())
                 .any(|row| row.tier.as_str().trim().is_empty())
-            || self.purposes[&CallPurpose::Extraction].locality != ModelLocality::OnDevice
+            || locality_rank(self.purposes[&CallPurpose::Extraction].locality)
+                > locality_rank(self.extraction_max_locality)
         {
             return Err(Error::InvalidConfig(
                 "invalid inference default rows".into(),
@@ -112,7 +151,18 @@ impl PurposeDefaultTable {
         explicit: Option<&PurposeDefault>,
         available: &[VoiceBackendBinding],
     ) -> Result<VoiceBackendBinding> {
-        let policy = explicit.unwrap_or_else(|| self.voice(lane));
+        let vault = self.voice(lane);
+        let policy = match (self.voice_precedence, explicit) {
+            (VoicePrecedence::VaultOnly, _) | (_, None) => vault,
+            (VoicePrecedence::NestedNarrowing, Some(override_row)) => {
+                if locality_rank(override_row.locality) > locality_rank(vault.locality) {
+                    return Err(Error::InvalidConfig(
+                        "voice override widens vault route".into(),
+                    ));
+                }
+                override_row
+            }
+        };
         let mut matching = available
             .iter()
             .filter(|backend| backend.locality == policy.locality && backend.tier == policy.tier);
@@ -177,19 +227,14 @@ impl Vault {
         next.validate()?;
         let mut txn = self.store.env.write_txn()?;
         let prior = read_stored_defaults(&self.store, &txn)?.unwrap_or_default();
-        let rank = |locality: ModelLocality| match locality {
-            ModelLocality::OnDevice => 0,
-            ModelLocality::OwnServer => 1,
-            ModelLocality::ThirdParty => 2,
-        };
-        if next
-            .purposes
-            .iter()
-            .any(|(key, row)| rank(row.locality) > rank(prior.purposes[key].locality))
-            || next
-                .voice
-                .iter()
-                .any(|(key, row)| rank(row.locality) > rank(prior.voice[key].locality))
+        if next.purposes.iter().any(|(key, row)| {
+            locality_rank(row.locality) > locality_rank(prior.purposes[key].locality)
+        }) || next.voice.iter().any(|(key, row)| {
+            locality_rank(row.locality) > locality_rank(prior.voice[key].locality)
+        }) || locality_rank(next.extraction_max_locality)
+            > locality_rank(prior.extraction_max_locality)
+            || (prior.voice_precedence == VoicePrecedence::VaultOnly
+                && next.voice_precedence != VoicePrecedence::VaultOnly)
         {
             return Err(Error::InvalidConfig(
                 "resident inference locality cannot widen".into(),
@@ -391,13 +436,27 @@ mod tests {
         incomplete.purposes.remove(&CallPurpose::Eval);
         assert!(vault.set_purpose_default_table(&incomplete).is_err());
         assert_eq!(vault.purpose_default_table().unwrap(), table);
-        let mut unsafe_extraction = table;
-        unsafe_extraction
+        let mut nonlocal = table;
+        nonlocal
             .purposes
             .get_mut(&CallPurpose::Extraction)
             .unwrap()
-            .locality = ModelLocality::ThirdParty;
-        assert!(vault.set_purpose_default_table(&unsafe_extraction).is_err());
+            .locality = ModelLocality::OwnServer;
+        // A route outside the owner-authored egress bound cannot be stored.
+        assert!(matches!(
+            vault.set_purpose_default_table(&nonlocal),
+            Err(Error::InvalidConfig(_))
+        ));
+        nonlocal.extraction_max_locality = ModelLocality::OwnServer;
+        vault.set_purpose_default_table(&nonlocal).unwrap();
+        assert_eq!(vault.purpose_default_table().unwrap(), nonlocal);
+        // An approved resident may narrow rows but cannot widen the owner pin.
+        let mut wider = nonlocal.clone();
+        wider.extraction_max_locality = ModelLocality::ThirdParty;
+        assert!(matches!(
+            vault.set_resident_purpose_default_table(&wider),
+            Err(Error::InvalidConfig(_))
+        ));
     }
 
     #[test]
@@ -467,6 +526,130 @@ mod tests {
                 .unwrap(),
             candidates[0]
         );
+    }
+
+    #[test]
+    fn voice_precedence_is_editable_but_override_cannot_widen_vault() {
+        let dir = tempfile::tempdir().unwrap();
+        let vault = Vault::open(dir.path(), crate::VaultConfig::default()).unwrap();
+        let mut table = vault.purpose_default_table().unwrap();
+        table.voice.get_mut(&VoiceLane::AsrLive).unwrap().locality = ModelLocality::OnDevice;
+        table.voice.get_mut(&VoiceLane::AsrLive).unwrap().tier = ModelTierRef("local-asr".into());
+        vault.set_purpose_default_table(&table).unwrap();
+        let remote = PurposeDefault {
+            tier: ModelTierRef("remote-asr".into()),
+            locality: ModelLocality::ThirdParty,
+        };
+        let local = PurposeDefault {
+            tier: ModelTierRef("alternate-local".into()),
+            locality: ModelLocality::OnDevice,
+        };
+        let available = [
+            VoiceBackendBinding {
+                model: ModelId::new("test/remote@r1").unwrap(),
+                tier: remote.tier.clone(),
+                locality: remote.locality,
+            },
+            VoiceBackendBinding {
+                model: ModelId::new("test/default-local@r1").unwrap(),
+                tier: ModelTierRef("local-asr".into()),
+                locality: ModelLocality::OnDevice,
+            },
+            VoiceBackendBinding {
+                model: ModelId::new("test/override-local@r1").unwrap(),
+                tier: local.tier.clone(),
+                locality: local.locality,
+            },
+        ];
+        assert!(matches!(
+            vault.select_voice_backend(VoiceLane::AsrLive, Some(&remote), &available),
+            Err(Error::InvalidConfig(_))
+        ));
+        assert_eq!(
+            vault
+                .select_voice_backend(VoiceLane::AsrLive, Some(&local), &available)
+                .unwrap(),
+            available[2]
+        );
+        table.voice_precedence = VoicePrecedence::VaultOnly;
+        vault.set_purpose_default_table(&table).unwrap();
+        assert_eq!(
+            vault
+                .select_voice_backend(VoiceLane::AsrLive, Some(&local), &available)
+                .unwrap(),
+            available[1]
+        );
+        let stored = vault.purpose_default_table().unwrap();
+        assert_eq!(stored.voice_precedence, VoicePrecedence::VaultOnly);
+        let mut resident = stored;
+        resident.voice_precedence = VoicePrecedence::NestedNarrowing;
+        assert!(matches!(
+            vault.set_resident_purpose_default_table(&resident),
+            Err(Error::InvalidConfig(_))
+        ));
+    }
+
+    #[test]
+    fn nonlocal_extraction_requires_host_egress_verdict_before_binding() {
+        use super::super::{CallClass, LlmRequest};
+        let dir = tempfile::tempdir().unwrap();
+        let vault = Vault::open(dir.path(), crate::VaultConfig::default()).unwrap();
+        let mut table = vault.purpose_default_table().unwrap();
+        table.extraction_max_locality = ModelLocality::OwnServer;
+        table
+            .purposes
+            .get_mut(&CallPurpose::Extraction)
+            .unwrap()
+            .locality = ModelLocality::OwnServer;
+        vault.set_purpose_default_table(&table).unwrap();
+        let mut request = LlmRequest {
+            model: ModelId::new("test/own-extraction@r1").unwrap(),
+            envelope: CallEnvelope {
+                scope: Default::default(),
+                purpose: CallPurpose::Extraction,
+                class: CallClass::BestEffort,
+                tier: TierPrecedence::for_purpose(
+                    &CallPurpose::Extraction,
+                    ModelTierRef("global".into()),
+                ),
+                response_format: super::super::ResponseFormat::Text,
+                locality: ModelLocality::OwnServer,
+            },
+            messages: vec![],
+            tools: vec![],
+            params: Default::default(),
+            provider_options: Default::default(),
+        };
+        let prior = request.clone();
+        assert!(matches!(
+            vault.bind_model_role(
+                super::super::manifest::ModelRole::ExtractionTeacher,
+                &mut request
+            ),
+            Err(Error::InvalidConfig(_))
+        ));
+        assert_eq!(request, prior);
+        let deny = |_: &LlmRequest| false;
+        assert!(matches!(
+            vault.bind_model_role_with_egress(
+                super::super::manifest::ModelRole::ExtractionTeacher,
+                &mut request,
+                Some(&deny)
+            ),
+            Err(Error::InvalidConfig(_))
+        ));
+        let allow = |call: &LlmRequest| {
+            call.model == prior.model && call.envelope.locality == ModelLocality::OwnServer
+        };
+        vault
+            .bind_model_role_with_egress(
+                super::super::manifest::ModelRole::ExtractionTeacher,
+                &mut request,
+                Some(&allow),
+            )
+            .unwrap();
+        assert_eq!(request.model, prior.model);
+        assert_eq!(request.envelope.locality, ModelLocality::OwnServer);
     }
 
     #[test]

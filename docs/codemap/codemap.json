@@ -20580,21 +20580,24 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [
+      "ExtractionEgressPredicate",
       "PurposeDefault",
       "PurposeDefaultTable",
       "VoiceBackendBinding",
-      "VoiceLane"
+      "VoiceLane",
+      "VoicePrecedence"
      ],
      "path": "src/llm/defaults.rs",
      "purpose": "Vault-local inference defaults",
      "surface": {
-      "crate-vis": 2,
-      "enum": 1,
-      "fn": 14,
-      "struct": 3
+      "crate-vis": 3,
+      "enum": 2,
+      "fn": 15,
+      "struct": 3,
+      "trait": 1
      }
     },
     {
@@ -20689,7 +20692,7 @@
       "const": 1,
       "crate-vis": 2,
       "enum": 5,
-      "fn": 10,
+      "fn": 11,
       "struct": 4
      }
     },
@@ -35754,7 +35757,7 @@
     "llm": {
      "files": 83,
      "impl_vault": true,
-     "largest_src_bucket": "m",
+     "largest_src_bucket": "L",
      "layout": "dir",
      "purpose": "Engine-facing LLM invocation seam"
     },
@@ -36305,7 +36308,7 @@
      "purpose": "Write-path stamping: `WriteActor`/`WriteProvenance`/`WriteEnvelope`/`ClaimCandidate` + evidence stamping"
     }
    },
-   "over_bar": 11,
+   "over_bar": 12,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
    "source_files": 2142,
    "test_files": 731
@@ -42998,7 +43001,7 @@
      "purpose": "Core server state: the `SyncServer` struct, construction, and shared helpers",
      "surface": {
       "crate-vis": 8,
-      "fn": 4,
+      "fn": 5,
       "struct": 1
      }
     },
@@ -43337,6 +43340,14 @@
      "surface": {}
     },
     {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/inference_egress.rs",
+     "purpose": "Extraction default changes require a host gate at storage and dispatch",
+     "surface": {}
+    },
+    {
      "bucket": "XL",
      "kind": "test",
      "notable": [],
@@ -43628,7 +43639,7 @@
    "over_bar": 3,
    "purpose": "Oneiron CRDT sync server library",
    "source_files": 231,
-   "test_files": 98
+   "test_files": 99
   },
   "oneiron-uniffi": {
    "files": [

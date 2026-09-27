@@ -18,7 +18,10 @@ mod call;
 mod defaults;
 #[cfg(test)]
 mod streaming_tests;
-pub use defaults::{PurposeDefault, PurposeDefaultTable, VoiceBackendBinding, VoiceLane};
+pub use defaults::{
+    ExtractionEgressPredicate, PurposeDefault, PurposeDefaultTable, VoiceBackendBinding, VoiceLane,
+    VoicePrecedence, locality_within_extraction_bound,
+};
 pub mod scope;
 pub use self::scope::{Scope, ScopeResource};
 mod catalog;

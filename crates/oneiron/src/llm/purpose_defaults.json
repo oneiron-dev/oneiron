@@ -46,5 +46,7 @@
       "tier": "tts-deferred",
       "locality": "own_server"
     }
-  }
+  },
+  "voice_precedence": "nested_narrowing",
+  "extraction_max_locality": "on_device"
 }
