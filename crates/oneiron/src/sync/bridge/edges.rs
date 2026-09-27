@@ -15,13 +15,31 @@ use super::entities::{committed_entity_state_matches, set_remat_marker_logged};
 
 use crate::affect::Vad;
 use crate::batch::BatchOp;
-use crate::edge::{EdgeKind, decode_edge_value_for_kind};
+use crate::edge::{EdgeKind, decode_edge_value_for_kind, parse_strict_edge_record_key};
 use crate::entity_id::EntityId;
 use crate::store::Store;
 use crate::sync::quarantine::{
     self, QuarantineContainer, quarantine_rejected_op_in_txn, remote_rejection_reason,
 };
 use crate::{Error, Result, Vault};
+
+/// The committed parent projection for one child. Read through the SAME
+/// transaction as the batch so resolver-injected removals are observable.
+fn projected_child_of_parents(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    child: &EntityId,
+) -> Result<std::collections::BTreeSet<EntityId>> {
+    vault
+        .store
+        .edges_out
+        .prefix_iter(txn, &crate::batch::child_of_prefix(child))?
+        .map(|row| {
+            let (key, _) = row?;
+            Ok(parse_strict_edge_record_key(&key)?.2)
+        })
+        .collect()
+}
 
 /// Materialize edge changes from a Loro MapDelta to LMDB.
 ///
@@ -75,6 +93,20 @@ pub(super) fn materialize_edges_from_delta(
             .filter_map(|(key, _)| parse_edge_key(key))
             .flat_map(|(source, _, target)| [source, target])
             .collect();
+        // A newly winning ChildOf add can evict a stored parent not named
+        // by this delta or replay set. Compare the projected parents around
+        // the committing batch, never an uncommitted CRDT candidate alone.
+        let children: std::collections::BTreeSet<_> = delta
+            .updated
+            .keys()
+            .filter_map(|key| parse_edge_key(key))
+            .filter(|(_, kind, _)| *kind == EdgeKind::ChildOf)
+            .map(|(child, _, _)| child)
+            .collect();
+        let mut before = std::collections::BTreeMap::new();
+        for child in &children {
+            before.insert(*child, projected_child_of_parents(vault, &*wtxn, child)?);
+        }
         let mut ops = Vec::<BatchOp>::new();
         let mut metas = Vec::<EdgeOpMeta>::new();
         for (key, new_val) in delta
@@ -421,13 +453,21 @@ pub(super) fn materialize_edges_from_delta(
             }
         }
         apply_materialized_edge_ops(vault, wtxn, ops, &metas, window_key)?;
+        let mut affected = replayed_entities;
+        for (child, old_parents) in before {
+            let new_parents = projected_child_of_parents(vault, &*wtxn, &child)?;
+            if old_parents != new_parents {
+                affected.push(child);
+                affected.extend(old_parents.symmetric_difference(&new_parents).copied());
+            }
+        }
         #[cfg(test)]
         if take_injected_batch_commit_failure() {
             return Err(Error::Io(std::io::Error::other(
                 "injected batch commit failure (test hook)",
             )));
         }
-        Ok(replayed_entities)
+        Ok(affected)
     });
 
     if result.is_ok()

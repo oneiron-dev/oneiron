@@ -12359,7 +12359,7 @@
      "path": "src/deletion/erase.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 13
+      "crate-vis": 14
      }
     },
     {
@@ -40344,7 +40344,7 @@
      "surface": {}
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "test",
      "notable": [],
      "path": "src/api/tests/reactive.rs",

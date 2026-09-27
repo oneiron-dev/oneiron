@@ -518,6 +518,28 @@ async fn hard_delete_waits_for_purge_then_refreshes_only_deleted_local_entity() 
     assert_local_deletion_refreshes_only_target(oneiron::DeleteReason::UserHardDelete).await;
 }
 
+struct IncomingEdges {
+    parent: oneiron::EntityId,
+    dependencies: [ReactiveDependency; 1],
+    reads: Arc<std::sync::atomic::AtomicUsize>,
+}
+impl ReactiveLocalQuery for IncomingEdges {
+    type Output = Vec<oneiron::EntityId>;
+    fn dependencies(&self) -> &[ReactiveDependency] {
+        &self.dependencies
+    }
+    fn read(&self, vault: &oneiron::Vault) -> oneiron::Result<Self::Output> {
+        self.reads
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        Ok(vault
+            .edges_in(&self.parent)?
+            .into_iter()
+            .filter(|edge| edge.kind == oneiron::EdgeKind::ChildOf)
+            .map(|edge| edge.target)
+            .collect())
+    }
+}
+
 /// The wire delta names child X and old parent A, but replay installs the
 /// losing candidate X→B from the live CRDT map in the same LMDB transaction.
 /// B's incoming-edge read must re-run; an unrelated parent remains untouched.
@@ -526,27 +548,6 @@ async fn replayed_child_of_parent_invalidates_incoming_edge_read() {
     use loro::CommitOptions;
     use oneiron::sync::bridge::{encode_edge_value_for_crdt, format_edge_key};
 
-    struct IncomingEdges {
-        parent: oneiron::EntityId,
-        dependencies: [ReactiveDependency; 1],
-        reads: Arc<std::sync::atomic::AtomicUsize>,
-    }
-    impl ReactiveLocalQuery for IncomingEdges {
-        type Output = Vec<oneiron::EntityId>;
-        fn dependencies(&self) -> &[ReactiveDependency] {
-            &self.dependencies
-        }
-        fn read(&self, vault: &oneiron::Vault) -> oneiron::Result<Self::Output> {
-            self.reads
-                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-            Ok(vault
-                .edges_in(&self.parent)?
-                .into_iter()
-                .filter(|edge| edge.kind == oneiron::EdgeKind::ChildOf)
-                .map(|edge| edge.target)
-                .collect())
-        }
-    }
     let (_dir, server) = test_server();
     let learned_at = 1_770_000_000;
     let window = oneiron::sync::WindowKey::from_timestamp(learned_at);
@@ -620,4 +621,352 @@ async fn replayed_child_of_parent_invalidates_incoming_edge_read() {
         "unrelated parent must not re-read"
     );
     assert_eq!(reactive_reads(&counter_other), 1);
+}
+
+/// A winner added for X displaces the already projected X→A link. The wire
+/// delta names only X and B, so A must be reported from committed projection
+/// effects, not merely from the input or the replay candidates.
+#[tokio::test]
+async fn new_child_of_winner_invalidates_displaced_parent_read() {
+    use loro::CommitOptions;
+    use oneiron::sync::bridge::{encode_edge_value_for_crdt, format_edge_key};
+
+    let (_dir, server) = test_server();
+    let learned_at = 1_770_000_000;
+    let window = oneiron::sync::WindowKey::from_timestamp(learned_at);
+    let doc = server.get_or_create_window(&window).await.unwrap();
+    let child = seeded_test_entity_id(0x1437_0030);
+    let a = seeded_test_entity_id(0x1437_0031);
+    let b = seeded_test_entity_id(0x1437_0032);
+    let other = seeded_test_entity_id(0x1437_0033);
+    for id in [child, a, b, other] {
+        seed_reactive_turn(server.vault(), &id, learned_at);
+    }
+    assert_eq!(
+        oneiron::sync::window::reverse_rematerialize(server.vault(), &doc, &window).unwrap(),
+        4
+    );
+    let kind = oneiron::EdgeKind::ChildOf;
+    let old = format_edge_key(&child, kind, &a);
+    let new = format_edge_key(&child, kind, &b);
+    doc.get_map("edges")
+        .insert(
+            &old,
+            encode_edge_value_for_crdt(kind, 1.0, 100, None, None)
+                .unwrap()
+                .as_slice(),
+        )
+        .unwrap();
+    doc.commit_with(CommitOptions::new().origin("conn:7"));
+    assert_eq!(server.vault().sources(&a, kind, None).unwrap(), vec![child]);
+
+    let a_reads = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let other_reads = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let mut a_read = open_local_reactive_read(
+        &server,
+        IncomingEdges {
+            parent: a,
+            dependencies: [ReactiveDependency::Doc(a)],
+            reads: a_reads.clone(),
+        },
+    )
+    .unwrap();
+    let mut other_read = open_local_reactive_read(
+        &server,
+        IncomingEdges {
+            parent: other,
+            dependencies: [ReactiveDependency::Doc(other)],
+            reads: other_reads.clone(),
+        },
+    )
+    .unwrap();
+    assert_eq!(a_read.snapshot(), &vec![child]);
+    doc.get_map("edges")
+        .insert(
+            &new,
+            encode_edge_value_for_crdt(kind, 1.0, 200, None, None)
+                .unwrap()
+                .as_slice(),
+        )
+        .unwrap();
+    doc.commit_with(CommitOptions::new().origin("conn:7"));
+    assert_eq!(server.vault().sources(&b, kind, None).unwrap(), vec![child]);
+    assert!(
+        tokio::time::timeout(
+            std::time::Duration::from_secs(5),
+            a_read.refresh_on_change()
+        )
+        .await
+        .expect("displaced parent notice")
+        .expect("read")
+        .is_empty()
+    );
+    assert_eq!(reactive_reads(&a_reads), 2);
+    assert!(
+        tokio::time::timeout(
+            std::time::Duration::from_millis(100),
+            other_read.refresh_on_change()
+        )
+        .await
+        .is_err()
+    );
+    assert_eq!(reactive_reads(&other_reads), 1);
+}
+
+/// Headerless residue has no entity-row `existed` flag, but purging its vector
+/// changes a local indexed read. The positive in-transaction scope probe is
+/// the notice gate, not the entity-row boolean returned by deindex.
+#[tokio::test]
+async fn headerless_vector_delete_refreshes_only_its_local_read() {
+    struct VectorRead {
+        id: oneiron::EntityId,
+        dependencies: [ReactiveDependency; 1],
+        reads: Arc<std::sync::atomic::AtomicUsize>,
+    }
+    impl ReactiveLocalQuery for VectorRead {
+        type Output = Option<Vec<f32>>;
+        fn dependencies(&self) -> &[ReactiveDependency] {
+            &self.dependencies
+        }
+        fn read(&self, vault: &oneiron::Vault) -> oneiron::Result<Self::Output> {
+            self.reads
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            vault.get_vector(&self.id)
+        }
+    }
+    let dir = tempfile::tempdir().expect("vector vault dir");
+    let mut config = oneiron::VaultConfig::device();
+    config.dimensions = 4;
+    config.embedding_model = Some("test/model@v1".to_owned());
+    let vault = Arc::new(oneiron::Vault::open(dir.path(), config).unwrap());
+    let server = Arc::new(
+        crate::server::SyncServer::new(
+            vault,
+            crate::config::SyncServerConfig {
+                allow_unauthenticated: true,
+                ..Default::default()
+            },
+        )
+        .unwrap(),
+    );
+    let orphan = seeded_test_entity_id(0x1437_0034);
+    let other = seeded_test_entity_id(0x1437_0035);
+    server
+        .vault()
+        .put_vector(&orphan, &[0.1, 0.2, 0.3, 0.4])
+        .unwrap();
+    server
+        .vault()
+        .put_vector(&other, &[0.5, 0.6, 0.7, 0.8])
+        .unwrap();
+    assert!(server.vault().get(&orphan).unwrap().is_none());
+    let reads = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let other_reads = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let mut read = open_local_reactive_read(
+        &server,
+        VectorRead {
+            id: orphan,
+            dependencies: [ReactiveDependency::Doc(orphan)],
+            reads: reads.clone(),
+        },
+    )
+    .unwrap();
+    let mut other_read = open_local_reactive_read(
+        &server,
+        VectorRead {
+            id: other,
+            dependencies: [ReactiveDependency::Doc(other)],
+            reads: other_reads.clone(),
+        },
+    )
+    .unwrap();
+    assert!(read.snapshot().is_some());
+    let outcome = server
+        .vault()
+        .delete_entity_with_reason(&orphan, oneiron::DeleteReason::GdprDelete)
+        .unwrap();
+    assert!(!outcome.existed);
+    assert!(
+        tokio::time::timeout(std::time::Duration::from_secs(5), read.refresh_on_change())
+            .await
+            .expect("post-commit orphan notice")
+            .expect("read")
+            .is_none()
+    );
+    assert_eq!(reactive_reads(&reads), 2);
+    assert!(
+        tokio::time::timeout(
+            std::time::Duration::from_millis(100),
+            other_read.refresh_on_change()
+        )
+        .await
+        .is_err()
+    );
+    assert_eq!(reactive_reads(&other_reads), 1);
+}
+
+/// The merge redirect shell retains its own body until the head's hard erase.
+/// That erase also clears the shell in one transaction; both document IDs
+/// must reach local readers, without waking an unrelated third entity.
+#[tokio::test]
+async fn hard_delete_head_refreshes_redirect_shell_read() {
+    use oneiron::identity_topology::{
+        IdentityOpEvidence, IdentityOpWrite, IdentityTopologyOp, MergeOp, SurvivorshipPlan,
+    };
+
+    let (_dir, server) = test_server();
+    let at = 1_770_000_000;
+    let actor = seeded_test_entity_id(0x1437_0036);
+    let head = seeded_test_entity_id(0x1437_0037);
+    let shell = seeded_test_entity_id(0x1437_0038);
+    let unrelated = seeded_test_entity_id(0x1437_0039);
+    for id in [actor, head, shell, unrelated] {
+        server
+            .vault()
+            .put_entity(
+                &id,
+                oneiron::registry::ENTITY_TYPE_PERSON,
+                oneiron::TimeRange { start: at, end: at },
+                at,
+                b"redirect shell body",
+            )
+            .unwrap();
+    }
+    server
+        .get_or_create_window(&oneiron::sync::WindowKey::from_timestamp(at))
+        .await
+        .unwrap();
+    let outcome = server
+        .vault()
+        .apply_identity_topology_op(
+            &IdentityTopologyOp::Merge(MergeOp {
+                sources: vec![shell],
+                survivor: head,
+                evidence: IdentityOpEvidence::default(),
+                survivorship_plan: SurvivorshipPlan::ReadThrough,
+            }),
+            &IdentityOpWrite::auto(oneiron::ClaimSource::Inferred).with_actor(
+                oneiron::WriteActor::new(actor, oneiron::EdgeActorClass::Human),
+            ),
+            at + 1,
+        )
+        .unwrap();
+    assert!(matches!(
+        outcome,
+        oneiron::identity_topology::IdentityOpOutcome::Applied { .. }
+    ));
+    assert_eq!(server.vault().resolve_entity(&shell).unwrap(), vec![head]);
+    let (probe, reads) = reactive_probe(shell, vec![ReactiveDependency::Doc(shell)]);
+    let (other_probe, other_reads) =
+        reactive_probe(unrelated, vec![ReactiveDependency::Doc(unrelated)]);
+    let mut read = open_local_reactive_read(&server, probe).unwrap();
+    let mut other_read = open_local_reactive_read(&server, other_probe).unwrap();
+    assert!(
+        read.snapshot()
+            .as_ref()
+            .is_some_and(|body| !body.is_empty())
+    );
+    assert!(
+        server
+            .vault()
+            .delete_entity_with_reason(&head, oneiron::DeleteReason::UserHardDelete)
+            .unwrap()
+            .existed
+    );
+    let refreshed =
+        tokio::time::timeout(std::time::Duration::from_secs(5), read.refresh_on_change())
+            .await
+            .expect("redirect shell notice")
+            .expect("read");
+    assert_eq!(refreshed, &server.vault().get(&shell).unwrap());
+    assert_ne!(refreshed, &Some(b"redirect shell body".to_vec()));
+    assert_eq!(reactive_reads(&reads), 2);
+    assert!(
+        tokio::time::timeout(
+            std::time::Duration::from_millis(100),
+            other_read.refresh_on_change()
+        )
+        .await
+        .is_err()
+    );
+    assert_eq!(reactive_reads(&other_reads), 1);
+}
+
+#[tokio::test]
+async fn remote_hard_tombstone_refreshes_redirect_shell_read() {
+    use loro::CommitOptions;
+    use oneiron::identity_topology::{
+        IdentityOpEvidence, IdentityOpWrite, IdentityTopologyOp, MergeOp, SurvivorshipPlan,
+    };
+
+    let (_dir, server) = test_server();
+    let at = 1_770_000_000;
+    let actor = seeded_test_entity_id(0x1437_0040);
+    let head = seeded_test_entity_id(0x1437_0041);
+    let shell = seeded_test_entity_id(0x1437_0042);
+    let other = seeded_test_entity_id(0x1437_0043);
+    for id in [actor, head, shell, other] {
+        server
+            .vault()
+            .put_entity(
+                &id,
+                oneiron::registry::ENTITY_TYPE_PERSON,
+                oneiron::TimeRange { start: at, end: at },
+                at,
+                b"remote shell body",
+            )
+            .unwrap();
+    }
+    let doc = server
+        .get_or_create_window(&oneiron::sync::WindowKey::from_timestamp(at))
+        .await
+        .unwrap();
+    server
+        .vault()
+        .apply_identity_topology_op(
+            &IdentityTopologyOp::Merge(MergeOp {
+                sources: vec![shell],
+                survivor: head,
+                evidence: IdentityOpEvidence::default(),
+                survivorship_plan: SurvivorshipPlan::ReadThrough,
+            }),
+            &IdentityOpWrite::auto(oneiron::ClaimSource::Inferred).with_actor(
+                oneiron::WriteActor::new(actor, oneiron::EdgeActorClass::Human),
+            ),
+            at + 1,
+        )
+        .unwrap();
+    let (probe, reads) = reactive_probe(shell, vec![ReactiveDependency::Doc(shell)]);
+    let (other_probe, other_reads) = reactive_probe(other, vec![ReactiveDependency::Doc(other)]);
+    let mut read = open_local_reactive_read(&server, probe).unwrap();
+    let mut other_read = open_local_reactive_read(&server, other_probe).unwrap();
+    assert!(
+        read.snapshot()
+            .as_ref()
+            .is_some_and(|body| !body.is_empty())
+    );
+    let mut tombstone = vec![2u8]; // user_hard_delete v2
+    tombstone.extend_from_slice(&at.to_le_bytes());
+    tombstone.extend_from_slice(&[7u8; 16]);
+    doc.get_map("tombstones")
+        .insert(&head.to_hex(), tombstone.as_slice())
+        .unwrap();
+    doc.commit_with(CommitOptions::new().origin("conn:7"));
+    assert_eq!(server.vault().get(&head).unwrap(), None);
+    let refreshed =
+        tokio::time::timeout(std::time::Duration::from_secs(5), read.refresh_on_change())
+            .await
+            .expect("remote redirect shell notice")
+            .expect("read");
+    assert_eq!(refreshed, &server.vault().get(&shell).unwrap());
+    assert_eq!(reactive_reads(&reads), 2);
+    assert!(
+        tokio::time::timeout(
+            std::time::Duration::from_millis(100),
+            other_read.refresh_on_change()
+        )
+        .await
+        .is_err()
+    );
+    assert_eq!(reactive_reads(&other_reads), 1);
 }

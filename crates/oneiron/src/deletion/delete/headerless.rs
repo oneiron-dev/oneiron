@@ -111,6 +111,7 @@ impl Vault {
             wtxn.commit()?;
             return Ok(DeleteEntityOutcome::missing());
         }
+        let affected = self.hard_delete_affected_ids_in_txn(&wtxn, id)?;
         let existed = self.purge_entity_active_store_in_txn(&mut wtxn, id)?;
         // OWNER-DECISION (cfg-off durability): marker in the SAME purge txn.
         self.put_pending_tombstone_in_txn(&mut wtxn, &window_label, id, &tombstone)?;
@@ -136,9 +137,7 @@ impl Vault {
         }
         if !reason.writes_receipt() {
             wtxn.commit()?;
-            if existed {
-                self.notify_local_delete_materialized(id);
-            }
+            self.notify_local_delete_materialized(&affected);
             if crdt_persisted {
                 self.clear_pending_tombstone(&window_label, id)?;
             }
@@ -172,9 +171,7 @@ impl Vault {
             HardEraseSweepExtras::default(),
         )?;
         wtxn.commit()?;
-        if existed {
-            self.notify_local_delete_materialized(id);
-        }
+        self.notify_local_delete_materialized(&affected);
         if crdt_persisted {
             self.clear_pending_tombstone(&window_label, id)?;
         }

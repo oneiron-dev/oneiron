@@ -365,6 +365,30 @@ impl Vault {
         Ok(())
     }
 
+    /// IDs whose local body or edge projection can change when this hard
+    /// deletion commits. Capture before deindex removes incident edges and
+    /// before the redirect walk scrubs shells. Callers publish only after
+    /// their owning transaction commits; a rolled-back delete publishes none.
+    pub(crate) fn hard_delete_affected_ids_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        id: &EntityId,
+    ) -> Result<Vec<EntityId>> {
+        let mut affected = crate::identity_redirect::inbound_redirect_shells_in_txn(
+            &self.store,
+            txn,
+            &BTreeSet::from([*id]),
+        )?;
+        affected.insert(*id);
+        for index in [&self.store.edges_out, &self.store.edges_in] {
+            for row in index.prefix_iter(txn, id.as_bytes())? {
+                let (key, value) = row?;
+                affected.insert(crate::vault::parse_edge_record(&key, &value)?.target);
+            }
+        }
+        Ok(affected.into_iter().collect())
+    }
+
     pub(super) fn purge_entity_active_store_in_txn(
         &self,
         wtxn: &mut heed::RwTxn<'_>,

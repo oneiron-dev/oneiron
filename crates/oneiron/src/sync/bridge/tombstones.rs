@@ -181,7 +181,7 @@ pub(super) fn materialize_tombstones_from_delta(
     // Soft-over-hard `ra:` reassert for staged soft items runs INSIDE
     // apply_tombstone_batch's single parent write txn (ONE-521) — materialize
     // must not open any per-item committing helper over staged work.
-    apply_tombstone_batch(vault, window_key, &staged).then(Vec::new)
+    apply_tombstone_batch(vault, window_key, &staged)
 }
 
 /// One tombstone staged out of the delta, owned so the batch transaction can
@@ -225,16 +225,24 @@ enum TombstoneFailureStage {
 /// as partial success. The tombstones stay in the CRDT map, which is both the
 /// resurrection gate for entity materialization and the replay source for
 /// forward rematerialization, so the work is not lost.
-fn apply_tombstone_batch(vault: &Vault, window_key: &str, staged: &[TombstoneWork]) -> bool {
+fn apply_tombstone_batch(
+    vault: &Vault,
+    window_key: &str,
+    staged: &[TombstoneWork],
+) -> Option<Vec<EntityId>> {
     let mut failures = Vec::<(&TombstoneWork, TombstoneFailureStage, Error)>::new();
 
     #[cfg(test)]
     note_tombstone_batch_top_level_txn();
     let batch = vault.with_write_txn(|parent| {
+        let mut affected = Vec::new();
         for work in staged {
-            let Err((stage, err)) = apply_tombstone_in_savepoint(vault, parent, window_key, work)
-            else {
-                continue;
+            let (stage, err) = match apply_tombstone_in_savepoint(vault, parent, window_key, work) {
+                Ok(ids) => {
+                    affected.extend(ids);
+                    continue;
+                }
+                Err(failure) => failure,
             };
             // Item-local bookkeeping on the PARENT — the item's own child is
             // already aborted, and none of this may use `?`: one tombstone's
@@ -298,17 +306,17 @@ fn apply_tombstone_batch(vault: &Vault, window_key: &str, staged: &[TombstoneWor
                 );
             }
         }
-        Ok(())
+        Ok(affected)
     });
 
-    if let Err(e) = batch {
+    if let Err(e) = &batch {
         tracing::error!(
             window = %window_key,
             tombstones = staged.len(),
             error = %e,
             "observer-b: tombstone batch transaction FAILED — NO tombstone in this delta was applied; the CRDT tombstones map keeps gating materialization and remains the replay source"
         );
-        return false;
+        return None;
     }
 
     loop {
@@ -337,7 +345,7 @@ fn apply_tombstone_batch(vault: &Vault, window_key: &str, staged: &[TombstoneWor
             ),
         }
     }
-    true
+    batch.ok()
 }
 
 /// Applies one staged tombstone inside a nested write transaction (savepoint)
@@ -351,13 +359,22 @@ fn apply_tombstone_in_savepoint(
     parent: &mut heed::RwTxn<'_>,
     window_key: &str,
     work: &TombstoneWork,
-) -> std::result::Result<(), (TombstoneFailureStage, Error)> {
+) -> std::result::Result<Vec<EntityId>, (TombstoneFailureStage, Error)> {
     let mut child = vault
         .store
         .env
         .nested_write_txn(parent)
         .map_err(|e| (TombstoneFailureStage::Replay, Error::from(e)))?;
 
+    // Read before replay tears edge indexes and redirect shells. An item
+    // rolled back to its savepoint contributes no committed invalidations.
+    let affected = if work.hard {
+        vault
+            .hard_delete_affected_ids_in_txn(&child, &work.id)
+            .map_err(|e| (TombstoneFailureStage::Replay, e))?
+    } else {
+        vec![work.id]
+    };
     let applied = quarantine::apply_replayed_tombstone_for_sync_in_txn(
         vault,
         &mut child,
@@ -377,6 +394,7 @@ fn apply_tombstone_in_savepoint(
     match item {
         Ok(()) => child
             .commit()
+            .map(|()| affected)
             .map_err(|e| (TombstoneFailureStage::Replay, Error::from(e))),
         Err(failure) => {
             // Savepoint abort: this item's entity/index/receipt/sweep/outbox

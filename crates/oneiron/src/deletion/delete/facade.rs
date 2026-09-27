@@ -172,7 +172,7 @@ impl Vault {
             }
             wtxn.commit()?;
             if existed {
-                self.notify_local_delete_materialized(id);
+                self.notify_local_delete_materialized(&[*id]);
             }
             // An archive publishes nothing (`publishes_crdt_tombstone` is
             // false for exactly one reason): there is no remote-binding act
@@ -343,7 +343,7 @@ impl Vault {
             }
             wtxn.commit()?;
             if existed {
-                self.notify_local_delete_materialized(id);
+                self.notify_local_delete_materialized(&[*id]);
             }
             self.store.clock.now_recorded_at()
         } else {
@@ -421,6 +421,7 @@ impl Vault {
         // it deletes the head's incident shell edges, which are the walk's
         // primary witness — and in this same transaction, so a head can
         // never be erased while a shell of it stays readable.
+        let affected = self.hard_delete_affected_ids_in_txn(&wtxn, id)?;
         let cascaded_shells = self.cascade_hard_erase_to_redirect_shells_in_txn(&mut wtxn, id)?;
         // The shells' historical carriers ride THIS erasure's sweep row:
         // clearing the active store while history keeps the bytes would
@@ -479,9 +480,7 @@ impl Vault {
         )?;
 
         wtxn.commit()?;
-        if existed {
-            self.notify_local_delete_materialized(id);
-        }
+        self.notify_local_delete_materialized(&affected);
         // The CRDT record (tombstone-first, above) is durable — the crash
         // marker has served its purpose. In non-`sync` builds the marker
         // STAYS: it is the deletion's only propagation intent until a

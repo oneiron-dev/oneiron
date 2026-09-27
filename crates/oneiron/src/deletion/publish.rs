@@ -246,7 +246,7 @@ impl Vault {
     /// commits. Tombstone publication is too early for hard purge, and a soft
     /// scrub must notify even when later CRDT publication fails. The existing
     /// tee is vault-scoped and has no recipient if no window manager is live.
-    pub(super) fn notify_local_delete_materialized(&self, id: &EntityId) {
+    pub(super) fn notify_local_delete_materialized(&self, ids: &[EntityId]) {
         #[cfg(feature = "sync")]
         {
             let manager = self
@@ -255,11 +255,11 @@ impl Vault {
                 .unwrap_or_else(std::sync::PoisonError::into_inner)
                 .upgrade();
             if let Some(manager) = manager {
-                let path = format!("e:{}", id.to_hex());
+                let path = "local_delete_committed";
                 manager.materializer().notify_live_queries(
-                    &path,
+                    path,
                     &crate::sync::bridge::MaterializedDiffSummary {
-                        containers: vec![path.clone()],
+                        containers: ids.iter().map(|id| format!("e:{}", id.to_hex())).collect(),
                         bytes: 0,
                     },
                     &crate::sync::bridge::OriginMark {
@@ -270,7 +270,7 @@ impl Vault {
             }
         }
         #[cfg(not(feature = "sync"))]
-        let _ = id;
+        let _ = ids;
     }
 
     /// Publication notification only: never run from a Loro observer or before
