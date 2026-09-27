@@ -10,6 +10,8 @@ pub const DOCS_EXPORT_SOURCE_ID: &str = "docs-export";
 #[serde(deny_unknown_fields)]
 pub struct DocsExport {
     pub corpus_id: String,
+    /// The PROJECT entity with role corpus that owns derived claims.
+    pub project_id: crate::EntityId,
     pub registry: Value,
     pub pages: Vec<DocsPage>,
 }
