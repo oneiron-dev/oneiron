@@ -47,6 +47,8 @@ pub(crate) async fn list_personas(
     query: Result<Query<PersonaListQuery>, QueryRejection>,
 ) -> Result<Json<PersonasListResponse>, EnvelopedApiError> {
     require_companion_profile_read(&auth)?;
+    // A stored profile grant cannot widen this request's credential caveats.
+    auth.require_unrestricted_record_scope()?;
     let req = query_params(query)?;
     let principal = companion_profile_principal_ref(
         &auth,
@@ -123,22 +125,47 @@ pub(crate) struct AccessRequestListRow {
 #[derive(Debug, Serialize, Deserialize, ToSchema)]
 pub(crate) struct AccessRequestsListResponse {
     items: Vec<AccessRequestListRow>,
+    /// Null when the pending set is exhausted; otherwise the last returned request id.
+    #[serde(rename = "nextCursor", default)]
+    next_cursor: Option<String>,
+}
+
+#[derive(Debug, Deserialize, IntoParams)]
+#[into_params(parameter_in = Query)]
+pub(crate) struct AccessRequestListQuery {
+    /// Page size, clamped to 1..=100.
+    #[serde(default = "default_request_limit")]
+    limit: usize,
+    /// Exclusive request-id cursor from a prior page.
+    after: Option<String>,
+}
+
+fn default_request_limit() -> usize {
+    100
 }
 
 /// Owner/control-plane view of pending requests only. A pending grant never authorizes a content read.
-#[utoipa::path(get, path = "/v1/companion/personas/access-requests",
+#[utoipa::path(get, path = "/v1/companion/personas/access-requests", params(AccessRequestListQuery),
     responses((status = 200, body = AccessRequestsListResponse),
               (status = 403, body = ApiErrorEnvelope)))]
 pub(crate) async fn list_access_requests(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
+    query: Result<Query<AccessRequestListQuery>, QueryRejection>,
 ) -> Result<Json<AccessRequestsListResponse>, EnvelopedApiError> {
     auth.require(CoreScope::Auth)?;
-    let requests = server
+    let req = query_params(query)?;
+    let after = req
+        .after
+        .as_deref()
+        .map(|id| parse_entity_id_param(id, "after"))
+        .transpose()?;
+    let (requests, next) = server
         .vault
-        .pending_access_requests(100)
+        .pending_access_requests_page(after.as_ref(), req.limit.clamp(1, 100))
         .map_err(|e| companion_engine_error("access request list failed", e))?;
     Ok(Json(AccessRequestsListResponse {
+        next_cursor: next.map(|id| id.to_hex()),
         items: requests
             .into_iter()
             .map(|request| AccessRequestListRow {

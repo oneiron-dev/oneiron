@@ -1156,13 +1156,14 @@ async fn conversation_list_previews_last_visible_multibyte_message_for_every_row
 
 #[test]
 fn old_conversation_list_row_deserializes_with_absent_preview() {
-    #[derive(serde::Deserialize)]
-    struct PreviewRow {
-        #[serde(rename = "lastMessageSnippet", default)]
-        last_message_snippet: Option<String>,
-    }
-    let row: PreviewRow = serde_json::from_value(json!({"id":"old", "label":"old room"})).unwrap();
-    assert_eq!(row.last_message_snippet, None);
+    let before = json!({
+        "items": [{"id":"old", "kind":"CONVERSATION", "label":"old room", "updatedAt":1}],
+        "meta": {"countMode":"exact", "total":1}
+    });
+    let response: ConversationsListResponse = serde_json::from_value(before).unwrap();
+    let current = serde_json::to_value(response).unwrap();
+    assert_eq!(current["items"][0]["id"], "old");
+    assert!(current["items"][0]["lastMessageSnippet"].is_null());
 }
 
 #[tokio::test]

@@ -42,8 +42,8 @@ use axum::response::Json;
 use oneiron::EdgeKind;
 use oneiron::registry::ENTITY_TYPE_TURN;
 use oneiron::registry::{ENTITY_TYPE_CONVERSATION, ENTITY_TYPE_MESSAGE};
-use serde::Deserialize;
-use serde_json::Value;
+use serde::{Deserialize, Serialize};
+use serde_json::{Map, Value};
 use std::sync::Arc;
 use utoipa::ToSchema;
 
@@ -102,6 +102,17 @@ pub(crate) struct CreateConversationRequest {
     actor: Option<oneiron::EntityId>,
 }
 
+/// A list row keeps the existing view projection and adds one optional preview.
+#[derive(Debug, Serialize, Deserialize)]
+pub(crate) struct ConversationListRow {
+    #[serde(flatten)]
+    entity: Map<String, Value>,
+    #[serde(rename = "lastMessageSnippet", default)]
+    last_message_snippet: Option<String>,
+}
+
+pub(crate) type ConversationsListResponse = PaginatedResponse<ConversationListRow>;
+
 /// List conversation entities, optionally filtered by effective kind and external id.
 #[utoipa::path(
     get,
@@ -119,7 +130,7 @@ pub(crate) async fn list_core_conversations(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
     query: Result<Query<ConversationListQuery>, QueryRejection>,
-) -> Result<Json<SearchResponse>, EnvelopedApiError> {
+) -> Result<Json<ConversationsListResponse>, EnvelopedApiError> {
     auth.require(CoreScope::Read)?;
     auth.require_unrestricted_record_scope()?;
     let query = query_params(query)?;
@@ -184,7 +195,7 @@ pub(crate) async fn list_core_conversations(
 fn list_conversations_unfiltered(
     vault: &oneiron::Vault,
     params: CoreListQuery,
-) -> Result<Json<SearchResponse>, EnvelopedApiError> {
+) -> Result<Json<ConversationsListResponse>, EnvelopedApiError> {
     let after = params
         .after
         .as_deref()
@@ -216,22 +227,24 @@ fn project_conversation_ids(
     vault: &oneiron::Vault,
     ids: Vec<oneiron::EntityId>,
     view: View,
-) -> Result<Vec<Value>, EnvelopedApiError> {
+) -> Result<Vec<ConversationListRow>, EnvelopedApiError> {
     let mut items = Vec::with_capacity(ids.len());
     for id in ids {
         if is_deleted_shell_for_core_list(vault, &id)? {
             continue;
         }
-        let Some(mut item) = projection::project_entity(vault, &id, view)
+        let Some(item) = projection::project_entity(vault, &id, view)
             .map_err(|e| core_engine_error("conversation projection failed", e))?
         else {
             continue;
         };
-        let snippet = last_message_snippet(vault, &id)?;
-        if let Value::Object(fields) = &mut item {
-            fields.insert("lastMessageSnippet".to_owned(), serde_json::json!(snippet));
-        }
-        items.push(item);
+        let Value::Object(entity) = item else {
+            continue;
+        };
+        items.push(ConversationListRow {
+            entity,
+            last_message_snippet: last_message_snippet(vault, &id)?,
+        });
     }
     Ok(items)
 }
@@ -242,15 +255,21 @@ fn last_message_snippet(
 ) -> Result<Option<String>, EnvelopedApiError> {
     // The selected DAG HEAD is a TURN. Witnessed MESSAGE rows live under that
     // TURN via PartOf; legacy text turns carry `txt` on the TURN itself.
-    if let Some(head) = vault
-        .selected_head_snapshot(conversation)
-        .map_err(|e| core_engine_error("conversation HEAD read failed", e))?
-        && let Some(text) = turn_snippet(vault, &head)?
+    if let Some(line) = vault
+        .selected_line_snapshot(conversation)
+        .map_err(|e| core_engine_error("conversation main-line read failed", e))?
     {
-        return Ok(Some(text));
+        // A fork, thread or sub-session can be newer than the selected HEAD,
+        // but never displaces a message from this selected ancestor path.
+        for id in line.iter().rev() {
+            if let Some(text) = turn_snippet(vault, id)? {
+                return Ok(Some(text));
+            }
+        }
+        return Ok(None);
     }
-    // No selected HEAD (legacy), or the head has no visible message. Scan the
-    // existing ChildOf index, using learned_at instead of lexicographic ids.
+    // No selected HEAD (legacy). Scan the existing ChildOf index, using
+    // learned_at instead of lexicographic ids.
     let mut after = None;
     let mut latest: Option<(u64, oneiron::EntityId, String)> = None;
     loop {

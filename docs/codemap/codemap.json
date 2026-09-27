@@ -38943,7 +38943,7 @@
      "path": "src/api/companion/lists.rs",
      "purpose": "Bounded, authorization-checked companion list projections",
      "surface": {
-      "crate-vis": 7
+      "crate-vis": 8
      }
     },
     {
@@ -39153,7 +39153,7 @@
      "path": "src/api/conversations.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 10
+      "crate-vis": 12
      }
     },
     {

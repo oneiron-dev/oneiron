@@ -1434,3 +1434,43 @@ fn old_companion_list_fixtures_deserialize_without_previews() {
     .unwrap();
     assert!(serde_json::to_value(requests).unwrap()["items"][0]["grantContentPreview"].is_null());
 }
+
+#[tokio::test]
+async fn pending_access_requests_list_exposes_every_page_after_one_hundred() {
+    let (_dir, server) = test_server_with_config(SyncServerConfig {
+        auth_secret: Some("secret".to_owned()),
+        ..Default::default()
+    });
+    let grant = oneiron::AccessGrant::companion_profile_read(
+        seeded_test_entity_id(0x0002_2201),
+        seeded_test_entity_id(0x0002_2202),
+        seeded_test_entity_id(0x0002_2203),
+        10,
+    );
+    for n in 0..101_u128 {
+        server
+            .vault
+            .request_access(seeded_test_entity_id(0x0002_2300 + n), grant.clone())
+            .unwrap();
+    }
+    let path = "/v1/companion/personas/access-requests?limit=100";
+    let (status, first) =
+        route_json(server.clone(), core_request("GET", path, "core:auth", None)).await;
+    assert_eq!(status, StatusCode::OK, "{first}");
+    let first_items = first["items"].as_array().unwrap();
+    assert_eq!(first_items.len(), 100);
+    let cursor = first["nextCursor"].as_str().expect("more pending requests");
+    assert_eq!(cursor, first_items[99]["id"]);
+    let (status, last) = route_json(
+        server,
+        core_request("GET", &format!("{path}&after={cursor}"), "core:auth", None),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{last}");
+    assert_eq!(last["items"].as_array().unwrap().len(), 1);
+    assert_eq!(
+        last["items"][0]["id"],
+        seeded_test_entity_id(0x0002_2364).to_hex()
+    );
+    assert!(last["nextCursor"].is_null());
+}

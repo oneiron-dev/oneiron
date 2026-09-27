@@ -407,3 +407,53 @@ async fn records_thread_and_canonical_share_the_typed_dag() {
         assert_eq!(response.status(), StatusCode::NOT_FOUND);
     }
 }
+
+#[tokio::test]
+async fn list_preview_falls_back_only_through_selected_dag_ancestors() {
+    let (_dir, server, actor) = setup();
+    let room = post(&server, "/v1/core/conversations", json!({"body": {}})).await;
+    let records = format!(
+        "/v1/core/conversations/{}/records",
+        room["id"].as_str().unwrap()
+    );
+    let root = post(
+        &server,
+        &records,
+        json!({
+            "advance": true, "body": {"txt": "selected ancestor"}, "actor": actor,
+            "occurred_start": 100_u64, "learned_at": 100_u64,
+        }),
+    )
+    .await;
+    let hidden_head = post(
+        &server,
+        &records,
+        json!({
+            "parent": root["id"], "advance": true, "body": {}, "actor": actor,
+            "occurred_start": 101_u64, "learned_at": 101_u64,
+        }),
+    )
+    .await;
+    let inactive_fork = post(&server, &records, json!({
+        "parent": root["id"], "advance": false, "body": {"txt": "inactive branch"}, "actor": actor,
+        "occurred_start": 102_u64, "learned_at": 102_u64,
+    })).await;
+    assert_eq!(inactive_fork["head"], hidden_head["id"]);
+    let thread = post(
+        &server,
+        &format!("{records}/{}/thread", root["id"].as_str().unwrap()),
+        json!({
+            "actor": actor, "body": {"txt": "thread reply"}, "occurred_start": 103_u64,
+        }),
+    )
+    .await;
+    assert_eq!(thread["head"], hidden_head["id"]);
+    let list = get(&server, "/v1/core/conversations?limit=20").await;
+    let row = list["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|item| item["id"] == room["id"])
+        .unwrap();
+    assert_eq!(row["lastMessageSnippet"], "selected ancestor");
+}
