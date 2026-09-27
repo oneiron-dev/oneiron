@@ -4352,12 +4352,12 @@ fn disjoint_concurrent_narrows_meet_at_bottom_and_deny_content() {
     let ceiling =
         effective_scope_for_grant(&fold, &grant_id).expect("a pact-bound grant has a ceiling");
     assert_eq!(
-        ceiling.facets,
+        ceiling.as_scope().facets,
         FederationScopeFacets::Bottom,
         "disjoint facet narrows must meet at ⊥, not widen"
     );
     assert_eq!(
-        ceiling.bands,
+        ceiling.as_scope().bands,
         FederationScopeBands::Bottom,
         "disjoint band narrows must meet at ⊥, not widen"
     );
@@ -4379,7 +4379,10 @@ fn disjoint_concurrent_narrows_meet_at_bottom_and_deny_content() {
     // `bottom_ceiling_exports_nothing_to_an_unnarrowed_request`.
     let silent = SyncSelector::new(grant_id, member, SyncSelectorWorld::All, vec![], vec![]);
     assert_eq!(
-        resolve_selector_position(&silent, &ceiling).unwrap().facets,
+        resolve_selector_position(&silent, &ceiling)
+            .unwrap()
+            .as_scope()
+            .facets,
         FederationScopeFacets::Bottom
     );
     authorize_sync_selector(&vault, test_selector_scope(), &silent)
@@ -4519,7 +4522,7 @@ fn multiple_active_pacts_intersect_into_one_ceiling() {
     let ceiling =
         effective_scope_for_grant(&fold, &grant_id).expect("a pact-bound grant has a ceiling");
     assert_eq!(
-        ceiling.facets,
+        ceiling.as_scope().facets,
         FederationScopeFacets::Some(vec![facet_b]),
         "the ceiling is the meet of every bound pact, not one arbitrary pact"
     );
@@ -5321,6 +5324,86 @@ fn explicit_crm_pack_registration_exports_by_family_after_reopen() {
         "the facet seed must cross, else this proves nothing"
     );
     assert!(ids.iter().all(|id| !exported.contains(id)));
+}
+
+#[test]
+fn peer_document_write_requires_stored_grant_scope_even_inside_selector() {
+    let member = entity_id(0x34);
+    let (_dir, vault, grant_id) = test_vault_with_grant(member);
+    let mut grant = FederationGrant::new(
+        test_selector_scope(),
+        member,
+        FederationGrantRole::Member,
+        FederationGrantPreset::Member,
+    );
+    vault
+        .batch()
+        .put_replicated(
+            &grant_id,
+            ENTITY_TYPE_FEDERATION_GRANT,
+            TimeRange { start: 1, end: 1 },
+            1,
+            &encode_federation_grant_body(&grant).unwrap(),
+        )
+        .commit()
+        .unwrap();
+    let id = entity_id(0x41);
+    vault
+        .put_entity(
+            &id,
+            crate::registry::ENTITY_TYPE_TURN,
+            TimeRange { start: 1, end: 1 },
+            1,
+            b"turn",
+        )
+        .unwrap();
+    let selector = SyncSelector::new(
+        grant_id,
+        member,
+        SyncSelectorWorld::All,
+        vec![],
+        vec![crate::federation::selector_range_of(crate::registry::ENTITY_TYPE_TURN).unwrap()],
+    );
+    {
+        let txn = vault.store.env.read_txn().unwrap();
+        super::document_admission::admit_document_write_in_txn(
+            &vault,
+            &txn,
+            id,
+            test_selector_scope(),
+            &selector,
+        )
+        .unwrap();
+    }
+    // The same selector and stamped TURN must be refused once the stored
+    // grant permits only reads. A matching selector cannot supply the verb.
+    grant.authority_scope = crate::federation::scope_codec::read_preset();
+    vault
+        .batch()
+        .put_replicated(
+            &grant_id,
+            ENTITY_TYPE_FEDERATION_GRANT,
+            TimeRange { start: 1, end: 1 },
+            2,
+            &encode_federation_grant_body(&grant).unwrap(),
+        )
+        .commit()
+        .unwrap();
+    let txn = vault.store.env.read_txn().unwrap();
+    let err = super::document_admission::admit_document_write_in_txn(
+        &vault,
+        &txn,
+        id,
+        test_selector_scope(),
+        &selector,
+    )
+    .unwrap_err();
+    assert!(matches!(
+        err,
+        Error::Sync(SyncError::SyncProtocolError {
+            context: SyncProtocolValidation::DocumentAdmissionDenied,
+        })
+    ));
 }
 
 #[test]
