@@ -13,7 +13,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 
 | crate | purpose | source files | test files | over 800-line bar |
 |---|---|---|---|---|
-| [oneiron](codemap/oneiron.md) | Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces | 2095 | 718 | 9 |
+| [oneiron](codemap/oneiron.md) | Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces | 2098 | 718 | 10 |
 | [oneiron-android](codemap/oneiron-android.md) | Minimal JNI/Kotlin ownership adapter | 1 | 0 | 0 |
 | [oneiron-bench](codemap/oneiron-bench.md) | oneiron-bench — benchmark harness skeleton | 98 | 18 | 0 |
 | [oneiron-driver](codemap/oneiron-driver.md) | oneiron-driver — the in-process starter motor (ONE-1683 / ONE-1684, M8 agent runtime RT-01/RT-02) | 14 | 9 | 0 |
@@ -31,7 +31,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | [oneiron-py](codemap/oneiron-py.md) | `oneiron._native` — the private PyO3 extension behind the `oneiron` PyPI package (ONE-1441 WIRE-P1) | 2 | 0 | 0 |
 | [oneiron-remote](codemap/oneiron-remote.md) | `oneiron-remote` — the shared Rust SDK backend behind the `oneiron` npm and PyPI packages (ONE-1441 WIRE-P1) | 8 | 9 | 1 |
 | [oneiron-seal](codemap/oneiron-seal.md) | Native Rust PAdES seal and verification engine (ONE-1837) | 31 | 9 | 0 |
-| [oneiron-server](codemap/oneiron-server.md) | Oneiron CRDT sync server library | 230 | 96 | 1 |
+| [oneiron-server](codemap/oneiron-server.md) | Oneiron CRDT sync server library | 231 | 97 | 1 |
 | [oneiron-uniffi](codemap/oneiron-uniffi.md) | Definition-only UniFFI interface surface for the WIRE head contract | 6 | 1 | 0 |
 | [oneiron-vault-contract](codemap/oneiron-vault-contract.md) | Supervisor ⇄ vault child-process contract: wire types, credential framing, limits | 11 | 3 | 0 |
 
@@ -48,7 +48,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `agent_run_status` | file | 1 | s | — | AgentRunStatus contract shared by Context Board and run-tree viewers |
 | `analyzer` | dir | 16 | m | — | Multilingual analyzer subsystem |
 | `anchored_annotation` | dir | 7 | m | yes | ARTL-2 (OF-368 D2/D3/D4): anchored-comment threads over versioned blob artifacts, plus thread → task-brief… |
-| `artifact_hosting` | file+dir | 2 | m | yes | Local artifact hosting over pinned CODE_ARTIFACT snapshots |
+| `artifact_hosting` | file+dir | 3 | m | yes | Local artifact hosting over pinned CODE_ARTIFACT snapshots |
 | `attempt_queue` | dir | 36 | m | — | Generic LMDB-backed background attempt queue |
 | `authority` | dir | 68 | m | yes | AUTHORITY_LOG record substrate |
 | `autoreason_campaign` | file+dir | 9 | m | — | Engine-side AR-3 autoreason campaign configuration and report join |
@@ -181,7 +181,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `rerank` | file+dir | 5 | m | — | RET-010 host-injected top-N rerank seam (1186-D1/D2) |
 | `retrieval_depth` | file+dir | 9 | m | — | ONE-207: the retrieval half of the effort dial |
 | `retrieval_quality` | file+dir | 2 | s | — | Shared retrieval execution quality, independent of result counts and ranking |
-| `run_tree` | dir | 7 | m | — | Run tree projection and control adapter over generic AttemptQueue rows |
+| `run_tree` | dir | 9 | m | — | Run tree projection and control adapter over generic AttemptQueue rows |
 | `saved_query` | dir | 11 | m | — | SAVED_QUERY — durable standing queries with staged evaluation (CA-02) |
 | `scope_summary` | dir | 4 | m | yes | Retained spawned sub-sessions and caller-composed scope summaries |
 | `secret_custody` | dir | 7 | m | yes | ARCH-0069 secret custody — SECRET-01 (ONE-1919): custody classes, the custody record that is the secret… |
@@ -209,7 +209,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `surface_event` | dir | 6 | m | yes | Inbound SurfaceEvent adapter contract (OF-347 CID-6) |
 | `sweep` | dir | 5 | m | — | ARCH-0038 historical-carrier sweep executor — ONE-1087 / ONE-1091 phase 1 (manual trigger via… |
 | `sync` | dir | 100 | m | yes | CRDT sync layer for Oneiron |
-| `task_authority` | file | 1 | m | yes | Replicated TASK authority: owner proof, cancellation, and acknowledgement as immutable companion TASK entities |
+| `task_authority` | file | 1 | L | yes | Replicated TASK authority: owner proof, cancellation, and acknowledgement as immutable companion TASK entities |
 | `task_verb` | dir | 59 | m | yes | Typed, actor-bound verbs over the Context Board TASKS section |
 | `temporal` | file | 1 | m | — | `TimeRange`, temporal expressions/parsing, granularity/anchor enums |
 | `test_util` | dir (no mod.rs) | 1 | m | — | — |
@@ -378,7 +378,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `handler` | dir | 15 | m | WebSocket upgrade handler and connection lifecycle |
 | `idempotency` | file+dir | 2 | m | — |
 | `livequery` | file+dir | 17 | m | App-tier framing and coarse live-query state, separate from WindowSync |
-| `managed` | dir | 10 | m | Managed serve mode: the vault engine as a supervised child process |
+| `managed` | dir | 11 | m | Managed serve mode: the vault engine as a supervised child process |
 | `mcp` | dir | 22 | m | MCP connector actor registry |
 | `oauth_relay` | file | 1 | m | ARCH-0028 host-trusted OAuth token-client verification half (ONE-1382 leg 1) |
 | `projection` | file+dir | 2 | m | — |

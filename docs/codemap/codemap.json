@@ -1183,14 +1183,25 @@
      "path": "src/artifact_hosting.rs",
      "purpose": "Local artifact hosting over pinned CODE_ARTIFACT snapshots",
      "surface": {
-      "const": 2,
+      "const": 1,
+      "crate-vis": 2,
       "enum": 3,
-      "fn": 12,
+      "fn": 13,
       "struct": 5
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/artifact_hosting/publish.rs",
+     "purpose": "The OF-327 artifact-publish dispatch door and its share-style receipt projection",
+     "surface": {
+      "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "m",
      "kind": "test",
      "notable": [],
      "path": "src/artifact_hosting/tests.rs",
@@ -1383,7 +1394,7 @@
      "path": "src/attempt_queue/mod.rs",
      "purpose": "Generic LMDB-backed background attempt queue",
      "surface": {
-      "crate-vis": 5,
+      "crate-vis": 9,
       "re-export": 4
      }
     },
@@ -9223,7 +9234,7 @@
      "path": "src/codebase/store.rs",
      "purpose": "Vault persistence for codebase snapshots: ingest methods, transactions, and index keys",
      "surface": {
-      "crate-vis": 7,
+      "crate-vis": 8,
       "fn": 9
      }
     },
@@ -12138,7 +12149,7 @@
      "path": "src/credential_door/door_policy.rs",
      "purpose": "Policy model: effectors, dials, floors, merge rules, and map helpers",
      "surface": {
-      "crate-vis": 17
+      "crate-vis": 18
      }
     },
     {
@@ -12158,7 +12169,7 @@
      "path": "src/credential_door/door_types.rs",
      "purpose": "Door constants, floor names and prefixes, error type, and small naming helpers",
      "surface": {
-      "crate-vis": 24
+      "crate-vis": 25
      }
     },
     {
@@ -12168,7 +12179,7 @@
      "path": "src/credential_door/mod.rs",
      "purpose": "Checkout receive-pack admission, catastrophe policy, and secret-shaped diff scanning",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 6
      }
     },
     {
@@ -16624,7 +16635,7 @@
      "path": "src/gate/effect/mod.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 10
+      "crate-vis": 11
      }
     },
     {
@@ -19780,6 +19791,7 @@
       "RsiBudgetRead",
       "RsiBudgetShare",
       "RsiExplorationRead",
+      "RsiOverdraftReceipt",
       "RsiSettlement",
       "RsiSpendPurpose"
      ],
@@ -19787,8 +19799,8 @@
      "purpose": "Vault-local durable reserve/settle/refund ledger for research-loop spend",
      "surface": {
       "enum": 3,
-      "fn": 10,
-      "struct": 4
+      "fn": 12,
+      "struct": 5
      }
     },
     {
@@ -23775,7 +23787,7 @@
      "path": "src/pipeline/builder.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 9,
+      "crate-vis": 10,
       "fn": 46,
       "struct": 1
      }
@@ -26579,6 +26591,20 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
+      "RunAskWait"
+     ],
+     "path": "src/run_tree/ask_wait.rs",
+     "purpose": "Durable step-local wait bindings for run-branch ask handles",
+     "surface": {
+      "crate-vis": 1,
+      "enum": 1,
+      "fn": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
       "GateConsentBundle",
       "GateConsentBundleAction",
       "GateConsentBundleMember",
@@ -26601,8 +26627,8 @@
      "path": "src/run_tree/mod.rs",
      "purpose": "Run tree projection and control adapter over generic AttemptQueue rows",
      "surface": {
-      "crate-vis": 1,
-      "re-export": 5
+      "crate-vis": 2,
+      "re-export": 7
      }
     },
     {
@@ -26617,7 +26643,30 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "RunAsk",
+      "RunAskAnswer",
+      "RunAskAnswerKind",
+      "RunAskQuestion",
+      "RunAskState",
+      "RunBranchSignal",
+      "RunSignalInput",
+      "RunSignalKind",
+      "RunSignalState"
+     ],
+     "path": "src/run_tree/signal.rs",
+     "purpose": "Durable, branch-addressed Signal inbox",
+     "surface": {
+      "crate-vis": 1,
+      "enum": 4,
+      "fn": 7,
+      "struct": 5
+     }
+    },
+    {
+     "bucket": "XL",
      "kind": "test",
      "notable": [],
      "path": "src/run_tree/tests.rs",
@@ -27007,7 +27056,7 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "XL",
      "kind": "test",
      "notable": [],
      "path": "src/secret_lease/tests.rs",
@@ -31228,7 +31277,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [
       "TaskAuthorityFact",
@@ -31239,7 +31288,7 @@
      "purpose": "Replicated TASK authority: owner proof, cancellation, and acknowledgement as immutable companion TASK entities",
      "surface": {
       "const": 2,
-      "crate-vis": 6,
+      "crate-vis": 7,
       "enum": 1,
       "fn": 3,
       "struct": 2
@@ -31323,6 +31372,7 @@
       "TaskAskDecision",
       "TaskAskDefault",
       "TaskAskDisagree",
+      "TaskAskEffectAuthorization",
       "TaskAskElectorate",
       "TaskAskEvidence",
       "TaskAskEvidenceReason",
@@ -31350,7 +31400,7 @@
      "purpose": "Typed asks: response coverage, decision reducers, and policy-bound revisions",
      "surface": {
       "crate-vis": 2,
-      "enum": 14,
+      "enum": 15,
       "fn": 5,
       "struct": 17
      }
@@ -31699,7 +31749,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "BoardExpandRequest",
@@ -31713,6 +31763,8 @@
       "RoomEntry",
       "RoomRequest",
       "TaskAnswerRequest",
+      "TaskAskRequest",
+      "TaskAskShort",
       "TaskCreateRequest",
       "TaskRequest",
       "TaskWaitRequest"
@@ -31720,7 +31772,8 @@
      "path": "src/task_verb/sdk.rs",
      "purpose": "Shared typed agent-verb inputs and generated transport dispatch",
      "surface": {
-      "struct": 14
+      "enum": 1,
+      "struct": 15
      }
     },
     {
@@ -34241,7 +34294,7 @@
      "purpose": "ARTL-2 (OF-368 D2/D3/D4): anchored-comment threads over versioned blob artifacts, plus thread → task-brief…"
     },
     "artifact_hosting": {
-     "files": 2,
+     "files": 3,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "file+dir",
@@ -35172,7 +35225,7 @@
      "purpose": "Shared retrieval execution quality, independent of result counts and ranking"
     },
     "run_tree": {
-     "files": 7,
+     "files": 9,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -35370,7 +35423,7 @@
     "task_authority": {
      "files": 1,
      "impl_vault": true,
-     "largest_src_bucket": "m",
+     "largest_src_bucket": "L",
      "layout": "file",
      "purpose": "Replicated TASK authority: owner proof, cancellation, and acknowledgement as immutable companion TASK entities"
     },
@@ -35494,9 +35547,9 @@
      "purpose": "Write-path stamping: `WriteActor`/`WriteProvenance`/`WriteEnvelope`/`ClaimCandidate` + evidence stamping"
     }
    },
-   "over_bar": 9,
+   "over_bar": 10,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2095,
+   "source_files": 2098,
    "test_files": 718
   },
   "oneiron-android": {
@@ -35674,7 +35727,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/beam/citations.rs",
@@ -39646,9 +39699,9 @@
      "kind": "src",
      "notable": [],
      "path": "src/api/esign.rs",
-     "purpose": "Public session-less signing lens",
+     "purpose": "Session-less signing ceremony",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 2
      }
     },
     {
@@ -41466,7 +41519,18 @@
      "path": "src/managed/mod.rs",
      "purpose": "Managed serve mode: the vault engine as a supervised child process",
      "surface": {
+      "crate-vis": 1,
       "re-export": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/managed/peer.rs",
+     "purpose": "Kernel-verified local transport peer, not a public caller IP",
+     "surface": {
+      "crate-vis": 2
      }
     },
     {
@@ -42428,6 +42492,14 @@
      "surface": {}
     },
     {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/it_esign_public.rs",
+     "purpose": "The public path and signing API are separate from hosted device leases",
+     "surface": {}
+    },
+    {
      "bucket": "XL",
      "kind": "test",
      "notable": [],
@@ -42552,7 +42624,7 @@
      "purpose": "App-tier framing and coarse live-query state, separate from WindowSync"
     },
     "managed": {
-     "files": 10,
+     "files": 11,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -42638,8 +42710,8 @@
    },
    "over_bar": 1,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 230,
-   "test_files": 96
+   "source_files": 231,
+   "test_files": 97
   },
   "oneiron-uniffi": {
    "files": [
