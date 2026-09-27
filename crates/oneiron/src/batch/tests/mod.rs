@@ -569,7 +569,6 @@ fn put_in_own_txn(
                 write_policy: Some(&policy),
                 write_envelope: envelope,
                 hub_admission: None,
-                companion_retired_histories: None,
             },
         },
     )

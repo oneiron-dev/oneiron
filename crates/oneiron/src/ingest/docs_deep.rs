@@ -188,20 +188,20 @@ pub(super) fn set_deep_ceiling(
     if old
         .as_ref()
         .is_some_and(|old| old.source_hash != hash || (old.allowed && !allowed))
+        && let Some(raw) = DEEP_RECEIPTS.get_bytes(&vault.store, txn, &HexId(asset))?
     {
-        if let Some(raw) = DEEP_RECEIPTS.get_bytes(&vault.store, txn, &HexId(asset))? {
-            let previous: DocsDeepReceipt =
-                serde_json::from_slice(&raw).map_err(|_| invalid("corrupt docs deep receipt"))?;
-            for reference in previous.claim_refs {
-                let id = EntityId::from_hex(&reference)?;
-                if vault.get_claim_in_txn(txn, &id)?.is_some_and(|body| {
-                    body.lifecycle == crate::claim::ClaimLifecycleStatus::Active
-                }) {
-                    vault.retract_claim_in_txn(txn, &id, now)?;
-                }
+        let previous: DocsDeepReceipt =
+            serde_json::from_slice(&raw).map_err(|_| invalid("corrupt docs deep receipt"))?;
+        for reference in previous.claim_refs {
+            let id = EntityId::from_hex(&reference)?;
+            if vault
+                .get_claim_in_txn(txn, &id)?
+                .is_some_and(|body| body.lifecycle == crate::claim::ClaimLifecycleStatus::Active)
+            {
+                vault.retract_claim_in_txn(txn, &id, now)?;
             }
-            DEEP_RECEIPTS.delete(&vault.store, txn, &HexId(asset))?;
         }
+        DEEP_RECEIPTS.delete(&vault.store, txn, &HexId(asset))?;
     }
     DEEP_CEILINGS.put(
         &vault.store,

@@ -886,7 +886,12 @@ fn public_body_cannot_export_relationship_hidden_from_audience() -> Result<()> {
     let read = vault.scoped_read(key.clone());
     assert!(read.is_entity_readable(&subject)?);
     assert!(read.is_entity_readable(&other)?);
-    assert!(read.get(&relation)?.value.is_none());
+    assert!(
+        read.read(&[crate::claim::PointRead::id(relation)], None)?
+            .single()
+            .value
+            .is_none()
+    );
     let compile = vault.compile_persona_snapshot(
         &subject,
         &PersonaSnapshotCompileOptions {

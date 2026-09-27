@@ -450,7 +450,7 @@ fn existing_companion_person_requires_valid_baseline_before_grant() -> Result<()
         );
         assert!(vault.get_access_grant(&birth.profile_grant_ref)?.is_none());
         assert_ne!(
-            read_journal(&vault, &onboarding_key(&intent.onboarding_id))?.map(|row| row.step),
+            read_journal(&vault, &intent.onboarding_id)?.map(|row| row.step),
             Some(MemberOnboardingStep::Complete)
         );
     }
