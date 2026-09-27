@@ -77,7 +77,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/esign/presentation.rs` | src | s | 9 crate-vis | — | Stateless field editor and capability-scoped ceremony presentation adapters |
 | `src/api/facade.rs` | src | m | 2 crate-vis | — | ONE-1441 WIRE-P1: the bounded HTTP projection of the engine memory surface |
 | `src/api/facade/agent_verbs.rs` | src | m | 1 crate-vis | — | — |
-| `src/api/facade/tests.rs` | test | m | — | — | — |
+| `src/api/facade/tests.rs` | test | L | — | — | — |
 | `src/api/git_http/gate.rs` | src | s | 9 crate-vis | — | Authentication gate and service canonicalization for Git smart-HTTP |
 | `src/api/git_http/mod.rs` | src | s | 1 crate-vis | — | Git smart-HTTP routes (ARCH-0068 Phase A, ONE-1908) |
 | `src/api/git_http/routes.rs` | src | s | 9 crate-vis | — | Git smart-HTTP routes and per-service RPC handlers |
@@ -331,7 +331,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `tests/it/main.rs` | test | s | — | — | Consolidated integration-test binary: five former standalone `tests/*.rs` Cargo targets compiled and linked… |
 | `tests/it/mcp_booking.rs` | test | m | — | — | ONE-1819 [BK-08] MCP-side gates for `oneiron.book` |
 | `tests/it/mcp_oracle.rs` | test | m | — | — | Context Board forward test oracle — MCP surface + packaging arms, epic ONE-1692, relocated from the engine… |
-| `tests/it/remote_pairing.rs` | test | s | — | — | A paired `oneiron_remote::OneironClient` against the real router |
+| `tests/it/remote_pairing.rs` | test | m | — | — | A paired `oneiron_remote::OneironClient` against the real router |
 | `tests/it/skills_pack.rs` | test | m | — | — | — |
 | `tests/it/ws_sync.rs` | test | XL | — | — | WebSocket integration tests for the sync server (ONE-1129) |
 | `tests/it_esign_public.rs` | test | m | — | — | The public path and signing API are separate from hosted device leases |
