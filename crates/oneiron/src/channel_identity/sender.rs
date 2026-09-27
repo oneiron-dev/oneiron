@@ -93,7 +93,14 @@ pub(crate) fn enrich_dispatch_channel_identity(
                 .ok_or(Error::CorruptedIndex("channel identity sender header"))?;
             if header.entity_type == ENTITY_TYPE_CHANNEL_IDENTITY {
                 let identity = decode_channel_identity_body(&raw[ENTITY_METADATA_HEADER_LEN..])?;
-                if !outbound_send_permitted(store, txn, &identity)? {
+                // A pinned identity on a different channel class is metadata,
+                // not the sender for THIS effect. Keep the gate's counterparty
+                // verdict independent of a stale cross-channel enrichment.
+                // Provider email rails map to the email class here too.
+                if normalize_channel_class(identity.channel())
+                    == normalize_channel_class(connector_key)
+                    && !outbound_send_permitted(store, txn, &identity)?
+                {
                     return Err(refuse_outbound_send(&identity));
                 }
             }
