@@ -79,7 +79,10 @@
 //! [`classify_both_planes`]: crate::Vault::classify_both_planes
 
 mod binding;
+mod classifier_lease;
 mod classify;
+
+pub(crate) use classify::stateless_owner_classification;
 mod concurrent;
 mod contract;
 mod enforce;
