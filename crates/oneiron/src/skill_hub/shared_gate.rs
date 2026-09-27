@@ -1,4 +1,8 @@
 //! Useful-upstream and held-out merge gate for submitted shared-skill deltas.
+use super::refinement_admission::{
+    RefinementAdmissionProof, RefinementState, RefinementTarget, put_control, read_control,
+};
+use super::refinement_custody::RefinementReceipt;
 use super::{HubPackage, SharedSkillDelta, package_codec::invalid};
 use crate::{
     Vault,
@@ -7,25 +11,34 @@ use crate::{
     },
     entity_id::EntityId,
     error::Result,
+    llm::decision::{
+        AnswerContract, DecisionAnswer, DecisionClass, DecisionQuestion, DecisionRung,
+        TypedDecision,
+    },
     skill::{SkillLifecycle, SkillRecord},
     skill_optimize::{HeldOutReplayCase, HeldOutReplayScorer},
     temporal::TimeRange,
 };
 
-/// The typed question precedes replay. A host judges only the offered package
-/// against this receiving base; this interface has no personal-vault read handle.
+/// The host's OF-493 answerer runs the configured typed question with a System One
+/// seat first. It sees submitted bytes, never the branch vault. The gate checks
+/// its typed receipt before any held-out replay or state change.
 pub trait UsefulUpstreamJudge {
-    fn useful_upstream(
+    fn decide(
         &self,
+        question: &DecisionQuestion,
+        resident: EntityId,
         base: &SkillRecord,
         candidate: &HubPackage,
         delta: &SharedSkillDelta,
-    ) -> Result<bool>;
+    ) -> Result<TypedDecision>;
 }
 #[derive(Debug, Clone)]
 pub struct SharedSkillMergeAsk {
     candidate: EntityId,
     binding: String,
+    resident: EntityId,
+    question: DecisionQuestion,
     effect: EffectDigest,
 }
 impl SharedSkillMergeAsk {
@@ -46,6 +59,9 @@ pub struct SharedSkillMergeReceipt {
     pub consent_digest: String,
     pub binding: String,
     pub useful_upstream: bool,
+    pub resident: String,
+    pub question: DecisionQuestion,
+    pub decision: TypedDecision,
     pub before: Option<f32>,
     pub after: Option<f32>,
     pub held_out_digest: String,
@@ -68,17 +84,46 @@ struct MergeSnapshot {
     binding: String,
 }
 impl Vault {
-    pub fn prepare_shared_skill_merge(&self, candidate: EntityId) -> Result<SharedSkillMergeAsk> {
+    pub fn prepare_shared_skill_merge(
+        &self,
+        candidate: EntityId,
+        resident: EntityId,
+        question: DecisionQuestion,
+    ) -> Result<SharedSkillMergeAsk> {
+        question.validate()?;
+        crate::batch::secret_scan::scan_staged_payload(
+            &serde_json::to_vec(&question).map_err(|_| invalid("question encode failed"))?,
+        )?;
+        if question.id != candidate
+            || question.class != DecisionClass::UsefulUpstream
+            || !matches!(question.contract, AnswerContract::Noul)
+            || question.accept_type
+            || self.get_entity_type(&resident)? != Some(crate::registry::ENTITY_TYPE_AGENT_DEF)
+        {
+            return Err(invalid(
+                "merge needs a resident's useful-upstream yes/no question",
+            ));
+        }
         let txn = self.store.env.read_txn()?;
         let snapshot = self.shared_merge_snapshot(&txn, &candidate)?;
         let effect = ComposedEffect::new(
-            EffectFacts::new(format!("skill.merge:{}", snapshot.binding))?
-                .with_undo_fidelity(UndoFidelity::None),
+            EffectFacts::new(format!(
+                "skill.merge:{}:{}:{}",
+                snapshot.binding,
+                resident.to_hex(),
+                blake3::hash(
+                    &serde_json::to_vec(&question)
+                        .map_err(|_| invalid("question encode failed"))?
+                )
+            ))?
+            .with_undo_fidelity(UndoFidelity::None),
         )
         .digest();
         Ok(SharedSkillMergeAsk {
             candidate,
             binding: snapshot.binding,
+            resident,
+            question,
             effect,
         })
     }
@@ -113,8 +158,14 @@ impl Vault {
             }
             snapshot
         };
-        let useful_upstream =
-            useful.useful_upstream(&snapshot.base, &snapshot.package, &snapshot.delta)?;
+        let decision = useful.decide(
+            &ask.question,
+            ask.resident,
+            &snapshot.base,
+            &snapshot.package,
+            &snapshot.delta,
+        )?;
+        let useful_upstream = checked_useful_decision(&ask.question, ask.resident, &decision)?;
         let (before, after) = if useful_upstream {
             replay(scorer, &snapshot)?
         } else {
@@ -127,25 +178,47 @@ impl Vault {
             consent_digest: ask.effect.to_hex(),
             binding: ask.binding.clone(),
             useful_upstream,
+            resident: ask.resident.to_hex(),
+            question: ask.question.clone(),
+            decision,
             before,
             after,
             held_out_digest: crate::skill_optimize::held_out_receipt_set_digest(&snapshot.evidence),
             accepted,
             at: learned_at,
         };
+        // A host-supplied provider pin or question can contain secret-shaped
+        // text even on a no. Scan the entire durable receipt before consent
+        // spend, activation, supersession, or history write.
+        let encoded_receipt =
+            serde_json::to_vec(&receipt).map_err(|_| invalid("merge receipt encode failed"))?;
+        crate::batch::secret_scan::scan_staged_payload(&encoded_receipt)?;
         self.with_write_txn(|txn| {
             self.check_merge_ask(txn, ask)?;
             let authorization =
                 crate::consent::approve_once_authorization_in_txn(&self.store, txn, &ask.effect)?
                     .ok_or_else(|| invalid("human merge consent is missing"))?;
+            let mut control = read_control(&self.store, txn, &ask.candidate)?
+                .ok_or_else(|| invalid("shared refinement control is missing"))?;
             if accepted {
-                self.activate_scored_hub_record_in_txn(
+                let mut admitted = snapshot.record.clone();
+                admitted.approval_status = crate::claim::ClaimApprovalStatus::Approved;
+                admitted.lifecycle_status = SkillLifecycle::Active;
+                let data = crate::skill::encode_skill_record(&admitted)?;
+                let refinement = RefinementAdmissionProof::for_skill(
+                    ask.candidate,
+                    snapshot.base_id,
+                    &data,
+                    &control.proposal_binding,
+                    &receipt,
+                )?;
+                self.activate_refined_hub_record_in_txn(
                     txn,
-                    &ask.candidate,
                     &snapshot.record,
                     occurred,
                     learned_at,
                     &authorization,
+                    refinement,
                 )?;
                 self.supersede_skill_record_in_txn(
                     txn,
@@ -158,18 +231,18 @@ impl Vault {
             if !accepted {
                 crate::consent::spend_approve_once_in_txn(&self.store, txn, &authorization)?;
             }
-            let encoded_receipt =
-                serde_json::to_vec(&receipt).map_err(|_| invalid("merge receipt encode failed"))?;
-            let mut history_key = b"skill_hub/shared-merge-history/v1\0".to_vec();
-            history_key.extend_from_slice(receipt.receipt_id.as_bytes());
-            self.store
-                .vault_meta
-                .put(txn, &history_key, &encoded_receipt)?;
-            self.store.vault_meta.put(
+            control.state = if accepted {
+                RefinementState::Admitted
+            } else {
+                RefinementState::Refused
+            };
+            put_control(&self.store, txn, &ask.candidate, &control)?;
+            self.put_refinement_receipt_in_txn(
                 txn,
-                &merge_receipt_key(&ask.candidate),
-                &serde_json::to_vec(&receipt)
-                    .map_err(|_| invalid("merge receipt encode failed"))?,
+                ask.candidate,
+                RefinementReceipt::Skill(receipt.clone()),
+                occurred,
+                learned_at,
             )?;
             Ok(SharedSkillMergeDisposition::Ruled(Box::new(receipt)))
         })
@@ -179,11 +252,11 @@ impl Vault {
         candidate: &EntityId,
     ) -> Result<Option<SharedSkillMergeReceipt>> {
         let txn = self.store.env.read_txn()?;
-        self.store
-            .vault_meta
-            .get(&txn, &merge_receipt_key(candidate))?
-            .map(|raw| serde_json::from_slice(&raw).map_err(|_| invalid("invalid merge receipt")))
-            .transpose()
+        match self.latest_refinement_receipt_in_txn(&txn, *candidate)? {
+            Some(RefinementReceipt::Skill(receipt)) => Ok(Some(receipt)),
+            Some(RefinementReceipt::Claim(_)) => Err(invalid("wrong refinement receipt target")),
+            None => Ok(None),
+        }
     }
     fn check_merge_ask(
         &self,
@@ -191,6 +264,13 @@ impl Vault {
         ask: &SharedSkillMergeAsk,
     ) -> Result<MergeSnapshot> {
         let snapshot = self.shared_merge_snapshot(txn, &ask.candidate)?;
+        let resident_is_agent =
+            crate::ports::EntityStoreRead::port_entity_raw(&self.store, txn, &ask.resident)?
+                .and_then(|raw| crate::batch::EntityMetadataHeader::parse(&raw))
+                .is_some_and(|header| header.entity_type == crate::registry::ENTITY_TYPE_AGENT_DEF);
+        if !resident_is_agent {
+            return Err(invalid("merge resident is no longer an agent"));
+        }
         if snapshot.binding != ask.binding {
             return Err(invalid(
                 "merge content, baseline, evidence or scan posture moved",
@@ -206,6 +286,18 @@ impl Vault {
         let delta = self
             .delta_in_txn(txn, candidate)?
             .ok_or_else(|| invalid("no submitted delta"))?;
+        let control = read_control(&self.store, txn, candidate)?
+            .ok_or_else(|| invalid("shared refinement control is missing"))?;
+        if !matches!(
+            control.state,
+            RefinementState::Pending | RefinementState::Refused
+        ) || !matches!(&control.target, RefinementTarget::Skill { base, fork }
+                if base == &delta.base && fork == &delta.submitted_fork)
+            || control.base_binding != delta.base_binding
+            || control.proposal_binding != delta.content_hash
+        {
+            return Err(invalid("shared refinement control moved"));
+        }
         let base_id = EntityId::from_hex(&delta.base)?;
         let base = super::admission_view::read_skill(self, txn, &base_id)?;
         let record = super::admission_view::read_skill(self, txn, candidate)?;
@@ -299,8 +391,41 @@ fn replay(
         Some(evaluate(&snapshot.record.version, instructions)?),
     ))
 }
-fn merge_receipt_key(id: &EntityId) -> Vec<u8> {
-    let mut key = b"skill_hub/shared-merge-receipt/v1\0".to_vec();
-    key.extend_from_slice(id.as_bytes());
-    key
+/// Do not turn a host-provided bool or a different question's verdict into
+/// authority. Abstention and malformed provenance leave the branch untouched.
+pub(super) fn checked_useful_decision(
+    question: &DecisionQuestion,
+    resident: EntityId,
+    decision: &TypedDecision,
+) -> Result<bool> {
+    let receipt = &decision.receipt;
+    if receipt.question != question.id
+        || receipt.question_version != question.version
+        || receipt.principal != resident
+        || receipt
+            .providers
+            .first()
+            .is_none_or(|p| p.rung != DecisionRung::SystemOne)
+        || receipt
+            .providers
+            .iter()
+            .any(|p| p.model.trim().is_empty() || p.version.trim().is_empty())
+        || receipt.band.validate().is_err()
+        || decision
+            .probability
+            .is_none_or(|p| !p.is_finite() || !(0.0..=1.0).contains(&p))
+        || decision.in_band
+            != receipt
+                .band
+                .contains(decision.probability.unwrap_or_default())
+        || !question.contract.accepts(&decision.answer)
+    {
+        return Err(invalid(
+            "unbound or malformed System One useful-upstream answer",
+        ));
+    }
+    match decision.answer {
+        DecisionAnswer::Noul(value) => Ok(value),
+        _ => Err(invalid("useful-upstream answer must be yes or no")),
+    }
 }

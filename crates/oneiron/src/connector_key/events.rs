@@ -100,6 +100,19 @@ fn invalid() -> Error {
 fn valid_ref(value: &str) -> bool {
     !value.trim().is_empty() && value == value.trim() && value.len() <= 256 && !value.contains('\0')
 }
+/// Structural event check shared by preflight and the atomic ingress door.
+pub(crate) fn validate_connector_event(event: &ConnectorEvent) -> Result<()> {
+    if !valid_ref(&event.event_id) || !valid_ref(&event.event_kind) || !valid_ref(&event.predicate)
+    {
+        return Err(invalid());
+    }
+    ConnectorEventFilter {
+        connector: event.connector.clone(),
+        event_kind: None,
+        predicate: None,
+    }
+    .validate()
+}
 fn decode_subscription(body: &crate::ClaimBody) -> Result<ConnectorSubscription> {
     let row: ConnectorSubscription =
         serde_json::from_str(body.value.as_str().ok_or_else(invalid)?).map_err(|_| invalid())?;
@@ -248,127 +261,140 @@ impl Vault {
         &self,
         event: &ConnectorEvent,
     ) -> Result<Vec<ConnectorWakeDecision>> {
-        if !valid_ref(&event.event_id)
-            || !valid_ref(&event.event_kind)
-            || !valid_ref(&event.predicate)
-        {
-            return Err(invalid());
-        }
-        ConnectorEventFilter {
-            connector: event.connector.clone(),
-            event_kind: None,
-            predicate: None,
-        }
-        .validate()?;
-        let frozen = serde_json::to_vec(event).map_err(|_| invalid())?;
-        let event_hash = blake3::hash(&frozen).to_hex().to_string();
-        let now = crate::unix_seconds_now();
         self.with_write_txn(|txn| {
-            let mut decisions = Vec::new();
-            for (id, row) in subscriptions(&self.store, &*txn)? {
-                if !row.active || !row.filter.matches(event) {
-                    continue;
-                }
-                let mut hash = blake3::Hasher::new();
-                hash.update(DECISION_PREFIX);
-                hash.update(id.as_bytes());
-                hash.update(&(event.event_id.len() as u64).to_be_bytes());
-                hash.update(event.event_id.as_bytes());
-                let identity = hash.finalize();
-                let key = [DECISION_PREFIX, identity.as_bytes()].concat();
-                if let Some(raw) = self.store.vault_meta.get(&*txn, &key)? {
-                    let old: ConnectorWakeDecision =
-                        serde_json::from_slice(&raw).map_err(|_| invalid())?;
-                    if old.event_hash != event_hash
-                        || old.subscription != id
-                        || old.agent != row.agent
-                    {
-                        return Err(invalid());
-                    }
-                    decisions.push(old);
-                    continue;
-                }
-                let status = self.admit_connector_event_wake(txn, &row, now)?;
-                let attempt_id = if status == ConnectorWakeStatus::Enqueued {
-                    let payload = DreamerAttemptPayload {
-                        attempt_type: "connector_event".into(),
-                        input: Value::Map(vec![
-                            (
-                                Value::from("agent_ref"),
-                                Value::Binary(row.agent.as_bytes().to_vec()),
-                            ),
-                            (
-                                Value::from("connector_event"),
-                                Value::from(
-                                    String::from_utf8(frozen.clone()).map_err(|_| invalid())?,
-                                ),
-                            ),
-                            (Value::from("source"), Value::from("tool_output")),
-                        ]),
-                        parent_attempt: None,
-                    };
-                    let outcome = crate::dreamer_wake::request_wake_in_txn(
-                        &DreamerRunnerStore::new(self),
-                        txn,
-                        crate::dreamer_wake::WakeTrigger::Event,
-                        payload,
-                        Some(identity.to_hex().to_string()),
-                        None,
-                        now,
-                    )?;
-                    let (EnqueueDreamerAttemptOutcome::Enqueued(attempt)
-                    | EnqueueDreamerAttemptOutcome::Existing(attempt)) = outcome;
-                    Some(*attempt.attempt.id.as_bytes())
-                } else {
-                    None
-                };
-                let decision = ConnectorWakeDecision {
-                    subscription: id,
-                    agent: row.agent,
-                    status,
-                    attempt_id,
-                    event_hash: event_hash.clone(),
-                };
-                let reason = match status {
-                    ConnectorWakeStatus::Enqueued => "gate.connector_wake.enqueued",
-                    ConnectorWakeStatus::KeyInactive => "gate.connector_wake.key_inactive",
-                    ConnectorWakeStatus::BudgetExhausted => "gate.connector_wake.budget_exhausted",
-                };
-                let receipt = GateDecisionRecord {
-                    version: GATE_DECISION_LEDGER_VERSION,
-                    decision_id: GateDecisionId::now(),
-                    created_at: now,
-                    outcome: if status == ConnectorWakeStatus::Enqueued {
-                        "allow"
-                    } else {
-                        "pending"
-                    }
-                    .into(),
-                    reason_codes: vec![reason.into()],
-                    receipt_reasons: Vec::new(),
-                    system_notices: Vec::new(),
-                    actor_class: "agent".into(),
-                    actor_ref: Some(row.agent.to_hex()),
-                    content_kind: "connector_wake".into(),
-                    policy_manifest_version: crate::gate::POLICY_SCHEMA_VERSION.into(),
-                    claim_id: Some(*id.as_bytes()),
-                    grant_ref: None,
-                    diff_handle: identity.as_bytes().to_vec(),
-                    read_frontier_hash: crate::gate::resolve_policy_manifest(&self.store, &*txn)?
-                        .read_frontier_hash()?,
-                    redacted_at: None,
-                };
-                self.store.append_gate_decision_in_txn(txn, &receipt)?;
-                self.store.vault_meta.put(
-                    txn,
-                    &key,
-                    &serde_json::to_vec(&decision).map_err(|_| invalid())?,
-                )?;
-                decisions.push(decision);
-            }
-            Ok(decisions)
+            self.ingest_connector_event_in_txn(txn, event, None, crate::unix_seconds_now())
         })
     }
+
+    /// The foreign-pack door attenuates host ingress to exactly the acting
+    /// agent and the key granted to that run. Caller owns the transaction so
+    /// the live grant, event admission and budget debit co-commit.
+    #[cfg(any(test, feature = "microvm-firecracker"))]
+    pub(crate) fn ingest_connector_event_for_pack_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        event: &ConnectorEvent,
+        agent: EntityId,
+        connector_key: EntityId,
+        now: u64,
+    ) -> Result<Vec<ConnectorWakeDecision>> {
+        self.ingest_connector_event_in_txn(txn, event, Some((agent, connector_key)), now)
+    }
+
+    fn ingest_connector_event_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        event: &ConnectorEvent,
+        scope: Option<(EntityId, EntityId)>,
+        now: u64,
+    ) -> Result<Vec<ConnectorWakeDecision>> {
+        validate_connector_event(event)?;
+        let frozen = serde_json::to_vec(event).map_err(|_| invalid())?;
+        let event_hash = blake3::hash(&frozen).to_hex().to_string();
+        let mut decisions = Vec::new();
+        for (id, row) in subscriptions(&self.store, &*txn)? {
+            if !row.active
+                || !row.filter.matches(event)
+                || scope.is_some_and(|(agent, key)| row.agent != agent || row.connector_key != key)
+            {
+                continue;
+            }
+            let mut hash = blake3::Hasher::new();
+            hash.update(DECISION_PREFIX);
+            hash.update(id.as_bytes());
+            hash.update(&(event.event_id.len() as u64).to_be_bytes());
+            hash.update(event.event_id.as_bytes());
+            let identity = hash.finalize();
+            let key = [DECISION_PREFIX, identity.as_bytes()].concat();
+            if let Some(raw) = self.store.vault_meta.get(&*txn, &key)? {
+                let old: ConnectorWakeDecision =
+                    serde_json::from_slice(&raw).map_err(|_| invalid())?;
+                if old.event_hash != event_hash || old.subscription != id || old.agent != row.agent
+                {
+                    return Err(invalid());
+                }
+                decisions.push(old);
+                continue;
+            }
+            let status = self.admit_connector_event_wake(txn, &row, now)?;
+            let attempt_id = if status == ConnectorWakeStatus::Enqueued {
+                let payload = DreamerAttemptPayload {
+                    attempt_type: "connector_event".into(),
+                    input: Value::Map(vec![
+                        (
+                            Value::from("agent_ref"),
+                            Value::Binary(row.agent.as_bytes().to_vec()),
+                        ),
+                        (
+                            Value::from("connector_event"),
+                            Value::from(String::from_utf8(frozen.clone()).map_err(|_| invalid())?),
+                        ),
+                        (Value::from("source"), Value::from("tool_output")),
+                    ]),
+                    parent_attempt: None,
+                };
+                let outcome = crate::dreamer_wake::request_wake_in_txn(
+                    &DreamerRunnerStore::new(self),
+                    txn,
+                    crate::dreamer_wake::WakeTrigger::Event,
+                    payload,
+                    Some(identity.to_hex().to_string()),
+                    None,
+                    now,
+                )?;
+                let (EnqueueDreamerAttemptOutcome::Enqueued(attempt)
+                | EnqueueDreamerAttemptOutcome::Existing(attempt)) = outcome;
+                Some(*attempt.attempt.id.as_bytes())
+            } else {
+                None
+            };
+            let decision = ConnectorWakeDecision {
+                subscription: id,
+                agent: row.agent,
+                status,
+                attempt_id,
+                event_hash: event_hash.clone(),
+            };
+            let reason = match status {
+                ConnectorWakeStatus::Enqueued => "gate.connector_wake.enqueued",
+                ConnectorWakeStatus::KeyInactive => "gate.connector_wake.key_inactive",
+                ConnectorWakeStatus::BudgetExhausted => "gate.connector_wake.budget_exhausted",
+            };
+            let receipt = GateDecisionRecord {
+                version: GATE_DECISION_LEDGER_VERSION,
+                decision_id: GateDecisionId::now(),
+                created_at: now,
+                outcome: if status == ConnectorWakeStatus::Enqueued {
+                    "allow"
+                } else {
+                    "pending"
+                }
+                .into(),
+                reason_codes: vec![reason.into()],
+                receipt_reasons: Vec::new(),
+                system_notices: Vec::new(),
+                actor_class: "agent".into(),
+                actor_ref: Some(row.agent.to_hex()),
+                content_kind: "connector_wake".into(),
+                policy_manifest_version: crate::gate::POLICY_SCHEMA_VERSION.into(),
+                claim_id: Some(*id.as_bytes()),
+                grant_ref: None,
+                diff_handle: identity.as_bytes().to_vec(),
+                read_frontier_hash: crate::gate::resolve_policy_manifest(&self.store, &*txn)?
+                    .read_frontier_hash()?,
+                redacted_at: None,
+            };
+            self.store.append_gate_decision_in_txn(txn, &receipt)?;
+            self.store.vault_meta.put(
+                txn,
+                &key,
+                &serde_json::to_vec(&decision).map_err(|_| invalid())?,
+            )?;
+            decisions.push(decision);
+        }
+        Ok(decisions)
+    }
+
     fn admit_connector_event_wake(
         &self,
         txn: &mut heed::RwTxn<'_>,

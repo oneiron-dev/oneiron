@@ -141,7 +141,7 @@ pub(super) fn append(
     body.source = Some(ClaimSource::Observed);
     vault.put_reserved_claim_in_txn(
         txn,
-        &EntityId::now(),
+        &vault.new_entity_id()?,
         &body,
         TimeRange {
             start: now,
