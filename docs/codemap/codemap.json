@@ -39266,7 +39266,7 @@
      "path": "src/api/esign.rs",
      "purpose": "Public session-less signing lens",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 4
      }
     },
     {
@@ -41071,7 +41071,7 @@
      "purpose": "Managed sockets: listener resolution and binding, the ctl plane, and readiness",
      "surface": {
       "const": 1,
-      "crate-vis": 1,
+      "crate-vis": 3,
       "enum": 2,
       "fn": 10,
       "struct": 1
@@ -41084,6 +41084,7 @@
      "path": "src/managed/mod.rs",
      "purpose": "Managed serve mode: the vault engine as a supervised child process",
      "surface": {
+      "crate-vis": 1,
       "re-export": 5
      }
     },
@@ -41966,7 +41967,7 @@
      "surface": {}
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "test",
      "notable": [],
      "path": "tests/esign_public.rs",

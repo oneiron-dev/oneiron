@@ -9,6 +9,8 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use axum::Router;
+use axum::extract::connect_info::Connected;
+use axum::serve::IncomingStream;
 use oneiron_vault_contract::{CtlRequest, CtlResponse, MAX_CTL_LINE, READY_BYTE};
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::net::{UnixListener, UnixStream};
@@ -110,6 +112,31 @@ pub enum BoundServeListener {
     },
 }
 
+/// Kernel-attested local peer, not an IP address. A failed peer-credential
+/// lookup cannot authorize a public signing action.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct UnixSigningPeer {
+    uid: Option<u32>,
+}
+
+impl UnixSigningPeer {
+    pub(crate) fn verified(self) -> bool {
+        self.uid.is_some()
+    }
+}
+
+impl Connected<IncomingStream<'_, UnixListener>> for UnixSigningPeer {
+    fn connect_info(stream: IncomingStream<'_, UnixListener>) -> Self {
+        Self {
+            uid: stream
+                .io()
+                .peer_cred()
+                .ok()
+                .map(|credentials| credentials.uid()),
+        }
+    }
+}
+
 impl BoundServeListener {
     /// The socket path this process is responsible for removing, if any.
     pub fn owned_path(&self) -> Option<&Path> {
@@ -122,8 +149,20 @@ impl BoundServeListener {
     /// Serves until the process ends — the unmanaged shape.
     pub async fn serve(self, app: Router) -> std::io::Result<()> {
         match self {
-            Self::Tcp(listener) => axum::serve(listener, app).await,
-            Self::Unix { listener, .. } => axum::serve(listener, app).await,
+            Self::Tcp(listener) => {
+                axum::serve(
+                    listener,
+                    app.into_make_service_with_connect_info::<SocketAddr>(),
+                )
+                .await
+            }
+            Self::Unix { listener, .. } => {
+                axum::serve(
+                    listener,
+                    app.into_make_service_with_connect_info::<UnixSigningPeer>(),
+                )
+                .await
+            }
         }
     }
 
@@ -136,14 +175,20 @@ impl BoundServeListener {
     ) -> std::io::Result<()> {
         match self {
             Self::Tcp(listener) => {
-                axum::serve(listener, app)
-                    .with_graceful_shutdown(shutdown)
-                    .await
+                axum::serve(
+                    listener,
+                    app.into_make_service_with_connect_info::<SocketAddr>(),
+                )
+                .with_graceful_shutdown(shutdown)
+                .await
             }
             Self::Unix { listener, .. } => {
-                axum::serve(listener, app)
-                    .with_graceful_shutdown(shutdown)
-                    .await
+                axum::serve(
+                    listener,
+                    app.into_make_service_with_connect_info::<UnixSigningPeer>(),
+                )
+                .with_graceful_shutdown(shutdown)
+                .await
             }
         }
     }
