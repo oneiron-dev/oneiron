@@ -9,6 +9,7 @@ mod consent_eval;
 mod failure_card;
 mod failure_card_validation;
 mod project_proposal;
+pub(crate) use failure_card_validation::require_diagnosed_route;
 mod protocol;
 mod receipt_view;
 mod voice_offer;

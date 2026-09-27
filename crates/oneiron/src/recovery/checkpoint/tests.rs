@@ -1,5 +1,83 @@
 use super::*;
 use crate::{EntityId, temporal::TimeRange};
+
+#[test]
+fn checkpoint_restore_binds_live_exterior_claim_keys_across_paths() {
+    use crate::store::{GateDecisionId, GateDecisionRecord};
+    let root = tempfile::tempdir().unwrap();
+    let source_path = root.path().join("source");
+    let source = Vault::open(&source_path, VaultConfig::device()).unwrap();
+    let claim_id = [0xC1; 16];
+    let decision = GateDecisionRecord {
+        version: 0,
+        decision_id: GateDecisionId::now(),
+        created_at: 40,
+        outcome: "approved".into(),
+        reason_codes: vec!["gate.test.checkpoint".into()],
+        receipt_reasons: vec![],
+        system_notices: vec![],
+        actor_class: "agent".into(),
+        actor_ref: Some("private-restore-receipt".into()),
+        content_kind: "claim".into(),
+        policy_manifest_version: "v0".into(),
+        claim_id: Some(claim_id),
+        grant_ref: None,
+        diff_handle: vec![1],
+        read_frontier_hash: [2; 32],
+        redacted_at: None,
+    };
+    source
+        .with_write_txn(|txn| source.store.append_gate_decision_in_txn(txn, &decision))
+        .unwrap();
+    let image = root.path().join("checkpoint");
+    source.snapshot_checkpoint(&image, 100).unwrap();
+    let key = root
+        .path()
+        .join(".source.gate-decision-keys")
+        .join(crate::entity_id::bytes_to_hex_lower(&claim_id));
+    let key_bytes = std::fs::read(&key).unwrap();
+    assert!(
+        !std::fs::read(&image)
+            .unwrap()
+            .windows(32)
+            .any(|v| v == key_bytes)
+    );
+    let destination_parent = root.path().join("different-parent");
+    std::fs::create_dir(&destination_parent).unwrap();
+    let destination = destination_parent.join("different-name");
+    let (restored, _) = Vault::restore_checkpoint(
+        &image,
+        &destination,
+        VaultConfig::device(),
+        RestoreReason::Restore,
+        120,
+    )
+    .unwrap();
+    assert!(restored.gate_decisions(100).unwrap().contains(&decision));
+    drop(restored);
+    // The image never carries a copy of this key. Removing CURRENT custody
+    // makes a second restore fail rather than resurrecting the old receipt.
+    std::fs::remove_file(key).unwrap();
+    let invalid_image = root.path().join("no-key-checkpoint");
+    assert!(source.snapshot_checkpoint(&invalid_image, 125).is_err());
+    assert!(!invalid_image.exists());
+    let refused = root.path().join("missing-live-key");
+    assert!(
+        Vault::restore_checkpoint(
+            &image,
+            &refused,
+            VaultConfig::device(),
+            RestoreReason::Migrate,
+            130,
+        )
+        .is_err()
+    );
+    assert!(
+        !refused.exists(),
+        "restore must preflight before creating the destination"
+    );
+}
+
 #[test]
 fn canonical_snapshot_rebuilds_indexes_excludes_runtime_and_mints_epoch() {
     let root = tempfile::tempdir().unwrap();
