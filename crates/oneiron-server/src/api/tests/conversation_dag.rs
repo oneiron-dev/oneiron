@@ -550,3 +550,400 @@ async fn thread_meta_and_summary_routes_roundtrip() {
     .await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
 }
+
+#[tokio::test]
+async fn list_preview_falls_back_only_through_selected_dag_ancestors() {
+    let (_dir, server, actor) = setup();
+    let room = post(&server, "/v1/core/conversations", json!({"body": {}})).await;
+    let records = format!(
+        "/v1/core/conversations/{}/records",
+        room["id"].as_str().unwrap()
+    );
+    let root = post(
+        &server,
+        &records,
+        json!({
+            "advance": true, "body": {"txt": "selected ancestor"}, "actor": actor,
+            "occurred_start": 100_u64, "learned_at": 100_u64,
+        }),
+    )
+    .await;
+    let hidden_head = post(
+        &server,
+        &records,
+        json!({
+            "parent": root["id"], "advance": true, "body": {}, "actor": actor,
+            "occurred_start": 101_u64, "learned_at": 101_u64,
+        }),
+    )
+    .await;
+    let inactive_fork = post(&server, &records, json!({
+        "parent": root["id"], "advance": false, "body": {"txt": "inactive branch"}, "actor": actor,
+        "occurred_start": 102_u64, "learned_at": 102_u64,
+    })).await;
+    assert_eq!(inactive_fork["head"], hidden_head["id"]);
+    let thread = post(
+        &server,
+        &format!("{records}/{}/thread", root["id"].as_str().unwrap()),
+        json!({
+            "actor": actor, "advance": false, "body": {"txt": "thread reply"}, "occurred_start": 103_u64,
+        }),
+    )
+    .await;
+    assert_eq!(thread["head"], hidden_head["id"]);
+    let list = get(&server, "/v1/core/conversations?limit=20").await;
+    let row = list["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|item| item["id"] == room["id"])
+        .unwrap();
+    assert_eq!(row["lastMessageSnippet"], "selected ancestor");
+}
+
+#[tokio::test]
+async fn list_preview_traverses_deleted_selected_shells_without_losing_other_rooms() {
+    let (_dir, server, actor) = setup();
+    let mut expected = Vec::new();
+    for (case, text) in [
+        ("deleted_head", "visible root"),
+        ("deleted_middle", "earlier root"),
+        ("deleted_root", "live child"),
+        ("unrelated", "other room"),
+    ] {
+        let room = post(&server, "/v1/core/conversations", json!({"body": {}})).await;
+        let records = format!(
+            "/v1/core/conversations/{}/records",
+            room["id"].as_str().unwrap()
+        );
+        let root_text = if case == "deleted_root" {
+            "deleted root"
+        } else {
+            text
+        };
+        let root = post(
+            &server,
+            &records,
+            json!({
+                "advance": true, "body": {"txt": root_text}, "actor": actor,
+            }),
+        )
+        .await;
+        let mut deleted = None;
+        if case == "deleted_head" {
+            let head = post(&server, &records, json!({
+                "parent": root["id"], "advance": true, "body": {"txt": "erased head"}, "actor": actor,
+            })).await;
+            deleted = Some(head["id"].as_str().unwrap().to_owned());
+        } else if case == "deleted_middle" {
+            let middle = post(&server, &records, json!({
+                "parent": root["id"], "advance": true, "body": {"txt": "erased middle"}, "actor": actor,
+            })).await;
+            post(
+                &server,
+                &records,
+                json!({
+                    "parent": middle["id"], "advance": true, "body": {}, "actor": actor,
+                }),
+            )
+            .await;
+            deleted = Some(middle["id"].as_str().unwrap().to_owned());
+        } else if case == "deleted_root" {
+            post(
+                &server,
+                &records,
+                json!({
+                    "parent": root["id"], "advance": true, "body": {"txt": text}, "actor": actor,
+                }),
+            )
+            .await;
+            deleted = Some(root["id"].as_str().unwrap().to_owned());
+        }
+        if let Some(id) = deleted {
+            let id = EntityId::from_hex(&id).unwrap();
+            server
+                .vault
+                .delete_entity_with_reason(&id, oneiron::DeleteReason::UserDelete)
+                .unwrap();
+            assert!(server.vault.is_deleted_shell(&id).unwrap());
+        }
+        expected.push((room["id"].as_str().unwrap().to_owned(), text));
+    }
+    let list = get(&server, "/v1/core/conversations?limit=20").await;
+    let rows = list["items"].as_array().unwrap();
+    for (id, text) in expected {
+        let row = rows.iter().find(|row| row["id"] == id).unwrap();
+        assert_eq!(row["lastMessageSnippet"], text, "room {id}");
+    }
+}
+
+#[tokio::test]
+async fn list_preview_walks_deleted_ordinary_session_turns_and_keeps_other_rooms() {
+    let (_dir, server, actor) = setup();
+    let session = match server.vault.mint_session(100).expect("ordinary session") {
+        oneiron::session_lifecycle::SessionMintOutcome::Minted(id) => id,
+        other => panic!("expected new session, got {other:?}"),
+    };
+    let mut expected = Vec::new();
+    for (case, text) in [
+        ("head", "session root"),
+        ("ancestor", "session child"),
+        ("unrelated", "other session room"),
+    ] {
+        let room = post(&server, "/v1/core/conversations", json!({"body": {}})).await;
+        let records = format!(
+            "/v1/core/conversations/{}/records",
+            room["id"].as_str().unwrap()
+        );
+        let root = post(
+            &server,
+            &records,
+            json!({
+                "advance": true, "session": session.to_hex(), "actor": actor,
+                "body": {"txt": if case == "ancestor" { "deleted ancestor" } else { text }},
+            }),
+        )
+        .await;
+        let mut deleted = None;
+        if case != "unrelated" {
+            let child = post(
+                &server,
+                &records,
+                json!({
+                    "parent": root["id"], "advance": true, "session": session.to_hex(),
+                    "body": {"txt": if case == "head" { "deleted head" } else { text }},
+                    "actor": actor,
+                }),
+            )
+            .await;
+            deleted = Some(if case == "head" {
+                child["id"].clone()
+            } else {
+                root["id"].clone()
+            });
+        }
+        if let Some(id) = deleted {
+            let id = EntityId::from_hex(id.as_str().unwrap()).unwrap();
+            server
+                .vault
+                .delete_entity_with_reason(&id, oneiron::DeleteReason::UserDelete)
+                .unwrap();
+            assert!(server.vault.is_deleted_shell(&id).unwrap());
+        }
+        expected.push((room["id"].as_str().unwrap().to_owned(), text));
+    }
+    let list = get(&server, "/v1/core/conversations?limit=20").await;
+    for (room, text) in expected {
+        let row = list["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|row| row["id"] == room)
+            .unwrap();
+        assert_eq!(row["lastMessageSnippet"], text, "room {room}");
+    }
+}
+
+#[tokio::test]
+async fn selected_preview_lifecycle_matrix_keeps_retained_shape_separate_from_content() {
+    for head_deleted in [false, true] {
+        for ancestor_deleted in [false, true] {
+            for session_deleted in [false, true] {
+                let (_dir, server, actor) = setup();
+                let session = match server.vault.mint_session(100).unwrap() {
+                    oneiron::session_lifecycle::SessionMintOutcome::Minted(id) => id,
+                    other => panic!("expected new ordinary session: {other:?}"),
+                };
+                let room = post(&server, "/v1/core/conversations", json!({"body": {}})).await;
+                let records = format!(
+                    "/v1/core/conversations/{}/records",
+                    room["id"].as_str().unwrap()
+                );
+                let root = post(
+                    &server,
+                    &records,
+                    json!({
+                        "advance": true, "actor": actor, "session": session.to_hex(),
+                        "body": {"txt": "selected root"},
+                    }),
+                )
+                .await;
+                let head = post(&server, &records, json!({
+                    "parent": root["id"], "advance": true, "actor": actor, "session": session.to_hex(),
+                    "body": {"txt": "selected head"},
+                })).await;
+                let fork = post(
+                    &server,
+                    &records,
+                    json!({
+                        "parent": root["id"], "advance": false, "actor": actor,
+                        "body": {"txt": "inactive fork"},
+                    }),
+                )
+                .await;
+                assert_eq!(fork["head"], head["id"]);
+                post(
+                    &server,
+                    &format!("{records}/{}/thread", root["id"].as_str().unwrap()),
+                    json!({
+                        "actor": actor, "advance": false, "body": {"txt": "off-line thread"},
+                    }),
+                )
+                .await;
+                let spawned = post(
+                    &server,
+                    &format!(
+                        "/v1/core/turns/{}/sub-sessions",
+                        root["id"].as_str().unwrap()
+                    ),
+                    json!({"actor": actor}),
+                )
+                .await;
+                post(
+                    &server,
+                    &records,
+                    json!({
+                        "parent": root["id"], "advance": false, "actor": actor,
+                        "session": spawned["session"], "body": {"txt": "worker branch"},
+                    }),
+                )
+                .await;
+                let other = post(&server, "/v1/core/conversations", json!({"body": {}})).await;
+                let other_records = format!(
+                    "/v1/core/conversations/{}/records",
+                    other["id"].as_str().unwrap()
+                );
+                post(
+                    &server,
+                    &other_records,
+                    json!({
+                        "advance": true, "actor": actor, "body": {"txt": "unrelated room"},
+                    }),
+                )
+                .await;
+                for (deleted, row) in [(head_deleted, &head), (ancestor_deleted, &root)] {
+                    if deleted {
+                        server
+                            .vault
+                            .delete_entity_with_reason(
+                                &EntityId::from_hex(row["id"].as_str().unwrap()).unwrap(),
+                                oneiron::DeleteReason::UserDelete,
+                            )
+                            .unwrap();
+                    }
+                }
+                if session_deleted {
+                    server
+                        .vault
+                        .delete_entity_with_reason(&session, oneiron::DeleteReason::UserDelete)
+                        .unwrap();
+                    assert!(server.vault.is_deleted_shell(&session).unwrap());
+                }
+                let list = get(&server, "/v1/core/conversations?limit=20").await;
+                let rows = list["items"].as_array().unwrap();
+                let selected = rows.iter().find(|row| row["id"] == room["id"]).unwrap();
+                let expected = if !head_deleted {
+                    Some("selected head")
+                } else if !ancestor_deleted {
+                    Some("selected root")
+                } else {
+                    None
+                };
+                assert_eq!(
+                    selected["lastMessageSnippet"].as_str(),
+                    expected,
+                    "head_deleted={head_deleted}, ancestor_deleted={ancestor_deleted}, session_deleted={session_deleted}"
+                );
+                assert_eq!(
+                    rows.iter().find(|row| row["id"] == other["id"]).unwrap()["lastMessageSnippet"],
+                    "unrelated room"
+                );
+            }
+        }
+    }
+}
+
+#[tokio::test]
+async fn empty_room_remains_listable_after_dag_read() {
+    let (_dir, server, actor) = setup();
+    let empty = post(&server, "/v1/core/conversations", json!({"body": {}})).await;
+    let healthy = post(&server, "/v1/core/conversations", json!({"body": {}})).await;
+    let healthy_records = format!(
+        "/v1/core/conversations/{}/records",
+        healthy["id"].as_str().unwrap()
+    );
+    post(
+        &server,
+        &healthy_records,
+        json!({
+            "advance": true, "actor": actor, "body": {"txt": "healthy room content"},
+        }),
+    )
+    .await;
+    let empty_records = format!(
+        "/v1/core/conversations/{}/records",
+        empty["id"].as_str().unwrap()
+    );
+    let dag = get(&server, &empty_records).await;
+    assert!(dag["head"].is_null());
+    assert_eq!(dag["main_line"], json!([]));
+    let list = get(&server, "/v1/core/conversations?limit=20").await;
+    let rows = list["items"].as_array().unwrap();
+    assert!(
+        rows.iter().find(|row| row["id"] == empty["id"]).unwrap()["lastMessageSnippet"].is_null()
+    );
+    assert_eq!(
+        rows.iter().find(|row| row["id"] == healthy["id"]).unwrap()["lastMessageSnippet"],
+        "healthy room content"
+    );
+}
+
+#[tokio::test]
+async fn room_with_only_deleted_childof_turns_lists_after_dag_migration() {
+    let (_dir, server, actor) = setup();
+    let empty = post(&server, "/v1/core/conversations", json!({"body": {}})).await;
+    let turn = post(
+        &server,
+        &format!(
+            "/v1/core/conversations/{}/turns",
+            empty["id"].as_str().unwrap()
+        ),
+        json!({"body": {"txt": "erased legacy text"}}),
+    )
+    .await;
+    let turn_id = EntityId::from_hex(turn["id"].as_str().unwrap()).unwrap();
+    server
+        .vault
+        .delete_entity_with_reason(&turn_id, oneiron::DeleteReason::UserDelete)
+        .unwrap();
+    assert!(server.vault.is_deleted_shell(&turn_id).unwrap());
+    let healthy = post(&server, "/v1/core/conversations", json!({"body": {}})).await;
+    post(
+        &server,
+        &format!(
+            "/v1/core/conversations/{}/records",
+            healthy["id"].as_str().unwrap()
+        ),
+        json!({"advance": true, "actor": actor, "body": {"txt": "healthy retained text"}}),
+    )
+    .await;
+    let dag = get(
+        &server,
+        &format!(
+            "/v1/core/conversations/{}/records",
+            empty["id"].as_str().unwrap()
+        ),
+    )
+    .await;
+    assert!(dag["head"].is_null());
+    assert_eq!(dag["main_line"], json!([]));
+    let list = get(&server, "/v1/core/conversations?limit=20").await;
+    let rows = list["items"].as_array().unwrap();
+    assert!(
+        rows.iter().find(|row| row["id"] == empty["id"]).unwrap()["lastMessageSnippet"].is_null()
+    );
+    assert_eq!(
+        rows.iter().find(|row| row["id"] == healthy["id"]).unwrap()["lastMessageSnippet"],
+        "healthy retained text"
+    );
+}
