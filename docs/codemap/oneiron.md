@@ -2270,7 +2270,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/skill_hub/http_fetch.rs` | src | s | 1 struct · 1 fn · 1 crate-vis | HttpEndpointSkillHubAdapter | Generic bounded static HTTP index |
 | `src/skill_hub/import_receipt.rs` | src | s | 1 struct · 2 fn · 1 crate-vis | HubImportReceipt | Source receipts and admitted-publisher ingress beside content dedup, never in place of it |
 | `src/skill_hub/index.rs` | src | m | 1 const · 19 crate-vis | — | — |
-| `src/skill_hub/mod.rs` | src | s | 2 mod · 16 re-export · 14 crate-vis | — | Skill-hub records, provenance aliases, adapter contracts, and update gates |
+| `src/skill_hub/mod.rs` | src | s | 2 mod · 16 re-export · 15 crate-vis | — | Skill-hub records, provenance aliases, adapter contracts, and update gates |
 | `src/skill_hub/osv.rs` | src | m | 3 struct · 1 enum · 1 trait · 2 fn · 1 const · 2 crate-vis | DependencyCoordinate, DependencyScanStatus, OsvDevClient, OsvQuery, SkillInstallAdvisories | Dependency-only OSV queries on dynamic installs, using the existing scan ledger |
 | `src/skill_hub/osv/tests.rs` | test | s | — | — | — |
 | `src/skill_hub/pack_catalog/admission.rs` | src | s | 5 fn | — | Human-gated installation of exact pack source; requested powers stay inert |
@@ -2290,7 +2290,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/skill_hub/publisher.rs` | src | s | 1 struct · 4 fn · 2 crate-vis | ForeignSkillPublisher | A publisher is a foreign actor with an owner-minted, revocable offer-only grant |
 | `src/skill_hub/record.rs` | src | m | 3 struct · 4 enum · 13 fn · 3 const · 2 crate-vis | HubPin, HubRef, HubSyncPolicy, SkillHubKind, SkillHubRecord, SkillHubTrustTier, TrackedHubRef | — |
 | `src/skill_hub/shared_delta.rs` | src | s | 1 struct · 1 enum · 4 fn · 1 crate-vis | SharedSkillDelta, SharedSkillLane | Submitted-byte federation merge-back and company PR staging |
-| `src/skill_hub/shared_gate.rs` | src | m | 2 struct · 1 enum · 1 trait · 6 fn · 1 crate-vis | SharedSkillMergeAsk, SharedSkillMergeDisposition, SharedSkillMergeReceipt, UsefulUpstreamJudge | Useful-upstream and held-out merge gate for submitted shared-skill deltas |
+| `src/skill_hub/shared_gate.rs` | src | m | 2 struct · 1 enum · 1 trait · 6 fn · 3 crate-vis | SharedSkillMergeAsk, SharedSkillMergeDisposition, SharedSkillMergeReceipt, UsefulUpstreamJudge | Useful-upstream and held-out merge gate for submitted shared-skill deltas |
 | `src/skill_hub/source_birth_tests.rs` | test | m | — | — | New births retain exact source and cannot acquire archive authority from a format tag |
 | `src/skill_hub/source_carrier.rs` | src | s | 8 crate-vis | — | Holder-bound exact source custody over ordinary replicated ASSET rows |
 | `src/skill_hub/source_custody.rs` | src | m | 8 crate-vis | — | Source-only retirement and payload cleanup, shared by local/raw/replay/erase |

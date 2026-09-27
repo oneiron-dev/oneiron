@@ -944,6 +944,234 @@ fn local_refinement_retargeted_upstream_version_is_independent_of_branch_version
     Ok(())
 }
 
+struct SecretProvider(bool);
+impl UsefulUpstreamJudge for SecretProvider {
+    fn decide(
+        &self,
+        question: &DecisionQuestion,
+        resident: EntityId,
+        base: &SkillRecord,
+        candidate: &HubPackage,
+        delta: &SharedSkillDelta,
+    ) -> Result<TypedDecision> {
+        let mut decision = Useful(self.0).decide(question, resident, base, candidate, delta)?;
+        decision.receipt.providers[0].model =
+            "-----BEGIN PRIVATE KEY-----\nsynthetic-not-a-key\n-----END PRIVATE KEY-----"
+                .to_owned();
+        Ok(decision)
+    }
+}
+#[test]
+fn shared_merge_scans_questions_and_provider_receipts_before_any_ruling() -> Result<()> {
+    for useful in [false, true] {
+        let fixture = Fixture::new();
+        let replay = Replay::new(true);
+        let offered = encode_hub_package(&package("fixture.base", "2", "check result"))?;
+        let id = fixture.vault.submit_shared_skill_delta(
+            &fixture.baseline,
+            &offered,
+            SharedSkillLane::FederationMergeBack,
+            "member:fixture",
+            &EntityId::now(),
+            at(20),
+            20,
+        )?;
+        let mut unsafe_question = useful_question(id);
+        unsafe_question.text = "-----BEGIN PRIVATE KEY-----\nsynthetic-not-a-key".to_owned();
+        assert!(
+            fixture
+                .vault
+                .prepare_shared_skill_merge(id, fixture.resident, unsafe_question)
+                .is_err()
+        );
+        assert!(fixture.vault.shared_skill_merge_receipt(&id)?.is_none());
+        let ask =
+            fixture
+                .vault
+                .prepare_shared_skill_merge(id, fixture.resident, useful_question(id))?;
+        fixture
+            .vault
+            .approve_shared_skill_merge(&ask, &fixture.owner)?;
+        assert!(
+            fixture
+                .vault
+                .merge_shared_skill_delta(&ask, &SecretProvider(useful), &replay, at(21), 21,)
+                .is_err()
+        );
+        assert!(fixture.vault.shared_skill_merge_receipt(&id)?.is_none());
+        let txn = fixture.vault.store.env.read_txn()?;
+        assert!(
+            fixture
+                .vault
+                .store
+                .vault_meta
+                .prefix_iter(&txn, b"skill_hub/shared-merge-history/v1\0")?
+                .next()
+                .is_none(),
+            "no historical receipt may hold rejected provider metadata"
+        );
+        drop(txn);
+        assert_eq!(
+            fixture
+                .vault
+                .get_skill_record(&id)?
+                .unwrap()
+                .lifecycle_status,
+            SkillLifecycle::Candidate
+        );
+        assert_eq!(
+            fixture
+                .vault
+                .get_skill_record(&fixture.baseline)?
+                .unwrap()
+                .lifecycle_status,
+            SkillLifecycle::Active
+        );
+        // Secret rejection must not consume approval; a clean answer still works.
+        let ruled =
+            fixture
+                .vault
+                .merge_shared_skill_delta(&ask, &Useful(useful), &replay, at(22), 22)?;
+        assert!(
+            matches!(ruled, SharedSkillMergeDisposition::Ruled(receipt) if receipt.accepted == useful)
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn shared_skill_merge_deletion_purges_current_and_every_historical_question() -> Result<()> {
+    for admitted in [false, true] {
+        let fixture = Fixture::new();
+        let offered = encode_hub_package(&package("fixture.base", "2", "check result"))?;
+        let id = fixture.vault.submit_shared_skill_delta(
+            &fixture.baseline,
+            &offered,
+            SharedSkillLane::FederationMergeBack,
+            "member:fixture",
+            &EntityId::now(),
+            at(20),
+            20,
+        )?;
+        let mut history = Vec::new();
+        for iteration in 0..(if admitted { 1 } else { 2 }) {
+            let mut question = useful_question(id);
+            question.text = format!("unique-personal-question-{admitted}-{iteration}");
+            let ask = fixture
+                .vault
+                .prepare_shared_skill_merge(id, fixture.resident, question)?;
+            fixture
+                .vault
+                .approve_shared_skill_merge(&ask, &fixture.owner)?;
+            let SharedSkillMergeDisposition::Ruled(receipt) =
+                fixture.vault.merge_shared_skill_delta(
+                    &ask,
+                    &Useful(admitted),
+                    &Replay::new(true),
+                    at(21 + iteration),
+                    21 + iteration,
+                )?
+            else {
+                panic!("consented")
+            };
+            history.push(receipt.receipt_id.clone());
+        }
+        assert!(fixture.vault.shared_skill_merge_receipt(&id)?.is_some());
+        for receipt_id in &history {
+            let txn = fixture.vault.store.env.read_txn()?;
+            let key = format!("skill_hub/shared-merge-history/v1\0{receipt_id}");
+            assert!(
+                fixture
+                    .vault
+                    .store
+                    .vault_meta
+                    .get(&txn, key.as_bytes())?
+                    .is_some()
+            );
+        }
+        assert!(fixture.vault.delete_entity(&id)?);
+        assert!(fixture.vault.shared_skill_merge_receipt(&id)?.is_none());
+        let Fixture {
+            vault, _temp: dir, ..
+        } = fixture;
+        drop(vault);
+        let reopened = Vault::open(dir.path(), crate::VaultConfig::default())?;
+        assert!(reopened.shared_skill_merge_receipt(&id)?.is_none());
+        for receipt_id in history {
+            let txn = reopened.store.env.read_txn()?;
+            let key = format!("skill_hub/shared-merge-history/v1\0{receipt_id}");
+            assert!(
+                reopened
+                    .store
+                    .vault_meta
+                    .get(&txn, key.as_bytes())?
+                    .is_none()
+            );
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn replayed_shared_skill_delete_purges_merge_questions_for_both_outcomes() -> Result<()> {
+    for reason in [
+        crate::deletion::TombstoneReason::UserDelete,
+        crate::deletion::TombstoneReason::GdprDelete,
+    ] {
+        for accepted in [false, true] {
+            let fixture = Fixture::new();
+            let offered = encode_hub_package(&package("fixture.base", "2", "check result"))?;
+            let id = fixture.vault.submit_shared_skill_delta(
+                &fixture.baseline,
+                &offered,
+                SharedSkillLane::FederationMergeBack,
+                "member:fixture",
+                &EntityId::now(),
+                at(20),
+                20,
+            )?;
+            let ask = fixture.vault.prepare_shared_skill_merge(
+                id,
+                fixture.resident,
+                useful_question(id),
+            )?;
+            fixture
+                .vault
+                .approve_shared_skill_merge(&ask, &fixture.owner)?;
+            let SharedSkillMergeDisposition::Ruled(receipt) =
+                fixture.vault.merge_shared_skill_delta(
+                    &ask,
+                    &Useful(accepted),
+                    &Replay::new(true),
+                    at(21),
+                    21,
+                )?
+            else {
+                panic!("consented")
+            };
+            let key = format!("skill_hub/shared-merge-history/v1\0{}", receipt.receipt_id);
+            let tombstone = crate::deletion::TombstoneValueV2 {
+                reason,
+                deleted_at: 23,
+                request_id: *EntityId::now().as_bytes(),
+            }
+            .encode();
+            fixture.vault.apply_replayed_tombstone(&id, &tombstone)?;
+            assert!(fixture.vault.shared_skill_merge_receipt(&id)?.is_none());
+            let txn = fixture.vault.store.env.read_txn()?;
+            assert!(
+                fixture
+                    .vault
+                    .store
+                    .vault_meta
+                    .get(&txn, key.as_bytes())?
+                    .is_none()
+            );
+        }
+    }
+    Ok(())
+}
+
 #[test]
 fn raw_package_cannot_understate_the_file_manifest_capabilities() -> Result<()> {
     let fixture = Fixture::new();

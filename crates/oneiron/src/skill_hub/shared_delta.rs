@@ -98,6 +98,7 @@ impl Vault {
         if submitted_by.trim().is_empty() || submitted_by.len() > 512 {
             return Err(invalid("invalid delta author reference"));
         }
+        crate::batch::secret_scan::scan_metadata_field(submitted_by)?;
         let envelope = super::decode_hub_package(submitted)?;
         // Derive identity and capabilities from submitted files, not envelope assertions.
         let mut package = super::folder::package_from_files(envelope.files)?;

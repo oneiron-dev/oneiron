@@ -27962,7 +27962,7 @@
      "path": "src/skill_hub/mod.rs",
      "purpose": "Skill-hub records, provenance aliases, adapter contracts, and update gates",
      "surface": {
-      "crate-vis": 14,
+      "crate-vis": 15,
       "mod": 2,
       "re-export": 16
      }
@@ -28230,7 +28230,7 @@
      "path": "src/skill_hub/shared_gate.rs",
      "purpose": "Useful-upstream and held-out merge gate for submitted shared-skill deltas",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 3,
       "enum": 1,
       "fn": 6,
       "struct": 2,

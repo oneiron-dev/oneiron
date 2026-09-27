@@ -467,3 +467,43 @@ fn replayed_soft_and_hard_delete_erase_headerless_claim_refinement() -> Result<(
     }
     Ok(())
 }
+
+#[test]
+fn raw_batch_delete_keeps_content_free_guard_against_same_id_claim_reput() -> Result<()> {
+    let f = Fixture::new()?;
+    let candidate = f.submit("improved")?;
+    let ask = f
+        .vault
+        .prepare_claim_refinement_merge(candidate, f.resident, question(candidate))?;
+    f.vault.approve_claim_refinement_merge(&ask, &f.owner)?;
+    assert!(
+        matches!(f.vault.merge_local_claim_refinement(&ask, &Useful(false), &NoReplay, 8)?,
+        ClaimRefinementMergeDisposition::Ruled(receipt) if !receipt.accepted)
+    );
+    let mut attempted = f
+        .vault
+        .local_claim_refinement(candidate)?
+        .unwrap()
+        .claim_body()?;
+    attempted.approval = ClaimApprovalStatus::Approved;
+    attempted.session_tag = None;
+    f.vault.batch().delete(&candidate).commit()?;
+    assert!(f.vault.local_claim_refinement(candidate)?.is_none());
+    assert!(f.vault.claim_refinement_merge_receipt(candidate)?.is_none());
+    assert!(f.vault.put_claim(&candidate, &attempted, at(9), 9).is_err());
+    assert!(
+        f.vault
+            .batch()
+            .put_replicated(
+                &candidate,
+                crate::registry::ENTITY_TYPE_CLAIM,
+                at(9),
+                9,
+                &encode_claim_body(&attempted)?
+            )
+            .commit()
+            .is_err()
+    );
+    assert!(f.vault.get_claim(&candidate)?.is_none());
+    Ok(())
+}

@@ -40,6 +40,9 @@ pub use shared_delta::{SharedSkillDelta, SharedSkillLane};
 pub use shared_gate::{
     SharedSkillMergeAsk, SharedSkillMergeDisposition, SharedSkillMergeReceipt, UsefulUpstreamJudge,
 };
+pub(crate) use shared_gate::{
+    erase_shared_merge_receipts_in_txn, shared_merge_receipt_scope_exists_in_txn,
+};
 
 #[cfg(test)]
 mod admission_tests;

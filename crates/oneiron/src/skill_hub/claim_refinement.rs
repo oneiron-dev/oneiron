@@ -23,6 +23,8 @@ use serde::{Deserialize, Serialize};
 const DELTA: &[u8] = b"skill_hub/claim-refinement/v1\0";
 const RESERVE: &[u8] = b"skill_hub/claim-refinement-reserve/v1\0";
 const RECEIPT: &[u8] = b"skill_hub/claim-refinement-receipt/v1\0";
+// Content-free permanent ID fence. Raw batch delete has no dt: marker.
+const RETIRED: &[u8] = b"skill_hub/claim-refinement-retired/v1\0";
 
 fn key(prefix: &[u8], id: &EntityId) -> Vec<u8> {
     let mut key = prefix.to_vec();
@@ -142,11 +144,15 @@ pub(crate) fn erase_claim_refinement_in_txn(
     txn: &mut heed::RwTxn<'_>,
     id: &EntityId,
 ) -> Result<bool> {
-    let existed = claim_refinement_scope_exists_in_txn(store, txn, id)?;
-    store.vault_meta.delete(txn, &key(DELTA, id))?;
-    store.vault_meta.delete(txn, &key(RECEIPT, id))?;
-    store.vault_meta.delete(txn, &key(RESERVE, id))?;
-    Ok(existed)
+    let had_delta = store.vault_meta.delete(txn, &key(DELTA, id))?;
+    let had_receipt = store.vault_meta.delete(txn, &key(RECEIPT, id))?;
+    let had_reserve = store.vault_meta.delete(txn, &key(RESERVE, id))?;
+    if had_delta || had_receipt {
+        // A raw batch delete does not create a hard-delete marker. Never let
+        // that content purge turn this known refinement id into a free CLAIM id.
+        store.vault_meta.put(txn, &key(RETIRED, id), &[1])?;
+    }
+    Ok(had_delta || had_receipt || had_reserve)
 }
 
 /// Generic/raw/replay writes cannot use a pending branch candidate's id. The
@@ -157,6 +163,9 @@ pub(crate) fn claim_refinement_pending_in_txn(
     txn: &heed::RoTxn<'_>,
     id: &EntityId,
 ) -> Result<bool> {
+    if store.vault_meta.get(txn, &key(RETIRED, id))?.is_some() {
+        return Ok(true);
+    }
     if store.vault_meta.get(txn, &key(DELTA, id))?.is_none() {
         return Ok(false);
     }

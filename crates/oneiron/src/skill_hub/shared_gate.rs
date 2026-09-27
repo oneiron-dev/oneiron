@@ -87,6 +87,9 @@ impl Vault {
         question: DecisionQuestion,
     ) -> Result<SharedSkillMergeAsk> {
         question.validate()?;
+        crate::batch::secret_scan::scan_staged_payload(
+            &serde_json::to_vec(&question).map_err(|_| invalid("question encode failed"))?,
+        )?;
         if question.id != candidate
             || question.class != DecisionClass::UsefulUpstream
             || !matches!(question.contract, AnswerContract::Noul)
@@ -180,6 +183,12 @@ impl Vault {
             accepted,
             at: learned_at,
         };
+        // A host-supplied provider pin or question can contain secret-shaped
+        // text even on a no. Scan the entire durable receipt before consent
+        // spend, activation, supersession, or history write.
+        let encoded_receipt =
+            serde_json::to_vec(&receipt).map_err(|_| invalid("merge receipt encode failed"))?;
+        crate::batch::secret_scan::scan_staged_payload(&encoded_receipt)?;
         self.with_write_txn(|txn| {
             self.check_merge_ask(txn, ask)?;
             let authorization =
@@ -205,19 +214,14 @@ impl Vault {
             if !accepted {
                 crate::consent::spend_approve_once_in_txn(&self.store, txn, &authorization)?;
             }
-            let encoded_receipt =
-                serde_json::to_vec(&receipt).map_err(|_| invalid("merge receipt encode failed"))?;
-            let mut history_key = b"skill_hub/shared-merge-history/v1\0".to_vec();
+            let mut history_key = MERGE_HISTORY_PREFIX.to_vec();
             history_key.extend_from_slice(receipt.receipt_id.as_bytes());
             self.store
                 .vault_meta
                 .put(txn, &history_key, &encoded_receipt)?;
-            self.store.vault_meta.put(
-                txn,
-                &merge_receipt_key(&ask.candidate),
-                &serde_json::to_vec(&receipt)
-                    .map_err(|_| invalid("merge receipt encode failed"))?,
-            )?;
+            self.store
+                .vault_meta
+                .put(txn, &merge_receipt_key(&ask.candidate), &encoded_receipt)?;
             Ok(SharedSkillMergeDisposition::Ruled(Box::new(receipt)))
         })
     }
@@ -359,6 +363,54 @@ fn merge_receipt_key(id: &EntityId) -> Vec<u8> {
     let mut key = b"skill_hub/shared-merge-receipt/v1\0".to_vec();
     key.extend_from_slice(id.as_bytes());
     key
+}
+
+const MERGE_HISTORY_PREFIX: &[u8] = b"skill_hub/shared-merge-history/v1\0";
+
+/// A headerless candidate can still have a receipt left by older raw deletes.
+pub(crate) fn shared_merge_receipt_scope_exists_in_txn(
+    store: &crate::store::Store,
+    txn: &heed::RoTxn<'_>,
+    id: &EntityId,
+) -> Result<bool> {
+    Ok(store.vault_meta.get(txn, &merge_receipt_key(id))?.is_some())
+}
+
+/// Remove both the latest ruling and every prior ruling for this candidate.
+/// History is keyed by receipt id, so select by the candidate bound inside each
+/// row; this runs only for a candidate carrying a current ruling.
+pub(crate) fn erase_shared_merge_receipts_in_txn(
+    store: &crate::store::Store,
+    txn: &mut heed::RwTxn<'_>,
+    id: &EntityId,
+) -> Result<bool> {
+    if !shared_merge_receipt_scope_exists_in_txn(store, txn, id)? {
+        return Ok(false);
+    }
+    let candidate = id.to_hex();
+    let mut history_keys = Vec::new();
+    for (scanned, entry) in store
+        .vault_meta
+        .prefix_iter(&*txn, MERGE_HISTORY_PREFIX)?
+        .enumerate()
+    {
+        if scanned >= 100_000 {
+            return Err(crate::error::Error::IndexOverflow(
+                "shared skill merge history",
+            ));
+        }
+        let (key, raw) = entry?;
+        let receipt: SharedSkillMergeReceipt = serde_json::from_slice(&raw)
+            .map_err(|_| crate::error::Error::CorruptedIndex("shared skill merge history"))?;
+        if receipt.delta.candidate == candidate {
+            history_keys.push(key.to_vec());
+        }
+    }
+    for key in history_keys {
+        store.vault_meta.delete(txn, &key)?;
+    }
+    store.vault_meta.delete(txn, &merge_receipt_key(id))?;
+    Ok(true)
 }
 
 /// Do not turn a host-provided bool or a different question's verdict into
