@@ -205,7 +205,10 @@ fn erasure_covers_trunk_thread_and_sub_session_without_rewriting_ledger() {
     let outcomes = vault
         .erase_room_person(room, bob.entity_ref(), owner)
         .unwrap();
-    assert!(vault.get_claim(&only_erased).unwrap().is_none());
+    // The audit/history door retains the derived row. Caller-facing claim
+    // visibility suppresses the sole-erased evidence (pinned separately by
+    // the scoped-read/retrieval regressions).
+    assert!(vault.get_claim(&only_erased).unwrap().is_some());
     assert!(vault.get_claim(&corroborated).unwrap().is_some());
     assert_eq!(outcomes.len(), 3);
     for id in [trunk, thread, worker] {
@@ -248,5 +251,296 @@ fn erasure_covers_trunk_thread_and_sub_session_without_rewriting_ledger() {
             .erase_room_person(room, bob.entity_ref(), owner)
             .unwrap()
             .is_empty()
+    );
+}
+
+fn independent_root(seed: u8) -> crate::authority::AuthorityLogEntry {
+    use crate::authority::{
+        AuthorityAttestation, AuthorityKey, AuthorityLogEntry, AuthorityOp, AuthoritySignature,
+        AuthorityTier, DeviceAuthority, GenesisRecoveryStep, ROLE_ADMIN, ROLE_OWNER,
+    };
+    use ed25519_dalek::Signer;
+    let signing = ed25519_dalek::SigningKey::from_bytes(&[seed; 32]);
+    let key = AuthorityKey::Ed25519(signing.verifying_key().to_bytes());
+    let mut entry = AuthorityLogEntry {
+        schema_version: crate::authority::AUTHORITY_LOG_SCHEMA_VERSION,
+        vault_id: None,
+        seq: 0,
+        parent_hashes: Vec::new(),
+        op: AuthorityOp::Genesis {
+            device: DeviceAuthority {
+                key: key.clone(),
+                transport_key_binding: [7; 32],
+                attestation: AuthorityAttestation {
+                    kind: "SoftwareArgon2id".to_owned(),
+                    evidence: vec![1, 2, 3],
+                },
+                tier: AuthorityTier::Software,
+                roles: ROLE_OWNER | ROLE_ADMIN,
+            },
+            genesis_nonce: [seed.wrapping_add(10); 32],
+            recovery: GenesisRecoveryStep::Saved([1; 32]),
+            tier_floor: AuthorityTier::Software,
+            pending_widen_delay_secs: crate::authority::DEFAULT_PENDING_WIDEN_DELAY_SECS,
+        },
+        signer: AuthoritySignature {
+            suite: key.suite(),
+            public_key: key,
+            signature: vec![0; 64],
+        },
+        cosigns: Vec::new(),
+        ts: 100,
+    };
+    let transcript = crate::authority::authority_transcript(&entry).unwrap();
+    entry.signer.signature = signing.sign(&transcript).to_bytes().to_vec();
+    entry
+}
+
+#[test]
+fn conflicted_roots_never_restore_local_creator_or_initial_role_powers() {
+    let (_dir, vault, owner, room, _) = fixture();
+    let bob = second(&vault);
+    vault
+        .join_member(room, bob.entity_ref(), owner, 2, HistoryChoice::Share)
+        .unwrap();
+    let record = vault
+        .append_dag_record(&record(&vault, room, bob, 3))
+        .unwrap()
+        .id;
+    let saved = vault.get(&record).unwrap();
+    vault
+        .put_authority_log_entries(&[
+            (independent_root(0x74), TimeRange { start: 1, end: 1 }, 1),
+            (independent_root(0x75), TimeRange { start: 2, end: 2 }, 2),
+        ])
+        .unwrap();
+    assert!(vault.authority_fold().unwrap().vault_root_is_conflicted());
+    for err in [
+        vault
+            .set_room_role(room, bob.entity_ref(), RoomRole::Admin, owner)
+            .unwrap_err(),
+        vault
+            .delete_room_record(room, record, owner, crate::DeleteReason::PolicyDelete)
+            .unwrap_err(),
+        vault
+            .erase_room_person(room, bob.entity_ref(), owner)
+            .unwrap_err(),
+    ] {
+        assert_eq!(err.kind(), ErrorKind::ConversationDenied);
+    }
+    let initial = ConversationBody {
+        member_ids: vec![owner.entity_ref()],
+        roles: BTreeMap::from([(owner.entity_ref().to_hex(), RoomRole::Owner)]),
+        ..Default::default()
+    };
+    assert_eq!(
+        vault
+            .create_conversation(EntityId::now(), &initial, owner, 4)
+            .unwrap_err()
+            .kind(),
+        ErrorKind::ConversationDenied
+    );
+    assert_eq!(vault.get(&record).unwrap(), saved);
+    assert!(vault.conversation_body(room).unwrap().roles.is_empty());
+}
+
+#[test]
+fn agent_person_creator_can_delegate_and_policy_delete_in_unrooted_room() {
+    let (_dir, vault, _, _, _) = fixture();
+    let agent_id = EntityId::now();
+    vault
+        .put_entity(
+            &agent_id,
+            ENTITY_TYPE_PERSON,
+            TimeRange { start: 1, end: 1 },
+            1,
+            &encode(&serde_json::json!({})).unwrap(),
+        )
+        .unwrap();
+    let agent = WriteActor::new(agent_id, EdgeActorClass::Agent);
+    let bob = second(&vault);
+    let room = EntityId::now();
+    let body = ConversationBody {
+        member_ids: vec![agent_id, bob.entity_ref()],
+        roles: BTreeMap::from([(agent_id.to_hex(), RoomRole::Owner)]),
+        ..Default::default()
+    };
+    vault.create_conversation(room, &body, agent, 2).unwrap();
+    vault
+        .set_room_role(room, bob.entity_ref(), RoomRole::Admin, agent)
+        .unwrap();
+    let record = vault
+        .append_dag_record(&record(&vault, room, bob, 3))
+        .unwrap()
+        .id;
+    let result = vault
+        .delete_room_record(room, record, agent, crate::DeleteReason::PolicyDelete)
+        .unwrap();
+    assert!(result.existed && result.receipt_id.is_some());
+}
+
+#[test]
+fn room_soft_shell_escalates_through_authorized_gdpr_and_keeps_dag_usable() {
+    let (_dir, vault, owner, room, _) = fixture();
+    let bob = second(&vault);
+    vault
+        .join_member(room, bob.entity_ref(), owner, 2, HistoryChoice::Share)
+        .unwrap();
+    let first = vault
+        .append_dag_record(&record(&vault, room, bob, 3))
+        .unwrap()
+        .id;
+    let next = vault
+        .append_dag_record(&record(&vault, room, owner, 4))
+        .unwrap()
+        .id;
+    vault
+        .delete_room_record(room, first, bob, crate::DeleteReason::UserDelete)
+        .unwrap();
+    assert!(vault.is_deleted_shell(&first).unwrap());
+    assert_eq!(
+        vault
+            .main_line(&room, Default::default())
+            .unwrap()
+            .main_line,
+        vec![next]
+    );
+    let erased = vault
+        .erase_room_person(room, bob.entity_ref(), owner)
+        .unwrap();
+    assert_eq!(erased.len(), 1);
+    assert_eq!(erased[0].receipt_id.is_some(), true);
+    assert_eq!(erased[0].sweep_key.is_some(), true);
+    assert!(vault.get_raw_unsealed(&first).unwrap().is_none());
+    assert_eq!(
+        vault
+            .main_line(&room, Default::default())
+            .unwrap()
+            .main_line,
+        vec![next]
+    );
+    assert!(
+        vault
+            .erase_room_person(room, bob.entity_ref(), owner)
+            .unwrap()
+            .is_empty()
+    );
+}
+
+#[test]
+fn deleting_root_middle_or_head_keeps_live_trunk_and_append() {
+    for removed in 0..3 {
+        let (_dir, vault, owner, room, _) = fixture();
+        let first = vault
+            .append_dag_record(&record(&vault, room, owner, 3))
+            .unwrap()
+            .id;
+        let middle = vault
+            .append_dag_record(&record(&vault, room, owner, 4))
+            .unwrap()
+            .id;
+        let head = vault
+            .append_dag_record(&record(&vault, room, owner, 5))
+            .unwrap()
+            .id;
+        let rows = [first, middle, head];
+        vault
+            .delete_room_record(
+                room,
+                rows[removed],
+                owner,
+                crate::DeleteReason::PolicyDelete,
+            )
+            .unwrap();
+        let remaining: Vec<_> = rows
+            .into_iter()
+            .enumerate()
+            .filter_map(|(i, id)| (i != removed).then_some(id))
+            .collect();
+        assert_eq!(
+            vault
+                .main_line(&room, Default::default())
+                .unwrap()
+                .main_line,
+            remaining
+        );
+        assert_eq!(
+            vault
+                .resolve_dag_scope(&crate::conversation_dag::ScopeSelector {
+                    conversation: room,
+                    session: None,
+                    path: crate::conversation_dag::ScopePath::Canonical,
+                    include_forks: false,
+                })
+                .unwrap()
+                .records,
+            remaining
+        );
+        vault.rebuild_conversation_canonical(&room).unwrap();
+        vault.move_head(&room, remaining[0]).unwrap();
+        vault.move_head(&room, *remaining.last().unwrap()).unwrap();
+        let appended = vault
+            .append_dag_record(&record(&vault, room, owner, 6))
+            .unwrap()
+            .id;
+        assert_eq!(
+            vault
+                .main_line(&room, Default::default())
+                .unwrap()
+                .main_line,
+            [remaining.as_slice(), &[appended]].concat()
+        );
+    }
+}
+
+#[test]
+fn imported_turn_has_unknown_person_author_but_owner_can_policy_delete_it() {
+    let dir = tempfile::tempdir().unwrap();
+    let vault = Vault::open(dir.path(), VaultConfig::default()).unwrap();
+    let owner_id = vault.ensure_embedded_owner_actor().unwrap();
+    let owner = WriteActor::new(owner_id, EdgeActorClass::Human);
+    let bob = EntityId::now();
+    vault
+        .put_entity(
+            &bob,
+            ENTITY_TYPE_PERSON,
+            TimeRange { start: 1, end: 1 },
+            1,
+            &encode(&serde_json::json!({})).unwrap(),
+        )
+        .unwrap();
+    let crate::calendar::transcript::TranscriptIngestOutcome::Session { turn_refs, .. } =
+        crate::calendar::transcript::ingest_file_drop_transcript(
+            &vault,
+            crate::calendar::transcript::TranscriptFileDropRequest {
+                source_blob_ref: EntityId::now(),
+                decoded_text: "Ada: hello",
+                arrived_at_ms: 200_000,
+            },
+        )
+        .unwrap()
+    else {
+        panic!("expected transcript turns")
+    };
+    let turn = turn_refs[0];
+    let room = vault
+        .edges_out(&turn)
+        .unwrap()
+        .into_iter()
+        .find(|e| e.kind == EdgeKind::ChildOf)
+        .unwrap()
+        .target;
+    assert!(
+        vault
+            .erase_room_person(room, bob, owner)
+            .unwrap()
+            .is_empty()
+    );
+    assert!(
+        vault
+            .delete_room_record(room, turn, owner, crate::DeleteReason::PolicyDelete)
+            .unwrap()
+            .receipt_id
+            .is_some()
     );
 }

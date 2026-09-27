@@ -203,14 +203,15 @@ impl Vault {
             authorize(self, txn, actor)?;
             if !body.roles.is_empty() {
                 let fold = self.authority_fold_readonly_in_txn(txn)?;
-                if actor.actor_class() != crate::EdgeActorClass::Human
+                if fold.vault_root_is_conflicted()
                     || (fold.vault_id.is_some()
-                        && crate::memory::verify_owner_actor_binding_in_txn(
-                            self,
-                            txn,
-                            actor.entity_ref(),
-                        )
-                        .is_err())
+                        && (actor.actor_class() != crate::EdgeActorClass::Human
+                            || crate::memory::verify_owner_actor_binding_in_txn(
+                                self,
+                                txn,
+                                actor.entity_ref(),
+                            )
+                            .is_err()))
                 {
                     return Err(denied());
                 }

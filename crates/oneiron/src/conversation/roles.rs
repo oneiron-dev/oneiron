@@ -12,7 +12,7 @@ pub(super) fn grant_key(room: EntityId, person: EntityId) -> Vec<u8> {
     .concat()
 }
 
-pub(crate) fn role_in(
+pub(super) fn role_in(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     room: EntityId,
@@ -29,10 +29,16 @@ pub(crate) fn role_in(
         .vault_meta
         .get(txn, &key(b"conversation:creator:v1:", room))?;
     let fold = vault.authority_fold_readonly_in_txn(txn)?;
-    if actor.actor_class() == crate::EdgeActorClass::Human
-        && ((fold.vault_id.is_none() && creator.as_deref() == Some(id.as_bytes().as_slice()))
-            || (fold.vault_id.is_some()
-                && crate::memory::verify_owner_actor_binding_in_txn(vault, txn, id).is_ok()))
+    if fold.vault_root_is_conflicted() {
+        return Err(denied());
+    }
+    if (fold.vault_id.is_none()
+        && (creator.as_deref() == Some(id.as_bytes().as_slice())
+            || (actor.actor_class() == crate::EdgeActorClass::Human
+                && id == crate::vault::embedded_owner_actor_id()?)))
+        || (fold.vault_id.is_some()
+            && actor.actor_class() == crate::EdgeActorClass::Human
+            && crate::memory::verify_owner_actor_binding_in_txn(vault, txn, id).is_ok())
     {
         return Ok(RoomRole::Owner);
     }
