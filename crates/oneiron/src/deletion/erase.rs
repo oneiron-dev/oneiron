@@ -266,22 +266,21 @@ impl Vault {
     /// `user_delete` uses, leaving the 25 B row and the topology that makes
     /// the projection rebuildable exactly where they were.
     ///
-    /// Returns the erased shells so the caller can widen its redaction
-    /// scope: a shell's historical carriers must ride the head's `h:` sweep
-    /// row, or the bytes this clears from the active store simply survive in
-    /// history and nothing has been erased at all.
+    /// Returns the erased shells for the redaction sweep and the event IDs
+    /// whose author stamps were actually rewritten for post-commit local
+    /// invalidation. No notice is sent from inside the transaction.
     pub(super) fn cascade_hard_erase_to_redirect_shells_in_txn(
         &self,
         wtxn: &mut heed::RwTxn<'_>,
         head: &EntityId,
-    ) -> Result<BTreeSet<EntityId>> {
+    ) -> Result<(BTreeSet<EntityId>, Vec<EntityId>)> {
         let shells = crate::identity_redirect::inbound_redirect_shells_in_txn(
             &self.store,
             &*wtxn,
             &BTreeSet::from([*head]),
         )?;
         if shells.is_empty() {
-            return Ok(shells);
+            return Ok((shells, Vec::new()));
         }
         let mut had_vector = false;
         for shell in &shells {
@@ -306,8 +305,8 @@ impl Vault {
         }
         let mut touched = shells.clone();
         touched.insert(*head);
-        self.scrub_identity_op_author_stamps_in_txn(wtxn, &touched)?;
-        Ok(shells)
+        let scrubbed_events = self.scrub_identity_op_author_stamps_in_txn(wtxn, &touched)?;
+        Ok((shells, scrubbed_events))
     }
 
     /// ARCH-0055 §9 author-stamp rider, STRICTLY scoped: drop the deciding
@@ -330,7 +329,7 @@ impl Vault {
         &self,
         wtxn: &mut heed::RwTxn<'_>,
         touched: &BTreeSet<EntityId>,
-    ) -> Result<()> {
+    ) -> Result<Vec<EntityId>> {
         let mut scrubbed: Vec<(EntityId, Vec<u8>)> = Vec::new();
         for entry in self
             .store
@@ -362,7 +361,7 @@ impl Vault {
             crate::vault::entity_revision::remove_entity_revisions(&self.store, wtxn, event_id)?;
             self.store.entities.put(wtxn, event_id.as_bytes(), record)?;
         }
-        Ok(())
+        Ok(scrubbed.into_iter().map(|(id, _)| id).collect())
     }
 
     /// IDs whose local body or edge projection can change when this hard
@@ -692,13 +691,15 @@ impl Vault {
                 erased: false,
                 receipt_id: None,
                 sweep_key: None,
+                scrubbed_events: Vec::new(),
             });
         }
         // ARCH-0055 §9 (r6) on the RECEIVING side: a remote hard erase must
         // leave this replica as unreadable as the origin, so the local shells
         // of the erased head are cascaded here too — before the purge takes
         // the shell edges with it, in the caller's transaction.
-        let cascaded_shells = self.cascade_hard_erase_to_redirect_shells_in_txn(wtxn, id)?;
+        let (cascaded_shells, scrubbed_events) =
+            self.cascade_hard_erase_to_redirect_shells_in_txn(wtxn, id)?;
         self.purge_entity_active_store_in_txn(wtxn, id)?;
         // Receiver-side `dt:` local hard-delete marker (pinned: presence-only
         // value, GLOBAL key, permanent, no GC) — written in the SAME txn as
@@ -756,6 +757,7 @@ impl Vault {
             erased: true,
             receipt_id: Some(receipt_id),
             sweep_key: Some(sweep_key),
+            scrubbed_events,
         })
     }
 

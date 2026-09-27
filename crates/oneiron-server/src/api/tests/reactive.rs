@@ -805,22 +805,71 @@ async fn headerless_vector_delete_refreshes_only_its_local_read() {
     assert_eq!(reactive_reads(&other_reads), 1);
 }
 
+/// A local read of an identity-topology event's public, typed body.
+struct ReactiveIdentityEvent {
+    id: oneiron::EntityId,
+    dependencies: [ReactiveDependency; 1],
+    reads: Arc<std::sync::atomic::AtomicUsize>,
+}
+
+impl ReactiveLocalQuery for ReactiveIdentityEvent {
+    type Output = Option<oneiron::identity_topology::StoredIdentityOpEvent>;
+
+    fn dependencies(&self) -> &[ReactiveDependency] {
+        &self.dependencies
+    }
+
+    fn read(&self, vault: &oneiron::Vault) -> oneiron::Result<Self::Output> {
+        self.reads
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        vault.identity_topology_event(&self.id)
+    }
+}
+
+fn seed_reactive_merge(
+    vault: &oneiron::Vault,
+    actor: oneiron::EntityId,
+    head: oneiron::EntityId,
+    shell: oneiron::EntityId,
+    at: u64,
+) -> oneiron::EntityId {
+    use oneiron::identity_topology::{
+        IdentityOpEvidence, IdentityOpWrite, IdentityTopologyOp, MergeOp, SurvivorshipPlan,
+    };
+    match vault
+        .apply_identity_topology_op(
+            &IdentityTopologyOp::Merge(MergeOp {
+                sources: vec![shell],
+                survivor: head,
+                evidence: IdentityOpEvidence::default(),
+                survivorship_plan: SurvivorshipPlan::ReadThrough,
+            }),
+            &IdentityOpWrite::auto(oneiron::ClaimSource::Inferred).with_actor(
+                oneiron::WriteActor::new(actor, oneiron::EdgeActorClass::Human),
+            ),
+            at,
+        )
+        .expect("apply bound merge")
+    {
+        oneiron::identity_topology::IdentityOpOutcome::Applied { event, .. } => event,
+        other => panic!("merge did not apply: {other:?}"),
+    }
+}
+
 /// The merge redirect shell retains its own body until the head's hard erase.
 /// That erase also clears the shell in one transaction; both document IDs
 /// must reach local readers, without waking an unrelated third entity.
 #[tokio::test]
 async fn hard_delete_head_refreshes_redirect_shell_read() {
-    use oneiron::identity_topology::{
-        IdentityOpEvidence, IdentityOpWrite, IdentityTopologyOp, MergeOp, SurvivorshipPlan,
-    };
-
     let (_dir, server) = test_server();
     let at = 1_770_000_000;
     let actor = seeded_test_entity_id(0x1437_0036);
     let head = seeded_test_entity_id(0x1437_0037);
     let shell = seeded_test_entity_id(0x1437_0038);
     let unrelated = seeded_test_entity_id(0x1437_0039);
-    for id in [actor, head, shell, unrelated] {
+    let other_head = seeded_test_entity_id(0x1437_0044);
+    let other_shell = seeded_test_entity_id(0x1437_0045);
+    for id in [actor, head, shell, unrelated, other_head, other_shell] {
         server
             .vault()
             .put_entity(
@@ -836,31 +885,43 @@ async fn hard_delete_head_refreshes_redirect_shell_read() {
         .get_or_create_window(&oneiron::sync::WindowKey::from_timestamp(at))
         .await
         .unwrap();
-    let outcome = server
-        .vault()
-        .apply_identity_topology_op(
-            &IdentityTopologyOp::Merge(MergeOp {
-                sources: vec![shell],
-                survivor: head,
-                evidence: IdentityOpEvidence::default(),
-                survivorship_plan: SurvivorshipPlan::ReadThrough,
-            }),
-            &IdentityOpWrite::auto(oneiron::ClaimSource::Inferred).with_actor(
-                oneiron::WriteActor::new(actor, oneiron::EdgeActorClass::Human),
-            ),
-            at + 1,
-        )
-        .unwrap();
-    assert!(matches!(
-        outcome,
-        oneiron::identity_topology::IdentityOpOutcome::Applied { .. }
-    ));
+    let event = seed_reactive_merge(server.vault(), actor, head, shell, at + 1);
+    let other_event = seed_reactive_merge(server.vault(), actor, other_head, other_shell, at + 2);
     assert_eq!(server.vault().resolve_entity(&shell).unwrap(), vec![head]);
     let (probe, reads) = reactive_probe(shell, vec![ReactiveDependency::Doc(shell)]);
     let (other_probe, other_reads) =
         reactive_probe(unrelated, vec![ReactiveDependency::Doc(unrelated)]);
     let mut read = open_local_reactive_read(&server, probe).unwrap();
     let mut other_read = open_local_reactive_read(&server, other_probe).unwrap();
+    let event_reads = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let other_event_reads = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let mut event_read = open_local_reactive_read(
+        &server,
+        ReactiveIdentityEvent {
+            id: event,
+            dependencies: [ReactiveDependency::Doc(event)],
+            reads: event_reads.clone(),
+        },
+    )
+    .unwrap();
+    let mut other_event_read = open_local_reactive_read(
+        &server,
+        ReactiveIdentityEvent {
+            id: other_event,
+            dependencies: [ReactiveDependency::Doc(other_event)],
+            reads: other_event_reads.clone(),
+        },
+    )
+    .unwrap();
+    assert!(event_read.snapshot().as_ref().unwrap().actor.is_some());
+    assert!(
+        other_event_read
+            .snapshot()
+            .as_ref()
+            .unwrap()
+            .actor
+            .is_some()
+    );
     assert!(
         read.snapshot()
             .as_ref()
@@ -881,6 +942,29 @@ async fn hard_delete_head_refreshes_redirect_shell_read() {
     assert_eq!(refreshed, &server.vault().get(&shell).unwrap());
     assert_ne!(refreshed, &Some(b"redirect shell body".to_vec()));
     assert_eq!(reactive_reads(&reads), 2);
+    let refreshed_event = tokio::time::timeout(
+        std::time::Duration::from_secs(5),
+        event_read.refresh_on_change(),
+    )
+    .await
+    .expect("rewritten local event notice")
+    .expect("event read");
+    assert_eq!(
+        refreshed_event,
+        &server.vault().identity_topology_event(&event).unwrap()
+    );
+    assert!(refreshed_event.as_ref().unwrap().actor.is_none());
+    assert_eq!(reactive_reads(&event_reads), 2);
+    assert!(
+        tokio::time::timeout(
+            std::time::Duration::from_millis(100),
+            other_event_read.refresh_on_change()
+        )
+        .await
+        .is_err(),
+        "unrelated event must not re-read"
+    );
+    assert_eq!(reactive_reads(&other_event_reads), 1);
     assert!(
         tokio::time::timeout(
             std::time::Duration::from_millis(100),
@@ -895,9 +979,6 @@ async fn hard_delete_head_refreshes_redirect_shell_read() {
 #[tokio::test]
 async fn remote_hard_tombstone_refreshes_redirect_shell_read() {
     use loro::CommitOptions;
-    use oneiron::identity_topology::{
-        IdentityOpEvidence, IdentityOpWrite, IdentityTopologyOp, MergeOp, SurvivorshipPlan,
-    };
 
     let (_dir, server) = test_server();
     let at = 1_770_000_000;
@@ -905,7 +986,9 @@ async fn remote_hard_tombstone_refreshes_redirect_shell_read() {
     let head = seeded_test_entity_id(0x1437_0041);
     let shell = seeded_test_entity_id(0x1437_0042);
     let other = seeded_test_entity_id(0x1437_0043);
-    for id in [actor, head, shell, other] {
+    let other_head = seeded_test_entity_id(0x1437_0046);
+    let other_shell = seeded_test_entity_id(0x1437_0047);
+    for id in [actor, head, shell, other, other_head, other_shell] {
         server
             .vault()
             .put_entity(
@@ -921,25 +1004,41 @@ async fn remote_hard_tombstone_refreshes_redirect_shell_read() {
         .get_or_create_window(&oneiron::sync::WindowKey::from_timestamp(at))
         .await
         .unwrap();
-    server
-        .vault()
-        .apply_identity_topology_op(
-            &IdentityTopologyOp::Merge(MergeOp {
-                sources: vec![shell],
-                survivor: head,
-                evidence: IdentityOpEvidence::default(),
-                survivorship_plan: SurvivorshipPlan::ReadThrough,
-            }),
-            &IdentityOpWrite::auto(oneiron::ClaimSource::Inferred).with_actor(
-                oneiron::WriteActor::new(actor, oneiron::EdgeActorClass::Human),
-            ),
-            at + 1,
-        )
-        .unwrap();
+    let event = seed_reactive_merge(server.vault(), actor, head, shell, at + 1);
+    let other_event = seed_reactive_merge(server.vault(), actor, other_head, other_shell, at + 2);
     let (probe, reads) = reactive_probe(shell, vec![ReactiveDependency::Doc(shell)]);
     let (other_probe, other_reads) = reactive_probe(other, vec![ReactiveDependency::Doc(other)]);
     let mut read = open_local_reactive_read(&server, probe).unwrap();
     let mut other_read = open_local_reactive_read(&server, other_probe).unwrap();
+    let event_reads = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let other_event_reads = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let mut event_read = open_local_reactive_read(
+        &server,
+        ReactiveIdentityEvent {
+            id: event,
+            dependencies: [ReactiveDependency::Doc(event)],
+            reads: event_reads.clone(),
+        },
+    )
+    .unwrap();
+    let mut other_event_read = open_local_reactive_read(
+        &server,
+        ReactiveIdentityEvent {
+            id: other_event,
+            dependencies: [ReactiveDependency::Doc(other_event)],
+            reads: other_event_reads.clone(),
+        },
+    )
+    .unwrap();
+    assert!(event_read.snapshot().as_ref().unwrap().actor.is_some());
+    assert!(
+        other_event_read
+            .snapshot()
+            .as_ref()
+            .unwrap()
+            .actor
+            .is_some()
+    );
     assert!(
         read.snapshot()
             .as_ref()
@@ -960,6 +1059,29 @@ async fn remote_hard_tombstone_refreshes_redirect_shell_read() {
             .expect("read");
     assert_eq!(refreshed, &server.vault().get(&shell).unwrap());
     assert_eq!(reactive_reads(&reads), 2);
+    let refreshed_event = tokio::time::timeout(
+        std::time::Duration::from_secs(5),
+        event_read.refresh_on_change(),
+    )
+    .await
+    .expect("rewritten remote event notice")
+    .expect("event read");
+    assert_eq!(
+        refreshed_event,
+        &server.vault().identity_topology_event(&event).unwrap()
+    );
+    assert!(refreshed_event.as_ref().unwrap().actor.is_none());
+    assert_eq!(reactive_reads(&event_reads), 2);
+    assert!(
+        tokio::time::timeout(
+            std::time::Duration::from_millis(100),
+            other_event_read.refresh_on_change()
+        )
+        .await
+        .is_err(),
+        "unrelated event must not re-read"
+    );
+    assert_eq!(reactive_reads(&other_event_reads), 1);
     assert!(
         tokio::time::timeout(
             std::time::Duration::from_millis(100),

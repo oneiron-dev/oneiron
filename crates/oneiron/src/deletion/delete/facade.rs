@@ -421,8 +421,10 @@ impl Vault {
         // it deletes the head's incident shell edges, which are the walk's
         // primary witness — and in this same transaction, so a head can
         // never be erased while a shell of it stays readable.
-        let affected = self.hard_delete_affected_ids_in_txn(&wtxn, id)?;
-        let cascaded_shells = self.cascade_hard_erase_to_redirect_shells_in_txn(&mut wtxn, id)?;
+        let mut affected = self.hard_delete_affected_ids_in_txn(&wtxn, id)?;
+        let (cascaded_shells, scrubbed_events) =
+            self.cascade_hard_erase_to_redirect_shells_in_txn(&mut wtxn, id)?;
+        affected.extend(scrubbed_events);
         // The shells' historical carriers ride THIS erasure's sweep row:
         // clearing the active store while history keeps the bytes would
         // erase nothing.

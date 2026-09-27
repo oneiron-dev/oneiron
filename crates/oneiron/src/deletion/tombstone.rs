@@ -231,6 +231,8 @@ pub(crate) enum ReplayedTombstoneOutcome {
         erased: bool,
         receipt_id: Option<EntityId>,
         sweep_key: Option<Vec<u8>>,
+        /// Event documents whose author stamps were removed by this purge.
+        scrubbed_events: Vec<EntityId>,
     },
 }
 

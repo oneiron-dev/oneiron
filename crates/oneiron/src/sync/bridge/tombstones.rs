@@ -368,7 +368,7 @@ fn apply_tombstone_in_savepoint(
 
     // Read before replay tears edge indexes and redirect shells. An item
     // rolled back to its savepoint contributes no committed invalidations.
-    let affected = if work.hard {
+    let mut affected = if work.hard {
         vault
             .hard_delete_affected_ids_in_txn(&child, &work.id)
             .map_err(|e| (TombstoneFailureStage::Replay, e))?
@@ -381,6 +381,12 @@ fn apply_tombstone_in_savepoint(
         &work.id,
         &work.raw_value,
     );
+    if let Ok(crate::deletion::ReplayedTombstoneOutcome::HardPurged {
+        scrubbed_events, ..
+    }) = &applied
+    {
+        affected.extend(scrubbed_events);
+    }
     let item = match applied {
         Ok(_) if work.hard => {
             scrub_receiver_outbox_on_remote_hard_delete_in_txn(vault, &mut child, window_key)
