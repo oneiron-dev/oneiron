@@ -48,6 +48,62 @@ fn bootstrap_commits_genesis_and_slip_mint_and_reuses_one_root() {
     assert!(verify(&vault, &issuer, &root).unwrap().allows_verb("read"));
 }
 #[test]
+fn signed_revoke_reports_one_winner_and_keeps_one_tombstone() {
+    let (_dir, vault, issuer, root) = fixture();
+    let before = vault.authority_fold().unwrap().valid_entries.len();
+    let winners = std::thread::scope(|scope| {
+        let start = std::sync::Arc::new(std::sync::Barrier::new(12));
+        let calls: Vec<_> = (0..12)
+            .map(|_| {
+                let start = std::sync::Arc::clone(&start);
+                let vault = &vault;
+                let issuer = &issuer;
+                scope.spawn(move || {
+                    start.wait();
+                    vault
+                        .revoke_capability_slip_once(issuer, root.claims.slip_id)
+                        .unwrap()
+                })
+            })
+            .collect();
+        calls
+            .into_iter()
+            .map(|call| call.join().unwrap() as usize)
+            .sum::<usize>()
+    });
+    assert_eq!(winners, 1);
+    assert!(
+        !vault
+            .revoke_capability_slip_once(&issuer, root.claims.slip_id)
+            .unwrap()
+    );
+    assert!(
+        !vault
+            .capability_slip_id_is_live(&root.claims.slip_id)
+            .unwrap()
+    );
+    assert_eq!(
+        vault.authority_fold().unwrap().valid_entries.len(),
+        before + 1
+    );
+}
+
+#[test]
+fn first_signed_revoke_preempts_late_mint_and_still_authenticates_retry() {
+    let (_dir, vault, issuer, root) = fixture();
+    let id = [81; 32];
+    assert!(vault.revoke_capability_slip_once(&issuer, id).unwrap());
+    assert!(!vault.revoke_capability_slip_once(&issuer, id).unwrap());
+    let stranger = HostSlipIssuer::from_secret(b"other host").unwrap();
+    assert!(vault.revoke_capability_slip_once(&stranger, id).is_err());
+    let mut claims = root.claims.clone();
+    claims.slip_id = id;
+    claims.parent_id = Some(root.claims.slip_id);
+    assert!(vault.mint_capability_slip(&issuer, claims).is_err());
+    assert!(vault.authority_fold().unwrap().slips.revoked.contains(&id));
+}
+
+#[test]
 fn v2_roundtrip_tamper_and_missing_binding_deny() {
     let (_dir, vault, issuer, root) = fixture();
     let decoded = CapabilitySlip::from_token(&root.to_token().unwrap()).unwrap();
@@ -753,8 +809,87 @@ fn divergent_mints_poison_the_identifier_in_either_merge_order() {
     ba.merge_from(&a);
     assert_eq!(ab, ba);
     assert!(ab.revoked.contains(&[77; 32]));
+    assert!(!ab.explicit_revoked.contains(&[77; 32]));
     assert!(!ab.is_live(&[77; 32], &base.roster));
     assert!(ab.is_live(&root.claims.slip_id, &base.roster));
+}
+
+#[test]
+fn collision_denial_still_needs_one_explicit_signed_revoke() {
+    let (_dir, vault, issuer, root) = fixture();
+    let parent = vault.authority_fold().unwrap().slips.mints[&root.claims.slip_id].entry_hash;
+    let id = [78; 32];
+    let mut claims = root.claims.clone();
+    claims.slip_id = id;
+    let mut other = claims.clone();
+    other.ttl_secs = 60;
+    let at = crate::TimeRange {
+        start: root.claims.issued_at,
+        end: root.claims.issued_at,
+    };
+    let first = issuer
+        .sign_entry(
+            Some(claims.vault_id),
+            2,
+            vec![parent],
+            AuthorityOp::SlipMint(SlipMintAction { claims }),
+            at.start,
+        )
+        .unwrap();
+    let second = issuer
+        .sign_entry(
+            Some(other.vault_id),
+            3,
+            vec![parent],
+            AuthorityOp::SlipMint(SlipMintAction { claims: other }),
+            at.start,
+        )
+        .unwrap();
+    vault
+        .put_authority_log_entries(&[(first, at, at.start), (second, at, at.start)])
+        .unwrap();
+    let before = vault.authority_fold().unwrap();
+    assert!(before.slips.revoked.contains(&id));
+    assert!(!before.slips.explicit_revoked.contains(&id));
+    assert!(!before.slip_is_live(&id));
+
+    let winners = std::thread::scope(|scope| {
+        let start = std::sync::Arc::new(std::sync::Barrier::new(12));
+        let calls: Vec<_> = (0..12)
+            .map(|_| {
+                let start = std::sync::Arc::clone(&start);
+                let vault = &vault;
+                let issuer = &issuer;
+                scope.spawn(move || {
+                    start.wait();
+                    vault.revoke_capability_slip_once(issuer, id).unwrap()
+                })
+            })
+            .collect();
+        calls
+            .into_iter()
+            .map(|call| call.join().unwrap() as usize)
+            .sum::<usize>()
+    });
+    assert_eq!(
+        winners, 1,
+        "the first explicit revoke must win despite collision denial"
+    );
+    assert!(!vault.revoke_capability_slip_once(&issuer, id).unwrap());
+    let after = vault.authority_fold().unwrap();
+    assert_eq!(after.valid_entries.len(), before.valid_entries.len() + 1);
+    assert!(after.slips.explicit_revoked.contains(&id));
+    let new_hash = *after
+        .valid_entries
+        .difference(&before.valid_entries)
+        .next()
+        .unwrap();
+    let entry = vault
+        .get_authority_log_entry(&authority_log_entity_id_from_hash(&new_hash).unwrap())
+        .unwrap()
+        .unwrap();
+    assert!(matches!(entry.op, AuthorityOp::SlipRevoke { slip_id } if slip_id == id));
+    assert!(!after.slip_is_live(&id));
 }
 
 #[test]
