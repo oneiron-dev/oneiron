@@ -68,6 +68,8 @@ pub(in crate::gate) struct DecodedPolicyManifest {
     pub(in crate::gate) diagnostic_bounds: Option<crate::self_heal::tripwires::TripwireBounds>,
     pub(in crate::gate) proposal_check_threshold: Option<u64>,
     pub(in crate::gate) weave_correction_policy: Option<crate::gate::WeaveCorrectionPolicy>,
+    pub(in crate::gate) retry_source_policy:
+        Vec<crate::gate::retry_source_policy::RetrySourcePolicyRow>,
     pub(in crate::gate) unsupported_schema: bool,
     pub(in crate::gate) engine_version_floor: bool,
     pub(in crate::gate) unknown_axis_seen: bool,
@@ -118,6 +120,7 @@ pub(in crate::gate) fn decode_policy_manifest(data: &[u8]) -> Option<DecodedPoli
                 | "diagnostic_bounds"
                 | "proposal_check_threshold"
                 | POLICY_WEAVE_CORRECTION_POLICY_KEY
+                | "retry_source_policy"
         ) {
             return None;
         }
@@ -274,6 +277,15 @@ pub(in crate::gate) fn decode_policy_manifest(data: &[u8]) -> Option<DecodedPoli
             MapValue::Duplicate => return None,
             MapValue::Present(value) => Some(crate::gate::WeaveCorrectionPolicy::parse(value)?),
         };
+    let retry_source_policy = match single_map_value(&entries, "retry_source_policy") {
+        MapValue::Missing => Vec::new(),
+        MapValue::Duplicate => return None,
+        MapValue::Present(Value::Array(rows)) => rows
+            .iter()
+            .map(crate::gate::retry_source_policy::RetrySourcePolicyRow::parse)
+            .collect::<Option<Vec<_>>>()?,
+        MapValue::Present(_) => return None,
+    };
 
     let unknown_axis_seen =
         defaults.unknown_axis_seen || rules.iter().any(|rule| rule.axes.unknown_axis_seen);
@@ -310,6 +322,7 @@ pub(in crate::gate) fn decode_policy_manifest(data: &[u8]) -> Option<DecodedPoli
         diagnostic_bounds,
         proposal_check_threshold,
         weave_correction_policy,
+        retry_source_policy,
         unsupported_schema,
         engine_version_floor,
         unknown_axis_seen,

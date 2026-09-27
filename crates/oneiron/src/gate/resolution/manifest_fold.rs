@@ -176,6 +176,9 @@ pub(crate) fn resolve_policy_manifest(
                         slot @ None => *slot = Some(quota),
                     }
                 }
+                resolution
+                    .retry_source_policy
+                    .extend(decoded.retry_source_policy);
                 resolution.packs.push(decoded.pack);
             }
             None => {

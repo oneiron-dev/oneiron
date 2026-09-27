@@ -94,6 +94,29 @@ pub(super) fn hash_policy_frontier_v0(
         policy.hash_into(hasher);
     }
 
+    // Hash authored typed selectors/precedence, not an invented fallback.
+    if !resolution.retry_source_policy.is_empty() {
+        hash_str(hasher, "retry_source_policy");
+        hash_len(hasher, resolution.retry_source_policy.len());
+        for row in &resolution.retry_source_policy {
+            match row.selector {
+                crate::gate::retry_source_policy::RetrySelector::Vault => hash_str(hasher, "vault"),
+                crate::gate::retry_source_policy::RetrySelector::Holder(id) => {
+                    hash_str(hasher, "holder");
+                    hash_bytes(hasher, id.as_bytes());
+                }
+                crate::gate::retry_source_policy::RetrySelector::Project(id) => {
+                    hash_str(hasher, "project");
+                    hash_bytes(hasher, id.as_bytes());
+                }
+            }
+            hash_u64(hasher, row.max_sources.get() as u64);
+            if let Some(precedence) = row.precedence {
+                hash_str(hasher, precedence.as_str());
+            }
+        }
+    }
+
     hash_len(hasher, resolution.packs.len());
     for pack in &resolution.packs {
         hash_str(hasher, &pack._pack_id);

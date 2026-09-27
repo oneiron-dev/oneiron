@@ -1408,7 +1408,7 @@
      "path": "src/attempt_queue/engine/reads.rs",
      "purpose": "Point/list/dedupe reads plus retry-chain and dreamer-root walks",
      "surface": {
-      "crate-vis": 15,
+      "crate-vis": 16,
       "fn": 4
      }
     },
@@ -7868,7 +7868,7 @@
      "path": "src/claim/scoped_read/point_reads.rs",
      "purpose": "Same-snapshot, receipted point and short-reference hydration doors",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 2,
       "fn": 9
      }
     },
@@ -13415,7 +13415,7 @@
      "path": "src/dreamer_consolidation/assembly.rs",
      "purpose": "Store-backed mechanical inputs for the consolidation executor",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 3
      }
     },
     {
@@ -13425,7 +13425,7 @@
      "path": "src/dreamer_consolidation/branch_scope.rs",
      "purpose": "Durable branch restriction alongside a partition payload, not a partition or consolidation identity axis",
      "surface": {
-      "crate-vis": 6,
+      "crate-vis": 7,
       "fn": 4
      }
     },
@@ -13440,18 +13440,29 @@
       "ConsolidationBucketPlan",
       "PriorHead",
       "SwarmChildReturn",
-      "SwarmEvidenceRef"
+      "SwarmEvidenceRef",
+      "VerifiedSwarmEvidence"
      ],
      "path": "src/dreamer_consolidation/conflict.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 5,
-      "fn": 10,
-      "struct": 8
+      "crate-vis": 6,
+      "fn": 9,
+      "struct": 9
      }
     },
     {
-     "bucket": "m",
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/dreamer_consolidation/evidence.rs",
+     "purpose": "Parent-verified evidence is the sole scoped consolidation handoff",
+     "surface": {
+      "crate-vis": 25
+     }
+    },
+    {
+     "bucket": "L",
      "kind": "src",
      "notable": [
       "ConsolidationExecutor"
@@ -13459,17 +13470,18 @@
      "path": "src/dreamer_consolidation/executor.rs",
      "purpose": "—",
      "surface": {
+      "crate-vis": 1,
       "struct": 1
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/dreamer_consolidation/executor/extraction.rs",
      "purpose": "Extraction request/response projection for one admitted branch",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 3
      }
     },
     {
@@ -13480,16 +13492,6 @@
      "purpose": "JSON merge outcome decoding for the scoped consolidation judge",
      "surface": {
       "crate-vis": 2
-     }
-    },
-    {
-     "bucket": "s",
-     "kind": "src",
-     "notable": [],
-     "path": "src/dreamer_consolidation/executor/retry.rs",
-     "purpose": "Fresh source reads for scheduled selection retries, within the original partition",
-     "surface": {
-      "crate-vis": 1
      }
     },
     {
@@ -13524,7 +13526,7 @@
      "path": "src/dreamer_consolidation/gap.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 3,
       "enum": 1,
       "fn": 4,
       "struct": 2
@@ -13547,9 +13549,9 @@
      "path": "src/dreamer_consolidation/mod.rs",
      "purpose": "Dreamer consolidation algorithm + reflection gap scan (ONE-1289, DREAM-002; DESIGN-PIN-20260710 Part A)",
      "surface": {
-      "crate-vis": 4,
+      "crate-vis": 7,
       "mod": 2,
-      "re-export": 9
+      "re-export": 10
      }
     },
     {
@@ -13605,7 +13607,7 @@
      "path": "src/dreamer_consolidation/provenance.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 3,
       "enum": 1,
       "fn": 7,
       "struct": 5,
@@ -13619,7 +13621,7 @@
      "path": "src/dreamer_consolidation/resources.rs",
      "purpose": "Exact resource bounds for a consolidation partition",
      "surface": {
-      "crate-vis": 15,
+      "crate-vis": 23,
       "re-export": 1
      }
     },
@@ -13779,7 +13781,7 @@
      "surface": {}
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "test",
      "notable": [],
      "path": "src/dreamer_consolidation/tests/prior_heads.rs",
@@ -13803,7 +13805,7 @@
      "path": "src/dreamer_consolidation/tests/support.rs",
      "purpose": "Shared backend fixture for deadline-driven consolidation tests",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 4
      }
     },
     {
@@ -13814,6 +13816,20 @@
      "purpose": "Data projection between extraction/merge JSON and claim MessagePack values",
      "surface": {
       "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "PreparedConsolidationAttempt",
+      "PreparedWake"
+     ],
+     "path": "src/dreamer_consolidation/wake_plan.rs",
+     "purpose": "One frozen read revision and exact preparation of queued consolidation work",
+     "surface": {
+      "crate-vis": 16,
+      "struct": 2
      }
     },
     {
@@ -14028,7 +14044,7 @@
      "path": "src/dreamer_runner/authority.rs",
      "purpose": "One vault-owned Dreamer principal; job kinds are facets, not new authorities",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 4,
       "fn": 3,
       "re-export": 1,
       "struct": 1
@@ -14501,7 +14517,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [
       "DreamerWakeDriver"
@@ -15753,7 +15769,7 @@
      "path": "src/edit_roundtrip/slides_review.rs",
      "purpose": "Bounded typed review of slide/shape units into one retained comment proposal",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 3,
       "enum": 1,
       "fn": 2,
       "struct": 5,
@@ -15761,7 +15777,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "test",
      "notable": [],
      "path": "src/edit_roundtrip/slides_review/tests.rs",
@@ -17233,7 +17249,7 @@
      "path": "src/gate/constants.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 79
+      "crate-vis": 80
      }
     },
     {
@@ -17516,7 +17532,7 @@
      "path": "src/gate/mod.rs",
      "purpose": "DEC-0005 Gate policy manifest resolver",
      "surface": {
-      "crate-vis": 29,
+      "crate-vis": 30,
       "re-export": 4
      }
     },
@@ -17568,13 +17584,13 @@
      "surface": {}
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/gate/resolution/accessors.rs",
      "purpose": "Read-only resolved-field accessors plus the frontier-hash entry",
      "surface": {
-      "crate-vis": 27
+      "crate-vis": 30
      }
     },
     {
@@ -17648,6 +17664,16 @@
      "path": "src/gate/retrieval_filter/tests.rs",
      "purpose": "—",
      "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/gate/retry_source_policy.rs",
+     "purpose": "Typed manifest work budget for consolidation retries",
+     "surface": {
+      "crate-vis": 8
+     }
     },
     {
      "bucket": "s",
@@ -17877,6 +17903,14 @@
      "notable": [],
      "path": "src/gate/tests/scoped_read.rs",
      "purpose": "Scoped read and retrieval filtering: core-read grants, context-pack scrubbing, and facet edges",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/gate/tests/slide_review_policy.rs",
+     "purpose": "Shipped slide-review limits, scoped manifest narrowing, and strict row decode",
      "surface": {}
     },
     {
@@ -20984,7 +21018,7 @@
      "purpose": "Typed question records and shared outcome projection",
      "surface": {
       "mod": 1,
-      "re-export": 5
+      "re-export": 6
      }
     },
     {
@@ -21178,6 +21212,23 @@
      "path": "src/llm/decision/seat/tests.rs",
      "purpose": "—",
      "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "SlideReviewLimits",
+      "SlideReviewPolicy",
+      "SlideReviewPrecedence",
+      "SlideReviewRoute"
+     ],
+     "path": "src/llm/decision/slides_policy.rs",
+     "purpose": "Manifest-backed operating limits for the artifact judgment adapter",
+     "surface": {
+      "enum": 1,
+      "fn": 8,
+      "struct": 3
+     }
     },
     {
      "bucket": "m",
@@ -26670,6 +26721,16 @@
       "crate-vis": 2,
       "fn": 3,
       "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/provenance/derived_attachment.rs",
+     "purpose": "Validate generated support evidence at the provenance write door",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -35452,7 +35513,7 @@
      "path": "src/write_envelope.rs",
      "purpose": "Write-path stamping: `WriteActor`/`WriteProvenance`/`WriteEnvelope`/`ClaimCandidate` + evidence stamping",
      "surface": {
-      "crate-vis": 17,
+      "crate-vis": 18,
       "fn": 28,
       "struct": 5
      }
@@ -36658,9 +36719,9 @@
      "purpose": "—"
     },
     "dreamer_consolidation": {
-     "files": 38,
+     "files": 39,
      "impl_vault": true,
-     "largest_src_bucket": "m",
+     "largest_src_bucket": "L",
      "layout": "dir",
      "purpose": "Dreamer consolidation algorithm + reflection gap scan (ONE-1289, DREAM-002; DESIGN-PIN-20260710 Part A)"
     },
@@ -36702,7 +36763,7 @@
     "dreamer_wake": {
      "files": 11,
      "impl_vault": true,
-     "largest_src_bucket": "m",
+     "largest_src_bucket": "L",
      "layout": "dir",
      "purpose": "Dreamer wake-pass driver (ONE-1288, DREAM-001 residual)"
     },
@@ -36812,7 +36873,7 @@
      "purpose": "—"
     },
     "gate": {
-     "files": 79,
+     "files": 81,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -36945,7 +37006,7 @@
      "purpose": "Deterministic LinkedIn entity resolution and explicit runtime-path corpus preload"
     },
     "llm": {
-     "files": 83,
+     "files": 84,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -37099,7 +37160,7 @@
      "purpose": "—"
     },
     "provenance": {
-     "files": 15,
+     "files": 16,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -37498,10 +37559,10 @@
      "purpose": "Write-path stamping: `WriteActor`/`WriteProvenance`/`WriteEnvelope`/`ClaimCandidate` + evidence stamping"
     }
    },
-   "over_bar": 2,
+   "over_bar": 4,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2226,
-   "test_files": 760
+   "source_files": 2230,
+   "test_files": 761
   },
   "oneiron-android": {
    "files": [
