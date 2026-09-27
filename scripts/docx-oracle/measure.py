@@ -32,7 +32,13 @@ def summarize(path):
         if len(names) != len(set(names)) or "word/document.xml" not in names or "[Content_Types].xml" not in names:
             raise ValueError("invalid DOCX package spine or duplicate part")
         root = ET.fromstring(z.read("word/document.xml"))
-        texts = [e.text or "" for e in root.iter() if e.tag in {f"{{{WORD}}}t", f"{{{WORD}}}delText"}]
+        # Word can split or merge runs on save without changing any visible
+        # characters. Compare logical text per paragraph, not text-node cuts.
+        text_tags = {f"{{{WORD}}}t", f"{{{WORD}}}delText"}
+        paragraph_text = [
+            "".join(e.text or "" for e in paragraph.iter() if e.tag in text_tags)
+            for paragraph in root.iter(f"{{{WORD}}}p")
+        ]
         revisions = {tag: sum(e.tag == f"{{{WORD}}}{tag}" for e in root.iter()) for tag in ("ins", "del")}
         comments = {tag: sum(e.tag == f"{{{WORD}}}{tag}" for e in root.iter()) for tag in ("commentRangeStart", "commentRangeEnd")}
         protection = None
@@ -40,7 +46,7 @@ def summarize(path):
             settings = ET.fromstring(z.read("word/settings.xml"))
             for e in settings.iter(f"{{{WORD}}}documentProtection"):
                 protection = e.get(f"{{{WORD}}}edit")
-        return {"parts": len(names), "text_sha256": digest("\n".join(texts).encode()),
+        return {"parts": len(names), "text_sha256": digest("\n".join(paragraph_text).encode()),
                 "paragraphs": sum(e.tag == f"{{{WORD}}}p" for e in root.iter()),
                 "revisions": revisions, "comments": comments, "protection": protection,
                 "document_xml_sha256": digest(z.read("word/document.xml"))}

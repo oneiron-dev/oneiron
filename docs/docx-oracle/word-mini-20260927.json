@@ -1,0 +1,331 @@
+{
+  "schema_version": 1,
+  "recorded_at_utc": "2026-09-27T02:23:29+00:00",
+  "oracle_host": "Oletymac.local (Mac mini; Office host)",
+  "word_version": "16.113.2",
+  "custody": "~/Library/Containers/com.microsoft.Word/Data/lin-2522/ on Mac mini; binary fixtures and Word outputs are not committed",
+  "method": "AppleScript open/save as a new DOCX; System Events reported zero sheets after open and save; Word revision object counts checked; logical text compared per paragraph to ignore Word run splitting; document windows closed individually with Command-W",
+  "visual_redline_screenshot": null,
+  "visual_redline_note": "screencapture from SSH reported could not create image from display; Word native object model exposed revision delete and revision insert on the writer sample",
+  "native_sample": {
+    "fork_output_sha256": "35814429d99d5032ac2ec9e2f829ac7000cac0ebfe3d10306f76bcf6d6ff8daa",
+    "word_saved_sha256": "5f24f9b9c12ed3c36985c0968874dac533664017459391cd886bb9f2ae1d6f12",
+    "before": {
+      "parts": 13,
+      "text_sha256": "05be1615a9240e4580f4528dc13f5de84d4713dee44f50e67f15a960a3c63177",
+      "paragraphs": 1,
+      "revisions": {
+        "ins": 1,
+        "del": 1
+      },
+      "comments": {
+        "commentRangeStart": 0,
+        "commentRangeEnd": 0
+      },
+      "protection": null,
+      "document_xml_sha256": "099580f4c1d1731acaefc321d88b553004e11fb5d4bb6bb534abc021771773e3"
+    },
+    "after": {
+      "parts": 13,
+      "text_sha256": "05be1615a9240e4580f4528dc13f5de84d4713dee44f50e67f15a960a3c63177",
+      "paragraphs": 1,
+      "revisions": {
+        "ins": 1,
+        "del": 1
+      },
+      "comments": {
+        "commentRangeStart": 0,
+        "commentRangeEnd": 0
+      },
+      "protection": null,
+      "document_xml_sha256": "fbe6407a1f0a404467e0b4e6d0b0f532c015552ea6e94db6121fff806493254b"
+    },
+    "repair_dialog_observed": false,
+    "word_revision_types": [
+      "revision delete",
+      "revision insert"
+    ],
+    "word_revision_author": [
+      "Editor",
+      "Editor"
+    ],
+    "word_deleted_text": "This is a test now foo bar baz",
+    "word_inserted_text": "A tracked replacement."
+  },
+  "poi_docx4j_fork_cases": [
+    {
+      "name": "poi-tracking-on",
+      "source": {
+        "url": "https://raw.githubusercontent.com/apache/poi/942d95d85b15d0dfdb3bc9ba1b4f273f277757c8/test-data/document/bug56075-changeTracking_on.docx",
+        "sha256": "9c837e12aaf3deac10ac20ac1bc08dc6bebdec14b553698063742b9bc12f8920"
+      },
+      "fork_output_sha256": "5a2e8e12caa0ba67fba777d60055d3325e4e17955fe281ce6e9817b040f343a1",
+      "word_saved_sha256": "91f0b8332bb856e9fd8410520d11a20074fc518469ece47343d70c11e0cb20f7",
+      "repair_dialog_observed": false,
+      "word_revision_objects_before_save": 2,
+      "word_revision_objects_after_save": 2,
+      "logical_text_equal": true,
+      "paragraph_count_equal": true,
+      "revisions_equal": true,
+      "protection_equal": true,
+      "before": {
+        "paragraphs": 1,
+        "revisions": {
+          "ins": 1,
+          "del": 1
+        },
+        "protection": null,
+        "text_sha256": "9815fbf03fef6977a3f6563af9eb37e568ad9076ab8aa48ef52db3b3be0df4ed",
+        "document_xml_sha256": "9a6f696a43786dcd4117b77e47ac19f597e46ad38423665c0c5ce06da5eadee7"
+      },
+      "after": {
+        "paragraphs": 1,
+        "revisions": {
+          "ins": 1,
+          "del": 1
+        },
+        "protection": null,
+        "text_sha256": "9815fbf03fef6977a3f6563af9eb37e568ad9076ab8aa48ef52db3b3be0df4ed",
+        "document_xml_sha256": "d0a08c8688bc7daafeec028cba99b0ff99548877c346ac1f86e846739cfbc1dc"
+      }
+    },
+    {
+      "name": "poi-tracking-off",
+      "source": {
+        "url": "https://raw.githubusercontent.com/apache/poi/942d95d85b15d0dfdb3bc9ba1b4f273f277757c8/test-data/document/bug56075-changeTracking_off.docx",
+        "sha256": "bfe651932119ad2472b943b726f8ea7559d8ff0fb9c100b63cc0c28f8227de78"
+      },
+      "fork_output_sha256": "2c6ba9e02dfeafe062100e3770bbf7e863edad88b519f377a891e41540cfb965",
+      "word_saved_sha256": "dcc7fdb6c21fae7ef44db15b7bd17bef45c6ebc03d651ec3ff6477e4f5a18215",
+      "repair_dialog_observed": false,
+      "word_revision_objects_before_save": 2,
+      "word_revision_objects_after_save": 2,
+      "logical_text_equal": true,
+      "paragraph_count_equal": true,
+      "revisions_equal": true,
+      "protection_equal": true,
+      "before": {
+        "paragraphs": 1,
+        "revisions": {
+          "ins": 1,
+          "del": 1
+        },
+        "protection": null,
+        "text_sha256": "0df6ed85441e3603e66379c62ee7ba8ea4aff2b01d56b4c28b767f945061a6b7",
+        "document_xml_sha256": "9fcf3c2fdad71d5d3ef62a72c032f287e06302fbbd895be036846834ae460c65"
+      },
+      "after": {
+        "paragraphs": 1,
+        "revisions": {
+          "ins": 1,
+          "del": 1
+        },
+        "protection": null,
+        "text_sha256": "0df6ed85441e3603e66379c62ee7ba8ea4aff2b01d56b4c28b767f945061a6b7",
+        "document_xml_sha256": "bb3999c683cb79f25a8ba2a011a79a8e4518c00ec80f37bd719227dab94f2f46"
+      }
+    },
+    {
+      "name": "poi-protected-tracked",
+      "source": {
+        "url": "https://raw.githubusercontent.com/apache/poi/942d95d85b15d0dfdb3bc9ba1b4f273f277757c8/test-data/document/documentProtection_trackedChanges_no_password.docx",
+        "sha256": "f57113d70213bf8d2fb739fc980662a84e3530f3d1b128ab92d00ab587cd3eb4"
+      },
+      "fork_output_sha256": "c45033fbca6ff344e26c0d01b99ccf46891fd65ced02c4e0780460bffa7d301d",
+      "word_saved_sha256": "91ce408c5d18f853ed3ba788a3d98e6b2136c93de7d24599a28ddb49f926106a",
+      "repair_dialog_observed": false,
+      "word_revision_objects_before_save": 2,
+      "word_revision_objects_after_save": 2,
+      "logical_text_equal": true,
+      "paragraph_count_equal": true,
+      "revisions_equal": true,
+      "protection_equal": true,
+      "before": {
+        "paragraphs": 1,
+        "revisions": {
+          "ins": 1,
+          "del": 1
+        },
+        "protection": "trackedChanges",
+        "text_sha256": "a34ad369551f3507bda9aab1574d4b697b8aa8eec12e2b1e050620ebc619c914",
+        "document_xml_sha256": "ed35cd3c2b3954cecba5e264affa6fd4a2b45fa4cc722caec1997be8f4d86fd4"
+      },
+      "after": {
+        "paragraphs": 1,
+        "revisions": {
+          "ins": 1,
+          "del": 1
+        },
+        "protection": "trackedChanges",
+        "text_sha256": "a34ad369551f3507bda9aab1574d4b697b8aa8eec12e2b1e050620ebc619c914",
+        "document_xml_sha256": "3e19e78a3f9746e9d1f9f77fbb15ad62ad727b625fca5922b1a03bad4721ab80"
+      }
+    },
+    {
+      "name": "docx4j-compare-left",
+      "source": {
+        "url": "https://raw.githubusercontent.com/plutext/docx4j/882f2d2cc72cae794f9e4be4a8712afa948ef309/docx4j-samples-docx-diffx/sample-docs/test.docx",
+        "sha256": "3f418838fa399e31d8a4d79d25f5c6520d074bd1d27d1de2f8864fe2a511cae9"
+      },
+      "fork_output_sha256": "7a434c8f51f424113f13c14125a83d923604d9814fe990db240e63bb6eecbc8d",
+      "word_saved_sha256": "147b0e9c312f96b05855496646d0141943b9b1354b9e634c01ee06ddd5689f47",
+      "repair_dialog_observed": false,
+      "word_revision_objects_before_save": 2,
+      "word_revision_objects_after_save": 2,
+      "logical_text_equal": true,
+      "paragraph_count_equal": true,
+      "revisions_equal": true,
+      "protection_equal": true,
+      "before": {
+        "paragraphs": 26,
+        "revisions": {
+          "ins": 1,
+          "del": 1
+        },
+        "protection": null,
+        "text_sha256": "d7877b042e39b62f995d3a9b657c66dab625de3ae01afe95c0358eb1b8ce56c1",
+        "document_xml_sha256": "7ba7ff4030ac0016aad86e74d73bbf7f939543d23a950ed8013098629c4e24d3"
+      },
+      "after": {
+        "paragraphs": 26,
+        "revisions": {
+          "ins": 1,
+          "del": 1
+        },
+        "protection": null,
+        "text_sha256": "d7877b042e39b62f995d3a9b657c66dab625de3ae01afe95c0358eb1b8ce56c1",
+        "document_xml_sha256": "30a2467be5cd6bbcc1f2893398c1295ca3c60a5a115a54eb5389e93e4cb958c4"
+      }
+    },
+    {
+      "name": "docx4j-compare-right",
+      "source": {
+        "url": "https://raw.githubusercontent.com/plutext/docx4j/882f2d2cc72cae794f9e4be4a8712afa948ef309/docx4j-samples-docx-diffx/sample-docs/test2.docx",
+        "sha256": "d439c0bac46039094913353f31fe3646b68c218f99078a35d26b55976106784f"
+      },
+      "fork_output_sha256": "afc37e2c33604a87579a20054e15cddd08e67b0bda38f9d4e286be58769d792b",
+      "word_saved_sha256": "95ea875041c1fa1cebb40cea7a3957b29ddad83d235965c8b14a2883750cb396",
+      "repair_dialog_observed": false,
+      "word_revision_objects_before_save": 2,
+      "word_revision_objects_after_save": 2,
+      "logical_text_equal": true,
+      "paragraph_count_equal": true,
+      "revisions_equal": true,
+      "protection_equal": true,
+      "before": {
+        "paragraphs": 24,
+        "revisions": {
+          "ins": 1,
+          "del": 1
+        },
+        "protection": null,
+        "text_sha256": "96f32226e7ef198383996412627138045ee13b46964a5be2fe31460e3c71240c",
+        "document_xml_sha256": "cd65fbd6e8d59f5d1c23ee45664864644e5d613c5deda1b4809b59d16c5d8133"
+      },
+      "after": {
+        "paragraphs": 24,
+        "revisions": {
+          "ins": 1,
+          "del": 1
+        },
+        "protection": null,
+        "text_sha256": "96f32226e7ef198383996412627138045ee13b46964a5be2fe31460e3c71240c",
+        "document_xml_sha256": "d4a56e626b2947956d2ada8b6b9df069d002848710e7ca31fbe4947996e15d6f"
+      }
+    }
+  ],
+  "poi_docx4j_word_baseline": [
+    {
+      "name": "poi-tracking-on",
+      "input_sha256": "9c837e12aaf3deac10ac20ac1bc08dc6bebdec14b553698063742b9bc12f8920",
+      "word_saved_sha256": "d2bfa72b9aa677e8a062c922bc46bde67adc8ededc0d86bbb0341f43efeeedfc",
+      "logical_text_equal": true,
+      "paragraph_count_equal": true,
+      "revisions_equal": true,
+      "protection_equal": true,
+      "repair_dialog_observed": false
+    },
+    {
+      "name": "poi-tracking-off",
+      "input_sha256": "bfe651932119ad2472b943b726f8ea7559d8ff0fb9c100b63cc0c28f8227de78",
+      "word_saved_sha256": "16a9cd9bcfc1358c8cc9b0439d237afe6925b8d65180c50794104c40adbcee73",
+      "logical_text_equal": true,
+      "paragraph_count_equal": true,
+      "revisions_equal": true,
+      "protection_equal": true,
+      "repair_dialog_observed": false
+    },
+    {
+      "name": "poi-protected-tracked",
+      "input_sha256": "f57113d70213bf8d2fb739fc980662a84e3530f3d1b128ab92d00ab587cd3eb4",
+      "word_saved_sha256": "52144852e198853971518715a1a5d7c978378924b0768796c093dd1770ee0c7e",
+      "logical_text_equal": true,
+      "paragraph_count_equal": true,
+      "revisions_equal": true,
+      "protection_equal": true,
+      "repair_dialog_observed": false
+    },
+    {
+      "name": "docx4j-compare-left",
+      "input_sha256": "3f418838fa399e31d8a4d79d25f5c6520d074bd1d27d1de2f8864fe2a511cae9",
+      "word_saved_sha256": "e2654c1c3277410d44f8a9acc13caba746a4471fa11e88e8d5a9e8046c021d83",
+      "logical_text_equal": true,
+      "paragraph_count_equal": true,
+      "revisions_equal": true,
+      "protection_equal": true,
+      "repair_dialog_observed": false
+    },
+    {
+      "name": "docx4j-compare-right",
+      "input_sha256": "d439c0bac46039094913353f31fe3646b68c218f99078a35d26b55976106784f",
+      "word_saved_sha256": "261ae77ee839cdae41d5fcafc14013ae931fd0cb135a812cc365f6f6ebde56a5",
+      "logical_text_equal": true,
+      "paragraph_count_equal": true,
+      "revisions_equal": true,
+      "protection_equal": true,
+      "repair_dialog_observed": false
+    }
+  ],
+  "paragraph_join": {
+    "simple": {
+      "input_document_xml_sha256": "b8e94fe420b09528fbff450523476b9823be98f98a378e994ed01b03f4fa47be",
+      "word_accepted_sha256": "51d8aa557681013a9bc8db9e7b4597c360a6b7ae8c4fa178e3d5d7a17a50b884",
+      "fork_accepted_sha256": "3d5771288837f6b62704f08325e10f1cdb3bedd0abde0f2cb888364eb64a6cff",
+      "word_text": [
+        "Alpha beta."
+      ],
+      "fork_text": [
+        "Alpha beta."
+      ],
+      "matches_word": true
+    },
+    "inserted_table_edge": {
+      "input_document_xml_sha256": "844a50103f0278570d6ccd800315d1d504db47b976a09e1b589ddadd5887f9d5",
+      "word_reject_all_first_pass_sha256": "89afa7918aa2417703a9d1df359754aefa391f3a02a635c0f54fd6761121830b",
+      "word_reject_remaining_row_sha256": "0e3a61de72b6cb4d8c8051612a02e1af2dbf4e0c5bd0faa8e7d61a828ef69b71",
+      "fork_reject_all_sha256": "3d5771288837f6b62704f08325e10f1cdb3bedd0abde0f2cb888364eb64a6cff",
+      "word_text": [
+        "beta."
+      ],
+      "fork_text": [
+        "Alpha beta."
+      ],
+      "matches_word": false,
+      "word_revision_objects_before": 1,
+      "word_revision_objects_after_first_reject_all": 1,
+      "word_revision_objects_after_explicit_remaining_reject": 0,
+      "reason": "Word moves Alpha into the inserted table cell on first reject and removes that cell when the remaining insertion is explicitly rejected; upstream stemma suite expects Alpha beta. instead."
+    }
+  },
+  "libreoffice": {
+    "installed_on_mini": false,
+    "measured_rate": null,
+    "note": "No /Applications/LibreOffice.app or soffice executable on Office host; no LibreOffice comparison measured."
+  },
+  "limits": [
+    "Five pinned public inputs are a bounded sample, not stemma’s full conformance corpus.",
+    "No screenshot/visual paint inspection; native Word revision objects are the application evidence.",
+    "POI/docx4j cases do not exercise anchored comments.",
+    "The inserted-table paragraph-join edge differs from Word; do not claim complete docengine:docx-pass."
+  ]
+}

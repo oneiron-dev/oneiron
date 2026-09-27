@@ -36353,6 +36353,14 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [],
+     "path": "examples/resolve_docx.rs",
+     "purpose": "Resolve a DOCX revision in the pinned fork for an application oracle case",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [
       "DoceditError"
      ],
@@ -36384,7 +36392,7 @@
    },
    "over_bar": 0,
    "purpose": "Native Word revisions over a pinned, Apache-2.0-selected stemma fork",
-   "source_files": 2,
+   "source_files": 3,
    "test_files": 1
   },
   "oneiron-driver": {
