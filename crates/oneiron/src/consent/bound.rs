@@ -12,7 +12,7 @@ const DOMAIN_DISCLOSURE: &str = "disclosure";
 pub(super) const DOMAIN_ACTION: &str = "action";
 
 /// Domain-separated BLAKE3 label for a normalized bound digest.
-const BOUND_DIGEST_DOMAIN: &[u8] = b"oneiron.consent.bound_digest.v1\0";
+const BOUND_DIGEST_DOMAIN: &[u8] = b"oneiron.consent.bound_digest.v2\0";
 
 /// Upper bound on selectors in one envelope. A bound is a bound, not a
 /// standing blanket assembled out of thousands of clauses.
@@ -597,42 +597,72 @@ impl GrantBound {
     pub fn digest(&self) -> EffectDigest {
         let mut hasher = blake3::Hasher::new();
         hasher.update(BOUND_DIGEST_DOMAIN);
-        hasher.update(self.domain().as_str().as_bytes());
+        hash_field(&mut hasher, self.domain().as_str().as_bytes());
         match &self.subject {
             BoundSubject::Actor(actor) => {
                 hash_field(&mut hasher, SUBJECT_KIND_ACTOR.as_bytes());
                 hash_field(&mut hasher, actor.actor_ref.as_bytes());
-                hash_field(
-                    &mut hasher,
-                    actor.actor_class.as_deref().unwrap_or_default().as_bytes(),
-                );
+                match actor.actor_class.as_deref() {
+                    None => {
+                        hasher.update(&[0]);
+                    }
+                    Some(class) => {
+                        hasher.update(&[1]);
+                        hash_field(&mut hasher, class.as_bytes());
+                    }
+                }
             }
             BoundSubject::Audience(audience) => {
                 hash_field(&mut hasher, SUBJECT_KIND_AUDIENCE.as_bytes());
+                hasher.update(&(audience.members.len() as u64).to_be_bytes());
                 for member in &audience.members {
                     hash_field(&mut hasher, member.as_bytes());
                 }
             }
         }
+        hash_field(&mut hasher, b"class");
         hash_field(&mut hasher, self.class.as_str().as_bytes());
         match &self.envelope {
             BoundEnvelope::Disclosure(envelope) => {
+                hash_field(&mut hasher, b"envelope:disclosure");
+                hasher.update(&(envelope.selectors.len() as u64).to_be_bytes());
                 for selector in &envelope.selectors {
                     hash_field(&mut hasher, selector.as_bytes());
                 }
-                if let Some(scope) = &envelope.scope {
-                    hash_scope(&mut hasher, scope);
+                match &envelope.scope {
+                    None => {
+                        hasher.update(&[0]);
+                    }
+                    Some(scope) => {
+                        hasher.update(&[1]);
+                        hash_scope(&mut hasher, scope);
+                    }
                 }
             }
             BoundEnvelope::Action(envelope) => {
+                hash_field(&mut hasher, b"envelope:action");
+                hasher.update(&(envelope.selectors.len() as u64).to_be_bytes());
                 for selector in &envelope.selectors {
                     hash_field(&mut hasher, selector.as_bytes());
                 }
-                hash_field(
-                    &mut hasher,
-                    envelope.target.as_deref().unwrap_or_default().as_bytes(),
-                );
-                hasher.update(&envelope.budget.unwrap_or(0).to_be_bytes());
+                match envelope.target.as_deref() {
+                    None => {
+                        hasher.update(&[0]);
+                    }
+                    Some(target) => {
+                        hasher.update(&[1]);
+                        hash_field(&mut hasher, target.as_bytes());
+                    }
+                }
+                match envelope.budget {
+                    None => {
+                        hasher.update(&[0]);
+                    }
+                    Some(budget) => {
+                        hasher.update(&[1]);
+                        hasher.update(&budget.to_be_bytes());
+                    }
+                }
                 hasher.update(&[u8::from(envelope.receipt_required)]);
             }
         }

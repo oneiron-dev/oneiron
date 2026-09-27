@@ -9,6 +9,7 @@ use super::errors::{
 use super::types::{OutboundDraftInput, OutboundIntentReceipt, OutboundScheduleContext};
 use crate::attempt_queue::{AttemptQueue, EnqueueAttempt, EnqueueOutcome};
 
+use crate::entity_id::EntityId;
 use crate::error::Error;
 use crate::outbound::{
     OutboundDeliveryWindowDecision, OutboundDispatchActor, OutboundDispatchGate,
@@ -41,7 +42,43 @@ impl Memory<'_> {
         draft: &OutboundDraftInput,
         schedule_context: &OutboundScheduleContext,
     ) -> MemoryResult<OutboundIntentReceipt> {
-        self.schedule_outbound_inner(draft, schedule_context, None)
+        self.schedule_outbound_inner(draft, schedule_context, None, None)
+            .map(|(receipt, _)| receipt)
+    }
+
+    /// Returns the sender recorded by the real outbound admission.
+    pub(crate) fn schedule_human_followup(
+        &self,
+        draft: &OutboundDraftInput,
+    ) -> MemoryResult<(OutboundIntentReceipt, Option<EntityId>)> {
+        self.schedule_outbound_inner(draft, &OutboundScheduleContext::default(), None, None)
+    }
+
+    /// Schedules a communication addressed to an explicit counterparty.
+    /// The transport target may be a shared channel or handle; it is never
+    /// inferred to be a PERSON. A missing binding on the ordinary schedule
+    /// path leaves `comm.last_touch` unchanged after delivery.
+    pub fn schedule_outbound_for_counterparty(
+        &self,
+        draft: &OutboundDraftInput,
+        counterparty_ref: &str,
+    ) -> MemoryResult<OutboundIntentReceipt> {
+        self.schedule_outbound_with_context_for_counterparty(
+            draft,
+            &OutboundScheduleContext::default(),
+            counterparty_ref,
+        )
+    }
+
+    /// The clock-aware form of [`Self::schedule_outbound_for_counterparty`].
+    pub fn schedule_outbound_with_context_for_counterparty(
+        &self,
+        draft: &OutboundDraftInput,
+        schedule_context: &OutboundScheduleContext,
+        counterparty_ref: &str,
+    ) -> MemoryResult<OutboundIntentReceipt> {
+        self.schedule_outbound_inner(draft, schedule_context, None, Some(counterparty_ref))
+            .map(|(receipt, _)| receipt)
     }
 
     /// The single scheduling implementation.
@@ -57,8 +94,25 @@ impl Memory<'_> {
         draft: &OutboundDraftInput,
         schedule_context: &OutboundScheduleContext,
         calendar_invite: Option<&crate::calendar::CalendarInvitePayload>,
-    ) -> MemoryResult<OutboundIntentReceipt> {
+        counterparty_ref: Option<&str>,
+    ) -> MemoryResult<(OutboundIntentReceipt, Option<EntityId>)> {
         schedule_context.validate()?;
+        if let Some(party) = counterparty_ref {
+            crate::comm::validate_comm_party_key(party).map_err(|_| {
+                MemoryError::bad_request("counterparty_ref is not a valid comm party key")
+            })?;
+            // A capability lookup accepts aliases such as " email ", but a
+            // counterparty-bound receipt is a projector source. Refuse those
+            // aliases before any gate, TASK, or provider delivery can persist
+            // a channel/verb the comm projector cannot decode.
+            if outbound_verb_contract(&draft.channel, &draft.verb).is_ok()
+                && !crate::outbound::is_canonical_outbound_verb(&draft.channel, &draft.verb)
+            {
+                return Err(MemoryError::bad_request(
+                    "counterparty-bound channel and verb must use manifest spellings",
+                ));
+            }
+        }
         if schedule_context.apns_interruption_level.is_some()
             && !(draft.channel == "apns" && draft.verb == "push")
         {
@@ -113,28 +167,35 @@ impl Memory<'_> {
                     "send idempotency index",
                 )));
             }
-            return Ok(OutboundIntentReceipt {
-                intent_ref: receipt
+            return Ok((
+                OutboundIntentReceipt {
+                    intent_ref: receipt
+                        .fields
+                        .get("intent_ref")
+                        .cloned()
+                        .unwrap_or_else(|| format!("intent:task:{}", task_ref.to_hex())),
+                    outcome: "already_sent".to_owned(),
+                    gate_outcome: receipt.fields.get("gate_outcome").cloned(),
+                    gate_decision_ref: receipt.fields.get("gate_decision_ref").cloned(),
+                    gate_reason_codes: receipt
+                        .fields
+                        .get("gate_reason_codes")
+                        .map(|codes| {
+                            codes
+                                .split(',')
+                                .filter(|code| !code.is_empty())
+                                .map(str::to_owned)
+                                .collect()
+                        })
+                        .unwrap_or_default(),
+                    deduped: true,
+                },
+                receipt
                     .fields
-                    .get("intent_ref")
-                    .cloned()
-                    .unwrap_or_else(|| format!("intent:task:{}", task_ref.to_hex())),
-                outcome: "already_sent".to_owned(),
-                gate_outcome: receipt.fields.get("gate_outcome").cloned(),
-                gate_decision_ref: receipt.fields.get("gate_decision_ref").cloned(),
-                gate_reason_codes: receipt
-                    .fields
-                    .get("gate_reason_codes")
-                    .map(|codes| {
-                        codes
-                            .split(',')
-                            .filter(|code| !code.is_empty())
-                            .map(str::to_owned)
-                            .collect()
-                    })
-                    .unwrap_or_default(),
-                deduped: true,
-            });
+                    .get("channel_identity_ref")
+                    .map(|value| EntityId::from_hex(value))
+                    .transpose()?,
+            ));
         }
 
         // Pre-validate the channel/verb capability before either the gate or
@@ -196,7 +257,7 @@ impl Memory<'_> {
         )?;
         drop(preflight_txn);
         if let EnqueueOutcome::Existing(attempt) = preflight {
-            return Ok(self.already_scheduled_outbound_receipt(attempt.id));
+            return Ok((self.already_scheduled_outbound_receipt(attempt.id), None));
         }
 
         // CAL-04 (ONE-1786) chokepoint admission, in its fixed order: exact
@@ -236,6 +297,9 @@ impl Memory<'_> {
         if let Some(session_ref) = originating_session_ref.as_deref() {
             request = request.originating_session(session_ref);
         }
+        if let Some(party) = counterparty_ref {
+            request = request.counterparty_ref(party);
+        }
         if let Some(payload) = calendar_invite {
             request = request.calendar_invite(payload.clone());
         }
@@ -249,19 +313,28 @@ impl Memory<'_> {
                 self.actor_class,
             )
             .map_err(facade_error_from_outbound_dispatch)?;
+        let sender_ref = result
+            .receipt
+            .fields
+            .get("channel_identity_ref")
+            .map(|value| EntityId::from_hex(value))
+            .transpose()?;
 
         // A denied schedule is fully audited by its Gate decision but never
         // becomes executable. Under the schedule-only Hold window, Held is the
         // sole outcome admitted to the durable queue.
         if result.outcome != OutboundDispatchOutcome::Held {
-            return Ok(OutboundIntentReceipt {
-                intent_ref: gate_intent_ref,
-                outcome: dispatch_outcome_str(&result.outcome).to_owned(),
-                gate_outcome: Some(result.gate_outcome),
-                gate_decision_ref: result.gate_decision_id,
-                gate_reason_codes: result.gate_reason_codes,
-                deduped: false,
-            });
+            return Ok((
+                OutboundIntentReceipt {
+                    intent_ref: gate_intent_ref,
+                    outcome: dispatch_outcome_str(&result.outcome).to_owned(),
+                    gate_outcome: Some(result.gate_outcome),
+                    gate_decision_ref: result.gate_decision_id,
+                    gate_reason_codes: result.gate_reason_codes,
+                    deduped: false,
+                },
+                sender_ref,
+            ));
         }
 
         let outcome = self.with_verified_actor_write_txn(|wtxn| {
@@ -288,6 +361,7 @@ impl Memory<'_> {
                     originating_session_ref.as_deref(),
                     schedule_context,
                     calendar_invite,
+                    counterparty_ref,
                     now,
                 )?;
                 // The SEQUENCE bump joins the SAME transaction as the ready
@@ -305,7 +379,7 @@ impl Memory<'_> {
         let attempt = match outcome {
             EnqueueOutcome::Enqueued(attempt) => attempt,
             EnqueueOutcome::Existing(attempt) => {
-                return Ok(self.already_scheduled_outbound_receipt(attempt.id));
+                return Ok((self.already_scheduled_outbound_receipt(attempt.id), None));
             }
         };
         let intent_ref = outbound_intent_ref(attempt.id);
@@ -318,14 +392,17 @@ impl Memory<'_> {
             result.gate_decision_id.as_deref(),
             &result.gate_reason_codes,
         );
-        Ok(OutboundIntentReceipt {
-            intent_ref,
-            outcome: dispatch_outcome_str(&result.outcome).to_owned(),
-            gate_outcome: Some(result.gate_outcome),
-            gate_decision_ref: result.gate_decision_id,
-            gate_reason_codes: result.gate_reason_codes,
-            deduped: false,
-        })
+        Ok((
+            OutboundIntentReceipt {
+                intent_ref,
+                outcome: dispatch_outcome_str(&result.outcome).to_owned(),
+                gate_outcome: Some(result.gate_outcome),
+                gate_decision_ref: result.gate_decision_id,
+                gate_reason_codes: result.gate_reason_codes,
+                deduped: false,
+            },
+            sender_ref,
+        ))
     }
 
     // ── calendar (CAL-09) ───────────────────────────────────────────────
