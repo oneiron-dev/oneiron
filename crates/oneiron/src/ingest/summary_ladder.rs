@@ -185,6 +185,62 @@ impl ScopedRead<'_> {
         }
         Ok(ScopedReadResult { value, receipt })
     }
+    /// Explicitly expand an authorized docs asset and run its opt-in NER on read.
+    /// A search hit alone never performs model work or writes claims.
+    pub fn expand_doc_ref_deep(
+        &self,
+        reference: &str,
+        owner: &crate::consent::AuthenticatedOwner,
+        extractor: &dyn super::DocsDeepExtractor,
+        now: u64,
+    ) -> Result<(
+        ScopedReadResult<Option<serde_json::Value>>,
+        Option<super::DocsDeepReceipt>,
+    )> {
+        if self.actor_key().actor_ref() != owner.principal_ref() {
+            return Err(crate::Error::InvalidConfig(
+                "docs read principal differs from owner".into(),
+            ));
+        }
+        let id = EntityId::from_hex(reference)?;
+        let parts = self.get_entity_parts_with_receipt(&id, None)?;
+        let expected_hash = parts
+            .value
+            .as_ref()
+            .and_then(|(kind, _, body)| {
+                (*kind == crate::registry::ENTITY_TYPE_ASSET)
+                    .then(|| rmp_serde::from_slice::<serde_json::Value>(body).ok())
+                    .flatten()
+            })
+            .and_then(|body| {
+                (body.get("source")?.as_str()? == "imported")
+                    .then(|| {
+                        body.get("text")?
+                            .as_str()
+                            .map(super::docs_deep::source_hash)
+                    })
+                    .flatten()
+            });
+        let expanded = ScopedReadResult {
+            value: parts
+                .value
+                .map(|(_, _, body)| crate::batch::export::redacted_memory_body(&body)),
+            receipt: parts.receipt,
+        };
+        let deep = if let Some(expected_hash) = expected_hash {
+            Some(self.vault().deep_ingest_docs_asset_checked(
+                owner,
+                id,
+                super::DocsDeepTrigger::OnRead,
+                extractor,
+                now,
+                Some((self, &expected_hash)),
+            )?)
+        } else {
+            None
+        };
+        Ok((expanded, deep))
+    }
 
     /// The old point hydration door stays available for existing callers.
     /// New agents use `expand_doc_ladder_ref` for the explicit next-rung refs.

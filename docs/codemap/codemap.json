@@ -7583,7 +7583,7 @@
      "path": "src/claim/scoped_read.rs",
      "purpose": "The policy-gated read lane: [`ScopedReadActorKey`], [`ScopedRead`], and the admission/filtering surface that…",
      "surface": {
-      "crate-vis": 5,
+      "crate-vis": 6,
       "fn": 14,
       "re-export": 3,
       "struct": 1
@@ -18473,7 +18473,7 @@
      "path": "src/ingest/admission.rs",
      "purpose": "Imported-evidence admission: typed claim and entity intake with JSON-to-MessagePack bridging",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 4,
       "fn": 7,
       "struct": 2
      }
@@ -18522,6 +18522,25 @@
      "bucket": "m",
      "kind": "src",
      "notable": [
+      "DocsDeepClaim",
+      "DocsDeepExtractor",
+      "DocsDeepReceipt",
+      "DocsDeepTrigger"
+     ],
+     "path": "src/ingest/docs_deep.rs",
+     "purpose": "On-demand docs NER: only a named trigger crosses the thin-star boundary",
+     "surface": {
+      "crate-vis": 6,
+      "enum": 1,
+      "fn": 1,
+      "struct": 2,
+      "trait": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
       "DocsDerivationEnvelope",
       "DocsImportCeiling",
       "DocsImportReceipt",
@@ -18537,7 +18556,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "test",
      "notable": [],
      "path": "src/ingest/docs_tests.rs",
@@ -18890,9 +18909,9 @@
      "path": "src/ingest/mod.rs",
      "purpose": "Ingest source registry and source-local normalization",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 4,
       "mod": 3,
-      "re-export": 13
+      "re-export": 14
      }
     },
     {
@@ -18962,7 +18981,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "DocsExpansion",
@@ -18973,7 +18992,7 @@
      "purpose": "Read-only knowledge ladder",
      "surface": {
       "enum": 1,
-      "fn": 4,
+      "fn": 5,
       "struct": 2
      }
     },
@@ -35640,7 +35659,7 @@
      "purpose": "OF-234 / ONE-1545: Dreamer-run inbox grouping + auto-approve exception queue"
     },
     "ingest": {
-     "files": 41,
+     "files": 42,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -36244,7 +36263,7 @@
    },
    "over_bar": 11,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2140,
+   "source_files": 2141,
    "test_files": 729
   },
   "oneiron-android": {
