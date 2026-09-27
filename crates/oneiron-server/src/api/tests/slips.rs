@@ -126,6 +126,32 @@ async fn v2_http_tamper_and_token_without_private_binding_refuse_401() {
     )
     .await;
     assert_eq!(status, StatusCode::OK);
+    // A different host signs the same claims; a holder proof cannot lend that
+    // foreign signature the authority of this logged mint.
+    let mut foreign_wire = serde_json::to_value(&slip).unwrap();
+    let mut mint_transcript = b"oneiron/capability-slip/v0/mint\0".to_vec();
+    mint_transcript.extend_from_slice(&serde_json::to_vec(&slip.claims).unwrap());
+    foreign_wire["signature"] = json!(
+        SigningKey::from_bytes(&[19; 32])
+            .sign(&mint_transcript)
+            .to_bytes()
+            .to_vec()
+    );
+    let foreign: CapabilitySlip = serde_json::from_value(foreign_wire).unwrap();
+    let (status, _) = route_json(
+        server.clone(),
+        Request::builder()
+            .uri("/v1/core/conversations")
+            .header(
+                AUTHORIZATION,
+                format!("Bearer {}", foreign.to_token().unwrap()),
+            )
+            .header("x-oneiron-binding", proof(&foreign, &holder))
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
     let used_proof = proof(&slip, &holder);
     for expected in [StatusCode::OK, StatusCode::UNAUTHORIZED] {
         let (status, _) = route_json(
@@ -271,7 +297,12 @@ async fn managed_pairing_revoke_and_org_setup_use_the_logged_host_root() {
     assert!(
         server
             .vault()
-            .verify_capability_slip(issuer, &slip, b"managed-proof", &binding.to_bytes())
+            .verify_capability_slip(
+                &issuer.public_key(),
+                &slip,
+                b"managed-proof",
+                &binding.to_bytes()
+            )
             .is_ok()
     );
     let response = app
@@ -292,7 +323,12 @@ async fn managed_pairing_revoke_and_org_setup_use_the_logged_host_root() {
     assert!(
         server
             .vault()
-            .verify_capability_slip(issuer, &slip, b"managed-proof", &binding.to_bytes())
+            .verify_capability_slip(
+                &issuer.public_key(),
+                &slip,
+                b"managed-proof",
+                &binding.to_bytes()
+            )
             .is_err()
     );
 
@@ -476,7 +512,28 @@ async fn relay_server_with_transport_secret_never_bootstraps_owner_authority() {
 
 #[tokio::test]
 async fn vault_clock_owns_http_proof_freshness_and_replay_admission() {
-    let (_dir, server) = server();
+    let wall = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs();
+    let floor = wall + 300;
+    let clock = oneiron::store::ports::ManualClock::new(floor);
+    let dir = tempfile::tempdir().unwrap();
+    let mut vault_config = oneiron::VaultConfig::device();
+    vault_config.retrieval_telemetry_capture = true;
+    vault_config.store_clock = clock.bundle();
+    let vault = Arc::new(oneiron::Vault::open(dir.path(), vault_config).unwrap());
+    assert_default_policy_manifest_fixture(vault.as_ref());
+    let server = Arc::new(
+        SyncServer::new(
+            vault,
+            SyncServerConfig {
+                auth_secret: Some(SLIP_SECRET.into()),
+                ..Default::default()
+            },
+        )
+        .unwrap(),
+    );
     let issuer = HostSlipIssuer::from_secret(SLIP_SECRET.as_bytes()).unwrap();
     let holder = SigningKey::from_bytes(&[89; 32]);
     let mut claims = server
@@ -492,17 +549,9 @@ async fn vault_clock_owns_http_proof_freshness_and_replay_admission() {
         .vault()
         .mint_capability_slip(&issuer, claims)
         .unwrap();
-    // Persisted authority time ahead of raw wall time models a backward clock
-    // step without changing the process clock or another test's vault.
-    let wall = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap()
-        .as_secs();
-    let floor = wall + 300;
-    server
-        .vault()
-        .sync_state_put("authlog:first_seen:clock_floor", &floor.to_be_bytes())
-        .unwrap();
+    // Roll back the source after minting. The vault's observed clock stays at
+    // its prior floor; proof admission uses that floor, not raw wall time.
+    clock.set(wall);
     let token = slip.to_token().unwrap();
     let request = |proof: &str| {
         Request::builder()
@@ -614,13 +663,16 @@ async fn narrowed_read_slips_can_read_static_capabilities_but_not_unscoped_recor
 
     let mut no_read = slip.clone();
     no_read
-        .attenuate(oneiron::authority::SlipCaveat {
-            scope: Some(Scope {
-                verbs: ScopeAxis::Bottom,
-                ..Scope::top()
-            }),
-            ..Default::default()
-        })
+        .attenuate(
+            oneiron::authority::SlipCaveat {
+                scope: Some(Scope {
+                    verbs: ScopeAxis::Bottom,
+                    ..Scope::top()
+                }),
+                ..Default::default()
+            },
+            &holder,
+        )
         .unwrap();
     for path in paths {
         let (status, _) = route_json(server.clone(), request(&no_read, path)).await;

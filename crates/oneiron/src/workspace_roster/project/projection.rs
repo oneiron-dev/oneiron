@@ -130,6 +130,9 @@ pub(crate) fn reconcile_project_rooms(
                 Err(Error::InvalidConfig(_)) => return Err(invalid_room()),
                 other => other?,
             };
+        if previous.is_none() && !crate::conversation::fresh_id_in_txn(store, txn, room_id)? {
+            return Err(invalid_room());
+        }
         if previous
             .as_ref()
             .is_some_and(|old| old.project_id != id.to_hex())
