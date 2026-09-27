@@ -153,7 +153,7 @@ pub fn resolve_serve_config_with_sources(
         if values.hosted_kms_key_ref.is_some() {
             key_ref_source = Some(source);
         }
-        values.apply_to(&mut resolved);
+        values.apply_to(&mut resolved)?;
     }
     // Only the final posture may discard inherited custody. An intermediate
     // self-host layer can still be overridden by a later hosted layer, which
@@ -523,7 +523,7 @@ impl fmt::Debug for PartialServeConfig {
 }
 
 impl PartialServeConfig {
-    fn apply_to(self, resolved: &mut ServeConfig) {
+    fn apply_to(self, resolved: &mut ServeConfig) -> anyhow::Result<()> {
         if let Some(value) = self.vault_path {
             resolved.vault_path = expand_home(value);
         }
@@ -621,7 +621,7 @@ impl PartialServeConfig {
             resolved
                 .embedder
                 .get_or_insert_with(EmbedderConfig::default)
-                .apply_override(value);
+                .apply_override(value)?;
         }
         if let Some(value) = self.failure_signal_export {
             resolved.failure_signal_export = value;
@@ -635,6 +635,7 @@ impl PartialServeConfig {
         if let Some(value) = self.hosted_kms_key_ref {
             resolved.hosted_kms_key_ref = Some(value);
         }
+        Ok(())
     }
 }
 

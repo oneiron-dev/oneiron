@@ -175,6 +175,98 @@ fn a_cuda_device_resolves_through_the_environment() {
 }
 
 #[test]
+fn shipped_auto_device_policy_is_an_ordered_manifest_row() {
+    let resolved = resolve("dimensions = 1024\n\n[embedder]\n").expect("local default");
+    assert_eq!(
+        resolved.embedder.expect("embedder").local.auto_devices,
+        [
+            EmbedderDevice::Metal,
+            EmbedderDevice::Cuda,
+            EmbedderDevice::Cpu
+        ],
+    );
+}
+
+#[test]
+fn vault_policy_may_reorder_and_nested_layers_may_only_narrow_auto_candidates() {
+    let resolved = resolve(
+        r#"dimensions = 1024
+[embedder]
+device = "auto"
+[embedder.policy]
+auto_devices = ["cpu", "cuda"]
+"#,
+    )
+    .expect("vault-local reordered policy");
+    assert_eq!(
+        resolved.embedder.expect("embedder").local.auto_devices,
+        [EmbedderDevice::Cpu, EmbedderDevice::Cuda]
+    );
+
+    let (_dir, args) = config_file(
+        r#"dimensions = 1024
+[embedder]
+[embedder.policy]
+auto_devices = ["cuda", "cpu"]
+"#,
+    );
+    let env =
+        EnvConfig::from_pairs([("ONEIRON_EMBEDDER_AUTO_DEVICES", "cpu")]).expect("narrow env row");
+    let resolved = resolve_serve_config_with_sources(&args, env, None).expect("narrowed");
+    assert_eq!(
+        resolved.embedder.expect("embedder").local.auto_devices,
+        [EmbedderDevice::Cpu]
+    );
+
+    let (_dir, mut args) = config_file(
+        r#"dimensions = 1024
+[embedder]
+[embedder.policy]
+auto_devices = ["cpu"]
+"#,
+    );
+    args.embedder.embedder_auto_devices = vec![EmbedderDevice::Cuda, EmbedderDevice::Cpu];
+    let error = resolve_serve_config_with_sources(&args, EnvConfig::default(), None)
+        .expect_err("argv cannot re-enable CUDA above a CPU-only vault policy");
+    assert!(
+        error.to_string().contains("embedder.policy.auto_devices"),
+        "{error}"
+    );
+}
+
+#[test]
+fn the_auto_policy_cli_flag_parses_one_ordered_row() {
+    #[derive(clap::Parser)]
+    struct DeviceCli {
+        #[command(flatten)]
+        args: super::embedder::EmbedderArgs,
+    }
+    let parsed = <DeviceCli as clap::Parser>::try_parse_from([
+        "oneiron-server",
+        "--embedder-auto-devices",
+        "cpu,cuda",
+    ])
+    .expect("policy flag parses");
+    assert_eq!(
+        parsed.args.embedder_auto_devices,
+        vec![EmbedderDevice::Cpu, EmbedderDevice::Cuda]
+    );
+}
+
+#[test]
+fn malformed_auto_device_policy_is_refused_before_model_load() {
+    for value in ["[]", "[\"auto\", \"cpu\"]", "[\"cpu\", \"cpu\"]"] {
+        let body =
+            format!("dimensions = 1024\n[embedder]\n[embedder.policy]\nauto_devices = {value}\n");
+        let error = resolve(&body).expect_err("invalid auto policy");
+        assert!(
+            error.to_string().contains("embedder.policy.auto_devices"),
+            "{error}"
+        );
+    }
+}
+
+#[test]
 fn an_unknown_provider_name_fails_closed() {
     let error = resolve("dimensions = 1024\n\n[embedder]\nprovider = \"magic\"\n")
         .expect_err("an unknown provider is refused");

@@ -44,6 +44,14 @@ dimensions = 1024
 # models_dir = "/Volumes/Cinema/models/oneiron"
 batch_size = 32
 lease_ms = 30000                    # 120000 is a better fit on a CPU-only host
+
+# Optional vault-local auto-device policy. The shipped manifest at
+# policy/embedder.toml says ["metal", "cuda", "cpu"]. File, environment
+# (ONEIRON_EMBEDDER_AUTO_DEVICES=cuda,cpu), and CLI
+# (--embedder-auto-devices cuda,cpu) use the normal precedence, but each
+# higher layer can only narrow/reorder the preceding candidate set.
+# [embedder.policy]
+# auto_devices = ["cuda", "cpu"]
 ```
 
 `provider = "local"` runs the model in-process on candle. On first use it
@@ -63,8 +71,11 @@ cargo build -p oneiron-server --release --features candle-core/cuda,candle-nn/cu
 
 The default build and `--all-features` remain toolchain-free on Linux. CUDA
 requires the CUDA toolkit and a compatible NVIDIA driver at build/run time.
-`device = "cuda"` fails if CUDA is unavailable; `auto` tries Metal, then CUDA,
-then CPU. Q8_0 weights are quantised on the CPU at load and uploaded to CUDA.
+`device = "cuda"` fails before any model download if CUDA is unavailable;
+`auto` tries only the vault policy's ordered candidates (Metal, CUDA, then CPU
+by default). If policy excludes CPU and no allowed GPU is reachable, `auto`
+fails closed instead of silently falling back to CPU. Q8_0 weights are
+quantised on the CPU at load and uploaded to CUDA.
 For a Linux Radeon host, candle has no Vulkan backend: use `cpu`, or set
 `provider = "endpoint"` to a separately hosted OpenAI-compatible embeddings
 server (for example llama-server with Vulkan), with the correct `model_id`,

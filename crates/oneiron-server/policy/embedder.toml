@@ -1,0 +1,4 @@
+# Shipped per-vault local embedder auto-device policy. A host may copy this
+# row to [embedder.policy] in its vault's server config and narrow or reorder
+# the candidates. Only these listed devices are ever tried by `auto`.
+auto_devices = ["metal", "cuda", "cpu"]

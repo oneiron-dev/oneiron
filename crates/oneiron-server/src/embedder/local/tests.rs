@@ -413,20 +413,20 @@ fn quantised_weights_run_in_f32_and_bf16_weights_run_in_bf16() {
 #[test]
 fn an_explicitly_named_unavailable_device_is_an_error_not_a_downgrade() {
     // `auto` always resolves: the CPU is always there.
-    assert!(device::resolve_device(EmbedderDevice::Auto).is_ok());
+    assert!(resolve_test_device(EmbedderDevice::Auto).is_ok());
     assert!(matches!(
-        device::resolve_device(EmbedderDevice::Cpu),
+        resolve_test_device(EmbedderDevice::Cpu),
         Ok(Device::Cpu)
     ));
     if Device::new_metal(0).is_err() {
         assert!(
-            device::resolve_device(EmbedderDevice::Metal).is_err(),
+            resolve_test_device(EmbedderDevice::Metal).is_err(),
             "a named device this build cannot reach is refused"
         );
     }
     if Device::new_metal(0).is_err() && Device::new_cuda(0).is_err() {
         assert!(matches!(
-            device::resolve_device(EmbedderDevice::Auto),
+            resolve_test_device(EmbedderDevice::Auto),
             Ok(Device::Cpu)
         ));
     }
@@ -436,14 +436,34 @@ fn an_explicitly_named_unavailable_device_is_an_error_not_a_downgrade() {
 fn a_named_cuda_device_is_an_error_when_unavailable_not_a_cpu_downgrade() {
     if Device::new_cuda(0).is_err() {
         assert!(
-            device::resolve_device(EmbedderDevice::Cuda).is_err(),
+            resolve_test_device(EmbedderDevice::Cuda).is_err(),
             "a named unavailable CUDA device must fail closed"
         );
     } else {
         assert!(matches!(
-            device::resolve_device(EmbedderDevice::Cuda),
+            resolve_test_device(EmbedderDevice::Cuda),
             Ok(Device::Cuda(_))
         ));
+    }
+}
+
+fn resolve_test_device(configured: EmbedderDevice) -> oneiron::Result<Device> {
+    device::resolve_device(
+        configured,
+        &crate::config::LocalEmbedderConfig::default().auto_devices,
+    )
+}
+
+#[test]
+fn auto_honours_a_vault_narrowed_cpu_only_candidate_set() {
+    assert!(matches!(
+        device::resolve_device(EmbedderDevice::Auto, &[EmbedderDevice::Cpu]),
+        Ok(Device::Cpu)
+    ));
+    if Device::new_cuda(0).is_err() {
+        let error = device::resolve_device(EmbedderDevice::Auto, &[EmbedderDevice::Cuda])
+            .expect_err("a disallowed CPU may not become a silent fallback");
+        assert!(matches!(error, oneiron::Error::InvalidConfig(_)));
     }
 }
 
@@ -701,6 +721,95 @@ impl StubSource {
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .clone()
     }
+}
+
+/// A named accelerator refusal must happen before either public model
+/// acquisition door reaches an HTTP source or creates the cache directory.
+#[test]
+fn unavailable_cuda_refuses_prepare_and_load_before_acquiring_any_artifact() {
+    if Device::new_cuda(0).is_ok() {
+        // On an NVIDIA build, CUDA is available; this refusal is proved on
+        // toolchain-less CI and on every host without a CUDA device.
+        return;
+    }
+    let source = StubSource::start();
+    let root = tempfile::tempdir().expect("model cache root");
+    let mut config = crate::config::EmbedderConfig::default();
+    config.local.device = EmbedderDevice::Cuda;
+    config.local.models_dir = Some(root.path().to_path_buf());
+    let manager = model_manager::ModelManager::with_base_url(&source.base);
+
+    let first = super::prepare_with_manager(&config, &manager).expect_err("CUDA is unavailable");
+    let second = LocalEmbedder::load(&config, &manager)
+        .err()
+        .expect("CUDA is unavailable");
+    for error in [first, second] {
+        assert!(
+            matches!(error, oneiron::Error::InvalidConfig(ref message) if message.contains("cuda")),
+            "{error:?}"
+        );
+    }
+    assert!(
+        source.paths().is_empty(),
+        "no HTTP request reached the source"
+    );
+    assert_eq!(
+        std::fs::read_dir(root.path()).expect("cache root").count(),
+        0,
+        "no artifact directory was created"
+    );
+}
+
+/// An auto-selected available fallback still reaches the artifact source.
+#[test]
+fn auto_fallback_can_prepare_an_uncached_model() {
+    let source = StubSource::start();
+    let root = tempfile::tempdir().expect("model cache root");
+    let mut config = crate::config::EmbedderConfig::default();
+    config.local.repo = "fixture/model".to_owned();
+    config.local.models_dir = Some(root.path().to_path_buf());
+    let manager = model_manager::ModelManager::with_base_url(&source.base);
+
+    let label = super::prepare_with_manager(&config, &manager).expect("auto can prepare");
+    assert_eq!(
+        label,
+        device::device_label(&resolve_test_device(EmbedderDevice::Auto).expect("auto device"))
+    );
+    let model_dir = model_manager::model_dir(&config.local).expect("model dir");
+    assert_eq!(
+        std::fs::read_to_string(model_dir.join("config.json")).expect("first artifact"),
+        STUB_BODY
+    );
+    assert_eq!(source.paths().len(), model_manager::HARRIER_06_FILES.len());
+}
+
+/// A vault that removes CPU from auto must not silently use it when its only
+/// permitted accelerator is unavailable. This is the same acquisition door
+/// the worker uses, not just an isolated device-selector test.
+#[test]
+fn narrowed_auto_policy_refuses_before_acquiring_artifacts_when_no_candidate_is_available() {
+    if Device::new_cuda(0).is_ok() {
+        return;
+    }
+    let source = StubSource::start();
+    let root = tempfile::tempdir().expect("model cache root");
+    let mut config = crate::config::EmbedderConfig::default();
+    config.local.models_dir = Some(root.path().to_path_buf());
+    config.local.auto_devices = vec![EmbedderDevice::Cuda];
+    let manager = model_manager::ModelManager::with_base_url(&source.base);
+
+    let error = super::prepare_with_manager(&config, &manager)
+        .expect_err("CPU fallback was excluded by the vault policy");
+    assert!(matches!(error, oneiron::Error::InvalidConfig(_)));
+    assert!(
+        source.paths().is_empty(),
+        "no HTTP request reached the source"
+    );
+    assert_eq!(
+        std::fs::read_dir(root.path()).expect("cache root").count(),
+        0,
+        "no artifact directory was created"
+    );
 }
 
 /// A file on disk whose digest does not match is removed and fetched again.

@@ -194,6 +194,24 @@ impl FromStr for EmbedderLocality {
     }
 }
 
+/// Vault-local policy-manifest contribution for automatic device selection.
+/// Each configuration layer may reorder or narrow the candidates, but it
+/// cannot re-enable a device that a lower layer disallowed. A named device is
+/// an explicit selection and does not consult this auto-only policy.
+#[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq)]
+#[serde(default, deny_unknown_fields)]
+pub struct LocalDevicePolicy {
+    pub auto_devices: Option<Vec<EmbedderDevice>>,
+}
+
+fn shipped_auto_devices() -> Vec<EmbedderDevice> {
+    let policy: LocalDevicePolicy = toml::from_str(include_str!("../../policy/embedder.toml"))
+        .expect("shipped embedder device policy parses");
+    policy
+        .auto_devices
+        .expect("shipped auto_devices row exists")
+}
+
 /// Keys only the local provider reads.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct LocalEmbedderConfig {
@@ -206,6 +224,8 @@ pub struct LocalEmbedderConfig {
     /// Root the downloaded artifacts live under. Defaults to the XDG data dir.
     pub models_dir: Option<PathBuf>,
     pub device: EmbedderDevice,
+    /// Vault-capped, ordered candidates for `device = "auto"`.
+    pub auto_devices: Vec<EmbedderDevice>,
     /// Threads the load-time quantisation spreads over. `0` means "as many as
     /// this machine has cores". It does not change the forward pass, whose
     /// parallelism is candle's own.
@@ -221,6 +241,7 @@ impl Default for LocalEmbedderConfig {
             model_dir: None,
             models_dir: None,
             device: EmbedderDevice::default(),
+            auto_devices: shipped_auto_devices(),
             threads: 0,
         }
     }
@@ -299,13 +320,14 @@ impl EmbedderConfig {
         !matches!(self.provider, EmbedderProvider::None)
     }
 
-    pub(super) fn apply_override(&mut self, over: EmbedderConfigOverride) {
+    pub(super) fn apply_override(&mut self, over: EmbedderConfigOverride) -> anyhow::Result<()> {
         apply_common(self, &over);
-        apply_local(&mut self.local, &over);
+        apply_local(&mut self.local, &over)?;
         apply_endpoint(&mut self.endpoint, &over);
         if over.remote.is_some() {
             self.remote = over.remote;
         }
+        Ok(())
     }
 }
 
@@ -336,7 +358,10 @@ fn apply_common(config: &mut EmbedderConfig, over: &EmbedderConfigOverride) {
     }
 }
 
-fn apply_local(local: &mut LocalEmbedderConfig, over: &EmbedderConfigOverride) {
+fn apply_local(
+    local: &mut LocalEmbedderConfig,
+    over: &EmbedderConfigOverride,
+) -> anyhow::Result<()> {
     if let Some(value) = over.repo.clone() {
         local.repo = value;
     }
@@ -358,6 +383,25 @@ fn apply_local(local: &mut LocalEmbedderConfig, over: &EmbedderConfigOverride) {
     if let Some(value) = over.threads {
         local.threads = value;
     }
+    if let Some(devices) = over
+        .policy
+        .as_ref()
+        .and_then(|policy| policy.auto_devices.as_ref())
+    {
+        if devices.is_empty()
+            || devices.iter().any(|device| {
+                *device == EmbedderDevice::Auto
+                    || !local.auto_devices.contains(device)
+                    || devices.iter().filter(|item| *item == device).count() != 1
+            })
+        {
+            anyhow::bail!(
+                "embedder.policy.auto_devices must be a non-empty, unique subset of the lower-precedence candidates, excluding auto"
+            );
+        }
+        local.auto_devices.clone_from(devices);
+    }
+    Ok(())
 }
 
 fn apply_endpoint(endpoint: &mut EndpointEmbedderConfig, over: &EmbedderConfigOverride) {
@@ -402,6 +446,7 @@ pub struct EmbedderConfigOverride {
     pub model_dir: Option<PathBuf>,
     pub models_dir: Option<PathBuf>,
     pub device: Option<EmbedderDevice>,
+    pub policy: Option<LocalDevicePolicy>,
     pub threads: Option<usize>,
     pub endpoint: Option<String>,
     pub model_key: Option<String>,
@@ -442,6 +487,7 @@ impl EmbedderConfigOverride {
             model_dir,
             models_dir,
             device,
+            policy,
             threads,
             endpoint,
             model_key,
@@ -503,6 +549,10 @@ pub struct EmbedderArgs {
     /// Local device: `auto`, `cpu`, `metal` or `cuda`.
     #[arg(long = "embedder-device", value_parser = parse_device)]
     pub embedder_device: Option<EmbedderDevice>,
+    /// Vault-local automatic device policy: comma-separated candidates in
+    /// preference order, e.g. `cuda,cpu`; a later layer may only narrow.
+    #[arg(long = "embedder-auto-devices", value_delimiter = ',', value_parser = parse_device)]
+    pub embedder_auto_devices: Vec<EmbedderDevice>,
     /// Threads the load-time quantisation spreads over; `0` means all cores.
     #[arg(long = "embedder-threads")]
     pub embedder_threads: Option<usize>,
@@ -539,6 +589,10 @@ fn parse_device(value: &str) -> Result<EmbedderDevice, String> {
     value.parse()
 }
 
+fn parse_auto_devices(value: &str) -> Result<Vec<EmbedderDevice>, String> {
+    value.split(',').map(str::trim).map(str::parse).collect()
+}
+
 fn parse_locality(value: &str) -> Result<EmbedderLocality, String> {
     value.parse()
 }
@@ -562,6 +616,9 @@ impl From<&EmbedderArgs> for EmbedderConfigOverride {
             model_dir: args.embedder_model_dir.clone(),
             models_dir: args.embedder_models_dir.clone(),
             device: args.embedder_device,
+            policy: (!args.embedder_auto_devices.is_empty()).then(|| LocalDevicePolicy {
+                auto_devices: Some(args.embedder_auto_devices.clone()),
+            }),
             threads: args.embedder_threads,
             endpoint: args.embedder_endpoint.clone(),
             model_key: args.embedder_model_key.clone(),
@@ -605,6 +662,14 @@ pub(super) fn lookup_embedder_override(
         model_dir: lookup_path(lookup, "ONEIRON_EMBEDDER_MODEL_DIR"),
         models_dir: lookup_path(lookup, "ONEIRON_EMBEDDER_MODELS_DIR"),
         device: lookup_parse(lookup, "ONEIRON_EMBEDDER_DEVICE")?,
+        policy: lookup("ONEIRON_EMBEDDER_AUTO_DEVICES")
+            .map(|value| {
+                parse_auto_devices(&value).map(|auto_devices| LocalDevicePolicy {
+                    auto_devices: Some(auto_devices),
+                })
+            })
+            .transpose()
+            .map_err(anyhow::Error::msg)?,
         threads: lookup_parse(lookup, "ONEIRON_EMBEDDER_THREADS")?,
         endpoint: lookup("ONEIRON_EMBEDDER_ENDPOINT"),
         model_key: lookup("ONEIRON_EMBEDDER_MODEL_KEY"),
