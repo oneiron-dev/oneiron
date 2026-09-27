@@ -58,7 +58,9 @@ fn propose_in_txn(
 ) -> Result<PolicyRowProposal> {
     if change.row_ref().trim().is_empty()
         || matches!(change.scope(), crate::gate::PolicyRowScope::World(s) | crate::gate::PolicyRowScope::Project(s) if s.trim().is_empty())
-        || matches!(&change, PolicyRowChange::Add { text, .. } | PolicyRowChange::Edit { text, .. } if text.trim().is_empty())
+        || matches!(change.scope(), crate::gate::PolicyRowScope::WorldProject { world, project } if world.trim().is_empty() || project.trim().is_empty())
+        || matches!(&change, PolicyRowChange::Add { text, .. } | PolicyRowChange::Edit { text, .. } | PolicyRowChange::AddWithWhy { text, .. } | PolicyRowChange::EditWithWhy { text, .. } if text.trim().is_empty())
+        || matches!(&change, PolicyRowChange::AddWithWhy { why, .. } | PolicyRowChange::EditWithWhy { why, .. } | PolicyRowChange::DraftWhy { why, .. } if why.trim().is_empty())
     {
         return Err(Error::InvalidConfig(
             "invalid owner policy row proposal".to_owned(),
