@@ -29,6 +29,23 @@ pub(crate) use storage::{
 };
 pub use verbs::{AnchoredEdit, EditVerb, TextAnchor, TextUpdateOutcome, TextUpdateRequest};
 
+/// Resolve an active document's identity and live frontier in a caller-owned
+/// transaction. An unmigrated row has no document plane.
+pub(crate) fn source_frontier_in_txn(
+    store: &crate::store::Store,
+    txn: &heed::RoTxn<'_>,
+    entity: &crate::EntityId,
+) -> crate::Result<Option<Vec<u8>>> {
+    if !storage::has_record_head(store, txn, entity)? {
+        return Ok(None);
+    }
+    let head = storage::head(store, txn, entity)?;
+    let doc = storage::load(store, txn, &head)?;
+    let mut pin = head.incarnation.into_bytes();
+    pin.extend_from_slice(&doc.frontier());
+    Ok(Some(pin))
+}
+
 use crate::error::{ArtifactError, Error};
 
 fn invalid(reason: &'static str) -> Error {

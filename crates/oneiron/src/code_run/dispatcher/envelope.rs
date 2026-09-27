@@ -240,7 +240,7 @@ const fn bridge_call_is_external_effect(effect: SelfEffect) -> bool {
         | SelfEffect::MemoryPutClaim
         | SelfEffect::MemorySupersedeClaim
         | SelfEffect::MemoryPutEdge
-        | SelfEffect::AskHuman
+        | SelfEffect::Ask
         | SelfEffect::DestructiveFixture
         | SelfEffect::AgentsSpawn
         | SelfEffect::TasksAsk
@@ -253,6 +253,7 @@ const fn bridge_call_is_external_effect(effect: SelfEffect) -> bool {
         | SelfEffect::ReportBlocked
         | SelfEffect::InferenceDefaultsRead
         | SelfEffect::InferenceDefaultsReplace => false,
+        SelfEffect::WakePolicyWrite => false,
     }
 }
 
