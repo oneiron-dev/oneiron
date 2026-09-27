@@ -8,13 +8,12 @@ use crate::Vault;
 use crate::authority::{AuthorityFold, FederationPactStatus};
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::claim::{COREFERENCE_PACT_ID_LEN, ClaimLifecycleStatus};
-use crate::companion::decode_companion_record_body;
 use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::federation::{
-    FederationDirectionScope, FederationGrantScope, FederationScopeBands, FederationScopeFacets,
-    SelectorRange, selector_range_of,
+    FederationDirectionScope, FederationScopeBands, FederationScopeFacets, SelectorRange,
+    selector_range_of,
 };
 use crate::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_FACET, ENTITY_TYPE_WORLD};
 use crate::sync::bridge::parse_edge_key;
@@ -531,7 +530,6 @@ pub(super) fn band_filter(position: &FederationDirectionScope) -> Option<&[Selec
 pub(super) fn entity_selector_decision(
     vault: &Vault,
     entity: (&EntityId, &[u8]),
-    grant_scope: FederationGrantScope,
     selector: &SyncSelector,
     facet_scope: &HashMap<EntityId, FacetScope>,
     position: &FederationDirectionScope,
@@ -552,10 +550,12 @@ pub(super) fn entity_selector_decision(
     {
         return None;
     }
-    if header.entity_type == crate::registry::ENTITY_TYPE_FACET
-        && crate::companion::is_identity_facet_body(&blob[ENTITY_METADATA_HEADER_LEN..])
-        && !companion_register_passes_selector(blob, grant_scope)
-    {
+    // Companion-shaped FACETs are retired identity stores, not masks.
+    // Never let them leave as generic FACETs under any selector/grant.
+    if crate::companion::is_retired_identity_carrier(
+        header.entity_type,
+        &blob[ENTITY_METADATA_HEADER_LEN..],
+    ) {
         return None;
     }
     // Registration is mandatory even for an unfiltered selector. Unknown
@@ -637,25 +637,6 @@ fn coreference_claim_passes(
     }
     crate::claim::decode_claim_body(&blob[ENTITY_METADATA_HEADER_LEN..], true)
         .is_ok_and(|body| coreference.claim_travels(&body))
-}
-
-fn companion_register_passes_selector(blob: &[u8], grant_scope: FederationGrantScope) -> bool {
-    let Ok(record) = decode_companion_record_body(&blob[ENTITY_METADATA_HEADER_LEN..]) else {
-        return false;
-    };
-    if !matches!(
-        record.lifecycle,
-        ClaimLifecycleStatus::Active | ClaimLifecycleStatus::Retracted
-    ) {
-        return false;
-    }
-    let FederationGrantScope::Vault { vault_id } = grant_scope else {
-        return false;
-    };
-    crate::channel_identity::ChannelIdentityBinding::vault(vault_id)
-        .permits_companion_scope(&record.scope)
-        && crate::federation::SensitivityCeiling::AtMost(crate::federation::Sensitivity::Sensitive)
-            .permits(record.sensitivity)
 }
 
 fn world_passes(entity_type: u8, body: &[u8], world: SyncSelectorWorld) -> bool {
