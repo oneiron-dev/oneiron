@@ -5,6 +5,7 @@
 //! contract.
 
 use super::*;
+use crate::dreamer_wake::{AgentWakeRole, AgentWakeSignals, CadencePrecedence};
 use crate::error::{ArtifactError, ErrorKind, RegistryError};
 use crate::registry::{
     ENTITY_TYPE_SKILL, EntityClassification, TypeByteZone, entity_type_registry_entry,
@@ -1816,7 +1817,10 @@ fn seeded_work_agents_inherit_dreaming() -> Result<()> {
 
 #[test]
 fn resident_cadence_dials_round_trip_and_choose_their_own_triggers() -> Result<()> {
-    let grain = crate::dreamer_wake::WakeGrain::new(3)?;
+    let mut policy: crate::dreamer_wake::DreamerWakePolicy =
+        serde_json::from_str(include_str!("../dreamer_wake/wake_policy_defaults.json"))
+            .expect("shipped wake policy");
+    policy.wake_grain_turns = 3;
     let companion = AgentWakeCadence::Companion { every_turns: None };
     let leader = AgentWakeCadence::Leader {
         every_turns: Some(2),
@@ -1825,26 +1829,83 @@ fn resident_cadence_dials_round_trip_and_choose_their_own_triggers() -> Result<(
     for dial in [companion, leader, worker] {
         let agent = minimal_agent("1").with_wake_cadence(dial);
         assert_eq!(
-            decode_agent_definition(&encode_agent_definition(&agent)?)?.wake_cadence(),
-            dial
+            decode_agent_definition(&encode_agent_definition(&agent)?)?.wake_cadence,
+            Some(dial)
         );
     }
-    assert!(!companion.due(grain, 2, false, false, false));
-    assert!(companion.due(grain, 3, false, false, false));
-    assert!(companion.due(grain, 2, true, false, false));
-    assert!(companion.due(grain, 2, false, true, false));
-    assert!(leader.due(grain, 2, false, false, false));
-    assert!(!leader.due(grain, 1, true, false, false));
-    assert!(leader.due(grain, 1, false, true, false));
-    assert!(!worker.due(grain, 3, true, true, false));
-    assert!(worker.due(grain, 1, false, false, true));
-    assert_eq!(minimal_agent("1").wake_cadence(), worker);
-    let mut disabled = minimal_agent("1").with_wake_cadence(companion);
+    let companion = minimal_agent("1").with_wake_cadence(companion);
+    let leader = minimal_agent("1").with_wake_cadence(leader);
+    let worker = minimal_agent("1").with_wake_cadence(worker);
+    assert!(!companion.dream_wake_due(&policy, 2, AgentWakeSignals::default()));
+    assert!(companion.dream_wake_due(&policy, 3, AgentWakeSignals::default()));
+    assert!(companion.dream_wake_due(
+        &policy,
+        2,
+        AgentWakeSignals {
+            surprise: true,
+            ..Default::default()
+        }
+    ));
+    assert!(!leader.dream_wake_due(&policy, 2, AgentWakeSignals::default()));
+    assert!(leader.dream_wake_due(&policy, 3, AgentWakeSignals::default()));
+    assert!(!leader.dream_wake_due(
+        &policy,
+        1,
+        AgentWakeSignals {
+            surprise: true,
+            ..Default::default()
+        }
+    ));
+    assert!(leader.dream_wake_due(
+        &policy,
+        1,
+        AgentWakeSignals {
+            agency: true,
+            ..Default::default()
+        }
+    ));
+    assert!(!worker.dream_wake_due(
+        &policy,
+        3,
+        AgentWakeSignals {
+            surprise: true,
+            agency: true,
+            ..Default::default()
+        }
+    ));
+    assert!(worker.dream_wake_due(
+        &policy,
+        1,
+        AgentWakeSignals {
+            event: true,
+            ..Default::default()
+        }
+    ));
+    assert!(!minimal_agent("1").dream_wake_due(&policy, 3, AgentWakeSignals::default()));
+    policy.agent_cadence.absent_role = AgentWakeRole::Companion;
+    assert!(minimal_agent("1").dream_wake_due(&policy, 3, AgentWakeSignals::default()));
+    policy.agent_cadence.precedence = CadencePrecedence::AgentOverride;
+    assert!(leader.dream_wake_due(&policy, 2, AgentWakeSignals::default()));
+    let mut disabled = companion;
     disabled.enabled = false;
-    assert!(!disabled.dream_wake_due(grain, 3, true, true, true));
+    assert!(!disabled.dream_wake_due(
+        &policy,
+        3,
+        AgentWakeSignals {
+            event: true,
+            ..Default::default()
+        }
+    ));
     disabled.enabled = true;
     disabled.dreaming = Some(DreamingMode::Off);
-    assert!(!disabled.dream_wake_due(grain, 3, true, true, true));
+    assert!(!disabled.dream_wake_due(
+        &policy,
+        3,
+        AgentWakeSignals {
+            event: true,
+            ..Default::default()
+        }
+    ));
     Ok(())
 }
 

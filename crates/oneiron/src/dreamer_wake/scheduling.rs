@@ -7,7 +7,10 @@ use crate::dreamer_runner::{
     EnqueueDreamerAttemptOutcome, EnqueueDreamerConsolidationAttempt,
     EnqueueDreamerVaultCleanupAttempt,
 };
+use crate::entity_id::EntityId;
 use crate::error::Result;
+
+use super::policy::AgentWakeSignals;
 
 use super::types::WakeTrigger;
 
@@ -139,6 +142,18 @@ pub fn request_compaction_wake_with_packet(
     )
 }
 
+/// Whose turn is being scheduled. The agent variant resolves the STORED
+/// definition in the same transaction as the policy and enqueue, so a caller
+/// cannot substitute a stale or invented cadence dial.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WakeTurnSubject {
+    Vault,
+    Agent {
+        id: EntityId,
+        signals: AgentWakeSignals,
+    },
+}
+
 /// Schedule the projector's turn wake through the one engine enqueue door.
 ///
 /// `projection_digest` is the SHA-256 of the projector's proposed image, not
@@ -156,6 +171,7 @@ pub fn request_compaction_wake_with_packet(
 )]
 pub fn request_turn_wake(
     store: &DreamerRunnerStore<'_>,
+    subject: WakeTurnSubject,
     turn_ordinal: u64,
     projection_digest: Option<[u8; 32]>,
     payload: DreamerAttemptPayload,
@@ -168,7 +184,16 @@ pub fn request_turn_wake(
     };
     let vault = store.vault();
     let mut txn = vault.store.env.write_txn()?;
-    if !vault.wake_grain_in_txn(&txn)?.due(turn_ordinal) {
+    let policy = super::policy::policy_in_txn(vault, &txn)?;
+    let due = match subject {
+        WakeTurnSubject::Vault => {
+            super::grain::WakeGrain::new(policy.wake_grain_turns)?.due(turn_ordinal)
+        }
+        WakeTurnSubject::Agent { id, signals } => vault
+            .read_agent_definition_in_txn(&txn, &id)?
+            .dream_wake_due(&policy, turn_ordinal, signals),
+    };
+    if !due {
         return Ok(None);
     }
     if vault.queued_wake_projection_in_txn(&txn)? == Some(projection_digest) {
