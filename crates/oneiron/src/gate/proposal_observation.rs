@@ -3,9 +3,6 @@
 use crate::{EntityId, Result, Vault, error::Error, store::Store};
 use serde::{Deserialize, Serialize};
 
-/// Default is above ordinary fleet volume. A trusted manifest may set a
-/// different positive advisory threshold; it never becomes an admission cap.
-pub(crate) const DEFAULT_PROPOSAL_CHECK_THRESHOLD: u64 = 1_000_000;
 const COUNT: &[u8] = b"proposal:actor_count:v1:";
 const RECEIPT: &[u8] = b"proposal:submission:v1:";
 const HISTORY: &[u8] = b"proposal:receipt:v1:";

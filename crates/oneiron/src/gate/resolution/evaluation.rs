@@ -10,6 +10,7 @@ use crate::gate::ceiling::{
 use crate::gate::decision::{GateDecision, GateReasonCode, external_effect_receipt_reasons};
 use crate::gate::grants::external_effect_grant_matches;
 use crate::gate::input::{GateContentKind, GateEvaluatorInput, consent_ladder_reasons};
+use crate::gate::policy_values::{PolicyEvaluationScope, PolicyValue, PolicyValueKey};
 
 #[cfg_attr(not(test), allow(dead_code))]
 impl PolicyManifestResolution {
@@ -164,6 +165,17 @@ impl PolicyManifestResolution {
         input: &GateEvaluatorInput,
         lineage: Option<&SourceLineage>,
     ) -> GateDecision {
+        self.evaluate_gate_in_scope(input, lineage, &PolicyEvaluationScope::default())
+    }
+
+    /// Resolve behaviour rows using the trusted location of the operation.
+    /// A scoped row is never authority to expand an actor ceiling or disclosure.
+    pub(crate) fn evaluate_gate_in_scope(
+        &self,
+        input: &GateEvaluatorInput,
+        lineage: Option<&SourceLineage>,
+        scope: &PolicyEvaluationScope,
+    ) -> GateDecision {
         let actor_class = input.actor.actor_class.trim();
         if actor_class.is_empty() {
             return GateDecision::deny(GateReasonCode::DenyMissingActorClass);
@@ -194,17 +206,47 @@ impl PolicyManifestResolution {
         //
         // The override never deletes `comm.opt_out`, `comm.do_not_contact`, or a
         // contact-level opt-out claim; CLEAR remains its own op.
+        let effective_posture = self.resolved_policy_value(
+            PolicyValueKey::CommOptOutPosture,
+            scope,
+            PolicyValue::CommOptOutPosture(self.comm_opt_out_posture()),
+        );
+        let PolicyValue::CommOptOutPosture(posture) = effective_posture.value else {
+            unreachable!("typed policy key")
+        };
+        let (_, precedence_row) = self.scope_precedence();
+        let mut deciding_row = None;
         if let Some(effect) = external_effect
             && effect.counterparty_opted_out
         {
-            match (
-                effect.counterparty_send_override,
-                self.comm_opt_out_posture(),
-            ) {
-                (Some(_), _) | (None, CommOptOutPosture::AllowWithReceipt) => {}
+            match (effect.counterparty_send_override, posture) {
+                (Some(_), _) => {}
+                (None, CommOptOutPosture::AllowWithReceipt) => {
+                    deciding_row = effective_posture
+                        .deciding_row
+                        .map(|row| row.row_ref.as_str());
+                }
                 (None, CommOptOutPosture::Escalate) => {
-                    return GateDecision::pending(vec![GateReasonCode::PendingCounterpartyOptOut])
-                        .with_receipt_reasons(external_effect_receipt_reasons(effect));
+                    let decision =
+                        GateDecision::pending(vec![GateReasonCode::PendingCounterpartyOptOut])
+                            .with_receipt_reasons(external_effect_receipt_reasons(effect))
+                            .with_policy_refusal(
+                                effective_posture.deciding_row.map(|row| row.scope.as_str()),
+                                effective_posture
+                                    .deciding_row
+                                    .map(|row| row.row_ref.as_str()),
+                                scope.hidden_world,
+                            );
+                    if scope.hidden_world {
+                        return decision;
+                    }
+                    return decision
+                        .with_policy_row_ref(
+                            effective_posture
+                                .deciding_row
+                                .map(|row| row.row_ref.as_str()),
+                        )
+                        .with_precedence_row_ref(precedence_row);
                 }
             }
         }
@@ -307,6 +349,16 @@ impl PolicyManifestResolution {
             GateDecision::pending(pending)
         };
 
+        let decision = decision.with_policy_row_ref(if scope.hidden_world {
+            None
+        } else {
+            deciding_row
+        });
+        let decision = if deciding_row.is_some() && !scope.hidden_world {
+            decision.with_precedence_row_ref(precedence_row)
+        } else {
+            decision
+        };
         if let Some(effect) = external_effect {
             decision.with_receipt_reasons(external_effect_receipt_reasons(effect))
         } else {

@@ -482,3 +482,58 @@ fn dnc_and_132_fold_unchanged() -> Result<()> {
     assert_eq!(kept.outcome(), GateOutcome::Pending);
     Ok(())
 }
+
+/// The durable effect receipt records both the deciding value row and the
+/// vault-only meta-rule. If the meta-rule is absent it names the shipped-data
+/// fallback instead of silently pretending a row was present.
+#[test]
+fn opt_out_receipt_names_value_row_and_precedence_fallback() -> Result<()> {
+    for (seed, body, expected) in [
+        (
+            0xB0,
+            default_policy_manifest(),
+            "policy_precedence_row_default.scope_precedence",
+        ),
+        (
+            0xB4,
+            opt_out_posture_manifest(None),
+            "policy_precedence_shipped_default",
+        ),
+    ] {
+        let (_tmp, vault) = temp_vault();
+        put_policy_manifest_bytes(&vault, test_id(seed), &body)?;
+        opted_out_contact(
+            &vault,
+            test_id(seed + 1),
+            test_id(seed + 2),
+            "receipt@example.com",
+            CounterpartyOptOutReason::Stop,
+        )?;
+        let policy = resolve(&vault)?;
+        let mut effect = external_effect_gate_input("sender", "send", "line");
+        effect.counterparty = Some("receipt@example.com".to_owned());
+        let (_, decision, _) = vault.with_write_txn(|wtxn| {
+            check_external_effect_policy(&vault.store, wtxn, &effect, &policy, true)
+        })?;
+        assert_eq!(decision.outcome(), GateOutcome::Pending);
+        let stored = vault.store.gate_decisions(10)?;
+        let record = stored
+            .iter()
+            .find(|row| row.reason_codes == vec!["gate.pending.counterparty_opt_out"])
+            .expect("opt-out decision persisted");
+        assert!(
+            record
+                .receipt_reasons
+                .iter()
+                .any(|reason| reason == expected)
+        );
+        if seed == 0xB0 {
+            assert!(
+                record
+                    .receipt_reasons
+                    .contains(&"policy_row_default.comm_opt_out_posture".to_owned())
+            );
+        }
+    }
+    Ok(())
+}

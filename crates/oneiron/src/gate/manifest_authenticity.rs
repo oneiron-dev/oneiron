@@ -73,7 +73,48 @@ pub struct ManifestContribution {
     pub restrict_only: bool,
     pub quarantined: bool,
 }
+/// Inert exception request. ONE-1548 owns filing and delivery; this result
+/// cannot change a live policy row or itself authorize an act.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PolicyOverrideProposal {
+    pub row_ref: String,
+    pub scope: String,
+}
+
 impl Vault {
+    /// Propose a manifest with explicit overrides. A holder applies it; a
+    /// non-holder receives an inert typed proposal for the host's later route.
+    /// Nothing is persisted for the non-holder.
+    pub fn propose_policy_value_override(
+        &self,
+        actor: &AuthenticatedOwner,
+        id: EntityId,
+        data: Vec<u8>,
+        now: u64,
+    ) -> Result<Option<PolicyOverrideProposal>> {
+        let mut txn = self.store.env.write_txn()?;
+        actor.revalidate_in_txn(self, &txn)?;
+        let decoded = super::decode::decode_policy_manifest(&data)
+            .ok_or_else(|| Error::InvalidConfig("malformed policy manifest".into()))?;
+        let override_row = decoded
+            .policy_values
+            .iter()
+            .find(|row| row.override_parent)
+            .ok_or_else(|| Error::InvalidConfig("no policy override row".into()))?;
+        for row in &decoded.policy_values {
+            let scope = row.scope.evaluation_context();
+            if !self.policy_power_in_txn(&txn, actor.actor(), &scope, now)? {
+                return Ok(Some(PolicyOverrideProposal {
+                    row_ref: override_row.row_ref.clone(),
+                    scope: override_row.scope.as_str(),
+                }));
+            }
+        }
+        self.write_owner_policy_manifest_in_txn(actor, &mut txn, id, data, now)?;
+        txn.commit()?;
+        Ok(None)
+    }
+
     /// Surface unauthenticated narrowing as actionable rows, without granting it authority.
     pub fn manifest_contributions(&self) -> Result<Vec<ManifestContribution>> {
         let txn = self.store.env.read_txn()?;
@@ -141,8 +182,17 @@ impl Vault {
         now: u64,
     ) -> Result<()> {
         owner.revalidate_in_txn(self, txn)?;
-        if super::decode::decode_policy_manifest(&data).is_none() {
-            return Err(Error::InvalidConfig("malformed policy manifest".into()));
+        let decoded = super::decode::decode_policy_manifest(&data)
+            .ok_or_else(|| Error::InvalidConfig("malformed policy manifest".into()))?;
+        // Human authentication does not imply policy power. The live fold or
+        // an explicit scope-covering policy-write grant decides independently.
+        for row in &decoded.policy_values {
+            let scope = row.scope.evaluation_context();
+            if !self.policy_power_in_txn(txn, owner.actor(), &scope, now)? {
+                return Err(Error::InvalidConfig(
+                    "policy write requires a holder".into(),
+                ));
+            }
         }
         if let Some(raw) = self.store.entities.get(txn, id.as_bytes())? {
             let header = EntityMetadataHeader::parse(&raw)
@@ -195,6 +245,43 @@ impl Vault {
         self.write_owner_policy_manifest_in_txn(owner, &mut txn, id, data, now)?;
         txn.commit()?;
         Ok(())
+    }
+
+    /// Apply an explanation drafted by a model only to an empty row. An
+    /// authenticated holder may instead write their own why; a draft never
+    /// overwrites that owner text. The engine never invents the prose.
+    pub fn set_policy_value_why(
+        &self,
+        owner: &AuthenticatedOwner,
+        manifest: EntityId,
+        row_ref: &str,
+        text: &str,
+        drafted: bool,
+        now: u64,
+    ) -> Result<bool> {
+        let mut txn = self.store.env.write_txn()?;
+        owner.revalidate_in_txn(self, &txn)?;
+        let raw = self
+            .store
+            .entities
+            .get(&txn, manifest.as_bytes())?
+            .ok_or(Error::EntityNotFound)?;
+        if EntityMetadataHeader::parse(&raw)
+            .is_none_or(|header| header.entity_type != ENTITY_TYPE_POLICY_MANIFEST)
+        {
+            return Err(Error::InvalidConfig("not a policy manifest".into()));
+        }
+        let Some(updated) = super::policy_values::with_policy_why(
+            &raw[ENTITY_METADATA_HEADER_LEN..],
+            row_ref,
+            text,
+            drafted,
+        ) else {
+            return Ok(false);
+        };
+        self.write_owner_policy_manifest_in_txn(owner, &mut txn, manifest, updated, now)?;
+        txn.commit()?;
+        Ok(true)
     }
 
     /// Explicit owner re-authoring, never grandfathering a product-band permit.

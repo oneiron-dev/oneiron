@@ -3198,6 +3198,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/batch/put_apply/proposal_submission.rs",
+     "purpose": "Actor-attributed proposal observation with scoped advisory policy rows",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/batch/put_apply/put_entity_update.rs",
      "purpose": "SKILL body validators shared by the put and update arms",
      "surface": {
@@ -16684,6 +16694,7 @@
      "path": "src/federation/shared_creation.rs",
      "purpose": "Creation-time membership defaults, materialized once as explicit grant/policy rows",
      "surface": {
+      "crate-vis": 1,
       "enum": 1,
       "fn": 3,
       "struct": 2
@@ -16933,7 +16944,7 @@
      "path": "src/gate/decision.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 28
+      "crate-vis": 35
      }
     },
     {
@@ -17176,17 +17187,18 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
-      "ManifestContribution"
+      "ManifestContribution",
+      "PolicyOverrideProposal"
      ],
      "path": "src/gate/manifest_authenticity.rs",
      "purpose": "Local write-door authentication for manifest contributions",
      "surface": {
       "crate-vis": 6,
-      "fn": 4,
-      "struct": 1
+      "fn": 6,
+      "struct": 2
      }
     },
     {
@@ -17196,8 +17208,28 @@
      "path": "src/gate/mod.rs",
      "purpose": "DEC-0005 Gate policy manifest resolver",
      "surface": {
-      "crate-vis": 26,
+      "crate-vis": 27,
       "re-export": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/gate/policy_power.rs",
+     "purpose": "Fold-verified policy-write authority for a scoped manifest row",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/gate/policy_values.rs",
+     "purpose": "Typed behaviour values and deterministic, scoped manifest-row selection",
+     "surface": {
+      "crate-vis": 24
      }
     },
     {
@@ -17211,7 +17243,7 @@
      "purpose": "Actor-scoped, receipt-backed proposal observation; crossing only asks a question",
      "surface": {
       "const": 1,
-      "crate-vis": 2,
+      "crate-vis": 1,
       "fn": 3,
       "struct": 2
      }
@@ -17235,13 +17267,13 @@
      "surface": {}
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/gate/resolution/accessors.rs",
      "purpose": "Read-only resolved-field accessors plus the frontier-hash entry",
      "surface": {
-      "crate-vis": 24
+      "crate-vis": 28
      }
     },
     {
@@ -17251,7 +17283,7 @@
      "path": "src/gate/resolution/evaluation.rs",
      "purpose": "Decision core: ceilings, source-trust, and gate evaluation",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 7
      }
     },
     {
@@ -17528,6 +17560,14 @@
      "notable": [],
      "path": "src/gate/tests/posture_override.rs",
      "purpose": "Opt-out posture, override receipts, and the posture dial",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "src/gate/tests/scoped_policy_values.rs",
+     "purpose": "Vault-resident behaviour rows: precedence, changeability, and deciding receipts",
      "surface": {}
     },
     {
@@ -35587,7 +35627,7 @@
      "purpose": "Engine-side AR-3 autoreason campaign configuration and report join"
     },
     "batch": {
-     "files": 89,
+     "files": 90,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -36126,7 +36166,7 @@
      "purpose": "—"
     },
     "gate": {
-     "files": 75,
+     "files": 78,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -36814,8 +36854,8 @@
    },
    "over_bar": 2,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2183,
-   "test_files": 740
+   "source_files": 2186,
+   "test_files": 741
   },
   "oneiron-android": {
    "files": [

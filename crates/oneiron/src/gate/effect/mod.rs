@@ -438,6 +438,15 @@ pub(crate) fn record_external_effect_policy(
             .receipt_reasons()
             .iter()
             .map(|reason| (*reason).to_owned())
+            .chain(
+                decision
+                    .policy_row_ref()
+                    .map(|row| format!("policy_row_{row}")),
+            )
+            .chain(decision.precedence_row_ref().map(|row| match row {
+                Some(row) => format!("policy_precedence_row_{row}"),
+                None => "policy_precedence_shipped_default".to_owned(),
+            }))
             .collect(),
         system_notices: Vec::new(),
         actor_class: input.actor.actor_class.clone(),

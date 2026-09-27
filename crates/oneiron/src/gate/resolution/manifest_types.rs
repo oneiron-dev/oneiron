@@ -7,6 +7,7 @@ use crate::gate::ceiling::{
     PolicySignature, SourceTrustCeiling,
 };
 use crate::gate::grants::PolicyScopedGrant;
+use crate::gate::policy_values::PolicyValueRow;
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub(crate) struct PolicyManifestDiagnostics {
@@ -76,8 +77,8 @@ impl CommOptOutPosture {
 pub(crate) struct PolicyManifestResolution {
     pub(crate) diagnostics: PolicyManifestDiagnostics,
     pub(crate) diagnostic_bounds: Option<crate::self_heal::tripwires::TripwireBounds>,
-    pub(crate) proposal_check_threshold: Option<u64>,
     pub(super) packs: Vec<PolicyPack>,
+    pub(super) policy_values: Vec<PolicyValueRow>,
     pub(super) actor_ceilings: Vec<ActorCeiling>,
     pub(crate) delegation_fold: DelegationFoldCache,
     pub(super) source_trust: SourceTrustCeiling,

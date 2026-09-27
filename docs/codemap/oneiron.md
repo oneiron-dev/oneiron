@@ -284,6 +284,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/batch/put_apply/lexical_hint.rs` | src | s | 1 crate-vis | — | Validation of synthetic lexical query hint CLAIMs at the shared write door |
 | `src/batch/put_apply/mod.rs` | src | s | 6 crate-vis | — | Batch entity-put materialization: the `apply_put` chokepoint and its row-staging helpers |
 | `src/batch/put_apply/owned_body.rs` | src | s | 1 crate-vis | — | Refuse generic body writes that bypass a storage-owned document or conversation ledger |
+| `src/batch/put_apply/proposal_submission.rs` | src | s | 2 crate-vis | — | Actor-attributed proposal observation with scoped advisory policy rows |
 | `src/batch/put_apply/put_entity_update.rs` | src | s | 2 crate-vis | — | SKILL body validators shared by the put and update arms |
 | `src/batch/put_apply/put_staging.rs` | src | m | 15 crate-vis | — | Body/index/edge row staging helpers shared by the put and update paths |
 | `src/batch/recovery_shell.rs` | src | s | 1 crate-vis | — | Header-only recovery of a retained soft-delete shell, never a body put |
@@ -1332,7 +1333,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/federation/scope_codec.rs` | src | s | 5 crate-vis | — | Canonical MessagePack bridge for six-axis Scope positions and grant presets |
 | `src/federation/selector_kind.rs` | src | s | 1 enum · 6 fn · 1 crate-vis | SelectorRange | Replication vocabulary keyed on declared classification and family, never byte ranges |
 | `src/federation/selector_kind/tests.rs` | test | s | — | — | — |
-| `src/federation/shared_creation.rs` | src | s | 2 struct · 1 enum · 3 fn | InitialSharedMember, SharedVaultCreation, SharedVaultPreset | Creation-time membership defaults, materialized once as explicit grant/policy rows |
+| `src/federation/shared_creation.rs` | src | s | 2 struct · 1 enum · 3 fn · 1 crate-vis | InitialSharedMember, SharedVaultCreation, SharedVaultPreset | Creation-time membership defaults, materialized once as explicit grant/policy rows |
 | `src/federation/shared_creation_tests.rs` | test | m | — | — | — |
 | `src/federation/stale.rs` | src | m | 1 struct · 1 enum · 8 fn · 3 const · 3 crate-vis | FederationStaleReason, WorldStaleStamp | Terminal-pact per-world stale stamping (FED-04) |
 | `src/federation/tests.rs` | test | XL | — | — | — |
@@ -1352,7 +1353,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/gate/ceiling.rs` | src | m | 37 crate-vis | — | — |
 | `src/gate/confirm.rs` | src | m | 1 struct · 1 enum · 2 fn · 4 const · 10 crate-vis | CriticalWriteConfirmBinding, CriticalWriteConfirmResolution | — |
 | `src/gate/constants.rs` | src | s | 77 crate-vis | — | — |
-| `src/gate/decision.rs` | src | m | 28 crate-vis | — | — |
+| `src/gate/decision.rs` | src | m | 35 crate-vis | — | — |
 | `src/gate/decode/decode_manifest.rs` | src | m | 6 crate-vis | — | Manifest envelope plus DecodedPolicyManifest assembly |
 | `src/gate/decode/decode_map_util.rs` | src | s | 13 crate-vis | — | Generic MessagePack map accessors, signature values, and semver compare |
 | `src/gate/decode/decode_policy_tables.rs` | src | m | 8 crate-vis | — | Rule, axis, ceiling, grant, and owner-row table parsers |
@@ -1377,13 +1378,15 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/gate/foreign_agent.rs` | src | m | 3 fn · 1 crate-vis | — | Owner-bound foreign introductions |
 | `src/gate/grants.rs` | src | m | 8 crate-vis | — | — |
 | `src/gate/input.rs` | src | m | 15 crate-vis | — | — |
-| `src/gate/manifest_authenticity.rs` | src | s | 1 struct · 4 fn · 6 crate-vis | ManifestContribution | Local write-door authentication for manifest contributions |
-| `src/gate/mod.rs` | src | s | 3 re-export · 26 crate-vis | — | DEC-0005 Gate policy manifest resolver |
-| `src/gate/proposal_observation.rs` | src | s | 2 struct · 3 fn · 1 const · 2 crate-vis | ProposalSubmissionCheck, ProposalSubmissionReceipt | Actor-scoped, receipt-backed proposal observation; crossing only asks a question |
+| `src/gate/manifest_authenticity.rs` | src | m | 2 struct · 6 fn · 6 crate-vis | ManifestContribution, PolicyOverrideProposal | Local write-door authentication for manifest contributions |
+| `src/gate/mod.rs` | src | s | 3 re-export · 27 crate-vis | — | DEC-0005 Gate policy manifest resolver |
+| `src/gate/policy_power.rs` | src | s | 2 crate-vis | — | Fold-verified policy-write authority for a scoped manifest row |
+| `src/gate/policy_values.rs` | src | m | 24 crate-vis | — | Typed behaviour values and deterministic, scoped manifest-row selection |
+| `src/gate/proposal_observation.rs` | src | s | 2 struct · 3 fn · 1 const · 1 crate-vis | ProposalSubmissionCheck, ProposalSubmissionReceipt | Actor-scoped, receipt-backed proposal observation; crossing only asks a question |
 | `src/gate/repair.rs` | src | s | 3 crate-vis | — | Pure, per-proposal consent recomputation |
 | `src/gate/repair_tests.rs` | test | m | — | — | ONE-1395 repair-only tests, kept separate from the existing Gate write-door tests |
-| `src/gate/resolution/accessors.rs` | src | s | 24 crate-vis | — | Read-only resolved-field accessors plus the frontier-hash entry |
-| `src/gate/resolution/evaluation.rs` | src | m | 6 crate-vis | — | Decision core: ceilings, source-trust, and gate evaluation |
+| `src/gate/resolution/accessors.rs` | src | m | 28 crate-vis | — | Read-only resolved-field accessors plus the frontier-hash entry |
+| `src/gate/resolution/evaluation.rs` | src | m | 7 crate-vis | — | Decision core: ceilings, source-trust, and gate evaluation |
 | `src/gate/resolution/frontier_hash.rs` | src | m | 5 crate-vis | — | Read-frontier hash worker plus byte-level hash encoders |
 | `src/gate/resolution/manifest_fold.rs` | src | m | 1 fn · 2 crate-vis | — | Store-scanning manifest fold plus budget-guard and trust adapters |
 | `src/gate/resolution/manifest_types.rs` | src | s | 7 crate-vis | — | Resolved-view types plus the `PolicyManifestResolution` struct definition |
@@ -1415,6 +1418,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/gate/tests/pending_lookup.rs` | test | s | — | — | — |
 | `src/gate/tests/policy_inputs.rs` | test | m | — | — | Policy-input primitives: companion access grants, budget-exhaustion parsing, and ceiling math |
 | `src/gate/tests/posture_override.rs` | test | m | — | — | Opt-out posture, override receipts, and the posture dial |
+| `src/gate/tests/scoped_policy_values.rs` | test | m | — | — | Vault-resident behaviour rows: precedence, changeability, and deciding receipts |
 | `src/gate/tests/scoped_read.rs` | test | L | — | — | Scoped read and retrieval filtering: core-read grants, context-pack scrubbing, and facet edges |
 | `src/gate/tests/special_doors.rs` | test | m | 1 crate-vis | — | Specialized doors: operation effect, fenced listing, and commitment projection |
 | `src/gate/tests/support.rs` | test | L | 60 crate-vis | — | Shared fixtures and assertion helpers for the gate test modules |

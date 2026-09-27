@@ -19,6 +19,7 @@ use crate::gate::constants::{
     POLICY_SIGNATURE_KEY, POLICY_SIGNATURES_KEY, POLICY_SOURCE_TRUST_KEY,
 };
 use crate::gate::grants::PolicyScopedGrant;
+use crate::gate::policy_values::{PolicyValueRow, parse_policy_values};
 use crate::gate::resolution::CommOptOutPosture;
 use crate::llm::{BudgetExhaustionPolicy, BudgetPolicyTable};
 
@@ -37,6 +38,7 @@ use super::decode_trust_budget::{
 
 pub(in crate::gate) struct DecodedPolicyManifest {
     pub(in crate::gate) pack: PolicyPack,
+    pub(in crate::gate) policy_values: Vec<PolicyValueRow>,
     pub(in crate::gate) actor_ceilings: Vec<ActorCeiling>,
     pub(in crate::gate) delegated_grants: Vec<DelegationGrantRecord>,
     pub(in crate::gate) source_trust: SourceTrustCeiling,
@@ -57,7 +59,6 @@ pub(in crate::gate) struct DecodedPolicyManifest {
     pub(in crate::gate) auto_checker: Option<String>,
     pub(in crate::gate) budget_policy: BudgetPolicyTable,
     pub(in crate::gate) diagnostic_bounds: Option<crate::self_heal::tripwires::TripwireBounds>,
-    pub(in crate::gate) proposal_check_threshold: Option<u64>,
     pub(in crate::gate) unsupported_schema: bool,
     pub(in crate::gate) engine_version_floor: bool,
     pub(in crate::gate) unknown_axis_seen: bool,
@@ -102,7 +103,7 @@ pub(in crate::gate) fn decode_policy_manifest(data: &[u8]) -> Option<DecodedPoli
                 | POLICY_AUTO_CHECKER_KEY
                 | POLICY_BUDGET_POLICY_KEY
                 | "diagnostic_bounds"
-                | "proposal_check_threshold"
+                | "policy_values"
         ) {
             return None;
         }
@@ -232,16 +233,17 @@ pub(in crate::gate) fn decode_policy_manifest(data: &[u8]) -> Option<DecodedPoli
         }
     };
 
-    let proposal_check_threshold = match single_map_value(&entries, "proposal_check_threshold") {
-        MapValue::Missing => None,
+    let policy_values = match single_map_value(&entries, "policy_values") {
+        MapValue::Missing => Vec::new(),
         MapValue::Duplicate => return None,
-        MapValue::Present(value) => Some(value.as_u64().filter(|value| *value > 0)?),
+        MapValue::Present(value) => parse_policy_values(value)?,
     };
 
     let unknown_axis_seen =
         defaults.unknown_axis_seen || rules.iter().any(|rule| rule.axes.unknown_axis_seen);
 
     Some(DecodedPolicyManifest {
+        policy_values,
         pack: PolicyPack {
             _pack_id: pack_id,
             _pack_version: pack_version,
@@ -267,7 +269,6 @@ pub(in crate::gate) fn decode_policy_manifest(data: &[u8]) -> Option<DecodedPoli
         auto_checker,
         budget_policy,
         diagnostic_bounds,
-        proposal_check_threshold,
         unsupported_schema,
         engine_version_floor,
         unknown_axis_seen,

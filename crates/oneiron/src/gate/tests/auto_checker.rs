@@ -472,6 +472,9 @@ fn integrated_no_checker_frontier(posture: &str) -> [u8; 32] {
     text(&mut bytes, "suspend");
     text(&mut bytes, posture);
     len(&mut bytes, 0); // budget-policy rows
+    text(&mut bytes, "scope_precedence_effective");
+    text(&mut bytes, "nested_narrowing"); // shipped-data fallback
+    len(&mut bytes, 0); // policy value rows
     len(&mut bytes, 1); // one pack
     text(&mut bytes, "gate-test");
     text(&mut bytes, "v1");
