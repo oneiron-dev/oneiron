@@ -127,9 +127,9 @@ async fn seal_baseline_b_both_suites_and_fixtures() {
             assert!(out.bytes.ends_with(b"%%EOF"));
             // Independent verify entry point agrees.
             let report = engine.verify_sealed_pdf(&out.bytes).unwrap();
-            assert!(report.valid);
-            assert_eq!(report.achieved_profile, Some(PadesProfile::BaselineB));
-            assert_eq!(report.evidence_sha256, out.evidence_sha256);
+            assert!(report.valid());
+            assert_eq!(report.achieved_profile(), Some(PadesProfile::BaselineB));
+            assert_eq!(report.artifact_sha256, out.evidence_sha256);
         }
     }
 }
@@ -149,8 +149,8 @@ async fn seal_baseline_t_with_fixture_tsa() {
     assert_eq!(out.achieved_profile, PadesProfile::BaselineT);
     assert!(out.warnings.is_empty());
     let report = engine.verify_sealed_pdf(&out.bytes).unwrap();
-    assert!(report.valid);
-    assert_eq!(report.achieved_profile, Some(PadesProfile::BaselineT));
+    assert!(report.valid());
+    assert_eq!(report.achieved_profile(), Some(PadesProfile::BaselineT));
 }
 
 /// Two functional TSAs: the first endpoint mints tokens dated past the
@@ -248,8 +248,8 @@ async fn seal_fails_over_past_over_skew_tsa_token() {
         "the over-skew token must be skipped and the next TSA tried"
     );
     let report = engine.verify_sealed_pdf(&out.bytes).unwrap();
-    assert!(report.valid);
-    assert_eq!(report.achieved_profile, Some(PadesProfile::BaselineT));
+    assert!(report.valid());
+    assert_eq!(report.achieved_profile(), Some(PadesProfile::BaselineT));
 }
 
 #[tokio::test]
@@ -282,8 +282,8 @@ async fn seal_baseline_lt_and_lta_full_assembly() {
         .unwrap();
     assert_eq!(out2.achieved_profile, PadesProfile::BaselineLta);
     let report2 = engine2.verify_sealed_pdf(&out2.bytes).unwrap();
-    assert!(report2.valid);
-    assert_eq!(report2.achieved_profile, Some(PadesProfile::BaselineLta));
+    assert!(report2.valid());
+    assert_eq!(report2.achieved_profile(), Some(PadesProfile::BaselineLta));
 }
 
 #[tokio::test]
@@ -341,8 +341,8 @@ async fn seal_degrades_to_b_t_when_available_crl_issuer_lacks_crl_sign() {
     );
     assert!(out.self_verify_report.passes_self_verify());
     let report = engine.verify_sealed_pdf(&out.bytes).unwrap();
-    assert!(report.valid);
-    assert_eq!(report.achieved_profile, Some(PadesProfile::BaselineT));
+    assert!(report.valid());
+    assert_eq!(report.achieved_profile(), Some(PadesProfile::BaselineT));
 }
 
 #[tokio::test]
@@ -385,8 +385,8 @@ async fn seal_achieves_b_lt_when_crl_issuer_asserts_crl_sign() {
     assert_eq!(out.achieved_profile, PadesProfile::BaselineLt);
     assert!(out.warnings.is_empty());
     let report = engine.verify_sealed_pdf(&out.bytes).unwrap();
-    assert!(report.valid);
-    assert_eq!(report.achieved_profile, Some(PadesProfile::BaselineLt));
+    assert!(report.valid());
+    assert_eq!(report.achieved_profile(), Some(PadesProfile::BaselineLt));
 }
 
 #[tokio::test]

@@ -147,68 +147,12 @@ pub enum SealWarning {
     },
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum VerifyCheckKind {
-    PdfRevision,
-    ByteRange,
-    CmsEnvelope,
-    SignedAttributes,
-    ContentDigest,
-    SignatureValue,
-    SigningCertificateBinding,
-    CertificatePath,
-    SignatureTimestamp,
-    ValidationMaterial,
-    DocumentTimestamp,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum VerifyCheckStatus {
-    Pass,
-    Fail,
-    AbsentAllowed,
-    NotApplicable,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum VerifyFindingCode {
-    InvalidPdfRevision,
-    InvalidByteRange,
-    InvalidCms,
-    InvalidSignedAttributes,
-    DigestMismatch,
-    SignatureMismatch,
-    CertificateBindingMismatch,
-    CertificatePathInvalid,
-    TimestampInvalid,
-    ValidationMaterialInvalid,
-    DocumentTimestampInvalid,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct VerifyCheck {
-    pub kind: VerifyCheckKind,
-    pub status: VerifyCheckStatus,
-    pub finding: Option<VerifyFindingCode>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct VerifyReport {
-    pub valid: bool,
-    pub achieved_profile: Option<PadesProfile>,
-    pub evidence_sha256: Sha256Digest,
-    pub checks: Vec<VerifyCheck>,
-}
-
-impl VerifyReport {
-    #[must_use]
-    pub fn passes_self_verify(&self) -> bool {
-        self.valid && self.achieved_profile.is_some()
-    }
-}
+mod report;
+pub use report::{
+    Anomaly, ByteRangeEvidence, Coverage, ModificationLevel, Modifications, RevisionKind,
+    RevisionReport, SignatureKind, SignatureReport, SignedRangeDigest, VerifyCheck,
+    VerifyCheckKind, VerifyCheckStatus, VerifyFindingCode, VerifyReport, VerifyVerdict,
+};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SealedPdf {
@@ -223,7 +167,7 @@ pub struct SealedPdf {
 /// Seal + verify engine. `seal_pdf` runs the verifier against its candidate
 /// output before returning and converts an invalid report into
 /// [`crate::SealError::VerifyFailed`]; `verify_sealed_pdf` returns
-/// `Ok(VerifyReport { valid: false, .. })` for a parseable but
+/// `Ok(VerifyReport)` for a parseable but
 /// cryptographically invalid sealed PDF.
 #[async_trait]
 pub trait PdfSealEngine: Send + Sync {

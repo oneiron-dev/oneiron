@@ -2,6 +2,7 @@
 //! and — with `network-fetch` — the guarded client's pre-network denials.
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
+#[cfg(feature = "network-fetch")]
 use crate::support;
 
 use oneiron_seal::{

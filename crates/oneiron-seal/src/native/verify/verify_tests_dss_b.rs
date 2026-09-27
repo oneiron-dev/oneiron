@@ -290,7 +290,7 @@ pub(crate) mod tests {
         let checks = dss_check(&doc, &[]);
         assert_eq!(
             dss_finding(&checks),
-            (VerifyCheckStatus::AbsentAllowed, None)
+            (VerifyCheckStatus::NotApplicable, None)
         );
     }
 
