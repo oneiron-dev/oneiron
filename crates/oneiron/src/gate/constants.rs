@@ -89,6 +89,13 @@ pub(super) const POLICY_PATTERN_ROLE_KEY: &str = "role";
 /// therefore bricks every pre-existing vault on upgrade. It stays listed, and
 /// nothing reads its value.
 pub(crate) const POLICY_LEGAL_FLOOR_ROWS_KEY: &str = "legal_floor_rows";
+/// Retired flat top-level keys (ONE-2673). Both values moved to typed
+/// `policy_values` rows, and the engine reads only rows. Decode still accepts
+/// the names, for the same upgrade reason as `legal_floor_rows` above: a
+/// manifest written before the move must not fail the whole gate closed.
+/// Nothing reads their values.
+pub(super) const POLICY_RETIRED_COMM_OPT_OUT_POSTURE_KEY: &str = "comm_opt_out_posture";
+pub(super) const POLICY_RETIRED_PROPOSAL_CHECK_THRESHOLD_KEY: &str = "proposal_check_threshold";
 
 pub(super) const AXIS_CRITICALITY_KEY: &str = "criticality";
 pub(super) const AXIS_SENSITIVITY_KEY: &str = "sensitivity";

@@ -179,15 +179,9 @@ impl Vault {
     }
     pub fn shared_vault_creation(&self) -> Result<Option<SharedVaultCreation>> {
         let txn = self.store.env.read_txn()?;
-        self.shared_vault_creation_in_txn(&txn)
-    }
-    pub(crate) fn shared_vault_creation_in_txn(
-        &self,
-        txn: &heed::RoTxn<'_>,
-    ) -> Result<Option<SharedVaultCreation>> {
         self.store
             .vault_meta
-            .get(txn, CREATION_KEY)?
+            .get(&txn, CREATION_KEY)?
             .map(|raw| serde_json::from_slice(&raw).map_err(|_| invalid("shared creation decode")))
             .transpose()
     }

@@ -216,8 +216,7 @@ pub(crate) fn evaluate_external_effect_policy(
         // override it resolved is written on here, once, before evaluation.
         effect.counterparty_send_override = counterparty_send_override;
     }
-    let policy_scope = super::effect_scope::scope_for_effect(store, &*wtxn, effect)?;
-    let mut decision = policy.evaluate_gate_in_scope(&input, None, &policy_scope);
+    let mut decision = policy.evaluate_gate(&input);
     let binding = GateConsentBinding::for_external_effect(&input, policy)?;
     let decision_id = crate::store::GateDecisionId::from_bytes(store.clock.ulid()?);
     let created_at = mutation_recorded_at;

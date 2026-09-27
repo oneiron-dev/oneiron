@@ -38,32 +38,6 @@ pub(super) fn gate_input(
     }
 }
 
-impl Vault {
-    /// Associate an exact prepared send with a stored scope origin. Only a
-    /// vault policy-power holder may attest this association; dispatch rechecks
-    /// the stored origin and exact effect identity on its own write transaction.
-    pub fn bind_outbound_policy_origin(
-        &self,
-        holder: &crate::consent::AuthenticatedOwner,
-        request: OutboundDispatchRequest,
-        origin: EntityId,
-        now: u64,
-    ) -> Result<(), OutboundDispatchError> {
-        let prepared =
-            super::request_binding::PreparedOutboundDispatch::prepare(self, request, None)?;
-        let effect = gate_input(
-            &prepared.request,
-            prepared.verb_contract,
-            prepared.policy_risk,
-        );
-        let mut txn = self.store.env.write_txn().map_err(Error::from)?;
-        holder.revalidate_in_txn(self, &txn)?;
-        self.bind_policy_effect_origin_in_txn(&mut txn, holder.actor(), &effect, origin, now)?;
-        txn.commit().map_err(Error::from)?;
-        Ok(())
-    }
-}
-
 pub(super) fn govern_parked(
     vault: &Vault,
     request: &OutboundDispatchRequest,

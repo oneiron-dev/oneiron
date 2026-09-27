@@ -25,6 +25,22 @@ impl PolicyValueKey {
             Self::ScopePrecedence => "scope_precedence",
         }
     }
+
+    /// Levels whose selector this key's production door resolves from store
+    /// truth. Substrate, not policy: a row its door can never select must not
+    /// look like it governs anything.
+    fn admits(self, scope: PolicyRowScope) -> bool {
+        match self {
+            // The proposal door reads world and project from the stored claim.
+            Self::ProposalCheckThreshold => matches!(
+                scope,
+                PolicyRowScope::Vault | PolicyRowScope::World(_) | PolicyRowScope::Project(_)
+            ),
+            // External effects carry no trusted origin yet, and the meta-rule
+            // is read at vault scope only.
+            Self::CommOptOutPosture | Self::ScopePrecedence => scope == PolicyRowScope::Vault,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -99,6 +115,15 @@ impl PolicyRowScope {
             _ => None,
         }
     }
+    pub(super) fn level(self) -> &'static str {
+        match self {
+            Self::Vault => "vault",
+            Self::World(_) => "world",
+            Self::Project(_) => "project",
+            Self::SubProject(_) => "sub_project",
+            Self::Thread(_) => "thread",
+        }
+    }
     pub(super) fn as_str(self) -> String {
         match self {
             Self::Vault => "vault".to_owned(),
@@ -118,10 +143,6 @@ pub(crate) struct PolicyEvaluationScope {
     pub(crate) thread: Option<EntityId>,
     /// The caller has not been authorized to learn this world exists.
     pub(crate) hidden_world: bool,
-    /// No verified effect origin; missing context must never skip a narrower row.
-    pub(crate) unknown_location: bool,
-    /// A project-room origin proves project but carries no single WORLD.
-    pub(crate) unknown_world: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -280,9 +301,6 @@ pub(super) fn parse_policy_values(value: &Value) -> Option<Vec<PolicyValueRow>> 
                 }
                 _ => return None,
             };
-            if key == PolicyValueKey::ScopePrecedence && scope != PolicyRowScope::Vault {
-                return None;
-            }
             let why = parse_optional_why(entries)?;
             let override_parent = match entries
                 .iter()
@@ -316,6 +334,12 @@ pub(super) fn parse_policy_values(value: &Value) -> Option<Vec<PolicyValueRow>> 
         return None;
     }
     Some(parsed)
+}
+
+/// First row at a level its key does not admit. The write door refuses it;
+/// a stored one fails the resolution closed like any invalid row.
+pub(super) fn unadmitted_row(rows: &[PolicyValueRow]) -> Option<&PolicyValueRow> {
+    rows.iter().find(|row| !row.key.admits(row.scope))
 }
 
 pub(super) fn resolve_row<'a>(
@@ -447,7 +471,7 @@ pub(super) fn resolve_value<'a>(
 }
 
 /// Fill the explanation of exactly one row in the current manifest bytes.
-/// The owning write door authenticates the caller and rechecks policy power.
+/// The owner write door authenticates the caller and rechecks the manifest.
 pub(crate) fn with_policy_why(
     mut data: &[u8],
     row_ref: &str,

@@ -162,6 +162,18 @@ pub(crate) fn resolve_policy_manifest(
         resolution.source_trust.restrict_only(contribution);
     }
 
+    // Equal key/scope rows cannot silently depend on entity scan order, and a
+    // stored row at a level its key's door cannot resolve fails closed.
+    let mut value_slots = BTreeSet::new();
+    if resolution
+        .policy_values
+        .iter()
+        .any(|row| !value_slots.insert((row.key, row.scope)))
+        || crate::gate::policy_values::unadmitted_row(&resolution.policy_values).is_some()
+    {
+        resolution.diagnostics.malformed_manifest_seen = true;
+    }
+
     // Duplicate owner rows are refused per manifest by
     // `parse_owner_policy_rows`, but the RESOLVED table is the concatenation
     // of every manifest's rows and `active_owner_policy_rows` first-matches
@@ -171,16 +183,6 @@ pub(crate) fn resolve_policy_manifest(
     // action, only assembled across entities instead of inside one. So the
     // question is asked again of the resolved set, and answered the same way:
     // drop the rows rather than let one silently swallow the other.
-    // Equal key/scope rows cannot silently depend on entity scan order.
-    let mut value_slots = BTreeSet::new();
-    if resolution
-        .policy_values
-        .iter()
-        .any(|row| !value_slots.insert((row.key, row.scope)))
-    {
-        resolution.diagnostics.malformed_manifest_seen = true;
-    }
-
     if has_duplicate_owner_policy_row(&resolution.owner_policy_rows) {
         resolution.owner_policy_rows.clear();
         resolution.owner_policy_rows_dropped = true;

@@ -10,9 +10,7 @@ use crate::gate::ceiling::{
 use crate::gate::decision::{GateDecision, GateReasonCode, external_effect_receipt_reasons};
 use crate::gate::grants::external_effect_grant_matches;
 use crate::gate::input::{GateContentKind, GateEvaluatorInput, consent_ladder_reasons};
-use crate::gate::policy_values::{
-    PolicyEvaluationScope, PolicyRowScope, PolicyValue, PolicyValueKey,
-};
+use crate::gate::policy_values::{PolicyEvaluationScope, PolicyValue, PolicyValueKey};
 
 #[cfg_attr(not(test), allow(dead_code))]
 impl PolicyManifestResolution {
@@ -213,35 +211,9 @@ impl PolicyManifestResolution {
             scope,
             PolicyValue::CommOptOutPosture(self.comm_opt_out_posture()),
         );
-        let PolicyValue::CommOptOutPosture(mut posture) = effective_posture.value else {
+        let PolicyValue::CommOptOutPosture(posture) = effective_posture.value else {
             unreachable!("typed policy key")
         };
-        // A missing effect origin is not evidence that no project/world rule
-        // applies. Its safe answer is the intersection of possible rows.
-        let unknown_world_policy = scope.unknown_world
-            && self.policy_values.iter().any(|row| {
-                row.key == PolicyValueKey::CommOptOutPosture
-                    && matches!(row.scope, PolicyRowScope::World(_))
-            });
-        let unknown_scoped_policy = scope.unknown_location
-            && self.policy_values.iter().any(|row| {
-                row.key == PolicyValueKey::CommOptOutPosture && row.scope != PolicyRowScope::Vault
-            });
-        let uncertain = unknown_scoped_policy || unknown_world_policy;
-        if uncertain
-            && !self.is_fail_closed()
-            && self.policy_values.iter().any(|row| {
-                row.key == PolicyValueKey::CommOptOutPosture
-                    && matches!(
-                        row.value,
-                        PolicyValue::CommOptOutPosture(CommOptOutPosture::Escalate)
-                    )
-                    && (scope.unknown_location || matches!(row.scope, PolicyRowScope::World(_)))
-            })
-        {
-            posture = CommOptOutPosture::Escalate;
-        }
-        let concealed = scope.hidden_world || uncertain;
         let (_, precedence_row) = self.scope_precedence();
         let mut deciding_row = None;
         if let Some(effect) = external_effect
@@ -255,34 +227,20 @@ impl PolicyManifestResolution {
             match (effect.counterparty_send_override, posture) {
                 (Some(_), _) => {}
                 (None, CommOptOutPosture::AllowWithReceipt) => {
-                    deciding_row = (!concealed)
-                        .then(|| {
-                            effective_posture
-                                .deciding_row
-                                .map(|row| row.row_ref.as_str())
-                        })
-                        .flatten();
+                    deciding_row = effective_posture
+                        .deciding_row
+                        .map(|row| row.row_ref.as_str());
                 }
                 (None, CommOptOutPosture::Escalate) => {
-                    let decision =
-                        GateDecision::pending(vec![GateReasonCode::PendingCounterpartyOptOut])
-                            .with_receipt_reasons(external_effect_receipt_reasons(effect))
-                            .with_policy_refusal(
-                                effective_posture.deciding_row.map(|row| row.scope.as_str()),
-                                effective_posture
-                                    .deciding_row
-                                    .map(|row| row.row_ref.as_str()),
-                                concealed,
-                            );
-                    if concealed {
-                        return decision;
-                    }
-                    return decision
-                        .with_policy_row_ref(
-                            effective_posture
-                                .deciding_row
-                                .map(|row| row.row_ref.as_str()),
+                    let row = effective_posture.deciding_row;
+                    return GateDecision::pending(vec![GateReasonCode::PendingCounterpartyOptOut])
+                        .with_receipt_reasons(external_effect_receipt_reasons(effect))
+                        .with_policy_refusal(
+                            row.map(|row| row.scope.as_str()),
+                            row.map(|row| row.row_ref.as_str()),
+                            false,
                         )
+                        .with_policy_row_ref(row.map(|row| row.row_ref.as_str()))
                         .with_precedence_row_ref(precedence_row);
                 }
             }
@@ -386,12 +344,8 @@ impl PolicyManifestResolution {
             GateDecision::pending(pending)
         };
 
-        let decision = decision.with_policy_row_ref(if scope.hidden_world {
-            None
-        } else {
-            deciding_row
-        });
-        let decision = if deciding_row.is_some() && !concealed {
+        let decision = decision.with_policy_row_ref(deciding_row);
+        let decision = if deciding_row.is_some() {
             decision.with_precedence_row_ref(precedence_row)
         } else {
             decision
