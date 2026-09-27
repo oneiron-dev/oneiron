@@ -176,8 +176,7 @@ pub fn token_revoke(args: TokenRevokeArgs) -> anyhow::Result<()> {
         let id: [u8; 32] = bytes
             .try_into()
             .map_err(|_| anyhow::anyhow!("invalid slip id"))?;
-        vault.revoke_capability_slip(&issuer, id)?;
-        true
+        vault.revoke_capability_slip_once(&issuer, id)?
     } else {
         revoke_token_jti(&vault, &args.jti)?
     };
