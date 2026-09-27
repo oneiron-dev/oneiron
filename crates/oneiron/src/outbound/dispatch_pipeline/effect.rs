@@ -12,7 +12,9 @@ use crate::outbound::dispatch_types::{
     OutboundDispatchError, OutboundDispatchOutcome, OutboundDispatchRequest,
     OutboundExecutionOutcome, OutboundExecutionOutcomeKind, OutboundExecutionSink,
 };
-use crate::outbound_intent_ledger::{IntentDispatchResult, IntentEscalationReason, IntentState};
+use crate::outbound_intent_ledger::{
+    IntentDispatchResult, IntentEscalationReason, IntentState, read_intent_record_in_txn,
+};
 use crate::receipt::ReceiptRecord;
 
 pub(super) struct EffectInput<'a, S> {
@@ -87,6 +89,25 @@ pub(super) fn execute_admitted<S: OutboundExecutionSink>(
             )));
         }
     };
+    // Stop reasons explain WHY retries stopped, not WHETHER an earlier send
+    // arrived. Read the cumulative fact from this exact logical intent.
+    let delivery_uncertain = if effect_result.dispatch.state == Some(IntentState::Abandoned) {
+        let id = effect_result
+            .dispatch
+            .intent_id
+            .ok_or(OutboundDispatchError::Engine(Error::InvariantViolation(
+                "abandoned outbound effect has no intent id",
+            )))?;
+        let txn = vault.store.env.read_txn().map_err(Error::from)?;
+        read_intent_record_in_txn(vault, &txn, &id)
+            .map_err(OutboundDispatchError::Chokepoint)?
+            .ok_or(OutboundDispatchError::Engine(Error::InvariantViolation(
+                "abandoned outbound intent row is missing",
+            )))?
+            .delivery_uncertain
+    } else {
+        false
+    };
     let outcome = if effect_result.dedupe_suppressed {
         OutboundDispatchOutcome::Suppressed
     } else {
@@ -94,6 +115,7 @@ pub(super) fn execute_admitted<S: OutboundExecutionSink>(
             &effect_result.dispatch,
             transport.execution.as_ref(),
             gate_outcome_kind,
+            delivery_uncertain,
         )
     };
     // A replay has no new decision id; never invent a non-queryable gate ref.
@@ -115,6 +137,7 @@ fn outbound_effect_outcome(
     dispatch: &IntentDispatchResult,
     execution: Option<&OutboundExecutionOutcome>,
     gate_outcome_kind: GateOutcome,
+    delivery_uncertain: bool,
 ) -> OutboundDispatchOutcome {
     match dispatch.state {
         Some(IntentState::Done) => OutboundDispatchOutcome::DeliveredToChannel,
@@ -129,15 +152,17 @@ fn outbound_effect_outcome(
             _ => OutboundDispatchOutcome::Held,
         },
         Some(IntentState::Abandoned) => {
-            if matches!(
-                dispatch.escalation.as_ref().map(|e| e.reason),
-                Some(
-                    IntentEscalationReason::NonIdempotentAmbiguous
-                        | IntentEscalationReason::NonIdempotentPending
-                        | IntentEscalationReason::ConnectorRevokedAfterUncertainty
-                        | IntentEscalationReason::BindingInvalidAfterUncertainty
+            if delivery_uncertain
+                || matches!(
+                    dispatch.escalation.as_ref().map(|e| e.reason),
+                    Some(
+                        IntentEscalationReason::NonIdempotentAmbiguous
+                            | IntentEscalationReason::NonIdempotentPending
+                            | IntentEscalationReason::ConnectorRevokedAfterUncertainty
+                            | IntentEscalationReason::BindingInvalidAfterUncertainty
+                    )
                 )
-            ) {
+            {
                 OutboundDispatchOutcome::Ambiguous
             } else {
                 OutboundDispatchOutcome::Failed

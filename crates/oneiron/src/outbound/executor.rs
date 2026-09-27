@@ -197,6 +197,11 @@ impl Vault {
             if let Some(session_ref) = originating_session_ref {
                 request = request.originating_session(session_ref);
             }
+            // The frozen party is not the transport target. The live gate and
+            // receipt projector must read the explicit counterparty binding.
+            if let Some(party) = task.counterparty_ref.as_deref() {
+                request = request.counterparty_ref(party);
+            }
             // CAL-04: replay the frozen five-field iMIP body the schedule
             // chokepoint committed with this TASK. The executor is the retry
             // lane, so it must never re-derive a UID or a SEQUENCE — it hands
@@ -297,6 +302,16 @@ impl Vault {
             match result.outcome {
                 OutboundDispatchOutcome::DeliveredToChannel => {
                     append_connector_task_window_receipt(&mut result.receipt, &task);
+                    // Never let an adapter-supplied receipt field invent a
+                    // counterparty for a TASK that did not freeze one.
+                    if let Some(party) = task.counterparty_ref.as_ref() {
+                        result
+                            .receipt
+                            .fields
+                            .insert("counterparty_ref".to_owned(), party.clone());
+                    } else {
+                        result.receipt.fields.remove("counterparty_ref");
+                    }
                     let delivered_idempotency =
                         idempotency_key.as_deref().map(|key| (task.actor_ref, key));
                     if persist_send_receipt(

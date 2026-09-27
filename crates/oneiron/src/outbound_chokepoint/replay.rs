@@ -62,7 +62,13 @@ pub(super) fn replay_record<T: OutboundTransport>(
             ))
         }
         (IntentState::Pending, None) => {
-            send_pending_with_gate(vault, authority, record, prepared, now_ms, true, transport)
+            // This row was committed before a prior transport attempt. A crash
+            // could have hidden a delivered response; persist that possibility
+            // BEFORE a resumed no-wire failure can replace its retry marker.
+            let uncertain = record_possible_delivery(vault, record.id, now_ms)?;
+            send_pending_with_gate(
+                vault, authority, uncertain, prepared, now_ms, true, transport,
+            )
         }
         _ => Err(IntentLedgerError::InvalidRecord(
             "outbound state has no canonical recorded outcome",
