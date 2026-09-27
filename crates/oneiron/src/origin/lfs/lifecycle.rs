@@ -73,7 +73,10 @@ impl Vault {
             })?;
             return Ok(false);
         };
-        let deleted = self.delete_entity(&object.asset_id)?;
+        let deleted = self.delete_entity_with_options(
+            &object.asset_id,
+            crate::deletion::DeleteEntityOptions { purge: true },
+        )?;
         while self.collect_lfs_garbage(32)? != 0 {}
         Ok(deleted)
     }

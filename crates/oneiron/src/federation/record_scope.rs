@@ -38,6 +38,12 @@ fn key(id: EntityId) -> Vec<u8> {
     key.extend_from_slice(id.as_bytes());
     key
 }
+/// Retire an id's scope sidecar in the same transaction that erases its body.
+/// A later same-id, same-bytes write must not inherit the old scope.
+pub(crate) fn retire_stamp(store: &Store, txn: &mut heed::RwTxn<'_>, id: EntityId) -> Result<()> {
+    store.vault_meta.delete(txn, &key(id))?;
+    Ok(())
+}
 fn digest(kind: u8, data: &[u8]) -> [u8; 32] {
     let mut h = blake3::Hasher::new_derive_key("oneiron/record-scope/v1");
     h.update(&[kind]);
@@ -89,10 +95,7 @@ pub(crate) fn stamp_put(
     let mut scope = if kind == crate::registry::ENTITY_TYPE_CLAIM {
         let body = crate::claim::decode_claim_body(data, true)?;
         body.record_scope("read")
-    } else if replicated
-        && !(kind == crate::registry::ENTITY_TYPE_FACET
-            && crate::companion::is_identity_facet_body(data))
-    {
+    } else if replicated {
         // Same bytes may retain their locally authored stamp. A changed opaque
         // replay must not inherit one from an earlier row at the same id.
         if stored_scope(store, txn, id, kind, data)?.is_none() {
@@ -110,8 +113,14 @@ pub(crate) fn stamp_put(
     } else {
         default_stamp(kind, crate::claim::substrate_facet_id(id))
     };
-    if kind == crate::registry::ENTITY_TYPE_FACET
-        && let Ok(rmpv::Value::Map(entries)) = rmpv::decode::read_value(&mut &data[..])
+    // A locally authored RELATIONSHIP may declare its sensitivity just as a
+    // FACET does. The resulting digest-bound record position, not a raw body
+    // string read at export time, is the portable disclosure ceiling. Replayed
+    // opaque rows above remain unstamped and cannot become public here.
+    if matches!(
+        kind,
+        crate::registry::ENTITY_TYPE_FACET | crate::registry::ENTITY_TYPE_RELATIONSHIP
+    ) && let Ok(rmpv::Value::Map(entries)) = rmpv::decode::read_value(&mut &data[..])
     {
         let bands: Vec<_> = entries
             .iter()
@@ -123,10 +132,16 @@ pub(crate) fn stamp_put(
                 Some("private") => Sensitivity::Private,
                 Some("sensitive") => Sensitivity::Sensitive,
                 Some("restricted") => Sensitivity::Restricted,
-                _ => return Err(Error::InvalidClaimBody("invalid facet sensitivity")),
+                _ => {
+                    return Err(Error::InvalidClaimBody(
+                        "invalid facet or relationship sensitivity",
+                    ));
+                }
             });
         } else if !bands.is_empty() {
-            return Err(Error::InvalidClaimBody("duplicate facet sensitivity"));
+            return Err(Error::InvalidClaimBody(
+                "duplicate facet or relationship sensitivity",
+            ));
         }
     }
     scope.verbs = ScopeAxis::Bottom;
@@ -351,7 +366,7 @@ impl Vault {
             }
             batch.apply(txn)?;
             for id in &ids {
-                self.store.vault_meta.delete(txn, &key(*id))?;
+                retire_stamp(&self.store, txn, *id)?;
             }
             Ok(ids)
         })

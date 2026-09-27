@@ -1,13 +1,10 @@
-use std::collections::HashSet;
 use std::str;
 
 use heed::RwTxn;
 use rmpv::Value;
 
 use crate::affect::Vad;
-use crate::claim::{ClaimLifecycleStatus, ClaimSubject};
-use crate::companion::CompanionLifecycleEvent;
-use crate::companion::{CompanionRecord, CompanionRecordKey, CompanionSubject};
+use crate::claim::ClaimSubject;
 use crate::edge::{DecodedEdgeValue, EdgeProvenanceFlags};
 use crate::entity_id::EntityId;
 use crate::error::Result;
@@ -24,40 +21,6 @@ pub(super) const SHORT_ID_COUNTER_LEN: usize = 8;
 pub(crate) const LONG_INTERVAL_THRESHOLD_SECS: u64 = 14 * 86_400;
 pub(super) const ERR_RAW_CLAIM_PUT_REQUIRES_ENVELOPE: &str = "raw claim put requires WriteEnvelope";
 pub(super) const ERR_RAW_NOTE_PUT_REQUIRES_AUTHOR_TAKE: &str = "raw NOTE put requires author_take";
-pub(super) type CompanionRetiredHistoryOverlay =
-    HashSet<(CompanionRecordKey, Vec<CompanionLifecycleEvent>)>;
-
-pub(super) fn is_relationship_end_scrub_value(value: &Value) -> bool {
-    let Value::Map(entries) = value else {
-        return false;
-    };
-    let mut has_kind = false;
-    let mut has_private_memory_marker = false;
-    let mut has_ended_at = false;
-    for (key, value) in entries {
-        match key.as_str() {
-            Some("kind") => has_kind = value.as_str() == Some("relationship_ended"),
-            Some("private_memory") => has_private_memory_marker = value.as_str() == Some("removed"),
-            Some("ended_at") => has_ended_at = value.as_u64().is_some(),
-            _ => {}
-        }
-    }
-    has_kind && has_private_memory_marker && has_ended_at
-}
-
-pub(super) fn is_retired_relationship_end_rescrub(
-    existing: &CompanionRecord,
-    record: &CompanionRecord,
-) -> bool {
-    existing.lifecycle == ClaimLifecycleStatus::Retracted
-        && record.lifecycle == ClaimLifecycleStatus::Retracted
-        && matches!(&existing.subject, CompanionSubject::Relationship { .. })
-        && record.key() == existing.key()
-        && record.lifecycle_events == existing.lifecycle_events
-        && record.sensitivity == existing.sensitivity
-        && is_relationship_end_scrub_value(&record.value)
-}
-
 pub(super) fn conflict_claim_candidate(
     predicate: &'static str,
     subject: EntityId,
