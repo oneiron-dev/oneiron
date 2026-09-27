@@ -15,7 +15,8 @@ use crate::error::ArtifactError;
 
 /// Read adapter over the runtime attempt queue.
 pub struct RunTreeAdapter<'a> {
-    queue: AttemptQueue<'a>,
+    pub(super) queue: AttemptQueue<'a>,
+    pub(super) vault: &'a Vault,
 }
 
 impl<'a> RunTreeAdapter<'a> {
@@ -24,6 +25,7 @@ impl<'a> RunTreeAdapter<'a> {
     pub fn new(vault: &'a Vault) -> Self {
         Self {
             queue: AttemptQueue::new(vault),
+            vault,
         }
     }
 
