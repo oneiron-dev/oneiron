@@ -700,7 +700,7 @@ fn resolved_refs_composition_deception_and_actual_mismatch_block_install() -> Re
     });
     let resolved = serde_json::json!({
         "$defs":{"limit":{"type":"integer","description":"Maximum items"}},
-        "allOf":[{"type":"object","properties":{"limit":{"type":"integer","description":"Maximum items"}}}]
+        "type":"object","properties":{"limit":{"type":"integer","description":"Maximum items"}}
     });
     let cases = [
         (
@@ -1000,6 +1000,19 @@ fn composition_keeps_branch_constraints_and_accepts_matching_branches() -> Resul
         widened,
         Some("declared-vs-actual"),
     )?;
+    // A ref's annotations must remain visible to a sibling
+    // unevaluatedProperties, unlike an allOf branch's annotations.
+    let declared = serde_json::json!({"allOf":[
+        {"type":"object","properties":{"x":{"type":"string"}}},
+        {"$defs":{"base":{"type":"object","properties":{"x":{"type":"string"}}}},"unevaluatedProperties":false}
+    ]});
+    let observed = serde_json::json!({"$defs":{"base":{"type":"object","properties":{"x":{"type":"string"}}}},"$ref":"#/$defs/base","unevaluatedProperties":false});
+    assert_screen_result(
+        &connector_with_schema(declared.clone())?,
+        observed,
+        Some("declared-vs-actual"),
+    )?;
+    assert_screen_result(&connector_with_schema(declared.clone())?, declared, None)?;
     let repeated = serde_json::json!({"allOf":[
         {"type":"object","properties":{"x":{"type":"string"}}},
         {"type":"object","properties":{"x":{"type":"string"}}}
@@ -1098,6 +1111,7 @@ fn script_calls_are_tokenized_and_local_helpers_are_allowed() -> Result<()> {
         ("import importlib; importlib.import_module('os')", true),
         ("run = eval; run(\"__import__('os').system('id')\")", true),
         ("reader = open; reader('/etc/passwd')", true),
+        ("# ｅｖａｌ should not execute\nprint('café')", false),
     ] {
         let mut files = source(true)?.files().to_vec();
         files.push(HubFile::new(
@@ -1115,6 +1129,27 @@ fn script_calls_are_tokenized_and_local_helpers_are_allowed() -> Result<()> {
             .clone();
         assert_screen_result(&source, observed, blocked.then_some("outside the sandbox"))?;
     }
+    let mut unicode_files = source(true)?.files().to_vec();
+    unicode_files.push(HubFile::new(
+        "scripts/runner.py",
+        "ｅｖａｌ(\"__import__('os').system('id')\")"
+            .as_bytes()
+            .to_vec(),
+    ));
+    let unicode_source = PackSource::from_files(unicode_files)?;
+    let observed = Qualification {
+        runtime: true,
+        passed: true,
+    }
+    .qualify(&unicode_source)?
+    .observed_tools[0]
+        .input_schema
+        .clone();
+    assert_screen_result(
+        &unicode_source,
+        observed,
+        Some("unverifiable script syntax"),
+    )?;
     let mut files = source(true)?.files().to_vec();
     files.push(HubFile::new(
         "scripts/runner.py",
@@ -1283,4 +1318,18 @@ fn escaped_pack_description_secret_blocks_without_consent_spend() -> Result<()> 
     );
     assert!(vault.installed_pack("alice.tools")?.is_none());
     Ok(())
+}
+
+#[test]
+fn schema_resolution_distinguishes_const_data_and_keyword_named_properties() -> Result<()> {
+    let declared = serde_json::json!({"type":"object","$defs":{"v":{"type":"string"}},"const":{"$ref":"#/$defs/v"}});
+    let observed = serde_json::json!({"type":"object","$defs":{"v":{"type":"string"}},"const":{"type":"string"}});
+    assert_screen_result(
+        &connector_with_schema(declared.clone())?,
+        observed,
+        Some("declared-vs-actual"),
+    )?;
+    assert_screen_result(&connector_with_schema(declared.clone())?, declared, None)?;
+    let named = serde_json::json!({"type":"object","properties":{"allOf":{"type":"string"}}});
+    assert_screen_result(&connector_with_schema(named.clone())?, named, None)
 }

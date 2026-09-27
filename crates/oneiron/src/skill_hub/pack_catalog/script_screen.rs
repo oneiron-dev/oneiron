@@ -188,6 +188,11 @@ fn python_tokens(source: &str) -> Option<Vec<Token>> {
                 word.push(chars.next()?);
             }
             tokens.push(Token::Word(word));
+        } else if !ch.is_ascii() {
+            // Python NFKC-normalizes Unicode identifiers. This bounded lexer
+            // accepts ASCII executable syntax only; never treat an unparsed
+            // executable identifier as punctuation or a harmless literal.
+            return None;
         } else if ch == '\\' {
             return None; // line continuations / escaped operators need a real parser
         } else if !ch.is_whitespace() && !ch.is_ascii_digit() {

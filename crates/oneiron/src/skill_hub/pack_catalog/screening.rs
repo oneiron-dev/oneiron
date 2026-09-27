@@ -238,19 +238,18 @@ impl Vault {
     }
 }
 
-// Resolve LOCAL JSON pointers against the entire tool document. No remote fetch,
-// unresolved/cyclic references, oversized graph or unchecked composition branch.
+// Resolve only schema positions. `const`, `enum`, `default`, examples and
+// extension payloads are *instance data*: their "$ref" and "allOf" keys are
+// ordinary text. Every branch and literal still pays the same depth/node budget.
 fn resolve(
     value: &Value,
     root: &Value,
     depth: usize,
     budget: &mut usize,
 ) -> std::result::Result<Value, &'static str> {
-    if depth > MAX_DEPTH || *budget == 0 {
-        return Err("schema resolution bound exceeded");
-    }
-    *budget -= 1;
+    debit(budget, depth)?;
     match value {
+        Value::Bool(_) => Ok(value.clone()),
         Value::Object(fields) => {
             let mut result = Map::new();
             let reference_target = if let Some(reference) = fields.get("$ref") {
@@ -272,66 +271,99 @@ fn resolve(
                 if key == "$ref" {
                     continue;
                 }
-                if key == "allOf" {
-                    let branches = child
-                        .as_array()
-                        .filter(|b| !b.is_empty())
-                        .ok_or("empty composition")?;
-                    let mut combined = Vec::new();
-                    // Never union constraints from distinct branches: branch-local
-                    // additionalProperties/unevaluatedProperties would change meaning.
-                    for branch in branches {
-                        let resolved = resolve(branch, root, depth + 1, budget)?;
-                        if !resolved.is_object() {
-                            return Err("composition must contain objects");
+                let resolved = match key.as_str() {
+                    "allOf" | "anyOf" | "oneOf" | "prefixItems" => {
+                        let branches = child
+                            .as_array()
+                            .filter(|b| !b.is_empty())
+                            .ok_or("empty composition")?;
+                        let mut resolved = Vec::with_capacity(branches.len());
+                        for branch in branches {
+                            let schema = resolve(branch, root, depth + 1, budget)?;
+                            if key != "allOf" || !resolved.contains(&schema) {
+                                resolved.push(schema);
+                            }
                         }
-                        if !combined.contains(&resolved) {
-                            combined.push(resolved);
+                        Value::Array(resolved)
+                    }
+                    "properties" | "patternProperties" | "$defs" | "definitions"
+                    | "dependentSchemas" => {
+                        let entries = child.as_object().ok_or("schema map must be an object")?;
+                        let mut mapped = Map::new();
+                        for (name, schema) in entries {
+                            mapped.insert(name.clone(), resolve(schema, root, depth + 1, budget)?);
                         }
+                        Value::Object(mapped)
                     }
-                    if result.insert(key.clone(), Value::Array(combined)).is_some() {
-                        return Err("conflicting composition");
-                    }
-                } else if key == "anyOf" || key == "oneOf" {
-                    let branches = child
-                        .as_array()
-                        .filter(|b| !b.is_empty())
-                        .ok_or("empty composition")?;
-                    let mut resolved = Vec::new();
-                    for branch in branches {
-                        let value = resolve(branch, root, depth + 1, budget)?;
-                        if !value.is_object() {
-                            return Err("composition must contain objects");
-                        }
-                        resolved.push(value);
-                    }
-                    if result.insert(key.clone(), Value::Array(resolved)).is_some() {
-                        return Err("conflicting composition");
-                    }
-                } else {
-                    let resolved = resolve(child, root, depth + 1, budget)?;
-                    if result
-                        .insert(key.clone(), resolved.clone())
-                        .is_some_and(|old| old != resolved)
-                    {
-                        return Err("conflicting ref sibling");
+                    "items"
+                    | "additionalProperties"
+                    | "unevaluatedProperties"
+                    | "contains"
+                    | "not"
+                    | "if"
+                    | "then"
+                    | "else"
+                    | "propertyNames"
+                    | "unevaluatedItems"
+                    | "additionalItems"
+                    | "contentSchema" => resolve(child, root, depth + 1, budget)?,
+                    _ => copy_literal(child, depth + 1, budget)?,
+                };
+                result.insert(key.clone(), resolved);
+            }
+            if let Some(target) = reference_target {
+                // The ref's annotations are visible to sibling
+                // `unevaluatedProperties` only when its applicator stays at
+                // THIS node. Never place those siblings in another branch.
+                match result.get_mut("allOf") {
+                    Some(Value::Array(branches)) => branches.push(target),
+                    _ => {
+                        result.insert("allOf".into(), Value::Array(vec![target]));
                     }
                 }
             }
-            // A ref plus sibling keywords is an intersection, not a map union.
-            // Even one allOf branch must keep its own evaluation scope:
-            // additionalProperties in that branch cannot see parent properties.
-            if let Some(target) = reference_target {
-                if result.is_empty() {
-                    return Ok(target);
-                }
-                return Ok(serde_json::json!({"allOf": [target, Value::Object(result)]}));
+            // This one flattening is provable: there are NO validating
+            // siblings, only an inert definitions table. Do not lift a branch
+            // across `properties`, `additionalProperties`, `unevaluated*`, etc.
+            if result.keys().all(|key| key == "$defs" || key == "allOf")
+                && let Some(Value::Array(branches)) = result.get("allOf")
+                && branches.len() == 1
+                && let Value::Object(branch) = &branches[0]
+                && branch.keys().all(|key| !result.contains_key(key))
+            {
+                let branch = branch.clone();
+                result.remove("allOf");
+                result.extend(branch);
             }
             Ok(Value::Object(result))
         }
+        _ => Err("schema must be an object or boolean"),
+    }
+}
+fn debit(budget: &mut usize, depth: usize) -> std::result::Result<(), &'static str> {
+    if depth > MAX_DEPTH || *budget == 0 {
+        return Err("schema resolution bound exceeded");
+    }
+    *budget -= 1;
+    Ok(())
+}
+fn copy_literal(
+    value: &Value,
+    depth: usize,
+    budget: &mut usize,
+) -> std::result::Result<Value, &'static str> {
+    debit(budget, depth)?;
+    match value {
+        Value::Object(fields) => {
+            let mut copied = Map::new();
+            for (name, child) in fields {
+                copied.insert(name.clone(), copy_literal(child, depth + 1, budget)?);
+            }
+            Ok(Value::Object(copied))
+        }
         Value::Array(items) => items
             .iter()
-            .map(|item| resolve(item, root, depth + 1, budget))
+            .map(|child| copy_literal(child, depth + 1, budget))
             .collect(),
         _ => Ok(value.clone()),
     }
