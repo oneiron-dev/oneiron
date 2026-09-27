@@ -17,7 +17,7 @@ fn stamped_resident_receipt(
     else {
         panic!("new attempt")
     };
-    vault.load_resident_skill_pack(row.id, resident, skill, now)?;
+
     let ClaimOutcome::Claimed(leased) = queue.claim_kind(
         "resident.optimize",
         ClaimAttempt {
@@ -28,6 +28,15 @@ fn stamped_resident_receipt(
     else {
         panic!("claim")
     };
+    vault.load_resident_skill_pack(
+        row.id,
+        resident,
+        skill,
+        "resident-opt",
+        leased.attempt_count,
+        "fixture/model@1",
+        now,
+    )?;
     queue.fail(crate::attempt_queue::FailAttempt {
         id: row.id,
         lease_owner: "resident-opt".into(),

@@ -457,7 +457,7 @@ async fn context_pack_route_rejects_malformed_controls() {
     );
 
     let (status, body) = route_json(
-        server,
+        server.clone(),
         json_request(
             "POST",
             "/v1/core/context-pack",
@@ -479,6 +479,19 @@ async fn context_pack_route_rejects_malformed_controls() {
         error_envelope(&body)["details"]["field"],
         Value::from("time.since")
     );
+    let (status, body) = route_json(
+        server,
+        json_request(
+            "POST",
+            "/v1/core/context-pack",
+            json!({
+                "query": "recent decisions", "executor_model": "missing-revision"
+            }),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_error_envelope(&body, "BAD_REQUEST");
 }
 
 #[tokio::test]

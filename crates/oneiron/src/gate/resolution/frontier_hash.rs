@@ -57,6 +57,11 @@ pub(super) fn hash_policy_frontier_v0(
             &resolution.voice_ref_limits,
         );
     }
+    if let Some(policy) = &resolution.pack_install_policy {
+        hash_str(hasher, "pack_install_policy");
+        let value = policy.encode();
+        hash_opt_value(hasher, Some(&value))?;
+    }
     // An absent/empty hosted policy changes no decision and keeps the
     // established frontier bytes for manifests that never named this knob.
     if !resolution.hosted_tts.rows.is_empty() {

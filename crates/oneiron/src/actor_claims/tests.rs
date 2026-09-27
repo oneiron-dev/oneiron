@@ -139,6 +139,12 @@ fn stamped_pack_receipt(vault: &Vault, skill_id: &str, actor: EntityId) -> Resul
     else {
         panic!("the enqueued attempt is claimable");
     };
+    queue.set_executor_model(
+        attempt.id,
+        "sk06-worker",
+        leased.attempt_count,
+        "fixture/model@1",
+    )?;
     queue.complete(CompleteAttempt {
         id: attempt.id,
         lease_owner: "sk06-worker".to_owned(),
