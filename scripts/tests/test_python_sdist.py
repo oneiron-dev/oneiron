@@ -71,7 +71,7 @@ def test_python_sdist_contains_rust_and_cargo_inputs(python_sdist):
             "oneiron-py/src/lib.rs",
             "oneiron/Cargo.toml",
             "oneiron/src/lib.rs",
-            "oneiron/src/memory/recall.rs",
+            "oneiron/src/memory/recall/mod.rs",
             "oneiron-remote/Cargo.toml",
             "oneiron-remote/src/lib.rs",
             "oneiron-vault-contract/Cargo.toml",

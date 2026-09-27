@@ -4138,3 +4138,4 @@ fn observer_b_quarantines_project_parent_forgery_removal_and_claim_hub_edge() {
         );
     }
 }
+mod resident;
