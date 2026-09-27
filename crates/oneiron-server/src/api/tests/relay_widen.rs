@@ -306,10 +306,12 @@ async fn managed_host_account_holder_lands_once_but_host_root_and_other_account_
         &owner.to_hex(),
         payload.as_bytes(),
     );
-    tampered.mac.replace_range(..1, "0");
-    if tampered.mac.starts_with('0') {
-        tampered.mac.replace_range(..1, "1");
-    }
+    let flipped = if tampered.mac.starts_with('0') {
+        "1"
+    } else {
+        "0"
+    };
+    tampered.mac.replace_range(..1, flipped);
     assert_eq!(
         app.clone()
             .oneshot(send(Some(tampered)))
