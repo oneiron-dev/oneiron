@@ -82,3 +82,42 @@ fn restored_working_context_enforces_same_turn_order_as_record() -> Result<()> {
     assert!(restored.record(&vault, 2, b"out of order", "no").is_err());
     Ok(())
 }
+
+#[test]
+fn captured_tool_output_assembles_reference_only_and_restores_exact_bytes() -> Result<()> {
+    let dir = tempfile::tempdir()?;
+    let raw = b"tool\0output\xff that cannot be context text";
+    let entry;
+    {
+        let vault = Vault::open(dir.path(), crate::VaultConfig::device())?;
+        entry = OutputContextEntry::capture(&vault, raw, 7, "short overview".into())?;
+        assert_eq!(
+            entry.source,
+            OutputContextEntry::capture(&vault, raw, 7, String::new())?.source
+        );
+    }
+    let working_context = serde_json::to_vec(&entry).unwrap();
+    assert!(
+        !working_context
+            .windows(raw.len())
+            .any(|window| window == raw)
+    );
+    assert!(!working_context.windows(4).any(|window| window == b"tool"));
+    let entry: OutputContextEntry = serde_json::from_slice(&working_context).unwrap();
+    let handle = entry.source.handle();
+    assert_eq!(OutputRef::from_handle(&handle)?, entry.source);
+    for malformed in [
+        "",
+        "output:blake3:0:0",
+        "output:blake3:00:1",
+        "output:blake3:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff:01",
+    ] {
+        assert!(OutputRef::from_handle(malformed).is_err());
+    }
+    let vault = Vault::open(dir.path(), crate::VaultConfig::device())?;
+    assert_eq!(
+        restore_output(&vault, OutputRef::from_handle(&handle)?)?,
+        raw
+    );
+    Ok(())
+}

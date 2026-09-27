@@ -83,6 +83,38 @@ impl<'de> Deserialize<'de> for OutputWorkingContext {
 }
 
 impl OutputRef {
+    /// Portable handle for an output that stays valid after context compaction.
+    #[must_use]
+    pub fn handle(self) -> String {
+        format!(
+            "output:blake3:{}:{}",
+            blake3::Hash::from(self.hash).to_hex(),
+            self.byte_len
+        )
+    }
+
+    /// Parse a handle before trying to restore the named bytes.
+    pub fn from_handle(handle: &str) -> Result<Self> {
+        let invalid = || Error::CorruptedIndex("recoverable output handle");
+        let rest = handle.strip_prefix("output:blake3:").ok_or_else(invalid)?;
+        let (hex, len) = rest.split_once(':').ok_or_else(invalid)?;
+        if hex.len() != 64
+            || !hex
+                .bytes()
+                .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
+        {
+            return Err(invalid());
+        }
+        let hash = blake3::Hash::from_hex(hex).map_err(|_| invalid())?;
+        let byte_len = len.parse::<u64>().map_err(|_| invalid())?;
+        if len != byte_len.to_string() {
+            return Err(invalid());
+        }
+        Ok(Self {
+            hash: *hash.as_bytes(),
+            byte_len,
+        })
+    }
     #[must_use]
     pub fn from_bytes(bytes: &[u8]) -> Self {
         Self {
@@ -206,6 +238,22 @@ impl OutputWorkingContext {
 }
 
 impl OutputContextEntry {
+    /// Persist a raw tool or agent result before handing context to a model.
+    /// The returned working entry contains only a handle and host-supplied
+    /// overview; callers explicitly reexpand the source when needed.
+    pub fn capture(
+        vault: &Vault,
+        bytes: &[u8],
+        created_turn: u64,
+        overview: String,
+    ) -> Result<Self> {
+        Ok(Self {
+            source: store_output(vault, bytes)?,
+            created_turn,
+            overview,
+        })
+    }
+
     fn stub_view(&self) -> OutputContextView {
         OutputContextView {
             source: self.source,
