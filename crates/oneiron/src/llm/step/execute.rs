@@ -243,6 +243,50 @@ pub(crate) fn verified_step_effector_eligible_in_txn(
     binding: super::types::StepEffectBinding,
     effect_actor: crate::entity_id::EntityId,
 ) -> DurableStepResult<bool> {
+    let (response, purpose) = verified_step_response_in_txn(vault, txn, binding, effect_actor)?;
+    let Some(class) = super::super::fallback_failure_class(&response) else {
+        return Ok(true);
+    };
+    let stage = crate::dreamer_consolidation::step_effector_eligible_in_txn(
+        vault, txn, &purpose, &response,
+    )?;
+    Ok(policy
+        .dreamer_failure_decision(class)
+        .effector_with_stage(stage))
+}
+
+/// Recheck one persisted fallback in the governing PERSON or promotion write
+/// transaction. A revoked manifest or stage rule cannot reuse the earlier
+/// read-side step decision as permission to publish.
+pub(crate) fn verified_step_consolidation_eligible_in_txn(
+    vault: &crate::Vault,
+    txn: &heed::RoTxn<'_>,
+    policy: &crate::gate::PolicyManifestResolution,
+    binding: super::types::StepEffectBinding,
+    actor: crate::entity_id::EntityId,
+    expected_response_hash: [u8; 32],
+) -> DurableStepResult<bool> {
+    let (response, purpose) = verified_step_response_in_txn(vault, txn, binding, actor)?;
+    let payload = serde_json::to_vec(&response)?;
+    if blake3::hash(&payload).as_bytes() != &expected_response_hash {
+        return Err(Error::InvalidClaimBody("consolidation fallback response changed").into());
+    }
+    let class = super::super::fallback_failure_class(&response).ok_or(Error::InvalidClaimBody(
+        "consolidation binding is not a fallback",
+    ))?;
+    let decision = policy.dreamer_failure_decision(class);
+    let stage = crate::dreamer_consolidation::step_consolidation_eligible_in_txn(
+        vault, txn, &purpose, &response,
+    )?;
+    Ok(decision.consolidation_with_stage(stage))
+}
+
+fn verified_step_response_in_txn(
+    vault: &crate::Vault,
+    txn: &heed::RoTxn<'_>,
+    binding: super::types::StepEffectBinding,
+    effect_actor: crate::entity_id::EntityId,
+) -> DurableStepResult<(LlmResponse, String)> {
     let claim_id = step_index_lookup_in_txn(vault, txn, binding.attempt_id, &binding.step_hash)?
         .ok_or(Error::InvalidClaimBody(
             "step-derived effect requires a completed step",
@@ -271,16 +315,7 @@ pub(crate) fn verified_step_effector_eligible_in_txn(
         return Err(Error::InvalidClaimBody("step-derived effect actor mismatch").into());
     }
     let response = load_step_response_in_txn(vault, txn, &decoded)?;
-    let manifest_allows = super::super::fallback_failure_class(&response)
-        .is_none_or(|class| policy.dreamer_failure_decision(class).effector_eligible);
-    let stage_allows = crate::dreamer_consolidation::step_effector_eligible_in_txn(
-        vault,
-        txn,
-        &decoded.purpose,
-        &response,
-    )?
-    .unwrap_or(true);
-    Ok(manifest_allows && stage_allows)
+    Ok((response, decoded.purpose))
 }
 
 fn failure_policy(

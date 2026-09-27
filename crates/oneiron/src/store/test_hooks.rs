@@ -37,6 +37,7 @@ use crate::store::GateDecisionId;
 /// the vault it opened; a sibling test running in the same binary opened a
 /// different vault and cannot see it.
 type GraphAskPreflightHook = (EntityId, Box<dyn FnOnce() + Send>);
+type BeforeDreamerPersonMintHook = Box<dyn FnOnce(&crate::Vault) + Send>;
 
 #[derive(Default)]
 pub(crate) struct TestHooks {
@@ -55,6 +56,9 @@ pub(crate) struct TestHooks {
     force_sync_calls: AtomicUsize,
     /// One-shot failure after a durable fallback is saved, before policy resolution.
     fail_next_dreamer_failure_policy_read: AtomicBool,
+    /// One-shot Dreamer boundary after a fallback passed read-side policy but
+    /// before the PERSON writer opens its transaction.
+    before_dreamer_person_mint: Mutex<Option<BeforeDreamerPersonMintHook>>,
     /// One-shot stage boundary for deadline tests; never shared across vaults.
     pub(crate) after_retrieval_text: Mutex<Option<Box<dyn FnOnce() + Send>>>,
     /// One vault-owned rendezvous after a graph ask's last read preflight,
@@ -65,6 +69,27 @@ pub(crate) struct TestHooks {
 }
 
 impl TestHooks {
+    pub(crate) fn install_before_dreamer_person_mint(
+        &self,
+        hook: impl FnOnce(&crate::Vault) + Send + 'static,
+    ) {
+        *self
+            .before_dreamer_person_mint
+            .lock()
+            .expect("person mint hook") = Some(Box::new(hook));
+    }
+
+    pub(crate) fn run_before_dreamer_person_mint(&self, vault: &crate::Vault) {
+        let hook = self
+            .before_dreamer_person_mint
+            .lock()
+            .expect("person mint hook")
+            .take();
+        if let Some(hook) = hook {
+            hook(vault);
+        }
+    }
+
     pub(crate) fn arm_fail_next_dreamer_failure_policy_read(&self) {
         self.fail_next_dreamer_failure_policy_read
             .store(true, Ordering::Release);

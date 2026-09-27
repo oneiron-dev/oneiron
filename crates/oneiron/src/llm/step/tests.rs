@@ -2082,6 +2082,7 @@ fn install_failure_rules(vault: &Vault, rows: &[(&str, &str, bool, bool)]) -> Re
     let rmpv::Value::Map(entries) = &mut manifest else {
         panic!("manifest map")
     };
+    entries.retain(|(key, _)| key.as_str() != Some("dreamer_failure_rules"));
     entries.push((
         rmpv::Value::from("dreamer_failure_rules"),
         rmpv::Value::Array(
@@ -2096,6 +2097,14 @@ fn install_failure_rules(vault: &Vault, rows: &[(&str, &str, bool, bool)]) -> Re
                         ),
                         (
                             rmpv::Value::from("effector_eligible"),
+                            rmpv::Value::Boolean(*effector),
+                        ),
+                        (
+                            rmpv::Value::from("default_consolidation_eligible"),
+                            rmpv::Value::Boolean(*consolidation),
+                        ),
+                        (
+                            rmpv::Value::from("default_effector_eligible"),
                             rmpv::Value::Boolean(*effector),
                         ),
                     ])

@@ -142,6 +142,13 @@ pub(crate) fn resolve_policy_manifest(
                 resolution
                     .dreamer_failure_rules
                     .extend(decoded.dreamer_failure_rules);
+                if let Some(precedence) = decoded.dreamer_failure_precedence {
+                    resolution.dreamer_failure_precedence = Some(
+                        resolution
+                            .dreamer_failure_precedence
+                            .map_or(precedence, |prior| prior.restrict(precedence)),
+                    );
+                }
                 if let Some(bounds) = decoded.diagnostic_bounds {
                     match resolution.diagnostic_bounds {
                         None => resolution.diagnostic_bounds = Some(bounds),

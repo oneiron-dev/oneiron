@@ -9,6 +9,7 @@ use crate::provenance::PREDICATE_EDGE_PROVENANCE;
 use super::constants::{
     ACTOR_CEILING_KEY, ACTOR_CLASS_KEY, ACTOR_REF_KEY, AXIS_CRITICALITY_KEY, AXIS_SENSITIVITY_KEY,
     LOCAL_WRITE_ACTOR_CLASS, POLICY_ACTOR_CEILINGS_KEY, POLICY_DEFAULTS_KEY,
+    POLICY_DREAMER_FAILURE_PRECEDENCE_KEY, POLICY_DREAMER_FAILURE_RULES_KEY,
     POLICY_MIN_ENGINE_VERSION_KEY, POLICY_ON_BUDGET_EXHAUSTED_KEY, POLICY_OWNER_POLICY_ENABLED_KEY,
     POLICY_OWNER_POLICY_ROWS_KEY, POLICY_PACK_ID_KEY, POLICY_PACK_VERSION_KEY, POLICY_RULES_KEY,
     POLICY_SCHEMA_VERSION, POLICY_SCHEMA_VERSION_KEY, POLICY_SIGNATURES_KEY,
@@ -360,6 +361,43 @@ pub(crate) fn default_policy_manifest() -> Vec<u8> {
         (
             Value::from(POLICY_ON_BUDGET_EXHAUSTED_KEY),
             Value::from("suspend"),
+        ),
+        // Shipped policy DATA: no failed output is eligible without an
+        // authenticated choice. Fatal ceilings leave room for a holder choice;
+        // a true ceiling is never by itself an authority grant.
+        (
+            Value::from(POLICY_DREAMER_FAILURE_PRECEDENCE_KEY),
+            Value::from("nested_narrowing"),
+        ),
+        (
+            Value::from(POLICY_DREAMER_FAILURE_RULES_KEY),
+            Value::Array(
+                ["retryable", "fatal", "budget"]
+                    .into_iter()
+                    .map(|failure| {
+                        let route = match failure {
+                            "retryable" => "retry",
+                            "fatal" => "fallback",
+                            _ => "budget_trap",
+                        };
+                        let cap = failure == "fatal";
+                        Value::Map(vec![
+                            (Value::from("failure"), Value::from(failure)),
+                            (Value::from("route"), Value::from(route)),
+                            (Value::from("consolidation_eligible"), Value::Boolean(cap)),
+                            (Value::from("effector_eligible"), Value::Boolean(cap)),
+                            (
+                                Value::from("default_consolidation_eligible"),
+                                Value::Boolean(false),
+                            ),
+                            (
+                                Value::from("default_effector_eligible"),
+                                Value::Boolean(false),
+                            ),
+                        ])
+                    })
+                    .collect(),
+            ),
         ),
         // The owner policy plane ships OFF with zero rows: a fresh vault
         // classifies nothing and calls no safeguard model until its owner

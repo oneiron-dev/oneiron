@@ -54,6 +54,14 @@ fn failure_manifest(actor: &str, eligible: bool, grant: bool) -> Vec<u8> {
             (Value::from("route"), Value::from("fallback")),
             (Value::from("consolidation_eligible"), Value::Boolean(false)),
             (Value::from("effector_eligible"), Value::Boolean(eligible)),
+            (
+                Value::from("default_consolidation_eligible"),
+                Value::Boolean(false),
+            ),
+            (
+                Value::from("default_effector_eligible"),
+                Value::Boolean(eligible),
+            ),
         ])]),
     ));
     let mut encoded = Vec::new();
@@ -108,7 +116,9 @@ fn step_derived_effect_rechecks_resident_eligibility_and_still_uses_gate()
     )?;
     vault.clock.set(1_000);
     let actor = OutboundDispatchActor::agent(agent);
-    let manifest_id = entity(0xD0);
+    // Replace the shipped default pack: a second trusted pack may only
+    // narrow its false default, never silently widen it.
+    let manifest_id = crate::gate::default_policy_manifest_id()?;
     put_policy_manifest_bytes(
         &vault,
         manifest_id,

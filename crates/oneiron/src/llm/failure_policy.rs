@@ -48,24 +48,76 @@ impl DreamerFailureClass {
     }
 }
 
+/// Policy composition is itself authored vault data, not an engine choice.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub(crate) enum DreamerFailurePrecedence {
+    #[default]
+    NestedNarrowing,
+    HolderOverrideCappedAtVault,
+}
+
+impl DreamerFailurePrecedence {
+    pub(crate) fn parse(value: &str) -> Option<Self> {
+        match value {
+            "nested_narrowing" => Some(Self::NestedNarrowing),
+            "holder_override_capped_at_vault" => Some(Self::HolderOverrideCappedAtVault),
+            _ => None,
+        }
+    }
+
+    pub(crate) fn restrict(self, other: Self) -> Self {
+        if self == Self::NestedNarrowing || other == Self::NestedNarrowing {
+            Self::NestedNarrowing
+        } else {
+            Self::HolderOverrideCappedAtVault
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct DreamerFailureDecision {
     pub class: DreamerFailureClass,
     pub route: DreamerFailureRoute,
-    /// Additional restrictions on top of claim and effect authority gates.
+    /// Effective manifest default; a holder choice cannot exceed the vault cap.
     pub consolidation_eligible: bool,
     pub effector_eligible: bool,
-    /// A trusted manifest declared this class, or the manifest fold itself
-    /// failed closed. An absent class is not a permit; an independent,
-    /// authenticated Dreamer stage rule can supply its own narrower answer.
-    pub(crate) manifest_restricts: bool,
+    pub(crate) consolidation_ceiling: bool,
+    pub(crate) effector_ceiling: bool,
+    pub(crate) precedence: DreamerFailurePrecedence,
+}
+
+impl DreamerFailureDecision {
+    pub(crate) fn consolidation_with_stage(self, stage: Option<bool>) -> bool {
+        self.compose(
+            stage,
+            self.consolidation_eligible,
+            self.consolidation_ceiling,
+        )
+    }
+
+    pub(crate) fn effector_with_stage(self, stage: Option<bool>) -> bool {
+        self.compose(stage, self.effector_eligible, self.effector_ceiling)
+    }
+
+    fn compose(self, stage: Option<bool>, default: bool, ceiling: bool) -> bool {
+        ceiling
+            && match (self.precedence, stage) {
+                (DreamerFailurePrecedence::NestedNarrowing, Some(choice)) => default && choice,
+                (DreamerFailurePrecedence::HolderOverrideCappedAtVault, Some(choice)) => choice,
+                (_, None) => default,
+            }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct DreamerFailureRule {
     pub(crate) class: DreamerFailureClass,
+    /// Vault ceilings. A true ceiling is not an effect or promotion grant.
     pub(crate) consolidation_eligible: bool,
     pub(crate) effector_eligible: bool,
+    /// Shipped/owner-authored default when no stage choice is present.
+    pub(crate) default_consolidation_eligible: bool,
+    pub(crate) default_effector_eligible: bool,
 }
 
 /// Strictly parse three optional class rows. No unknown or duplicate classes,
@@ -82,13 +134,15 @@ pub(crate) fn parse_failure_rules(value: &Value) -> Option<Vec<DreamerFailureRul
         let Value::Map(entries) = row else {
             return None;
         };
-        if entries.len() != 4 {
+        if entries.len() != 6 {
             return None;
         }
         let mut class = None;
         let mut route = None;
         let mut consolidation_eligible = None;
         let mut effector_eligible = None;
+        let mut default_consolidation_eligible = None;
+        let mut default_effector_eligible = None;
         for (key, value) in entries {
             match key.as_str()? {
                 "failure" if class.is_none() => {
@@ -100,6 +154,12 @@ pub(crate) fn parse_failure_rules(value: &Value) -> Option<Vec<DreamerFailureRul
                 }
                 "effector_eligible" if effector_eligible.is_none() => {
                     effector_eligible = value.as_bool();
+                }
+                "default_consolidation_eligible" if default_consolidation_eligible.is_none() => {
+                    default_consolidation_eligible = Some(value.as_bool()?);
+                }
+                "default_effector_eligible" if default_effector_eligible.is_none() => {
+                    default_effector_eligible = Some(value.as_bool()?);
                 }
                 _ => return None,
             }
@@ -117,6 +177,8 @@ pub(crate) fn parse_failure_rules(value: &Value) -> Option<Vec<DreamerFailureRul
             class,
             consolidation_eligible: consolidation_eligible?,
             effector_eligible: effector_eligible?,
+            default_consolidation_eligible: default_consolidation_eligible?,
+            default_effector_eligible: default_effector_eligible?,
         });
     }
     Some(parsed)
@@ -125,17 +187,24 @@ pub(crate) fn parse_failure_rules(value: &Value) -> Option<Vec<DreamerFailureRul
 pub(crate) fn decide_failure(
     rules: &[DreamerFailureRule],
     class: DreamerFailureClass,
+    precedence: DreamerFailurePrecedence,
 ) -> DreamerFailureDecision {
     let matched: Vec<_> = rules.iter().filter(|rule| rule.class == class).collect();
+    let ceiling_consolidation =
+        !matched.is_empty() && matched.iter().all(|row| row.consolidation_eligible);
+    let ceiling_effector = !matched.is_empty() && matched.iter().all(|row| row.effector_eligible);
     DreamerFailureDecision {
         class,
         route: class.route(),
-        manifest_restricts: !matched.is_empty(),
-        // Missing rows do not license failed outputs. Multiple trusted packs
-        // compose by intersection, never last-writer-wins.
-        consolidation_eligible: !matched.is_empty()
-            && matched.iter().all(|r| r.consolidation_eligible),
-        effector_eligible: !matched.is_empty() && matched.iter().all(|r| r.effector_eligible),
+        precedence,
+        consolidation_ceiling: ceiling_consolidation,
+        effector_ceiling: ceiling_effector,
+        // Defaults and ceilings fold restrictively across all trusted packs.
+        // A missing class has no cap and cannot grant through an override.
+        consolidation_eligible: ceiling_consolidation
+            && matched.iter().all(|row| row.default_consolidation_eligible),
+        effector_eligible: ceiling_effector
+            && matched.iter().all(|row| row.default_effector_eligible),
     }
 }
 

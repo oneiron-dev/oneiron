@@ -2,7 +2,7 @@
 
 use crate::llm::{
     BudgetExhaustionPolicy, BudgetPolicyTable, DreamerFailureClass, DreamerFailureDecision,
-    DreamerFailureRule, decide_failure,
+    DreamerFailurePrecedence, DreamerFailureRule, decide_failure,
 };
 
 use crate::gate::ceiling::{
@@ -103,6 +103,7 @@ pub(crate) struct PolicyManifestResolution {
     pub(super) auto_checker: Option<String>,
     pub(super) budget_policy: BudgetPolicyTable,
     pub(super) dreamer_failure_rules: Vec<DreamerFailureRule>,
+    pub(super) dreamer_failure_precedence: Option<DreamerFailurePrecedence>,
 }
 
 impl PolicyManifestResolution {
@@ -111,12 +112,11 @@ impl PolicyManifestResolution {
         &self,
         class: DreamerFailureClass,
     ) -> DreamerFailureDecision {
+        let precedence = self.dreamer_failure_precedence.unwrap_or_default();
         if self.diagnostics.is_fail_closed() {
-            let mut denied = decide_failure(&[], class);
-            denied.manifest_restricts = true;
-            denied
+            decide_failure(&[], class, precedence)
         } else {
-            decide_failure(&self.dreamer_failure_rules, class)
+            decide_failure(&self.dreamer_failure_rules, class, precedence)
         }
     }
 }

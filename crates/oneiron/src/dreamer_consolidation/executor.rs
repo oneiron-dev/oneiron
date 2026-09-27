@@ -6,7 +6,7 @@ mod retry;
 
 use merge_resolution::{MergeResolution, decode_merge_resolution};
 
-use super::resources::BranchResources;
+use super::resources::{BranchResources, FallbackOutputPin};
 use super::value_projection::{json_to_rmpv, rmpv_to_json};
 use rmpv::Value;
 
@@ -31,7 +31,8 @@ use crate::error::Result;
 use crate::llm::{
     BudgetGuard, CallClass, CallEnvelope, CallPurpose, ContentPart, DurableStepContext,
     DurableStepResult, LlmBackend, LlmMessage, LlmMessageRole, LlmRequest, LlmResponse, ModelId,
-    ModelLocality, ModelTierRef, ResponseFormat, StepOutcome, TierPrecedence, call_as_step,
+    ModelLocality, ModelTierRef, ResponseFormat, StepEffectBinding, StepOutcome, TierPrecedence,
+    call_as_step,
 };
 use crate::temporal::TimeRange;
 use crate::write_envelope::{ClaimCandidate, WriteActor};
@@ -147,15 +148,22 @@ impl ConsolidationExecutor<'_> {
         // Both resident policies restrict a fallback: the step-level failure
         // class must permit consolidation AND the Dreamer stage rule must
         // accept the deterministic response. Neither is a Gate bypass.
-        let accepted = rules.as_ref().map_or_else(
-            || failure_policy.is_none_or(|decision| decision.consolidation_eligible),
-            |rules| {
-                rules.accepts(Stage::Extraction, &response)
-                    && failure_policy.is_none_or(|decision| {
-                        !decision.manifest_restricts || decision.consolidation_eligible
-                    })
-            },
-        );
+        let accepted = failure_policy.is_none_or(|decision| {
+            decision.consolidation_with_stage(
+                rules
+                    .as_ref()
+                    .map(|rules| rules.accepts(Stage::Extraction, &response)),
+            )
+        });
+        if accepted && failure_policy.is_some() {
+            resources.bind_fallback(FallbackOutputPin::new(
+                StepEffectBinding {
+                    attempt_id,
+                    step_hash,
+                },
+                &response,
+            )?)?;
+        }
         let candidates = if accepted {
             self.decode_candidates(
                 &partition,
@@ -172,6 +180,12 @@ impl ConsolidationExecutor<'_> {
         if ctx.deadline.expired() {
             return Ok(PartitionRun::Checkpoint);
         }
+        #[cfg(test)]
+        if accepted {
+            ctx.vault
+                .test_hooks()
+                .run_before_dreamer_person_mint(ctx.vault);
+        }
         let mint = if accepted {
             super::extracted_people::mint_extracted_people(
                 ctx.vault,
@@ -179,6 +193,9 @@ impl ConsolidationExecutor<'_> {
                 &turn_ids,
                 resources.scope(),
                 ctx.now_ms,
+                resources
+                    .fallback_binding()
+                    .map(|binding| (binding, self.actor.entity_ref())),
                 Some(ctx.deadline),
             )
             .map(|_| ())
