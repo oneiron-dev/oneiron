@@ -457,6 +457,7 @@ impl Vault {
             });
         }
 
+        let revisions = super::supersession_diff::capture_in_txn(self, &*wtxn, *old_id, *new_id)?;
         old_body.lifecycle = ClaimLifecycleStatus::Superseded;
         old_body.valid_to = Some(now);
         let data = encode_claim_body(&old_body)?;
@@ -486,15 +487,17 @@ impl Vault {
             },
         ];
         let binding = crate::batch::ClaimMaterialization::lifecycle(&self.store, &*wtxn, &ops[0])?;
-        match (closure_granted, checker, binding) {
+        let decision = match (closure_granted, checker, binding) {
             (true, Some(checker), Some(binding)) => {
-                self.apply_checked_deferred_closure_in_txn(wtxn, ops, binding, &old_body, checker)
+                self.apply_checked_deferred_closure_in_txn(wtxn, ops, binding, &old_body, checker)?
             }
             (_, _, binding) => {
                 self.apply_lifecycle_materialization(wtxn, ops, binding, true)?;
-                Ok(None)
+                None
             }
-        }
+        };
+        super::supersession_diff::store_in_txn(self, wtxn, *old_id, *new_id, revisions)?;
+        Ok(decision)
     }
 
     /// Supersedes an engine-owned `skill.*` / `actor.*` Claim inside the
@@ -518,6 +521,7 @@ impl Vault {
         Self::require_active_claim(&old_body)?;
         Self::require_source_trust_supersession_rights(&new_body, &old_body)?;
 
+        let revisions = super::supersession_diff::capture_in_txn(self, &*wtxn, *old_id, *new_id)?;
         old_body.lifecycle = ClaimLifecycleStatus::Superseded;
         old_body.valid_to = Some(now);
         let data = encode_claim_body(&old_body)?;
@@ -557,6 +561,7 @@ impl Vault {
             false,
             true,
         )?;
+        super::supersession_diff::store_in_txn(self, wtxn, *old_id, *new_id, revisions)?;
         Ok(())
     }
 
