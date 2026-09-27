@@ -7,7 +7,9 @@ use super::spec::{
     ContextSpec, MemoryProjection, normalize_context_spec, validate_context_spec,
 };
 use crate::Vault;
+use crate::attempt_queue::AttemptId;
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
+use crate::compaction::output::OutputRef;
 use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;
 use crate::error::{ArtifactError, Error, Result};
@@ -34,6 +36,15 @@ pub struct ContextResolutionRequest {
     pub world_scope: Option<WorldScope>,
 }
 
+/// One prior workflow step's recoverable output, bound to its producer.
+/// This is not a memory section or a read grant.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct WorkflowOutputContextRef {
+    pub step_ordinal: usize,
+    pub producing_attempt: AttemptId,
+    pub source: OutputRef,
+}
+
 /// What a [`ContextSpec`] resolved to against live vault state.
 ///
 /// A RUNTIME value, deliberately not serde: it is recomputed at every dispatch
@@ -48,6 +59,9 @@ pub struct ResolvedContextProjection {
     pub chat_sections: Vec<String>,
     pub briefing: Option<String>,
     pub sibling_result_refs: Vec<EntityId>,
+    /// Prior results of this saved workflow only. Assembled from settled
+    /// attempts, never inherited through the parent memory projection.
+    pub workflow_output_refs: Vec<WorkflowOutputContextRef>,
 }
 
 impl ResolvedContextProjection {
@@ -107,6 +121,7 @@ pub fn resolve_context_spec(
         chat_sections,
         briefing,
         sibling_result_refs: resolve_sibling_results(vault, &context_from)?,
+        workflow_output_refs: Vec::new(),
     })
 }
 
