@@ -272,6 +272,7 @@ pub(in crate::batch) fn apply_put(
         crate::skill_hub::decode_skill_hub_record(data)?;
     } else if entity_type == ENTITY_TYPE_SKILL {
         let decoded = crate::skill::decode_skill_record(data)?;
+        crate::skill::resident::validate_owner_put_in_txn(store, wtxn, &id, &decoded, replicated)?;
         hub_origin_marker = crate::skill_hub::check_hub_skill_put(
             store,
             &*wtxn,
