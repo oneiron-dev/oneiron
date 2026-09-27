@@ -29,17 +29,18 @@ fn provenance(seed: u8) -> CompanionProvenance {
 }
 
 #[test]
-fn companion_export_includes_portable_persona_and_relationship_layer() -> Result<()> {
+fn companion_export_includes_neutral_and_personal_relationship_records() -> Result<()> {
     let neutral = CompanionScope::neutral();
     let personal = CompanionScope::personal(entity(0x51));
-    let persona_ref = entity(0x52);
+    let neutral_source = entity(0x52);
     let relationship_source = entity(0x53);
     let relationship_target = entity(0x54);
 
-    let persona = CompanionRecord::persona(
+    let neutral_relationship = CompanionRecord::relationship(
         neutral,
-        persona_ref,
-        Value::from("portable persona"),
+        neutral_source,
+        entity(0xFE),
+        Value::from("portable neutral relationship"),
         provenance(0x55),
         crate::federation::Sensitivity::Public,
     );
@@ -53,11 +54,14 @@ fn companion_export_includes_portable_persona_and_relationship_layer() -> Result
     );
 
     let mut records = CompanionRegister::new();
-    records.register(persona.clone())?;
+    records.register(neutral_relationship.clone())?;
     records.register(relationship.clone())?;
 
     let mut expressions = CompanionExpressionRegister::new();
-    expressions.update(persona.key(), CompanionExpression::Professional)?;
+    expressions.update(
+        neutral_relationship.key(),
+        CompanionExpression::Professional,
+    )?;
     expressions.update(relationship.key(), CompanionExpression::Warm)?;
 
     let layer = companion_export_layer(
@@ -73,16 +77,23 @@ fn companion_export_includes_portable_persona_and_relationship_layer() -> Result
 
     assert_eq!(layer.layer_version(), COMPANION_EXPORT_LAYER_VERSION);
     assert_eq!(layer.len(), 2);
-    assert_eq!(layer.personas().len(), 1);
-    assert_eq!(layer.relationships().len(), 1);
-    assert_eq!(layer.personas()[0].record(), &persona);
+    assert_eq!(layer.relationships().len(), 2);
+    let exported_neutral = layer
+        .relationships()
+        .iter()
+        .find(|item| item.record() == &neutral_relationship)
+        .expect("neutral relationship is exportable");
     assert_eq!(
-        layer.personas()[0].expression(),
+        exported_neutral.expression(),
         Some(CompanionExpression::Professional)
     );
-    assert_eq!(layer.relationships()[0].record(), &relationship);
+    let exported_personal = layer
+        .relationships()
+        .iter()
+        .find(|item| item.record() == &relationship)
+        .expect("personal relationship is exportable");
     assert_eq!(
-        layer.relationships()[0].expression(),
+        exported_personal.expression(),
         Some(CompanionExpression::Warm)
     );
     Ok(())
@@ -94,17 +105,19 @@ fn companion_export_checks_channel_ceiling_scope_and_lifecycle() -> Result<()> {
     let personal = CompanionScope::personal(entity(0x61));
     let shared = CompanionScope::shared_vault(7);
 
-    let included = CompanionRecord::persona(
+    let included = CompanionRecord::relationship(
         neutral,
         entity(0x62),
-        Value::from("portable neutral persona"),
+        entity(0xFE),
+        Value::from("portable neutral relationship"),
         provenance(0xB1),
         crate::federation::Sensitivity::Public,
     );
-    let private = CompanionRecord::persona(
+    let private = CompanionRecord::relationship(
         personal.clone(),
         entity(0x63),
-        Value::from("private personal persona"),
+        entity(0xFE),
+        Value::from("private personal relationship"),
         provenance(0xB2),
         crate::federation::Sensitivity::Restricted,
     );
@@ -116,10 +129,11 @@ fn companion_export_checks_channel_ceiling_scope_and_lifecycle() -> Result<()> {
         provenance(0xB3),
         crate::federation::Sensitivity::Private,
     );
-    let shared_public = CompanionRecord::persona(
+    let shared_public = CompanionRecord::relationship(
         shared,
         entity(0x66),
-        Value::from("public shared-scope persona"),
+        entity(0xFE),
+        Value::from("public shared-scope relationship"),
         provenance(0xB4),
         crate::federation::Sensitivity::Public,
     );
@@ -163,33 +177,32 @@ fn companion_export_checks_channel_ceiling_scope_and_lifecycle() -> Result<()> {
     );
 
     assert_eq!(layer.len(), 1);
-    assert_eq!(layer.personas().len(), 1);
-    assert!(layer.relationships().is_empty());
-    assert_eq!(layer.personas()[0].record(), &included);
+    assert_eq!(layer.relationships().len(), 1);
+    assert_eq!(layer.relationships()[0].record(), &included);
     assert_eq!(
-        layer.personas()[0].expression(),
+        layer.relationships()[0].expression(),
         Some(CompanionExpression::Warm)
     );
-    assert_ne!(layer.personas()[0].record(), &private);
+    assert_ne!(layer.relationships()[0].record(), &private);
     assert!(
         layer
-            .personas()
+            .relationships()
             .iter()
             .all(|item| item.record() != &shared_public)
     );
     assert!(
         layer
-            .personas()
+            .relationships()
             .iter()
             .all(|item| item.record() != &private)
     );
     // Even the highest sensitivity ceiling does not grant a destination.
     let portable = companion_export_layer(&records, &expressions, &crate::federation::Scope::top());
     assert_eq!(portable.len(), 2);
-    assert!(portable.relationships().is_empty());
+    assert_eq!(portable.relationships().len(), 2);
     assert!(
         portable
-            .personas()
+            .relationships()
             .iter()
             .all(|item| item.record() != &shared_public)
     );
@@ -201,10 +214,10 @@ fn companion_export_checks_channel_ceiling_scope_and_lifecycle() -> Result<()> {
         identity.binding = binding;
         let layer = companion_export_layer_for_channel(&records, &expressions, &channel, &identity);
         assert_eq!(layer.len(), 2);
-        assert!(layer.relationships().is_empty());
+        assert_eq!(layer.relationships().len(), 2);
         assert!(
             layer
-                .personas()
+                .relationships()
                 .iter()
                 .all(|item| item.record() != &shared_public)
         );
@@ -216,19 +229,23 @@ fn companion_export_checks_channel_ceiling_scope_and_lifecycle() -> Result<()> {
     assert_eq!(public.len(), 2);
     assert!(
         public
-            .personas()
+            .relationships()
             .iter()
             .any(|item| item.record() == &shared_public)
     );
-    assert!(public.relationships().is_empty());
+    assert_eq!(public.relationships().len(), 2);
     channel.sensitivity =
         crate::federation::SensitivityCeiling::AtMost(crate::federation::Sensitivity::Private);
     let private_layer =
         companion_export_layer_for_channel(&records, &expressions, &channel, &identity);
     assert_eq!(private_layer.len(), 3);
-    assert_eq!(private_layer.relationships()[0].record(), &shared_private);
+    let exported_shared_private = private_layer
+        .relationships()
+        .iter()
+        .find(|item| item.record() == &shared_private)
+        .expect("matching shared-vault binding exports private relationship");
     assert_eq!(
-        private_layer.relationships()[0].expression(),
+        exported_shared_private.expression(),
         Some(CompanionExpression::Unrestricted)
     );
     channel.sensitivity = crate::federation::SensitivityCeiling::Bottom;
@@ -1495,9 +1512,10 @@ mod staged_content_gc {
 
     /// A companion body materialization accepts.
     fn valid_companion_body() -> Vec<u8> {
-        let record = CompanionRecord::persona(
+        let record = CompanionRecord::relationship(
             CompanionScope::neutral(),
             test_entity_id(0x7A),
+            entity(0xFE),
             Value::from("portable persona"),
             provenance(0x7B),
             crate::federation::Sensitivity::Public,

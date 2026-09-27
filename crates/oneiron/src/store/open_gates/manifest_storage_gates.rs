@@ -121,11 +121,15 @@ impl Drop for RegisteredPath {
 /// `SyncServer.vault`) — the last clone to drop closes the environment.
 pub(crate) struct OwnedEnv {
     pub(super) env: Env,
-    /// Directory descriptor retained with the LMDB environment. Linux opens
-    /// through this descriptor; the Unix create door also retains it before
-    /// opening so the telemetry sweep lock never re-resolves the root path.
-    /// Declared after `env`: the environment closes before the directory fd.
-    pub(super) _bound_root_dir: Option<std::fs::File>,
+    /// The bound root directory descriptor, kept alive for the whole
+    /// environment lifetime. Existing-only LMDB uses its `/proc/self/fd` path;
+    /// both open doors use this descriptor for no-follow upload staging.
+    ///
+    /// Declared AFTER `env` on purpose. `Drop` runs the body above first, then
+    /// drops fields in declaration order, so the environment closes
+    /// (`mdb_env_close`) while the descriptor is still open and the descriptor
+    /// is released only afterwards.
+    pub(in crate::store) _bound_root_dir: Option<std::fs::File>,
 }
 
 impl OwnedEnv {

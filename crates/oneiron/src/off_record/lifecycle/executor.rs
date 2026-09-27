@@ -19,6 +19,22 @@ use crate::error::OffRecordError;
 /// a canonical run runs, reached through [`Self::base_write_vault`], which
 /// never leaves this module.
 impl OffRecordSession<'_> {
+    /// Confirm an on-record executor write was admitted before it can change
+    /// Dreamer configuration. The captured session route remains authoritative.
+    pub(crate) fn admitted_executor_claim(
+        &self,
+        route: &SessionWriteRoute,
+        id: &EntityId,
+        actor: crate::WriteActor,
+    ) -> Result<bool> {
+        route.require_recording(&self.session_ref)?;
+        route.revalidate()?;
+        if route.target() != RouteTarget::Base {
+            return Ok(false);
+        }
+        crate::dreamer_consolidation::admitted_authored_claim(self.vault, id, actor)
+    }
+
     /// Witnesses ONE executor turn through ONE-1728's facade door.
     ///
     /// Guest-supplied turn identity meets a TYPED PRE-CONSTRUCTION REFUSAL

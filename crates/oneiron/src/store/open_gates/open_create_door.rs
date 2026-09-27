@@ -1,5 +1,7 @@
 //! Create-capable open door: `Store::open` and its helpers.
 
+#[cfg(unix)]
+use super::super::root_directory::{file_identity, named_directory_identity, open_root_directory};
 use std::path::Path;
 
 use heed::EnvOpenOptions;
@@ -112,6 +114,10 @@ impl Store {
             #[cfg(not(target_os = "linux"))]
             let storage_path = canonical_path.clone();
             let root_preflight = preflight_vault_root(&storage_path)?;
+            #[cfg(unix)]
+            let bound_root_dir = open_root_directory(&canonical_path)?;
+            #[cfg(unix)]
+            let bound_root_identity = file_identity(&bound_root_dir.metadata()?);
             let is_new_vault = root_preflight.is_new_vault;
             if is_new_vault {
                 #[cfg(target_os = "linux")]
@@ -173,6 +179,9 @@ impl Store {
             // heed's process-global registry (ONE-1142).
             let env = OwnedEnv {
                 env,
+                #[cfg(unix)]
+                _bound_root_dir: Some(bound_root_dir),
+                #[cfg(not(unix))]
                 _bound_root_dir: None,
             };
             #[cfg(unix)]
@@ -219,6 +228,12 @@ impl Store {
                 registered_path.refresh_identity(refreshed.identity)?;
             }
 
+            #[cfg(unix)]
+            if named_directory_identity(&canonical_path)? != Some(bound_root_identity) {
+                return Err(Error::InvalidConfig(
+                    "vault root changed during open".to_owned(),
+                ));
+            }
             (env, registered_path, is_new_vault)
         };
 

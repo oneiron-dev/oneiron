@@ -111,7 +111,10 @@ fn owners_share_exact_inbox_and_saved_query_membership_with_backfill() -> Result
             .tasks_by_owner(owners[0], Some(tasks[0][0]), 10)?
             .is_empty()
     );
-    vault.delete_entity(&tasks[0][0])?;
+    vault.delete_entity_with_options(
+        &tasks[0][0],
+        crate::deletion::DeleteEntityOptions { purge: true },
+    )?;
     assert!(vault.tasks_by_owner(owners[0], None, 10)?.is_empty());
     Ok(())
 }

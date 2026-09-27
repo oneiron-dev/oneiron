@@ -43,7 +43,7 @@ impl ApplyOpsGateMode {
         self
     }
 
-    pub(super) fn with_claim_materializations(
+    pub(crate) fn with_claim_materializations(
         mut self,
         bindings: Vec<ClaimMaterialization>,
     ) -> Self {
