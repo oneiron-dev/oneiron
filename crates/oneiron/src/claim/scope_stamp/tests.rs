@@ -249,50 +249,26 @@ fn stored_grant_scope_roundtrip_and_bottom_deny_at_existing_doors() -> Result<()
     Ok(())
 }
 #[test]
-fn identity_facet_replay_and_export_use_content_sensitivity_not_export_classification() -> Result<()>
+fn legacy_persona_facet_refused_by_raw_and_replay_put_before_person_materialization() -> Result<()>
 {
     let (_dir, vault) = vault()?;
-    let person = entity(43);
-    let facet = entity(44);
-    let record = crate::companion::CompanionRecord::persona(
-        crate::companion::CompanionScope::neutral(),
-        person,
-        Value::from("persona"),
-        crate::companion::CompanionProvenance::new(
-            person,
-            crate::EdgeActorClass::Human,
-            crate::ClaimSource::UserStated,
-            crate::ClaimApprovalStatus::Approved,
-            Value::from("owner"),
-        ),
-        Sensitivity::Private,
-    );
-    vault.create_companion_record(&facet, &record, 10)?;
-    assert_eq!(vault.get_entity_type(&facet)?, Some(ENTITY_TYPE_FACET));
-    assert_eq!(vault.get_entity_type(&person)?, Some(ENTITY_TYPE_PERSON));
-    let raw = vault.get(&facet)?.expect("fixture");
-    let (_dir2, replayed) = self::vault()?;
-    replayed
-        .batch()
-        .put_replicated(&facet, ENTITY_TYPE_FACET, AT, 10, &raw[..])
-        .commit()?;
-    assert_eq!(
-        replayed.get_companion_record(&facet)?,
-        vault.get_companion_record(&facet)?
-    );
-    assert_eq!(replayed.get_entity_type(&person)?, Some(ENTITY_TYPE_PERSON));
-    let register = vault.companion_register()?;
-    let expressions = crate::companion::CompanionExpressionRegister::new();
-    let mut channel = Scope::top();
-    channel.sensitivity = SensitivityCeiling::AtMost(Sensitivity::Public);
-    assert!(
-        crate::batch::export::companion_export_layer(&register, &expressions, &channel).is_empty()
-    );
-    channel.sensitivity = SensitivityCeiling::AtMost(Sensitivity::Private);
-    assert_eq!(
-        crate::batch::export::companion_export_layer(&register, &expressions, &channel).len(),
-        1
-    );
+    let facet = entity(47);
+    let person = entity(48);
+    let body = crate::companion::tests::support::retired_persona_facet_body(person);
+    for replicated in [false, true] {
+        let mut batch = vault.batch();
+        batch = if replicated {
+            batch.put_replicated(&facet, ENTITY_TYPE_FACET, AT, 10, &body)
+        } else {
+            batch.put(&facet, ENTITY_TYPE_FACET, AT, 10, &body)
+        };
+        let err = batch
+            .commit()
+            .expect_err("retired persona FACET must never be written");
+        assert_eq!(err.kind(), crate::ErrorKind::InvalidClaimBody);
+        assert!(vault.get(&facet)?.is_none());
+        assert!(vault.get(&person)?.is_none());
+    }
     Ok(())
 }
 

@@ -314,10 +314,8 @@ pub use crate::compaction::{
     decode_epoch_summary_body, encode_epoch_summary_body,
 };
 pub use crate::companion::{
-    CompanionExpression, CompanionExpressionRegister, CompanionProvenance, CompanionRecord,
-    CompanionRecordKind, CompanionScope, CompanionScopeResolutionSource, CompanionSubject,
-    CompanionTaskKind, EndCompanionRelationship, EnqueueCompanionTaskOutcome,
-    companion_value_from_json, companion_value_to_json,
+    CompanionExpression, CompanionRecordKind, CompanionScope, CompanionSubject, CompanionTaskKind,
+    EnqueueCompanionTaskOutcome, companion_value_from_json, companion_value_to_json,
 };
 pub use crate::config::{
     HnswConfig, HostingPrivacyPosture, PprCommunityConfig, VaultConfig, VaultDataKeyCustody,
@@ -434,12 +432,12 @@ pub use crate::memory::{
     AdmitImportedClaimInput, BlobArtifactInput, CalendarInviteSurfaceInput,
     CalendarInviteSurfaceMethod, ChatAbstentionReason, ChatComposeRequest, ChatComposer, ChatDepth,
     ChatOptions, ChatResponse, ChatScope, ClaimInput, ClaimListFilter, ClaimView, CommitReceipt,
-    CompanionRecordInput, ComposedChatAnswer, ConsolidationAttemptInput, Effort, EntityRefReceipt,
-    EntityView, ExpressionPreferenceInput, HabitCheckinInput, MEMORY_CODE_BAD_REQUEST,
-    MEMORY_CODE_FORBIDDEN, MEMORY_CODE_INTERNAL, MEMORY_CODE_INVALID_STATE, MEMORY_CODE_NOT_FOUND,
-    MEMORY_PACK_VERSION, Memory, MemoryError, NeighborOpts, OutboundDraftInput, RecallScope,
-    SafeDeleteReason, StructuralEdgeSpec, StructuralPutInput, TextIndexField, WitnessAuthor,
-    WitnessMessage, WitnessTurn, parse_actor_key,
+    ComposedChatAnswer, ConsolidationAttemptInput, Effort, EntityRefReceipt, EntityView,
+    ExpressionPreferenceInput, HabitCheckinInput, MEMORY_CODE_BAD_REQUEST, MEMORY_CODE_FORBIDDEN,
+    MEMORY_CODE_INTERNAL, MEMORY_CODE_INVALID_STATE, MEMORY_CODE_NOT_FOUND, MEMORY_PACK_VERSION,
+    Memory, MemoryError, NeighborOpts, OutboundDraftInput, RecallScope, SafeDeleteReason,
+    StructuralEdgeSpec, StructuralPutInput, TextIndexField, WitnessAuthor, WitnessMessage,
+    WitnessTurn, parse_actor_key,
 };
 pub use crate::outbound::{
     COMMON_OUTBOUND_VERB_KINDS, OUTBOUND_CAPABILITY_MANIFEST_VERSION, OUTBOUND_VERB_FIELD_CONTRACT,

@@ -62,6 +62,11 @@ impl ExportBody {
                 Err(_) => Self::Nulled,
             };
         }
+        if crate::companion::is_retired_identity_carrier(entity_type, bytes) {
+            // Pre-release legacy persona/relationship FACETs are not portable
+            // identities. Never fall through to the generic MessagePack export.
+            return Self::Nulled;
+        }
         if entity_type == crate::registry::ENTITY_TYPE_ASSET {
             match crate::skill_hub::decode_source_carrier(bytes) {
                 Ok(Some((holder, package))) => {

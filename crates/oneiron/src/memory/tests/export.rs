@@ -414,7 +414,7 @@ fn verified_owner_export_rechecks_read_only_and_revoked_slips() {
     let slip = vault.mint_capability_slip(&issuer, claims.clone()).unwrap();
     let proof = vault
         .verify_capability_slip(
-            &issuer,
+            &issuer.public_key(),
             &slip,
             b"export-owner-test",
             &issuer.binding_proof(&slip, b"export-owner-test").unwrap(),
@@ -432,7 +432,7 @@ fn verified_owner_export_rechecks_read_only_and_revoked_slips() {
     let read_only = vault.mint_capability_slip(&issuer, claims).unwrap();
     let narrow = vault
         .verify_capability_slip(
-            &issuer,
+            &issuer.public_key(),
             &read_only,
             b"export-read-only-test",
             &issuer

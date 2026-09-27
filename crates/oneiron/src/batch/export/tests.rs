@@ -3,262 +3,10 @@ use crate::authority::{
     AuthorityAttestation, AuthorityKey, AuthorityLogEntry, AuthorityOp, AuthoritySignature,
     AuthorityTier, DeviceAuthority, ROLE_OWNER, authority_transcript,
 };
-use crate::channel_identity::{ChannelIdentity, ChannelIdentityBinding, ChannelIdentityState};
-use crate::claim::{ClaimApprovalStatus, ClaimSource};
-use crate::companion::CompanionProvenance;
-use crate::edge::EdgeActorClass;
 use crate::off_record::OffRecordBackendClass;
 use crate::temporal::TimeRange;
-use crate::write_envelope::WriteActor;
-use crate::write_envelope::WriteEnvelope;
-use crate::write_envelope::WriteProvenance;
 use crate::{Vault, VaultConfig};
 use ed25519_dalek::{Signer, SigningKey};
-use rmpv::Value;
-
-use crate::test_util::entity;
-
-fn provenance(seed: u8) -> CompanionProvenance {
-    let envelope = WriteEnvelope::new(
-        WriteActor::new(entity(seed), EdgeActorClass::Agent),
-        ClaimSource::UserStated,
-        WriteProvenance::new(Value::from(format!("fixture-{seed}"))).unwrap(),
-        ClaimApprovalStatus::Approved,
-    );
-    CompanionProvenance::from_envelope(&envelope)
-}
-
-#[test]
-fn companion_export_includes_portable_persona_and_relationship_layer() -> Result<()> {
-    let neutral = CompanionScope::neutral();
-    let personal = CompanionScope::personal(entity(0x51));
-    let persona_ref = entity(0x52);
-    let relationship_source = entity(0x53);
-    let relationship_target = entity(0x54);
-
-    let persona = CompanionRecord::persona(
-        neutral,
-        persona_ref,
-        Value::from("portable persona"),
-        provenance(0x55),
-        crate::federation::Sensitivity::Public,
-    );
-    let relationship = CompanionRecord::relationship(
-        personal,
-        relationship_source,
-        relationship_target,
-        Value::from("portable relationship"),
-        provenance(0x56),
-        crate::federation::Sensitivity::Public,
-    );
-
-    let mut records = CompanionRegister::new();
-    records.register(persona.clone())?;
-    records.register(relationship.clone())?;
-
-    let mut expressions = CompanionExpressionRegister::new();
-    expressions.update(persona.key(), CompanionExpression::Professional)?;
-    expressions.update(relationship.key(), CompanionExpression::Warm)?;
-
-    let layer = companion_export_layer(
-        &records,
-        &expressions,
-        &crate::federation::Scope {
-            sensitivity: crate::federation::SensitivityCeiling::AtMost(
-                crate::federation::Sensitivity::Public,
-            ),
-            ..crate::federation::Scope::top()
-        },
-    );
-
-    assert_eq!(layer.layer_version(), COMPANION_EXPORT_LAYER_VERSION);
-    assert_eq!(layer.len(), 2);
-    assert_eq!(layer.personas().len(), 1);
-    assert_eq!(layer.relationships().len(), 1);
-    assert_eq!(layer.personas()[0].record(), &persona);
-    assert_eq!(
-        layer.personas()[0].expression(),
-        Some(CompanionExpression::Professional)
-    );
-    assert_eq!(layer.relationships()[0].record(), &relationship);
-    assert_eq!(
-        layer.relationships()[0].expression(),
-        Some(CompanionExpression::Warm)
-    );
-    Ok(())
-}
-
-#[test]
-fn companion_export_checks_channel_ceiling_scope_and_lifecycle() -> Result<()> {
-    let neutral = CompanionScope::neutral();
-    let personal = CompanionScope::personal(entity(0x61));
-    let shared = CompanionScope::shared_vault(7);
-
-    let included = CompanionRecord::persona(
-        neutral,
-        entity(0x62),
-        Value::from("portable neutral persona"),
-        provenance(0xB1),
-        crate::federation::Sensitivity::Public,
-    );
-    let private = CompanionRecord::persona(
-        personal.clone(),
-        entity(0x63),
-        Value::from("private personal persona"),
-        provenance(0xB2),
-        crate::federation::Sensitivity::Restricted,
-    );
-    let shared_private = CompanionRecord::relationship(
-        shared.clone(),
-        entity(0x64),
-        entity(0x65),
-        Value::from("shared org relationship"),
-        provenance(0xB3),
-        crate::federation::Sensitivity::Private,
-    );
-    let shared_public = CompanionRecord::persona(
-        shared,
-        entity(0x66),
-        Value::from("public shared-scope persona"),
-        provenance(0xB4),
-        crate::federation::Sensitivity::Public,
-    );
-    let mut closed = CompanionRecord::relationship(
-        personal,
-        entity(0x67),
-        entity(0x68),
-        Value::from("closed relationship"),
-        provenance(0xB5),
-        crate::federation::Sensitivity::Public,
-    );
-    closed.lifecycle = ClaimLifecycleStatus::Retracted;
-
-    let mut records = CompanionRegister::new();
-    for record in [
-        included.clone(),
-        private.clone(),
-        shared_private.clone(),
-        shared_public.clone(),
-        closed.clone(),
-    ] {
-        records.register(record)?;
-    }
-
-    let mut expressions = CompanionExpressionRegister::new();
-    expressions.update(included.key(), CompanionExpression::Warm)?;
-    expressions.update(private.key(), CompanionExpression::Unrestricted)?;
-    expressions.update(shared_private.key(), CompanionExpression::Unrestricted)?;
-    expressions.update(shared_public.key(), CompanionExpression::Unrestricted)?;
-    expressions.update(closed.key(), CompanionExpression::Professional)?;
-
-    let layer = companion_export_layer(
-        &records,
-        &expressions,
-        &crate::federation::Scope {
-            sensitivity: crate::federation::SensitivityCeiling::AtMost(
-                crate::federation::Sensitivity::Public,
-            ),
-            ..crate::federation::Scope::top()
-        },
-    );
-
-    assert_eq!(layer.len(), 1);
-    assert_eq!(layer.personas().len(), 1);
-    assert!(layer.relationships().is_empty());
-    assert_eq!(layer.personas()[0].record(), &included);
-    assert_eq!(
-        layer.personas()[0].expression(),
-        Some(CompanionExpression::Warm)
-    );
-    assert_ne!(layer.personas()[0].record(), &private);
-    assert!(
-        layer
-            .personas()
-            .iter()
-            .all(|item| item.record() != &shared_public)
-    );
-    assert!(
-        layer
-            .personas()
-            .iter()
-            .all(|item| item.record() != &private)
-    );
-    // Even the highest sensitivity ceiling does not grant a destination.
-    let portable = companion_export_layer(&records, &expressions, &crate::federation::Scope::top());
-    assert_eq!(portable.len(), 2);
-    assert!(portable.relationships().is_empty());
-    assert!(
-        portable
-            .personas()
-            .iter()
-            .all(|item| item.record() != &shared_public)
-    );
-
-    let mut identity = ChannelIdentity::own_app_home(entity(0xB6), 1);
-    let mut channel = crate::federation::Scope::top();
-    // Actor-bound and other-vault identities cannot carry shared-vault rows.
-    for binding in [identity.binding, ChannelIdentityBinding::vault(8)] {
-        identity.binding = binding;
-        let layer = companion_export_layer_for_channel(&records, &expressions, &channel, &identity);
-        assert_eq!(layer.len(), 2);
-        assert!(layer.relationships().is_empty());
-        assert!(
-            layer
-                .personas()
-                .iter()
-                .all(|item| item.record() != &shared_public)
-        );
-    }
-    identity.binding = ChannelIdentityBinding::vault(7);
-    channel.sensitivity =
-        crate::federation::SensitivityCeiling::AtMost(crate::federation::Sensitivity::Public);
-    let public = companion_export_layer_for_channel(&records, &expressions, &channel, &identity);
-    assert_eq!(public.len(), 2);
-    assert!(
-        public
-            .personas()
-            .iter()
-            .any(|item| item.record() == &shared_public)
-    );
-    assert!(public.relationships().is_empty());
-    channel.sensitivity =
-        crate::federation::SensitivityCeiling::AtMost(crate::federation::Sensitivity::Private);
-    let private_layer =
-        companion_export_layer_for_channel(&records, &expressions, &channel, &identity);
-    assert_eq!(private_layer.len(), 3);
-    assert_eq!(private_layer.relationships()[0].record(), &shared_private);
-    assert_eq!(
-        private_layer.relationships()[0].expression(),
-        Some(CompanionExpression::Unrestricted)
-    );
-    channel.sensitivity = crate::federation::SensitivityCeiling::Bottom;
-    assert!(
-        companion_export_layer_for_channel(&records, &expressions, &channel, &identity).is_empty()
-    );
-    channel = crate::federation::Scope::top();
-    for state in [
-        ChannelIdentityState::Requested,
-        ChannelIdentityState::Released,
-        ChannelIdentityState::Tombstone,
-    ] {
-        identity.state = state;
-        assert!(
-            companion_export_layer_for_channel(&records, &expressions, &channel, &identity)
-                .is_empty()
-        );
-    }
-    identity.state = ChannelIdentityState::Active;
-    identity.shape = crate::channel_identity::ChannelIdentityShape::DelegatedGrant;
-    assert!(
-        companion_export_layer_for_channel(&records, &expressions, &channel, &identity).is_empty()
-    );
-    identity.shape = crate::channel_identity::ChannelIdentityShape::DedicatedHandle;
-    identity.binding = ChannelIdentityBinding::vault(0);
-    assert!(
-        companion_export_layer_for_channel(&records, &expressions, &channel, &identity).is_empty()
-    );
-    Ok(())
-}
 
 #[test]
 fn export_manifest_stable_fixture_records_data_shape_and_secret_nulling() {
@@ -998,7 +746,9 @@ fn strict_receipt_codec_schema_is_versioned() {
 #[cfg(feature = "sync")]
 mod staged_content_gc {
     use super::*;
-    use crate::claim::{ClaimBody, ClaimLifecycleStatus, ClaimSubject};
+    use crate::claim::{
+        ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSource, ClaimSubject,
+    };
     use crate::companion::ENTITY_TYPE_COMPANION_REGISTER;
     use crate::entity_id::EntityId;
     use crate::error::RecordError;
@@ -1007,6 +757,7 @@ mod staged_content_gc {
     use crate::sync::types::WindowKey;
     use crate::test_util::{entity as test_entity_id, entity_record, put_policy_manifest_bytes};
     use loro::{ExportMode, LoroDoc};
+    use rmpv::Value;
     use std::sync::Arc;
 
     fn encode_policy_manifest(extra_entries: Vec<(Value, Value)>) -> Vec<u8> {
@@ -1493,18 +1244,8 @@ mod staged_content_gc {
         bytes
     }
 
-    /// A companion body materialization accepts.
     fn valid_companion_body() -> Vec<u8> {
-        let record = CompanionRecord::persona(
-            CompanionScope::neutral(),
-            test_entity_id(0x7A),
-            Value::from("portable persona"),
-            provenance(0x7B),
-            crate::federation::Sensitivity::Public,
-        )
-        .created_at(1_772_400_000)
-        .expect("companion created_at");
-        crate::companion::encode_companion_record_body(&record).expect("companion body encode")
+        crate::companion::tests::support::retired_persona_facet_body(test_entity_id(0x7A))
     }
 
     /// FED-1380: COMPANION_REGISTER was the one pinned-body kind this door still
@@ -1597,56 +1338,35 @@ mod staged_content_gc {
         );
     }
 
-    /// The other half of FED-1380: closing the door must not disturb a companion
-    /// artifact whose body decodes. It still stages `Pending` with its admitted
-    /// bytes retained, and the confirmation still moves it to `Confirmed` while
-    /// GCing that content in the same write txn.
+    /// Valid old persona-shaped FACETs must not receive an admission receipt.
     #[test]
-    fn valid_foreign_companion_body_still_stages_and_confirms() {
+    fn valid_foreign_companion_body_never_stages_or_confirms() {
         let dir = tempfile::tempdir().unwrap();
         let vault = Vault::open(dir.path(), VaultConfig::device()).unwrap();
         let policy = encode_policy_manifest(vec![source_trust_entry(ClaimSource::Imported, 0)]);
         put_policy_manifest_bytes(&vault, test_entity_id(0x7C), &policy).unwrap();
         let claim = public_source_trust_claim(ClaimSource::ToolOutput);
-        let claim_id = test_entity_id(0x7D);
         let valid = claim_and_entity_update(
-            &claim_id,
+            &test_entity_id(0x7D),
             &claim,
             &test_entity_id(0x7E),
             crate::registry::ENTITY_TYPE_FACET,
             &valid_companion_body(),
         );
-
-        // Admission passes the body through byte-for-byte, exactly as before.
-        admit_federated_window_update(
-            &vault,
-            &WindowKey::new("2026-01"),
-            &valid,
-            FederationAdmissionRole::Guest,
-        )
-        .expect("a decodable companion body is still admitted");
-
-        let staged = stage_prebuilt_update(&vault, 0x7F, &valid).expect("valid bodies still stage");
-        let id = staged.receipt.receipt_id;
-        assert_eq!(staged.receipt.status, VaultImportStageStatus::Pending);
-        assert!(!staged.admitted_update.is_empty());
-        assert_eq!(
-            vault_import_staged_content(&vault, &id).unwrap().as_deref(),
-            Some(staged.admitted_update.as_slice()),
-            "a Pending receipt still retains its admitted bytes"
-        );
-
-        // Confirm: the receipt leaves Pending and the staged content is dropped
-        // in the same write txn.
-        let confirmed = confirmed_receipt(&staged.receipt, test_entity_id(0x80), 13);
-        assert!(
-            vault_import_confirm_if_pending(&vault, &staged.receipt, &confirmed).unwrap(),
-            "the confirmation must win the CAS"
-        );
-        let durable = vault_import_stage_receipt(&vault, &id).unwrap().unwrap();
-        assert_eq!(durable.status, VaultImportStageStatus::Confirmed);
-        assert_eq!(durable, confirmed);
-        assert_eq!(vault_import_staged_content(&vault, &id).unwrap(), None);
+        assert!(matches!(
+            admit_federated_window_update(
+                &vault,
+                &WindowKey::new("2026-01"),
+                &valid,
+                FederationAdmissionRole::Guest,
+            ),
+            Err(Error::Record(RecordError::InvalidCompanionRecordBody(_)))
+        ));
+        assert!(matches!(
+            stage_prebuilt_update(&vault, 0x7F, &valid),
+            Err(Error::Record(RecordError::InvalidCompanionRecordBody(_)))
+        ));
+        assert!(vault.get(&test_entity_id(0x7E)).unwrap().is_none());
     }
 
     /// C8: the receipt and its content row are read in different transactions.

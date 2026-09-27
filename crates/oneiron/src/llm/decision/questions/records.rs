@@ -1,7 +1,7 @@
 //! Immutable definitions and typed outcome bindings.
 
 use super::super::types::invalid;
-use super::super::{DecisionAnswer, DecisionDial, DecisionQuestion, TypedDecision};
+use super::super::{DecisionAnswer, DecisionDial, DecisionQuestion, ProviderPin, TypedDecision};
 use crate::{EntityId, Result};
 use serde::{Deserialize, Serialize};
 
@@ -75,6 +75,7 @@ pub struct QuestionDefinition {
     pub recipe: String,
     pub profile: String,
     pub dial: DecisionDial,
+    pub activation: QuestionActivation,
     pub refresh: RefreshPolicy,
     pub delivery: String,
     pub learning: bool,
@@ -101,6 +102,13 @@ impl QuestionDefinition {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum QuestionActivation {
+    OneOff,
+    Standing,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct RefreshPolicy {
@@ -125,6 +133,14 @@ pub enum RefreshTrigger {
     Manual,
 }
 
+/// Provider output only. The engine owns the question, principal, evidence and version receipt.
+#[derive(Debug, Clone, PartialEq)]
+pub struct AnswerProposal {
+    pub answer: DecisionAnswer,
+    pub probability: Option<f64>,
+    pub providers: Vec<ProviderPin>,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct AnswerRecord {
@@ -133,7 +149,7 @@ pub struct AnswerRecord {
     #[serde(with = "super::super::codec::entity")]
     pub unit: EntityId,
     pub decision: TypedDecision,
-    /// Parent-computed hash of the exact source body read before provider work.
+    /// Engine-computed hash of the live source row and its document frontier.
     pub frontier: [u8; 32],
     pub source_kind: u8,
     pub answered_at: u64,

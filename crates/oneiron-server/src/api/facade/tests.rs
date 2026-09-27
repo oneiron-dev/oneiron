@@ -530,10 +530,13 @@ async fn generated_facade_read_admission_preserves_defaults_and_record_scope() {
     let mut scope = Scope::top();
     scope.worlds = ScopeAxis::Some(std::collections::BTreeSet::from([ScopeId(actor)]));
     narrow
-        .attenuate(SlipCaveat {
-            scope: Some(scope),
-            ..Default::default()
-        })
+        .attenuate(
+            SlipCaveat {
+                scope: Some(scope),
+                ..Default::default()
+            },
+            &holder,
+        )
         .unwrap();
     let app = crate::build_app(Arc::clone(&server));
     for (credential, verb, input, status) in [
@@ -828,10 +831,13 @@ async fn export_projects_five_formats_and_refuses_non_owner_credentials() {
     let mut scope = Scope::top();
     scope.worlds = ScopeAxis::Some(std::collections::BTreeSet::from([ScopeId(actor)]));
     narrow
-        .attenuate(SlipCaveat {
-            scope: Some(scope),
-            ..Default::default()
-        })
+        .attenuate(
+            SlipCaveat {
+                scope: Some(scope),
+                ..Default::default()
+            },
+            &owner_key,
+        )
         .unwrap();
     let app = crate::build_app(Arc::clone(&server));
     for format in ["toon", "md", "json", "yaml", "txt"] {
