@@ -215,6 +215,37 @@ fn share_writes_receipt() -> Result<()> {
 }
 
 #[test]
+fn read_observed_share_expiry_stays_expired_after_restart_and_clock_rollback() -> Result<()> {
+    let clock = crate::ports::ManualClock::new(1_900);
+    let mut config = embedding_test_config();
+    config.store_clock = clock.bundle();
+    let (dir, vault, issuer, mut share) = fixture_with_config(config.clone())?;
+    share.expires_at = Some(2_000);
+    let id = entity(0x81);
+    vault.create_share(&id, &issuer, &share)?;
+    assert!(
+        vault
+            .resolve_share_for_view(&id, &share.recipient_ref, None, &[])?
+            .is_some()
+    );
+    clock.set(2_100);
+    assert!(
+        vault
+            .resolve_share_for_view(&id, &share.recipient_ref, None, &[])?
+            .is_none()
+    );
+    drop(vault);
+    clock.set(1_900);
+    let reopened = Vault::open(dir.path(), config)?;
+    assert!(
+        reopened
+            .resolve_share_for_view(&id, &share.recipient_ref, None, &[])?
+            .is_none()
+    );
+    Ok(())
+}
+
+#[test]
 fn render_time_scope_redaction() -> Result<()> {
     let (_dir, vault, issuer, mut share) = fixture()?;
     share.world_refs = BTreeSet::from([entity(0x61)]);

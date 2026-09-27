@@ -31,6 +31,7 @@ pub mod manifest;
 mod model_id;
 mod protocol;
 pub mod registry;
+pub mod routing;
 mod safeguard;
 pub mod score_scraper;
 mod step;
@@ -130,6 +131,7 @@ use std::time::Duration;
 /// Typed question and outcome contracts.
 pub mod decision;
 pub use budget::{
-    RsiBudgetConfig, RsiBudgetError, RsiBudgetRead, RsiBudgetShare, RsiSettlement, RsiSpendPurpose,
+    RsiBudgetConfig, RsiBudgetError, RsiBudgetRead, RsiBudgetShare, RsiExplorationRead,
+    RsiOverdraftReceipt, RsiSettlement, RsiSpendPurpose,
 };
 pub(crate) use step::resume_peer_result_steps;

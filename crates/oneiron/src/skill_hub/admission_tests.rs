@@ -7,7 +7,7 @@ use crate::{
     entity_id::EntityId,
     error::{ErrorKind, Result},
     skill::{SkillLifecycle, SkillRecord},
-    skill_optimize::{HeldOutReplayCase, HeldOutReplayScorer},
+    skill_optimize::{BlindPreference, HeldOutReplayCase, HeldOutReplayScorer, PreferredResponse},
     temporal::TimeRange,
 };
 use std::cell::Cell;
@@ -128,6 +128,25 @@ impl HeldOutReplayScorer for NoReplay {
     fn score(&self, _: &HeldOutReplayCase<'_>) -> Result<f32> {
         panic!("replay must not run before consent or usefulness");
     }
+    fn structural_audit(&self, _task: &str, _instructions: &str) -> Result<f32> {
+        Ok(0.5)
+    }
+    fn blind_preference(&self, _task: &str, _receipts: &[String]) -> Result<Vec<BlindPreference>> {
+        Ok(vec![BlindPreference {
+            pair_ref: "fixture-pair".to_owned(),
+            preferred: PreferredResponse::First,
+        }])
+    }
+    fn contrastive_audit(
+        &self,
+        _case: &HeldOutReplayCase<'_>,
+        _blind: &[BlindPreference],
+    ) -> Result<f32> {
+        Ok(0.5)
+    }
+    fn predict_task_success(&self, case: &HeldOutReplayCase<'_>) -> Result<Vec<f32>> {
+        Ok(vec![0.5; case.held_out_receipts.len()])
+    }
 }
 impl HeldOutReplayScorer for Replay {
     fn score(&self, case: &HeldOutReplayCase<'_>) -> Result<f32> {
@@ -139,6 +158,25 @@ impl HeldOutReplayScorer for Replay {
                 0.2
             },
         )
+    }
+    fn structural_audit(&self, _task: &str, _instructions: &str) -> Result<f32> {
+        Ok(0.5)
+    }
+    fn blind_preference(&self, _task: &str, _receipts: &[String]) -> Result<Vec<BlindPreference>> {
+        Ok(vec![BlindPreference {
+            pair_ref: "fixture-pair".to_owned(),
+            preferred: PreferredResponse::First,
+        }])
+    }
+    fn contrastive_audit(
+        &self,
+        _case: &HeldOutReplayCase<'_>,
+        _blind: &[BlindPreference],
+    ) -> Result<f32> {
+        Ok(0.5)
+    }
+    fn predict_task_success(&self, case: &HeldOutReplayCase<'_>) -> Result<Vec<f32>> {
+        Ok(vec![0.5; case.held_out_receipts.len()])
     }
 }
 #[test]
@@ -330,6 +368,25 @@ impl HeldOutReplayScorer for MoveBaseline<'_> {
         } else {
             Ok(0.9)
         }
+    }
+    fn structural_audit(&self, _task: &str, _instructions: &str) -> Result<f32> {
+        Ok(0.5)
+    }
+    fn blind_preference(&self, _task: &str, _receipts: &[String]) -> Result<Vec<BlindPreference>> {
+        Ok(vec![BlindPreference {
+            pair_ref: "fixture-pair".to_owned(),
+            preferred: PreferredResponse::First,
+        }])
+    }
+    fn contrastive_audit(
+        &self,
+        _case: &HeldOutReplayCase<'_>,
+        _blind: &[BlindPreference],
+    ) -> Result<f32> {
+        Ok(0.5)
+    }
+    fn predict_task_success(&self, case: &HeldOutReplayCase<'_>) -> Result<Vec<f32>> {
+        Ok(vec![0.5; case.held_out_receipts.len()])
     }
 }
 #[test]

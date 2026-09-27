@@ -36,6 +36,8 @@ use crate::store::GateDecisionId;
 /// store handle hands out `&TestHooks` and needs no lock of its own. A test arms
 /// the vault it opened; a sibling test running in the same binary opened a
 /// different vault and cannot see it.
+type GraphAskPreflightHook = (EntityId, Box<dyn FnOnce() + Send>);
+
 #[derive(Default)]
 pub(crate) struct TestHooks {
     /// The one-shot delete rendezvous: the step and target entity a delete must
@@ -53,9 +55,37 @@ pub(crate) struct TestHooks {
     force_sync_calls: AtomicUsize,
     /// One-shot stage boundary for deadline tests; never shared across vaults.
     pub(crate) after_retrieval_text: Mutex<Option<Box<dyn FnOnce() + Send>>>,
+    /// One vault-owned rendezvous after a graph ask's last read preflight,
+    /// before it acquires the write transaction.
+    after_graph_ask_preflight: Mutex<Option<GraphAskPreflightHook>>,
+    /// One-shot local-repo ingest boundary before its writer transaction.
+    pub(crate) before_codebase_ingest_writer: Mutex<Option<Box<dyn FnOnce() + Send>>>,
 }
 
 impl TestHooks {
+    pub(crate) fn install_graph_ask_preflight(
+        &self,
+        unit: EntityId,
+        hook: impl FnOnce() + Send + 'static,
+    ) {
+        *self
+            .after_graph_ask_preflight
+            .lock()
+            .expect("graph ask hook lock") = Some((unit, Box::new(hook)));
+    }
+
+    pub(crate) fn signal_graph_ask_preflight(&self, unit: EntityId) {
+        let mut slot = self
+            .after_graph_ask_preflight
+            .lock()
+            .expect("graph ask hook lock");
+        if slot.as_ref().is_some_and(|(target, _)| *target == unit) {
+            let (_, hook) = slot.take().expect("target checked");
+            drop(slot);
+            hook();
+        }
+    }
+
     /// Installs the one-shot rendezvous consumed when a delete of `target`
     /// reaches `step` on this vault. Any other step, or any other entity,
     /// passes straight through.

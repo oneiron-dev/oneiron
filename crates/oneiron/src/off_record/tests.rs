@@ -15,7 +15,7 @@ use crate::temporal::TimeRange;
 
 fn temp_vault() -> (tempfile::TempDir, Vault) {
     let tmp = tempfile::tempdir().expect("temp dir");
-    let vault = Vault::open(tmp.path(), VaultConfig::default()).expect("open vault");
+    let vault = Vault::open(tmp.path(), telemetry_config()).expect("open vault");
     (tmp, vault)
 }
 
@@ -135,7 +135,7 @@ fn off_record_enter_is_explicit_marked_and_single_shot() {
 #[test]
 fn off_record_registry_evaporates_without_base_residue_on_reopen() -> Result<()> {
     let tmp = tempfile::tempdir()?;
-    let vault = Vault::open(tmp.path(), VaultConfig::default())?;
+    let vault = Vault::open(tmp.path(), telemetry_config())?;
     let base_rows_before = {
         let rtxn = vault.store.env.read_txn()?;
         vault.store.vault_meta.len(&rtxn)?
@@ -155,7 +155,7 @@ fn off_record_registry_evaporates_without_base_residue_on_reopen() -> Result<()>
     drop(session);
     drop(vault);
 
-    let reopened = Vault::open(tmp.path(), VaultConfig::default())?;
+    let reopened = Vault::open(tmp.path(), telemetry_config())?;
     assert!(
         reopened
             .off_record_session("sess-crash-registry")?
@@ -623,8 +623,11 @@ fn promote_replay_refuses_another_live_rooms_overlay_id_and_rolls_back() -> Resu
             created_at: 1000,
             vad: crate::affect::Vad::NEUTRAL,
         });
-    let refusal = vault
-        .with_write_txn(|wtxn| {
+    // Fail on the FIRST replay op: the builder's copied Put bodies are still
+    // queued, so iterator teardown must scrub them without consuming them.
+    overreaching.ops.rotate_right(1);
+    let early_refusal = crate::session_overlay::hygiene_tests::observe_replay_copy(|| {
+        vault.with_write_txn(|wtxn| {
             FloorWrites::new(&vault.store).promote(
                 &vault,
                 wtxn,
@@ -633,7 +636,22 @@ fn promote_replay_refuses_another_live_rooms_overlay_id_and_rolls_back() -> Resu
                 2000,
             )
         })
-        .expect_err("another room's overlay id must taint the replay");
+    })
+    .expect_err("foreign room reference before replay puts must fail");
+    assert_eq!(early_refusal.kind(), ErrorKind::OffRecordTaintedBaseWrite);
+    overreaching.ops.rotate_left(1);
+    let refusal = crate::session_overlay::hygiene_tests::observe_replay_copy(|| {
+        vault.with_write_txn(|wtxn| {
+            FloorWrites::new(&vault.store).promote(
+                &vault,
+                wtxn,
+                "sess-grant-scope",
+                &overreaching,
+                2000,
+            )
+        })
+    })
+    .expect_err("another room's overlay id must taint the replay");
     assert_eq!(refusal.kind(), ErrorKind::OffRecordTaintedBaseWrite);
     {
         let rtxn = vault.store.env.read_txn()?;
@@ -656,7 +674,8 @@ fn promote_replay_refuses_another_live_rooms_overlay_id_and_rolls_back() -> Resu
     // The SAME closure is still promotable through the ordinary path — and
     // the other room stays live, because a closure that stops at its own
     // endpoints has nothing to say about anyone else's ids.
-    let outcome = session.promote_turn(&turn)?;
+    let outcome =
+        crate::session_overlay::hygiene_tests::observe_replay_copy(|| session.promote_turn(&turn))?;
     assert_eq!(
         outcome.replayed.len(),
         4,
@@ -1336,6 +1355,8 @@ fn anonymous_telemetry_never_falls_back_to_base_even_for_existing_run_ids() -> R
         claims_suppressed: 0,
         surfaced_result_ids: &[],
         empty_reason: None,
+        pack_output: None,
+        pack_config: None,
     })?;
     telemetry.discard_run(existing)?;
     assert_eq!(vault.retrieval_run(existing)?, Some(before));
@@ -1430,4 +1451,88 @@ fn anonymous_audited_effects_refuse_before_creating_floor_receipts() -> Result<(
     assert_eq!(ordinary.mode()?, OffRecordMode::OffRecord);
     ordinary.close()?;
     Ok(())
+}
+
+fn telemetry_config() -> VaultConfig {
+    VaultConfig {
+        retrieval_telemetry_capture: true,
+        ..VaultConfig::default()
+    }
+}
+
+// The public self.memory.search route must obey capture policy independently
+// of the pipeline and ordinary Vault search registration doors.
+fn assert_session_search_capture(capture: bool, on_record: bool) -> Result<()> {
+    use crate::code_run::{
+        HostSelfDispatcher, SelfCall, SelfDispatchOutcome, SelfDispatcher, SelfMemorySearchCall,
+    };
+
+    let dir = tempfile::tempdir()?;
+    let config = VaultConfig {
+        retrieval_telemetry_capture: capture,
+        ..VaultConfig::default()
+    };
+    let vault = Vault::open(dir.path(), config)?;
+    let id = EntityId::from_bytes([0xB8; 16])?;
+    vault
+        .batch()
+        .put(&id, 1, TimeRange { start: 1, end: 1 }, 1, b"entity")
+        .text(&id, &[("name", "amberlantern")])
+        .commit()?;
+    let session = vault
+        .off_record_session_vault()
+        .enter("capture-room", OffRecordBackendClass::Local)?;
+    if on_record {
+        session.flip_on_record()?;
+    }
+    let dispatcher = HostSelfDispatcher::for_off_record_session(
+        &session,
+        crate::WriteActor::new(id, EdgeActorClass::Human),
+        "capture-run",
+    )?;
+    let result = dispatcher.dispatch(SelfCall::MemorySearch(SelfMemorySearchCall::new(
+        "amberlantern",
+        5,
+    )))?;
+    let SelfDispatchOutcome::MemorySearch(found) = result else {
+        panic!("expected memory search");
+    };
+    assert!(found.results.iter().any(|row| row.id == id));
+    assert_eq!(
+        vault.retrieval_runs(10)?.len(),
+        usize::from(capture && on_record)
+    );
+    drop(dispatcher);
+    let close = session.close()?;
+    assert_eq!(
+        close.context_receipts_deleted,
+        usize::from(capture && !on_record)
+    );
+    drop(vault);
+    let reopened = Vault::open(dir.path(), VaultConfig::default())?;
+    assert_eq!(
+        reopened.retrieval_runs(10)?.len(),
+        usize::from(capture && on_record)
+    );
+    Ok(())
+}
+
+#[test]
+fn default_on_record_session_search_does_not_persist_telemetry() -> Result<()> {
+    assert_session_search_capture(false, true)
+}
+
+#[test]
+fn default_off_record_session_search_does_not_stage_telemetry() -> Result<()> {
+    assert_session_search_capture(false, false)
+}
+
+#[test]
+fn opted_in_on_record_session_search_persists_telemetry() -> Result<()> {
+    assert_session_search_capture(true, true)
+}
+
+#[test]
+fn opted_in_off_record_session_search_stages_only_in_room() -> Result<()> {
+    assert_session_search_capture(true, false)
 }

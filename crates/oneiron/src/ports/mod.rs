@@ -24,6 +24,7 @@ mod lmdb_claim;
 mod lmdb_entity;
 pub(crate) use lmdb_entity::reindex_named_entities;
 mod lmdb_index;
+mod lmdb_short_id_maintenance;
 mod mutation;
 mod records;
 pub(crate) use mutation::{
@@ -42,7 +43,7 @@ pub(crate) use integrity::{
     invalidate_source_in_txn, record_dependency_in_txn, record_derived_edge_in_txn, stale_in_txn,
 };
 pub use records::*;
-pub(crate) use time::{CLOCK_FLOOR, recorded_at_in_txn};
+pub(crate) use time::{CLOCK_FLOOR, authorization_floor_in_txn, recorded_at_in_txn};
 pub use time::{Clock, IdGen, StoreClock};
 mod manual_clock;
 pub use manual_clock::ManualClock;

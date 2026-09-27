@@ -35,6 +35,7 @@ impl Vault {
         // Order the raced-delete fixture after a positive scope probe, before
         // any write lock. This rendezvous is a no-op in non-test builds.
         signal_after_delete_probe(self);
+        signal_delete_rendezvous(self, DeleteRendezvous::BeforeFirstDeletionTxn, id, None);
         self.reserve_user_brief_delete(id, reason, gate)?;
         // ONE-1149: the deletion request UUID is minted only AFTER the probe
         // above says there is something to erase.

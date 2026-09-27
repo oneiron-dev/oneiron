@@ -18,7 +18,7 @@ fn record(started: u64) -> RetrievalRunRecord {
 
 #[test]
 fn state_roundtrip_replay_and_ordered_turn_projection_survive_delete() -> crate::Result<()> {
-    let (_dir, vault) = open_test_vault_with(VaultConfig::default());
+    let (_dir, vault) = open_test_vault_with(telemetry_config());
     let state = RetrievalState {
         top_score_norm: 0.7,
         score_gap_ratio: 0.4,
@@ -58,7 +58,7 @@ fn state_roundtrip_replay_and_ordered_turn_projection_survive_delete() -> crate:
 
 #[test]
 fn provisional_turn_runs_publish_only_on_finalize() -> crate::Result<()> {
-    let (_dir, vault) = open_test_vault_with(VaultConfig::default());
+    let (_dir, vault) = open_test_vault_with(telemetry_config());
     let mut run = record(10);
     let turn = RetrievalTurn {
         turn_id: [4; 16],
@@ -79,6 +79,8 @@ fn provisional_turn_runs_publish_only_on_finalize() -> crate::Result<()> {
             claims_suppressed: 0,
             surfaced_result_ids: &[],
             empty_reason: None,
+            pack_output: None,
+            pack_config: None,
         })?;
     assert_eq!(vault.retrieval_runs_by_turn(&turn.turn_id)?, [run.run_id]);
     Ok(())
@@ -86,8 +88,8 @@ fn provisional_turn_runs_publish_only_on_finalize() -> crate::Result<()> {
 
 #[test]
 fn telemetry_failure_disables_only_that_vault_without_corrupt_rows() -> crate::Result<()> {
-    let (dir, vault) = open_test_vault_with(VaultConfig::default());
-    let (_other_dir, other) = open_test_vault_with(VaultConfig::default());
+    let (dir, vault) = open_test_vault_with(telemetry_config());
+    let (_other_dir, other) = open_test_vault_with(telemetry_config());
     crate::store::test_hooks::fail_next_retrieval_run_write_for(dir.path().canonicalize()?);
     assert!(vault.store.record_retrieval_run(&record(10)).is_err());
     assert!(!vault.store.retrieval_telemetry_writes_enabled());
@@ -101,7 +103,7 @@ fn telemetry_failure_disables_only_that_vault_without_corrupt_rows() -> crate::R
 
 #[test]
 fn one_shot_baseline_is_measured_from_stored_runs_without_policy() -> crate::Result<()> {
-    let (_dir, vault) = open_test_vault_with(VaultConfig::default());
+    let (_dir, vault) = open_test_vault_with(telemetry_config());
     let id = crate::test_util::entity(0xB3);
     vault
         .batch()
@@ -184,7 +186,7 @@ fn one_shot_strength_is_not_a_binary_flag_and_agreement_is_distinct() {
 
 #[test]
 fn pipeline_persists_one_shot_signals_and_verbatim_host_override() -> crate::Result<()> {
-    let (_dir, vault) = open_test_vault_with(VaultConfig::default());
+    let (_dir, vault) = open_test_vault_with(telemetry_config());
     let id = crate::test_util::entity(0xB4);
     vault
         .batch()
@@ -240,7 +242,7 @@ fn pipeline_persists_one_shot_signals_and_verbatim_host_override() -> crate::Res
 
 #[test]
 fn invalid_caller_state_does_not_disable_later_pipeline_telemetry() -> crate::Result<()> {
-    let (_dir, vault) = open_test_vault_with(VaultConfig::default());
+    let (_dir, vault) = open_test_vault_with(telemetry_config());
     let mut invalid = record(10);
     invalid.state.top_score_norm = f32::NAN;
     assert!(matches!(
@@ -269,7 +271,7 @@ fn invalid_caller_state_does_not_disable_later_pipeline_telemetry() -> crate::Re
 
 #[test]
 fn persisted_nonfinite_retrieval_state_is_corruption_at_read_doors() -> crate::Result<()> {
-    let (_dir, vault) = open_test_vault_with(VaultConfig::default());
+    let (_dir, vault) = open_test_vault_with(telemetry_config());
     let mut run = record(10);
     vault.store.record_retrieval_run(&run)?;
     for value in [f32::NAN, f32::INFINITY, f32::NEG_INFINITY] {
@@ -291,5 +293,202 @@ fn persisted_nonfinite_retrieval_state_is_corruption_at_read_doors() -> crate::R
             Err(crate::Error::CorruptedIndex(_))
         ));
     }
+    Ok(())
+}
+
+#[test]
+fn opt_in_turn_round_trips_replay_inputs_and_exact_pack_with_fork_lookup() -> crate::Result<()> {
+    let (_dir, vault) = open_test_vault_with(telemetry_config());
+    let id = crate::test_util::entity(0xB5);
+    vault
+        .batch()
+        .put(
+            &id,
+            1,
+            crate::TimeRange { start: 1, end: 1 },
+            1,
+            b"replay marker",
+        )
+        .text(&id, &[("body", "replay marker")])
+        .commit()?;
+    let turn = RetrievalTurn {
+        turn_id: [8; 16],
+        episode_id: [9; 16],
+        turn_idx: 3,
+    };
+    let output = vault
+        .context_pack()
+        .search_text("replay marker", 5)
+        .corpus_snapshot_ref("eval://corpus/fixture-v1")
+        .replay_query_ref("eval://query/turn-3")
+        .retrieval_turn(turn)
+        .capture_retrieval_trace(true)
+        .run_serialized_with_telemetry()?;
+    let run_id = output.run_id.expect("captured run");
+    let row = vault.retrieval_run(run_id)?.expect("stored turn");
+    assert_eq!(vault.retrieval_runs_by_turn(&turn.turn_id)?, vec![run_id]);
+    let inputs = row.replay_inputs.expect("complete query inputs");
+    assert_eq!(inputs.query_ref.as_deref(), Some("eval://query/turn-3"));
+    assert_eq!(inputs.config["channels"]["text_limit"], 5);
+    assert!(
+        !serde_json::to_string(&inputs)
+            .unwrap()
+            .contains("replay marker")
+    );
+    assert!(inputs.config["bm25"]["fields"].is_array());
+    assert_eq!(inputs.config["corpus_scope"]["kind"], "all");
+    assert_eq!(inputs.config["pack"]["assembly"]["edge_hop"], 0);
+    assert_eq!(inputs.config["pack"]["projection"]["format"], "Json");
+    assert_eq!(
+        inputs.corpus_snapshot_ref.as_deref(),
+        Some("eval://corpus/fixture-v1")
+    );
+    let pack = row.pack_output.expect("final pack");
+    assert_eq!(pack.bytes, output.value);
+    assert_eq!(pack.format, "Json");
+    let trace = row.trace.expect("trace");
+    assert_eq!(
+        vault.retrieval_trace_by_fork_hash(trace.fork_hash)?,
+        Some(trace)
+    );
+    let untraced = vault
+        .context_pack()
+        .search_text("replay marker", 5)
+        .corpus_snapshot_ref("eval://corpus/fixture-v1")
+        .run_serialized_with_telemetry()?;
+    let row = vault.retrieval_run(untraced.run_id.expect("run"))?.unwrap();
+    assert!(row.replay_inputs.is_none());
+    assert!(row.pack_output.is_none());
+    Ok(())
+}
+
+#[test]
+fn raw_pack_snapshot_preserves_unprojected_fields_and_resolved_config() -> crate::Result<()> {
+    let (_dir, vault) = open_test_vault_with(telemetry_config());
+    let id = crate::test_util::entity(0xB6);
+    let payload = rmp_serde::to_vec_named(&serde_json::json!({
+        "txt": "raw replay marker", "spkr": "user", "at": 1_u64,
+    }))
+    .unwrap();
+    vault
+        .batch()
+        .put(
+            &id,
+            crate::registry::ENTITY_TYPE_TURN,
+            crate::TimeRange { start: 1, end: 1 },
+            1,
+            &payload,
+        )
+        .text(&id, &[("body", "raw replay marker")])
+        .commit()?;
+    let raw = vault
+        .context_pack()
+        .search_text("raw replay marker", 5)
+        .corpus_snapshot_ref("eval://corpus/raw-fixture")
+        .capture_retrieval_trace(true)
+        .run_with_telemetry()?;
+    let row = vault.retrieval_run(raw.run_id.expect("captured"))?.unwrap();
+    let replay = row.replay_inputs.unwrap();
+    assert_eq!(
+        replay.config["blend_weights"]["recency"]
+            .as_f64()
+            .map(|v| v as f32),
+        Some(0.35_f32)
+    );
+    assert_eq!(replay.config["authority"]["deny_all"], false);
+    assert_eq!(replay.config["candidate_filter_present"], false);
+    let output = row.pack_output.expect("full raw pack");
+    assert_eq!(output.format, "msgpack.context-pack.v1");
+    let restored: serde_json::Value = rmp_serde::from_slice(&output.bytes).unwrap();
+    assert_eq!(
+        restored["results"].as_array().unwrap().len(),
+        raw.value.results.len()
+    );
+    assert_eq!(restored["results"][0]["fields"]["txt"], "raw replay marker");
+    assert_eq!(
+        restored["results"][0]["id"],
+        serde_json::json!(id.as_bytes())
+    );
+    assert_eq!(
+        restored["stats"]["candidates_considered"],
+        raw.value.stats.candidates_considered
+    );
+    Ok(())
+}
+
+#[test]
+fn opted_in_no_channel_and_expired_deadline_publish_empty_turns() -> crate::Result<()> {
+    let (_dir, vault) = open_test_vault_with(telemetry_config());
+    let deadline = crate::retrieval_depth::RetrievalDeadline::at(
+        std::time::Instant::now() - std::time::Duration::from_secs(1),
+    );
+    for (index, skip_text) in [false, true].into_iter().enumerate() {
+        let turn = RetrievalTurn {
+            turn_id: [index as u8 + 30; 16],
+            episode_id: [42; 16],
+            turn_idx: index as u64,
+        };
+        let mut builder = vault
+            .context_pack()
+            .retrieval_turn(turn)
+            .replay_query_ref(format!("eval://queries/empty-{index}"))
+            .corpus_snapshot_ref("eval://corpus/empty")
+            .capture_retrieval_trace(true);
+        if skip_text {
+            builder = builder
+                .search_text("private unexecuted query", 5)
+                .deadline(&deadline);
+        }
+        let result = builder.run_with_telemetry()?;
+        assert!(result.value.results.is_empty());
+        let run_id = result.run_id.expect("opted-in empty run has a row");
+        assert_eq!(vault.retrieval_runs_by_turn(&turn.turn_id)?, vec![run_id]);
+        let row = vault.retrieval_run(run_id)?.unwrap();
+        let inputs = row.replay_inputs.expect("query-free input reference");
+        assert_eq!(
+            inputs.query_ref,
+            Some(format!("eval://queries/empty-{index}"))
+        );
+        assert_eq!(
+            inputs.config["channels"]["text_limit"],
+            if skip_text {
+                serde_json::json!(5)
+            } else {
+                serde_json::Value::Null
+            }
+        );
+        assert!(
+            !serde_json::to_string(&inputs)
+                .unwrap()
+                .contains("private unexecuted query")
+        );
+        assert!(row.result_ids.is_empty());
+        assert!(row.pack_output.is_some());
+    }
+    assert!(deadline.was_cut_short());
+    let uncaptured = vault.context_pack().run_with_telemetry()?;
+    assert!(uncaptured.run_id.is_none());
+    Ok(())
+}
+
+fn telemetry_config() -> VaultConfig {
+    VaultConfig {
+        retrieval_telemetry_capture: true,
+        ..VaultConfig::default()
+    }
+}
+
+#[test]
+fn trace_request_cannot_override_disabled_vault_capture() -> crate::Result<()> {
+    let (_dir, vault) = open_test_vault_with(VaultConfig::default());
+    let result = vault
+        .context_pack()
+        .search_text("not stored", 10)
+        .replay_query_ref("eval://queries/disabled")
+        .corpus_snapshot_ref("eval://corpus/disabled")
+        .capture_retrieval_trace(true)
+        .run_with_telemetry()?;
+    assert!(result.run_id.is_none());
+    assert!(vault.retrieval_runs(10)?.is_empty());
     Ok(())
 }
