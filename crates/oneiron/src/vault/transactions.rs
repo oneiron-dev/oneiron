@@ -211,16 +211,19 @@ impl Vault {
         E: From<Error>,
     {
         let mut wtxn = self.store.env.write_txn().map_err(Error::from)?;
-        let (result, pending_vad_ids) = {
+        let (result, postcommit) = {
             let _active_write_txn = crate::store::active_write_txn_guard();
             let vad_scope = crate::batch::VadPostcommitScope::new(self, &wtxn);
             let result = f(&mut wtxn)?;
             (result, vad_scope.finish())
         };
         let approved_vad_ids =
-            self.resolved_dreamer_vad_approvals_in_txn(&wtxn, pending_vad_ids)?;
+            self.resolved_dreamer_vad_approvals_in_txn(&wtxn, postcommit.vad_ids)?;
         wtxn.commit().map_err(Error::from)?;
         self.store.notify_attempt_observers();
+        if postcommit.proactivity_changed {
+            self.store.notify_proactivity_changes();
+        }
         // Approval is durable now. The canonical consolidator opens its own
         // writer; its failure is returned without rolling back Approved.
         let now = self.store.clock.now_recorded_at();
