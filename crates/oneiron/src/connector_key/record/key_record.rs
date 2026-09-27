@@ -361,7 +361,7 @@ impl ConnectorKeyRecord {
                 _ => return Err(invalid_body("manifest pin incomplete")),
             };
             if pending.drift != expected
-                || !pending.drift.needs_reconsent()
+                || !pending.drift.has_change()
                 || pending
                     .qualification_report_hash
                     .as_ref()

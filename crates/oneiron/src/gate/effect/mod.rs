@@ -360,27 +360,11 @@ pub(crate) fn evaluate_external_effect_policy(
             }
         }
 
-        // Retained resolved schemas are the only auto-fire surface. A staged
-        // change downgrades just the affected tool; other rows remain live.
-        let manifest_verb = hydrated_effect
-            .scoped_mcp_call
-            .as_ref()
-            .map_or(hydrated_effect.verb.as_str(), |call| call.tool.as_str());
-        if charter_wall.is_none()
-            && (key.tool_requires_confirmation(manifest_verb)
-                || uses_scoped_mcp_governing_connector
-                    && prepared.is_some()
-                    && key.retained_manifest.is_none())
-        {
-            charter_wall = Some(
-                GateDecision::pending(vec![GateReasonCode::PendingConnectorManifestDrift])
-                    .with_receipt_reasons(["connector_manifest_drift"]),
-            );
-        }
-
         // A rendered scoped call binds the approved snapshot and revision.
-        // A replaced manifest (even with an unchanged tool name) cannot
-        // release old prepared bytes through the ordinary drift wall.
+        // Check the binding before per-tool drift classification: a removed or
+        // renamed tool can make `tool_requires_confirmation` true, but if its
+        // approved manifest changed the useful refusal is the stale snapshot
+        // with the current hash. It must also run before budget admission.
         if charter_wall.is_none()
             && uses_scoped_mcp_governing_connector
             && prepared.is_some()
@@ -401,6 +385,24 @@ pub(crate) fn evaluate_external_effect_policy(
                         .with_receipt_reasons(["connector_manifest_stale"]),
                 );
             }
+        }
+
+        // Retained resolved schemas are the only auto-fire surface. A staged
+        // change downgrades just the affected tool; other rows remain live.
+        let manifest_verb = hydrated_effect
+            .scoped_mcp_call
+            .as_ref()
+            .map_or(hydrated_effect.verb.as_str(), |call| call.tool.as_str());
+        if charter_wall.is_none()
+            && (key.tool_requires_confirmation(manifest_verb)
+                || uses_scoped_mcp_governing_connector
+                    && prepared.is_some()
+                    && key.retained_manifest.is_none())
+        {
+            charter_wall = Some(
+                GateDecision::pending(vec![GateReasonCode::PendingConnectorManifestDrift])
+                    .with_receipt_reasons(["connector_manifest_drift"]),
+            );
         }
 
         if key.status != ConnectorKeyStatus::Active {

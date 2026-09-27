@@ -47,6 +47,12 @@ impl Vault {
         if record.status == ConnectorKeyStatus::Revoked {
             return Err(invalid_body("revoked connector cannot update manifest"));
         }
+        let policy = crate::gate::resolve_policy_manifest(&self.store, &txn)?;
+        if policy.is_fail_closed() {
+            return Err(invalid_body("connector admission policy is unavailable"));
+        }
+        let holder = record.actor_entity_ref.as_ref().map(EntityId::to_hex);
+        manifest.validate_admission(policy.connector_admission.effective(holder.as_deref()))?;
         let drift = match (
             &record.retained_manifest,
             &record.negotiated_protocol_revision,
@@ -57,41 +63,74 @@ impl Vault {
             (None, None) => ConnectorManifestDrift::first_registration(&manifest),
             _ => return Err(invalid_body("connector manifest pin incomplete")),
         };
-        if !drift.needs_reconsent() {
-            if record.pending_manifest.is_some() {
-                let undo_revision_hold =
-                    record.suspended_reason.as_deref() == Some("protocol_revision_drift");
-                let reverted = ConnectorKeyRecord {
-                    pending_manifest: None,
-                    status: if undo_revision_hold {
-                        ConnectorKeyStatus::Active
-                    } else {
-                        record.status
-                    },
-                    status_changed_at: if undo_revision_hold {
-                        Some(at)
-                    } else {
-                        record.status_changed_at
-                    },
-                    suspended_reason: if undo_revision_hold {
-                        None
-                    } else {
-                        record.suspended_reason.clone()
-                    },
-                    ..record
-                };
-                rewrite_connector_key_in_txn(&self.store, &mut txn, id, &reverted)?;
-                let policy = crate::gate::resolve_policy_manifest(&self.store, &txn)?;
-                append_connector_key_op_record(
-                    &self.store,
-                    &mut txn,
-                    id,
-                    "gate.connector_key.manifest_revert",
-                    &reverted,
-                    policy.read_frontier_hash()?,
-                    at,
-                )?;
-                txn.commit()?;
+        if !drift.has_change() {
+            if let Some(previous) = record.pending_manifest.as_ref() {
+                let held_revision = record.status == ConnectorKeyStatus::Suspended
+                    && record.suspended_reason.as_deref() == Some("protocol_revision_drift")
+                    && previous.drift.requires_reregistration;
+                if held_revision {
+                    // A return to the approved revision is not an expansion,
+                    // but it is not proof that the reconnected peer still
+                    // qualifies. Keep the hold through the suite and compare
+                    // the exact old candidate again before lifting it.
+                    let candidate_id = previous.candidate_id;
+                    drop(txn);
+                    let report = suite.qualify(&manifest, revision)?;
+                    if !valid_report_hash(&report) {
+                        return Err(invalid_body("connector qualification report hash missing"));
+                    }
+                    let mut txn = self.store.env.write_txn()?;
+                    let current = read_connector_key_in_txn(&self.store, &txn, id)?
+                        .ok_or(Error::EntityNotFound)?;
+                    if current
+                        .pending_manifest
+                        .as_ref()
+                        .map(|candidate| candidate.candidate_id)
+                        != Some(candidate_id)
+                        || current.status != ConnectorKeyStatus::Suspended
+                        || current.suspended_reason.as_deref() != Some("protocol_revision_drift")
+                        || current.retained_manifest.as_ref() != Some(&manifest)
+                        || current.negotiated_protocol_revision.as_deref() != Some(revision)
+                    {
+                        return Err(Error::ConcurrentWrite("connector manifest candidate"));
+                    }
+                    let reverted = ConnectorKeyRecord {
+                        pending_manifest: None,
+                        status: ConnectorKeyStatus::Active,
+                        status_changed_at: Some(at),
+                        suspended_reason: None,
+                        ..current
+                    };
+                    rewrite_connector_key_in_txn(&self.store, &mut txn, id, &reverted)?;
+                    let policy = crate::gate::resolve_policy_manifest(&self.store, &txn)?;
+                    append_connector_key_op_record(
+                        &self.store,
+                        &mut txn,
+                        id,
+                        "gate.connector_key.manifest_requalified_revert",
+                        &reverted,
+                        policy.read_frontier_hash()?,
+                        at,
+                    )?;
+                    txn.commit()?;
+                } else {
+                    let reverted = ConnectorKeyRecord {
+                        pending_manifest: None,
+                        ..record
+                    };
+                    rewrite_connector_key_in_txn(&self.store, &mut txn, id, &reverted)?;
+                    let policy = crate::gate::resolve_policy_manifest(&self.store, &txn)?;
+                    append_connector_key_op_record(
+                        &self.store,
+                        &mut txn,
+                        id,
+                        "gate.connector_key.manifest_revert",
+                        &reverted,
+                        policy.read_frontier_hash()?,
+                        at,
+                    )?;
+                    txn.commit()?;
+                }
             }
             return Ok(None);
         }
@@ -164,7 +203,7 @@ impl Vault {
         txn.commit()?;
 
         let report_hash = suite.qualify(&manifest, revision)?;
-        if report_hash.len() != 64 || !report_hash.bytes().all(|b| b.is_ascii_hexdigit()) {
+        if !valid_report_hash(&report_hash) {
             return Err(invalid_body("connector qualification report hash missing"));
         }
         let mut txn = self.store.env.write_txn()?;
@@ -178,13 +217,26 @@ impl Vault {
             return Err(Error::ConcurrentWrite("connector manifest candidate"));
         }
         pending.qualification_report_hash = Some(report_hash);
+        let auto_narrow = !pending.drift.needs_reconsent();
+        if auto_narrow {
+            // A strict permission subset or removed tool is a proved narrow.
+            // It takes effect after successful qualification, without an
+            // unnecessary owner re-consent prompt.
+            record.retained_manifest = Some(pending.manifest.clone());
+            record.negotiated_protocol_revision = Some(pending.protocol_revision.clone());
+            record.pending_manifest = None;
+        }
         rewrite_connector_key_in_txn(&self.store, &mut txn, id, &record)?;
         let policy = crate::gate::resolve_policy_manifest(&self.store, &txn)?;
         append_connector_key_op_record(
             &self.store,
             &mut txn,
             id,
-            "gate.connector_key.manifest_qualified",
+            if auto_narrow {
+                "gate.connector_key.manifest_narrow"
+            } else {
+                "gate.connector_key.manifest_qualified"
+            },
             &record,
             policy.read_frontier_hash()?,
             at,
@@ -284,4 +336,8 @@ impl Vault {
         }
         Ok(record.tool_requires_confirmation(tool))
     }
+}
+
+fn valid_report_hash(value: &str) -> bool {
+    value.len() == 64 && value.bytes().all(|byte| byte.is_ascii_hexdigit())
 }

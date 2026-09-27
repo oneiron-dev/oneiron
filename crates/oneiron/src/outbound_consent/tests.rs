@@ -2223,7 +2223,7 @@ fn replaced_manifest_refuses_delayed_and_pending_scoped_calls_with_current_hash(
         &grant.principal_ref,
         AttemptId::from_bytes(&[0xDA; 16]).unwrap(),
         2,
-        delayed,
+        delayed.clone(),
         15,
         &mut sender,
     )
@@ -2254,4 +2254,216 @@ fn replaced_manifest_refuses_delayed_and_pending_scoped_calls_with_current_hash(
             .state,
         IntentState::Pending
     );
+    // A renamed/removed tool must still report the replaced snapshot, not
+    // generic unknown-tool drift. The public sweep must preserve that typed
+    // result and must not debit or send the paid Pending intent again.
+    let removed = crate::connector_key::ResolvedConnectorManifest::resolve(vec![
+        crate::connector_key::ConnectorToolSchema {
+            name: "other".into(),
+            permissions: ["read".into()].into(),
+            triggers: Default::default(),
+            input_schema: serde_json::json!({"properties":{}}),
+        },
+    ])
+    .unwrap();
+    vault
+        .stage_connector_manifest(&key_id, removed.clone(), "R1", &Suite, 17)
+        .unwrap();
+    let candidate = vault
+        .get_connector_key(&key_id)
+        .unwrap()
+        .unwrap()
+        .pending_manifest
+        .unwrap()
+        .candidate_id;
+    vault
+        .approve_connector_manifest(
+            &auth,
+            &key_id,
+            candidate,
+            removed.hash().unwrap(),
+            &"b".repeat(64),
+            18,
+        )
+        .unwrap();
+    let removed_result = execute_scoped_mcp_outbound_call(
+        &vault,
+        &authority,
+        grant_id,
+        &grant,
+        &grant.principal_ref,
+        AttemptId::from_bytes(&[0xDB; 16]).unwrap(),
+        3,
+        delayed,
+        19,
+        &mut sender,
+    )
+    .unwrap();
+    assert_eq!(
+        removed_result.decision,
+        ScopedMcpConsentDecision::Escalate(ScopedMcpEscalationReason::StaleConnectorManifest {
+            current_manifest_hash: removed.hash().unwrap(),
+        })
+    );
+    assert_eq!(removed_result.effectful_sends, 0);
+    let connector = scoped_capability_connector("files", &grant_id);
+    let debit_before = vault
+        .effector_budget_read(&connector, None)
+        .unwrap()
+        .unwrap()
+        .rows[0]
+        .used;
+    let sweep =
+        recover_authorized_outbound_intents(&vault, &authority, &mut sender, 20, 30_000).unwrap();
+    assert_eq!(sweep.effectful_sends, 0);
+    assert_eq!(sweep.ledger.pending, 1);
+    assert_eq!(sweep.stale_manifest_refusals.len(), 1);
+    assert_eq!(
+        sweep.stale_manifest_refusals[0].intent_id,
+        intent_ledger_records(&vault).unwrap()[0].id
+    );
+    assert_eq!(
+        sweep.stale_manifest_refusals[0].current_manifest_hash,
+        removed.hash().unwrap()
+    );
+    assert_eq!(
+        vault
+            .effector_budget_read(&connector, None)
+            .unwrap()
+            .unwrap()
+            .rows[0]
+            .used,
+        debit_before
+    );
+    assert!(sender.sent_payloads.is_empty());
+}
+
+#[test]
+fn failed_revision_revert_stays_closed_for_preparation_admission_and_recovery() {
+    struct Suite(Option<&'static str>);
+    impl crate::connector_key::ConnectorManifestQualifier for Suite {
+        fn qualify(
+            &self,
+            _: &crate::connector_key::ResolvedConnectorManifest,
+            _: &str,
+        ) -> crate::error::Result<String> {
+            self.0
+                .map(str::to_owned)
+                .ok_or_else(|| crate::Error::InvalidConfig("probe failed".into()))
+        }
+    }
+    let (_dir, vault) = temp_vault();
+    let grant_id = entity(0xBC);
+    let grant = vault
+        .mint_scoped_mcp_outbound_grant(&grant_id, &scoped_intent(), 10)
+        .unwrap();
+    let key_id = register_active_scoped_connector_key_with_budget(&vault, &grant_id, "files", 100);
+    let authority = OutboundBindingAuthority::for_vault(&vault).unwrap();
+    let prepared = prepared_fixture(
+        &vault,
+        &grant_id,
+        scoped_call(),
+        fixture_descriptor(),
+        vec![3],
+    );
+    let mut ambiguous = AmbiguousResultSender;
+    let initial = execute_scoped_mcp_outbound_call(
+        &vault,
+        &authority,
+        grant_id,
+        &grant,
+        &grant.principal_ref,
+        AttemptId::from_bytes(&[0xBC; 16]).unwrap(),
+        1,
+        prepared.clone(),
+        11,
+        &mut ambiguous,
+    )
+    .unwrap();
+    assert_eq!(initial.effectful_sends, 1);
+    assert_eq!(
+        initial.dispatch.as_ref().and_then(|r| r.state),
+        Some(IntentState::Pending)
+    );
+    let manifest = vault
+        .get_connector_key(&key_id)
+        .unwrap()
+        .unwrap()
+        .retained_manifest
+        .unwrap();
+    assert!(
+        vault
+            .stage_connector_manifest(&key_id, manifest.clone(), "R2", &Suite(None), 13)
+            .is_err()
+    );
+    assert!(
+        vault
+            .stage_connector_manifest(&key_id, manifest.clone(), "R1", &Suite(None), 14)
+            .is_err()
+    );
+    assert!(
+        vault
+            .stage_connector_manifest(&key_id, manifest, "R1", &Suite(Some("malformed")), 15)
+            .is_err()
+    );
+    assert_eq!(
+        vault.get_connector_key(&key_id).unwrap().unwrap().status,
+        crate::connector_key::ConnectorKeyStatus::Suspended
+    );
+    let descriptor = tool_call::ToolCallDescriptor {
+        schema: &serde_json::json!({"properties":{}}),
+        destructive_hint: false,
+        replay: fixture_descriptor(),
+    };
+    assert!(
+        vault
+            .prepare_connector_tool_call(
+                &key_id,
+                scoped_call(),
+                descriptor,
+                &serde_json::json!({}),
+                tool_call::MutationIntent::default()
+            )
+            .is_err()
+    );
+    let mut sender = RecordingResultSender::default();
+    let admission = execute_scoped_mcp_outbound_call(
+        &vault,
+        &authority,
+        grant_id,
+        &grant,
+        &grant.principal_ref,
+        AttemptId::from_bytes(&[0xBD; 16]).unwrap(),
+        2,
+        prepared,
+        16,
+        &mut sender,
+    )
+    .unwrap();
+    assert_eq!(
+        admission.decision,
+        ScopedMcpConsentDecision::Escalate(ScopedMcpEscalationReason::ConnectorKeySuspended)
+    );
+    assert_eq!(admission.effectful_sends, 0);
+    let connector = scoped_capability_connector("files", &grant_id);
+    let used = vault
+        .effector_budget_read(&connector, None)
+        .unwrap()
+        .unwrap()
+        .rows[0]
+        .used;
+    let sweep =
+        recover_authorized_outbound_intents(&vault, &authority, &mut sender, 17, 30_000).unwrap();
+    assert_eq!(sweep.effectful_sends, 0);
+    assert_eq!(sweep.ledger.pending, 1);
+    assert_eq!(
+        vault
+            .effector_budget_read(&connector, None)
+            .unwrap()
+            .unwrap()
+            .rows[0]
+            .used,
+        used
+    );
+    assert!(sender.sent_payloads.is_empty());
 }

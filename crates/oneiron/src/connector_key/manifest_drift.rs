@@ -28,14 +28,14 @@ impl ResolvedConnectorManifest {
     /// Resolve local references and composition before any comparison or
     /// consent-visible use. Unsupported or cyclic references refuse admission.
     pub fn resolve(mut tools: Vec<ConnectorToolSchema>) -> Result<Self> {
-        if tools.is_empty() || tools.len() > 256 {
+        if tools.is_empty() || tools.len() > 4096 {
             return Err(invalid());
         }
         for tool in &mut tools {
             if tool.name.trim().is_empty()
                 || tool.name.len() > 256
-                || tool.permissions.len() > 128
-                || tool.triggers.len() > 128
+                || tool.permissions.len() > 4096
+                || tool.triggers.len() > 4096
                 || tool
                     .permissions
                     .iter()
@@ -59,6 +59,23 @@ impl ResolvedConnectorManifest {
             return Err(invalid());
         }
         Ok(Self { tools })
+    }
+    /// Mutable admission capacity comes from a vault policy snapshot. It is
+    /// deliberately NOT used by persisted-body validation: later policy
+    /// tightening cannot make an already admitted key unreadable.
+    pub(crate) fn validate_admission(
+        &self,
+        quotas: crate::gate::ConnectorAdmissionQuotas,
+    ) -> Result<()> {
+        if self.tools.len() > quotas.max_tools
+            || self.tools.iter().any(|tool| {
+                tool.permissions.len() > quotas.max_permissions_per_tool
+                    || tool.triggers.len() > quotas.max_triggers_per_tool
+            })
+        {
+            return Err(invalid());
+        }
+        Ok(())
     }
     pub fn tools(&self) -> &[ConnectorToolSchema] {
         &self.tools
@@ -390,17 +407,22 @@ pub enum ConnectorDriftKind {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ConnectorManifestDrift {
+    /// All detected changes, including narrows and removals.
     pub kinds: BTreeSet<ConnectorDriftKind>,
+    /// Rows held during qualification; a removed tool also belongs here.
     pub affected_tools: BTreeSet<String>,
-    /// Revision changes need re-registration; ordinary drift re-asks only
-    /// affected rows and leaves unrelated rows available.
+    /// Only widening or otherwise non-monotone rows need a new owner tap.
+    pub reconsent_tools: BTreeSet<String>,
+    /// Revision changes need re-registration, independently of tool deltas.
     pub requires_reregistration: bool,
 }
 impl ConnectorManifestDrift {
     pub fn first_registration(manifest: &ResolvedConnectorManifest) -> Self {
+        let tools: BTreeSet<_> = manifest.tools().iter().map(|t| t.name.clone()).collect();
         Self {
             kinds: [ConnectorDriftKind::Permission].into(),
-            affected_tools: manifest.tools().iter().map(|t| t.name.clone()).collect(),
+            affected_tools: tools.clone(),
+            reconsent_tools: tools,
             requires_reregistration: false,
         }
     }
@@ -412,43 +434,61 @@ impl ConnectorManifestDrift {
     ) -> Self {
         let mut kinds = BTreeSet::new();
         let mut affected_tools = BTreeSet::new();
+        let mut reconsent_tools = BTreeSet::new();
         if old_revision != new_revision {
             kinds.insert(ConnectorDriftKind::ProtocolRevision);
         }
         let before: BTreeMap<_, _> = old.tools().iter().map(|t| (t.name.as_str(), t)).collect();
         let after: BTreeMap<_, _> = new.tools().iter().map(|t| (t.name.as_str(), t)).collect();
         for name in before.keys().chain(after.keys()) {
-            let (Some(a), Some(b)) = (before.get(name), after.get(name)) else {
+            let name = (*name).to_owned();
+            let (Some(a), Some(b)) = (before.get(name.as_str()), after.get(name.as_str())) else {
                 kinds.insert(ConnectorDriftKind::Permission);
-                affected_tools.insert((*name).to_owned());
+                affected_tools.insert(name.clone());
+                if !before.contains_key(name.as_str()) {
+                    reconsent_tools.insert(name);
+                }
                 continue;
             };
             if a.permissions != b.permissions {
                 kinds.insert(ConnectorDriftKind::Permission);
+                // A strict subset narrows authority and carries forward. A
+                // replacement or added permission can widen; re-ask its row.
+                if !b.permissions.is_subset(&a.permissions) {
+                    reconsent_tools.insert(name.clone());
+                }
             }
             if a.triggers != b.triggers {
                 kinds.insert(ConnectorDriftKind::Trigger);
+                reconsent_tools.insert(name.clone());
             }
             if defaults(&a.input_schema) != defaults(&b.input_schema) {
                 kinds.insert(ConnectorDriftKind::ParameterDefault);
+                reconsent_tools.insert(name.clone());
             }
             if a.input_schema != b.input_schema {
                 kinds.insert(ConnectorDriftKind::Schema);
+                reconsent_tools.insert(name.clone());
             }
             if a != b {
-                affected_tools.insert((*name).to_owned());
+                affected_tools.insert(name);
             }
         }
         Self {
             requires_reregistration: old_revision != new_revision,
             kinds,
             affected_tools,
+            reconsent_tools,
         }
     }
-    pub fn needs_reconsent(&self) -> bool {
+    pub fn has_change(&self) -> bool {
         !self.kinds.is_empty()
     }
+    pub fn needs_reconsent(&self) -> bool {
+        self.requires_reregistration || !self.reconsent_tools.is_empty()
+    }
 }
+
 fn defaults(value: &Value) -> Vec<(String, Value)> {
     fn visit(value: &Value, path: &str, out: &mut Vec<(String, Value)>) {
         if let Some(object) = value.as_object() {

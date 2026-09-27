@@ -3879,3 +3879,393 @@ fn replicated_connector_key_replacement_and_manifest_clear_are_rejected() -> Res
     }
     Ok(())
 }
+
+#[test]
+fn strict_permission_narrow_and_tool_removal_qualify_without_reconsent() -> Result<()> {
+    use std::cell::Cell;
+    struct Suite(Cell<usize>);
+    impl ConnectorManifestQualifier for Suite {
+        fn qualify(&self, _: &ResolvedConnectorManifest, _: &str) -> Result<String> {
+            self.0.set(self.0.get() + 1);
+            Ok("a".repeat(64))
+        }
+    }
+    let (_dir, vault) = temp_vault();
+    let id = test_id(0xC3);
+    let suite = Suite(Cell::new(0));
+    vault.register_connector_key(&id, ConnectorKeyRecord::active("line", None, vec![], 10))?;
+    let tool = |name: &str, permissions: &[&str]| ConnectorToolSchema {
+        name: name.into(),
+        permissions: permissions
+            .iter()
+            .map(|permission| (*permission).to_owned())
+            .collect(),
+        triggers: Default::default(),
+        input_schema: serde_json::json!({"properties":{}}),
+    };
+    let full = ResolvedConnectorManifest::resolve(vec![
+        tool("send", &["read", "write"]),
+        tool("other", &["read"]),
+    ])?;
+    vault.stage_connector_manifest(&id, full.clone(), "R1", &suite, 11)?;
+    let owner = test_id(0xC4);
+    vault.put_entity(
+        &owner,
+        crate::registry::ENTITY_TYPE_PERSON,
+        crate::TimeRange { start: 1, end: 1 },
+        1,
+        b"owner",
+    )?;
+    let auth = vault.authenticate_owner(
+        owner,
+        &owner.to_hex(),
+        true,
+        crate::store::GateDecisionId::from_bytes(*test_id(0xC5).as_bytes()),
+    )?;
+    let pending = vault
+        .get_connector_key(&id)?
+        .unwrap()
+        .pending_manifest
+        .unwrap();
+    vault.approve_connector_manifest(
+        &auth,
+        &id,
+        pending.candidate_id,
+        full.hash()?,
+        &"a".repeat(64),
+        12,
+    )?;
+    let narrowed = ResolvedConnectorManifest::resolve(vec![
+        tool("send", &["read"]),
+        tool("other", &["read"]),
+    ])?;
+    let change = vault
+        .stage_connector_manifest(&id, narrowed.clone(), "R1", &suite, 13)?
+        .unwrap();
+    assert!(change.kinds.contains(&ConnectorDriftKind::Permission));
+    assert!(!change.needs_reconsent());
+    assert!(change.reconsent_tools.is_empty());
+    let record = vault.get_connector_key(&id)?.unwrap();
+    assert_eq!(record.retained_manifest.as_ref(), Some(&narrowed));
+    assert!(record.pending_manifest.is_none());
+    assert!(!record.tool_requires_confirmation("send"));
+    let removed = ResolvedConnectorManifest::resolve(vec![tool("send", &["read"])])?;
+    let change = vault
+        .stage_connector_manifest(&id, removed.clone(), "R1", &suite, 14)?
+        .unwrap();
+    assert!(!change.needs_reconsent());
+    assert_eq!(
+        vault.get_connector_key(&id)?.unwrap().retained_manifest,
+        Some(removed.clone())
+    );
+    assert!(vault.connector_tool_requires_confirmation(&id, "other")?);
+    let expansion = vault
+        .stage_connector_manifest(&id, full, "R1", &suite, 15)?
+        .unwrap();
+    assert!(expansion.needs_reconsent());
+    assert!(expansion.reconsent_tools.contains("send"));
+    assert!(expansion.reconsent_tools.contains("other"));
+    assert_eq!(
+        vault.get_connector_key(&id)?.unwrap().retained_manifest,
+        Some(removed)
+    );
+    assert_eq!(suite.0.get(), 4);
+    Ok(())
+}
+
+#[test]
+fn failed_or_malformed_revision_revert_keeps_the_qualified_hold() -> Result<()> {
+    use std::cell::Cell;
+    struct Suite<'a> {
+        calls: &'a Cell<usize>,
+        result: Option<&'a str>,
+    }
+    impl ConnectorManifestQualifier for Suite<'_> {
+        fn qualify(&self, _: &ResolvedConnectorManifest, _: &str) -> Result<String> {
+            self.calls.set(self.calls.get() + 1);
+            self.result
+                .map(str::to_owned)
+                .ok_or_else(|| Error::InvalidConfig("probe failed".into()))
+        }
+    }
+    let calls = Cell::new(0);
+    let (_dir, vault) = temp_vault();
+    let id = test_id(0xC6);
+    let manifest = drift_fixture_manifest("read", 0);
+    vault.register_connector_key(&id, ConnectorKeyRecord::active("line", None, vec![], 10))?;
+    vault.stage_connector_manifest(
+        &id,
+        manifest.clone(),
+        "R1",
+        &Suite {
+            calls: &calls,
+            result: Some(&"a".repeat(64)),
+        },
+        11,
+    )?;
+    let owner = test_id(0xC7);
+    vault.put_entity(
+        &owner,
+        crate::registry::ENTITY_TYPE_PERSON,
+        crate::TimeRange { start: 1, end: 1 },
+        1,
+        b"owner",
+    )?;
+    let auth = vault.authenticate_owner(
+        owner,
+        &owner.to_hex(),
+        true,
+        crate::store::GateDecisionId::from_bytes(*test_id(0xC8).as_bytes()),
+    )?;
+    let initial = vault
+        .get_connector_key(&id)?
+        .unwrap()
+        .pending_manifest
+        .unwrap();
+    vault.approve_connector_manifest(
+        &auth,
+        &id,
+        initial.candidate_id,
+        manifest.hash()?,
+        &"a".repeat(64),
+        12,
+    )?;
+    assert!(
+        vault
+            .stage_connector_manifest(
+                &id,
+                manifest.clone(),
+                "R2",
+                &Suite {
+                    calls: &calls,
+                    result: None
+                },
+                13
+            )
+            .is_err()
+    );
+    let held = vault.get_connector_key(&id)?.unwrap();
+    let candidate = held.pending_manifest.as_ref().unwrap().candidate_id;
+    assert_eq!(held.status, ConnectorKeyStatus::Suspended);
+    assert!(
+        vault
+            .stage_connector_manifest(
+                &id,
+                manifest.clone(),
+                "R1",
+                &Suite {
+                    calls: &calls,
+                    result: None
+                },
+                14
+            )
+            .is_err()
+    );
+    assert!(
+        vault
+            .stage_connector_manifest(
+                &id,
+                manifest.clone(),
+                "R1",
+                &Suite {
+                    calls: &calls,
+                    result: Some("bad")
+                },
+                15
+            )
+            .is_err()
+    );
+    let still_held = vault.get_connector_key(&id)?.unwrap();
+    assert_eq!(still_held.status, ConnectorKeyStatus::Suspended);
+    assert_eq!(
+        still_held.pending_manifest.as_ref().unwrap().candidate_id,
+        candidate
+    );
+    assert!(vault.connector_tool_requires_confirmation(&id, "send")?);
+    assert!(
+        vault
+            .approve_connector_manifest(
+                &auth,
+                &id,
+                candidate,
+                manifest.hash()?,
+                &"a".repeat(64),
+                16
+            )
+            .is_err()
+    );
+    assert_eq!(calls.get(), 4);
+    assert_eq!(
+        vault.stage_connector_manifest(
+            &id,
+            manifest,
+            "R1",
+            &Suite {
+                calls: &calls,
+                result: Some(&"a".repeat(64))
+            },
+            17
+        )?,
+        None
+    );
+    let recovered = vault.get_connector_key(&id)?.unwrap();
+    assert_eq!(recovered.status, ConnectorKeyStatus::Active);
+    assert!(recovered.pending_manifest.is_none());
+    assert_eq!(calls.get(), 5);
+    Ok(())
+}
+
+#[test]
+fn connector_admission_quota_policy_vault_and_holder_rows_narrow_without_poisoning_old_keys()
+-> Result<()> {
+    use rmpv::Value;
+    struct Suite;
+    impl ConnectorManifestQualifier for Suite {
+        fn qualify(&self, _: &ResolvedConnectorManifest, _: &str) -> Result<String> {
+            Ok("a".repeat(64))
+        }
+    }
+    let (_dir, vault) = temp_vault();
+    let holder = test_id(0xC9);
+    let mut cursor = std::io::Cursor::new(crate::gate::default_policy_manifest());
+    let Value::Map(mut entries) = rmpv::decode::read_value(&mut cursor).unwrap() else {
+        panic!("policy map")
+    };
+    entries.retain(|(key, _)| key.as_str() != Some("connector_admission"));
+    let quotas = |scope: &str, max_tools: u64, holder: Option<EntityId>| {
+        let mut fields = vec![
+            (Value::from("scope"), Value::from(scope)),
+            (Value::from("max_tools"), Value::from(max_tools)),
+            (Value::from("max_permissions_per_tool"), Value::from(10)),
+            (Value::from("max_triggers_per_tool"), Value::from(10)),
+        ];
+        if let Some(holder) = holder {
+            fields.push((Value::from("holder_ref"), Value::from(holder.to_hex())));
+        }
+        Value::Map(fields)
+    };
+    entries.push((
+        Value::from("connector_admission"),
+        Value::Array(vec![
+            Value::Map(vec![
+                (Value::from("scope"), Value::from("precedence")),
+                (
+                    Value::from("mode"),
+                    Value::from("nested_narrow_holder_override_vault_cap"),
+                ),
+            ]),
+            quotas("vault", 300, None),
+            quotas("holder", 2, Some(holder)),
+        ]),
+    ));
+    let mut raw = Vec::new();
+    rmpv::encode::write_value(&mut raw, &Value::Map(entries)).unwrap();
+    crate::test_util::put_policy_manifest_bytes(
+        &vault,
+        crate::gate::default_policy_manifest_id()?,
+        &raw,
+    )?;
+    let tools = |count: usize| -> ResolvedConnectorManifest {
+        ResolvedConnectorManifest::resolve(
+            (0..count)
+                .map(|n| ConnectorToolSchema {
+                    name: format!("tool_{n:03}"),
+                    permissions: ["read".to_owned()].into(),
+                    triggers: Default::default(),
+                    input_schema: serde_json::json!({"properties":{}}),
+                })
+                .collect(),
+        )
+        .unwrap()
+    };
+    let general = test_id(0xCA);
+    vault.register_connector_key(
+        &general,
+        ConnectorKeyRecord::active("general", None, vec![], 10),
+    )?;
+    vault.stage_connector_manifest(&general, tools(257), "R1", &Suite, 11)?;
+    assert_eq!(
+        vault
+            .get_connector_key(&general)?
+            .unwrap()
+            .pending_manifest
+            .as_ref()
+            .unwrap()
+            .manifest
+            .tools()
+            .len(),
+        257
+    );
+    assert!(
+        vault
+            .stage_connector_manifest(&general, tools(301), "R1", &Suite, 12)
+            .is_err()
+    );
+    let bounded = test_id(0xCB);
+    vault.register_connector_key(
+        &bounded,
+        ConnectorKeyRecord::active("bounded", Some(holder), vec![], 10),
+    )?;
+    assert!(
+        vault
+            .stage_connector_manifest(&bounded, tools(3), "R1", &Suite, 13)
+            .is_err()
+    );
+    vault.stage_connector_manifest(&bounded, tools(2), "R1", &Suite, 14)?;
+    assert_eq!(
+        vault
+            .get_connector_key(&bounded)?
+            .unwrap()
+            .pending_manifest
+            .unwrap()
+            .manifest
+            .tools()
+            .len(),
+        2
+    );
+    // A later policy decrease refuses NEW admissions, but the already stored
+    // 257-tool candidate stays decodable and available for its owner decision.
+    let mut reduced: Value = rmpv::decode::read_value(&mut raw.as_slice()).unwrap();
+    let Value::Map(ref mut reduced_entries) = reduced else {
+        panic!("policy map")
+    };
+    let (_, admission) = reduced_entries
+        .iter_mut()
+        .find(|(key, _)| key.as_str() == Some("connector_admission"))
+        .unwrap();
+    let Value::Array(rows) = admission else {
+        panic!("quota rows")
+    };
+    let Value::Map(vault_row) = &mut rows[1] else {
+        panic!("vault row")
+    };
+    let (_, limit) = vault_row
+        .iter_mut()
+        .find(|(key, _)| key.as_str() == Some("max_tools"))
+        .unwrap();
+    *limit = Value::from(100);
+    let mut reduced_bytes = Vec::new();
+    rmpv::encode::write_value(&mut reduced_bytes, &reduced).unwrap();
+    crate::test_util::put_policy_manifest_bytes(
+        &vault,
+        crate::gate::default_policy_manifest_id()?,
+        &reduced_bytes,
+    )?;
+    assert!(
+        vault
+            .stage_connector_manifest(&general, tools(101), "R1", &Suite, 15)
+            .is_err()
+    );
+    assert_eq!(
+        vault
+            .get_connector_key(&general)?
+            .unwrap()
+            .pending_manifest
+            .unwrap()
+            .manifest
+            .tools()
+            .len(),
+        257
+    );
+    Ok(())
+}

@@ -29,7 +29,8 @@ pub use self::execution::ScopedMcpDispatchResult;
 #[cfg(test)]
 use self::execution::execute_scoped_mcp_outbound_call;
 pub use self::recovery::{
-    AuthorizedRecoveryError, AuthorizedRecoveryReport, recover_authorized_outbound_intents,
+    AuthorizedRecoveryError, AuthorizedRecoveryReport, StaleConnectorManifestRefusal,
+    recover_authorized_outbound_intents,
 };
 pub use self::result_scrub::{
     OutboundResultSender, OutboundTransportPolicy, OutboundTransportResult,

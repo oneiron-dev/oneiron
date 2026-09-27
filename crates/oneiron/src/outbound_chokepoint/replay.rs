@@ -304,11 +304,10 @@ pub(super) fn recovery_governance(
     {
         return Ok(RecoveryGovernance::Block("connector_key_unregistered"));
     }
-    if key.tool_requires_confirmation(&record.tool)
-        || (record.capability_provenance().is_some() && key.retained_manifest.is_none())
-    {
-        return Ok(RecoveryGovernance::Block("connector_manifest_drift"));
-    }
+    // Compare the frozen snapshot before per-tool drift classification. An
+    // approved removal/rename makes the tool unknown to the new manifest, but
+    // the prior row must report the stale snapshot and the new manifest hash,
+    // not hide that actionable fact behind generic tool drift.
     if record.capability_provenance().is_some()
         && let Some(manifest) = key.retained_manifest.as_ref()
     {
@@ -322,6 +321,11 @@ pub(super) fn recovery_governance(
         }) {
             return Ok(RecoveryGovernance::Block("connector_manifest_stale"));
         }
+    }
+    if key.tool_requires_confirmation(&record.tool)
+        || (record.capability_provenance().is_some() && key.retained_manifest.is_none())
+    {
+        return Ok(RecoveryGovernance::Block("connector_manifest_drift"));
     }
     if let Some(charter) = key.charter.as_ref() {
         if connector_key::charter_block_drifted(charter)? {
