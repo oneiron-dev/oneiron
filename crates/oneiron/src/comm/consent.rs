@@ -109,6 +109,8 @@ pub fn request_opt_out_clear(
     created_at: u64,
 ) -> CommResult<CommClearOptOutOutcome> {
     validate_channel_class(channel_class).map_err(|_| CommError::InvalidRecord)?;
+    let channel_class = normalize_channel_class(channel_class);
+    let channel_class = channel_class.as_str();
     let Some(party_ref) = resolve_party(vault, party)? else {
         return Err(CommError::ActiveOptOutNotFound);
     };
@@ -168,6 +170,10 @@ pub fn approve_pending_opt_out_clear(
         NoActiveOptOut,
         Superseded,
     }
+
+    validate_channel_class(channel_class).map_err(|_| CommError::InvalidRecord)?;
+    let channel_class = normalize_channel_class(channel_class);
+    let channel_class = channel_class.as_str();
 
     let actor_ref = actor.entity_ref();
     let Some(party_ref) = resolve_party(vault, party)? else {
@@ -385,9 +391,9 @@ impl StandingOptOutHead {
     /// channel-scoped reader must use this rather than re-derive the rule.
     #[must_use]
     pub(crate) fn matches_channel(&self, channel_class: &str) -> bool {
-        self.channel_class
-            .as_deref()
-            .is_none_or(|stored| stored == normalize_channel_class(channel_class))
+        self.channel_class.as_deref().is_none_or(|stored| {
+            normalize_channel_class(stored) == normalize_channel_class(channel_class)
+        })
     }
 }
 
@@ -567,10 +573,9 @@ pub(crate) fn send_override_for_send_in_txn(
         else {
             continue;
         };
-        if head_channel
-            .as_deref()
-            .is_some_and(|stored| stored != channel_class)
-        {
+        if head_channel.as_deref().is_some_and(|stored| {
+            normalize_channel_class(stored) != normalize_channel_class(channel_class)
+        }) {
             continue;
         }
         // A ruling dated ahead of the clock has not started: `is_standing`

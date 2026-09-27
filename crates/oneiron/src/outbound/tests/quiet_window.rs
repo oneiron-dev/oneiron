@@ -15,6 +15,9 @@ fn ambient_email_and_plain_chat_deliver_inside_window() -> crate::Result<()> {
     // classifier is the only thing that can promote them.
     for (channel, verb) in [
         ("email", "send"),
+        ("email_resend", "send"),
+        ("email_ses", "send"),
+        ("email_postmark", "send"),
         ("slack", "send"),
         ("discord", "send"),
         ("telegram", "send"),
@@ -37,6 +40,9 @@ fn ambient_email_and_plain_chat_deliver_inside_window() -> crate::Result<()> {
         // Seeds stay outside `PINNED_ID_BYTES` (and so do the `seed+1`/`seed+2`
         // ids `quiet_window_fixture` derives from them).
         (0x80_u8, "email", "send", None),
+        (0xD0, "email_resend", "send", None),
+        (0xD4, "email_ses", "send", None),
+        (0xD8, "email_postmark", "send", None),
         (0x84, "slack", "send", None),
         (0xAC, "discord", "send", None),
         (
@@ -119,6 +125,42 @@ fn ambient_email_and_plain_chat_deliver_inside_window() -> crate::Result<()> {
         assert_eq!(
             attempts[0].state,
             crate::attempt_queue::AttemptState::Completed
+        );
+    }
+
+    // Ambient provider emails also ignore a live quiet-window claim when the
+    // host has no local-minute offset; an async write cannot wait on a clock.
+    for (seed, channel) in [
+        (0xD0_u8, "email_resend"),
+        (0xD4, "email_ses"),
+        (0xD8, "email_postmark"),
+    ] {
+        let fixture = quiet_window_fixture(seed, channel, &["send"])?;
+        let key = format!("ambient-no-offset-{channel}");
+        fixture
+            .vault
+            .memory(fixture.actor, EdgeActorClass::Agent)
+            .schedule_outbound(&one_1768_draft(channel, "send", &key))
+            .expect("provider email schedules without an offset");
+        let mut executor = RecordingExecutor::default();
+        assert_eq!(
+            fixture
+                .vault
+                .run_connector_task_executor(&mut executor, ONE_1768_EXECUTE_AT)
+                .expect("ambient provider send"),
+            1,
+            "{channel}"
+        );
+        assert_eq!(executor.calls.len(), 1, "{channel}");
+        assert_eq!(
+            receipt_field(&one_1768_receipts(&fixture.vault)?[0], "window_ladder_rung"),
+            Some("ambient"),
+            "{channel}"
+        );
+        assert_eq!(
+            one_1768_bridge_attempts(&fixture.vault)?.len(),
+            1,
+            "{channel} has no hold/retry row"
         );
     }
 

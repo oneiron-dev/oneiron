@@ -4,6 +4,7 @@ use super::dispatch_types::OutboundDispatchRequest;
 use super::intent::OutboundIntent;
 use crate::Vault;
 use crate::claim::{ClaimBody, ClaimSubject};
+use crate::counterparty_contact::normalize_channel_class;
 use crate::delivery_window::{
     DeliveryWindowApnsInterruptionLevel, DeliveryWindowEvaluationContext, DeliveryWindowEvaluator,
     DeliveryWindowMatch, DeliveryWindowPolicyClaim, DeliveryWindowResolution,
@@ -164,7 +165,7 @@ fn outbound_delivery_window_verb_class(
 }
 
 fn outbound_delivery_window_channel(intent: &OutboundIntent) -> String {
-    normalize_key(&intent.channel)
+    normalize_channel_class(&intent.channel)
 }
 
 /// Derive wall-clock minute from the frozen host offset, never a timezone database.
@@ -178,7 +179,7 @@ pub(crate) fn local_minute_of_day_at(epoch_secs: u64, utc_offset_minutes: i16) -
 /// implementer. Exactly:
 ///
 /// - `slack | discord` × `send | send_media` — thread-landing writes.
-/// - `email` × `send` only. `email × send_media` is NOT promoted: media sends
+/// - Email family (`email`, Resend, SES, Postmark) × `send` only. Media sends
 ///   are not in the ruled set and must not be over-promoted out of the
 ///   manifest's interrupt class.
 /// - `telegram | line | imessage_mfb | imessage_bridge` × `send` ONLY when the
@@ -196,10 +197,11 @@ pub(super) fn outbound_delivery_window_is_chat_like_ambient(
     verb_contract: &OutboundVerbContract,
     resolved_level: Option<DeliveryWindowResolvedLevel>,
 ) -> bool {
-    let connector = normalize_key(&intent.channel);
+    let connector = normalize_channel_class(&intent.channel);
     let verb = verb_contract.kind.as_str();
     match connector.as_str() {
-        "slack" | "discord" => matches!(verb, "send" | "send_media"),
+        "slack" => matches!(verb, "send" | "send_media"),
+        "discord" => matches!(verb, "send" | "send_media"),
         "email" => verb == "send",
         // "do not guess ambient from the string alone": the schedule context
         // must carry the resolved level for these compatibility verbs.
