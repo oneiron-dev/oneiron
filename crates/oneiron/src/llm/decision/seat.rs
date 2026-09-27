@@ -4,7 +4,9 @@ use super::{
     AnswerContract, DecisionAnswer, DecisionDial, DecisionQuestion, DecisionReceipt, DecisionRung,
     HumanAskReason, ProviderPin, TypedDecision,
 };
-use crate::{BudgetLease, EntityId, FatalLlmError, HostingPrivacyPosture, LlmResult};
+use crate::{
+    BudgetGuard, BudgetLease, EntityId, FatalLlmError, HostingPrivacyPosture, LlmResult, LlmUsage,
+};
 use serde_json::Value;
 use std::future::Future;
 use std::pin::Pin;
@@ -70,6 +72,8 @@ impl SeatRequest {
 pub struct SeatAnswer {
     pub answer: DecisionAnswer,
     pub probability: f64,
+    /// Tokens reported by this measurement; settled against its own lease.
+    pub usage: LlmUsage,
 }
 
 pub type SeatFuture<'a> = Pin<Box<dyn Future<Output = LlmResult<SeatAnswer>> + Send + 'a>>;
@@ -89,7 +93,7 @@ pub async fn decide_at_remote_seat(
     principal: EntityId,
     evidence: Vec<EntityId>,
     dial: DecisionDial,
-    lease: &BudgetLease,
+    guard: &BudgetGuard,
 ) -> LlmResult<TypedDecision> {
     request.validate_remote()?;
     dial.band
@@ -105,31 +109,73 @@ pub async fn decide_at_remote_seat(
     {
         return Err(FatalLlmError::InvalidRequest.into());
     }
-    let first = seat.ask(request.clone(), lease).await?;
+    // Each measurement is admitted and settled as its own call. A retry cannot
+    // silently reuse the first terminal lease or exceed the caller's budget.
+    let first_lease = guard.admit()?.lease;
+    let first = seat.ask(request.clone(), &first_lease).await;
+    let first = match first {
+        Ok(first) => {
+            guard.settle_per_call(&first_lease, &first.usage)?;
+            first
+        }
+        Err(error) => {
+            guard.settle_reserved(&first_lease)?;
+            return Err(error);
+        }
+    };
     check_answer(&request, &first)?;
     let mut providers = vec![pin.clone()];
     let mut answer = first.answer.clone();
     let mut probability = Some(first.probability);
     let mut human_ask = None;
-    // Re-measure confident negative accept-type Noul results. Never turn a
-    // disputed answer into acceptance by averaging probabilities.
+    // A negative accept-type Noul requires a fresh admitted measurement.
     if request.question.accept_type
         && matches!(request.question.contract, AnswerContract::Noul)
         && answer == DecisionAnswer::Noul(false)
         && first.probability < dial.band.low
     {
-        let second = seat.ask(request.clone(), lease).await?;
-        check_answer(&request, &second)?;
-        providers.push(pin);
-        if second.answer != DecisionAnswer::Noul(false) || second.probability >= dial.band.low {
-            answer = DecisionAnswer::Abstain;
-            probability = None;
-            human_ask = Some(HumanAskReason::Disagreement);
-        } else {
-            probability = Some(second.probability);
+        match guard.admit() {
+            Ok(admission) => {
+                providers.push(pin);
+                let second = seat.ask(request.clone(), &admission.lease).await;
+                match second {
+                    Ok(second) => {
+                        guard.settle_per_call(&admission.lease, &second.usage)?;
+                        if check_answer(&request, &second).is_err() {
+                            answer = DecisionAnswer::Abstain;
+                            probability = None;
+                            human_ask = Some(HumanAskReason::ProviderUnavailable);
+                        } else if second.answer != DecisionAnswer::Noul(false)
+                            || second.probability >= dial.band.low
+                        {
+                            answer = DecisionAnswer::Abstain;
+                            probability = None;
+                            human_ask = Some(HumanAskReason::Disagreement);
+                        } else {
+                            probability = Some(second.probability);
+                        }
+                    }
+                    Err(_) => {
+                        guard.settle_reserved(&admission.lease)?;
+                        answer = DecisionAnswer::Abstain;
+                        probability = None;
+                        human_ask = Some(HumanAskReason::ProviderUnavailable);
+                    }
+                }
+            }
+            Err(_) => {
+                answer = DecisionAnswer::Abstain;
+                probability = None;
+                human_ask = Some(HumanAskReason::ProviderUnavailable);
+            }
         }
     }
-    let in_band = probability.is_some_and(|p| dial.band.contains(p));
+    let in_band = probability.is_some_and(|p| match request.question.contract {
+        AnswerContract::Noul => dial.band.contains(p),
+        // Choice/score report the selected answer's confidence, not P(yes).
+        // Neither has a 'confident no' below the lower bound.
+        AnswerContract::Choice { .. } | AnswerContract::Score { .. } => p < dial.band.high,
+    });
     if in_band {
         answer = DecisionAnswer::Abstain;
         human_ask = Some(HumanAskReason::Uncertain);

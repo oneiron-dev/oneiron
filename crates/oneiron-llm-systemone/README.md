@@ -20,7 +20,11 @@ Wire reference: [TypeSafe System One HTTP API](https://docs.typesafe.ai/api.md),
 
 The response must contain `model: "jev-<pinned version>"` and exactly one entry in
 `answers.decision`. Missing, malformed, out-of-range, unoffered, or wrong-version
-answers fail closed. `usage` is vendor metadata, not a local budget settlement;
-the host owns accounting and retry policy. The decision receipt records the model
+answers fail closed. `usage` reports per-measurement input and output tokens. The typed-decision
+orchestrator admits a fresh `BudgetGuard` lease per measurement and settles each
+one from these counts; failed calls settle their reserved charge. When budget
+denies the optional recheck, the decision holds without another HTTP call.
+The host owns its budget policy and retry policy. The decision receipt records the model
 and exact version per measurement. A confident negative accept-type noul is
-measured twice; a disagreement or a band hit holds instead of accepting.
+measured twice when separately admitted. A disagreement or a noul band hit
+holds; choice and score hold below the band's upper confidence threshold.

@@ -4,7 +4,7 @@ use oneiron::llm::decision::{
     AnswerContract, DecisionAnswer, DecisionRung, DecisionSeat, ProviderPin, SeatAnswer,
     SeatFuture, SeatRequest,
 };
-use oneiron::{BudgetLease, FatalLlmError, RetryableLlmError};
+use oneiron::{BudgetLease, FatalLlmError, LlmUsage, RetryableLlmError};
 use serde::Deserialize;
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
@@ -52,6 +52,7 @@ impl SystemOneSeat {
         let client = reqwest::Client::builder()
             .timeout(std::time::Duration::from_secs(8))
             .connect_timeout(std::time::Duration::from_secs(3))
+            .redirect(reqwest::redirect::Policy::none())
             .build()
             .map_err(|_| FatalLlmError::InvalidRequest)?;
         Ok(Self {
@@ -130,7 +131,14 @@ impl DecisionSeat for SystemOneSeat {
                 .answers
                 .get("decision")
                 .ok_or(FatalLlmError::InvalidRequest)?;
-            parse_answer(answer, &request)
+            let mut parsed = parse_answer(answer, &request)?;
+            parsed.usage.input.total = wire.usage.input_tokens;
+            parsed.usage.output.total = wire.usage.output_tokens;
+            parsed.usage.raw_provider = json!({
+                "input_tokens": wire.usage.input_tokens,
+                "output_tokens": wire.usage.output_tokens,
+            });
+            Ok(parsed)
         })
     }
 }
@@ -139,6 +147,13 @@ impl DecisionSeat for SystemOneSeat {
 struct Response {
     model: String,
     answers: BTreeMap<String, Value>,
+    usage: WireUsage,
+}
+
+#[derive(Deserialize)]
+struct WireUsage {
+    input_tokens: u64,
+    output_tokens: u64,
 }
 
 fn parse_answer(value: &Value, request: &SeatRequest) -> oneiron::LlmResult<SeatAnswer> {
@@ -209,8 +224,17 @@ fn parse_answer(value: &Value, request: &SeatRequest) -> oneiron::LlmResult<Seat
             {
                 return Err(invalid());
             }
-            let mapped = min + score / ceiling * (max - min);
-            if !mapped.is_finite() || (mapped < *min || mapped > *max) {
+            // Exact endpoints stay exact. The weighted interior avoids overflow
+            // in (max-min) for opposite-sign finite bounds.
+            let mapped = if score == 0.0 {
+                *min
+            } else if score == ceiling {
+                *max
+            } else {
+                let t = score / ceiling;
+                ((1.0 - t) * min + t * max).clamp(*min, *max)
+            };
+            if !mapped.is_finite() {
                 return Err(invalid());
             }
             let p = value
@@ -227,6 +251,7 @@ fn parse_answer(value: &Value, request: &SeatRequest) -> oneiron::LlmResult<Seat
     Ok(SeatAnswer {
         answer,
         probability,
+        usage: LlmUsage::zero(),
     })
 }
 
