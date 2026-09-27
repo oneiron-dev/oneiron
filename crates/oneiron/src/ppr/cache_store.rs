@@ -47,7 +47,8 @@ pub(super) const MAX_PPR_DEPTH: u32 = 10;
 /// `ClaimOf` traversal so synthetic hint records do not consume transition
 /// mass. v5 = stored-edge VAD salience, with both alphas in cache identity.
 /// v6 = deterministic Forward-Push rounds with retained below-threshold residual.
-pub(super) const PPR_FORMULA_VERSION: u32 = 6;
+/// v7 = hub-specific `belongs_to` traversal budget for PROJECT collections.
+pub(super) const PPR_FORMULA_VERSION: u32 = 7;
 pub(crate) const MAX_PPR_SEEDS: usize = 256;
 /// Recency-tiered `ppr_cache` serve TTL (ARCH-0019 "PPR cache TTL" table /
 /// ARCH-0014 "TTL strategy"; ONE-1116 pinned decision).

@@ -1958,3 +1958,94 @@ fn agent_record_rejections_do_not_wedge_replay_and_missing_projects_readmit() {
         assert_eq!(vault.project(child).unwrap(), Some(waiting));
     }
 }
+
+#[test]
+fn forward_remat_quarantines_stale_project_parents_and_claim_membership() {
+    use oneiron::claim::{ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSubject};
+    use oneiron::workspace_roster::ProjectRecord;
+
+    let (_dir, vault) = test_vault_with_dir();
+    let root = vault.root_project().unwrap();
+    let leader = EntityId::from_hex(&vault.project(root).unwrap().unwrap().leader).unwrap();
+    let other = EntityId::now();
+    vault
+        .put_project(
+            other,
+            &ProjectRecord::new(other, Some(root), root, leader),
+            1,
+        )
+        .unwrap();
+    let child = EntityId::now();
+    vault
+        .put_project(
+            child,
+            &ProjectRecord::new(child, Some(root), root, leader),
+            2,
+        )
+        .unwrap();
+    let mut body = vault.project(child).unwrap().unwrap();
+    body.parents = vec![other.to_hex()];
+    vault.put_project(child, &body, 3).unwrap();
+    let person = EntityId::now();
+    vault
+        .put_entity(
+            &person,
+            ENTITY_TYPE_PERSON,
+            valid_time_range(),
+            LEARNED_AT,
+            b"person",
+        )
+        .unwrap();
+    let claim = EntityId::now();
+    vault
+        .put_claim(
+            &claim,
+            &ClaimBody::new(
+                "test.project_membership",
+                ClaimSubject::Entity(person),
+                rmpv::Value::from("fixture"),
+                0.9,
+                ClaimApprovalStatus::Auto,
+                ClaimLifecycleStatus::Active,
+            ),
+            valid_time_range(),
+            LEARNED_AT,
+        )
+        .unwrap();
+    let window = WindowKey::new(WINDOW);
+    let doc = create_window_doc("test-user", &window);
+    let edges = doc.get_map("edges");
+    let stale = format_edge_key(&child, EdgeKind::BelongsTo, &root);
+    let cycle = format_edge_key(&root, EdgeKind::BelongsTo, &child);
+    let claim_link = format_edge_key(&claim, EdgeKind::BelongsTo, &root);
+    let value = structural_edge_value(0.05, LEARNED_AT);
+    for key in [&stale, &cycle, &claim_link] {
+        insert_bytes(&edges, key, &value);
+    }
+    doc.commit();
+    forward_rematerialize(&vault, &doc, &Materializer::new(), &window).unwrap();
+    assert_eq!(
+        vault.targets(&child, EdgeKind::BelongsTo, None).unwrap(),
+        vec![other]
+    );
+    assert!(
+        !vault
+            .edge_exists(&root, EdgeKind::BelongsTo, &child)
+            .unwrap()
+    );
+    assert!(
+        !vault
+            .edge_exists(&claim, EdgeKind::BelongsTo, &root)
+            .unwrap()
+    );
+    let records = quarantined_records(&vault).unwrap();
+    for key in [&stale, &cycle, &claim_link] {
+        assert!(
+            records.iter().any(|(_, record)| {
+                record.crdt_key_hash == xxh3_64(key.as_bytes())
+                    && record.reason_code == "InvalidProjectBody"
+            }),
+            "missing edge quarantine for {key}"
+        );
+    }
+}

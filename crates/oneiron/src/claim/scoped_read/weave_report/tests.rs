@@ -6,19 +6,30 @@ use rmpv::Value;
 
 fn put(vault: &Vault, id: u8, predicate: &str, subject: ClaimSubject) -> Result<EntityId> {
     let id = entity(id);
-    vault.put_claim(
-        &id,
-        &ClaimBody::new(
-            predicate,
-            subject,
-            Value::from("live"),
-            1.0,
-            ClaimApprovalStatus::Approved,
-            ClaimLifecycleStatus::Active,
-        ),
-        TimeRange { start: 1, end: 1 },
-        1,
-    )?;
+    let body = ClaimBody::new(
+        predicate,
+        subject,
+        Value::from("live"),
+        1.0,
+        ClaimApprovalStatus::Approved,
+        ClaimLifecycleStatus::Active,
+    );
+    if let ClaimSubject::Entity(target) = subject
+        && vault.get_entity_type(&target)? == Some(vault.project_type_byte()?)
+    {
+        // PROJECT is a report subject, but a CLAIM must never edge to its
+        // hub. The generic validated CLAIM put keeps the subject in the body
+        // without minting put_claim's automatic ClaimOf edge.
+        vault.put_entity(
+            &id,
+            crate::registry::ENTITY_TYPE_CLAIM,
+            TimeRange { start: 1, end: 1 },
+            1,
+            &crate::claim::encode_claim_body(&body)?,
+        )?;
+    } else {
+        vault.put_claim(&id, &body, TimeRange { start: 1, end: 1 }, 1)?;
+    }
     Ok(id)
 }
 fn section(kind: WeaveSectionKind, predicates: &[&str]) -> WeaveSectionSpec {
