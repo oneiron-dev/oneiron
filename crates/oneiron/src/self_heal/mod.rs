@@ -58,7 +58,9 @@ pub mod tiered;
 pub(crate) mod untrusted_text;
 
 pub mod healer_host;
-pub use crate::gate::proposal_observation::{ProposalSubmissionCheck, ProposalSubmissionReceipt};
+pub use crate::gate::proposal_observation::{
+    ProposalPolicySource, ProposalSubmissionCheck, ProposalSubmissionReceipt,
+};
 mod receipt_serde;
 mod repair;
 

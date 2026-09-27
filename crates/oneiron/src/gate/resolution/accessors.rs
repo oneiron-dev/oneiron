@@ -93,15 +93,27 @@ impl PolicyManifestResolution {
 
     #[must_use]
     pub(crate) fn proposal_check_threshold_in_scope(&self, scope: &PolicyEvaluationScope) -> u64 {
+        self.proposal_check_threshold_source(scope).threshold
+    }
+
+    pub(crate) fn proposal_check_threshold_source(
+        &self,
+        scope: &PolicyEvaluationScope,
+    ) -> crate::gate::proposal_observation::ProposalPolicySource {
         let fallback = PolicyValue::ProposalCheckThreshold(
             crate::gate::policy_values::shipped_default_proposal_check_threshold(),
         );
-        match self
-            .resolved_policy_value(PolicyValueKey::ProposalCheckThreshold, scope, fallback)
-            .value
-        {
-            PolicyValue::ProposalCheckThreshold(value) => value,
-            _ => unreachable!("typed policy key"),
+        let resolved =
+            self.resolved_policy_value(PolicyValueKey::ProposalCheckThreshold, scope, fallback);
+        let PolicyValue::ProposalCheckThreshold(threshold) = resolved.value else {
+            unreachable!("typed policy key")
+        };
+        let (_, precedence_row) = self.scope_precedence();
+        crate::gate::proposal_observation::ProposalPolicySource {
+            threshold,
+            deciding_row: resolved.deciding_row.map(|row| row.row_ref.clone()),
+            precedence_row: precedence_row.map(str::to_owned),
+            shipped_default_precedence: precedence_row.is_none(),
         }
     }
 
@@ -114,8 +126,20 @@ impl PolicyManifestResolution {
     /// restrictive default, `Escalate`.
     #[must_use]
     pub(in crate::gate) fn comm_opt_out_posture(&self) -> CommOptOutPosture {
-        self.comm_opt_out_posture
-            .unwrap_or_else(crate::gate::policy_values::shipped_default_comm_opt_out_posture)
+        let fallback = PolicyValue::CommOptOutPosture(
+            crate::gate::policy_values::shipped_default_comm_opt_out_posture(),
+        );
+        match self
+            .resolved_policy_value(
+                PolicyValueKey::CommOptOutPosture,
+                &PolicyEvaluationScope::default(),
+                fallback,
+            )
+            .value
+        {
+            PolicyValue::CommOptOutPosture(value) => value,
+            _ => unreachable!("typed policy key"),
+        }
     }
 
     /// The manifest's opaque auto-checker ref (ONE-1296), or `None` when no

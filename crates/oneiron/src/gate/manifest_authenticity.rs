@@ -81,7 +81,129 @@ pub struct PolicyOverrideProposal {
     pub scope: String,
 }
 
+/// A non-holder's proposed override is inert; all other denied mutations are
+/// refusals. Only the exact row that needs another holder may be proposed.
+enum PolicyMutationDenial {
+    Row {
+        row_ref: String,
+        scope: String,
+        override_parent: bool,
+    },
+    NonValue,
+}
+
+fn non_value_fields(data: &[u8]) -> Result<rmpv::Value> {
+    let mut input = data;
+    let mut value = rmpv::decode::read_value(&mut input)
+        .map_err(|_| Error::InvalidConfig("malformed policy manifest".into()))?;
+    if !input.is_empty() {
+        return Err(Error::InvalidConfig("malformed policy manifest".into()));
+    }
+    let rmpv::Value::Map(entries) = &mut value else {
+        return Err(Error::InvalidConfig("malformed policy manifest".into()));
+    };
+    entries.retain(|(key, _)| key.as_str() != Some("policy_values"));
+    Ok(value)
+}
+
 impl Vault {
+    /// Authorize OLD and NEW scopes for every mutated row in one snapshot.
+    /// All other manifest content requires vault policy power when it changes.
+    fn policy_mutation_denial_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        actor: EntityId,
+        id: EntityId,
+        data: &[u8],
+        now: u64,
+    ) -> Result<Option<PolicyMutationDenial>> {
+        let new = super::decode::decode_policy_manifest(data)
+            .ok_or_else(|| Error::InvalidConfig("malformed policy manifest".into()))?;
+        let old_body = self
+            .store
+            .entities
+            .get(txn, id.as_bytes())?
+            .map(|raw| {
+                let header = EntityMetadataHeader::parse(&raw)
+                    .ok_or(Error::CorruptedIndex("policy manifest header"))?;
+                if header.entity_type != ENTITY_TYPE_POLICY_MANIFEST {
+                    return Err(Error::InvalidConfig(
+                        "policy manifest id belongs to another entity".into(),
+                    ));
+                }
+                raw.get(ENTITY_METADATA_HEADER_LEN..)
+                    .map(<[u8]>::to_vec)
+                    .ok_or(Error::CorruptedIndex("policy manifest body"))
+            })
+            .transpose()?;
+        let old = old_body
+            .as_ref()
+            .map(|body| {
+                super::decode::decode_policy_manifest(body).ok_or_else(|| {
+                    Error::InvalidConfig("existing policy manifest is malformed".into())
+                })
+            })
+            .transpose()?;
+        // Compare without the value-table key: even deleting an old field
+        // cannot hide a vault-wide policy edit inside a project-only update.
+        if old_body.as_deref().map(non_value_fields).transpose()? != Some(non_value_fields(data)?)
+            && !self.policy_power_in_txn(
+                txn,
+                actor,
+                super::policy_values::PolicyRowScope::Vault,
+                now,
+            )?
+        {
+            return Ok(Some(PolicyMutationDenial::NonValue));
+        }
+        let empty = Vec::new();
+        let old_rows = old
+            .as_ref()
+            .map_or(empty.as_slice(), |old| old.policy_values.as_slice());
+        for row in old_rows {
+            if new
+                .policy_values
+                .iter()
+                .find(|new_row| new_row.row_ref == row.row_ref)
+                == Some(row)
+            {
+                continue;
+            }
+            if !self.policy_power_in_txn(txn, actor, row.scope, now)? {
+                // Same-scope override edits may be proposed. A deletion or
+                // rescope still needs power over the old row independently.
+                let proposed = new.policy_values.iter().find(|new_row| {
+                    new_row.row_ref == row.row_ref
+                        && new_row.scope == row.scope
+                        && new_row.override_parent
+                });
+                let denied = proposed.unwrap_or(row);
+                return Ok(Some(PolicyMutationDenial::Row {
+                    row_ref: denied.row_ref.clone(),
+                    scope: denied.scope.as_str(),
+                    override_parent: proposed.is_some(),
+                }));
+            }
+        }
+        for row in &new.policy_values {
+            if old_rows
+                .iter()
+                .find(|old_row| old_row.row_ref == row.row_ref)
+                == Some(row)
+            {
+                continue;
+            }
+            if !self.policy_power_in_txn(txn, actor, row.scope, now)? {
+                return Ok(Some(PolicyMutationDenial::Row {
+                    row_ref: row.row_ref.clone(),
+                    scope: row.scope.as_str(),
+                    override_parent: row.override_parent,
+                }));
+            }
+        }
+        Ok(None)
+    }
+
     /// Propose a manifest with explicit overrides. A holder applies it; a
     /// non-holder receives an inert typed proposal for the host's later route.
     /// Nothing is persisted for the non-holder.
@@ -96,19 +218,23 @@ impl Vault {
         actor.revalidate_in_txn(self, &txn)?;
         let decoded = super::decode::decode_policy_manifest(&data)
             .ok_or_else(|| Error::InvalidConfig("malformed policy manifest".into()))?;
-        let override_row = decoded
-            .policy_values
-            .iter()
-            .find(|row| row.override_parent)
-            .ok_or_else(|| Error::InvalidConfig("no policy override row".into()))?;
-        for row in &decoded.policy_values {
-            let scope = row.scope.evaluation_context();
-            if !self.policy_power_in_txn(&txn, actor.actor(), &scope, now)? {
-                return Ok(Some(PolicyOverrideProposal {
-                    row_ref: override_row.row_ref.clone(),
-                    scope: override_row.scope.as_str(),
-                }));
+        if !decoded.policy_values.iter().any(|row| row.override_parent) {
+            return Err(Error::InvalidConfig("no policy override row".into()));
+        }
+        match self.policy_mutation_denial_in_txn(&txn, actor.actor(), id, &data, now)? {
+            Some(PolicyMutationDenial::Row {
+                row_ref,
+                scope,
+                override_parent: true,
+            }) => {
+                return Ok(Some(PolicyOverrideProposal { row_ref, scope }));
             }
+            Some(_) => {
+                return Err(Error::InvalidConfig(
+                    "policy write requires a holder".into(),
+                ));
+            }
+            None => {}
         }
         self.write_owner_policy_manifest_in_txn(actor, &mut txn, id, data, now)?;
         txn.commit()?;
@@ -182,26 +308,13 @@ impl Vault {
         now: u64,
     ) -> Result<()> {
         owner.revalidate_in_txn(self, txn)?;
-        let decoded = super::decode::decode_policy_manifest(&data)
-            .ok_or_else(|| Error::InvalidConfig("malformed policy manifest".into()))?;
-        // Human authentication does not imply policy power. The live fold or
-        // an explicit scope-covering policy-write grant decides independently.
-        for row in &decoded.policy_values {
-            let scope = row.scope.evaluation_context();
-            if !self.policy_power_in_txn(txn, owner.actor(), &scope, now)? {
-                return Err(Error::InvalidConfig(
-                    "policy write requires a holder".into(),
-                ));
-            }
-        }
-        if let Some(raw) = self.store.entities.get(txn, id.as_bytes())? {
-            let header = EntityMetadataHeader::parse(&raw)
-                .ok_or(Error::CorruptedIndex("policy manifest header"))?;
-            if header.entity_type != ENTITY_TYPE_POLICY_MANIFEST {
-                return Err(Error::InvalidConfig(
-                    "policy manifest id belongs to another entity".into(),
-                ));
-            }
+        if self
+            .policy_mutation_denial_in_txn(txn, owner.actor(), id, &data, now)?
+            .is_some()
+        {
+            return Err(Error::InvalidConfig(
+                "policy write requires a holder".into(),
+            ));
         }
         crate::batch::apply_ops(
             &self.store,

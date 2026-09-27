@@ -19,6 +19,7 @@ mod definition_ceiling;
 mod doors;
 mod dreamer_precommit;
 mod effect;
+mod effect_scope;
 mod foreign_agent;
 mod grants;
 mod input;

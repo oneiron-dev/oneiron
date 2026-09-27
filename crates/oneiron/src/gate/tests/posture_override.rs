@@ -23,8 +23,19 @@ fn opt_out_posture_manifest(posture: Option<&str>) -> Vec<u8> {
     )];
     if let Some(posture) = posture {
         entries.push((
-            Value::from(POLICY_COMM_OPT_OUT_POSTURE_KEY),
-            Value::from(posture),
+            Value::from("policy_values"),
+            Value::Array(vec![Value::Map(vec![
+                (
+                    Value::from("row_ref"),
+                    Value::from("fixture.comm_opt_out_posture"),
+                ),
+                (Value::from("key"), Value::from("comm_opt_out_posture")),
+                (Value::from("value"), Value::from(posture)),
+                (
+                    Value::from("scope"),
+                    Value::Map(vec![(Value::from("level"), Value::from("vault"))]),
+                ),
+            ])]),
         ));
     }
     encode_policy_manifest(entries)
@@ -322,8 +333,7 @@ fn posture_dial_allow_with_receipt() -> Result<()> {
         CommOptOutPosture::Escalate
     );
 
-    // Composition is restrictive: one `escalate` pack wins over an
-    // `allow_with_receipt` one.
+    // Two vault rows for the same key are ambiguous and fail closed.
     let (_mixed_tmp, mixed_vault) = temp_vault();
     put_policy_manifest_bytes(
         &mixed_vault,
@@ -336,7 +346,8 @@ fn posture_dial_allow_with_receipt() -> Result<()> {
         &opt_out_posture_manifest(Some("escalate")),
     )?;
     let mixed_policy = resolve(&mixed_vault)?;
-    assert!(!mixed_policy.diagnostics().malformed_manifest_seen);
+    assert!(mixed_policy.diagnostics().malformed_manifest_seen);
+    assert!(mixed_policy.is_fail_closed());
     assert_eq!(
         mixed_policy.comm_opt_out_posture(),
         CommOptOutPosture::Escalate

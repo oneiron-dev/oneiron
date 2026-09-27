@@ -16930,7 +16930,7 @@
      "path": "src/gate/constants.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 77
+      "crate-vis": 76
      }
     },
     {
@@ -16980,7 +16980,7 @@
      "path": "src/gate/decode/decode_trust_budget.rs",
      "purpose": "Source-trust ceilings and budget-policy parsers",
      "surface": {
-      "crate-vis": 9
+      "crate-vis": 8
      }
     },
     {
@@ -17152,6 +17152,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/gate/effect_scope.rs",
+     "purpose": "Owner-bound exact-effect origin: same-transaction location, never caller scope text",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
@@ -17209,13 +17219,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/gate/policy_power.rs",
      "purpose": "Fold-verified policy-write authority for a scoped manifest row",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 1
      }
     },
     {
@@ -17225,13 +17235,14 @@
      "path": "src/gate/policy_values.rs",
      "purpose": "Typed behaviour values and deterministic, scoped manifest-row selection",
      "surface": {
-      "crate-vis": 24
+      "crate-vis": 23
      }
     },
     {
      "bucket": "s",
      "kind": "src",
      "notable": [
+      "ProposalPolicySource",
       "ProposalSubmissionCheck",
       "ProposalSubmissionReceipt"
      ],
@@ -17241,7 +17252,7 @@
       "const": 1,
       "crate-vis": 1,
       "fn": 3,
-      "struct": 2
+      "struct": 3
      }
     },
     {
@@ -17269,7 +17280,7 @@
      "path": "src/gate/resolution/accessors.rs",
      "purpose": "Read-only resolved-field accessors plus the frontier-hash entry",
      "surface": {
-      "crate-vis": 28
+      "crate-vis": 29
      }
     },
     {
@@ -17293,7 +17304,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "src",
      "notable": [],
      "path": "src/gate/resolution/manifest_fold.rs",
@@ -17559,7 +17570,7 @@
      "surface": {}
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "test",
      "notable": [],
      "path": "src/gate/tests/scoped_policy_values.rs",
@@ -23799,7 +23810,8 @@
      "path": "src/outbound/dispatch_pipeline/govern.rs",
      "purpose": "The governance-only parked lane: one durable gate transaction, no budget debit",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 2,
+      "fn": 1
      }
     },
     {
@@ -24026,7 +24038,7 @@
      "surface": {}
     },
     {
-     "bucket": "L",
+     "bucket": "XL",
      "kind": "test",
      "notable": [],
      "path": "src/outbound/tests/gate_window.rs",
@@ -34637,7 +34649,7 @@
      "purpose": "Project responsibility records and their derived home-room membership",
      "surface": {
       "const": 1,
-      "crate-vis": 13,
+      "crate-vis": 16,
       "enum": 1,
       "fn": 8,
       "struct": 3
@@ -36163,7 +36175,7 @@
      "purpose": "—"
     },
     "gate": {
-     "files": 78,
+     "files": 79,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -36851,7 +36863,7 @@
    },
    "over_bar": 2,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2186,
+   "source_files": 2187,
    "test_files": 741
   },
   "oneiron-android": {

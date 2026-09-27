@@ -10,8 +10,8 @@ use crate::gate::ceiling::{
 };
 use crate::gate::constants::{
     POLICY_ACTOR_CEILINGS_KEY, POLICY_AUTO_CHECKER_KEY, POLICY_BUDGET_POLICY_KEY,
-    POLICY_COMM_OPT_OUT_POSTURE_KEY, POLICY_DEFAULTS_KEY, POLICY_DELEGATED_GRANTS_KEY,
-    POLICY_LEGAL_FLOOR_ROWS_KEY, POLICY_MIN_ENGINE_VERSION_KEY, POLICY_ON_BUDGET_EXHAUSTED_KEY,
+    POLICY_DEFAULTS_KEY, POLICY_DELEGATED_GRANTS_KEY, POLICY_LEGAL_FLOOR_ROWS_KEY,
+    POLICY_MIN_ENGINE_VERSION_KEY, POLICY_ON_BUDGET_EXHAUSTED_KEY,
     POLICY_OWNER_POLICY_DOCUMENT_KEY, POLICY_OWNER_POLICY_ENABLED_KEY,
     POLICY_OWNER_POLICY_OUTPUT_CONTRACT_KEY, POLICY_OWNER_POLICY_PATTERNS_KEY,
     POLICY_OWNER_POLICY_ROWS_KEY, POLICY_PACK_ID_KEY, POLICY_PACK_VERSION_KEY, POLICY_RULES_KEY,
@@ -20,7 +20,6 @@ use crate::gate::constants::{
 };
 use crate::gate::grants::PolicyScopedGrant;
 use crate::gate::policy_values::{PolicyValueRow, parse_policy_values};
-use crate::gate::resolution::CommOptOutPosture;
 use crate::llm::{BudgetExhaustionPolicy, BudgetPolicyTable};
 
 use super::decode_map_util::{
@@ -32,8 +31,7 @@ use super::decode_policy_tables::{
     parse_owner_policy_rows, parse_rules, parse_scoped_grants,
 };
 use super::decode_trust_budget::{
-    parse_budget_exhaustion_policy, parse_budget_policy, parse_comm_opt_out_posture,
-    parse_source_trust,
+    parse_budget_exhaustion_policy, parse_budget_policy, parse_source_trust,
 };
 
 pub(in crate::gate) struct DecodedPolicyManifest {
@@ -53,7 +51,6 @@ pub(in crate::gate) struct DecodedPolicyManifest {
     pub(in crate::gate) owner_policy_patterns_dropped: bool,
     pub(in crate::gate) signatures: Vec<PolicySignature>,
     pub(in crate::gate) on_budget_exhausted: Option<BudgetExhaustionPolicy>,
-    pub(in crate::gate) comm_opt_out_posture: Option<CommOptOutPosture>,
     /// The opaque host checker ref (ONE-1296), absent unless the manifest
     /// names one.
     pub(in crate::gate) auto_checker: Option<String>,
@@ -99,7 +96,6 @@ pub(in crate::gate) fn decode_policy_manifest(data: &[u8]) -> Option<DecodedPoli
                 | POLICY_SIGNATURE_KEY
                 | POLICY_SIGNATURES_KEY
                 | POLICY_ON_BUDGET_EXHAUSTED_KEY
-                | POLICY_COMM_OPT_OUT_POSTURE_KEY
                 | POLICY_AUTO_CHECKER_KEY
                 | POLICY_BUDGET_POLICY_KEY
                 | "diagnostic_bounds"
@@ -201,15 +197,6 @@ pub(in crate::gate) fn decode_policy_manifest(data: &[u8]) -> Option<DecodedPoli
         MapValue::Duplicate => return None,
         MapValue::Present(value) => Some(parse_budget_exhaustion_policy(value)?),
     };
-    // Parsed exactly like its `on_budget_exhausted` sibling, and failing the
-    // same way: an unrecognized token drops the WHOLE manifest, which sets
-    // `malformed_manifest_seen` and fails the gate closed. A posture nobody can
-    // read must never resolve to the permissive pole by silent default.
-    let comm_opt_out_posture = match single_map_value(&entries, POLICY_COMM_OPT_OUT_POSTURE_KEY) {
-        MapValue::Missing => None,
-        MapValue::Duplicate => return None,
-        MapValue::Present(value) => Some(parse_comm_opt_out_posture(value)?),
-    };
     // ONE-1296: the checker ref is a SELECTOR the host resolves, so decode
     // asks only that it be one non-blank, bounded string. A duplicate row is
     // the same ambiguity `on_budget_exhausted` refuses, and a blank or
@@ -265,7 +252,6 @@ pub(in crate::gate) fn decode_policy_manifest(data: &[u8]) -> Option<DecodedPoli
         owner_policy_patterns_dropped,
         signatures,
         on_budget_exhausted,
-        comm_opt_out_posture,
         auto_checker,
         budget_policy,
         diagnostic_bounds,

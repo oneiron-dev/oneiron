@@ -99,27 +99,6 @@ impl PolicyRowScope {
             _ => None,
         }
     }
-    pub(super) fn evaluation_context(self) -> PolicyEvaluationScope {
-        match self {
-            Self::Vault => PolicyEvaluationScope::default(),
-            Self::World(id) => PolicyEvaluationScope {
-                world: Some(id),
-                ..Default::default()
-            },
-            Self::Project(id) => PolicyEvaluationScope {
-                project: Some(id),
-                ..Default::default()
-            },
-            Self::SubProject(id) => PolicyEvaluationScope {
-                subproject: Some(id),
-                ..Default::default()
-            },
-            Self::Thread(id) => PolicyEvaluationScope {
-                thread: Some(id),
-                ..Default::default()
-            },
-        }
-    }
     pub(super) fn as_str(self) -> String {
         match self {
             Self::Vault => "vault".to_owned(),
@@ -139,6 +118,10 @@ pub(crate) struct PolicyEvaluationScope {
     pub(crate) thread: Option<EntityId>,
     /// The caller has not been authorized to learn this world exists.
     pub(crate) hidden_world: bool,
+    /// No verified effect origin; missing context must never skip a narrower row.
+    pub(crate) unknown_location: bool,
+    /// A project-room origin proves project but carries no single WORLD.
+    pub(crate) unknown_world: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -229,7 +212,8 @@ pub(super) fn parse_policy_values(value: &Value) -> Option<Vec<PolicyValueRow>> 
     let Value::Array(rows) = value else {
         return None;
     };
-    rows.iter()
+    let parsed: Vec<PolicyValueRow> = rows
+        .iter()
         .map(|row| {
             let Value::Map(entries) = row else {
                 return None;
@@ -326,7 +310,12 @@ pub(super) fn parse_policy_values(value: &Value) -> Option<Vec<PolicyValueRow>> 
                 override_parent,
             })
         })
-        .collect()
+        .collect::<Option<_>>()?;
+    let mut refs = std::collections::BTreeSet::new();
+    if parsed.iter().any(|row| !refs.insert(row.row_ref.as_str())) {
+        return None;
+    }
+    Some(parsed)
 }
 
 pub(super) fn resolve_row<'a>(

@@ -346,6 +346,16 @@ fn product_band_permit_needs_explicit_owner_reauthoring() -> Result<()> {
         true,
         crate::store::GateDecisionId::now(),
     )?;
+    vault.initialize_shared_vault(
+        &owner,
+        42,
+        None,
+        &[crate::federation::InitialSharedMember {
+            member_ref: owner_ref,
+            role: Some(crate::federation::FederationGrantRole::Owner),
+        }],
+        1,
+    )?;
     let legacy = test_id(0x72);
     let target = test_id(0x73);
     let data = encode_policy_manifest(vec![source_trust_entry(ClaimSource::ToolOutput, 2)]);

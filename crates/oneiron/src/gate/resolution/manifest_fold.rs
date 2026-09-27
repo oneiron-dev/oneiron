@@ -110,18 +110,6 @@ pub(crate) fn resolve_policy_manifest(
                         Some(_) => resolution.diagnostics.malformed_manifest_seen = true,
                     }
                 }
-                // Unlike `on_budget_exhausted`, disagreement here is NOT
-                // malformed: the posture has a restrictive pole, so two packs
-                // that disagree have a deterministic, safe answer — hold the
-                // send. Marking that malformed would fail the whole vault
-                // closed over a question the axis can answer itself.
-                if let Some(posture) = decoded.comm_opt_out_posture {
-                    resolution.comm_opt_out_posture = Some(
-                        resolution
-                            .comm_opt_out_posture
-                            .map_or(posture, |existing| existing.restrict(posture)),
-                    );
-                }
                 // One checker per vault (ONE-1296), folded exactly like the
                 // budget policy above: the first value wins, a second manifest
                 // stating the SAME ref is one configuration written twice, and

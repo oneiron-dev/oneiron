@@ -39,17 +39,17 @@ pub(super) fn observe_proposed_put(
         project: Some(body.scope_project),
         ..Default::default()
     };
-    let threshold = match put.policy {
-        Some(policy) => policy.proposal_check_threshold_in_scope(&scope),
+    let policy_source = match put.policy {
+        Some(policy) => policy.proposal_check_threshold_source(&scope),
         None => crate::gate::resolve_policy_manifest(store, &*wtxn)?
-            .proposal_check_threshold_in_scope(&scope),
+            .proposal_check_threshold_source(&scope),
     };
     crate::gate::proposal_observation::observe_submission_in_txn(
         store,
         wtxn,
         envelope.actor().entity_ref(),
         &format!("claim:{}", id.to_hex()),
-        threshold,
+        policy_source,
         put.body_changed,
     )
 }

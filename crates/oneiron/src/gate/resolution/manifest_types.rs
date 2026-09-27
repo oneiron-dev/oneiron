@@ -43,10 +43,9 @@ impl PolicyManifestDiagnostics {
 /// `Escalate` is the DEFAULT and the restrictive pole: an absent key anywhere,
 /// and any single matching pack that names it, resolve here. It is the posture
 /// that asks the owner rather than deciding for them.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(in crate::gate) enum CommOptOutPosture {
     /// Hold the send as a pending owner decision.
-    #[default]
     Escalate,
     /// Send immediately, keeping the opt-out receipt trail.
     AllowWithReceipt,
@@ -62,8 +61,7 @@ impl CommOptOutPosture {
         }
     }
 
-    /// Manifest token for this posture. The parse direction is
-    /// `decode::parse_comm_opt_out_posture`; the two stay exact inverses.
+    /// Manifest token for this posture, parsed from a typed value row.
     #[must_use]
     pub(crate) fn as_str(self) -> &'static str {
         match self {
@@ -93,7 +91,6 @@ pub(crate) struct PolicyManifestResolution {
     pub(super) owner_policy_patterns_dropped: bool,
     pub(super) signatures: Vec<PolicySignature>,
     pub(super) on_budget_exhausted: Option<BudgetExhaustionPolicy>,
-    pub(super) comm_opt_out_posture: Option<CommOptOutPosture>,
     /// The opaque host auto-checker ref (ONE-1296). The CHECKER itself is
     /// never stored here — only the manifest's selector for it. Injection
     /// rides the write door's own options, so no host object is ever reachable

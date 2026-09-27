@@ -1400,3 +1400,141 @@ fn transport_failed_pending_retry_persists_an_audit_receipt() -> crate::Result<(
     );
     Ok(())
 }
+
+#[test]
+fn bound_project_send_holds_only_inside_its_verified_origin()
+-> std::result::Result<(), Box<dyn std::error::Error>> {
+    let (_tmp, vault) = temp_vault();
+    let owner_id = entity(0xD2);
+    let agent = entity(0xD3);
+    for actor in [owner_id, agent] {
+        vault.put_entity(
+            &actor,
+            crate::registry::ENTITY_TYPE_PERSON,
+            crate::temporal::TimeRange { start: 1, end: 1 },
+            1,
+            b"actor",
+        )?;
+    }
+    let owner = vault.authenticate_owner(
+        owner_id,
+        &owner_id.to_hex(),
+        true,
+        crate::store::GateDecisionId::now(),
+    )?;
+    vault.initialize_shared_vault(
+        &owner,
+        42,
+        None,
+        &[crate::federation::InitialSharedMember {
+            member_ref: owner_id,
+            role: Some(crate::federation::FederationGrantRole::Owner),
+        }],
+        1,
+    )?;
+    let root = vault.root_project()?;
+    let leader = EntityId::from_hex(&vault.project(root)?.unwrap().leader)?;
+    let project_a = entity(0xD5);
+    let project_b = entity(0xD6);
+    for project in [project_a, project_b] {
+        vault.put_project(
+            project,
+            &crate::workspace_roster::ProjectRecord::new(project, Some(root), root, leader),
+            2,
+        )?;
+    }
+    let mut default =
+        rmpv::decode::read_value(&mut crate::gate::default_policy_manifest().as_slice())?;
+    let Value::Map(entries) = &mut default else {
+        unreachable!()
+    };
+    let (_, Value::Array(rows)) = entries
+        .iter_mut()
+        .find(|(key, _)| key.as_str() == Some("policy_values"))
+        .unwrap()
+    else {
+        unreachable!()
+    };
+    let Value::Map(vault_row) = &mut rows[0] else {
+        unreachable!()
+    };
+    vault_row
+        .iter_mut()
+        .find(|(key, _)| key.as_str() == Some("value"))
+        .unwrap()
+        .1 = Value::from("allow_with_receipt");
+    rows.push(Value::Map(vec![
+        (Value::from("row_ref"), Value::from("project-a")),
+        (Value::from("key"), Value::from("comm_opt_out_posture")),
+        (Value::from("value"), Value::from("escalate")),
+        (
+            Value::from("scope"),
+            Value::Map(vec![
+                (Value::from("level"), Value::from("project")),
+                (Value::from("ref"), Value::from(project_a.to_hex())),
+            ]),
+        ),
+    ]));
+    let mut encoded = Vec::new();
+    rmpv::encode::write_value(&mut encoded, &default)?;
+    put_policy_manifest_bytes(&vault, crate::gate::default_policy_manifest_id()?, &encoded)?;
+    put_policy_manifest_bytes(
+        &vault,
+        entity(0xDA),
+        &policy_manifest(&agent.to_hex(), "email", &["send"]),
+    )?;
+    let contact_id = entity(0xD8);
+    let identity = entity(0xD9);
+    let counterparty = "scope-dispatch@example.com";
+    vault.create_counterparty_contact(
+        &contact_id,
+        &CounterpartyContactRecord::user_introduction(identity, counterparty, 5)?,
+    )?;
+    vault.opt_out_counterparty_contact(&contact_id, CounterpartyOptOutReason::Stop, 6)?;
+    let mut executor = RecordingExecutor::default();
+    for (label, origin, expected, calls) in [
+        ("a", project_a, OutboundDispatchOutcome::Held, 0),
+        (
+            "b",
+            project_b,
+            OutboundDispatchOutcome::DeliveredToChannel,
+            1,
+        ),
+    ] {
+        let intent = OutboundIntent::from_trigger(
+            OutboundIntentDraft::new("agent-alpha", "send", "email", counterparty)
+                .content_ref(format!("content:{label}"))
+                .idempotency_key(format!("idem:{label}"))
+                .dedupe_key(format!("dedupe:{label}")),
+            OutboundIntentTrigger::agent_immediate(format!("session:{label}")),
+        );
+        let request = OutboundDispatchRequest::new(
+            format!("outbound:{label}"),
+            format!("intent:{label}"),
+            intent,
+            OutboundDispatchActor::agent(agent),
+            OutboundDispatchGate::allow_when_policy_grants(),
+            1_100,
+            OutboundDeliveryWindowDecision::DeliverNow,
+        )
+        .channel_identity_ref(identity)
+        .counterparty_ref(counterparty);
+        vault.bind_outbound_policy_origin(&owner, request.clone(), origin, 7)?;
+        let result = vault.dispatch_outbound_intent(request, &mut executor)?;
+        assert_eq!(result.outcome, expected, "{label}");
+        assert_eq!(executor.calls.len(), calls, "{label}");
+        let expected_row = if label == "a" {
+            "policy_row_project-a"
+        } else {
+            "policy_row_default.comm_opt_out_posture"
+        };
+        assert!(
+            vault
+                .gate_decisions(20)?
+                .iter()
+                .any(|record| record.receipt_reasons.contains(&expected_row.to_owned())),
+            "{label}"
+        );
+    }
+    Ok(())
+}
