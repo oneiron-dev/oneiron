@@ -15998,6 +15998,23 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [
+      "AgentKind",
+      "CustomFailureGroup",
+      "FailureSignalClass",
+      "TierOneFailureCount"
+     ],
+     "path": "src/failure_ladder/custom_review.rs",
+     "purpose": "Vault-local custom-agent failure index and content-free health projection",
+     "surface": {
+      "enum": 2,
+      "fn": 3,
+      "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [],
      "path": "src/failure_ladder/healer_case.rs",
      "purpose": "Durable failure-ladder cases bind healer admission to the fenced failure",
@@ -16048,7 +16065,7 @@
      "surface": {
       "crate-vis": 3,
       "mod": 1,
-      "re-export": 5
+      "re-export": 6
      }
     },
     {
@@ -16098,6 +16115,14 @@
      "notable": [],
      "path": "src/failure_ladder/tests.rs",
      "purpose": "ONE-1887 failure-ladder tests, mapped 1:1 to the brief's acceptance criteria: classification, bounded retry…",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/failure_ladder/tests/custom_review.rs",
+     "purpose": "Custom-agent retrospective grouping uses only committed terminal dispatches",
      "surface": {}
     },
     {
@@ -33958,8 +33983,19 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [],
+     "path": "src/workspace_roster/project/edges.rs",
+     "purpose": "Shared project-hub edge admission and final graph invariant",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
      "notable": [
       "ProjectRecord",
+      "ProjectRole",
       "ProjectRoom",
       "ProjectRoomChange"
      ],
@@ -33967,8 +34003,9 @@
      "purpose": "Project responsibility records and their derived home-room membership",
      "surface": {
       "const": 1,
-      "crate-vis": 10,
-      "fn": 7,
+      "crate-vis": 13,
+      "enum": 1,
+      "fn": 8,
       "struct": 3
      }
     },
@@ -33983,7 +34020,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "test",
      "notable": [],
      "path": "src/workspace_roster/project/tests.rs",
@@ -35449,7 +35486,7 @@
      "purpose": "—"
     },
     "failure_ladder": {
-     "files": 12,
+     "files": 14,
      "impl_vault": true,
      "largest_src_bucket": "s",
      "layout": "dir",
@@ -36156,7 +36193,7 @@
      "purpose": "OF-444 web acquisition primitive: one HTTP(S) URL in, one fixed six-field [`FetchResult`] out, produced by a…"
     },
     "workspace_roster": {
-     "files": 19,
+     "files": 20,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -36172,8 +36209,8 @@
    },
    "over_bar": 11,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2137,
-   "test_files": 727
+   "source_files": 2139,
+   "test_files": 728
   },
   "oneiron-android": {
    "files": [
