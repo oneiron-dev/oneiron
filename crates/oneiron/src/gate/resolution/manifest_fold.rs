@@ -142,6 +142,7 @@ pub(crate) fn resolve_policy_manifest(
                 if let Some(rows) = decoded.retrieval_retention {
                     resolution.retrieval_retention.narrow(rows);
                 }
+                resolution.hosted_tts.rows.extend(decoded.hosted_tts.rows);
                 if let Some(bounds) = decoded.diagnostic_bounds {
                     match resolution.diagnostic_bounds {
                         None => resolution.diagnostic_bounds = Some(bounds),
@@ -157,6 +158,12 @@ pub(crate) fn resolve_policy_manifest(
                             .proposal_check_threshold
                             .map_or(threshold, |old| old.min(threshold)),
                     );
+                }
+                if let Some(quota) = decoded.weave_correction_policy {
+                    match &mut resolution.weave_correction_policy {
+                        Some(existing) => existing.restrict(quota),
+                        slot @ None => *slot = Some(quota),
+                    }
                 }
                 resolution.packs.push(decoded.pack);
             }
@@ -189,6 +196,9 @@ pub(crate) fn resolve_policy_manifest(
     // resolution malformed, fail-closing the write gate exactly like any
     // malformed manifest and refusing the budget-policy accessor. Never wrap
     // or silently truncate a row index.
+    if resolution.hosted_tts.rows.len() > usize::from(u16::MAX) + 1 {
+        resolution.diagnostics.malformed_manifest_seen = true;
+    }
     if resolution.budget_policy.rows().len() > usize::from(u16::MAX) + 1 {
         resolution.diagnostics.malformed_manifest_seen = true;
     }
