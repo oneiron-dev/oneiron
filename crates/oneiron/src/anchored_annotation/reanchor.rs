@@ -373,6 +373,7 @@ impl Vault {
             // Each thread's head write + old-head supersede share ONE txn, so a
             // rejected supersede leaves that thread's original head live.
             let new_head_id = self.with_write_txn(|wtxn| {
+                self.require_anchor_version_in_txn(&*wtxn, artifact_id, to_version)?;
                 self.apply_reanchor_head_in_txn(
                     wtxn,
                     artifact_id,
