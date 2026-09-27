@@ -144,6 +144,12 @@ pub struct StoreCore {
     pub(crate) diagnostics: Diagnostics,
     /// Bounded, content-addressed L2 render cache. Never persisted.
     pub(crate) l2_base_cache: Mutex<crate::context_pack::L2BaseCache>,
+    /// Content-free, per-vault digest deadline invalidation. The host
+    /// subscribes before reading its first deadline; no process-global timer.
+    pub(crate) proactivity_updates: tokio::sync::watch::Sender<u64>,
+    /// A failed digest lane stays quiet until a committed relevant change.
+    /// This is per-vault, content-free and never gates unrelated deadlines.
+    pub(crate) proactivity_suspended: Mutex<Option<u64>>,
     /// Content-free local invalidations. Readers always re-read committed rows.
     #[cfg(feature = "sync")]
     pub(crate) attempt_updates: tokio::sync::broadcast::Sender<()>,

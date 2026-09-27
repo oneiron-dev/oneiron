@@ -15,11 +15,12 @@ pub(crate) fn terminal_success_in_store(
         return Ok(false);
     };
     let header = EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("task header"))?;
-    if header.entity_type != crate::registry::ENTITY_TYPE_TASK {
-        return Ok(false);
-    }
-    let body = &raw[ENTITY_METADATA_HEADER_LEN..];
-    if !task_body_has_typed_subkind(body)? {
+    terminal_success_from_body(header.entity_type, &raw[ENTITY_METADATA_HEADER_LEN..])
+}
+
+/// The same terminal check for an adapter that already holds decoded row metadata.
+pub(crate) fn terminal_success_from_body(entity_type: u8, body: &[u8]) -> Result<bool> {
+    if entity_type != crate::registry::ENTITY_TYPE_TASK || !task_body_has_typed_subkind(body)? {
         return Ok(false);
     }
     Ok(decode_task_verb_body(body)?
