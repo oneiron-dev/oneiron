@@ -47,7 +47,7 @@ fn digest(kind: u8, data: &[u8]) -> [u8; 32] {
 fn singleton<T: Ord>(v: T) -> ScopeAxis<T> {
     ScopeAxis::Some(BTreeSet::from([v]))
 }
-fn default_stamp(kind: u8, facet: EntityId) -> Scope {
+pub(crate) fn default_stamp(kind: u8, facet: EntityId) -> Scope {
     Scope {
         worlds: singleton(ScopeId(crate::claim::base_world_id())),
         facets: singleton(ScopeId(facet)),

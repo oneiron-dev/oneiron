@@ -15916,7 +15916,7 @@
      "path": "src/federation/membership_gate.rs",
      "purpose": "Transaction-bound shared-vault membership write authorization",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 4,
       "enum": 1,
       "fn": 1
      }
@@ -16000,7 +16000,7 @@
      "path": "src/federation/record_scope.rs",
      "purpose": "Digest-bound record-position stamps and scoped read/delete/export doors",
      "surface": {
-      "crate-vis": 4,
+      "crate-vis": 5,
       "enum": 1,
       "fn": 4,
       "struct": 1
@@ -16109,6 +16109,7 @@
      "path": "src/federation/shared_creation.rs",
      "purpose": "Creation-time membership defaults, materialized once as explicit grant/policy rows",
      "surface": {
+      "crate-vis": 1,
       "enum": 1,
       "fn": 3,
       "struct": 2
@@ -21131,7 +21132,7 @@
      "surface": {}
     },
     {
-     "bucket": "L",
+     "bucket": "XL",
      "kind": "test",
      "notable": [],
      "path": "src/memory/tests/commit_claims.rs",
@@ -21837,6 +21838,14 @@
      "surface": {
       "crate-vis": 3
      }
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/note/shared_membership_tests.rs",
+     "purpose": "Caller-observable shared-vault NOTE write-denial regressions",
+     "surface": {}
     },
     {
      "bucket": "s",
@@ -34655,7 +34664,7 @@
      "purpose": "Durable batched speculation over real detached worktrees"
     },
     "note": {
-     "files": 28,
+     "files": 29,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "file+dir",
@@ -35176,7 +35185,7 @@
    "over_bar": 9,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
    "source_files": 2075,
-   "test_files": 715
+   "test_files": 716
   },
   "oneiron-android": {
    "files": [

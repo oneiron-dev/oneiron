@@ -197,6 +197,27 @@ impl Memory<'_> {
                 batch = batch.edge(&id, *kind, target, *weight);
             }
             batch.apply(wtxn)?;
+            if self.vault.shared_vault_creation_in_txn(wtxn)?.is_some() {
+                // Typed local projections can change a fresh row's body after
+                // its initial scope stamp. Pin the final bytes before gating.
+                let raw = self
+                    .vault
+                    .get_raw_in(wtxn, &id)?
+                    .ok_or(crate::Error::EntityNotFound)?;
+                crate::federation::record_scope::stamp_put(
+                    &self.vault.store,
+                    wtxn,
+                    id,
+                    type_byte,
+                    &raw[crate::batch::ENTITY_METADATA_HEADER_LEN..],
+                    false,
+                )?;
+            }
+            self.vault.authorize_shared_content_write_in_txn(
+                wtxn,
+                id,
+                &WriteActor::new(self.actor, self.actor_class),
+            )?;
             if !text_fields.is_empty() {
                 apply_ops(
                     &self.vault.store,

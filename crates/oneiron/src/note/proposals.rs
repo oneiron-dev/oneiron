@@ -257,6 +257,7 @@ impl Vault {
         self.memory(actor.entity_ref(), actor.actor_class())
             .with_verified_actor_write_txn(|txn| {
                 super::verbs::note_core(self, txn, note)?;
+                self.authorize_shared_note_write_in_txn(txn, note, &actor)?;
                 let parent = load_doc(self, txn, note)?.ok_or(invalid("note has no document"))?;
                 let fork_doc = parent
                     .doc
@@ -338,6 +339,7 @@ fn land(
     // A switch moves the head pointer to the fork, whose document becomes
     // the NOTE's text plane. The previous head's document is never deleted.
     let head = if verdict == NoteVerdict::Switch {
+        vault.authorize_shared_note_write_in_txn(txn, fork.note, &actor)?;
         if vault
             .store
             .sync_state

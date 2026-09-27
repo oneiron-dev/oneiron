@@ -162,6 +162,8 @@ impl Memory<'_> {
                 )
                 .edge(&id, EdgeKind::AuthoredBy, &self.actor(), 1.0)
                 .apply(txn)?;
+            self.vault()
+                .authorize_shared_note_write_in_txn(txn, id, &actor)?;
             super::operations::record_authorship(
                 &doc,
                 &super::NoteAuthorship {
@@ -218,6 +220,11 @@ impl Memory<'_> {
     /// than silently dropping the history that makes a quote checkable.
     pub fn purge_note_history(&self, note: EntityId, through: &[u8]) -> MemoryResult<()> {
         self.with_verified_actor_write_txn(|txn| {
+            self.vault().authorize_shared_note_write_in_txn(
+                txn,
+                note,
+                &WriteActor::new(self.actor(), self.actor_class()),
+            )?;
             require_note_writer(self, txn, note)?;
             let doc = load(self.vault(), txn, note)?;
             let through = frontier(through)?;

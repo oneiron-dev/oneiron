@@ -699,6 +699,11 @@ impl Memory<'_> {
                     self.vault.text_index_trusted.load(Ordering::Acquire),
                     ApplyOpsGateMode::new(true, true),
                 )?;
+                self.vault.authorize_shared_content_write_in_txn(
+                    wtxn,
+                    id,
+                    &closure_envelope.actor(),
+                )?;
                 if let Some(old_id) = prior {
                     self.vault.stage_claim_supersession_in_txn(
                         wtxn,

@@ -1389,3 +1389,133 @@ fn relationship_upserts_do_not_supersede_another_relationship() {
         );
     }
 }
+
+#[test]
+fn shared_vault_structural_and_claim_content_mutations_obey_role_and_scope() {
+    use crate::federation::{
+        FederationGrantRole, InitialSharedMember, ScopeAxis, ScopeId, decode_federation_grant_body,
+        encode_federation_grant_body,
+    };
+    use crate::registry::ENTITY_TYPE_FEDERATION_GRANT;
+    use std::collections::BTreeSet;
+
+    let (_dir, vault) = open_vault();
+    let owner = put_person(&vault, 0xB1);
+    let member = put_person(&vault, 0xB2);
+    let viewer = put_person(&vault, 0xB3);
+    let authenticated = vault
+        .authenticate_owner(
+            owner,
+            &owner.to_hex(),
+            true,
+            crate::store::GateDecisionId::now(),
+        )
+        .unwrap();
+    let created = vault
+        .initialize_shared_vault(
+            &authenticated,
+            42,
+            None,
+            &[
+                InitialSharedMember {
+                    member_ref: owner,
+                    role: Some(FederationGrantRole::Owner),
+                },
+                InitialSharedMember {
+                    member_ref: member,
+                    role: Some(FederationGrantRole::Member),
+                },
+                InitialSharedMember {
+                    member_ref: viewer,
+                    role: Some(FederationGrantRole::Viewer),
+                },
+            ],
+            1,
+        )
+        .unwrap();
+    let task = || StructuralPutInput {
+        id: None,
+        kind: "TASK".into(),
+        body: serde_json::json!({"role": 4, "content": "shared task"}),
+        text_fields: None,
+        edges: None,
+        occurred_at: 10,
+        learned_at: None,
+    };
+    let member_facade = facade_for(&vault, member);
+    member_facade
+        .put_structural(&task())
+        .expect("in-scope member task");
+    member_facade
+        .claim_upsert(&claim_input(
+            "profile.name",
+            &member,
+            "user_stated",
+            serde_json::json!("in scope"),
+        ))
+        .expect("in-scope member claim");
+    let before_tasks = vault.entities_by_type(ENTITY_TYPE_TASK).unwrap().len();
+    let before_claims = vault.entities_by_type(ENTITY_TYPE_CLAIM).unwrap().len();
+    let viewer_facade = facade_for(&vault, viewer);
+    assert!(viewer_facade.put_structural(&task()).is_err());
+    assert!(
+        viewer_facade
+            .claim_upsert(&claim_input(
+                "profile.color",
+                &member,
+                "user_stated",
+                serde_json::json!("denied"),
+            ))
+            .is_err()
+    );
+    assert_eq!(
+        vault.entities_by_type(ENTITY_TYPE_TASK).unwrap().len(),
+        before_tasks
+    );
+    assert_eq!(
+        vault.entities_by_type(ENTITY_TYPE_CLAIM).unwrap().len(),
+        before_claims
+    );
+
+    let (id, mut grant) = created
+        .grant_refs
+        .iter()
+        .find_map(|hex| {
+            let id = EntityId::from_hex(hex).unwrap();
+            let raw = vault.get_raw(&id).unwrap().unwrap();
+            let grant = decode_federation_grant_body(&raw[ENTITY_METADATA_HEADER_LEN..]).unwrap();
+            (grant.member_ref == member).then_some((id, grant))
+        })
+        .unwrap();
+    grant.authority_scope.audience = ScopeAxis::Some(BTreeSet::from([ScopeId(EntityId::now())]));
+    vault
+        .batch()
+        .put_replicated(
+            &id,
+            ENTITY_TYPE_FEDERATION_GRANT,
+            test_time(1),
+            1,
+            &encode_federation_grant_body(&grant).unwrap(),
+        )
+        .commit()
+        .unwrap();
+    assert!(member_facade.put_structural(&task()).is_err());
+    assert!(
+        member_facade
+            .claim_upsert(&claim_input(
+                "profile.color",
+                &member,
+                "user_stated",
+                serde_json::json!("outside"),
+            ))
+            .is_err()
+    );
+    assert_eq!(
+        vault.entities_by_type(ENTITY_TYPE_TASK).unwrap().len(),
+        before_tasks
+    );
+    assert_eq!(
+        vault.entities_by_type(ENTITY_TYPE_CLAIM).unwrap().len(),
+        before_claims
+    );
+}

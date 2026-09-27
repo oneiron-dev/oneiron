@@ -121,6 +121,11 @@ impl Memory<'_> {
                 )
                 .edge(&note_id, link, &target_id, registered_edge_weight(link))
                 .apply(wtxn)?;
+            self.vault.authorize_shared_note_write_in_txn(
+                wtxn,
+                note_id,
+                &WriteActor::new(self.actor, self.actor_class),
+            )?;
             Ok(())
         })?;
         self.entity_ref_receipt(&note_id)

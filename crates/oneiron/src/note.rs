@@ -392,6 +392,8 @@ pub use document::{NoteDocumentView, NoteEdit, NoteEditOutcome, NotePin, NoteSpa
 
 #[cfg(test)]
 mod program_tests;
+#[cfg(test)]
+mod shared_membership_tests;
 
 #[cfg(test)]
 mod adapter_tests;

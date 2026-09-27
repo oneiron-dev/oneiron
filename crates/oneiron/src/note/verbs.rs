@@ -43,6 +43,7 @@ impl Vault {
                     )
                     .edge(&id, EdgeKind::AuthoredBy, &actor.entity_ref(), 1.0)
                     .apply(txn)?;
+                self.authorize_shared_note_write_in_txn(txn, id, &actor)?;
                 let doc = super::document_store::load(self, txn, id)?;
                 super::document_store::persist(self, txn, &doc)?;
                 Ok(id)
@@ -84,6 +85,7 @@ impl Vault {
                     .is_ok();
                 match kind {
                     ENTITY_TYPE_NOTE => {
+                        self.authorize_shared_note_write_in_txn(txn, origin, &actor)?;
                         let (_, core) = note_core(self, txn, origin)?;
                         if !owner && core.author_ref != actor.entity_ref() {
                             return Err(
@@ -174,7 +176,11 @@ impl Vault {
                     .into());
                 }
                 let origin_facet = match self.get_entity_type_in_txn(txn, &origin)? {
-                    Some(ENTITY_TYPE_NOTE | ENTITY_TYPE_ASSET) => {
+                    Some(ENTITY_TYPE_NOTE) => {
+                        self.authorize_shared_note_write_in_txn(txn, origin, &actor)?;
+                        crate::federation::record_scope::birth_facet(&self.store, txn, origin)?
+                    }
+                    Some(ENTITY_TYPE_ASSET) => {
                         crate::federation::record_scope::birth_facet(&self.store, txn, origin)?
                     }
                     Some(crate::registry::ENTITY_TYPE_CLAIM) => self
@@ -216,6 +222,7 @@ impl Vault {
         let result = self
             .memory(actor.entity_ref(), actor.actor_class())
             .with_verified_actor_write_txn(|txn| {
+                self.authorize_shared_note_write_in_txn(txn, note, &actor)?;
                 let existed = load_doc(self, txn, note)?.is_some();
                 if existed && matches!(edit, NoteEdit::WholeText { base: None, .. }) {
                     return Err(invalid("whole-text edit requires its read version").into());
@@ -399,6 +406,7 @@ fn create_from_text_in_txn(
         .edge(&id, EdgeKind::AuthoredBy, &actor.entity_ref(), 1.0)
         .edge(&id, EdgeKind::DerivedFrom, &citation, 1.0)
         .apply(txn)?;
+    vault.authorize_shared_note_write_in_txn(txn, id, &actor)?;
     Ok(id)
 }
 

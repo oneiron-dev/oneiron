@@ -22,6 +22,8 @@ pub enum SharedVaultWrite {
     Admin(OrgAdminPower),
     /// A conflict review ruling in this shared vault.
     RuleConflict,
+    /// Change a shared workspace setting; enrollment authority alone does not confer it.
+    WorkspaceSettings,
     /// Mutate the organization root.
     OrgRoot,
     /// Mutate a member's separate personal root.
@@ -78,7 +80,9 @@ impl Vault {
             let grant = decode_federation_grant_body(&raw[ENTITY_METADATA_HEADER_LEN..])?;
             if grant.scope != FederationGrantScope::vault(vault_id)
                 || grant.member_ref != writer.entity_ref()
-                || !grant.confers_at(self.store.clock.now_recorded_at())
+                || grant
+                    .expires_at
+                    .is_some_and(|expires| self.store.clock.now_recorded_at() >= expires)
                 || matches!(
                     federation_grant_activation(&fold, &id),
                     FederationGrantActivation::Inactive(_)
@@ -93,9 +97,9 @@ impl Vault {
                 continue;
             }
             let role_permits = match requested {
-                SharedVaultWrite::Admin(_) | SharedVaultWrite::RuleConflict => {
-                    grant.role.is_admin()
-                }
+                SharedVaultWrite::Admin(_)
+                | SharedVaultWrite::RuleConflict
+                | SharedVaultWrite::WorkspaceSettings => grant.role.is_admin(),
                 SharedVaultWrite::OrgRoot | SharedVaultWrite::Veto => {
                     grant.role == FederationGrantRole::Owner
                 }
@@ -107,6 +111,7 @@ impl Vault {
             let (verb, mut record) = match requested {
                 SharedVaultWrite::Admin(power) => (power.as_str(), Scope::top()),
                 SharedVaultWrite::RuleConflict => ("admin", Scope::top()),
+                SharedVaultWrite::WorkspaceSettings => ("write", Scope::top()),
                 SharedVaultWrite::OrgRoot => ("org:root", Scope::top()),
                 SharedVaultWrite::Veto => ("owner:veto", Scope::top()),
                 SharedVaultWrite::PersonalVault | SharedVaultWrite::Content(_) => unreachable!(),
@@ -136,4 +141,49 @@ pub(crate) fn grant_allows_content_write(grant: &FederationGrant, scope: &Scope)
     grant
         .authority_scope
         .admits("write", &record, &Scope::top())
+}
+
+impl Vault {
+    /// Check a staged content row in the same writer that commits its mutation.
+    /// Personal vaults have no shared-creation row and keep their own authority.
+    pub(crate) fn authorize_shared_content_write_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        id: crate::EntityId,
+        writer: &WriteActor,
+    ) -> Result<()> {
+        let Some(creation) = self.shared_vault_creation_in_txn(txn)? else {
+            return Ok(());
+        };
+        let raw = self.get_raw_in(txn, &id)?.ok_or_else(denied)?;
+        let header = EntityMetadataHeader::parse(&raw).ok_or_else(denied)?;
+        let scope = match super::record_scope::scope_for_blob(&self.store, txn, id, &raw)? {
+            Some(scope) => scope,
+            None if header.entity_type == crate::registry::ENTITY_TYPE_NOTE => {
+                // A NOTE born without a FacetOf edge has the ordinary base/default
+                // position. Never use this fallback for another record kind.
+                super::record_scope::default_stamp(
+                    header.entity_type,
+                    crate::claim::substrate_facet_id(id),
+                )
+            }
+            None => return Err(denied()),
+        };
+        self.authorize_shared_vault_write_in_txn(
+            txn,
+            creation.vault_id,
+            writer,
+            &SharedVaultWrite::Content(scope),
+        )
+    }
+
+    /// NOTE-specific spelling for the actor-bound editor doors.
+    pub(crate) fn authorize_shared_note_write_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        note: crate::EntityId,
+        writer: &WriteActor,
+    ) -> Result<()> {
+        self.authorize_shared_content_write_in_txn(txn, note, writer)
+    }
 }

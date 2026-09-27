@@ -246,6 +246,11 @@ impl Memory<'_> {
         {
             return Err(invalid("replica NOTE edits require authenticated authority").into());
         }
+        self.vault().authorize_shared_note_write_in_txn(
+            txn,
+            note,
+            &WriteActor::new(self.actor(), self.actor_class()),
+        )?;
         require_note_writer(self, txn, note)?;
         let doc = load(self.vault(), txn, note)?;
         let hash = operation.hash()?;
