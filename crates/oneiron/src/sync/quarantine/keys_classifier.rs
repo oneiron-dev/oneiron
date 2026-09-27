@@ -153,6 +153,7 @@ pub(crate) fn remote_rejection_reason(error: &Error) -> Option<String> {
         | ErrorKind::InvalidProjectBody
         | ErrorKind::InvalidProjectRoomBody
         | ErrorKind::ProjectDependencyPending
+        | ErrorKind::ResidentOwnerDependencyPending
         | ErrorKind::InvalidPredicate
         | ErrorKind::InvalidEdgeWeight
         | ErrorKind::InvalidVad

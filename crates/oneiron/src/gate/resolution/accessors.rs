@@ -2,7 +2,9 @@
 
 use sha2::{Digest, Sha256};
 
+use crate::EntityId;
 use crate::error::Result;
+use crate::gate::hosted_tts_policy::HostedTtsLimits;
 use crate::llm::{BudgetExhaustionPolicy, BudgetPolicyTable};
 
 use super::frontier_hash::hash_policy_frontier_v0;
@@ -90,6 +92,17 @@ impl PolicyManifestResolution {
         Some(cap.min(holder_override.unwrap_or(u64::MAX)))
     }
 
+    /// Effective correction quota from the resolved manifest, never from a
+    /// caller-supplied request. Malformed policy cannot authorize a label.
+    pub(crate) fn weave_correction_limit(&self, holder: &str) -> Option<usize> {
+        if self.diagnostics.loaded_manifest_forces_fail_closed() {
+            return None;
+        }
+        self.weave_correction_policy
+            .as_ref()
+            .map(|policy| policy.limit_for(holder))
+    }
+
     #[must_use]
     pub(crate) fn proposal_check_threshold(&self) -> u64 {
         self.proposal_check_threshold
@@ -132,6 +145,17 @@ impl PolicyManifestResolution {
         } else {
             Some(&self.budget_policy)
         }
+    }
+
+    pub(crate) fn hosted_tts_limits(
+        &self,
+        provider: &str,
+        holder: EntityId,
+    ) -> Option<HostedTtsLimits> {
+        if self.diagnostics.loaded_manifest_forces_fail_closed() {
+            return None;
+        }
+        self.hosted_tts.limits(provider, holder)
     }
 
     /// Rendering pins follow declared critical classes, not the fail-closed
