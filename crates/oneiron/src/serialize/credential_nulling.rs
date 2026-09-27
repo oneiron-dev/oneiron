@@ -36,7 +36,7 @@ pub(super) fn credential_key(key: &str) -> bool {
 }
 
 /// No option can bypass this transform. Recursion stops closed, not by returning the input.
-pub(super) fn null_credentials(key: &str, value: &Value) -> Value {
+pub(crate) fn null_credentials(key: &str, value: &Value) -> Value {
     null_at_depth(key, value, 0)
 }
 fn null_at_depth(key: &str, value: &Value, depth: usize) -> Value {
