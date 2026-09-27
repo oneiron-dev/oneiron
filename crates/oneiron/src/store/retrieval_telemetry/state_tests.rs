@@ -387,22 +387,38 @@ fn published_retention_evicts_old_runs_and_their_sidecars() -> crate::Result<()>
 }
 
 #[test]
-fn telemetry_age_expires_on_write_and_crash_orphans_sweep_on_open() -> crate::Result<()> {
+fn telemetry_age_expires_on_write() -> crate::Result<()> {
     let clock = crate::ports::ManualClock::new(1_000_000);
     let mut config = VaultConfig::device();
     config.store_clock = clock.bundle();
     config.retrieval_telemetry_capture = true;
     let dir = tempfile::tempdir()?;
+    let vault = crate::Vault::open(dir.path(), config)?;
     let published = record(1_000_000);
-    let orphan = record(1_000_000);
+    vault.store.record_retrieval_run(&published)?;
+    clock.set(1_000_000 + RETRIEVAL_RUN_TTL_SECONDS + 1);
+    vault
+        .store
+        .record_retrieval_run(&record(1_000_000 + RETRIEVAL_RUN_TTL_SECONDS + 1))?;
+    assert!(vault.retrieval_run(published.run_id)?.is_none());
+    assert_eq!(vault.retrieval_runs(10)?.len(), 1);
+    Ok(())
+}
+
+#[cfg(unix)]
+#[test]
+fn crash_orphans_sweep_on_reopen() -> crate::Result<()> {
+    let dir = tempfile::tempdir()?;
+    let mut config = VaultConfig::device();
+    config.retrieval_telemetry_capture = true;
+    let orphan = record(10);
     {
         let vault = crate::Vault::open(dir.path(), config.clone())?;
-        vault.store.record_retrieval_run(&published)?;
         vault
             .store
             .record_context_pack_provisional_retrieval_run(&orphan)?;
     }
-    let vault = crate::Vault::open_existing(dir.path(), config)?;
+    let vault = crate::Vault::open(dir.path(), config)?;
     assert!(
         vault
             .store
@@ -419,49 +435,9 @@ fn telemetry_age_expires_on_write_and_crash_orphans_sweep_on_open() -> crate::Re
             .vault_meta
             .get(
                 &vault.store.env.read_txn()?,
-                &super::run_store::retrieval_run_provisional_key(orphan.run_id),
+                &super::run_store::retrieval_run_provisional_key(orphan.run_id)
             )?
             .is_none()
-    );
-    assert!(vault.retrieval_run(published.run_id)?.is_some());
-    clock.set(1_000_000 + RETRIEVAL_RUN_TTL_SECONDS + 1);
-    vault
-        .store
-        .record_retrieval_run(&record(1_000_000 + RETRIEVAL_RUN_TTL_SECONDS + 1))?;
-    assert!(vault.retrieval_run(published.run_id)?.is_none());
-    assert!(
-        vault
-            .retrieval_runs(10)?
-            .iter()
-            .all(|r| r.run_id != orphan.run_id)
-    );
-    Ok(())
-}
-
-#[test]
-fn opening_pre_retention_runs_bounds_them_before_indexing() -> crate::Result<()> {
-    let dir = tempfile::tempdir()?;
-    let mut config = VaultConfig::device();
-    config.retrieval_telemetry_capture = true;
-    {
-        let vault = crate::Vault::open(dir.path(), config.clone())?;
-        vault.with_write_txn(|txn| {
-            for _ in 0..RETRIEVAL_RUN_MAX_ROWS + 3 {
-                let mut run = record(vault.now_recorded_at());
-                run.turn = None;
-                vault.store.vault_meta.put(
-                    txn,
-                    &retrieval_run_key(run.run_id),
-                    &encode_retrieval_run(&run)?,
-                )?;
-            }
-            Ok(())
-        })?;
-    }
-    let vault = crate::Vault::open(dir.path(), config)?;
-    assert_eq!(
-        vault.retrieval_runs(RETRIEVAL_RUN_MAX_ROWS + 3)?.len(),
-        RETRIEVAL_RUN_MAX_ROWS
     );
     Ok(())
 }
@@ -515,7 +491,7 @@ fn open_does_not_sweep_a_provisional_run_while_another_owner_holds_the_vault() -
     let acquired = unsafe { libc::flock(lock.as_raw_fd(), libc::LOCK_SH | libc::LOCK_NB) };
     assert_eq!(acquired, 0);
     {
-        let vault = crate::Vault::open_existing(dir.path(), config.clone())?;
+        let vault = crate::Vault::open(dir.path(), config.clone())?;
         assert!(
             vault
                 .store
@@ -529,6 +505,30 @@ fn open_does_not_sweep_a_provisional_run_while_another_owner_holds_the_vault() -
     let released = unsafe { libc::flock(lock.as_raw_fd(), libc::LOCK_UN) };
     assert_eq!(released, 0);
     drop(lock);
+    let vault = crate::Vault::open(dir.path(), config)?;
+    assert!(
+        vault
+            .store
+            .vault_meta
+            .get(&vault.store.env.read_txn()?, &retrieval_run_key(run.run_id))?
+            .is_none()
+    );
+    Ok(())
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn existing_only_open_sweeps_crashed_provisional_row() -> crate::Result<()> {
+    let dir = tempfile::tempdir()?;
+    let mut config = VaultConfig::device();
+    config.retrieval_telemetry_capture = true;
+    let run = record(10);
+    {
+        let vault = crate::Vault::open(dir.path(), config.clone())?;
+        vault
+            .store
+            .record_context_pack_provisional_retrieval_run(&run)?;
+    }
     let vault = crate::Vault::open_existing(dir.path(), config)?;
     assert!(
         vault
@@ -537,5 +537,46 @@ fn open_does_not_sweep_a_provisional_run_while_another_owner_holds_the_vault() -
             .get(&vault.store.env.read_txn()?, &retrieval_run_key(run.run_id))?
             .is_none()
     );
+    Ok(())
+}
+
+#[cfg(unix)]
+#[test]
+fn renamed_root_cannot_redirect_the_orphan_sweep_lock() -> crate::Result<()> {
+    let tmp = tempfile::tempdir()?;
+    let original = tmp.path().join("vault");
+    let renamed = tmp.path().join("renamed");
+    let mut config = VaultConfig::device();
+    config.retrieval_telemetry_capture = true;
+    let vault = crate::Vault::open(&original, config)?;
+    let run = record(10);
+    vault
+        .store
+        .record_context_pack_provisional_retrieval_run(&run)?;
+
+    // This is the interval after LMDB validation but before a second lease
+    // acquisition. A pathname-based lock would be taken in the replacement
+    // and falsely grant EX, deleting the active row in the original LMDB.
+    std::fs::rename(&original, &renamed)?;
+    std::fs::create_dir(&original)?;
+    vault.store.reconcile_retrieval_telemetry_on_open()?;
+    assert!(
+        vault
+            .store
+            .vault_meta
+            .get(&vault.store.env.read_txn()?, &retrieval_run_key(run.run_id))?
+            .is_some()
+    );
+    vault
+        .store
+        .finalize_context_pack_retrieval_run(RetrievalRunFinalize {
+            run_id: run.run_id,
+            elapsed_us: 100,
+            total_in_scope: 0,
+            claims_suppressed: 0,
+            surfaced_result_ids: &[],
+            empty_reason: None,
+        })?;
+    assert!(vault.retrieval_run(run.run_id)?.is_some());
     Ok(())
 }

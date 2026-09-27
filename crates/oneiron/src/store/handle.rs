@@ -172,10 +172,9 @@ pub struct StoreOwner {
     pub(in crate::store) core: Weak<StoreCore>,
     /// Sole owner of the environment's close-on-last-clone semantics
     /// (ONE-1142).
-    #[expect(
-        dead_code,
-        reason = "held for Drop only: OwnedEnv's close-on-last-clone must fire \
-                  before _registered_path releases the vault root (ONE-1142)"
+    #[cfg_attr(
+        not(unix),
+        expect(dead_code, reason = "held for close-on-last-clone Drop on non-Unix")
     )]
     pub(in crate::store) env: OwnedEnv,
     // DROP-ORDER: keep this field after `env`. Fields drop in declaration

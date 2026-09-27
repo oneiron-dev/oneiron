@@ -91,17 +91,35 @@ impl Store {
             if let Some(lease) = lease {
                 lease.validate_directory(&canonical_path)?;
             }
+            #[cfg(unix)]
+            let bound_root_dir = match lease {
+                Some(lease) => lease.clone_directory()?,
+                None => crate::store::root_directory::open_root_directory(&canonical_path)?,
+            };
             #[cfg(target_os = "linux")]
-            let storage_path = lease.map_or_else(
-                || canonical_path.clone(),
-                VaultWriterLease::environment_path,
-            );
+            let storage_path = match lease {
+                Some(lease) => lease.environment_path(),
+                None => {
+                    use std::os::fd::AsRawFd;
+                    std::path::PathBuf::from(format!(
+                        "/proc/self/fd/{}",
+                        bound_root_dir.as_raw_fd()
+                    ))
+                }
+            };
             #[cfg(not(target_os = "linux"))]
             let storage_path = canonical_path.clone();
             let root_preflight = preflight_vault_root(&storage_path)?;
             let is_new_vault = root_preflight.is_new_vault;
             if is_new_vault {
-                torn_creation_cleanup.arm(storage_path.clone());
+                // On an unleased open the descriptor is owned by the Env and
+                // drops before torn-creation cleanup; keep the cleanup path
+                // independent of that fd's eventual number.
+                torn_creation_cleanup.arm(if lease.is_some() {
+                    storage_path.clone()
+                } else {
+                    canonical_path.clone()
+                });
             }
             let mut registered_path =
                 RegisteredPath::reserve(canonical_path.clone(), root_preflight.identity)?;
@@ -141,7 +159,12 @@ impl Store {
                         },
                     )?
                 } else {
-                    options.open(&canonical_path)?
+                    options.open_with_cache_identity(
+                        &storage_path,
+                        canonical_path.clone(),
+                        || {},
+                        || {},
+                    )?
                 };
                 #[cfg(not(target_os = "linux"))]
                 let opened = options.open(&canonical_path)?;
@@ -153,6 +176,12 @@ impl Store {
             let env = OwnedEnv {
                 env,
                 _bound_root_dir: None,
+            };
+            #[cfg(unix)]
+            let env = {
+                let mut env = env;
+                env.retain_bound_root(bound_root_dir);
+                env
             };
             #[cfg(test)]
             test_hooks::run_after_lmdb_open(&canonical_path);

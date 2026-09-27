@@ -1,7 +1,7 @@
 //! Process path registry, owned environment close semantics, manifest create/open/validate pairs, and storage ABI/schema gates.
 
 use std::collections::HashSet;
-#[cfg(target_os = "linux")]
+#[cfg(unix)]
 use std::fs::File;
 use std::path::PathBuf;
 use std::sync::MutexGuard;
@@ -121,25 +121,28 @@ impl Drop for RegisteredPath {
 /// `SyncServer.vault`) — the last clone to drop closes the environment.
 pub(crate) struct OwnedEnv {
     pub(super) env: Env,
-    /// The existing-only door's bound root directory descriptor, kept alive for
-    /// the whole environment lifetime so the `/proc/self/fd/<dirfd>` path LMDB
-    /// was opened through can never become some recycled descriptor. `None` on
-    /// the create-capable door, which opens the caller's pathname. Deliberately
-    /// never read: holding it open IS the point.
-    ///
-    /// Declared AFTER `env` on purpose. `Drop` runs the body above first, then
-    /// drops fields in declaration order, so the environment closes
-    /// (`mdb_env_close`) while the descriptor is still open and the descriptor
-    /// is released only afterwards.
+    /// Directory descriptor retained with the LMDB environment. Linux opens
+    /// through this descriptor; the Unix create door also retains it before
+    /// opening so the telemetry sweep lock never re-resolves the root path.
+    /// Declared after `env`: the environment closes before the directory fd.
     pub(super) _bound_root_dir: Option<std::fs::File>,
 }
 
 impl OwnedEnv {
     /// Moves the bound root directory descriptor into the environment that was
     /// opened through it.
-    #[cfg(target_os = "linux")]
+    #[cfg(unix)]
     pub(super) fn retain_bound_root(&mut self, dir: File) {
         self._bound_root_dir = Some(dir);
+    }
+
+    #[cfg(unix)]
+    pub(in crate::store) fn bound_root_dir(&self) -> Result<&File> {
+        self._bound_root_dir
+            .as_ref()
+            .ok_or(Error::InvariantViolation(
+                "vault root directory descriptor missing",
+            ))
     }
 }
 

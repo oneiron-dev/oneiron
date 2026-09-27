@@ -29335,7 +29335,7 @@
      "path": "src/store/open_gates/manifest_storage_gates.rs",
      "purpose": "Process path registry, owned environment close semantics, manifest create/open/validate pairs, and storage…",
      "surface": {
-      "crate-vis": 29
+      "crate-vis": 30
      }
     },
     {
@@ -29702,7 +29702,7 @@
      "purpose": "Process-owner writer lease, shared by the server and embedded SDK",
      "surface": {
       "const": 2,
-      "crate-vis": 2,
+      "crate-vis": 3,
       "fn": 4,
       "struct": 1
      }

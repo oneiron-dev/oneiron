@@ -6,11 +6,9 @@ use crate::error::{Error, Result};
 use crate::store::{ManifestDbs, Store};
 
 use super::RetrievalRunId;
+use super::run_store::stage_retrieval_run_delete;
 #[cfg(unix)]
-use super::run_store::{
-    RETRIEVAL_RUN_KEY_PREFIX, RETRIEVAL_RUN_PROVISIONAL_KEY_PREFIX, decode_retrieval_run,
-    retrieval_run_id_from_key, retrieval_run_id_from_value, stage_retrieval_run_delete,
-};
+use super::run_store::{RETRIEVAL_RUN_PROVISIONAL_KEY_PREFIX, retrieval_run_id_from_value};
 
 // Base-ledger retention only. Session overlay rows evaporate on close and
 // cannot be evicted while an in-flight room assembly still owns them.
@@ -38,9 +36,8 @@ pub(in crate::store) struct RetrievalTelemetryLease {
 
 #[cfg(unix)]
 impl RetrievalTelemetryLease {
-    fn acquire(root: &std::path::Path) -> Result<(Self, bool)> {
+    fn acquire(dir: &std::fs::File) -> Result<(Self, bool)> {
         use std::os::fd::AsRawFd;
-        let dir = crate::store::root_directory::open_root_directory(root)?;
         let lock_name = std::ffi::CString::new(RETRIEVAL_TELEMETRY_LOCK_FILE)
             .expect("static lock filename contains no NUL");
         // SAFETY: dir is a live directory fd; lock_name is NUL-terminated,
@@ -108,14 +105,14 @@ impl Drop for RetrievalTelemetryLease {
     }
 }
 
-/// Recover an interrupted context-pack registration and reconcile pre-retention
-/// published rows. Runs after the open gates, before handing the vault to a caller.
+/// Recover interrupted context-pack registrations and expire indexed runs.
+/// Runs after the open gates, before handing the vault to a caller.
 impl Store {
     pub(in crate::store) fn reconcile_retrieval_telemetry_on_open(&self) -> Result<()> {
         #[cfg(unix)]
         {
             let (lease, sole_opener) =
-                RetrievalTelemetryLease::acquire(&self.owner._registered_path.path)?;
+                RetrievalTelemetryLease::acquire(self.owner.env.bound_root_dir()?)?;
             if sole_opener {
                 let mut wtxn = self.env.write_txn()?;
                 let mut orphans = Vec::new();
@@ -132,42 +129,7 @@ impl Store {
                 for id in orphans {
                     stage_retrieval_run_delete(self, &mut wtxn, id)?;
                 }
-                let mut unindexed = Vec::new();
-                for row in self
-                    .vault_meta
-                    .prefix_iter(&wtxn, RETRIEVAL_RUN_KEY_PREFIX)?
-                {
-                    let (key, value) = row?;
-                    let id = retrieval_run_id_from_key(&key)?;
-                    if self.vault_meta.get(&wtxn, &age_by_run_key(id))?.is_none() {
-                        let record = decode_retrieval_run(&value)?;
-                        if record.run_id != id {
-                            return Err(Error::CorruptedIndex("retrieval run telemetry"));
-                        }
-                        unindexed.push((id, record.started_at));
-                    }
-                }
-                // Delete old/excess legacy rows BEFORE allocating any new sidecars.
-                // A full old ledger must be able to reopen without doubling its map
-                // footprint just to discover which rows retention will discard.
-                unindexed.sort_unstable_by_key(|(id, at)| (*at, id.as_bytes()));
-                let cutoff = self
-                    .clock
-                    .now_recorded_at()
-                    .saturating_sub(RETRIEVAL_RUN_TTL_SECONDS);
-                let excess = unindexed.len().saturating_sub(RETRIEVAL_RUN_MAX_ROWS);
-                let mut survivors = Vec::new();
-                for (index, (id, at)) in unindexed.into_iter().enumerate() {
-                    if index < excess || at < cutoff {
-                        stage_retrieval_run_delete(self, &mut wtxn, id)?;
-                    } else {
-                        survivors.push((id, at));
-                    }
-                }
-                prune_retrieval_runs(self, &mut wtxn, survivors.len())?;
-                for (id, started_at) in survivors {
-                    put_retrieval_age(self, &mut wtxn, id, started_at)?;
-                }
+                prune_retrieval_runs(self, &mut wtxn, 0)?;
                 wtxn.commit()?;
                 lease.downgrade()?;
             }
