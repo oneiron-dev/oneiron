@@ -219,6 +219,10 @@ pub(super) fn materialize_entities_from_delta(
                 }
             }
         }
+        let facts: Vec<_> = applied_ops.iter().map(|(id, _)| {
+            crate::conversation_dag::topology::Dependency::Entity(*id)
+        }).collect();
+        super::parent_retry::wake_in_txn(vault, wtxn, &facts)?;
         #[cfg(test)]
         if take_injected_batch_commit_failure() {
             return Err(Error::Io(std::io::Error::other(
@@ -237,6 +241,45 @@ pub(super) fn materialize_entities_from_delta(
             window = %window_key,
             "observer-b: local-only companion CRDT scrub failed after entity batch commit"
         );
+    }
+
+    // An earlier ChildOf or SpawnedBy can have arrived before this body's
+    // endpoint and been deferred by the edge observer. Re-present only the
+    // now-reachable structural keys through that SAME edge gauntlet; no raw
+    // LMDB write or peer-controlled edge bypasses its validators. A pending
+    // Parent then wakes from the accepted membership/anchor fact.
+    if result.is_ok() && !applied_ops.is_empty() {
+        let arrived: HashSet<_> = applied_ops.iter().map(|(id, _)| *id).collect();
+        let edges = doc.get_map("edges");
+        let mut retry = loro::event::MapDelta {
+            updated: Default::default(),
+        };
+        edges.for_each(|key, value| {
+            if let Some((src, kind, tgt)) = super::parse_edge_key(key)
+                && matches!(
+                    kind,
+                    crate::edge::EdgeKind::ChildOf | crate::edge::EdgeKind::SpawnedBy
+                )
+                && (arrived.contains(&src) || arrived.contains(&tgt))
+                && matches!(
+                    value,
+                    loro::ValueOrContainer::Value(loro::LoroValue::Binary(_))
+                )
+            {
+                retry
+                    .updated
+                    .insert(std::borrow::Cow::Owned(key.to_string()), Some(value));
+            }
+        });
+        if !retry.updated.is_empty() {
+            super::edges::materialize_edges_from_delta(
+                doc,
+                &retry,
+                vault,
+                window_key,
+                lease_vault_id,
+            );
+        }
     }
 
     let committed = result.is_ok();
@@ -365,6 +408,16 @@ pub(super) fn materialize_entity_blob_in_txn(
         && quarantine::unproven_remat_marker_exists_in_txn(vault, wtxn, window_key, &id)?
     {
         return Ok(false);
+    }
+    if header.entity_type == crate::registry::ENTITY_TYPE_RECEIPT_RECORD {
+        return crate::sync::receipt_ingest::ingest_in_txn(
+            vault,
+            wtxn,
+            tombstones_map,
+            window_key,
+            &id,
+            blob,
+        );
     }
     let delete_protected = crate::registry::is_delete_protected_engine_record(header.entity_type);
 
