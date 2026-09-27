@@ -4992,7 +4992,7 @@ fn a_new_goal_floor_revokes_cached_acceptance_before_admission() -> Result<()> {
     let (_other_tmp, other_vault) = temp_vault();
     let (other, other_proposal) =
         losing_skill_with_proposal(&other_vault, "oneiron.skill.vector.rescore");
-    score_gate_skill_edit_in_cycle(
+    let other_accepted = score_gate_skill_edit_in_cycle(
         &other_vault,
         &other_proposal,
         &StubScorer::improving(),
@@ -5013,7 +5013,12 @@ fn a_new_goal_floor_revokes_cached_acceptance_before_admission() -> Result<()> {
         901,
     )?;
     assert_eq!(rescored.disposition, SkillEditDisposition::Rejected);
-    assert_ne!(rescored.id, accepted.id);
+    assert_ne!(rescored.id, other_accepted.id);
+    assert_ne!(rescored.goal_revision, other_accepted.goal_revision);
+    assert_eq!(
+        skill_edit_verdicts_for_proposal(&other_vault, &other_proposal)?.len(),
+        2
+    );
     Ok(())
 }
 
