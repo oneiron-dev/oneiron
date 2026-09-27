@@ -14,12 +14,15 @@ use crate::{
 use heed::RoTxn;
 
 /// Installed knowledge-pack receipt, keyed by pack name.
-const PACK_INSTALL: SideTable<String, PackInstallReceipt, LegacyJson> =
+pub(super) const PACK_INSTALL: SideTable<String, PackInstallReceipt, LegacyJson> =
     SideTable::new(&side_table::SKILL_HUB_PACK_INSTALL);
 /// Index from a claim predicate name to the pack name that owns it
 /// (exclusivity check).
 const PACK_PREDICATE: SideTable<String, String, Raw> =
     SideTable::new(&side_table::SKILL_HUB_PACK_PREDICATE);
+/// Candidate receipt keyed by the source content hash in lowercase hex.
+const PACK_CANDIDATE: SideTable<String, PackInstallReceipt, LegacyJson> =
+    SideTable::new(&side_table::SKILL_HUB_PACK_CANDIDATE);
 
 impl Vault {
     /// Evaluate the immutable source and permission card outside the writer lock.
@@ -114,12 +117,8 @@ impl Vault {
                 skills: skills.into_iter().map(|id| id.to_hex()).collect(),
                 installed_at: at,
             };
-            let bytes =
-                serde_json::to_vec(&receipt).map_err(|_| invalid("pack receipt encoding"))?;
             if status == PackInstallStatus::Candidate {
-                self.store
-                    .vault_meta
-                    .put(txn, &candidate_key(&source), &bytes)?;
+                PACK_CANDIDATE.put(&self.store, txn, &candidate_key(&source), &receipt)?;
                 return Ok(PackInstallDisposition::Candidate(Box::new(receipt)));
             }
             let identities = source.kind_identities()?;
@@ -152,7 +151,7 @@ impl Vault {
             for predicate in &source.manifest.predicates {
                 PACK_PREDICATE.put(&self.store, txn, predicate, &source.manifest.name)?;
             }
-            self.store.vault_meta.delete(txn, &candidate_key(&source))?;
+            PACK_CANDIDATE.delete(&self.store, txn, &candidate_key(&source))?;
             PACK_INSTALL.put(&self.store, txn, &source.manifest.name, &receipt)?;
             Ok(PackInstallDisposition::Installed(Box::new(receipt)))
         })
@@ -162,21 +161,20 @@ impl Vault {
     pub fn installed_packs(&self) -> Result<Vec<PackInstallReceipt>> {
         let txn = self.store.env.read_txn()?;
         let mut rows = Vec::new();
-        for (seen, entry) in self
-            .store
-            .vault_meta
-            .prefix_iter(&txn, b"pack.install.v1/")?
-            .enumerate()
-        {
+        for (seen, entry) in PACK_INSTALL.iter_from(&self.store, &txn, &[])?.enumerate() {
             if seen >= 4096 {
                 return Err(invalid("installed pack catalog exceeds bound"));
             }
-            let (key, _) = entry?;
-            let name = std::str::from_utf8(&key[b"pack.install.v1/".len()..])
-                .map_err(|_| invalid("pack install catalog name corrupt"))?;
+            let (name, _) = entry.map_err(|error| {
+                if error.kind() == crate::error::ErrorKind::SideTableRow {
+                    invalid("pack install catalog corrupt")
+                } else {
+                    error
+                }
+            })?;
             // The lens uses the same snapshot to distinguish a deleted source
             // (not live) from a malformed receipt or a drifting live source.
-            let Some(receipt) = self.mounted_pack_in_txn(&txn, name)? else {
+            let Some(receipt) = self.mounted_pack_in_txn(&txn, &name)? else {
                 continue;
             };
             let source_id = EntityId::from_hex(&receipt.source_id)?;
@@ -226,13 +224,15 @@ impl Vault {
     }
     pub fn candidate_pack(&self, source: &PackSource) -> Result<Option<PackInstallReceipt>> {
         let txn = self.store.env.read_txn()?;
-        self.store
-            .vault_meta
-            .get(&txn, &candidate_key(source))?
-            .map(|raw| {
-                serde_json::from_slice(&raw).map_err(|_| invalid("candidate receipt corrupt"))
+        PACK_CANDIDATE
+            .get(&self.store, &txn, &candidate_key(source))
+            .map_err(|error| {
+                if error.kind() == crate::error::ErrorKind::SideTableRow {
+                    invalid("candidate receipt corrupt")
+                } else {
+                    error
+                }
             })
-            .transpose()
     }
     pub fn installed_pack(&self, name: &str) -> Result<Option<PackInstallReceipt>> {
         let txn = self.store.env.read_txn()?;
@@ -345,9 +345,18 @@ impl Vault {
             _ => {}
         }
         let alias_key = super::transport::source_hub_alias_key(&source_id, hub)?;
-        let expected = serde_json::to_vec(&(publisher.identity(), publisher.grant_ref()))
+        let expected = (
+            publisher.identity().to_owned(),
+            publisher.grant_ref().to_owned(),
+        );
+        let expected_bytes = super::transport::SOURCE_HUB_ALIAS
+            .encode_value(&expected)
             .map_err(|_| invalid("pack publisher receipt encoding"))?;
-        if self.store.vault_meta.get(txn, &alias_key)?.as_deref() != Some(expected.as_slice()) {
+        if super::transport::SOURCE_HUB_ALIAS
+            .get_bytes(&self.store, txn, &alias_key)?
+            .as_deref()
+            != Some(expected_bytes.as_slice())
+        {
             return Err(invalid(
                 "pack source was not fetched from this publisher hub",
             ));
@@ -364,12 +373,8 @@ impl Vault {
         Ok((binding, surface))
     }
 }
-fn candidate_key(source: &PackSource) -> Vec<u8> {
-    [
-        b"pack.candidate.v1/".as_slice(),
-        source.content_hash().to_hex().as_bytes(),
-    ]
-    .concat()
+fn candidate_key(source: &PackSource) -> String {
+    source.content_hash().to_hex()
 }
 fn pack_permissions(
     source: &PackSource,

@@ -163,13 +163,10 @@ pub(crate) fn is_project_entity(
     txn: &heed::RoTxn<'_>,
     id: EntityId,
 ) -> Result<bool> {
-    let Some(root) = store.vault_meta().get(txn, &ROOT.key_bytes(&()))? else {
+    let Some(root) = ROOT.get(store, txn, &())? else {
         return Ok(false);
     };
-    let Some(root_raw) = store
-        .entities()
-        .get(txn, ROOT.decode_value(&root)?.as_bytes())?
-    else {
+    let Some(root_raw) = store.entities().get(txn, root.as_bytes())? else {
         return Err(Error::CorruptedIndex("project root missing"));
     };
     let root_header = EntityMetadataHeader::parse(&root_raw)

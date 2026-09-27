@@ -157,11 +157,17 @@ side_tables! {
     /// Per-envelope usage/rate-window accounting shared by every standing grant naming that envelope.
     /// Key: bytes (channel-identity envelope ref).
     OUTBOUND_GRANT_CHANNEL_IDENTITY_USAGE: VaultMeta b"outbound_grant:channel_identity_usage:v1:" Raw;
+    /// Candidate knowledge-pack receipt. Key: lowercase hex content hash.
+    SKILL_HUB_PACK_CANDIDATE: VaultMeta b"pack.candidate.v1/" LegacyJson;
     /// Installed knowledge-pack receipt, keyed by pack name. Key: string.
     SKILL_HUB_PACK_INSTALL: VaultMeta b"pack.install.v1/" LegacyJson;
     /// Index from a claim predicate name to the pack name that owns it (exclusivity check). Key:
     /// string.
     SKILL_HUB_PACK_PREDICATE: VaultMeta b"pack.predicate.v1/" Raw;
+    /// Alias minted for one skill from a pack. Key: id16 + blake3(JSON hub ref).
+    SKILL_HUB_PACK_SKILL_ALIAS: VaultMeta b"pack.skill-alias.v1/" Raw;
+    /// Configured publisher provenance for a staged pack. Key: id16 + blake3(JSON hub ref).
+    SKILL_HUB_PACK_SOURCE_ALIAS: VaultMeta b"pack.source-alias.v1/" LegacyJson;
     /// Local-only content-hash pin (32 bytes) to the currently installed pack-byte-map carrier ASSET;
     /// never synced or imported. Key: ().
     PACK_BYTE_MAP_LOCAL_HEAD: VaultMeta b"pack_byte_map:local_head:v1" Raw;
