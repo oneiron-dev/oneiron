@@ -79,27 +79,11 @@ pub(super) fn live_for_message(
         } // Replayed soft tombstone shell.
         let reaction = ReactionBody::from_bytes(&body)
             .map_err(|_| Error::CorruptedIndex("reaction stored body"))?;
-        if !matches!(
-            live_entity_row_in_txn(&vault.store, txn, &reaction.by)?,
-            LiveEntityRow::Live {
-                entity_type: ENTITY_TYPE_PERSON,
-                ..
-            }
-        ) || !AudienceCache::default().readable(vault, txn, message, &[reaction.by])?
-            || reaction.msg != message
+        if reaction.msg != message
+            || !super::state::resolve(&vault.store, txn, id, &reaction)?.active()
+            || !AudienceCache::default().readable(vault, txn, message, &[reaction.by])?
         {
-            continue; // Incomplete or invalid remote rows never poison the page.
-        }
-        let author = edge_ids(&vault.store, txn, &id, EdgeKind::AuthoredBy, false, 2)?;
-        let target = edge_ids(&vault.store, txn, &id, EdgeKind::About, false, 2)?;
-        if author.as_slice() != [reaction.by] || target.as_slice() != [message] {
-            continue;
-        }
-        let Some(room) = room_for_record_in(vault, txn, message)? else {
-            continue;
-        };
-        if !crate::conversation::member_at_in(vault, txn, room, reaction.by, reaction.at)? {
-            continue; // A hostile historical peer row cannot toggle a valid new put.
+            continue; // One resolver governs incomplete/invalid/hard-erased rows.
         }
         let raw = vault
             .store
@@ -180,45 +164,48 @@ impl Vault {
             if !crate::conversation::member_at_in(self, txn, room, body.by, body.at)? {
                 return Err(invalid("reactor is not a room member"));
             }
-            let external = body.ext.as_ref().map(external_key);
-            if let Some(key) = &external
-                && let Some(prior) = self.store.vault_meta.get(txn, key)?
-            {
-                let (id_bytes, rest) = prior
-                    .split_at_checked(16)
-                    .ok_or(invalid("external index"))?;
-                if rest.len() != 64
-                    || &rest[..16] != body.msg.as_bytes()
-                    || &rest[16..32] != body.by.as_bytes()
-                    || &rest[32..] != blake3::hash(body.glyph.as_bytes()).as_bytes()
-                {
-                    return Err(invalid("external id bound to another reaction"));
+            let generation = body
+                .ext
+                .clone()
+                .map(super::identity::ReactionGeneration::from);
+            if let Some(generation) = generation.as_ref() {
+                if super::identity::suppressed(&self.store, txn, generation)? {
+                    return Err(invalid("hard-erased provider generation"));
                 }
-                let id = EntityId::from_bytes(
-                    id_bytes.try_into().map_err(|_| invalid("external index"))?,
-                )?;
-                return Ok(Effect::Put(ReactionChange {
-                    id,
-                    state: ReactionState::Replayed,
-                }));
+                let bindings = super::identity::bindings_in(&self.store, txn, generation)?;
+                if !bindings.is_empty() {
+                    if bindings.iter().any(|(_, prior)| {
+                        prior.msg != body.msg || prior.by != body.by || prior.glyph != body.glyph
+                    }) {
+                        return Err(invalid("provider generation conflicts with another tuple"));
+                    }
+                    for (_, prior) in &bindings {
+                        if !super::identity::binding_ready(&self.store, txn, prior)? {
+                            return Err(RecordError::ReactionNeedsReconciliation(
+                                "provider generation binding has unresolved source",
+                            )
+                            .into());
+                        }
+                    }
+                    let id = bindings
+                        .iter()
+                        .map(|(_, prior)| prior.reaction)
+                        .min()
+                        .ok_or(invalid("generation has no original add"))?;
+                    return Ok(Effect::Put(ReactionChange {
+                        id,
+                        state: ReactionState::Replayed,
+                    }));
+                }
+                // An explicit provider add is a new causal generation, not an
+                // echo inferred by matching some first-party live tuple.
             }
             let mut matching: Vec<_> = live_for_message(self, txn, body.msg)?
                 .into_iter()
                 .filter(|(_, row, _)| row.by == body.by && row.glyph == body.glyph)
                 .collect();
             matching.sort_by_key(|(id, _, recorded_at)| (*recorded_at, *id));
-            if let Some((canonical, _, _)) = matching.first() {
-                if let Some(key) = &external {
-                    // Connector echo of a first-party put is an ack, not a
-                    // new toggle. The replicated identity repair is separate.
-                    self.store
-                        .vault_meta
-                        .put(txn, key, &external_binding(*canonical, &body))?;
-                    return Ok(Effect::Put(ReactionChange {
-                        id: *canonical,
-                        state: ReactionState::Replayed,
-                    }));
-                }
+            if generation.is_none() && !matching.is_empty() {
                 let mut commits = Vec::with_capacity(matching.len());
                 for (index, (id, _, _)) in matching.into_iter().enumerate() {
                     commits.push(
@@ -245,12 +232,22 @@ impl Vault {
                 .edge(&id, EdgeKind::AuthoredBy, &body.by, 1.0)
                 .apply(txn)?;
             super::admission::finish(&self.store, txn, &id)?;
-            super::outbound::enqueue(self, txn, id, &body, false)?;
-            if let Some(key) = &external {
-                self.store
-                    .vault_meta
-                    .put(txn, key, &external_binding(id, &body))?;
+            if let Some(generation) = generation {
+                super::identity::put_binding_in_txn(
+                    self,
+                    txn,
+                    super::identity::ReactionBindingBody {
+                        v: 1,
+                        generation,
+                        reaction: id,
+                        msg: body.msg,
+                        by: body.by,
+                        glyph: body.glyph.clone(),
+                        at: body.at,
+                    },
+                )?;
             }
+            super::outbound::enqueue(self, txn, id, &body, false)?;
             Ok(Effect::Put(ReactionChange {
                 id,
                 state: ReactionState::Put,

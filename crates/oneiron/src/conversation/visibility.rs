@@ -5,8 +5,7 @@ use crate::limits::MAX_ANCESTOR_DEPTH;
 use crate::{
     EdgeKind,
     registry::{
-        ENTITY_TYPE_CLAIM, ENTITY_TYPE_CONVERSATION, ENTITY_TYPE_MESSAGE, ENTITY_TYPE_PERSON,
-        ENTITY_TYPE_REACTION, ENTITY_TYPE_RELATIONSHIP, ENTITY_TYPE_TURN,
+        ENTITY_TYPE_CLAIM, ENTITY_TYPE_CONVERSATION, ENTITY_TYPE_REACTION, ENTITY_TYPE_RELATIONSHIP,
     },
 };
 use std::collections::{BTreeMap, BTreeSet};
@@ -81,45 +80,21 @@ impl AudienceCache {
         };
         let h =
             EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("audience header"))?;
+        if h.entity_type == crate::registry::ENTITY_TYPE_REACTION_BINDING {
+            return Ok(false); // Connector metadata is never a conversation record.
+        }
         if h.entity_type == ENTITY_TYPE_REACTION {
-            // A replayed soft tombstone can be a header-only shell before
-            // local deletion metadata is rebuilt; no reaction has an empty body.
             if raw.len() == ENTITY_METADATA_HEADER_LEN {
                 return Ok(false);
             }
-            let body = raw
-                .get(ENTITY_METADATA_HEADER_LEN..)
-                .ok_or(Error::CorruptedIndex("reaction audience body"))?;
-            let reaction = crate::reaction::ReactionBody::from_bytes(body)
-                .map_err(|_| Error::CorruptedIndex("reaction audience body"))?;
-            let about = edge_ids(&vault.store, txn, &id, EdgeKind::About, false, 2)?;
-            let by = edge_ids(&vault.store, txn, &id, EdgeKind::AuthoredBy, false, 2)?;
-            if about.as_slice() != [reaction.msg] || by.as_slice() != [reaction.by] {
+            let reaction =
+                crate::reaction::ReactionBody::from_bytes(&raw[ENTITY_METADATA_HEADER_LEN..])
+                    .map_err(|_| Error::CorruptedIndex("reaction audience body"))?;
+            let crate::reaction::ReactionResolution::Active { room } =
+                crate::reaction::resolve_state(&vault.store, txn, id, &reaction)?
+            else {
                 return Ok(false);
-            }
-            if !matches!(
-                crate::vault::live_entity_row_in_txn(&vault.store, txn, &reaction.msg)?,
-                crate::vault::LiveEntityRow::Live {
-                    entity_type: ENTITY_TYPE_MESSAGE | ENTITY_TYPE_TURN,
-                    ..
-                }
-            ) || !matches!(
-                crate::vault::live_entity_row_in_txn(&vault.store, txn, &reaction.by)?,
-                crate::vault::LiveEntityRow::Live {
-                    entity_type: ENTITY_TYPE_PERSON,
-                    ..
-                }
-            ) {
-                return Ok(false);
-            }
-            let room = match room_for_record_in(vault, txn, reaction.msg) {
-                Ok(Some(room)) => room,
-                Ok(None) | Err(Error::EntityNotFound) => return Ok(false),
-                Err(error) => return Err(error),
             };
-            if !membership::member_at_in(vault, txn, room, reaction.by, reaction.at)? {
-                return Ok(false);
-            }
             for person in audience {
                 if !membership::visible_at_in(vault, txn, room, *person, reaction.at)? {
                     return Ok(false);

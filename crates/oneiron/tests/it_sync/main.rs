@@ -12,6 +12,7 @@
 mod common;
 mod sync_harness;
 
+mod reaction_generation;
 mod rung0_cold_start_conformance;
 mod sync_bridge;
 mod sync_byzantine_lww;

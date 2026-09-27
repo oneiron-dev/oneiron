@@ -677,6 +677,7 @@ pub(in crate::batch) fn apply_put(
     }
 
     stage_entity_index_rows(store, wtxn, &id, entity_type, occurred, learned_at)?;
+    crate::reaction::purge_suppressed_aliases(store, wtxn, entity_type, data)?;
     crate::federation::record_scope::stamp_put(store, wtxn, id, entity_type, data, replicated)?;
     if entity_type == crate::registry::ENTITY_TYPE_FACET {
         super::super::facet_identity::reconcile_identity_facet(

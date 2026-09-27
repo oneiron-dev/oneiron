@@ -117,6 +117,10 @@ pub(crate) enum SurfaceEventActionPayload {
         #[serde(default)]
         external_reaction_id: Option<String>,
         #[serde(default)]
+        reaction_occurred_at: Option<u64>,
+        #[serde(default)]
+        reaction_origin_ref: Option<String>,
+        #[serde(default)]
         revoked: bool,
     },
 }
@@ -130,12 +134,16 @@ impl SurfaceEventActionPayload {
                 target_ref,
                 glyph,
                 external_reaction_id,
+                reaction_occurred_at,
+                reaction_origin_ref,
                 revoked,
             } => oneiron::SurfaceEventAction::Interaction {
                 interaction: interaction.to_engine(),
                 target_ref,
                 glyph,
                 external_reaction_id,
+                reaction_occurred_at,
+                reaction_origin_ref,
                 revoked,
             },
         }

@@ -289,6 +289,14 @@ fn byte_space_v3_matches_vendored_canon() {
         canon_bytes.insert(120, "REACTION").is_none(),
         "canon now owns REACTION; remove the ticket overlay"
     );
+    assert!(
+        canon_bytes.insert(121, "REACTION_BINDING").is_none(),
+        "canon now owns REACTION_BINDING; remove the ticket overlay"
+    );
+    let binding = entity_type_registry_entry(121).expect("REACTION_BINDING registration");
+    assert_eq!(binding.kind, "REACTION_BINDING");
+    assert_eq!(binding.classification, EntityClassification::Pack);
+    assert_eq!(binding.zone, TypeByteZone::CompiledProduct);
     let reaction = entity_type_registry_entry(120).expect("REACTION registration");
     assert_eq!(reaction.kind, "REACTION");
     assert_eq!(reaction.short_id_prefix, Some("rx"));

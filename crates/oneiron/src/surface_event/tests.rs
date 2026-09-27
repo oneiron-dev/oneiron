@@ -309,6 +309,8 @@ fn interaction_actions_decode_and_route_to_observed_source_enrichment() {
             target_ref: Some("msg-1".to_owned()),
             glyph: None,
             external_reaction_id: None,
+            reaction_occurred_at: None,
+            reaction_origin_ref: None,
             revoked: false,
         };
         let encoded = serde_json::to_value(&action).expect("action serializes");
@@ -381,6 +383,8 @@ fn builders_override_the_defaults_new_derives() {
             target_ref: None,
             glyph: None,
             external_reaction_id: None,
+            reaction_occurred_at: None,
+            reaction_origin_ref: None,
             revoked: false,
         })
         .with_correlation_id("provider-correlation-9");
@@ -878,6 +882,8 @@ fn surface_event_interaction_never_creates_turn() -> Result<()> {
                     target_ref: Some("msg-1".to_owned()),
                     glyph: None,
                     external_reaction_id: None,
+                    reaction_occurred_at: None,
+                    reaction_origin_ref: None,
                     revoked: false,
                 }),
                 1_800_004_000 + index as u64,

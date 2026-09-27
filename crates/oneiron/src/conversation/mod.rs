@@ -7,7 +7,7 @@ mod visibility;
 pub use body::{ConversationBody, ConversationKind};
 pub(crate) use body::{body_in, validate_put_in_txn};
 pub use membership::{HistoryChoice, MembershipAction, MembershipRow, MembershipWindow};
-pub(crate) use membership::{member_at_in, visible_at_in};
+pub(crate) use membership::{member_at_in, member_at_store, visible_at_in};
 pub use session::{SessionMode, SessionPresence};
 pub(crate) use visibility::AudienceCache;
 pub(crate) use visibility::room_for_record_in;

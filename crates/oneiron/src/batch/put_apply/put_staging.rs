@@ -57,6 +57,7 @@ pub(in crate::batch) fn stage_entity_body_row(
     store.entities().put(wtxn, id.as_bytes(), &payload)?;
     crate::reaction::index_triple(store, wtxn, *id, entity_type, data)?;
     crate::reaction::index_external(store, wtxn, *id, entity_type, data)?;
+    crate::reaction::index_binding(store, wtxn, *id, entity_type, data)?;
     crate::conversation_dag::pin_typed_record(store, wtxn, id, entity_type, data)?;
     crate::reaction::flush_pending_after_dependency(store, wtxn, *id, entity_type)?;
     Ok(())

@@ -97,47 +97,72 @@ pub(crate) async fn run_context_pack(
         .unwrap_or(View::Standard);
     let projection = context_pack_json_projection_config(view, req.budget.as_ref());
     let scoped_read = scoped_read_for_core_auth(&server.vault, auth)?;
-    let scoped_read = if let Some(room) = req.conversation_id.as_deref() {
+    let room_audience = if let Some(room) = req.conversation_id.as_deref() {
         let room = super::super::parse_entity_id_param(room, "conversation_id")?;
-        let members = server
-            .vault
-            .members(room)
-            .map_err(|e| core_engine_error("room audience failed", e))?;
-        scoped_read.for_audience(&members)
-    } else if let Some(set) = interlocutors.as_ref().filter(|set| set.has_non_owner()) {
-        // Contact records are not PERSON identities. Only a unique explicit
-        // person link may resolve one; unresolved participants fail closed.
-        let mut audience = Vec::new();
-        let mut unresolved = false;
-        if let Some(actor) = auth.principal_ref() {
-            audience.push(super::super::parse_entity_id_param(actor, "principal_ref")?);
-        }
-        for party in set.non_owner() {
-            let Some(contact) = party
-                .contact_ref()
-                .and_then(|id| oneiron::EntityId::from_hex(id).ok())
-            else {
-                unresolved = true;
-                break;
-            };
-            let people = server
+        Some(
+            server
                 .vault
-                .targets(
-                    &contact,
-                    oneiron::EdgeKind::About,
-                    Some(oneiron::registry::ENTITY_TYPE_PERSON),
-                )
-                .map_err(|e| core_engine_error("audience person resolution failed", e))?;
-            if people.len() != 1 {
-                unresolved = true;
-                break;
+                .members(room)
+                .map_err(|e| core_engine_error("room audience failed", e))?,
+        )
+    } else {
+        None
+    };
+    let interlocutor_audience =
+        if let Some(set) = interlocutors.as_ref().filter(|set| set.has_non_owner()) {
+            // Explicit interlocutors conjoin with room membership, never disappear
+            // when both controls are present. Unresolved contacts fail closed.
+            let mut audience = Vec::new();
+            let mut unresolved = false;
+            if let Some(actor) = auth.principal_ref() {
+                audience.push(super::super::parse_entity_id_param(actor, "principal_ref")?);
             }
-            audience.push(people[0]);
+            for party in set.non_owner() {
+                let Some(contact) = party
+                    .contact_ref()
+                    .and_then(|id| oneiron::EntityId::from_hex(id).ok())
+                else {
+                    unresolved = true;
+                    break;
+                };
+                let people = server
+                    .vault
+                    .targets(
+                        &contact,
+                        oneiron::EdgeKind::About,
+                        Some(oneiron::registry::ENTITY_TYPE_PERSON),
+                    )
+                    .map_err(|e| core_engine_error("audience person resolution failed", e))?;
+                if people.len() != 1 {
+                    unresolved = true;
+                    break;
+                }
+                audience.push(people[0]);
+            }
+            if unresolved {
+                audience.clear();
+            }
+            Some(audience)
+        } else {
+            None
+        };
+    let signal_audience = match (room_audience, interlocutor_audience) {
+        (Some(mut room), Some(people)) => {
+            if people.is_empty() {
+                Some(Vec::new())
+            } else {
+                room.extend(people);
+                room.sort_unstable();
+                room.dedup();
+                Some(room)
+            }
         }
-        if unresolved {
-            audience.clear();
-        }
-        scoped_read.for_audience(&audience)
+        (None, Some(people)) => Some(people),
+        (Some(room), None) => Some(room),
+        (None, None) => None,
+    };
+    let scoped_read = if let Some(audience) = signal_audience.as_ref() {
+        scoped_read.for_audience(audience)
     } else {
         scoped_read
     };
@@ -249,14 +274,13 @@ pub(crate) async fn run_context_pack(
             .map_err(|e| core_engine_error("reaction signal read failed", e))?;
         response.signals_next = page.next;
         for row in page.signals {
-            // An owner-only request has no actor-scoped retrieval floor; its
-            // author-window predicate is the audience door. Delegated and
-            // multi-party packs still pass their scoped retrieval policy.
+            // Policy, target audience and event-time audience are one scoped
+            // snapshot; owner-only author feeds keep their original bypass.
             if (!auth.is_owner_grade()
                 || req.interlocutors.is_some()
                 || req.conversation_id.is_some())
                 && !scoped_read
-                    .is_entity_readable(&row.message)
+                    .is_reaction_signal_readable(&row)
                     .map_err(|e| core_engine_error("reaction signal scope failed", e))?
             {
                 continue;

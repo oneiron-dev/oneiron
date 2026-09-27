@@ -141,7 +141,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/tests/context_pack_v4.rs` | test | L | — | — | Context-board memories/cursor/companion/assets, session scoping, evidence run-id omission |
 | `src/api/tests/contract_snapshots.rs` | test | L | — | — | v1 core OpenAPI/success/error contract fixture snapshots plus generated-OpenAPI spec assertions |
 | `src/api/tests/conversation_dag.rs` | test | m | — | — | Wire-level DAG, summary and reply-strip acceptance |
-| `src/api/tests/conversation_reactions.rs` | test | s | — | — | HTTP reaction toggle and grouped pills on the MESSAGE children of listed TURNs |
+| `src/api/tests/conversation_reactions.rs` | test | m | — | — | HTTP reaction toggle and grouped pills on the MESSAGE children of listed TURNs |
 | `src/api/tests/conversation_rooms.rs` | test | s | — | — | Room, membership, addressing, thread and listing routes through the HTTP router |
 | `src/api/tests/core_memory_conversations.rs` | test | L | — | — | Batch/query/hydrate smoke, memory timeline + verbs, conversations/turns, platform announcements |
 | `src/api/tests/depth_quality.rs` | test | m | 1 crate-vis | — | — |

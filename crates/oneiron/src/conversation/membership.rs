@@ -41,12 +41,12 @@ impl MembershipWindow {
 }
 
 pub(super) fn revision_in(
-    store: &crate::store::Store,
+    store: &impl crate::store::ManifestDbs,
     txn: &heed::RoTxn<'_>,
     conversation: EntityId,
 ) -> Result<u64> {
     let revision = store
-        .vault_meta
+        .vault_meta()
         .get(txn, &key(b"conversation_membership:seq:v1:", conversation))?
         .map(|bytes| {
             bytes
@@ -58,7 +58,7 @@ pub(super) fn revision_in(
         .transpose()?;
     if revision.unwrap_or(0) == 0
         && store
-            .vault_meta
+            .vault_meta()
             .prefix_iter(txn, &key(PREFIX, conversation))?
             .next()
             .transpose()?
@@ -70,13 +70,13 @@ pub(super) fn revision_in(
 }
 
 pub(super) fn rows_in(
-    store: &crate::store::Store,
+    store: &impl crate::store::ManifestDbs,
     txn: &heed::RoTxn<'_>,
     conversation: EntityId,
 ) -> Result<Vec<MembershipRow>> {
     let prefix = key(PREFIX, conversation);
     let mut rows = Vec::new();
-    for row in store.vault_meta.prefix_iter(txn, &prefix)? {
+    for row in store.vault_meta().prefix_iter(txn, &prefix)? {
         let (k, v) = row?;
         if k.len() != prefix.len() + 8 {
             return Err(Error::CorruptedIndex("membership key"));
@@ -116,6 +116,7 @@ pub(super) fn append_row(
         &key(b"conversation_membership:seq:v1:", conversation),
         &((rows.len() + 1) as u64).to_be_bytes(),
     )?;
+    crate::reaction::flush_pending_after_membership(&vault.store, txn, row.person)?;
     Ok(())
 }
 pub(super) fn members_at_rows(rows: &[MembershipRow], at: u64) -> BTreeSet<EntityId> {
@@ -176,6 +177,15 @@ pub(super) fn windows_rows(
     }
     Ok(windows)
 }
+pub(crate) fn member_at_store(
+    store: &impl crate::store::ManifestDbs,
+    txn: &heed::RoTxn<'_>,
+    room: EntityId,
+    person: EntityId,
+    at: u64,
+) -> Result<bool> {
+    Ok(members_at_rows(&rows_in(store, txn, room)?, at).contains(&person))
+}
 pub(crate) fn member_at_in(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -183,7 +193,7 @@ pub(crate) fn member_at_in(
     person: EntityId,
     at: u64,
 ) -> Result<bool> {
-    Ok(members_at_rows(&rows_in(&vault.store, txn, room)?, at).contains(&person))
+    member_at_store(&vault.store, txn, room, person, at)
 }
 pub(crate) fn visible_at_in(
     vault: &Vault,

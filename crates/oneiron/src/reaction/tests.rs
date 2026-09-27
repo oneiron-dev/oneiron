@@ -220,7 +220,8 @@ fn surface_reaction_is_source_idempotent_and_revoke_is_a_signal() {
             "source": {"app":"slack", "user_ref":"U1"},
             "action": {"kind":"interaction", "interaction":"reaction",
                 "target_ref":message.to_hex(), "glyph":"👍",
-                "external_reaction_id":"provider-r1", "revoked":revoked},
+                "external_reaction_id":"provider-r1", "revoked":revoked,
+                "reaction_occurred_at":if revoked {None} else {Some(20u64)}},
             "correlation_id": event_id, "received_at": 20,
             "foreign_inbound":true, "claims_not_instructions":true,
             "identity_retiring":false
@@ -445,19 +446,19 @@ fn provider_echo_aliases_first_party_reaction_instead_of_toggling_it() {
         })
         .unwrap();
     let echo = vault
-        .react(ReactionInput {
-            message,
-            by: alice,
-            glyph: "👍".into(),
-            occurred_at: 21,
-            external_id: Some(ReactionExternalId {
+        .acknowledge_reaction(ReactionAcknowledgment {
+            original: first.id,
+            generation: ReactionGeneration {
                 connector: "slack".into(),
                 id: "r-1".into(),
-            }),
+            },
             actor,
         })
         .unwrap();
-    assert_eq!(echo.id, first.id);
+    assert_ne!(
+        echo.id, first.id,
+        "the canonical binding has its own record ID"
+    );
     assert_eq!(echo.state, ReactionState::Replayed);
     assert_eq!(
         vault.reaction_pills(&[message], alice).unwrap()[&message][0].count,
@@ -590,7 +591,16 @@ fn replicated_external_body_rebuilds_local_idempotency_index() {
                     20,
                     &body.to_bytes()?,
                 )
+                .edge(&id, crate::EdgeKind::About, &message, 1.0)
+                .edge(&id, crate::EdgeKind::AuthoredBy, &alice, 1.0)
                 .apply(txn)
+        })
+        .unwrap();
+    vault
+        .acknowledge_reaction(ReactionAcknowledgment {
+            original: id,
+            generation: ext.clone().into(),
+            actor: crate::WriteActor::new(alice, crate::EdgeActorClass::Human),
         })
         .unwrap();
     vault
@@ -1699,3 +1709,9 @@ fn reactor_person_arriving_after_reaction_edges_flushes_pending_signal() {
             .any(|event| event.reaction == id)
     );
 }
+
+#[path = "tests/identity.rs"]
+mod identity_tests;
+
+#[path = "tests/signal.rs"]
+mod signal_tests;

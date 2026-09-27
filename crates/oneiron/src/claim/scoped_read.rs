@@ -491,6 +491,25 @@ impl<'a> ScopedRead<'a> {
         self.is_entity_readable_in(&rtxn, id)
     }
 
+    /// A reaction signal is readable only when the same snapshot admits the
+    /// target MESSAGE and every recipient's event-time room window. Soft
+    /// revocation events remain readable even though the reaction body is a
+    /// tombstone shell.
+    pub fn is_reaction_signal_readable(
+        &self,
+        signal: &crate::reaction::ReactionSignal,
+    ) -> Result<bool> {
+        let txn = self.vault.store.env.read_txn()?;
+        if !self.is_entity_readable_in(&txn, &signal.message)? {
+            return Ok(false);
+        }
+        let Some(audience) = self.audience.as_deref() else {
+            return Ok(true);
+        };
+        self.vault
+            .reaction_signal_visible_in(&txn, signal, audience)
+    }
+
     fn is_entity_readable_in(&self, rtxn: &heed::RoTxn<'_>, id: &EntityId) -> Result<bool> {
         let policy = self.policy_manifest_in(rtxn)?;
         self.is_entity_readable_with_policy_in(rtxn, &policy, id)

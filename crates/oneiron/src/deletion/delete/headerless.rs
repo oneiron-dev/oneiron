@@ -90,6 +90,9 @@ impl Vault {
         // published), guarded exactly like the receiver-side
         // `apply_replayed_tombstone` nothing-local branch.
         if !self.active_delete_scope_exists_in_txn(&wtxn, id)? {
+            if reason.active_store_hard_purge_v1() {
+                crate::reaction::purge_for_reaction(&self.store, &mut wtxn, *id)?;
+            }
             if reason.active_store_hard_purge_v1()
                 && self.store.sync_state.get(&wtxn, &marker_key)?.is_none()
             {

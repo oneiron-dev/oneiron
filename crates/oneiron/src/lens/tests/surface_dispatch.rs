@@ -67,6 +67,8 @@ fn native_interaction_requires_the_frame_target_and_produces_only_a_mediated_wri
             target_ref: Some(token.ref_id().as_str().into()),
             glyph: None,
             external_reaction_id: None,
+            reaction_occurred_at: None,
+            reaction_origin_ref: None,
             revoked: false,
         },
         correlation_id: "click-1".into(),
@@ -99,6 +101,8 @@ fn native_interaction_requires_the_frame_target_and_produces_only_a_mediated_wri
         target_ref: Some("ref-forged".into()),
         glyph: None,
         external_reaction_id: None,
+        reaction_occurred_at: None,
+        reaction_origin_ref: None,
         revoked: false,
     };
     assert!(dispatch(&forged, &event).is_err());

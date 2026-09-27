@@ -15,9 +15,21 @@ pub(crate) fn purge_derived_in_txn(
     };
     let header =
         EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("reaction purge header"))?;
+    if header.entity_type == crate::registry::ENTITY_TYPE_REACTION_BINDING {
+        let body = raw[crate::batch::ENTITY_METADATA_HEADER_LEN..].to_vec();
+        return super::identity::purge_binding(store, txn, &body);
+    }
     if header.entity_type != ENTITY_TYPE_REACTION {
         return Ok(());
     }
+    if raw.len() > crate::batch::ENTITY_METADATA_HEADER_LEN {
+        let body =
+            super::ReactionBody::from_bytes(&raw[crate::batch::ENTITY_METADATA_HEADER_LEN..])?;
+        if let Some(ext) = body.ext {
+            super::identity::suppress_generation(store, txn, &ext.into())?;
+        }
+    }
+    super::identity::purge_for_reaction(store, txn, reaction)?;
     crate::attempt_queue::purge_reaction_attempts_in_txn(store, txn, reaction)?;
 
     let mut keys = Vec::new();

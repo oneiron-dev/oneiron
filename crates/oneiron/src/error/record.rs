@@ -203,6 +203,9 @@ pub enum RecordError {
         resource: &'static str,
         limit: usize,
     },
+    /// A provider delivery lacks the causal fact needed to bind a generation.
+    #[error("reaction generation needs reconciliation: {0}")]
+    ReactionNeedsReconciliation(&'static str),
 }
 
 impl RecordError {
@@ -219,6 +222,7 @@ impl RecordError {
             Self::ProjectDependencyPending => ErrorKind::ProjectDependencyPending,
             Self::InvalidConversationBody(_) => ErrorKind::InvalidConversationBody,
             Self::InvalidReactionBody(_) => ErrorKind::InvalidReactionBody,
+            Self::ReactionNeedsReconciliation(_) => ErrorKind::ReactionNeedsReconciliation,
             Self::ConversationState(_) => ErrorKind::ConversationState,
             Self::ConversationDenied => ErrorKind::ConversationDenied,
             Self::MessageStreamRecoveryFailed(_) => ErrorKind::MessageStreamRecoveryFailed,

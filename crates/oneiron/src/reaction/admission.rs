@@ -31,6 +31,9 @@ pub(super) fn finish(store: &Store, txn: &mut RwTxn<'_>, id: &EntityId) -> Resul
     store.vault_meta.delete(txn, &key(id))?;
     Ok(())
 }
+pub(super) fn has_permit(store: &Store, txn: &RoTxn<'_>, id: &EntityId) -> Result<bool> {
+    Ok(store.vault_meta.get(txn, &key(id))?.as_deref() == Some(&[1][..]))
+}
 pub(crate) fn guard_put(
     store: &Store,
     txn: &RoTxn<'_>,
@@ -40,10 +43,16 @@ pub(crate) fn guard_put(
     data: &[u8],
     replicated: bool,
 ) -> Result<()> {
+    super::identity::guard_put(store, txn, id, kind, occurred, data, replicated)?;
     if kind != ENTITY_TYPE_REACTION {
         return Ok(());
     }
     let body = ReactionBody::from_bytes(data)?;
+    if let Some(ext) = body.ext.clone()
+        && super::identity::suppressed(store, txn, &ext.into())?
+    {
+        return Err(invalid("hard-erased provider generation"));
+    }
     if occurred.start != body.at || occurred.end != body.at {
         return Err(invalid("occurrence differs from body"));
     }
@@ -141,12 +150,16 @@ pub(crate) fn index_external(
     };
     let key = super::write::external_key(ext);
     let binding = super::write::external_binding(id, &body);
-    if store
-        .vault_meta()
-        .get(txn, &key)?
-        .is_some_and(|prior| prior != binding.as_slice())
-    {
-        return Err(invalid("external id bound to another reaction"));
+    if let Some(prior) = store.vault_meta().get(txn, &key)? {
+        if prior.len() != binding.len() || prior[16..] != binding[16..] {
+            return Err(invalid("external generation bound to another tuple"));
+        }
+        // Independently received copies of one provider generation are
+        // aliases. This disposable lookup picks a stable physical id, never
+        // decides which add is valid or blocks its replicated admission.
+        if prior[..16] <= binding[..16] {
+            return Ok(());
+        }
     }
     store.vault_meta().put(txn, &key, &binding)?;
     Ok(())

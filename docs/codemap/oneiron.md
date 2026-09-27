@@ -623,7 +623,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/claim/scope.rs` | src | s | 3 crate-vis | — | The engine-RECOGNIZED entries inside a claim's otherwise opaque `scope` map, and their fail-closed… |
 | `src/claim/scope_stamp.rs` | src | s | 7 fn · 1 const · 5 crate-vis | — | Required record-position Scope stamps and the versioned CLAIM wire upgrade |
 | `src/claim/scope_stamp/tests.rs` | test | m | — | — | Observable Scope identity, codec, selector and replay acceptance |
-| `src/claim/scoped_read.rs` | src | L | 1 struct · 14 fn · 2 re-export · 5 crate-vis | ScopedRead | The policy-gated read lane: [`ScopedReadActorKey`], [`ScopedRead`], and the admission/filtering surface that… |
+| `src/claim/scoped_read.rs` | src | L | 1 struct · 15 fn · 2 re-export · 5 crate-vis | ScopedRead | The policy-gated read lane: [`ScopedReadActorKey`], [`ScopedRead`], and the admission/filtering surface that… |
 | `src/claim/scoped_read/access_gate.rs` | src | s | 2 crate-vis | — | Relationship access checks share the row read transaction with grant resolution |
 | `src/claim/scoped_read/actor_key.rs` | src | s | 1 struct · 6 fn · 1 crate-vis | ScopedReadActorKey | Authenticated identity carried by a scoped read |
 | `src/claim/scoped_read/graph_reads.rs` | src | s | 2 fn | — | Receipted graph and timeline reads under the resolved actor floor |
@@ -943,12 +943,12 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/contract_oracle/tests.rs` | test | s | 1 fn | — | — |
 | `src/contract_oracle/types.rs` | src | s | 5 struct · 1 enum · 1 fn | CommandOutput, ContractBaseline, ContractDiff, ContractSnapshot, ContractSpec, ContractVerdict | Contract input, snapshot and persisted verdict types |
 | `src/conversation/body.rs` | src | s | 1 struct · 1 enum · 8 fn · 2 crate-vis | ConversationBody, ConversationKind | Forward-compatible room body codec and the all-writer membership guard |
-| `src/conversation/membership.rs` | src | m | 2 struct · 2 enum · 8 fn · 7 crate-vis | HistoryChoice, MembershipAction, MembershipRow, MembershipWindow | Append-only membership ledger |
+| `src/conversation/membership.rs` | src | m | 2 struct · 2 enum · 8 fn · 8 crate-vis | HistoryChoice, MembershipAction, MembershipRow, MembershipWindow | Append-only membership ledger |
 | `src/conversation/mod.rs` | src | s | 3 re-export · 4 crate-vis | — | Room bodies, membership windows, session presence and audience visibility |
 | `src/conversation/session.rs` | src | s | 1 struct · 1 enum · 3 fn | SessionMode, SessionPresence | Session mode persists; active participant presence belongs only to this process |
 | `src/conversation/tests.rs` | test | L | — | — | — |
 | `src/conversation/tests/audience_boundaries.rs` | test | m | — | — | — |
-| `src/conversation/visibility.rs` | src | m | 1 fn · 4 crate-vis | — | The audience predicate shared by all ScopedRead paths |
+| `src/conversation/visibility.rs` | src | s | 1 fn · 4 crate-vis | — | The audience predicate shared by all ScopedRead paths |
 | `src/conversation_dag/admission.rs` | src | s | 9 crate-vis | — | Close the legacy ChildOf-only append door after DAG adoption |
 | `src/conversation_dag/fixtures.rs` | src | s | 6 crate-vis | — | — |
 | `src/conversation_dag/graph.rs` | src | s | 16 crate-vis | — | Strict transactional graph reads and shared guards |
@@ -2071,15 +2071,19 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/psych_profile/tests.rs` | test | m | — | — | — |
 | `src/query_expansion.rs` | src | s | 6 struct · 1 enum · 1 trait · 1 fn · 3 const · 2 crate-vis | CompletionCandidate, CompletionRequest, EvidenceVerdict, GroundingContext, HydeExpander, HydeExpansion, HydeOptions, HydeRequest | Host-injected HyDE query-expansion seam |
 | `src/query_expansion/tests.rs` | test | s | — | — | — |
-| `src/reaction/admission.rs` | src | s | 9 crate-vis | — | Guard every raw and replicated REACTION put at the generic batch door |
+| `src/reaction/admission.rs` | src | s | 10 crate-vis | — | Guard every raw and replicated REACTION put at the generic batch door |
 | `src/reaction/body.rs` | src | s | 2 struct · 3 fn | ReactionBody, ReactionExternalId | Pinned `REACTION` MessagePack body, including mirrored provenance |
-| `src/reaction/mod.rs` | src | s | 5 re-export · 3 crate-vis | — | Immutable message reactions and their live, audience-bound projections |
+| `src/reaction/identity.rs` | src | m | 3 struct · 3 fn · 13 crate-vis | ReactionAcknowledgment, ReactionBindingBody, ReactionGeneration | Canonical, replicated connector-generation receipts for reaction adds |
+| `src/reaction/mod.rs` | src | s | 7 re-export · 5 crate-vis | — | Immutable message reactions and their live, audience-bound projections |
 | `src/reaction/outbound.rs` | src | s | 1 struct · 1 fn · 1 const · 2 crate-vis | ReactionOutboundAttempt | Connector-neutral reaction attempts; connector workers own provider sends |
 | `src/reaction/purge.rs` | src | s | 1 crate-vis | — | Hard-erase cleanup for every derived reaction carrier, including sidecars |
 | `src/reaction/read.rs` | src | s | 2 struct · 1 fn | ReactionPill, ReactionSignal | One-snapshot, batched reaction pills and agent-facing reaction signal rows |
-| `src/reaction/signal.rs` | src | m | 1 struct · 2 fn · 5 crate-vis | ReactionSignalPage | Derived per-author event index |
-| `src/reaction/surface.rs` | src | s | 1 fn | — | Mirrored reaction ingress through the normalized SurfaceEvent contract |
+| `src/reaction/signal.rs` | src | m | 1 struct · 2 fn · 7 crate-vis | ReactionSignalPage | Derived per-author event index |
+| `src/reaction/state.rs` | src | s | 5 crate-vis | — | One transaction-local lifecycle resolver for reaction admission projections |
+| `src/reaction/surface.rs` | src | s | 1 enum · 2 fn | ReactionIngress | Connector-neutral causal reaction ingress |
 | `src/reaction/tests.rs` | test | XL | — | — | — |
+| `src/reaction/tests/identity.rs` | test | m | — | — | Canonical generation receipts: provider causality is not a vault_meta alias |
+| `src/reaction/tests/signal.rs` | test | s | — | — | Replay dependency order and all-audience signal laws |
 | `src/reaction/write.rs` | src | s | 2 struct · 1 enum · 1 fn · 3 crate-vis | ReactionChange, ReactionInput, ReactionState | One live reaction per (message, person, glyph), with a soft-delete toggle |
 | `src/receipt/archive_source/access.rs` | src | s | 2 crate-vis | — | Archive receipt I/O through ordinary ASSET admission, not terminal ledgers |
 | `src/receipt/archive_source/codec.rs` | src | s | 16 crate-vis | — | Canonical claim-bound archived receipt data, never a native terminal stamp |
@@ -2128,7 +2132,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/registry/pack_byte_map/tests.rs` | test | m | — | — | PackByteMap contract tests: public results, persisted rows, and typed refusals |
 | `src/registry/pack_byte_map/types.rs` | src | s | 5 struct · 4 fn · 3 crate-vis | PackByteMapSnapshot, PackInstanceEnvelope, PackInstanceOrigin, PackKindIdentity, PackKindRegistration | Name-bearing portable kinds, local registrations, and instance envelopes |
 | `src/registry/registry_table.rs` | src | m | 1 struct · 4 fn · 1 const · 2 crate-vis | EntityTypeRegistryEntry | Registry rows: the `ENTITY_TYPE_REGISTRY` table and its lookups |
-| `src/registry/type_bytes.rs` | src | s | 47 const | — | Entity type bytes: every statically allocated `ENTITY_TYPE_*` constant |
+| `src/registry/type_bytes.rs` | src | s | 48 const | — | Entity type bytes: every statically allocated `ENTITY_TYPE_*` constant |
 | `src/registry/validation.rs` | src | s | 3 crate-vis | — | Static validation of entity type bytes, including public-write gates |
 | `src/registry/zones.rs` | src | s | 2 enum · 1 fn · 9 const | EntityClassification, TypeByteZone | Type-byte zones: classification, zone map, and the `zone_of` table |
 | `src/repo_mutation/conflict.rs` | src | m | 2 fn · 4 crate-vis | — | — |
@@ -2803,6 +2807,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `tests/it/skills_epic_oracle.rs` | test | XL | — | — | ARCH-0053 skills-epic forward oracle (authored by the ONE-1735 opener) |
 | `tests/it/snapshot_custody_binding.rs` | test | s | — | — | ONE-1534 (OPS-SERVE): the custody contract for the scoped Wasabi snapshot credential, pinned through the… |
 | `tests/it_sync/main.rs` | test | s | — | — | Consolidated integration-test binary for the `sync`-feature cluster |
+| `tests/it_sync/reaction_generation.rs` | test | s | — | — | Carrier-level generation receipt proof through real Observer B rematerialization |
 | `tests/it_sync/rung0_cold_start_conformance.rs` | test | m | — | — | ONE-1346 — rung-0 cold-start conformance contract |
 | `tests/it_sync/sync_bridge.rs` | test | L | — | — | Integration tests for the sync entity bridge |
 | `tests/it_sync/sync_byzantine_lww.rs` | test | m | — | — | ONE-1156 — Byzantine LWW misbehaving-peer family (WAVE-C design) |

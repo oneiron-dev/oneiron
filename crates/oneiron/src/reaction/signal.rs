@@ -124,19 +124,7 @@ fn ready(
     id: EntityId,
     body: &ReactionBody,
 ) -> Result<bool> {
-    Ok(has_type(store, txn, id, &[ENTITY_TYPE_REACTION])?
-        && has_type(
-            store,
-            txn,
-            body.msg,
-            &[
-                crate::registry::ENTITY_TYPE_MESSAGE,
-                crate::registry::ENTITY_TYPE_TURN,
-            ],
-        )?
-        && has_type(store, txn, body.by, &[crate::registry::ENTITY_TYPE_PERSON])?
-        && sole_edge(store, txn, id, EdgeKind::About)? == Some(body.msg)
-        && sole_edge(store, txn, id, EdgeKind::AuthoredBy)? == Some(body.by))
+    Ok(super::state::resolve(store, txn, id, body)?.ready())
 }
 fn key(author: EntityId, at: u64, reaction: EntityId, revoked: bool) -> Vec<u8> {
     let mut result = Vec::with_capacity(PREFIX.len() + 41);
@@ -155,6 +143,7 @@ fn append_for_author(
     store: &impl ManifestDbs,
     txn: &mut heed::RwTxn<'_>,
     author: EntityId,
+    _room: EntityId,
     id: EntityId,
     body: &ReactionBody,
     revoked: bool,
@@ -208,8 +197,9 @@ fn append_or_defer(
     }
     if ready(store, txn, id, body)?
         && let Some(author) = author_in(store, txn, body.msg)?
+        && let Some(room) = super::state::room_in(store, txn, body.msg)?
     {
-        append_for_author(store, txn, author, id, body, revoked, at)?;
+        append_for_author(store, txn, author, room, id, body, revoked, at)?;
     } else {
         let learned_at = if revoked {
             let raw = store
@@ -247,34 +237,85 @@ pub(crate) fn flush_pending_after_edge(
     txn: &mut heed::RwTxn<'_>,
     src: EntityId,
     kind: EdgeKind,
-    _target: EntityId,
+    target: EntityId,
 ) -> Result<()> {
-    if !matches!(kind, EdgeKind::About | EdgeKind::AuthoredBy) {
-        return Ok(());
-    }
-    let message = if let Some(raw) = store.entities().get(txn, src.as_bytes())? {
-        let header = crate::batch::EntityMetadataHeader::parse(&raw)
-            .ok_or(Error::CorruptedIndex("reaction edge source"))?;
-        if header.entity_type == ENTITY_TYPE_REACTION
-            && raw.len() > crate::batch::ENTITY_METADATA_HEADER_LEN
-        {
-            Some(
-                ReactionBody::from_bytes(&raw[crate::batch::ENTITY_METADATA_HEADER_LEN..])
-                    .map_err(|_| Error::CorruptedIndex("reaction edge body"))?
-                    .msg,
-            )
+    if matches!(kind, EdgeKind::About | EdgeKind::AuthoredBy) {
+        let message = if let Some(raw) = store.entities().get(txn, src.as_bytes())? {
+            let header = crate::batch::EntityMetadataHeader::parse(&raw)
+                .ok_or(Error::CorruptedIndex("reaction edge source"))?;
+            if header.entity_type == ENTITY_TYPE_REACTION {
+                if raw.len() > crate::batch::ENTITY_METADATA_HEADER_LEN {
+                    Some(
+                        ReactionBody::from_bytes(&raw[crate::batch::ENTITY_METADATA_HEADER_LEN..])
+                            .map_err(|_| Error::CorruptedIndex("reaction edge body"))?
+                            .msg,
+                    )
+                } else if kind == EdgeKind::About {
+                    Some(target)
+                } else {
+                    // A soft tombstone can strip the reaction body before its
+                    // AuthoredBy edge. The pending reactor index still binds
+                    // this reaction id to its message.
+                    store
+                        .vault_meta()
+                        .get(txn, &pending_by_key(target, src))?
+                        .map(|bytes| {
+                            EntityId::from_bytes(bytes.as_ref().try_into().map_err(|_| {
+                                Error::CorruptedIndex("reaction pending reactor target")
+                            })?)
+                        })
+                        .transpose()?
+                }
+            } else if kind == EdgeKind::AuthoredBy {
+                Some(src)
+            } else {
+                None
+            }
+        } else if kind == EdgeKind::About {
+            Some(target)
         } else if kind == EdgeKind::AuthoredBy {
             Some(src)
         } else {
             None
+        };
+        if let Some(message) = message {
+            flush_pending_for_message(store, txn, message)?;
         }
-    } else if kind == EdgeKind::AuthoredBy {
-        Some(src)
-    } else {
-        None
-    };
-    if let Some(message) = message {
-        flush_pending_for_message(store, txn, message)?;
+    }
+    // Ancestry may be the last missing input after message and author arrive.
+    // A TURN can also be the missing parent of a pending MESSAGE.
+    if matches!(
+        kind,
+        EdgeKind::ChildOf
+            | EdgeKind::PartOf
+            | EdgeKind::Parent
+            | EdgeKind::RepliesTo
+            | EdgeKind::SpawnedBy
+            | EdgeKind::BelongsTo
+    ) {
+        flush_pending_for_message(store, txn, src)?;
+        if has_type(store, txn, src, &[crate::registry::ENTITY_TYPE_TURN])? {
+            for descendant in [EdgeKind::PartOf, EdgeKind::ChildOf] {
+                let mut prefix = src.as_bytes().to_vec();
+                prefix.push(descendant as u8);
+                let mut children = Vec::new();
+                for (n, entry) in store.edges_in().prefix_iter(txn, &prefix)?.enumerate() {
+                    if n >= crate::limits::MAX_ANCESTOR_DEPTH {
+                        return Err(Error::IndexOverflow("reaction pending descendants"));
+                    }
+                    let (key, _) = entry?;
+                    if key.len() != 33 {
+                        return Err(Error::CorruptedIndex("reaction pending descendant"));
+                    }
+                    children.push(EntityId::from_bytes(key[17..33].try_into().map_err(
+                        |_| Error::CorruptedIndex("reaction pending descendant target"),
+                    )?)?);
+                }
+                for child in children {
+                    flush_pending_for_message(store, txn, child)?;
+                }
+            }
+        }
     }
     Ok(())
 }
@@ -285,6 +326,9 @@ fn flush_pending_for_message(
     message: EntityId,
 ) -> Result<()> {
     let Some(author) = author_in(store, txn, message)? else {
+        return Ok(());
+    };
+    let Some(room) = super::state::room_in(store, txn, message)? else {
         return Ok(());
     };
     let prefix = [PENDING, message.as_bytes()].concat();
@@ -313,9 +357,18 @@ fn flush_pending_for_message(
         if !ready(store, txn, id, &row.body)? {
             continue;
         }
-        append_for_author(store, txn, author, id, &row.body, false, row.learned_at)?;
+        append_for_author(
+            store,
+            txn,
+            author,
+            room,
+            id,
+            &row.body,
+            false,
+            row.learned_at,
+        )?;
         if let Some(at) = row.revoked_at {
-            append_for_author(store, txn, author, id, &row.body, true, at)?;
+            append_for_author(store, txn, author, room, id, &row.body, true, at)?;
         }
         store.vault_meta().delete(txn, &key)?;
         store
@@ -338,23 +391,34 @@ pub(crate) fn flush_pending_after_dependency(
     ) {
         flush_pending_for_message(store, txn, id)?;
     } else if kind == crate::registry::ENTITY_TYPE_PERSON {
-        let prefix = [PENDING_BY, id.as_bytes()].concat();
-        let mut messages = std::collections::BTreeSet::new();
-        for (n, entry) in store.vault_meta().prefix_iter(txn, &prefix)?.enumerate() {
-            if n >= 100_000 {
-                return Err(Error::IndexOverflow("reaction_pending_by"));
-            }
-            let (key, value) = entry?;
-            if key.len() != prefix.len() + 16 || value.len() != 16 {
-                return Err(Error::CorruptedIndex("reaction pending reactor index"));
-            }
-            messages.insert(EntityId::from_bytes(value.as_ref().try_into().map_err(
-                |_| Error::CorruptedIndex("reaction pending reactor target"),
-            )?)?);
+        flush_pending_after_membership(store, txn, id)?;
+    }
+    Ok(())
+}
+
+/// A historical membership join can complete a peer reaction after its
+/// PERSON and both binding edges already arrived in the opposite order.
+pub(crate) fn flush_pending_after_membership(
+    store: &impl ManifestDbs,
+    txn: &mut heed::RwTxn<'_>,
+    id: EntityId,
+) -> Result<()> {
+    let prefix = [PENDING_BY, id.as_bytes()].concat();
+    let mut messages = std::collections::BTreeSet::new();
+    for (n, entry) in store.vault_meta().prefix_iter(txn, &prefix)?.enumerate() {
+        if n >= 100_000 {
+            return Err(Error::IndexOverflow("reaction_pending_by"));
         }
-        for message in messages {
-            flush_pending_for_message(store, txn, message)?;
+        let (key, value) = entry?;
+        if key.len() != prefix.len() + 16 || value.len() != 16 {
+            return Err(Error::CorruptedIndex("reaction pending reactor index"));
         }
+        messages.insert(EntityId::from_bytes(value.as_ref().try_into().map_err(
+            |_| Error::CorruptedIndex("reaction pending reactor target"),
+        )?)?);
+    }
+    for message in messages {
+        flush_pending_for_message(store, txn, message)?;
     }
     Ok(())
 }
@@ -430,6 +494,37 @@ pub(crate) fn record_replayed_revoke(
 }
 
 impl Vault {
+    /// Require each participant of a multi-party pack to see the signal at
+    /// its event time, not merely the older message at its occurrence time.
+    /// Same-snapshot event-time audience check used by ScopedRead after it
+    /// verifies the message's policy and original occurrence-time audience.
+    pub(crate) fn reaction_signal_visible_in(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        signal: &ReactionSignal,
+        audience: &[EntityId],
+    ) -> Result<bool> {
+        if audience.is_empty() {
+            return Ok(false);
+        }
+        let room = match room_for_record_in(self, txn, signal.message) {
+            Ok(Some(room)) => room,
+            Ok(None) | Err(Error::EntityNotFound) => return Ok(false),
+            Err(error) => return Err(error),
+        };
+        let event_at = if signal.revoked {
+            signal.recorded_at
+        } else {
+            signal.occurred_at
+        };
+        for &person in audience {
+            if !visible_at_in(self, txn, room, person, event_at)? {
+                return Ok(false);
+            }
+        }
+        Ok(true)
+    }
+
     /// Signals since a recorded-time cursor, including revocations. A signal
     /// cannot broaden its target MESSAGE's audience.
     pub fn reactions_since(&self, person: EntityId, since: u64) -> Result<ReactionSignalPage> {
@@ -524,8 +619,9 @@ impl Vault {
                 continue;
             }
             if audience.readable(self, &txn, row.message, &[person])? {
-                let room =
-                    room_for_record_in(self, &txn, row.message)?.ok_or(Error::EntityNotFound)?;
+                let Some(room) = room_for_record_in(self, &txn, row.message)? else {
+                    continue;
+                };
                 let event_at = if row.revoked {
                     row.recorded_at
                 } else {

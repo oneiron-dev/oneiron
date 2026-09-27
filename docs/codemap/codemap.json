@@ -7534,7 +7534,7 @@
      "purpose": "The policy-gated read lane: [`ScopedReadActorKey`], [`ScopedRead`], and the admission/filtering surface that…",
      "surface": {
       "crate-vis": 5,
-      "fn": 14,
+      "fn": 15,
       "re-export": 2,
       "struct": 1
      }
@@ -11779,7 +11779,7 @@
      "path": "src/conversation/membership.rs",
      "purpose": "Append-only membership ledger",
      "surface": {
-      "crate-vis": 7,
+      "crate-vis": 8,
       "enum": 2,
       "fn": 8,
       "struct": 2
@@ -11828,7 +11828,7 @@
      "surface": {}
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "src",
      "notable": [],
      "path": "src/conversation/visibility.rs",
@@ -25553,7 +25553,7 @@
      "path": "src/reaction/admission.rs",
      "purpose": "Guard every raw and replicated REACTION put at the generic batch door",
      "surface": {
-      "crate-vis": 9
+      "crate-vis": 10
      }
     },
     {
@@ -25571,14 +25571,30 @@
      }
     },
     {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "ReactionAcknowledgment",
+      "ReactionBindingBody",
+      "ReactionGeneration"
+     ],
+     "path": "src/reaction/identity.rs",
+     "purpose": "Canonical, replicated connector-generation receipts for reaction adds",
+     "surface": {
+      "crate-vis": 13,
+      "fn": 3,
+      "struct": 3
+     }
+    },
+    {
      "bucket": "s",
      "kind": "src",
      "notable": [],
      "path": "src/reaction/mod.rs",
      "purpose": "Immutable message reactions and their live, audience-bound projections",
      "surface": {
-      "crate-vis": 3,
-      "re-export": 5
+      "crate-vis": 5,
+      "re-export": 7
      }
     },
     {
@@ -25629,7 +25645,7 @@
      "path": "src/reaction/signal.rs",
      "purpose": "Derived per-author event index",
      "surface": {
-      "crate-vis": 5,
+      "crate-vis": 7,
       "fn": 2,
       "struct": 1
      }
@@ -25638,10 +25654,23 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
-     "path": "src/reaction/surface.rs",
-     "purpose": "Mirrored reaction ingress through the normalized SurfaceEvent contract",
+     "path": "src/reaction/state.rs",
+     "purpose": "One transaction-local lifecycle resolver for reaction admission projections",
      "surface": {
-      "fn": 1
+      "crate-vis": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "ReactionIngress"
+     ],
+     "path": "src/reaction/surface.rs",
+     "purpose": "Connector-neutral causal reaction ingress",
+     "surface": {
+      "enum": 1,
+      "fn": 2
      }
     },
     {
@@ -25650,6 +25679,22 @@
      "notable": [],
      "path": "src/reaction/tests.rs",
      "purpose": "—",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "src/reaction/tests/identity.rs",
+     "purpose": "Canonical generation receipts: provider causality is not a vault_meta alias",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/reaction/tests/signal.rs",
+     "purpose": "Replay dependency order and all-audience signal laws",
      "surface": {}
     },
     {
@@ -26262,7 +26307,7 @@
      "path": "src/registry/type_bytes.rs",
      "purpose": "Entity type bytes: every statically allocated `ENTITY_TYPE_*` constant",
      "surface": {
-      "const": 47
+      "const": 48
      }
     },
     {
@@ -34043,6 +34088,14 @@
      "surface": {}
     },
     {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/it_sync/reaction_generation.rs",
+     "purpose": "Carrier-level generation receipt proof through real Observer B rematerialization",
+     "surface": {}
+    },
+    {
      "bucket": "m",
      "kind": "test",
      "notable": [],
@@ -35248,7 +35301,7 @@
      "purpose": "Host-injected HyDE query-expansion seam"
     },
     "reaction": {
-     "files": 10,
+     "files": 14,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -35628,8 +35681,8 @@
    },
    "over_bar": 10,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2105,
-   "test_files": 719
+   "source_files": 2107,
+   "test_files": 722
   },
   "oneiron-android": {
    "files": [
@@ -40418,7 +40471,7 @@
      "surface": {}
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "test",
      "notable": [],
      "path": "src/api/tests/conversation_reactions.rs",

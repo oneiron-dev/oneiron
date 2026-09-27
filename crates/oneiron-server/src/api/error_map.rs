@@ -10,6 +10,9 @@ pub(super) fn core_engine_error(message: &'static str, error: oneiron::Error) ->
     match error.kind() {
         ErrorKind::ConversationDenied => ApiError::forbidden_scope("conversation_actor"),
         ErrorKind::ConversationState => ApiError::invalid_state(Some("conversation_state")),
+        ErrorKind::ReactionNeedsReconciliation => {
+            ApiError::invalid_state(Some("reaction_generation"))
+        }
         ErrorKind::InvalidConversationBody
         | ErrorKind::InvalidReactionBody
         | ErrorKind::DimensionMismatch

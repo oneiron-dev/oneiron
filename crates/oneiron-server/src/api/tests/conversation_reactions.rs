@@ -194,3 +194,183 @@ async fn first_party_append_record_is_reactable_without_witness_child() {
     assert_eq!(signals.len(), 1);
     assert_eq!(signals[0].message.to_hex(), id);
 }
+
+#[tokio::test]
+async fn context_pack_signals_use_every_interlocutors_event_time_window() {
+    let (_dir, server) = interlocutor_test_server();
+    let alice = EntityId::now();
+    let bob = EntityId::now();
+    for person in [alice, bob] {
+        server
+            .vault
+            .put_entity(
+                &person,
+                oneiron::registry::ENTITY_TYPE_PERSON,
+                TimeRange { start: 1, end: 1 },
+                1,
+                b"person",
+            )
+            .unwrap();
+    }
+    let actor = WriteActor::new(alice, EdgeActorClass::Human);
+    let room = EntityId::now();
+    server
+        .vault
+        .create_conversation(room, &ConversationBody::default(), actor, 1)
+        .unwrap();
+    server
+        .vault
+        .join_member(room, alice, actor, 2, HistoryChoice::None)
+        .unwrap();
+    server
+        .vault
+        .join_member(room, bob, actor, 3, HistoryChoice::None)
+        .unwrap();
+    let message = EntityId::now();
+    server
+        .vault
+        .memory(alice, EdgeActorClass::Human)
+        .witness(&WitnessTurn {
+            conversation_ref: room.to_hex(),
+            turn_ref: None,
+            occurred_at: 10,
+            messages: vec![WitnessMessage {
+                id: Some(message.to_hex()),
+                author: WitnessAuthor::User,
+                message_type: "dialogue".into(),
+                content: "hello".into(),
+                metadata: None,
+                is_visible: true,
+                order: 0,
+            }],
+        })
+        .unwrap();
+    let policy = json!({
+        "schema_version":"1.2", "pack_id":"reaction-reader", "pack_version":"v1",
+        "min_engine_version":"0.0.0", "defaults":{}, "rules":[],
+        "actor_ceilings":[],
+        "scoped_grants":[{"actor_ref":"host", "effector":"core:read",
+            "scope":oneiron::federation::Scope::top(), "receipt_required":false}]
+    });
+    oneiron::conversation_dag::test_support::put_test_policy_manifest(
+        &server.vault,
+        actor,
+        EntityId::now(),
+        &policy,
+    )
+    .unwrap();
+    let contact = EntityId::now();
+    seed_counterparty_contact(&server, contact, EntityId::now(), "bob@example.com");
+    seed_disclosure_scope(&server, contact, oneiron::federation::Scope::top());
+    server
+        .vault
+        .put_edge(&contact, oneiron::EdgeKind::About, &bob, 1.0)
+        .unwrap();
+    let query = json!({"query":"hello","limit":10,"signals_since":0,
+        "signals_person":alice.to_hex(),
+        "interlocutors":{"third_parties":[{"contact_ref":contact.to_hex()}]}});
+    let react = |at: u64| {
+        server.vault.react(oneiron::reaction::ReactionInput {
+            message,
+            by: alice,
+            glyph: "👀".into(),
+            occurred_at: at,
+            external_id: None,
+            actor,
+        })
+    };
+    assert_eq!(
+        react(12).unwrap().state,
+        oneiron::reaction::ReactionState::Put
+    );
+    assert_eq!(
+        server.vault.reactions_since(alice, 0).unwrap().len(),
+        1,
+        "author inbox should hold the put before context projection"
+    );
+    let scoped = server
+        .vault
+        .scoped_read(oneiron::claim::ScopedReadActorKey::new("host").unwrap())
+        .for_audience(&[alice, bob]);
+    assert!(
+        scoped.is_entity_readable(&message).unwrap(),
+        "old message should be authorized to both participants at t10"
+    );
+    let (status, pack) = route_json(
+        server.clone(),
+        core_request_with_authz(
+            "POST",
+            "/v1/core/context-pack",
+            owner_bearer(),
+            Some(&query),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{pack}");
+    assert_eq!(
+        pack["signals"]
+            .as_array()
+            .unwrap_or_else(|| panic!("missing initial signals: {pack}"))
+            .len(),
+        1
+    );
+    server
+        .vault
+        .leave_member(room, bob, WriteActor::new(bob, EdgeActorClass::Human), 15)
+        .unwrap();
+    assert_eq!(
+        react(20).unwrap().state,
+        oneiron::reaction::ReactionState::Revoked
+    );
+    assert_eq!(
+        react(22).unwrap().state,
+        oneiron::reaction::ReactionState::Put
+    );
+    let (status, pack) = route_json(
+        server.clone(),
+        core_request_with_authz(
+            "POST",
+            "/v1/core/context-pack",
+            owner_bearer(),
+            Some(&query),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{pack}");
+    assert_eq!(
+        pack["signals"].as_array().unwrap().len(),
+        1,
+        "message t10 stays readable but revoke t20 and put t22 do not disclose to Bob"
+    );
+    let mut room_query = query.clone();
+    room_query["conversation_id"] = json!(room.to_hex());
+    let (status, room_pack) = route_json(
+        server.clone(),
+        core_request_with_authz(
+            "POST",
+            "/v1/core/context-pack",
+            owner_bearer(),
+            Some(&room_query),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{room_pack}");
+    assert_eq!(
+        room_pack["signals"].as_array().map(Vec::len).unwrap_or(0),
+        1,
+        "explicit Bob cannot be dropped when a room filter is also supplied"
+    );
+    let (status, owner) = route_json(
+        server,
+        core_request_with_authz(
+            "POST",
+            "/v1/core/context-pack",
+            owner_bearer(),
+            Some(&json!({"query":"hello","limit":10,
+                "signals_since":0,"signals_person":alice.to_hex()})),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{owner}");
+    assert_eq!(owner["signals"].as_array().unwrap().len(), 3);
+}

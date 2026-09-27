@@ -1,6 +1,6 @@
 //! One-snapshot, batched reaction pills and agent-facing reaction signal rows.
 use super::write::live_for_message;
-use crate::conversation::{AudienceCache, member_at_in, room_for_record_in, visible_at_in};
+use crate::conversation::{AudienceCache, room_for_record_in, visible_at_in};
 use crate::error::{Error, Result};
 use crate::{EntityId, Vault};
 use serde::{Deserialize, Serialize};
@@ -48,9 +48,6 @@ impl Vault {
             let mut groups: Vec<ReactionPill> = Vec::new();
             let mut seen = BTreeSet::new();
             for (_, row, _) in entries {
-                if !member_at_in(self, &txn, room, row.by, row.at)? {
-                    continue; // An invalid peer row cannot take down the page.
-                }
                 if !visible_at_in(self, &txn, room, viewer, row.at)? {
                     continue;
                 }

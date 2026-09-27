@@ -125,6 +125,12 @@ pub enum SurfaceEventAction {
         /// Stable provider reaction identity, distinct from the delivery event id.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         external_reaction_id: Option<String>,
+        /// Provider occurrence time for a new add; never delivery time.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        reaction_occurred_at: Option<u64>,
+        /// Original outbound REACTION id for a provider echo/acknowledgment.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        reaction_origin_ref: Option<String>,
         /// A removed reaction carries the same stable external reaction id.
         #[serde(default, skip_serializing_if = "is_false")]
         revoked: bool,
