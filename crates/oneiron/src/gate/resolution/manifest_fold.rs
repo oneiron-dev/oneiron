@@ -193,6 +193,10 @@ pub(crate) fn resolve_policy_manifest(
         }
     }
 
+    // `None` only when no trusted manifest names a class row, so the frontier
+    // of such manifests keeps its established bytes.
+    let class_policy_named =
+        vault_class_carry.is_some() || vault_precedence.is_some() || !holder_class_carry.is_empty();
     resolution.connector_class_precedence = vault_precedence.unwrap_or_default();
     let mut carry = vault_class_carry.unwrap_or_default();
     match resolution.connector_class_precedence {
@@ -210,7 +214,7 @@ pub(crate) fn resolve_policy_manifest(
             }
         }
     }
-    resolution.connector_class_carry = Some(carry);
+    resolution.connector_class_carry = class_policy_named.then_some(carry);
 
     for contribution in untrusted_source_rows {
         resolution.source_trust.restrict_only(contribution);
