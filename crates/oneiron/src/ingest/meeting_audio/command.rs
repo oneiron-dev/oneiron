@@ -324,6 +324,18 @@ impl MeetingAudioHost for CommandMeetingAudioHost {
                     end_ms: number(word, "end_ms")?,
                     text: text(word, "text")?,
                     confidence,
+                    acoustic_candidates: match word.get("acoustic_candidates") {
+                        None => Vec::new(),
+                        Some(Value::Array(values)) => values
+                            .iter()
+                            .map(|v| {
+                                v.as_str()
+                                    .map(str::to_owned)
+                                    .ok_or(AudioError::InvalidWords)
+                            })
+                            .collect::<AudioResult<_>>()?,
+                        _ => return Err(AudioError::InvalidWords),
+                    },
                 })
             })
             .collect::<AudioResult<_>>()?;
@@ -334,11 +346,7 @@ impl MeetingAudioHost for CommandMeetingAudioHost {
         })
     }
 
-    fn community1_exclusive_full_file(
-        &mut self,
-        audio: &Pcm16,
-        digest: &str,
-    ) -> AudioResult<GlobalDiarization> {
+    fn diarize_full_file(&mut self, audio: &Pcm16, digest: &str) -> AudioResult<GlobalDiarization> {
         let reply = self.pcm_call("community1_exclusive_full_file", audio, digest, json!({}))?;
         let exclusive_tracks = array(&reply.result, "exclusive_tracks")?
             .iter()

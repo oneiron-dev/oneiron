@@ -1,7 +1,8 @@
 use super::super::alignment::make_turns;
-use super::super::cleanup::apply_cleanup;
+use super::super::cleanup::{AcousticCandidate, apply_cleanup};
 use super::super::packing::{packed_audio, source_times};
 use super::super::*;
+use super::support::options;
 
 fn span(start_ms: u64, end_ms: u64) -> SpeechSpan {
     SpeechSpan { start_ms, end_ms }
@@ -238,13 +239,65 @@ fn cleanup_rejects_invention_deletion_reorder_symbol_changes_and_word_joining() 
     let mut turns = make_turns(&words);
     let before = turns.clone();
     assert_eq!(
-        apply_cleanup(&mut turns, vec!["Hello!".into(), "yes".into()]),
+        apply_cleanup(
+            &mut turns,
+            vec!["Hello!".into(), "yes".into()],
+            &words,
+            &Default::default(),
+            None,
+            None,
+        ),
         Err(AudioError::CleanupInventedContent)
     );
     assert_eq!(turns, before);
     assert_eq!(
-        apply_cleanup(&mut turns, vec!["hello not".into()]),
+        apply_cleanup(
+            &mut turns,
+            vec!["hello not".into()],
+            &words,
+            &Default::default(),
+            None,
+            None,
+        ),
         Err(AudioError::CleanupChangedTurns)
     );
+    assert_eq!(turns, before);
+}
+
+#[test]
+fn acoustic_candidates_never_allow_negation_loss_or_extra_words() {
+    let mut raw = [word(0, 20, "not")];
+    raw[0].speaker_cluster = "a".into();
+    let mut turns = make_turns(&raw);
+    let before = turns.clone();
+    let candidates = std::collections::HashMap::from([(
+        raw[0].word_id.clone(),
+        AcousticCandidate {
+            words: vec!["now".into()],
+            pack_sha256: "fixture-pack-hash".into(),
+        },
+    )]);
+    assert!(matches!(
+        apply_cleanup(
+            &mut turns,
+            vec!["now".into()],
+            &raw,
+            &candidates,
+            Some("English"),
+            options().cleanup_policy.as_ref()
+        ),
+        Err(AudioError::CleanupInventedContent)
+    ));
+    assert!(matches!(
+        apply_cleanup(
+            &mut turns,
+            vec!["not now".into()],
+            &raw,
+            &candidates,
+            Some("English"),
+            options().cleanup_policy.as_ref()
+        ),
+        Err(AudioError::CleanupInventedContent)
+    ));
     assert_eq!(turns, before);
 }

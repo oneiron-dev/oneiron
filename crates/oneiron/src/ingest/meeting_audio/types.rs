@@ -1,6 +1,8 @@
 //! Typed host ports for file decoding, inference, routing and explicit import consent.
 
-use serde::Serialize;
+use std::collections::BTreeMap;
+
+use serde::{Deserialize, Serialize};
 
 use super::{AudioError, AudioResult};
 
@@ -110,11 +112,41 @@ impl BatchDefault {
     }
 }
 
+/// Host-supplied cleanup policy; no lexical correction is admitted without a
+/// language rule, an explicitly allowed source/target pair and an acoustic
+/// candidate from the same ASR pack. Unknown languages fail closed.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CleanupPolicy {
+    pub max_candidates_per_word: usize,
+    pub max_candidate_bytes: usize,
+    pub language_rules: BTreeMap<String, LanguageCorrectionRules>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct LanguageCorrectionRules {
+    pub protected_tokens: Vec<String>,
+    pub protected_suffixes: Vec<String>,
+    pub allowed_pairs: Vec<AllowedWordCorrection>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AllowedWordCorrection {
+    pub from: String,
+    pub to: String,
+}
+
 #[derive(Debug, Clone)]
 pub struct ProducerOptions {
     /// Immutable domain data only. There is no previous-transcript input.
     pub glossary: Vec<String>,
     pub batch_default: BatchDefault,
+    /// Expected OF-133 full-file diarizer; a different receipt must refuse.
+    pub diarization_model_id: String,
+    /// None means cosmetic-only; populated policy is resolved by the host.
+    pub cleanup_policy: Option<CleanupPolicy>,
     pub local_only: bool,
 }
 
@@ -150,6 +182,9 @@ pub struct AsrWord {
     pub end_ms: u64,
     pub text: String,
     pub confidence: Option<f64>,
+    /// Acoustic alternatives from this pack's inference, never a cleanup
+    /// model's assertion or a term copied from the glossary.
+    pub acoustic_candidates: Vec<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -159,7 +194,7 @@ pub struct AsrOutput {
     pub provenance: InferenceProvenance,
 }
 
-/// The host must return community-1's exclusive track, not its overlapping
+/// The host must return a full-file exclusive track, not an overlapping
 /// diarization track. Speaker labels must keep their full-file identity.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct SpeakerTrack {
@@ -208,8 +243,8 @@ pub struct CleanupOutput {
 }
 
 /// Host supplies runtime code, models, and prompts; the engine supplies no
-/// model dependencies or product prompt content. Method names pin the model
-/// families at the inference boundary. The host still records exact versions.
+/// model dependencies or product prompt content. A specialized host can
+/// refuse unsupported models; the generic producer checks the selected model.
 pub trait MeetingAudioHost {
     /// Optional fail-fast host readiness check. It grants neither inference
     /// consent nor model-selection authority; every port still validates output.
@@ -220,15 +255,11 @@ pub trait MeetingAudioHost {
     fn silero_vad(&mut self, audio: &Pcm16, sha256: &str) -> AudioResult<VadOutput>;
     fn route_batch_asr(&mut self, request: BatchAsrRequest<'_>) -> AudioResult<AsrRoute>;
     fn transcribe_pack(&mut self, request: AsrPackRequest<'_>) -> AudioResult<AsrOutput>;
-    /// Called exactly once per successful producer run, with the entire decoded
-    /// file (including silence). Return model_id `pyannote/speaker-diarization-community-1`.
-    fn community1_exclusive_full_file(
-        &mut self,
-        audio: &Pcm16,
-        sha256: &str,
-    ) -> AudioResult<GlobalDiarization>;
+    /// Called exactly once per successful producer run with the complete file.
+    /// Return an exclusive track from the selected diarization model.
+    fn diarize_full_file(&mut self, audio: &Pcm16, sha256: &str) -> AudioResult<GlobalDiarization>;
     /// One corrected string per turn, in the supplied order. The engine owns
-    /// labels and source IDs, and rejects added/deleted lexical content.
+    /// labels and source IDs and only allows an ASR-backed 1:1 word correction.
     fn cleanup_turns(&mut self, request: CleanupRequest<'_>) -> AudioResult<CleanupOutput>;
 }
 

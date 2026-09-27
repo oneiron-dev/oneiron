@@ -43,6 +43,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let options = ProducerOptions {
         glossary: vec!["notebook".into(), "station".into()],
         batch_default: BatchDefault::Provisional { model_id },
+        diarization_model_id: "pyannote/speaker-diarization-community-1".into(),
+        cleanup_policy: None,
         local_only: true,
     };
     match produce_meeting_transcript(&file, &options, &mut host) {
