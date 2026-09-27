@@ -3,7 +3,7 @@
 //!
 //! Every promotion is a per-op gated write: one candidate, one
 //! `evaluate_gate` evaluation, one write txn (commit or roll back together
-//! with its optional supersession) — never batched across candidates
+//! with its optional deferred closure binding) — never batched across candidates
 //! (1183-D2). The writer constructs the envelope itself (callers cannot pass
 //! one), stamps surviving evidence into the candidate, applies the GATE-05
 //! taint rules including the E1 supersession taint fold (a tainted head
@@ -26,8 +26,8 @@
 //!   central `validate_claim_source_lineage` guard can compare the two on
 //!   every write door;
 //! * ordinary creates request `Auto` and roll back on refusal. Destructive
-//!   replacements share the deferred closure gate with memory upserts: held
-//!   replacements and conflict markers persist Proposed. Only a granted closure
+//!   replacements share the deferred closure gate with memory upserts: every
+//!   replacement first persists Proposed. Only a later Auto or owner grant
 //!   writes the edge and its runner-owned provenance companion.
 //!
 //! The actor axis is untouched: the Dreamer stays visible as the writing
@@ -76,7 +76,7 @@ pub struct DreamerRunContext {
 pub struct PromotionOutcome {
     /// Landed with `Auto` approval (gate-granted).
     pub landed: Vec<EntityId>,
-    /// Destructive replacements and conflict markers retained as Proposed.
+    /// All destructive replacements and conflict markers retained as Proposed.
     /// Ordinary create refusals still go to `rejected`.
     pub pended: Vec<EntityId>,
     /// Not written (typed reason per candidate); the loop continues.
@@ -135,11 +135,9 @@ pub fn promote_consolidated_claims_with_checker(
 
     for candidate in candidates {
         let claim_id = candidate.claim_id;
-        match promote_one(vault, run, candidate, checker, false, None) {
-            // `promote_one` rolls back anything the gate did not grant Auto,
-            // so the non-Auto arm is unreachable defence-in-depth: it stays a
-            // REJECTION rather than silently minting the approval queue row
-            // ONE-1710 removed.
+        match promote_one(vault, run, candidate, checker, None) {
+            // Ordinary creates roll back unless granted Auto. Replacements
+            // explicitly stage Proposed; any other status is a rejection.
             Ok(ClaimApprovalStatus::Auto) => outcome.landed.push(claim_id),
             Ok(ClaimApprovalStatus::Proposed) => outcome.pended.push(claim_id),
             Ok(other) => outcome.rejected.push((
@@ -164,10 +162,8 @@ fn promote_one(
     run: &DreamerRunContext,
     candidate: PromotionCandidate,
     checker: Option<&BoundedAutoChecker>,
-    force_proposed: bool,
     fence: Option<&crate::dreamer_consolidation::resources::ConsolidationFence>,
 ) -> std::result::Result<ClaimApprovalStatus, String> {
-    let retry = candidate.clone();
     let default_facet = vault
         .default_facet()
         .map_err(|error| format!("default facet read failed: {error}"))?;
@@ -240,26 +236,7 @@ fn promote_one(
 
     let is_conflict_marker =
         candidate.candidate.predicate() == crate::claim::PREDICATE_CONFLICT_OPEN;
-    let held = if let Some(old) = candidate.supersedes.as_ref() {
-        let txn = vault
-            .store
-            .env
-            .read_txn()
-            .map_err(|error| error.to_string())?;
-        vault
-            .supersession_requires_confirmation_in_txn(
-                &txn,
-                old,
-                &candidate
-                    .candidate
-                    .clone()
-                    .into_claim_body(&envelope, default_facet),
-            )
-            .map_err(|error| error.to_string())?
-    } else {
-        false
-    };
-    if held || is_conflict_marker || force_proposed {
+    if candidate.supersedes.is_some() || is_conflict_marker {
         envelope = WriteEnvelope::with_lineage(
             envelope.actor(),
             source,
@@ -315,9 +292,9 @@ fn promote_one(
         computed_meet
     ));
 
-    // 4. ONE wtxn: the claim write composed with its optional supersession
-    // — commit or roll back BOTH (the landed torn-window contract).
-    // GATE-007 (Generated over UserStated) surfaces here per-candidate.
+    // 4. ONE wtxn: the proposed claim and its deferred closure binding
+    // commit or roll back together; the prior stays active until later grant.
+    // GATE-007 (Generated over UserStated) is rechecked on closure.
     let finish_promotion = |wtxn: &mut heed::RwTxn<'_>| {
         if let Some(fence) = fence {
             fence.validate_in_txn(vault, wtxn)?;
@@ -331,11 +308,9 @@ fn promote_one(
                 run.now_ms,
             )?;
         }
-        // No approval queues (§4/§9): failures during phase-2 apply, supersession,
-        // or this in-transaction presence/Auto-approval check roll back the claim,
-        // supersession, and allow receipt together. Checker refusals never reach
-        // this callback: the batch preflight commits only
-        // their actual rejection receipt, with no claim or pending-consent row.
+        // Failed apply or stage rolls back the claim, binding and gate receipt.
+        // Checker refusals never reach this callback: preflight commits only
+        // the rejection receipt, with no claim or pending-consent row.
         // The already-stored answer TURN never shared this transaction.
         let landed =
             vault
@@ -381,12 +356,6 @@ fn promote_one(
         })
     };
     if let Err(error) = write {
-        if !force_proposed
-            && retry.supersedes.is_some()
-            && error.kind() == crate::ErrorKind::GateWriteRejected
-        {
-            return promote_one(vault, run, retry, checker, true, fence);
-        }
         return Err(format!("gated write rejected: {error}"));
     }
 
