@@ -7457,7 +7457,7 @@
      "surface": {
       "crate-vis": 5,
       "fn": 14,
-      "re-export": 2,
+      "re-export": 3,
       "struct": 1
      }
     },
@@ -7578,6 +7578,33 @@
      "surface": {
       "crate-vis": 5
      }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "WeaveItem",
+      "WeaveReader",
+      "WeaveReport",
+      "WeaveSection",
+      "WeaveSectionKind",
+      "WeaveSectionSpec"
+     ],
+     "path": "src/claim/scoped_read/weave_report.rs",
+     "purpose": "Live weave data for a reader, not a saved digest or a rendered section recipe",
+     "surface": {
+      "enum": 3,
+      "fn": 1,
+      "struct": 3
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "src/claim/scoped_read/weave_report/tests.rs",
+     "purpose": "—",
+     "surface": {}
     },
     {
      "bucket": "m",
@@ -18960,7 +18987,7 @@
      "path": "src/lens/mod.rs",
      "purpose": "Closed generated-lens atom vocabulary",
      "surface": {
-      "re-export": 7
+      "re-export": 8
      }
     },
     {
@@ -19083,6 +19110,14 @@
      "notable": [],
      "path": "src/lens/tests/versioning.rs",
      "purpose": "Envelope-versioning and behavior-fingerprint tests: version stamps, canonical fingerprints, and diffs",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/lens/tests/weave_report.rs",
+     "purpose": "A host-authored section recipe can lower the live report into the lens kit",
      "surface": {}
     },
     {
@@ -33812,7 +33847,7 @@
      "purpose": "—"
     },
     "claim": {
-     "files": 36,
+     "files": 38,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -34337,7 +34372,7 @@
      "purpose": "Interlocutor resolution substrate (OF-365 ILD-1)"
     },
     "lens": {
-     "files": 39,
+     "files": 40,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -34920,8 +34955,8 @@
    },
    "over_bar": 9,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2063,
-   "test_files": 706
+   "source_files": 2064,
+   "test_files": 708
   },
   "oneiron-android": {
    "files": [
