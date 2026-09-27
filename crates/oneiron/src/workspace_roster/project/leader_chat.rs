@@ -57,6 +57,81 @@ pub(crate) fn permitted_record(
         .get(txn, &key(PERMIT, id))?
         .is_some_and(|v| v.as_ref() == room.as_bytes()))
 }
+/// A witnessed TURN belongs to its first authenticated speaker. Existing
+/// turns without this proof cannot be adopted into a leader chat on append.
+pub(crate) fn verify_existing_turn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    id: EntityId,
+    room: EntityId,
+    actor: EntityId,
+    project: EntityId,
+) -> Result<()> {
+    let raw = vault
+        .store
+        .entities
+        .get(txn, id.as_bytes())?
+        .ok_or_else(denied)?;
+    let header = EntityMetadataHeader::parse(&raw).ok_or_else(denied)?;
+    if header.entity_type != crate::registry::ENTITY_TYPE_TURN {
+        return Err(denied());
+    }
+    let bytes = vault
+        .store
+        .vault_meta
+        .get(txn, &key(PROOF, id))?
+        .ok_or_else(denied)?;
+    let prior: SpeakerProof = decode(&bytes).map_err(|_| denied())?;
+    if prior.room != room
+        || prior.actor != actor
+        || prior.project != project
+        || prior.body_hash != *blake3::hash(&raw[ENTITY_METADATA_HEADER_LEN..]).as_bytes()
+    {
+        return Err(denied());
+    }
+    Ok(())
+}
+
+/// Recheck the FINAL local TURN→Conversation edges once every batch op has
+/// applied. This catches edge-before-Put, a pre-existing edge whose TURN body
+/// arrives later, and Put-before-edge with one transaction-bound permit.
+pub(crate) fn validate_local_turns(
+    store: &crate::store::Store,
+    txn: &heed::RoTxn<'_>,
+    turns: &BTreeSet<EntityId>,
+) -> Result<()> {
+    for turn in turns {
+        let Some(raw) = store.entities.get(txn, turn.as_bytes())? else {
+            continue;
+        };
+        let header = EntityMetadataHeader::parse(&raw).ok_or_else(denied)?;
+        if header.entity_type != crate::registry::ENTITY_TYPE_TURN {
+            continue;
+        }
+        for room in crate::conversation_dag::edge_ids(
+            store,
+            txn,
+            turn,
+            crate::EdgeKind::ChildOf,
+            false,
+            crate::limits::MAX_ANCESTOR_DEPTH,
+        )? {
+            let Some(raw) = store.entities.get(txn, room.as_bytes())? else {
+                continue;
+            };
+            let h = EntityMetadataHeader::parse(&raw).ok_or_else(denied)?;
+            if h.entity_type != crate::registry::ENTITY_TYPE_CONVERSATION {
+                continue;
+            }
+            let body = ConversationBody::from_bytes(&raw[ENTITY_METADATA_HEADER_LEN..])?;
+            if body.extra.contains_key(CHAT_FIELD) && !permitted_record(store, txn, *turn, room)? {
+                return Err(denied());
+            }
+        }
+    }
+    Ok(())
+}
+
 /// Commit the authenticated speaker proof and ordinary six-axis Scope after
 /// the body and witness edges have been applied in the same transaction.
 pub(crate) fn settle_record(
@@ -78,6 +153,12 @@ pub(crate) fn settle_record(
         crate::registry::ENTITY_TYPE_TURN | crate::registry::ENTITY_TYPE_MESSAGE
     ) {
         return Err(denied());
+    }
+    if let Some(bytes) = vault.store.vault_meta.get(txn, &key(PROOF, id))? {
+        let prior: SpeakerProof = decode(&bytes).map_err(|_| denied())?;
+        if prior.room != room || prior.actor != actor || prior.project != project {
+            return Err(denied());
+        }
     }
     let body_hash = *blake3::hash(&raw[ENTITY_METADATA_HEADER_LEN..]).as_bytes();
     let proof = SpeakerProof {
@@ -162,6 +243,15 @@ fn ensure_leaders(vault: &Vault, txn: &heed::RoTxn<'_>, chat: &LeaderChat, at: u
     Ok(())
 }
 fn check_rule(vault: &Vault, txn: &heed::RoTxn<'_>, chat: &LeaderChat, at: u64) -> Result<()> {
+    // The vault manifest caps holder/project rules. A true holder claim never
+    // widens a vault deny or a stricter shared ancestor's false row.
+    let policy = crate::gate::resolve_policy_manifest(&vault.store, txn)?;
+    if policy
+        .project_collaboration()
+        .is_none_or(|row| row.leader_chat_default == crate::gate::LeaderChatDefault::Deny)
+    {
+        return Err(denied());
+    }
     let other: BTreeSet<_> = lineage(vault, txn, chat.projects[1])?.into_iter().collect();
     for ancestor in lineage(vault, txn, chat.projects[0])? {
         if !other.contains(&ancestor) {

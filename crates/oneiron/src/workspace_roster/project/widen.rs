@@ -40,8 +40,12 @@ impl Memory<'_> {
         until: u64,
     ) -> MemoryResult<TaskAskReceipt> {
         let vault = self.vault();
-        let (board_project, people) = {
+        let (board_project, people, fallback) = {
             let txn = vault.store.env.read_txn().map_err(Error::from)?;
+            let fallback = crate::gate::resolve_policy_manifest(&vault.store, &txn)?
+                .project_collaboration()
+                .ok_or_else(|| MemoryError::from(denied()))?
+                .widen_ask_fallback;
             let own = project_in(vault, &txn, requesting)?;
             if requesting == other || own.leader != self.actor().to_hex() {
                 return Err(MemoryError::from(denied()));
@@ -60,13 +64,17 @@ impl Memory<'_> {
             if board.is_empty() {
                 return Err(MemoryError::from(denied()));
             }
-            (common, board)
+            (common, board, fallback)
+        };
+        let fallback = match fallback {
+            crate::gate::ProjectWidenAskFallback::Hold => TaskAskDefault::Hold,
+            crate::gate::ProjectWidenAskFallback::AskMe => TaskAskDefault::AskMe,
         };
         let mut spec = TaskAskSpec::shorthand(
             Some(TaskAskTarget::People(people.clone())),
             question,
             Some(until),
-            TaskAskDefault::Hold,
+            fallback,
         );
         spec.intent_key = format!(
             "project.widen/{}/{}/{:?}/{}",
@@ -76,9 +84,18 @@ impl Memory<'_> {
             spec.intent_key
         );
         self.tasks_ask_with_txn_effect(&spec, |txn, ask| {
-            // Revalidate the route in the writer snapshot. If a leader, ancestor
-            // or board changed during admission, the ask and its TASKs roll back.
-            if project_in(vault, txn, requesting)?.leader != self.actor().to_hex() {
+            // Revalidate route and fallback in the same writer snapshot. A
+            // changed policy cannot land an ask with a stale fallback choice.
+            let current = crate::gate::resolve_policy_manifest(&vault.store, txn)?
+                .project_collaboration()
+                .ok_or_else(|| MemoryError::from(denied()))?;
+            let selected = match current.widen_ask_fallback {
+                crate::gate::ProjectWidenAskFallback::Hold => TaskAskDefault::Hold,
+                crate::gate::ProjectWidenAskFallback::AskMe => TaskAskDefault::AskMe,
+            };
+            if selected != fallback
+                || project_in(vault, txn, requesting)?.leader != self.actor().to_hex()
+            {
                 return Err(MemoryError::from(denied()));
             }
             let other_lineage: BTreeSet<_> = lineage(vault, txn, other)?.into_iter().collect();

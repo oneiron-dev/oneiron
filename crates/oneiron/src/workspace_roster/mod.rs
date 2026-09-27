@@ -114,8 +114,9 @@ pub(crate) use project::{
     HUB_BELONGS_TO_LAMBDA, LEADER_CHAT_FIELD, admit_leader_chat_turn, admit_leader_chat_witness,
     deindex_project_room, is_project_entity, is_project_type, leader_chat_record_permitted,
     permit_leader_chat_record, reconcile_project_rooms, seed_root_project,
-    settle_leader_chat_record, validate_project_body, validate_project_edge_delete,
-    validate_project_edge_put, validate_project_graph, validate_room_body,
+    settle_leader_chat_record, validate_local_leader_chat_turns, validate_project_body,
+    validate_project_edge_delete, validate_project_edge_put, validate_project_graph,
+    validate_room_body, verify_existing_leader_chat_turn,
 };
 pub use project::{
     LEADER_CHAT_RULE_PREDICATE, LeaderChat, PROJECT_TYPE_BYTE, ProjectRecord, ProjectRole,

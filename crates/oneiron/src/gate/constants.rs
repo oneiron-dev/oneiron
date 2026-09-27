@@ -30,6 +30,7 @@ pub(super) const POLICY_ON_BUDGET_EXHAUSTED_KEY: &str = "on_budget_exhausted";
 /// unrecognized token fails the whole manifest closed at parse time, in the
 /// same class as an invalid `on_budget_exhausted` token.
 pub(super) const POLICY_COMM_OPT_OUT_POSTURE_KEY: &str = "comm_opt_out_posture";
+pub(super) const POLICY_PROJECT_COLLABORATION_KEY: &str = "project_collaboration";
 /// Optional top-level manifest key naming the HOST's auto checker (ONE-1296).
 ///
 /// The value is an opaque non-empty string the engine never interprets: it

@@ -3005,6 +3005,16 @@
      "surface": {}
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/batch/leader_chat_admission.rs",
+     "purpose": "Final-state leader-chat TURN candidates, independent of batch op order",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
@@ -16681,7 +16691,7 @@
      "path": "src/gate/constants.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 77
+      "crate-vis": 78
      }
     },
     {
@@ -16761,6 +16771,16 @@
      "path": "src/gate/decode/policy_scope_migration/tests.rs",
      "purpose": "Stored-row proof for versioned policy Scope, migration, and fail-closed reads/effects",
      "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/gate/decode/project_collaboration.rs",
+     "purpose": "Exact project coordination policy row decoder",
+     "surface": {
+      "crate-vis": 1
+     }
     },
     {
      "bucket": "m",
@@ -16999,7 +17019,7 @@
      "path": "src/gate/resolution/accessors.rs",
      "purpose": "Read-only resolved-field accessors plus the frontier-hash entry",
      "surface": {
-      "crate-vis": 24
+      "crate-vis": 25
      }
     },
     {
@@ -17040,7 +17060,7 @@
      "path": "src/gate/resolution/manifest_types.rs",
      "purpose": "Resolved-view types plus the `PolicyManifestResolution` struct definition",
      "surface": {
-      "crate-vis": 7
+      "crate-vis": 13
      }
     },
     {
@@ -17286,6 +17306,14 @@
      "notable": [],
      "path": "src/gate/tests/posture_override.rs",
      "purpose": "Opt-out posture, override receipts, and the posture dial",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/gate/tests/project_collaboration.rs",
+     "purpose": "Manifest-resident project talk and widening defaults",
      "surface": {}
     },
     {
@@ -34104,7 +34132,7 @@
      "purpose": "Direct leader chats: same-vault routing, shared-ancestor rule clamp and speaker scope",
      "surface": {
       "const": 1,
-      "crate-vis": 9,
+      "crate-vis": 11,
       "fn": 2,
       "struct": 1
      }
@@ -35117,7 +35145,7 @@
      "purpose": "Engine-side AR-3 autoreason campaign configuration and report join"
     },
     "batch": {
-     "files": 83,
+     "files": 84,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -35656,7 +35684,7 @@
      "purpose": "—"
     },
     "gate": {
-     "files": 75,
+     "files": 77,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -36344,8 +36372,8 @@
    },
    "over_bar": 11,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2145,
-   "test_files": 732
+   "source_files": 2147,
+   "test_files": 733
   },
   "oneiron-android": {
    "files": [

@@ -222,6 +222,18 @@ impl Memory<'_> {
                     .iter()
                     .any(|m| m.author == super::WitnessAuthor::System),
             )?;
+            if let Some(project) = leader_project
+                && self.vault.get_entity_type_in_txn(wtxn, &turn_id)?.is_some()
+            {
+                crate::workspace_roster::verify_existing_leader_chat_turn(
+                    self.vault,
+                    wtxn,
+                    turn_id,
+                    conversation_id,
+                    self.actor,
+                    project,
+                )?;
+            }
             if leader_project.is_some() {
                 crate::workspace_roster::permit_leader_chat_record(
                     &self.vault.store,
@@ -404,26 +416,6 @@ impl Memory<'_> {
                 }
             }
             batch.apply(wtxn)?;
-            if let Some(project) = leader_project {
-                crate::workspace_roster::settle_leader_chat_record(
-                    self.vault,
-                    wtxn,
-                    turn_id,
-                    conversation_id,
-                    self.actor,
-                    project,
-                )?;
-                for id in &message_ids {
-                    crate::workspace_roster::settle_leader_chat_record(
-                        self.vault,
-                        wtxn,
-                        *id,
-                        conversation_id,
-                        self.actor,
-                        project,
-                    )?;
-                }
-            }
             let text_ops: Vec<BatchOp> = turn
                 .messages
                 .iter()
@@ -477,6 +469,26 @@ impl Memory<'_> {
             // room has flipped back off record (K10). Every earlier row is
             // rolled back with this `Err`.
             effect(wtxn)?;
+            if let Some(project) = leader_project {
+                crate::workspace_roster::settle_leader_chat_record(
+                    self.vault,
+                    wtxn,
+                    turn_id,
+                    conversation_id,
+                    self.actor,
+                    project,
+                )?;
+                for id in &message_ids {
+                    crate::workspace_roster::settle_leader_chat_record(
+                        self.vault,
+                        wtxn,
+                        *id,
+                        conversation_id,
+                        self.actor,
+                        project,
+                    )?;
+                }
+            }
             if let Some(route) = session_route {
                 route.revalidate()?;
             }

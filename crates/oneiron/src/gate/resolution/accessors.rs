@@ -8,6 +8,7 @@ use crate::llm::{BudgetExhaustionPolicy, BudgetPolicyTable};
 use super::frontier_hash::hash_policy_frontier_v0;
 use super::manifest_types::{
     CommOptOutPosture, PolicyManifestDiagnostics, PolicyManifestResolution,
+    ProjectCollaborationPolicy,
 };
 use crate::gate::ceiling::{
     PolicyAxes, PolicyCriticality, PolicyOwnerPatternRow, PolicyOwnerPolicyRow, PolicySensitivity,
@@ -54,6 +55,17 @@ impl PolicyManifestResolution {
     #[must_use]
     pub(in crate::gate) fn comm_opt_out_posture(&self) -> CommOptOutPosture {
         self.comm_opt_out_posture.unwrap_or_default()
+    }
+
+    /// Project coordination decisions read one trusted manifest snapshot.
+    /// A malformed loaded manifest cannot silently open leader chat.
+    #[must_use]
+    pub(crate) fn project_collaboration(&self) -> Option<ProjectCollaborationPolicy> {
+        if self.is_fail_closed() {
+            None
+        } else {
+            self.project_collaboration
+        }
     }
 
     /// The manifest's opaque auto-checker ref (ONE-1296), or `None` when no

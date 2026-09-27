@@ -31,6 +31,13 @@ pub(super) fn hash_policy_frontier_v0(
     // opted-out send holds or ships, so flipping it must move the frontier and
     // invalidate every standing grant bound to the old one.
     hash_str(hasher, resolution.comm_opt_out_posture().as_str());
+    if let Some(project) = resolution.project_collaboration {
+        hash_str(hasher, "project_collaboration");
+        hash_str(hasher, project.leader_chat_default.as_str());
+        hash_str(hasher, "nested_narrowing");
+        hash_str(hasher, "vault");
+        hash_str(hasher, project.widen_ask_fallback.as_str());
+    }
     // ONE-1296: hashed ONLY when the knob is present, so a manifest that never
     // names a checker keeps its exact no-checker frontier hash — and every
     // consent binding taken against it stays valid. A domain tag rides with

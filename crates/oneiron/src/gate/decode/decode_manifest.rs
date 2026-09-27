@@ -14,12 +14,13 @@ use crate::gate::constants::{
     POLICY_LEGAL_FLOOR_ROWS_KEY, POLICY_MIN_ENGINE_VERSION_KEY, POLICY_ON_BUDGET_EXHAUSTED_KEY,
     POLICY_OWNER_POLICY_DOCUMENT_KEY, POLICY_OWNER_POLICY_ENABLED_KEY,
     POLICY_OWNER_POLICY_OUTPUT_CONTRACT_KEY, POLICY_OWNER_POLICY_PATTERNS_KEY,
-    POLICY_OWNER_POLICY_ROWS_KEY, POLICY_PACK_ID_KEY, POLICY_PACK_VERSION_KEY, POLICY_RULES_KEY,
-    POLICY_SCHEMA_VERSION, POLICY_SCHEMA_VERSION_KEY, POLICY_SCOPED_GRANTS_KEY,
-    POLICY_SIGNATURE_KEY, POLICY_SIGNATURES_KEY, POLICY_SOURCE_TRUST_KEY,
+    POLICY_OWNER_POLICY_ROWS_KEY, POLICY_PACK_ID_KEY, POLICY_PACK_VERSION_KEY,
+    POLICY_PROJECT_COLLABORATION_KEY, POLICY_RULES_KEY, POLICY_SCHEMA_VERSION,
+    POLICY_SCHEMA_VERSION_KEY, POLICY_SCOPED_GRANTS_KEY, POLICY_SIGNATURE_KEY,
+    POLICY_SIGNATURES_KEY, POLICY_SOURCE_TRUST_KEY,
 };
 use crate::gate::grants::PolicyScopedGrant;
-use crate::gate::resolution::CommOptOutPosture;
+use crate::gate::resolution::{CommOptOutPosture, ProjectCollaborationPolicy};
 use crate::llm::{BudgetExhaustionPolicy, BudgetPolicyTable};
 
 use super::decode_map_util::{
@@ -52,6 +53,7 @@ pub(in crate::gate) struct DecodedPolicyManifest {
     pub(in crate::gate) signatures: Vec<PolicySignature>,
     pub(in crate::gate) on_budget_exhausted: Option<BudgetExhaustionPolicy>,
     pub(in crate::gate) comm_opt_out_posture: Option<CommOptOutPosture>,
+    pub(in crate::gate) project_collaboration: Option<ProjectCollaborationPolicy>,
     /// The opaque host checker ref (ONE-1296), absent unless the manifest
     /// names one.
     pub(in crate::gate) auto_checker: Option<String>,
@@ -99,6 +101,7 @@ pub(in crate::gate) fn decode_policy_manifest(data: &[u8]) -> Option<DecodedPoli
                 | POLICY_SIGNATURES_KEY
                 | POLICY_ON_BUDGET_EXHAUSTED_KEY
                 | POLICY_COMM_OPT_OUT_POSTURE_KEY
+                | POLICY_PROJECT_COLLABORATION_KEY
                 | POLICY_AUTO_CHECKER_KEY
                 | POLICY_BUDGET_POLICY_KEY
                 | "diagnostic_bounds"
@@ -209,6 +212,11 @@ pub(in crate::gate) fn decode_policy_manifest(data: &[u8]) -> Option<DecodedPoli
         MapValue::Duplicate => return None,
         MapValue::Present(value) => Some(parse_comm_opt_out_posture(value)?),
     };
+    let project_collaboration = match single_map_value(&entries, POLICY_PROJECT_COLLABORATION_KEY) {
+        MapValue::Missing => None,
+        MapValue::Duplicate => return None,
+        MapValue::Present(value) => Some(super::project_collaboration::parse(value)?),
+    };
     // ONE-1296: the checker ref is a SELECTOR the host resolves, so decode
     // asks only that it be one non-blank, bounded string. A duplicate row is
     // the same ambiguity `on_budget_exhausted` refuses, and a blank or
@@ -264,6 +272,7 @@ pub(in crate::gate) fn decode_policy_manifest(data: &[u8]) -> Option<DecodedPoli
         signatures,
         on_budget_exhausted,
         comm_opt_out_posture,
+        project_collaboration,
         auto_checker,
         budget_policy,
         diagnostic_bounds,
