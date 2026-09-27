@@ -534,7 +534,7 @@ fn hosted_eviction_repoints_banked_identity_to_self_hosted_spine() -> Result<()>
     use crate::voice_cascade::hosted_tts::{
         HostedProvider, HostedTransport, HostedTtsAdapter, HostedWork,
     };
-    use crate::voice_identity::ref_bank::{OwnerVoiceRefPack, VoiceRefOrigin, VoiceRegisterClip};
+    use crate::voice_identity::ref_bank::{VoiceRefOrigin, VoiceRefPack, VoiceRegisterClip};
     #[derive(Default)]
     struct Queue(Vec<HostedWork>);
     impl HostedTransport for Queue {
@@ -544,11 +544,12 @@ fn hosted_eviction_repoints_banked_identity_to_self_hosted_spine() -> Result<()>
         }
     }
     let (_dir, vault) = vault();
-    let pack = OwnerVoiceRefPack {
+    let pack = VoiceRefPack {
         version: 1,
-        id: "owner-voice".into(),
+        id: "owner-voice-refs".into(),
+        voice_id: "owner-voice".into(),
         owner: entity(6),
-        origin: VoiceRefOrigin::OwnerCapture,
+        origin: VoiceRefOrigin::Captured,
         clips: vec![VoiceRegisterClip {
             register: "neutral".into(),
             media_type: "audio/wav".into(),
@@ -556,17 +557,14 @@ fn hosted_eviction_repoints_banked_identity_to_self_hosted_spine() -> Result<()>
             transcript: "reference".into(),
         }],
     };
-    vault.store_owner_voice_refs(&pack)?;
+    vault.store_voice_ref_pack(&pack)?;
     for provider in [HostedProvider::Cartesia, HostedProvider::ElevenLabsFlash] {
+        let request = vault.prepare_voice_clone(&pack.voice_id, provider.target(), false)?;
+        vault.record_voice_target_clone(&request, "ephemeral-voice", 1)?;
         let mut session = VoiceCascadeSession::new(Arc::clone(&vault), config())?;
         let old = start(&mut session, false)?.generation;
-        let mut hosted = HostedTtsAdapter::bind(
-            &vault,
-            &pack.id,
-            provider,
-            "ephemeral-voice",
-            Queue::default(),
-        )?;
+        let mut hosted =
+            HostedTtsAdapter::bind(&vault, &pack.voice_id, provider, false, Queue::default())?;
         hosted.submit(TtsCommand::Start { generation: old })?;
         hosted.submit(TtsCommand::Text {
             generation: old,
@@ -575,15 +573,27 @@ fn hosted_eviction_repoints_banked_identity_to_self_hosted_spine() -> Result<()>
         hosted.submit(TtsCommand::End { generation: old })?;
         let frame = hosted.receive_pcm(old, 0, 0, &[1, 0])?;
         assert!(hosted.filter_pcm(&session, frame.clone()).is_some());
+        // The vendor and its voice ID disappear; the bank identity remains.
+        vault.evict_voice_target(&pack.voice_id, provider.target())?;
+        assert!(hosted.receive_pcm(old, 0, 1, &[1, 0]).is_err());
+        assert!(
+            HostedTtsAdapter::bind(&vault, &pack.voice_id, provider, false, Queue::default())
+                .is_err()
+        );
         let stop = session.end();
         assert_eq!(stop.generation, Some(old));
         hosted.submit(TtsCommand::Cancel { generation: old })?;
         assert!(hosted.receive_pcm(old, 0, 1, &[1, 0]).is_err());
         assert!(hosted.filter_pcm(&session, frame).is_none());
-        drop(hosted); // vendor and its voice ID disappear; the bank remains.
-        let spine = vault.clone_voice_refs_into(&pack.id, "voxcpm2")?;
-        assert_eq!(spine.owner, pack.owner);
-        assert_eq!(spine.source_pack, pack.id);
+        drop(hosted);
+        let spine = vault.prepare_voice_clone(&pack.voice_id, "voxcpm2", false)?;
+        assert_eq!(
+            vault
+                .voice_identity(&spine.voice_id)?
+                .map(|voice| voice.owner),
+            Some(pack.owner)
+        );
+        assert_eq!(spine.source_packs, std::slice::from_ref(&pack.id));
         assert_eq!(spine.clips, pack.clips);
         let mut new_session = VoiceCascadeSession::new(Arc::clone(&vault), config())?;
         let current = start(&mut new_session, false)?.generation;
