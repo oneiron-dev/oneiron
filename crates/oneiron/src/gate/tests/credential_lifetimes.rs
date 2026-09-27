@@ -71,6 +71,7 @@ fn credential_lifetime_policy_defaults_and_trusted_narrowing_govern_both_mints()
         120,
         "JWT remains an independent ceiling"
     );
+    let outstanding = pair(&vault, &issuer, u64::MAX)?;
     crate::test_util::put_policy_manifest_bytes(
         &vault,
         crate::test_util::entity(0xB7),
@@ -85,6 +86,11 @@ fn credential_lifetime_policy_defaults_and_trusted_narrowing_govern_both_mints()
     assert_eq!(
         pending_lifetime(&vault, &issuer, &pair(&vault, &issuer, 100_000)?)?,
         600
+    );
+    assert_eq!(
+        pending_lifetime(&vault, &issuer, &outstanding)?,
+        600,
+        "a policy narrowed after link issuance still binds the mint"
     );
     assert_eq!(mint(&vault, &issuer, 10_000, Some(5))?.claims.ttl_secs, 5);
     assert_eq!(

@@ -231,6 +231,10 @@ impl Vault {
             return Err(invalid_authority());
         }
         self.validate_pairing_principal_in_txn(&txn, &pending.principal, &pending.scope)?;
+        // Recheck in the actual mint transaction: policy may have narrowed
+        // after link issuance while the one-hour link was still outstanding.
+        let ceiling = crate::gate::resolve_credential_lifetimes(&self.store, &txn)?;
+        let slip_lifetime_secs = pending.slip_lifetime_secs.min(ceiling.initial_owner_secs);
         let fold = self.authority_fold_readonly_in_txn(&txn)?;
         require_host(&fold, issuer)?;
         let claims = SlipClaims {
@@ -241,8 +245,8 @@ impl Vault {
             binding_key,
             scope: pending.scope,
             issued_at: now,
-            expires_at: now.saturating_add(pending.slip_lifetime_secs),
-            ttl_secs: pending.slip_lifetime_secs,
+            expires_at: now.saturating_add(slip_lifetime_secs),
+            ttl_secs: slip_lifetime_secs,
             single_use: false,
             records: Default::default(),
             channels: Default::default(),

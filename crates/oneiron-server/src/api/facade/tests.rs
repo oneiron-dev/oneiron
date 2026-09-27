@@ -874,14 +874,21 @@ async fn export_projects_five_formats_and_refuses_non_owner_credentials() {
     }
     // The host's logged root has no actor binding; its verified full-vault
     // instrument is still an owner, not a read-only scoped slip.
+    let (host_slip, host_key) =
+        crate::test_credentials::credential(&server, "jti=facade-export-host-root");
     let host = Request::builder()
         .method("POST")
         .uri("/v1/core/facade/export")
-        .header("Authorization", "Bearer facade-export")
         .header("Content-Type", "application/json")
         .body(Body::from(json!({"format":"json"}).to_string()))
         .unwrap();
-    let response = app.clone().oneshot(host).await.unwrap();
+    let response = app
+        .clone()
+        .oneshot(crate::test_credentials::bind_slip_request(
+            &server, &host_slip, &host_key, host,
+        ))
+        .await
+        .unwrap();
     assert_eq!(response.status(), StatusCode::OK);
     let body = to_bytes(response.into_body(), 1_048_576).await.unwrap();
     assert!(String::from_utf8_lossy(&body).contains("private export owner diary"));
