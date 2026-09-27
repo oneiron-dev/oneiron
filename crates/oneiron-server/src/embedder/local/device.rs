@@ -6,18 +6,44 @@ use crate::config::{EmbedderDevice, EmbedderQuant};
 
 /// Resolves the configured device against what this build can actually reach.
 ///
-/// `auto` prefers the GPU and falls back to the CPU without complaint, because
-/// a CPU host is a supported deployment, only a slower one. A NAMED device
+/// `auto` tries only the vault's ordered policy candidates. CPU is a fallback
+/// only when that row permits it. A candidate that is unavailable is skipped;
+/// no available permitted candidate is a configuration refusal. A NAMED device
 /// that is unavailable is an error rather than a silent downgrade: an operator
 /// who wrote `device = "metal"` and got the CPU would read the throughput as a
 /// model problem.
-pub(super) fn resolve_device(configured: EmbedderDevice) -> oneiron::Result<Device> {
+pub(super) fn resolve_device(
+    configured: EmbedderDevice,
+    auto_devices: &[EmbedderDevice],
+) -> oneiron::Result<Device> {
     match configured {
         EmbedderDevice::Cpu => Ok(Device::Cpu),
         EmbedderDevice::Metal => Device::new_metal(0).map_err(|e| {
             oneiron::Error::InvalidConfig(format!("embedder device metal is unavailable: {e}"))
         }),
-        EmbedderDevice::Auto => Ok(Device::new_metal(0).unwrap_or(Device::Cpu)),
+        EmbedderDevice::Cuda => Device::new_cuda(0).map_err(|e| {
+            oneiron::Error::InvalidConfig(format!("embedder device cuda is unavailable: {e}"))
+        }),
+        EmbedderDevice::Auto => {
+            for candidate in auto_devices {
+                let available = match candidate {
+                    EmbedderDevice::Metal => Device::new_metal(0),
+                    EmbedderDevice::Cuda => Device::new_cuda(0),
+                    EmbedderDevice::Cpu => return Ok(Device::Cpu),
+                    EmbedderDevice::Auto => {
+                        return Err(oneiron::Error::InvalidConfig(
+                            "embedder.policy.auto_devices cannot contain auto".to_owned(),
+                        ));
+                    }
+                };
+                if let Ok(device) = available {
+                    return Ok(device);
+                }
+            }
+            Err(oneiron::Error::InvalidConfig(
+                "no permitted auto embedder device is available; narrow embedder.policy.auto_devices or choose a named device".to_owned(),
+            ))
+        }
     }
 }
 

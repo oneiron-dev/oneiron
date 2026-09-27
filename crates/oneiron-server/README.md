@@ -40,10 +40,21 @@ provider = "local"                  # local | endpoint | none
 model_id = "microsoft/harrier-oss-v1-0.6b@f9b9dc8d367d443f2479d27aa5d8d2850c0774ee"
 dimensions = 1024
 # quant = "q8_0"                    # q8_0 | none (none = bf16, GPU only)
-# device = "auto"                   # auto | cpu | metal
+# device = "auto"                   # auto | cpu | metal | cuda
 # models_dir = "/Volumes/Cinema/models/oneiron"
 batch_size = 32
 lease_ms = 30000                    # 120000 is a better fit on a CPU-only host
+
+# Optional vault-local auto-device policy. The shipped manifest at
+# policy/embedder.toml says ["metal", "cuda", "cpu"]. File, environment
+# (ONEIRON_EMBEDDER_AUTO_DEVICES=cuda,cpu), and CLI
+# (--embedder-auto-devices cuda,cpu) use the normal precedence, but each
+# higher layer can only narrow/reorder the preceding candidate set by default.
+# [embedder.policy]
+# auto_devices = ["cuda", "cpu"]
+# precedence = "nested-narrowing"    # shipped default
+# Alternative: "vault-capped-holder-override" lets the CLI holder override
+# an environment choice, but never add a candidate excluded by this vault file.
 ```
 
 `provider = "local"` runs the model in-process on candle. On first use it
@@ -53,6 +64,25 @@ a pinned sha256, and quantises the projections to Q8_0 at load. Nothing is
 downloaded at boot: the vault serves at rung 0 until the artifacts are verified,
 then starts filling. Point `model_dir` at a directory already holding those six
 files and no download is attempted at all — the offline-host door.
+
+On a CUDA toolkit host, build the same server with candle's dependency features
+explicitly enabled (not a `oneiron-server` feature):
+
+```sh
+cargo build -p oneiron-server --release --features candle-core/cuda,candle-nn/cuda
+```
+
+The default build and `--all-features` remain toolchain-free on Linux. CUDA
+requires the CUDA toolkit and a compatible NVIDIA driver at build/run time.
+`device = "cuda"` fails before any model download if CUDA is unavailable;
+`auto` tries only the vault policy's ordered candidates (Metal, CUDA, then CPU
+by default). If policy excludes CPU and no allowed GPU is reachable, `auto`
+fails closed instead of silently falling back to CPU. Q8_0 weights are
+quantised on the CPU at load and uploaded to CUDA.
+For a Linux Radeon host, candle has no Vulkan backend: use `cpu`, or set
+`provider = "endpoint"` to a separately hosted OpenAI-compatible embeddings
+server (for example llama-server with Vulkan), with the correct `model_id`,
+`dimensions`, and `locality`. No Vulkan accelerator is claimed for `local`.
 
 `provider = "endpoint"` speaks to any OpenAI-compatible `/v1/embeddings` server:
 

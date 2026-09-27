@@ -45,10 +45,18 @@ pub(crate) struct LocalEmbedder {
 }
 
 pub(crate) fn prepare(config: &EmbedderConfig) -> oneiron::Result<&'static str> {
-    model_manager::ModelManager::default().ensure_all(&config.local)?;
-    Ok(device::device_label(&device::resolve_device(
-        config.local.device,
-    )?))
+    prepare_with_manager(config, &model_manager::ModelManager::default())
+}
+
+fn prepare_with_manager(
+    config: &EmbedderConfig,
+    models: &model_manager::ModelManager,
+) -> oneiron::Result<&'static str> {
+    // A named device must fail before an expensive first-use download, not
+    // after fetching the entire checkpoint and discovering no GPU is usable.
+    let device = device::resolve_device(config.local.device, &config.local.auto_devices)?;
+    models.ensure_all(&config.local)?;
+    Ok(device::device_label(&device))
 }
 
 impl LocalEmbedder {
@@ -61,6 +69,7 @@ impl LocalEmbedder {
         config: &EmbedderConfig,
         models: &model_manager::ModelManager,
     ) -> oneiron::Result<std::sync::Arc<Self>> {
+        let run_device = device::resolve_device(config.local.device, &config.local.auto_devices)?;
         let dir = models.ensure_all(&config.local)?;
         let raw_config = std::fs::read_to_string(dir.join("config.json")).map_err(|e| {
             oneiron::Error::InvalidConfig(format!("embedder model config.json: {e}"))
@@ -72,7 +81,6 @@ impl LocalEmbedder {
         let tokenizer = Tokenizer::from_file(dir.join("tokenizer.json")).map_err(|e| {
             oneiron::Error::InvalidConfig(format!("embedder model tokenizer.json: {e}"))
         })?;
-        let run_device = device::resolve_device(config.local.device)?;
         let dtype = device::run_dtype(config.local.quant);
         let started = Instant::now();
         let model = load_body(&dir, &model_config, config, &run_device, dtype)?;
