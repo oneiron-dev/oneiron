@@ -376,6 +376,9 @@ impl PolicyManifestResolution {
         ) {
             return false;
         }
+        if effect.artifact_publish_approve_once {
+            return true;
+        }
         if effect.standing_grant_ref.is_some() {
             return true;
         }

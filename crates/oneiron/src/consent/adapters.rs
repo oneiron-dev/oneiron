@@ -147,6 +147,11 @@ pub(super) fn outbound_scope_axes(
             ],
             Some(identity_ref.to_hex()),
         ),
+        StandingOutboundGrantScope::ArtifactPublish { artifact } => (
+            "publish".to_owned(),
+            vec!["verb:publish".to_owned()],
+            Some(artifact.clone()),
+        ),
         StandingOutboundGrantScope::Contact { contact_ref } => (
             OUTBOUND_SEND_VERB_CLASS.to_owned(),
             vec![format!("contact:{contact_ref}")],

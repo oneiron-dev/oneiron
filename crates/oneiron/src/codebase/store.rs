@@ -13,7 +13,7 @@ use super::snapshot::{
 };
 use crate::Vault;
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
-use crate::code_artifact::{CodeArtifactBody, decode_code_artifact_body};
+use crate::code_artifact::{CodeArtifactBody, CodeArtifactClass, decode_code_artifact_body};
 use crate::code_symbol::{CodeSymbolSource, derive_code_symbol_graph_from_sources};
 use crate::entity_id::{ENTITY_ID_LEN, EntityId};
 use crate::error::{ArtifactError, CodeError, Error, Result};
@@ -71,6 +71,32 @@ pub(crate) fn codebase_candidate_matches_scope_key(
         .vault_meta
         .get(rtxn, &codebase_scope_index_key(scope_key, id))?
         .is_some())
+}
+
+/// Rechecks a hostable snapshot against the current writer view. Publish must
+/// not trust a snapshot resolved before it acquired LMDB's write lock.
+pub(crate) fn codebase_artifact_snapshot_matches_in_txn(
+    store: &Store,
+    txn: &RoTxn<'_>,
+    id: &EntityId,
+    project_id: &str,
+    fork_hash: &CodebaseForkHash,
+) -> Result<bool> {
+    let Some(raw_snapshot) = store.vault_meta.get(txn, &codebase_snapshot_key(id))? else {
+        return Ok(false);
+    };
+    let snapshot = decode_codebase_snapshot(&raw_snapshot)?;
+    if snapshot.project_id != project_id || &snapshot.fork_hash != fork_hash {
+        return Ok(false);
+    }
+    let Some(raw_artifact) = store.port_entity_record(txn, id)? else {
+        return Ok(false);
+    };
+    if raw_artifact.entity_type != ENTITY_TYPE_CODE_ARTIFACT {
+        return Ok(false);
+    }
+    let artifact = decode_code_artifact_body(&raw_artifact.body)?;
+    Ok(artifact.class == CodeArtifactClass::Artifact)
 }
 
 pub(crate) fn delete_codebase_snapshot_in_txn(

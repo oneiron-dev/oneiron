@@ -505,6 +505,10 @@ fn append_outbound_grant_scope_fields(
             fields.insert("envelope_ref".to_owned(), envelope_ref.to_hex());
             fields.insert("verb_class".to_owned(), verb_class.clone());
         }
+        StandingOutboundGrantScope::ArtifactPublish { artifact } => {
+            fields.insert("scope".to_owned(), "artifact_publish".to_owned());
+            fields.insert("artifact".to_owned(), artifact.clone());
+        }
         StandingOutboundGrantScope::Contact { contact_ref } => {
             fields.insert("scope".to_owned(), "contact".to_owned());
             fields.insert("contact_ref".to_owned(), contact_ref.clone());

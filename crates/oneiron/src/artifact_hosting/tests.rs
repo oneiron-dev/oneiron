@@ -191,54 +191,402 @@ fn artifact_serving_rejects_codebase_class_snapshots() -> Result<()> {
     Ok(())
 }
 
+fn test_publisher(vault: &Vault) -> Result<WriteActor> {
+    let id = EntityId::from_bytes([0x31; 16])?;
+    vault.put_entity(
+        &id,
+        crate::registry::ENTITY_TYPE_PERSON,
+        TimeRange { start: 1, end: 1 },
+        1,
+        b"publisher",
+    )?;
+    // This module's shared test fixture clears policy for legacy local-pointer
+    // tests. Dispatch needs an actual resolved Gate policy to authorize grants.
+    crate::test_util::put_policy_manifest_bytes(
+        vault,
+        EntityId::from_bytes([0x35; 16])?,
+        &crate::gate::default_policy_manifest(),
+    )?;
+    Ok(WriteActor::new(id, crate::edge::EdgeActorClass::Human))
+}
+
+fn grant_artifact_publish(vault: &Vault, actor: WriteActor, artifact: &str) -> Result<EntityId> {
+    let id = EntityId::from_bytes([0x32; 16])?;
+    vault.mint_standing_outbound_grant(
+        &id,
+        &crate::genui::GrantMintIntent {
+            principal_ref: actor.entity_ref().to_hex(),
+            origin_component_id: "artifact.publish".to_owned(),
+            origin_action_id: "auto_publish_this_artifact".to_owned(),
+            origin_receipt_ref: None,
+            scope: crate::genui::GrantMintIntentScope::ArtifactPublish {
+                artifact: artifact.to_owned(),
+            },
+        },
+        11,
+    )?;
+    Ok(id)
+}
+
 #[test]
-fn publish_verb_stub_parks_as_proposed_without_writing_pointer() -> Result<()> {
-    let (_dir, vault) = crate::test_util::open_test_vault_with(test_config());
+fn ungranted_publish_proposes_until_grant_then_receipts_and_replays() -> Result<()> {
+    let (dir, vault) = crate::test_util::open_test_vault_with(test_config());
     let repo = create_test_repo(b"<h1>v1</h1>\n")?;
     let result = ingest_artifact(&vault, repo.path(), "site", 10)?;
+    let actor = test_publisher(&vault)?;
+    let publish_id = EntityId::from_bytes([0x33; 16])?;
     let request = ArtifactPublishVerbRequest::new(
         "site",
         ArtifactPointerChannel::Published,
         result.snapshot.fork_hash,
-        false,
+        actor,
+        publish_id,
+        12,
     );
-
-    let outcome = vault.request_artifact_publish(&request)?;
-
-    assert_eq!(outcome.status, ArtifactPublishVerbStatus::Proposed);
-    assert!(outcome.pointer.is_none());
+    let proposed = vault.request_artifact_publish(&request)?;
+    assert_eq!(proposed.status, ArtifactPublishVerbStatus::Proposed);
+    assert!(proposed.receipt.is_none());
     assert!(
         vault
             .artifact_pointer("site", ArtifactPointerChannel::Published)?
-            .is_none(),
-        "proposed publish must not make the artifact served"
+            .is_none()
+    );
+    assert!(
+        vault
+            .receipts(ReceiptQuery::new(10).with_kind(ReceiptKind::Share))?
+            .iter()
+            .all(|receipt| receipt.receipt_id != format!("share:artifact:{}", publish_id.to_hex()))
+    );
+
+    let grant_id = grant_artifact_publish(&vault, actor, "site")?;
+    let published = vault.request_artifact_publish(&request)?;
+    assert_eq!(published.status, ArtifactPublishVerbStatus::Published);
+    let receipt = published.receipt.expect("publish receipt");
+    assert_eq!(receipt.receipt_kind, ReceiptKind::Share);
+    assert_eq!(
+        receipt.fields.get("gate_receipt_ref"),
+        Some(&published.gate_decision_ref)
+    );
+    assert_eq!(
+        receipt.fields.get("artifact").map(String::as_str),
+        Some("site")
+    );
+    assert_eq!(
+        published.pointer.expect("published pointer").fork_hash,
+        result.snapshot.fork_hash
+    );
+    let stored = vault.receipts(ReceiptQuery::new(10).with_kind(ReceiptKind::Share))?;
+    assert!(stored.contains(&receipt));
+    vault.revoke_standing_outbound_grant(&grant_id, 13)?;
+    // Revoking a grant blocks a NEW publish, but cannot erase the old proof.
+    let next = ArtifactPublishVerbRequest::new(
+        "site",
+        ArtifactPointerChannel::Published,
+        result.snapshot.fork_hash,
+        actor,
+        EntityId::from_bytes([0x36; 16])?,
+        14,
+    );
+    assert_eq!(
+        vault.request_artifact_publish(&next)?.status,
+        ArtifactPublishVerbStatus::Proposed
+    );
+    assert!(vault.unpublish_artifact_pointer("site", ArtifactPointerChannel::Published)?);
+    let replay = vault.request_artifact_publish(&request)?;
+    assert_eq!(replay.receipt, Some(receipt.clone()));
+    assert!(
+        replay.pointer.is_none(),
+        "a replay cannot resurrect an unpublished pointer"
+    );
+    drop(vault);
+    let reopened = Vault::open(dir.path(), test_config())?;
+    assert!(
+        reopened
+            .receipts(ReceiptQuery::new(10).with_kind(ReceiptKind::Share))?
+            .contains(&receipt)
+    );
+    assert_eq!(
+        reopened.request_artifact_publish(&request)?.receipt,
+        Some(receipt)
     );
     Ok(())
 }
 
-#[cfg(feature = "artifact-publish-verb")]
 #[test]
-fn publish_verb_honors_standing_grant_by_publishing_pointer() -> Result<()> {
+fn artifact_publish_grant_is_per_artifact_and_replay_cannot_rebind() -> Result<()> {
+    let (_dir, vault) = crate::test_util::open_test_vault_with(test_config());
+    let repo = create_test_repo(b"<h1>v1</h1>\n")?;
+    let first = ingest_artifact(&vault, repo.path(), "site", 10)?;
+    let second = ingest_artifact(&vault, repo.path(), "other", 11)?;
+    let actor = test_publisher(&vault)?;
+    grant_artifact_publish(&vault, actor, "site")?;
+    let id = EntityId::from_bytes([0x34; 16])?;
+    let other = ArtifactPublishVerbRequest::new(
+        "other",
+        ArtifactPointerChannel::Published,
+        second.snapshot.fork_hash,
+        actor,
+        id,
+        12,
+    );
+    assert_eq!(
+        vault.request_artifact_publish(&other)?.status,
+        ArtifactPublishVerbStatus::Proposed
+    );
+    let allowed = ArtifactPublishVerbRequest::new(
+        "site",
+        ArtifactPointerChannel::Published,
+        first.snapshot.fork_hash,
+        actor,
+        id,
+        12,
+    );
+    assert_eq!(
+        vault.request_artifact_publish(&allowed)?.status,
+        ArtifactPublishVerbStatus::Published
+    );
+    let rebound = ArtifactPublishVerbRequest::new(
+        "other",
+        ArtifactPointerChannel::Published,
+        second.snapshot.fork_hash,
+        actor,
+        id,
+        12,
+    );
+    assert!(vault.request_artifact_publish(&rebound).is_err());
+    assert!(
+        vault
+            .artifact_pointer("other", ArtifactPointerChannel::Published)?
+            .is_none()
+    );
+    Ok(())
+}
+
+#[test]
+fn one_off_owner_approval_publishes_exact_request_without_standing_grant() -> Result<()> {
     let (_dir, vault) = crate::test_util::open_test_vault_with(test_config());
     let repo = create_test_repo(b"<h1>v1</h1>\n")?;
     let result = ingest_artifact(&vault, repo.path(), "site", 10)?;
+    let actor = test_publisher(&vault)?;
     let request = ArtifactPublishVerbRequest::new(
         "site",
         ArtifactPointerChannel::Published,
         result.snapshot.fork_hash,
-        true,
+        actor,
+        EntityId::from_bytes([0x41; 16])?,
+        12,
     );
+    let other = ArtifactPublishVerbRequest::new(
+        "site",
+        ArtifactPointerChannel::Published,
+        result.snapshot.fork_hash,
+        actor,
+        EntityId::from_bytes([0x42; 16])?,
+        13,
+    );
+    assert_eq!(
+        vault.request_artifact_publish(&request)?.status,
+        ArtifactPublishVerbStatus::Proposed
+    );
+    let digest = vault.artifact_publish_approval_digest(&request)?;
+    assert_ne!(digest, vault.artifact_publish_approval_digest(&other)?);
+    let preview = ArtifactPublishVerbRequest {
+        channel: ArtifactPointerChannel::Preview,
+        ..request.clone()
+    };
+    assert_ne!(digest, vault.artifact_publish_approval_digest(&preview)?);
+    let foreign = ingest_artifact(&vault, repo.path(), "other", 11)?;
+    let different_artifact = ArtifactPublishVerbRequest::new(
+        "other",
+        ArtifactPointerChannel::Published,
+        foreign.snapshot.fork_hash,
+        actor,
+        request.publish_id,
+        request.occurred_at,
+    );
+    assert_ne!(
+        digest,
+        vault.artifact_publish_approval_digest(&different_artifact)?
+    );
+    commit_index(repo.path(), b"<h1>v2</h1>\n", "v2")?;
+    let second = ingest_artifact(&vault, repo.path(), "site", 11)?;
+    let different_fork = ArtifactPublishVerbRequest {
+        fork_hash: second.snapshot.fork_hash,
+        ..request.clone()
+    };
+    assert_ne!(
+        digest,
+        vault.artifact_publish_approval_digest(&different_fork)?
+    );
+    let second_actor_id = EntityId::from_bytes([0x45; 16])?;
+    vault.put_entity(
+        &second_actor_id,
+        crate::registry::ENTITY_TYPE_PERSON,
+        TimeRange { start: 1, end: 1 },
+        1,
+        b"second publisher",
+    )?;
+    let different_actor = ArtifactPublishVerbRequest {
+        actor: WriteActor::new(second_actor_id, crate::edge::EdgeActorClass::Human),
+        ..request.clone()
+    };
+    assert_ne!(
+        digest,
+        vault.artifact_publish_approval_digest(&different_actor)?
+    );
+    let owner = vault.authenticate_owner(
+        actor.entity_ref(),
+        &actor.entity_ref().to_hex(),
+        true,
+        GateDecisionId::now(),
+    )?;
+    vault.approve_once(&owner, digest)?;
+    let approved = vault.request_artifact_publish(&request)?;
+    assert_eq!(approved.status, ArtifactPublishVerbStatus::Published);
+    let receipt = approved.receipt.expect("publish receipt");
+    assert!(
+        vault
+            .receipts(ReceiptQuery::new(10).with_kind(ReceiptKind::Share))?
+            .contains(&receipt)
+    );
+    assert_eq!(
+        vault.request_artifact_publish(&request)?.receipt,
+        Some(receipt)
+    );
+    assert_eq!(
+        vault.request_artifact_publish(&other)?.status,
+        ArtifactPublishVerbStatus::Proposed
+    );
+    Ok(())
+}
 
-    let outcome = vault.request_artifact_publish(&request)?;
+#[test]
+fn publish_receipt_replays_after_snapshot_entity_deletion() -> Result<()> {
+    let (_dir, vault) = crate::test_util::open_test_vault_with(test_config());
+    let repo = create_test_repo(b"<h1>v1</h1>\n")?;
+    let result = ingest_artifact(&vault, repo.path(), "site", 10)?;
+    let actor = test_publisher(&vault)?;
+    grant_artifact_publish(&vault, actor, "site")?;
+    let request = ArtifactPublishVerbRequest::new(
+        "site",
+        ArtifactPointerChannel::Published,
+        result.snapshot.fork_hash,
+        actor,
+        EntityId::from_bytes([0x43; 16])?,
+        12,
+    );
+    let receipt = vault
+        .request_artifact_publish(&request)?
+        .receipt
+        .expect("receipt");
+    assert!(vault.delete_entity(&result.code_artifact_id)?);
+    assert!(
+        vault
+            .resolve_artifact_snapshot_by_fork("site", &request.fork_hash)?
+            .is_none()
+    );
+    let replay = vault.request_artifact_publish(&request)?;
+    assert_eq!(replay.receipt, Some(receipt.clone()));
+    assert!(replay.pointer.is_none());
+    let rebound = ArtifactPublishVerbRequest {
+        occurred_at: 13,
+        ..request
+    };
+    assert!(vault.request_artifact_publish(&rebound).is_err());
+    assert!(
+        vault
+            .receipts(ReceiptQuery::new(1).with_kind(ReceiptKind::Share))?
+            .contains(&receipt)
+    );
+    Ok(())
+}
 
-    assert_eq!(outcome.status, ArtifactPublishVerbStatus::Published);
-    let pointer = outcome.pointer.expect("published pointer returned");
-    assert_eq!(pointer.fork_hash, result.snapshot.fork_hash);
+#[test]
+fn publish_receipt_replays_after_same_entity_snapshot_replacement() -> Result<()> {
+    let (_dir, vault) = crate::test_util::open_test_vault_with(test_config());
+    let repo = create_test_repo(b"<h1>v1</h1>\n")?;
+    let result = ingest_artifact(&vault, repo.path(), "site", 10)?;
+    let actor = test_publisher(&vault)?;
+    grant_artifact_publish(&vault, actor, "site")?;
+    let request = ArtifactPublishVerbRequest::new(
+        "site",
+        ArtifactPointerChannel::Published,
+        result.snapshot.fork_hash,
+        actor,
+        EntityId::from_bytes([0x44; 16])?,
+        12,
+    );
+    let receipt = vault
+        .request_artifact_publish(&request)?
+        .receipt
+        .expect("receipt");
+    let replacement = CodebaseSnapshot::new(
+        "site",
+        result.snapshot.repo_ref.clone(),
+        result.snapshot.commit_hash.clone(),
+        result
+            .snapshot
+            .files
+            .iter()
+            .filter(|file| file.path == "index.html")
+            .cloned()
+            .collect(),
+    )?;
+    assert_ne!(replacement.fork_hash, request.fork_hash);
+    vault.put_codebase_snapshot(&result.code_artifact_id, &replacement, &|path| {
+        fs::read(repo.path().join(path)).ok()
+    })?;
+    assert!(
+        vault
+            .resolve_artifact_snapshot_by_fork("site", &request.fork_hash)?
+            .is_none()
+    );
+    let replay = vault.request_artifact_publish(&request)?;
+    assert_eq!(replay.receipt, Some(receipt));
+    assert!(replay.pointer.is_none());
     assert!(
         vault
             .artifact_pointer("site", ArtifactPointerChannel::Published)?
-            .is_some(),
-        "standing grant publish should make the artifact served"
+            .is_none()
+    );
+    Ok(())
+}
+
+#[test]
+fn publish_share_query_with_limit_one_keeps_the_newest_receipt() -> Result<()> {
+    let (_dir, vault) = crate::test_util::open_test_vault_with(test_config());
+    let repo = create_test_repo(b"<h1>v1</h1>\n")?;
+    let result = ingest_artifact(&vault, repo.path(), "site", 10)?;
+    let actor = test_publisher(&vault)?;
+    grant_artifact_publish(&vault, actor, "site")?;
+    let first = ArtifactPublishVerbRequest::new(
+        "site",
+        ArtifactPointerChannel::Published,
+        result.snapshot.fork_hash,
+        actor,
+        EntityId::from_bytes([0x46; 16])?,
+        12,
+    );
+    let later = ArtifactPublishVerbRequest::new(
+        "site",
+        ArtifactPointerChannel::Published,
+        result.snapshot.fork_hash,
+        actor,
+        EntityId::from_bytes([0x47; 16])?,
+        13,
+    );
+    let earlier_receipt = vault
+        .request_artifact_publish(&first)?
+        .receipt
+        .expect("first receipt");
+    let later_receipt = vault
+        .request_artifact_publish(&later)?
+        .receipt
+        .expect("later receipt");
+    assert_ne!(earlier_receipt, later_receipt);
+    assert_eq!(
+        vault.receipts(ReceiptQuery::new(1).with_kind(ReceiptKind::Share))?,
+        vec![later_receipt]
     );
     Ok(())
 }

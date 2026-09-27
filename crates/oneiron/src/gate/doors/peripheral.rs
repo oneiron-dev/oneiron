@@ -233,6 +233,10 @@ pub(crate) fn standing_outbound_grant_binding_parts(
             hash_str(&mut hasher, brief_ref.trim());
             hash_str(&mut hasher, verb_class.trim());
         }
+        GrantMintIntentScope::ArtifactPublish { artifact } => {
+            hash_str(&mut hasher, "artifact_publish");
+            hash_str(&mut hasher, artifact.trim());
+        }
         GrantMintIntentScope::Calendar { .. } => {
             return Err(Error::Record(RecordError::InvalidOutboundGrantBody(
                 "calendar disclosure scope is a read grant, not an outbound grant scope",

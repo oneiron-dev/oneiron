@@ -323,6 +323,9 @@ fn collect_receipt_records(vault: &Vault, query: &ReceiptQuery) -> Result<Vec<Re
         records.extend(federation_share_receipts(vault, &rtxn, query)?);
         records.extend(persona_snapshot_export_receipts(vault, &rtxn, query)?);
         records.extend(brief_share_receipts(vault, &rtxn, query)?);
+        records.extend(crate::artifact_hosting::artifact_publish_receipts(
+            vault, &rtxn, query,
+        )?);
     }
     // CMT-4 (ONE-1541): terminal `commitment.record` rows ARE the lifecycle
     // ledger. Shares the same read txn and the same MAX_RECEIPT_QUERY_SCAN
