@@ -60,6 +60,7 @@ pub(in crate::gate) struct DecodedPolicyManifest {
     pub(in crate::gate) budget_policy: BudgetPolicyTable,
     pub(in crate::gate) dreamer_failure_rules: Vec<DreamerFailureRule>,
     pub(in crate::gate) diagnostic_bounds: Option<crate::self_heal::tripwires::TripwireBounds>,
+    pub(in crate::gate) proposal_check_threshold: Option<u64>,
     pub(in crate::gate) unsupported_schema: bool,
     pub(in crate::gate) engine_version_floor: bool,
     pub(in crate::gate) unknown_axis_seen: bool,
@@ -105,6 +106,7 @@ pub(in crate::gate) fn decode_policy_manifest(data: &[u8]) -> Option<DecodedPoli
                 | POLICY_BUDGET_POLICY_KEY
                 | POLICY_DREAMER_FAILURE_RULES_KEY
                 | "diagnostic_bounds"
+                | "proposal_check_threshold"
         ) {
             return None;
         }
@@ -239,6 +241,12 @@ pub(in crate::gate) fn decode_policy_manifest(data: &[u8]) -> Option<DecodedPoli
         }
     };
 
+    let proposal_check_threshold = match single_map_value(&entries, "proposal_check_threshold") {
+        MapValue::Missing => None,
+        MapValue::Duplicate => return None,
+        MapValue::Present(value) => Some(value.as_u64().filter(|value| *value > 0)?),
+    };
+
     let unknown_axis_seen =
         defaults.unknown_axis_seen || rules.iter().any(|rule| rule.axes.unknown_axis_seen);
 
@@ -269,6 +277,7 @@ pub(in crate::gate) fn decode_policy_manifest(data: &[u8]) -> Option<DecodedPoli
         budget_policy,
         dreamer_failure_rules,
         diagnostic_bounds,
+        proposal_check_threshold,
         unsupported_schema,
         engine_version_floor,
         unknown_axis_seen,
