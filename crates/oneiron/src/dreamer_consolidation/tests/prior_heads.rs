@@ -106,6 +106,10 @@ pub(super) fn policy(vault: &Vault, reader: EntityId, auto: bool) -> Result<()> 
 }
 
 fn fixture(vault: &Vault) -> Result<Fixture> {
+    fixture_with_head_source(vault, ClaimSource::UserStated)
+}
+
+fn fixture_with_head_source(vault: &Vault, source: ClaimSource) -> Result<Fixture> {
     let actor = vault.dreamer_authority()?;
     policy(vault, actor.entity_ref(), true)?;
     let store = DreamerRunnerStore::new(vault);
@@ -119,7 +123,7 @@ fn fixture(vault: &Vault) -> Result<Fixture> {
     let head = EntityId::now();
     let envelope = WriteEnvelope::new(
         WriteActor::new(owner, EdgeActorClass::Human),
-        ClaimSource::UserStated,
+        source,
         WriteProvenance::new("owner statement".into())?,
         ClaimApprovalStatus::Approved,
     );
@@ -285,6 +289,91 @@ fn exact_persisted_head_attaches_evidence_without_judge_or_duplicate_and_survive
         vault.sources(&fx.head, EdgeKind::Supports, None)?,
         vec![fx.turn]
     );
+    Ok(())
+}
+
+#[test]
+fn fast_path_and_judge_merge_share_deferred_closure() -> Result<()> {
+    for fast_path in [false, true] {
+        let (_dir, vault) = open_vault();
+        let fx = fixture_with_head_source(&vault, ClaimSource::Generated)?;
+        if fast_path {
+            let id = crate::gate::default_policy_manifest_id()?;
+            let raw = vault.get_raw(&id)?.expect("manifest");
+            let mut cursor = std::io::Cursor::new(&raw[crate::batch::ENTITY_METADATA_HEADER_LEN..]);
+            let Value::Map(mut entries) = rmpv::decode::read_value(&mut cursor).expect("decode")
+            else {
+                panic!("manifest map");
+            };
+            entries.push((
+                "single_valued_predicates".into(),
+                Value::Array(vec!["profile.name".into()]),
+            ));
+            let bytes = super::super::support::encode_value(&Value::Map(entries))?;
+            crate::test_util::put_policy_manifest_bytes(&vault, id, &bytes)?;
+        }
+        let mut script = vec![Ok(extract(&fx, "Alex"))];
+        if !fast_path {
+            script.push(Ok(text_response(
+                "{\"resolution\":\"merge\",\"value\":\"Alex\"}".into(),
+            )));
+        }
+        let backend = ScriptedBackend::new(script);
+        let mut sink = PromotionWriterSink::new(&vault, fx.run.clone());
+        assert!(matches!(
+            execute(&vault, &fx, &backend, &mut sink, fx.scope.clone())?,
+            DreamerAttemptExecution::Completed { .. }
+        ));
+        assert_eq!(
+            backend.calls.load(Ordering::SeqCst),
+            if fast_path { 1 } else { 2 }
+        );
+        let [new] = sink.outcome.pended.as_slice() else {
+            panic!("one proposed replacement");
+        };
+        assert!(sink.outcome.landed.is_empty());
+        assert!(sink.outcome.rejected.is_empty());
+        let proposed = vault.get_claim(new)?.expect("persisted proposal");
+        assert_eq!(proposed.approval, ClaimApprovalStatus::Proposed);
+        assert_eq!(vault.pending_claim_supersession(new)?, Some(fx.head));
+        assert_eq!(
+            vault.get_claim(&fx.head)?.expect("old").lifecycle,
+            crate::ClaimLifecycleStatus::Active
+        );
+        assert!(
+            !vault
+                .edges_out(new)?
+                .iter()
+                .any(|edge| edge.kind == EdgeKind::Supersedes)
+        );
+        assert!(
+            vault
+                .supersede_claim(new, &fx.head, fx.run.now_ms + 1)
+                .is_err()
+        );
+        assert_eq!(vault.pending_claim_supersession(new)?, Some(fx.head));
+        assert_eq!(
+            vault.get_claim(&fx.head)?.expect("old").lifecycle,
+            crate::ClaimLifecycleStatus::Active
+        );
+        assert!(
+            !vault
+                .edges_out(new)?
+                .iter()
+                .any(|edge| edge.kind == EdgeKind::Supersedes)
+        );
+        vault.grant_deferred_claim_auto(new, fx.run.now_ms + 1)?;
+        assert_eq!(
+            vault.get_claim(&fx.head)?.expect("closed").lifecycle,
+            crate::ClaimLifecycleStatus::Superseded
+        );
+        assert!(
+            vault
+                .edges_out(new)?
+                .iter()
+                .any(|edge| edge.kind == EdgeKind::Supersedes && edge.target == fx.head)
+        );
+    }
     Ok(())
 }
 
