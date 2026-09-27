@@ -124,7 +124,9 @@ fn delete_references_amp_ident(statement: &str, name: &str) -> bool {
 }
 
 fn open_test_vault() -> (tempfile::TempDir, Vault) {
-    crate::test_util::open_test_vault_with(VaultConfig::device())
+    let mut config = VaultConfig::device();
+    config.retrieval_telemetry_capture = true;
+    crate::test_util::open_test_vault_with(config)
 }
 
 fn entity_id(byte: u8) -> EntityId {
@@ -2013,6 +2015,230 @@ fn invalid_fast_dims_fails_closed_at_open() -> Result<()> {
             "fast_dims {fd}: got {err:?}",
         );
     }
+    Ok(())
+}
+
+#[test]
+fn orcb_claim_hot_values_are_ciphertext_with_exterior_first_append_key() -> Result<()> {
+    let dir = tempfile::tempdir()?;
+    let path = dir.path().join("vault");
+    let vault = Vault::open(&path, VaultConfig::device())?;
+    let claim = [0x37; 16];
+    let mut first = claim_bound_gate_decision(synthetic_gate_decision_id(0x91, 1), 1, &claim);
+    first.actor_ref = Some("private-canary-claim-value".to_owned());
+    let second = claim_bound_gate_decision(synthetic_gate_decision_id(0x92, 2), 2, &claim);
+    let unbound = gate_decision(synthetic_gate_decision_id(0x93, 3), 3, None);
+    append_gate_decisions(&vault, &[first.clone(), second.clone(), unbound.clone()])?;
+
+    let rtxn = vault.store.env.read_txn()?;
+    let raw = vault
+        .store
+        .vault_meta
+        .get(&rtxn, &gate_decision_key(first.decision_id))?
+        .expect("first value")
+        .into_owned();
+    let raw_second = vault
+        .store
+        .vault_meta
+        .get(&rtxn, &gate_decision_key(second.decision_id))?
+        .expect("second value")
+        .into_owned();
+    let raw_unbound = vault
+        .store
+        .vault_meta
+        .get(&rtxn, &gate_decision_key(unbound.decision_id))?
+        .expect("unbound value")
+        .into_owned();
+    assert!(raw.starts_with(b"ORCB"));
+    assert!(raw_second.starts_with(b"ORCB"));
+    assert!(
+        !raw.windows(26)
+            .any(|bytes| bytes == b"private-canary-claim-value")
+    );
+    assert_eq!(
+        raw_unbound,
+        encode_gate_decision(&unbound)?,
+        "only erasure-target rows encrypt"
+    );
+    assert_eq!(
+        vault.store.gate_decision_in_txn(&rtxn, first.decision_id)?,
+        Some(first.clone())
+    );
+    assert_eq!(
+        vault
+            .store
+            .find_gate_decision_id_in_txn(&rtxn, |row| row == &first)?,
+        Some(first.decision_id)
+    );
+    assert_eq!(
+        vault
+            .store
+            .gate_decisions_page_in_txn(&rtxn, None, 3)?
+            .len(),
+        3
+    );
+    drop(rtxn);
+
+    let key_dir = dir.path().join(".vault.gate-decision-keys");
+    assert!(
+        !key_dir.starts_with(&path),
+        "keys cannot enter the vault image"
+    );
+    let keys: Vec<_> = std::fs::read_dir(&key_dir)?.collect::<std::io::Result<_>>()?;
+    assert_eq!(
+        keys.len(),
+        1,
+        "a claim shares its first-append key across rows"
+    );
+    assert_eq!(std::fs::read(keys[0].path())?.len(), 32);
+    drop(vault);
+    let reopened = Vault::open(&path, VaultConfig::device())?;
+    assert_eq!(
+        gate_decision_primary(&reopened, first.decision_id)?,
+        Some(first.clone())
+    );
+    std::fs::remove_dir_all(key_dir)?;
+    assert!(
+        gate_decision_primary(&reopened, first.decision_id).is_err(),
+        "an old LMDB image cannot decrypt after its exterior key is destroyed"
+    );
+    drop(reopened);
+    Ok(())
+}
+
+#[test]
+fn orcb_ciphertext_requires_key_and_authenticated_header() -> Result<()> {
+    let dir = tempfile::tempdir()?;
+    let vault = Vault::open(dir.path().join("vault"), VaultConfig::device())?;
+    let first = claim_bound_gate_decision(synthetic_gate_decision_id(0x94, 1), 1, &[0x39; 16]);
+    append_gate_decisions(&vault, std::slice::from_ref(&first))?;
+    let mut wtxn = vault.store.env.write_txn()?;
+    let mut raw = vault
+        .store
+        .vault_meta
+        .get(&wtxn, &gate_decision_key(first.decision_id))?
+        .expect("encrypted value")
+        .into_owned();
+    raw[6] ^= 1; // Claim-id AAD: cannot retarget the value to another claim.
+    vault
+        .store
+        .vault_meta
+        .put(&mut wtxn, &gate_decision_key(first.decision_id), &raw)?;
+    wtxn.commit()?;
+    let rtxn = vault.store.env.read_txn()?;
+    assert!(
+        vault
+            .store
+            .gate_decision_in_txn(&rtxn, first.decision_id)
+            .is_err()
+    );
+    assert!(
+        vault
+            .store
+            .for_each_gate_decision_in_txn(&rtxn, |_| Ok(()))
+            .is_err()
+    );
+    Ok(())
+}
+
+#[cfg(unix)]
+#[test]
+fn orcb_first_append_recovers_unpublished_and_linked_temporary_keys() -> Result<()> {
+    use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt};
+    let dir = tempfile::tempdir()?;
+    let vault = Vault::open(dir.path().join("vault"), VaultConfig::device())?;
+    let custody = dir.path().join(".vault.gate-decision-keys");
+    std::fs::DirBuilder::new().mode(0o700).create(&custody)?;
+    let unfinished = [0x41; 16];
+    let linked = [0x42; 16];
+    let first_temp = custody.join(format!(
+        ".{}-0123456789abcdef.pending",
+        crate::entity_id::bytes_to_hex_lower(&unfinished)
+    ));
+    std::fs::write(&first_temp, b"short, unpublished key")?;
+    let linked_temp = custody.join(format!(
+        ".{}-0123456789abcdef.pending",
+        crate::entity_id::bytes_to_hex_lower(&linked)
+    ));
+    let mut options = std::fs::OpenOptions::new();
+    options.write(true).create_new(true).mode(0o600);
+    std::io::Write::write_all(&mut options.open(&linked_temp)?, &[0x77; 32])?;
+    let linked_final = custody.join(crate::entity_id::bytes_to_hex_lower(&linked));
+    std::fs::hard_link(&linked_temp, &linked_final)?;
+    let a = claim_bound_gate_decision(synthetic_gate_decision_id(0x95, 1), 1, &unfinished);
+    let b = claim_bound_gate_decision(synthetic_gate_decision_id(0x95, 2), 2, &linked);
+    append_gate_decisions(&vault, &[a.clone(), b.clone()])?;
+    assert_eq!(gate_decision_primary(&vault, a.decision_id)?, Some(a));
+    assert_eq!(gate_decision_primary(&vault, b.decision_id)?, Some(b));
+    assert!(!first_temp.exists());
+    assert!(!linked_temp.exists());
+    assert_eq!(std::fs::read(linked_final)?, [0x77; 32]);
+    Ok(())
+}
+
+#[cfg(unix)]
+#[test]
+fn orcb_never_replaces_a_published_short_key() -> Result<()> {
+    use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt};
+    let dir = tempfile::tempdir()?;
+    let vault = Vault::open(dir.path().join("vault"), VaultConfig::device())?;
+    let custody = dir.path().join(".vault.gate-decision-keys");
+    std::fs::DirBuilder::new().mode(0o700).create(&custody)?;
+    let claim = [0x43; 16];
+    let final_key = custody.join(crate::entity_id::bytes_to_hex_lower(&claim));
+    let mut options = std::fs::OpenOptions::new();
+    options.write(true).create_new(true).mode(0o600);
+    options.open(&final_key)?;
+    let decision = claim_bound_gate_decision(synthetic_gate_decision_id(0x95, 3), 3, &claim);
+    assert!(append_gate_decisions(&vault, std::slice::from_ref(&decision)).is_err());
+    assert!(std::fs::read(&final_key)?.is_empty());
+    assert!(gate_decision_primary(&vault, decision.decision_id)?.is_none());
+    Ok(())
+}
+
+#[cfg(unix)]
+#[test]
+fn orcb_non_utf8_sibling_vaults_have_independent_keys() -> Result<()> {
+    use std::os::unix::ffi::OsStringExt;
+    let dir = tempfile::tempdir()?;
+    let mut vaults = Vec::new();
+    let claim = [0x44; 16];
+    for (suffix, id) in [(0xff, 4), (0xfe, 5)] {
+        let path = dir
+            .path()
+            .join(std::ffi::OsString::from_vec(vec![b'v', suffix]));
+        let vault = Vault::open(path, VaultConfig::device())?;
+        let decision = claim_bound_gate_decision(synthetic_gate_decision_id(0x95, id), id, &claim);
+        append_gate_decisions(&vault, std::slice::from_ref(&decision))?;
+        vaults.push((vault, decision));
+    }
+    let paths: Vec<_> = std::fs::read_dir(dir.path())?
+        .map(|entry| entry.map(|entry| entry.path()))
+        .collect::<std::io::Result<_>>()?;
+    let key_paths: Vec<_> = paths
+        .into_iter()
+        .filter(|path| {
+            path.file_name().is_some_and(|name| {
+                use std::os::unix::ffi::OsStrExt;
+                name.as_bytes().ends_with(b".gate-decision-keys")
+            })
+        })
+        .collect();
+    assert_eq!(key_paths.len(), 2);
+    let key_name = crate::entity_id::bytes_to_hex_lower(&claim);
+    assert_ne!(
+        std::fs::read(key_paths[0].join(&key_name))?,
+        std::fs::read(key_paths[1].join(&key_name))?
+    );
+    std::fs::remove_file(key_paths[0].join(&key_name))?;
+    let readable = vaults
+        .iter()
+        .filter(|(vault, decision)| gate_decision_primary(vault, decision.decision_id).is_ok())
+        .count();
+    assert_eq!(
+        readable, 1,
+        "retiring one vault must not retire its sibling"
+    );
     Ok(())
 }
 

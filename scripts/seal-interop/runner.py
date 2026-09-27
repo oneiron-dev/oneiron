@@ -50,6 +50,19 @@ def emit(reader, pdf):
         print(f"{reader}: wrapper output is not JSON: {p.stdout!r}", file=sys.stderr)
         result = {"reader": reader, "version": "unknown", "mode": "unknown", "status": "fail", "detail": "invalid wrapper output"}
         p.returncode = p.returncode or 1
+    # Source-backed PDFium coverage can be established, rejected, or missing.
+    # A missing proof is an incomplete reader row, not a pass or a bad PDF.
+    if reader == "pdfium":
+        coverage = result.get("coverage_outcome")
+        if coverage == "not_established":
+            result["status"] = "unavailable"
+            p.returncode = 77
+        elif coverage == "rejected":
+            result["status"] = "fail"
+            p.returncode = 1
+        elif result.get("status") == "pass" and coverage != "established":
+            result["status"] = "unavailable"
+            p.returncode = 77
     result.setdefault("reader", reader)
     result.setdefault("version", "unknown")
     result.setdefault("os_proxy", os_proxy())
@@ -57,6 +70,10 @@ def emit(reader, pdf):
     result.setdefault("status", "fail")
     result.setdefault("detail", "")
     print("\t".join(str(result[k]).replace("\t", " ").replace("\n", " ") for k in ("reader", "version", "os_proxy", "mode", "status", "detail")))
+    if result["status"] == "unavailable":
+        return 77
+    if result["status"] == "fail":
+        return p.returncode or 1
     return p.returncode
 
 def main(argv):

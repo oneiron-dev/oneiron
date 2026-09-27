@@ -35,7 +35,9 @@ mod host;
 mod isolation;
 mod ledger;
 mod listener;
+mod peer;
 mod shed;
+pub(crate) use self::peer::UnixPeer;
 mod state_serve;
 mod vault_gates;
 
