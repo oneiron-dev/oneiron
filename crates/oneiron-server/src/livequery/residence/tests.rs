@@ -26,9 +26,9 @@ fn reply(server: &SyncServer, auth: &CoreAuth, method: &str, params: Value) -> V
 async fn first_join_index_is_thin_and_first_touch_returns_only_the_selected_item() {
     let (_dir, server) = production_tests::server();
     let actor = EntityId::from_hex(production_tests::ACTOR).unwrap();
-    let item = EntityId::from_hex("55555555555555555555555555555555").unwrap();
-    let other = EntityId::from_hex("66666666666666666666666666666666").unwrap();
-    let grant_id = EntityId::from_hex("77777777777777777777777777777777").unwrap();
+    let item = EntityId::now();
+    let other = EntityId::now();
+    let grant_id = EntityId::now();
     let scope = crate::handler::selector_grant_scope();
     let grant = FederationGrant::new(
         scope,

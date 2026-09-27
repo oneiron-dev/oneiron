@@ -97,7 +97,7 @@ pub(in crate::sync) fn admit_promoted_entity_write_in_txn(
         return Err(denied());
     }
     let admission = authorize_in_txn(vault, txn, scope, selector, Some(selector.member_ref))?;
-    admit_selected_in_txn(vault, txn, id, scope, selector, &admission)?;
+    admit_selected_in_txn(vault, txn, id, selector, &admission)?;
     let mut record = crate::federation::record_scope::scope_for_blob(&vault.store, txn, id, &old)?
         .ok_or_else(denied)?;
     record.verbs =
