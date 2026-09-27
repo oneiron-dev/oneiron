@@ -3,7 +3,7 @@
 use crate::edge::EdgeKind;
 use crate::error::{Error, RecordError, RegistryError, Result};
 use crate::limits::MAX_ANCESTOR_DEPTH;
-use crate::ports::{EdgeDirection, EdgeStoreRead, EntityStoreRead};
+use crate::ports::{EdgeDirection, EdgeStoreRead};
 use crate::registry::{ENTITY_TYPE_CONVERSATION, ENTITY_TYPE_TURN};
 use crate::store::Store;
 use crate::vault::{LiveEntityRow, live_entity_row_in_txn};
@@ -159,78 +159,6 @@ pub(super) fn chain(
     }
     records.reverse();
     Ok(records)
-}
-
-/// Read-only selected path for previews. A soft-deleted TURN keeps its typed
-/// shell and structural edges, so it may be traversed but never rendered.
-/// Unlike the write validator, this admits only retained shells at dead nodes.
-pub(super) fn preview_canonical_chain(
-    store: &Store,
-    txn: &RoTxn<'_>,
-    conversation: &EntityId,
-    head: EntityId,
-) -> Result<Vec<EntityId>> {
-    require_type(store, txn, conversation, ENTITY_TYPE_CONVERSATION)?;
-    let mut reversed = Vec::new();
-    let mut seen = HashSet::new();
-    let mut cursor = Some(head);
-    while let Some(id) = cursor {
-        if !seen.insert(id) {
-            return Err(RegistryError::CycleDetected.into());
-        }
-        if reversed.len() >= MAX_ANCESTOR_DEPTH {
-            return Err(Error::IndexOverflow("conversation_dag_walk"));
-        }
-        match live_entity_row_in_txn(store, txn, &id)? {
-            LiveEntityRow::Live {
-                entity_type: ENTITY_TYPE_TURN,
-                ..
-            } => {
-                if is_thread_record(store, txn, &id)? || is_sub_session_record(store, txn, &id)? {
-                    return Err(invalid("non-trunk record on canonical line"));
-                }
-            }
-            LiveEntityRow::DeletedShell => {
-                let shell = store
-                    .port_entity_record(txn, &id)?
-                    .ok_or(Error::CorruptedIndex("conversation DAG shell"))?;
-                if shell.entity_type != ENTITY_TYPE_TURN {
-                    return Err(invalid("non-trunk shell on canonical line"));
-                }
-                if let Some(session) =
-                    crate::compaction::turn_session_membership_in_txn(store, txn, &id)?
-                {
-                    match super::topology::classify_session(store, txn, session, *conversation)? {
-                        super::topology::Fact::Known(
-                            super::topology::SessionPlacement::Ordinary { .. },
-                        ) => {}
-                        super::topology::Fact::Known(
-                            super::topology::SessionPlacement::Spawned { .. },
-                        ) => return Err(invalid("non-trunk shell on canonical line")),
-                        super::topology::Fact::Wait(_) => {
-                            return Err(invalid("sub-session anchor has not been reconciled"));
-                        }
-                        super::topology::Fact::Reject(reason) => return Err(reason.into_error()),
-                    }
-                }
-            }
-            LiveEntityRow::Live { .. } => return Err(invalid("unexpected entity type")),
-            LiveEntityRow::Absent => return Err(Error::EntityNotFound),
-        }
-        let owners = edge_ids(store, txn, &id, EdgeKind::ChildOf, false, 2)?;
-        if owners.len() != 1 || owners[0] != *conversation {
-            return Err(invalid("record is outside selected conversation"));
-        }
-        reversed.push(id);
-        cursor = parent(store, txn, &id)?;
-    }
-    reversed.reverse();
-    for (n, id) in reversed.iter().enumerate() {
-        if read_id(store, txn, CANONICAL, id)? != reversed.get(n + 1).copied() {
-            return Err(Error::CorruptedIndex("conversation canonical mark"));
-        }
-    }
-    Ok(reversed)
 }
 
 pub(crate) fn is_sub_session_record(

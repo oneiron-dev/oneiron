@@ -11865,6 +11865,16 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [],
+     "path": "src/conversation/preview.rs",
+     "purpose": "Visible text projection over a checked selected path or the current ChildOf writer",
+     "surface": {
+      "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [
       "SessionMode",
       "SessionPresence"
@@ -11901,7 +11911,7 @@
      "purpose": "The audience predicate shared by all ScopedRead paths",
      "surface": {
       "crate-vis": 4,
-      "fn": 2
+      "fn": 1
      }
     },
     {
@@ -11931,7 +11941,7 @@
      "path": "src/conversation_dag/graph.rs",
      "purpose": "Strict transactional graph reads and shared guards",
      "surface": {
-      "crate-vis": 17
+      "crate-vis": 16
      }
     },
     {
@@ -11962,7 +11972,7 @@
      "path": "src/conversation_dag/mod.rs",
      "purpose": "Conversation DAG topology, local HEAD state and exact scope resolution",
      "surface": {
-      "crate-vis": 9,
+      "crate-vis": 10,
       "mod": 1,
       "re-export": 2
      }
@@ -11989,6 +11999,16 @@
      "surface": {
       "fn": 3,
       "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/conversation_dag/retained_path.rs",
+     "purpose": "Read-only selected topology over retained TURN and SESSION headers",
+     "surface": {
+      "crate-vis": 5
      }
     },
     {
@@ -12065,7 +12085,7 @@
      "purpose": "Atomic append, explicit HEAD moves and canonical-index repair",
      "surface": {
       "crate-vis": 3,
-      "fn": 6
+      "fn": 5
      }
     },
     {
@@ -35203,14 +35223,14 @@
      "purpose": "Persisted, deterministic Rust API, schema and command-output contracts"
     },
     "conversation": {
-     "files": 7,
+     "files": 8,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
      "purpose": "Room bodies, membership windows, session presence and audience visibility"
     },
     "conversation_dag": {
-     "files": 15,
+     "files": 16,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -36122,7 +36142,7 @@
    },
    "over_bar": 11,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2134,
+   "source_files": 2136,
    "test_files": 726
   },
   "oneiron-android": {

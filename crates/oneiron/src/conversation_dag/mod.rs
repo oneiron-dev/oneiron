@@ -19,6 +19,7 @@ pub(crate) use membership::{stage_session_carrier, validate_session_carrier};
 
 mod policy;
 mod reply;
+pub(crate) mod retained_path;
 mod scopes;
 mod types;
 mod writes;

@@ -906,3 +906,180 @@ fn head_cannot_select_a_thread_or_escape_through_its_descendant() {
         ErrorKind::InvalidConversationDag
     );
 }
+
+#[test]
+fn retained_preview_refuses_wrong_type_owner_cycle_and_canonical_mark() {
+    let (_dir, vault, conversation, actor) = fixture();
+    let root = vault
+        .append_dag_record(&input(conversation, None, true, actor))
+        .unwrap()
+        .id;
+    let child = vault
+        .append_dag_record(&input(conversation, Some(root), true, actor))
+        .unwrap()
+        .id;
+    assert_eq!(
+        vault
+            .conversation_last_message_snippet(&conversation)
+            .unwrap(),
+        Some("record".into())
+    );
+    vault
+        .with_write_txn(|txn| {
+            vault.store.vault_meta.put(
+                txn,
+                &super::graph::key(super::graph::HEAD, &conversation),
+                actor.entity_ref().as_bytes(),
+            )?;
+            Ok(())
+        })
+        .unwrap();
+    assert_eq!(
+        vault
+            .conversation_last_message_snippet(&conversation)
+            .unwrap_err()
+            .kind(),
+        ErrorKind::InvalidConversationDag
+    );
+    vault
+        .with_write_txn(|txn| {
+            vault.store.vault_meta.put(
+                txn,
+                &super::graph::key(super::graph::HEAD, &conversation),
+                child.as_bytes(),
+            )?;
+            Ok(())
+        })
+        .unwrap();
+    let foreign = EntityId::now();
+    vault
+        .put_entity(
+            &foreign,
+            ENTITY_TYPE_CONVERSATION,
+            time(1),
+            1,
+            &body("other room"),
+        )
+        .unwrap();
+    let other_root = vault
+        .append_dag_record(&input(foreign, None, true, actor))
+        .unwrap()
+        .id;
+    vault
+        .with_write_txn(|txn| {
+            vault.store.vault_meta.put(
+                txn,
+                &super::graph::key(super::graph::HEAD, &conversation),
+                other_root.as_bytes(),
+            )?;
+            Ok(())
+        })
+        .unwrap();
+    assert_eq!(
+        vault
+            .conversation_last_message_snippet(&conversation)
+            .unwrap_err()
+            .kind(),
+        ErrorKind::InvalidConversationDag
+    );
+    vault
+        .with_write_txn(|txn| {
+            vault.store.vault_meta.put(
+                txn,
+                &super::graph::key(super::graph::HEAD, &conversation),
+                child.as_bytes(),
+            )?;
+            vault.store.vault_meta.put(
+                txn,
+                &super::graph::key(super::graph::CANONICAL, &root),
+                root.as_bytes(),
+            )?;
+            Ok(())
+        })
+        .unwrap();
+    assert_eq!(
+        vault
+            .conversation_last_message_snippet(&conversation)
+            .unwrap_err()
+            .kind(),
+        ErrorKind::CorruptedIndex
+    );
+    vault
+        .with_write_txn(|txn| {
+            vault.store.vault_meta.put(
+                txn,
+                &super::graph::key(super::graph::CANONICAL, &root),
+                child.as_bytes(),
+            )?;
+            Ok(())
+        })
+        .unwrap();
+    vault
+        .batch()
+        .edge_with_value_fields(&root, EdgeKind::Parent, &child, super::writes::value(1))
+        .commit()
+        .unwrap();
+    assert_eq!(
+        vault
+            .conversation_last_message_snippet(&conversation)
+            .unwrap_err()
+            .kind(),
+        ErrorKind::CycleDetected
+    );
+}
+
+#[test]
+fn retained_preview_refuses_unresolved_spawn_but_not_live_empty_legacy_turn() {
+    let (_dir, vault, conversation, actor) = fixture();
+    let legacy = EntityId::now();
+    vault
+        .batch()
+        .put(&legacy, ENTITY_TYPE_TURN, time(20), 20, b"")
+        .edge_checked(&legacy, &conversation, 1.0)
+        .commit()
+        .unwrap();
+    assert!(!vault.is_deleted_shell(&legacy).unwrap());
+    assert_eq!(
+        vault
+            .conversation_last_message_snippet(&conversation)
+            .unwrap(),
+        None
+    );
+    let session = match vault.mint_session(100).unwrap() {
+        crate::session_lifecycle::SessionMintOutcome::Minted(id) => id,
+        other => panic!("expected ordinary session, got {other:?}"),
+    };
+    let root = vault
+        .append_dag_record(&AppendRecord {
+            session: Some(session),
+            ..input(conversation, None, true, actor)
+        })
+        .unwrap()
+        .id;
+    // An injected live session declaration without its SpawnedBy edge is not
+    // ordinary. The preview must refuse rather than quietly broaden the path.
+    vault
+        .with_write_txn(|txn| {
+            let mut raw = vault
+                .store
+                .entities
+                .get(txn, session.as_bytes())?
+                .unwrap()
+                .to_vec();
+            raw.truncate(crate::batch::ENTITY_METADATA_HEADER_LEN);
+            raw.extend(
+                rmp_serde::to_vec_named(&serde_json::json!({"dag_spawning_turn": root.to_hex()}))
+                    .unwrap(),
+            );
+            vault.store.entities.put(txn, session.as_bytes(), &raw)?;
+            Ok(())
+        })
+        .unwrap();
+    assert_eq!(
+        vault
+            .conversation_last_message_snippet(&conversation)
+            .unwrap_err()
+            .kind(),
+        ErrorKind::InvalidConversationDag
+    );
+}

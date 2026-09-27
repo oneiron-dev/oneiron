@@ -40,8 +40,8 @@ use axum::extract::rejection::JsonRejection;
 use axum::extract::rejection::QueryRejection;
 use axum::response::Json;
 use oneiron::EdgeKind;
+use oneiron::registry::ENTITY_TYPE_CONVERSATION;
 use oneiron::registry::ENTITY_TYPE_TURN;
-use oneiron::registry::{ENTITY_TYPE_CONVERSATION, ENTITY_TYPE_MESSAGE};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 use std::sync::Arc;
@@ -243,163 +243,12 @@ fn project_conversation_ids(
         };
         items.push(ConversationListRow {
             entity,
-            last_message_snippet: last_message_snippet(vault, &id)?,
+            last_message_snippet: vault
+                .conversation_last_message_snippet(&id)
+                .map_err(|e| core_engine_error("conversation preview failed", e))?,
         });
     }
     Ok(items)
-}
-
-fn last_message_snippet(
-    vault: &oneiron::Vault,
-    conversation: &oneiron::EntityId,
-) -> Result<Option<String>, EnvelopedApiError> {
-    // The selected DAG HEAD is a TURN. Witnessed MESSAGE rows live under that
-    // TURN via PartOf; legacy text turns carry `txt` on the TURN itself.
-    if let Some(line) = vault
-        .selected_line_snapshot(conversation)
-        .map_err(|e| core_engine_error("conversation main-line read failed", e))?
-    {
-        // A fork, thread or sub-session can be newer than the selected HEAD,
-        // but never displaces a message from this selected ancestor path.
-        for id in line.iter().rev() {
-            if let Some(text) = turn_snippet(vault, id)? {
-                return Ok(Some(text));
-            }
-        }
-        return Ok(None);
-    }
-    // No selected HEAD (legacy). Scan the existing ChildOf index, using
-    // learned_at instead of lexicographic ids.
-    let mut after = None;
-    let mut latest: Option<(u64, oneiron::EntityId, String)> = None;
-    loop {
-        let ids = vault
-            .sources_page(
-                conversation,
-                EdgeKind::ChildOf,
-                Some(ENTITY_TYPE_TURN),
-                after.as_ref(),
-                CORE_MAX_LIST_LIMIT,
-            )
-            .map_err(|e| core_engine_error("conversation message scan failed", e))?;
-        if ids.is_empty() {
-            break;
-        }
-        for id in &ids {
-            if let Some(text) = turn_snippet(vault, id)? {
-                let at = vault
-                    .get_learned_at(id)
-                    .map_err(|e| core_engine_error("conversation message time failed", e))?;
-                if latest
-                    .as_ref()
-                    .is_none_or(|(time, previous, _)| (at, id) > (*time, previous))
-                {
-                    latest = Some((at, *id, text));
-                }
-            }
-        }
-        after = ids.last().copied();
-        if ids.len() < CORE_MAX_LIST_LIMIT {
-            break;
-        }
-    }
-    Ok(latest.map(|(_, _, text)| text))
-}
-
-fn turn_snippet(
-    vault: &oneiron::Vault,
-    turn: &oneiron::EntityId,
-) -> Result<Option<String>, EnvelopedApiError> {
-    if !vault
-        .is_unarchived_live_record(turn)
-        .map_err(|e| core_engine_error("conversation turn visibility failed", e))?
-    {
-        return Ok(None);
-    }
-    let mut after = None;
-    let mut latest: Option<(u64, oneiron::EntityId, String)> = None;
-    loop {
-        let ids = vault
-            .sources_page(
-                turn,
-                EdgeKind::PartOf,
-                Some(ENTITY_TYPE_MESSAGE),
-                after.as_ref(),
-                CORE_MAX_LIST_LIMIT,
-            )
-            .map_err(|e| core_engine_error("conversation turn messages failed", e))?;
-        if ids.is_empty() {
-            break;
-        }
-        for id in &ids {
-            if let Some((order, text)) = visible_message(vault, id)?
-                && latest
-                    .as_ref()
-                    .is_none_or(|(previous_order, previous_id, _)| {
-                        (order, id) > (*previous_order, previous_id)
-                    })
-            {
-                latest = Some((order, *id, text));
-            }
-        }
-        after = ids.last().copied();
-        if ids.len() < CORE_MAX_LIST_LIMIT {
-            break;
-        }
-    }
-    if let Some((_, _, text)) = latest {
-        return Ok(Some(text));
-    }
-    let body = vault
-        .get(turn)
-        .map_err(|e| core_engine_error("conversation turn read failed", e))?;
-    let text = body
-        .as_deref()
-        .and_then(|body| rmp_serde::from_slice::<Value>(body).ok())
-        .and_then(|body| body.get("txt").and_then(Value::as_str).map(str::to_owned));
-    Ok(text.map(|text| truncate_snippet(&text)))
-}
-
-fn visible_message(
-    vault: &oneiron::Vault,
-    id: &oneiron::EntityId,
-) -> Result<Option<(u64, String)>, EnvelopedApiError> {
-    if !vault
-        .is_unarchived_live_record(id)
-        .map_err(|e| core_engine_error("conversation message visibility failed", e))?
-    {
-        return Ok(None);
-    }
-    let body = vault
-        .get(id)
-        .map_err(|e| core_engine_error("conversation message read failed", e))?;
-    let Some(body) = body
-        .as_deref()
-        .and_then(|body| rmp_serde::from_slice::<Value>(body).ok())
-    else {
-        return Ok(None);
-    };
-    if body.get("is_visible").and_then(Value::as_bool) != Some(true) {
-        return Ok(None);
-    }
-    let Some(content) = body.get("content").and_then(Value::as_str) else {
-        return Ok(None);
-    };
-    Ok(Some((
-        body.get("order").and_then(Value::as_u64).unwrap_or(0),
-        truncate_snippet(content),
-    )))
-}
-
-fn truncate_snippet(source: &str) -> String {
-    if source.chars().count() <= 50 {
-        return source.to_owned();
-    }
-    source
-        .chars()
-        .take(49)
-        .chain(std::iter::once('…'))
-        .collect()
 }
 
 /// Create a conversation entity.

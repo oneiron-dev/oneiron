@@ -315,15 +315,6 @@ impl Vault {
         })
     }
 
-    /// Read the selected main line without migrating or writing legacy rooms.
-    /// `None` lets read-only list projections fall back to legacy ChildOf rows.
-    pub fn selected_line_snapshot(&self, conversation: &EntityId) -> Result<Option<Vec<EntityId>>> {
-        let txn = self.store.env.read_txn()?;
-        read_id(&self.store, &txn, HEAD, conversation)?
-            .map(|head| graph::preview_canonical_chain(&self.store, &txn, conversation, head))
-            .transpose()
-    }
-
     /// Local HEAD; legacy conversations migrate before the first read.
     pub fn head(&self, conversation: &EntityId) -> Result<Option<EntityId>> {
         Ok(self
