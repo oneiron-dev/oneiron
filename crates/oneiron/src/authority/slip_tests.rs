@@ -539,36 +539,48 @@ fn consuming_child_spends_single_use_ancestor_and_siblings() {
 }
 
 #[test]
-fn a_later_signer_fork_quarantines_even_the_pre_fork_root_slip() {
+fn same_sequence_parent_revoke_invalidates_descendant_slip_without_quarantine() {
     let (_dir, vault, issuer, root) = fixture();
-    let parent = vault.authority_fold().unwrap().slips.mints[&root.claims.slip_id].entry_hash;
+    let root_mint_hash =
+        vault.authority_fold().unwrap().slips.mints[&root.claims.slip_id].entry_hash;
+    let mut claims = root.claims.clone();
+    claims.slip_id = [71; 32];
+    claims.parent_id = Some(root.claims.slip_id);
+    let child = vault.mint_capability_slip(&issuer, claims).unwrap();
+    let child_hash = vault.authority_fold().unwrap().slips.mints[&child.claims.slip_id].entry_hash;
+    assert!(verify(&vault, &issuer, &child).is_ok());
+
+    // This revocation and the child mint share a parent, signer, and sequence.
+    // Each branch folds by its own ancestry. The parent's revocation still
+    // denies the descendant slip even though it cannot retroactively remove
+    // the sibling mint from the signed log.
     let at = crate::TimeRange {
         start: root.claims.issued_at,
         end: root.claims.issued_at,
     };
-    let first = issuer
+    let revoke = issuer
         .sign_entry(
             Some(root.claims.vault_id),
             2,
-            vec![parent],
-            AuthorityOp::SlipRevoke { slip_id: [71; 32] },
+            vec![root_mint_hash],
+            AuthorityOp::SlipRevoke {
+                slip_id: root.claims.slip_id,
+            },
             at.start,
         )
         .unwrap();
-    let second = issuer
-        .sign_entry(
-            Some(root.claims.vault_id),
-            2,
-            vec![parent],
-            AuthorityOp::SlipRevoke { slip_id: [72; 32] },
-            at.start,
-        )
-        .unwrap();
+    let revoke_hash = authority_entry_hash(&revoke).unwrap();
     vault
-        .put_authority_log_entries(&[(first, at, at.start), (second, at, at.start)])
+        .put_authority_log_entries(&[(revoke, at, at.start)])
         .unwrap();
+
+    let fold = vault.authority_fold().unwrap();
+    assert!(fold.valid_entries.contains(&child_hash));
+    assert!(fold.valid_entries.contains(&revoke_hash));
+    assert!(!fold.slip_is_live(&root.claims.slip_id));
+    assert!(!fold.slip_is_live(&child.claims.slip_id));
     assert!(verify(&vault, &issuer, &root).is_err());
-    assert!(vault.ensure_host_root_slip(&issuer).is_err());
+    assert!(verify(&vault, &issuer, &child).is_err());
 }
 #[test]
 fn a_slip_mint_signed_by_an_agent_device_folds_invalid_even_with_an_owner_cosigner() {
@@ -1430,7 +1442,6 @@ fn rejected_mint_transaction_leaves_append_frontier_unchanged_after_reopen() {
         .unwrap();
     assert_eq!(entry.seq, 2);
     assert_eq!(entry.parent_hashes, vec![parent]);
-    assert!(fold.fork_alarms.is_empty());
     assert!(verify(&vault, &issuer, &slip).is_ok());
 }
 
@@ -1734,4 +1745,62 @@ fn same_agent_logged_attenuation_verifies_but_actor_redelegation_is_rejected() {
             .contains_key(&[0x93; 32])
     );
     assert!(verify(&vault, &issuer, &direct).is_ok());
+}
+
+#[test]
+fn paired_connection_verifies_publicly_and_spends_nonce_without_a_host_secret() {
+    let (_dir, vault, issuer, _root) = fixture();
+    let holder = SigningKey::from_bytes(&[92; 32]);
+    let link = vault
+        .issue_pairing_link(&issuer, Scope::top(), 300)
+        .unwrap();
+    let binding_key = holder.verifying_key().to_bytes();
+    let receipt = holder
+        .sign(&pairing_binding_transcript(&link.code, &binding_key, "external-holder").unwrap())
+        .to_bytes();
+    let slip = vault
+        .redeem_pairing_link(
+            &issuer,
+            &link.code,
+            "external-holder",
+            binding_key,
+            &receipt,
+        )
+        .unwrap();
+    let timestamp = slip.claims.issued_at;
+    let nonce = b"abcdef0123456789abcdef0123456789";
+    let challenge =
+        super::super::slip_replay::request_challenge(timestamp, nonce, timestamp).unwrap();
+    let signature = holder
+        .sign(&slip.binding_transcript(&challenge).unwrap())
+        .to_bytes();
+    assert!(
+        vault
+            .verify_logged_capability_slip_request(&slip, timestamp, &signature, nonce)
+            .is_ok()
+    );
+    assert!(
+        vault
+            .admit_capability_slip_request(&slip, timestamp, &signature, nonce)
+            .is_ok()
+    );
+    assert!(
+        vault
+            .admit_capability_slip_request(&slip, timestamp, &signature, nonce)
+            .is_err()
+    );
+    let wrong_holder = issuer.binding_proof(&slip, &challenge).unwrap();
+    assert!(
+        vault
+            .verify_logged_capability_slip_request(&slip, timestamp, &wrong_holder, nonce)
+            .is_err()
+    );
+    vault
+        .revoke_capability_slip(&issuer, slip.claims.slip_id)
+        .unwrap();
+    assert!(
+        vault
+            .verify_logged_capability_slip_request(&slip, timestamp, &signature, nonce)
+            .is_err()
+    );
 }
