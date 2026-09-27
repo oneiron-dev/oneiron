@@ -1310,6 +1310,44 @@ fn typed_sheet_range_lands_on_keep_with_per_cell_receipts() -> Result<()> {
     use crate::temporal::TimeRange;
     use crate::write_envelope::WriteActor;
 
+    fn fake_text_bytes(bytes: &[u8], mode: u8) -> Result<Vec<u8>> {
+        let mut pkg = opc::read(bytes)?;
+        if mode == 4 {
+            pkg.upsert(SHEET_PART, br#"<worksheet><sheetData><row r="2"><c r="B2" t="inlineStr"><is><r><t>Actual</t></r></is></c></row></sheetData></worksheet>"#.to_vec());
+        } else {
+            pkg.upsert(SHEET_PART, br#"<worksheet><sheetData><row r="2"><c r="B2" t="s"><v>0</v></c></row></sheetData></worksheet>"#.to_vec());
+            pkg.upsert(
+                "xl/sharedStrings.xml",
+                br#"<sst><si/><si><t>Wrong</t></si></sst>"#.to_vec(),
+            );
+        }
+        Ok(opc::write(&pkg))
+    }
+    struct TextSession;
+    impl EditSession for TextSession {
+        fn apply_edits(&self, doc: &OfficeDoc, plan: &EditPlan) -> Result<AppliedEdit> {
+            let EditOp::SetCell {
+                after: CellValue::Text(text),
+                ..
+            } = &plan.ops[0]
+            else {
+                panic!("expected text answer");
+            };
+            let mut pkg = opc::read(&doc.bytes)?;
+            pkg.upsert(SHEET_PART, format!(r#"<worksheet><sheetData><row r="2"><c r="B2" t="inlineStr"><is><t>{text}</t></is></c></row></sheetData></worksheet>"#).into_bytes());
+            Ok(AppliedEdit {
+                bytes: opc::write(&pkg),
+                applied_ops: plan.ops.clone(),
+                warnings: vec![],
+            })
+        }
+        fn recalc(&self, doc: &OfficeDoc) -> Result<Vec<u8>> {
+            Ok(doc.bytes.clone())
+        }
+        fn recalc_engine(&self) -> Option<crate::blob_artifact::CalcEngineStamp> {
+            Some(crate::blob_artifact::CalcEngineStamp::new("fixture", "1").unwrap())
+        }
+    }
     struct DishonestSession {
         mode: u8,
     }
@@ -1317,6 +1355,8 @@ fn typed_sheet_range_lands_on_keep_with_per_cell_receipts() -> Result<()> {
         fn apply_edits(&self, doc: &OfficeDoc, plan: &EditPlan) -> Result<AppliedEdit> {
             let bytes = if self.mode == 0 {
                 doc.bytes.clone()
+            } else if self.mode >= 4 {
+                fake_text_bytes(&doc.bytes, self.mode)?
             } else {
                 let mut pkg = opc::read(&doc.bytes)?;
                 let sheet = if self.mode == 1 {
@@ -1428,6 +1468,51 @@ fn typed_sheet_range_lands_on_keep_with_per_cell_receipts() -> Result<()> {
         max_count_override: None,
         answers: vec![answer(2, 6.0), answer(3, 8.0)],
     };
+    // These two valid OOXML encodings used to yield false receipts: rich
+    // inline text was read as empty, and an empty shared-string item was
+    // skipped so the following item's text was falsely assigned to index 0.
+    for (mode, expected) in [(4, ""), (5, "Wrong")] {
+        let mut text_bundle = bundle.clone();
+        text_bundle.range = RangeRef::parse("B2:B2")?;
+        text_bundle.answers = vec![SheetCellAnswer {
+            cell: CellRef::new(2, 2),
+            before: None,
+            value: Some(CellValue::Text(expected.into())),
+            ..text_bundle.answers[0].clone()
+        }];
+        let refused = vault
+            .propose_sheet_answers(
+                &artifact,
+                &DishonestSession { mode },
+                text_bundle.clone(),
+                "ask:fake-text",
+            )
+            .expect_err("a writer's false text op cannot make a proposal");
+        assert_eq!(refused.kind(), crate::error::ErrorKind::InvalidEditManifest);
+        let EditOutcome::Proposed(mut honest) =
+            vault.propose_sheet_answers(&artifact, &TextSession, text_bundle, "ask:honest-text")?
+        else {
+            panic!("text stages");
+        };
+        honest.new_bytes = fake_text_bytes(&honest.new_bytes, mode)?;
+        let refused = vault
+            .settle_select_edit_proposal(
+                &artifact,
+                &honest,
+                &SettleConsent::OwnerConsent { brief_ref: None },
+                actor,
+                time,
+                11,
+            )
+            .expect_err("Keep must re-read rich and shared string bytes");
+        assert_eq!(refused.kind(), crate::error::ErrorKind::InvalidEditManifest);
+        assert!(
+            vault
+                .blob_artifact_settlement(&artifact, "ask:honest-text")?
+                .is_none()
+        );
+        assert_eq!(vault.blob_artifact_head(&artifact)?.unwrap().version, 1);
+    }
     let idempotent = SheetAnswerBundle {
         question: "unchanged".into(),
         question_version: "q1".into(),

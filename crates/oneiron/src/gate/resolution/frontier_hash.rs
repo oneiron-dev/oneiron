@@ -61,7 +61,12 @@ pub(super) fn hash_policy_frontier_v0(
     let nondefault: Vec<_> = resolution
         .sheet_answer_limits
         .iter()
-        .filter(|row| row.artifact_ref.is_some() || row.sheet.is_some() || row.max_count != 4096)
+        .chain(resolution.untrusted_sheet_answer_limits.iter())
+        .filter(|row| {
+            row.artifact_ref.is_some()
+                || row.sheet.is_some()
+                || Some(row.max_count) != resolution.sheet_answer_default_max_count
+        })
         .collect();
     if !nondefault.is_empty() {
         hash_str(hasher, "sheet_answer_limits");

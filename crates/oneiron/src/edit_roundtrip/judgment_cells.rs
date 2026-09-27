@@ -90,6 +90,7 @@ fn sheet_cells(
     let mut current: Option<CellRead> = None;
     let mut capture: Option<&'static str> = None;
     let mut inline_string = false;
+    let mut inline_run = false;
     let mut in_sheet_data = false;
     let mut row: Option<u32> = None;
     let mut depth = 0usize;
@@ -156,6 +157,14 @@ fn sheet_cells(
                 inline_string = true;
             }
             Event::Start(tag)
+                if current.is_some()
+                    && inline_string
+                    && depth == 6
+                    && sheet_tag(&reader, &tag, "r") =>
+            {
+                inline_run = true;
+            }
+            Event::Start(tag)
                 if current.is_some() && depth == 5 && sheet_tag(&reader, &tag, "f") =>
             {
                 current.as_mut().ok_or_else(invalid)?.3 = Some(String::new());
@@ -169,7 +178,14 @@ fn sheet_cells(
             Event::Start(tag)
                 if current.is_some()
                     && ((depth == 5 && sheet_tag(&reader, &tag, "v"))
-                        || (depth == 6 && inline_string && sheet_tag(&reader, &tag, "t"))) =>
+                        || (depth == 6
+                            && inline_string
+                            && !inline_run
+                            && sheet_tag(&reader, &tag, "t"))
+                        || (depth == 7
+                            && inline_string
+                            && inline_run
+                            && sheet_tag(&reader, &tag, "t"))) =>
             {
                 capture = Some("value");
                 current.as_mut().ok_or_else(invalid)?.4 = true;
@@ -180,18 +196,27 @@ fn sheet_cells(
                 current.as_mut().ok_or_else(invalid)?.4 = true;
             }
             Event::Text(text)
-                if capture.is_some() && (depth == 5 || (depth == 6 && inline_string)) =>
+                if capture.is_some()
+                    && (depth == 5
+                        || (depth == 6 && inline_string && !inline_run)
+                        || (depth == 7 && inline_run)) =>
             {
                 let v = quick_xml::escape::unescape(text.as_ref()).map_err(|_| invalid())?;
                 push_captured(&mut current, capture, &v)?;
             }
             Event::CData(text)
-                if capture.is_some() && (depth == 5 || (depth == 6 && inline_string)) =>
+                if capture.is_some()
+                    && (depth == 5
+                        || (depth == 6 && inline_string && !inline_run)
+                        || (depth == 7 && inline_run)) =>
             {
                 push_captured(&mut current, capture, text.as_ref())?;
             }
             Event::GeneralRef(reference)
-                if capture.is_some() && (depth == 5 || (depth == 6 && inline_string)) =>
+                if capture.is_some()
+                    && (depth == 5
+                        || (depth == 6 && inline_string && !inline_run)
+                        || (depth == 7 && inline_run)) =>
             {
                 let value = reference
                     .resolve_char_ref()
@@ -208,13 +233,21 @@ fn sheet_cells(
                 finish_cell(&mut current, &targets, &mut cells, &pkg)?;
                 capture = None;
                 inline_string = false;
+                inline_run = false;
             }
             Event::End(tag)
                 if (depth == 5
                     && (sheet_end(&reader, &tag, "v") || sheet_end(&reader, &tag, "f")))
-                    || (depth == 6 && inline_string && sheet_end(&reader, &tag, "t")) =>
+                    || (depth == 6
+                        && inline_string
+                        && !inline_run
+                        && sheet_end(&reader, &tag, "t"))
+                    || (depth == 7 && inline_run && sheet_end(&reader, &tag, "t")) =>
             {
                 capture = None;
+            }
+            Event::End(tag) if depth == 6 && inline_run && sheet_end(&reader, &tag, "r") => {
+                inline_run = false;
             }
             Event::End(tag) if depth == 5 && inline_string && sheet_end(&reader, &tag, "is") => {
                 inline_string = false;
@@ -341,6 +374,12 @@ fn shared_string(pkg: &OpcPackage, index: usize) -> Result<String> {
         }
         let ended = matches!(&event, Event::End(_));
         match event {
+            Event::Empty(tag) if depth == 1 && sheet_tag(&reader, &tag, "si") => {
+                if ordinal == index {
+                    return Ok(String::new());
+                }
+                ordinal += 1;
+            }
             Event::Start(tag) if depth == 2 && sheet_tag(&reader, &tag, "si") => {
                 if in_item {
                     return Err(invalid());
@@ -510,6 +549,37 @@ mod tests {
             });
         }
         opc::write(&OpcPackage::from_parts(parts))
+    }
+
+    #[test]
+    fn rich_inline_and_empty_shared_items_have_their_actual_text() -> Result<()> {
+        let rich = package(
+            r#"<worksheet><sheetData><row r="2"><c r="B2" t="inlineStr"><is><r><t>Actual</t></r></is></c></row></sheetData></worksheet>"#,
+            false,
+        );
+        let mut ask = bundle(
+            "Data & Co",
+            Some(CellValue::Text("Actual".into())),
+            CellValue::Text("Actual".into()),
+        );
+        verify_sheet_answer_bytes(&ask, Some(&rich), Some(&rich))?;
+        ask.answers[0].before = Some(CellValue::Text(String::new()));
+        assert!(verify_sheet_answer_bytes(&ask, Some(&rich), Some(&rich)).is_err());
+        let mut pkg = opc::read(&package(
+            r#"<worksheet><sheetData><row r="2"><c r="B2" t="s"><v>0</v></c></row></sheetData></worksheet>"#,
+            true,
+        ))?;
+        pkg.upsert(
+            "xl/sharedStrings.xml",
+            br#"<sst><si/><si><t>Wrong</t></si></sst>"#.to_vec(),
+        );
+        let shared = opc::write(&pkg);
+        ask.answers[0].before = Some(CellValue::Text(String::new()));
+        ask.answers[0].value = Some(CellValue::Text(String::new()));
+        verify_sheet_answer_bytes(&ask, Some(&shared), Some(&shared))?;
+        ask.answers[0].value = Some(CellValue::Text("Wrong".into()));
+        assert!(verify_sheet_answer_bytes(&ask, Some(&shared), Some(&shared)).is_err());
+        Ok(())
     }
 
     #[test]

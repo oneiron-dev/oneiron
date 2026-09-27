@@ -16,8 +16,8 @@ use crate::gate::constants::{
     POLICY_OWNER_POLICY_OUTPUT_CONTRACT_KEY, POLICY_OWNER_POLICY_PATTERNS_KEY,
     POLICY_OWNER_POLICY_ROWS_KEY, POLICY_PACK_ID_KEY, POLICY_PACK_VERSION_KEY, POLICY_RULES_KEY,
     POLICY_SCHEMA_VERSION, POLICY_SCHEMA_VERSION_KEY, POLICY_SCOPED_GRANTS_KEY,
-    POLICY_SHEET_ANSWER_LIMITS_KEY, POLICY_SIGNATURE_KEY, POLICY_SIGNATURES_KEY,
-    POLICY_SOURCE_TRUST_KEY,
+    POLICY_SHEET_ANSWER_LIMITS_KEY, POLICY_SHEET_ANSWER_PRECEDENCE_KEY, POLICY_SIGNATURE_KEY,
+    POLICY_SIGNATURES_KEY, POLICY_SOURCE_TRUST_KEY,
 };
 use crate::gate::grants::PolicyScopedGrant;
 use crate::gate::resolution::CommOptOutPosture;
@@ -60,6 +60,8 @@ pub(in crate::gate) struct DecodedPolicyManifest {
     pub(in crate::gate) diagnostic_bounds: Option<crate::self_heal::tripwires::TripwireBounds>,
     pub(in crate::gate) proposal_check_threshold: Option<u64>,
     pub(in crate::gate) sheet_answer_limits: Vec<crate::gate::resolution::SheetAnswerLimitRow>,
+    pub(in crate::gate) sheet_answer_precedence:
+        Option<crate::gate::resolution::SheetAnswerPrecedence>,
     pub(in crate::gate) unsupported_schema: bool,
     pub(in crate::gate) engine_version_floor: bool,
     pub(in crate::gate) unknown_axis_seen: bool,
@@ -106,6 +108,7 @@ pub(in crate::gate) fn decode_policy_manifest(data: &[u8]) -> Option<DecodedPoli
                 | "diagnostic_bounds"
                 | "proposal_check_threshold"
                 | POLICY_SHEET_ANSWER_LIMITS_KEY
+                | POLICY_SHEET_ANSWER_PRECEDENCE_KEY
         ) {
             return None;
         }
@@ -247,6 +250,25 @@ pub(in crate::gate) fn decode_policy_manifest(data: &[u8]) -> Option<DecodedPoli
         MapValue::Present(value) => parse_sheet_answer_limits(value)?,
     };
 
+    let sheet_answer_precedence = match single_map_value(
+        &entries,
+        POLICY_SHEET_ANSWER_PRECEDENCE_KEY,
+    ) {
+        MapValue::Missing => None,
+        MapValue::Duplicate => return None,
+        MapValue::Present(Value::Map(row)) => {
+            if row.len() != 1 {
+                return None;
+            }
+            match single_map_value(row, "mode") {
+                MapValue::Present(value) if value.as_str() == Some("nested_narrowing_holder_capped_at_vault") =>
+                    Some(crate::gate::resolution::SheetAnswerPrecedence::NestedNarrowingHolderCappedAtVault),
+                _ => return None,
+            }
+        }
+        _ => return None,
+    };
+
     let unknown_axis_seen =
         defaults.unknown_axis_seen || rules.iter().any(|rule| rule.axes.unknown_axis_seen);
 
@@ -278,6 +300,7 @@ pub(in crate::gate) fn decode_policy_manifest(data: &[u8]) -> Option<DecodedPoli
         diagnostic_bounds,
         proposal_check_threshold,
         sheet_answer_limits,
+        sheet_answer_precedence,
         unsupported_schema,
         engine_version_floor,
         unknown_axis_seen,
@@ -353,7 +376,12 @@ fn parse_sheet_answer_limits(
             MapValue::Duplicate => return None,
             MapValue::Present(value) => {
                 let id = value.as_str()?;
-                crate::entity_id::EntityId::from_hex(id).ok()?;
+                let parsed = crate::entity_id::EntityId::from_hex(id).ok()?;
+                // Accepted rows must match the canonical lookup key; rejecting
+                // mixed case prevents a silent widening at both write doors.
+                if parsed.to_hex() != id {
+                    return None;
+                }
                 Some(id.to_owned())
             }
         };
@@ -395,6 +423,12 @@ mod sheet_answer_limit_tests {
         let shipped = crate::gate::default_manifest::default_policy_manifest();
         let default = decode_policy_manifest(&shipped).expect("shipped manifest decodes");
         assert_eq!(default.sheet_answer_limits[0].max_count, 4096);
+        assert_eq!(
+            default.sheet_answer_precedence,
+            Some(
+                crate::gate::resolution::SheetAnswerPrecedence::NestedNarrowingHolderCappedAtVault
+            )
+        );
         let artifact = "11111111111111111111111111111111";
         let rows = Value::Array(vec![
             Value::Map(vec![(Value::from("max_count"), Value::from(256u64))]),
@@ -410,8 +444,12 @@ mod sheet_answer_limit_tests {
         ]);
         let parsed = parse_sheet_answer_limits(&rows).expect("nested rows parse");
         let mut policy = PolicyManifestResolution::default();
+        policy.sheet_answer_default_max_count = Some(default.sheet_answer_limits[0].max_count);
+        policy.sheet_answer_precedence = default.sheet_answer_precedence;
         policy.sheet_answer_limits = parsed;
         let mut raised = PolicyManifestResolution::default();
+        raised.sheet_answer_default_max_count = policy.sheet_answer_default_max_count;
+        raised.sheet_answer_precedence = policy.sheet_answer_precedence;
         raised.sheet_answer_limits.push(SheetAnswerLimitRow {
             artifact_ref: None,
             sheet: None,
@@ -447,6 +485,26 @@ mod sheet_answer_limit_tests {
         assert_eq!(
             narrowed.sheet_answer_limit(artifact, "Private", Some(4096)),
             Some(8)
+        );
+        let letters = "abababababababababababababababab";
+        let upper = letters.to_ascii_uppercase();
+        assert!(
+            parse_sheet_answer_limits(&Value::Array(vec![Value::Map(vec![
+                (Value::from("artifact_ref"), Value::from(upper.as_str())),
+                (Value::from("max_count"), Value::from(1u64)),
+            ])]))
+            .is_none(),
+            "accepted uppercase IDs would silently miss canonical lookups"
+        );
+        let valid = parse_sheet_answer_limits(&Value::Array(vec![Value::Map(vec![
+            (Value::from("artifact_ref"), Value::from(letters)),
+            (Value::from("max_count"), Value::from(1u64)),
+        ])]))
+        .expect("canonical artifact ref");
+        narrowed.sheet_answer_limits.extend(valid);
+        assert_eq!(
+            narrowed.sheet_answer_limit(letters, "Public", None),
+            Some(1)
         );
         // Unknown or duplicate row keys fail the manifest rather than falling
         // back to the shipped limit, which could inadvertently widen it.
