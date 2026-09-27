@@ -35,6 +35,18 @@ pub struct TxnBatchBuilder<'a> {
     federated_puts: Vec<usize>,
 }
 
+// Promotion clones the private journal into this builder. Scrub that copy on
+// abandonment or preflight failure; base_apply owns it after the handoff.
+impl Drop for TxnBatchBuilder<'_> {
+    fn drop(&mut self) {
+        if matches!(self.origin, BaseWriteOrigin::PromoteReplay(_)) {
+            for op in &mut self.ops {
+                crate::session_overlay::zeroize_batch_op_payload(op);
+            }
+        }
+    }
+}
+
 impl<'a> TxnBatchBuilder<'a> {
     pub(crate) fn new(vault: &'a Vault) -> Self {
         Self {
@@ -110,6 +122,8 @@ impl<'a> TxnBatchBuilder<'a> {
         ops: Vec<BatchOp>,
         grant: &'a PromoteReplayGrant,
     ) -> Self {
+        #[cfg(test)]
+        crate::session_overlay::hygiene_tests::register_replay_copy(&ops);
         Self {
             vault,
             ops,
@@ -677,7 +691,7 @@ impl<'a> TxnBatchBuilder<'a> {
         #[cfg(feature = "sync")]
         let mut this = self;
         #[cfg(not(feature = "sync"))]
-        let this = self;
+        let mut this = self;
         #[cfg(feature = "sync")]
         if !this.federated_puts.is_empty() {
             let policy = crate::gate::resolve_policy_manifest(&this.vault.store, wtxn)?;
@@ -725,7 +739,7 @@ impl<'a> TxnBatchBuilder<'a> {
             &this.vault.config,
             &this.vault.analyzer,
             wtxn,
-            this.ops,
+            std::mem::take(&mut this.ops),
             text_index_trusted,
             gate_mode.with_birth_mask(this.mask),
             this.origin,

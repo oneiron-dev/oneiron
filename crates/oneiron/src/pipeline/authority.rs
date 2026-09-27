@@ -30,7 +30,7 @@ pub(crate) fn claim_allowed(filter: &ResolvedRetrievalFilter, body: &ClaimBody) 
 /// carriers, ARCH-0002) stay out of retrieval: they are not context
 /// entities. A caller that names a maintenance kind, in the filter or in
 /// its own kind filter (`named`), still reaches it.
-pub(super) fn type_allowed(
+pub(crate) fn type_allowed(
     filter: &ResolvedRetrievalFilter,
     named: Option<&[u8]>,
     store: &Store,
