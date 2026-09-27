@@ -16,7 +16,6 @@ const HOST_ROOT_SLIP_CACHE: SideTable<String, String, Raw> =
     SideTable::new(&side_table::AUTHORITY_HOST_ROOT_SLIP_CACHE);
 
 /// A dedicated host signing key. Never loaded from device-key residue.
-
 /// The configured retained root secret is the recovery material for bootstrap.
 pub struct HostSlipIssuer {
     secret: Zeroizing<Vec<u8>>,

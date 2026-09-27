@@ -380,12 +380,12 @@ pub(super) fn scan_suppression_receipts(vault: &Vault) -> Result<ReceiptScan> {
         if asset.intent_id != indexed_intent {
             return Err(Error::CorruptedIndex("outbound suppression index target"));
         }
-        if let Some(receipt) = local_receipt(&vault.store, &txn, &asset.intent_id)? {
-            if receipt != asset.receipt {
-                return Err(Error::CorruptedIndex(
-                    "outbound suppression local/replicated mismatch",
-                ));
-            }
+        if let Some(receipt) = local_receipt(&vault.store, &txn, &asset.intent_id)?
+            && receipt != asset.receipt
+        {
+            return Err(Error::CorruptedIndex(
+                "outbound suppression local/replicated mismatch",
+            ));
         }
         receipts.push(asset.receipt);
     }

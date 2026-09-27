@@ -3,7 +3,6 @@ use super::ContextPackBuilder;
 
 impl<'a> ContextPackBuilder<'a> {
     /// Apply the same scoped retrieval floor to every candidate channel.
-
     pub(crate) fn authority_filter(mut self, filter: crate::gate::ResolvedRetrievalFilter) -> Self {
         self.pipeline = self.pipeline.authority_filter(filter);
         self

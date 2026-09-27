@@ -29,6 +29,14 @@ use crate::registry::{
 use crate::secret_custody::plan_replicated_name_index;
 use crate::store::Store;
 
+fn normalized_policy_scope(entity_type: u8, data: &[u8]) -> Option<Vec<u8>> {
+    if entity_type == crate::registry::ENTITY_TYPE_POLICY_MANIFEST {
+        crate::gate::normalize_policy_manifest_scope(data)
+    } else {
+        None
+    }
+}
+
 pub(in crate::batch) fn apply_put(
     store: &Store,
     wtxn: &mut RwTxn<'_>,
@@ -63,11 +71,7 @@ pub(in crate::batch) fn apply_put(
     // Normalize before body comparison, short-id hashing and scope stamping so
     // every index names the bytes actually stored. Malformed policy stays intact
     // and is diagnosed fail-closed by the policy resolver, never defaulted away.
-    let normalized_policy = if entity_type == crate::registry::ENTITY_TYPE_POLICY_MANIFEST {
-        crate::gate::normalize_policy_manifest_scope(data)
-    } else {
-        None
-    };
+    let normalized_policy = normalized_policy_scope(entity_type, data);
     let data = normalized_policy.as_deref().unwrap_or(data);
     super::put_staging::validate_scope_carriers(store, wtxn, id, entity_type, data, origin)?;
     guard_storage_owned_body(store, wtxn, &id, entity_type, occurred, data, replicated)?;
