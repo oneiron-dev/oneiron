@@ -220,7 +220,9 @@ pub(super) fn test_server_with_config(
     config: SyncServerConfig,
 ) -> (tempfile::TempDir, Arc<SyncServer>) {
     let dir = tempfile::tempdir().expect("temp vault dir");
-    let vault = Arc::new(oneiron::Vault::open(dir.path(), oneiron::VaultConfig::device()).unwrap());
+    let mut vault_config = oneiron::VaultConfig::device();
+    vault_config.retrieval_telemetry_capture = true;
+    let vault = Arc::new(oneiron::Vault::open(dir.path(), vault_config).unwrap());
     assert_default_policy_manifest_fixture(vault.as_ref());
     let server = Arc::new(SyncServer::new(vault, config).expect("sync server"));
     (dir, server)
@@ -854,21 +856,64 @@ pub(super) fn seed_text_turn(server: &SyncServer, text: &str) -> oneiron::Entity
 pub(super) fn seed_disclosure_scope(
     server: &SyncServer,
     contact_id: oneiron::EntityId,
-    entities: Vec<oneiron::EntityId>,
+    clearance: oneiron::federation::Scope,
 ) {
-    // The clearance is now a six-axis Scope, not an entity allowlist.
-    // The callers retain their entity lists for the historical fixture shape.
-    let _ = entities;
-    let scope = oneiron::disclosure::DisclosureScope::new(
-        oneiron::federation::Scope::top(),
-        "party planning",
-        100,
-    )
-    .expect("disclosure scope");
+    let scope = oneiron::disclosure::DisclosureScope::new(clearance, "party planning", 100)
+        .expect("disclosure scope");
     server
         .vault
         .set_counterparty_disclosure_scope(&contact_id, &scope)
         .expect("set disclosure scope");
+}
+
+fn disclosure_base_world_clearance() -> oneiron::federation::Scope {
+    use oneiron::federation::{Scope, ScopeAxis, ScopeId};
+    let mut scope = Scope::top();
+    scope.worlds = ScopeAxis::Some([ScopeId(oneiron::claim::base_world_id())].into());
+    scope
+}
+
+fn seed_disclosure_claim_in_world(
+    server: &SyncServer,
+    subject: oneiron::EntityId,
+    text: &str,
+    world: oneiron::EntityId,
+) -> oneiron::EntityId {
+    let id = oneiron::EntityId::now();
+    let mut claim = oneiron::ClaimBody::new(
+        "event.diary",
+        oneiron::ClaimSubject::Entity(subject),
+        rmpv::Value::from(text),
+        1.0,
+        oneiron::ClaimApprovalStatus::Auto,
+        oneiron::ClaimLifecycleStatus::Active,
+    );
+    claim.world = Some(world);
+    // Tier B is required here: otherwise the tier check rejects this claim
+    // before the test can exercise the contact's world clearance.
+    claim.scope = Some(rmpv::Value::Map(vec![(
+        rmpv::Value::from("sensitivity"),
+        rmpv::Value::from("private"),
+    )]));
+    server
+        .vault
+        .put_claim(
+            &id,
+            &claim,
+            oneiron::TimeRange {
+                start: 100,
+                end: 100,
+            },
+            100,
+        )
+        .expect("seed out-of-world claim");
+    server
+        .vault
+        .batch()
+        .text(&id, &[("body", text)])
+        .commit()
+        .expect("index out-of-world claim");
+    id
 }
 
 // ─── Surface events (ONE-1259) ───────────────────────────────────────────────
