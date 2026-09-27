@@ -12,6 +12,9 @@ const BLOB_ARTIFACT_VERSION_KEY_PREFIX: &[u8] = b"blob_artifact:version:v1:";
 
 const BLOB_ARTIFACT_HEAD_KEY_PREFIX: &[u8] = b"blob_artifact:head:v1:";
 
+// Survives deletion so a reused caller-chosen entity ID never reuses a URL version.
+const BLOB_ARTIFACT_HIGHWATER_KEY_PREFIX: &[u8] = b"blob_artifact:highwater:v1:";
+
 const BLOB_ARTIFACT_ASSET_REF_KEY_PREFIX: &[u8] = b"blob_artifact:asset_ref:v1:";
 
 pub(super) const BLOB_ARTIFACT_ASSET_ID_DOMAIN: &[u8] = b"oneiron:blob-artifact-asset:v1";
@@ -23,6 +26,13 @@ pub const BLOB_ARTIFACT_RUN_REF_MAX_BYTES: usize = 1024;
 pub(super) fn blob_artifact_head_key(artifact_id: &EntityId) -> Vec<u8> {
     let mut key = Vec::with_capacity(BLOB_ARTIFACT_HEAD_KEY_PREFIX.len() + ENTITY_ID_LEN);
     key.extend_from_slice(BLOB_ARTIFACT_HEAD_KEY_PREFIX);
+    key.extend_from_slice(artifact_id.as_bytes());
+    key
+}
+
+pub(super) fn blob_artifact_highwater_key(artifact_id: &EntityId) -> Vec<u8> {
+    let mut key = Vec::with_capacity(BLOB_ARTIFACT_HIGHWATER_KEY_PREFIX.len() + ENTITY_ID_LEN);
+    key.extend_from_slice(BLOB_ARTIFACT_HIGHWATER_KEY_PREFIX);
     key.extend_from_slice(artifact_id.as_bytes());
     key
 }

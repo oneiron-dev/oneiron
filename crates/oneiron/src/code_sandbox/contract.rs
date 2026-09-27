@@ -176,11 +176,10 @@ pub enum SandboxImportClass {
     /// The `self.speak` family (ONE-1686): an explicit host effect that emits
     /// one durable MESSAGE bubble through the run's bound witness route.
     ///
-    /// Deliberately NOT `WriteTrap`. A write trap is a gated MEMORY verb —
-    /// claim, supersede, edge — and OF-060 P3 pins that set closed. Speech
-    /// writes a transcript row, not memory, and it is gated on the witness
-    /// path instead; giving it its own class is what keeps the two ceilings
-    /// from being confused for one.
+    /// Deliberately NOT `WriteTrap`. Write traps are gated memory verbs
+    /// (claim, supersede, edge) or the blocked-report receipt; OF-060 P3 pins
+    /// that set closed. Speech writes a transcript row instead of memory and
+    /// is gated on the witness path, so the two ceilings stay distinct.
     Speech,
 }
 
@@ -248,6 +247,9 @@ const CLOCK_NOW_UNIX_MS_IMPORT: SandboxLinkedImport =
 const RANDOM_BYTES_IMPORT: SandboxLinkedImport =
     SandboxLinkedImport::new("oneiron.random.bytes", SandboxImportClass::Determinism);
 
+const SELF_JSON_VALIDATE_IMPORT: SandboxLinkedImport =
+    SandboxLinkedImport::new("self.json.validate", SandboxImportClass::ReadOnly);
+
 const SELF_MEMORY_SEARCH_IMPORT: SandboxLinkedImport =
     SandboxLinkedImport::new("self.memory.search", SandboxImportClass::ReadOnly);
 
@@ -290,6 +292,7 @@ const FIRST_PARTY_IMPORTS: &[SandboxLinkedImport] = &[
     CREDENTIAL_CALL_IMPORT,
     CLOCK_NOW_UNIX_MS_IMPORT,
     RANDOM_BYTES_IMPORT,
+    SELF_JSON_VALIDATE_IMPORT,
     SELF_MEMORY_SEARCH_IMPORT,
     SELF_MEMORY_PUT_CLAIM_IMPORT,
     SELF_MEMORY_SUPERSEDE_CLAIM_IMPORT,
