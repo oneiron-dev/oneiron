@@ -396,12 +396,44 @@ pub(super) fn prior_epoch_in_txn(
 ///
 /// The row is BYTE-STABLE from this moment: this module exposes no update
 /// path, which is what lets CB-A cache the rendered prefix.
-pub(super) fn mint_epoch_summary(
+/// Minted identity supplied only while the SUMMARY row is in the same write
+/// transaction. Consumers cannot substitute a caller's summary reference.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct EpochMint {
+    summary_id: EntityId,
+    session_ref: EntityId,
+    epoch: u64,
+    turn_start: u64,
+    turn_end: u64,
+}
+
+impl EpochMint {
+    pub(crate) const fn summary_id(self) -> EntityId {
+        self.summary_id
+    }
+    pub(crate) const fn session_ref(self) -> EntityId {
+        self.session_ref
+    }
+    pub(crate) const fn epoch(self) -> u64 {
+        self.epoch
+    }
+    pub(crate) const fn turn_start(self) -> u64 {
+        self.turn_start
+    }
+    pub(crate) const fn turn_end(self) -> u64 {
+        self.turn_end
+    }
+}
+
+/// The extra write shares the summary mint transaction. Failure of EITHER
+/// operation rolls back both, leaving the driver request retryable.
+pub(super) fn mint_epoch_summary_with(
     vault: &Vault,
     session_ref: &EntityId,
     byline: WriteActor,
     request: &CompactionRequest,
     product: &CompactionProduct,
+    extra: impl FnOnce(&mut heed::RwTxn<'_>, &EpochMint) -> Result<()>,
 ) -> Result<(u64, EntityId)> {
     if request.session_ref != *session_ref {
         return Err(Error::InvariantViolation(
@@ -492,6 +524,16 @@ pub(super) fn mint_epoch_summary(
         vault
             .store
             .mark_pending_embedding(wtxn, &summary_id, &body)?;
+        extra(
+            wtxn,
+            &EpochMint {
+                summary_id,
+                session_ref: *session_ref,
+                epoch,
+                turn_start,
+                turn_end,
+            },
+        )?;
         Ok(epoch)
     })?;
     Ok((epoch, summary_id))
