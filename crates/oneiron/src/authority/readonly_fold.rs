@@ -237,14 +237,15 @@ pub(super) fn authority_view_readonly_for_store_in_txn(
     let peer_consent_roots =
         crate::federation::admitted_peer_consent_roots_for_store_in_txn(store, txn)?;
     let observations = authority_local_observations_in_txn(store, txn, &entries)?;
-    let fold = fold_authority_log_with_local_observations_and_posture(
-        &entries,
-        &first_seen_at_secs,
-        now_secs,
-        &peer_consent_roots,
-        &observations,
-        posture,
-    );
+    let (fold, observed_widen_deadline) =
+        fold_authority_log_with_local_observations_and_posture_with_deadline(
+            &entries,
+            &first_seen_at_secs,
+            now_secs,
+            &peer_consent_roots,
+            &observations,
+            posture,
+        );
     // An indeterminate row is only a problem where its delay actually
     // decides something. `now_secs` is the maximum-delay assumption, so any
     // affected DELAYABLE widen lands in `pending_widens` — and pending is
@@ -277,7 +278,11 @@ pub(super) fn authority_view_readonly_for_store_in_txn(
         now_secs,
         key.policy.stale_roster_window_secs,
     );
-    let next_deadline_secs = next_widen.into_iter().chain(next_stale).min();
+    let next_deadline_secs = next_widen
+        .into_iter()
+        .chain(observed_widen_deadline)
+        .chain(next_stale)
+        .min();
     let view = AuthorityView {
         fold: Arc::new(fold),
         generation: key.generation,

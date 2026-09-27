@@ -37,7 +37,7 @@ pub(super) fn uncached_reference_fold(
     let peers =
         crate::federation::admitted_peer_consent_roots_for_store_in_txn(&vault.store, txn).unwrap();
     let observations = authority_local_observations_in_txn(&vault.store, txn, &entries).unwrap();
-    fold_authority_log_with_local_observations_and_posture(
+    fold_authority_log_with_local_observations_and_posture_with_deadline(
         &entries,
         &first_seen,
         now,
@@ -45,6 +45,7 @@ pub(super) fn uncached_reference_fold(
         &observations,
         vault.privacy_posture(),
     )
+    .0
 }
 
 #[test]
@@ -950,6 +951,102 @@ fn matured_rotation_with_corrupt_sidecar_refuses_public_and_snapshot_folds() {
             is_corrupt_first_seen_sidecar(&public_error),
             "{public_error}"
         );
+    }
+}
+
+/// A veto erases its target from the final pending map, but the target's
+/// eligibility still decides whether the veto remains valid at the deadline.
+/// Advance only the vault's local clock: no authority row or generation changes.
+#[test]
+fn warm_vetoed_widen_rechecks_enrollment_and_rotation_at_eligibility() {
+    for rotation in [false, true] {
+        let dir = tempfile::tempdir().unwrap();
+        let observed_at = 1_000_000;
+        let vault = open_vault_at(dir.path(), observed_at);
+        let owner = ed_key(241);
+        let owner_key = authority_key_from_ed(&owner);
+        let genesis = genesis_entry(241, DEFAULT_PENDING_WIDEN_DELAY_SECS, 1);
+        let vault_id = genesis_vault_id(&genesis).unwrap();
+        let new_key = authority_key_from_ed(&ed_key(242));
+        let target = if rotation {
+            sign_ed(
+                unsigned_entry(
+                    Some(vault_id),
+                    1,
+                    vec![authority_entry_hash(&genesis).unwrap()],
+                    AuthorityOp::RotateKey {
+                        old_key: owner_key.clone(),
+                        new_device: device(
+                            new_key.clone(),
+                            ROLE_OWNER | ROLE_ADMIN,
+                            AuthorityTier::Software,
+                        ),
+                    },
+                    owner_key.clone(),
+                    2,
+                ),
+                &owner,
+            )
+        } else {
+            enroll_device_entry(
+                vault_id,
+                &genesis,
+                &owner,
+                EnrollSpec {
+                    seed: 242,
+                    roles: ROLE_ADMIN,
+                    tier: AuthorityTier::Software,
+                    seq: 1,
+                    ts: 2,
+                },
+            )
+        };
+        let target_hash = authority_entry_hash(&target).unwrap();
+        let veto = veto_entry(vault_id, &genesis, &owner, target_hash, 2);
+        let veto_hash = authority_entry_hash(&veto).unwrap();
+        vault
+            .put_authority_log_entries(&[
+                (genesis, TimeRange { start: 1, end: 1 }, 1),
+                (target, TimeRange { start: 2, end: 2 }, 2),
+                (veto, TimeRange { start: 3, end: 3 }, 3),
+            ])
+            .unwrap();
+        // Establish sidecars, then warm the exact cached view before maturity.
+        vault.authority_fold().unwrap();
+        let txn = vault.store.env.read_txn().unwrap();
+        let warm = vault.authority_view_readonly_in_txn(&txn).unwrap();
+        let before = uncached_reference_fold(&vault, &txn);
+        assert_eq!(warm.roster, before.roster);
+        assert!(warm.vetoed_widens.contains(&target_hash));
+        assert!(warm.valid_entries.contains(&veto_hash));
+        assert!(warm.pending_widens.is_empty());
+        assert!(!warm.roster.contains_key(&new_key));
+        assert!(
+            warm.roster
+                .get(&owner_key)
+                .is_some_and(folded_device_can_authority_consent)
+        );
+        drop(txn);
+
+        let eligible = observed_at + DEFAULT_PENDING_WIDEN_DELAY_SECS + 1;
+        assert!(authority_observation_secs(&vault.store, eligible, 0) >= eligible);
+        let txn = vault.store.env.read_txn().unwrap();
+        let after = vault.authority_view_readonly_in_txn(&txn).unwrap();
+        let reference = uncached_reference_fold(&vault, &txn);
+        assert_eq!(after.roster, reference.roster, "rotation={rotation}");
+        assert!(after.roster.contains_key(&new_key));
+        assert!(!after.valid_entries.contains(&veto_hash));
+        assert!(!after.vetoed_widens.contains(&target_hash));
+        if rotation {
+            assert!(
+                !after
+                    .roster
+                    .get(&owner_key)
+                    .is_some_and(folded_device_can_authority_consent)
+            );
+        }
+        drop(txn);
+        assert_eq!(vault.authority_fold().unwrap().roster, reference.roster);
     }
 }
 
