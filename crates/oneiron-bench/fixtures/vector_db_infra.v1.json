@@ -3,25 +3,37 @@
   "purpose": "cost-framing-only",
   "rows": [
     {
-      "system": "Chroma",
-      "card_id": "chroma-v2-infra",
-      "source": "https://docs.trychroma.com/",
-      "measurement": null,
-      "caveat": "No matched recall/latency/cost triple was present in the supplied evidence. Run against the same corpus and host before comparison."
+      "system": "Zilliz Cloud Capacity 12CU",
+      "card_id": "vdbbench-2026-05-laion100m-zilliz-cloud-capacity-12cu",
+      "source": "https://zilliz.com/vdbbench-leaderboard-v2",
+      "measurement": {
+        "recall_at_k": 0.9723,
+        "latency_us": 299316,
+        "cost_usd": 2.198541e-06
+      },
+      "caveat": "VDBBench vendor-run snapshot 2026-05-28, AWS us-west-2; LAION 100M x 768d, unfiltered IDs-only topK=100 (reported recall@10). Latency is P99 at max concurrency, rounded to microseconds; QPS=376.007, query-only modeled search=$2.976/hour, USD/query=search USD/hour/(QPS x 3600), rounded to 12 decimals. Assumes sustained measured max QPS; excludes storage, ingest/write, and embedding; not the Oneiron corpus or host. Source: payloadSearch unfiltered/na ids_only + costModel.scenarios.single.points in page __NEXT_DATA__; not BEAM accuracy."
     },
     {
-      "system": "Qdrant",
-      "card_id": "qdrant-infra-v1",
-      "source": "https://qdrant.tech/benchmarks/",
-      "measurement": null,
-      "caveat": "No matched recall/latency/cost triple was present in the supplied evidence. Run against the same corpus and host before comparison."
+      "system": "Turbopuffer",
+      "card_id": "vdbbench-2026-05-laion100m-turbopuffer-unpinned",
+      "source": "https://zilliz.com/vdbbench-leaderboard-v2",
+      "measurement": {
+        "recall_at_k": 0.9321,
+        "latency_us": 2339210,
+        "cost_usd": 5.232396e-05
+      },
+      "caveat": "VDBBench vendor-run snapshot 2026-05-28, AWS us-west-2; LAION 100M x 768d, unfiltered IDs-only topK=100 (reported recall@10). Latency is P99 at max concurrency, rounded to microseconds; QPS=395.6972, query-only modeled search=$74.536/hour, USD/query=search USD/hour/(QPS x 3600), rounded to 12 decimals. Assumes sustained measured max QPS; excludes storage, ingest/write, and embedding; not the Oneiron corpus or host. Source: payloadSearch unfiltered/na ids_only + costModel.scenarios.single.points in page __NEXT_DATA__; not BEAM accuracy."
     },
     {
-      "system": "Weaviate",
-      "card_id": "weaviate-infra-v1",
-      "source": "https://weaviate.io/developers/weaviate/benchmarks",
-      "measurement": null,
-      "caveat": "No matched recall/latency/cost triple was present in the supplied evidence. Run against the same corpus and host before comparison."
+      "system": "Pinecone Serverless",
+      "card_id": "vdbbench-2026-05-laion100m-pinecone-serverless",
+      "source": "https://zilliz.com/vdbbench-leaderboard-v2",
+      "measurement": {
+        "recall_at_k": 0.9609,
+        "latency_us": 4849571,
+        "cost_usd": 0.004928026817
+      },
+      "caveat": "VDBBench vendor-run snapshot 2026-05-28, AWS us-west-2; LAION 100M x 768d, unfiltered IDs-only topK=100 (reported recall@10). Latency is P99 at max concurrency, rounded to microseconds; QPS=4.5642 (read-unit throttled, not a saturation-peer comparison), query-only modeled search=$80.973/hour, USD/query=search USD/hour/(QPS x 3600), rounded to 12 decimals. Assumes sustained measured max QPS; excludes storage, ingest/write, and embedding; not the Oneiron corpus or host. Source: payloadSearch unfiltered/na ids_only + costModel.scenarios.single.points in page __NEXT_DATA__; not BEAM accuracy."
     }
   ]
 }
