@@ -104,6 +104,16 @@ impl PolicyManifestResolution {
         }
     }
 
+    /// Retention may erase published telemetry only when the loaded manifest
+    /// is usable. An absent manifest keeps the shipped bootstrap posture;
+    /// malformed or unsupported loaded policy grants no deletion authority.
+    #[must_use]
+    pub(crate) fn retrieval_retention_policy(
+        &self,
+    ) -> Option<crate::gate::retrieval_retention::RetrievalRetentionPolicy> {
+        (!self.diagnostics.loaded_manifest_forces_fail_closed()).then_some(self.retrieval_retention)
+    }
+
     pub(crate) fn hosted_tts_limits(
         &self,
         provider: &str,

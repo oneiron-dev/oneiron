@@ -146,6 +146,9 @@ pub(crate) fn resolve_policy_manifest(
                         resolution.pack_install_policy = Some(policy);
                     }
                 }
+                if let Some(rows) = decoded.retrieval_retention {
+                    resolution.retrieval_retention.narrow(rows);
+                }
                 resolution.hosted_tts.rows.extend(decoded.hosted_tts.rows);
 
                 if let Some(bounds) = decoded.diagnostic_bounds {

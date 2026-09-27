@@ -1,7 +1,7 @@
 //! Create-capable open door: `Store::open` and its helpers.
 
 #[cfg(unix)]
-use super::super::root_directory::{file_identity, named_directory_identity, open_root_directory};
+use super::super::root_directory::{file_identity, named_directory_identity};
 use std::path::Path;
 
 use heed::EnvOpenOptions;
@@ -84,7 +84,7 @@ impl Store {
     ) -> Result<Self> {
         // Declared before the environment so its Drop runs after the env has
         // closed, releasing LMDB's file handles before removing torn files.
-        let mut torn_creation_cleanup = TornCreationCleanup { root: None };
+        let mut torn_creation_cleanup = TornCreationCleanup::default();
         let (env, registered_path, is_new_vault) = {
             let _vault_root_open_guard = vault_root_open_guard()?;
 
@@ -93,20 +93,34 @@ impl Store {
             if let Some(lease) = lease {
                 lease.validate_directory(&canonical_path)?;
             }
+            #[cfg(unix)]
+            let bound_root_dir = match lease {
+                Some(lease) => lease.clone_directory()?,
+                None => crate::store::root_directory::open_root_directory(&canonical_path)?,
+            };
+            #[cfg(all(test, unix))]
+            test_hooks::run_after_create_root_bind(&canonical_path);
             #[cfg(target_os = "linux")]
-            let storage_path = lease.map_or_else(
-                || canonical_path.clone(),
-                VaultWriterLease::environment_path,
-            );
+            let storage_path = match lease {
+                Some(lease) => lease.environment_path(),
+                None => {
+                    use std::os::fd::AsRawFd;
+                    std::path::PathBuf::from(format!(
+                        "/proc/self/fd/{}",
+                        bound_root_dir.as_raw_fd()
+                    ))
+                }
+            };
             #[cfg(not(target_os = "linux"))]
             let storage_path = canonical_path.clone();
             let root_preflight = preflight_vault_root(&storage_path)?;
             #[cfg(unix)]
-            let bound_root_dir = open_root_directory(&canonical_path)?;
-            #[cfg(unix)]
             let bound_root_identity = file_identity(&bound_root_dir.metadata()?);
             let is_new_vault = root_preflight.is_new_vault;
             if is_new_vault {
+                #[cfg(target_os = "linux")]
+                torn_creation_cleanup.arm_bound(&bound_root_dir)?;
+                #[cfg(not(target_os = "linux"))]
                 torn_creation_cleanup.arm(storage_path.clone());
             }
             let mut registered_path =
@@ -147,7 +161,12 @@ impl Store {
                         },
                     )?
                 } else {
-                    options.open(&canonical_path)?
+                    options.open_with_cache_identity(
+                        &storage_path,
+                        canonical_path.clone(),
+                        || {},
+                        || {},
+                    )?
                 };
                 #[cfg(not(target_os = "linux"))]
                 let opened = options.open(&canonical_path)?;
@@ -379,6 +398,7 @@ impl Store {
         if matches!(seed_mode, DefaultPolicySeedMode::Required) {
             store.ensure_default_policy_manifest_on_open()?;
         }
+        store.reconcile_retrieval_telemetry_on_open()?;
         Ok(store)
     }
 }
