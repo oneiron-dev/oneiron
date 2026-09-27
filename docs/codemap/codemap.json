@@ -239,6 +239,14 @@
      "bucket": "s",
      "kind": "test",
      "notable": [],
+     "path": "src/actor_claims/tests/evidence_support.rs",
+     "purpose": "Read-time support on a replica where erasure precedes a late claim",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
      "path": "src/actor_claims/tests/pack_load.rs",
      "purpose": "—",
      "surface": {}
@@ -7346,6 +7354,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/claim/evidence_support.rs",
+     "purpose": "Live support for typed derived claims, resolved in the caller's read snapshot",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/claim/expression_archive.rs",
      "purpose": "Foreign expression histories restored by their owning source-aware writer",
      "surface": {
@@ -7392,7 +7410,7 @@
      "path": "src/claim/mod.rs",
      "purpose": "CLAIM body ABI + typed Claim API (ARCH-0003, pinned decisions D11/D17/D18)",
      "surface": {
-      "crate-vis": 6,
+      "crate-vis": 7,
       "re-export": 9
      }
     },
@@ -34053,7 +34071,7 @@
      "purpose": "AccessGrant control-plane record substrate"
     },
     "actor_claims": {
-     "files": 12,
+     "files": 13,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -34249,7 +34267,7 @@
      "purpose": "—"
     },
     "claim": {
-     "files": 36,
+     "files": 37,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -35364,8 +35382,8 @@
    },
    "over_bar": 9,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2087,
-   "test_files": 717
+   "source_files": 2088,
+   "test_files": 718
   },
   "oneiron-android": {
    "files": [

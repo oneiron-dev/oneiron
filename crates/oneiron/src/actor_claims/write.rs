@@ -355,7 +355,9 @@ pub fn skill_fit_for(vault: &Vault, actor: &EntityId, skill: &EntityId) -> Resul
         // matches on — the scope map also carries the row's lineage meet, and
         // comparing whole maps would make two lanes' estimates of one pair
         // look like estimates of two different pairs.
-        if skill_fit_scope_skill(body.scope.as_ref()) != Some(*skill) {
+        if skill_fit_scope_skill(body.scope.as_ref()) != Some(*skill)
+            || !crate::claim::has_live_support_in_txn(&vault.store, &rtxn, &body)?
+        {
             continue;
         }
         let Value::F32(fit) = body.value else {
