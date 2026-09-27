@@ -147,6 +147,80 @@ fn canonical_carry_list_round_trips_with_blake3_and_fresh_documents() -> Result<
 }
 
 #[test]
+fn world_month_canonical_snapshot_round_trips_and_rebuilds() -> Result<()> {
+    let dir = tempfile::tempdir()?;
+    let vault = Vault::open(dir.path(), VaultConfig::device())?;
+    let world = EntityId::from_bytes([0x81; 16])?;
+    let claim = EntityId::from_bytes([0x82; 16])?;
+    let at = 1_771_027_200;
+    let occurred = TimeRange { start: at, end: at };
+    vault.put_entity(
+        &world,
+        crate::registry::ENTITY_TYPE_WORLD,
+        occurred,
+        at,
+        b"world",
+    )?;
+    let mut body = crate::claim::ClaimBody::new(
+        "test.canonical_world",
+        crate::claim::ClaimSubject::Entity(world),
+        rmpv::Value::from("fact"),
+        1.0,
+        crate::claim::ClaimApprovalStatus::Proposed,
+        crate::claim::ClaimLifecycleStatus::Active,
+    );
+    body.world = Some(world);
+    vault.put_claim(&claim, &body, occurred, at)?;
+    let window = format!("2026-02@{}", world.to_hex());
+    let doc = LoroDoc::new();
+    canonical::insert(
+        &doc,
+        "entities",
+        &claim.to_hex(),
+        &vault.get_raw(&claim)?.unwrap(),
+    )?;
+    doc.commit();
+    let snapshot = capture_canonical_window(&vault, &window, &doc)?;
+    let encoded = snapshot.encode()?;
+    assert_eq!(CanonicalSnapshot::decode(&encoded)?, snapshot);
+    let rebuilt = rebuild_vault_window_from_canonical(&snapshot)?;
+    assert_eq!(
+        capture_canonical_window(&vault, &window, &rebuilt)?,
+        snapshot
+    );
+    let mut wrong = snapshot.clone();
+    wrong.window = format!("2026-02@{}", EntityId::from_bytes([0x83; 16])?.to_hex());
+    assert!(wrong.validate().is_err());
+    let mut contaminated = snapshot;
+    contaminated.entity_blobs.push(CanonicalEntity {
+        id: *world.as_bytes(),
+        blob: vault.get_raw(&world)?.unwrap(),
+    });
+    contaminated.entity_blobs.sort_by_key(|row| row.id);
+    assert!(contaminated.validate().is_err());
+    #[cfg(feature = "sync")]
+    {
+        let peer_dir = tempfile::tempdir()?;
+        let peer = Vault::open(peer_dir.path(), VaultConfig::device())?;
+        peer.put_entity(
+            &world,
+            crate::registry::ENTITY_TYPE_WORLD,
+            occurred,
+            at,
+            b"world",
+        )?;
+        crate::sync::window::forward_rematerialize(
+            &peer,
+            &rebuilt,
+            &crate::sync::bridge::Materializer::new(),
+            &crate::sync::WindowKey::new(&window),
+        )?;
+        assert_eq!(peer.get(&claim)?, vault.get(&claim)?);
+    }
+    Ok(())
+}
+
+#[test]
 fn recovery_ladder_quarantines_before_rebuild_and_never_drops_pressure() -> Result<()> {
     let fixture = fixture()?;
     let snapshot = &fixture.snapshot;

@@ -326,12 +326,345 @@ fn fresh_device_requests_followed_history_after_root_arrives() {
     let mut frame = vec![TAG_SYNC_UPDATE];
     frame.extend_from_slice(&root.export(ExportMode::snapshot()).unwrap());
     let requests = client.handle_server_message(&frame).unwrap();
-    assert_eq!(requests.len(), 1);
-    assert_eq!(
-        transport::decode_window_sync(&requests[0][1..]).unwrap().0,
-        WindowKey::for_world(1_771_027_200, world).as_str()
-    );
+    let keys: Vec<_> = requests
+        .iter()
+        .map(|frame| {
+            transport::decode_window_sync(&frame[1..])
+                .unwrap()
+                .0
+                .to_owned()
+        })
+        .collect();
+    assert_eq!(keys.len(), 2);
+    assert!(keys.contains(&WindowKey::from_timestamp(1_771_027_200).to_string()));
+    assert!(keys.contains(&WindowKey::for_world(1_771_027_200, world).to_string()));
+    assert!(!keys.contains(&WindowKey::for_world(1_771_027_200, other).to_string()));
     assert!(client.handle_server_message(&frame).unwrap().is_empty());
+}
+
+#[test]
+fn followed_world_rejects_foreign_payload_at_update_and_both_bulk_doors() {
+    let manager = test_manager();
+    let vault = manager.vault();
+    let month = WindowKey::new("2026-03");
+    let at = month.start_timestamp().unwrap() + 60;
+    let occurred = TimeRange { start: at, end: at };
+    let world_a = test_entity_id(0x61);
+    let world_b = test_entity_id(0x62);
+    let claim_a = test_entity_id(0x63);
+    let claim_b = test_entity_id(0x64);
+    for world in [world_a, world_b] {
+        vault
+            .put_entity(
+                &world,
+                crate::registry::ENTITY_TYPE_WORLD,
+                occurred,
+                at,
+                b"world",
+            )
+            .unwrap();
+    }
+    for (world, claim) in [(world_a, claim_a), (world_b, claim_b)] {
+        let mut body = ClaimBody::new(
+            "test.client_residence",
+            ClaimSubject::Entity(world),
+            rmpv::Value::from("fact"),
+            1.0,
+            ClaimApprovalStatus::Proposed,
+            ClaimLifecycleStatus::Active,
+        );
+        body.world = Some(world);
+        vault.put_claim(&claim, &body, occurred, at).unwrap();
+    }
+    let key = WindowKey::for_month_world(&month, world_a);
+    let foreign = vault.get_raw_unsealed(&claim_b).unwrap().unwrap();
+    let remote = server_window_doc();
+    remote
+        .get_map("entities")
+        .insert(claim_b.to_hex().as_str(), foreign.as_slice())
+        .unwrap();
+    remote.commit();
+    let entity_update = remote.export(ExportMode::all_updates()).unwrap();
+    let entity_snapshot = remote.export(ExportMode::snapshot()).unwrap();
+    let mut frames = vec![entity_update];
+    let foreign_tombstone = server_window_doc();
+    foreign_tombstone
+        .get_map("tombstones")
+        .insert(claim_b.to_hex().as_str(), b"deleted".as_slice())
+        .unwrap();
+    foreign_tombstone.commit();
+    frames.push(foreign_tombstone.export(ExportMode::all_updates()).unwrap());
+    let edge = crate::sync::bridge::format_edge_key(&claim_a, crate::EdgeKind::About, &claim_b);
+    let foreign_edge = server_window_doc();
+    foreign_edge
+        .get_map("edges")
+        .insert(&edge, b"edge".as_slice())
+        .unwrap();
+    foreign_edge.commit();
+    frames.push(foreign_edge.export(ExportMode::all_updates()).unwrap());
+    let (mut client, _events) = test_client(&manager);
+    client.follow_world(world_a);
+    let marker = format!("bulk:w:{key}");
+    vault.sync_state_put(&marker, &[1]).unwrap();
+    // Cold completion must reject before opening, persisting or clearing the
+    // in-progress marker. A live completion must leave its Doc unchanged.
+    let done = transport::encode_bulk_transfer_done(key.as_str(), &entity_snapshot)
+        .into_result()
+        .unwrap();
+    assert!(client.handle_server_message(&done).is_err());
+    assert!(client.window(key.as_str()).is_none());
+    assert!(
+        vault
+            .sync_state_get(&format!("d:w:{key}"))
+            .unwrap()
+            .is_none()
+    );
+    assert!(vault.sync_state_get(&marker).unwrap().is_some());
+    let live = client.ensure_window(key.as_str()).unwrap();
+    let before = live.doc.oplog_vv();
+    for payload in &frames {
+        let update = transport::encode_window_sync(key.as_str(), window_sub_tags::UPDATE, payload)
+            .into_result()
+            .unwrap();
+        assert!(client.handle_server_message(&update).is_err());
+    }
+    assert_eq!(live.doc.oplog_vv(), before);
+    assert!(client.handle_server_message(&done).is_err());
+    assert_eq!(live.doc.oplog_vv(), before);
+    assert!(vault.sync_state_get(&marker).unwrap().is_some());
+    assert!(
+        live.doc
+            .get_map("entities")
+            .get(&claim_b.to_hex())
+            .is_none()
+    );
+}
+
+#[test]
+fn sync_all_discovers_unopened_world_and_old_base_windows_between_independent_vaults() {
+    let source_dir = tempfile::tempdir().unwrap();
+    let source = Arc::new(Vault::open(source_dir.path(), crate::VaultConfig::device()).unwrap());
+    let person = test_entity_id(0x71);
+    let world = test_entity_id(0x72);
+    let claim = test_entity_id(0x73);
+    let old_at = WindowKey::new("2025-11").start_timestamp().unwrap() + 60;
+    let world_at = WindowKey::new("2026-02").start_timestamp().unwrap() + 60;
+    source
+        .put_entity(
+            &person,
+            crate::registry::ENTITY_TYPE_PERSON,
+            TimeRange {
+                start: old_at,
+                end: old_at,
+            },
+            old_at,
+            b"shared person",
+        )
+        .unwrap();
+    source
+        .put_entity(
+            &world,
+            crate::registry::ENTITY_TYPE_WORLD,
+            TimeRange {
+                start: world_at,
+                end: world_at,
+            },
+            world_at,
+            b"world",
+        )
+        .unwrap();
+    let mut body = ClaimBody::new(
+        "test.home_custody",
+        ClaimSubject::Entity(person),
+        rmpv::Value::from("world fact"),
+        1.0,
+        ClaimApprovalStatus::Proposed,
+        ClaimLifecycleStatus::Active,
+    );
+    body.world = Some(world);
+    source
+        .put_claim(
+            &claim,
+            &body,
+            TimeRange {
+                start: world_at,
+                end: world_at,
+            },
+            world_at,
+        )
+        .unwrap();
+    source
+        .batch()
+        .edge(&claim, crate::EdgeKind::About, &person, 1.0)
+        .commit()
+        .unwrap();
+    let mut other_projects = Vec::new();
+    for byte in 0x74..=0x77 {
+        let other_world = test_entity_id(byte);
+        let other_claim = test_entity_id(byte + 0x10);
+        source
+            .put_entity(
+                &other_world,
+                crate::registry::ENTITY_TYPE_WORLD,
+                TimeRange {
+                    start: world_at,
+                    end: world_at,
+                },
+                world_at,
+                b"world",
+            )
+            .unwrap();
+        let mut other_body = ClaimBody::new(
+            "test.other_project",
+            ClaimSubject::Entity(person),
+            rmpv::Value::from("foreign fact"),
+            1.0,
+            ClaimApprovalStatus::Proposed,
+            ClaimLifecycleStatus::Active,
+        );
+        other_body.world = Some(other_world);
+        source
+            .put_claim(
+                &other_claim,
+                &other_body,
+                TimeRange {
+                    start: world_at,
+                    end: world_at,
+                },
+                world_at,
+            )
+            .unwrap();
+        other_projects.push((other_world, other_claim));
+    }
+    let source_manager = Arc::new(WindowManager::new(
+        source.clone(),
+        Arc::new(Materializer::new()),
+        "source",
+    ));
+    assert!(source_manager.loaded_keys().is_empty());
+    assert!(
+        source
+            .sync_state_get(&format!("d:w:{}", WindowKey::for_world(world_at, world)))
+            .unwrap()
+            .is_none()
+    );
+    let known = crate::sync::discover_local_window_keys(&source).unwrap();
+    let world_key = WindowKey::for_world(world_at, world);
+    let old_base = WindowKey::from_timestamp(old_at);
+    assert!(known.contains(&world_key));
+    assert!(known.contains(&old_base));
+    let (home, _) = SyncClient::new(
+        source_manager.clone(),
+        SyncClientConfig {
+            followed_worlds: None,
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    let requested = |frames: &[Vec<u8>]| -> Vec<String> {
+        frames
+            .iter()
+            .filter(|frame| frame.first() == Some(&TAG_WINDOW_SYNC))
+            .map(|frame| {
+                transport::decode_window_sync(&frame[1..])
+                    .unwrap()
+                    .0
+                    .to_owned()
+            })
+            .collect()
+    };
+    let home_keys = requested(&home.generate_initial_sync());
+    assert!(home_keys.contains(&world_key.to_string()));
+    assert!(home_keys.contains(&old_base.to_string()));
+    for (other_world, _) in &other_projects {
+        assert!(home_keys.contains(&WindowKey::for_world(world_at, *other_world).to_string()));
+    }
+
+    for followed_worlds in [None, Some(vec![world])] {
+        let sync_all = followed_worlds.is_none();
+        let peer_dir = tempfile::tempdir().unwrap();
+        let peer = Arc::new(Vault::open(peer_dir.path(), crate::VaultConfig::device()).unwrap());
+        let peer_manager = Arc::new(WindowManager::new(
+            peer.clone(),
+            Arc::new(Materializer::new()),
+            "peer",
+        ));
+        let (mut peer_client, _) = SyncClient::new(
+            peer_manager,
+            SyncClientConfig {
+                followed_worlds,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        peer_client.root_doc = create_root_doc("server", "vault", &known);
+        let peer_keys = requested(&peer_client.generate_initial_sync());
+        assert!(peer_keys.contains(&world_key.to_string()));
+        assert!(peer_keys.contains(&old_base.to_string()));
+        if !sync_all {
+            for (other_world, _) in &other_projects {
+                assert!(
+                    !peer_keys.contains(&WindowKey::for_world(world_at, *other_world).to_string())
+                );
+            }
+        }
+        for key in &known {
+            if !peer_keys.contains(&key.to_string()) {
+                continue;
+            }
+            let doc = source_manager.open_window(key).unwrap();
+            let payload = crate::sync::window::export_window_updates_since(
+                &source,
+                key,
+                &doc.doc,
+                &VersionVector::default().encode(),
+            )
+            .unwrap();
+            let frame =
+                transport::encode_window_sync(key.as_str(), window_sub_tags::UPDATE, &payload)
+                    .into_result()
+                    .unwrap();
+            peer_client.handle_server_message(&frame).unwrap();
+        }
+        assert_eq!(peer.get(&person).unwrap(), source.get(&person).unwrap());
+        assert_eq!(peer.get(&claim).unwrap(), source.get(&claim).unwrap());
+        assert!(
+            peer.edges_out(&claim)
+                .unwrap()
+                .iter()
+                .any(|edge| edge.kind == crate::EdgeKind::About && edge.target == person)
+        );
+        for (_, other_claim) in &other_projects {
+            assert_eq!(peer.get(other_claim).unwrap().is_some(), sync_all);
+        }
+        if !sync_all {
+            let (next_world, next_claim) = other_projects[0];
+            peer_client.follow_world(next_world);
+            let backfill = requested(&peer_client.generate_initial_sync());
+            let next_key = WindowKey::for_world(world_at, next_world);
+            assert!(backfill.contains(&next_key.to_string()));
+            let doc = source_manager.open_window(&next_key).unwrap();
+            let payload = crate::sync::window::export_window_updates_since(
+                &source,
+                &next_key,
+                &doc.doc,
+                &VersionVector::default().encode(),
+            )
+            .unwrap();
+            let frame =
+                transport::encode_window_sync(next_key.as_str(), window_sub_tags::UPDATE, &payload)
+                    .into_result()
+                    .unwrap();
+            peer_client.handle_server_message(&frame).unwrap();
+            assert_eq!(
+                peer.get(&next_claim).unwrap(),
+                source.get(&next_claim).unwrap()
+            );
+            for (_, still_unfollowed) in &other_projects[1..] {
+                assert!(peer.get(still_unfollowed).unwrap().is_none());
+            }
+        }
+    }
 }
 
 #[test]

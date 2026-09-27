@@ -315,8 +315,13 @@ impl SyncClient {
         // would durably append an unvalidated frame as a `u:w:` row, and
         // window load is fail-closed on pending updates — one malformed frame
         // would brick every future open of this window.
-        crate::sync::window::validate_window_update_residence(&window.doc, payload, &window.key)
-            .map_err(|_| TransportError::InvalidPayload("entity outside window residence"))?;
+        crate::sync::window::validate_window_update_residence_with_vault(
+            &self.vault,
+            &window.doc,
+            payload,
+            &window.key,
+        )
+        .map_err(|_| TransportError::InvalidPayload("entity outside window residence"))?;
         let vv_before = window.doc.oplog_vv();
         window
             .doc
@@ -469,6 +474,13 @@ impl SyncClient {
             if let Some(window) = self.window(window_key) {
                 // Window is live: import through the observed doc so
                 // Observer B materializes, then persist the merged state.
+                crate::sync::window::validate_window_update_residence_with_vault(
+                    &self.vault,
+                    &window.doc,
+                    doc_state,
+                    &window.key,
+                )
+                .map_err(|_| TransportError::InvalidPayload("bulk window residence denied"))?;
                 window
                     .doc
                     .import(doc_state)
@@ -524,7 +536,32 @@ impl SyncClient {
                 // the just-opened window so RAM never runs ahead of
                 // durable state (same discipline as the live arm and the
                 // WindowSync UPDATE arm).
+                let key = WindowKey::new(window_key);
+                let candidate = match load_window_from_state(&self.vault, "local", &key) {
+                    Ok(doc) => doc,
+                    Err(Error::Sync(SyncError::WindowNotFound { .. })) => {
+                        let doc = create_window_doc("local", &key);
+                        apply_pending_window_updates(&self.vault, &doc, &key)
+                            .map_err(|e| TransportError::Storage(e.to_string()))?;
+                        doc
+                    }
+                    Err(e) => return Err(TransportError::Storage(e.to_string())),
+                };
+                crate::sync::window::validate_window_update_residence_with_vault(
+                    &self.vault,
+                    &candidate,
+                    doc_state,
+                    &key,
+                )
+                .map_err(|_| TransportError::InvalidPayload("bulk window residence denied"))?;
                 let window = self.ensure_window(window_key)?;
+                crate::sync::window::validate_window_update_residence_with_vault(
+                    &self.vault,
+                    &window.doc,
+                    doc_state,
+                    &key,
+                )
+                .map_err(|_| TransportError::InvalidPayload("bulk window residence denied"))?;
                 if window.doc.import(doc_state).is_err() {
                     self.manager.discard_window(&WindowKey::new(window_key));
                     return Err(TransportError::InvalidPayload(

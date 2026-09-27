@@ -141,10 +141,23 @@ impl SyncClient {
                 keys.push(key);
             }
         }
-        // A newly followed project backfills every month advertised by root;
-        // the thin enrol index owns discovery, not a guess from wall time.
-        for key in crate::sync::schema::read_window_list(&self.root_doc) {
-            if key.world().is_some() && self.follows_window(&key) && !keys.contains(&key) {
+        // The home/sync-all replica requests every root and local partition,
+        // including historical base months and world claims not yet indexed
+        // by a fresh server. A followed world also needs its base month.
+        let mut discovered = crate::sync::schema::read_window_list(&self.root_doc);
+        if self
+            .config
+            .followed_worlds
+            .as_ref()
+            .is_none_or(|worlds| !worlds.is_empty())
+        {
+            discovered.extend(
+                crate::sync::discover_local_window_keys(&self.vault)
+                    .map_err(|error| TransportError::Storage(error.to_string()))?,
+            );
+        }
+        for key in self.selected_discovered_windows(discovered) {
+            if !keys.contains(&key) {
                 keys.push(key);
             }
         }
@@ -198,6 +211,36 @@ impl SyncClient {
         Ok(messages)
     }
 
+    fn selected_discovered_windows(&self, discovered: Vec<WindowKey>) -> Vec<WindowKey> {
+        let mut selected = Vec::new();
+        for key in discovered {
+            if key.world().is_some() && self.follows_window(&key) {
+                let base =
+                    WindowKey::from_timestamp(key.start_timestamp().expect("validated window"));
+                if !selected.contains(&base) {
+                    selected.push(base);
+                }
+                if !selected.contains(&key) {
+                    selected.push(key);
+                }
+            } else if key.world().is_none()
+                && self
+                    .config
+                    .followed_worlds
+                    .as_ref()
+                    .is_none_or(|worlds| !worlds.is_empty())
+                && !selected.contains(&key)
+            {
+                // A selected-world edge can name a shared base endpoint
+                // learned in any older month. The first-touch item index in
+                // ONE-2662 may narrow these shared base fetches later; this
+                // carrier must not strand valid graph dependencies today.
+                selected.push(key);
+            }
+        }
+        selected
+    }
+
     /// The root document may arrive after initial frames on a new device.
     /// Request newly advertised, followed world windows only after the root
     /// import is durable. A repeat root update never requests the same key.
@@ -205,10 +248,9 @@ impl SyncClient {
         &self,
     ) -> std::result::Result<Vec<Vec<u8>>, TransportError> {
         let mut frames = Vec::new();
-        for key in crate::sync::schema::read_window_list(&self.root_doc) {
-            if key.world().is_none() || !self.follows_window(&key) {
-                continue;
-            }
+        for key in
+            self.selected_discovered_windows(crate::sync::schema::read_window_list(&self.root_doc))
+        {
             if self
                 .requested_windows
                 .lock()

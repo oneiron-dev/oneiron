@@ -711,3 +711,63 @@ fn queue_overflow_triggers_real_re_bootstrap() {
     let event = event_rx.try_recv().unwrap();
     assert_matches!(event, SyncEvent::Error(msg) if msg.contains("re-bootstrap"));
 }
+
+#[tokio::test]
+async fn out_of_order_window_delta_disconnects_instead_of_losing_the_update() {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let source = window_doc();
+    source
+        .get_map("entities")
+        .insert("prefix", b"first".as_slice())
+        .unwrap();
+    source.commit();
+    let prefix_vv = source.oplog_vv();
+    source
+        .get_map("entities")
+        .insert("later", b"second".as_slice())
+        .unwrap();
+    source.commit();
+    let missing_prefix = source.export(ExportMode::updates(&prefix_vv)).unwrap();
+    let server = tokio::spawn(async move {
+        let (stream, _) = listener.accept().await.unwrap();
+        let mut ws = tokio_tungstenite::accept_async(stream).await.unwrap();
+        let frame =
+            transport::encode_window_sync("2026-03", window_sub_tags::UPDATE, &missing_prefix)
+                .into_result()
+                .unwrap();
+        ws.send(Message::Binary(frame.into())).await.unwrap();
+    });
+    let (ws, _) = tokio_tungstenite::connect_async(format!("ws://{addr}"))
+        .await
+        .unwrap();
+    let manager = test_manager();
+    let conn = SyncConnection::new(
+        manager.clone(),
+        ConnectionConfig {
+            auto_reconnect: false,
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    let (mut client, _) = SyncClient::new(manager.clone(), SyncClientConfig::default()).unwrap();
+    let (event_tx, mut events) = mpsc::unbounded_channel();
+    let (_local_tx, mut local_rx) = mpsc::unbounded_channel();
+    let (_shutdown_tx, mut shutdown_rx) = tokio::sync::oneshot::channel();
+    let outcome = tokio::time::timeout(
+        std::time::Duration::from_secs(10),
+        conn.steady_state(ws, &mut client, &event_tx, &mut local_rx, &mut shutdown_rx),
+    )
+    .await
+    .unwrap();
+    assert!(matches!(outcome, LoopExit::Disconnected(_)));
+    assert_matches!(events.try_recv(), Ok(SyncEvent::Error(_)));
+    assert!(
+        manager
+            .vault()
+            .sync_state_keys_with_prefix("u:w:2026-03:")
+            .unwrap()
+            .is_empty()
+    );
+    server.await.unwrap();
+}

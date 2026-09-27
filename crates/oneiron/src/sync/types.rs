@@ -152,35 +152,7 @@ impl WindowKey {
 }
 
 pub(crate) fn parse_window_key_str(key: &str) -> Option<(i32, u32)> {
-    let bytes = key.as_bytes();
-    if bytes.len() != 7 && bytes.len() != 40 {
-        return None;
-    }
-    if bytes[4] != b'-'
-        || !bytes[..4].iter().all(u8::is_ascii_digit)
-        || !bytes[5..7].iter().all(u8::is_ascii_digit)
-    {
-        return None;
-    }
-    if bytes.len() == 40 {
-        if bytes[7] != b'@'
-            || !bytes[8..]
-                .iter()
-                .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(b))
-        {
-            return None;
-        }
-        let world = crate::EntityId::from_hex(&key[8..]).ok()?;
-        if world.to_hex() != key[8..] {
-            return None;
-        }
-    }
-    let year: i32 = key[..4].parse().ok()?;
-    let month: u32 = key[5..7].parse().ok()?;
-    if year < 1970 || !(1..=12).contains(&month) {
-        return None;
-    }
-    Some((year, month))
+    crate::deletion::parse_window_label(key)
 }
 
 /// The ledger-plane partition axis: only CLAIM bodies can name a world.

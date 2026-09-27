@@ -792,6 +792,11 @@ async fn revoked_token_stops_serving_its_already_open_socket() {
         );
     }
 
+    // A first window touch also publishes a root-index delta. The direct
+    // catch-up is deliberately sent first; drain that pre-revocation delta
+    // before asserting the socket serves nothing after revocation.
+    let index_notice = next_binary(&mut ws).await;
+    assert_eq!(index_notice[0], TAG_SYNC_UPDATE);
     // The operator revokes THIS token while the socket stays open.
     revoke_owner_slip(&server, "live-revoke-secret", &jti);
 
@@ -2004,6 +2009,136 @@ async fn ephemeral_frames_coexist_with_window_sync_updates() {
 }
 
 #[tokio::test]
+async fn fresh_home_root_advertises_unopened_world_and_historical_base() {
+    let dir = tempfile::tempdir().unwrap();
+    let vault = open_vault(dir.path());
+    let world = seeded_entity(0x91);
+    let person = seeded_entity(0x92);
+    let claim = seeded_entity(0x93);
+    let older = 1_763_000_000;
+    let learned = 1_771_027_200;
+    vault
+        .put_entity(
+            &person,
+            oneiron::registry::ENTITY_TYPE_PERSON,
+            test_range(older),
+            older,
+            b"person",
+        )
+        .unwrap();
+    vault
+        .put_entity(
+            &world,
+            oneiron::registry::ENTITY_TYPE_WORLD,
+            test_range(learned),
+            learned,
+            b"world",
+        )
+        .unwrap();
+    let mut body = oneiron::ClaimBody::new(
+        "test.world_discovery",
+        oneiron::ClaimSubject::Entity(person),
+        rmpv::Value::from("fact"),
+        1.0,
+        oneiron::ClaimApprovalStatus::Proposed,
+        oneiron::ClaimLifecycleStatus::Active,
+    );
+    body.world = Some(world);
+    vault
+        .put_claim(&claim, &body, test_range(learned), learned)
+        .unwrap();
+    let world_key = oneiron::sync::WindowKey::for_world(learned, world);
+    assert!(
+        vault
+            .sync_state_get(&format!("d:w:{world_key}"))
+            .unwrap()
+            .is_none()
+    );
+    let (addr, _server, handle) =
+        spawn_server(vault, config_with_secret(Some("world-root-secret"))).await;
+    let mut client = connect(addr, Some("world-root-secret")).await.unwrap();
+    let root = next_binary(&mut client).await;
+    assert_eq!(root[0], TAG_SYNC_UPDATE);
+    let doc = LoroDoc::from_snapshot(&root[1..]).unwrap();
+    let keys = oneiron::sync::schema::read_window_list(&doc);
+    assert!(keys.contains(&world_key));
+    assert!(keys.contains(&oneiron::sync::WindowKey::from_timestamp(older)));
+    handle.abort();
+}
+
+#[tokio::test]
+async fn subscribed_window_catchup_prefix_precedes_concurrent_live_delta() {
+    let dir = tempfile::tempdir().unwrap();
+    let vault = open_vault(dir.path());
+    let (addr, _server, handle) =
+        spawn_server(vault.clone(), config_with_secret(Some("causal-secret"))).await;
+    let mut writer = connect_without_hello(addr, Some("causal-secret"))
+        .await
+        .unwrap();
+    writer
+        .send(Message::Binary(
+            transport::encode_chunk_full_window_protocol_hello().into(),
+        ))
+        .await
+        .unwrap();
+    let _ = next_binary(&mut writer).await; // root
+    let author = LoroDoc::new();
+    author
+        .get_map("entities")
+        .insert("prefix", b"before".as_slice())
+        .unwrap();
+    author.commit();
+    let prefix = author.export(ExportMode::all_updates()).unwrap();
+    writer
+        .send(Message::Binary(
+            transport::encode_window_sync("2026-02", window_sub_tags::UPDATE, &prefix).into(),
+        ))
+        .await
+        .unwrap();
+    wait_for_sync_state_key(&vault, "u:w:2026-02:00000001").await;
+    let mut follower = connect_without_hello(addr, Some("causal-secret"))
+        .await
+        .unwrap();
+    follower
+        .send(Message::Binary(
+            transport::encode_chunk_full_window_protocol_hello().into(),
+        ))
+        .await
+        .unwrap();
+    let _ = next_binary(&mut follower).await; // root with the known window
+    send_window_vv_request(&mut follower, "2026-02").await;
+    let first = next_window_frame(&mut follower).await;
+    let (_, first_tag, first_bytes) = transport::decode_window_sync(&first[1..]).unwrap();
+    assert_eq!(first_tag, window_sub_tags::UPDATE);
+    let received = LoroDoc::new();
+    assert!(received.import(first_bytes).unwrap().pending.is_none());
+    // The catch-up VV response was queued before subscription. A live update
+    // arriving now must not overtake it on the single socket.
+    let before = author.oplog_vv();
+    author
+        .get_map("entities")
+        .insert("later", b"after".as_slice())
+        .unwrap();
+    author.commit();
+    let later = author.export(ExportMode::updates(&before)).unwrap();
+    writer
+        .send(Message::Binary(
+            transport::encode_window_sync("2026-02", window_sub_tags::UPDATE, &later).into(),
+        ))
+        .await
+        .unwrap();
+    let response = next_window_frame(&mut follower).await;
+    let (_, tag, _) = transport::decode_window_sync(&response[1..]).unwrap();
+    assert_eq!(tag, window_sub_tags::VV_RESPONSE);
+    let live = next_window_frame(&mut follower).await;
+    let (_, tag, bytes) = transport::decode_window_sync(&live[1..]).unwrap();
+    assert_eq!(tag, window_sub_tags::UPDATE);
+    assert!(received.import(bytes).unwrap().pending.is_none());
+    assert!(received.get_map("entities").get("later").is_some());
+    handle.abort();
+}
+
+#[tokio::test]
 async fn imported_update_relays_to_second_client_and_persists_contract_keys() {
     let dir = tempfile::tempdir().unwrap();
     let vault = open_vault(dir.path());
@@ -2128,9 +2263,10 @@ async fn relayed_update_and_tombstone_survive_server_restart() {
     let (mut sync_client, _events) =
         SyncClient::new(open_manager(client_vault), SyncClientConfig::default()).unwrap();
     sync_client.handle_server_message(&root_msg).unwrap();
-    assert_eq!(
-        sync_client.server_windows(),
-        vec!["2026-02".to_string()],
+    assert!(
+        sync_client
+            .server_windows()
+            .contains(&"2026-02".to_string()),
         "restarted server must still announce the persisted window in meta.windows"
     );
 

@@ -21,9 +21,10 @@ pub fn validate_window_update_locality(doc: &LoroDoc, update: &[u8]) -> Result<(
     validate_window_update(doc, update, None, None)
 }
 
-/// Checks a peer's complete operation range against the window's world axis
-/// before it can enter a live document or persisted update log.
-pub fn validate_window_update_residence(
+/// Checks a peer's complete operation range against the window's world axis.
+/// Production imports use the vault-aware door below instead.
+#[cfg(test)]
+pub(in crate::sync) fn validate_window_update_residence(
     doc: &LoroDoc,
     update: &[u8],
     key: &crate::sync::WindowKey,

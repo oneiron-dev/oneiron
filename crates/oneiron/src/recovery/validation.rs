@@ -6,13 +6,7 @@ use crate::error::Result;
 use std::collections::{BTreeMap, BTreeSet};
 
 pub(super) fn validate(snapshot: &CanonicalSnapshot) -> Result<()> {
-    let window = snapshot.window.as_bytes();
-    if window.len() != 7
-        || window[4] != b'-'
-        || !window[..4].iter().all(u8::is_ascii_digit)
-        || !window[5..].iter().all(u8::is_ascii_digit)
-        || !(1..=12).contains(&snapshot.window[5..].parse::<u8>().unwrap_or(0))
-    {
+    if crate::deletion::parse_window_label(&snapshot.window).is_none() {
         return Err(invalid("window key"));
     }
     if snapshot.schema_manifest.oneiron_schema_version != crate::store::STORAGE_ABI_VERSION
@@ -38,6 +32,21 @@ pub(super) fn validate(snapshot: &CanonicalSnapshot) -> Result<()> {
     if snapshot.container_manifests != snapshot.expected_containers() {
         return Err(invalid("container manifest coverage"));
     }
+    let world = snapshot
+        .window
+        .split_once('@')
+        .map(|(_, hex)| crate::EntityId::from_hex(hex))
+        .transpose()
+        .map_err(|_| invalid("window world"))?;
+    if world.is_some()
+        && (!snapshot.doc_snapshots.is_empty()
+            || !snapshot.document_heads.is_empty()
+            || !snapshot.head_move_receipts.is_empty()
+            || !snapshot.note_forks.is_empty()
+            || !snapshot.note_proposals.is_empty())
+    {
+        return Err(invalid("world window NOTE carrier"));
+    }
     let deleted: BTreeMap<_, _> = snapshot
         .tombstones
         .iter()
@@ -57,7 +66,22 @@ pub(super) fn validate(snapshot: &CanonicalSnapshot) -> Result<()> {
         }
         let body = &entity.blob[ENTITY_METADATA_HEADER_LEN..];
         if header.entity_type == crate::registry::ENTITY_TYPE_CLAIM && !body.is_empty() {
-            crate::claim::validate_claim_body_and_decode(body, true)?;
+            let claim = crate::claim::decode_claim_body(body, true)?;
+            if claim.world != world
+                || (world.is_some()
+                    && crate::deletion::window_label_from_timestamp(header.learned_at)
+                        != snapshot.window[..7])
+            {
+                return Err(invalid("claim outside window residence"));
+            }
+        } else if world.is_some()
+            && (header.entity_type != crate::registry::ENTITY_TYPE_CLAIM
+                || !body.is_empty()
+                || !deleted.contains_key(&entity.id))
+        {
+            // A bodiless CLAIM is admissible only as a soft-deletion shell,
+            // bound by its tombstone and the canonical window address.
+            return Err(invalid("entity outside world window"));
         }
         if header.entity_type == crate::registry::ENTITY_TYPE_NOTE && !body.is_empty() {
             crate::note::decode_note_body_using(body, crate::note::NoteKind::wire)?;

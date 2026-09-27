@@ -3968,3 +3968,72 @@ fn world_window_admission_rejects_cross_project_edges_before_relay() -> Result<(
     assert!(target.get_map("edges").get(&foreign).is_none());
     Ok(())
 }
+
+#[test]
+fn world_export_does_not_pick_up_a_shared_note_from_the_same_month() -> Result<()> {
+    let (_dir, source) = test_vault();
+    let owner = source.ensure_embedded_owner_actor().unwrap();
+    let actor = crate::write_envelope::WriteActor::new(owner, EdgeActorClass::Human);
+    let note = source
+        .create_note("research", "shared note", actor)
+        .unwrap();
+    let raw = source.get_raw_unsealed(&note)?.unwrap();
+    let at = crate::batch::EntityMetadataHeader::parse(&raw)
+        .unwrap()
+        .learned_at;
+    let world = EntityId::now();
+    let claim = EntityId::now();
+    let occurred = TimeRange { start: at, end: at };
+    source.put_entity(
+        &world,
+        crate::registry::ENTITY_TYPE_WORLD,
+        occurred,
+        at,
+        b"world",
+    )?;
+    let mut body = crate::claim::ClaimBody::new(
+        "test.note_partition",
+        crate::claim::ClaimSubject::Entity(world),
+        Value::from("world fact"),
+        1.0,
+        ClaimApprovalStatus::Proposed,
+        crate::claim::ClaimLifecycleStatus::Active,
+    );
+    body.world = Some(world);
+    source.put_claim(&claim, &body, occurred, at)?;
+    let world_key = WindowKey::for_world(at, world);
+    let world_doc = create_window_doc("owner", &world_key);
+    reverse_rematerialize(&source, &world_doc, &world_key)?;
+    let exported = export_window_updates_since(
+        &source,
+        &world_key,
+        &world_doc,
+        &VersionVector::default().encode(),
+    )?;
+    let (_peer_dir, peer) = test_vault();
+    // The shared base endpoint is already loaded before its world edge.
+    peer.put_entity(
+        &world,
+        crate::registry::ENTITY_TYPE_WORLD,
+        occurred,
+        at,
+        b"world",
+    )?;
+    let received = create_window_doc("peer", &world_key);
+    validate_window_update_residence_with_vault(&peer, &received, &exported, &world_key)?;
+    import_doc(&received, &exported)?;
+    assert!(received.get_map("entities").get(&claim.to_hex()).is_some());
+    assert!(received.get_map("entities").get(&note.to_hex()).is_none());
+
+    let base_key = WindowKey::from_timestamp(at);
+    let base = create_window_doc("owner", &base_key);
+    reverse_rematerialize(&source, &base, &base_key)?;
+    export_window_updates_since(
+        &source,
+        &base_key,
+        &base,
+        &VersionVector::default().encode(),
+    )?;
+    assert!(base.get_map("entities").get(&note.to_hex()).is_some());
+    Ok(())
+}

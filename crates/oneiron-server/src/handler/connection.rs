@@ -215,9 +215,13 @@ async fn handle_connection(
     // revocation that should have stopped it.
     loop {
         let event = tokio::select! {
+            biased;
+            // A VV catch-up queues its UPDATE and VV_RESPONSE before binding
+            // the subscription. Drain those direct frames before a concurrent
+            // broadcast can overtake their causal prefix on this socket.
+            direct_msg = direct_rx.recv() => ConnEvent::Direct(direct_msg),
             msg = transport.read_next(), if direct_rx.is_empty() => ConnEvent::Inbound(msg),
             broadcast_result = subscriber.recv() => ConnEvent::Broadcast(broadcast_result),
-            direct_msg = direct_rx.recv() => ConnEvent::Direct(direct_msg),
             _ = app_tick.tick(), if app_connection.has_active_subscriptions() => ConnEvent::AppDelivery,
         };
 

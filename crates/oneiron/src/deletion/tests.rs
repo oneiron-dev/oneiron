@@ -307,6 +307,17 @@ fn window_label_format_and_clamp() {
 }
 
 #[test]
+fn world_month_window_label_validates_without_sync_feature() {
+    let world = EntityId::from_bytes([0xab; 16]).unwrap();
+    let key = format!("2026-02@{}", world.to_hex());
+    assert_eq!(parse_window_label(&key), Some((2026, 2)));
+    assert_eq!(parse_window_label("2026-02"), Some((2026, 2)));
+    assert!(parse_window_label(&key.to_uppercase()).is_none());
+    assert!(parse_window_label(&format!("{key}0")).is_none());
+    assert!(parse_window_label(&key.replace("2026-02", "2026-13")).is_none());
+}
+
+#[test]
 fn leap_year_boundaries_keep_feb_29_in_february_window() {
     // 2023-02-28 23:59:59 UTC and 2023-03-01 00:00:00 UTC.
     assert_eq!(window_label_from_timestamp(1_677_628_799), "2023-02");

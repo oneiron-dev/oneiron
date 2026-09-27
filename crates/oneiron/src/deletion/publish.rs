@@ -619,7 +619,7 @@ mod live_query_publication_tests {
                 deleted_at: 1_772_000_000,
                 request_id: [7; 16],
             };
-            let result = vault.write_crdt_tombstone(&id, "2026-03", &value, None, None);
+            let result = vault.write_crdt_tombstone(&id, tee.window.as_str(), &value, None, None);
             assert_eq!(result.is_err(), fail);
             assert_eq!(*tee.seen.lock().unwrap(), usize::from(!fail));
         }

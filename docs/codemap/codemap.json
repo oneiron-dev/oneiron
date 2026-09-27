@@ -12422,7 +12422,7 @@
      "purpose": "—",
      "surface": {
       "const": 2,
-      "crate-vis": 17,
+      "crate-vis": 18,
       "enum": 2,
       "fn": 7,
       "struct": 2
@@ -29895,7 +29895,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/sync/client/sync_frames.rs",
@@ -30209,8 +30209,8 @@
      "purpose": "CRDT sync layer for Oneiron",
      "surface": {
       "crate-vis": 3,
-      "mod": 18,
-      "re-export": 14
+      "mod": 19,
+      "re-export": 15
      }
     },
     {
@@ -30471,6 +30471,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/sync/residence.rs",
+     "purpose": "Discover locally held world/month partitions without loading their Docs",
+     "surface": {
+      "fn": 1
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
@@ -30659,7 +30669,8 @@
      "path": "src/sync/window/admission.rs",
      "purpose": "Full-window UPDATE locality admission without live document side effects",
      "surface": {
-      "fn": 3
+      "crate-vis": 1,
+      "fn": 2
      }
     },
     {
@@ -30733,7 +30744,7 @@
      "path": "src/sync/window/mod.rs",
      "purpose": "Window lifecycle management for the CRDT sync layer",
      "surface": {
-      "crate-vis": 9,
+      "crate-vis": 10,
       "fn": 6,
       "mod": 1,
       "re-export": 5,
@@ -34904,7 +34915,7 @@
      "purpose": "ARCH-0038 historical-carrier sweep executor — ONE-1087 / ONE-1091 phase 1 (manual trigger via…"
     },
     "sync": {
-     "files": 100,
+     "files": 101,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -35039,7 +35050,7 @@
    },
    "over_bar": 9,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2069,
+   "source_files": 2070,
    "test_files": 710
   },
   "oneiron-android": {

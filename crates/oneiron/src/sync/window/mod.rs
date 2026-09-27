@@ -27,9 +27,10 @@ mod reverse;
 pub mod test_hooks;
 mod tombstones;
 
+#[cfg(test)]
+pub(in crate::sync) use self::admission::validate_window_update_residence;
 pub use self::admission::{
-    validate_window_update_locality, validate_window_update_residence,
-    validate_window_update_residence_with_vault,
+    validate_window_update_locality, validate_window_update_residence_with_vault,
 };
 pub(crate) use self::egress::export_history_free_window_snapshot;
 pub(in crate::sync) use self::egress::export_scrubbed_window_snapshot;

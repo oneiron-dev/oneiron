@@ -98,6 +98,72 @@ async fn world_window_creation_announces_root_index_after_persistence() {
 }
 
 #[test]
+fn fresh_server_root_indexes_unopened_world_claim_and_older_base_row() {
+    let (_dir, vault) = test_vault();
+    let world = oneiron::EntityId::now();
+    let claim = oneiron::EntityId::now();
+    let person = oneiron::EntityId::now();
+    let old_at = 1_763_000_000;
+    let world_at = 1_771_027_200;
+    vault
+        .put_entity(
+            &person,
+            oneiron::registry::ENTITY_TYPE_PERSON,
+            oneiron::TimeRange {
+                start: old_at,
+                end: old_at,
+            },
+            old_at,
+            b"person",
+        )
+        .unwrap();
+    vault
+        .put_entity(
+            &world,
+            oneiron::registry::ENTITY_TYPE_WORLD,
+            oneiron::TimeRange {
+                start: world_at,
+                end: world_at,
+            },
+            world_at,
+            b"world",
+        )
+        .unwrap();
+    let mut body = oneiron::ClaimBody::new(
+        "test.server_world_inventory",
+        oneiron::ClaimSubject::Entity(person),
+        rmpv::Value::from("fact"),
+        1.0,
+        oneiron::ClaimApprovalStatus::Proposed,
+        oneiron::ClaimLifecycleStatus::Active,
+    );
+    body.world = Some(world);
+    vault
+        .put_claim(
+            &claim,
+            &body,
+            oneiron::TimeRange {
+                start: world_at,
+                end: world_at,
+            },
+            world_at,
+        )
+        .unwrap();
+    let world_key = WindowKey::for_world(world_at, world);
+    assert!(
+        vault
+            .sync_state_get(&format!("d:w:{world_key}"))
+            .unwrap()
+            .is_none()
+    );
+    let server = SyncServer::new(vault, SyncServerConfig::default()).unwrap();
+    let keys = read_window_list(&server.root_doc);
+    assert!(keys.contains(&world_key));
+    assert!(keys.contains(&WindowKey::from_timestamp(old_at)));
+    assert!(server.reassert_manager.loaded_keys().is_empty());
+}
+
+#[test]
 fn root_doc_initialization() {
     let (_dir, vault) = test_vault();
     let server = SyncServer::new(vault, SyncServerConfig::default()).unwrap();
