@@ -73,6 +73,12 @@ impl OneironClient {
                     "key_value_namespaces" => {
                         remote_agent_verb_output::<Vec<Vec<String>>>(client, verb, &input)
                     }
+                    "can" => remote_agent_verb_output::<oneiron::task_verb::TaskAskPreflight>(
+                        client, verb, &input,
+                    ),
+                    "peek" => remote_agent_verb_output::<
+                        Vec<oneiron::task_verb::TaskAskPersonEvidence>,
+                    >(client, verb, &input),
                     "tasks.ask" => remote_agent_verb_output::<oneiron::task_verb::TaskAskReceipt>(
                         client, verb, &input,
                     ),
@@ -326,6 +332,32 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("key_value_namespaces", value)
+    }
+    /// Read-only ask preflight or partial answer evidence.
+    pub fn can(
+        &self,
+        input: &oneiron::task_verb::sdk::TaskCanAskRequest,
+    ) -> Result<oneiron::task_verb::TaskAskPreflight, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("can", value)
+    }
+    /// Read-only ask preflight or partial answer evidence.
+    pub fn peek(
+        &self,
+        input: &oneiron::task_verb::TaskAskHandle,
+    ) -> Result<Vec<oneiron::task_verb::TaskAskPersonEvidence>, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("peek", value)
     }
     pub fn tasks_ask(
         &self,
