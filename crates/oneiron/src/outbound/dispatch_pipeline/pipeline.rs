@@ -13,9 +13,14 @@ use crate::edge::EdgeActorClass;
 use crate::entity_id::EntityId;
 use crate::error::{Error, OffRecordError};
 use crate::gate::{self, ExternalEffectGateInput, ExternalEffectPolicyRisk, GateOutcome};
-use crate::linkedin_connector::LinkedInSeatPolicyAction;
+use crate::linkedin_connector::{
+    LINKEDIN_CHANNEL, LINKEDIN_CONNECT_REQUEST_VERB, LinkedInSeatPolicyAction,
+    LinkedInSeatPolicyDecision, LinkedInSeatSandboxPolicy,
+};
 use crate::outbound::OutboundDeliveryWindowDecision;
-use crate::outbound::capability::{OutboundRetryClass, normalize_key, outbound_verb_contract};
+use crate::outbound::capability::{
+    OutboundRetryClass, OutboundVerbContract, normalize_key, outbound_verb_contract,
+};
 use crate::outbound::dispatch_attempt_id::outbound_dispatch_attempt_id;
 use crate::outbound::dispatch_types::{
     OutboundDispatchError, OutboundDispatchOutcome, OutboundDispatchRequest,
@@ -83,6 +88,16 @@ impl OutboundDispatchPipeline {
         }
 
         let verb_contract = outbound_verb_contract(&request.intent.channel, &request.intent.verb)?;
+        // Scheduled tasks cannot supply a seat snapshot today. Never let that
+        // optional request field turn a LinkedIn connect into an ungated send.
+        if request.intent.channel == LINKEDIN_CHANNEL
+            && verb_contract.kind == LINKEDIN_CONNECT_REQUEST_VERB
+            && request.linkedin_sandbox_policy.is_none()
+        {
+            return Err(OutboundDispatchError::Engine(Error::InvalidConfig(
+                "LinkedIn connect request requires current seat policy".to_owned(),
+            )));
+        }
         let idempotency_supported = !matches!(
             verb_contract.retry_class,
             OutboundRetryClass::NonIdempotentInterrupt
@@ -168,13 +183,10 @@ impl OutboundDispatchPipeline {
                 | OutboundDeliveryWindowDecision::DeliverNowWithApnsCap { .. }
         );
         let mut linkedin_decision = if window_admits {
-            request.linkedin_sandbox_policy.as_ref().map(|policy| {
-                policy.evaluate_outbound(
-                    &request.intent.channel,
-                    &verb_contract.kind,
-                    request.occurred_at,
-                )
-            })
+            request
+                .linkedin_sandbox_policy
+                .as_ref()
+                .map(|policy| linkedin_seat_decision(policy, &request, verb_contract))
         } else {
             None
         };
@@ -607,6 +619,28 @@ impl OutboundDispatchPipeline {
             budget_ladder_events,
         })
     }
+}
+
+fn linkedin_seat_decision(
+    policy: &LinkedInSeatSandboxPolicy,
+    request: &OutboundDispatchRequest,
+    verb_contract: &OutboundVerbContract,
+) -> LinkedInSeatPolicyDecision {
+    let send_decision = policy.evaluate_outbound(
+        &request.intent.channel,
+        &verb_contract.kind,
+        request.occurred_at,
+    );
+    if request.intent.channel == LINKEDIN_CHANNEL
+        && verb_contract.kind == LINKEDIN_CONNECT_REQUEST_VERB
+        && matches!(send_decision.action, LinkedInSeatPolicyAction::Allow)
+    {
+        let read_decision = policy.evaluate_profile_read();
+        if !matches!(read_decision.action, LinkedInSeatPolicyAction::Allow) {
+            return read_decision;
+        }
+    }
+    send_decision
 }
 
 fn apply_apns_window_cap(

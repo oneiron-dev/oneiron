@@ -56,9 +56,8 @@ pub struct HealerRunReceipt {
     pub proposals: Vec<EntityId>,
     pub reversed: bool,
 }
-// Review pressure is independent of a detector's bounded observation window.
-// This check never rejects submissions or grants execution authority.
-pub(super) const PROPOSAL_BURST_THRESHOLD: u64 = 100_000;
+// The healer-local reversal marker follows the same manifest-set observation
+// threshold as the shared OF-520 actor question; neither limits admission.
 #[derive(Default, Serialize, Deserialize)]
 struct ActorCount {
     count: u64,
@@ -471,7 +470,8 @@ impl HealerRegistration<'_> {
             // Persist authority attribution, not the runner's claimed actor/source.
             proposal.actor = reviewed.invocation().actor().clone();
             proposal.source = reviewed.invocation().source();
-            let threshold = PROPOSAL_BURST_THRESHOLD;
+            let threshold = policy.proposal_check_threshold();
+
             let pk = key(b"healer:proposal:", proposal.proposal_id.as_bytes());
             if self.vault.store.vault_meta.get(txn, &pk)?.is_some() {
                 return Err(Error::InvalidConfig("proposal id already exists".into()));
@@ -512,6 +512,7 @@ impl HealerRegistration<'_> {
                     run_ref: run.into(),
                 });
             }
+            let proposal_id = proposal.proposal_id;
             self.vault.store.vault_meta.put(
                 txn,
                 &pk,
@@ -529,6 +530,14 @@ impl HealerRegistration<'_> {
                 .store
                 .vault_meta
                 .put(txn, &ck, &encode(&counter)?)?;
+            crate::gate::proposal_observation::observe_submission_in_txn(
+                &self.vault.store,
+                txn,
+                actor,
+                &format!("healer:{}", proposal_id.to_hex()),
+                threshold,
+                true,
+            )?;
             Ok(bundle)
         })
     }
