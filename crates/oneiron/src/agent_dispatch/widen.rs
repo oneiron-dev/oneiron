@@ -89,6 +89,7 @@ impl AgentDispatcher<'_> {
             },
         )?
         .sibling_result_refs;
+        projection.workflow_output_refs = self.workflow_output_refs_for_attempt(attempt, parent)?;
         Ok(projection)
     }
 
