@@ -40,10 +40,27 @@ pub(crate) async fn core_propose(
     let request = json_payload(payload)?;
     let subject = oneiron::EntityId::from_hex(&request.subject)
         .map_err(|_| ApiError::bad_request("invalid subject reference", Some("subject")))?;
-    let readable = scoped_read_for_core_auth(server.vault().as_ref(), &auth)?
-        .get(&subject)
-        .map_err(|error| core_engine_error("proposal target lookup failed", error))?;
-    if readable.value.is_none() {
+    // A propose-only logged slip cannot create a ScopedReadActorKey (read is
+    // deliberately absent). The host checks existence without projecting the
+    // target or granting its contents to the caller. Read-capable callers keep
+    // the scoped-read visibility gate, so this does not weaken their policy.
+    let exists = if !auth.has_scope(CoreScope::Read)
+        && auth.has_scope(CoreScope::Propose)
+        && auth.verified_slip().is_some()
+    {
+        server
+            .vault()
+            .get(&subject)
+            .map_err(|error| core_engine_error("proposal target lookup failed", error))?
+            .is_some()
+    } else {
+        scoped_read_for_core_auth(server.vault().as_ref(), &auth)?
+            .get(&subject)
+            .map_err(|error| core_engine_error("proposal target lookup failed", error))?
+            .value
+            .is_some()
+    };
+    if !exists {
         return Err(ApiError::forbidden_scope("proposal:subject").into());
     }
     let bytes = rmp_serde::to_vec_named(&request.value)

@@ -376,6 +376,35 @@ mod tests {
             },
         );
     }
+    fn slip_request(
+        server: &crate::server::SyncServer,
+        slip: &oneiron::authority::CapabilitySlip,
+        holder: &ed25519_dalek::SigningKey,
+        method: &str,
+        uri: &str,
+        body: Option<serde_json::Value>,
+    ) -> axum::http::Request<axum::body::Body> {
+        let proof = oneiron::authority::holder_proof(
+            slip,
+            holder,
+            server.vault().capability_slip_now().unwrap(),
+        )
+        .unwrap();
+        axum::http::Request::builder()
+            .method(method)
+            .uri(uri)
+            .header(
+                AUTHORIZATION,
+                format!("Bearer {}", slip.to_token().unwrap()),
+            )
+            .header("x-oneiron-binding", proof.to_string())
+            .header("content-type", "application/json")
+            .body(body.map_or_else(axum::body::Body::empty, |body| {
+                axum::body::Body::from(body.to_string())
+            }))
+            .unwrap()
+    }
+
     #[test]
     fn oauth_bound_read_accepted() {
         let fixture = tempfile::NamedTempFile::new().unwrap();
@@ -446,6 +475,19 @@ mod tests {
                 b"oauth actor",
             )
             .unwrap();
+        let readable = oneiron::EntityId::now();
+        vault
+            .batch()
+            .put(
+                &readable,
+                oneiron::registry::ENTITY_TYPE_TURN,
+                oneiron::TimeRange { start: 1, end: 1 },
+                1,
+                b"oauth scoped query needle",
+            )
+            .text(&readable, &[("body", "oauth scoped query needle")])
+            .commit()
+            .unwrap();
         let server = Arc::new(crate::server::SyncServer::new(vault, cfg).unwrap());
         let app = crate::api::api_routes(server.clone());
         // The recording clock can move ahead of the authority plane's
@@ -500,7 +542,7 @@ mod tests {
         }
         let slip = issued.unwrap();
         assert_eq!(slip.claims.holder_ref, subject.to_hex());
-        assert!(slip.claims.scope.verbs.contains(&"core:read".to_owned()));
+        assert!(slip.claims.scope.verbs.contains(&"read".to_owned()));
         assert!(slip.claims.scope.verbs.contains(&"core:propose".to_owned()));
         assert!(!slip.claims.scope.verbs.contains(&"core:write".to_owned()));
         assert!(slip.claims.expires_at <= server.vault().now_recorded_at() + 3600);
@@ -518,26 +560,192 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(no_proof.status(), StatusCode::UNAUTHORIZED);
-        let timestamp = server.vault().capability_slip_now().unwrap();
-        let request_nonce = oneiron::EntityId::now().to_hex();
-        let challenge = format!("oneiron-request:{timestamp}:{request_nonce}");
-        let signature = hex(&holder
-            .sign(&slip.binding_transcript(challenge.as_bytes()).unwrap())
-            .to_bytes());
-        let proof =
-            serde_json::json!({"timestamp":timestamp,"nonce":request_nonce,"signature":signature});
         let accepted = app
+            .clone()
+            .oneshot(slip_request(
+                &server,
+                &slip,
+                &holder,
+                "GET",
+                "/v1/core/conversations",
+                None,
+            ))
+            .await
+            .unwrap();
+        assert_eq!(accepted.status(), StatusCode::OK);
+        let query = app
+            .oneshot(slip_request(
+                &server,
+                &slip,
+                &holder,
+                "POST",
+                "/v1/core/query",
+                Some(serde_json::json!({"query":"oauth scoped query needle","limit":10})),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(query.status(), StatusCode::OK);
+        let bytes = to_bytes(query.into_body(), 1024 * 1024).await.unwrap();
+        let body: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        assert!(
+            body["items"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|item| item["id"] == readable.to_hex()),
+            "{body:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn exchanged_propose_only_slip_can_propose_existing_subject_but_never_read_or_write() {
+        use axum::{
+            body::{Body, to_bytes},
+            http::{Request, StatusCode},
+        };
+        use ed25519_dalek::{Signer, SigningKey};
+        use oneiron::authority::CapabilitySlip;
+        use tower::ServiceExt;
+        let cfg = config();
+        cache_jwks(&cfg);
+        let dir = tempfile::tempdir().unwrap();
+        let vault =
+            Arc::new(oneiron::Vault::open(dir.path(), oneiron::VaultConfig::device()).unwrap());
+        let actor = oneiron::EntityId::now();
+        let subject = oneiron::EntityId::now();
+        for id in [actor, subject] {
+            vault
+                .put_entity(
+                    &id,
+                    oneiron::registry::ENTITY_TYPE_PERSON,
+                    oneiron::TimeRange { start: 1, end: 1 },
+                    1,
+                    b"existing actor",
+                )
+                .unwrap();
+        }
+        let server = Arc::new(crate::server::SyncServer::new(vault.clone(), cfg).unwrap());
+        let app = crate::api::api_routes(server.clone());
+        let jwt = token_for_subject(
+            "https://issuer.example",
+            "https://api.example",
+            "propose",
+            &actor.to_hex(),
+        );
+        let holder = SigningKey::from_bytes(&[90; 32]);
+        let key = holder.verifying_key().to_bytes();
+        let nonce = oneiron::EntityId::now().to_hex();
+        let transcript = oauth_binding_transcript(&jwt, &key, &nonce).unwrap();
+        let hex = |bytes: &[u8]| bytes.iter().map(|b| format!("{b:02x}")).collect::<String>();
+        let request = serde_json::json!({"binding_key":hex(&key), "nonce":nonce,
+            "signature":hex(&holder.sign(&transcript).to_bytes())});
+        let response = app
+            .clone()
             .oneshot(
                 Request::builder()
-                    .uri("/v1/core/conversations")
-                    .header(AUTHORIZATION, &bearer)
-                    .header("x-oneiron-binding", proof.to_string())
-                    .body(Body::empty())
+                    .method("POST")
+                    .uri("/v1/core/pairing/oauth")
+                    .header(AUTHORIZATION, format!("Bearer {jwt}"))
+                    .header("content-type", "application/json")
+                    .body(Body::from(request.to_string()))
                     .unwrap(),
             )
             .await
             .unwrap();
-        assert_eq!(accepted.status(), StatusCode::OK);
+        assert_eq!(response.status(), StatusCode::OK);
+        let bytes = to_bytes(response.into_body(), 100_000).await.unwrap();
+        let body: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        let slip = CapabilitySlip::from_token(body["token"].as_str().unwrap()).unwrap();
+        assert!(slip.claims.scope.verbs.contains(&"core:propose".to_owned()));
+        assert!(!slip.claims.scope.verbs.contains(&"read".to_owned()));
+        let proposal = |id: oneiron::EntityId| {
+            serde_json::json!({
+                "subject":id.to_hex(),"predicate":"profile.name","value":"candidate"
+            })
+        };
+        let response = app
+            .clone()
+            .oneshot(slip_request(
+                &server,
+                &slip,
+                &holder,
+                "POST",
+                "/v1/core/propose",
+                Some(proposal(subject)),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let bytes = to_bytes(response.into_body(), 100_000).await.unwrap();
+        let body: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        let claim = vault
+            .get_claim(&oneiron::EntityId::from_hex(body["id"].as_str().unwrap()).unwrap())
+            .unwrap()
+            .unwrap();
+        assert_eq!(claim.approval, oneiron::ClaimApprovalStatus::Proposed);
+        assert_eq!(claim.source, Some(oneiron::ClaimSource::ToolOutput));
+        let missing = oneiron::EntityId::now();
+        assert_eq!(
+            app.clone()
+                .oneshot(slip_request(
+                    &server,
+                    &slip,
+                    &holder,
+                    "POST",
+                    "/v1/core/propose",
+                    Some(proposal(missing))
+                ))
+                .await
+                .unwrap()
+                .status(),
+            StatusCode::FORBIDDEN
+        );
+        let mut forged = proposal(subject);
+        forged["approval"] = serde_json::json!("auto");
+        assert_eq!(
+            app.clone()
+                .oneshot(slip_request(
+                    &server,
+                    &slip,
+                    &holder,
+                    "POST",
+                    "/v1/core/propose",
+                    Some(forged)
+                ))
+                .await
+                .unwrap()
+                .status(),
+            StatusCode::BAD_REQUEST
+        );
+        assert_eq!(
+            app.clone()
+                .oneshot(slip_request(
+                    &server,
+                    &slip,
+                    &holder,
+                    "GET",
+                    "/v1/core/conversations",
+                    None
+                ))
+                .await
+                .unwrap()
+                .status(),
+            StatusCode::FORBIDDEN
+        );
+        assert_eq!(
+            app.oneshot(slip_request(
+                &server,
+                &slip,
+                &holder,
+                "POST",
+                "/v1/core/batch",
+                Some(serde_json::json!({"entities":[]}))
+            ))
+            .await
+            .unwrap()
+            .status(),
+            StatusCode::FORBIDDEN
+        );
     }
 
     #[test]

@@ -445,9 +445,9 @@ pub(super) fn test_bearer(claims: &str) -> String {
     format!("{}{claims}", slip_credentials::RECIPE_PREFIX)
 }
 
-/// Owner-grade credential: the bare trust root over the standard header.
+/// Owner-grade fixture credential: an unattenuated top-scope slip.
 pub(super) fn owner_bearer() -> String {
-    "Bearer secret".to_owned()
+    test_bearer("jti=owner-bearer")
 }
 
 pub(super) fn core_request(

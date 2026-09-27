@@ -285,7 +285,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/mcp/tool_catalog.rs` | src | m | 1 struct · 3 enum · 7 fn · 4 const · 6 crate-vis | McpToolName, McpToolSchema, McpToolValidationError, McpValidatedToolArgs | Retired MCP tool catalog: legacy names, schemas, and validation dispatch |
 | `src/mcp/validate.rs` | src | m | 1 fn · 3 crate-vis | — | Validation of MCP tool arguments, per-verb allow-lists, and metadata checks |
 | `src/mcp/validators.rs` | src | s | 12 crate-vis | — | Small field validators shared by every MCP argument type |
-| `src/oauth_relay.rs` | src | m | 7 crate-vis | — | ARCH-0028 host-trusted OAuth token-client verification half (ONE-1382 leg 1) |
+| `src/oauth_relay.rs` | src | L | 7 crate-vis | — | ARCH-0028 host-trusted OAuth token-client verification half (ONE-1382 leg 1) |
 | `src/projection.rs` | src | m | 1 struct · 1 enum · 7 fn · 1 crate-vis | InvalidView, View | — |
 | `src/projection/tests.rs` | test | s | — | — | — |
 | `src/protocol.rs` | src | m | 27 crate-vis | — | Custom Oneiron sync protocol — server-side extensions |

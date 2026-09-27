@@ -106,7 +106,11 @@ pub(super) async fn oauth_exchange(
             identity
                 .scopes
                 .iter()
-                .map(|scope| scope.as_str().to_owned())
+                .map(|scope| match scope {
+                    crate::auth::CoreScope::Read => "read".to_owned(),
+                    crate::auth::CoreScope::Propose => "core:propose".to_owned(),
+                    _ => scope.as_str().to_owned(),
+                })
                 .collect(),
         );
         claims.issued_at = now;

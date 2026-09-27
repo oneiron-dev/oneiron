@@ -42357,7 +42357,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [],
      "path": "src/oauth_relay.rs",
@@ -43057,7 +43057,7 @@
     "oauth_relay": {
      "files": 1,
      "impl_vault": false,
-     "largest_src_bucket": "m",
+     "largest_src_bucket": "L",
      "layout": "file",
      "purpose": "ARCH-0028 host-trusted OAuth token-client verification half (ONE-1382 leg 1)"
     },
@@ -43125,7 +43125,7 @@
      "purpose": "RC42 observation-only wire counters"
     }
    },
-   "over_bar": 3,
+   "over_bar": 4,
    "purpose": "Oneiron CRDT sync server library",
    "source_files": 229,
    "test_files": 98
