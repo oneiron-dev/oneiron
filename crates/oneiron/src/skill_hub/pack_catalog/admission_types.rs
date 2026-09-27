@@ -18,6 +18,19 @@ pub trait PackFitPolicy {
     fn qualify_script(&self, _source: &PackSource) -> Result<Option<PackQualification>> {
         Ok(None)
     }
+
+    /// Host-observed tool surfaces from the pinned source's actual adapter.
+    /// Empty is a declaration of no external tool surface, not a passing scan.
+    fn observed_tools(&self, _source: &PackSource) -> Result<Vec<PackObservedTool>> {
+        Ok(Vec::new())
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PackObservedTool {
+    pub name: String,
+    pub description: String,
+    pub input_schema: serde_json::Value,
 }
 
 pub trait PackQualifier {
@@ -84,6 +97,9 @@ pub struct PackInstallAsk {
     pub(super) permissions: PackPermissions,
     pub(super) qualification: Option<PackQualification>,
     pub(super) surface: HubAskSurface,
+    pub(super) observed_tools: Vec<PackObservedTool>,
+    pub(super) blocked_reason: Option<String>,
+    pub(super) scan_risk: Option<crate::skill_hub::ScanRiskLevel>,
 }
 impl PackInstallAsk {
     pub fn source_id(&self) -> EntityId {
@@ -103,6 +119,13 @@ impl PackInstallAsk {
     }
     pub fn surface(&self) -> HubAskSurface {
         self.surface
+    }
+    pub fn blocked_reason(&self) -> Option<&str> {
+        self.blocked_reason.as_deref()
+    }
+    /// Hash-bound scanner signal only; a rule decides blocking.
+    pub fn scan_risk(&self) -> Option<crate::skill_hub::ScanRiskLevel> {
+        self.scan_risk
     }
 }
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -148,6 +171,7 @@ pub struct PackInstallReceipt {
 }
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PackInstallDisposition {
+    Blocked { reason: String },
     Candidate(Box<PackInstallReceipt>),
     Installed(Box<PackInstallReceipt>),
 }
