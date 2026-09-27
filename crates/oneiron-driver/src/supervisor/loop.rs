@@ -204,6 +204,10 @@ where
                 if shutdown.requested() {
                     break;
                 }
+                // The planner/queue calls above are synchronous. Yield even
+                // when a new signal is already ready, so shutdown and timer
+                // futures cannot starve behind a self-sustaining wake burst.
+                tokio::task::yield_now().await;
                 continue;
             }
             if wave_scan_pending {
@@ -266,6 +270,7 @@ where
                 if shutdown.requested() {
                     break;
                 }
+                tokio::task::yield_now().await;
                 continue;
             }
             // ONE biased select: shutdown always beats a ready tick.
@@ -282,6 +287,7 @@ where
                         wave_scan_pending = true;
                         scan_after = None;
                         next_wave_due = None;
+                        tokio::task::yield_now().await;
                         continue;
                     }
                     () = async {
@@ -294,6 +300,7 @@ where
                         wave_scan_pending = true;
                         scan_after = None;
                         next_wave_due = None;
+                        tokio::task::yield_now().await;
                         continue;
                     }
                     tick = ticks.next_tick() => match tick {

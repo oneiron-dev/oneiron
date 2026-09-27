@@ -555,51 +555,55 @@ async fn running_supervisor_claims_plan_and_dispatches_only_live_ready_tasks() {
     let (push, wake, hint) = PushTick::channel(crate::DEFAULT_SESSION_IDLE_FLOOR_SECS * 1_000);
     let supervisor = WakeSupervisor::new(&vault, push, factory, test_config());
     let stop = supervisor.shutdown_handle();
-    let (report, (first, second)) = tokio::join!(supervisor.run(), async {
-        let first = tokio::time::timeout(Duration::from_secs(5), claimed_tasks.recv())
-            .await
-            .expect("initial dispatch timeout")
-            .expect("initial dispatch");
-        assert_ne!(first, epic);
-        assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 1);
-        assert_eq!(
-            AttemptQueue::new(&vault)
-                .get(attempt.id)
-                .expect("attempt")
-                .unwrap()
-                .state,
-            AttemptState::Completed
-        );
-        // Keep the supervisor alive. A TASK terminal write must wake its
-        // durable rescan and hand the dependent to the SAME dispatcher.
-        vault
-            .memory(actor, oneiron::EdgeActorClass::Human)
-            .land_task_result(
-                first,
-                &TaskResultInput {
-                    result_ref: actor,
-                    disposition: TaskTerminalDisposition::Completed,
-                    finished_at: std::time::SystemTime::now()
-                        .duration_since(std::time::UNIX_EPOCH)
-                        .expect("clock")
-                        .as_secs()
-                        + 1,
-                },
-            )
-            .expect("complete blocker");
-        let second = tokio::time::timeout(Duration::from_secs(5), claimed_tasks.recv())
-            .await
-            .expect("dependent dispatch timeout")
-            .expect("dependent dispatch");
-        assert_ne!(second, first);
-        assert_eq!(
-            calls.load(std::sync::atomic::Ordering::SeqCst),
-            1,
-            "no second plan was needed to wake the dependent"
-        );
-        stop.shutdown();
-        (first, second)
-    },);
+    let (report, (first, second)) = tokio::time::timeout(Duration::from_secs(12), async {
+        tokio::join!(supervisor.run(), async {
+            let first = tokio::time::timeout(Duration::from_secs(5), claimed_tasks.recv())
+                .await
+                .expect("initial dispatch timeout")
+                .expect("initial dispatch");
+            assert_ne!(first, epic);
+            assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 1);
+            assert_eq!(
+                AttemptQueue::new(&vault)
+                    .get(attempt.id)
+                    .expect("attempt")
+                    .unwrap()
+                    .state,
+                AttemptState::Completed
+            );
+            // Keep the supervisor alive. A TASK terminal write must wake its
+            // durable rescan and hand the dependent to the SAME dispatcher.
+            vault
+                .memory(actor, oneiron::EdgeActorClass::Human)
+                .land_task_result(
+                    first,
+                    &TaskResultInput {
+                        result_ref: actor,
+                        disposition: TaskTerminalDisposition::Completed,
+                        finished_at: std::time::SystemTime::now()
+                            .duration_since(std::time::UNIX_EPOCH)
+                            .expect("clock")
+                            .as_secs()
+                            + 1,
+                    },
+                )
+                .expect("complete blocker");
+            let second = tokio::time::timeout(Duration::from_secs(5), claimed_tasks.recv())
+                .await
+                .expect("dependent dispatch timeout")
+                .expect("dependent dispatch");
+            assert_ne!(second, first);
+            assert_eq!(
+                calls.load(std::sync::atomic::Ordering::SeqCst),
+                1,
+                "no second plan was needed to wake the dependent"
+            );
+            stop.shutdown();
+            (first, second)
+        })
+    })
+    .await
+    .expect("supervisor and dispatch must finish within twelve seconds");
     drop(wake);
     drop(hint);
     assert_eq!(report.passes_completed, 0, "planning is not a Dreamer pass");
@@ -723,43 +727,47 @@ async fn supervisor_recovers_committed_wave_and_retries_failed_handoff() {
     };
     let supervisor = WakeSupervisor::new(&vault, push, factory, config);
     let stop = supervisor.shutdown_handle();
-    let (report, ()) = tokio::join!(supervisor.run(), async {
-        assert_eq!(
-            tokio::time::timeout(Duration::from_secs(5), delivered.recv())
-                .await
-                .expect("failed callback retry timeout")
-                .expect("first delivery"),
-            first
-        );
-        assert_eq!(
-            plans.load(std::sync::atomic::Ordering::SeqCst),
-            1,
-            "restart must not replan a completed cut"
-        );
-        vault
-            .memory(actor, oneiron::EdgeActorClass::Human)
-            .land_task_result(
-                first,
-                &TaskResultInput {
-                    result_ref: actor,
-                    disposition: TaskTerminalDisposition::Completed,
-                    finished_at: std::time::SystemTime::now()
-                        .duration_since(std::time::UNIX_EPOCH)
-                        .expect("clock")
-                        .as_secs()
-                        + 1,
-                },
-            )
-            .expect("complete blocker");
-        assert_eq!(
-            tokio::time::timeout(Duration::from_secs(5), delivered.recv())
-                .await
-                .expect("dependent delivery timeout")
-                .expect("dependent"),
-            second
-        );
-        stop.shutdown();
-    });
+    let (report, ()) = tokio::time::timeout(Duration::from_secs(12), async {
+        tokio::join!(supervisor.run(), async {
+            assert_eq!(
+                tokio::time::timeout(Duration::from_secs(5), delivered.recv())
+                    .await
+                    .expect("failed callback retry timeout")
+                    .expect("first delivery"),
+                first
+            );
+            assert_eq!(
+                plans.load(std::sync::atomic::Ordering::SeqCst),
+                1,
+                "restart must not replan a completed cut"
+            );
+            vault
+                .memory(actor, oneiron::EdgeActorClass::Human)
+                .land_task_result(
+                    first,
+                    &TaskResultInput {
+                        result_ref: actor,
+                        disposition: TaskTerminalDisposition::Completed,
+                        finished_at: std::time::SystemTime::now()
+                            .duration_since(std::time::UNIX_EPOCH)
+                            .expect("clock")
+                            .as_secs()
+                            + 1,
+                    },
+                )
+                .expect("complete blocker");
+            assert_eq!(
+                tokio::time::timeout(Duration::from_secs(5), delivered.recv())
+                    .await
+                    .expect("dependent delivery timeout")
+                    .expect("dependent"),
+                second
+            );
+            stop.shutdown();
+        })
+    })
+    .await
+    .expect("supervisor and dispatch must finish within twelve seconds");
     drop(wake);
     drop(hint);
     assert_eq!(report.passes_completed, 0);
@@ -822,58 +830,62 @@ async fn successful_wave_handoff_reopens_on_retry_and_reclaimed_lease() {
     let (push, wake, hint) = PushTick::channel(crate::DEFAULT_SESSION_IDLE_FLOOR_SECS * 1_000);
     let supervisor = WakeSupervisor::new(&vault, push, factory, test_config());
     let stop = supervisor.shutdown_handle();
-    let (report, ()) = tokio::join!(supervisor.run(), async {
-        let first = tokio::time::timeout(Duration::from_secs(5), claims.recv())
-            .await
-            .expect("initial handoff timeout")
-            .expect("initial claim");
-        let queue = AttemptQueue::new(&vault);
-        let now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .expect("clock")
-            .as_secs();
-        let RetryOutcome::Retried(successor) = queue
-            .retry(RetryAttempt {
-                id: first.id,
-                lease_owner: "executor".into(),
-                attempt_count: first.attempt_count,
-                now,
-                backoff_until: now + 1,
-                last_error: Some("retry".into()),
-            })
-            .expect("schedule retry")
-        else {
-            panic!("retry outcome");
-        };
-        let second = tokio::time::timeout(Duration::from_secs(5), claims.recv())
-            .await
-            .expect("scheduled retry handoff timeout")
-            .expect("retry claim");
-        assert_eq!(second.id, successor.id);
-        assert_eq!(second.task_ref, first.task_ref);
-        assert_eq!(second.retry_of, Some(first.id));
-        assert!(
-            claims.try_recv().is_err(),
-            "claim notification cannot re-dispatch a leased attempt"
-        );
-        queue
-            .cleanup_leases(CleanupAttemptLeases {
-                now: u64::MAX,
-                lease_timeout_secs: 1,
-            })
-            .expect("reclaim expired lease");
-        let third = tokio::time::timeout(Duration::from_secs(5), claims.recv())
-            .await
-            .expect("reclaimed lease handoff timeout")
-            .expect("reclaimed claim");
-        assert_eq!(third.id, second.id, "reclaim reuses the same row");
-        assert!(
-            third.attempt_count > second.attempt_count,
-            "reclaim raises the lease generation"
-        );
-        assert_eq!(third.task_ref, first.task_ref);
-        stop.shutdown();
-    });
+    let (report, ()) = tokio::time::timeout(Duration::from_secs(12), async {
+        tokio::join!(supervisor.run(), async {
+            let first = tokio::time::timeout(Duration::from_secs(5), claims.recv())
+                .await
+                .expect("initial handoff timeout")
+                .expect("initial claim");
+            let queue = AttemptQueue::new(&vault);
+            let now = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("clock")
+                .as_secs();
+            let RetryOutcome::Retried(successor) = queue
+                .retry(RetryAttempt {
+                    id: first.id,
+                    lease_owner: "executor".into(),
+                    attempt_count: first.attempt_count,
+                    now,
+                    backoff_until: now + 1,
+                    last_error: Some("retry".into()),
+                })
+                .expect("schedule retry")
+            else {
+                panic!("retry outcome");
+            };
+            let second = tokio::time::timeout(Duration::from_secs(5), claims.recv())
+                .await
+                .expect("scheduled retry handoff timeout")
+                .expect("retry claim");
+            assert_eq!(second.id, successor.id);
+            assert_eq!(second.task_ref, first.task_ref);
+            assert_eq!(second.retry_of, Some(first.id));
+            assert!(
+                claims.try_recv().is_err(),
+                "claim notification cannot re-dispatch a leased attempt"
+            );
+            queue
+                .cleanup_leases(CleanupAttemptLeases {
+                    now: u64::MAX,
+                    lease_timeout_secs: 1,
+                })
+                .expect("reclaim expired lease");
+            let third = tokio::time::timeout(Duration::from_secs(5), claims.recv())
+                .await
+                .expect("reclaimed lease handoff timeout")
+                .expect("reclaimed claim");
+            assert_eq!(third.id, second.id, "reclaim reuses the same row");
+            assert!(
+                third.attempt_count > second.attempt_count,
+                "reclaim raises the lease generation"
+            );
+            assert_eq!(third.task_ref, first.task_ref);
+            stop.shutdown();
+        })
+    })
+    .await
+    .expect("supervisor and dispatch must finish within twelve seconds");
     drop(wake);
     drop(hint);
     assert_eq!(report.passes_completed, 0);
