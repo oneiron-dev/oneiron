@@ -455,6 +455,9 @@ impl Vault {
             crate::skill_hub::erase_claim_refinement_in_txn(&self.store, wtxn, id)?;
         let had_merge_receipt =
             crate::skill_hub::erase_refinement_custody_in_txn(&self.store, wtxn, id)?;
+        // A directly soft-deleted receipt ASSET must also lose its owner's
+        // latest pointer; raw/hard deletes already run this shared hook.
+        crate::skill_hub::remove_refinement_carrier_in_txn(&self.store, wtxn, id)?;
         crate::skill_hub::retire_refinement_holder_in_txn(&self.store, wtxn, id)?;
         crate::agent_def::remove_birth_custody_in_txn(&self.store, wtxn, id)?;
         let Some(entity_record) = self.store.entities.get(wtxn, id.as_bytes())? else {

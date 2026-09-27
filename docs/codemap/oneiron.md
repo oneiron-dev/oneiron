@@ -2289,7 +2289,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/skill_hub/package_codec.rs` | src | m | 2 fn · 12 crate-vis | — | Bounded, typed package persistence |
 | `src/skill_hub/publisher.rs` | src | s | 1 struct · 4 fn · 2 crate-vis | ForeignSkillPublisher | A publisher is a foreign actor with an owner-minted, revocable offer-only grant |
 | `src/skill_hub/record.rs` | src | m | 3 struct · 4 enum · 13 fn · 3 const · 2 crate-vis | HubPin, HubRef, HubSyncPolicy, SkillHubKind, SkillHubRecord, SkillHubTrustTier, TrackedHubRef | — |
-| `src/skill_hub/refinement_admission.rs` | src | m | 15 crate-vis | — | Content-free refinement identity and the transaction-local exact-admission capability |
+| `src/skill_hub/refinement_admission.rs` | src | m | 16 crate-vis | — | Content-free refinement identity and the transaction-local exact-admission capability |
 | `src/skill_hub/refinement_custody.rs` | src | m | 12 crate-vis | — | Candidate-owned custody for inert refinement rulings |
 | `src/skill_hub/refinement_custody/tests.rs` | test | m | — | — | The same source custody laws for claim and skill refinement receipts |
 | `src/skill_hub/shared_delta.rs` | src | s | 1 struct · 1 enum · 4 fn · 2 crate-vis | SharedSkillDelta, SharedSkillLane | Submitted-byte federation merge-back and company PR staging |

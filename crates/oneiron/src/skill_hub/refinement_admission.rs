@@ -11,6 +11,9 @@ use crate::{
 };
 use serde::{Deserialize, Serialize};
 
+// Permanent candidate origin, keyed only by entity ID. The value is the hash
+// of the first native Proposed bytes, never the body or an approval receipt.
+const CLAIM_ORIGIN: &[u8] = b"skill_hub/refinement-claim-origin/v1\0";
 const CONTROL: &[u8] = b"skill_hub/refinement-control/v1\0";
 fn key(id: &EntityId) -> Vec<u8> {
     let mut out = CONTROL.to_vec();
@@ -278,6 +281,47 @@ impl RefinementAdmissionProof {
     }
 }
 
+fn declares_refinement(body: &crate::claim::ClaimBody) -> bool {
+    body.evidence.as_ref().is_some_and(|evidence| {
+        evidence.as_map().is_some_and(|fields| {
+            fields.iter().any(|(key, value)| {
+                key.as_str() == Some("provenance") && value.as_str() == Some("claim-refinement")
+            })
+        })
+    })
+}
+fn origin_key(id: &EntityId) -> Vec<u8> {
+    let mut key = CLAIM_ORIGIN.to_vec();
+    key.extend_from_slice(id.as_bytes());
+    key
+}
+/// The ordinary put chokepoint stages this after validation, for local and
+/// replicated Proposed claims alike. Delete never removes it.
+pub(crate) fn stage_refinement_claim_origin(
+    store: &Store,
+    txn: &mut heed::RwTxn<'_>,
+    id: &EntityId,
+    body: Option<&crate::claim::ClaimBody>,
+    data: &[u8],
+) -> Result<()> {
+    let Some(body) = body else {
+        return Ok(());
+    };
+    if body.approval != crate::claim::ClaimApprovalStatus::Proposed || !declares_refinement(body) {
+        return Ok(());
+    }
+    let digest = blake3::hash(data);
+    let key = origin_key(id);
+    if let Some(prior) = store.vault_meta.get(txn, &key)? {
+        if prior.as_ref() != digest.as_bytes() {
+            return Err(invalid("refinement claim origin changed"));
+        }
+    } else {
+        store.vault_meta.put(txn, &key, digest.as_bytes())?;
+    }
+    Ok(())
+}
+
 /// The shared materialization door asks this BEFORE any gate or entity write.
 pub(crate) fn validate_refinement_admission(
     store: &Store,
@@ -287,21 +331,36 @@ pub(crate) fn validate_refinement_admission(
     data: &[u8],
     proof: Option<&RefinementAdmissionProof>,
 ) -> Result<()> {
-    let Some(control) = read_control(store, txn, id)? else {
-        // The session's Proposed CLAIM is allowed to arrive before its local
-        // control row is staged. A raw/replayed Approved copy without that row
-        // cannot borrow authority from stamped provenance or an inert receipt.
+    let origin = store.vault_meta.get(txn, &origin_key(id))?;
+    let control = read_control(store, txn, id)?;
+    if let Some(ref origin) = origin {
+        if origin.len() != 32 || kind != ENTITY_TYPE_CLAIM {
+            return Err(Error::CorruptedIndex("refinement origin binding"));
+        }
+        if control.is_none() {
+            let same_stored_proposal = store.entities.get(txn, id.as_bytes())?.is_some_and(|raw| {
+                raw.get(crate::batch::ENTITY_METADATA_HEADER_LEN..) == Some(data)
+            });
+            let body = crate::claim::decode_claim_body(data, true)?;
+            if !same_stored_proposal
+                || body.approval != crate::claim::ClaimApprovalStatus::Proposed
+                || !declares_refinement(&body)
+                || origin.as_ref() != blake3::hash(data).as_bytes()
+            {
+                return Err(invalid("refinement origin requires exact local admission"));
+            }
+            return Ok(());
+        }
+    }
+    let Some(control) = control else {
+        // A first Proposed copy may arrive before control. Its id is pinned
+        // as an origin fact by stage_refinement_claim_origin in this same put.
         if kind == ENTITY_TYPE_CLAIM {
             let body = crate::claim::decode_claim_body(data, true)?;
-            let refinement_origin = body.evidence.as_ref().is_some_and(|evidence| {
-                evidence.as_map().is_some_and(|fields| {
-                    fields.iter().any(|(key, value)| {
-                        key.as_str() == Some("provenance")
-                            && value.as_str() == Some("claim-refinement")
-                    })
-                })
-            });
-            if refinement_origin && body.approval != crate::claim::ClaimApprovalStatus::Proposed {
+            if declares_refinement(&body)
+                && (body.approval != crate::claim::ClaimApprovalStatus::Proposed
+                    || body.session_tag.is_none())
+            {
                 return Err(invalid(
                     "refinement origin cannot publish without local proof",
                 ));
@@ -309,6 +368,9 @@ pub(crate) fn validate_refinement_admission(
         }
         return Ok(());
     };
+    if kind == ENTITY_TYPE_CLAIM && origin.is_none() {
+        return Err(Error::CorruptedIndex("refinement proposal origin"));
+    }
     if control.state == RefinementState::Erased {
         return Err(invalid("erased refinement id cannot be reused"));
     }

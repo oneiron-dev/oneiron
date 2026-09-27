@@ -28209,7 +28209,7 @@
      "path": "src/skill_hub/refinement_admission.rs",
      "purpose": "Content-free refinement identity and the transaction-local exact-admission capability",
      "surface": {
-      "crate-vis": 15
+      "crate-vis": 16
      }
     },
     {

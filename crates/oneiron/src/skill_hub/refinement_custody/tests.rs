@@ -377,3 +377,49 @@ fn historical_refinement_carrier_scrubs_by_holder_without_trusting_forged_key() 
     );
     Ok(())
 }
+
+#[test]
+fn directly_soft_deleted_receipt_carrier_clears_local_latest_for_both_targets() -> Result<()> {
+    for claim in [false, true] {
+        let dir = tempfile::tempdir()?;
+        let vault = Vault::open(dir.path(), crate::VaultConfig::default())?;
+        let holder = EntityId::now();
+        let receipt = ruling(holder, EntityId::now(), claim);
+        let (carrier, bytes) = encode(&holder, &receipt)?;
+        vault.with_write_txn(|txn| {
+            vault.put_refinement_receipt_in_txn(txn, holder, receipt, at(1), 1)
+        })?;
+        let txn = vault.store.env.read_txn()?;
+        assert!(
+            vault
+                .latest_refinement_receipt_in_txn(&txn, holder)?
+                .is_some()
+        );
+        drop(txn);
+        assert!(
+            vault
+                .delete_entity_with_reason(&carrier, crate::deletion::DeleteReason::UserDelete)?
+                .existed
+        );
+        let txn = vault.store.env.read_txn()?;
+        assert!(
+            vault
+                .latest_refinement_receipt_in_txn(&txn, holder)?
+                .is_none()
+        );
+        assert!(!refinement_custody_exists_in_txn(
+            &vault.store,
+            &txn,
+            &holder
+        )?);
+        drop(txn);
+        assert!(
+            vault
+                .batch()
+                .put(&carrier, ENTITY_TYPE_ASSET, at(2), 2, &bytes)
+                .commit()
+                .is_err()
+        );
+    }
+    Ok(())
+}

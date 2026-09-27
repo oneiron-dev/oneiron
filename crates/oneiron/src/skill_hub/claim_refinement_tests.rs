@@ -654,3 +654,93 @@ fn native_proposed_refinement_is_absent_from_canonical_context_pack() -> Result<
     assert!(!pack.results.iter().any(|result| result.id == candidate));
     Ok(())
 }
+
+fn replay_claim_refinement_entity(
+    vault: &Vault,
+    id: EntityId,
+    body: &ClaimBody,
+    stamp: u64,
+) -> Result<()> {
+    let data = encode_claim_body(body)?;
+    #[cfg(feature = "sync")]
+    {
+        crate::sync::replay::replay_entity(
+            vault,
+            crate::sync::replay::ReplicatedEntity {
+                id,
+                entity_type: crate::registry::ENTITY_TYPE_CLAIM,
+                occurred: at(stamp),
+                learned_at: stamp,
+                body: &data,
+            },
+            crate::sync::client::ImportTier::OwnDevice,
+        )
+    }
+    #[cfg(not(feature = "sync"))]
+    {
+        vault
+            .batch()
+            .put_replicated(
+                &id,
+                crate::registry::ENTITY_TYPE_CLAIM,
+                at(stamp),
+                stamp,
+                &data,
+            )
+            .commit()
+    }
+}
+
+#[test]
+fn proposed_replay_pins_origin_across_stripped_overwrite_and_raw_delete() -> Result<()> {
+    let source = Fixture::new()?;
+    let candidate = source.submit("improved")?;
+    let native_proposed = source
+        .vault
+        .get_claim(&candidate)?
+        .expect("native proposal");
+    let dir = tempfile::tempdir()?;
+    let receiver = Vault::open(dir.path(), VaultConfig::default())?;
+    receiver.put_entity(
+        &source.subject,
+        crate::registry::ENTITY_TYPE_PERSON,
+        at(1),
+        1,
+        b"same subject on receiving device",
+    )?;
+    replay_claim_refinement_entity(&receiver, candidate, &native_proposed, 5)?;
+    assert_eq!(
+        receiver.get_claim(&candidate)?.unwrap().approval,
+        ClaimApprovalStatus::Proposed
+    );
+    assert!(
+        receiver.local_claim_refinement(candidate)?.is_none(),
+        "a received proposal has no local submission control row"
+    );
+    let mut stripped = native_proposed;
+    stripped.approval = ClaimApprovalStatus::Approved;
+    stripped.evidence = None;
+    stripped.session_tag = None;
+    let refusal = replay_claim_refinement_entity(&receiver, candidate, &stripped, 6)
+        .expect_err("stored origin must win over stripped incoming evidence");
+    assert_eq!(
+        refusal.kind(),
+        crate::error::ErrorKind::InvalidSkillBody,
+        "{refusal:?}"
+    );
+    assert_eq!(
+        receiver.get_claim(&candidate)?.unwrap().approval,
+        ClaimApprovalStatus::Proposed
+    );
+    receiver.batch().delete(&candidate).commit()?;
+    assert!(receiver.get_claim(&candidate)?.is_none());
+    let refusal = replay_claim_refinement_entity(&receiver, candidate, &stripped, 7)
+        .expect_err("raw deletion cannot free a refinement id");
+    assert_eq!(
+        refusal.kind(),
+        crate::error::ErrorKind::InvalidSkillBody,
+        "{refusal:?}"
+    );
+    assert!(receiver.get_claim(&candidate)?.is_none());
+    Ok(())
+}
