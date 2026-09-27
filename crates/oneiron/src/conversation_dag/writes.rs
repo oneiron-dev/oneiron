@@ -5,7 +5,7 @@ use super::graph::{
     require_type,
 };
 use super::migration::migrate_in_txn;
-use super::{AppendRecord, AppendedRecord, DagPage, DagPageRequest};
+use super::{AddressMode, AppendRecord, AppendedRecord, DagPage, DagPageRequest};
 use crate::affect::Vad;
 use crate::batch::EdgeValueFields;
 use crate::edge::EdgeKind;
@@ -180,16 +180,44 @@ pub(crate) fn append_in_txn(
             return Err(invalid("nonempty conversation requires a Parent"));
         }
     }
+    // Validate all recipients before minting the record. Addressing is never a
+    // room-membership or audience test: a non-member may be mentioned.
+    let mut seen = std::collections::HashSet::new();
+    if input.reply_to.is_some() {
+        if input.address != AddressMode::Broadcast {
+            return Err(invalid("reply cannot also use direct addressing"));
+        }
+    } else {
+        match input.address {
+            AddressMode::Broadcast if !input.recipients.is_empty() => {
+                return Err(invalid("broadcast cannot name recipients"));
+            }
+            AddressMode::Direct if input.recipients.is_empty() => {
+                return Err(invalid("direct addressing requires recipients"));
+            }
+            _ => {}
+        }
+    }
+    for recipient in &input.recipients {
+        if !seen.insert(*recipient) {
+            return Err(invalid("duplicate recipient"));
+        }
+        require_type(
+            &vault.store,
+            txn,
+            recipient,
+            crate::registry::ENTITY_TYPE_PERSON,
+        )?;
+    }
     let mut body = stamp_body(&input.body, input.actor, input.session, thread)?;
+    let Value::Map(mut entries) = rmpv::decode::read_value(&mut body.as_slice())
+        .map_err(|_| invalid("record decode failed"))?
+    else {
+        return Err(invalid("record body must be a map"));
+    };
     if let Some(asking) = input.reply_to {
         require_member(&vault.store, txn, &input.conversation, &asking)?;
         let asking_body = require_type(&vault.store, txn, &asking, ENTITY_TYPE_TURN)?;
-        let mut entries = match rmpv::decode::read_value(&mut body.as_slice())
-            .map_err(|_| invalid("record decode failed"))?
-        {
-            Value::Map(entries) => entries,
-            _ => return Err(invalid("record body must be a map")),
-        };
         entries.extend([
             (Value::from("addr"), Value::from("reply")),
             (
@@ -206,10 +234,29 @@ pub(crate) fn append_in_txn(
         if let Some(summary) = summary {
             entries.push((Value::from("summary"), Value::from(summary.to_hex())));
         }
-        body.clear();
-        rmpv::encode::write_value(&mut body, &Value::Map(entries))
-            .map_err(|_| invalid("record encode failed"))?;
+    } else {
+        entries.push((
+            Value::from("addr"),
+            Value::from(match input.address {
+                AddressMode::Broadcast => "broadcast",
+                AddressMode::Direct => "direct",
+            }),
+        ));
     }
+    // Addressing never limits audience, including on reply records.
+    entries.push((
+        Value::from("to"),
+        Value::Array(
+            input
+                .recipients
+                .iter()
+                .map(|id| Value::from(id.to_hex()))
+                .collect(),
+        ),
+    ));
+    body.clear();
+    rmpv::encode::write_value(&mut body, &Value::Map(entries))
+        .map_err(|_| invalid("record encode failed"))?;
     let id = vault.store.clock.entity_id()?;
     super::policy::check_append_policy(vault, txn, &id, input, &body)?;
     let fields: Vec<_> = input
@@ -227,6 +274,14 @@ pub(crate) fn append_in_txn(
     if let Some(parent) = input.parent {
         batch =
             batch.edge_with_value_fields(&id, EdgeKind::Parent, &parent, value(input.learned_at));
+    }
+    for recipient in &input.recipients {
+        batch = batch.edge_with_value_fields(
+            &id,
+            EdgeKind::AddressedTo,
+            recipient,
+            value(input.learned_at),
+        );
     }
     if let Some(asking) = input.reply_to {
         batch = batch.edge_with_value_fields(

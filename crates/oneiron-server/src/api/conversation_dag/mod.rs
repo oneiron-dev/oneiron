@@ -14,7 +14,7 @@ use axum::Json;
 use axum::extract::rejection::{JsonRejection, QueryRejection};
 use axum::extract::{Path, Query, State};
 use oneiron::EntityId;
-use oneiron::conversation_dag::{AppendRecord, DagPageRequest};
+use oneiron::conversation_dag::{AddressMode, AppendRecord, DagPageRequest};
 use oneiron::registry::ENTITY_TYPE_TURN;
 use std::sync::Arc;
 use types::parse_optional;
@@ -50,6 +50,16 @@ fn append_input(
     Ok(AppendRecord {
         conversation,
         reply_to: parse_optional(req.reply_to.as_deref(), "reply_to")?,
+        address: match req.addr.unwrap_or(DagAddressMode::Broadcast) {
+            DagAddressMode::Broadcast => AddressMode::Broadcast,
+            DagAddressMode::Direct => AddressMode::Direct,
+        },
+        recipients: req
+            .to
+            .unwrap_or_default()
+            .iter()
+            .map(|id| parse_entity_id_param(id, "to"))
+            .collect::<Result<Vec<_>, _>>()?,
         parent: parse_optional(req.parent.as_deref(), "parent")?,
         advance: req.advance,
         kind: ENTITY_TYPE_TURN,

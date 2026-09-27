@@ -135,6 +135,30 @@ pub(super) fn run(ctx: &RematCtx<'_>, ledger: &mut RematLedger) -> Result<()> {
                 }
             };
 
+            let soft_addressing = kind == crate::edge::EdgeKind::AddressedTo
+                && crate::recovery::retained_soft_shell(ctx.doc, &src).is_some();
+            if soft_addressing {
+                // Ordinary peer replay has no body proof after a soft erase.
+                // Only canonical recovery's validated BaseEdge may retain it.
+                let Some(snapshot) = ctx.trusted else {
+                    return;
+                };
+                match crate::recovery::trusted_soft_addressing_edge(snapshot, &src, &tgt, buf) {
+                    Ok(true) => {}
+                    Ok(false) => {
+                        edge_error = Some(
+                            crate::error::RegistryError::ReservedEdgeKind("conversation_dag")
+                                .into(),
+                        );
+                        return;
+                    }
+                    Err(error) => {
+                        edge_error = Some(error);
+                        return;
+                    }
+                }
+            }
+
             // Never re-add an edge whose endpoint is tombstoned in the CRDT.
             // ANY-value, entity-canonical presence — a non-binary tombstone
             // gates too, and a case-shifted hex alias still names the id.
@@ -175,6 +199,7 @@ pub(super) fn run(ctx: &RematCtx<'_>, ledger: &mut RematLedger) -> Result<()> {
                         crate::edge::EdgeKind::Parent
                             | crate::edge::EdgeKind::SpawnedBy
                             | crate::edge::EdgeKind::RepliesTo
+                            | crate::edge::EdgeKind::AddressedTo
                     )
                 {
                     let mandated_at = vault
@@ -213,6 +238,15 @@ pub(super) fn run(ctx: &RematCtx<'_>, ledger: &mut RematLedger) -> Result<()> {
                     }
                     return Ok(EdgeRematOutcome::Deferred);
                 }
+                if soft_addressing
+                    && crate::batch::stored_entity_type(&vault.store, &*wtxn, &tgt)?
+                        != Some(crate::registry::ENTITY_TYPE_PERSON)
+                {
+                    return Err(crate::error::ArtifactError::InvalidRecoveryArtifact(
+                        "retained addressing recipient missing or not a PERSON",
+                    )
+                    .into());
+                }
                 if matches!(
                     kind,
                     crate::edge::EdgeKind::SpawnedBy | crate::edge::EdgeKind::RepliesTo
@@ -225,6 +259,28 @@ pub(super) fn run(ctx: &RematCtx<'_>, ledger: &mut RematLedger) -> Result<()> {
                         tgt,
                         decoded,
                     )?;
+                }
+
+                if kind == crate::edge::EdgeKind::AddressedTo
+                    && !soft_addressing
+                    && !crate::conversation_dag::addressed_to_echo_in_txn(
+                        &vault.store,
+                        &*wtxn,
+                        &src,
+                        &tgt,
+                        decoded,
+                    )?
+                {
+                    quarantine::quarantine_rejected_op_in_txn(
+                        vault,
+                        wtxn,
+                        window_key.as_str(),
+                        QuarantineContainer::Edges,
+                        key,
+                        &crate::error::RegistryError::ReservedEdgeKind("conversation_dag").into(),
+                        buf,
+                    )?;
+                    return Ok(EdgeRematOutcome::Quarantined);
                 }
 
                 // ONE-1645 replay door for the FacetOf type table. The batch

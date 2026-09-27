@@ -72,13 +72,20 @@ pub(super) fn copy_admitted_edges(
             return;
         }
         if let Some((src, kind, tgt)) = super::bridge::parse_edge_key(key) {
-            if let Err(reserved) = crate::edge::validate_public_edge_kind(kind) {
+            if kind != EdgeKind::AddressedTo
+                && let Err(reserved) = crate::edge::validate_public_edge_kind(kind)
+            {
                 result = Err(reserved);
                 return;
             }
-            match admitted_facet_of_verdict(vault, &rtxn, source_entities, src, kind, tgt) {
+            let verdict = if kind == EdgeKind::AddressedTo {
+                admitted_addressing_verdict(vault, &rtxn, source_entities, src, tgt, value)
+            } else {
+                admitted_facet_of_verdict(vault, &rtxn, source_entities, src, kind, tgt)
+            };
+            match verdict {
                 Ok(AdmittedEdgeVerdict::Copy) => {}
-                Ok(AdmittedEdgeVerdict::DropOffTable(off_table)) => {
+                Ok(AdmittedEdgeVerdict::DropRejected(off_table)) => {
                     // Quarantine-and-continue: the peer's forged row gets
                     // typed durable evidence, the window's other N-1 rows
                     // still admit. `payload` is the raw value when present.
@@ -122,9 +129,64 @@ enum AdmittedEdgeVerdict {
     /// PROVABLY off-table on the facts in hand: a known off-table source, or a
     /// known non-FACET target, is each sufficient alone. Drop with this typed
     /// rejection.
-    DropOffTable(Error),
+    DropRejected(Error),
 }
 
+/// An admitted source body can authorize an addressing edge; neither the
+/// edge key nor the recipient's membership does. An unknown source or target
+/// is tentative (H2): forward replay defers until both arrive.
+#[cfg(feature = "sync")]
+fn admitted_addressing_verdict(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    source_entities: &loro::LoroMap,
+    src: EntityId,
+    tgt: EntityId,
+    value: Option<&[u8]>,
+) -> Result<AdmittedEdgeVerdict> {
+    let reject = || {
+        AdmittedEdgeVerdict::DropRejected(Error::Registry(RegistryError::ReservedEdgeKind(
+            "conversation_dag",
+        )))
+    };
+    let local = vault.store.entities.get(txn, src.as_bytes())?;
+    let staged = if local.is_none() {
+        super::loro_support::map_get_bytes(source_entities, &src.to_hex())
+    } else {
+        None
+    };
+    let Some(raw) = local.as_deref().or(staged.as_deref()) else {
+        return Ok(AdmittedEdgeVerdict::Copy);
+    };
+    let Some(header) = EntityMetadataHeader::parse(raw) else {
+        // Malformed staged sources are refused by the entity door, not
+        // permanently classified as an edge forgery here.
+        return Ok(AdmittedEdgeVerdict::Copy);
+    };
+    if header.entity_type != crate::registry::ENTITY_TYPE_TURN {
+        return Ok(reject());
+    }
+    if admitted_endpoint_type(vault, txn, source_entities, &tgt)?
+        .is_some_and(|kind| kind != crate::registry::ENTITY_TYPE_PERSON)
+    {
+        return Ok(reject());
+    }
+    let Some(bytes) = value else {
+        return Ok(reject());
+    };
+    let Ok(fields) = crate::edge::decode_edge_value_for_kind(EdgeKind::AddressedTo, bytes) else {
+        return Ok(reject());
+    };
+    let Some(body) = raw.get(crate::batch::ENTITY_METADATA_HEADER_LEN..) else {
+        return Ok(reject());
+    };
+    match crate::conversation_dag::addressed_to_echo(body, header.learned_at, &tgt, fields) {
+        Ok(true) => Ok(AdmittedEdgeVerdict::Copy),
+        Ok(false) => Ok(reject()),
+        Err(local_error) if local.is_some() => Err(local_error),
+        Err(_) => Ok(reject()),
+    }
+}
 /// Resolves the ONE-1645 `FacetOf` table for ONE admitted row.
 ///
 /// Endpoint types resolve from two sources, in this order:
@@ -173,7 +235,7 @@ fn admitted_facet_of_verdict(
     if !crate::batch::facet_of_endpoints_provably_off_table(src_type, tgt_type) {
         return Ok(AdmittedEdgeVerdict::Copy);
     }
-    Ok(AdmittedEdgeVerdict::DropOffTable(Error::Registry(
+    Ok(AdmittedEdgeVerdict::DropRejected(Error::Registry(
         RegistryError::InvalidFacetOfEdge {
             src,
             src_type,

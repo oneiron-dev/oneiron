@@ -398,6 +398,22 @@ pub fn capture_canonical_window(
     snapshot.tombstones.sort_by_key(|row| row.id);
     snapshot.refresh_containers();
     snapshot.validate()?;
+    for edge in &snapshot.base_edges {
+        if edge.kind == crate::EdgeKind::AddressedTo as u8
+            && super::trusted_soft_addressing_edge(
+                &snapshot,
+                &id(edge.source)?,
+                &id(edge.target)?,
+                &edge.value,
+            )?
+            && crate::batch::stored_entity_type(&vault.store, &txn, &id(edge.target)?)?
+                != Some(crate::registry::ENTITY_TYPE_PERSON)
+        {
+            return Err(invalid(
+                "retained addressing recipient missing or not a PERSON",
+            ));
+        }
+    }
     Ok(snapshot)
 }
 

@@ -6,6 +6,8 @@
 
 mod admission;
 mod graph;
+#[cfg(feature = "sync")]
+pub(crate) use admission::{addressed_to_echo, addressed_to_echo_in_txn};
 pub(crate) mod topology;
 pub(crate) use admission::{
     guard_record_put, keep_membership_pin, pin_membership, pin_typed_record,
@@ -34,7 +36,8 @@ pub(crate) use reply::{invalidate_thread_meta, invalidate_thread_meta_for_turn_p
 pub(crate) use scopes::resolve_in_txn;
 pub(crate) use thread_projection::selected_thread_in_txn;
 pub use types::{
-    AppendRecord, AppendedRecord, DagPage, DagPageRequest, ResolvedScope, ScopePath, ScopeSelector,
+    AddressMode, AppendRecord, AppendedRecord, DagPage, DagPageRequest, ResolvedScope, ScopePath,
+    ScopeSelector,
 };
 pub(crate) use writes::append_in_txn;
 
