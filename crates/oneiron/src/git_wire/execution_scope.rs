@@ -86,18 +86,16 @@ impl PreparedGitExecution {
             return Err(invalid("worktree gitdir is not a regular file"));
         }
         let current = fs::read_to_string(&git_file)?;
-        let prefix = format!("gitdir: {}/worktrees/", self.shadow.path().display());
-        let Some(name) = current
-            .strip_prefix(&prefix)
-            .map(|text| text.trim_end_matches('\n'))
-        else {
-            let real_prefix = format!(
-                "gitdir: {}/worktrees/",
-                self.profile.layout.common.display()
-            );
-            if current.starts_with(&real_prefix) {
-                return Ok(());
-            }
+        let private_prefix = format!("gitdir: {}/worktrees/", self.shadow.path().display());
+        let real_prefix = format!(
+            "gitdir: {}/worktrees/",
+            self.profile.layout.common.display()
+        );
+        let (name, needs_rebind) = if let Some(name) = current.strip_prefix(&private_prefix) {
+            (name.trim_end_matches('\n'), true)
+        } else if let Some(name) = current.strip_prefix(&real_prefix) {
+            (name.trim_end_matches('\n'), false)
+        } else {
             return Err(invalid("worktree gitdir has an unexpected owner"));
         };
         if name.is_empty() || name.contains('/') || name.contains('\\') {
@@ -107,10 +105,42 @@ impl PreparedGitExecution {
         if !registered.is_dir() {
             return Err(invalid("worktree registration is missing"));
         }
-        let mut replacement = tempfile::NamedTempFile::new_in(target)?;
-        writeln!(replacement, "gitdir: {}", registered.display())?;
+        if needs_rebind {
+            let mut replacement = tempfile::NamedTempFile::new_in(target)?;
+            writeln!(replacement, "gitdir: {}", registered.display())?;
+            replacement
+                .persist(&git_file)
+                .map_err(|error| error.error)?;
+        }
+        self.persist_worktree_overrides(&registered)?;
+        Ok(())
+    }
+
+    fn persist_worktree_overrides(&self, registered: &Path) -> Result<()> {
+        let Some(config) = self.profile.worktree_overrides.render() else {
+            return Ok(());
+        };
+        if !self.profile.layout.worktree_config_enabled {
+            return Err(invalid("durable worktree settings require worktreeConfig"));
+        }
+        let destination = registered.join("config.worktree");
+        match fs::symlink_metadata(&destination) {
+            Ok(metadata) if metadata.file_type().is_file() => {
+                if fs::read(&destination)? == config.as_bytes() {
+                    return Ok(());
+                }
+                return Err(invalid(
+                    "created worktree config disagrees with admitted profile",
+                ));
+            }
+            Ok(_) => return Err(invalid("created worktree config is not a regular file")),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => return Err(error.into()),
+        }
+        let mut replacement = tempfile::NamedTempFile::new_in(registered)?;
+        replacement.write_all(config.as_bytes())?;
         replacement
-            .persist(&git_file)
+            .persist_noclobber(&destination)
             .map_err(|error| error.error)?;
         Ok(())
     }

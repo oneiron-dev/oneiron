@@ -79,6 +79,10 @@ pub(super) struct StoredGitWireRecord {
     /// absent value on a legacy prepared row cannot certify an add.
     #[serde(default)]
     pub(super) worktree_commit: Option<String>,
+    /// Digest of the admitted non-executable config that must survive in the
+    /// created registration. Recovery cannot certify a different meaning.
+    #[serde(default)]
+    pub(super) worktree_settings_hash: Option<[u8; 32]>,
     pub(super) failure: Option<String>,
     started_at: u64,
     finished_at: Option<u64>,
@@ -122,6 +126,12 @@ impl StoredGitWireRecord {
         hash_field(
             &mut hasher,
             self.worktree_commit.as_deref().unwrap_or("-").as_bytes(),
+        );
+        hash_field(
+            &mut hasher,
+            self.worktree_settings_hash
+                .as_ref()
+                .map_or(b"-".as_slice(), |hash| hash.as_slice()),
         );
         hash_field(&mut hasher, &self.started_at.to_be_bytes());
         *hasher.finalize().as_bytes()
@@ -305,6 +315,7 @@ pub(super) fn new_record(
         keep_refs: Vec::new(),
         worktree_scope: None,
         worktree_commit: None,
+        worktree_settings_hash: None,
         failure: None,
         started_at: now,
         finished_at: None,

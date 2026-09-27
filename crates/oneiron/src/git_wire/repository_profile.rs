@@ -1,5 +1,6 @@
 //! Admission of immutable Git layout and worktree semantics before an attribute-consuming effect.
 
+use std::collections::BTreeMap;
 use std::ffi::OsString;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -22,6 +23,80 @@ pub(super) struct RepoLayout {
     pub(super) format_version: u8,
     pub(super) refs: RefBackend,
     pub(super) bare: bool,
+    pub(super) worktree_config_enabled: bool,
+}
+
+/// Only normalized, non-executable settings observed at worktree scope can
+/// outlive an add into the new registration. Keys are enum variants, never
+/// arbitrary repository-supplied strings.
+#[derive(Debug, Clone, Copy)]
+enum WorktreeSetting {
+    Filemode(bool),
+    Symlinks(bool),
+    IgnoreCase(bool),
+    PrecomposeUnicode(bool),
+    TrustCtime(bool),
+    IgnoreStat(bool),
+    LogAllRefUpdates(bool),
+    Eol(&'static str),
+    SafeCrlf(&'static str),
+    CheckStat(&'static str),
+}
+
+impl WorktreeSetting {
+    fn key(self) -> &'static str {
+        match self {
+            Self::Filemode(_) => "filemode",
+            Self::Symlinks(_) => "symlinks",
+            Self::IgnoreCase(_) => "ignorecase",
+            Self::PrecomposeUnicode(_) => "precomposeunicode",
+            Self::TrustCtime(_) => "trustctime",
+            Self::IgnoreStat(_) => "ignorestat",
+            Self::LogAllRefUpdates(_) => "logallrefupdates",
+            Self::Eol(_) => "eol",
+            Self::SafeCrlf(_) => "safecrlf",
+            Self::CheckStat(_) => "checkstat",
+        }
+    }
+
+    fn value(self) -> String {
+        match self {
+            Self::Filemode(value)
+            | Self::Symlinks(value)
+            | Self::IgnoreCase(value)
+            | Self::PrecomposeUnicode(value)
+            | Self::TrustCtime(value)
+            | Self::IgnoreStat(value)
+            | Self::LogAllRefUpdates(value) => value.to_string(),
+            Self::Eol(value) | Self::SafeCrlf(value) | Self::CheckStat(value) => value.to_owned(),
+        }
+    }
+}
+
+#[derive(Debug, Default)]
+pub(super) struct WorktreeOverrides {
+    entries: BTreeMap<&'static str, WorktreeSetting>,
+}
+
+impl WorktreeOverrides {
+    fn insert(&mut self, setting: WorktreeSetting) {
+        self.entries.insert(setting.key(), setting);
+    }
+
+    pub(super) fn render(&self) -> Option<String> {
+        if self.entries.is_empty() {
+            return None;
+        }
+        let mut content = String::from("[core]\n");
+        for setting in self.entries.values() {
+            content.push_str(&format!(" {} = {}\n", setting.key(), setting.value()));
+        }
+        Some(content)
+    }
+
+    fn is_empty(&self) -> bool {
+        self.entries.is_empty()
+    }
 }
 
 /// No raw repository config is copied into a Git child. These are the only
@@ -111,6 +186,7 @@ impl SourceFile {
 pub(super) struct AdmittedRepoProfile {
     pub(super) layout: RepoLayout,
     pub(super) semantics: WorktreeSemantics,
+    pub(super) worktree_overrides: WorktreeOverrides,
     sources: [SourceFile; 4],
 }
 
@@ -136,18 +212,23 @@ impl AdmittedRepoProfile {
         {
             return Err(invalid("unmodeled repository info attributes"));
         }
-        let args = prefixed(prefix, &["config", "--null", "--list", "--includes"]);
+        let args = prefixed(
+            prefix,
+            &["config", "--null", "--list", "--show-scope", "--includes"],
+        );
         let observed = spawn_git_inner(process_env, repo_root, &args, None, None)?;
         if !observed.success {
             return Err(invalid("git configuration snapshot could not be read"));
         }
-        let (layout, semantics) = parse_effective_config(&observed.stdout, common, git_dir)?;
+        let (layout, semantics, worktree_overrides) =
+            parse_effective_config(&observed.stdout, common, git_dir)?;
         if layout.bare && !allow_bare_worktree_add {
             return Err(invalid("bare repository requires a worktree-add operation"));
         }
         let profile = Self {
             layout,
             semantics,
+            worktree_overrides,
             sources,
         };
         if profile.source_changed()? {
@@ -181,6 +262,11 @@ impl AdmittedRepoProfile {
         self.sources[3].bytes.as_deref()
     }
 
+    pub(super) fn worktree_settings_hash(&self) -> [u8; 32] {
+        let content = self.worktree_overrides.render().unwrap_or_default();
+        hash_worktree_settings(content.as_bytes())
+    }
+
     pub(super) fn source_changed(&self) -> Result<bool> {
         for source in &self.sources {
             if source.changed()? {
@@ -189,6 +275,13 @@ impl AdmittedRepoProfile {
         }
         Ok(false)
     }
+}
+
+pub(super) fn hash_worktree_settings(bytes: &[u8]) -> [u8; 32] {
+    let mut hasher = blake3::Hasher::new();
+    hasher.update(b"oneiron.git.worktree.settings.v1");
+    hasher.update(bytes);
+    *hasher.finalize().as_bytes()
 }
 
 fn read_optional(path: &Path) -> Result<Option<Vec<u8>>> {
@@ -236,15 +329,25 @@ fn parse_effective_config(
     bytes: &[u8],
     common: PathBuf,
     git_dir: PathBuf,
-) -> Result<(RepoLayout, WorktreeSemantics)> {
+) -> Result<(RepoLayout, WorktreeSemantics, WorktreeOverrides)> {
     let mut version: Option<u8> = None;
     let mut backend: Option<RefBackend> = None;
     let mut bare = false;
+    let mut worktree_config_enabled = false;
     let mut semantics = WorktreeSemantics::default();
-    for record in bytes
+    let mut worktree_overrides = WorktreeOverrides::default();
+    let mut records = bytes
         .split(|byte| *byte == 0)
-        .filter(|record| !record.is_empty())
-    {
+        .filter(|record| !record.is_empty());
+    while let Some(scope) = records.next() {
+        let from_worktree = match scope {
+            b"worktree" => true,
+            b"local" | b"command" | b"global" | b"system" => false,
+            _ => return Err(invalid("unknown Git configuration scope")),
+        };
+        let record = records
+            .next()
+            .ok_or_else(|| invalid("unpaired Git config scope"))?;
         let separator = record
             .iter()
             .position(|byte| *byte == b'\n')
@@ -253,6 +356,17 @@ fn parse_effective_config(
         let value = &value[1..];
         let key = std::str::from_utf8(key).map_err(|_| invalid("Git config key is not UTF-8"))?;
         let name = key.to_ascii_lowercase();
+        if from_worktree
+            && matches!(
+                name.as_str(),
+                "core.repositoryformatversion"
+                    | "extensions.objectformat"
+                    | "extensions.refstorage"
+                    | "extensions.worktreeconfig"
+            )
+        {
+            return Err(invalid("repository layout cannot be set per worktree"));
+        }
         if GIT_WIRE_CONFIG_POLICY
             .iter()
             .any(|(pinned, _)| pinned.eq_ignore_ascii_case(&name))
@@ -308,7 +422,7 @@ fn parse_effective_config(
                 });
             }
             "extensions.worktreeconfig" => {
-                parse_bool(value)?;
+                worktree_config_enabled = parse_bool(value)?;
             } // flattened; child never reads mutable worktree config
             "core.sparsecheckout" | "core.sparsecheckoutcone" | "index.sparse"
                 if value == b"false" => {}
@@ -336,6 +450,32 @@ fn parse_effective_config(
             _ if irrelevant_to_local_effect(&name) => {}
             _ => return Err(invalid("unmodeled Git configuration namespace")),
         }
+        if from_worktree {
+            let setting = match name.as_str() {
+                "core.filemode" => Some(WorktreeSetting::Filemode(semantics.filemode)),
+                "core.symlinks" => Some(WorktreeSetting::Symlinks(semantics.symlinks)),
+                "core.ignorecase" => semantics.ignorecase.map(WorktreeSetting::IgnoreCase),
+                "core.precomposeunicode" => semantics
+                    .precompose_unicode
+                    .map(WorktreeSetting::PrecomposeUnicode),
+                "core.trustctime" => semantics.trust_ctime.map(WorktreeSetting::TrustCtime),
+                "core.ignorestat" => semantics.ignore_stat.map(WorktreeSetting::IgnoreStat),
+                "core.logallrefupdates" => semantics
+                    .log_all_ref_updates
+                    .map(WorktreeSetting::LogAllRefUpdates),
+                "core.eol" => semantics.eol.map(WorktreeSetting::Eol),
+                "core.safecrlf" => semantics.safe_crlf.map(WorktreeSetting::SafeCrlf),
+                "core.checkstat" => semantics.check_stat.map(WorktreeSetting::CheckStat),
+                "core.bare" => return Err(invalid("worktree cannot override core.bare")),
+                _ => None,
+            };
+            if let Some(setting) = setting {
+                worktree_overrides.insert(setting);
+            }
+        }
+    }
+    if !worktree_config_enabled && !worktree_overrides.is_empty() {
+        return Err(invalid("worktree settings need extensions.worktreeConfig"));
     }
     let version = version.ok_or_else(|| invalid("Git repository format is missing"))?;
     let refs = match (version, backend) {
@@ -352,8 +492,10 @@ fn parse_effective_config(
             format_version: version,
             refs,
             bare,
+            worktree_config_enabled,
         },
         semantics,
+        worktree_overrides,
     ))
 }
 

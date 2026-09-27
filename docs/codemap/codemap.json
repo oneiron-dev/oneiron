@@ -17738,7 +17738,7 @@
      "path": "src/git_wire/repository_profile.rs",
      "purpose": "Admission of immutable Git layout and worktree semantics before an attribute-consuming effect",
      "surface": {
-      "crate-vis": 9
+      "crate-vis": 13
      }
     },
     {

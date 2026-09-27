@@ -117,14 +117,14 @@ impl<'a> GitCommandSpec<'a> {
             }
             "worktree" | "rev-parse" | "for-each-ref" | "show-ref" | "cat-file" | "hash-object"
             | "mktree" | "commit-tree" | "update-ref" | "notes" | "rev-list" | "merge-base"
-            | "merge-tree" | "ls-tree" | "ls-files" | "check-ref-format" | "symbolic-ref"
-            | "fsck" | "count-objects" | "pack-refs" | "prune" | "gc" | "branch" => {
+            | "ls-tree" | "ls-files" | "check-ref-format" | "symbolic-ref" | "fsck"
+            | "count-objects" | "pack-refs" | "prune" | "gc" | "branch" => {
                 GitExecutionEffect::ContextOnly
             }
             "status" | "diff" | "show" | "log" => GitExecutionEffect::AttributeRead,
-            "add" | "commit" | "checkout" | "checkout-index" | "reset" | "restore" | "switch"
-            | "merge" | "rebase" | "cherry-pick" | "am" | "apply" | "read-tree"
-            | "update-index" => GitExecutionEffect::AttributeWrite,
+            "merge-tree" | "add" | "commit" | "checkout" | "checkout-index" | "reset"
+            | "restore" | "switch" | "merge" | "rebase" | "cherry-pick" | "am" | "apply"
+            | "read-tree" | "update-index" => GitExecutionEffect::AttributeWrite,
             _ => return Err(invalid("unsupported bridged Git verb")),
         };
         let worktree_target = if effect.creates_worktree() {
