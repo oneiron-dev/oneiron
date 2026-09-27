@@ -119,6 +119,8 @@ else warn "mvn unavailable; DSS/PDFBox rows will be unavailable"; fi
 # Task-local wrappers and sources.
 cp "$SCRIPT_DIR/pyhanko_check.py" "$ROOT/share/pyhanko_check.py"
 cp "$SCRIPT_DIR/pdfium.py" "$ROOT/share/pdfium.py"
+cp "$SCRIPT_DIR/pdf_source.py" "$ROOT/share/pdf_source.py"
+cp "$SCRIPT_DIR/reader_result.py" "$ROOT/share/reader_result.py"
 cp "$SCRIPT_DIR/pdfjs.mjs" "$ROOT/share/pdfjs.mjs"
 cp "$SCRIPT_DIR/reader_util.py" "$ROOT/share/reader_util.py"
 write_shim() { local name="$1" body="$2"; printf '%s\n' '#!/usr/bin/env bash' 'set -euo pipefail' "$body" >"$ROOT/bin/$name"; chmod +x "$ROOT/bin/$name"; }
