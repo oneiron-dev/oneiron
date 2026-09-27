@@ -44,6 +44,7 @@ mod repair_tests;
 mod actor_fork;
 mod auto_checker;
 mod budget_policy;
+mod carry_forward;
 mod charter_ceiling;
 mod claim_candidate_lineage;
 mod connector_budget;
