@@ -409,10 +409,11 @@ async fn local_artifact_route_serves_pinned_pointer_and_hash_mounts() {
     let first = ingest_artifact_snapshot(&server, repo.path(), "site", 10);
     server
         .vault
-        .publish_artifact_pointer(
+        .publish_artifact_pointer_with_tier(
             "site",
             oneiron::ArtifactPointerChannel::Published,
             &first.snapshot.fork_hash,
+            oneiron::artifact_hosting::ArtifactServeTier::Public,
         )
         .expect("publish first artifact pointer");
 
@@ -506,7 +507,7 @@ async fn local_artifact_route_serves_pinned_pointer_and_hash_mounts() {
         "/a/site/index.html?forkHash={}",
         oneiron::artifact_hex(&second.snapshot.fork_hash)
     );
-    let (status, headers, body) = route_bytes(
+    let (status, _, body) = route_bytes(
         server.clone(),
         Request::builder()
             .uri(direct_fork_uri)
@@ -514,21 +515,16 @@ async fn local_artifact_route_serves_pinned_pointer_and_hash_mounts() {
             .expect("artifact request"),
     )
     .await;
-    assert_eq!(status, StatusCode::OK);
-    assert_eq!(body.as_ref(), b"<h1>v2</h1>\n");
-    assert_eq!(
-        headers
-            .get(CACHE_CONTROL)
-            .and_then(|value| value.to_str().ok()),
-        Some(ARTIFACT_IMMUTABLE_CACHE_CONTROL)
-    );
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    assert!(!body.is_empty());
 
     server
         .vault
-        .publish_artifact_pointer(
+        .publish_artifact_pointer_with_tier(
             "site",
             oneiron::ArtifactPointerChannel::Published,
             &second.snapshot.fork_hash,
+            oneiron::artifact_hosting::ArtifactServeTier::Public,
         )
         .expect("repoint artifact pointer");
     let (status, _, body) = route_bytes(
@@ -568,25 +564,26 @@ async fn local_artifact_route_serves_pinned_pointer_and_hash_mounts() {
             .expect("artifact request"),
     )
     .await;
-    assert_eq!(status, StatusCode::OK);
-    assert_eq!(body.as_ref(), b"<h1>v1</h1>\n");
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    assert!(!body.is_empty());
 }
 
 #[tokio::test]
-async fn local_artifact_route_requires_api_auth_when_configured() {
+async fn local_artifact_route_public_bypasses_api_auth_when_configured() {
     let (_dir, server) = test_server_with_config(SyncServerConfig {
         auth_secret: Some("secret".to_owned()),
         allow_unauthenticated: false,
         ..Default::default()
     });
-    let repo = create_artifact_repo(b"<h1>private</h1>\n");
+    let repo = create_artifact_repo(b"<h1>public</h1>\n");
     let snapshot = ingest_artifact_snapshot(&server, repo.path(), "site", 10);
     server
         .vault
-        .publish_artifact_pointer(
+        .publish_artifact_pointer_with_tier(
             "site",
             oneiron::ArtifactPointerChannel::Published,
             &snapshot.snapshot.fork_hash,
+            oneiron::artifact_hosting::ArtifactServeTier::Public,
         )
         .expect("publish artifact pointer");
 
@@ -598,7 +595,7 @@ async fn local_artifact_route_requires_api_auth_when_configured() {
             .expect("artifact request"),
     )
     .await;
-    assert_eq!(status, StatusCode::UNAUTHORIZED);
+    assert_eq!(status, StatusCode::OK);
 
     let (status, _, body) = route_bytes(
         server,
@@ -610,7 +607,7 @@ async fn local_artifact_route_requires_api_auth_when_configured() {
     )
     .await;
     assert_eq!(status, StatusCode::OK);
-    assert_eq!(body.as_ref(), b"<h1>private</h1>\n");
+    assert_eq!(body.as_ref(), b"<h1>public</h1>\n");
 }
 
 #[test]
@@ -625,10 +622,11 @@ async fn local_artifact_route_serves_preview_pointer_and_rejects_ambiguous_selec
     let ingest = ingest_artifact_snapshot(&server, repo.path(), "site", 10);
     server
         .vault
-        .publish_artifact_pointer(
+        .publish_artifact_pointer_with_tier(
             "site",
             oneiron::ArtifactPointerChannel::Preview,
             &ingest.snapshot.fork_hash,
+            oneiron::artifact_hosting::ArtifactServeTier::Public,
         )
         .expect("publish preview pointer");
 
@@ -685,4 +683,186 @@ async fn configured_cimd_documents_are_served_without_client_capabilities() {
         assert!(body.get("sampling").is_none());
         assert!(body.get("roots").is_none());
     }
+}
+
+#[tokio::test]
+async fn artifact_tiers_bind_tokens_and_live_world_grants_without_an_existence_oracle() {
+    fn stable_error(bytes: &Bytes) -> Value {
+        let mut body: Value = serde_json::from_slice(bytes).expect("error envelope");
+        body["error"].as_object_mut().unwrap().remove("requestId");
+        body
+    }
+    let (_dir, server) = test_server_with_config(SyncServerConfig {
+        auth_secret: Some("secret".to_owned()),
+        allow_unauthenticated: false,
+        ..Default::default()
+    });
+    let repo = create_artifact_repo(b"<h1>tiered</h1>\n");
+    let snapshot = ingest_artifact_snapshot(&server, repo.path(), "site", 10);
+    let hash = snapshot.snapshot.fork_hash;
+    let (tier, token) = oneiron::artifact_hosting::ArtifactServeTier::mint_link_token();
+    server
+        .vault
+        .publish_artifact_pointer_with_tier(
+            "site",
+            oneiron::ArtifactPointerChannel::Published,
+            &hash,
+            tier,
+        )
+        .unwrap();
+    let denied = route_bytes(
+        server.clone(),
+        Request::builder()
+            .uri("/a/site/")
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await;
+    let missing = route_bytes(
+        server.clone(),
+        Request::builder()
+            .uri("/a/missing/")
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(denied.0, StatusCode::NOT_FOUND);
+    assert_eq!(
+        (denied.0, stable_error(&denied.2)),
+        (missing.0, stable_error(&missing.2))
+    );
+    let wrong = route_bytes(
+        server.clone(),
+        Request::builder()
+            .uri(format!("/a/site/?token={}", "a".repeat(64)))
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(
+        (wrong.0, stable_error(&wrong.2)),
+        (missing.0, stable_error(&missing.2))
+    );
+    let linked = route_bytes(
+        server.clone(),
+        Request::builder()
+            .uri(format!("/a/site/?token={token}"))
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(linked.0, StatusCode::OK);
+    assert_eq!(linked.2.as_ref(), b"<h1>tiered</h1>\n");
+    assert_eq!(linked.1.get(CACHE_CONTROL).unwrap(), "private, no-store");
+    let direct = route_bytes(
+        server.clone(),
+        Request::builder()
+            .uri(format!(
+                "/a/site/index.html?forkHash={}&token={token}",
+                oneiron::artifact_hex(&hash)
+            ))
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(direct.0, StatusCode::OK);
+    assert_eq!(direct.1.get(CACHE_CONTROL).unwrap(), "private, no-store");
+
+    let owner = oneiron::EntityId::now();
+    let member = oneiron::EntityId::now();
+    let stranger = oneiron::EntityId::now();
+    for id in [owner, member, stranger] {
+        server
+            .vault
+            .put_entity(
+                &id,
+                oneiron::registry::ENTITY_TYPE_PERSON,
+                oneiron::TimeRange { start: 1, end: 1 },
+                1,
+                b"human",
+            )
+            .unwrap();
+    }
+    let authenticated_owner = server
+        .vault
+        .authenticate_owner(
+            owner,
+            &owner.to_hex(),
+            true,
+            oneiron::store::GateDecisionId::now(),
+        )
+        .unwrap();
+    server
+        .vault
+        .initialize_shared_vault(
+            &authenticated_owner,
+            42,
+            None,
+            &[oneiron::federation::InitialSharedMember {
+                member_ref: member,
+                role: Some(oneiron::federation::FederationGrantRole::Viewer),
+            }],
+            10,
+        )
+        .unwrap();
+    server
+        .vault
+        .publish_artifact_pointer_with_tier(
+            "site",
+            oneiron::ArtifactPointerChannel::Published,
+            &hash,
+            oneiron::artifact_hosting::ArtifactServeTier::WorldMembers(42),
+        )
+        .unwrap();
+    let permitted = route_bytes(
+        server.clone(),
+        core_request_with_principal_ref("GET", "/a/site/", "core:read", &member.to_hex(), None),
+    )
+    .await;
+    assert_eq!(permitted.0, StatusCode::OK);
+    assert_eq!(permitted.1.get(CACHE_CONTROL).unwrap(), "private, no-store");
+    for request in [
+        Request::builder()
+            .uri("/a/site/")
+            .body(Body::empty())
+            .unwrap(),
+        core_request_with_principal_ref("GET", "/a/site/", "core:read", &stranger.to_hex(), None),
+        Request::builder()
+            .uri(format!("/a/site/?token={token}"))
+            .body(Body::empty())
+            .unwrap(),
+        Request::builder()
+            .uri("/a/site/")
+            .header(AUTHORIZATION, owner_bearer())
+            .body(Body::empty())
+            .unwrap(),
+    ] {
+        let denied = route_bytes(server.clone(), request).await;
+        assert_eq!(
+            (denied.0, stable_error(&denied.2)),
+            (missing.0, stable_error(&missing.2))
+        );
+    }
+    server
+        .vault
+        .unpublish_artifact_pointer("site", oneiron::ArtifactPointerChannel::Published)
+        .unwrap();
+    let revoked = route_bytes(
+        server,
+        core_request_with_principal_ref(
+            "GET",
+            &format!(
+                "/a/site/index.html?forkHash={}",
+                oneiron::artifact_hex(&hash)
+            ),
+            "core:read",
+            &member.to_hex(),
+            None,
+        ),
+    )
+    .await;
+    assert_eq!(
+        (revoked.0, stable_error(&revoked.2)),
+        (missing.0, stable_error(&missing.2))
+    );
 }

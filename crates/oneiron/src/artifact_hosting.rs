@@ -111,6 +111,8 @@ pub struct ArtifactPointer {
     /// durable fact about how this pointer came to exist, and someone
     /// auditing the channel later deserves to see it.
     pub stale_taint_override: bool,
+    /// Serving authority for this exact live pointer.
+    pub serve_tier: ArtifactServeTier,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -126,6 +128,7 @@ pub struct ArtifactSnapshotRef {
 #[non_exhaustive]
 pub struct ArtifactServedFile {
     pub artifact: String,
+    pub serve_tier: ArtifactServeTier,
     pub selector: ArtifactSnapshotSelector,
     pub fork_hash: CodebaseForkHash,
     pub code_artifact_id: EntityId,
@@ -139,6 +142,8 @@ pub struct ArtifactServedFile {
 #[non_exhaustive]
 pub struct ArtifactPublishVerbRequest {
     pub artifact: String,
+    /// A publish defaults closed; public disclosure must be explicit.
+    pub serve_tier: ArtifactServeTier,
     pub channel: ArtifactPointerChannel,
     pub fork_hash: CodebaseForkHash,
     pub actor: WriteActor,
@@ -159,6 +164,7 @@ impl ArtifactPublishVerbRequest {
     ) -> Self {
         Self {
             artifact: artifact.into(),
+            serve_tier: ArtifactServeTier::Private,
             channel,
             fork_hash,
             actor,
@@ -198,6 +204,8 @@ struct ArtifactPublishAdmission {
     gate_id: GateDecisionId,
     occurred_at: u64,
     stale_taint_override: bool,
+    #[serde(default)]
+    serve_tier: ArtifactServeTier,
 }
 
 impl Vault {
@@ -214,7 +222,31 @@ impl Vault {
             .resolve_artifact_snapshot_by_fork(artifact, fork_hash)?
             .ok_or(Error::EntityNotFound)?;
         let mut wtxn = self.store.env.write_txn()?;
-        let pointer = publish_artifact_pointer_in_txn(self, &mut wtxn, &snapshot_ref, channel)?;
+        let pointer = publish_artifact_pointer_in_txn(
+            self,
+            &mut wtxn,
+            &snapshot_ref,
+            channel,
+            ArtifactServeTier::Private,
+        )?;
+        wtxn.commit()?;
+        Ok(pointer)
+    }
+
+    /// Test-only setup of an explicit serve tier without the outbound Gate.
+    #[cfg(any(test, feature = "test-hooks"))]
+    pub fn publish_artifact_pointer_with_tier(
+        &self,
+        artifact: &str,
+        channel: ArtifactPointerChannel,
+        fork_hash: &CodebaseForkHash,
+        tier: ArtifactServeTier,
+    ) -> Result<ArtifactPointer> {
+        let snapshot = self
+            .resolve_artifact_snapshot_by_fork(artifact, fork_hash)?
+            .ok_or(Error::EntityNotFound)?;
+        let mut wtxn = self.store.env.write_txn()?;
+        let pointer = publish_artifact_pointer_in_txn(self, &mut wtxn, &snapshot, channel, tier)?;
         wtxn.commit()?;
         Ok(pointer)
     }
@@ -250,7 +282,7 @@ impl Vault {
         let Some(raw) = raw else {
             return Ok(None);
         };
-        let (fork_hash, stale_taint_override) = decode_artifact_pointer_row(&raw)?;
+        let (fork_hash, stale_taint_override, serve_tier) = decode_artifact_pointer_row(&raw)?;
         let Some(snapshot_ref) = self.resolve_artifact_snapshot_by_fork(artifact, &fork_hash)?
         else {
             return Ok(None);
@@ -261,6 +293,7 @@ impl Vault {
             fork_hash,
             code_artifact_id: snapshot_ref.code_artifact_id,
             stale_taint_override,
+            serve_tier,
         }))
     }
 
@@ -335,6 +368,7 @@ impl Vault {
         Ok(Some(ArtifactServedFile {
             artifact: artifact.to_owned(),
             selector,
+            serve_tier: ArtifactServeTier::Private,
             fork_hash,
             code_artifact_id: snapshot_ref.code_artifact_id,
             path: path.to_owned(),
@@ -399,18 +433,33 @@ fn put_artifact_pointer_in_txn(
     channel: ArtifactPointerChannel,
     fork_hash: &CodebaseForkHash,
     stale_taint_override: bool,
+    serve_tier: ArtifactServeTier,
 ) -> Result<()> {
     validate_artifact_id(artifact)?;
     let key = artifact_pointer_key(artifact, channel)?;
-    if stale_taint_override {
-        let mut value = Vec::with_capacity(CODEBASE_FORK_HASH_LEN + 1);
-        value.extend_from_slice(fork_hash);
-        value.push(ARTIFACT_POINTER_STALE_OVERRIDE_STAMP);
-        store.vault_meta.put(wtxn, &key, &value)?;
-    } else {
-        // Byte-identical to every pointer row written before SECRET-04.
-        store.vault_meta.put(wtxn, &key, fork_hash)?;
+    let mut value = Vec::with_capacity(CODEBASE_FORK_HASH_LEN + 34);
+    value.extend_from_slice(fork_hash);
+    if stale_taint_override || serve_tier != ArtifactServeTier::Private {
+        value.push(u8::from(stale_taint_override));
+        match serve_tier {
+            ArtifactServeTier::Private => {}
+            ArtifactServeTier::Public => value.push(1),
+            ArtifactServeTier::LinkToken(capability) => {
+                value.push(2);
+                value.extend_from_slice(&capability.0);
+            }
+            ArtifactServeTier::WorldMembers(world_id) => {
+                if world_id == 0 {
+                    return Err(Error::InvalidConfig(
+                        "artifact world id cannot be zero".into(),
+                    ));
+                }
+                value.push(3);
+                value.extend_from_slice(&world_id.to_be_bytes());
+            }
+        }
     }
+    store.vault_meta.put(wtxn, &key, &value)?;
     Ok(())
 }
 
@@ -433,21 +482,39 @@ fn artifact_pointer_key(artifact: &str, channel: ArtifactPointerChannel) -> Resu
 /// carries no override; a 33-byte row must carry the one defined stamp byte,
 /// because a pointer row asserting an override nobody minted is corruption,
 /// not a default. Any other length is a corrupted row.
-fn decode_artifact_pointer_row(raw: &[u8]) -> Result<(CodebaseForkHash, bool)> {
-    let stale_taint_override = match raw.len() {
-        CODEBASE_FORK_HASH_LEN => false,
-        len if len == CODEBASE_FORK_HASH_LEN + 1 => {
-            if raw[CODEBASE_FORK_HASH_LEN] != ARTIFACT_POINTER_STALE_OVERRIDE_STAMP {
-                return Err(Error::CorruptedIndex("artifact pointer taint stamp"));
-            }
-            true
-        }
-        _ => return Err(Error::CorruptedIndex("artifact pointer fork hash")),
-    };
+fn decode_artifact_pointer_row(raw: &[u8]) -> Result<(CodebaseForkHash, bool, ArtifactServeTier)> {
+    if raw.len() < CODEBASE_FORK_HASH_LEN {
+        return Err(Error::CorruptedIndex("artifact pointer fork hash"));
+    }
     let fork_hash = raw[..CODEBASE_FORK_HASH_LEN]
         .try_into()
         .map_err(|_| Error::CorruptedIndex("artifact pointer fork hash"))?;
-    Ok((fork_hash, stale_taint_override))
+    let (stale, tier) = match &raw[CODEBASE_FORK_HASH_LEN..] {
+        [] => (false, ArtifactServeTier::Private),
+        [ARTIFACT_POINTER_STALE_OVERRIDE_STAMP] => (true, ArtifactServeTier::Private),
+        [stamp @ (0 | 1), 1] => (*stamp == 1, ArtifactServeTier::Public),
+        [stamp @ (0 | 1), 2, digest @ ..] if digest.len() == 32 => (
+            *stamp == 1,
+            ArtifactServeTier::LinkToken(ArtifactLinkCapability(
+                digest
+                    .try_into()
+                    .map_err(|_| Error::CorruptedIndex("artifact token digest"))?,
+            )),
+        ),
+        [stamp @ (0 | 1), 3, world @ ..] if world.len() == 8 => {
+            let world_id = u64::from_be_bytes(
+                world
+                    .try_into()
+                    .map_err(|_| Error::CorruptedIndex("artifact world id"))?,
+            );
+            if world_id == 0 {
+                return Err(Error::CorruptedIndex("artifact world id"));
+            }
+            (*stamp == 1, ArtifactServeTier::WorldMembers(world_id))
+        }
+        _ => return Err(Error::CorruptedIndex("artifact pointer tier")),
+    };
+    Ok((fork_hash, stale, tier))
 }
 
 fn snapshot_file_entry<'a>(
@@ -519,6 +586,10 @@ fn hex_nibble(byte: u8) -> Option<u8> {
         _ => None,
     }
 }
+
+#[path = "artifact_hosting/access.rs"]
+mod access;
+pub use self::access::{ArtifactLinkCapability, ArtifactServeTier};
 
 #[path = "artifact_hosting/publish.rs"]
 mod publish;

@@ -1186,8 +1186,24 @@
       "const": 1,
       "crate-vis": 2,
       "enum": 3,
-      "fn": 13,
+      "fn": 14,
+      "re-export": 1,
       "struct": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "ArtifactLinkCapability",
+      "ArtifactServeTier"
+     ],
+     "path": "src/artifact_hosting/access.rs",
+     "purpose": "Serve-time authority for live artifact pointers",
+     "surface": {
+      "enum": 1,
+      "fn": 2,
+      "struct": 1
      }
     },
     {
@@ -34547,7 +34563,7 @@
      "purpose": "ARTL-2 (OF-368 D2/D3/D4): anchored-comment threads over versioned blob artifacts, plus thread → task-brief…"
     },
     "artifact_hosting": {
-     "files": 3,
+     "files": 4,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "file+dir",
@@ -35802,7 +35818,7 @@
    },
    "over_bar": 11,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2113,
+   "source_files": 2114,
    "test_files": 722
   },
   "oneiron-android": {
@@ -40842,7 +40858,7 @@
      "surface": {}
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "test",
      "notable": [],
      "path": "src/api/tests/surface_routes.rs",

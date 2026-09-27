@@ -1,5 +1,5 @@
-use super::check_api_auth;
 use super::core_engine_error;
+use crate::auth::CoreAuth;
 use crate::error::ApiError;
 use crate::error::EnvelopedApiError;
 use crate::server::SyncServer;
@@ -44,6 +44,7 @@ pub(crate) const ARTIFACT_CONTENT_SECURITY_POLICY: &str = concat!(
 pub(crate) struct ArtifactServeQuery {
     channel: Option<String>,
     fork_hash: Option<String>,
+    token: Option<String>,
 }
 
 pub(crate) async fn serve_artifact_root(
@@ -53,11 +54,11 @@ pub(crate) async fn serve_artifact_root(
     Path(artifact): Path<String>,
     Query(query): Query<ArtifactServeQuery>,
 ) -> Result<Response, EnvelopedApiError> {
-    check_api_auth(&headers, &server).map_err(EnvelopedApiError::from)?;
+    let response = serve_artifact_file(server, artifact, "", query, &headers)?;
     if !uri.path().ends_with('/') {
         return artifact_root_redirect_response(&uri);
     }
-    serve_artifact_file(server, artifact, "", query, &headers)
+    Ok(response)
 }
 
 pub(crate) async fn serve_artifact_path(
@@ -66,7 +67,6 @@ pub(crate) async fn serve_artifact_path(
     Path((artifact, path)): Path<(String, String)>,
     Query(query): Query<ArtifactServeQuery>,
 ) -> Result<Response, EnvelopedApiError> {
-    check_api_auth(&headers, &server).map_err(EnvelopedApiError::from)?;
     serve_artifact_file(server, artifact, &path, query, &headers)
 }
 
@@ -78,13 +78,28 @@ pub(crate) fn serve_artifact_file(
     request_headers: &HeaderMap,
 ) -> Result<Response, EnvelopedApiError> {
     let selector = artifact_snapshot_selector(&query)?;
+    // Only a verified, bound principal can claim membership. An invalid bearer
+    // cannot turn an anonymous hit into a different error shape.
+    let principal =
+        CoreAuth::from_headers(request_headers, &server.config, server.vault().as_ref())
+            .ok()
+            .and_then(|auth| {
+                auth.principal_ref()
+                    .and_then(|id| oneiron::EntityId::from_hex(id).ok())
+            });
     let path = normalize_artifact_route_path(route_path);
     let Some(file) = server
         .vault
-        .resolve_artifact_file(&artifact, selector, &path)
+        .resolve_authorized_artifact_file(
+            &artifact,
+            selector,
+            &path,
+            query.token.as_deref(),
+            principal,
+        )
         .map_err(|error| core_engine_error("artifact serving failed", error))?
     else {
-        return Err(ApiError::not_found("artifact", Some(&artifact)).into());
+        return Err(ApiError::not_found("artifact", None).into());
     };
     artifact_file_response(file, request_headers)
 }
@@ -149,7 +164,11 @@ pub(crate) fn artifact_file_response(
     file: oneiron::ArtifactServedFile,
     request_headers: &HeaderMap,
 ) -> Result<Response, EnvelopedApiError> {
-    let cache_control = artifact_cache_control(file.selector);
+    let cache_control = if file.serve_tier == oneiron::artifact_hosting::ArtifactServeTier::Public {
+        artifact_cache_control(file.selector)
+    } else {
+        "private, no-store"
+    };
     let etag = format!("\"{}\"", oneiron::artifact_hex(&file.content_hash));
     if request_etag_matches(request_headers, &etag) {
         let mut response = Response::new(Body::empty());
