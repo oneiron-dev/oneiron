@@ -205,7 +205,7 @@ fn direct_addressing_never_restricts_room_visibility() {
 fn hard_deleted_empty_room_id_cannot_be_recreated() {
     let (_dir, vault, actor, room, _bob) = fixture();
     vault
-        .delete_entity_with_reason(&room, crate::DeleteReason::UserHardDelete)
+        .delete_entity_with_options(&room, crate::deletion::DeleteEntityOptions { purge: true })
         .unwrap();
     let err = vault
         .create_conversation(room, &ConversationBody::default(), actor, 2)
