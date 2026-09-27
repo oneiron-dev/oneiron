@@ -29,6 +29,7 @@ mod tombstones;
 
 #[cfg(test)]
 pub(in crate::sync) use self::admission::validate_window_update_residence;
+pub(in crate::sync) use self::admission::validate_window_update_with_staged_worlds;
 pub use self::admission::{
     validate_window_update_locality, validate_window_update_residence_with_vault,
 };

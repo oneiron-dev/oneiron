@@ -17,6 +17,7 @@ use crate::gate::constants::{
     POLICY_OWNER_POLICY_ROWS_KEY, POLICY_PACK_ID_KEY, POLICY_PACK_VERSION_KEY, POLICY_RULES_KEY,
     POLICY_SCHEMA_VERSION, POLICY_SCHEMA_VERSION_KEY, POLICY_SCOPED_GRANTS_KEY,
     POLICY_SIGNATURE_KEY, POLICY_SIGNATURES_KEY, POLICY_SOURCE_TRUST_KEY,
+    POLICY_SYNC_WORLD_CEILING_KEY, POLICY_SYNC_WORLD_DEFAULT_KEY,
 };
 use crate::gate::grants::PolicyScopedGrant;
 use crate::gate::resolution::CommOptOutPosture;
@@ -58,6 +59,8 @@ pub(in crate::gate) struct DecodedPolicyManifest {
     pub(in crate::gate) budget_policy: BudgetPolicyTable,
     pub(in crate::gate) diagnostic_bounds: Option<crate::self_heal::tripwires::TripwireBounds>,
     pub(in crate::gate) proposal_check_threshold: Option<u64>,
+    pub(in crate::gate) sync_world_ceiling: Option<std::collections::BTreeSet<crate::EntityId>>,
+    pub(in crate::gate) sync_world_default: Option<bool>,
     pub(in crate::gate) unsupported_schema: bool,
     pub(in crate::gate) engine_version_floor: bool,
     pub(in crate::gate) unknown_axis_seen: bool,
@@ -103,6 +106,8 @@ pub(in crate::gate) fn decode_policy_manifest(data: &[u8]) -> Option<DecodedPoli
                 | POLICY_BUDGET_POLICY_KEY
                 | "diagnostic_bounds"
                 | "proposal_check_threshold"
+                | POLICY_SYNC_WORLD_CEILING_KEY
+                | POLICY_SYNC_WORLD_DEFAULT_KEY
         ) {
             return None;
         }
@@ -238,6 +243,33 @@ pub(in crate::gate) fn decode_policy_manifest(data: &[u8]) -> Option<DecodedPoli
         MapValue::Present(value) => Some(value.as_u64().filter(|value| *value > 0)?),
     };
 
+    let sync_world_ceiling = match single_map_value(&entries, POLICY_SYNC_WORLD_CEILING_KEY) {
+        MapValue::Missing => None,
+        MapValue::Duplicate => return None,
+        MapValue::Present(Value::Array(worlds)) => {
+            let mut ids = std::collections::BTreeSet::new();
+            for value in worlds {
+                let Value::Binary(bytes) = value else {
+                    return None;
+                };
+                let id = crate::EntityId::from_bytes(bytes.as_slice().try_into().ok()?).ok()?;
+                if !ids.insert(id) {
+                    return None;
+                }
+            }
+            Some(ids)
+        }
+        MapValue::Present(_) => return None,
+    };
+
+    let sync_world_default = match single_map_value(&entries, POLICY_SYNC_WORLD_DEFAULT_KEY) {
+        MapValue::Missing => None,
+        MapValue::Duplicate => return None,
+        MapValue::Present(Value::String(mode)) if mode.as_str() == Some("opened") => Some(false),
+        MapValue::Present(Value::String(mode)) if mode.as_str() == Some("all") => Some(true),
+        MapValue::Present(_) => return None,
+    };
+
     let unknown_axis_seen =
         defaults.unknown_axis_seen || rules.iter().any(|rule| rule.axes.unknown_axis_seen);
 
@@ -268,6 +300,8 @@ pub(in crate::gate) fn decode_policy_manifest(data: &[u8]) -> Option<DecodedPoli
         budget_policy,
         diagnostic_bounds,
         proposal_check_threshold,
+        sync_world_ceiling,
+        sync_world_default,
         unsupported_schema,
         engine_version_floor,
         unknown_axis_seen,

@@ -333,3 +333,46 @@ fn foreign_door_clamps_live_claim_gate_and_widen_requires_allow() -> Result<()> 
     );
     Ok(())
 }
+
+#[test]
+fn trusted_sync_world_caps_meet_and_malformed_rows_fail_closed() -> Result<()> {
+    use std::collections::BTreeSet;
+    let (_dir, vault) = temp_vault();
+    let (a, b, c) = (
+        crate::EntityId::now(),
+        crate::EntityId::now(),
+        crate::EntityId::now(),
+    );
+    let cap = |worlds: &[crate::EntityId]| {
+        (
+            Value::from(super::POLICY_SYNC_WORLD_CEILING_KEY),
+            Value::Array(
+                worlds
+                    .iter()
+                    .map(|id| Value::Binary(id.as_bytes().to_vec()))
+                    .collect(),
+            ),
+        )
+    };
+    let first = crate::EntityId::now();
+    let second = crate::EntityId::now();
+    put_policy_manifest_bytes(&vault, first, &encode_policy_manifest(vec![cap(&[a, b])]))?;
+    put_policy_manifest_bytes(&vault, second, &encode_policy_manifest(vec![cap(&[b, c])]))?;
+    let policy = resolve(&vault)?;
+    assert_eq!(policy.sync_world_ceiling()?, Some(&BTreeSet::from([b])));
+    assert!(!policy.sync_default_all_worlds()?);
+    let malformed = encode_policy_manifest(vec![cap(&[a])]);
+    let mut value: Value = rmpv::decode::read_value(&mut malformed.as_slice()).unwrap();
+    let Value::Map(ref mut entries) = value else {
+        unreachable!()
+    };
+    entries.push((
+        Value::from(super::POLICY_SYNC_WORLD_CEILING_KEY),
+        Value::Array(vec![Value::Binary(a.as_bytes().to_vec())]),
+    ));
+    let mut bytes = Vec::new();
+    rmpv::encode::write_value(&mut bytes, &value).unwrap();
+    put_policy_manifest_bytes(&vault, crate::EntityId::now(), &bytes)?;
+    assert!(resolve(&vault)?.sync_world_ceiling().is_err());
+    Ok(())
+}

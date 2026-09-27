@@ -138,6 +138,7 @@ impl CanonicalSnapshot {
             "entities",
             "edges",
             "tombstones",
+            "retained_claim_worlds",
             "documents",
             "document_heads",
             "head_move_receipts",
@@ -181,6 +182,7 @@ pub fn capture_canonical_window(
             "entities",
             "edges",
             "tombstones",
+            "retained_claim_worlds",
             "documents",
             "document_heads",
             "head_move_receipts",
@@ -402,6 +404,9 @@ pub fn capture_canonical_window(
     }
     document::capture(vault, &txn, &mut snapshot)?;
     snapshot.entity_blobs.sort_by_key(|row| row.id);
+    let carried: std::collections::BTreeMap<_, _> = binary_rows(doc, "retained_claim_worlds")?
+        .into_iter()
+        .collect();
     if let Some((_, hex)) = window.split_once('@') {
         let world = EntityId::from_hex(hex).map_err(|_| invalid("window world"))?;
         for entity in &snapshot.entity_blobs {
@@ -413,7 +418,10 @@ pub fn capture_canonical_window(
                 continue;
             }
             let mapping = format!("m:dw:{}", id(entity.id)?.to_hex());
-            if vault.store.sync_state.get(&txn, &mapping)?.as_deref() != Some(window.as_bytes()) {
+            if vault.store.sync_state.get(&txn, &mapping)?.as_deref() != Some(window.as_bytes())
+                && carried.get(&id(entity.id)?.to_hex()).map(Vec::as_slice)
+                    != Some(world.as_bytes().as_slice())
+            {
                 return Err(invalid("soft claim world address"));
             }
             snapshot.retained_claim_worlds.push(CanonicalShellWorld {
@@ -421,6 +429,15 @@ pub fn capture_canonical_window(
                 world: *world.as_bytes(),
             });
         }
+    }
+    if carried.keys().any(|id| {
+        !snapshot.retained_claim_worlds.iter().any(|row| {
+            EntityId::from_bytes(row.id)
+                .ok()
+                .is_some_and(|entity| entity.to_hex() == *id)
+        })
+    }) {
+        return Err(invalid("orphan retained world witness"));
     }
     snapshot
         .base_edges
@@ -438,6 +455,14 @@ pub fn rebuild_vault_window_from_canonical(snapshot: &CanonicalSnapshot) -> Resu
     let doc = LoroDoc::new();
     for entity in &snapshot.entity_blobs {
         insert(&doc, "entities", &id(entity.id)?.to_hex(), &entity.blob)?;
+    }
+    for shell in &snapshot.retained_claim_worlds {
+        insert(
+            &doc,
+            "retained_claim_worlds",
+            &id(shell.id)?.to_hex(),
+            &shell.world,
+        )?;
     }
     for edge in &snapshot.base_edges {
         insert(&doc, "edges", &edge.key()?, &edge.value)?;

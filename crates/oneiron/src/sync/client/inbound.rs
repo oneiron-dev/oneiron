@@ -153,7 +153,7 @@ impl SyncClient {
             TAG_BULK_TRANSFER => {
                 let (window_key, compressed) = transport::decode_bulk_transfer(payload)?;
                 let key = WindowKey::try_new(window_key).ok_or(TransportError::InvalidWindowKey)?;
-                if !self.follows_window(&key) {
+                if !Self::follows_window(&key, &self.effective_worlds()?) {
                     return Err(TransportError::InvalidPayload("unfollowed world window"));
                 }
                 self.handle_bulk_transfer(window_key, compressed)?;
@@ -161,7 +161,7 @@ impl SyncClient {
             TAG_BULK_TRANSFER_DONE => {
                 let (window_key, doc_state) = transport::decode_bulk_transfer_done(payload)?;
                 let key = WindowKey::try_new(window_key).ok_or(TransportError::InvalidWindowKey)?;
-                if !self.follows_window(&key) {
+                if !Self::follows_window(&key, &self.effective_worlds()?) {
                     return Err(TransportError::InvalidPayload("unfollowed world window"));
                 }
                 self.handle_bulk_transfer_done(window_key, doc_state)?;
@@ -187,7 +187,9 @@ impl SyncClient {
         payload: &[u8],
     ) -> std::result::Result<Vec<Vec<u8>>, TransportError> {
         let key = WindowKey::try_new(window_key).ok_or(TransportError::InvalidWindowKey)?;
-        if self.config.federation_peer.is_none() && !self.follows_window(&key) {
+        if self.config.federation_peer.is_none()
+            && !Self::follows_window(&key, &self.effective_worlds()?)
+        {
             return Err(TransportError::InvalidPayload("unfollowed world window"));
         }
         if self.config.federation_peer.is_some()
@@ -301,11 +303,156 @@ impl SyncClient {
         }
     }
 
+    fn staged_entity_evidence(
+        &self,
+    ) -> std::result::Result<
+        std::collections::HashMap<crate::EntityId, (WindowKey, Vec<u8>)>,
+        TransportError,
+    > {
+        let mut evidence = std::collections::HashMap::new();
+        for (key, bytes) in &self.staged_world_updates {
+            let live = self.ensure_window(key.as_str())?;
+            let candidate = live.doc.fork();
+            let imported = candidate
+                .import(bytes)
+                .map_err(|_| TransportError::InvalidPayload("staged world update decode failed"))?;
+            if imported.pending.is_some() {
+                return Err(TransportError::InvalidPayload(
+                    "staged world update has missing causal history",
+                ));
+            }
+            let mut entities = Vec::new();
+            crate::sync::loro_support::map_for_each_value_bytes(
+                &candidate.get_map("entities"),
+                |raw, blob| {
+                    if let Some(blob) = blob {
+                        entities.push((raw.to_owned(), blob.to_vec()));
+                    }
+                },
+            );
+            for (raw, blob) in entities {
+                let id = crate::EntityId::from_hex(&raw)
+                    .map_err(|_| TransportError::InvalidPayload("invalid staged entity id"))?;
+                if id.to_hex() != raw {
+                    return Err(TransportError::InvalidPayload(
+                        "invalid staged entity alias",
+                    ));
+                }
+                if !crate::sync::types::entity_belongs_to_window(&blob, key) {
+                    let txn = self
+                        .vault
+                        .store
+                        .env
+                        .read_txn()
+                        .map_err(|e| TransportError::Storage(e.to_string()))?;
+                    let shell = crate::sync::types::retained_world_shell_belongs_to_window(
+                        &self.vault,
+                        &txn,
+                        &candidate,
+                        &id,
+                        &blob,
+                        key,
+                        false,
+                    )
+                    .map_err(|e| TransportError::Storage(e.to_string()))?;
+                    if !shell {
+                        return Err(TransportError::InvalidPayload(
+                            "staged entity outside world",
+                        ));
+                    }
+                    // A witnessed shell is valid local content, but it has no
+                    // claim body to prove another window's edge endpoint.
+                    continue;
+                }
+                if evidence.insert(id, (key.clone(), blob)).is_some() {
+                    return Err(TransportError::InvalidPayload("duplicate staged entity"));
+                }
+            }
+        }
+        Ok(evidence)
+    }
+
+    pub(super) fn drain_staged_world_updates(&mut self) -> std::result::Result<(), TransportError> {
+        let mut healed = Vec::new();
+        loop {
+            if self.staged_world_updates.is_empty() {
+                break;
+            }
+            let evidence = self.staged_entity_evidence()?;
+            let mut progressed = false;
+            let mut index = 0;
+            while index < self.staged_world_updates.len() {
+                let (key, bytes) = &self.staged_world_updates[index];
+                let live = self.ensure_window(key.as_str())?;
+                match crate::sync::window::validate_window_update_with_staged_worlds(
+                    &self.vault,
+                    &live.doc,
+                    bytes,
+                    key,
+                    &evidence,
+                ) {
+                    Ok(()) => {}
+                    Err(crate::Error::InvalidConfig(reason))
+                        if reason == "edge endpoint unresolved" =>
+                    {
+                        index += 1;
+                        continue;
+                    }
+                    Err(_) => {
+                        return Err(TransportError::InvalidPayload(
+                            "staged world residence denied",
+                        ));
+                    }
+                }
+                let (key, bytes) = self.staged_world_updates[index].clone();
+                self.import_accepted_window_update_with_evidence(
+                    key.as_str(),
+                    &live,
+                    &bytes,
+                    &evidence,
+                )?;
+                self.staged_world_updates.remove(index);
+                healed.push(key);
+                progressed = true;
+                break;
+            }
+            if !progressed {
+                break;
+            }
+        }
+        for key in healed {
+            let live = self.ensure_window(key.as_str())?;
+            crate::sync::window::forward_rematerialize(
+                &self.vault,
+                &live.doc,
+                self.manager.materializer(),
+                &key,
+            )
+            .map_err(|error| TransportError::Storage(format!("heal staged world edge: {error}")))?;
+        }
+        Ok(())
+    }
+
     pub(super) fn import_accepted_window_update(
         &mut self,
         window_key: &str,
         window: &LoadedWindow,
         payload: &[u8],
+    ) -> std::result::Result<(), TransportError> {
+        self.import_accepted_window_update_with_evidence(
+            window_key,
+            window,
+            payload,
+            &std::collections::HashMap::new(),
+        )
+    }
+
+    fn import_accepted_window_update_with_evidence(
+        &mut self,
+        window_key: &str,
+        window: &LoadedWindow,
+        payload: &[u8],
+        evidence: &std::collections::HashMap<crate::EntityId, (WindowKey, Vec<u8>)>,
     ) -> std::result::Result<(), TransportError> {
         // Server sending Loro update bytes — import into the manager-owned
         // live doc. Observer B materializes the change to LMDB synchronously
@@ -315,19 +462,78 @@ impl SyncClient {
         // would durably append an unvalidated frame as a `u:w:` row, and
         // window load is fail-closed on pending updates — one malformed frame
         // would brick every future open of this window.
-        crate::sync::window::validate_window_update_residence_with_vault(
+        crate::sync::window::validate_window_update_with_staged_worlds(
             &self.vault,
             &window.doc,
             payload,
             &window.key,
+            evidence,
         )
         .map_err(|_| TransportError::InvalidPayload("entity outside window residence"))?;
+        // A retained world shell has no body to tell Observer B its address.
+        // The isolated pre-import validator proved its witness; persist that
+        // address BEFORE the observed import fires the tombstone and edge
+        // observers. This is not a new grant: it is exact peer-window state
+        // admitted by the same payload check above.
+        if window.key.world().is_some() {
+            let candidate = window.doc.fork();
+            candidate
+                .import(payload)
+                .map_err(|_| TransportError::InvalidPayload("window import failed"))?;
+            let witnesses = candidate.get_map("retained_claim_worlds");
+            let mut ids = Vec::new();
+            witnesses.for_each(|raw, _| ids.push(raw.to_owned()));
+            self.vault
+                .with_write_txn(|txn| {
+                    for raw in &ids {
+                        let id = crate::EntityId::from_hex(raw)?;
+                        if let Some(blob) = crate::sync::loro_support::map_get_bytes(
+                            &candidate.get_map("entities"),
+                            raw,
+                        ) && crate::sync::types::retained_world_shell_belongs_to_window(
+                            &self.vault,
+                            txn,
+                            &candidate,
+                            &id,
+                            &blob,
+                            &window.key,
+                            false,
+                        )? {
+                            self.vault.store.sync_state.put(
+                                txn,
+                                &format!("m:dw:{raw}"),
+                                window.key.as_str().as_bytes(),
+                            )?;
+                        }
+                    }
+                    Ok(())
+                })
+                .map_err(|error| TransportError::Storage(error.to_string()))?;
+        }
         let vv_before = window.doc.oplog_vv();
         window
             .doc
             .import(payload)
             .map_err(|_| TransportError::InvalidPayload("window import failed"))?;
         let key = WindowKey::new(window_key);
+        if key.world().is_some() && !window.doc.get_map("retained_claim_worlds").is_empty() {
+            // Observer B cannot materialize a bodyless CLAIM on an entity-map
+            // callback: its paired witness/tombstone may arrive later in the
+            // same Loro import. The complete, validated document is now live;
+            // replay it through the ordinary forward recovery door before
+            // persisting or acknowledging the version vector.
+            if let Err(error) = crate::sync::window::forward_rematerialize(
+                &self.vault,
+                &window.doc,
+                self.manager.materializer(),
+                &key,
+            ) {
+                self.manager.discard_window(&key);
+                return Err(TransportError::Storage(format!(
+                    "restore retained world shell: {error}"
+                )));
+            }
+        }
         // A no-op import can still reveal a same-process durability gap:
         // compare the live doc with exactly what restart would load from
         // `d:w:` + surviving `u:w:` rows, then heal only the missing live-doc

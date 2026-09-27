@@ -21,7 +21,7 @@ use crate::{Error, Result};
 /// Missing causal dependencies are refused rather than relaying uninspected
 /// pending operations; a peer can negotiate the missing prefix and retry.
 pub fn validate_window_update_locality(doc: &LoroDoc, update: &[u8]) -> Result<()> {
-    validate_window_update(doc, update, None, None)
+    validate_window_update(doc, update, None, None, &HashMap::new())
 }
 
 /// Checks a peer's complete operation range against the window's world axis.
@@ -32,7 +32,7 @@ pub(in crate::sync) fn validate_window_update_residence(
     update: &[u8],
     key: &crate::sync::WindowKey,
 ) -> Result<()> {
-    validate_window_update(doc, update, Some(key), None)
+    validate_window_update(doc, update, Some(key), None, &HashMap::new())
 }
 
 /// Owner-lane admission with the vault's durable entity residence as proof
@@ -43,7 +43,19 @@ pub fn validate_window_update_residence_with_vault(
     update: &[u8],
     key: &crate::sync::WindowKey,
 ) -> Result<()> {
-    validate_window_update(doc, update, Some(key), Some(vault))
+    validate_window_update(doc, update, Some(key), Some(vault), &HashMap::new())
+}
+
+/// Client-only cross-month staging evidence. Rows are kept in RAM until the
+/// owner window carrying them passes its own residence and history admission.
+pub(in crate::sync) fn validate_window_update_with_staged_worlds(
+    vault: &crate::Vault,
+    doc: &LoroDoc,
+    update: &[u8],
+    key: &crate::sync::WindowKey,
+    staged: &HashMap<EntityId, (crate::sync::WindowKey, Vec<u8>)>,
+) -> Result<()> {
+    validate_window_update(doc, update, Some(key), Some(vault), staged)
 }
 
 fn validate_window_update(
@@ -51,6 +63,7 @@ fn validate_window_update(
     update: &[u8],
     key: Option<&crate::sync::WindowKey>,
     vault: Option<&crate::Vault>,
+    staged: &HashMap<EntityId, (crate::sync::WindowKey, Vec<u8>)>,
 ) -> Result<()> {
     let decode_error = |source| {
         Error::Sync(SyncError::CrdtDecodeError {
@@ -75,13 +88,65 @@ fn validate_window_update(
         EntityMetadataHeader::parse(blob)
             .is_some_and(|header| header.entity_type == ENTITY_TYPE_DIAGNOSTIC)
     };
+    if let Some(key) = key {
+        let witnesses = candidate.get_map("retained_claim_worlds");
+        let mut invalid_witness = false;
+        witnesses.for_each(|raw, value| {
+            let valid_id = EntityId::from_hex(raw)
+                .ok()
+                .is_some_and(|id| id.to_hex() == raw);
+            let valid_world = matches!(value,
+                loro::ValueOrContainer::Value(LoroValue::Binary(bytes))
+                    if key.world().is_some_and(|world| bytes.as_slice() == world.as_bytes()));
+            invalid_witness |= !valid_id || !valid_world;
+        });
+        if invalid_witness || (key.world().is_none() && !witnesses.is_empty()) {
+            return Err(Error::InvalidConfig(
+                "invalid retained world witness".into(),
+            ));
+        }
+        if key.world().is_some() {
+            let mut shells = Vec::new();
+            map_for_each_value_bytes(&candidate.get_map("entities"), |raw, blob| {
+                if let Some(blob) = blob
+                    && EntityMetadataHeader::parse(blob).is_some_and(|header| {
+                        header.entity_type == crate::registry::ENTITY_TYPE_CLAIM
+                            && blob.len() == crate::batch::ENTITY_METADATA_HEADER_LEN
+                    })
+                {
+                    shells.push((raw.to_owned(), blob.to_vec()));
+                }
+            });
+            for (raw, blob) in shells {
+                let Some(vault) = vault else {
+                    return Err(Error::InvalidConfig(
+                        "world shell needs vault residence".into(),
+                    ));
+                };
+                let id = EntityId::from_hex(&raw).map_err(|_| Error::InvalidKey)?;
+                let txn = vault.store.env.read_txn()?;
+                if !crate::sync::types::retained_world_shell_belongs_to_window(
+                    vault, &txn, &candidate, &id, &blob, key, false,
+                )? {
+                    return Err(Error::InvalidConfig("unproven world shell".into()));
+                }
+            }
+        }
+    }
     if metadata.mode.is_snapshot() {
         let mut diagnostic = false;
         let mut misplaced = false;
         map_for_each_value_bytes(&candidate.get_map("entities"), |_, blob| {
             diagnostic |= blob.is_some_and(is_diagnostic);
             misplaced |= key.is_some_and(|key| {
-                blob.is_none_or(|blob| !crate::sync::types::entity_belongs_to_window(blob, key))
+                blob.is_none_or(|blob| {
+                    !(crate::sync::types::entity_belongs_to_window(blob, key)
+                        || (key.world().is_some()
+                            && blob.len() == crate::batch::ENTITY_METADATA_HEADER_LEN
+                            && EntityMetadataHeader::parse(blob).is_some_and(|header| {
+                                header.entity_type == crate::registry::ENTITY_TYPE_CLAIM
+                            })))
+                })
             });
         });
         if diagnostic {
@@ -143,7 +208,7 @@ fn validate_window_update(
         let mut edge_keys = Vec::new();
         edges.for_each(|edge, _| edge_keys.push(edge.to_owned()));
         for edge in edge_keys {
-            check_edge_residence(vault, &candidate, &edge, key, &historical)?;
+            check_edge_residence(vault, &candidate, &edge, key, &historical, staged)?;
         }
         let tombstones = candidate.get_map("tombstones");
         let mut tombstone_keys = Vec::new();
@@ -152,6 +217,7 @@ fn validate_window_update(
             check_tombstone_residence(vault, &id, key)?;
         }
     }
+    let witnesses = ContainerID::new_root("retained_claim_worlds", ContainerType::Map);
     for op in operations.changes.into_iter().flat_map(|change| change.ops) {
         let JsonOpContent::Map(MapOp::Insert {
             key: map_key,
@@ -160,7 +226,17 @@ fn validate_window_update(
         else {
             continue;
         };
-        if op.container == entities {
+        if op.container == witnesses {
+            if key.is_none_or(|key| key.world().is_none())
+                || !matches!(value, LoroValue::Binary(ref bytes)
+                    if key.and_then(crate::sync::WindowKey::world)
+                        .is_some_and(|world| bytes.as_slice() == world.as_bytes()))
+            {
+                return Err(Error::InvalidConfig(
+                    "invalid retained world witness".into(),
+                ));
+            }
+        } else if op.container == entities {
             match value {
                 LoroValue::Binary(blob) => {
                     if is_diagnostic(&blob) {
@@ -169,7 +245,21 @@ fn validate_window_update(
                         ));
                     }
                     if key.is_some_and(|key| {
-                        !crate::sync::types::entity_belongs_to_window(&blob, key)
+                        !(crate::sync::types::entity_belongs_to_window(&blob, key)
+                            || (blob.len() == crate::batch::ENTITY_METADATA_HEADER_LEN
+                                && key.world().is_some()
+                                && vault.is_some_and(|vault| {
+                                    let Ok(id) = EntityId::from_hex(&map_key) else {
+                                        return false;
+                                    };
+                                    let Ok(txn) = vault.store.env.read_txn() else {
+                                        return false;
+                                    };
+                                    crate::sync::types::retained_world_shell_belongs_to_window(
+                                        vault, &txn, &candidate, &id, &blob, key, false,
+                                    )
+                                    .unwrap_or(false)
+                                })))
                     }) {
                         return Err(Error::InvalidConfig(
                             "entity outside window residence".into(),
@@ -183,7 +273,7 @@ fn validate_window_update(
             }
         } else if let (Some(key), Some(vault)) = (key, vault) {
             if op.container == edges {
-                check_edge_residence(vault, &candidate, &map_key, key, &historical)?;
+                check_edge_residence(vault, &candidate, &map_key, key, &historical, staged)?;
             } else if op.container == tombstones {
                 check_tombstone_residence(vault, &map_key, key)?;
             }
@@ -198,6 +288,7 @@ fn check_edge_residence(
     edge: &str,
     key: &crate::sync::WindowKey,
     historical: &HashMap<EntityId, Vec<u8>>,
+    staged: &HashMap<EntityId, (crate::sync::WindowKey, Vec<u8>)>,
 ) -> Result<()> {
     let denied = || Error::InvalidConfig("edge outside window residence".into());
     let Some((src, _, tgt)) = crate::sync::bridge::parse_edge_key(edge) else {
@@ -239,7 +330,20 @@ fn check_edge_residence(
         } else if let Some(live) = live.as_deref() {
             live
         } else {
-            old.map(Vec::as_slice).ok_or_else(denied)?
+            match old {
+                Some(raw) => raw.as_slice(),
+                None => {
+                    let Some((staged_key, raw)) = staged.get(id) else {
+                        return Err(Error::InvalidConfig("edge endpoint unresolved".into()));
+                    };
+                    if staged_key.world() != key.world()
+                        || !crate::sync::types::entity_belongs_to_window(raw, staged_key)
+                    {
+                        return Err(denied());
+                    }
+                    raw.as_slice()
+                }
+            }
         };
         let header = EntityMetadataHeader::parse(raw).ok_or_else(denied)?;
         worlds[index] = Some(crate::sync::types::entity_world(raw)?);

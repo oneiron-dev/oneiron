@@ -251,7 +251,6 @@ fn authorized_base_edge_endpoints(
     vault: &Vault,
     edges: &loro::LoroMap,
     kept: &BTreeSet<EntityId>,
-    grant_scope: FederationGrantScope,
     selector: &SyncSelector,
     position: &Position,
 ) -> Result<BTreeSet<EntityId>> {
@@ -292,8 +291,7 @@ fn authorized_base_edge_endpoints(
                 Err(error) => return Err(error),
             };
             reverse_rematerialize(vault, &base, &base_key)?;
-            let selected =
-                filter_window_doc(vault, &base, &base_key, grant_scope, selector, position)?;
+            let selected = filter_window_doc(vault, &base, &base_key, selector, position)?;
             selected_by_month.insert(base_key.to_string(), selected);
         }
         if selected_by_month[base_key.as_str()]
@@ -520,14 +518,7 @@ pub(super) fn filter_window_doc(
     });
 
     let authorized_base = if key.world().is_some() {
-        authorized_base_edge_endpoints(
-            vault,
-            &source_edges,
-            &kept,
-            grant_scope,
-            selector,
-            position,
-        )?
+        authorized_base_edge_endpoints(vault, &source_edges, &kept, selector, position)?
     } else {
         BTreeSet::new()
     };

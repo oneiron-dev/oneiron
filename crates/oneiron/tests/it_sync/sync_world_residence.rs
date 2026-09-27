@@ -2,7 +2,7 @@
 
 use std::sync::Arc;
 
-use loro::{ExportMode, VersionVector};
+use loro::{ExportMode, LoroDoc, VersionVector};
 use oneiron::recovery::{
     CanonicalSnapshot, RecoveryBudget, capture_canonical_window,
     rebuild_vault_window_from_canonical, recover_vault_window,
@@ -237,6 +237,89 @@ fn fresh_follow_uses_wire_request_order_for_same_and_older_base_edges() {
 }
 
 #[test]
+fn cross_month_world_edges_in_both_directions_stage_until_the_other_month_arrives() {
+    let (_src_dir, source) = vault();
+    let (_dst_dir, peer) = vault();
+    let world = EntityId::now();
+    let january = EntityId::now();
+    let february = EntityId::now();
+    let jan = WindowKey::new("2026-01").start_timestamp().unwrap() + 60;
+    let feb = WindowKey::new("2026-02").start_timestamp().unwrap() + 60;
+    for node in [&source, &peer] {
+        node.put_entity(
+            &world,
+            oneiron::registry::ENTITY_TYPE_WORLD,
+            TimeRange {
+                start: jan,
+                end: jan,
+            },
+            jan,
+            b"world",
+        )
+        .unwrap();
+    }
+    for (id, at) in [(january, jan), (february, feb)] {
+        let mut body = ClaimBody::new(
+            "test.two_month_cycle",
+            ClaimSubject::Entity(world),
+            rmpv::Value::from("fact"),
+            1.0,
+            ClaimApprovalStatus::Proposed,
+            ClaimLifecycleStatus::Active,
+        );
+        body.world = Some(world);
+        source
+            .put_claim(&id, &body, TimeRange { start: at, end: at }, at)
+            .unwrap();
+    }
+    source
+        .batch()
+        .edge(&january, EdgeKind::Mentions, &february, 1.0)
+        .edge(&february, EdgeKind::Mentions, &january, 1.0)
+        .commit()
+        .unwrap();
+    let jan_key = WindowKey::for_world(jan, world);
+    let feb_key = WindowKey::for_world(feb, world);
+    let source_manager = manager(&source);
+    let (mut client, _) = SyncClient::new(
+        manager(&peer),
+        SyncClientConfig {
+            followed_worlds: Some(vec![world]),
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    let known = oneiron::sync::discover_local_window_keys(&source).unwrap();
+    let root = create_root_doc("server", "vault", &known);
+    let mut root_frame = vec![TAG_SYNC_UPDATE];
+    root_frame.extend_from_slice(&root.export(ExportMode::snapshot()).unwrap());
+    let initial = window_requests(&client.generate_initial_sync());
+    let mut requests = initial;
+    requests.extend(window_requests(
+        &client.handle_server_message(&root_frame).unwrap(),
+    ));
+    let first = requests
+        .iter()
+        .position(|key| key.world().is_some())
+        .unwrap();
+    assert!(requests[..first].iter().all(|key| key.world().is_none()));
+    assert!(requests.contains(&jan_key) && requests.contains(&feb_key));
+    for key in requests {
+        transfer(&source, &source_manager, &mut client, &key);
+    }
+    assert_eq!(peer.get(&january).unwrap(), source.get(&january).unwrap());
+    assert_eq!(peer.get(&february).unwrap(), source.get(&february).unwrap());
+    for (src, tgt) in [(january, february), (february, january)] {
+        assert!(
+            peer.edges_out(&src)
+                .unwrap()
+                .iter()
+                .any(|edge| edge.kind == EdgeKind::Mentions && edge.target == tgt)
+        );
+    }
+}
+
+#[test]
 fn late_follow_accepts_valid_soft_and_hard_deleted_world_history() {
     for reason in [
         oneiron::deletion::TombstoneReason::UserDelete,
@@ -316,7 +399,18 @@ fn late_follow_accepts_valid_soft_and_hard_deleted_world_history() {
         let frame = transport::encode_window_sync(key.as_str(), window_sub_tags::UPDATE, &update)
             .into_result()
             .unwrap();
-        client.handle_server_message(&frame).unwrap();
+        client
+            .handle_server_message(&frame)
+            .unwrap_or_else(|error| {
+                panic!(
+                    "{reason:?} import failed: {error}; source shell={:?}; source witness={:?}",
+                    doc.doc.get_map("entities").get(&erased.to_hex()).is_some(),
+                    doc.doc
+                        .get_map("retained_claim_worlds")
+                        .get(&erased.to_hex())
+                        .is_some()
+                )
+            });
         assert_eq!(peer.get(&alive).unwrap(), source.get(&alive).unwrap());
         assert!(
             client
@@ -423,6 +517,193 @@ fn canonical_soft_world_recovery_restores_shell_edge_and_address() {
             .any(|edge| edge.kind == EdgeKind::About && edge.target == person)
     );
     oneiron::sync::server_state::persist_window_snapshot(&peer, &key, &recovered.window).unwrap();
+    let exported = export_window_updates_since(
+        &peer,
+        &key,
+        &recovered.window,
+        &VersionVector::default().encode(),
+    )
+    .unwrap();
+    assert!(
+        recovered
+            .window
+            .get_map("entities")
+            .get(&claim.to_hex())
+            .is_some()
+    );
+    assert!(!recovered.window.get_map("edges").is_empty());
+    assert!(
+        recovered
+            .window
+            .get_map("retained_claim_worlds")
+            .get(&claim.to_hex())
+            .is_some()
+    );
+    let exported_doc = LoroDoc::from_snapshot(&exported).unwrap_or_else(|_| {
+        let doc = LoroDoc::new();
+        doc.import(&exported).expect("import exported update");
+        doc
+    });
+    assert!(
+        exported_doc
+            .get_map("entities")
+            .get(&claim.to_hex())
+            .is_some()
+    );
+    assert!(
+        exported_doc
+            .get_map("retained_claim_worlds")
+            .get(&claim.to_hex())
+            .is_some()
+    );
+    {
+        let (_third_dir, third) = vault();
+        third
+            .put_entity(
+                &world,
+                oneiron::registry::ENTITY_TYPE_WORLD,
+                occurred,
+                at,
+                b"world",
+            )
+            .unwrap();
+        third
+            .put_entity(
+                &person,
+                oneiron::registry::ENTITY_TYPE_PERSON,
+                occurred,
+                at,
+                b"person",
+            )
+            .unwrap();
+        let frame = transport::encode_window_sync(key.as_str(), window_sub_tags::UPDATE, &exported)
+            .into_result()
+            .unwrap();
+        let (mut client, _) = SyncClient::new(
+            manager(&third),
+            SyncClientConfig {
+                followed_worlds: Some(vec![world]),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        client
+            .handle_server_message(&frame)
+            .expect("fresh recipient retains shell/edge");
+        assert!(
+            client
+                .window(key.as_str())
+                .unwrap()
+                .doc
+                .get_map("entities")
+                .get(&claim.to_hex())
+                .is_some(),
+            "received window keeps shell"
+        );
+        let third_doc = &client.window(key.as_str()).unwrap().doc;
+        assert!(oneiron::recovery::rebuild_vault_window_from_canonical(&snapshot).is_ok());
+        assert!(
+            third_doc
+                .get_map("retained_claim_worlds")
+                .get(&claim.to_hex())
+                .is_some()
+        );
+        assert!(third_doc.get_map("entities").get(&claim.to_hex()).is_some());
+        assert!(
+            third_doc
+                .get_map("tombstones")
+                .get(&claim.to_hex())
+                .is_some()
+        );
+        let third_raw = third.get_raw(&claim).unwrap();
+        assert!(
+            third_raw.is_some(),
+            "shell absent; address={:?}, quarantines={:?}",
+            third
+                .sync_state_get(&format!("m:dw:{}", claim.to_hex()))
+                .unwrap(),
+            oneiron::sync::sync_doctor(&third).ok()
+        );
+        assert_eq!(third_raw.unwrap().len(), 25);
+        assert_eq!(
+            third
+                .sync_state_get(&format!("m:dw:{}", claim.to_hex()))
+                .unwrap()
+                .as_deref(),
+            Some(key.as_str().as_bytes())
+        );
+        assert!(
+            third
+                .edges_out(&claim)
+                .unwrap()
+                .iter()
+                .any(|edge| edge.kind == EdgeKind::About && edge.target == person)
+        );
+        assert!(
+            client
+                .window(key.as_str())
+                .unwrap()
+                .doc
+                .get_map("tombstones")
+                .get(&claim.to_hex())
+                .is_some()
+        );
+        let live = client.window(key.as_str()).unwrap();
+        let relayed = export_window_updates_since(
+            &third,
+            &key,
+            &live.doc,
+            &VersionVector::default().encode(),
+        )
+        .unwrap();
+        let (_fourth_dir, fourth) = vault();
+        fourth
+            .put_entity(
+                &world,
+                oneiron::registry::ENTITY_TYPE_WORLD,
+                occurred,
+                at,
+                b"world",
+            )
+            .unwrap();
+        fourth
+            .put_entity(
+                &person,
+                oneiron::registry::ENTITY_TYPE_PERSON,
+                occurred,
+                at,
+                b"person",
+            )
+            .unwrap();
+        let (mut fourth_client, _) = SyncClient::new(
+            manager(&fourth),
+            SyncClientConfig {
+                followed_worlds: Some(vec![world]),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        let frame = transport::encode_window_sync(key.as_str(), window_sub_tags::UPDATE, &relayed)
+            .into_result()
+            .unwrap();
+        fourth_client.handle_server_message(&frame).unwrap();
+        assert_eq!(fourth.get_raw(&claim).unwrap().unwrap().len(), 25);
+        assert!(
+            fourth
+                .edges_out(&claim)
+                .unwrap()
+                .iter()
+                .any(|edge| edge.kind == EdgeKind::About && edge.target == person)
+        );
+        assert_eq!(
+            fourth
+                .sync_state_get(&format!("m:dw:{}", claim.to_hex()))
+                .unwrap()
+                .as_deref(),
+            Some(key.as_str().as_bytes())
+        );
+    }
+
     let opened = manager(&peer).open_window(&key).unwrap();
     assert!(
         opened

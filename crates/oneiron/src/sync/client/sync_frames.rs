@@ -141,12 +141,13 @@ impl SyncClient {
             .duration_since(std::time::UNIX_EPOCH)
             .map_or(0, |d| d.as_secs());
 
+        let effective_worlds = self.effective_worlds()?;
         let mut keys: Vec<WindowKey> = Vec::new();
         let mut next = Some(WindowKey::from_timestamp(now_secs));
         for _ in 0..self.config.default_window_count {
             let Some(key) = next else { break };
             next = key.previous_month();
-            if let Some(worlds) = &self.config.followed_worlds {
+            if let Some(worlds) = &effective_worlds {
                 for world in worlds {
                     let scoped = WindowKey::for_month_world(&key, *world);
                     if !keys.contains(&scoped) {
@@ -157,7 +158,7 @@ impl SyncClient {
             keys.push(key);
         }
         for key in self.manager.loaded_keys() {
-            if self.follows_window(&key) && !keys.contains(&key) {
+            if Self::follows_window(&key, &effective_worlds) && !keys.contains(&key) {
                 keys.push(key);
             }
         }
@@ -165,9 +166,7 @@ impl SyncClient {
         // including historical base months and world claims not yet indexed
         // by a fresh server. A followed world also needs its base month.
         let mut discovered = crate::sync::schema::read_window_list(&self.root_doc);
-        if self
-            .config
-            .followed_worlds
+        if effective_worlds
             .as_ref()
             .is_none_or(|worlds| !worlds.is_empty())
         {
@@ -176,7 +175,7 @@ impl SyncClient {
                     .map_err(|error| TransportError::Storage(error.to_string()))?,
             );
         }
-        for key in self.selected_discovered_windows(discovered) {
+        for key in Self::selected_discovered_windows(discovered, &effective_worlds) {
             if !keys.contains(&key) {
                 keys.push(key);
             }
@@ -188,7 +187,7 @@ impl SyncClient {
                 )));
                 continue;
             };
-            if self.follows_window(&window_key) && !keys.contains(&window_key) {
+            if Self::follows_window(&window_key, &effective_worlds) && !keys.contains(&window_key) {
                 keys.push(window_key);
             }
         }
@@ -247,10 +246,13 @@ impl SyncClient {
         Ok(messages)
     }
 
-    fn selected_discovered_windows(&self, discovered: Vec<WindowKey>) -> Vec<WindowKey> {
+    fn selected_discovered_windows(
+        discovered: Vec<WindowKey>,
+        effective_worlds: &Option<std::collections::BTreeSet<crate::EntityId>>,
+    ) -> Vec<WindowKey> {
         let mut selected = Vec::new();
         for key in discovered {
-            if key.world().is_some() && self.follows_window(&key) {
+            if key.world().is_some() && Self::follows_window(&key, effective_worlds) {
                 let base =
                     WindowKey::from_timestamp(key.start_timestamp().expect("validated window"));
                 if !selected.contains(&base) {
@@ -260,9 +262,7 @@ impl SyncClient {
                     selected.push(key);
                 }
             } else if key.world().is_none()
-                && self
-                    .config
-                    .followed_worlds
+                && effective_worlds
                     .as_ref()
                     .is_none_or(|worlds| !worlds.is_empty())
                 && !selected.contains(&key)
@@ -283,6 +283,7 @@ impl SyncClient {
     pub(super) fn newly_followed_window_requests(
         &mut self,
     ) -> std::result::Result<Vec<Vec<u8>>, TransportError> {
+        let effective_worlds = self.effective_worlds()?;
         let mut discovered = crate::sync::schema::read_window_list(&self.root_doc);
         discovered.extend(self.manager.loaded_keys());
         discovered.extend(
@@ -293,9 +294,7 @@ impl SyncClient {
                 .cloned(),
         );
         if !self.root_bootstrapped
-            && self
-                .config
-                .followed_worlds
+            && effective_worlds
                 .as_ref()
                 .is_none_or(|worlds| !worlds.is_empty())
         {
@@ -304,7 +303,7 @@ impl SyncClient {
                     .map_err(|error| TransportError::Storage(error.to_string()))?,
             );
         }
-        let mut keys = self.selected_discovered_windows(discovered);
+        let mut keys = Self::selected_discovered_windows(discovered, &effective_worlds);
         keys.sort_by(|left, right| {
             left.world()
                 .is_some()

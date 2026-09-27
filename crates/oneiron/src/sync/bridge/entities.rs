@@ -107,6 +107,10 @@ pub(super) fn materialize_entities_from_delta(
                     }
                     if let Some(window) = crate::sync::types::WindowKey::try_new(window_key)
                         && !crate::sync::types::entity_belongs_to_window(blob, &window)
+                        && !(window.world().is_some()
+                            && crate::sync::types::retained_world_shell_belongs_to_window(
+                                vault, wtxn, doc, &id, blob, &window, false,
+                            )?)
                     {
                         quarantine_rejected_op_in_txn(
                             vault,

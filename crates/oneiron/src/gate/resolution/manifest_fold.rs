@@ -75,6 +75,17 @@ pub(crate) fn resolve_policy_manifest(
                 resolution.diagnostics.unsupported_schema_seen |= decoded.unsupported_schema;
                 resolution.diagnostics.engine_version_floor_seen |= decoded.engine_version_floor;
                 resolution.diagnostics.unknown_axis_seen |= decoded.unknown_axis_seen;
+                if let Some(default_all) = decoded.sync_world_default {
+                    resolution.sync_world_default =
+                        Some(resolution.sync_world_default.unwrap_or(true) && default_all);
+                }
+                if let Some(worlds) = decoded.sync_world_ceiling {
+                    resolution.sync_world_ceiling =
+                        Some(match resolution.sync_world_ceiling.take() {
+                            Some(existing) => existing.intersection(&worlds).copied().collect(),
+                            None => worlds,
+                        });
+                }
                 resolution.source_trust.merge(decoded.source_trust);
                 resolution.actor_ceilings.extend(decoded.actor_ceilings);
                 delegated_rows.extend(decoded.delegated_grants);

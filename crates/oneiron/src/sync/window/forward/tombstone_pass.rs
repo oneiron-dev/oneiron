@@ -102,7 +102,17 @@ pub(super) fn run(ctx: &RematCtx<'_>, ledger: &mut RematLedger) -> TombstonePass
 
         let residence = (|| {
             let txn = vault.store.env.read_txn()?;
-            crate::sync::types::tombstone_residence_in(vault, &txn, &id, window_key)
+            let state = crate::sync::types::tombstone_residence_in(vault, &txn, &id, window_key)?;
+            if state == crate::sync::types::TombstoneResidence::Unknown
+                && window_key.world().is_some()
+                && let Some(raw) = map_get_bytes(entities_map, &id.to_hex())
+                && crate::sync::types::retained_world_shell_belongs_to_window(
+                    vault, &txn, ctx.doc, &id, &raw, window_key, false,
+                )?
+            {
+                return Ok(crate::sync::types::TombstoneResidence::Match);
+            }
+            Ok(state)
         })();
         match residence {
             Ok(crate::sync::types::TombstoneResidence::Wrong) => {

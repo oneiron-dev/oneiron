@@ -60,6 +60,11 @@ pub(crate) fn forward_recovery(
     snapshot: &crate::recovery::CanonicalSnapshot,
 ) -> Result<u32> {
     snapshot.validate()?;
+    if snapshot.window != window_key.as_str() {
+        return Err(crate::Error::InvalidConfig(
+            "recovery window key mismatch".into(),
+        ));
+    }
     forward_with_recovery(vault, doc, materializer, window_key, Some(snapshot))
 }
 
@@ -70,6 +75,43 @@ fn forward_with_recovery(
     window_key: &WindowKey,
     trusted: Option<&crate::recovery::CanonicalSnapshot>,
 ) -> Result<u32> {
+    if window_key.world().is_some() {
+        let mut witnesses = Vec::new();
+        doc.get_map("retained_claim_worlds").for_each(|raw, value| {
+            if let loro::ValueOrContainer::Value(loro::LoroValue::Binary(bytes)) = value {
+                witnesses.push((raw.to_owned(), bytes.to_vec()));
+            }
+        });
+        for (raw, value) in witnesses {
+            let id = EntityId::from_hex(&raw)?;
+            if value.as_slice() != window_key.world().expect("world key").as_bytes() {
+                return Err(crate::Error::InvalidConfig(
+                    "foreign retained world witness".into(),
+                ));
+            }
+            let Some(blob) =
+                crate::sync::loro_support::map_get_bytes(&doc.get_map("entities"), &raw)
+            else {
+                return Err(crate::Error::InvalidConfig(
+                    "orphan retained world witness".into(),
+                ));
+            };
+            let txn = vault.store.env.read_txn()?;
+            if !crate::sync::types::retained_world_shell_belongs_to_window(
+                vault,
+                &txn,
+                doc,
+                &id,
+                &blob,
+                window_key,
+                trusted.is_some(),
+            )? {
+                return Err(crate::Error::InvalidConfig(
+                    "unproven retained world witness".into(),
+                ));
+            }
+        }
+    }
     let native_notes = crate::sync::note::is_native(doc);
     let native_documents = native_notes
         .then(|| crate::sync::note::validate(doc))
@@ -138,6 +180,42 @@ fn forward_with_recovery(
             documents,
             window_key.as_str(),
         )?);
+    }
+    if window_key.world().is_some() {
+        let witnesses = doc.get_map("retained_claim_worlds");
+        let mut rows = Vec::new();
+        witnesses.for_each(|raw, _| rows.push(raw.to_owned()));
+        vault.with_write_txn(|txn| {
+            for raw in &rows {
+                let id = EntityId::from_hex(raw)?;
+                let Some(blob) =
+                    crate::sync::loro_support::map_get_bytes(&doc.get_map("entities"), raw)
+                else {
+                    return Err(crate::Error::InvalidConfig(
+                        "orphan retained world witness".into(),
+                    ));
+                };
+                if !crate::sync::types::retained_world_shell_belongs_to_window(
+                    vault,
+                    txn,
+                    doc,
+                    &id,
+                    &blob,
+                    window_key,
+                    trusted.is_some(),
+                )? {
+                    return Err(crate::Error::InvalidConfig(
+                        "unproven retained world witness".into(),
+                    ));
+                }
+                vault.store.sync_state.put(
+                    txn,
+                    &format!("m:dw:{raw}"),
+                    window_key.as_str().as_bytes(),
+                )?;
+            }
+            Ok(())
+        })?;
     }
     crate::recovery::materialize_retained_shells(vault, doc)?;
     if let Some(snapshot) = trusted.filter(|_| window_key.world().is_some()) {

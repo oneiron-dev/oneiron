@@ -121,12 +121,24 @@ pub(super) fn materialize_tombstones_from_delta(
                     continue;
                 }
 
-                let residence = (|| {
+                let residence: Result<crate::sync::types::TombstoneResidence> = (|| {
                     let txn = vault.store.env.read_txn()?;
                     let window =
                         crate::sync::WindowKey::try_new(window_key).ok_or(Error::InvalidKey)?;
-                    crate::sync::types::tombstone_residence_in(vault, &txn, &id, &window)
-                })();
+                    let state =
+                        crate::sync::types::tombstone_residence_in(vault, &txn, &id, &window)?;
+                    if state == crate::sync::types::TombstoneResidence::Unknown
+                        && window.world().is_some()
+                        && let Some(raw) = map_get_bytes(&entities_map, &id.to_hex())
+                        && crate::sync::types::retained_world_shell_belongs_to_window(
+                            vault, &txn, doc, &id, &raw, &window, false,
+                        )?
+                    {
+                        return Ok(crate::sync::types::TombstoneResidence::Match);
+                    }
+                    Ok(state)
+                })(
+                );
                 match residence {
                     Ok(crate::sync::types::TombstoneResidence::Wrong) => {
                         if let Err(error) = quarantine_rejected_op(
@@ -162,6 +174,13 @@ pub(super) fn materialize_tombstones_from_delta(
                     id,
                     crdt_key: key.as_ref().to_string(),
                     raw_value: raw_value.to_vec(),
+                    witnessed_shell: matches!(
+                        residence,
+                        Ok(crate::sync::types::TombstoneResidence::Match)
+                    ) && window_key.contains('@')
+                        && map_get_bytes(&entities_map, &id.to_hex()).is_some_and(|raw| {
+                            raw.len() == crate::batch::ENTITY_METADATA_HEADER_LEN
+                        }),
                     hard: crate::deletion::decode_tombstone_value(raw_value).is_hard(),
                 });
             }
@@ -229,6 +248,7 @@ struct TombstoneWork {
     id: EntityId,
     crdt_key: String,
     raw_value: Vec<u8>,
+    witnessed_shell: bool,
     hard: bool,
 }
 
@@ -401,6 +421,7 @@ fn apply_tombstone_in_savepoint(
         && crate::sync::types::tombstone_residence_in(vault, &child, &work.id, &window)
             .map_err(|e| (TombstoneFailureStage::Replay, e))?
             != crate::sync::types::TombstoneResidence::Match
+        && !work.witnessed_shell
     {
         return Err((
             TombstoneFailureStage::Replay,

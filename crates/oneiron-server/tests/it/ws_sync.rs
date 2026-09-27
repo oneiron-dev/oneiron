@@ -208,6 +208,28 @@ async fn send_protocol_hello(
     .await
 }
 
+/// Current owner protocol requires an explicit per-window VV subscription.
+/// These fixtures intentionally test broadcast delivery, not legacy v6.
+async fn subscribe_owner_window(ws: &mut WsStream, key: &str) {
+    send_window_vv_request(ws, key).await;
+    drain_vv_request_responses(ws, key).await;
+    // The first request also announces its new key in the root manifest.
+    let root = next_binary(ws).await;
+    assert_eq!(root[0], TAG_SYNC_UPDATE);
+}
+
+async fn connect_subscribed_owner(addr: SocketAddr, secret: &str, key: &str) -> WsStream {
+    let mut ws = connect_without_hello(addr, Some(secret)).await.unwrap();
+    ws.send(Message::Binary(
+        transport::encode_chunk_full_window_protocol_hello().into(),
+    ))
+    .await
+    .unwrap();
+    assert_eq!(next_binary(&mut ws).await[0], TAG_SYNC_UPDATE);
+    subscribe_owner_window(&mut ws, key).await;
+    ws
+}
+
 async fn next_binary(ws: &mut WsStream) -> Vec<u8> {
     loop {
         let msg = tokio::time::timeout(Duration::from_secs(10), ws.next())
@@ -876,9 +898,16 @@ async fn revoked_token_stops_broadcast_fan_out_to_its_open_socket() {
 
     // A holds the token that gets revoked; B holds the trust root and stays
     // live, so it keeps authoring the updates A must stop receiving.
-    let mut client_a = connect_bound(addr, &revoked_token, true).await.unwrap();
+    let mut client_a = connect_bound(addr, &revoked_token, false).await.unwrap();
+    client_a
+        .send(Message::Binary(
+            transport::encode_chunk_full_window_protocol_hello().into(),
+        ))
+        .await
+        .unwrap();
     let mut client_b = connect(addr, Some("fanout-revoke-secret")).await.unwrap();
     let _ = next_binary(&mut client_a).await;
+    subscribe_owner_window(&mut client_a, "2026-02").await;
     let _ = next_binary(&mut client_b).await;
 
     let author = LoroDoc::new();
@@ -2016,9 +2045,8 @@ async fn ephemeral_frames_coexist_with_window_sync_updates() {
     .await;
 
     let mut client_a = connect(addr, Some("coexist-secret")).await.unwrap();
-    let mut client_b = connect(addr, Some("coexist-secret")).await.unwrap();
+    let mut client_b = connect_subscribed_owner(addr, "coexist-secret", "2026-02").await;
     let _ = next_binary(&mut client_a).await; // root snapshot
-    let _ = next_binary(&mut client_b).await; // root snapshot
 
     client_a
         .send(Message::Binary(
@@ -2191,11 +2219,10 @@ async fn imported_update_relays_to_second_client_and_persists_contract_keys() {
         spawn_server(vault.clone(), config_with_secret(Some("relay-secret"))).await;
 
     let mut client_a = connect(addr, Some("relay-secret")).await.unwrap();
-    let mut client_b = connect(addr, Some("relay-secret")).await.unwrap();
+    let mut client_b = connect_subscribed_owner(addr, "relay-secret", "2026-02").await;
     // Drain the Phase-1 root snapshot on both connections; once B has its
     // snapshot, B's broadcast subscription is live.
     let _ = next_binary(&mut client_a).await;
-    let _ = next_binary(&mut client_b).await;
 
     // Author an update in a local Loro doc.
     let author = LoroDoc::new();
@@ -2630,9 +2657,8 @@ async fn diagnostic_update_is_refused_before_live_state_persistence_and_relay() 
     let (addr, _server, handle) =
         spawn_server(vault.clone(), config_with_secret(Some("diagnostic-secret"))).await;
     let mut sender = connect(addr, Some("diagnostic-secret")).await.unwrap();
-    let mut receiver = connect(addr, Some("diagnostic-secret")).await.unwrap();
+    let mut receiver = connect_subscribed_owner(addr, "diagnostic-secret", "2026-02").await;
     let _ = next_binary(&mut sender).await;
-    let _ = next_binary(&mut receiver).await;
 
     let author = LoroDoc::new();
     author

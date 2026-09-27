@@ -249,6 +249,96 @@ fn federated_tombstone_update(id: &EntityId) -> Vec<u8> {
 }
 
 #[test]
+fn trusted_manifest_world_ceiling_caps_sync_all_and_rejects_unfollowed_updates() {
+    let manager = test_manager();
+    let vault = manager.vault();
+    let (a, b) = (EntityId::now(), EntityId::now());
+    let key_a = WindowKey::for_world(1_771_027_200, a);
+    let key_b = WindowKey::for_world(1_771_027_200, b);
+    let cap = |ids: &[EntityId]| {
+        (
+            rmpv::Value::from("sync_world_ceiling"),
+            rmpv::Value::Array(
+                ids.iter()
+                    .map(|id| rmpv::Value::Binary(id.as_bytes().to_vec()))
+                    .collect(),
+            ),
+        )
+    };
+    // Distinct trusted owner-authored manifests compose by intersection.
+    put_policy_manifest_bytes(
+        vault,
+        EntityId::now(),
+        &encode_policy_manifest(vec![cap(&[a, b])]),
+    )
+    .unwrap();
+    put_policy_manifest_bytes(
+        vault,
+        EntityId::now(),
+        &encode_policy_manifest(vec![cap(&[a])]),
+    )
+    .unwrap();
+    let (mut client, _) = test_client(&manager);
+    client.follow_all_worlds();
+    client.root_doc = create_root_doc("server", "vault", &[key_a.clone(), key_b.clone()]);
+    client.begin_connection_sync();
+    let first = client.generate_initial_sync();
+    assert!(
+        first
+            .iter()
+            .filter(|frame| frame.first() == Some(&TAG_WINDOW_SYNC))
+            .all(|frame| transport::decode_window_sync(&frame[1..]).unwrap().0 != key_b.as_str())
+    );
+    let mut root = vec![TAG_SYNC_UPDATE];
+    root.extend_from_slice(
+        &create_root_doc("server", "vault", &[key_a.clone(), key_b.clone()])
+            .export(ExportMode::snapshot())
+            .unwrap(),
+    );
+    let requests = client.handle_server_message(&root).unwrap();
+    let requested: Vec<_> = requests
+        .iter()
+        .map(|frame| {
+            transport::decode_window_sync(&frame[1..])
+                .unwrap()
+                .0
+                .to_string()
+        })
+        .collect();
+    assert!(requested.contains(&key_a.to_string()));
+    assert!(!requested.contains(&key_b.to_string()));
+    let forged = transport::encode_window_sync(
+        key_b.as_str(),
+        window_sub_tags::UPDATE,
+        &server_window_doc()
+            .export(ExportMode::all_updates())
+            .unwrap(),
+    )
+    .into_result()
+    .unwrap();
+    assert!(client.handle_server_message(&forged).is_err());
+    client.follow_all_worlds();
+    client.begin_connection_sync();
+    client.generate_initial_sync();
+    let again = client.handle_server_message(&root).unwrap();
+    assert!(
+        again
+            .iter()
+            .all(|frame| transport::decode_window_sync(&frame[1..]).unwrap().0 != key_b.as_str())
+    );
+    client.config.followed_worlds = Some(vec![b]);
+    client.begin_connection_sync();
+    client.generate_initial_sync();
+    assert!(
+        client
+            .handle_server_message(&root)
+            .unwrap()
+            .iter()
+            .all(|frame| transport::decode_window_sync(&frame[1..]).unwrap().0 != key_b.as_str())
+    );
+}
+
+#[test]
 fn subscribed_world_windows_only_request_followed_projects_and_backfill_on_follow() {
     let manager = test_manager();
     let (mut client, _rx) = test_client(&manager);

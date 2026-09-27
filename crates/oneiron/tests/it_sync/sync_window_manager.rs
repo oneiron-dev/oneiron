@@ -524,8 +524,13 @@ fn unload_refuses_with_outstanding_handles_and_keeps_delete_routing_live() {
         "live entities-map copy removed in the delete commit"
     );
     assert!(
-        vault.get(&id).unwrap().is_none(),
-        "LMDB purge ran (delete semantics untouched by the refusal)"
+        vault.get(&id).unwrap().is_none_or(|body| body.is_empty()),
+        "the payload must be unreadable after soft erase"
+    );
+    assert_eq!(
+        vault.get_raw(&id).unwrap().unwrap().len(),
+        25,
+        "current user-delete keeps only the 25-byte header shell"
     );
 
     // Still held → still refused: the refusal is a stable, pollable state.

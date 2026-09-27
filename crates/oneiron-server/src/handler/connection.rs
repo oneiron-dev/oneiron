@@ -590,9 +590,6 @@ fn window_broadcast_allowed(
         version if version == protocol::CHUNK_FULL_WINDOW_PROTOCOL_VERSION => {
             key.is_some_and(|key| state.receives_window(&key))
         }
-        version if version == protocol::LEGACY_FULL_WINDOW_PROTOCOL_VERSION => {
-            key.is_some_and(|key| key.world().is_none())
-        }
         _ => false,
     }
 }
@@ -669,7 +666,7 @@ mod window_broadcast_tests {
         let base = encode_window_sync(month.as_str(), window_sub_tags::UPDATE, b"base")
             .into_result()
             .unwrap();
-        assert!(window_broadcast_allowed(
+        assert!(!window_broadcast_allowed(
             protocol::LEGACY_FULL_WINDOW_PROTOCOL_VERSION,
             &device,
             &base

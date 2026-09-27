@@ -12,9 +12,9 @@ use super::constants::{
     POLICY_MIN_ENGINE_VERSION_KEY, POLICY_ON_BUDGET_EXHAUSTED_KEY, POLICY_OWNER_POLICY_ENABLED_KEY,
     POLICY_OWNER_POLICY_ROWS_KEY, POLICY_PACK_ID_KEY, POLICY_PACK_VERSION_KEY, POLICY_RULES_KEY,
     POLICY_SCHEMA_VERSION, POLICY_SCHEMA_VERSION_KEY, POLICY_SIGNATURES_KEY,
-    POLICY_SOURCE_TRUST_KEY, RULE_AXES_KEY, RULE_EXACT_KEY, RULE_PREFIX_KEY, SIGNATURE_ALG_KEY,
-    SIGNATURE_KEY_ID_KEY, SIGNATURE_SIG_KEY, SOURCE_TRUST_MAX_AUTO_SENSITIVITY_KEY,
-    SOURCE_TRUST_RECEIPTED_KEY, SOURCE_TRUST_WARNED_KEY,
+    POLICY_SOURCE_TRUST_KEY, POLICY_SYNC_WORLD_DEFAULT_KEY, RULE_AXES_KEY, RULE_EXACT_KEY,
+    RULE_PREFIX_KEY, SIGNATURE_ALG_KEY, SIGNATURE_KEY_ID_KEY, SIGNATURE_SIG_KEY,
+    SOURCE_TRUST_MAX_AUTO_SENSITIVITY_KEY, SOURCE_TRUST_RECEIPTED_KEY, SOURCE_TRUST_WARNED_KEY,
 };
 use super::definition_ceiling::first_party_connector_actor_ref;
 
@@ -364,6 +364,12 @@ pub(crate) fn default_policy_manifest() -> Vec<u8> {
         // The owner policy plane ships OFF with zero rows: a fresh vault
         // classifies nothing and calls no safeguard model until its owner
         // opts in and writes their own rows.
+        // Owner default for a fresh non-home machine; sync-all remains an
+        // explicit host request bounded by trusted world ceilings.
+        (
+            Value::from(POLICY_SYNC_WORLD_DEFAULT_KEY),
+            Value::from("opened"),
+        ),
         (
             Value::from(POLICY_OWNER_POLICY_ENABLED_KEY),
             Value::Boolean(false),

@@ -69,6 +69,8 @@ pub(super) fn validate(snapshot: &CanonicalSnapshot) -> Result<()> {
                     && entity.blob.len() == ENTITY_METADATA_HEADER_LEN
                     && EntityMetadataHeader::parse(&entity.blob).is_some_and(|header| {
                         header.entity_type == crate::registry::ENTITY_TYPE_CLAIM
+                            && crate::deletion::window_label_from_timestamp(header.learned_at)
+                                == snapshot.window[..7]
                     })
             })
             || !deleted.get(&row.id).is_some_and(|value| {
@@ -92,7 +94,7 @@ pub(super) fn validate(snapshot: &CanonicalSnapshot) -> Result<()> {
         }
         let body = &entity.blob[ENTITY_METADATA_HEADER_LEN..];
         if header.entity_type == crate::registry::ENTITY_TYPE_CLAIM && !body.is_empty() {
-            let claim = crate::claim::decode_claim_body(body, true)?;
+            let claim = crate::claim::validate_claim_body_and_decode(body, true)?;
             if claim.world != world
                 || (world.is_some()
                     && crate::deletion::window_label_from_timestamp(header.learned_at)

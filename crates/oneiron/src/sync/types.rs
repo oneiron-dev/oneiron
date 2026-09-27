@@ -227,7 +227,21 @@ pub(crate) fn retained_world_shell_belongs_to_window(
     if trusted {
         return Ok(true);
     }
-    Ok(tombstone_residence_in(vault, txn, id, key)? == TombstoneResidence::Match)
+    let mapped = tombstone_residence_in(vault, txn, id, key)?;
+    if mapped == TombstoneResidence::Wrong {
+        return Ok(false);
+    }
+    if mapped == TombstoneResidence::Match {
+        return Ok(true);
+    }
+    Ok(key.world().is_some_and(|world| {
+        crate::sync::loro_support::map_get_bytes(
+            &doc.get_map("retained_claim_worlds"),
+            &id.to_hex(),
+        )
+        .as_deref()
+            == Some(world.as_bytes().as_slice())
+    }))
 }
 
 /// An edge with a world endpoint lives in that world, alongside the shared
