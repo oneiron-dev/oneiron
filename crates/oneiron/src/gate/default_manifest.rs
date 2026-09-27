@@ -12,14 +12,15 @@ use super::constants::{
     POLICY_MIN_ENGINE_VERSION_KEY, POLICY_ON_BUDGET_EXHAUSTED_KEY, POLICY_OWNER_POLICY_ENABLED_KEY,
     POLICY_OWNER_POLICY_ROWS_KEY, POLICY_PACK_ID_KEY, POLICY_PACK_VERSION_KEY, POLICY_RULES_KEY,
     POLICY_SCHEMA_VERSION, POLICY_SCHEMA_VERSION_KEY, POLICY_SIGNATURES_KEY,
-    POLICY_SOURCE_TRUST_KEY, RULE_AXES_KEY, RULE_EXACT_KEY, RULE_PREFIX_KEY, SIGNATURE_ALG_KEY,
-    SIGNATURE_KEY_ID_KEY, SIGNATURE_SIG_KEY, SOURCE_TRUST_MAX_AUTO_SENSITIVITY_KEY,
-    SOURCE_TRUST_RECEIPTED_KEY, SOURCE_TRUST_WARNED_KEY,
+    POLICY_SOURCE_TRUST_KEY, POLICY_WEAVE_CORRECTION_POLICY_KEY, RULE_AXES_KEY, RULE_EXACT_KEY,
+    RULE_PREFIX_KEY, SIGNATURE_ALG_KEY, SIGNATURE_KEY_ID_KEY, SIGNATURE_SIG_KEY,
+    SOURCE_TRUST_MAX_AUTO_SENSITIVITY_KEY, SOURCE_TRUST_RECEIPTED_KEY, SOURCE_TRUST_WARNED_KEY,
 };
 use super::definition_ceiling::first_party_connector_actor_ref;
 use super::operational_policy::{
     LINEAR_MIRROR_KEY, LINEAR_SYNC_KEY, PRECEDENCE_KEY, WAVE_HANDOFF_KEY,
 };
+use super::pack_install_policy::{KEY as PACK_INSTALL_POLICY_KEY, PackInstallPolicy};
 
 const DEFAULT_POLICY_MANIFEST_ID: [u8; ENTITY_ID_LEN] = [0xD7; ENTITY_ID_LEN];
 pub(crate) const DEFAULT_POLICY_MANIFEST_TIMESTAMP: u64 = 0;
@@ -47,6 +48,18 @@ pub(crate) fn default_policy_manifest() -> Vec<u8> {
             Value::from("oneiron-default-policy"),
         ),
         (Value::from(POLICY_PACK_VERSION_KEY), Value::from("v1")),
+        (
+            Value::from(POLICY_WEAVE_CORRECTION_POLICY_KEY),
+            Value::Map(vec![
+                (Value::from("vault_max"), Value::from(10_000)),
+                (Value::from("default"), Value::from(10_000)),
+                (Value::from("holders"), Value::Map(Vec::new())),
+                (
+                    Value::from("precedence"),
+                    Value::from("holder_then_default"),
+                ),
+            ]),
+        ),
         (
             Value::from(POLICY_MIN_ENGINE_VERSION_KEY),
             Value::from(env!("CARGO_PKG_VERSION")),
@@ -409,6 +422,10 @@ pub(crate) fn default_policy_manifest() -> Vec<u8> {
                     ),
                 ),
             ]),
+        ),
+        (
+            Value::from(PACK_INSTALL_POLICY_KEY),
+            PackInstallPolicy::shipped().encode(),
         ),
         (
             Value::from(POLICY_ON_BUDGET_EXHAUSTED_KEY),

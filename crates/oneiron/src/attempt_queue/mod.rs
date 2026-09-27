@@ -16,6 +16,7 @@ mod cancel;
 mod completion;
 mod encoding;
 mod engine;
+mod executor;
 mod observe;
 mod ports;
 mod result;
