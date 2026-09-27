@@ -100,6 +100,8 @@ impl Vault {
                     content_hash: Some(base.content_hash),
                     manifest_ref: Some(manifest_hash),
                     manifest_ops,
+                    pptx_slide_creation_id_mints: Vec::new(),
+                    pptx_review_identities: Vec::new(),
                     anchors: Vec::new(),
                     reason: Some("stale_base".to_owned()),
                 };
@@ -108,7 +110,32 @@ impl Vault {
                     .put(wtxn, &key, &encode_settlement_record(&record)?)?;
                 return Ok((base, ReanchorSummary::default(), record, Some(stranded)));
             }
-            let version = self.append_blob_artifact_version_with_engine_in_txn(
+            // Replay every PPTX comment operation against the pinned in-transaction
+            // base. A public proposal/report cannot authorize XML changes on its own.
+            if proposal.format == OfficeFormat::Pptx {
+                let body = self
+                    .get_blob_artifact_in_txn(wtxn, artifact_id)?
+                    .ok_or(Error::EntityNotFound)?;
+                if OfficeFormat::from_media_type(&body.media_type)? != OfficeFormat::Pptx {
+                    return Err(Error::Artifact(ArtifactError::InvalidEditManifest(
+                        "PowerPoint comment proposal targets a non-PPTX artifact",
+                    )));
+                }
+                if proposal.base_version != Some(base.version) {
+                    return Err(Error::Artifact(ArtifactError::EditProposalStale));
+                }
+                let bytes = self
+                    .read_blob_artifact_version_in_txn(wtxn, artifact_id, base.version)?
+                    .ok_or(Error::EntityNotFound)?;
+                crate::edit_roundtrip::pptx::verify_comment_proposal(&bytes, proposal).map_err(
+                    |_| {
+                        Error::Artifact(ArtifactError::InvalidEditManifest(
+                            "PowerPoint comment proposal does not replay over its pinned base",
+                        ))
+                    },
+                )?;
+            }
+            let version = self.append_blob_artifact_version_with_engine_and_parent_in_txn(
                 wtxn,
                 artifact_id,
                 &proposal.new_bytes,
@@ -121,7 +148,19 @@ impl Vault {
                 actor,
                 occurred,
                 learned_at,
+                (proposal.format == OfficeFormat::Pptx).then_some(base.version),
             )?;
+            if proposal.format == OfficeFormat::Pptx {
+                self.apply_pptx_comment_annotations_in_txn(
+                    wtxn,
+                    artifact_id,
+                    base.version,
+                    proposal,
+                    actor,
+                    occurred,
+                    learned_at,
+                )?;
+            }
             // Replay the manifest anchor effects onto threads at the prior head.
             // A dedupe no-op append (identical bytes) advances no version, so
             // there is nothing to re-anchor.
@@ -150,6 +189,39 @@ impl Vault {
                 content_hash: Some(version.content_hash),
                 manifest_ref: Some(manifest_hash),
                 manifest_ops,
+                pptx_slide_creation_id_mints: proposal
+                    .manifest
+                    .ops
+                    .iter()
+                    .filter_map(|op| {
+                        if let crate::edit_roundtrip::EditOp::MintPptxSlideCreationId {
+                            slide,
+                            creation_id,
+                        } = op
+                        {
+                            Some((*slide, *creation_id))
+                        } else {
+                            None
+                        }
+                    })
+                    .collect(),
+                pptx_review_identities: proposal
+                    .manifest
+                    .ops
+                    .iter()
+                    .filter_map(|op| {
+                        let crate::edit_roundtrip::EditOp::PptxComment { patch } = op else {
+                            return None;
+                        };
+                        Some(super::records::PptxReviewIdentity {
+                            thread_id: patch.thread_id,
+                            asked_by: patch.asked_by,
+                            answered_by: patch.answered_by,
+                            export_author_guid: patch.author.guid.clone(),
+                            export_author_name: patch.author.name.clone(),
+                        })
+                    })
+                    .collect(),
                 anchors: settled_anchors_from_summary(&reanchor),
                 reason: None,
             };
@@ -200,6 +272,8 @@ impl Vault {
             content_hash: None,
             manifest_ref: None,
             manifest_ops: 0,
+            pptx_slide_creation_id_mints: Vec::new(),
+            pptx_review_identities: Vec::new(),
             anchors: Vec::new(),
             reason: (!reason.is_empty()).then(|| reason.to_owned()),
         };
@@ -372,11 +446,23 @@ impl Vault {
                 "recalculated proposal must name its engine and version",
             )));
         }
-        // The op vocabulary and re-anchor replay are spreadsheet-specific, the
-        // same gate ARTL-3 applies.
-        if !matches!(proposal.format, OfficeFormat::Xlsx) {
+        // The spreadsheet door cannot settle a disguised PowerPoint manifest.
+        if proposal.format == OfficeFormat::Xlsx
+            && proposal.manifest.ops.iter().any(|op| {
+                matches!(
+                    op,
+                    crate::edit_roundtrip::EditOp::PptxComment { .. }
+                        | crate::edit_roundtrip::EditOp::MintPptxSlideCreationId { .. }
+                )
+            })
+        {
             return Err(Error::Artifact(ArtifactError::InvalidEditManifest(
-                "settle supports only xlsx proposals; docx and pptx are not yet supported",
+                "PowerPoint operations require a verified PPTX comment proposal",
+            )));
+        }
+        if !matches!(proposal.format, OfficeFormat::Xlsx | OfficeFormat::Pptx) {
+            return Err(Error::Artifact(ArtifactError::InvalidEditManifest(
+                "settle supports xlsx and verified pptx comment proposals; docx is not supported",
             )));
         }
         Ok(())
