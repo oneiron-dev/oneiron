@@ -617,9 +617,6 @@ pub(in crate::batch) fn apply_put(
         new_skill_record.as_ref(),
     )?;
     stage_entity_body_row(store, wtxn, &id, entity_type, occurred, learned_at, data)?;
-    if entity_type == crate::registry::ENTITY_TYPE_TURN {
-        crate::conversation_dag::invalidate_thread_meta_for_turn_put(store, wtxn, id)?;
-    }
     // Count authenticated local Proposed submissions, including changed bodies
     // under an actor-owned claim ID. An exact same-body retry is not new.
     // Replays and envelope-less system puts cannot be assigned to an actor.
@@ -650,6 +647,7 @@ pub(in crate::batch) fn apply_put(
     }
     if entity_type == crate::registry::ENTITY_TYPE_TURN {
         crate::conversation_dag::stage_session_carrier(store, wtxn, id, data)?;
+        crate::conversation_dag::invalidate_thread_meta_for_turn_put(store, wtxn, id)?;
     }
     crate::secret_custody::stage_replicated_name_index(store, wtxn, &id, custody_name_index)?;
     if let Some(record) = new_skill_record.as_ref() {
