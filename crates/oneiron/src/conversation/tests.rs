@@ -175,7 +175,12 @@ fn a_conversation_cannot_be_created_over_a_deleted_shell() {
 #[test]
 fn hard_deleted_empty_room_id_cannot_be_recreated() {
     let (_dir, vault, actor, room, _bob) = fixture();
-    vault.delete_entity(&room).unwrap();
+    vault
+        .delete_entity_with_options(
+            &room,
+            crate::deletion::DeleteEntityOptions { purge: true },
+        )
+        .unwrap();
     let err = vault
         .create_conversation(room, &ConversationBody::default(), actor, 2)
         .unwrap_err();
