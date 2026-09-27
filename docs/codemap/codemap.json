@@ -32493,13 +32493,21 @@
      "surface": {}
     },
     {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/tests/identity_topology_delete_interlock.rs",
+     "purpose": "Deletion publication owns the topology interlock through purge",
+     "surface": {}
+    },
+    {
      "bucket": "m",
      "kind": "test",
      "notable": [],
      "path": "src/tests/mod.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 19
+      "crate-vis": 20
      }
     },
     {
@@ -35840,7 +35848,7 @@
      "purpose": "—"
     },
     "tests": {
-     "files": 21,
+     "files": 22,
      "impl_vault": false,
      "largest_src_bucket": "—",
      "layout": "dir",
@@ -35941,7 +35949,7 @@
    "over_bar": 10,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
    "source_files": 2122,
-   "test_files": 722
+   "test_files": 723
   },
   "oneiron-android": {
    "files": [

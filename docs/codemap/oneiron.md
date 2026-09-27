@@ -2649,7 +2649,8 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/tests/embedding.rs` | test | L | — | — | Embedding-model identity gates, HNSW compat records, embedding-space migration |
 | `src/tests/entity_edge_kinds.rs` | test | L | — | — | Entity/edge identity contracts: edge kinds, value layouts, weights, type prefixes |
 | `src/tests/graph_topology.rs` | test | L | — | — | Graph reads: type index, peers, hierarchy, cycles, child-of, learned-range scans |
-| `src/tests/mod.rs` | test | m | 19 crate-vis | — | — |
+| `src/tests/identity_topology_delete_interlock.rs` | test | s | — | — | Deletion publication owns the topology interlock through purge |
+| `src/tests/mod.rs` | test | m | 20 crate-vis | — | — |
 | `src/tests/open_gates.rs` | test | L | — | — | Vault open path: LMDB env exclusivity, manifest set, doctor, ABI gate matrix |
 | `src/tests/prov_deletes.rs` | test | L | — | — | Provenance-claim deletes (downgrade/restamp) plus model substrate and actor class |
 | `src/tests/reput_phonetic.rs` | test | L | — | — | Re-put reindexing, phonetic/forward-code index, delete deindexing |
