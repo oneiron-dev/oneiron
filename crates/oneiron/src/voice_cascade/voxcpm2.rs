@@ -78,7 +78,9 @@ impl RenderTarget {
     /// Hosts must recheck at playback, not only on initial PCM admission.
     #[must_use]
     pub fn is_current_in(&self, vault: &Vault) -> bool {
-        self.with_current(vault, |_| Ok(())).is_ok()
+        vault
+            .owner_voice_ref_current_now(&self.source_pack, &self.reference_revision)
+            .unwrap_or(false)
     }
 }
 
@@ -217,17 +219,9 @@ impl<Q: VoxCpm2Queue> VoxCpm2Adapter<Q> {
 
     fn boundary(&mut self, generation: GenerationEpoch, end: bool) -> Result<()> {
         if !self.buffer.is_empty() {
-            if !self
-                .target
-                .as_ref()
-                .is_some_and(|target| target.is_current_in(&self.vault))
-            {
-                self.cancelled = true;
-                self.buffer.clear();
-                self.pending.clear();
-                let _ = self.send(generation, VoxCpm2Operation::Cancel);
-                return Err(invalid("owner voice reference withdrawn or replaced"));
-            }
+            // Never wait on the ref guard here: GPU work can hold a read lock
+            // while a withdrawal waits to write. The worker checks the exact
+            // revision at dispatch; returned PCM is checked before playback.
             if self.pending.len() >= self.limits.max_queued_renders as usize {
                 return Err(invalid("responses must drain"));
             }

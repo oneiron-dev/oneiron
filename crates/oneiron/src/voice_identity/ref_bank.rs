@@ -188,6 +188,27 @@ impl Vault {
         })
     }
 
+    /// Best-effort, nonblocking output check. A waiting withdrawal writer makes
+    /// a new read lock unavailable; refuse PCM rather than block the cascade.
+    pub(crate) fn owner_voice_ref_current_now(&self, id: &str, revision: &str) -> Result<bool> {
+        let _guard = match self.voice_ref_guard.try_read() {
+            Ok(guard) => guard,
+            Err(std::sync::TryLockError::WouldBlock) => return Ok(false),
+            Err(std::sync::TryLockError::Poisoned(_)) => {
+                return Err(Error::InvariantViolation("voice reference guard poisoned"));
+            }
+        };
+        let key = key(id)?;
+        let revision_key = [REVISION_PREFIX, id.as_bytes()].concat();
+        let txn = self.store.env.read_txn()?;
+        Ok(self.store.vault_meta.get(&txn, &key)?.is_some()
+            && self
+                .store
+                .vault_meta
+                .get(&txn, &revision_key)?
+                .is_some_and(|current| current.as_ref() == revision.as_bytes()))
+    }
+
     /// Read-guarded dispatch: a committed withdrawal wins before any later upload.
     /// The guard spans only this vault's voice-ref upload/validation, not its
     /// ordinary reads or writes. A new insertion never inherits an old revision.

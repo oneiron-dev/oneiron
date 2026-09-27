@@ -66,21 +66,25 @@ impl VoiceServingLimits {
             max_header_bytes: v[7],
         }
     }
-    /// Distinct substrate ceilings guard memory/wire arithmetic; actual
-    /// operational values come only from resolved manifest rows.
+    /// Structural/wire checks only. Operational limits and deadlines are
+    /// authored by the trusted manifest, with shipped defaults and narrowing.
     pub(crate) fn valid(self) -> bool {
-        let v = self.values();
-        v.iter().all(|n| *n > 0)
-            && self.max_text_bytes <= 64 * 1024
-            && self.max_pcm_bytes <= 32 * 1024 * 1024
+        self.values().iter().all(|n| *n > 0)
+            && self.max_ref_bytes >= 12
             && self.max_pcm_bytes.is_multiple_of(2)
-            && (12..=16 * 1024 * 1024).contains(&self.max_ref_bytes)
-            && self.max_queued_renders <= 64
-            && self.max_inflight_uploads <= 64
-            && self.upload_read_deadline_ms <= 120_000
-            && self.http_deadline_ms <= 120_000
+            && self.max_header_bytes <= u64::from(u32::MAX) // 4-byte wire header
+            && self.max_text_bytes <= usize::MAX as u64
+            && self.max_pcm_bytes <= usize::MAX as u64
+            && self.max_ref_bytes <= usize::MAX as u64
+            && self.max_queued_renders <= usize::MAX as u64
+            && self.max_inflight_uploads <= usize::MAX as u64
+            && self.max_ref_bytes.checked_add(self.max_header_bytes)
+                .and_then(|n| n.checked_add(4))
+                .is_some_and(|n| n <= usize::MAX as u64)
+            && self.max_pcm_bytes.checked_add(self.max_header_bytes)
+                .and_then(|n| n.checked_add(4))
+                .is_some_and(|n| n <= usize::MAX as u64)
             && self.upload_read_deadline_ms <= self.http_deadline_ms
-            && self.max_header_bytes <= 32_768
     }
     pub(crate) fn narrow(self, other: Self) -> Self {
         let a = self.values();

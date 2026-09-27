@@ -83,6 +83,8 @@ impl VoxCpm2HttpQueue {
         }
         let vault_limits = vault.voice_serving_limits(None)?;
         let client = Client::builder()
+            // A loopback URL is not a loopback destination if env proxies apply.
+            .no_proxy()
             .redirect(reqwest::redirect::Policy::none())
             .timeout(Duration::from_millis(vault_limits.http_deadline_ms))
             .build()

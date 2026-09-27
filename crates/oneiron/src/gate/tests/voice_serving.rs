@@ -96,3 +96,62 @@ fn widening_holder_and_invalid_precedence_fail_closed() -> Result<()> {
     assert!(policy.voice_serving_limits(None).is_err());
     Ok(())
 }
+
+#[test]
+fn manifest_can_authorize_a_longer_parent_deadline_but_not_holder_widening() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    let holder = test_id(0x44);
+    let mut row = serving(8192, None);
+    let Value::Map(entries) = &mut row else {
+        unreachable!()
+    };
+    let (_, Value::Map(vault_limits)) = entries
+        .iter_mut()
+        .find(|(key, _)| key.as_str() == Some("vault"))
+        .unwrap()
+    else {
+        unreachable!()
+    };
+    vault_limits
+        .iter_mut()
+        .find(|(key, _)| key.as_str() == Some("http_deadline_ms"))
+        .unwrap()
+        .1 = Value::from(120_001);
+    put(&vault, 0x30, row.clone())?;
+    assert_eq!(
+        resolve(&vault)?
+            .voice_serving_limits(None)?
+            .http_deadline_ms,
+        120_001
+    );
+    let Value::Map(entries) = &mut row else {
+        unreachable!()
+    };
+    let (_, Value::Map(vault_limits)) = entries
+        .iter_mut()
+        .find(|(key, _)| key.as_str() == Some("vault"))
+        .unwrap()
+    else {
+        unreachable!()
+    };
+    let mut holder_limits = Value::Map(vault_limits.clone());
+    let Value::Map(fields) = &mut holder_limits else {
+        unreachable!()
+    };
+    fields
+        .iter_mut()
+        .find(|(key, _)| key.as_str() == Some("http_deadline_ms"))
+        .unwrap()
+        .1 = Value::from(120_002);
+    entries
+        .iter_mut()
+        .find(|(key, _)| key.as_str() == Some("holders"))
+        .unwrap()
+        .1 = Value::Array(vec![Value::Map(vec![
+        (Value::from("holder"), Value::from(holder.to_hex())),
+        (Value::from("limits"), holder_limits),
+    ])]);
+    put(&vault, 0x30, row)?;
+    assert!(resolve(&vault)?.voice_serving_limits(Some(holder)).is_err());
+    Ok(())
+}

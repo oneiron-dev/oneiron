@@ -319,3 +319,44 @@ fn loopback_worker_queue_roundtrips_a_banked_ref_and_pcm() -> Result<()> {
     assert_eq!(target.warm.model, MODEL);
     Ok(())
 }
+
+#[test]
+fn loopback_worker_ignores_environment_proxies() -> Result<()> {
+    // Run the real ready+render wire case in a child process: environment
+    // mutation in this parallel test binary would race sibling tests.
+    let exe = std::env::current_exe()?;
+    let mut child = std::process::Command::new(exe)
+        .args([
+            "--exact",
+            "loopback_worker_queue_roundtrips_a_banked_ref_and_pcm",
+        ])
+        .env("HTTP_PROXY", "http://127.0.0.1:1")
+        .env("http_proxy", "http://127.0.0.1:1")
+        .env("ALL_PROXY", "http://127.0.0.1:1")
+        .env("all_proxy", "http://127.0.0.1:1")
+        .env("NO_PROXY", "")
+        .env("no_proxy", "")
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()?;
+    let deadline = Instant::now() + Duration::from_secs(10);
+    loop {
+        if child.try_wait()?.is_some() {
+            break;
+        }
+        if Instant::now() >= deadline {
+            child.kill()?;
+            let _ = child.wait();
+            panic!("proxy-negative loopback wire test did not finish");
+        }
+        thread::yield_now();
+    }
+    let result = child.wait_with_output()?;
+    assert!(
+        result.status.success(),
+        "loopback request took the proxy path: {} {}",
+        String::from_utf8_lossy(&result.stdout),
+        String::from_utf8_lossy(&result.stderr)
+    );
+    Ok(())
+}

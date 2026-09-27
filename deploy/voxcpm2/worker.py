@@ -20,14 +20,22 @@ MODEL_ID = "openbmb/VoxCPM2"
 FIELDS = ("max_text_bytes", "max_pcm_bytes", "max_ref_bytes", "max_queued_renders",
           "max_inflight_uploads", "upload_read_deadline_ms", "http_deadline_ms",
           "max_header_bytes")
-# Format/memory safety ceilings, distinct from the deployment's operational row.
-SAFETY = (65536, 32 * 1024 * 1024, 16 * 1024 * 1024, 64, 64, 120000, 120000, 32768)
+# MessagePack u64/4-byte framing and PCM16 are structural; deployment policy
+# supplies all behavior-deciding waits and budgets, including larger values.
+WIRE_U64 = (1 << 64) - 1
+WIRE_USIZE = (1 << (8 * struct.calcsize("P"))) - 1
 
 
 def validate_limits(limits):
     if (not isinstance(limits, dict) or set(limits) != set(FIELDS)
-            or any(type(limits[k]) is not int or not 0 < limits[k] <= max_value
-                   for k, max_value in zip(FIELDS, SAFETY))
+            or any(type(limits[k]) is not int or not 0 < limits[k] <= WIRE_U64
+                   for k in FIELDS)
+            or any(limits[k] > WIRE_USIZE for k in (
+                "max_text_bytes", "max_pcm_bytes", "max_ref_bytes",
+                "max_queued_renders", "max_inflight_uploads"))
+            or limits["max_header_bytes"] > (1 << 32) - 1
+            or limits["max_ref_bytes"] + limits["max_header_bytes"] + 4 > WIRE_USIZE
+            or limits["max_pcm_bytes"] + limits["max_header_bytes"] + 4 > WIRE_USIZE
             or limits["max_pcm_bytes"] % 2
             or limits["max_ref_bytes"] < 12
             or limits["upload_read_deadline_ms"] > limits["http_deadline_ms"]):
@@ -43,7 +51,7 @@ def load_policy(path):
     return validate_limits(data["vault"])
 
 
-def unpack(body, max_header=32768):
+def unpack(body, max_header=32768, *, include_header_length=False):
     if len(body) < 4:
         raise ValueError("missing metadata")
     n = struct.unpack("!I", body[:4])[0]
@@ -52,6 +60,8 @@ def unpack(body, max_header=32768):
     meta = json.loads(body[4:4+n])
     if not isinstance(meta, dict):
         raise ValueError("invalid metadata")
+    if include_header_length:
+        return meta, body[4+n:], n
     return meta, body[4+n:]
 
 
@@ -81,7 +91,7 @@ class Worker:
                 "boot_id": self.boot_id, "sample_rate": self.sample_rate,
                 "limits": self.limits}
 
-    def render(self, meta, wav):
+    def render(self, meta, wav, header_bytes):
         target = meta.get("target")
         if not isinstance(target, dict) or target.get("warm") != self.target():
             raise ValueError("stale or mismatched warm target")
@@ -91,6 +101,11 @@ class Worker:
         effective = validate_limits(target.get("limits"))
         if any(effective[k] > self.limits[k] for k in FIELDS):
             raise ValueError("request widens worker policy")
+        if header_bytes > effective["max_header_bytes"]:
+            raise ValueError("request metadata exceeds narrowed policy")
+        response_meta = {"target": target, "sample_rate": self.sample_rate, "channels": 1}
+        if len(json.dumps(response_meta, separators=(",", ":")).encode()) > effective["max_header_bytes"]:
+            raise ValueError("response metadata exceeds narrowed policy")
         text = meta.get("text")
         transcript = meta.get("transcript")
         if (not isinstance(text, str) or not text.strip()
@@ -116,7 +131,7 @@ class Worker:
         if values.size * 2 > effective["max_pcm_bytes"]:
             raise ValueError("render exceeded policy PCM budget")
         pcm = (np.clip(values, -1.0, 1.0) * 32767).astype("<i2").tobytes()
-        return pack({"target": target, "sample_rate": self.sample_rate, "channels": 1}, pcm)
+        return pack(response_meta, pcm)
 
 
 class BoundedHTTPServer(ThreadingHTTPServer):
@@ -124,14 +139,44 @@ class BoundedHTTPServer(ThreadingHTTPServer):
 
     def __init__(self, address, handler, upload_deadline_ms):
         self.upload_deadline_ms = upload_deadline_ms
+        self._upload_lock = threading.Lock()
+        self._uploads = {}
         super().__init__(address, handler)
 
     def get_request(self):
         sock, addr = super().get_request()
-        # Includes incomplete HTTP headers; never let an idle client hold a
-        # handler thread forever before reaching do_POST admission.
-        sock.settimeout(self.upload_deadline_ms / 1000)
+        duration = self.upload_deadline_ms / 1000
+        sock.settimeout(duration)
+        deadline = time.monotonic() + duration
+        def expire():
+            try:
+                # SHUT_RD unblocks a buffered readline/read1 already inside
+                # parsing headers or reading a dribbled body.
+                sock.shutdown(socket.SHUT_RD)
+            except OSError:
+                pass
+        timer = threading.Timer(duration, expire)
+        timer.daemon = True
+        with self._upload_lock:
+            self._uploads[id(sock)] = (deadline, timer)
+        timer.start()
         return sock, addr
+
+    def upload_deadline(self, sock):
+        with self._upload_lock:
+            return self._uploads[id(sock)][0]
+
+    def disarm_upload(self, sock):
+        with self._upload_lock:
+            entry = self._uploads.pop(id(sock), None)
+        if entry is not None:
+            entry[1].cancel()
+
+    def finish_request(self, request, client_address):
+        try:
+            super().finish_request(request, client_address)
+        finally:
+            self.disarm_upload(request)
 
 
 def handler_for(worker):
@@ -144,6 +189,7 @@ def handler_for(worker):
             return False
 
         def do_GET(self):
+            self.server.disarm_upload(self.connection)
             if not self.authorized():
                 return
             if self.path != "/ready":
@@ -161,7 +207,7 @@ def handler_for(worker):
             max_body = worker.limits["max_ref_bytes"] + worker.limits["max_header_bytes"] + 4
             if not 5 <= n <= max_body:
                 raise ValueError("request size")
-            deadline = time.monotonic() + worker.limits["upload_read_deadline_ms"] / 1000
+            deadline = self.server.upload_deadline(self.connection)
             parts = []
             remaining = n
             while remaining:
@@ -169,12 +215,15 @@ def handler_for(worker):
                 if left <= 0:
                     raise TimeoutError("upload deadline")
                 self.connection.settimeout(left)
-                piece = self.rfile.read(min(65536, remaining))
+                piece = self.rfile.read1(min(65536, remaining))
+                if time.monotonic() >= deadline:
+                    raise TimeoutError("upload deadline")
                 if not piece:
                     raise ValueError("incomplete upload")
                 parts.append(piece)
                 remaining -= len(piece)
-            return unpack(b"".join(parts), worker.limits["max_header_bytes"])
+            return unpack(b"".join(parts), worker.limits["max_header_bytes"],
+                          include_header_length=True)
 
         def do_POST(self):
             if not self.authorized():
@@ -187,8 +236,9 @@ def handler_for(worker):
                 return
             try:
                 try:
-                    meta, wav = self.read_body()
-                    data = worker.render(meta, wav)
+                    meta, wav, header_bytes = self.read_body()
+                    self.server.disarm_upload(self.connection)
+                    data = worker.render(meta, wav, header_bytes)
                 except (TimeoutError, socket.timeout):
                     self.send_error(408, "upload deadline exceeded")
                     return

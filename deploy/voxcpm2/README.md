@@ -10,7 +10,8 @@ must keep one worker alive across sessions (and restart it if it dies).
 paths and provision the CUDA user, wheel environment, and 0600 environment
 file before enabling it. It restarts on failure and exposes readiness only
 after model load. Do not
-expose the listener publicly: the body carries a private banked WAV. Use a
+expose the listener publicly: the Rust client disables environment proxies so
+an operator's HTTP_PROXY cannot redirect credentials or private WAVs; the body carries a private banked WAV. Use a
 32+-byte random `VOXCPM_TOKEN` shared with the host adapter; keep the credential
 out of logs and repositories. Choose an owner-only runtime directory.
 
@@ -63,5 +64,9 @@ worker restart/reconnection to make `/ready` advertise matching limits; a
 worker with narrower limits rejects a host whose manifest was widened. This
 file is deployment data, not an invitation to publish raw references.
 Upload admission is shared across all sessions and occurs before reading body
-bytes. A bounded upload deadline also covers incomplete uploads; `/ready`
-remains available when all render slots are occupied.
+bytes. A monotonic elapsed deadline begins at socket accept, covering slow
+headers and continuous as well as idle partial bodies; `/ready` remains
+available when all render slots are occupied. The only compiled limit checks
+are PCM16 alignment, 4-byte metadata framing, integer/host-width
+representability, and the relation between read and HTTP deadlines. All
+operational ceiling values are manifest data, not hidden second defaults.

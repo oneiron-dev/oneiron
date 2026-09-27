@@ -83,6 +83,7 @@ class WorkerTest(unittest.TestCase):
         self.server.server_close()
         self.thread.join(timeout=2)
         self.limits = limits
+        self.model = model
         self.worker = Worker(model, "pinned-checkpoint", self.tmp.name, "t" * 32, limits)
         self.server = BoundedHTTPServer(("127.0.0.1", 0), handler_for(self.worker),
                                         limits["upload_read_deadline_ms"])
@@ -111,6 +112,86 @@ class WorkerTest(unittest.TestCase):
         self.assertEqual(self.request("POST", "/render", pack(
             {"target": target, "text": "hi", "transcript": "ref"},
             b"RIFF0000WAVEfmt "))[0], 400)
+
+    @staticmethod
+    def _metadata_straddles(target, limit):
+        target["limits"] = {**target["limits"], "max_header_bytes": limit}
+        request = {"target": target, "text": "a", "transcript": "a"}
+        response = {"target": target, "sample_rate": 48000, "channels": 1}
+        return (len(json.dumps(request, separators=(",", ":")).encode()) <= limit <
+                len(json.dumps(response, separators=(",", ":")).encode()))
+
+    def test_large_manifest_deadline_and_narrowed_request_metadata(self):
+        from worker import validate_limits
+        parent = {**self.limits, "http_deadline_ms": 120001}
+        self.assertEqual(validate_limits(parent)["http_deadline_ms"], 120001)
+        self.replace_worker(FakeModel(), parent)
+        self.assertEqual(self.request("GET", "/ready")[0], 200)
+        self.assertEqual(self.request("POST", "/render", pack(
+            {"target": self.target(), "text": "hi", "transcript": "ref"},
+            b"RIFF0000WAVEfmt "))[0], 200)
+        self.model.calls.clear()
+        # A narrower request is authoritative even though deployment permits
+        # more metadata; this previously rendered despite its 1024-byte row.
+        target = {**self.target(), "limits": {**self.limits, "max_header_bytes": 1024}}
+        body = pack({"target": target, "text": "hi", "transcript": "r" * 1400},
+                    b"RIFF0000WAVEfmt ")
+        self.assertGreater(int.from_bytes(body[:4], "big"), 1024)
+        self.assertEqual(self.request("POST", "/render", body)[0], 400)
+        self.assertEqual(self.model.calls, [])
+        # A caller can also narrow below the response metadata footprint.
+        target = self.target()
+        request = {"target": target, "text": "a", "transcript": "a"}
+        response = {"target": target, "sample_rate": 48000, "channels": 1}
+        req_size = len(json.dumps(request, separators=(",", ":")).encode())
+        resp_size = len(json.dumps(response, separators=(",", ":")).encode())
+        narrow = next((limit for limit in range(req_size - 16, resp_size + 16)
+                       if self._metadata_straddles(target, limit)), None)
+        self.assertIsNotNone(narrow, "fixture must straddle response header size")
+        target["limits"]["max_header_bytes"] = narrow
+        self.assertEqual(self.request("POST", "/render", pack(
+            {"target": target, "text": "a", "transcript": "a"},
+            b"RIFF0000WAVEfmt "))[0], 400)
+        self.assertEqual(self.model.calls, [])
+
+    def test_continuous_upload_and_incomplete_headers_obey_elapsed_deadline(self):
+        limits = {**self.limits, "upload_read_deadline_ms": 250}
+        self.replace_worker(FakeModel(), limits)
+        body = pack({"target": self.target(), "text": "hi", "transcript": "ref"},
+                    b"RIFF0000WAVEfmt ")
+        sock = socket.create_connection(("127.0.0.1", self.server.server_port), 2)
+        sock.settimeout(2)
+        sock.sendall(("POST /render HTTP/1.1\r\nHost: localhost\r\n"
+                      "Authorization: Bearer " + "t" * 32 +
+                      f"\r\nContent-Length: {len(body)}\r\n\r\n").encode())
+        # Finish later than the absolute deadline without ever being idle for
+        # a full 250 ms. Buffered `read()` used to accept this as HTTP 200.
+        for offset in range(0, len(body), 50):
+            try:
+                sock.sendall(body[offset:offset + 50])
+            except (BrokenPipeError, ConnectionResetError):
+                break
+            threading.Event().wait(0.075)
+        self.assertIn(b"408", sock.recv(4096))
+        sock.close()
+        self.assertEqual(self.worker.model.calls, [])
+        # Absolute cutoff also applies while headers have not completed.
+        sock = socket.create_connection(("127.0.0.1", self.server.server_port), 2)
+        sock.settimeout(2)
+        sock.sendall(("POST /render HTTP/1.1\r\nHost: localhost\r\n"
+                      "Authorization: Bearer " + "t" * 32 +
+                      f"\r\nContent-Length: {len(body)}\r\nX-Partial: ").encode())
+        threading.Event().wait(0.35)
+        try:
+            sock.sendall(b"done\r\n\r\n" + body)
+            self.assertNotIn(b"HTTP/1.0 200", sock.recv(4096))
+        except (BrokenPipeError, ConnectionResetError):
+            pass
+        finally:
+            sock.close()
+        self.assertEqual(self.worker.model.calls, [])
+        self.assertEqual(self.request("GET", "/ready")[0], 200)
+        self.assertEqual(self.request("POST", "/render", body)[0], 200)
 
     def test_overload_and_incomplete_upload_release_admission(self):
         class BlockingModel(FakeModel):
