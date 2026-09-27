@@ -376,7 +376,7 @@ fn queued_policy_push_enters_the_existing_human_followup_ladder() -> TestResult 
     assert_eq!(queued.len(), 1);
     assert_eq!(queued[0].receipt_id, receipt.receipt_id);
     assert!(queued[0].followup_task.is_none());
-    assert_eq!(vault.drive_policy_notification_queue(NOW + 1, 10)?, 1);
+    crate::human_task::run_human_followups_on_wake(&vault, NOW + 1)?;
     let linked = vault.policy_queued_notifications()?;
     let task_ref = EntityId::from_hex(linked[0].followup_task.as_deref().expect("follow-up task"))?;
     let cursor = human_followup_record(&vault, task_ref)?.expect("human follow-up cursor");
