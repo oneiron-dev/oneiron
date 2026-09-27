@@ -577,11 +577,7 @@ fn revocation_registry_key_is_namespaced_and_id_keyed() {
 }
 
 #[test]
-fn later_host_fork_revokes_cached_owner_auth_and_its_session_jti() {
-    use oneiron::authority::{
-        AUTHORITY_LOG_SCHEMA_VERSION, AuthorityLogEntry, AuthorityOp, AuthoritySignature,
-        AuthoritySignatureSuite, authority_transcript,
-    };
+fn revoked_host_root_closes_cached_owner_auth_and_its_session_jti() {
     let fixture = Fixture::new();
     let auth = CoreAuth::from_verified(
         fixture
@@ -591,39 +587,11 @@ fn later_host_fork_revokes_cached_owner_auth_and_its_session_jti() {
         true,
     )
     .unwrap();
-    let parent = fixture.vault.authority_fold().unwrap().slips.mints[&fixture.root.claims.slip_id]
-        .entry_hash;
-    let signing = SigningKey::from_bytes(&blake3::derive_key(
-        "oneiron/host-authority-signing/v2",
-        SECRET.as_bytes(),
-    ));
-    let at = oneiron::TimeRange {
-        start: fixture.root.claims.issued_at,
-        end: fixture.root.claims.issued_at,
-    };
-    let mut rows = Vec::new();
-    for id in [[71; 32], [72; 32]] {
-        let mut entry = AuthorityLogEntry {
-            schema_version: AUTHORITY_LOG_SCHEMA_VERSION,
-            vault_id: Some(fixture.root.claims.vault_id),
-            seq: 2,
-            parent_hashes: vec![parent],
-            op: AuthorityOp::SlipRevoke { slip_id: id },
-            signer: AuthoritySignature {
-                suite: AuthoritySignatureSuite::Ed25519,
-                public_key: fixture.issuer.public_key(),
-                signature: vec![0; 64],
-            },
-            cosigns: Vec::new(),
-            ts: at.start,
-        };
-        entry.signer.signature = signing
-            .sign(&authority_transcript(&entry).unwrap())
-            .to_bytes()
-            .to_vec();
-        rows.push((entry, at, at.start));
-    }
-    fixture.vault.put_authority_log_entries(&rows).unwrap();
+    assert!(auth.credential_is_live(fixture.vault.as_ref()));
+    fixture
+        .vault
+        .revoke_capability_slip(&fixture.issuer, fixture.root.claims.slip_id)
+        .unwrap();
     assert!(!auth.credential_is_live(fixture.vault.as_ref()));
     assert!(is_revoked_or_unreadable(
         auth.jti().unwrap(),
