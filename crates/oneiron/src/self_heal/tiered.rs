@@ -74,11 +74,12 @@ pub struct ProposedDiagnostic {
     pub event: DiagnosticEvent,
 }
 
-fn propose(
+pub(super) fn propose(
     vault: &Vault,
     tier: ProposedTier,
     policy: &DetectorPolicy,
     runs: &[RetrievalRunRecord],
+    centroid: Option<([u8; 32], Vec<EntityId>)>,
 ) -> Result<Option<ProposedDiagnostic>> {
     let Some(last) = runs.last() else {
         return Ok(None);
@@ -97,6 +98,7 @@ fn propose(
     }
     evidence.sort();
     evidence.dedup();
+    let (digest, evidence) = centroid.unwrap_or((*digest.finalize().as_bytes(), evidence));
     let event = DiagnosticEvent {
         detector_id: format!("{}.{}", tier.token(), policy.family),
         event_class: policy.class,
@@ -108,7 +110,7 @@ fn propose(
         actual: Value::from(true),
         delta: Value::from(1),
         replay: DiagnosticReplayCoordinate {
-            content_hash: *digest.finalize().as_bytes(),
+            content_hash: digest,
             run_ref: Some(last.run_id.to_hex()),
             checkpoint_ref: None,
         },
@@ -127,7 +129,11 @@ fn propose(
     }))
 }
 
-fn valid_runs(vault: &Vault, runs: &[RetrievalRunRecord], consecutive: usize) -> Result<()> {
+pub(super) fn valid_runs(
+    vault: &Vault,
+    runs: &[RetrievalRunRecord],
+    consecutive: usize,
+) -> Result<()> {
     if runs.len() > 64
         || runs.len() < consecutive
         || runs.windows(2).any(|w| {
@@ -150,71 +156,9 @@ fn valid_runs(vault: &Vault, runs: &[RetrievalRunRecord], consecutive: usize) ->
 }
 
 impl Vault {
-    /// T2a reads vectors already attached to vault entities. Invalid/missing
-    /// vectors silence this detector; it never writes or trains an index.
-    pub fn classify_centroid(
-        &self,
-        policy: &DetectorPolicy,
-        labeled: &[EntityId],
-        candidate: EntityId,
-        run: &RetrievalRunRecord,
-        min_similarity: f32,
-    ) -> Result<Option<ProposedDiagnostic>> {
-        policy.validate()?;
-        valid_runs(self, std::slice::from_ref(run), 1)?;
-        if labeled.is_empty()
-            || labeled.len() > 1024
-            || !min_similarity.is_finite()
-            || !(-1.0..=1.0).contains(&min_similarity)
-        {
-            return Err(Error::InvalidConfig("invalid centroid detector".into()));
-        }
-        if !run.result_ids.iter().any(|id| id == candidate.as_bytes()) {
-            return Err(Error::InvalidConfig(
-                "candidate is not in retrieval run".into(),
-            ));
-        }
-        let Some(vector) = self.get_vector(&candidate)? else {
-            return Ok(None);
-        };
-        let mut centroid = vec![0_f64; vector.len()];
-        if centroid.is_empty() || vector.iter().any(|x| !x.is_finite()) {
-            return Ok(None);
-        }
-        for id in labeled {
-            let Some(v) = self.get_vector(id)? else {
-                return Ok(None);
-            };
-            if v.len() != centroid.len() || v.iter().any(|x| !x.is_finite()) {
-                return Ok(None);
-            }
-            for (sum, x) in centroid.iter_mut().zip(v) {
-                *sum += f64::from(x);
-            }
-        }
-        let dot: f64 = centroid
-            .iter()
-            .zip(&vector)
-            .map(|(a, b)| *a * f64::from(*b))
-            .sum();
-        let cn: f64 = centroid.iter().map(|x| x * x).sum();
-        let vn: f64 = vector.iter().map(|x| f64::from(*x) * f64::from(*x)).sum();
-        if cn <= 0.0 || vn <= 0.0 || !cn.is_finite() || !vn.is_finite() {
-            return Ok(None);
-        }
-        let similarity = dot / (cn.sqrt() * vn.sqrt());
-        if !similarity.is_finite() || similarity < f64::from(min_similarity) {
-            return Ok(None);
-        }
-        propose(
-            self,
-            ProposedTier::Centroid,
-            policy,
-            std::slice::from_ref(run),
-        )
-    }
-
     /// T2b spends model calls after the cheaper centroid rung did not match.
+    /// Supply a strictly oldest-first telemetry window; `retrieval_runs` returns
+    /// newest-first and its caller must reverse that bounded result first.
     pub fn classify_prompt(
         &self,
         policy: &DetectorPolicy,
@@ -254,10 +198,11 @@ impl Vault {
             ProposedTier::PromptClassifier,
             policy,
             &runs[runs.len() - streak..],
+            None,
         )
     }
 
-    /// T3 receives the whole bounded trace window and can find open anomalies.
+    /// T3 receives an oldest-first bounded trace window and finds open anomalies.
     pub fn judge_retrieval_trace(
         &self,
         policy: &DetectorPolicy,
@@ -269,10 +214,11 @@ impl Vault {
         if !judge.assess(&policy.prompt, &policy.rubric, runs, &[])? {
             return Ok(None);
         }
-        propose(self, ProposedTier::Judge, policy, runs)
+        propose(self, ProposedTier::Judge, policy, runs, None)
     }
 
     /// Session quality is a T2/T3 model grade, never a BEAM score or auto arm.
+    /// The telemetry window must be oldest-first and belong to one episode.
     pub fn judge_session_quality(
         &self,
         policy: &DetectorPolicy,
@@ -293,6 +239,6 @@ impl Vault {
         if !judge.assess(&policy.prompt, &policy.rubric, runs, &[])? {
             return Ok(None);
         }
-        propose(self, ProposedTier::SessionJudge, policy, runs)
+        propose(self, ProposedTier::SessionJudge, policy, runs, None)
     }
 }

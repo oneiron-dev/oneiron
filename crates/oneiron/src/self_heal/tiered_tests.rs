@@ -281,9 +281,71 @@ fn centroid_uses_existing_vectors_and_emits_only_a_proposal() -> Result<()> {
         decode_diagnostic_event_body(&v.get(&classified.event_id)?.unwrap())?,
         classified.event
     );
+    let original = v.replay_centroid_finding(&classified.event_id)?;
+    assert_eq!(original.candidate, candidate);
+    assert_eq!(original.labeled, vec![(center, vec![1.0, 0.0, 0.0, 0.0])]);
+    assert_eq!(original.min_similarity, 0.9);
+    assert!(original.matched);
+    // Mutable current vectors can no longer produce this verdict. Historical
+    // replay must still reconstruct the exact centroid and threshold.
+    v.put_vector(&center, &[0.0, 1.0, 0.0, 0.0])?;
+    assert!(
+        v.classify_centroid(&policy(1), &[center], candidate, &row, 0.9)?
+            .is_none()
+    );
+    let replayed = v.replay_centroid_finding(&classified.event_id)?;
+    assert_eq!(replayed.labeled, original.labeled);
+    assert_eq!(replayed.similarity.to_bits(), original.similarity.to_bits());
+    assert_eq!(replayed.run, row);
+    // The threshold is a verdict input: same telemetry with a changed
+    // threshold must not reuse the previous event address.
+    v.put_vector(&center, &[1.0, 0.0, 0.0, 0.0])?;
+    let other = v
+        .classify_centroid(&policy(1), &[center], candidate, &row, 0.8)?
+        .unwrap();
+    assert_ne!(other.event_id, classified.event_id);
+    assert_eq!(
+        v.replay_centroid_finding(&other.event_id)?.min_similarity,
+        0.8
+    );
     assert!(
         v.classify_centroid(&policy(1), &[center], candidate, &row, 1.0)?
             .is_none()
     );
+    Ok(())
+}
+
+#[test]
+fn copied_t3_bodies_under_other_entity_kinds_cannot_mint_evidence() -> Result<()> {
+    let (_d, vault) = vault();
+    let owner = owner(&vault);
+    let positive = vault
+        .judge_retrieval_trace(&policy(1), &Grade(true), &[run(&vault, 51, true)])?
+        .unwrap();
+    let negative = vault
+        .judge_retrieval_trace(&policy(1), &Grade(true), &[run(&vault, 52, false)])?
+        .unwrap();
+    let body = vault.get(&positive.event_id)?.unwrap();
+    for _ in 0..2 {
+        let forged = EntityId::now();
+        vault.put_entity(
+            &forged,
+            ENTITY_TYPE_PERSON,
+            TimeRange {
+                start: 51,
+                end: u64::MAX,
+            },
+            51,
+            &body,
+        )?;
+        assert!(
+            vault
+                .review_t3_finding(&owner, &policy(2).family, forged, true)
+                .is_err()
+        );
+    }
+    vault.review_t3_finding(&owner, &policy(2).family, positive.event_id, true)?;
+    vault.review_t3_finding(&owner, &policy(2).family, negative.event_id, false)?;
+    assert!(vault.mint_t2(policy(2))?.is_none());
     Ok(())
 }

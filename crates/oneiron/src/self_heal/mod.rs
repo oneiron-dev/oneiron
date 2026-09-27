@@ -42,8 +42,10 @@ pub use crate::registry::ENTITY_TYPE_DIAGNOSTIC;
 
 mod admission;
 pub(crate) use admission::validate_diagnostic_event_admission;
+mod centroid_evidence;
 mod consent_detector;
 pub mod tripwires;
+pub use centroid_evidence::CentroidReplay;
 pub use consent_detector::ConsentDeniedDetector;
 
 mod detector_runner;

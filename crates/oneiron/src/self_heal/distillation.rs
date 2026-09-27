@@ -1,11 +1,13 @@
 //! Owner-labeled T3 evidence -> T2 policy -> closed-form T1 proof.
 //! No model grade, label, or mint operation signs or schedules a T1 run.
 use super::{
-    DiagnosticEventClass, DiagnosticObservation, DiagnosticSourceKind,
+    DiagnosticEvent, DiagnosticEventClass, DiagnosticObservation, DiagnosticSourceKind,
     decode_diagnostic_event_body,
     tiered::{DetectorPolicy, ProposedDiagnostic, TelemetryJudge},
-    validate_token,
+    validate_diagnostic_event_admission, validate_token,
 };
+use crate::ports::{EntityStoreRead, TombstoneStoreRead};
+use crate::registry::ENTITY_TYPE_DIAGNOSTIC;
 use crate::store::{RetrievalRunId, RetrievalRunRecord};
 use crate::{EntityId, Error, Result, Vault, consent::AuthenticatedOwner};
 use serde::{Deserialize, Serialize};
@@ -60,6 +62,29 @@ fn family_prefix(family: &str) -> Vec<u8> {
 }
 
 impl Vault {
+    /// A corpus reference must be a live DIAGNOSTIC admitted at its real ID,
+    /// not an arbitrary entity holding bytes copied from a diagnostic body.
+    /// Envelope, visibility and body come from the same storage snapshot.
+    pub(in crate::self_heal) fn reviewed_diagnostic(
+        &self,
+        id: &EntityId,
+    ) -> Result<DiagnosticEvent> {
+        let txn = self.store.env.read_txn()?;
+        let row = self
+            .store
+            .port_entity_record(&txn, id)?
+            .ok_or(Error::EntityNotFound)?;
+        let visibility = self.store.port_deletion_state(&txn, id)?;
+        if row.entity_type != ENTITY_TYPE_DIAGNOSTIC
+            || visibility.deleted
+            || visibility.stale
+            || visibility.archived
+        {
+            return Err(Error::InvalidConfig("not a live diagnostic entity".into()));
+        }
+        validate_diagnostic_event_admission(id, row.occurred, &row.body)?;
+        decode_diagnostic_event_body(&row.body)
+    }
     /// A model cannot label its own findings. Owner identity is reauthenticated
     /// and the cited event must be a stored T3 telemetry diagnostic.
     pub fn review_t3_finding(
@@ -76,8 +101,7 @@ impl Vault {
             true,
             owner.decision_id(),
         )?;
-        let raw = self.get(&event_id)?.ok_or(Error::EntityNotFound)?;
-        let event = decode_diagnostic_event_body(&raw)?;
+        let event = self.reviewed_diagnostic(&event_id)?;
         if event.source != DiagnosticSourceKind::RetrievalTelemetry
             || !event.detector_id.starts_with("t3.")
             || event.detector_id.strip_prefix("t3.") != Some(family)
@@ -137,8 +161,7 @@ impl Vault {
         let mut positive_events = Vec::new();
         let mut negative_events = Vec::new();
         for label in labels {
-            let raw = self.get(&label.event_id)?.ok_or(Error::EntityNotFound)?;
-            let event = decode_diagnostic_event_body(&raw)?;
+            let event = self.reviewed_diagnostic(&label.event_id)?;
             if event.event_class != policy.class
                 || event.detector_id != format!("t3.{}", policy.family)
             {
@@ -184,8 +207,7 @@ impl Vault {
             (&current.negative_events, false),
         ] {
             for id in ids {
-                let raw = self.get(id)?.ok_or(Error::EntityNotFound)?;
-                let event = decode_diagnostic_event_body(&raw)?;
+                let event = self.reviewed_diagnostic(id)?;
                 let mut rows = Vec::new();
                 for run_ref in &event.evidence_refs {
                     let row = self
@@ -233,8 +255,7 @@ impl Vault {
             (&current.negative_events, false),
         ] {
             for id in ids {
-                let raw = self.get(id)?.ok_or(Error::EntityNotFound)?;
-                let event = decode_diagnostic_event_body(&raw)?;
+                let event = self.reviewed_diagnostic(id)?;
                 // A T3 window cannot be used as one T1 observation.
                 if event.evidence_refs.len() != 1 {
                     return Ok(None);

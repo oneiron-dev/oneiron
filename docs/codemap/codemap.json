@@ -27422,6 +27422,19 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
+      "CentroidReplay"
+     ],
+     "path": "src/self_heal/centroid_evidence.rs",
+     "purpose": "Immutable, content-addressed centroid inputs beside vault-local telemetry",
+     "surface": {
+      "fn": 2,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
       "ConsentDeniedDetector"
      ],
      "path": "src/self_heal/consent_detector.rs",
@@ -27454,7 +27467,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "ClosedFormPredicate",
@@ -27465,6 +27478,7 @@
      "path": "src/self_heal/distillation.rs",
      "purpose": "Owner-labeled T3 evidence -> T2 policy -> closed-form T1 proof",
      "surface": {
+      "crate-vis": 1,
       "enum": 1,
       "fn": 4,
       "struct": 3
@@ -27542,7 +27556,7 @@
      "surface": {
       "crate-vis": 4,
       "mod": 5,
-      "re-export": 7
+      "re-export": 8
      }
     },
     {
@@ -27660,15 +27674,15 @@
      "path": "src/self_heal/tiered.rs",
      "purpose": "Model-graded detection over ARCH-0037 runs",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 4,
       "enum": 1,
-      "fn": 4,
+      "fn": 3,
       "struct": 2,
       "trait": 1
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "test",
      "notable": [],
      "path": "src/self_heal/tiered_tests.rs",
@@ -35581,7 +35595,7 @@
      "purpose": "Snapshot-time secret custody filtering (ARCH-0069 S4/S5)"
     },
     "self_heal": {
-     "files": 26,
+     "files": 27,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -35849,7 +35863,7 @@
    },
    "over_bar": 11,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2115,
+   "source_files": 2116,
    "test_files": 723
   },
   "oneiron-android": {
