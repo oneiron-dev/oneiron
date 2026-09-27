@@ -16,7 +16,11 @@ def main():
     )
     if not checkpoint.is_file():
         raise ValueError("trained NER checkpoint is required")
-    digest = hashlib.sha256(checkpoint.read_bytes()).hexdigest()
+    hasher = hashlib.sha256()
+    with checkpoint.open("rb") as source:
+        for chunk in iter(lambda: source.read(64 * 1024), b""):
+            hasher.update(chunk)
+    digest = hasher.hexdigest()
     if digest != expected_sha:
         raise ValueError("NER checkpoint SHA-256 mismatch")
     if not (model_repo / "model" / "head_runtime.py").is_file():

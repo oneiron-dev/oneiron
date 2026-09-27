@@ -2,7 +2,7 @@
 //! The checkpoint and Python runtime remain host-owned; the vault path is never
 //! passed to the inference process. The report is emitted only after a byte-level
 //! assertion that the shadow pass left the fixture vault unchanged.
-use std::io::Write;
+use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
@@ -100,8 +100,17 @@ struct Proof {
 
 fn sha256(path: &Path) -> Result<String, Box<dyn std::error::Error>> {
     use sha2::Digest;
-    let bytes = std::fs::read(path)?;
-    Ok(format!("{:x}", sha2::Sha256::digest(bytes)))
+    let mut file = std::fs::File::open(path)?;
+    let mut digest = sha2::Sha256::new();
+    let mut chunk = [0_u8; 64 * 1024];
+    loop {
+        let count = file.read(&mut chunk)?;
+        if count == 0 {
+            break;
+        }
+        digest.update(&chunk[..count]);
+    }
+    Ok(format!("{:x}", digest.finalize()))
 }
 
 fn vault_bytes(path: &Path) -> Result<blake3::Hash, Box<dyn std::error::Error>> {
@@ -169,7 +178,7 @@ fn run(
     })
 }
 
-pub(crate) fn cli(args: &[String]) -> std::process::ExitCode {
+pub(super) fn cli(args: &[String]) -> std::process::ExitCode {
     cli_with_io(
         args,
         &mut std::io::stdout().lock(),
@@ -214,6 +223,18 @@ fn cli_with_io(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn checkpoint_hash_matches_sha256_across_chunk_boundary() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("fixture.safetensors");
+        let bytes = vec![0x61_u8; 65_537];
+        std::fs::write(&path, bytes).unwrap();
+        assert_eq!(
+            sha256(&path).unwrap(),
+            "008ffc88d3c96a9f307524eb361e47c5222a887fc45fa0c1fb8d429c5c23b430"
+        );
+    }
 
     #[test]
     fn rejects_missing_checkpoint_without_a_fake_ner_result() {
