@@ -34,6 +34,7 @@ mod converge;
 mod handshake;
 mod session;
 mod steady;
+mod topology;
 
 use std::sync::Arc;
 
@@ -42,6 +43,7 @@ use crate::sync::manager::WindowManager;
 use crate::sync::queue::SyncQueue;
 pub use crate::sync::types::LocalUpdate;
 use crate::sync::types::parse_window_key_str;
+pub use topology::HomeNodeTopology;
 
 /// Configuration for the connection manager.
 #[derive(Debug, Clone)]
@@ -80,19 +82,6 @@ impl SyncConnection {
             queue,
             config,
         })
-    }
-
-    /// Applies an explicit host-authorized sync topology update.
-    ///
-    /// A WebSocket connect or disconnect alone does not change membership:
-    /// the designated cloud may still be running during a local outage.
-    pub fn sync_topology_changed(
-        &self,
-        candidates: &[crate::dreamer_runner::DreamerHomeNodeCandidate],
-        now: u64,
-    ) -> crate::error::Result<Option<crate::dreamer_runner::DreamerHomeNodeDesignation>> {
-        crate::dreamer_runner::DreamerRunnerStore::new(self.manager.vault())
-            .sync_topology_changed(candidates, now)
     }
 
     /// Returns a reference to the offline queue for external inspection.

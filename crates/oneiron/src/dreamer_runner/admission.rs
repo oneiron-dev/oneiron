@@ -73,6 +73,12 @@ impl DreamerRunnerStore<'_> {
     ) -> Result<Option<DreamerHomeNodeDesignation>> {
         let designation = elect_home_node_designation(candidates, now)?;
         let mut wtxn = self.vault.store.env.write_txn()?;
+        let previous = self.home_node_designation_in_txn(&wtxn)?;
+        if previous.as_ref().map(|home| (home.node_id, home.class))
+            == designation.as_ref().map(|home| (home.node_id, home.class))
+        {
+            return Ok(previous);
+        }
         if let Some(designation) = designation {
             let encoded = encode_home_node_designation(&designation)?;
             self.vault

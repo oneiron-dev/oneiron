@@ -30310,8 +30310,8 @@
      "path": "src/sync/connection/mod.rs",
      "purpose": "WebSocket connection manager with debounced sync and reconnection",
      "surface": {
-      "fn": 3,
-      "re-export": 1,
+      "fn": 2,
+      "re-export": 2,
       "struct": 2
      }
     },
@@ -30342,6 +30342,20 @@
      "path": "src/sync/connection/tests.rs",
      "purpose": "—",
      "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "HomeNodeTopology"
+     ],
+     "path": "src/sync/connection/topology.rs",
+     "purpose": "Host-authorized home-node candidate updates, independent of socket liveness",
+     "surface": {
+      "crate-vis": 2,
+      "fn": 2,
+      "struct": 1
+     }
     },
     {
      "bucket": "m",
@@ -35262,7 +35276,7 @@
      "purpose": "ARCH-0038 historical-carrier sweep executor — ONE-1087 / ONE-1091 phase 1 (manual trigger via…"
     },
     "sync": {
-     "files": 100,
+     "files": 101,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -35397,7 +35411,7 @@
    },
    "over_bar": 9,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2088,
+   "source_files": 2089,
    "test_files": 717
   },
   "oneiron-android": {
