@@ -141,7 +141,7 @@ pub struct AnswerRecord {
     #[serde(with = "super::super::codec::entity")]
     pub unit: EntityId,
     pub decision: TypedDecision,
-    /// Engine-computed hash of the source row, including metadata checked at settle.
+    /// Engine-computed hash of the live source row and its document frontier.
     pub frontier: [u8; 32],
     pub source_kind: u8,
     pub answered_at: u64,

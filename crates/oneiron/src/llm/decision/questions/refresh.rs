@@ -3,17 +3,24 @@
 
 use super::{arrival, records::*, store::*};
 use crate::batch::ENTITY_METADATA_HEADER_LEN;
-use crate::claim::{ClaimApprovalStatus, ClaimSource, ClaimSubject};
+use crate::claim::{ClaimApprovalStatus, ClaimSource, ClaimSubject, ScopedReadActorKey};
 use crate::llm::decision::{DecisionReceipt, TypedDecision};
 use crate::{
     ClaimCandidate, EntityId, Error, Result, TimeRange, Vault, WriteActor, WriteEnvelope,
     WriteProvenance,
 };
 
+struct SourceRow {
+    kind: u8,
+    raw: Vec<u8>,
+    frontier: [u8; 32],
+}
+
 struct Prepared {
     unit: EntityId,
     frontier: [u8; 32],
     proposal: AnswerProposal,
+    arrival_marker: Option<Vec<u8>>,
 }
 
 /// The host supplies the answerer (and invokes this on arrival or on each timer tick).
@@ -27,7 +34,7 @@ pub fn refresh_question(
     now: u64,
     mut answerer: impl FnMut(&QuestionRecord, EntityId, &[u8]) -> Result<AnswerProposal>,
 ) -> Result<Vec<AnswerRecord>> {
-    let (record, head, units) = {
+    let (record, head, units, arrival_marker) = {
         let txn = vault.store.env.read_txn()?;
         let head = owned_head(vault, &txn, principal, question)?;
         let record: QuestionRecord = load(
@@ -40,6 +47,7 @@ pub fn refresh_question(
         if head.paused {
             return Ok(Vec::new());
         }
+        let mut arrival_marker = None;
         let units = match trigger {
             RefreshTrigger::Manual => record.definition.units.clone(),
             RefreshTrigger::Schedule => {
@@ -57,20 +65,22 @@ pub fn refresh_question(
                 record.definition.units.clone()
             }
             RefreshTrigger::Arrival(unit) => {
-                if !record.definition.refresh.on_arrival
-                    || !record.definition.units.contains(&unit)
-                    || vault
-                        .store
-                        .vault_meta
-                        .get(&txn, &arrival::pending_key(question, unit))?
-                        .is_none()
+                if !record.definition.refresh.on_arrival || !record.definition.units.contains(&unit)
                 {
+                    return Ok(Vec::new());
+                }
+                arrival_marker = vault
+                    .store
+                    .vault_meta
+                    .get(&txn, &arrival::pending_key(question, unit))?
+                    .map(|raw| raw.to_vec());
+                if arrival_marker.is_none() {
                     return Ok(Vec::new());
                 }
                 vec![unit]
             }
         };
-        (record, head, units)
+        (record, head, units, arrival_marker)
     };
     let mut prepared = Vec::new();
     for unit in units {
@@ -78,13 +88,23 @@ pub fn refresh_question(
             let txn = vault.store.env.read_txn()?;
             source(vault, &txn, principal, actor, unit)?
         };
-        let Some((_, raw)) = snapshot else { continue };
+        let Some(SourceRow { raw, frontier, .. }) = snapshot else {
+            continue;
+        };
         let proposal = answerer(&record, unit, &raw[ENTITY_METADATA_HEADER_LEN..])?;
         validate_proposal(&record, &proposal)?;
         prepared.push(Prepared {
             unit,
-            frontier: *blake3::hash(&raw).as_bytes(),
+            frontier,
             proposal,
+            arrival_marker: {
+                let txn = vault.store.env.read_txn()?;
+                vault
+                    .store
+                    .vault_meta
+                    .get(&txn, &arrival::pending_key(question, unit))?
+                    .map(|raw| raw.to_vec())
+            },
         });
     }
     vault.with_write_txn(|txn| {
@@ -97,19 +117,37 @@ pub fn refresh_question(
                 "standing question changed during refresh",
             ));
         }
+        if let RefreshTrigger::Arrival(unit) = trigger
+            && vault
+                .store
+                .vault_meta
+                .get(txn, &arrival::pending_key(question, unit))?
+                .as_deref()
+                != arrival_marker.as_deref()
+        {
+            return Err(Error::ConcurrentWrite("standing question arrival consumed"));
+        }
         // Every input is checked before the first write. A batch is all-or-nothing.
         let mut inputs = Vec::new();
         for p in &prepared {
-            let Some((kind, raw)) = source(vault, txn, principal, actor, p.unit)? else {
+            let Some(row) = source(vault, txn, principal, actor, p.unit)? else {
                 return Err(Error::ConcurrentWrite("standing question source changed"));
             };
-            if *blake3::hash(&raw).as_bytes() != p.frontier {
+            if row.frontier != p.frontier {
                 return Err(Error::ConcurrentWrite("standing question source changed"));
             }
-            inputs.push((kind, raw));
+            inputs.push(row);
         }
         let mut answers = Vec::new();
-        for (p, (kind, raw)) in prepared.iter().zip(inputs) {
+        for (
+            p,
+            SourceRow {
+                kind,
+                raw,
+                frontier,
+            },
+        ) in prepared.iter().zip(inputs)
+        {
             let answer = AnswerRecord {
                 claim: EntityId::now(),
                 unit: p.unit,
@@ -130,7 +168,7 @@ pub fn refresh_question(
                     },
                     human_ask: None,
                 },
-                frontier: *blake3::hash(&raw).as_bytes(),
+                frontier,
                 source_kind: kind,
                 answered_at: now,
             };
@@ -147,10 +185,13 @@ pub fn refresh_question(
             let mut updated = current;
             updated.last_refresh = Some(now);
             for p in &prepared {
-                vault
-                    .store
-                    .vault_meta
-                    .delete(txn, &arrival::pending_key(question, p.unit))?;
+                let pending = arrival::pending_key(question, p.unit);
+                if p.arrival_marker.is_some()
+                    && vault.store.vault_meta.get(txn, &pending)?.as_deref()
+                        == p.arrival_marker.as_deref()
+                {
+                    vault.store.vault_meta.delete(txn, &pending)?;
+                }
             }
             put(vault, txn, &key(question, b"head", &[]), &updated)?;
         }
@@ -164,14 +205,29 @@ pub fn refresh_question(
     })
 }
 
+/// One failed activation, available to the host for a later retry or report.
+pub struct RefreshFailure {
+    pub question: EntityId,
+    pub trigger: RefreshTrigger,
+    pub error: Error,
+}
+
+/// Successful answers and individual failures from one pump tick.
+#[derive(Default)]
+pub struct RefreshBatch {
+    pub answers: Vec<AnswerRecord>,
+    pub failures: Vec<RefreshFailure>,
+}
+
 /// Pump due scheduled and materialized-arrival work. The host calls this on its clock
 /// and after ingress; an arrival never runs a provider inside the ingress transaction.
+/// A failed question does not withhold independent answers from this tick.
 pub fn refresh_due_questions(
     vault: &Vault,
     actor: WriteActor,
     now: u64,
     mut answerer: impl FnMut(&QuestionRecord, EntityId, &[u8]) -> Result<AnswerProposal>,
-) -> Result<Vec<AnswerRecord>> {
+) -> Result<RefreshBatch> {
     let work = {
         let txn = vault.store.env.read_txn()?;
         let mut work = Vec::new();
@@ -249,9 +305,9 @@ pub fn refresh_due_questions(
         }
         work
     };
-    let mut answers = Vec::new();
+    let mut batch = RefreshBatch::default();
     for (principal, question, trigger) in work {
-        answers.extend(refresh_question(
+        match refresh_question(
             vault,
             actor,
             principal,
@@ -259,9 +315,16 @@ pub fn refresh_due_questions(
             trigger,
             now,
             &mut answerer,
-        )?);
+        ) {
+            Ok(answers) => batch.answers.extend(answers),
+            Err(error) => batch.failures.push(RefreshFailure {
+                question,
+                trigger,
+                error,
+            }),
+        }
     }
-    Ok(answers)
+    Ok(batch)
 }
 
 /// Scoped receipt read; past versions remain available after edits and switches.
@@ -309,25 +372,84 @@ fn source(
     principal: EntityId,
     actor: WriteActor,
     unit: EntityId,
-) -> Result<Option<(u8, Vec<u8>)>> {
-    match super::task_ask::validate_task_answer_unit(
-        vault,
-        txn,
-        principal,
-        actor.entity_ref(),
-        unit,
-    ) {
-        Ok((kind, _)) => {
-            let raw = vault
-                .store
-                .entities
-                .get(txn, unit.as_bytes())?
-                .ok_or(Error::EntityNotFound)?;
-            Ok(Some((kind, raw.to_vec())))
-        }
-        Err(Error::EntityNotFound) => Ok(None),
-        Err(e) => Err(e),
+) -> Result<Option<SourceRow>> {
+    // Both access checks and the live document projection share this txn.
+    // Unscoped storage reads can reveal private NOTE bodies and stale birth text.
+    let principal_key = source_actor_key(vault, txn, principal, None)?;
+    let actor_key = source_actor_key(vault, txn, actor.entity_ref(), Some(actor.actor_class()))?;
+    let Some(raw) = vault
+        .scoped_read(principal_key)
+        .entity_raw_live_in(txn, &unit)?
+    else {
+        return Ok(None);
+    };
+    if vault
+        .scoped_read(actor_key)
+        .entity_raw_live_in(txn, &unit)?
+        .is_none()
+    {
+        return Ok(None);
     }
+    let header = crate::batch::EntityMetadataHeader::parse(&raw)
+        .ok_or(Error::CorruptedIndex("question source header"))?;
+    if header.entity_type == crate::registry::ENTITY_TYPE_SECRET_CUSTODY
+        || raw.len() == ENTITY_METADATA_HEADER_LEN
+    {
+        return Ok(None);
+    }
+    let mut hasher = blake3::Hasher::new();
+    hasher.update(&raw);
+    #[cfg(feature = "sync")]
+    let document_head = crate::entity_doc::record_head_bytes(&vault.store, txn, &unit)?;
+    #[cfg(feature = "sync")]
+    if let Some(head) = &document_head {
+        hasher.update(head);
+    }
+    if header.entity_type == crate::registry::ENTITY_TYPE_NOTE {
+        #[cfg(feature = "sync")]
+        let migrated = document_head.is_some();
+        #[cfg(not(feature = "sync"))]
+        let migrated = false;
+        if !migrated {
+            hasher.update(&crate::note::live_frontier_in_txn(vault, txn, unit)?);
+        }
+    }
+    Ok(Some(SourceRow {
+        kind: header.entity_type,
+        raw,
+        frontier: *hasher.finalize().as_bytes(),
+    }))
+}
+
+fn source_actor_key(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    id: EntityId,
+    declared: Option<crate::EdgeActorClass>,
+) -> Result<ScopedReadActorKey> {
+    let raw = vault
+        .store
+        .entities
+        .get(txn, id.as_bytes())?
+        .ok_or(Error::EntityNotFound)?;
+    let header = crate::batch::EntityMetadataHeader::parse(&raw)
+        .ok_or(Error::CorruptedIndex("question actor header"))?;
+    let class = declared.unwrap_or(match header.entity_type {
+        crate::registry::ENTITY_TYPE_PERSON => crate::EdgeActorClass::Human,
+        crate::registry::ENTITY_TYPE_AGENT_DEF => crate::EdgeActorClass::Agent,
+        crate::registry::ENTITY_TYPE_MACHINE => crate::EdgeActorClass::System,
+        _ => return Err(Error::EntityNotFound),
+    });
+    if crate::provenance::validate_actor_class(header.entity_type, class).is_err() {
+        return Err(Error::EntityNotFound);
+    }
+    let name = match class {
+        crate::EdgeActorClass::Human => "human",
+        crate::EdgeActorClass::Agent => "agent",
+        crate::EdgeActorClass::System => "system",
+    };
+    ScopedReadActorKey::with_actor_class(id.to_hex(), name)
+        .ok_or(Error::InvariantViolation("question actor key"))
 }
 
 fn land(

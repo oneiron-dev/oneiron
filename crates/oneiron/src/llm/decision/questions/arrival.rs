@@ -132,9 +132,11 @@ fn enqueue_arrivals(
                 && record.definition.refresh.on_arrival
                 && record.definition.units.contains(unit)
             {
-                store
-                    .vault_meta
-                    .put(txn, &pending_key(question, *unit), &[])?;
+                store.vault_meta.put(
+                    txn,
+                    &pending_key(question, *unit),
+                    EntityId::now().as_bytes(),
+                )?;
             }
         }
     }

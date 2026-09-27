@@ -7,7 +7,7 @@ use crate::llm::decision::{
     DecisionRung, ProviderPin,
 };
 
-type TestResult = std::result::Result<(), Box<dyn std::error::Error>>;
+type TestResult<T = ()> = std::result::Result<T, Box<dyn std::error::Error>>;
 
 fn fixture() -> Result<(tempfile::TempDir, Vault, EntityId, EntityId, WriteActor)> {
     let dir = tempfile::tempdir()?;
@@ -24,6 +24,7 @@ fn fixture() -> Result<(tempfile::TempDir, Vault, EntityId, EntityId, WriteActor
             b"source",
         )?;
     }
+    crate::test_util::authorize_readers(&vault, &[owner.to_hex().as_str()]);
     Ok((dir, vault, owner, unit, actor))
 }
 
@@ -73,7 +74,11 @@ fn arrival_schedule_manual_version_and_pause() -> TestResult {
     let (_dir, vault, owner, unit, actor) = fixture()?;
     let record = create_question(&vault, owner, definition(unit), 2)?;
     let id = record.definition.question.id;
-    assert!(refresh_due_questions(&vault, actor, 3, |r, u, s| Ok(propose(r, u, s)))?.is_empty());
+    assert!(
+        refresh_due_questions(&vault, actor, 3, |r, u, s| Ok(propose(r, u, s)))?
+            .answers
+            .is_empty()
+    );
     vault.put_entity(
         &unit,
         crate::registry::ENTITY_TYPE_PERSON,
@@ -81,26 +86,28 @@ fn arrival_schedule_manual_version_and_pause() -> TestResult {
         4,
         b"arrival",
     )?;
-    let first = refresh_due_questions(&vault, actor, 4, |r, u, s| Ok(propose(r, u, s)))?;
+    let first = refresh_due_questions(&vault, actor, 4, |r, u, s| Ok(propose(r, u, s)))?.answers;
     assert_eq!(first.len(), 1);
     assert_eq!(first[0].decision.receipt.question_version, 1);
     assert_eq!(
         first[0].frontier,
-        *blake3::hash(
-            &vault
-                .store
-                .entities
-                .get(&vault.store.env.read_txn()?, unit.as_bytes())?
-                .unwrap()
-        )
-        .as_bytes()
+        *blake3::hash(&vault.get_raw(&unit)?.expect("source")).as_bytes()
     );
     assert!(vault.get_claim(&first[0].claim)?.is_some());
-    assert!(refresh_due_questions(&vault, actor, 4, |r, u, s| Ok(propose(r, u, s)))?.is_empty());
-    let scheduled = refresh_due_questions(&vault, actor, 12, |r, u, s| Ok(propose(r, u, s)))?;
+    assert!(
+        refresh_due_questions(&vault, actor, 4, |r, u, s| Ok(propose(r, u, s)))?
+            .answers
+            .is_empty()
+    );
+    let scheduled =
+        refresh_due_questions(&vault, actor, 12, |r, u, s| Ok(propose(r, u, s)))?.answers;
     assert_eq!(scheduled.len(), 1);
     assert_ne!(first[0].claim, scheduled[0].claim);
-    assert!(refresh_due_questions(&vault, actor, 12, |r, u, s| Ok(propose(r, u, s)))?.is_empty());
+    assert!(
+        refresh_due_questions(&vault, actor, 12, |r, u, s| Ok(propose(r, u, s)))?
+            .answers
+            .is_empty()
+    );
     let mut changed = definition(unit);
     changed.question.text = "changed".into();
     edit_question(&vault, owner, id, 1, changed, 13)?;
@@ -123,7 +130,11 @@ fn arrival_schedule_manual_version_and_pause() -> TestResult {
         14,
         b"pause",
     )?;
-    assert!(refresh_due_questions(&vault, actor, 30, |r, u, s| Ok(propose(r, u, s)))?.is_empty());
+    assert!(
+        refresh_due_questions(&vault, actor, 30, |r, u, s| Ok(propose(r, u, s)))?
+            .answers
+            .is_empty()
+    );
     assert!(
         refresh_question(
             &vault,
@@ -138,7 +149,9 @@ fn arrival_schedule_manual_version_and_pause() -> TestResult {
     );
     pause_question(&vault, owner, id, false)?;
     assert_eq!(
-        refresh_due_questions(&vault, actor, 30, |r, u, s| Ok(propose(r, u, s)))?.len(),
+        refresh_due_questions(&vault, actor, 30, |r, u, s| Ok(propose(r, u, s)))?
+            .answers
+            .len(),
         1
     );
     assert_eq!(answer_records(&vault, owner, id)?.len(), 4);
@@ -221,16 +234,10 @@ fn removing_arrival_retire_queued_work_without_reanswering() -> TestResult {
     changed.refresh.on_arrival = false;
     changed.refresh.every_seconds = None;
     edit_question(&vault, owner, id, 1, changed, 4)?;
-    assert!(refresh_due_questions(&vault, actor, 5, |r, u, s| Ok(propose(r, u, s)))?.is_empty());
     assert!(
-        vault
-            .store
-            .vault_meta
-            .get(
-                &vault.store.env.read_txn()?,
-                &arrival::pending_key(id, unit)
-            )?
-            .is_none()
+        refresh_due_questions(&vault, actor, 5, |r, u, s| Ok(propose(r, u, s)))?
+            .answers
+            .is_empty()
     );
     vault.put_entity(
         &unit,
@@ -239,7 +246,11 @@ fn removing_arrival_retire_queued_work_without_reanswering() -> TestResult {
         6,
         b"later",
     )?;
-    assert!(refresh_due_questions(&vault, actor, 6, |r, u, s| Ok(propose(r, u, s)))?.is_empty());
+    assert!(
+        refresh_due_questions(&vault, actor, 6, |r, u, s| Ok(propose(r, u, s)))?
+            .answers
+            .is_empty()
+    );
     assert!(answer_records(&vault, owner, id)?.is_empty());
     Ok(())
 }
@@ -256,9 +267,220 @@ fn scheduled_refresh_consumes_same_unit_arrival_once() -> TestResult {
         12,
         b"both",
     )?;
-    let answers = refresh_due_questions(&vault, actor, 12, |r, u, s| Ok(propose(r, u, s)))?;
+    let answers = refresh_due_questions(&vault, actor, 12, |r, u, s| Ok(propose(r, u, s)))?.answers;
     assert_eq!(answers.len(), 1);
     assert_eq!(answer_records(&vault, owner, id)?, answers);
-    assert!(refresh_due_questions(&vault, actor, 12, |r, u, s| Ok(propose(r, u, s)))?.is_empty());
+    assert!(
+        refresh_due_questions(&vault, actor, 12, |r, u, s| Ok(propose(r, u, s)))?
+            .answers
+            .is_empty()
+    );
+    Ok(())
+}
+
+fn private_note_fixture() -> TestResult<(tempfile::TempDir, Vault, EntityId, EntityId, EntityId)> {
+    use crate::note::{NoteKind, NoteScope, NoteWriteEnvelope};
+    let dir = tempfile::tempdir()?;
+    let vault = Vault::open(dir.path(), VaultConfig::device())?;
+    let owner = EntityId::now();
+    let other = EntityId::now();
+    for id in [owner, other] {
+        vault.put_entity(
+            &id,
+            crate::registry::ENTITY_TYPE_PERSON,
+            TimeRange { start: 1, end: 1 },
+            1,
+            b"person",
+        )?;
+    }
+    crate::test_util::authorize_readers(
+        &vault,
+        &[owner.to_hex().as_str(), other.to_hex().as_str()],
+    );
+    let receipt = vault
+        .memory(owner, EdgeActorClass::Human)
+        .author_note(&NoteWriteEnvelope {
+            kind: NoteKind::parse("diary").expect("shipped diary kind"),
+            scope: NoteScope::ActorPrivate { owner_ref: owner },
+            source_revision_ref: [7; 16],
+            markdown: "birth secret".into(),
+            mask: None,
+        })?;
+    let note = EntityId::from_hex(&receipt.id_hex)?;
+    Ok((dir, vault, owner, other, note))
+}
+
+#[test]
+fn private_note_never_reaches_foreign_provider_or_claim() -> TestResult {
+    let (_dir, vault, owner, other, note) = private_note_fixture()?;
+    let other_actor = WriteActor::new(other, EdgeActorClass::Human);
+    let denied = create_question(&vault, other, definition(note), 3)?;
+    let denied_id = denied.definition.question.id;
+    let mut called = false;
+    let answers = refresh_question(
+        &vault,
+        other_actor,
+        other,
+        denied_id,
+        RefreshTrigger::Manual,
+        4,
+        |_, _, _| {
+            called = true;
+            Ok(propose(&denied, note, &[]))
+        },
+    )?;
+    assert!(!called);
+    assert!(answers.is_empty());
+    assert!(answer_records(&vault, other, denied_id)?.is_empty());
+
+    let allowed = create_question(&vault, owner, definition(note), 3)?;
+    let allowed_id = allowed.definition.question.id;
+    let mut called = false;
+    let answers = refresh_question(
+        &vault,
+        WriteActor::new(owner, EdgeActorClass::Human),
+        owner,
+        allowed_id,
+        RefreshTrigger::Manual,
+        4,
+        |r, u, body| {
+            called = true;
+            assert_eq!(
+                crate::note::decode_note_body(body)?.markdown,
+                "birth secret"
+            );
+            Ok(propose(r, u, body))
+        },
+    )?;
+    assert!(called);
+    assert_eq!(answers.len(), 1);
+    assert!(vault.get_claim(&answers[0].claim)?.is_some());
+    Ok(())
+}
+
+#[test]
+fn note_refresh_reads_live_edits_and_refuses_provider_time_change() -> TestResult {
+    use crate::note::{NoteEdit, NoteEditOutcome};
+    let (_dir, vault, owner, _other, note) = private_note_fixture()?;
+    let actor = WriteActor::new(owner, EdgeActorClass::Human);
+    let record = create_question(&vault, owner, definition(note), 3)?;
+    let question = record.definition.question.id;
+    let birth = vault.get_raw(&note)?.expect("birth row");
+    let apply = |text: &str| -> TestResult {
+        let base = vault.note_document(note)?.frontier;
+        let result = vault.memory(owner, EdgeActorClass::Human).apply_note_ops(
+            note,
+            &base,
+            &[NoteEdit {
+                start: 0,
+                delete: 0,
+                insert: text.into(),
+            }],
+        )?;
+        assert!(matches!(result, NoteEditOutcome::Applied(_)));
+        Ok(())
+    };
+    apply("live ")?;
+    assert_eq!(vault.get_raw(&note)?.unwrap(), birth);
+    let first = refresh_question(
+        &vault,
+        actor,
+        owner,
+        question,
+        RefreshTrigger::Manual,
+        5,
+        |r, u, body| {
+            assert_eq!(
+                crate::note::decode_note_body(body)?.markdown,
+                "live birth secret"
+            );
+            Ok(propose(r, u, body))
+        },
+    )?;
+    assert_eq!(first.len(), 1);
+    let stale = refresh_question(
+        &vault,
+        actor,
+        owner,
+        question,
+        RefreshTrigger::Manual,
+        6,
+        |r, u, body| {
+            apply("new ").map_err(|e| Error::InvalidConfig(e.to_string()))?;
+            Ok(propose(r, u, body))
+        },
+    );
+    assert!(matches!(stale, Err(Error::ConcurrentWrite(_))));
+    assert_eq!(vault.get_raw(&note)?.unwrap(), birth);
+    assert_eq!(answer_records(&vault, owner, question)?.len(), 1);
+    Ok(())
+}
+
+#[test]
+fn concurrent_arrival_cannot_settle_twice() -> TestResult {
+    let (_dir, vault, owner, unit, actor) = fixture()?;
+    let record = create_question(&vault, owner, definition(unit), 2)?;
+    let id = record.definition.question.id;
+    vault.put_entity(
+        &unit,
+        crate::registry::ENTITY_TYPE_PERSON,
+        TimeRange { start: 3, end: 3 },
+        3,
+        b"arrived",
+    )?;
+    let mut nested = Vec::new();
+    let outer = refresh_question(
+        &vault,
+        actor,
+        owner,
+        id,
+        RefreshTrigger::Arrival(unit),
+        4,
+        |r, u, body| {
+            nested = refresh_question(
+                &vault,
+                actor,
+                owner,
+                id,
+                RefreshTrigger::Arrival(unit),
+                4,
+                |inner, inner_unit, source| Ok(propose(inner, inner_unit, source)),
+            )?;
+            Ok(propose(r, u, body))
+        },
+    );
+    assert!(matches!(outer, Err(Error::ConcurrentWrite(_))));
+    assert_eq!(nested.len(), 1);
+    assert_eq!(answer_records(&vault, owner, id)?, nested);
+    Ok(())
+}
+
+#[test]
+fn failing_question_does_not_starve_other_due_work() -> TestResult {
+    let (_dir, vault, owner, unit, actor) = fixture()?;
+    let first = create_question(&vault, owner, definition(unit), 2)?
+        .definition
+        .question
+        .id;
+    let second = create_question(&vault, owner, definition(unit), 2)?
+        .definition
+        .question
+        .id;
+    for at in [12, 22] {
+        let batch = refresh_due_questions(&vault, actor, at, |r, u, body| {
+            if r.definition.question.id == first {
+                Err(Error::InvalidConfig("fixture answerer unavailable".into()))
+            } else {
+                Ok(propose(r, u, body))
+            }
+        })?;
+        assert_eq!(batch.failures.len(), 1);
+        assert_eq!(batch.failures[0].question, first);
+        assert!(matches!(batch.failures[0].error, Error::InvalidConfig(_)));
+        assert_eq!(batch.answers.len(), 1);
+        assert_eq!(batch.answers[0].decision.receipt.question, second);
+    }
+    assert!(answer_records(&vault, owner, first)?.is_empty());
+    assert_eq!(answer_records(&vault, owner, second)?.len(), 2);
     Ok(())
 }
