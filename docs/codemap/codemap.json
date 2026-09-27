@@ -16919,7 +16919,7 @@
      "surface": {}
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "test",
      "notable": [],
      "path": "src/gate/tests/carry_forward.rs",
@@ -33749,7 +33749,7 @@
      "purpose": "Confidence-gated forward commitments, separate from belief consolidation and the commitment ledger",
      "surface": {
       "const": 2,
-      "crate-vis": 1,
+      "crate-vis": 3,
       "enum": 1,
       "fn": 5,
       "struct": 1

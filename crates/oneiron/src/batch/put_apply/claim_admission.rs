@@ -38,6 +38,7 @@ pub(super) fn admit_claim_put(
     };
     crate::booking::publication::guard_publication_put(store, txn, id, body.as_ref())?;
     if let Some(body) = &body {
+        crate::write_envelope::carry_forward::validate_admission(store, txn, &id, body)?;
         crate::scope_summary::merge_summary_ref(body)?;
         crate::federation::validate_ruling_claim(
             store,

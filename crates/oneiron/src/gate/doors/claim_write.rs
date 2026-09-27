@@ -271,6 +271,11 @@ fn check_claim_policy_for_write_with_record_inner(
                     &body.predicate,
                 )
             && body.confidence < kind.auto_floor()
+            && (body.approval == ClaimApprovalStatus::Proposed
+                || body.approval == ClaimApprovalStatus::Auto
+                    && !crate::write_envelope::carry_forward::allows_auto_demotion(
+                        store, &*wtxn, id, body,
+                    )?)
         {
             decision = GateDecision::pending(vec![GateReasonCode::PendingCarryForwardConfidence]);
         }

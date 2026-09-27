@@ -105,7 +105,7 @@ pub(crate) fn validate_claim(body: &ClaimBody) -> Result<()> {
     if !body.predicate.starts_with("core.carry_forward.") {
         return Ok(());
     }
-    let kind = CarryForwardKind::from_predicate(&body.predicate)
+    CarryForwardKind::from_predicate(&body.predicate)
         .ok_or(Error::InvalidClaimBody("unknown carry-forward kind"))?;
     if !matches!(body.subject, ClaimSubject::Entity(_))
         || body
@@ -115,20 +115,137 @@ pub(crate) fn validate_claim(body: &ClaimBody) -> Result<()> {
     {
         return Err(Error::InvalidClaimBody("invalid carry-forward claim shape"));
     }
-    // A low-confidence claim is a proposal even on replicated replay. A local
-    // Auto attempt through the generic batch door cannot bypass this check.
-    if body.confidence < kind.auto_floor() && body.approval != ClaimApprovalStatus::Proposed {
-        return Err(Error::InvalidClaimBody(
-            "carry-forward confidence requires Proposed",
-        ));
-    }
+    // Confidence is an ADMISSION floor, not a storage shape: later owner
+    // resolution and monotonic demotion may change approval or confidence.
     Ok(())
+}
+
+/// Enforce the floor at the shared put admission (including replay). A stored
+/// low-confidence Auto claim can only come from a verified monotonic demotion,
+/// never from a new generic/raw claim with a forged approval.
+pub(crate) fn validate_admission(
+    store: &crate::store::Store,
+    txn: &heed::RoTxn<'_>,
+    id: &EntityId,
+    body: &ClaimBody,
+) -> Result<()> {
+    let Some(kind) = CarryForwardKind::from_predicate(&body.predicate) else {
+        return Ok(());
+    };
+    if body.confidence >= kind.auto_floor() || body.approval == ClaimApprovalStatus::Proposed {
+        return Ok(());
+    }
+    let prior = prior_claim(store, txn, id)?;
+    let valid = match body.approval {
+        ClaimApprovalStatus::Auto => prior
+            .as_ref()
+            .is_some_and(|prior| monotonic_demotion(prior, body)),
+        ClaimApprovalStatus::Approved => prior.as_ref().is_some_and(|prior| {
+            matches!(
+                prior.approval,
+                ClaimApprovalStatus::Proposed | ClaimApprovalStatus::Approved
+            ) && prior.predicate == body.predicate
+                && prior.subject == body.subject
+        }),
+        ClaimApprovalStatus::Rejected => prior.as_ref().is_some_and(|prior| {
+            matches!(
+                prior.approval,
+                ClaimApprovalStatus::Proposed | ClaimApprovalStatus::Rejected
+            ) && prior.predicate == body.predicate
+                && prior.subject == body.subject
+                && body.lifecycle == crate::claim::ClaimLifecycleStatus::Retracted
+        }),
+        ClaimApprovalStatus::Proposed => true,
+    };
+    if valid {
+        Ok(())
+    } else {
+        Err(Error::InvalidClaimBody(
+            "carry-forward confidence requires a proposal or bound lifecycle transition",
+        ))
+    }
+}
+
+/// The Gate can preserve a previously admitted Auto head only for the exact
+/// confidence-weakening lifecycle delta. The common put admission repeats the
+/// same check on replay where policy re-gating is intentionally absent.
+pub(crate) fn allows_auto_demotion(
+    store: &crate::store::Store,
+    txn: &heed::RoTxn<'_>,
+    id: &EntityId,
+    body: &ClaimBody,
+) -> Result<bool> {
+    Ok(prior_claim(store, txn, id)?
+        .as_ref()
+        .is_some_and(|prior| monotonic_demotion(prior, body)))
+}
+
+fn prior_claim(
+    store: &crate::store::Store,
+    txn: &heed::RoTxn<'_>,
+    id: &EntityId,
+) -> Result<Option<ClaimBody>> {
+    use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
+    let Some(raw) = store.entities.get(txn, id.as_bytes())? else {
+        return Ok(None);
+    };
+    let header = EntityMetadataHeader::parse(&raw)
+        .ok_or(Error::CorruptedIndex("carry-forward prior header"))?;
+    if header.entity_type != crate::registry::ENTITY_TYPE_CLAIM {
+        return Ok(None);
+    }
+    crate::claim::decode_claim_body(&raw[ENTITY_METADATA_HEADER_LEN..], true).map(Some)
+}
+
+/// Match the exact body delta of the canonical demotion writer. A raw caller
+/// cannot create a new low-confidence Auto head by only stamping a rung.
+fn monotonic_demotion(prior: &ClaimBody, next: &ClaimBody) -> bool {
+    use crate::claim::{CLAIM_SCOPE_DEMOTION_RUNG_KEY, ClaimDemotionRung, claim_demotion_rung};
+    if prior.approval != ClaimApprovalStatus::Auto
+        || prior.lifecycle != crate::claim::ClaimLifecycleStatus::Active
+        || next.confidence > prior.confidence
+    {
+        return false;
+    }
+    let Ok(before) = claim_demotion_rung(prior) else {
+        return false;
+    };
+    let Ok(after) = claim_demotion_rung(next) else {
+        return false;
+    };
+    let mut expected = prior.clone();
+    let rung = match (before, after) {
+        (
+            Some(ClaimDemotionRung::Decayed | ClaimDemotionRung::Weakened),
+            Some(ClaimDemotionRung::Weakened),
+        ) => {
+            expected.confidence = next.confidence;
+            "weakened"
+        }
+        (Some(ClaimDemotionRung::Weakened), Some(ClaimDemotionRung::Stale)) => {
+            expected.stale = true;
+            "stale"
+        }
+        _ => return prior == next, // idempotent same-body replay only
+    };
+    let mut scope = match expected.scope.take() {
+        Some(Value::Map(entries)) => entries,
+        _ => return false,
+    };
+    scope.retain(|(key, _)| key.as_str() != Some(CLAIM_SCOPE_DEMOTION_RUNG_KEY));
+    scope.push((
+        Value::from(CLAIM_SCOPE_DEMOTION_RUNG_KEY),
+        Value::from(rung),
+    ));
+    expected.scope = Some(Value::Map(scope));
+    expected == *next
 }
 
 impl Vault {
     /// Write one typed forward claim through the standard envelope and Gate.
-    /// Low-confidence writes are forced to Proposed; policy can still hold a
-    /// high-confidence Auto request, never promote a Proposed request itself.
+    /// Low-confidence Auto requests are forced to Proposed. An explicit
+    /// approval or rejection is not silently rewritten; the existing claim
+    /// lifecycle and its authenticated consent door must authorize it.
     ///
     /// # Errors
     /// Returns a validation, authority or Gate error on an invalid write.
@@ -140,9 +257,17 @@ impl Vault {
         occurred: TimeRange,
         learned_at: u64,
     ) -> Result<()> {
+        if !matches!(
+            envelope.approval(),
+            ClaimApprovalStatus::Auto | ClaimApprovalStatus::Proposed
+        ) {
+            return Err(Error::InvalidClaimBody(
+                "carry-forward consent must use the authenticated resolution door",
+            ));
+        }
         let held = claim.confidence < claim.kind.auto_floor();
         let candidate = claim.into_candidate()?;
-        let envelope = if held {
+        let envelope = if held && envelope.approval() == ClaimApprovalStatus::Auto {
             envelope
                 .clone()
                 .with_approval(ClaimApprovalStatus::Proposed)
