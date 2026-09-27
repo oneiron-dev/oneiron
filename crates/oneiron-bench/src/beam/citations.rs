@@ -20,6 +20,18 @@ fn citation_rows(source: &Value) -> impl Iterator<Item = &Value> {
 }
 
 fn validate_pairings(source: &Value) -> BeamResult<()> {
+    for group in [
+        "beam_paper_baselines",
+        "honcho",
+        "competitors",
+        "dropped_or_unverifiable",
+    ] {
+        if !source[group].is_array() {
+            return Err(BeamError::Comparability {
+                reason: format!("citation group {group} must be an array"),
+            });
+        }
+    }
     let mut solo = HashMap::new();
     for row in citation_rows(source) {
         if matches!(parse_pairing(row)?, BackboneSoloPairing::Solo) {
@@ -105,11 +117,10 @@ fn corpus_from_source(source: &Value) -> BeamResult<CitationCorpus> {
         "competitors",
         "dropped_or_unverifiable",
     ] {
-        let rows = match &source[group] {
-            Value::Array(rows) => rows.clone(),
-            Value::Object(_) => vec![source[group].clone()],
-            _ => Vec::new(),
-        };
+        let rows = source[group]
+            .as_array()
+            .expect("citation groups validated as arrays")
+            .clone();
         for row in rows {
             let named = row["disposition"].as_str().unwrap_or("walled appendix");
             let unpaired = group != "dropped_or_unverifiable"
@@ -235,5 +246,52 @@ mod tests {
         let mut source = fixture();
         source["honcho"][0]["backbone_solo_pairing"]["reason"] = " ".into();
         assert!(corpus_from_source(&source).is_err());
+        let mut source = fixture();
+        source["honcho"] = source["honcho"][0].clone();
+        assert!(corpus_from_source(&source).is_err());
+    }
+
+    #[test]
+    fn published_light_and_rag_cards_keep_distinct_retrieval_budgets() {
+        let corpus = corpus().unwrap();
+        let numbers = corpus.main_table.iter().chain(&corpus.appendix);
+        let light = numbers
+            .clone()
+            .filter(|number| {
+                number.evidence["system"]
+                    .as_str()
+                    .is_some_and(|system| system.starts_with("BEAM paper (LIGHT"))
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(light.len(), 4);
+        for number in light {
+            assert_eq!(
+                number.evidence["retrieval_k"], 15,
+                "{}",
+                number.evidence["system"]
+            );
+            let caveat = number.evidence["card_caveat"].as_str().unwrap();
+            assert!(caveat.contains("scratchpad") && caveat.contains("working memory"));
+        }
+        let rag = numbers
+            .filter(|number| {
+                number.evidence["system"]
+                    .as_str()
+                    .is_some_and(|system| system.starts_with("BEAM paper (RAG"))
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(rag.len(), 5);
+        for number in rag {
+            assert_eq!(
+                number.evidence["retrieval_k"], 5,
+                "{}",
+                number.evidence["system"]
+            );
+        }
+        assert!(corpus.main_table.iter().any(|number| {
+            number.evidence["system"] == "BEAM paper (LIGHT, Qwen2.5-32B)"
+                && number.evidence["tier"] == "1M"
+                && number.evidence["retrieval_k"] == 15
+        }));
     }
 }
