@@ -220,30 +220,16 @@ impl Memory<'_> {
                         )?;
                     }
                 }
-                if let Some(old_id) = prior {
-                    let policy = crate::gate::resolve_policy_manifest(&self.vault.store, wtxn)?;
-                    let old = self
-                        .vault
-                        .require_named_claim_target_active_in(wtxn, &old_id)?;
-                    let probe = candidate
-                        .clone()
-                        .into_claim_body(&envelope, self.vault.default_facet_in_txn(wtxn)?);
-                    if !policy.is_single_valued_predicate(&input.predicate)
-                        || crate::claim::claim_source_widens_beyond(
-                            old.source.unwrap_or(ClaimSource::UserStated),
-                            source,
-                        )
-                        || self
-                            .vault
-                            .supersession_requires_confirmation_in_txn(wtxn, &old_id, &probe)?
-                    {
-                        envelope = WriteEnvelope::new(
-                            envelope.actor(),
-                            source,
-                            envelope.provenance().clone(),
-                            ClaimApprovalStatus::Proposed,
-                        );
-                    }
+                // A replacement is a create-versus-closure proposal even when its
+                // source and actor would qualify for Auto. The later grant is
+                // the only door allowed to close the prior head.
+                if prior.is_some() {
+                    envelope = WriteEnvelope::new(
+                        envelope.actor(),
+                        source,
+                        envelope.provenance().clone(),
+                        ClaimApprovalStatus::Proposed,
+                    );
                 }
                 let closure_envelope = envelope.clone();
                 apply_ops_with_gate_mode(
