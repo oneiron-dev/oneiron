@@ -151,6 +151,18 @@ pub(crate) fn validate_channel_identity_body_bytes(bytes: &[u8]) -> Result<()> {
     decode_channel_identity_body(bytes).map(|_| ())
 }
 
+/// Refuses a peer-authored delegated body before any put effects are staged.
+/// Local rows are decoded here too, so every put shares the wire validation.
+pub(crate) fn validate_channel_identity_put_carrier(bytes: &[u8], replicated: bool) -> Result<()> {
+    let identity = decode_channel_identity_body(bytes)?;
+    if replicated && identity.is_delegated() {
+        return Err(Error::Record(RecordError::InvalidChannelIdentityBody(
+            "delegated ChannelIdentity rows are local custody facts and cannot be replicated",
+        )));
+    }
+    Ok(())
+}
+
 /// Returns whether `predicate` belongs to the ChannelIdentity claim family.
 #[must_use]
 pub fn is_channel_identity_claim_predicate(predicate: &str) -> bool {

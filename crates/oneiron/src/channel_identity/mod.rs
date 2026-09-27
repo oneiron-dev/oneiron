@@ -73,6 +73,7 @@ pub(crate) use self::assignment::maintain_assignment_put;
 #[cfg(test)]
 use self::codec::validate_channel_identity_body_bytes;
 pub(crate) use self::codec::validate_channel_identity_claim_structure;
+pub(crate) use self::codec::validate_channel_identity_put_carrier;
 #[cfg(test)]
 use self::record::StoredIdentityParts;
 pub(crate) use self::sender::enrich_dispatch_channel_identity;

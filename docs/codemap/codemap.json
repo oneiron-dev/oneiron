@@ -6551,6 +6551,16 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [],
+     "path": "src/channel_identity/assignment.rs",
+     "purpose": "Two-slot channel assignment index",
+     "surface": {
+      "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [
       "ChannelAuthMode"
      ],
@@ -6583,7 +6593,7 @@
      "path": "src/channel_identity/codec.rs",
      "purpose": "Canonical MessagePack body and claim-structure codec for ChannelIdentity",
      "surface": {
-      "crate-vis": 18,
+      "crate-vis": 19,
       "fn": 3
      }
     },
@@ -6591,15 +6601,17 @@
      "bucket": "m",
      "kind": "src",
      "notable": [
+      "Custody",
       "DelegatedGrant",
-      "DelegatedGrantScope"
+      "DelegatedGrantScope",
+      "InboundDisposition"
      ],
      "path": "src/channel_identity/custody.rs",
-     "purpose": "Delegated-grant custody: the grant handle, the txn-bound proof, and the one verification door",
+     "purpose": "Custody: WHO holds the account behind a channel identity, the delegated grant handle, the txn-bound proof…",
      "surface": {
-      "crate-vis": 3,
-      "enum": 1,
-      "fn": 7,
+      "crate-vis": 8,
+      "enum": 3,
+      "fn": 17,
       "struct": 1
      }
     },
@@ -6615,16 +6627,20 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
-      "ChannelIdentityState"
+      "ChannelIdentityState",
+      "ChannelIdentityStep",
+      "DelegatedLifecycle",
+      "SelfHeldLifecycle"
      ],
      "path": "src/channel_identity/lifecycle.rs",
-     "purpose": "ChannelIdentity lifecycle states and transition edge tables",
+     "purpose": "ChannelIdentity lifecycle: the wire projection, the two machines, and their proof-carrying edge tables",
      "surface": {
-      "enum": 1,
-      "fn": 5
+      "crate-vis": 8,
+      "enum": 4,
+      "fn": 8
      }
     },
     {
@@ -6634,8 +6650,8 @@
      "path": "src/channel_identity/mod.rs",
      "purpose": "ChannelIdentity record substrate (OF-347 CID-1)",
      "surface": {
-      "crate-vis": 2,
-      "re-export": 11
+      "crate-vis": 6,
+      "re-export": 12
      }
     },
     {
@@ -6645,11 +6661,21 @@
       "ChannelIdentity"
      ],
      "path": "src/channel_identity/record.rs",
-     "purpose": "Vault-resident ChannelIdentity record with validators, transitions, and claims",
+     "purpose": "Vault-resident ChannelIdentity record: private fields, one custody value, accessors, and the one stepping door",
      "surface": {
-      "crate-vis": 2,
-      "fn": 9,
+      "crate-vis": 7,
+      "fn": 23,
       "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/channel_identity/sender.rs",
+     "purpose": "—",
+     "surface": {
+      "crate-vis": 2
      }
     },
     {
@@ -6707,7 +6733,7 @@
      "path": "src/channel_identity/transition.rs",
      "purpose": "ChannelIdentity transition admission, custody re-proof, and uniqueness scan",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 3,
       "struct": 1
      }
     },
@@ -6719,7 +6745,7 @@
      "purpose": "Vault doors for ChannelIdentity create, provision, transition, reads, and body apply",
      "surface": {
       "crate-vis": 3,
-      "fn": 7
+      "fn": 8
      }
     },
     {
@@ -6932,16 +6958,32 @@
       "GmailDelegatedProvision",
       "GmailInboxPage",
       "GmailInboxPollConfig",
-      "GmailMessageMetadata",
       "GmailReadWire"
      ],
      "path": "src/channel_identity_provider/gmail.rs",
      "purpose": "Gmail/Workspace read-side adapter for `delegated_grant` rows",
      "surface": {
       "const": 5,
-      "fn": 18,
-      "struct": 6,
+      "crate-vis": 5,
+      "fn": 16,
+      "re-export": 1,
+      "struct": 5,
       "trait": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "GmailMessageMetadata",
+      "HeaderMailbox"
+     ],
+     "path": "src/channel_identity_provider/gmail_header.rs",
+     "purpose": "Typed Gmail From-header projection and message metadata",
+     "surface": {
+      "enum": 1,
+      "fn": 3,
+      "struct": 1
      }
     },
     {
@@ -6959,7 +7001,7 @@
      "purpose": "Shared provider envelope: inbound payload structs, provision result, and the adapter trait",
      "surface": {
       "enum": 1,
-      "fn": 9,
+      "fn": 10,
       "struct": 4,
       "trait": 1
      }
@@ -19378,7 +19420,7 @@
      "path": "src/lib.rs",
      "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
      "surface": {
-      "crate-vis": 29,
+      "crate-vis": 30,
       "mod": 168,
       "re-export": 72
      }
@@ -22935,16 +22977,6 @@
      "purpose": "Connector-neutral seat wall and its host-supplied LinkedIn policy adapter",
      "surface": {
       "crate-vis": 3
-     }
-    },
-    {
-     "bucket": "s",
-     "kind": "src",
-     "notable": [],
-     "path": "src/outbound/dispatch_pipeline/sender_identity.rs",
-     "purpose": "—",
-     "surface": {
-      "crate-vis": 2
      }
     },
     {
@@ -30075,7 +30107,7 @@
      "purpose": "Durable admission txn, attempt payload codec, dispatch handoff, and status reads",
      "surface": {
       "const": 1,
-      "crate-vis": 5,
+      "crate-vis": 7,
       "enum": 4,
       "fn": 9,
       "struct": 5,
@@ -30104,7 +30136,7 @@
       "const": 2,
       "crate-vis": 1,
       "enum": 7,
-      "fn": 14,
+      "fn": 15,
       "struct": 4
      }
     },
@@ -31205,7 +31237,7 @@
      "path": "src/sync/window/egress.rs",
      "purpose": "Window egress: packing policy, local-only scrub, exports, and mirror replay",
      "surface": {
-      "crate-vis": 5,
+      "crate-vis": 6,
       "fn": 4
      }
     },
@@ -31269,7 +31301,7 @@
      "path": "src/sync/window/mod.rs",
      "purpose": "Window lifecycle management for the CRDT sync layer",
      "surface": {
-      "crate-vis": 9,
+      "crate-vis": 10,
       "fn": 6,
       "mod": 1,
       "re-export": 5,
@@ -31283,7 +31315,7 @@
      "path": "src/sync/window/reverse.rs",
      "purpose": "Reverse rematerialization plus skip/policy predicates and carrier removal",
      "surface": {
-      "crate-vis": 7,
+      "crate-vis": 8,
       "fn": 1
      }
     },
@@ -32058,6 +32090,16 @@
       "enum": 4,
       "fn": 5,
       "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/test_util/channel_identity.rs",
+     "purpose": "Self-held ChannelIdentity fixtures: a row in a chosen state, reached by walking its machine",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -33594,7 +33636,7 @@
      "path": "tests/common/mod.rs",
      "purpose": "Shared fixture helpers for `oneiron` integration tests",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 4
      }
     },
     {
@@ -34426,7 +34468,7 @@
      "purpose": "CRM pack engine-side registration home"
     },
     "channel_identity": {
-     "files": 17,
+     "files": 19,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -34454,7 +34496,7 @@
      "purpose": "Channel identity capability manifests (OF-347 CID-4)"
     },
     "channel_identity_provider": {
-     "files": 10,
+     "files": 11,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -35091,7 +35133,7 @@
      "purpose": "Vault-as-origin serving plane (ARCH-0068 Phase A)"
     },
     "outbound": {
-     "files": 38,
+     "files": 37,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -35483,7 +35525,7 @@
      "purpose": "`TimeRange`, temporal expressions/parsing, granularity/anchor enums"
     },
     "test_util": {
-     "files": 1,
+     "files": 2,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir (no mod.rs)",
@@ -35590,7 +35632,7 @@
    },
    "over_bar": 10,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2100,
+   "source_files": 2103,
    "test_files": 719
   },
   "oneiron-android": {
@@ -40530,7 +40572,7 @@
      "path": "src/api/tests/mod.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 64
+      "crate-vis": 65
      }
     },
     {
