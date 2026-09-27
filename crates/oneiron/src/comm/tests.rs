@@ -1376,7 +1376,10 @@ fn deleted_indexed_party_is_reminted_before_projector_reuse() -> CommResult<()> 
     run_comm_projector(&vault)?;
     let deleted_party = resolve_party(&vault, "party-reminted")?.ok_or(CommError::InvalidRecord)?;
 
-    assert!(vault.delete_entity(&deleted_party)?);
+    assert!(vault.delete_entity_with_options(
+        &deleted_party,
+        crate::deletion::DeleteEntityOptions { purge: true }
+    )?);
     assert_eq!(vault.get_entity_type(&deleted_party)?, None);
     // A cache hit naming a deleted row is stale, and synced truth holds no
     // replacement — absent, not the dangling id.
@@ -3597,5 +3600,142 @@ fn send_and_reply_receipts_project_only_last_touch() -> CommResult<()> {
         run_comm_projector(&vault)?;
         assert_eq!(vault.claims_for_subject(&party_ref)?.len(), rows);
     }
+    Ok(())
+}
+/// Insert the real node-local receipt shape without a transport adapter, so
+/// comm tests exercise the receipt importer rather than the manual event door.
+fn delivered_connector_receipt(
+    vault: &Vault,
+    seed: u8,
+    channel: &str,
+    verb: &str,
+    target: &str,
+    party: Option<&str>,
+) -> CommResult<()> {
+    let intent = crate::outbound::OutboundIntent::from_trigger(
+        crate::outbound::OutboundIntentDraft::new("actor", verb, channel, target),
+        crate::outbound::OutboundIntentTrigger::agent_immediate("comm-receipt-test"),
+    );
+    let mut receipt = crate::receipt::outbound_intent_receipt(
+        format!("comm-receipt-{seed}"),
+        format!("intent-{seed}"),
+        &intent,
+        u64::from(seed),
+        "delivered_to_channel",
+    );
+    if let Some(party) = party {
+        receipt
+            .fields
+            .insert("counterparty_ref".to_owned(), party.to_owned());
+    }
+    assert!(crate::receipt::persist_send_receipt(
+        vault,
+        entity(seed),
+        receipt,
+        crate::receipt::SendReceiptOutcome::Delivered,
+        true,
+        None,
+    )?);
+    Ok(())
+}
+
+#[test]
+fn durable_message_verbs_project_party_not_destination_and_other_verbs_do_not() -> CommResult<()> {
+    let (_dir, vault) = open_vault();
+    for (seed, channel, verb) in [
+        (0x81, "email", "send"),
+        (0x82, "line", "reply"),
+        (0x83, "line", "push"),
+        (0x84, "telegram", "send_media"),
+        (0x85, "linkedin", "send_dm"),
+        (0x8A, "line", "send_media"),
+        (0x8B, "imessage_bridge", "send_media"),
+        (0x8C, "email", "replace"),
+    ] {
+        let party = format!("party-{seed}");
+        let target = format!("transport-channel-{seed}");
+        delivered_connector_receipt(&vault, seed, channel, verb, &target, Some(&party))?;
+        assert_eq!(
+            count_active_comm_claims(&vault, PREDICATE_COMM_LAST_TOUCH, &party, channel)?,
+            0
+        );
+        run_comm_projector(&vault)?;
+        assert_eq!(
+            count_active_comm_claims(&vault, PREDICATE_COMM_LAST_TOUCH, &party, channel)?,
+            1
+        );
+        assert_eq!(resolve_party(&vault, &target)?, None);
+        run_comm_projector(&vault)?;
+        assert_eq!(
+            count_total_comm_claim_rows(&vault, PREDICATE_COMM_LAST_TOUCH, &party, channel)?,
+            1
+        );
+    }
+    delivered_connector_receipt(
+        &vault,
+        0x86,
+        "telegram",
+        "react",
+        "group-channel",
+        Some("party-reaction"),
+    )?;
+    delivered_connector_receipt(&vault, 0x87, "slack", "send", "shared-channel", None)?;
+    run_comm_projector(&vault)?;
+    assert_eq!(resolve_party(&vault, "party-reaction")?, None);
+    assert_eq!(resolve_party(&vault, "shared-channel")?, None);
+    Ok(())
+}
+
+#[test]
+fn durable_receipt_replay_survives_party_merge_and_projects_later_stop() -> CommResult<()> {
+    let (_dir, vault) = open_vault();
+    let party = "durable-party-merge";
+    delivered_connector_receipt(&vault, 0x88, "email", "send", "shared-inbox", Some(party))?;
+    run_comm_projector(&vault)?;
+    let original = resolve_party(&vault, party)?.ok_or(CommError::InvalidRecord)?;
+    let survivor = entity(0x01);
+    plant_comm_person(&vault, survivor, party)?;
+    assert!(survivor < original);
+    run_comm_projector(&vault)?;
+    assert_eq!(
+        vault.entity_lifecycle_state(&original)?,
+        EntityLifecycleState::Merged
+    );
+    assert_eq!(resolve_party(&vault, party)?, Some(survivor));
+    record_comm_inbound_stop(&vault, "independent-stop", "email", 40)?;
+    run_comm_projector(&vault)?;
+    assert_eq!(
+        count_active_comm_claims(&vault, PREDICATE_COMM_OPT_OUT, "independent-stop", "email")?,
+        1
+    );
+    Ok(())
+}
+
+#[test]
+fn durable_receipt_replay_survives_party_deletion_and_remint() -> CommResult<()> {
+    let (_dir, vault) = open_vault();
+    let party = "durable-party-remint";
+    delivered_connector_receipt(&vault, 0x89, "email", "send", "shared-inbox", Some(party))?;
+    run_comm_projector(&vault)?;
+    let original = resolve_party(&vault, party)?.ok_or(CommError::InvalidRecord)?;
+    assert!(vault.delete_entity(&original)?);
+    record_comm_inbound_stop(&vault, "independent-stop", "email", 41)?;
+    run_comm_projector(&vault)?;
+    assert_eq!(
+        resolve_party(&vault, party)?,
+        None,
+        "old receipt never remints the deleted party"
+    );
+    assert_eq!(
+        count_active_comm_claims(&vault, PREDICATE_COMM_OPT_OUT, "independent-stop", "email")?,
+        1
+    );
+    record_comm_inbound_reply(&vault, party, "email", 42)?;
+    run_comm_projector(&vault)?;
+    assert_ne!(resolve_party(&vault, party)?, Some(original));
+    assert_eq!(
+        count_active_comm_claims(&vault, PREDICATE_COMM_LAST_TOUCH, party, "email")?,
+        1
+    );
     Ok(())
 }

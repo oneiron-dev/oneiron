@@ -22,6 +22,7 @@ mod tests;
 
 pub use crate::delivery_window::DeliveryWindowDecision as OutboundDeliveryWindowDecision;
 
+pub(crate) use self::capability::is_canonical_outbound_verb;
 pub use self::capability::{
     COMMON_OUTBOUND_VERB_KINDS, OUTBOUND_CAPABILITY_MANIFEST_VERSION, OUTBOUND_VERB_FIELD_CONTRACT,
     OutboundCapabilityManifest, OutboundCapabilityPermission, OutboundDeliverySemantics,
@@ -35,6 +36,7 @@ pub use self::connector_task::{
 };
 pub(crate) use self::dispatch_attempt_id::outbound_dispatch_attempt_id;
 pub use self::dispatch_pipeline::OutboundDispatchPipeline;
+pub(crate) use self::dispatch_pipeline::resolve_channel_identity_ref_for_connector;
 pub use self::dispatch_types::{
     OutboundDispatchActor, OutboundDispatchError, OutboundDispatchGate, OutboundDispatchOutcome,
     OutboundDispatchPolicyRisk, OutboundDispatchRequest, OutboundDispatchResult,
