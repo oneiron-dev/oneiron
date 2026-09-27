@@ -167,7 +167,7 @@ impl<'a> FailureLadder<'a> {
         }
 
         match class {
-            FailureClass::Transient => self.route_transient(&queue, input, &policy, &context, walk),
+            FailureClass::Transient => self.route_transient(input, &policy, &context, walk),
             FailureClass::Permanent => {
                 // The intact-lineage ordinal is discarded by policy: permanent
                 // failures are stamped 0 rather than counted.
@@ -197,7 +197,6 @@ impl<'a> FailureLadder<'a> {
 
     fn route_transient(
         &self,
-        queue: &AttemptQueue<'_>,
         input: HandleAttemptFailure,
         policy: &FailureScopePolicy,
         context: &FailureSurfaceContext,

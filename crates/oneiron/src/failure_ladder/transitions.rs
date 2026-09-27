@@ -4,7 +4,7 @@ use std::num::NonZeroU16;
 
 use crate::Vault;
 use crate::agent_dispatch::{AGENT_DISPATCH_ATTEMPT_TYPE, decode_agent_dispatch_input};
-use crate::attempt_queue::{AttemptQueue, AttemptRecord, FailAttempt, FailOutcome, RetryAttempt};
+use crate::attempt_queue::{AttemptRecord, FailAttempt, FailOutcome, RetryAttempt};
 use crate::dreamer_runner::{DREAMER_RUNNER_ATTEMPT_KIND, decode_dreamer_attempt_payload};
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
