@@ -132,5 +132,6 @@ impl Memory<'_> {
             Some(&input.frozen_payload()),
             None,
         )
+        .map(|(receipt, _)| receipt)
     }
 }

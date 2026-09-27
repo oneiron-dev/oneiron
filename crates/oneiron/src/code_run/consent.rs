@@ -304,14 +304,14 @@ pub struct CodeConsentRequest {
 
 impl CodeConsentRequest {
     /// Attach host-computed facts to a consumer-authored human question.
-    pub fn ask_human(&self, prompt: &str) -> crate::code_run::SelfAskHumanCall {
+    pub fn ask(&self, prompt: &str) -> crate::code_run::SelfAskCall {
         let facts = serde_json::json!({
             "reached_symbols": self.blast_radius.reached_symbols,
             "reached_entities": self.blast_radius.reached_entities,
             "max_depth": self.blast_radius.max_depth,
             "risk_summary": self.risk_summary,
         });
-        crate::code_run::SelfAskHumanCall {
+        crate::code_run::SelfAskCall {
             prompt: format!("{prompt}\n{facts}"),
         }
     }
@@ -575,7 +575,7 @@ mod tests {
         );
         assert!(request.risk_summary.is_none());
         request.risk_summary = Some("Review downstream callers and egress before running.".into());
-        let ask = request.ask_human("Allow this change?");
+        let ask = request.ask("Allow this change?");
         let facts: serde_json::Value =
             serde_json::from_str(ask.prompt.lines().last().unwrap()).unwrap();
         assert_eq!(facts["reached_symbols"], 4);

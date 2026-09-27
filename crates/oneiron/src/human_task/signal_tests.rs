@@ -20,7 +20,7 @@ fn only_human_input_maps_to_the_human_response_trap() {
         trap_for_durable_wait(
             &SelfDurableWait {
                 wait_id: crate::test_util::entity(0x8F),
-                effect: SelfEffect::AskHuman,
+                effect: SelfEffect::Ask,
                 reason,
                 prompt: None,
             },
@@ -49,7 +49,7 @@ fn only_human_input_maps_to_the_human_response_trap() {
 #[test]
 fn ask_human_dispatch_binds_the_real_task_at_wait_mint_time() {
     use crate::code_run::{
-        HostSelfDispatcher, SelfAskHumanCall, SelfCall, SelfDispatchOutcome, SelfDispatcher,
+        HostSelfDispatcher, SelfAskCall, SelfCall, SelfDispatchOutcome, SelfDispatcher,
     };
 
     let fixture = HumanFixture::open();
@@ -65,12 +65,10 @@ fn ask_human_dispatch_binds_the_real_task_at_wait_mint_time() {
     .expect("bind dispatcher to the human task");
 
     let outcome = dispatcher
-        .dispatch(SelfCall::AskHuman(SelfAskHumanCall::new(
-            "Please answer this task",
-        )))
-        .expect("dispatch self.ask_human");
+        .dispatch(SelfCall::Ask(SelfAskCall::new("Please answer this task")))
+        .expect("dispatch ask");
     let SelfDispatchOutcome::DurableWait(wait) = outcome else {
-        panic!("self.ask_human must mint a durable wait");
+        panic!("ask must mint a durable wait");
     };
 
     assert_eq!(wait.wait_id, task_ref);

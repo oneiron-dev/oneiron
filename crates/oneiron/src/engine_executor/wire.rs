@@ -629,6 +629,7 @@ fn looks_like_plain_js(text: &str) -> bool {
         "import ",
         "export ",
         "self.",
+        "ask(",
         "finish(",
         "console.log(",
         "writeOutput(",

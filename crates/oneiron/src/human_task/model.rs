@@ -183,4 +183,6 @@ pub struct HumanFollowupDispatch {
     pub intent_ref: String,
     /// Outbound schedule outcome, verbatim from the OF-327 receipt.
     pub outcome: String,
+    /// Sending identity recorded by the outbound admission, not re-resolved.
+    pub sender_ref: Option<EntityId>,
 }

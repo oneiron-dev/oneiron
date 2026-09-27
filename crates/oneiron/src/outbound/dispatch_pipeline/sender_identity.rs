@@ -17,7 +17,7 @@ use crate::store::Store;
 /// identity that will carry the send. Missing, unregistered, or inactive
 /// identities resolve to `None`. Multiple eligible identities instead return
 /// [`Error::InvalidConfig`]: automatic selection must not send without a unique sender.
-pub(in crate::outbound) fn resolve_channel_identity_ref_for_connector(
+pub(crate) fn resolve_channel_identity_ref_for_connector(
     store: &Store,
     txn: &heed::RoTxn<'_>,
     connector_key: &str,

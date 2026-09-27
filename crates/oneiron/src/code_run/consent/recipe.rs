@@ -80,7 +80,7 @@ mod tests {
             ),
         ]);
         recipe.explain(&mut request, &vars).unwrap();
-        let ask = request.ask_human("Review?");
+        let ask = request.ask("Review?");
         let facts: serde_json::Value =
             serde_json::from_str(ask.prompt.lines().last().unwrap()).unwrap();
         assert_eq!(facts["reached_symbols"], 12);

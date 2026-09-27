@@ -1,5 +1,7 @@
 """Dependency-free fixtures for the checked-in WIT artifact generator."""
 import importlib.util
+import shutil
+import subprocess
 from pathlib import Path
 import unittest
 
@@ -23,6 +25,22 @@ class SandboxWitTests(unittest.TestCase):
             GEN.generate(source)
         with self.assertRaises(ValueError):
             GEN.generate(source.replace("import clock:", "// @js fixture.clock\nimport clock:").replace("-> u64", "-> unknown-type"))
+
+    def test_bare_ask_declaration_compiles_as_typescript(self):
+        declaration = GEN.OUT / "code-run.d.ts"
+        self.assertIn("declare function ask(", declaration.read_text())
+        tsc = shutil.which("tsc")
+        if tsc is None:
+            package_tsc = ROOT / "packages/oneiron/node_modules/.bin/tsc"
+            if package_tsc.exists():
+                tsc = str(package_tsc)
+        if tsc is None:
+            self.skipTest("TypeScript compiler is not installed on this host")
+        result = subprocess.run(
+            [tsc, "--noEmit", "--lib", "es2022", str(declaration)],
+            capture_output=True, text=True, check=False, timeout=30,
+        )
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
     def test_json_transport_fields_keep_public_object_types(self):
         artifacts = GEN.generate(GEN.WIT.read_text())

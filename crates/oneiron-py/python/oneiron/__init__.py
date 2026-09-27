@@ -216,6 +216,12 @@ class Oneiron:
     def key_value_namespaces(self, request: dict[str, Any]) -> list[list[str]]:
         """Exact actor-owned worldless keyed memory; typed engine errors pass through."""
         return json.loads(_translate(lambda: self._client.key_value_namespaces(json.dumps(request, allow_nan=False))))
+    def can(self, request: dict[str, Any]) -> dict[str, Any]:
+        """Read-only ask routing or attributed partial answers."""
+        return json.loads(_translate(lambda: self._client.can(json.dumps(request, allow_nan=False))))
+    def peek(self, request: dict[str, Any]) -> list[dict[str, Any]]:
+        """Read-only ask routing or attributed partial answers."""
+        return json.loads(_translate(lambda: self._client.peek(json.dumps(request, allow_nan=False))))
 
 # END GENERATED FACADE VERBS
 

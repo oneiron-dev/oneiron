@@ -40,6 +40,8 @@ keyValuePut(requestJson: string): string
 keyValueDelete(requestJson: string): string
 keyValueSearch(requestJson: string): string
 keyValueNamespaces(requestJson: string): string
+can(requestJson: string): string
+peek(requestJson: string): string
 tasksAsk(input: unknown): unknown
 tasksWait(input: unknown): unknown
 tasksAnswer(input: unknown): unknown

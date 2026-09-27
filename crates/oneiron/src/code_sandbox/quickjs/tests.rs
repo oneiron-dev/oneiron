@@ -1,6 +1,9 @@
 //! Acceptance tests require the real artifacts produced by the pinned build.
 use super::*;
-use crate::code_run::{SelfDispatchOutcome, SelfMemoryEdgeWriteResult, SelfMemoryWriteResult};
+use crate::code_run::{
+    SelfDispatchOutcome, SelfDurableWait, SelfDurableWaitReason, SelfEffect,
+    SelfMemoryEdgeWriteResult, SelfMemoryWriteResult,
+};
 use crate::engine_executor::JsCodeModeStepOutcome;
 use serde_json::Value;
 use std::path::PathBuf;
@@ -49,6 +52,12 @@ impl JsCodeModeHost for Host {
                     tgt: call.tgt,
                 })
             }
+            SelfCall::Ask(_) => SelfDispatchOutcome::DurableWait(SelfDurableWait {
+                wait_id: EntityId::from_bytes([2; 16])?,
+                effect: SelfEffect::Ask,
+                reason: SelfDurableWaitReason::HumanInput,
+                prompt: None,
+            }),
             _ => return Err(Error::InvalidConfig("unexpected test call".into())),
         };
         Ok(SelfDispatchResponse {
@@ -139,6 +148,29 @@ fn quickjs_real_language_typed_writes_determinism_and_escape_refusal() {
 }
 
 #[test]
+fn quickjs_exposes_bare_ask_but_no_self_ask_alias() {
+    let (bytes, hash) = artifact("first-party");
+    let factory = QuickJsRuntimeFactory::from_component(&bytes, hash, ComponentBudget::default())
+        .expect("pinned real component");
+    let mut host = Host::default();
+    let mut runtime = factory.runtime().expect("runtime");
+    let output = run(
+        &mut runtime,
+        "const wait = await ask({prompt:'continue?'}); finish(JSON.stringify({wait, old:typeof self.ask_human, camel:typeof self.askHuman}));",
+        &mut host,
+    ).expect("guest bare ask");
+    let result: Value = serde_json::from_str(&output.observation).expect("guest result");
+    assert_eq!(
+        result["wait"]["waitId"],
+        EntityId::from_bytes([2; 16]).unwrap().to_hex()
+    );
+    assert_eq!(result["old"], "undefined");
+    assert_eq!(result["camel"], "undefined");
+    assert!(matches!(&host.calls[..], [SelfCall::Ask(call)] if call.prompt == "continue?"));
+}
+
+#[test]
+
 fn quickjs_json_validate_returns_shared_allow_reject_verdicts_without_dispatch() {
     let (bytes, hash) = artifact("first-party");
     let factory =
@@ -354,14 +386,7 @@ impl crate::code_sandbox::wasmtime_boundary::bindings::GuestImports for ForeignH
     {
         Err("unlinked capability".into())
     }
-    fn ask_human(
-        &mut self,
-        _: crate::code_sandbox::wasmtime_boundary::bindings::PromptInput,
-    ) -> std::result::Result<crate::code_sandbox::wasmtime_boundary::bindings::WaitOutput, String>
-    {
-        Err("unlinked capability".into())
-    }
-    fn ask_human_camel(
+    fn ask(
         &mut self,
         _: crate::code_sandbox::wasmtime_boundary::bindings::PromptInput,
     ) -> std::result::Result<crate::code_sandbox::wasmtime_boundary::bindings::WaitOutput, String>

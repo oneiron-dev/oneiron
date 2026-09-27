@@ -3,6 +3,13 @@ use super::{TaskAskDefault, TaskAskHandle, TaskAskQuestion, TaskAskSpec, TaskAsk
 use crate::memory::{Memory, MemoryError, MemoryResult};
 use serde::{Deserialize, Serialize};
 
+/// `can(ask(...))`: one read-only preflight for a typed ask spec.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct TaskCanAskRequest {
+    pub ask: super::TaskAskSpec,
+}
+
 /// One SDK verb with two disjoint wire shapes. Rich fields cannot be
 /// reinterpreted as first-answer shorthand after Serde drops field presence.
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]

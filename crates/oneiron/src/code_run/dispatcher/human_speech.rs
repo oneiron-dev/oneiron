@@ -2,7 +2,7 @@
 
 use crate::code_run::storage::ExecutorStorage;
 use crate::code_run::types::{
-    SelfAskHumanCall, SelfDispatchOutcome, SelfDurableWait, SelfDurableWaitReason, SelfEffect,
+    SelfAskCall, SelfDispatchOutcome, SelfDurableWait, SelfDurableWaitReason, SelfEffect,
     SelfSpeechCall, SelfSpeechResult,
 };
 use crate::entity_id::EntityId;
@@ -18,7 +18,7 @@ pub(in crate::code_run) struct HumanWaitDispatchTarget {
 }
 
 impl HostSelfDispatcher<'_> {
-    pub(super) fn dispatch_ask_human(&self, call: SelfAskHumanCall) -> Result<SelfDispatchOutcome> {
+    pub(super) fn dispatch_ask(&self, call: SelfAskCall) -> Result<SelfDispatchOutcome> {
         let is_review = self.code_emission.as_ref().is_some_and(|(emission, _)| {
             crate::code_run::consent::consent_lane_for(emission.tier, emission.source_trust)
                 == crate::code_run::consent::ConsentLane::Review
@@ -28,7 +28,7 @@ impl HostSelfDispatcher<'_> {
                 .code_emission_admission()?
                 .and_then(|a| a.consent_request)
             {
-                Some(request) => request.ask_human(&call.prompt),
+                Some(request) => request.ask(&call.prompt),
                 None => call,
             }
         } else {
@@ -37,21 +37,21 @@ impl HostSelfDispatcher<'_> {
         if let Some(target) = self.human_wait_target {
             let ExecutorStorage::Canonical(vault) = &self.storage else {
                 return Err(Error::InvalidClaimBody(
-                    "self.ask_human task wait requires canonical storage",
+                    "ask task wait requires canonical storage",
                 ));
             };
             let responder_ref = crate::task_verb::task_human_assignee(vault, target.task_ref)?
                 .ok_or(Error::InvalidClaimBody(
-                    "self.ask_human task is not assigned to a human",
+                    "ask task is not assigned to a human",
                 ))?;
             crate::human_task::bind_human_wait(vault, target.task_ref, responder_ref, &target.trap)
                 .map_err(|error| match error {
                     crate::human_task::HumanTaskError::Engine(error) => error,
-                    _ => Error::InvalidClaimBody("self.ask_human wait binding was refused"),
+                    _ => Error::InvalidClaimBody("ask wait binding was refused"),
                 })?;
             return Ok(SelfDispatchOutcome::DurableWait(SelfDurableWait {
                 wait_id: target.task_ref,
-                effect: SelfEffect::AskHuman,
+                effect: SelfEffect::Ask,
                 reason: SelfDurableWaitReason::HumanInput,
                 prompt: Some(call.prompt),
             }));
@@ -63,7 +63,7 @@ impl HostSelfDispatcher<'_> {
         #[cfg(test)]
         {
             Ok(self.durable_wait(
-                SelfEffect::AskHuman,
+                SelfEffect::Ask,
                 SelfDurableWaitReason::HumanInput,
                 Some(call.prompt),
             ))
@@ -72,7 +72,7 @@ impl HostSelfDispatcher<'_> {
         {
             let _ = call;
             Err(Error::InvalidClaimBody(
-                "self.ask_human missing human task wait target",
+                "ask missing human task wait target",
             ))
         }
     }

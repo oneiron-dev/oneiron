@@ -18,6 +18,8 @@ pub enum AgentVerb {
     KeyValueDelete,
     KeyValueSearch,
     KeyValueNamespaces,
+    Can,
+    Peek,
     TasksAsk,
     TasksWait,
     TasksAnswer,
@@ -46,6 +48,8 @@ impl AgentVerb {
         Self::KeyValueDelete,
         Self::KeyValueSearch,
         Self::KeyValueNamespaces,
+        Self::Can,
+        Self::Peek,
         Self::TasksAsk,
         Self::TasksWait,
         Self::TasksAnswer,
@@ -77,6 +81,8 @@ impl AgentVerb {
             Self::KeyValueDelete => "key_value_delete",
             Self::KeyValueSearch => "key_value_search",
             Self::KeyValueNamespaces => "key_value_namespaces",
+            Self::Can => "can",
+            Self::Peek => "peek",
             Self::TasksAsk => "tasks.ask",
             Self::TasksWait => "tasks.wait",
             Self::TasksAnswer => "tasks.answer",
@@ -103,6 +109,8 @@ impl AgentVerb {
                 | Self::KeyValueDelete
                 | Self::KeyValueSearch
                 | Self::KeyValueNamespaces
+                | Self::Can
+                | Self::Peek
                 | Self::TasksAsk
                 | Self::TasksWait
                 | Self::TasksAnswer
