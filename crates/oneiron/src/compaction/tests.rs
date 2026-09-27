@@ -1647,7 +1647,8 @@ fn the_compaction_module_carries_no_scheduler_primitive() {
     ];
     for source in [
         include_str!("../compaction.rs"),
-        include_str!("driver.rs"),
+        include_str!("driver/mod.rs"),
+        include_str!("driver/integration.rs"),
         include_str!("epoch.rs"),
     ] {
         for needle in BANNED {
