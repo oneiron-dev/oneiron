@@ -10000,6 +10000,7 @@
      "path": "src/config/failure_signals.rs",
      "purpose": "Deployment-tier participation is separate from permission to train",
      "surface": {
+      "crate-vis": 1,
       "enum": 1,
       "fn": 2,
       "re-export": 1,
@@ -10007,7 +10008,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "RedactionKind",
@@ -10018,6 +10019,7 @@
      "path": "src/config/failure_signals/samples.rs",
      "purpose": "Vault-local tier-2 sampling",
      "surface": {
+      "crate-vis": 1,
       "enum": 1,
       "fn": 2,
       "struct": 2,
@@ -10025,7 +10027,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "test",
      "notable": [],
      "path": "src/config/failure_signals/tests.rs",

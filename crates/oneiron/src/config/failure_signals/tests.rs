@@ -37,13 +37,49 @@ impl Tier2Redactor for Miss {
     }
 }
 fn turn(vault: &Vault, text: &str) -> crate::Result<crate::EntityId> {
+    use crate::{
+        edge::EdgeActorClass,
+        memory::{WitnessAuthor, WitnessMessage, WitnessTurn},
+        registry::ENTITY_TYPE_PERSON,
+    };
+    let actor = crate::EntityId::from_bytes([0x61; 16])?;
+    if vault.get_entity_type(&actor)?.is_none() {
+        vault.put_entity(
+            &actor,
+            ENTITY_TYPE_PERSON,
+            TimeRange { start: 1, end: 1 },
+            1,
+            b"actor",
+        )?;
+    }
+    let id = crate::EntityId::now();
+    vault
+        .memory(actor, EdgeActorClass::Human)
+        .witness(&WitnessTurn {
+            conversation_ref: crate::EntityId::now().to_hex(),
+            turn_ref: Some(id.to_hex()),
+            occurred_at: 10,
+            messages: vec![WitnessMessage {
+                id: None,
+                author: WitnessAuthor::User,
+                message_type: "dialogue".to_owned(),
+                content: text.to_owned(),
+                metadata: None,
+                is_visible: true,
+                order: 0,
+            }],
+        })
+        .expect("authorized witness");
+    Ok(id)
+}
+fn bare_turn(vault: &Vault, text: &str) -> crate::Result<crate::EntityId> {
     let id = crate::EntityId::now();
     let mut body = vec![];
     rmpv::encode::write_value(
         &mut body,
         &rmpv::Value::Map(vec![("txt".into(), text.into())]),
     )
-    .expect("encode fixture");
+    .expect("encode bare turn");
     vault.put_entity(
         &id,
         ENTITY_TYPE_TURN,
@@ -58,9 +94,11 @@ fn vault() -> (tempfile::TempDir, Vault, std::sync::Arc<ManualClock>) {
     let mut config = VaultConfig::device();
     config.store_clock = clock.bundle();
     config.failure_signals.export_opt_in = true;
-    let (dir, vault) = crate::test_util::open_test_vault_with(config);
+    let dir = tempfile::tempdir().expect("vault root");
+    let vault = Vault::open(dir.path(), config).expect("vault open");
     (dir, vault, clock)
 }
+
 #[test]
 fn pii_is_replaced_before_storage_and_read_and_uncertainty_fails_closed() -> crate::Result<()> {
     let (_dir, vault, _) = vault();
@@ -101,7 +139,7 @@ fn cap_is_durable_weekly_and_expiry_is_35_days() -> crate::Result<()> {
         capture_tier2_samples(&vault, &ids, &FixtureNer, &[])?.len(),
         50
     );
-    assert!(capture_tier2_samples(&vault, &ids, &FixtureNer, &[])?.is_empty());
+    assert!(capture_tier2_samples(&vault, &ids, &Unknown, &[])?.is_empty());
     assert_eq!(read_tier2_samples(&vault)?.len(), 50);
     drop(vault);
     let mut config = VaultConfig::device();
@@ -140,7 +178,8 @@ fn off_record_rows_and_disabled_exports_never_reach_redactor() -> crate::Result<
     assert!(read_tier2_samples(&vault)?.is_empty());
     let mut config = VaultConfig::device();
     config.failure_signals.export_opt_in = false;
-    let (_other_dir, other) = crate::test_util::open_test_vault_with(config);
+    let other_dir = tempfile::tempdir().expect("other root");
+    let other = Vault::open(other_dir.path(), config)?;
     let ordinary = turn(&other, "must not inspect")?;
     assert!(capture_tier2_samples(&other, &[ordinary], &Unknown, &[])?.is_empty());
     Ok(())
@@ -191,5 +230,98 @@ fn witnessed_message_children_supply_transcript_without_exposing_metadata() -> c
     assert_eq!(got.len(), 1);
     assert_eq!(got[0].text, "hello [EMAIL]\n[PERSON] says goodbye");
     assert_eq!(read_tier2_samples(&vault)?, got);
+    Ok(())
+}
+
+#[test]
+fn erasing_turn_or_message_revokes_the_derived_sample() -> crate::Result<()> {
+    use crate::{edge::EdgeKind, registry::ENTITY_TYPE_MESSAGE};
+    for erase_message in [false, true] {
+        let (_dir, vault, _) = vault();
+        let id = turn(&vault, "Ada is here")?;
+        assert_eq!(
+            capture_tier2_samples(&vault, &[id], &FixtureNer, &[])?.len(),
+            1
+        );
+        let source = if erase_message {
+            vault.sources(&id, EdgeKind::PartOf, Some(ENTITY_TYPE_MESSAGE))?[0]
+        } else {
+            id
+        };
+        assert!(vault.delete_entity(&source)?);
+        assert!(read_tier2_samples(&vault)?.is_empty());
+        let txn = vault.store.env.read_txn()?;
+        assert!(
+            vault
+                .store
+                .vault_meta
+                .get(&txn, &super::sample_key(1_800_000_000 / super::WEEK, &id))?
+                .is_none()
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn deletion_during_redaction_cannot_commit_a_stale_sample() -> crate::Result<()> {
+    use crate::{edge::EdgeKind, registry::ENTITY_TYPE_MESSAGE};
+    struct DeleteDuringRedaction<'a> {
+        vault: &'a Vault,
+        source: crate::EntityId,
+    }
+    impl Tier2Redactor for DeleteDuringRedaction<'_> {
+        fn detect(&self, _: &str) -> crate::Result<Option<Vec<RedactionSpan>>> {
+            assert!(self.vault.delete_entity(&self.source)?);
+            Ok(Some(vec![]))
+        }
+    }
+    let (_dir, vault, _) = vault();
+    let turn_id = turn(&vault, "unredacted safe phrase")?;
+    let message = vault.sources(&turn_id, EdgeKind::PartOf, Some(ENTITY_TYPE_MESSAGE))?[0];
+    let ner = DeleteDuringRedaction {
+        vault: &vault,
+        source: message,
+    };
+    assert!(capture_tier2_samples(&vault, &[turn_id], &ner, &[])?.is_empty());
+    assert!(read_tier2_samples(&vault)?.is_empty());
+    Ok(())
+}
+
+#[test]
+fn expired_week_counter_cannot_be_revived_by_clock_rollback() -> crate::Result<()> {
+    const T: u64 = 1_800_000_000;
+    let (dir, vault, clock) = vault();
+    let ids = (0..54)
+        .map(|_| turn(&vault, "safe transcript"))
+        .collect::<crate::Result<Vec<_>>>()?;
+    assert_eq!(
+        capture_tier2_samples(&vault, &ids, &FixtureNer, &[])?.len(),
+        50
+    );
+    clock.set(T + super::WEEK);
+    assert_eq!(read_tier2_samples(&vault)?.len(), 50);
+    drop(vault);
+    clock.set(T);
+    let mut config = VaultConfig::device();
+    config.store_clock = clock.bundle();
+    config.failure_signals.export_opt_in = true;
+    let vault = Vault::open(dir.path(), config)?;
+    let second = capture_tier2_samples(&vault, &ids, &FixtureNer, &[])?;
+    assert_eq!(second.len(), 50);
+    assert!(
+        second
+            .iter()
+            .all(|sample| sample.sampled_at >= T + super::WEEK)
+    );
+    assert_eq!(read_tier2_samples(&vault)?.len(), 100);
+    Ok(())
+}
+
+#[test]
+fn bare_turn_body_is_not_a_transcript_candidate() -> crate::Result<()> {
+    let (_dir, vault, _) = vault();
+    let id = bare_turn(&vault, "Ada email ada@example.invalid")?;
+    assert!(capture_tier2_samples(&vault, &[id], &Unknown, &[])?.is_empty());
+    assert!(read_tier2_samples(&vault)?.is_empty());
     Ok(())
 }

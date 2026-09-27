@@ -3,6 +3,7 @@
 use serde::{Deserialize, Serialize};
 
 mod samples;
+pub(crate) use samples::purge_tier2_for_source_in_txn;
 pub use samples::{
     RedactionKind, RedactionSpan, Tier2Redactor, Tier2Sample, capture_tier2_samples,
     read_tier2_samples,

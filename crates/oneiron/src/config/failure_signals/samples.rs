@@ -6,11 +6,15 @@ use crate::{
     EntityId, Vault,
     edge::EdgeKind,
     error::{Error, Result},
+    ports::EdgeStoreRead,
     registry::{ENTITY_TYPE_MESSAGE, ENTITY_TYPE_TURN},
+    store::Store,
+    vault::{LiveEntityRow, live_entity_row_in_txn},
 };
 
 const PREFIX: &[u8] = b"failure_signals:tier2:sample:";
 const WEEK_PREFIX: &[u8] = b"failure_signals:tier2:week:";
+const SOURCE_PREFIX: &[u8] = b"failure_signals:tier2:source:";
 const WEEK: u64 = 7 * 24 * 60 * 60;
 const TTL: u64 = 35 * 24 * 60 * 60;
 const CAP: usize = 50;
@@ -116,13 +120,47 @@ struct TranscriptMessage {
     order: u32,
 }
 
-fn transcript_text(vault: &Vault, turn: &EntityId) -> Result<String> {
-    let messages = vault.sources(turn, EdgeKind::PartOf, Some(ENTITY_TYPE_MESSAGE))?;
-    if messages.is_empty() {
-        // Older direct TURN writes carry their text on the body. Witnessed
-        // turns do not: their body carries only the speaker grouping fact.
-        return crate::dreamer_consolidation::turn_text_for_shadow(vault, turn);
+// Private custody. Source IDs and body fingerprints never enter the export DTO.
+#[derive(Clone, Serialize, Deserialize)]
+struct SourceProof {
+    id: [u8; 16],
+    body_hash: [u8; 32],
+}
+impl SourceProof {
+    fn new(id: &EntityId, body: &[u8]) -> Self {
+        Self {
+            id: *id.as_bytes(),
+            body_hash: *blake3::hash(body).as_bytes(),
+        }
     }
+    fn entity_id(&self) -> Result<EntityId> {
+        EntityId::from_bytes(self.id)
+    }
+}
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct StoredSample {
+    sample: Tier2Sample,
+    // First entry is the TURN; the rest are visible MESSAGE sources.
+    sources: Vec<SourceProof>,
+}
+struct Prepared {
+    turn: EntityId,
+    text: String,
+    sources: Vec<SourceProof>,
+}
+
+fn transcript_text(vault: &Vault, turn: &EntityId) -> Result<Option<(String, Vec<SourceProof>)>> {
+    let messages = vault.sources(turn, EdgeKind::PartOf, Some(ENTITY_TYPE_MESSAGE))?;
+    // A TURN body is a grouping fact, not a transcript. Never use txt/text
+    // aliases to turn a bare or previously emptied TURN into a sample.
+    if messages.is_empty() {
+        return Ok(None);
+    }
+    let turn_body = vault
+        .get(turn)?
+        .ok_or(Error::CorruptedIndex("tier-2 turn"))?;
+    let mut sources = vec![SourceProof::new(turn, &turn_body)];
     let mut parts = Vec::new();
     for id in messages {
         if vault.store.off_record_sessions.contains_entity(&id)? {
@@ -136,6 +174,7 @@ fn transcript_text(vault: &Vault, turn: &EntityId) -> Result<String> {
         let row: TranscriptMessage =
             rmp_serde::from_slice(&bytes).map_err(|_| Error::CorruptedIndex("tier-2 message"))?;
         if row.is_visible && !row.content.is_empty() {
+            sources.push(SourceProof::new(&id, &bytes));
             parts.push((row.order, row.content));
         }
     }
@@ -144,13 +183,16 @@ fn transcript_text(vault: &Vault, turn: &EntityId) -> Result<String> {
         return Err(Error::CorruptedIndex("tier-2 message order"));
     }
     if parts.is_empty() {
-        return Err(deny("tier-2 transcript is empty"));
+        return Ok(None);
     }
-    Ok(parts
-        .into_iter()
-        .map(|(_, text)| text)
-        .collect::<Vec<_>>()
-        .join("\n"))
+    Ok(Some((
+        parts
+            .into_iter()
+            .map(|(_, text)| text)
+            .collect::<Vec<_>>()
+            .join("\n"),
+        sources,
+    )))
 }
 
 fn sample_key(week: u64, id: &EntityId) -> Vec<u8> {
@@ -159,14 +201,110 @@ fn sample_key(week: u64, id: &EntityId) -> Vec<u8> {
 fn week_key(week: u64) -> Vec<u8> {
     format!("failure_signals:tier2:week:{week:016x}").into_bytes()
 }
-fn decode(raw: &[u8]) -> Result<Tier2Sample> {
+fn source_prefix(id: &EntityId) -> Vec<u8> {
+    let mut key = SOURCE_PREFIX.to_vec();
+    key.extend_from_slice(id.to_hex().as_bytes());
+    key.push(b':');
+    key
+}
+fn source_key(id: &EntityId, sample_key: &[u8]) -> Vec<u8> {
+    let mut key = source_prefix(id);
+    key.extend_from_slice(sample_key);
+    key
+}
+fn decode(raw: &[u8]) -> Result<StoredSample> {
     serde_json::from_slice(raw).map_err(|_| Error::CorruptedIndex("tier-2 sample"))
 }
+fn count_for_week(vault: &Vault, txn: &heed::RoTxn<'_>, week: u64) -> Result<u64> {
+    match vault.store.vault_meta.get(txn, &week_key(week))? {
+        Some(raw) if raw.len() == 8 => Ok(u64::from_be_bytes(
+            raw.as_ref()
+                .try_into()
+                .map_err(|_| Error::CorruptedIndex("tier-2 week"))?,
+        )),
+        Some(_) => Err(Error::CorruptedIndex("tier-2 week")),
+        None => Ok(0),
+    }
+}
+fn sources_live(store: &Store, txn: &heed::RoTxn<'_>, sources: &[SourceProof]) -> Result<bool> {
+    let Some(turn) = sources.first() else {
+        return Err(Error::CorruptedIndex("tier-2 sources"));
+    };
+    let turn_id = turn.entity_id()?;
+    for (index, proof) in sources.iter().enumerate() {
+        let id = proof.entity_id()?;
+        let expected = if index == 0 {
+            ENTITY_TYPE_TURN
+        } else {
+            ENTITY_TYPE_MESSAGE
+        };
+        if store.off_record_sessions.contains_entity(&id)? {
+            return Ok(false);
+        }
+        match live_entity_row_in_txn(store, txn, &id)? {
+            LiveEntityRow::Live { entity_type, body }
+                if entity_type == expected
+                    && blake3::hash(&body).as_bytes() == &proof.body_hash => {}
+            _ => return Ok(false),
+        }
+        if index != 0
+            && (store
+                .port_edge_get(txn, &id, EdgeKind::PartOf, &turn_id)?
+                .is_none()
+                || !store.port_edge_consistent(txn, &id, EdgeKind::PartOf, &turn_id)?)
+        {
+            return Ok(false);
+        }
+    }
+    Ok(true)
+}
+fn purge_sample(
+    store: &Store,
+    txn: &mut heed::RwTxn<'_>,
+    key: &[u8],
+    row: &StoredSample,
+) -> Result<()> {
+    for proof in &row.sources {
+        store
+            .vault_meta
+            .delete(txn, &source_key(&proof.entity_id()?, key))?;
+    }
+    store.vault_meta.delete(txn, key)?;
+    Ok(())
+}
 
-/// Select at most 50 distinct, base-vault TURN candidates in a UTC seven-day
-/// bucket. No caller-supplied content, timestamp, or off-record override exists.
-/// The durable count is consumed atomically with the redacted samples; repeats
-/// cannot bypass the cap, including after reopening the vault.
+/// Erase every stored carrier derived from a deleted TURN or MESSAGE in the
+/// same transaction as the source tear. Used by hard, soft and replay doors.
+pub(crate) fn purge_tier2_for_source_in_txn(
+    store: &Store,
+    txn: &mut heed::RwTxn<'_>,
+    id: &EntityId,
+) -> Result<()> {
+    let prefix = source_prefix(id);
+    let keys = store
+        .vault_meta
+        .prefix_iter(&*txn, &prefix)?
+        .map(|entry| {
+            let (_, value) = entry?;
+            Ok(value.to_vec())
+        })
+        .collect::<Result<Vec<_>>>()?;
+    for key in keys {
+        if !key.starts_with(PREFIX) {
+            return Err(Error::CorruptedIndex("tier-2 source index"));
+        }
+        if let Some(raw) = store.vault_meta.get(&*txn, &key)? {
+            purge_sample(store, txn, &key, &decode(&raw)?)?;
+        } else {
+            store.vault_meta.delete(txn, &source_key(id, &key))?;
+        }
+    }
+    Ok(())
+}
+
+/// Select at most 50 distinct base-vault transcript candidates per UTC
+/// seven-day bucket. No caller-supplied content, timestamp, or off-record
+/// override exists. Quota, source proofs, and the recorded clock commit as one.
 pub fn capture_tier2_samples(
     vault: &Vault,
     candidates: &[EntityId],
@@ -176,62 +314,93 @@ pub fn capture_tier2_samples(
     if !vault.config.failure_signals.exports() {
         return Ok(Vec::new());
     }
-    let now = vault.store.clock.now_recorded_at();
-    let week = now / WEEK;
-    let mut prepared = Vec::new();
     let mut ordered = candidates.to_vec();
     ordered.sort_unstable();
     ordered.dedup();
-    for id in ordered {
-        // A live room is never a source. The base row check prevents forged
-        // caller text, deleted turns, and non-turn IDs from becoming samples.
+    // Advisory preflight avoids paying for the host-local model when quota is
+    // already full. The final write transaction rechecks the count and sources.
+    let to_prepare = {
+        let txn = vault.store.env.read_txn()?;
+        let week = vault.store.clock.now_recorded_at() / WEEK;
+        let count = count_for_week(vault, &txn, week)?;
+        if count > CAP as u64 {
+            return Err(Error::CorruptedIndex("tier-2 week"));
+        }
+        let mut chosen = Vec::new();
+        for id in ordered {
+            if chosen.len() == CAP - count as usize {
+                break;
+            }
+            if vault
+                .store
+                .vault_meta
+                .get(&txn, &sample_key(week, &id))?
+                .is_none()
+            {
+                chosen.push(id);
+            }
+        }
+        chosen
+    };
+    let mut prepared = Vec::new();
+    for id in to_prepare {
         if vault.store.off_record_sessions.contains_entity(&id)? {
             continue;
         }
         if vault.get_entity_type(&id)? != Some(ENTITY_TYPE_TURN) {
             continue;
         }
-        let text = transcript_text(vault, &id)?;
-        let text = scrub(&text, ner, denylist)?;
-        prepared.push((
-            id,
-            Tier2Sample {
-                text,
-                sampled_at: now,
-                expires_at: now.saturating_add(TTL),
-            },
-        ));
+        let Some((text, sources)) = transcript_text(vault, &id)? else {
+            continue;
+        };
+        prepared.push(Prepared {
+            turn: id,
+            text: scrub(&text, ner, denylist)?,
+            sources,
+        });
     }
     vault.with_write_txn(|txn| {
+        let now = crate::ports::recorded_at_in_txn(&vault.store, txn)?;
+        let week = now / WEEK;
         let wk = week_key(week);
-        let count = match vault.store.vault_meta.get(&*txn, &wk)? {
-            Some(raw) if raw.len() == 8 => u64::from_be_bytes(
-                raw.as_ref()
-                    .try_into()
-                    .map_err(|_| Error::CorruptedIndex("tier-2 week"))?,
-            ),
-            Some(_) => return Err(Error::CorruptedIndex("tier-2 week")),
-            None => 0,
-        };
+        let count = count_for_week(vault, &*txn, week)?;
         if count > CAP as u64 {
             return Err(Error::CorruptedIndex("tier-2 week"));
         }
         let mut selected = Vec::new();
-        for (id, sample) in &prepared {
+        for row in &prepared {
             if selected.len() + count as usize == CAP {
                 break;
             }
-            let key = sample_key(week, id);
+            let key = sample_key(week, &row.turn);
             if vault.store.vault_meta.get(&*txn, &key)?.is_some() {
                 continue;
             }
+            if !sources_live(&vault.store, &*txn, &row.sources)? {
+                continue;
+            }
+            let sample = Tier2Sample {
+                text: row.text.clone(),
+                sampled_at: now,
+                expires_at: now.saturating_add(TTL),
+            };
+            let stored = StoredSample {
+                sample: sample.clone(),
+                sources: row.sources.clone(),
+            };
             vault.store.vault_meta.put(
                 txn,
                 &key,
-                &serde_json::to_vec(sample)
+                &serde_json::to_vec(&stored)
                     .map_err(|_| Error::InvariantViolation("tier-2 sample encoding"))?,
             )?;
-            selected.push(sample.clone());
+            for proof in &row.sources {
+                vault
+                    .store
+                    .vault_meta
+                    .put(txn, &source_key(&proof.entity_id()?, &key), &key)?;
+            }
+            selected.push(sample);
         }
         vault
             .store
@@ -241,31 +410,32 @@ pub fn capture_tier2_samples(
     })
 }
 
-/// Read only unexpired redacted rows. Expired rows are swept in the same call,
-/// while independent weekly counters remain until their bucket passes.
+/// Read only unexpired rows whose original TURN and every visible MESSAGE
+/// still exist with the captured bytes. Retire stale samples and counters.
 pub fn read_tier2_samples(vault: &Vault) -> Result<Vec<Tier2Sample>> {
     if !vault.config.failure_signals.exports() {
         return Ok(Vec::new());
     }
-    let now = vault.store.clock.now_recorded_at();
     vault.with_write_txn(|txn| {
+        let now = crate::ports::recorded_at_in_txn(&vault.store, txn)?;
         let mut live = Vec::new();
-        let mut expired = Vec::new();
+        let mut stale = Vec::new();
         for entry in vault.store.vault_meta.prefix_iter(&*txn, PREFIX)? {
             let (key, raw) = entry?;
-            let sample = decode(&raw)?;
-            if sample.expires_at <= now {
-                expired.push(key.to_vec());
+            let stored = decode(&raw)?;
+            if stored.sample.expires_at <= now
+                || !sources_live(&vault.store, &*txn, &stored.sources)?
+            {
+                stale.push((key.to_vec(), stored));
             } else {
-                live.push(sample);
+                live.push(stored.sample);
             }
         }
-        for key in expired {
-            vault.store.vault_meta.delete(txn, &key)?;
+        for (key, row) in stale {
+            purge_sample(&vault.store, txn, &key, &row)?;
         }
-        // Old counters cannot be used to restore expired samples.
         let current_week = now / WEEK;
-        let stale = vault
+        let stale_weeks = vault
             .store
             .vault_meta
             .prefix_iter(&*txn, WEEK_PREFIX)?
@@ -278,7 +448,7 @@ pub fn read_tier2_samples(vault: &Vault) -> Result<Vec<Tier2Sample>> {
                 Ok((bucket, key.to_vec()))
             })
             .collect::<Result<Vec<_>>>()?;
-        for (bucket, key) in stale {
+        for (bucket, key) in stale_weeks {
             if bucket < current_week {
                 vault.store.vault_meta.delete(txn, &key)?;
             }
