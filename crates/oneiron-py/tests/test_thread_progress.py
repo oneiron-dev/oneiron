@@ -113,7 +113,24 @@ def probe(verb, outcome):
         peer.start()
         progress_thread.start()
         if outcome == "success":
-            assert call(memory, verb) == SUCCESS[verb]
+            result = call(memory, verb)
+            if verb == "recall":
+                # The server keeps its camelCase wire field; the Python-facing
+                # dict must expose snake_case without dropping other metadata.
+                assert result == {
+                    **SUCCESS["recall"],
+                    "retrieval_meta": {
+                        "quality": "passthrough",
+                        "confidence_adjustment": -0.35,
+                        "sparse": True,
+                        "total_candidates": 0,
+                        "claims_returned": 0,
+                        "deep_pending": None,
+                        "partial": True,
+                    },
+                }
+            else:
+                assert result == SUCCESS[verb]
         else:
             with pytest.raises(OneironError) as caught:
                 call(memory, verb)

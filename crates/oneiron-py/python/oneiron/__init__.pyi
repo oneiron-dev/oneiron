@@ -87,6 +87,9 @@ class ScopeHonesty(TypedDict):
     out_of_scope_worlds: list[str]
 
 class RetrievalMeta(TypedDict):
+    quality: Literal["full", "degraded", "passthrough"]
+    degradation: NotRequired[list[Literal["ppr_cache_miss", "embedding_timeout", "bm25_stale", "temporal_signal_skipped"]]]
+    confidence_adjustment: float
     partial: bool
     sparse: bool | None
     total_candidates: int
