@@ -164,6 +164,18 @@ impl HostSelfDispatcher<'_> {
             &envelope,
             crate::claim::substrate_facet_id(envelope.actor().entity_ref()),
         );
+        let authored_rules = crate::dreamer_consolidation::prepare_authored_claim(
+            &gate_body.predicate,
+            &gate_body.value,
+        )?;
+        if authored_rules.is_some()
+            && (gate_body.subject != ClaimSubject::Entity(self.actor.entity_ref())
+                || self.actor.actor_class() != crate::EdgeActorClass::Agent)
+        {
+            return Err(Error::InvalidConfig(
+                "Dreamer rule author is not the bound resident".into(),
+            ));
+        }
         self.check_write_gate(call.id, &gate_body, &envelope, true)?;
         match &self.storage {
             ExecutorStorage::Canonical(vault) => vault
@@ -184,6 +196,38 @@ impl HostSelfDispatcher<'_> {
             )?,
         }
 
+        if let Some(json) = authored_rules {
+            let admitted = match &self.storage {
+                ExecutorStorage::Canonical(vault) => {
+                    crate::dreamer_consolidation::admitted_authored_claim(
+                        vault, &call.id, self.actor,
+                    )?
+                }
+                ExecutorStorage::Session(binding) => {
+                    binding
+                        .session
+                        .admitted_executor_claim(&binding.route, &call.id, self.actor)?
+                }
+            };
+            if !admitted {
+                return Err(Error::InvalidConfig(
+                    "Dreamer rules require an admitted resident claim".into(),
+                ));
+            }
+            let record = crate::dreamer_consolidation::resident_record(self.actor, &json)?;
+            match &self.storage {
+                ExecutorStorage::Canonical(vault) => {
+                    vault.set_dreamer_failure_rules(self.actor, &json)?;
+                }
+                ExecutorStorage::Session(binding) => {
+                    binding.session.vault_meta_put_routed(
+                        &binding.route,
+                        crate::dreamer_consolidation::DREAMER_FAILURE_RULES_KEY,
+                        &record,
+                    )?;
+                }
+            }
+        }
         Ok(SelfDispatchOutcome::MemoryWrite(SelfMemoryWriteResult {
             id: call.id,
         }))
