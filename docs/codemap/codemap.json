@@ -1643,6 +1643,26 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [],
+     "path": "src/authority/ancestor_index.rs",
+     "purpose": "Claimed authority-entry ancestry index for deterministic fold scheduling",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/authority/ancestry_bypass.rs",
+     "purpose": "Stalled-revocation bypass with freeze classifier and chain probe",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [
       "CausalWriteDisposition"
      ],
@@ -1706,7 +1726,7 @@
      "path": "src/authority/constants.rs",
      "purpose": "Pinned AUTHORITY_LOG constant table",
      "surface": {
-      "const": 15,
+      "const": 14,
       "crate-vis": 72,
       "type": 2
      }
@@ -1750,7 +1770,7 @@
      "path": "src/authority/entry_transition.rs",
      "purpose": "Per-entry state transition and the consent / quorum / widen-delay predicates",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 5
      }
     },
     {
@@ -1804,9 +1824,6 @@
       "ActorBindingStatus",
       "AuthorityFold",
       "AuthorityFoldIssue",
-      "AuthorityFork",
-      "AuthorityForkAlarm",
-      "AuthorityForkStatus",
       "AuthorityPendingWiden",
       "FoldedActorBinding",
       "FoldedDevice"
@@ -1814,61 +1831,10 @@
      "path": "src/authority/fold_state.rs",
      "purpose": "Folded-state data model and the two-state merge",
      "surface": {
-      "const": 1,
       "crate-vis": 6,
-      "enum": 4,
+      "enum": 3,
       "fn": 3,
-      "struct": 7
-     }
-    },
-    {
-     "bucket": "m",
-     "kind": "src",
-     "notable": [],
-     "path": "src/authority/fork_resolution/ancestry_bypass.rs",
-     "purpose": "Scheduling gates, stalled-revocation bypass with freeze classifier, and chain probe",
-     "surface": {
-      "crate-vis": 5
-     }
-    },
-    {
-     "bucket": "m",
-     "kind": "src",
-     "notable": [],
-     "path": "src/authority/fork_resolution/equivocation_core.rs",
-     "purpose": "Equivocation group resolution driver, resolution types, and fork record/report helpers",
-     "surface": {
-      "crate-vis": 5
-     }
-    },
-    {
-     "bucket": "s",
-     "kind": "src",
-     "notable": [],
-     "path": "src/authority/fork_resolution/mod.rs",
-     "purpose": "Equivocation and fork detection, ranking, quarantine, and restore markers",
-     "surface": {
-      "crate-vis": 4
-     }
-    },
-    {
-     "bucket": "m",
-     "kind": "src",
-     "notable": [],
-     "path": "src/authority/fork_resolution/quarantine_gate.rs",
-     "purpose": "Post-quarantine winner re-checks, roster/consent predicates, and global fork resolution",
-     "surface": {
-      "crate-vis": 4
-     }
-    },
-    {
-     "bucket": "s",
-     "kind": "src",
-     "notable": [],
-     "path": "src/authority/fork_resolution/restore_rank.rs",
-     "purpose": "Ancestor index, restore-marker divergence checks, and deterministic fork ranking",
-     "surface": {
-      "crate-vis": 5
+      "struct": 5
      }
     },
     {
@@ -2135,7 +2101,7 @@
      "kind": "test",
      "notable": [],
      "path": "src/authority/tests/basic_fold.rs",
-     "purpose": "Fold validation for enroll, rotate, recovery, revoke and equivocation",
+     "purpose": "Fold validation for enroll, rotate, recovery, revoke and divergent ancestry",
      "surface": {}
     },
     {
@@ -2192,38 +2158,6 @@
      "notable": [],
      "path": "src/authority/tests/federation_merge.rs",
      "purpose": "Federation DAG merges, grant divergence healing and tiebreaks",
-     "surface": {}
-    },
-    {
-     "bucket": "L",
-     "kind": "test",
-     "notable": [],
-     "path": "src/authority/tests/fork_ancestry.rs",
-     "purpose": "Restore markers and fork-candidate ancestry exemption rules",
-     "surface": {}
-    },
-    {
-     "bucket": "m",
-     "kind": "test",
-     "notable": [],
-     "path": "src/authority/tests/fork_quarantine.rs",
-     "purpose": "Fork quarantine limits, quorum-revoke resolution and vault attribution",
-     "surface": {}
-    },
-    {
-     "bucket": "L",
-     "kind": "test",
-     "notable": [],
-     "path": "src/authority/tests/fork_resolution.rs",
-     "purpose": "Late fork rechecks, waiting, rank tiebreaks and seq-zero roots",
-     "surface": {}
-    },
-    {
-     "bucket": "L",
-     "kind": "test",
-     "notable": [],
-     "path": "src/authority/tests/fork_scoping.rs",
-     "purpose": "Fork scoping across vaults, recovery winners and missing parents",
      "surface": {}
     },
     {
@@ -2315,7 +2249,7 @@
      "path": "src/authority/tests/support.rs",
      "purpose": "Shared fixtures and fold helpers for the authority tests",
      "surface": {
-      "crate-vis": 62
+      "crate-vis": 58
      }
     },
     {
@@ -7602,7 +7536,7 @@
      "surface": {
       "crate-vis": 5,
       "fn": 14,
-      "re-export": 2,
+      "re-export": 3,
       "struct": 1
      }
     },
@@ -7723,6 +7657,33 @@
      "surface": {
       "crate-vis": 6
      }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "WeaveItem",
+      "WeaveReader",
+      "WeaveReport",
+      "WeaveSection",
+      "WeaveSectionKind",
+      "WeaveSectionSpec"
+     ],
+     "path": "src/claim/scoped_read/weave_report.rs",
+     "purpose": "Live weave data for a reader, not a saved digest or a rendered section recipe",
+     "surface": {
+      "enum": 3,
+      "fn": 1,
+      "struct": 3
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "src/claim/scoped_read/weave_report/tests.rs",
+     "purpose": "—",
+     "surface": {}
     },
     {
      "bucket": "m",
@@ -16148,11 +16109,13 @@
      "bucket": "m",
      "kind": "src",
      "notable": [
+      "Ceiling",
       "FederationDirectionScope",
       "FederationPactScope",
       "FederationScopeBands",
       "FederationScopeFacets",
-      "FederationScopeWorlds"
+      "FederationScopeWorlds",
+      "Position"
      ],
      "path": "src/federation/pact_scope.rs",
      "purpose": "Pact direction-scope lattice (worlds/facets/bands axes) and canonical codec",
@@ -16160,9 +16123,9 @@
       "const": 1,
       "crate-vis": 7,
       "enum": 3,
-      "fn": 6,
+      "fn": 12,
       "re-export": 1,
-      "struct": 2
+      "struct": 4
      }
     },
     {
@@ -18421,7 +18384,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "test",
      "notable": [],
      "path": "src/ingest/docs_tests.rs",
@@ -18849,13 +18812,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
+      "DocsExpansion",
+      "DocsExpansionLevel",
       "DocsSummaryHit"
      ],
      "path": "src/ingest/summary_ladder.rs",
-     "purpose": "Summary-first rank fusion",
+     "purpose": "Read-only knowledge ladder",
      "surface": {
-      "fn": 2,
-      "struct": 1
+      "enum": 1,
+      "fn": 4,
+      "struct": 2
      }
     },
     {
@@ -19339,7 +19305,7 @@
      "path": "src/lens/mod.rs",
      "purpose": "Closed generated-lens atom vocabulary",
      "surface": {
-      "re-export": 9
+      "re-export": 10
      }
     },
     {
@@ -19475,6 +19441,14 @@
      "notable": [],
      "path": "src/lens/tests/versioning.rs",
      "purpose": "Envelope-versioning and behavior-fingerprint tests: version stamps, canonical fingerprints, and diffs",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/lens/tests/weave_report.rs",
+     "purpose": "A host-authored section recipe can lower the live report into the lens kit",
      "surface": {}
     },
     {
@@ -22336,6 +22310,25 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "AnonymousChatBlockReason",
+      "AnonymousChatResponder",
+      "AnonymousChatSession",
+      "AnonymousChatTarget",
+      "AnonymousChatTurn"
+     ],
+     "path": "src/off_record/anonymous_chat.rs",
+     "purpose": "Stateless, memory-free chat beside (not inside) agent chat and off-record promote",
+     "surface": {
+      "enum": 3,
+      "fn": 3,
+      "struct": 1,
+      "trait": 1
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
@@ -22439,6 +22432,7 @@
      "purpose": "Off-record sessions — ARCH-0052 branch store, ONE-1725..ONE-1732",
      "surface": {
       "crate-vis": 5,
+      "mod": 1,
       "re-export": 2
      }
     },
@@ -24514,13 +24508,23 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/policy_model/classifier_lease.rs",
+     "purpose": "Cancellation-safe ownership of a stateless classifier's private reservation",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/policy_model/classify.rs",
      "purpose": "Vault-egress classification, which is the owner plane and nothing else",
      "surface": {
-      "crate-vis": 9,
+      "crate-vis": 11,
       "fn": 8
      }
     },
@@ -24592,6 +24596,7 @@
      "path": "src/policy_model/mod.rs",
      "purpose": "Policy classification over two planes",
      "surface": {
+      "crate-vis": 1,
       "re-export": 10
      }
     },
@@ -24773,6 +24778,14 @@
       "fn": 9,
       "struct": 3
      }
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "src/policy_model/tests/anonymous_chat.rs",
+     "purpose": "Stateless chat is not Memory::chat, agent chat, or an off-record room read",
+     "surface": {}
     },
     {
      "bucket": "L",
@@ -34620,7 +34633,7 @@
      "purpose": "Generic LMDB-backed background attempt queue"
     },
     "authority": {
-     "files": 68,
+     "files": 61,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -34746,7 +34759,7 @@
      "purpose": "—"
     },
     "claim": {
-     "files": 38,
+     "files": 40,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -35271,7 +35284,7 @@
      "purpose": "Interlocutor resolution substrate (OF-365 ILD-1)"
     },
     "lens": {
-     "files": 42,
+     "files": 43,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -35348,7 +35361,7 @@
      "purpose": "Attributed NOTE records with built-in, plugin and registered PACK kinds"
     },
     "off_record": {
-     "files": 11,
+     "files": 12,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -35418,7 +35431,7 @@
      "purpose": "—"
     },
     "policy_model": {
-     "files": 32,
+     "files": 34,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -35862,7 +35875,7 @@
    "over_bar": 11,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
    "source_files": 2117,
-   "test_files": 724
+   "test_files": 723
   },
   "oneiron-android": {
    "files": [
