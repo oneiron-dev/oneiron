@@ -33,6 +33,17 @@ pub enum TaskAskTarget {
     Authority(AskAuthorityScope),
     Responder(super::TaskAssignee),
     People(BTreeSet<EntityId>),
+    /// Foreign people enter through owner-confirmed disclosure bounds and
+    /// per-ask guest grants, not membership or a caller-picked authority list.
+    Guests(BTreeMap<EntityId, TaskAskGuest>),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct TaskAskGuest {
+    pub companion_ref: EntityId,
+    /// Reference to the person's live, owner-stamped standing disclosure grant.
+    pub disclosure_grant_ref: String,
 }
 
 /// Stable option identity. Display text is never a predicate.
@@ -96,6 +107,10 @@ pub struct TaskAskQuestion {
     /// The learning bucket. If omitted, a governed class supplies its key.
     #[serde(default)]
     pub class_key: Option<String>,
+    /// Whether an answer proposes a booking or other commitment. Companion
+    /// answers to these questions require a separate human soft-confirm notice.
+    #[serde(default)]
+    pub commitment: bool,
 }
 impl TaskAskQuestion {
     pub fn new(reference: ConsultPayloadRef) -> Self {
@@ -108,6 +123,7 @@ impl TaskAskQuestion {
             outcome_binding: None,
             ladder_answer: None,
             class_key: None,
+            commitment: false,
         }
     }
 }
@@ -336,6 +352,17 @@ impl TaskAskSpec {
         {
             return Err(MemoryError::bad_request("invalid ask ladder prediction"));
         }
+        if self.what.commitment
+            && (!self
+                .what
+                .options
+                .contains_key(&TaskAskOptionId::new("yes")?)
+                || !self.what.options.contains_key(&TaskAskOptionId::new("no")?))
+        {
+            return Err(MemoryError::bad_request(
+                "commitment ask requires yes and no options",
+            ));
+        }
         if self
             .what
             .class_key
@@ -535,6 +562,9 @@ pub struct TaskAskWord {
     pub result_ref: EntityId,
     pub option: Option<TaskAskOptionId>,
     pub inform_for: Option<EntityId>,
+    /// An attributed companion answer for this person, never a human word.
+    #[serde(default)]
+    pub companion_for: Option<EntityId>,
     #[serde(default)]
     pub provenance_refs: BTreeSet<ConsultPayloadRef>,
 }
@@ -544,6 +574,7 @@ impl TaskAskWord {
             result_ref,
             option: None,
             inform_for: None,
+            companion_for: None,
             provenance_refs: BTreeSet::new(),
         }
     }
@@ -553,6 +584,7 @@ impl TaskAskWord {
 #[serde(rename_all = "snake_case")]
 pub enum TaskAskSource {
     Human,
+    Companion,
     Inform,
     Executor,
 }
@@ -560,6 +592,7 @@ pub enum TaskAskSource {
 #[serde(rename_all = "snake_case")]
 pub enum TaskAskEvidenceReason {
     Counted,
+    CompanionHint,
     Inform,
     HumanDominates,
     Executor,
@@ -579,6 +612,13 @@ pub struct TaskAskEvidence {
     pub reason: TaskAskEvidenceReason,
     /// True only for an admitted human option that differs from the pinned ladder answer.
     pub ladder_changed: Option<bool>,
+    /// A companion commitment never becomes a human authorization, even when
+    /// its answer class is delegated and its answer counts toward need.
+    #[serde(default)]
+    pub soft_confirm: bool,
+    /// The person's owner-stamped grant that delegated this answer class.
+    #[serde(default)]
+    pub delegation_grant_ref: Option<String>,
 }
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -602,6 +642,7 @@ pub enum TaskAskDecision {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct TaskAskFallback {
+    /// The default or disagreement branch is the asking agent's act.
     pub branch: TaskAskDefault,
     pub surface: TaskAskSurface,
 }
@@ -652,6 +693,20 @@ pub struct TaskAskResult {
 pub enum TaskAskStatus {
     Pending { hold: Option<TaskAskHoldReason> },
     Settled(Box<TaskAskResult>),
+}
+
+/// One durable, idempotent approve-or-no delivery instruction. A notice is
+/// an ask revision fact, not permission to book or commit anything.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct TaskAskSoftConfirmNotice {
+    pub group_ref: EntityId,
+    pub revision: u64,
+    pub person_ref: EntityId,
+    pub companion_answer_ref: EntityId,
+    pub option: Option<TaskAskOptionId>,
+    pub task_ref: EntityId,
+    pub deadline: u64,
 }
 
 /// This is a signal contract, not a blocking read or a polling loop.

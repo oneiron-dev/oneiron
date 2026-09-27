@@ -649,7 +649,9 @@ fn companion_register_passes_selector(blob: &[u8], grant_scope: FederationGrantS
     ) {
         return false;
     }
-    let FederationGrantScope::Vault { vault_id } = grant_scope;
+    let FederationGrantScope::Vault { vault_id } = grant_scope else {
+        return false;
+    };
     crate::channel_identity::ChannelIdentityBinding::vault(vault_id)
         .permits_companion_scope(&record.scope)
         && crate::federation::SensitivityCeiling::AtMost(crate::federation::Sensitivity::Sensitive)

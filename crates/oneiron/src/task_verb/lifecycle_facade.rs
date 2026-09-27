@@ -305,7 +305,7 @@ impl Memory<'_> {
                 word,
                 now,
             )?;
-            if word.inform_for.is_none() {
+            if word.inform_for.is_none() && word.companion_for.is_none() {
                 let mut body = consult_body_in_txn(self.vault(), txn, answer.task_ref)?;
                 if body.terminal().is_none() && body.settled_ladder_disposition().is_none() {
                     body.state = Some(TaskExecutionState::Terminal(TaskTerminalRecord {
@@ -329,11 +329,85 @@ impl Memory<'_> {
             super::ask_settlement::settle_in(self.vault(), txn, handle.group_ref, now)?;
             Ok(answer)
         })?;
+        if let Some(person) = word.companion_for {
+            // Scheduling is outside the writer transaction. The durable typed
+            // notice landed with the answer first; an unavailable route or a
+            // gated send never rolls back or turns the answer into consent.
+            let _ = self.dispatch_ask_soft_confirm(*handle, person);
+        }
         send_peer_result_signal(
             self.vault(),
             handle.group_ref,
             self.vault().store.clock.now_recorded_at(),
         )?;
         Ok(answer)
+    }
+}
+
+impl Memory<'_> {
+    /// A typed notice for the recipient's existing ask task, including the
+    /// exact revision and deadline. Humans reply through `tasks_answer`.
+    pub fn tasks_ask_soft_confirm_notice(
+        &self,
+        handle: super::TaskAskHandle,
+        person: EntityId,
+    ) -> MemoryResult<Option<super::TaskAskSoftConfirmNotice>> {
+        verify_actor_binding(self.vault(), self.actor(), self.actor_class())?;
+        let txn = self.vault().store.env.read_txn().map_err(Error::from)?;
+        let group = super::ask_record::read_group(self.vault(), &txn, handle.group_ref)?
+            .ok_or_else(|| MemoryError::bad_request("unknown ask handle"))?;
+        if group.owner != self.actor().to_hex()
+            && person != self.actor()
+            && !matches!(&group.effective.who,
+                Some(super::TaskAskTarget::Guests(guests)) if guests.get(&person).is_some_and(
+                    |guest| guest.companion_ref == self.actor()))
+        {
+            return Err(MemoryError::bad_request(
+                "ask notice is not addressed to this actor",
+            ));
+        }
+        Ok(super::ask_soft_confirm::notice(
+            self.vault(),
+            &txn,
+            handle.group_ref,
+            person,
+        )?)
+    }
+
+    fn dispatch_ask_soft_confirm(
+        &self,
+        handle: super::TaskAskHandle,
+        person: EntityId,
+    ) -> MemoryResult<()> {
+        let Some(notice) = self.tasks_ask_soft_confirm_notice(handle, person)? else {
+            return Ok(());
+        };
+        let Ok(route) = crate::human_task::resolve_native_human_route(self.vault(), person) else {
+            return Ok(());
+        };
+        let key = format!(
+            "ask-soft-confirm/{}/{}",
+            handle.group_ref.to_hex(),
+            person.to_hex()
+        );
+        let content = super::ask_record::derived_id(
+            b"oneiron.tasks.ask.soft_confirm.v1",
+            handle.group_ref,
+            person.as_bytes(),
+        )?;
+        self.schedule_outbound(&crate::memory::OutboundDraftInput {
+            verb: "send".to_owned(),
+            channel: route.channel,
+            target: route.target,
+            on_behalf_of: None,
+            content_ref: Some(content.to_hex()),
+            idempotency_key: Some(key.clone()),
+            dedupe_key: Some(key),
+            trigger: "agent_immediate".to_owned(),
+            trigger_ref: notice.task_ref.to_hex(),
+            job_ref: None,
+            occurred_at: None,
+        })?;
+        Ok(())
     }
 }

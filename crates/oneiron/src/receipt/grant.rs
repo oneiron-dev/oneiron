@@ -582,5 +582,9 @@ fn append_federation_scope_fields(
             fields.insert("scope".to_owned(), "vault".to_owned());
             fields.insert("vault_id".to_owned(), vault_id.to_string());
         }
+        FederationGrantScope::Ask { ask_ref } => {
+            fields.insert("scope".to_owned(), "ask".to_owned());
+            fields.insert("ask_ref".to_owned(), ask_ref.to_hex());
+        }
     }
 }

@@ -15960,6 +15960,7 @@
      "kind": "src",
      "notable": [
       "FederationGrant",
+      "FederationGrantGuestPayload",
       "FederationGrantPreset",
       "FederationGrantRole",
       "FederationGrantScope"
@@ -15967,11 +15968,11 @@
      "path": "src/federation/grant.rs",
      "purpose": "Federation grant record, role/preset policy, and grant body MessagePack codec",
      "surface": {
-      "const": 3,
-      "crate-vis": 16,
+      "const": 4,
+      "crate-vis": 17,
       "enum": 3,
-      "fn": 14,
-      "struct": 1
+      "fn": 18,
+      "struct": 2
      }
     },
     {
@@ -31293,6 +31294,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/task_verb/ask_guest.rs",
+     "purpose": "Ask-scoped guest authority: reuse a person's owner-stamped bounds",
+     "surface": {
+      "crate-vis": 6
+     }
+    },
+    {
      "bucket": "m",
      "kind": "test",
      "notable": [],
@@ -31329,6 +31340,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/task_verb/ask_soft_confirm.rs",
+     "purpose": "Durable, once-per-person soft-confirm notice for a companion commitment",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
      "bucket": "XL",
      "kind": "test",
      "notable": [],
@@ -31354,6 +31375,7 @@
       "TaskAskEvidence",
       "TaskAskEvidenceReason",
       "TaskAskFallback",
+      "TaskAskGuest",
       "TaskAskHandle",
       "TaskAskHoldReason",
       "TaskAskLadderPrediction",
@@ -31365,6 +31387,7 @@
       "TaskAskResult",
       "TaskAskSettlement",
       "TaskAskSettlementReason",
+      "TaskAskSoftConfirmNotice",
       "TaskAskSource",
       "TaskAskSpec",
       "TaskAskStatus",
@@ -31379,7 +31402,7 @@
       "crate-vis": 2,
       "enum": 15,
       "fn": 5,
-      "struct": 17
+      "struct": 19
      }
     },
     {
@@ -31581,7 +31604,7 @@
      "path": "src/task_verb/lifecycle_facade.rs",
      "purpose": "—",
      "surface": {
-      "fn": 5
+      "fn": 6
      }
     },
     {
@@ -35405,7 +35428,7 @@
      "purpose": "Replicated TASK authority: owner proof, cancellation, and acknowledgement as immutable companion TASK entities"
     },
     "task_verb": {
-     "files": 59,
+     "files": 61,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -35526,7 +35549,7 @@
    },
    "over_bar": 10,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2097,
+   "source_files": 2099,
    "test_files": 718
   },
   "oneiron-android": {

@@ -38,6 +38,7 @@ fn stored_invalid_option_is_a_store_error_not_caller_input()
         result_ref: question,
         option: Some(TaskAskOptionId::new("not-an-option")?),
         inform_for: None,
+        companion_for: None,
         provenance_refs: Default::default(),
     };
     let source = TaskAskSource::Human;
@@ -51,6 +52,7 @@ fn stored_invalid_option_is_a_store_error_not_caller_input()
             source,
             word,
             order: 1,
+            delegation_grant_ref: None,
         },
     )?;
     vault

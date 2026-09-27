@@ -3104,6 +3104,8 @@ fn coordination_effects_and_outcomes_round_trip_through_replay_wire() {
             order: 1,
             reason: crate::task_verb::TaskAskEvidenceReason::Counted,
             ladder_changed: None,
+            soft_confirm: false,
+            delegation_grant_ref: None,
         }],
         settlement: crate::task_verb::TaskAskSettlement {
             group_ref: group,

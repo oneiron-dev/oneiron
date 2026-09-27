@@ -34,6 +34,7 @@ impl Memory<'_> {
                     vec![assignee.entity_ref().unwrap_or(self.actor())]
                 }
                 Some(TaskAskTarget::People(people)) => people.iter().copied().collect(),
+                Some(TaskAskTarget::Guests(guests)) => guests.keys().copied().collect(),
                 None => vec![self.short_ask_principal_in_txn(txn)?],
             };
             let context_class = self.ask_class_in_txn(txn, input.task_ref)?;
@@ -127,6 +128,14 @@ impl Memory<'_> {
             let question_digest =
                 super::ask_settlement::question_digest(self.vault(), txn, &effective.what)?
                     .ok_or(crate::Error::EntityNotFound)?;
+            let guest_grants = super::ask_guest::mint_guest_grants(
+                self.vault(),
+                txn,
+                group_ref,
+                self.actor(),
+                &effective,
+                now,
+            )?;
             let mut members = Vec::with_capacity(holders.len());
             for (actor, (entry, reachable)) in holders.iter().zip(&validated) {
                 let task_ref = self.mint_task_at_in_txn(
@@ -159,6 +168,7 @@ impl Memory<'_> {
                 members,
                 no_live_route,
                 created_at: now,
+                guest_grants,
             };
             ask_record::put_group(self.vault(), txn, group_ref, &group)?;
             for (member, (entry, _)) in group.members.iter().zip(&validated) {

@@ -5,8 +5,10 @@
 
 mod ask_band;
 mod ask_facade;
+mod ask_guest;
 mod ask_record;
 mod ask_settlement;
+mod ask_soft_confirm;
 mod ask_types;
 mod consts;
 mod consult_fanout_admission;
@@ -118,9 +120,9 @@ pub(crate) use ask_settlement::settle_ask_if_due;
 pub use ask_types::{
     AskAuthorityScope, TaskAskAnswer, TaskAskBranch, TaskAskClass, TaskAskCoverage, TaskAskDecide,
     TaskAskDecision, TaskAskDefault, TaskAskDisagree, TaskAskEffectAuthorization,
-    TaskAskElectorate, TaskAskEvidence, TaskAskEvidenceReason, TaskAskFallback, TaskAskHandle,
-    TaskAskHoldReason, TaskAskLadderPrediction, TaskAskNeed, TaskAskOptionId, TaskAskProvisional,
-    TaskAskQuestion, TaskAskReceipt, TaskAskResult, TaskAskSettlement, TaskAskSettlementReason,
-    TaskAskSource, TaskAskSpec, TaskAskStatus, TaskAskSurface, TaskAskTarget, TaskAskWait,
-    TaskAskWord,
+    TaskAskElectorate, TaskAskEvidence, TaskAskEvidenceReason, TaskAskFallback, TaskAskGuest,
+    TaskAskHandle, TaskAskHoldReason, TaskAskLadderPrediction, TaskAskNeed, TaskAskOptionId,
+    TaskAskProvisional, TaskAskQuestion, TaskAskReceipt, TaskAskResult, TaskAskSettlement,
+    TaskAskSettlementReason, TaskAskSoftConfirmNotice, TaskAskSource, TaskAskSpec, TaskAskStatus,
+    TaskAskSurface, TaskAskTarget, TaskAskWait, TaskAskWord,
 };

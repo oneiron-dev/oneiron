@@ -36,6 +36,9 @@ pub(super) struct AskGroup {
     pub members: Vec<AskMember>,
     pub no_live_route: bool,
     pub created_at: u64,
+    /// Disjoint FEDERATION_GRANT entity IDs, keyed by the guest's person.
+    #[serde(default)]
+    pub guest_grants: std::collections::BTreeMap<EntityId, EntityId>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -47,6 +50,8 @@ struct AskAnswerFact {
     source: TaskAskSource,
     word: TaskAskWord,
     order: u64,
+    #[serde(default)]
+    delegation_grant_ref: Option<String>,
 }
 
 pub(super) fn invalid() -> Error {
@@ -304,7 +309,11 @@ pub(super) fn evidence_in(
         if fact.group != id {
             continue;
         }
-        let person = fact.word.inform_for.unwrap_or(fact.actor);
+        let person = fact
+            .word
+            .inform_for
+            .or(fact.word.companion_for)
+            .unwrap_or(fact.actor);
         if !group
             .members
             .iter()
@@ -312,11 +321,29 @@ pub(super) fn evidence_in(
             || fact.order == 0
             || (fact.source == TaskAskSource::Inform) != fact.word.inform_for.is_some()
             || (fact.source == TaskAskSource::Inform && fact.actor.to_hex() != group.owner)
+            || (fact.source == TaskAskSource::Companion) != fact.word.companion_for.is_some()
+            || (fact.source != TaskAskSource::Companion && fact.delegation_grant_ref.is_some())
+            || fact.delegation_grant_ref.as_ref().is_some_and(|reference| {
+                !super::ask_guest::check_delegation_record(
+                    vault,
+                    txn,
+                    person,
+                    fact.actor,
+                    group.effective.what.class_key.as_deref(),
+                    reference,
+                )
+                .unwrap_or(false)
+            })
             || answer_id(id, fact.task, fact.actor, fact.source, &fact.word)? != word_ref
         {
             return Err(invalid());
         }
         validate_word(group, &fact.word).map_err(|_| Error::CorruptedIndex("tasks.ask.word"))?;
+        if fact.source == TaskAskSource::Companion {
+            super::ask_guest::validate_companion_fact(
+                vault, txn, id, group, fact.actor, &fact.word,
+            )?;
+        }
         evidence.push(TaskAskEvidence {
             answer: TaskAskAnswer {
                 task_ref: fact.task,
@@ -330,6 +357,9 @@ pub(super) fn evidence_in(
             order: fact.order,
             reason: TaskAskEvidenceReason::OutsideElectorate,
             ladder_changed: None,
+            soft_confirm: fact.source == TaskAskSource::Companion
+                && group.effective.what.commitment,
+            delegation_grant_ref: fact.delegation_grant_ref,
         });
     }
     evidence.sort_by_key(|entry| (entry.order, entry.answer.word_ref));
@@ -337,7 +367,9 @@ pub(super) fn evidence_in(
 }
 
 fn validate_word(group: &AskGroup, word: &TaskAskWord) -> Result<()> {
-    if word.provenance_refs.len() > 64 {
+    if word.provenance_refs.len() > 64
+        || (word.companion_for.is_some() && word.inform_for.is_some())
+    {
         return Err(invalid());
     }
     if match &word.option {
@@ -369,8 +401,14 @@ pub(super) fn admit_word(
         }
     }
     let actor = writer.entity_ref();
-    let person = word.inform_for.unwrap_or(actor);
-    let source = if word.inform_for.is_some() {
+    let person = word.inform_for.or(word.companion_for).unwrap_or(actor);
+    let source = if word.companion_for.is_some() {
+        if writer.actor_class() != crate::EdgeActorClass::Agent {
+            return Err(invalid());
+        }
+        super::ask_guest::check_companion_answer(vault, txn, id, group, actor, word, now)?;
+        TaskAskSource::Companion
+    } else if word.inform_for.is_some() {
         if actor.to_hex() != group.owner || writer.actor_class() != crate::EdgeActorClass::Agent {
             return Err(invalid());
         }
@@ -400,6 +438,17 @@ pub(super) fn admit_word(
     {
         return Err(invalid());
     }
+    let delegation_grant_ref = if source == TaskAskSource::Companion {
+        super::ask_guest::delegated_class(
+            vault,
+            txn,
+            person,
+            actor,
+            group.effective.what.class_key.as_deref(),
+        )?
+    } else {
+        None
+    };
     let word_ref = answer_id(id, task, actor, source, word)?;
     let answer = TaskAskAnswer {
         task_ref: task,
@@ -452,6 +501,7 @@ pub(super) fn admit_word(
             source,
             word: word.clone(),
             order,
+            delegation_grant_ref,
         },
         now,
     )?;
@@ -459,6 +509,17 @@ pub(super) fn admit_word(
         .batch_in()
         .edge(&word_ref, crate::EdgeKind::About, &id, 1.0)
         .apply(txn)?;
+    if source == TaskAskSource::Companion && group.effective.what.commitment {
+        super::ask_soft_confirm::put_notice(
+            vault,
+            txn,
+            (id, person),
+            &answer,
+            word,
+            &group.effective,
+            now,
+        )?;
+    }
     Ok(answer)
 }
 
@@ -498,6 +559,7 @@ pub(super) fn replay_answer_option_matches(
         result_ref: terminal.result_ref.ok_or_else(invalid)?,
         option: option.cloned(),
         inform_for: None,
+        companion_for: None,
         provenance_refs: evidence_refs.iter().copied().collect(),
     };
     validate_word(&group, &word)?;
@@ -553,6 +615,7 @@ pub(super) fn record_answer(
                 result_ref: terminal.result_ref.ok_or_else(invalid)?,
                 option: option.cloned(),
                 inform_for: None,
+                companion_for: None,
                 provenance_refs: evidence_refs.iter().copied().collect(),
             },
             now,
@@ -594,6 +657,7 @@ fn fact_kind(bytes: &[u8]) -> Option<&'static str> {
             GROUP => Some(GROUP),
             ANSWER => Some(ANSWER),
             "tasks.ask_settlement" => Some("tasks.ask_settlement"),
+            super::ask_soft_confirm::SOFT_CONFIRM => Some(super::ask_soft_confirm::SOFT_CONFIRM),
             _ => None,
         }
     })
@@ -634,6 +698,19 @@ pub(crate) fn guard_ask_fact_put(
             {
                 return Err(invalid());
             }
+            if let Some(super::TaskAskTarget::Guests(guests)) = &group.effective.who {
+                if group.guest_grants.len() != guests.len()
+                    || group.guest_grants.iter().any(|(person, grant)| {
+                        !guests.contains_key(person)
+                            || derived_id(b"oneiron.tasks.ask.guest.v1", id, person.as_bytes()).ok()
+                                != Some(*grant)
+                    })
+                {
+                    return Err(invalid());
+                }
+            } else if !group.guest_grants.is_empty() {
+                return Err(invalid());
+            }
             for member in &group.members {
                 if entity(&member.task)? != member_id(id, entity(&member.actor)?)? {
                     return Err(invalid());
@@ -645,7 +722,22 @@ pub(crate) fn guard_ask_fact_put(
             let fact: AskAnswerFact = decode(data, ANSWER)?.ok_or_else(invalid)?;
             if fact.order == 0
                 || (fact.source == TaskAskSource::Inform) != fact.word.inform_for.is_some()
+                || (fact.source == TaskAskSource::Companion) != fact.word.companion_for.is_some()
+                || (fact.source != TaskAskSource::Companion && fact.delegation_grant_ref.is_some())
                 || answer_id(fact.group, fact.task, fact.actor, fact.source, &fact.word)? != id
+            {
+                return Err(invalid());
+            }
+        }
+        Some(super::ask_soft_confirm::SOFT_CONFIRM) => {
+            let notice: super::TaskAskSoftConfirmNotice =
+                decode(data, super::ask_soft_confirm::SOFT_CONFIRM)?.ok_or_else(invalid)?;
+            if notice.revision == 0
+                || derived_id(
+                    b"oneiron.tasks.ask.soft_confirm.v1",
+                    notice.group_ref,
+                    notice.person_ref.as_bytes(),
+                )? != id
             {
                 return Err(invalid());
             }
