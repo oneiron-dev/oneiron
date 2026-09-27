@@ -429,7 +429,7 @@ pub(super) fn signatures_entry() -> (Value, Value) {
             (Value::from(SIGNATURE_KEY_ID_KEY), Value::from("owner")),
             (
                 Value::from(SIGNATURE_SIG_KEY),
-                Value::from("first-party-eiri-auto"),
+                Value::from("first-party-agent-auto"),
             ),
         ])]),
     )

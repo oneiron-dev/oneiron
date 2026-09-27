@@ -97,5 +97,6 @@ pub(super) fn govern_parked(
         effect_state: None,
         outcome,
         execution: None,
+        suppression_receipt: None,
     })
 }

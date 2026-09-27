@@ -433,11 +433,12 @@ fn implicit_persona_subjects_follow_companion_scope_not_unrelated_people() -> Re
     );
     vault.create_companion_record(
         &crate::test_util::entity(0x66),
-        &CompanionRecord::persona(
+        &CompanionRecord::new(
             CompanionScope::personal(person),
-            persona,
+            crate::companion::CompanionSubject::persona(persona),
             rmpv::Value::from("persona"),
             provenance,
+            ClaimLifecycleStatus::Active,
             crate::federation::Sensitivity::Private,
         ),
         1,
@@ -519,11 +520,12 @@ fn implicit_prefix_limits_do_not_fail_an_otherwise_valid_pack() -> Result<()> {
     for n in 0..9_u8 {
         vault.create_companion_record(
             &crate::test_util::entity(0x90 + n),
-            &CompanionRecord::persona(
+            &CompanionRecord::new(
                 CompanionScope::neutral(),
-                crate::test_util::entity(0x80 + n),
+                crate::companion::CompanionSubject::persona(crate::test_util::entity(0x80 + n)),
                 rmpv::Value::from("persona"),
                 provenance.clone(),
+                ClaimLifecycleStatus::Active,
                 crate::federation::Sensitivity::Public,
             ),
             1,
@@ -583,11 +585,12 @@ fn unscoped_owner_discovers_its_personal_persona_not_a_strangers() -> Result<()>
     ] {
         vault.create_companion_record(
             &id,
-            &CompanionRecord::persona(
+            &CompanionRecord::new(
                 CompanionScope::personal(person),
-                persona,
+                crate::companion::CompanionSubject::persona(persona),
                 rmpv::Value::from("persona"),
                 provenance.clone(),
+                ClaimLifecycleStatus::Active,
                 crate::federation::Sensitivity::Public,
             ),
             1,
