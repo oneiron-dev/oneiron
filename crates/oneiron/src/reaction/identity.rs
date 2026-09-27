@@ -305,6 +305,10 @@ pub(crate) fn guard_put(
         LiveEntityRow::Live {
             entity_type: ENTITY_TYPE_REACTION,
             body: source,
+        } if source.is_empty() && replicated => {}
+        LiveEntityRow::Live {
+            entity_type: ENTITY_TYPE_REACTION,
+            body: source,
         } => {
             let original = ReactionBody::from_bytes(&source)?;
             if original.msg != body.msg
@@ -443,6 +447,25 @@ pub(crate) fn bindings_in(
 /// A pending replicated receipt is not an idempotency verdict. The bound
 /// original must exist as a typed add with complete topology, or as its
 /// deliberate soft-revocation shell; a wrong-kind/missing source is unresolved.
+fn shell_binding_ready(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    row: &ReactionBindingBody,
+) -> Result<bool> {
+    let original = ReactionBody {
+        v: 1,
+        msg: row.msg,
+        by: row.by,
+        glyph: row.glyph.clone(),
+        at: row.at,
+        ext: None,
+    };
+    Ok(matches!(
+        super::state::resolve(store, txn, row.reaction, &original)?,
+        super::state::ReactionResolution::Revoked { .. }
+    ))
+}
+
 pub(super) fn binding_ready(
     store: &Store,
     txn: &heed::RoTxn<'_>,
@@ -457,11 +480,11 @@ pub(super) fn binding_ready(
     }
     let source = crate::vault::live_entity_row_in_txn(store, txn, &row.reaction)?;
     match source {
-        LiveEntityRow::DeletedShell => Ok(true),
+        LiveEntityRow::DeletedShell => shell_binding_ready(store, txn, row),
         LiveEntityRow::Live {
             entity_type: ENTITY_TYPE_REACTION,
             body,
-        } if body.is_empty() => Ok(true),
+        } if body.is_empty() => shell_binding_ready(store, txn, row),
         LiveEntityRow::Live {
             entity_type: ENTITY_TYPE_REACTION,
             body,

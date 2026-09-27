@@ -163,6 +163,7 @@ fn hard_erase_purges_canonical_binding_and_blocks_late_echo() {
             actor,
         };
         let binding = vault.acknowledge_reaction(ack()).unwrap().id;
+        #[cfg(feature = "sync")]
         let canonical = vault.get_raw(&binding).unwrap().unwrap();
         if soft_first {
             vault
@@ -178,31 +179,34 @@ fn hard_erase_purges_canonical_binding_and_blocks_late_echo() {
         );
         assert!(vault.reactions_since(alice, 0).unwrap().is_empty());
         assert!(vault.acknowledge_reaction(ack()).is_err());
-        let h = crate::batch::EntityMetadataHeader::parse(&canonical).unwrap();
-        assert!(
-            vault
-                .with_write_txn(|txn| vault
-                    .batch_in()
-                    .put_replicated(
-                        &binding,
-                        ENTITY_TYPE_REACTION_BINDING,
-                        crate::TimeRange {
-                            start: h.occurred_start,
-                            end: h.occurred_end
-                        },
-                        h.learned_at,
-                        &canonical[crate::batch::ENTITY_METADATA_HEADER_LEN..]
-                    )
-                    .apply(txn))
-                .is_ok(),
-            "late replica receipt is consumed only as an opaque suppression fact"
-        );
-        let redacted = vault.get_raw(&binding).unwrap().unwrap();
-        assert_eq!(
-            redacted.len(),
-            crate::batch::ENTITY_METADATA_HEADER_LEN,
-            "no content-bearing receipt survives a hard marker"
-        );
+        #[cfg(feature = "sync")]
+        {
+            let h = crate::batch::EntityMetadataHeader::parse(&canonical).unwrap();
+            assert!(
+                vault
+                    .with_write_txn(|txn| vault
+                        .batch_in()
+                        .put_replicated(
+                            &binding,
+                            ENTITY_TYPE_REACTION_BINDING,
+                            crate::TimeRange {
+                                start: h.occurred_start,
+                                end: h.occurred_end
+                            },
+                            h.learned_at,
+                            &canonical[crate::batch::ENTITY_METADATA_HEADER_LEN..]
+                        )
+                        .apply(txn))
+                    .is_ok(),
+                "late replica receipt is consumed only as an opaque suppression fact"
+            );
+            let redacted = vault.get_raw(&binding).unwrap().unwrap();
+            assert_eq!(
+                redacted.len(),
+                crate::batch::ENTITY_METADATA_HEADER_LEN,
+                "no content-bearing receipt survives a hard marker"
+            );
+        }
         assert!(vault.reactions_since(alice, 0).unwrap().is_empty());
         assert!(vault.reaction_pills(&[message], alice).unwrap()[&message].is_empty());
     }
@@ -658,6 +662,96 @@ fn unresolved_remote_binding_never_steals_a_valid_provider_add() {
     assert_eq!(
         vault.ingest_reaction(input()).unwrap_err().kind(),
         crate::ErrorKind::ReactionNeedsReconciliation
+    );
+    assert!(vault.reaction_pills(&[message], alice).unwrap()[&message].is_empty());
+}
+
+#[cfg(feature = "sync")]
+#[test]
+fn binding_to_soft_shell_waits_for_original_edges_before_replay_verdict() {
+    let (_dir, vault, alice, _, message) = mirror_fixture();
+    let actor = crate::WriteActor::new(alice, crate::EdgeActorClass::Human);
+    let original = EntityId::now();
+    let body = ReactionBody {
+        v: 1,
+        msg: message,
+        by: alice,
+        glyph: "👀".into(),
+        at: 20,
+        ext: None,
+    };
+    vault
+        .with_write_txn(|txn| {
+            vault
+                .batch_in()
+                .put_replicated(
+                    &original,
+                    ENTITY_TYPE_REACTION,
+                    crate::TimeRange { start: 20, end: 20 },
+                    22,
+                    &body.to_bytes()?,
+                )
+                .apply(txn)
+        })
+        .unwrap();
+    let soft = crate::deletion::TombstoneValueV2 {
+        reason: crate::deletion::TombstoneReason::UserDelete,
+        deleted_at: 30,
+        request_id: [5; 16],
+    };
+    vault
+        .apply_replayed_tombstone(&original, &soft.encode())
+        .unwrap();
+    let generation = ReactionGeneration {
+        connector: "slack".into(),
+        id: "shell-first".into(),
+    };
+    let receipt = ReactionBindingBody {
+        v: 1,
+        generation: generation.clone(),
+        reaction: original,
+        msg: message,
+        by: alice,
+        glyph: "👀".into(),
+        at: 20,
+    };
+    let id = crate::reaction::identity::binding_id(&receipt).unwrap();
+    vault
+        .with_write_txn(|txn| {
+            vault
+                .batch_in()
+                .put_replicated(
+                    &id,
+                    ENTITY_TYPE_REACTION_BINDING,
+                    crate::TimeRange { start: 20, end: 20 },
+                    23,
+                    &receipt.to_bytes()?,
+                )
+                .apply(txn)
+        })
+        .unwrap();
+    let add = || ReactionIngress::ProviderAdd {
+        message,
+        by: alice,
+        glyph: "👀".into(),
+        occurred_at: 20,
+        generation: generation.clone(),
+        actor,
+    };
+    assert_eq!(
+        vault.ingest_reaction(add()).unwrap_err().kind(),
+        crate::ErrorKind::ReactionNeedsReconciliation,
+        "a bodyless shell without its bindings cannot prove a generation"
+    );
+    vault
+        .put_edge(&original, crate::EdgeKind::About, &message, 1.0)
+        .unwrap();
+    vault
+        .put_edge(&original, crate::EdgeKind::AuthoredBy, &alice, 1.0)
+        .unwrap();
+    assert_eq!(
+        vault.ingest_reaction(add()).unwrap().state,
+        ReactionState::Replayed
     );
     assert!(vault.reaction_pills(&[message], alice).unwrap()[&message].is_empty());
 }
