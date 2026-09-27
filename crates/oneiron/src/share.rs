@@ -33,6 +33,10 @@ use crate::write_envelope::WriteActor;
 const ADMISSIONS: SideTable<EntityId, Vec<u8>, Raw> =
     SideTable::new(&side_table::SHARE_BRIEF_ADMISSION);
 
+/// A one-way identity fence. Its exact stored marker is the single byte `1`.
+const DELETE_RESERVATIONS: SideTable<EntityId, [u8; 1], Raw> =
+    SideTable::new(&side_table::SHARE_BRIEF_DELETE_RESERVATION);
+
 /// A typed AccessGrant. Only the opaque brief handle and redaction maximum are stored.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Share {
@@ -232,18 +236,12 @@ fn admission_key(id: &EntityId) -> Vec<u8> {
 // same writer that rechecks direct shares, before the CRDT tombstone can publish.
 // A failed delete may leave the fence, but cannot leave an unshared new grant
 // racing ahead of a later retry at the same id.
-fn delete_reservation_key(id: &EntityId) -> Vec<u8> {
-    [b"share:brief:deleting:v1:".as_slice(), id.as_bytes()].concat()
-}
-
 pub(crate) fn reserve_brief_delete(
     store: &Store,
     txn: &mut heed::RwTxn<'_>,
     id: &EntityId,
 ) -> Result<()> {
-    store
-        .vault_meta
-        .put(txn, &delete_reservation_key(id), &[1])?;
+    DELETE_RESERVATIONS.put(store, txn, id, &[1])?;
     Ok(())
 }
 
@@ -529,12 +527,7 @@ impl Vault {
         // grant must not point at that same id, even when the caller reuses
         // the exact opaque `brief:<hex>` handle after deleting the record.
         if let Ok(id) = EntityId::from_hex(&share.brief_ref) {
-            if self
-                .store
-                .vault_meta
-                .get(&txn, &delete_reservation_key(&id))?
-                .is_some()
-            {
+            if DELETE_RESERVATIONS.contains(&self.store, &txn, &id)? {
                 return Err(Error::InvariantViolation("cannot share a deleting brief"));
             }
             if self

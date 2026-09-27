@@ -11,6 +11,8 @@ side_tables! {
     /// Owner Tier-A mark row for an entity (value = marked_at u64 LE), dual-written with an owner-
     /// visible claim. Key: id16.
     DISCLOSURE_TIER_A: VaultMeta b"disclosure.tier_a.v1:" Raw;
+    /// Passive outbound dispatch audit observation for one attempt/try. Key: id16 + u32be.
+    DISPATCH_OBSERVATION: VaultMeta b"dispatch_observation:v1/" Raw;
     /// Classifier-derived annotation (derivation envelope + annotation body) for one imported docs
     /// page/asset. Key: hex32 ":" hex32.
     INGEST_DOCS_ANNOTATION: VaultMeta b"docs-annotation:v1:" LegacyJson;
@@ -46,6 +48,9 @@ side_tables! {
     DREAMER_BUDGET_STEP_CHARGE: VaultMeta b"dreamer:budget_step_charge:" Raw;
     /// Operator-set predicate key rules governing which claim keys the consolidator may fold;
     /// defaults from key_defaults.json when absent. Key: ().
+    /// Resident-owned v1 failure rules, stored as the validated JSON payload with its author.
+    /// Key: ().
+    DREAMER_FAILURE_RULES: VaultMeta b"dreamer:consolidation:failure_rules:v1" Raw;
     DREAMER_CONSOLIDATION_KEY_RULES: VaultMeta b"dreamer:consolidation:keys:v1" LegacyJson;
     /// Operator-set consolidation candidate-selection config (strength weights, caps). Key: ().
     DREAMER_CONSOLIDATION_SELECTION: VaultMeta b"dreamer:consolidation:selection:v1" LegacyJson;
@@ -196,8 +201,6 @@ side_tables! {
     /// Live vs indexed revision pointers. Key: id16.
     ENTITY_REVISION_STATE: VaultMeta b"entity_revision:state:" Named;
     /// Esign machine actor id. Key: ().
-    /// Advisory burst observation for one document/recipient/window. Key: hex32/string/u64be.
-    ESIGN_PUBLIC_CHECK: VaultMeta b"esign.public_check.v1/" Named;
     ESIGN_ARTIFACT_ACTOR: VaultMeta b"esign.artifact_actor.v1" Raw;
     /// Esign document audit event. Key: id16 + u64be.
     ESIGN_AUDIT: VaultMeta b"esign.audit.v1/" LegacyJson;
@@ -211,6 +214,8 @@ side_tables! {
     ESIGN_PRINCIPAL_OWNER_STAMP: VaultMeta b"esign.principal.owner_stamp.v1" Raw;
     /// Signing principal. Key: hex32.
     ESIGN_PRINCIPAL: VaultMeta b"esign.principal.v1/" LegacyJson;
+    /// Advisory burst observation for one document/recipient/window. Key: hex32/string/u64be.
+    ESIGN_PUBLIC_CHECK: VaultMeta b"esign.public_check.v1/" Named;
     /// Public ceremony rate counter. Key: hex32 [/ string].
     ESIGN_PUBLIC_RATE: VaultMeta b"esign.public_rate.v1/" Raw;
     /// Recipient live capability index. Key: id16 + string.
