@@ -91,6 +91,53 @@ pub(crate) fn guard_claim_put(
     Ok(())
 }
 
+/// The one graph exception for a CLAIM -> PROJECT `ClaimOf` edge. A caller's
+/// predicate/subject alone is never enough: the locally armed slot must bind
+/// the exact stored body (or its still-open birth/closure transaction).
+pub(crate) fn admitted_claim_of_project(
+    store: &impl crate::store::ManifestDbs,
+    txn: &RoTxn<'_>,
+    claim: EntityId,
+    project: EntityId,
+) -> Result<bool> {
+    let Some(marker) = store.vault_meta().get(txn, &key(CLAIM_KEY, claim))? else {
+        return Ok(false);
+    };
+    let raw = store
+        .entities()
+        .get(txn, claim.as_bytes())?
+        .ok_or_else(invalid)?;
+    if EntityMetadataHeader::parse(&raw).is_none_or(|h| h.entity_type != ENTITY_TYPE_CLAIM) {
+        return Err(invalid());
+    }
+    let data = raw.get(ENTITY_METADATA_HEADER_LEN..).ok_or_else(invalid)?;
+    let body = decode_claim_body(data, true).map_err(|_| invalid())?;
+    let mut active = body.clone();
+    active.lifecycle = ClaimLifecycleStatus::Active;
+    active.valid_to = None;
+    decode_goal_claim(&active, project)?;
+    let digest = blake3::hash(data);
+    let allowed = match marker.as_ref() {
+        [1, stored @ ..] if stored.len() == 32 => stored == digest.as_bytes(),
+        [2, rest @ ..] if rest.len() == 48 && body.lifecycle == ClaimLifecycleStatus::Active => {
+            let (project_bytes, payload_hash) = rest.split_at(16);
+            project_bytes == project.as_bytes()
+                && matches!(&body.value, rmpv::Value::Binary(payload)
+                    if payload_hash == blake3::hash(payload).as_bytes())
+        }
+        [3, rest @ ..]
+            if rest.len() == 64 && body.lifecycle == ClaimLifecycleStatus::Superseded =>
+        {
+            &rest[32..] == digest.as_bytes()
+        }
+        _ => false,
+    };
+    if !allowed {
+        return Err(invalid());
+    }
+    Ok(true)
+}
+
 /// Only the owner-authenticated intake transaction may arm an unoccupied slot.
 pub(super) fn arm_birth(
     store: &Store,

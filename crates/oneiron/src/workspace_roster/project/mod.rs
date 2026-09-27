@@ -10,7 +10,7 @@ pub(crate) use edges::{
 };
 pub use goal::{GoalAxis, GoalExplorationBudget, GoalInterviewTurns, GoalPreference, GoalRecord};
 pub(crate) use goal::{
-    guard_claim_put as guard_goal_claim_put, guard_goal_delete,
+    admitted_claim_of_project, guard_claim_put as guard_goal_claim_put, guard_goal_delete,
     guard_pointer_put as guard_goal_pointer_put,
 };
 #[cfg(test)]

@@ -368,6 +368,11 @@ fn intake_does_not_supersede_a_claim_named_by_a_corrupt_project_pointer() -> Res
             &crate::claim::encode_claim_body(&body)?,
         )
         .commit()?;
+    assert!(
+        vault
+            .put_edge(&foreign, crate::edge::EdgeKind::ClaimOf, &project, 1.0,)
+            .is_err()
+    );
     // Corrupt pre-existing data exercises the write-side safety check even
     // though the new generic project door will not admit this pointer.
     let mut corrupted = vault.project(project)?.unwrap();

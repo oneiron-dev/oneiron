@@ -15,7 +15,9 @@ use std::collections::BTreeSet;
 pub(crate) const PREDICATE: &str = "project.goal_intake";
 mod admission;
 mod interview;
-pub(crate) use admission::{guard_claim_put, guard_goal_delete, guard_pointer_put};
+pub(crate) use admission::{
+    admitted_claim_of_project, guard_claim_put, guard_goal_delete, guard_pointer_put,
+};
 pub use interview::GoalInterviewTurns;
 
 fn decode_goal_claim(body: &ClaimBody, project: EntityId) -> Result<GoalRecord> {

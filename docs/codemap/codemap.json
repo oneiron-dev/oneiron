@@ -34098,7 +34098,7 @@
      "path": "src/workspace_roster/project/goal/admission.rs",
      "purpose": "Vault-private, exact-byte admission for goal claims and project goal pointers",
      "surface": {
-      "crate-vis": 9
+      "crate-vis": 10
      }
     },
     {
