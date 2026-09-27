@@ -50,9 +50,14 @@ pub(super) fn enqueue_seal(
     if !state.ready_to_seal() {
         return Ok(());
     }
-    let event_count = super::ledger::events_in(vault, txn, document)?.len();
     let generation = if state.reseal_pending {
-        event_count as u64
+        super::ledger::events_in(vault, txn, document)?
+            .iter()
+            .rev()
+            .find(|row| matches!(row.event, EsignEvent::ResealRequested { .. }))
+            .ok_or_else(|| invalid("reseal request missing"))?
+            .sequence
+            + 1
     } else {
         0
     };

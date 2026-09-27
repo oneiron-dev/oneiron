@@ -4,7 +4,9 @@ mod fold;
 mod ledger;
 mod lifecycle;
 mod model;
+mod notice_dispatch;
 pub use lifecycle::{EsignLifecycleRules, EsignNoticeSwitches};
+pub use notice_dispatch::{ESIGN_NOTICE_ATTEMPT_KIND, EsignNotice};
 #[cfg(test)]
 mod lifecycle_tests;
 #[cfg(test)]

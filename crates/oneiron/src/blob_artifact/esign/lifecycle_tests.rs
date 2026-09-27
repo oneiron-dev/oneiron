@@ -150,7 +150,9 @@ fn pack_rules_materialize_deadlines_and_claim_ladder_until_unsealed_expiry() -> 
     assert!(vault.esign_document(id)?.sealed_sha256.is_empty());
     assert_eq!(
         vault.esign_audit(id)?.last().unwrap().event,
-        EsignEvent::Expired
+        EsignEvent::Expired {
+            recipient: Some(doc.recipients[0].id.clone())
+        }
     );
     assert_eq!(due(state.document.expires_at)?, None);
     Ok(())
@@ -178,6 +180,62 @@ fn disabled_expiry_notice_preserves_claim_and_no_edge_handoff() -> Result<()> {
             .list()?
             .iter()
             .any(|a| a.kind == "esign.delivery")
+    );
+    Ok(())
+}
+
+#[test]
+fn recipient_window_precedes_document_and_viewer_window_does_not_terminalize() -> Result<()> {
+    let (_dir, vault, id, mut doc) = fixture()?;
+    let signer = doc.recipients[0].id.clone();
+    doc.recipients[0].expires_at = 100;
+    let mut viewer = doc.recipients[0].clone();
+    viewer.id = EntityId::now().to_hex();
+    viewer.role = RecipientRole::Viewer;
+    viewer.expires_at = 50;
+    doc.recipients.push(viewer);
+    vault.create_esign_document_with_lifecycle(
+        id,
+        &doc,
+        EsignAuditActor {
+            actor: "owner".into(),
+            ip: None,
+            user_agent: None,
+        },
+        2,
+        &rules(),
+    )?;
+    assert_eq!(
+        vault.esign_document(id)?.document.expires_at,
+        2 + 90 * 86400
+    );
+    assert_eq!(vault.sweep_esign_expiry(&[id], 50)?, 0);
+    assert_eq!(vault.sweep_esign_expiry(&[id], 99)?, 0);
+    let forged = vault.with_write_txn(|txn| {
+        super::ledger::append(
+            &vault,
+            txn,
+            id,
+            EsignEvent::Expired {
+                recipient: Some(doc.recipients[1].id.clone()),
+            },
+            EsignAuditActor {
+                actor: "owner".into(),
+                ip: None,
+                user_agent: None,
+            },
+            100,
+        )
+    });
+    assert!(forged.is_err());
+    assert_eq!(vault.sweep_esign_expiry(&[id], 100)?, 1);
+    assert_eq!(vault.sweep_esign_expiry(&[id], 101)?, 0);
+    assert_eq!(vault.esign_document(id)?.status, DocumentStatus::Expired);
+    assert_eq!(
+        vault.esign_audit(id)?.last().unwrap().event,
+        EsignEvent::Expired {
+            recipient: Some(signer)
+        }
     );
     Ok(())
 }

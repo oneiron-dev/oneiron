@@ -168,7 +168,9 @@ pub enum EsignEvent {
     Voided {
         reason: String,
     },
-    Expired,
+    Expired {
+        recipient: Option<String>,
+    },
     Reminded {
         recipient: String,
         rung: u32,
@@ -193,7 +195,7 @@ impl EsignEvent {
             Self::Signed { .. } => "esign.signed",
             Self::Declined { .. } => "esign.declined",
             Self::Voided { .. } => "esign.voided",
-            Self::Expired => "esign.expired",
+            Self::Expired { .. } => "esign.expired",
             Self::Reminded { .. } => "esign.reminded",
             Self::Sealed {
                 rejected: false, ..

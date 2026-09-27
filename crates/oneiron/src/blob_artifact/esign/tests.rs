@@ -190,9 +190,11 @@ fn claims_enforce_required_fields_sequential_promotion_and_seal_only_terminals()
 #[test]
 fn void_and_expiry_are_unsealed_and_never_trigger_sealing() -> Result<()> {
     for expire in [false, true] {
-        let (_dir, vault, id, _) = setup()?;
+        let (_dir, vault, id, doc) = setup()?;
         let event_kind = if expire {
-            EsignEvent::Expired
+            EsignEvent::Expired {
+                recipient: Some(doc.recipients[0].id.clone()),
+            }
         } else {
             EsignEvent::Voided {
                 reason: "withdrawn".into(),
@@ -706,14 +708,16 @@ fn lifecycle_sweep_uses_gate_and_claims_each_due_recipient_once() -> Result<()> 
     assert!(vault.esign_document(id)?.sealed_sha256.is_empty());
     assert_eq!(
         vault.esign_audit(id)?.last().unwrap().event,
-        EsignEvent::Expired
+        EsignEvent::Expired {
+            recipient: Some(doc.recipients[0].id.clone())
+        }
     );
     let queued = crate::attempt_queue::AttemptQueue::new(&vault).list()?;
     assert!(queued.iter().all(|a| a.kind != ESIGN_SEAL_ATTEMPT_KIND));
     assert_eq!(
         queued
             .iter()
-            .filter(|a| a.kind == "esign.delivery"
+            .filter(|a| a.kind == ESIGN_NOTICE_ATTEMPT_KIND
                 && serde_json::from_slice::<serde_json::Value>(&a.payload)
                     .is_ok_and(|v| v["transition"] == "expiry"))
             .count(),
@@ -985,7 +989,10 @@ fn seal_backstop_obeys_both_time_bounds_and_expiry_stays_unsealed() -> Result<()
     let queued = crate::attempt_queue::AttemptQueue::new(&vault).list()?;
     assert!(queued.iter().all(|a| a.kind != ESIGN_SEAL_ATTEMPT_KIND));
     assert_eq!(
-        queued.iter().filter(|a| a.kind == "esign.delivery").count(),
+        queued
+            .iter()
+            .filter(|a| a.kind == ESIGN_NOTICE_ATTEMPT_KIND)
+            .count(),
         doc.recipients.len()
     );
     Ok(())
@@ -1640,5 +1647,323 @@ fn unrenderable_fields_are_refused_before_save_and_final_signature_without_locki
     )
     .unwrap();
     assert_eq!(prepared.original_pages, 1);
+    Ok(())
+}
+
+#[test]
+fn committed_signature_or_decline_wins_expiry_and_void_while_sealing() -> Result<()> {
+    for decline in [false, true] {
+        let (_dir, vault, id, mut doc) = setup()?;
+        doc.fields.clear();
+        doc.sequential = false;
+        event(
+            &vault,
+            id,
+            EsignEvent::Drafted {
+                document: doc.clone(),
+            },
+            3,
+        )?;
+        event(&vault, id, EsignEvent::Sent, 4)?;
+        let first = doc.recipients[0].id.clone();
+        event(
+            &vault,
+            id,
+            EsignEvent::Viewed {
+                recipient: first.clone(),
+            },
+            5,
+        )?;
+        if decline {
+            event(
+                &vault,
+                id,
+                EsignEvent::Declined {
+                    recipient: first.clone(),
+                    reason: "no".into(),
+                },
+                6,
+            )?;
+        } else {
+            event(
+                &vault,
+                id,
+                EsignEvent::Signed {
+                    recipient: first.clone(),
+                    next: None,
+                },
+                6,
+            )?;
+            let second = doc.recipients[1].id.clone();
+            event(
+                &vault,
+                id,
+                EsignEvent::Viewed {
+                    recipient: second.clone(),
+                },
+                7,
+            )?;
+            event(
+                &vault,
+                id,
+                EsignEvent::Signed {
+                    recipient: second,
+                    next: None,
+                },
+                8,
+            )?;
+        }
+        assert!(vault.esign_document(id)?.ready_to_seal());
+        let before = vault.esign_audit(id)?.len();
+        assert_eq!(vault.sweep_esign_expiry(&[id], doc.expires_at)?, 0);
+        assert_eq!(vault.sweep_esign_expiry(&[id], doc.expires_at + 100)?, 0);
+        assert!(
+            event(
+                &vault,
+                id,
+                EsignEvent::Expired {
+                    recipient: Some(first)
+                },
+                doc.expires_at
+            )
+            .is_err()
+        );
+        assert!(
+            event(
+                &vault,
+                id,
+                EsignEvent::Voided {
+                    reason: "too late".into()
+                },
+                doc.expires_at
+            )
+            .is_err()
+        );
+        assert_eq!(vault.esign_document(id)?.status, DocumentStatus::Pending);
+        assert_eq!(vault.esign_audit(id)?.len(), before);
+        assert!(
+            crate::attempt_queue::AttemptQueue::new(&vault)
+                .list()?
+                .iter()
+                .all(|a| a.kind != ESIGN_NOTICE_ATTEMPT_KIND)
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn transition_mail_is_staged_then_denied_held_retried_and_allowed_via_outbound_gate() -> Result<()>
+{
+    use crate::attempt_queue::{AttemptQueue, AttemptState};
+    use crate::outbound::{
+        OutboundDeliveryWindowDecision, OutboundDispatchActor, OutboundDispatchGate,
+        OutboundDispatchOutcome, OutboundDispatchRequest, OutboundIntent, OutboundIntentDraft,
+        OutboundIntentTrigger,
+    };
+    let (_dir, vault, id, doc) = setup()?;
+    let sender = EntityId::now();
+    vault.put_entity(
+        &sender,
+        crate::registry::ENTITY_TYPE_PERSON,
+        TimeRange { start: 1, end: 1 },
+        1,
+        b"sender",
+    )?;
+    event(
+        &vault,
+        id,
+        EsignEvent::Drafted {
+            document: doc.clone(),
+        },
+        3,
+    )?;
+    vault.with_write_txn(|txn| {
+        super::ledger::append(
+            &vault,
+            txn,
+            id,
+            EsignEvent::Sent,
+            EsignAuditActor {
+                actor: sender.to_hex(),
+                ip: None,
+                user_agent: None,
+            },
+            4,
+        )
+        .map(|_| ())
+    })?;
+    let manifest = serde_json::json!({
+        "schema_version":"1.2", "pack_id":"esign-mail-test", "pack_version":"v1",
+        "min_engine_version":env!("CARGO_PKG_VERSION"),
+        "defaults":{"criticality":"normal","sensitivity":"normal"}, "rules":[],
+        "actor_ceilings":[{"actor_class":"human","actor_ref":sender.to_hex(),"ceiling":"auto"}],
+        "scoped_grants":[{"actor_ref":sender.to_hex(),"effector":"external:send",
+            "scope":crate::federation::scope_codec::effect_preset(),"selectors":{"channel":"email"}}]
+    });
+    crate::test_util::put_policy_manifest_bytes(
+        &vault,
+        EntityId::now(),
+        &rmp_serde::to_vec_named(&manifest).unwrap(),
+    )?;
+    assert_eq!(vault.sweep_esign_expiry(&[id], doc.expires_at)?, 1);
+    assert_eq!(
+        AttemptQueue::new(&vault)
+            .list()?
+            .iter()
+            .filter(|a| a.kind == ESIGN_NOTICE_ATTEMPT_KIND)
+            .count(),
+        2
+    );
+    assert!(
+        AttemptQueue::new(&vault)
+            .list()?
+            .iter()
+            .all(|a| a.kind != "esign.delivery")
+    );
+    let request = |notice: &EsignNotice, at: u64, key: &str, opted_in: bool, permitted: bool| {
+        OutboundDispatchRequest::new(
+            format!("receipt:{key}"),
+            key,
+            OutboundIntent::from_trigger(
+                OutboundIntentDraft {
+                    actor: sender.to_hex(),
+                    on_behalf_of: None,
+                    verb: "send".into(),
+                    channel: "email".into(),
+                    target: notice.email.clone(),
+                    content_ref: None,
+                    idempotency_key: None,
+                    dedupe_key: None,
+                },
+                OutboundIntentTrigger::record_transition(notice.event_ref.clone().unwrap()),
+            ),
+            OutboundDispatchActor {
+                actor_class: "human".into(),
+                actor_ref: Some(sender.to_hex()),
+                actor_entity_ref: Some(sender),
+            },
+            OutboundDispatchGate {
+                has_opted_in: opted_in,
+                has_permission: permitted,
+                policy_risk: Default::default(),
+            },
+            at,
+            OutboundDeliveryWindowDecision::DeliverNow,
+        )
+    };
+    let (denied_attempt, denied) = vault
+        .claim_esign_notice("notice-worker", crate::unix_seconds_now())?
+        .unwrap();
+    assert_eq!(denied.principal.as_deref(), Some(sender.to_hex().as_str()));
+    let denied_result = vault
+        .dispatch_esign_notice(&denied_attempt, request(&denied, 1001, "deny", false, true))
+        .unwrap();
+    assert_ne!(
+        denied_result.outcome,
+        OutboundDispatchOutcome::DeliveredToChannel
+    );
+    assert!(
+        AttemptQueue::new(&vault)
+            .list()?
+            .iter()
+            .all(|a| a.kind != "esign.delivery")
+    );
+    let (held_attempt, held) = vault
+        .claim_esign_notice("notice-worker", crate::unix_seconds_now())?
+        .unwrap();
+    let held_result = vault
+        .dispatch_esign_notice(&held_attempt, request(&held, 1002, "hold", true, false))
+        .unwrap();
+    assert_eq!(held_result.outcome, OutboundDispatchOutcome::Held);
+    assert!(
+        AttemptQueue::new(&vault)
+            .list()?
+            .iter()
+            .all(|a| a.kind != "esign.delivery")
+    );
+    // The second recipient's original row precedes the scheduled retry.
+    let (other, other_notice) = vault
+        .claim_esign_notice("notice-worker", crate::unix_seconds_now())?
+        .unwrap();
+    assert_ne!(other_notice, held);
+    let other_result = vault
+        .dispatch_esign_notice(
+            &other,
+            request(&other_notice, 1003, "deny-other", false, true),
+        )
+        .unwrap();
+    assert_ne!(
+        other_result.outcome,
+        OutboundDispatchOutcome::DeliveredToChannel
+    );
+    let (retry, same_notice) = vault
+        .claim_esign_notice("notice-worker", crate::unix_seconds_now())?
+        .unwrap();
+    assert_eq!(same_notice, held);
+    assert_eq!(retry.state, AttemptState::Leased);
+    let sent = vault
+        .dispatch_esign_notice(&retry, request(&same_notice, 1065, "allow", true, true))
+        .unwrap();
+    assert_eq!(
+        sent.outcome,
+        OutboundDispatchOutcome::DeliveredToChannel,
+        "{sent:?}"
+    );
+    let rows = AttemptQueue::new(&vault).list()?;
+    assert_eq!(
+        rows.iter().filter(|a| a.kind == "esign.delivery").count(),
+        1
+    );
+    assert_eq!(
+        rows.iter()
+            .filter(|a| a.kind == "esign.delivery")
+            .map(
+                |a| serde_json::from_slice::<serde_json::Value>(&a.payload).unwrap()["transition"]
+                    .clone()
+            )
+            .collect::<Vec<_>>(),
+        vec!["expiry"]
+    );
+    assert_eq!(vault.esign_document(id)?.status, DocumentStatus::Expired);
+    Ok(())
+}
+
+#[test]
+fn completed_recipient_window_cannot_expire_a_different_pending_signer() -> Result<()> {
+    let (_dir, vault, id, mut doc) = setup()?;
+    doc.fields.clear();
+    doc.sequential = false;
+    doc.recipients[0].expires_at = 100;
+    let first = doc.recipients[0].id.clone();
+    let second = doc.recipients[1].id.clone();
+    event(
+        &vault,
+        id,
+        EsignEvent::Drafted {
+            document: doc.clone(),
+        },
+        3,
+    )?;
+    event(&vault, id, EsignEvent::Sent, 4)?;
+    event(&vault, id, EsignEvent::Viewed { recipient: first }, 5)?;
+    event(
+        &vault,
+        id,
+        EsignEvent::Signed {
+            recipient: doc.recipients[0].id.clone(),
+            next: None,
+        },
+        6,
+    )?;
+    assert!(!vault.esign_document(id)?.ready_to_seal());
+    assert_eq!(vault.sweep_esign_expiry(&[id], 100)?, 0);
+    assert_eq!(vault.esign_document(id)?.status, DocumentStatus::Pending);
+    assert_eq!(vault.sweep_esign_expiry(&[id], doc.expires_at)?, 1);
+    assert_eq!(
+        vault.esign_audit(id)?.last().unwrap().event,
+        EsignEvent::Expired {
+            recipient: Some(second)
+        }
+    );
     Ok(())
 }

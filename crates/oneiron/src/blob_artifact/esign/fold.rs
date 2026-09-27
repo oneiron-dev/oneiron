@@ -38,6 +38,23 @@ impl EsignState {
             reminder_at: Default::default(),
         })
     }
+    /// One deterministic terminal target at the first overdue unfinished
+    /// signer/approver window. An outcome already awaiting its seal wins expiry.
+    pub(super) fn expiry_target(&self, now: u64) -> Option<Option<String>> {
+        if !matches!(self.status, DocumentStatus::Draft | DocumentStatus::Pending)
+            || self.ready_to_seal()
+        {
+            return None;
+        }
+        if let Some(recipient) = self.document.recipients.iter().find(|r| {
+            matches!(r.role, RecipientRole::Signer | RecipientRole::Approver)
+                && self.recipients[&r.id].signing != SigningStatus::Completed
+                && now >= self.recipients[&r.id].expires_at
+        }) {
+            return Some(Some(recipient.id.clone()));
+        }
+        (now >= self.document.expires_at).then_some(None)
+    }
     fn has_actionable_recipient(&self) -> bool {
         self.document.recipients.iter().any(|recipient| {
             matches!(
@@ -204,7 +221,8 @@ impl EsignState {
                 self.rejection = Some(reason.clone());
             }
             EsignEvent::Voided { reason } => {
-                if !matches!(self.status, DocumentStatus::Draft | DocumentStatus::Pending)
+                if self.ready_to_seal()
+                    || !matches!(self.status, DocumentStatus::Draft | DocumentStatus::Pending)
                     || reason.trim().is_empty()
                     || reason.len() > 4096
                 {
@@ -212,10 +230,8 @@ impl EsignState {
                 }
                 self.status = DocumentStatus::Voided;
             }
-            EsignEvent::Expired => {
-                if !matches!(self.status, DocumentStatus::Draft | DocumentStatus::Pending)
-                    || now < self.document.expires_at
-                {
+            EsignEvent::Expired { recipient } => {
+                if self.expiry_target(now).as_ref() != Some(recipient) {
                     return Err(invalid("document has not expired"));
                 }
                 self.status = DocumentStatus::Expired;

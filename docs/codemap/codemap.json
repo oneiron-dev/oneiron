@@ -3398,7 +3398,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "SigningAction",
@@ -3426,13 +3426,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/blob_artifact/esign/fold.rs",
      "purpose": "Pure projection of the append-only esign claim family",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 4,
       "fn": 1
      }
     },
@@ -3479,7 +3479,7 @@
      "surface": {
       "crate-vis": 1,
       "mod": 2,
-      "re-export": 7
+      "re-export": 8
      }
     },
     {
@@ -3512,6 +3512,20 @@
       "crate-vis": 4,
       "enum": 9,
       "struct": 10
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "EsignNotice"
+     ],
+     "path": "src/blob_artifact/esign/notice_dispatch.rs",
+     "purpose": "Durable e-sign transition intents cross OF-327 before edge handoff",
+     "surface": {
+      "const": 1,
+      "fn": 2,
+      "struct": 1
      }
     },
     {
@@ -22756,7 +22770,7 @@
      "surface": {
       "const": 1,
       "enum": 1,
-      "fn": 12,
+      "fn": 13,
       "struct": 3
      }
     },
@@ -33944,7 +33958,7 @@
      "purpose": "—"
     },
     "blob_artifact": {
-     "files": 40,
+     "files": 41,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -35164,7 +35178,7 @@
    },
    "over_bar": 9,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2074,
+   "source_files": 2075,
    "test_files": 715
   },
   "oneiron-android": {

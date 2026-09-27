@@ -116,6 +116,8 @@ pub enum OutboundIntentSource {
     GapQueue,
     /// In-session agent action.
     AgentImmediate,
+    /// A durable record transition, such as an e-sign terminal notice.
+    RecordTransition,
 }
 
 impl OutboundIntentSource {
@@ -125,6 +127,7 @@ impl OutboundIntentSource {
             Self::Commitment => "commitment",
             Self::GapQueue => "gap_queue",
             Self::AgentImmediate => "agent_immediate",
+            Self::RecordTransition => "record_transition",
         }
     }
 
@@ -134,6 +137,7 @@ impl OutboundIntentSource {
             "commitment" | "commitment_timer_wake" => Some(Self::Commitment),
             "gap_queue" => Some(Self::GapQueue),
             "agent_immediate" => Some(Self::AgentImmediate),
+            "record_transition" => Some(Self::RecordTransition),
             _ => None,
         }
     }
@@ -170,6 +174,14 @@ impl OutboundIntentTrigger {
     pub fn agent_immediate(trigger_ref: impl Into<String>) -> Self {
         Self {
             source: OutboundIntentSource::AgentImmediate,
+            trigger_ref: trigger_ref.into(),
+            job_ref: None,
+        }
+    }
+    #[must_use]
+    pub fn record_transition(trigger_ref: impl Into<String>) -> Self {
+        Self {
+            source: OutboundIntentSource::RecordTransition,
             trigger_ref: trigger_ref.into(),
             job_ref: None,
         }

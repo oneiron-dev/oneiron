@@ -1,6 +1,6 @@
 //! Pack-supplied lifecycle timing and atomic claim/edge-handoff sweeps.
 use super::{
-    ledger::{append, state_in},
+    ledger::{append, events_in, hash, state_in},
     model::*,
 };
 use crate::outbound::{OutboundDispatchOutcome, OutboundDispatchRequest};
@@ -98,9 +98,13 @@ pub(super) fn notify(
     if !enabled {
         return Ok(());
     }
-    let attachments = if transition == "completed" {
-        if state.status != DocumentStatus::Completed || state.sealed_sha256.is_empty() {
-            return Err(invalid("completed mail requires sealed output"));
+    let (attachments, seal_generation) = if matches!(transition, "completed" | "rejection") {
+        if !matches!(
+            state.status,
+            DocumentStatus::Completed | DocumentStatus::Rejected
+        ) || state.sealed_sha256.is_empty()
+        {
+            return Err(invalid("terminal mail requires sealed output"));
         }
         let manifest = vault
             .store
@@ -112,7 +116,7 @@ pub(super) fn notify(
             .ok_or_else(|| invalid("sealed manifest missing"))?;
         let sealed: super::SealedDocument =
             serde_json::from_slice(&manifest).map_err(|_| invalid("sealed manifest schema"))?;
-        if sealed.rejected
+        if sealed.rejected != (transition == "rejection")
             || sealed.items.len() != state.sealed_sha256.len()
             || sealed
                 .items
@@ -122,9 +126,32 @@ pub(super) fn notify(
         {
             return Err(invalid("sealed mail binding mismatch"));
         }
-        sealed.items
+        (
+            if transition == "completed" {
+                sealed.items
+            } else {
+                Vec::new()
+            },
+            Some(sealed.attempt_ref),
+        )
     } else {
-        Vec::new()
+        (Vec::new(), None)
+    };
+
+    let origin = if dispatch_ref.is_none() {
+        let rows = events_in(vault, txn, document)?;
+        let sender = rows
+            .iter()
+            .find(|r| matches!(r.event, EsignEvent::Sent))
+            .or_else(|| rows.first())
+            .ok_or_else(|| invalid("missing notice origin"))?;
+        let trigger = rows.last().ok_or_else(|| invalid("missing notice event"))?;
+        Some((
+            sender.actor.actor.clone(),
+            crate::entity_id::bytes_to_hex_lower(&hash(trigger)?),
+        ))
+    } else {
+        None
     };
     for recipient in recipients {
         let row = state
@@ -137,14 +164,27 @@ pub(super) fn notify(
             "document": document.to_hex(), "recipient": recipient,
             "email": row.email, "transition": transition,
             "dispatch_ref": dispatch_ref, "sealed_items": attachments,
+            "principal": origin.as_ref().map(|v| v.0.as_str()),
+            "event_ref": origin.as_ref().map(|v| v.1.as_str()),
+            "generation": seal_generation,
         }))
         .map_err(|_| invalid("delivery encoding"))?;
         crate::attempt_queue::AttemptQueue::new(vault).enqueue_in_txn(
             txn,
             crate::attempt_queue::EnqueueAttempt {
-                kind: "esign.delivery".into(),
+                kind: if dispatch_ref.is_some() {
+                    "esign.delivery"
+                } else {
+                    "esign.notice"
+                }
+                .into(),
                 payload,
-                dedupe_key: Some(if transition == "reminder" {
+                dedupe_key: Some(if let Some(generation) = &seal_generation {
+                    format!(
+                        "{}:{transition}:{recipient}:{generation}",
+                        document.to_hex()
+                    )
+                } else if transition == "reminder" {
                     format!(
                         "{}:{transition}:{recipient}:{}",
                         document.to_hex(),
@@ -222,9 +262,12 @@ impl Vault {
     ) -> Result<()> {
         rules.validate()?;
         let mut body = body.clone();
-        let expires = now
-            .checked_add(rules.expiry_after_seconds)
-            .ok_or_else(|| invalid("expiry overflow"))?;
+        let expires = if body.expires_at == 0 || body.recipients.iter().any(|r| r.expires_at == 0) {
+            now.checked_add(rules.expiry_after_seconds)
+                .ok_or_else(|| invalid("expiry overflow"))?
+        } else {
+            0
+        };
         if body.expires_at == 0 {
             body.expires_at = expires;
         }
@@ -246,16 +289,12 @@ impl Vault {
             let mut count = 0;
             for &document in documents {
                 let state = state_in(self, txn, document)?;
-                if matches!(
-                    state.status,
-                    DocumentStatus::Draft | DocumentStatus::Pending
-                ) && now >= state.document.expires_at
-                {
+                if let Some(recipient) = state.expiry_target(now) {
                     let state = append(
                         self,
                         txn,
                         document,
-                        EsignEvent::Expired,
+                        EsignEvent::Expired { recipient },
                         EsignAuditActor {
                             actor: "engine:expiry".into(),
                             ip: None,
