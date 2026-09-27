@@ -824,34 +824,6 @@ pub(super) fn seed_counterparty_contact(
 
 // ─── OF-365 disclosure clamp HTTP red-team suite (ONE-1517) ─────────────────
 
-/// A searchable out-of-band record: the contact's TURN clearance must not
-/// admit it merely because its words match the same query.
-pub(super) fn seed_text_asset(server: &SyncServer, text: &str) -> oneiron::EntityId {
-    let id = oneiron::EntityId::now();
-    let body = rmp_serde::to_vec_named(&json!({
-        "txt": text,
-        "source_asset_ref": format!("fixture:{}", id.to_hex()),
-    }))
-    .expect("encode ASSET_TEXT body");
-    server
-        .vault
-        .batch()
-        .put(
-            &id,
-            oneiron::registry::ENTITY_TYPE_ASSET_TEXT,
-            oneiron::TimeRange {
-                start: 100,
-                end: 100,
-            },
-            100,
-            &body,
-        )
-        .text(&id, &[("body", text)])
-        .commit()
-        .expect("seed ASSET_TEXT");
-    id
-}
-
 pub(super) fn seed_text_turn(server: &SyncServer, text: &str) -> oneiron::EntityId {
     let turn = oneiron::EntityId::now();
     let body = rmp_serde::to_vec_named(&json!({
@@ -882,31 +854,64 @@ pub(super) fn seed_text_turn(server: &SyncServer, text: &str) -> oneiron::Entity
 pub(super) fn seed_disclosure_scope(
     server: &SyncServer,
     contact_id: oneiron::EntityId,
-    entities: Vec<oneiron::EntityId>,
+    clearance: oneiron::federation::Scope,
 ) {
-    // Six-axis clearance uses record-kind bands, not entity-id allowlists.
-    // The selected rows supply their actual bands; an empty fixture is bottom.
-    let mut clearance = oneiron::federation::Scope::default();
-    if !entities.is_empty() {
-        let bands = entities
-            .into_iter()
-            .map(|id| {
-                server
-                    .vault
-                    .get_entity_type(&id)
-                    .expect("record kind")
-                    .expect("scoped fixture entity must exist")
-            })
-            .collect();
-        clearance = oneiron::federation::Scope::top();
-        clearance.bands = oneiron::federation::ScopeAxis::Some(bands);
-    }
     let scope = oneiron::disclosure::DisclosureScope::new(clearance, "party planning", 100)
         .expect("disclosure scope");
     server
         .vault
         .set_counterparty_disclosure_scope(&contact_id, &scope)
         .expect("set disclosure scope");
+}
+
+fn disclosure_base_world_clearance() -> oneiron::federation::Scope {
+    use oneiron::federation::{Scope, ScopeAxis, ScopeId};
+    let mut scope = Scope::top();
+    scope.worlds = ScopeAxis::Some([ScopeId(oneiron::claim::base_world_id())].into());
+    scope
+}
+
+fn seed_disclosure_claim_in_world(
+    server: &SyncServer,
+    subject: oneiron::EntityId,
+    text: &str,
+    world: oneiron::EntityId,
+) -> oneiron::EntityId {
+    let id = oneiron::EntityId::now();
+    let mut claim = oneiron::ClaimBody::new(
+        "event.diary",
+        oneiron::ClaimSubject::Entity(subject),
+        rmpv::Value::from(text),
+        1.0,
+        oneiron::ClaimApprovalStatus::Auto,
+        oneiron::ClaimLifecycleStatus::Active,
+    );
+    claim.world = Some(world);
+    // Tier B is required here: otherwise the tier check rejects this claim
+    // before the test can exercise the contact's world clearance.
+    claim.scope = Some(rmpv::Value::Map(vec![(
+        rmpv::Value::from("sensitivity"),
+        rmpv::Value::from("private"),
+    )]));
+    server
+        .vault
+        .put_claim(
+            &id,
+            &claim,
+            oneiron::TimeRange {
+                start: 100,
+                end: 100,
+            },
+            100,
+        )
+        .expect("seed out-of-world claim");
+    server
+        .vault
+        .batch()
+        .text(&id, &[("body", text)])
+        .commit()
+        .expect("index out-of-world claim");
+    id
 }
 
 // ─── Surface events (ONE-1259) ───────────────────────────────────────────────

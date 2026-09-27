@@ -116,6 +116,7 @@ fn blob_artifact_upload_creates_v1_with_ledger_event() -> Result<()> {
         *blake3::hash(b"office bytes v1").as_bytes()
     );
     assert_eq!(version.provenance, BlobVersionProvenance::UserUpload);
+    assert_eq!(version.calc_engine, None, "an upload was not recalculated");
     // The LEDGER event landed as a CLAIM entity.
     assert_eq!(
         vault.get_entity_type(&version.claim_id)?,
@@ -255,6 +256,7 @@ fn blob_artifact_provenance_round_trips_per_version() -> Result<()> {
 
     let versions = vault.blob_artifact_versions(&artifact_id)?;
     assert_eq!(versions.len(), 2);
+    assert_eq!(versions[0].calc_engine, None);
     assert_eq!(versions[0].provenance, BlobVersionProvenance::UserUpload);
     assert_eq!(versions[1].provenance, agent_run);
     assert_ne!(v1.claim_id, v2.claim_id);
