@@ -62,6 +62,7 @@ struct DeepCeiling {
     allowed: bool,
     owner: String,
     approval_digest: String,
+    project_id: EntityId,
 }
 
 fn invalid(message: &str) -> Error {
@@ -178,6 +179,7 @@ pub(super) fn set_deep_ceiling(
     txn: &mut heed::RwTxn<'_>,
     asset: EntityId,
     text: &str,
+    project_id: EntityId,
     allowed: bool,
     approval: DeepApproval<'_>,
     now: u64,
@@ -190,10 +192,9 @@ pub(super) fn set_deep_ceiling(
         .map(|raw| serde_json::from_slice(&raw).map_err(|_| invalid("corrupt docs deep ceiling")))
         .transpose()?;
     let hash = source_hash(text);
-    if old
-        .as_ref()
-        .is_some_and(|old| old.source_hash != hash || (old.allowed && !allowed))
-    {
+    if old.as_ref().is_some_and(|old| {
+        old.source_hash != hash || old.project_id != project_id || (old.allowed && !allowed)
+    }) {
         let receipt_key = receipt_key(asset);
         if let Some(raw) = vault.store.vault_meta.get(&*txn, receipt_key.as_bytes())? {
             let previous: DocsDeepReceipt =
@@ -214,6 +215,7 @@ pub(super) fn set_deep_ceiling(
         allowed,
         owner: approval.owner.to_hex(),
         approval_digest: approval.digest.to_owned(),
+        project_id,
     })
     .map_err(|_| invalid("docs deep ceiling encoding"))?;
     vault.store.vault_meta.put(txn, key.as_bytes(), &data)?;
@@ -252,7 +254,7 @@ impl Vault {
         if extractor.binding().trim().is_empty() {
             return Err(invalid("docs deep extractor needs a binding"));
         }
-        let (text, corpus, page, hash, approval_digest) = {
+        let (text, corpus, page, hash, approval_digest, project_id) = {
             let txn = self.store.env.read_txn()?;
             owner.revalidate_in_txn(self, &txn)?;
             if let Some((reader, _)) = read
@@ -260,7 +262,7 @@ impl Vault {
             {
                 return Err(invalid("docs source no longer readable by scoped actor"));
             }
-            let (text, corpus, page, hash, approval_digest) =
+            let (text, corpus, page, hash, approval_digest, project_id) =
                 self.deep_source_in(&txn, asset, owner.actor())?;
             if read.is_some_and(|(_, expected)| expected != hash) {
                 return Err(invalid("docs source changed since authorized expansion"));
@@ -272,7 +274,7 @@ impl Vault {
                 self.require_live_deep_receipt(&txn, &receipt)?;
                 return Ok(receipt);
             }
-            (text, corpus, page, hash, approval_digest)
+            (text, corpus, page, hash, approval_digest, project_id)
         };
         // Model work never holds the LMDB writer slot. Every quote is checked
         // against the corresponding unmodified source unit before admission.
@@ -303,14 +305,21 @@ impl Vault {
         {
             return Err(invalid("docs source no longer readable by scoped actor"));
         }
-        let (_, current_corpus, current_page, current_hash, current_approval_digest) =
-            self.deep_source_in(&txn, asset, owner.actor())?;
+        let (
+            _,
+            current_corpus,
+            current_page,
+            current_hash,
+            current_approval_digest,
+            current_project,
+        ) = self.deep_source_in(&txn, asset, owner.actor())?;
         if (
             current_corpus.as_str(),
             current_page.as_str(),
             current_hash.as_str(),
         ) != (corpus.as_str(), page.as_str(), hash.as_str())
             || current_approval_digest != approval_digest
+            || current_project != project_id
         {
             return Err(invalid("docs source changed during deep ingest; retry"));
         }
@@ -403,7 +412,12 @@ impl Vault {
                 ));
                 builder = builder.claim_candidate(
                     &claim.id,
-                    candidate.with_evidence(rmpv::Value::Map(evidence)),
+                    candidate
+                        .with_scope(rmpv::Value::Map(vec![(
+                            v("scopeProjectId"),
+                            rmpv::Value::Binary(project_id.as_bytes().to_vec()),
+                        )]))
+                        .with_evidence(rmpv::Value::Map(evidence)),
                     &envelope,
                     admission.occurred,
                     admission.learned_at,
@@ -517,7 +531,7 @@ impl Vault {
         txn: &heed::RoTxn<'_>,
         asset: EntityId,
         owner: EntityId,
-    ) -> Result<(String, String, String, String, String)> {
+    ) -> Result<(String, String, String, String, String, EntityId)> {
         let raw = self.get_raw_in(txn, &asset)?.ok_or(Error::EntityNotFound)?;
         let header =
             EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("docs asset header"))?;
@@ -534,6 +548,9 @@ impl Vault {
         };
         let text = get("text")?;
         let corpus = get("corpus")?;
+        let project_id = EntityId::from_hex(&get("project_id")?)
+            .map_err(|_| invalid("docs corpus PROJECT id invalid"))?;
+        super::docs_import::require_docs_corpus_project(self, txn, project_id)?;
         let page = get("page_id")?;
         if get("source")? != "imported" {
             return Err(invalid("docs deep source is not imported"));
@@ -552,6 +569,7 @@ impl Vault {
             || ceiling.source_hash != hash
             || ceiling.owner != owner.to_hex()
             || ceiling.approval_digest.is_empty()
+            || ceiling.project_id != project_id
         {
             return Err(invalid(
                 "docs deep import ceiling or source revision refused",
@@ -567,6 +585,13 @@ impl Vault {
         for segment in docs_semantic_segments(&text) {
             self.deep_chunk_in(txn, asset, &corpus, &page, &segment.block, &segment.text)?;
         }
-        Ok((text, corpus, page, hash, ceiling.approval_digest))
+        Ok((
+            text,
+            corpus,
+            page,
+            hash,
+            ceiling.approval_digest,
+            project_id,
+        ))
     }
 }

@@ -7555,7 +7555,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/claim/scope_stamp.rs",
@@ -18575,6 +18575,7 @@
      "path": "src/ingest/docs_import.rs",
      "purpose": "Atomic bulk consent and thin-star docs membership",
      "surface": {
+      "crate-vis": 1,
       "fn": 3,
       "struct": 3,
       "trait": 2

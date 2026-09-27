@@ -622,7 +622,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/claim/put.rs` | src | m | 1 fn · 5 crate-vis | — | `Vault` claim write doors: the public `put_claim` family, the crate-private reserved-namespace door, the… |
 | `src/claim/read.rs` | src | m | 2 fn · 9 crate-vis | — | `Vault` claim read doors: targeted `get_claim`, the subject/predicate scans, the session-bundle projection… |
 | `src/claim/scope.rs` | src | s | 2 crate-vis | — | The engine-RECOGNIZED entries inside a claim's otherwise opaque `scope` map, and their fail-closed… |
-| `src/claim/scope_stamp.rs` | src | s | 7 fn · 1 const · 5 crate-vis | — | Required record-position Scope stamps and the versioned CLAIM wire upgrade |
+| `src/claim/scope_stamp.rs` | src | m | 7 fn · 1 const · 5 crate-vis | — | Required record-position Scope stamps and the versioned CLAIM wire upgrade |
 | `src/claim/scope_stamp/tests.rs` | test | m | — | — | Observable Scope identity, codec, selector and replay acceptance |
 | `src/claim/scoped_read.rs` | src | L | 1 struct · 14 fn · 3 re-export · 6 crate-vis | ScopedRead | The policy-gated read lane: [`ScopedReadActorKey`], [`ScopedRead`], and the admission/filtering surface that… |
 | `src/claim/scoped_read/access_gate.rs` | src | s | 4 crate-vis | — | Relationship access checks share the row read transaction with grant resolution |
@@ -1494,7 +1494,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/ingest/bulk_review_tests.rs` | test | s | — | — | — |
 | `src/ingest/docs.rs` | src | s | 4 struct · 3 fn · 1 const | DocsExport, DocsExportSource, DocsPage, DocsSegment | Export-seam docs normalization |
 | `src/ingest/docs_deep.rs` | src | m | 2 struct · 1 enum · 1 trait · 1 fn · 6 crate-vis | DocsDeepClaim, DocsDeepExtractor, DocsDeepReceipt, DocsDeepTrigger | On-demand docs NER: only a named trigger crosses the thin-star boundary |
-| `src/ingest/docs_import.rs` | src | m | 3 struct · 2 trait · 3 fn | DocsDerivationEnvelope, DocsImportCeiling, DocsImportReceipt, DocsInjectionClassifier, DocsSummaryModel | Atomic bulk consent and thin-star docs membership |
+| `src/ingest/docs_import.rs` | src | m | 3 struct · 2 trait · 3 fn · 1 crate-vis | DocsDerivationEnvelope, DocsImportCeiling, DocsImportReceipt, DocsInjectionClassifier, DocsSummaryModel | Atomic bulk consent and thin-star docs membership |
 | `src/ingest/docs_tests.rs` | test | L | — | — | — |
 | `src/ingest/exports.rs` | src | m | 1 struct · 1 enum | ExportLayout, ExportSource | Native export layouts with catalog-supplied platform identity (ARCH-0027) |
 | `src/ingest/exports/tests.rs` | test | s | — | — | — |
