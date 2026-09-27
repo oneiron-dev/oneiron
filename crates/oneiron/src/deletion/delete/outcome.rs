@@ -19,3 +19,10 @@ impl DeleteEntityOutcome {
         }
     }
 }
+
+/// Optional cascade/purge choice for the user delete door. The default is a
+/// propagated tombstone with a local shell, not irreversible erasure.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct DeleteEntityOptions {
+    pub purge: bool,
+}
