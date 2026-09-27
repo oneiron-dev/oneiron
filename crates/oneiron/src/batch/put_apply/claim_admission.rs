@@ -11,6 +11,7 @@ pub(super) struct ClaimPutAdmission<'a> {
     pub(super) allow_reserved_predicate: bool,
     pub(super) write_envelope: Option<&'a WriteEnvelope>,
     pub(super) replicated: bool,
+    pub(super) posture: crate::HostingPrivacyPosture,
 }
 
 pub(super) fn admit_claim_put(
@@ -36,6 +37,16 @@ pub(super) fn admit_claim_put(
     } else {
         None
     };
+    if let Some(body) = &body {
+        crate::authority::verify_machine_claim_in_txn(
+            store,
+            txn,
+            input.posture,
+            &id,
+            body,
+            input.replicated,
+        )?;
+    }
     crate::booking::publication::guard_publication_put(store, txn, id, body.as_ref())?;
     if let Some(body) = &body {
         crate::scope_summary::merge_summary_ref(body)?;

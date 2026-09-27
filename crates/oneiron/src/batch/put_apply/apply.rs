@@ -96,18 +96,9 @@ pub(in crate::batch) fn apply_put(
             allow_reserved_predicate,
             write_envelope,
             replicated,
+            posture: config.privacy.posture,
         },
     )?;
-    if let Some(body) = &incoming_claim_body {
-        crate::authority::verify_machine_claim_in_txn(
-            store,
-            wtxn,
-            config.privacy.posture,
-            &id,
-            body,
-            replicated,
-        )?;
-    }
     // ARCH-0052 D2: this is the shared entity materialization choke point for
     // public/typed puts, claim candidates, and replicated replay. A base row
     // at a live overlay member's id would publish the room into base, so it
