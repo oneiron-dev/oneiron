@@ -320,7 +320,7 @@ mod tests {
             action: PolicyRowAction::Warn,
             scope,
         };
-        let in_project = PolicyRowScope::Project(project_a.clone());
+        let in_project = PolicyRowScope::Project(project_a);
         let bound = GrantBound::action(
             ActorBound::new(admin_id.to_hex())?.with_actor_class("human")?,
             ActionClass::new(POLICY_CHANGE_CLASS)?,

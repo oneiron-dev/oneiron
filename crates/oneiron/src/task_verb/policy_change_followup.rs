@@ -49,7 +49,7 @@ pub(crate) fn enqueue_policy_change_digest_followup_in_txn(
     receipts: &[String],
     now: u64,
 ) -> Result<EntityId> {
-    if receipts.is_empty() || receipts.iter().any(|r| r.is_empty()) {
+    if receipts.is_empty() || receipts.iter().any(String::is_empty) {
         return Err(Error::InvalidConfig("empty policy digest".into()));
     }
     let mut sorted = receipts.to_vec();

@@ -3,6 +3,7 @@ use rmpv::Value;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 use std::io::Cursor;
+use std::ops::Bound;
 
 use super::{
     authority,
@@ -389,7 +390,6 @@ impl Vault {
             // Seek from the durable cursor, reading only the next bounded
             // page. A second bounded range wraps once when the end is reached.
             // Never materialize the entire queue just to find page N.
-            use std::ops::Bound;
             let mut upper = QUEUED.to_vec();
             *upper.last_mut().expect("nonempty prefix") += 1;
             let mut selected = Vec::with_capacity(limit.min(64));
@@ -409,8 +409,9 @@ impl Vault {
                     break;
                 }
             }
-            if selected.len() < limit && cursor.is_some() {
-                let end = cursor.as_ref().expect("checked");
+            if selected.len() < limit
+                && let Some(end) = cursor.as_ref()
+            {
                 for entry in self.store.vault_meta.range(
                     &txn,
                     &(Bound::Included(QUEUED), Bound::Included(end.as_slice())),
@@ -435,12 +436,7 @@ impl Vault {
         let mut processed_digests = BTreeSet::new();
         for key in selected {
             // Cursor advancement is independent of the TASK transaction.
-            self.with_write_txn(|txn| {
-                self.store
-                    .vault_meta
-                    .put(txn, QUEUE_CURSOR, &key)
-                    .map_err(Into::into)
-            })?;
+            self.with_write_txn(|txn| self.store.vault_meta.put(txn, QUEUE_CURSOR, &key))?;
             if failure_retry.get(&key).is_some_and(|retry| *retry > now) {
                 continue;
             }
@@ -460,12 +456,11 @@ impl Vault {
             if row.followup_task.is_some() || row.mode == PolicyNotificationMode::LogOnly {
                 continue;
             }
-            if row.mode == PolicyNotificationMode::Digest {
-                if !processed_digests.insert(row.recipient.clone())
-                    || row.digest_due_at.is_none_or(|due| due > now)
-                {
-                    continue;
-                }
+            if row.mode == PolicyNotificationMode::Digest
+                && (!processed_digests.insert(row.recipient.clone())
+                    || row.digest_due_at.is_none_or(|due| due > now))
+            {
+                continue;
             }
             match self.link_notification_in_txn(&key, &row, now) {
                 Ok(count) => linked += count,

@@ -66,7 +66,7 @@ impl Vault {
             )
             .into_iter()
             .find(|row| row.row_ref == *row_ref)
-            .and_then(|row| row.human.clone())
+            .and_then(|row| row.human)
             .ok_or(Error::Relay(RelayError::PolicyVerdictNotInForce))?;
         // Reclassifying the same caller/content/frontier cannot erase a human ruling.
         if self
