@@ -135,29 +135,112 @@ impl Vault {
         occurred: TimeRange,
         learned_at: u64,
     ) -> Result<SkillRecord> {
-        self.with_write_txn(|txn| {
-            self.fork_skill_record_in_txn(
-                txn,
-                parent_id,
-                fork_id,
-                fork_skill_id,
-                occurred,
-                learned_at,
-            )
-        })
+        self.fork_skill_record_bound(
+            parent_id,
+            fork_id,
+            fork_skill_id,
+            None,
+            occurred,
+            learned_at,
+        )
     }
 
-    /// The same fork door inside a caller transaction, so a confirmed project
-    /// and all of its skill forks commit or roll back together.
-    pub(crate) fn fork_skill_record_in_txn(
+    /// Forks a shared skill for one persistent resident. The owner stamp is
+    /// born in the same transaction as the fork and survives later revisions.
+    pub fn fork_skill_for_resident(
         &self,
-        wtxn: &mut heed::RwTxn<'_>,
+        resident: &EntityId,
         parent_id: &EntityId,
         fork_id: &EntityId,
         fork_skill_id: &str,
         occurred: TimeRange,
         learned_at: u64,
     ) -> Result<SkillRecord> {
+        self.fork_skill_record_bound(
+            parent_id,
+            fork_id,
+            fork_skill_id,
+            Some(*resident),
+            occurred,
+            learned_at,
+        )
+    }
+
+    fn fork_skill_record_bound(
+        &self,
+        parent_id: &EntityId,
+        fork_id: &EntityId,
+        fork_skill_id: &str,
+        resident: Option<EntityId>,
+        occurred: TimeRange,
+        learned_at: u64,
+    ) -> Result<SkillRecord> {
+        self.with_write_txn(|txn| {
+            self.fork_skill_record_bound_in_txn(
+                txn,
+                parent_id,
+                fork_id,
+                fork_skill_id,
+                resident,
+                occurred,
+                learned_at,
+            )
+        })
+    }
+
+    /// Fork under an existing write transaction, so a project and every
+    /// confirmed starting skill fork commit or roll back together.
+    pub(crate) fn fork_skill_record_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        parent_id: &EntityId,
+        fork_id: &EntityId,
+        fork_skill_id: &str,
+        occurred: TimeRange,
+        learned_at: u64,
+    ) -> Result<SkillRecord> {
+        self.fork_skill_record_bound_in_txn(
+            txn,
+            parent_id,
+            fork_id,
+            fork_skill_id,
+            None,
+            occurred,
+            learned_at,
+        )
+    }
+
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "transactional fork also binds an optional resident"
+    )]
+    fn fork_skill_record_bound_in_txn(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+        parent_id: &EntityId,
+        fork_id: &EntityId,
+        fork_skill_id: &str,
+        resident: Option<EntityId>,
+        occurred: TimeRange,
+        learned_at: u64,
+    ) -> Result<SkillRecord> {
+        if let Some(resident) = resident {
+            let raw = self
+                .store
+                .port_entity_record(wtxn, &resident)?
+                .map(|row| row.encode())
+                .ok_or(Error::EntityNotFound)?;
+            let header = EntityMetadataHeader::parse(&raw)
+                .ok_or(Error::CorruptedIndex("resident entity header"))?;
+            if !matches!(
+                header.entity_type,
+                crate::registry::ENTITY_TYPE_AGENT_DEF | crate::registry::ENTITY_TYPE_PERSON
+            ) {
+                return Err(Error::Artifact(ArtifactError::InvalidSkillBody(
+                    "resident must be an agent definition or person identity",
+                )));
+            }
+        }
         let parent = self.read_skill_record_in_txn(wtxn, parent_id)?;
         if fork_id == parent_id || self.store.entities.get(wtxn, fork_id.as_bytes())?.is_some() {
             return Err(Error::Artifact(ArtifactError::InvalidSkillBody(
@@ -189,6 +272,15 @@ impl Vault {
                 ),
             ]),
         );
+        if let Some(resident) = resident {
+            let Value::Map(entries) = &mut fork.provenance else {
+                return Err(Error::CorruptedIndex("skill fork provenance"));
+            };
+            entries.push((
+                Value::from(super::resident::RESIDENT_PROVENANCE_KEY),
+                Value::from(resident.to_hex()),
+            ));
+        }
         fork.forked_from = Some(*parent_id);
         fork.governance_tier = parent.governance_tier;
         let package = self.fork_skill_package_in_txn(wtxn, parent_id, &parent, &mut fork)?;
@@ -253,6 +345,11 @@ impl Vault {
         if new.skill_id != old.skill_id {
             return Err(Error::Artifact(ArtifactError::InvalidSkillBody(
                 "supersession links two revisions of one skill",
+            )));
+        }
+        if super::resident_of(&old)? != super::resident_of(&new)? {
+            return Err(Error::Artifact(ArtifactError::InvalidSkillBody(
+                "supersession cannot cross resident ownership",
             )));
         }
         if new.version == old.version {
