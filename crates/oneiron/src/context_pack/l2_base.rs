@@ -94,9 +94,9 @@ impl L2BaseCache {
     }
 }
 
-/// Select vault-owned user and configured persona identities. A generic PERSON
-/// row is not proof that it is this context's user. Evidence from these
-/// identities still passes every retrieval, disclosure, and scoped-read gate.
+/// Select the vault-owned user identity. A generic PERSON row is not proof
+/// that it is this context's user. Its evidence still passes every retrieval,
+/// disclosure, and scoped-read gate.
 pub(super) fn default_l2_subjects(
     vault: &Vault,
     reader: Option<&ScopedRead<'_>>,
@@ -125,48 +125,6 @@ pub(super) fn default_l2_subjects(
     }
     if let Some(person) = principal {
         subjects.insert(person);
-    }
-    // A persona is its own PERSON. Discover only live, explicitly granted
-    // companion profiles bound to this principal, never a retired register
-    // FACET or an unrelated PERSON. All evidence still passes scoped reads.
-    if let Some(person) = principal {
-        let now = crate::ports::authorization_floor_in_txn(&vault.store, &txn)?;
-        for row in vault
-            .store
-            .type_index
-            .prefix_iter(&txn, &[crate::registry::ENTITY_TYPE_ACCESS_GRANT])?
-        {
-            let (key, _) = row?;
-            let id = crate::vault::entity_id_from_type_index_key(&key)?;
-            let raw = vault
-                .store
-                .entities
-                .get(&txn, id.as_bytes())?
-                .ok_or(Error::CorruptedIndex("companion profile grant row"))?;
-            let header = crate::batch::EntityMetadataHeader::parse(&raw)
-                .ok_or(Error::CorruptedIndex("companion profile grant header"))?;
-            if header.entity_type != crate::registry::ENTITY_TYPE_ACCESS_GRANT {
-                return Err(Error::CorruptedIndex("companion profile grant type"));
-            }
-            let grant = crate::access_grant::decode_access_grant_body(
-                &raw[crate::batch::ENTITY_METADATA_HEADER_LEN..],
-            )?;
-            let Some((bound_person, persona)) = grant.scope.companion_profile_refs() else {
-                continue;
-            };
-            if bound_person == person
-                && grant.allows_companion_profile_read(&person, &person, &persona, now)
-                && vault
-                    .store
-                    .entities
-                    .get(&txn, persona.as_bytes())?
-                    .as_deref()
-                    .and_then(crate::batch::EntityMetadataHeader::parse)
-                    .is_some_and(|h| h.entity_type == crate::registry::ENTITY_TYPE_PERSON)
-            {
-                subjects.insert(persona);
-            }
-        }
     }
     drop(txn);
     if subjects.len() > 8 {
