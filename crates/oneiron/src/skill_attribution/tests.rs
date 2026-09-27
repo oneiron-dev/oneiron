@@ -718,7 +718,7 @@ mod sweep;
 fn stated_deviation_causes_route_differently_and_empty_reasons_are_refused() -> Result<()> {
     let (_dir, vault) = open_test_vault_with(embedding_test_config());
     let Grounded { actor, skill } = ground(&vault, 0x71, 0x72)?;
-    let receipt = stamped_receipt(&vault, FIXTURE_SKILL_ID)?;
+    let receipt = stamped_receipt(&vault, FIXTURE_SKILL_ID, actor)?;
     for (cause, expected) in [
         (
             DeviationCause::IncorrectInstruction,

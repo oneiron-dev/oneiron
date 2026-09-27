@@ -221,13 +221,17 @@ fn task_sweep_keeps_four_states_and_routes_stated_deviation_causes() -> Result<(
         verdict_for(&deviated),
         Some(AttributionVerdict::SkillDefect)
     );
-    let after = skill_reliability_posterior(&vault, &skill)?.unwrap();
+    let after =
+        skill_reliability_posterior_for_executor(&vault, &skill, "fixture/model@1")?.unwrap();
     assert_eq!(after.beta, prior.beta + 2.0);
     assert_eq!(
         run_task_attribution_sweep(&vault, 64, &source)?.captured_evidence,
         0
     );
-    assert_eq!(skill_reliability_posterior(&vault, &skill)?, Some(after));
+    assert_eq!(
+        skill_reliability_posterior_for_executor(&vault, &skill, "fixture/model@1")?,
+        Some(after)
+    );
     assert_eq!(attribution_judgments(&vault)?, judgments);
     Ok(())
 }
@@ -347,7 +351,10 @@ fn ignored_success_is_not_a_contributing_skill_win() -> Result<()> {
     let report = run_task_attribution_sweep(&vault, 8, &Source { actor, skill })?;
     assert_eq!(report.captured_evidence, 1);
     assert!(report.skills.is_empty());
-    assert_eq!(skill_reliability_posterior(&vault, &skill)?, None);
+    assert_eq!(
+        skill_reliability_posterior_for_executor(&vault, &skill, "fixture/model@1")?,
+        None
+    );
     Ok(())
 }
 
@@ -383,7 +390,10 @@ fn stated_executor_deviation_mints_actor_failure_mode_without_skill_loss() -> Re
         attribution_judgments(&vault)?[0].verdict,
         AttributionVerdict::ExecutionLapse
     );
-    assert!(skill_reliability_posterior(&vault, &skill)?.is_none_or(|row| row.beta == prior.beta));
+    assert!(
+        skill_reliability_posterior_for_executor(&vault, &skill, "fixture/model@1")?
+            .is_none_or(|row| row.beta == prior.beta)
+    );
     let failures = vault
         .claims_for_subject(&actor)?
         .into_iter()
@@ -432,10 +442,15 @@ fn wrong_revision_is_refused_before_capture_and_corrected_facts_project_once() -
     assert_eq!(accepted.judgments, 1);
     assert_eq!(accepted.skills, vec![old]);
     assert_eq!(
-        skill_reliability_posterior(&vault, &old)?.unwrap().beta,
+        skill_reliability_posterior_for_executor(&vault, &old, "fixture/model@1")?
+            .unwrap()
+            .beta,
         prior.beta + 1.0
     );
-    assert_eq!(skill_reliability_posterior(&vault, &new)?, None);
+    assert_eq!(
+        skill_reliability_posterior_for_executor(&vault, &new, "fixture/model@1")?,
+        None
+    );
     assert_eq!(
         run_task_attribution_sweep(&vault, 8, &source)?.captured_evidence,
         0
@@ -485,7 +500,9 @@ fn two_revisions_of_one_skill_in_one_receipt_both_receive_evidence() -> Result<(
     for skill in [v1, v2] {
         let prior = skill_reliability_prior(&vault, &skill)?;
         assert_eq!(
-            skill_reliability_posterior(&vault, &skill)?.unwrap().beta,
+            skill_reliability_posterior_for_executor(&vault, &skill, "fixture/model@1")?
+                .unwrap()
+                .beta,
             prior.beta + 1.0
         );
     }
