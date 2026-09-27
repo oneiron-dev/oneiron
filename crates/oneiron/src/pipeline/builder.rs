@@ -144,6 +144,23 @@ impl<'a> PipelineBuilder<'a> {
         }
     }
 
+    /// Resolve the same type gate for graph neighbors that the retrieval run
+    /// applies to primary candidates. An explicit named kind stays reachable.
+    pub(crate) fn neighbor_type_policy(
+        &self,
+        txn: &heed::RoTxn<'_>,
+    ) -> Result<(crate::gate::ResolvedRetrievalFilter, Option<&[u8]>)> {
+        let filter = match self.authority_filter.as_ref() {
+            Some(filter) => filter.clone(),
+            None => {
+                let policy = crate::gate::resolve_policy_manifest(&self.vault.store, txn)?;
+                let floor = policy.retrieval_floor_for_actor(None);
+                crate::gate::narrow_retrieval_filter(&floor, None)?
+            }
+        };
+        Ok((filter, self.type_filter.as_deref()))
+    }
+
     /// Selects stated, concluded, or all claims after admission and before truncation.
     pub fn made_by(mut self, predicate: crate::provenance::made_by::MadeByPredicate) -> Self {
         self.made_by = predicate;

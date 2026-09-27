@@ -1240,6 +1240,102 @@ fn scoped_person_recall_after_control_writes_holds_no_control_kind() {
 }
 
 #[test]
+fn unnamed_control_neighbor_stays_out_of_owner_and_scoped_recall() {
+    use crate::access_grant::{
+        AccessGrant, AccessGrantCapability, AccessGrantScope, AccessGrantStatus,
+    };
+
+    let (_dir, vault) = open_vault();
+    let owner = vault.ensure_embedded_owner_actor().expect("owner actor");
+    let scoped = put_person(&vault, 0x73);
+    vault
+        .install_read_permit_for_test(crate::WriteActor::new(scoped, EdgeActorClass::Human))
+        .expect("scoped read permit");
+    let anchor = facade_for(&vault, owner)
+        .put_structural(&StructuralPutInput {
+            id: None,
+            kind: "EVENT".to_owned(),
+            body: serde_json::json!({"name": "auditcontrolneighbor"}),
+            text_fields: Some(vec![TextIndexField {
+                field: "name".to_owned(),
+                value: "auditcontrolneighbor".to_owned(),
+            }]),
+            edges: None,
+            occurred_at: 1000,
+            learned_at: None,
+        })
+        .expect("indexed event");
+    let control = EntityId::from_bytes([0x71; 16]).unwrap();
+    vault
+        .create_access_grant(
+            &control,
+            &AccessGrant {
+                authority_scope: crate::federation::Scope::top(),
+                principal_ref: owner,
+                scope: AccessGrantScope::Messages {
+                    space_ref: EntityId::from_bytes([0x72; 16]).unwrap(),
+                },
+                capability: AccessGrantCapability::MessagesRead,
+                status: AccessGrantStatus::Active,
+                created_at: 1000,
+                revoked_at: None,
+                expires_at: None,
+            },
+        )
+        .expect("control row");
+    let recall = |actor, effort| {
+        facade_for(&vault, actor)
+            .recall(
+                "auditcontrolneighbor",
+                effort,
+                &RecallScope::default(),
+                20,
+                Some("json"),
+                None,
+            )
+            .expect("ordinary recall")
+    };
+    let assert_no_control = |pack: crate::memory::MemoryPack| {
+        assert!(pack.items.iter().any(|item| item.kind == "EVENT"));
+        assert!(pack.items.iter().all(|item| item.kind != "ACCESS_GRANT"));
+        let rendered: serde_json::Value =
+            serde_json::from_str(pack.rendered.as_deref().expect("JSON rendering"))
+                .expect("valid JSON");
+        assert!(
+            rendered.get("access_grants").is_none(),
+            "unnamed grant reached rendered recall: {rendered}"
+        );
+    };
+    assert_no_control(recall(owner, Effort::Medium)); // No edge: negative control.
+    vault
+        .batch()
+        .edge(
+            &EntityId::from_hex(&anchor.id_hex).unwrap(),
+            EdgeKind::Mentions,
+            &control,
+            1.0,
+        )
+        .commit()
+        .expect("context-to-control edge");
+    assert_no_control(recall(owner, Effort::Light)); // No walk: negative control.
+    assert_no_control(recall(owner, Effort::Medium));
+    assert_no_control(recall(scoped, Effort::Medium));
+
+    let pack = vault
+        .context_pack()
+        .search_text("auditcontrolneighbor", 20)
+        .edge_hop(1)
+        .run()
+        .expect("ordinary context pack");
+    assert!(
+        pack.results
+            .iter()
+            .any(|entity| entity.entity_type == crate::registry::ENTITY_TYPE_EVENT)
+    );
+    assert!(pack.neighbors.iter().all(|entity| entity.id != control));
+}
+
+#[test]
 fn naming_a_control_kind_returns_it_to_a_caller_allowed_to_read_it() {
     use crate::registry::{ENTITY_TYPE_ACCESS_GRANT, ENTITY_TYPE_POLICY_MANIFEST};
 
