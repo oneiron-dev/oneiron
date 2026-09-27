@@ -18,6 +18,8 @@ pub(super) struct DocumentGrant {
     pub(super) grant: FederationGrant,
     pub(super) fold: AuthorityFold,
     pub(super) position: Position,
+    /// NOTE reads and peer writes use different verb classes on the same row.
+    verb: &'static str,
 }
 
 pub(super) fn authorize_in_txn(
@@ -69,6 +71,7 @@ pub(super) fn authorize_in_txn(
         grant,
         fold,
         position,
+        verb: if writer.is_some() { "write" } else { "read" },
     })
 }
 
@@ -159,6 +162,26 @@ impl StoredSelection<'_, '_> {
             .local_hard_delete_marker_exists_in_txn(self.txn, &id)?
             || self.vault.store.off_record_sessions.contains_entity(&id)?
         {
+            return Ok(None);
+        }
+        // A selector can only narrow a stored grant. Derive the current
+        // digest-bound record position in this transaction, just as export
+        // does; missing or stale stamps cannot acquire authority from a
+        // matching legacy selector (including via the facet closure below).
+        let Some(mut record) =
+            crate::federation::record_scope::scope_for_blob(&self.vault.store, self.txn, id, &raw)?
+        else {
+            return Ok(None);
+        };
+        record.verbs = crate::federation::ScopeAxis::Some(std::collections::BTreeSet::from([self
+            .admission
+            .verb
+            .to_owned()]));
+        if !self.admission.grant.authority_scope.admits(
+            self.admission.verb,
+            &record,
+            &crate::federation::Scope::top(),
+        ) {
             return Ok(None);
         }
         let coreference = if header.entity_type == crate::registry::ENTITY_TYPE_CLAIM {

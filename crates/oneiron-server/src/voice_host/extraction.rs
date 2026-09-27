@@ -70,7 +70,7 @@ impl TinyExtractor {
                 purpose: CallPurpose::Extraction,
                 class: CallClass::BestEffort,
                 tier: TierPrecedence {
-                    per_call: Some(ModelTierRef("tiny".to_owned())),
+                    per_seat: Some(ModelTierRef("tiny".to_owned())),
                     vault_policy: None,
                     purpose_default: None,
                     global_default: ModelTierRef("tiny".to_owned()),
