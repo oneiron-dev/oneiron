@@ -31,7 +31,7 @@ impl Source {
 }
 
 impl LiveQuerySource for Source {
-    fn derive(&self, view: &ScopedView, _: Channel) -> Result<DerivedView, AppError> {
+    fn derive(&self, view: &ScopedView, channel: Channel) -> Result<DerivedView, AppError> {
         if self.refused.load(Ordering::SeqCst) {
             return Err(AppError::unauthorized());
         }
@@ -43,7 +43,11 @@ impl LiveQuerySource for Source {
                 version_vector: self.doc.oplog_vv().encode(),
                 batch: 0,
             },
-            dependencies: BTreeSet::from([format!("world/{world}")]),
+            dependencies: BTreeSet::from([if channel == Channel::OwnerFeed {
+                "owner-feed".to_owned()
+            } else {
+                format!("world/{world}")
+            }]),
         })
     }
     fn can_resume(&self, cursor: &Cursor) -> Result<bool, AppError> {
@@ -513,4 +517,60 @@ fn bridge_origin_edge_updates_name_both_entity_documents() {
         .filter_map(|path| path.strip_prefix("e:"))
         .collect();
     assert_eq!(deps, std::collections::BTreeSet::from([WORLD_A, WORLD_B]));
+}
+
+#[test]
+fn owner_feed_poll_never_rederives_unrelated_subscriptions() {
+    let source = Arc::new(Source::default());
+    let tier = LiveQueries::new(1, source.clone());
+    let view_open = tier
+        .open(1, view(WORLD_A), Channel::View, None, None)
+        .unwrap();
+    tier.ack(1, &view_open.last().unwrap().cursor).unwrap();
+    tier.open(2, ScopedView::default(), Channel::OwnerFeed, None, None)
+        .unwrap();
+    // No materializer notification for this View change. An owner-feed poll
+    // must not cause an unrelated View data push visible to its subscriber.
+    source.write(WORLD_A, 1);
+    tier.owner_feed_poll_now();
+    tier.refresh().unwrap();
+    assert!(
+        tier.buffered()
+            .unwrap()
+            .iter()
+            .all(|push| push.subscription_id != 1)
+    );
+}
+
+#[test]
+fn owner_feed_poll_keeps_delayed_ack_after_body_coalescing() {
+    let source = Arc::new(Source::default());
+    let tier = LiveQueries::new(1, source.clone());
+    let initial = tier
+        .open(4, ScopedView::default(), Channel::OwnerFeed, None, None)
+        .unwrap();
+    tier.ack(4, &initial.last().unwrap().cursor).unwrap();
+    source.write("base", 1);
+    tier.owner_feed_poll_now();
+    tier.refresh().unwrap();
+    let c1 = tier.buffered().unwrap().last().unwrap().cursor.clone();
+    source.write("base", 2);
+    tier.owner_feed_poll_now();
+    tier.refresh().unwrap();
+    let pending = tier.buffered().unwrap();
+    assert_eq!(pending.len(), 1);
+    assert_eq!(pending[0].result, Some(json!(2)));
+    let c2 = pending[0].cursor.clone();
+    tier.ack(4, &c1).expect("issued C1 remains ACKable");
+    let pending = tier.buffered().unwrap();
+    assert_eq!(pending.len(), 1, "ACK C1 cannot discard C2");
+    assert_eq!(pending[0].cursor, c2);
+    tier.ack(4, &c2).expect("latest C2 ACK");
+    assert!(tier.buffered().unwrap().is_empty());
+    let mut invented = c2;
+    invented.batch += 1_000;
+    assert_eq!(
+        serde_json::to_value(tier.ack(4, &invented).unwrap_err()).unwrap()["code"],
+        "BAD_REQUEST"
+    );
 }

@@ -2020,17 +2020,18 @@
      "kind": "src",
      "notable": [
       "CapabilitySlip",
+      "SignedCaveat",
       "SlipCaveat",
       "SlipClaims",
       "SlipMintAction",
       "VerifiedSlip"
      ],
      "path": "src/authority/slip.rs",
-     "purpose": "Host-signed, log-backed capability slips with MAC-checked offline narrowing and holder proof",
+     "purpose": "Host-signed capability slips with holder-signed offline narrowing and proof",
      "surface": {
       "crate-vis": 7,
-      "fn": 12,
-      "struct": 5
+      "fn": 13,
+      "struct": 6
      }
     },
     {
@@ -2100,7 +2101,7 @@
      "purpose": "Host-root bootstrap and atomic authority-log capability issuance",
      "surface": {
       "crate-vis": 8,
-      "fn": 17,
+      "fn": 21,
       "struct": 1
      }
     },
@@ -7471,7 +7472,7 @@
      "path": "src/claim/mod.rs",
      "purpose": "CLAIM body ABI + typed Claim API (ARCH-0003, pinned decisions D11/D17/D18)",
      "surface": {
-      "crate-vis": 6,
+      "crate-vis": 7,
       "re-export": 9
      }
     },
@@ -7617,19 +7618,19 @@
      "path": "src/claim/scoped_read/actor_key.rs",
      "purpose": "Authenticated identity carried by a scoped read",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 2,
       "fn": 6,
       "struct": 1
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/claim/scoped_read/graph_reads.rs",
      "purpose": "Receipted graph and timeline reads under the resolved actor floor",
      "surface": {
-      "fn": 2
+      "fn": 4
      }
     },
     {
@@ -7744,6 +7745,16 @@
       "crate-vis": 4,
       "enum": 3,
       "fn": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/claim/supersession_diff.rs",
+     "purpose": "Immutable before/after revision bindings for accepted supersession edges",
+     "surface": {
+      "crate-vis": 4
      }
     },
     {
@@ -11452,7 +11463,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "L2BaseSummary"
@@ -11460,13 +11471,13 @@
      "path": "src/context_pack/l2_base.rs",
      "purpose": "Content-addressed persona/user evidence prefix",
      "surface": {
-      "crate-vis": 5,
+      "crate-vis": 6,
       "fn": 1,
       "struct": 1
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "test",
      "notable": [],
      "path": "src/context_pack/l2_base/tests.rs",
@@ -17226,7 +17237,7 @@
      "purpose": "OF-336 generated-UI component contract",
      "surface": {
       "crate-vis": 1,
-      "re-export": 6
+      "re-export": 7
      }
     },
     {
@@ -17307,6 +17318,19 @@
      "path": "src/genui/tests/project_proposal.rs",
      "purpose": "—",
      "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "VoiceGrantOffer"
+     ],
+     "path": "src/genui/voice_offer.rs",
+     "purpose": "Voice-only disclosure widening is an offer, not an authorization",
+     "surface": {
+      "fn": 3,
+      "struct": 1
+     }
     },
     {
      "bucket": "s",
@@ -19219,6 +19243,20 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [
+      "LensQuoteHandle",
+      "LensQuoteRange"
+     ],
+     "path": "src/lens/mediation/mediation_quote.rs",
+     "purpose": "Revision-pinned quote pointers derived from engine-issued span selections",
+     "surface": {
+      "fn": 6,
+      "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [],
      "path": "src/lens/mediation/mediation_scope.rs",
      "purpose": "Ordinary world-id and repository membership clamps on every frame-bound read",
@@ -19233,7 +19271,7 @@
      "path": "src/lens/mediation/mod.rs",
      "purpose": "Host mediation — the lens security chokepoint",
      "surface": {
-      "re-export": 4
+      "re-export": 5
      }
     },
     {
@@ -21600,6 +21638,14 @@
      "notable": [],
      "path": "src/memory/tests_regressions/recall.rs",
      "purpose": "BRIDGE-02 retrieval surface regressions: BM25, neighbors, recall packs, scope honesty, limits",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/memory/tests_regressions/recall_l2.rs",
+     "purpose": "Typed recall retains a ranked owner claim even when L2 also caches it",
      "surface": {}
     },
     {
@@ -26980,11 +27026,25 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [
+      "MemoryWatch"
+     ],
+     "path": "src/saved_query/memory_watch.rs",
+     "purpose": "Owner-bound per-claim watches stored as SAVED_QUERY definitions",
+     "surface": {
+      "crate-vis": 1,
+      "fn": 3,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [],
      "path": "src/saved_query/mod.rs",
      "purpose": "SAVED_QUERY — durable standing queries with staged evaluation (CA-02)",
      "surface": {
-      "re-export": 7
+      "re-export": 8
      }
     },
     {
@@ -27738,7 +27798,7 @@
      "path": "src/serialize/mod.rs",
      "purpose": "Context-pack serialization",
      "surface": {
-      "crate-vis": 5,
+      "crate-vis": 7,
       "re-export": 4
      }
     },
@@ -27787,7 +27847,7 @@
      "path": "src/serialize/provider_codecs.rs",
      "purpose": "Provider read formats share prepared rows and always null credential-bearing fields",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 3
      }
     },
     {
@@ -33381,7 +33441,7 @@
      "path": "src/voice_identity/vault.rs",
      "purpose": "Vault surface for consent, enrollment, segment matching, roster reads, withdrawal, and pruning",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 3,
       "fn": 7
      }
     },
@@ -34646,7 +34706,7 @@
      "purpose": "—"
     },
     "claim": {
-     "files": 36,
+     "files": 37,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -35080,8 +35140,8 @@
      "purpose": "DEC-0005 Gate policy manifest resolver"
     },
     "genui": {
-     "files": 11,
-     "impl_vault": false,
+     "files": 12,
+     "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
      "purpose": "OF-336 generated-UI component contract"
@@ -35171,7 +35231,7 @@
      "purpose": "Interlocutor resolution substrate (OF-365 ILD-1)"
     },
     "lens": {
-     "files": 41,
+     "files": 42,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -35227,7 +35287,7 @@
      "purpose": "—"
     },
     "memory": {
-     "files": 75,
+     "files": 76,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -35444,7 +35504,7 @@
      "purpose": "Run tree projection and control adapter over generic AttemptQueue rows"
     },
     "saved_query": {
-     "files": 11,
+     "files": 12,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -35761,7 +35821,7 @@
    },
    "over_bar": 10,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2109,
+   "source_files": 2114,
    "test_files": 722
   },
   "oneiron-android": {
@@ -39991,7 +40051,7 @@
      "path": "src/api/facade.rs",
      "purpose": "ONE-1441 WIRE-P1: the bounded HTTP projection of the engine memory surface",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 2
      }
     },
     {
@@ -40285,13 +40345,13 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [],
      "path": "src/api/memory.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 15
+      "crate-vis": 20
      }
     },
     {
@@ -40355,7 +40415,7 @@
      "path": "src/api/mod.rs",
      "purpose": "HTTP query routes for web dashboard access",
      "surface": {
-      "crate-vis": 26
+      "crate-vis": 27
      }
     },
     {
@@ -41651,13 +41711,13 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [],
      "path": "src/livequery/subscriptions.rs",
      "purpose": "Coarse derivation, retained rings and cumulative cursor acknowledgements",
      "surface": {
-      "crate-vis": 19
+      "crate-vis": 20
      }
     },
     {
@@ -42477,7 +42537,7 @@
      "path": "src/test_credentials.rs",
      "purpose": "Request fixtures mint real logged slips before crossing the production router",
      "surface": {
-      "crate-vis": 8
+      "crate-vis": 9
      }
     },
     {
@@ -42879,7 +42939,7 @@
     "livequery": {
      "files": 17,
      "impl_vault": false,
-     "largest_src_bucket": "m",
+     "largest_src_bucket": "L",
      "layout": "file+dir",
      "purpose": "App-tier framing and coarse live-query state, separate from WindowSync"
     },
@@ -42968,7 +43028,7 @@
      "purpose": "RC42 observation-only wire counters"
     }
    },
-   "over_bar": 1,
+   "over_bar": 3,
    "purpose": "Oneiron CRDT sync server library",
    "source_files": 231,
    "test_files": 97
