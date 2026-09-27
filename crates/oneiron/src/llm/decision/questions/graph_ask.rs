@@ -318,6 +318,7 @@ fn answer_unit(
                     principal,
                     providers: vec![prediction.provider.clone()],
                     band,
+                    band_version: 0,
                     evidence_versions: context
                         .sources
                         .iter()

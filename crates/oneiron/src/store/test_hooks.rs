@@ -58,6 +58,8 @@ pub(crate) struct TestHooks {
     /// One vault-owned rendezvous after a graph ask's last read preflight,
     /// before it acquires the write transaction.
     after_graph_ask_preflight: Mutex<Option<GraphAskPreflightHook>>,
+    /// One-shot local-repo ingest boundary before its writer transaction.
+    pub(crate) before_codebase_ingest_writer: Mutex<Option<Box<dyn FnOnce() + Send>>>,
 }
 
 impl TestHooks {
