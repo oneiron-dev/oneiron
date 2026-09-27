@@ -21540,7 +21540,7 @@
      "surface": {}
     },
     {
-     "bucket": "XL",
+     "bucket": "L",
      "kind": "test",
      "notable": [],
      "path": "src/memory/tests/commit_claims.rs",
