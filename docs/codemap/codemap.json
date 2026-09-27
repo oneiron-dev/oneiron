@@ -1171,6 +1171,7 @@
      "bucket": "m",
      "kind": "src",
      "notable": [
+      "ArtifactExportRef",
       "ArtifactPointer",
       "ArtifactPointerChannel",
       "ArtifactPublishVerbOutcome",
@@ -1181,12 +1182,12 @@
       "ArtifactSnapshotSelector"
      ],
      "path": "src/artifact_hosting.rs",
-     "purpose": "Local artifact hosting over pinned CODE_ARTIFACT snapshots",
+     "purpose": "Local artifact hosting over pinned code snapshots and blob exports",
      "surface": {
       "const": 1,
-      "crate-vis": 2,
-      "enum": 3,
-      "fn": 13,
+      "crate-vis": 3,
+      "enum": 4,
+      "fn": 16,
       "struct": 5
      }
     },
@@ -1201,7 +1202,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "test",
      "notable": [],
      "path": "src/artifact_hosting/tests.rs",
@@ -3794,7 +3795,7 @@
      "purpose": "Blob vault_meta key builders and shared MessagePack scalar helpers",
      "surface": {
       "const": 2,
-      "crate-vis": 12
+      "crate-vis": 13
      }
     },
     {
@@ -3804,6 +3805,16 @@
      "path": "src/blob_artifact/tests.rs",
      "purpose": "—",
      "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/blob_artifact/version_codec.rs",
+     "purpose": "Strict MessagePack framing for blob version records",
+     "surface": {
+      "crate-vis": 2
+     }
     },
     {
      "bucket": "m",
@@ -3816,7 +3827,7 @@
      "purpose": "Blob version chain: version record codec and the Vault version-chain API",
      "surface": {
       "const": 1,
-      "crate-vis": 15,
+      "crate-vis": 20,
       "fn": 11,
       "struct": 2
      }
@@ -8131,13 +8142,13 @@
      "surface": {
       "crate-vis": 2,
       "enum": 2,
-      "fn": 6,
+      "fn": 8,
       "struct": 4,
       "type": 1
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "test",
      "notable": [],
      "path": "src/code_run/actions/tests.rs",
@@ -8273,7 +8284,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "HostSelfDispatcher"
@@ -8281,11 +8292,21 @@
      "path": "src/code_run/dispatcher/mod.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 8,
+      "crate-vis": 9,
       "fn": 7,
       "re-export": 1,
       "struct": 1,
       "type": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/code_run/dispatcher/wake_policy.rs",
+     "purpose": "Owner-authorized Dreamer wake-policy action; off-record never writes base",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -8424,14 +8445,15 @@
       "SelfMemoryWriteFixtureCall",
       "SelfMemoryWriteResult",
       "SelfSpeechCall",
-      "SelfSpeechResult"
+      "SelfSpeechResult",
+      "SelfWakePolicyWriteCall"
      ],
      "path": "src/code_run/types.rs",
      "purpose": "—",
      "surface": {
       "enum": 5,
-      "fn": 16,
-      "struct": 18,
+      "fn": 17,
+      "struct": 19,
       "trait": 1
      }
     },
@@ -11886,13 +11908,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/conversation_dag/admission.rs",
      "purpose": "Close the legacy ChildOf-only append door after DAG adoption",
      "surface": {
-      "crate-vis": 9
+      "crate-vis": 12
      }
     },
     {
@@ -11922,7 +11944,7 @@
      "path": "src/conversation_dag/membership.rs",
      "purpose": "Replicated TURN session membership: body carrier and local index reconstruction",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 5
      }
     },
     {
@@ -11943,7 +11965,7 @@
      "path": "src/conversation_dag/mod.rs",
      "purpose": "Conversation DAG topology, local HEAD state and exact scope resolution",
      "surface": {
-      "crate-vis": 7,
+      "crate-vis": 9,
       "mod": 1,
       "re-export": 2
      }
@@ -12002,12 +12024,22 @@
      "surface": {}
     },
     {
-     "bucket": "m",
+     "bucket": "XL",
      "kind": "test",
      "notable": [],
      "path": "src/conversation_dag/tests/replay.rs",
      "purpose": "Observable session-carrier replay without exporting local membership indexes",
      "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/conversation_dag/topology.rs",
+     "purpose": "Shared DAG shape, session placement, and prospective Parent validation",
+     "surface": {
+      "crate-vis": 18
+     }
     },
     {
      "bucket": "s",
@@ -13633,7 +13665,7 @@
      "purpose": "Scheduled curator and harness-evaluation facets on one gated Dreamer authority",
      "surface": {
       "const": 3,
-      "crate-vis": 2,
+      "crate-vis": 4,
       "fn": 1,
       "mod": 2,
       "re-export": 2
@@ -13982,8 +14014,37 @@
      "purpose": "Dreamer wake-pass driver (ONE-1288, DREAM-001 residual)",
      "surface": {
       "crate-vis": 1,
-      "re-export": 5
+      "re-export": 6
      }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "DreamerWakePolicy",
+      "WakeIdleState",
+      "WakePolicyDecision",
+      "WakePolicyOutcome",
+      "WakePolicyTimerLease",
+      "WakePolicyTrigger",
+      "WakeRecipe"
+     ],
+     "path": "src/dreamer_wake/policy.rs",
+     "purpose": "Row-backed wake admission",
+     "surface": {
+      "crate-vis": 2,
+      "enum": 2,
+      "fn": 6,
+      "struct": 5
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "src/dreamer_wake/policy/tests.rs",
+     "purpose": "—",
+     "surface": {}
     },
     {
      "bucket": "s",
@@ -25007,7 +25068,9 @@
      "notable": [],
      "path": "src/ports/lmdb_aux.rs",
      "purpose": "LMDB audit, dependency, content-addressed blob and queue adapters",
-     "surface": {}
+     "surface": {
+      "crate-vis": 1
+     }
     },
     {
      "bucket": "s",
@@ -25163,7 +25226,7 @@
      "path": "src/ports/mod.rs",
      "purpose": "Transaction-composable storage ports",
      "surface": {
-      "crate-vis": 8,
+      "crate-vis": 9,
       "re-export": 6
      }
     },
@@ -30558,7 +30621,7 @@
      "path": "src/sync/bridge/childof.rs",
      "purpose": "ChildOf replay set, component ordering, and ordered edge-op application",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 8
      }
     },
     {
@@ -30607,7 +30670,7 @@
      "path": "src/sync/bridge/mod.rs",
      "purpose": "Entity bridge: CRDT ↔ LMDB materialization observers",
      "surface": {
-      "crate-vis": 6,
+      "crate-vis": 9,
       "re-export": 3
      }
     },
@@ -30630,6 +30693,16 @@
       "fn": 13,
       "struct": 5,
       "trait": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/sync/bridge/parent_retry.rs",
+     "purpose": "Transactional Parent admission, exact pending work and dependency wake-up",
+     "surface": {
+      "crate-vis": 7
      }
     },
     {
@@ -31593,7 +31666,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/sync/window/forward.rs",
@@ -31614,7 +31687,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/sync/window/forward/edge_pass.rs",
@@ -34722,7 +34795,7 @@
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "file+dir",
-     "purpose": "Local artifact hosting over pinned CODE_ARTIFACT snapshots"
+     "purpose": "Local artifact hosting over pinned code snapshots and blob exports"
     },
     "attempt_queue": {
      "files": 36,
@@ -34753,7 +34826,7 @@
      "purpose": "—"
     },
     "blob_artifact": {
-     "files": 38,
+     "files": 39,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -34900,7 +34973,7 @@
      "purpose": "—"
     },
     "code_run": {
-     "files": 36,
+     "files": 37,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -35061,7 +35134,7 @@
      "purpose": "Room bodies, membership windows, session presence and audience visibility"
     },
     "conversation_dag": {
-     "files": 14,
+     "files": 15,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -35173,8 +35246,8 @@
      "purpose": "OF-366 tournament claim-authoring runner primitives"
     },
     "dreamer_wake": {
-     "files": 9,
-     "impl_vault": false,
+     "files": 11,
+     "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
      "purpose": "Dreamer wake-pass driver (ONE-1288, DREAM-001 residual)"
@@ -35838,7 +35911,7 @@
      "purpose": "ARCH-0038 historical-carrier sweep executor — ONE-1087 / ONE-1091 phase 1 (manual trigger via…"
     },
     "sync": {
-     "files": 102,
+     "files": 103,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -35973,8 +36046,8 @@
    },
    "over_bar": 11,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2123,
-   "test_files": 724
+   "source_files": 2128,
+   "test_files": 725
   },
   "oneiron-android": {
    "files": [
@@ -37402,7 +37475,7 @@
      "purpose": "Tick sources: what wakes the supervisor (ONE-1684)",
      "surface": {
       "crate-vis": 2,
-      "re-export": 4,
+      "re-export": 5,
       "type": 1
      }
     },
@@ -37425,6 +37498,20 @@
       "enum": 1,
       "struct": 4,
       "trait": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "WakePolicyTicks"
+     ],
+     "path": "src/tick/policy.rs",
+     "purpose": "One cancellable quiet sleep per tick source, driven by the vault's row policy",
+     "surface": {
+      "fn": 1,
+      "struct": 1,
+      "type": 1
      }
     },
     {
@@ -37459,6 +37546,14 @@
      "notable": [],
      "path": "src/tick/tests/tests_commitment.rs",
      "purpose": "Tick commitment-lane tests: merge and tie, admission, and fire tests",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/tick/tests/tests_policy.rs",
+     "purpose": "One-shot wake-policy timer: quiet expiry, inbound cancellation, and durable queue",
      "surface": {}
     },
     {
@@ -37502,7 +37597,7 @@
      "purpose": "The wake-pass supervisor (ONE-1683): a plain `tokio::select!` loop that pumps…"
     },
     "tick": {
-     "files": 8,
+     "files": 10,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -37511,8 +37606,8 @@
    },
    "over_bar": 0,
    "purpose": "oneiron-driver — the in-process starter motor (ONE-1683 / ONE-1684, M8 agent runtime RT-01/RT-02)",
-   "source_files": 14,
-   "test_files": 9
+   "source_files": 15,
+   "test_files": 10
   },
   "oneiron-ffi": {
    "files": [
@@ -39562,13 +39657,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/api/artifacts.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 14
+      "crate-vis": 16
      }
     },
     {
@@ -41012,7 +41107,7 @@
      "surface": {}
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "test",
      "notable": [],
      "path": "src/api/tests/surface_routes.rs",
