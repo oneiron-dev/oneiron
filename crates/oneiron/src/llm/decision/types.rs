@@ -182,6 +182,9 @@ pub struct DecisionReceipt {
     pub principal: EntityId,
     pub providers: Vec<ProviderPin>,
     pub band: DecisionBand,
+    /// Zero denotes the seed band in shadow; learned bands pin their version.
+    #[serde(default)]
+    pub band_version: u32,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
