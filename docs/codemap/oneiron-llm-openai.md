@@ -12,7 +12,9 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | path | kind | bucket | pub surface | notable types | purpose |
 |---|---|---|---|---|---|
 | `src/lib/backend.rs` | src | s | 2 struct · 6 fn · 2 crate-vis | OpenAiCompatBackend, OpenAiCompatConfig | Backend assembly: config, backend struct, LlmBackend impl, and capability gating |
-| `src/lib/mod.rs` | src | s | 5 re-export | — | OpenAI-compatible wire adapter for Oneiron's [`oneiron::LlmBackend`] seam |
+| `src/lib/image.rs` | src | s | 4 struct · 1 enum · 1 trait · 1 fn · 1 type | DirectOpenAiImageBackend, OpenAiImageBody, OpenAiImageHttpRequest, OpenAiImageHttpResponse, OpenAiImagePart, OpenAiImageTransport | Direct OpenAI image generation and multi-reference edits; HTTP and authentication stay host-owned |
+| `src/lib/image/tests.rs` | test | s | — | — | — |
+| `src/lib/mod.rs` | src | s | 6 re-export | — | OpenAI-compatible wire adapter for Oneiron's [`oneiron::LlmBackend`] seam |
 | `src/lib/options.rs` | src | s | 2 struct · 4 fn · 1 const | OpenAiProviderOptions, OpenAiReasoningOptions | Namespaced provider options and reasoning controls with wire-field projection |
 | `src/lib/stream.rs` | src | s | 2 struct · 5 fn | OpenAiCompatLlmStream, OpenAiCompatStreamAccumulator | OpenAI chunk decoding with correlated text, reasoning, and tool fragments |
 | `src/lib/tests.rs` | test | m | — | — | Unit tests for wire mapping, classification, options round-trip, and accumulator abort behavior |

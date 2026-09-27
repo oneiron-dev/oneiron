@@ -279,6 +279,47 @@ impl TombstoneStore for Vault {
 }
 
 impl super::RetrievalIndexMaintenance for Vault {
+    fn port_retrieval_clear_text_for_soft_erase(
+        &self,
+        txn: &mut RwTxn<'_>,
+        id: &EntityId,
+    ) -> Result<()> {
+        crate::bm25::deindex_text(&self.store, txn, id)
+    }
+
+    fn port_retrieval_clear_phonetic_for_soft_erase(
+        &self,
+        txn: &mut RwTxn<'_>,
+        id: &EntityId,
+    ) -> Result<()> {
+        crate::batch::delete_from_phonetic_postings(&self.store, txn, id)
+    }
+
+    fn port_retrieval_clear_vector_for_soft_erase(
+        &self,
+        txn: &mut RwTxn<'_>,
+        id: &EntityId,
+    ) -> Result<bool> {
+        let had_vector = self.store.vectors.delete(txn, id.as_bytes())?;
+        crate::hnsw::hnsw_deindex(&self.store, txn, id)?;
+        Ok(had_vector)
+    }
+
+    fn port_retrieval_delete_scope_exists(&self, txn: &RoTxn<'_>, id: &EntityId) -> Result<bool> {
+        Ok(self.store.vectors.get(txn, id.as_bytes())?.is_some()
+            || self.store.text_forward.get(txn, id.as_bytes())?.is_some()
+            || self.store.text_meta.get(txn, id.as_bytes())?.is_some()
+            || self
+                .store
+                .text_doc_field_lengths
+                .get(txn, id.as_bytes())?
+                .is_some()
+            || self
+                .store
+                .phonetic_forward
+                .get(txn, id.as_bytes())?
+                .is_some())
+    }
     fn port_retrieval_validate_rebuild(&self, txn: &RoTxn<'_>) -> Result<()> {
         for row in self.store.vectors.iter(txn)? {
             let (id, value) = row?;
