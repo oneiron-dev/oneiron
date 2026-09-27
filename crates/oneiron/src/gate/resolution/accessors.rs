@@ -104,6 +104,24 @@ impl PolicyManifestResolution {
         }
     }
 
+    /// Effective trusted per-vault limits. Malformed loaded policy refuses
+    /// edits; a loaded policy missing the row refuses. Only an unseeded
+    /// bootstrap vault uses the same shipped default as the persisted row.
+    #[must_use]
+    pub(crate) fn pptx_comment_limits(
+        &self,
+    ) -> Option<crate::edit_roundtrip::pptx::PptxOperationalLimits> {
+        if self.diagnostics.loaded_manifest_forces_fail_closed() {
+            None
+        } else if self.diagnostics.manifest_count == 0 {
+            // Unseeded bootstrap/test vaults have no row to read yet; real
+            // opens persist the same shipped default in the trusted manifest.
+            Some(crate::edit_roundtrip::pptx::PptxOperationalLimits::default())
+        } else {
+            self.pptx_comment_limits
+        }
+    }
+
     pub(crate) fn hosted_tts_limits(
         &self,
         provider: &str,

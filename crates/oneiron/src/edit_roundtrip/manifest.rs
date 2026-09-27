@@ -59,6 +59,10 @@ pub struct EditManifest {
     pub touched_parts: BTreeSet<String>,
     pub mutation_mode: MutationMode,
     pub warnings: Vec<EditWarning>,
+    /// Optional caller-held cap. Settlement replays under this cap AND the
+    /// currently resolved vault policy; it can never raise the vault budget.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pptx_holder_limits: Option<Box<super::pptx::PptxOperationalLimits>>,
 }
 
 impl EditManifest {

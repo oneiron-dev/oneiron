@@ -337,6 +337,8 @@ pub struct TaskBrief {
 /// sheet rather than silently leaving them pinned to a stale sheet name.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ReanchorOp {
+    /// Missing slide identity created by a declared PowerPoint comment edit.
+    PptxSlideCreationId { slide: u64, creation_id: u32 },
     /// Insert `count` rows above `at_row` on `sheet`.
     InsertRows {
         /// Target sheet.
@@ -408,6 +410,7 @@ impl ReanchorOp {
     /// current sheet. For a rename this is the pre-rename (`from`) name.
     pub(super) fn sheet(&self) -> &str {
         match self {
+            Self::PptxSlideCreationId { .. } => "",
             Self::InsertRows { sheet, .. }
             | Self::DeleteRows { sheet, .. }
             | Self::InsertCols { sheet, .. }
