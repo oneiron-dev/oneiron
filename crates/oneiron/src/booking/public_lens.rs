@@ -7,8 +7,9 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value as JsonValue;
 
 use crate::booking::{
-    BookingError, BookingVerb, DisclosureRung, EventTypeKey, OpaqueLifecycleToken, RungProjection,
-    SurfaceClass, project_at_rung,
+    BookingError, BookingLandingContent, BookingSlotPreview, BookingVerb, DisclosureRung,
+    EventTypeKey, OpaqueLifecycleToken, RungProjection, SurfaceClass, booking_slot_preview,
+    project_at_rung,
 };
 use crate::lens::{
     ButtonControl, CollectionAtom, GeneratedLens, GeneratedUiActionDeclaration,
@@ -47,21 +48,24 @@ pub struct BookingPageModel {
     pub owner_display: String,
     pub event_types: Vec<EventTypeCard>,
     pub slots: RungProjection,
-    /// Explicit IANA zone label selected or confirmed by the visitor.
-    pub visitor_zone: String,
     pub constraint_field: ConstraintFieldConfig,
     pub theme: ThemeTokens,
+    pub landing: BookingLandingContent,
+    pub preview: BookingSlotPreview,
+    pub visitor_tz: String,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum BookingPageModelError {
     NonSlotsProjection,
     InvalidSlotMask,
-    InvalidVisitorZone,
     EmptyOwnerDisplay,
     EmptyEventTypes,
     UnlistedEventType,
     FieldTooLarge,
+    InvalidLanding,
+    InvalidPreview,
+    InvalidTimeZone,
 }
 
 impl BookingPageModel {
@@ -69,17 +73,24 @@ impl BookingPageModel {
         owner_display: String,
         event_types: Vec<EventTypeCard>,
         slots: RungProjection,
-        visitor_zone: String,
         constraint_field: ConstraintFieldConfig,
         theme: ThemeTokens,
+        landing: BookingLandingContent,
+        visitor_tz: String,
     ) -> core::result::Result<Self, BookingPageModelError> {
+        let preview = match &slots {
+            RungProjection::Slots(mask) => booking_slot_preview(mask),
+            _ => return Err(BookingPageModelError::NonSlotsProjection),
+        };
         let model = Self {
             owner_display,
             event_types,
             slots,
-            visitor_zone,
             constraint_field,
             theme,
+            landing,
+            preview,
+            visitor_tz,
         };
         validate_booking_page_model(&model)?;
         Ok(model)
@@ -103,11 +114,20 @@ pub fn validate_booking_page_model(
         &model.theme,
     )?;
     validate_model_field(&model.slots)?;
-    // The UTC instant alone cannot be displayed. Refuse an absent, unknown,
-    // or unconvertible IANA zone rather than silently selecting UTC.
-    crate::booking::booking_zoned_time(mask.window_start_utc, &model.visitor_zone)
-        .map_err(|_| BookingPageModelError::InvalidVisitorZone)?;
-    validate_model_field(&model.visitor_zone)?;
+    model
+        .landing
+        .validate()
+        .map_err(|_| BookingPageModelError::InvalidLanding)?;
+    validate_model_field(&model.landing)?;
+    validate_model_field(&model.preview)?;
+    if model.preview != booking_slot_preview(mask) {
+        return Err(BookingPageModelError::InvalidPreview);
+    }
+    if model.visitor_tz.len() > 64
+        || crate::calendar::tz::utc_to_wall(mask.window_start_utc, &model.visitor_tz).is_err()
+    {
+        return Err(BookingPageModelError::InvalidTimeZone);
+    }
     if model.owner_display.trim().is_empty() {
         return Err(BookingPageModelError::EmptyOwnerDisplay);
     }
@@ -298,17 +318,13 @@ impl BookingPageLens {
         root.children
             .push(model_field("event_types", &model.event_types)?);
         root.children.push(model_field("slots", &model.slots)?);
-        let RungProjection::Slots(mask) = &model.slots else {
-            unreachable!("validated slot projection")
-        };
-        let shortlist = crate::booking::booking_shortlist(&mask.slots, 3)
-            .map_err(|_| Error::InvalidConfig("public booking shortlist invariant".to_owned()))?;
-        root.children.push(model_field("shortlist", &shortlist)?);
-        root.children
-            .push(model_field("visitor_zone", &model.visitor_zone)?);
         root.children
             .push(model_field("constraint_field", &model.constraint_field)?);
         root.children.push(model_field("theme", &model.theme)?);
+        root.children.push(model_field("landing", &model.landing)?);
+        root.children.push(model_field("preview", &model.preview)?);
+        root.children
+            .push(model_field("visitor_tz", &model.visitor_tz)?);
         Ok(root)
     }
 }
@@ -373,12 +389,13 @@ mod tests {
             }],
             project_at_rung(&[], DisclosureRung::Full, SurfaceClass::Public, Some(&mask))
                 .expect("public clamp"),
-            "UTC".to_owned(),
             ConstraintFieldConfig {
                 enabled: false,
                 placeholder: String::new(),
             },
             ThemeTokens(json!({"unknown": {"nested": [null, 7, "opaque"]}})),
+            BookingLandingContent::default(),
+            "UTC".to_owned(),
         )
         .expect("model")
     }
@@ -402,10 +419,12 @@ mod tests {
             [
                 "constraint_field",
                 "event_types",
+                "landing",
                 "owner_display",
+                "preview",
                 "slots",
                 "theme",
-                "visitor_zone"
+                "visitor_tz"
             ]
         );
         assert_eq!(
@@ -415,32 +434,6 @@ mod tests {
         assert_eq!(keys(&value["constraint_field"]), ["enabled", "placeholder"]);
         let restored: BookingPageModel = serde_json::from_value(value).expect("round trip");
         assert_eq!(restored, model());
-    }
-
-    #[test]
-    fn page_refuses_unknown_zone_and_projects_recommended_shortlist() {
-        let mut model = model();
-        model.visitor_zone = "Not/AZone".to_owned();
-        assert_eq!(
-            validate_booking_page_model(&model),
-            Err(BookingPageModelError::InvalidVisitorZone)
-        );
-        assert!(BookingPageLens::card(&model).is_err());
-        model.visitor_zone = "Europe/London".to_owned();
-        let card = BookingPageLens::card(&model).expect("card");
-        let root = card.tree.root();
-        let LensAtom::MetaLine(zone) = &root.children[3].atom else {
-            panic!("zone label")
-        };
-        assert_eq!(zone.value.as_str(), "\"Europe/London\"");
-        let LensAtom::MetaLine(shortlist) = &root.children[2].atom else {
-            panic!("shortlist")
-        };
-        let value: JsonValue =
-            serde_json::from_str(shortlist.value.as_str()).expect("shortlist JSON");
-        assert_eq!(value["recommended"]["start_utc"], 100);
-        assert_eq!(value["visible"].as_array().unwrap().len(), 1);
-        assert_eq!(value["more_count"], 0);
     }
 
     #[test]
@@ -464,9 +457,10 @@ mod tests {
                     model.owner_display,
                     model.event_types,
                     model.slots,
-                    model.visitor_zone,
                     model.constraint_field,
-                    model.theme
+                    model.theme,
+                    model.landing,
+                    model.visitor_tz
                 ),
                 Err(BookingPageModelError::NonSlotsProjection)
             );
@@ -535,11 +529,33 @@ mod tests {
             let restored: ThemeTokens = serde_json::from_slice(&bytes).expect("round trip");
             assert_eq!(restored, model.theme);
             let lens = BookingPageLens::assemble(model).expect("assemble");
-            let LensAtom::MetaLine(theme) = &lens.root().children[5].atom else {
+            let LensAtom::MetaLine(theme) = &lens.root().children[3].atom else {
                 panic!("meta line")
             };
             assert_eq!(theme.value.as_str().as_bytes(), bytes);
         }
+    }
+
+    #[test]
+    fn conversion_metadata_cannot_be_forged_or_skip_zone_validation() {
+        let mut page = model();
+        page.preview.recommended_start_utc = Some(999);
+        assert_eq!(
+            validate_booking_page_model(&page),
+            Err(BookingPageModelError::InvalidPreview)
+        );
+        let mut page = model();
+        page.visitor_tz = "invalid/zone".to_owned();
+        assert_eq!(
+            validate_booking_page_model(&page),
+            Err(BookingPageModelError::InvalidTimeZone)
+        );
+        let mut page = model();
+        page.landing.photo_path = Some("//foreign.example/host.jpg".to_owned());
+        assert_eq!(
+            validate_booking_page_model(&page),
+            Err(BookingPageModelError::InvalidLanding)
+        );
     }
 
     #[test]
@@ -692,13 +708,18 @@ mod tests {
                 model.owner_display.clone(),
                 model.event_types.clone(),
                 RungProjection::Slots(mask.clone()),
-                model.visitor_zone.clone(),
                 model.constraint_field.clone(),
-                model.theme.clone()
+                model.theme.clone(),
+                model.landing.clone(),
+                model.visitor_tz.clone()
             )
             .is_err()
         );
         model.slots = bounded_public_slots(mask).expect("bounded projection");
+        let RungProjection::Slots(projected) = &model.slots else {
+            panic!("slots");
+        };
+        model.preview = booking_slot_preview(projected);
         let RungProjection::Slots(mask) = &model.slots else {
             panic!("slots");
         };

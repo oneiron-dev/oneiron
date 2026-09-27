@@ -142,9 +142,10 @@ pub(crate) async fn render_public_booking_page(
         publication.owner_display,
         publication.event_types,
         slots,
-        request.visitor_tz,
         publication.constraint_field,
         publication.theme,
+        publication.landing,
+        request.visitor_tz,
     )
     .map_err(|defect| {
         tracing::error!(?defect, "public booking model invariant failed");
