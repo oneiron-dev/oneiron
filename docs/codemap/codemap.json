@@ -35976,7 +35976,7 @@
      "surface": {}
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/oneironer_shadow.rs",
@@ -36448,7 +36448,7 @@
     "oneironer_shadow": {
      "files": 1,
      "impl_vault": false,
-     "largest_src_bucket": "s",
+     "largest_src_bucket": "m",
      "layout": "file",
      "purpose": "Checkpoint-backed NER shadow proof beside an indexed fixture turn"
     },

@@ -170,8 +170,21 @@ fn run(
 }
 
 pub(crate) fn cli(args: &[String]) -> std::process::ExitCode {
+    cli_with_io(
+        args,
+        &mut std::io::stdout().lock(),
+        &mut std::io::stderr().lock(),
+    )
+}
+
+fn cli_with_io(
+    args: &[String],
+    output: &mut impl Write,
+    errors: &mut impl Write,
+) -> std::process::ExitCode {
     if args.len() != 4 {
-        eprintln!(
+        let _ = writeln!(
+            errors,
             "usage: oneiron-bench oneironer-shadow <python> <model-repo> <checkpoint.safetensors> <sha256>"
         );
         return std::process::ExitCode::FAILURE;
@@ -183,14 +196,16 @@ pub(crate) fn cli(args: &[String]) -> std::process::ExitCode {
         &args[3],
     ) {
         Ok(proof) => {
-            println!(
-                "{}",
-                serde_json::to_string_pretty(&proof).expect("serializable proof")
-            );
-            std::process::ExitCode::SUCCESS
+            let json = serde_json::to_string_pretty(&proof).expect("serializable proof");
+            if writeln!(output, "{json}").is_ok() {
+                std::process::ExitCode::SUCCESS
+            } else {
+                let _ = writeln!(errors, "oneironer shadow: report write failed");
+                std::process::ExitCode::FAILURE
+            }
         }
         Err(error) => {
-            eprintln!("oneironer shadow: {error}");
+            let _ = writeln!(errors, "oneironer shadow: {error}");
             std::process::ExitCode::FAILURE
         }
     }
@@ -236,6 +251,40 @@ mod tests {
         assert!(proof.live_ids.contains(&person.to_hex()));
         assert!(proof.live_ids.contains(&turn.to_hex()));
         assert_eq!(proof.vault_writes, 0);
+
+        // Pin the observable CLI output. Keep user-visible text on the
+        // injected writer rather than adding print macros to the ratchet.
+        let args = vec![
+            shim.to_string_lossy().into_owned(),
+            repo.to_string_lossy().into_owned(),
+            checkpoint.to_string_lossy().into_owned(),
+            sha256(&checkpoint).unwrap(),
+        ];
+        let (mut output, mut errors) = (Vec::new(), Vec::new());
+        assert_eq!(
+            cli_with_io(&args, &mut output, &mut errors),
+            std::process::ExitCode::SUCCESS
+        );
+        assert!(errors.is_empty());
+        let json: serde_json::Value = serde_json::from_slice(&output).unwrap();
+        assert_eq!(json["vault_writes"], 0);
+        let report: ShadowTagReport = serde_json::from_value(json["report"].clone()).unwrap();
+        assert_eq!(report.common, vec![person]);
+    }
+
+    #[test]
+    fn cli_bad_invocation_writes_usage_to_error_sink() {
+        let (mut output, mut errors) = (Vec::new(), Vec::new());
+        assert_eq!(
+            cli_with_io(&[], &mut output, &mut errors),
+            std::process::ExitCode::FAILURE
+        );
+        assert!(output.is_empty());
+        assert!(
+            String::from_utf8(errors)
+                .unwrap()
+                .starts_with("usage: oneiron-bench oneironer-shadow ")
+        );
     }
 
     /// Run with ONEIRON_NER_PYTHON, ONEIRON_NER_REPO,
