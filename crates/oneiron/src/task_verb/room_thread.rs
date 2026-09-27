@@ -11,7 +11,7 @@ use std::collections::BTreeSet;
 /// Neither field is inferred from label text or from room membership.
 pub(crate) fn thread_tasks(
     memory: &Memory<'_>,
-    roots: &BTreeSet<EntityId>,
+    roots: &std::collections::BTreeMap<EntityId, EntityId>,
     members: &BTreeSet<String>,
     now: u64,
 ) -> MemoryResult<Vec<RoomThreadTask>> {
@@ -19,6 +19,16 @@ pub(crate) fn thread_tasks(
         return Ok(Vec::new());
     }
     let vault = memory.vault();
+    let key = crate::claim::ScopedReadActorKey::with_actor_class(
+        memory.actor().to_hex(),
+        memory.actor_class().gate_actor_class(),
+    )
+    .ok_or_else(|| crate::memory::MemoryError::bad_request("invalid room reader"))?;
+    let audience = members
+        .iter()
+        .map(|id| EntityId::from_hex(id))
+        .collect::<crate::Result<Vec<_>>>()?;
+    let scoped = vault.scoped_read(key).for_audience(&audience);
     let txn = vault.store.env.read_txn().map_err(Error::from)?;
     let mut candidates = Vec::new();
     for row in vault
@@ -40,9 +50,12 @@ pub(crate) fn thread_tasks(
             std::iter::once(consult.question_ref)
                 .chain(consult.context_refs.iter().copied())
                 .map(super::ConsultPayloadRef::entity_ref)
-                .find(|id| roots.contains(id))
+                .find(|id| roots.contains_key(id))
         });
-        let Some(thread) = from_spec.or(from_consult).filter(|id| roots.contains(id)) else {
+        let Some(thread) = from_spec
+            .or(from_consult)
+            .and_then(|turn| roots.get(&turn).copied())
+        else {
             continue;
         };
         let Some(authority) = vault.task_authority_state_in(&txn, id)? else {
@@ -61,26 +74,49 @@ pub(crate) fn thread_tasks(
         // Ask-group ladders live on the existing group row. A peer consult
         // without a group has no promised nudge; a governed ask supplies its
         // next notice or its absolute cutoff without a duplicate cursor.
-        let ask_due = if body.task_kind() == super::TaskKind::Consult {
+        let ask_group = body.consult.as_ref().map(|payload| payload.correlation_ref);
+        let group_settled = if let Some(group_id) = ask_group {
+            super::ask_record::read_group(vault, &txn, group_id)?.is_some_and(|group| {
+                group
+                    .members
+                    .iter()
+                    .any(|member| member.task == id.to_hex())
+            }) && super::ask_settlement::read_result(vault, &txn, group_id)?.is_some()
+        } else {
+            false
+        };
+        let ask_due = if body.task_kind() == super::TaskKind::Consult && !group_settled {
             super::ask_record::ask_notice_at_in(vault, &txn, id, 0)?
                 .map(|(notice, cutoff)| notice.map_or(cutoff, |at| at.min(cutoff)))
         } else {
             None
         };
-        candidates.push((id, thread, body, authority.cancelled, ask_due));
+        candidates.push((
+            id,
+            thread,
+            body,
+            authority.cancelled,
+            ask_due,
+            group_settled,
+        ));
     }
     drop(txn);
     let mut result = Vec::new();
-    for (id, thread, body, cancelled, ask_due) in candidates {
+    for (id, thread, body, cancelled, ask_due, group_settled) in candidates {
         // `Memory::get_entity` opens a reader of its own: finish the index
         // snapshot first or LMDB refuses recursive reuse of its reader slot.
         // Room membership alone never grants TASK visibility.
+        if !scoped.is_entity_readable(&id)? {
+            continue;
+        }
         let Some(view) = memory.get_entity(&id.to_hex())? else {
             continue;
         };
         let terminal = body.terminal();
-        let open =
-            terminal.is_none() && !cancelled && body.ttl.is_none_or(|ttl| ttl.deadline_at > now);
+        let open = terminal.is_none()
+            && !cancelled
+            && !group_settled
+            && body.ttl.is_none_or(|ttl| ttl.deadline_at > now);
         let wait = if open {
             match body.assignee {
                 Some(TaskAssignee::Human { actor_ref }) => {
@@ -141,9 +177,7 @@ pub(crate) fn thread_tasks(
         // A visible TASK does not grant a read of its result. The room row
         // and trunk header must not disclose a foreign result ref.
         let delivered = match delivered {
-            Some((result, at)) if memory.get_entity(&result.to_hex())?.is_some() => {
-                Some((result, at))
-            }
+            Some((result, at)) if scoped.is_entity_readable(&result)? => Some((result, at)),
             _ => None,
         };
         result.push(RoomThreadTask {

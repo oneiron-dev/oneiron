@@ -26,6 +26,33 @@ fn turn(
         occurred_at: at,
     }
 }
+fn permit_room_reads(vault: &Vault, actors: &[EntityId]) -> Result<()> {
+    permit_room_reads_with_types(vault, actors, None)
+}
+
+fn permit_room_reads_with_types(
+    vault: &Vault,
+    actors: &[EntityId],
+    types: Option<&[u8]>,
+) -> Result<()> {
+    let bytes = crate::gate::default_policy_manifest();
+    let mut manifest: serde_json::Value = rmp_serde::from_slice(&bytes).expect("policy");
+    manifest["scoped_grants"] = serde_json::Value::Array(actors.iter().map(|actor| {
+        let mut row = serde_json::json!({
+            "actor_ref": actor.to_hex(), "effector": "core:read",
+            "scope": serde_json::to_value(crate::federation::scope_codec::read_preset()).unwrap(),
+            "receipt_required": false,
+        });
+        if let Some(types) = types { row["selectors"] = serde_json::json!({"entity_types": types}); }
+        row
+    }).collect());
+    crate::test_util::put_policy_manifest_bytes(
+        vault,
+        crate::gate::default_policy_manifest_id()?,
+        &rmp_serde::to_vec_named(&manifest).expect("encode policy"),
+    )
+}
+
 #[test]
 fn mention_claim_speech_scope_and_thread_head() -> Result<()> {
     let dir = tempfile::tempdir()?;
@@ -251,6 +278,7 @@ fn room_projection_reads_task_register_and_reply_without_stored_liveness() -> Re
     record.roster.push(agent.to_hex());
     vault.put_project(project, &record, 1)?;
     let room = EntityId::from_hex(&record.home_room)?;
+    permit_room_reads(&vault, &[owner, agent])?;
     let human = vault.memory(owner, EdgeActorClass::Human);
     let worker = vault.memory(agent, EdgeActorClass::Agent);
     let trunk = EntityId::now();
@@ -289,7 +317,45 @@ fn room_projection_reads_task_register_and_reply_without_stored_liveness() -> Re
         fresh_for: 1,
         rows_per_list: 4,
         tokens_per_list: 512,
+        fill: RoomThreadFill::Stage,
+        waits_per_thread: 8,
     };
+    // A room-linked open TASK outside this reader's grant cannot affect
+    // active/waiting rows, counts, direct get, or trunk headers.
+    permit_room_reads_with_types(
+        &vault,
+        &[owner, agent],
+        Some(&[crate::registry::ENTITY_TYPE_TURN]),
+    )?;
+    let hidden = human.rooms_threads(room, policy).unwrap();
+    assert_eq!(hidden.quiet.rows.len(), 1);
+    assert!(hidden.active.rows.is_empty());
+    assert!(hidden.waiting.rows.is_empty());
+    assert_eq!(
+        human
+            .rooms_get_thread(room, root)
+            .unwrap()
+            .unwrap()
+            .open_tasks,
+        0
+    );
+    assert!(human.rooms_trunk(room, trunk).unwrap().headers.is_empty());
+    permit_room_reads(&vault, &[owner, agent])?;
+    let sdk_render = crate::task_verb::sdk::invoke(
+        &human,
+        "rooms.render",
+        serde_json::json!({"room_ref":room.to_hex()}),
+    )
+    .unwrap();
+    assert!(sdk_render.as_array().is_some());
+    let sdk_find = crate::task_verb::sdk::invoke(
+        &human,
+        "rooms.find",
+        serde_json::json!({"room_ref":room.to_hex(),"limit":1}),
+    )
+    .unwrap();
+    assert_eq!(sdk_find["rows"].as_array().unwrap().len(), 1);
+    assert!(sdk_find["next_after"].is_null());
     let live = human.rooms_threads(room, policy).unwrap();
     assert!(human.rooms_trunk(room, trunk).unwrap().headers.is_empty());
     assert_eq!(live.active.rows[0].handle, root);
@@ -314,6 +380,23 @@ fn room_projection_reads_task_register_and_reply_without_stored_liveness() -> Re
         )
         .unwrap();
     let folded = human.rooms_threads(room, policy).unwrap();
+    let sdk_get = crate::task_verb::sdk::invoke(
+        &human,
+        "rooms.get",
+        serde_json::json!({"room_ref":room.to_hex(),"turn_ref":root.to_hex()}),
+    )
+    .unwrap();
+    assert_eq!(sdk_get["result_header"], serde_json::json!(result.to_hex()));
+    let sdk_trunk = crate::task_verb::sdk::invoke(
+        &human,
+        "rooms.trunk",
+        serde_json::json!({"room_ref":room.to_hex(),"turn_ref":trunk.to_hex()}),
+    )
+    .unwrap();
+    assert_eq!(
+        sdk_trunk["headers"][0]["result_ref"],
+        serde_json::json!(result.to_hex())
+    );
     let trunk_view = human.rooms_trunk(room, trunk).unwrap();
     assert_eq!(trunk_view.turn.turn_id, trunk.to_hex());
     assert_eq!(
@@ -329,6 +412,41 @@ fn room_projection_reads_task_register_and_reply_without_stored_liveness() -> Re
         }]
     );
     assert_eq!(folded.quiet.rows[0].result_header, Some(result));
+    // A TASK-only grant must not reveal the referenced TURN or its header.
+    permit_room_reads_with_types(
+        &vault,
+        &[owner, agent],
+        Some(&[crate::registry::ENTITY_TYPE_TASK]),
+    )?;
+    assert!(human.rooms_trunk(room, trunk).unwrap().headers.is_empty());
+    assert_eq!(
+        human
+            .rooms_get_thread(room, root)
+            .unwrap()
+            .unwrap()
+            .result_header,
+        None
+    );
+    assert_eq!(
+        human.rooms_threads(room, policy).unwrap().quiet.rows[0].result_header,
+        None
+    );
+    // With no TASK grant, even its open/wait metadata and list count vanish.
+    permit_room_reads_with_types(
+        &vault,
+        &[owner, agent],
+        Some(&[crate::registry::ENTITY_TYPE_TURN]),
+    )?;
+    assert_eq!(
+        human
+            .rooms_get_thread(room, root)
+            .unwrap()
+            .unwrap()
+            .open_tasks,
+        0
+    );
+    assert!(human.rooms_trunk(room, trunk).unwrap().headers.is_empty());
+    permit_room_reads(&vault, &[owner, agent])?;
     assert_eq!(folded.quiet.rows[0].trunk, trunk);
     assert_eq!(
         human.rooms_find_threads(room, None, 10).unwrap(),
@@ -342,22 +460,124 @@ fn room_projection_reads_task_register_and_reply_without_stored_liveness() -> Re
             .result_header,
         Some(result)
     );
+    let direct = EntityId::now();
     human
         .rooms_speak(&turn(
             room,
-            EntityId::now(),
+            direct,
             WitnessAuthor::User,
             serde_json::json!({"room_reply_to": root.to_hex()}),
             1_000_000,
         ))
         .unwrap();
+    assert_eq!(
+        human.room_head(room).unwrap().unwrap().turn_id,
+        trunk.to_hex()
+    );
+    let nested = EntityId::now();
+    human
+        .rooms_speak(&turn(
+            room,
+            nested,
+            WitnessAuthor::User,
+            serde_json::json!({"room_reply_to": direct.to_hex()}),
+            1_000_001,
+        ))
+        .unwrap();
+    assert_eq!(
+        human.room_head(room).unwrap().unwrap().turn_id,
+        trunk.to_hex()
+    );
+    assert_eq!(
+        human
+            .rooms_get_thread(room, root)
+            .unwrap()
+            .unwrap()
+            .last_message_at,
+        1_000_001
+    );
     let active = human.rooms_threads(room, policy).unwrap();
     assert_eq!(active.active.rows[0].handle, root);
     assert_eq!(active.active.rows[0].result_header, Some(result));
+    // A completed task may name a CLAIM in another world. Its TASK remains
+    // readable, but the foreign result cannot appear as a trunk header.
+    let foreign_world = EntityId::from_bytes([0xD6; 16])?;
+    let allowed_world = EntityId::from_bytes([0xD7; 16])?;
+    let foreign_result = EntityId::now();
+    let mut claim = crate::claim::ClaimBody::new(
+        "test.room_result",
+        crate::claim::ClaimSubject::Entity(owner),
+        rmpv::Value::from("private"),
+        1.0,
+        crate::claim::ClaimApprovalStatus::Approved,
+        crate::claim::ClaimLifecycleStatus::Active,
+    );
+    claim.world = Some(foreign_world);
+    vault
+        .batch()
+        .put_replicated(
+            &foreign_result,
+            crate::registry::ENTITY_TYPE_CLAIM,
+            TimeRange { start: 5, end: 5 },
+            5,
+            &crate::claim::encode_claim_body(&claim)?,
+        )
+        .commit()?;
+    let foreign_task = worker.tasks_create(&spec).unwrap().task_ref.unwrap();
+    worker
+        .land_task_result(
+            foreign_task,
+            &TaskResultInput {
+                result_ref: foreign_result,
+                disposition: TaskTerminalDisposition::Completed,
+                finished_at: 6,
+            },
+        )
+        .unwrap();
+    let mut manifest: serde_json::Value =
+        rmp_serde::from_slice(&crate::gate::default_policy_manifest()).unwrap();
+    let full = serde_json::to_value(crate::federation::scope_codec::read_preset()).unwrap();
+    manifest["scoped_grants"] = serde_json::json!([
+        {"actor_ref":owner.to_hex(),"effector":"core:read","scope":full,
+            "selectors":{"entity_types":[crate::registry::ENTITY_TYPE_TASK,crate::registry::ENTITY_TYPE_TURN]},
+            "receipt_required":false},
+        {"actor_ref":owner.to_hex(),"effector":"core:read",
+            "scope":serde_json::to_value(crate::federation::scope_codec::read_preset()).unwrap(),
+            "selectors":{"world_ref":allowed_world.to_hex()},"receipt_required":false}
+    ]);
+    crate::test_util::put_policy_manifest_bytes(
+        &vault,
+        crate::gate::default_policy_manifest_id()?,
+        &rmp_serde::to_vec_named(&manifest).unwrap(),
+    )?;
+    let scoped = vault.scoped_read(
+        crate::claim::ScopedReadActorKey::with_actor_class(owner.to_hex(), "human").unwrap(),
+    );
+    assert!(scoped.get(&foreign_result)?.value.is_none());
+    assert!(
+        !human
+            .rooms_trunk(room, trunk)
+            .unwrap()
+            .headers
+            .iter()
+            .any(|header| header.result_ref == foreign_result)
+    );
+    assert_ne!(
+        human
+            .rooms_get_thread(room, root)
+            .unwrap()
+            .unwrap()
+            .result_header,
+        Some(foreign_result)
+    );
+    permit_room_reads(&vault, &[owner, agent])?;
     // A reply changes liveness, not the durable terminal header on the trunk.
-    assert_eq!(
-        human.rooms_trunk(room, trunk).unwrap().headers,
-        trunk_view.headers
+    assert!(
+        human
+            .rooms_trunk(room, trunk)
+            .unwrap()
+            .headers
+            .contains(&trunk_view.headers[0])
     );
     Ok(())
 }
@@ -365,7 +585,8 @@ fn room_projection_reads_task_register_and_reply_without_stored_liveness() -> Re
 #[test]
 fn consult_question_turn_projects_an_open_wait_without_a_room_state_row() -> Result<()> {
     use crate::task_verb::{
-        ConsultPayload, ConsultPayloadRef, TaskAssignee, TaskCreateSpec, TaskKind, TaskTtl,
+        ConsultPayload, ConsultPayloadRef, ConsultResultInput, ConsultResultKind, TaskAssignee,
+        TaskCreateSpec, TaskKind, TaskTtl,
     };
     let dir = tempfile::tempdir()?;
     let vault = Vault::open(dir.path(), crate::VaultConfig::default())?;
@@ -391,6 +612,7 @@ fn consult_question_turn_projects_an_open_wait_without_a_room_state_row() -> Res
     record.roster.extend([asker.to_hex(), peer.to_hex()]);
     vault.put_project(project, &record, 1)?;
     let room = EntityId::from_hex(&record.home_room)?;
+    permit_room_reads(&vault, &[owner, asker, peer])?;
     let human = vault.memory(owner, EdgeActorClass::Human);
     let trunk = EntityId::now();
     let root = EntityId::now();
@@ -412,36 +634,72 @@ fn consult_question_turn_projects_an_open_wait_without_a_room_state_row() -> Res
             3,
         ))
         .unwrap();
-    let spec = TaskCreateSpec::new(rmpv::Value::Nil, None, None, Some(4))
+    let question = EntityId::now();
+    human
+        .rooms_speak(&turn(
+            room,
+            question,
+            WitnessAuthor::User,
+            serde_json::json!({"room_reply_to": root.to_hex()}),
+            4,
+        ))
+        .unwrap();
+    assert_eq!(
+        human.room_head(room).unwrap().unwrap().turn_id,
+        trunk.to_hex()
+    );
+    let spec = TaskCreateSpec::new(rmpv::Value::Nil, None, None, Some(5))
         .with_kind(TaskKind::Consult)
         .with_consult(ConsultPayload::question(
-            ConsultPayloadRef::Turn(root),
+            ConsultPayloadRef::Turn(question),
             Vec::new(),
             EntityId::now(),
         ))
         .with_assignee(TaskAssignee::Peer { actor_ref: peer })
         .with_ttl(TaskTtl::at(1_000_010));
-    assert!(
-        vault
-            .memory(asker, EdgeActorClass::Agent)
-            .tasks_create(&spec)
-            .unwrap()
-            .task_ref
-            .is_some()
-    );
+    let task = vault
+        .memory(asker, EdgeActorClass::Agent)
+        .tasks_create(&spec)
+        .unwrap()
+        .task_ref
+        .unwrap();
     let policy = RoomThreadPolicy {
         now: 1_000_000,
         fresh_for: 1,
         rows_per_list: 4,
         tokens_per_list: 512,
+        fill: RoomThreadFill::Stage,
+        waits_per_thread: 8,
     };
     let projection = human.rooms_threads(room, policy).unwrap();
     assert!(projection.active.rows.is_empty());
     assert_eq!(projection.waiting.rows.len(), 1);
     assert_eq!(projection.waiting.rows[0].waits[0].who, peer);
     assert_eq!(projection.waiting.rows[0].waits[0].kind, RoomWaitKind::Ask);
-    assert_eq!(projection.waiting.rows[0].waits[0].since, 4);
+    assert_eq!(projection.waiting.rows[0].waits[0].since, 5);
     assert_eq!(projection.waiting.rows[0].waits[0].next_nudge, None);
+    vault
+        .memory(peer, EdgeActorClass::Agent)
+        .land_consult_result(
+            task,
+            &ConsultResultInput {
+                kind: ConsultResultKind::Answer {
+                    result_ref: trunk,
+                    option: None,
+                    evidence_refs: vec![ConsultPayloadRef::Turn(question)],
+                },
+                completed_at: 1_000_001,
+            },
+        )
+        .unwrap();
+    assert_eq!(
+        human.rooms_threads(room, policy).unwrap().quiet.rows[0].result_header,
+        Some(trunk)
+    );
+    assert_eq!(
+        human.rooms_trunk(room, trunk).unwrap().headers[0].task,
+        task
+    );
     Ok(())
 }
 
@@ -472,6 +730,7 @@ fn peer_ask_wait_projects_its_existing_followup_ladder() -> Result<()> {
     record.roster.push(peer.to_hex());
     vault.put_project(project, &record, 1)?;
     let room = EntityId::from_hex(&record.home_room)?;
+    permit_room_reads(&vault, &[owner, peer])?;
     let memory = vault.memory(owner, EdgeActorClass::Human);
     let trunk = EntityId::now();
     let root = EntityId::now();
@@ -513,6 +772,8 @@ fn peer_ask_wait_projects_its_existing_followup_ladder() -> Result<()> {
                 fresh_for: 1,
                 rows_per_list: 8,
                 tokens_per_list: 512,
+                fill: RoomThreadFill::Stage,
+                waits_per_thread: 8,
             },
         )
         .unwrap();
@@ -520,6 +781,174 @@ fn peer_ask_wait_projects_its_existing_followup_ladder() -> Result<()> {
     assert_eq!(projection.waiting.rows[0].waits[0].kind, RoomWaitKind::Ask);
     let due = projection.waiting.rows[0].waits[0].next_nudge.unwrap();
     assert!(due >= before + 30 && due <= crate::unix_seconds_now() + 30);
+    Ok(())
+}
+
+#[test]
+fn settled_multi_recipient_ask_drops_unanswered_sibling_wait() -> Result<()> {
+    use crate::task_verb::{
+        ConsultPayloadRef, TaskAskDefault, TaskAskQuestion, TaskAskSpec, TaskAskTarget, TaskAskWord,
+    };
+    let dir = tempfile::tempdir()?;
+    let vault = Vault::open(dir.path(), crate::VaultConfig::default())?;
+    let owner = vault.ensure_embedded_owner_actor().unwrap();
+    let responders = [
+        EntityId::from_bytes([0xD1; 16])?,
+        EntityId::from_bytes([0xD2; 16])?,
+    ];
+    for id in responders {
+        vault.put_entity(
+            &id,
+            crate::registry::ENTITY_TYPE_PERSON,
+            TimeRange { start: 1, end: 1 },
+            1,
+            b"responder",
+        )?;
+    }
+    let project = EntityId::now();
+    let mut record = ProjectRecord::new(
+        project,
+        Some(vault.root_project()?),
+        vault.root_project()?,
+        owner,
+    );
+    record
+        .roster
+        .extend(responders.iter().map(EntityId::to_hex));
+    vault.put_project(project, &record, 1)?;
+    let room = EntityId::from_hex(&record.home_room)?;
+    permit_room_reads(&vault, &[owner, responders[0], responders[1]])?;
+    let memory = vault.memory(owner, EdgeActorClass::Human);
+    let trunk = EntityId::now();
+    let root = EntityId::now();
+    memory
+        .rooms_speak(&turn(
+            room,
+            trunk,
+            WitnessAuthor::User,
+            serde_json::json!({}),
+            2,
+        ))
+        .unwrap();
+    memory
+        .rooms_speak(&turn(
+            room,
+            root,
+            WitnessAuthor::User,
+            serde_json::json!({"room_thread_of":trunk.to_hex()}),
+            3,
+        ))
+        .unwrap();
+    let now = crate::unix_seconds_now();
+    let ask = TaskAskSpec::shorthand(
+        Some(TaskAskTarget::People(responders.into())),
+        TaskAskQuestion::new(ConsultPayloadRef::Turn(root)),
+        Some(now + 300),
+        TaskAskDefault::AskMe,
+    );
+    let receipt = memory.tasks_ask(&ask).unwrap();
+    assert_eq!(receipt.task_refs.len(), 2);
+    let policy = RoomThreadPolicy {
+        now: now + 10,
+        fresh_for: 1,
+        rows_per_list: 8,
+        tokens_per_list: 512,
+        fill: RoomThreadFill::Stage,
+        waits_per_thread: 8,
+    };
+    assert_eq!(
+        memory.rooms_threads(room, policy).unwrap().waiting.rows[0]
+            .waits
+            .len(),
+        2
+    );
+    vault
+        .memory(responders[0], EdgeActorClass::Human)
+        .tasks_answer(&receipt.handle, &TaskAskWord::new(responders[0]))
+        .unwrap();
+    let after = memory.rooms_threads(room, policy).unwrap();
+    assert!(after.waiting.rows.is_empty());
+    assert_eq!(after.quiet.rows.len(), 1);
+    assert_eq!(memory.rooms_trunk(room, trunk).unwrap().headers.len(), 1);
+    Ok(())
+}
+
+#[test]
+fn room_manifest_changes_selected_rows_and_cannot_be_widened_by_caller() -> Result<()> {
+    let dir = tempfile::tempdir()?;
+    let vault = Vault::open(dir.path(), crate::VaultConfig::default())?;
+    let owner = vault.ensure_embedded_owner_actor().unwrap();
+    let project = EntityId::now();
+    let record = ProjectRecord::new(
+        project,
+        Some(vault.root_project()?),
+        vault.root_project()?,
+        owner,
+    );
+    vault.put_project(project, &record, 1)?;
+    let room = EntityId::from_hex(&record.home_room)?;
+    let memory = vault.memory(owner, EdgeActorClass::Human);
+    let trunk = EntityId::now();
+    memory
+        .rooms_speak(&turn(
+            room,
+            trunk,
+            WitnessAuthor::User,
+            serde_json::json!({}),
+            1,
+        ))
+        .unwrap();
+    for n in 2..=3 {
+        memory
+            .rooms_speak(&turn(
+                room,
+                EntityId::now(),
+                WitnessAuthor::User,
+                serde_json::json!({"room_thread_of":trunk.to_hex()}),
+                n,
+            ))
+            .unwrap();
+    }
+    let caller = RoomThreadPolicy {
+        now: 1000,
+        fresh_for: 1,
+        rows_per_list: 8,
+        tokens_per_list: 512,
+        fill: RoomThreadFill::Stage,
+        waits_per_thread: 8,
+    };
+    assert_eq!(
+        memory.rooms_threads(room, caller).unwrap().quiet.rows.len(),
+        2
+    );
+    let mut manifest: serde_json::Value =
+        rmp_serde::from_slice(&crate::gate::default_policy_manifest()).unwrap();
+    manifest["room_thread"] = serde_json::json!({"fresh_for_secs":1,
+        "rows_per_list":1, "tokens_per_list":256, "fill":"recency","waits_per_thread":4});
+    crate::test_util::put_policy_manifest_bytes(
+        &vault,
+        crate::gate::default_policy_manifest_id()?,
+        &rmp_serde::to_vec_named(&manifest).unwrap(),
+    )?;
+    let narrowed = memory.rooms_threads(room, caller).unwrap();
+    assert_eq!((narrowed.quiet.rows.len(), narrowed.quiet.more), (1, 1));
+    assert_eq!(narrowed.quiet.rows[0].last_message_at, 3);
+    assert_eq!(memory.rooms_find_threads(room, None, 8).unwrap().len(), 2);
+    let first = crate::task_verb::sdk::invoke(
+        &memory,
+        "rooms.find",
+        serde_json::json!({"room_ref":room.to_hex(),"limit":1}),
+    )
+    .unwrap();
+    let cursor = first["next_after"].as_str().unwrap();
+    let last = crate::task_verb::sdk::invoke(
+        &memory,
+        "rooms.find",
+        serde_json::json!({"room_ref":room.to_hex(),"after":cursor,"limit":1}),
+    )
+    .unwrap();
+    assert_eq!(last["rows"].as_array().unwrap().len(), 1);
+    assert!(last["next_after"].is_null());
     Ok(())
 }
 

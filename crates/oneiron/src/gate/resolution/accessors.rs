@@ -38,6 +38,17 @@ impl PolicyManifestResolution {
         self.diagnostics.manifest_count > 0 || self.diagnostics.loaded_manifest_forces_fail_closed()
     }
 
+    /// Only trusted policy rows select the room working set. A malformed
+    /// loaded manifest refuses reads rather than silently restoring defaults.
+    pub(crate) fn room_thread_settings(&self) -> Result<crate::gate::RoomThreadSettings> {
+        if self.diagnostics.loaded_manifest_forces_fail_closed() {
+            return Err(crate::Error::InvalidConfig(
+                "invalid room thread policy".into(),
+            ));
+        }
+        Ok(self.room_thread.unwrap_or_default())
+    }
+
     #[must_use]
     pub(crate) fn proposal_check_threshold(&self) -> u64 {
         self.proposal_check_threshold

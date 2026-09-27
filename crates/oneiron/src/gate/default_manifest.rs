@@ -49,6 +49,16 @@ pub(crate) fn default_policy_manifest() -> Vec<u8> {
             Value::from(env!("CARGO_PKG_VERSION")),
         ),
         (
+            Value::from("room_thread"),
+            Value::Map(vec![
+                (Value::from("fresh_for_secs"), Value::from(7 * 86_400_u64)),
+                (Value::from("rows_per_list"), Value::from(8)),
+                (Value::from("tokens_per_list"), Value::from(512)),
+                (Value::from("fill"), Value::from("stage")),
+                (Value::from("waits_per_thread"), Value::from(8)),
+            ]),
+        ),
+        (
             Value::from(POLICY_DEFAULTS_KEY),
             Value::Map(vec![
                 (Value::from(AXIS_CRITICALITY_KEY), Value::from("critical")),

@@ -112,6 +112,22 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 crate::code_run::vault_read::request_schema::<RoomRequest>(),
             ),
             (
+                "rooms.render",
+                crate::code_run::vault_read::request_schema::<RoomRefRequest>(),
+            ),
+            (
+                "rooms.find",
+                crate::code_run::vault_read::request_schema::<RoomRequest>(),
+            ),
+            (
+                "rooms.get",
+                crate::code_run::vault_read::request_schema::<RoomTurnRequest>(),
+            ),
+            (
+                "rooms.trunk",
+                crate::code_run::vault_read::request_schema::<RoomTurnRequest>(),
+            ),
+            (
                 "rooms.claim",
                 crate::code_run::vault_read::request_schema::<RoomClaimRequest>(),
             ),
@@ -233,6 +249,46 @@ pub fn mcp_arguments_schema_from_input(
             );
             &["room_ref"]
         }
+        "rooms.render" => {
+            properties.insert(
+                "room_ref".to_owned(),
+                schema.pointer("/properties/room_ref")?.clone(),
+            );
+            &["room_ref"]
+        }
+        "rooms.find" => {
+            properties.insert(
+                "room_ref".to_owned(),
+                schema.pointer("/properties/room_ref")?.clone(),
+            );
+            properties.insert(
+                "turn_ref".to_owned(),
+                schema.pointer("/properties/after")?.clone(),
+            );
+            &["room_ref"]
+        }
+        "rooms.get" => {
+            properties.insert(
+                "room_ref".to_owned(),
+                schema.pointer("/properties/room_ref")?.clone(),
+            );
+            properties.insert(
+                "turn_ref".to_owned(),
+                schema.pointer("/properties/turn_ref")?.clone(),
+            );
+            &["room_ref", "turn_ref"]
+        }
+        "rooms.trunk" => {
+            properties.insert(
+                "room_ref".to_owned(),
+                schema.pointer("/properties/room_ref")?.clone(),
+            );
+            properties.insert(
+                "turn_ref".to_owned(),
+                schema.pointer("/properties/turn_ref")?.clone(),
+            );
+            &["room_ref", "turn_ref"]
+        }
         "rooms.claim" => {
             properties.insert(
                 "room_ref".to_owned(),
@@ -343,6 +399,18 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "rooms.messages" => {
             let _input: RoomRequest = decode(value.clone())?;
         }
+        "rooms.render" => {
+            let _input: RoomRefRequest = decode(value.clone())?;
+        }
+        "rooms.find" => {
+            let _input: RoomRequest = decode(value.clone())?;
+        }
+        "rooms.get" => {
+            let _input: RoomTurnRequest = decode(value.clone())?;
+        }
+        "rooms.trunk" => {
+            let _input: RoomTurnRequest = decode(value.clone())?;
+        }
         "rooms.claim" => {
             let _input: RoomClaimRequest = decode(value.clone())?;
         }
@@ -380,6 +448,10 @@ pub fn invoke(
         "tasks.outcomes" => encode(tasks_outcomes(memory, decode(value)?)?),
         "rooms.list" => encode(rooms_list(memory, decode(value)?)?),
         "rooms.messages" => encode(rooms_messages(memory, decode(value)?)?),
+        "rooms.render" => encode(rooms_render(memory, decode(value)?)?),
+        "rooms.find" => encode(rooms_find(memory, decode(value)?)?),
+        "rooms.get" => encode(rooms_get(memory, decode(value)?)?),
+        "rooms.trunk" => encode(rooms_trunk(memory, decode(value)?)?),
         "rooms.claim" => encode(rooms_claim(memory, decode(value)?)?),
         "rooms.speak" => encode(rooms_speak(memory, decode(value)?)?),
         _ => Err(MemoryError::bad_request("unknown SDK agent verb")),
@@ -594,6 +666,44 @@ pub fn rooms_messages(
             .map(crate::EntityId::from_hex)
             .transpose()?,
         input.limit.unwrap_or(256),
+    )
+}
+pub fn rooms_render(memory: &Memory<'_>, input: RoomRefRequest) -> MemoryResult<Vec<String>> {
+    memory.rooms_render_threads(
+        crate::EntityId::from_hex(&input.room_ref)?,
+        crate::workspace_roster::RoomThreadPolicy::default(),
+    )
+}
+pub fn rooms_find(
+    memory: &Memory<'_>,
+    input: RoomRequest,
+) -> MemoryResult<crate::workspace_roster::RoomThreadPage> {
+    memory.rooms_find_threads_page(
+        crate::EntityId::from_hex(&input.room_ref)?,
+        input
+            .after
+            .as_deref()
+            .map(crate::EntityId::from_hex)
+            .transpose()?,
+        input.limit.unwrap_or(256),
+    )
+}
+pub fn rooms_get(
+    memory: &Memory<'_>,
+    input: RoomTurnRequest,
+) -> MemoryResult<Option<crate::workspace_roster::RoomThread>> {
+    memory.rooms_get_thread(
+        crate::EntityId::from_hex(&input.room_ref)?,
+        crate::EntityId::from_hex(&input.turn_ref)?,
+    )
+}
+pub fn rooms_trunk(
+    memory: &Memory<'_>,
+    input: RoomTurnRequest,
+) -> MemoryResult<crate::workspace_roster::RoomTrunk> {
+    memory.rooms_trunk(
+        crate::EntityId::from_hex(&input.room_ref)?,
+        crate::EntityId::from_hex(&input.turn_ref)?,
     )
 }
 pub fn rooms_claim(

@@ -596,6 +596,73 @@ async fn execute_mcp_agent_verb(
             })?;
             Ok((value, source, McpCarrierPolicy::Drain, None))
         }
+        "rooms.render" => {
+            let input: oneiron::task_verb::sdk::RoomRefRequest =
+                serde_json::from_value(json!({"room_ref":a.room_ref.clone().ok_or_else(invalid)?}))
+                    .map_err(|_| invalid())?;
+
+            let output =
+                oneiron::task_verb::sdk::rooms_render(&memory, input).map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(output.len());
+            let value = serde_json::to_value(output).map_err(|_| {
+                McpGatewayError::new(
+                    -32603,
+                    "engine_error",
+                    "typed agent result cannot be encoded",
+                )
+            })?;
+            Ok((value, source, McpCarrierPolicy::Drain, None))
+        }
+        "rooms.find" => {
+            let input: oneiron::task_verb::sdk::RoomRequest = serde_json::from_value(json!({"room_ref":a.room_ref.clone().ok_or_else(invalid)?,"after":a.turn_ref.clone()})).map_err(|_| invalid())?;
+
+            let output =
+                oneiron::task_verb::sdk::rooms_find(&memory, input).map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::scoped_window(
+                output.rows.len(),
+                0,
+                0,
+                output.next_after.is_none(),
+            );
+            let value = serde_json::to_value(output).map_err(|_| {
+                McpGatewayError::new(
+                    -32603,
+                    "engine_error",
+                    "typed agent result cannot be encoded",
+                )
+            })?;
+            Ok((value, source, McpCarrierPolicy::Drain, None))
+        }
+        "rooms.get" => {
+            let input: oneiron::task_verb::sdk::RoomTurnRequest = serde_json::from_value(json!({"room_ref":a.room_ref.clone().ok_or_else(invalid)?,"turn_ref":a.turn_ref.clone().ok_or_else(invalid)?})).map_err(|_| invalid())?;
+
+            let output =
+                oneiron::task_verb::sdk::rooms_get(&memory, input).map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            let value = serde_json::to_value(output).map_err(|_| {
+                McpGatewayError::new(
+                    -32603,
+                    "engine_error",
+                    "typed agent result cannot be encoded",
+                )
+            })?;
+            Ok((value, source, McpCarrierPolicy::Drain, None))
+        }
+        "rooms.trunk" => {
+            let input: oneiron::task_verb::sdk::RoomTurnRequest = serde_json::from_value(json!({"room_ref":a.room_ref.clone().ok_or_else(invalid)?,"turn_ref":a.turn_ref.clone().ok_or_else(invalid)?})).map_err(|_| invalid())?;
+
+            let output =
+                oneiron::task_verb::sdk::rooms_trunk(&memory, input).map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            let value = serde_json::to_value(output).map_err(|_| {
+                McpGatewayError::new(
+                    -32603,
+                    "engine_error",
+                    "typed agent result cannot be encoded",
+                )
+            })?;
+            Ok((value, source, McpCarrierPolicy::Drain, None))
+        }
         "rooms.claim" => {
             let input: oneiron::task_verb::sdk::RoomClaimRequest = serde_json::from_value(json!({"room_ref":a.room_ref.clone().ok_or_else(invalid)?,"turn_ref":a.turn_ref.clone().ok_or_else(invalid)?})).map_err(|_| invalid())?;
 

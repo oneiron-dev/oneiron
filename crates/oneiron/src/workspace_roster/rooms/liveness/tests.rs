@@ -1,5 +1,6 @@
 //! Read-time room thread liveness acceptance fixtures.
 use super::*;
+use crate::workspace_roster::RoomThreadFill;
 fn id(n: u8) -> EntityId {
     EntityId::from_bytes([n; 16]).unwrap()
 }
@@ -39,14 +40,16 @@ fn forty_threads_fold_under_three_exact_budgeted_lists_and_relist_on_reply() {
         now: 1_000_000,
         fresh_for: 86_400,
         rows_per_list: 4,
-        tokens_per_list: 512,
+        tokens_per_list: 2048,
+        fill: RoomThreadFill::Recency,
+        waits_per_thread: 8,
     };
     let initial = project(&turns, &tasks, policy).unwrap();
     assert_eq!((initial.active.rows.len(), initial.active.more), (4, 6));
     assert_eq!((initial.waiting.rows.len(), initial.waiting.more), (4, 6));
     assert_eq!((initial.quiet.rows.len(), initial.quiet.more), (4, 16));
     assert_eq!(initial.waiting.rows[0].waits[0].who, id(251));
-    let rows = initial.render_rows();
+    let rows = initial.render_rows(id(250));
     for lane in ["active", "waiting", "quiet"] {
         assert!(rows.iter().any(|row| row == &format!("threads {lane}: 10")
             || lane == "quiet" && row == "threads quiet: 20"));
@@ -63,8 +66,10 @@ fn forty_threads_fold_under_three_exact_budgeted_lists_and_relist_on_reply() {
         let count = list.rows.len() + list.more;
         let heading = format!("threads {lane}: {count}");
         let footer = format!(
-            "threads {lane}: +{} more; find=rooms_find_threads get=rooms_get_thread",
-            list.more
+            "threads {lane}: +{} more; find=rooms.find(room_ref={}) get=rooms.get(room_ref={},turn_ref=<handle>)",
+            list.more,
+            id(250).to_hex(),
+            id(250).to_hex()
         );
         let spent = crate::tokenizer::count_context_pack_tokens(&heading)
             + crate::tokenizer::count_context_pack_tokens(&footer)
@@ -155,6 +160,8 @@ fn ordinary_trunk_reply_is_not_a_thread_and_reply_before_wait_does_not_wake_it()
         fresh_for: 86_400,
         rows_per_list: 4,
         tokens_per_list: 512,
+        fill: RoomThreadFill::Stage,
+        waits_per_thread: 8,
     };
     let folded = project(&turns, std::slice::from_ref(&task), policy).unwrap();
     assert!(folded.active.rows.is_empty());
@@ -195,6 +202,8 @@ fn reply_ancestry_is_memoized_and_multiple_waits_have_distinct_handles() {
             fresh_for: 1,
             rows_per_list: 8,
             tokens_per_list: 512,
+            fill: RoomThreadFill::Stage,
+            waits_per_thread: 8,
         },
     )
     .unwrap();
@@ -204,4 +213,52 @@ fn reply_ancestry_is_memoized_and_multiple_waits_have_distinct_handles() {
     let line = row.line("waiting");
     assert!(line.contains(&id(210).to_hex()));
     assert!(line.contains(&id(211).to_hex()));
+}
+
+#[test]
+fn policy_fill_switches_due_first_to_recent_wait_with_one_row_budget() {
+    let turns = vec![
+        turn(240, None, None, 1),
+        turn(1, Some(id(240)), None, 10),
+        turn(2, Some(id(240)), None, 20),
+    ];
+    let tasks = [1u8, 2]
+        .into_iter()
+        .map(|n| RoomThreadTask {
+            task: id(n + 100),
+            thread: id(n),
+            open: true,
+            delivered: None,
+            wait: Some(RoomThreadWait {
+                task: id(n + 100),
+                kind: RoomWaitKind::HumanTask,
+                who: id(251),
+                since: 5,
+                next_nudge: Some(if n == 1 { 30 } else { 300 }),
+            }),
+        })
+        .collect::<Vec<_>>();
+    let stage = RoomThreadPolicy {
+        now: 1000,
+        fresh_for: 1,
+        rows_per_list: 1,
+        tokens_per_list: 2048,
+        fill: RoomThreadFill::Stage,
+        waits_per_thread: 8,
+    };
+    assert_eq!(
+        project(&turns, &tasks, stage).unwrap().waiting.rows[0].handle,
+        id(1)
+    );
+    let recency = stage.narrowed(crate::gate::RoomThreadSettings {
+        fresh_for: 1,
+        rows_per_list: 1,
+        tokens_per_list: 2048,
+        fill: RoomThreadFill::Recency,
+        waits_per_thread: 8,
+    });
+    assert_eq!(
+        project(&turns, &tasks, recency).unwrap().waiting.rows[0].handle,
+        id(2)
+    );
 }

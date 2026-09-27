@@ -26,6 +26,10 @@ pub enum AgentVerb {
     TasksOutcomes,
     RoomsList,
     RoomsMessages,
+    RoomsRender,
+    RoomsFind,
+    RoomsGet,
+    RoomsTrunk,
     RoomsClaim,
     RoomsSpeak,
 }
@@ -56,6 +60,10 @@ impl AgentVerb {
         Self::TasksOutcomes,
         Self::RoomsList,
         Self::RoomsMessages,
+        Self::RoomsRender,
+        Self::RoomsFind,
+        Self::RoomsGet,
+        Self::RoomsTrunk,
         Self::RoomsClaim,
         Self::RoomsSpeak,
     ];
@@ -89,6 +97,10 @@ impl AgentVerb {
             Self::TasksOutcomes => "tasks.outcomes",
             Self::RoomsList => "rooms.list",
             Self::RoomsMessages => "rooms.messages",
+            Self::RoomsRender => "rooms.render",
+            Self::RoomsFind => "rooms.find",
+            Self::RoomsGet => "rooms.get",
+            Self::RoomsTrunk => "rooms.trunk",
             Self::RoomsClaim => "rooms.claim",
             Self::RoomsSpeak => "rooms.speak",
         }
@@ -117,6 +129,10 @@ impl AgentVerb {
                 | Self::TasksOutcomes
                 | Self::RoomsList
                 | Self::RoomsMessages
+                | Self::RoomsRender
+                | Self::RoomsFind
+                | Self::RoomsGet
+                | Self::RoomsTrunk
                 | Self::RoomsClaim
                 | Self::RoomsSpeak
         )
@@ -155,6 +171,10 @@ impl AgentVerb {
                 | Self::TasksOutcomes
                 | Self::RoomsList
                 | Self::RoomsMessages
+                | Self::RoomsRender
+                | Self::RoomsFind
+                | Self::RoomsGet
+                | Self::RoomsTrunk
                 | Self::RoomsClaim
                 | Self::RoomsSpeak
         )
@@ -167,6 +187,8 @@ impl AgentVerb {
                 | Self::TasksOutcomes
                 | Self::RoomsList
                 | Self::RoomsMessages
+                | Self::RoomsRender
+                | Self::RoomsFind
         )
     }
     pub const fn filtered_read(self) -> bool {
@@ -189,6 +211,10 @@ impl AgentVerb {
                 | Self::TasksOutcomes
                 | Self::RoomsList
                 | Self::RoomsMessages
+                | Self::RoomsRender
+                | Self::RoomsFind
+                | Self::RoomsGet
+                | Self::RoomsTrunk
                 | Self::RoomsClaim
                 | Self::RoomsSpeak
         )
@@ -226,6 +252,10 @@ impl AgentVerb {
             Self::TasksOutcomes => Some(&["spec"]),
             Self::RoomsList => Some(&[]),
             Self::RoomsMessages => Some(&["room_ref", "turn_ref"]),
+            Self::RoomsRender => Some(&["room_ref"]),
+            Self::RoomsFind => Some(&["room_ref", "turn_ref"]),
+            Self::RoomsGet => Some(&["room_ref", "turn_ref"]),
+            Self::RoomsTrunk => Some(&["room_ref", "turn_ref"]),
             Self::RoomsClaim => Some(&["room_ref", "turn_ref"]),
             Self::RoomsSpeak => Some(&["spec", "room_ref"]),
             _ => None,
@@ -247,6 +277,10 @@ impl AgentVerb {
             Self::TasksOutcomes => Some(&["spec"]),
             Self::RoomsList => Some(&[]),
             Self::RoomsMessages => Some(&["room_ref"]),
+            Self::RoomsRender => Some(&["room_ref"]),
+            Self::RoomsFind => Some(&["room_ref"]),
+            Self::RoomsGet => Some(&["room_ref", "turn_ref"]),
+            Self::RoomsTrunk => Some(&["room_ref", "turn_ref"]),
             Self::RoomsClaim => Some(&["room_ref", "turn_ref"]),
             Self::RoomsSpeak => Some(&["spec", "room_ref"]),
             _ => None,

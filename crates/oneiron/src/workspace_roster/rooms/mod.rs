@@ -7,6 +7,8 @@ mod witness;
 use super::ProjectRoom;
 use crate::error::{Error, Result};
 use crate::memory::{Memory, MemoryError, MemoryResult, WitnessReceipt, WitnessTurn};
+#[cfg(test)]
+use crate::workspace_roster::RoomThreadFill;
 use crate::{EntityId, Vault};
 pub(super) use history::delete_room_metadata;
 pub(crate) use liveness::RoomThreadTask;
@@ -84,7 +86,7 @@ pub struct RoomTurn {
 }
 /// A delivered TASK's durable result, attached to its trunk on a room read.
 /// The TASK terminal register holds the fact; no second row is stored.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RoomTrunkHeader {
     pub thread: EntityId,
     pub task: EntityId,
@@ -92,12 +94,18 @@ pub struct RoomTrunkHeader {
 }
 
 /// A trunk turn with the delivered task headers under its thread anchors.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RoomTrunk {
     pub turn: RoomTurn,
     pub headers: Vec<RoomTrunkHeader>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RoomThreadPage {
+    pub rows: Vec<EntityId>,
+    /// Explicit end marker: `None` means the room has no further page.
+    pub next_after: Option<EntityId>,
+}
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct RoomPage {
@@ -118,6 +126,46 @@ pub enum RoomClaimOutcome {
     Claimed(RoomClaimReceipt),
     HeldBy(RoomClaimReceipt),
     NotAddressed,
+}
+
+/// Project rooms use the PROJECT roster instead of the ordinary membership
+/// ledger. Return None for other conversations so their historical membership
+/// windows remain authoritative at the ordinary audience door.
+pub(crate) fn project_room_audience_in(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    room: EntityId,
+    audience: &[EntityId],
+) -> Result<Option<bool>> {
+    let Some(raw) = vault.store.entities.get(txn, room.as_bytes())? else {
+        return Ok(None);
+    };
+    let header = crate::batch::EntityMetadataHeader::parse(&raw).ok_or_else(invalid)?;
+    if header.entity_type != crate::registry::ENTITY_TYPE_CONVERSATION {
+        return Ok(None);
+    }
+    let body = crate::conversation::ConversationBody::from_bytes(
+        &raw[crate::batch::ENTITY_METADATA_HEADER_LEN..],
+    )?;
+    if !body.extra.contains_key("project_id")
+        && !body.extra.contains_key("memberIds")
+        && vault
+            .store
+            .vault_meta
+            .get(
+                txn,
+                &[super::project::ROOM_PROJECT, room.as_bytes()].concat(),
+            )?
+            .is_none()
+    {
+        return Ok(None);
+    }
+    let room = room_in(vault, txn, room)?;
+    Ok(Some(
+        audience
+            .iter()
+            .all(|actor| room.member_ids.contains(&actor.to_hex())),
+    ))
 }
 
 impl Vault {

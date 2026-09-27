@@ -188,12 +188,13 @@ impl Memory<'_> {
         if policy.rows_per_list > 64 {
             return Err(MemoryError::from(invalid()));
         }
+        let txn = self.vault().store.env.read_txn().map_err(Error::from)?;
+        let settings = crate::gate::resolve_policy_manifest(&self.vault().store, &txn)?
+            .room_thread_settings()?;
+        drop(txn);
+        let policy = policy.narrowed(settings);
         let turns = self.room_turn_snapshot(room)?;
-        let roots = turns
-            .iter()
-            .filter(|turn| turn.thread_of.is_some())
-            .map(|turn| EntityId::from_hex(&turn.turn_id))
-            .collect::<Result<std::collections::BTreeSet<_>>>()?;
+        let roots = super::liveness::thread_root_map(&turns)?;
         let members = self
             .vault()
             .project_room(room)?
@@ -212,7 +213,7 @@ impl Memory<'_> {
         room: EntityId,
         policy: super::RoomThreadPolicy,
     ) -> MemoryResult<Vec<String>> {
-        Ok(self.rooms_threads(room, policy)?.render_rows())
+        Ok(self.rooms_threads(room, policy)?.render_rows(room))
     }
 
     /// Read one trunk turn with the completed TASK result headers that hang
@@ -233,11 +234,18 @@ impl Memory<'_> {
         drop(txn);
         let turns = self.room_turn_snapshot(room)?;
         let trunk_hex = trunk.to_hex();
-        let roots = turns
+        let root_ids = turns
             .iter()
-            .filter(|turn| turn.thread_of.as_deref() == Some(trunk_hex.as_str()))
+            .filter(|turn| {
+                super::liveness::is_thread_root(turn)
+                    && turn.thread_of.as_deref() == Some(trunk_hex.as_str())
+            })
             .map(|turn| EntityId::from_hex(&turn.turn_id))
             .collect::<Result<std::collections::BTreeSet<_>>>()?;
+        let roots = super::liveness::thread_root_map(&turns)?
+            .into_iter()
+            .filter(|(_, root)| root_ids.contains(root))
+            .collect();
         let tasks =
             crate::task_verb::room_thread_tasks(self, &roots, &members, crate::unix_seconds_now())?;
         let mut headers = tasks
@@ -268,7 +276,7 @@ impl Memory<'_> {
         let turns = self.room_turn_snapshot(room)?;
         let mut roots = turns
             .iter()
-            .filter(|turn| turn.thread_of.is_some())
+            .filter(|turn| super::liveness::is_thread_root(turn))
             .map(|turn| EntityId::from_hex(&turn.turn_id))
             .collect::<Result<Vec<_>>>()?;
         roots.sort();
@@ -282,6 +290,26 @@ impl Memory<'_> {
             .collect())
     }
 
+    /// Exact page end for SDK cursors, including a full final page.
+    pub fn rooms_find_threads_page(
+        &self,
+        room: EntityId,
+        after: Option<EntityId>,
+        limit: usize,
+    ) -> MemoryResult<super::RoomThreadPage> {
+        let rows = self.rooms_find_threads(room, after, limit)?;
+        let next_after = if rows.len() == limit
+            && !self
+                .rooms_find_threads(room, rows.last().copied(), 1)?
+                .is_empty()
+        {
+            rows.last().copied()
+        } else {
+            None
+        };
+        Ok(super::RoomThreadPage { rows, next_after })
+    }
+
     /// Scoped get handle; reaches a thread even when every list omits it.
     pub fn rooms_get_thread(
         &self,
@@ -289,12 +317,8 @@ impl Memory<'_> {
         handle: EntityId,
     ) -> MemoryResult<Option<super::RoomThread>> {
         let turns = self.room_turn_snapshot(room)?;
-        let roots = turns
-            .iter()
-            .filter(|turn| turn.thread_of.is_some())
-            .map(|turn| EntityId::from_hex(&turn.turn_id))
-            .collect::<Result<std::collections::BTreeSet<_>>>()?;
-        if !roots.contains(&handle) {
+        let roots = super::liveness::thread_root_map(&turns)?;
+        if !roots.contains_key(&handle) || roots.get(&handle) != Some(&handle) {
             return Ok(None);
         }
         let members = self
@@ -305,7 +329,10 @@ impl Memory<'_> {
             .into_iter()
             .collect();
         let now = crate::unix_seconds_now();
-        let selected = std::collections::BTreeSet::from([handle]);
+        let selected = roots
+            .into_iter()
+            .filter(|(_, root)| *root == handle)
+            .collect();
         let tasks = crate::task_verb::room_thread_tasks(self, &selected, &members, now)?;
         Ok(super::liveness::project_target(
             &turns, &tasks, handle, now,

@@ -121,8 +121,13 @@ pub use project::{PROJECT_TYPE_BYTE, ProjectRecord, ProjectRole, ProjectRoom, Pr
 mod rooms;
 pub(crate) use rooms::admit_witness as admit_room_witness;
 pub use rooms::{
-    RoomClaimOutcome, RoomClaimReceipt, RoomPage, RoomThread, RoomThreadList, RoomThreadPolicy,
-    RoomThreadWait, RoomThreads, RoomTrunk, RoomTrunkHeader, RoomTurn, RoomWaitKind,
+    RoomClaimOutcome, RoomClaimReceipt, RoomPage, RoomThread, RoomThreadList, RoomThreadPage,
+    RoomThreadPolicy, RoomThreadWait, RoomThreads, RoomTrunk, RoomTrunkHeader, RoomTurn,
+    RoomWaitKind,
 };
 
 pub(crate) use rooms::RoomThreadTask;
+
+pub(crate) use rooms::project_room_audience_in;
+
+pub use crate::gate::RoomThreadFill;

@@ -23,6 +23,10 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/tasks.outcomes", post(tasks_outcomes))
         .route("/rooms.list", post(rooms_list))
         .route("/rooms.messages", post(rooms_messages))
+        .route("/rooms.render", post(rooms_render))
+        .route("/rooms.find", post(rooms_find))
+        .route("/rooms.get", post(rooms_get))
+        .route("/rooms.trunk", post(rooms_trunk))
         .route("/rooms.claim", post(rooms_claim))
         .route("/rooms.speak", post(rooms_speak))
 }
@@ -351,6 +355,66 @@ async fn rooms_messages(
     Ok(Json(oneiron::task_verb::sdk::invoke(
         &server.vault.memory(actor, class),
         "rooms.messages",
+        value,
+    )?))
+}
+async fn rooms_render(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+    payload: Result<Json<serde_json::Value>, JsonRejection>,
+) -> Result<Json<serde_json::Value>, FacadeApiError> {
+    auth.require(CoreScope::Read)?;
+
+    let value = facade_json(payload)?;
+    let (actor, class) = facade_actor(&auth)?;
+    Ok(Json(oneiron::task_verb::sdk::invoke(
+        &server.vault.memory(actor, class),
+        "rooms.render",
+        value,
+    )?))
+}
+async fn rooms_find(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+    payload: Result<Json<serde_json::Value>, JsonRejection>,
+) -> Result<Json<serde_json::Value>, FacadeApiError> {
+    auth.require(CoreScope::Read)?;
+
+    let value = facade_json(payload)?;
+    let (actor, class) = facade_actor(&auth)?;
+    Ok(Json(oneiron::task_verb::sdk::invoke(
+        &server.vault.memory(actor, class),
+        "rooms.find",
+        value,
+    )?))
+}
+async fn rooms_get(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+    payload: Result<Json<serde_json::Value>, JsonRejection>,
+) -> Result<Json<serde_json::Value>, FacadeApiError> {
+    auth.require(CoreScope::Read)?;
+
+    let value = facade_json(payload)?;
+    let (actor, class) = facade_actor(&auth)?;
+    Ok(Json(oneiron::task_verb::sdk::invoke(
+        &server.vault.memory(actor, class),
+        "rooms.get",
+        value,
+    )?))
+}
+async fn rooms_trunk(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+    payload: Result<Json<serde_json::Value>, JsonRejection>,
+) -> Result<Json<serde_json::Value>, FacadeApiError> {
+    auth.require(CoreScope::Read)?;
+
+    let value = facade_json(payload)?;
+    let (actor, class) = facade_actor(&auth)?;
+    Ok(Json(oneiron::task_verb::sdk::invoke(
+        &server.vault.memory(actor, class),
+        "rooms.trunk",
         value,
     )?))
 }

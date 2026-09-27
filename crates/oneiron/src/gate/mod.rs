@@ -26,6 +26,9 @@ pub(crate) mod proposal_observation;
 mod repair;
 mod resolution;
 mod retrieval_filter;
+mod room_thread;
+pub use room_thread::RoomThreadFill;
+pub(crate) use room_thread::RoomThreadSettings;
 mod share;
 mod witness_message;
 

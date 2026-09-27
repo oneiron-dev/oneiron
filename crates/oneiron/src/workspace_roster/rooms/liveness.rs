@@ -12,7 +12,7 @@ pub(crate) struct RoomThreadTask {
     pub(crate) wait: Option<RoomThreadWait>,
     pub(crate) delivered: Option<(EntityId, u64)>,
 }
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum RoomWaitKind {
     Ask,
     Hold,
@@ -27,7 +27,7 @@ impl RoomWaitKind {
         }
     }
 }
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct RoomThreadWait {
     pub task: EntityId,
     pub kind: RoomWaitKind,
@@ -35,17 +35,19 @@ pub struct RoomThreadWait {
     pub since: u64,
     pub next_nudge: Option<u64>,
 }
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct RoomThread {
     pub handle: EntityId,
     pub trunk: EntityId,
     pub last_message_at: u64,
     pub open_tasks: usize,
     pub waits: Vec<RoomThreadWait>,
+    #[serde(skip)]
+    pub wait_render_limit: usize,
     /// Result pointer projected beside its trunk anchor; never a copied result body.
     pub result_header: Option<EntityId>,
 }
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct RoomThreadList {
     pub rows: Vec<RoomThread>,
     pub more: usize,
@@ -53,7 +55,7 @@ pub struct RoomThreadList {
 impl RoomThreads {
     /// Three separate capped room lists, not extra Context Board ROOM fields.
     /// `+N` counts describe every omitted row; find/get retain the full set.
-    pub fn render_rows(&self) -> Vec<String> {
+    pub fn render_rows(&self, room: EntityId) -> Vec<String> {
         let mut rows = Vec::new();
         for (name, list) in [
             ("active", &self.active),
@@ -64,8 +66,8 @@ impl RoomThreads {
             rows.extend(list.rows.iter().map(|row| row.line(name)));
             if list.more > 0 || name == "quiet" {
                 rows.push(format!(
-                    "threads {name}: +{} more; find=rooms_find_threads get=rooms_get_thread",
-                    list.more
+                    "threads {name}: +{} more; find=rooms.find(room_ref={}) get=rooms.get(room_ref={},turn_ref=<handle>)",
+                    list.more, room.to_hex(), room.to_hex()
                 ));
             }
         }
@@ -84,7 +86,7 @@ impl RoomThread {
         );
         // Keep one structural row bounded even when the thread has many
         // waits. The typed get returns the complete wait set.
-        for wait in self.waits.iter().take(8) {
+        for wait in self.waits.iter().take(self.wait_render_limit) {
             row.push_str(&format!(
                 " wait={} kind={} who={} since={} next={}",
                 wait.task.to_hex(),
@@ -95,10 +97,10 @@ impl RoomThread {
                     .map_or_else(|| "none".to_owned(), |at| at.to_string())
             ));
         }
-        if self.waits.len() > 8 {
+        if self.waits.len() > self.wait_render_limit {
             row.push_str(&format!(
-                " waits:+{} get=rooms_get_thread",
-                self.waits.len() - 8
+                " waits:+{} get=rooms.get",
+                self.waits.len() - self.wait_render_limit
             ));
         }
         if let Some(header) = self.result_header {
@@ -107,7 +109,7 @@ impl RoomThread {
         row
     }
 }
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct RoomThreads {
     pub active: RoomThreadList,
     pub waiting: RoomThreadList,
@@ -122,6 +124,8 @@ pub struct RoomThreadPolicy {
     pub rows_per_list: usize,
     /// Per-list maximum tokens including the list's count and find/get footer.
     pub tokens_per_list: usize,
+    pub fill: crate::workspace_roster::RoomThreadFill,
+    pub waits_per_thread: usize,
 }
 impl Default for RoomThreadPolicy {
     fn default() -> Self {
@@ -130,7 +134,91 @@ impl Default for RoomThreadPolicy {
             fresh_for: 7 * 86_400,
             rows_per_list: 8,
             tokens_per_list: 512,
+            fill: crate::workspace_roster::RoomThreadFill::Stage,
+            waits_per_thread: 8,
         }
+    }
+}
+
+/// A root names a trunk anchor; continuations inherit that same anchor but
+/// point at a turn inside the thread rather than at the trunk itself.
+pub(super) fn is_thread_root(turn: &RoomTurn) -> bool {
+    turn.thread_of.as_ref().is_some_and(|anchor| {
+        turn.reply_to
+            .as_deref()
+            .is_none_or(|parent| parent == anchor)
+    })
+}
+
+/// Validated, memoized room-turn → thread-root map. Trunk turns have no
+/// entry; every reply within a thread resolves to the same root as its parent.
+pub(super) fn thread_root_map(turns: &[RoomTurn]) -> Result<BTreeMap<EntityId, EntityId>> {
+    let mut by_id = BTreeMap::new();
+    let mut roots = BTreeSet::new();
+    for turn in turns {
+        let id = EntityId::from_hex(&turn.turn_id)?;
+        if by_id.insert(id, turn).is_some() {
+            return Err(invalid());
+        }
+        if is_thread_root(turn) {
+            let trunk = EntityId::from_hex(turn.thread_of.as_deref().ok_or_else(invalid)?)?;
+            if trunk == id {
+                return Err(invalid());
+            }
+            roots.insert(id);
+        }
+    }
+    let mut cache: BTreeMap<EntityId, Option<EntityId>> = BTreeMap::new();
+    let mut result = BTreeMap::new();
+    for turn in turns {
+        let id = EntityId::from_hex(&turn.turn_id)?;
+        if roots.contains(&id) {
+            result.insert(id, id);
+            continue;
+        }
+        let mut cursor = id;
+        let mut path = Vec::new();
+        let mut seen = BTreeSet::new();
+        let found = loop {
+            if !seen.insert(cursor) {
+                return Err(invalid());
+            }
+            if roots.contains(&cursor) {
+                break Some(cursor);
+            }
+            if let Some(cached) = cache.get(&cursor) {
+                break *cached;
+            }
+            path.push(cursor);
+            let ancestor = by_id.get(&cursor).ok_or_else(invalid)?;
+            match ancestor
+                .reply_to
+                .as_deref()
+                .map(EntityId::from_hex)
+                .transpose()?
+            {
+                Some(parent) => cursor = parent,
+                None => break None,
+            }
+        };
+        for member in path {
+            cache.insert(member, found);
+        }
+        if let Some(root) = found {
+            result.insert(id, root);
+        }
+    }
+    Ok(result)
+}
+
+impl RoomThreadPolicy {
+    pub(super) fn narrowed(mut self, settings: crate::gate::RoomThreadSettings) -> Self {
+        self.fresh_for = self.fresh_for.min(settings.fresh_for);
+        self.rows_per_list = self.rows_per_list.min(settings.rows_per_list);
+        self.tokens_per_list = self.tokens_per_list.min(settings.tokens_per_list);
+        self.fill = self.fill.min(settings.fill);
+        self.waits_per_thread = self.waits_per_thread.min(settings.waits_per_thread);
+        self
     }
 }
 
@@ -181,11 +269,18 @@ fn project_inner(
         || tasks.len() > MAX_ROWS
         || policy.rows_per_list > 64 && policy.rows_per_list != usize::MAX
         || !(64..=2_048).contains(&policy.tokens_per_list)
+        || !(1..=8).contains(&policy.waits_per_thread)
     {
         return Err(invalid());
     }
+    let room_hex = turns
+        .first()
+        .map_or_else(|| "0".repeat(32), |turn| turn.room_id.clone());
     let mut by_id = BTreeMap::new();
     for turn in turns {
+        if turn.room_id != room_hex {
+            return Err(invalid());
+        }
         let id = EntityId::from_hex(&turn.turn_id)?;
         if by_id.insert(id, turn).is_some() {
             return Err(invalid());
@@ -194,6 +289,10 @@ fn project_inner(
     let mut roots = BTreeMap::new();
     for turn in turns {
         if let Some(trunk) = &turn.thread_of {
+            // Replies inherit the anchor but are not new thread roots.
+            if !is_thread_root(turn) {
+                continue;
+            }
             let id = EntityId::from_hex(&turn.turn_id)?;
             if target.is_some_and(|handle| handle != id) {
                 continue;
@@ -210,50 +309,23 @@ fn project_inner(
                     last_message_at: turn.at,
                     open_tasks: 0,
                     waits: Vec::new(),
+                    wait_render_limit: policy.waits_per_thread,
                     result_header: None,
                 },
             );
         }
     }
-    // Memoize ancestry. A normal trunk reply has no thread root and is
-    // ignored; only malformed missing parents and cycles refuse the read.
-    let mut resolved: BTreeMap<EntityId, Option<EntityId>> = BTreeMap::new();
+    let root_by_turn = thread_root_map(turns)?;
     let mut last_reply = BTreeMap::new();
     for turn in turns {
         let id = EntityId::from_hex(&turn.turn_id)?;
-        if turn.thread_of.is_some() || turn.reply_to.is_none() {
+        let Some(&root_id) = root_by_turn.get(&id) else {
+            continue;
+        };
+        if id == root_id {
             continue;
         }
-        let mut target = id;
-        let mut path = Vec::new();
-        let mut seen = BTreeSet::new();
-        let found = loop {
-            if !seen.insert(target) {
-                return Err(invalid());
-            }
-            if roots.contains_key(&target) {
-                break Some(target);
-            }
-            if let Some(prior) = resolved.get(&target) {
-                break *prior;
-            }
-            path.push(target);
-            let parent = by_id.get(&target).ok_or_else(invalid)?;
-            match parent
-                .reply_to
-                .as_deref()
-                .map(EntityId::from_hex)
-                .transpose()?
-            {
-                Some(next) => target = next,
-                None => break None,
-            }
-        };
-        for node in path {
-            resolved.insert(node, found);
-        }
-        if let Some(root_id) = found {
-            let root = roots.get_mut(&root_id).ok_or_else(invalid)?;
+        if let Some(root) = roots.get_mut(&root_id) {
             root.last_message_at = root.last_message_at.max(turn.at);
             last_reply
                 .entry(root_id)
@@ -320,20 +392,36 @@ fn project_inner(
             quiet.push(row);
         }
     }
-    active.sort_by_key(|row| (std::cmp::Reverse(row.last_message_at), row.handle));
-    waiting.sort_by_key(|row| {
-        (
-            row.waits[0].next_nudge.unwrap_or(u64::MAX),
-            std::cmp::Reverse(row.last_message_at),
-            row.handle,
-        )
-    });
+    if policy.fill == crate::workspace_roster::RoomThreadFill::Stage {
+        active.sort_by_key(|row| {
+            (
+                std::cmp::Reverse(row.open_tasks),
+                std::cmp::Reverse(row.last_message_at),
+                row.handle,
+            )
+        });
+    } else {
+        active.sort_by_key(|row| (std::cmp::Reverse(row.last_message_at), row.handle));
+    }
+    if policy.fill == crate::workspace_roster::RoomThreadFill::Recency {
+        waiting.sort_by_key(|row| (std::cmp::Reverse(row.last_message_at), row.handle));
+    } else {
+        waiting.sort_by_key(|row| {
+            (
+                row.waits[0].next_nudge.unwrap_or(u64::MAX),
+                std::cmp::Reverse(row.last_message_at),
+                row.handle,
+            )
+        });
+    }
     quiet.sort_by_key(|row| (std::cmp::Reverse(row.last_message_at), row.handle));
     let list = |mut rows: Vec<RoomThread>, lane: &str| {
         let total = rows.len();
         let heading = format!("threads {lane}: {total}");
-        let footer =
-            format!("threads {lane}: +{total} more; find=rooms_find_threads get=rooms_get_thread");
+        let id = "f".repeat(32);
+        let footer = format!(
+            "threads {lane}: +{total} more; find=rooms.find(room_ref={id}) get=rooms.get(room_ref={id},turn_ref=<handle>)"
+        );
         let mut used = crate::tokenizer::count_context_pack_tokens(&heading)
             + crate::tokenizer::count_context_pack_tokens(&footer);
         let mut selected = 0;
