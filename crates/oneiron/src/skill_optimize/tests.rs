@@ -146,6 +146,14 @@ fn stamped_receipt(vault: &Vault, skill_id: &str, now: u64) -> String {
     else {
         panic!("the enqueued attempt is claimable");
     };
+    queue
+        .set_executor_model(
+            attempt.id,
+            "skill-opt-worker",
+            leased.attempt_count,
+            "fixture/model@1",
+        )
+        .expect("stamp model");
     let CompleteOutcome::Completed(_) = queue
         .complete(CompleteAttempt {
             id: attempt.id,
@@ -157,7 +165,10 @@ fn stamped_receipt(vault: &Vault, skill_id: &str, now: u64) -> String {
     else {
         panic!("a leased attempt completes exactly once");
     };
-    attempt_pack_receipt_id(&attempt.id)
+    let receipt_id = attempt_pack_receipt_id(&attempt.id);
+    crate::receipt::make_attempt_receipt_legacy_for_tests(vault, &receipt_id)
+        .expect("emulate historical unknown-executor evidence");
+    receipt_id
 }
 
 /// Attributes SK-04 skill DEFECTS until the DEV partition holds `count` more of

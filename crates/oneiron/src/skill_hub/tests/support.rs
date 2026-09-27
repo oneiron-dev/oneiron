@@ -187,6 +187,14 @@ pub(crate) fn reserve(vault: &Vault, skill: &EntityId, skill_id: &str) {
         else {
             panic!("claimable attempt");
         };
+        queue
+            .set_executor_model(
+                attempt.id,
+                "fixture",
+                leased.attempt_count,
+                "fixture/model@1",
+            )
+            .expect("stamp model");
         assert!(matches!(
             queue
                 .complete(CompleteAttempt {

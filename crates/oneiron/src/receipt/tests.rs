@@ -1699,6 +1699,28 @@ fn the_pack_receipt_ledger_resolves_only_ids_it_stamped() -> Result<()> {
     else {
         panic!("the enqueued attempt is claimable");
     };
+    assert!(
+        queue
+            .complete(CompleteAttempt {
+                id: attempt.id,
+                lease_owner: "worker".to_owned(),
+                attempt_count: leased.attempt_count,
+                now: 13,
+            })
+            .is_err(),
+        "skill-bearing attempt cannot settle without a model"
+    );
+    assert!(attempt_pack_receipt(&vault, &attempt_pack_receipt_id(&attempt.id))?.is_none());
+    assert_eq!(
+        queue.get(attempt.id)?.unwrap().state,
+        crate::attempt_queue::AttemptState::Leased
+    );
+    queue.set_executor_model(
+        attempt.id,
+        "worker",
+        leased.attempt_count,
+        "fixture/model@1",
+    )?;
     queue.complete(CompleteAttempt {
         id: attempt.id,
         lease_owner: "worker".to_owned(),

@@ -127,11 +127,14 @@ fn stamped_receipt_for_model(
     else {
         panic!("the enqueued attempt is claimable");
     };
-    if let Some(model) = model {
-        queue
-            .set_executor_model(attempt.id, "sk05-worker", leased.attempt_count, model)
-            .expect("stamp model");
-    }
+    queue
+        .set_executor_model(
+            attempt.id,
+            "sk05-worker",
+            leased.attempt_count,
+            model.unwrap_or("fixture/model@1"),
+        )
+        .expect("stamp model");
     let CompleteOutcome::Completed(_) = queue
         .complete(CompleteAttempt {
             id: attempt.id,
@@ -143,7 +146,12 @@ fn stamped_receipt_for_model(
     else {
         panic!("a leased attempt completes exactly once");
     };
-    attempt_pack_receipt_id(&attempt.id)
+    let receipt_id = attempt_pack_receipt_id(&attempt.id);
+    if model.is_none() {
+        crate::receipt::make_attempt_receipt_legacy_for_tests(vault, &receipt_id)
+            .expect("emulate older receipt without executor stamp");
+    }
+    receipt_id
 }
 
 /// Records one routed outcome and returns the judgments the pass minted.
