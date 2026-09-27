@@ -127,7 +127,23 @@ pub(super) fn partition_capabilities(
                 );
         }
     }
-    crate::fusion::sort_scored_entities_desc(&mut eligible);
+    // Sort only skill slots. Agent candidates already carry the host reranker's
+    // order, and its score ladder can tie; sorting agents here would replace
+    // that order (and the five chosen agents) with entity-ID order.
+    let mut ranked_skills: Vec<_> = eligible
+        .iter()
+        .copied()
+        .filter(|scored| skill_ids.contains(&scored.id))
+        .collect();
+    crate::fusion::sort_scored_entities_desc(&mut ranked_skills);
+    let mut ranked_skills = ranked_skills.into_iter();
+    for scored in &mut eligible {
+        if skill_ids.contains(&scored.id) {
+            *scored = ranked_skills
+                .next()
+                .expect("one ranked skill per skill slot");
+        }
+    }
     let mut capabilities = Vec::new();
     let mut skills = 0;
     let mut agents = 0;

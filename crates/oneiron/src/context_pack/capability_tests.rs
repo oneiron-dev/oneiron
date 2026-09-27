@@ -374,3 +374,113 @@ fn skill_discovery_preserves_semantic_relevance_before_ucb() -> Result<()> {
     );
     Ok(())
 }
+
+/// The skill bandit must not re-sort agent discoveries after the host reranker
+/// has chosen their order, including when the text/vector union exceeds five.
+#[test]
+fn agent_discovery_retains_reranker_order_and_five_slot_choice() -> Result<()> {
+    use std::sync::Mutex;
+
+    use crate::rerank::{RerankCandidate, RerankOptions, Reranker};
+    use crate::{EntityId, Vault};
+
+    struct ReverseIdReranker {
+        seen: Mutex<Vec<EntityId>>,
+    }
+    impl Reranker for ReverseIdReranker {
+        fn id(&self) -> &str {
+            "test/agent-reverse-id@v1"
+        }
+
+        fn rerank(&self, _query: &str, candidates: &[RerankCandidate<'_>]) -> Result<Vec<f32>> {
+            *self.seen.lock().expect("candidate capture") =
+                candidates.iter().map(|candidate| candidate.id).collect();
+            Ok(candidates
+                .iter()
+                .map(|candidate| f32::from(candidate.id.as_bytes()[0]))
+                .collect())
+        }
+    }
+
+    fn put_agent(vault: &Vault, id: EntityId, vector: &[f32; 4]) -> Result<()> {
+        let agent = AgentDefinition::new(
+            format!("agent.rerank.{}", id.as_bytes()[0]),
+            "channel",
+            "v1",
+            None,
+            vec![],
+            vec![],
+            vec![],
+            None,
+            AgentScope::All,
+            AgentCeiling::Proposed,
+            None,
+            ClaimApprovalStatus::Proposed,
+            ClaimLifecycleStatus::Active,
+            ClaimSource::UserStated,
+            1.0,
+            false,
+            true,
+            rmpv::Value::Map(vec![(
+                rmpv::Value::from("source"),
+                rmpv::Value::from("agent-rerank-fixture"),
+            )]),
+            None,
+            false,
+            None,
+        );
+        vault
+            .batch()
+            .put(
+                &id,
+                ENTITY_TYPE_AGENT_DEF,
+                TimeRange { start: 1, end: 1 },
+                1,
+                &encode_agent_definition(&agent)?,
+            )
+            .text(&id, &[("body", "channel")])
+            .vector(&id, vector)
+            .commit()
+    }
+
+    let (_dir, vault) =
+        crate::test_util::open_test_vault_with(crate::test_util::embedding_test_config());
+    let reranker = ReverseIdReranker {
+        seen: Mutex::new(Vec::new()),
+    };
+    let ids: Vec<_> = (1..=6).map(crate::test_util::entity).collect();
+    put_agent(&vault, ids[0], &[-1.0, 0.0, 0.0, 0.0])?;
+    put_agent(&vault, ids[1], &[1.0, 0.0, 0.0, 0.0])?;
+    let query = || {
+        vault
+            .context_pack()
+            .search_text("channel", 5)
+            .search_vector(&[1.0, 0.0, 0.0, 0.0], 5)
+            .rerank(&reranker, RerankOptions::default())
+            .run()
+    };
+    let two = query()?;
+    assert_eq!(
+        two.capabilities
+            .iter()
+            .map(|hit| hit.id)
+            .collect::<Vec<_>>(),
+        vec![ids[1], ids[0]],
+        "host choice survives the neutral blend's equal score ladder"
+    );
+
+    for id in &ids[2..] {
+        put_agent(&vault, *id, &[1.0, 0.0, 0.0, 0.0])?;
+    }
+    let six = query()?;
+    assert_eq!(reranker.seen.lock().expect("candidate capture").len(), 6);
+    assert_eq!(
+        six.capabilities
+            .iter()
+            .map(|hit| hit.id)
+            .collect::<Vec<_>>(),
+        vec![ids[5], ids[4], ids[3], ids[2], ids[1]],
+        "the reranker's first five survive the independent agent budget"
+    );
+    Ok(())
+}
