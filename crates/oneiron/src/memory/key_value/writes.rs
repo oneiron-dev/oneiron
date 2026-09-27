@@ -55,7 +55,14 @@ impl Memory<'_> {
             }
             let mut rows = self.key_value_rows(txn)?;
             let prior = rows.remove(&address);
+            let writer = WriteActor::new(self.actor, self.actor_class);
+            if let Some((prior_id, _)) = &prior {
+                self.vault.authorize_shared_content_write_in_txn(txn, *prior_id, &writer)?;
+            }
             if self.vault.get_raw_in(txn, &id)?.is_some() {
+                // Even an idempotent replay is a Write request, and a reused
+                // request ID must never bypass today's membership authority.
+                self.vault.authorize_shared_content_write_in_txn(txn, id, &writer)?;
                 let body = self.vault.get_claim_in_txn(txn, &id)
                     .map_err(|err| match err {
                         Error::InvalidClaimBody(_) => conflict("request_id names an erased or malformed revision"),
@@ -85,6 +92,7 @@ impl Memory<'_> {
                 vec![BatchOp::ClaimCandidate { id, candidate: Box::new(candidate), envelope,
                     occurred: TimeRange { start: now, end: now }, learned_at: now, internal_lexical_query_hint: false }],
                 self.vault.text_index_trusted.load(Ordering::Acquire), ApplyOpsGateMode::new(true, true))?;
+            self.vault.authorize_shared_content_write_in_txn(txn, id, &writer)?;
             let committed = self.vault.get_claim_in_txn(txn, &id)?.ok_or(Error::EntityNotFound)?;
             if !matches!(committed.approval, ClaimApprovalStatus::Auto | ClaimApprovalStatus::Approved) {
                 return Err(MemoryError::new(super::super::MEMORY_CODE_FORBIDDEN,
@@ -127,8 +135,13 @@ impl Memory<'_> {
                     receipt_refs: Vec::new(),
                 });
             };
-            // key_value_rows checked exact subject/scope/envelope authorship
-            // in THIS writer snapshot, even for a human-class owner.
+            // Exact actor ownership is necessary but never substitutes for
+            // the current shared-vault role and this stored row's scope.
+            self.vault.authorize_shared_content_write_in_txn(
+                txn,
+                id,
+                &WriteActor::new(self.actor, self.actor_class),
+            )?;
             let receipt = self
                 .vault
                 .retract_claim_in_txn(txn, &id, crate::unix_seconds_now())?;

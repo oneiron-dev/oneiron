@@ -156,6 +156,31 @@ fn stored_scope(
     }
     Ok(Some(stamp.scope))
 }
+/// Rebind a validated local TASK scope after a typed reducer rewrites only
+/// derived body fields. An absent or stale pre-write stamp is never upgraded.
+pub(crate) fn rebind_local_task_projection(
+    store: &Store,
+    txn: &mut heed::RwTxn<'_>,
+    id: EntityId,
+    before: &[u8],
+    after: &[u8],
+) -> Result<()> {
+    let kind = crate::registry::ENTITY_TYPE_TASK;
+    let scope = stored_scope(store, txn, id, kind, before)?.ok_or(Error::CorruptedIndex(
+        "TASK scope stamp changed before projection",
+    ))?;
+    if before != after {
+        let bytes = serde_json::to_vec(&Stamp {
+            version: 1,
+            digest: digest(kind, after),
+            scope,
+        })
+        .map_err(|_| Error::InvariantViolation("TASK scope restamp encode"))?;
+        store.vault_meta.put(txn, &key(id), &bytes)?;
+    }
+    Ok(())
+}
+
 /// Preserve an existing, digest-proved scope when a text document replaces only
 /// its row body with a pointer. Do not mint reach for an unstamped or stale row.
 #[cfg(feature = "sync")]

@@ -1446,6 +1446,35 @@ fn shared_vault_structural_and_claim_content_mutations_obey_role_and_scope() {
     let habit = member_facade
         .put_structural(&task())
         .expect("in-scope member task");
+    let habit_id = EntityId::from_hex(&habit.id_hex).unwrap();
+    for at in [11, 12] {
+        let checkin = member_facade
+            .put_habit_checkin(&HabitCheckinInput {
+                habit_ref: habit.id_hex.clone(),
+                id: None,
+                data: Some(serde_json::json!({"note": "done"})),
+                occurred_at: at,
+                learned_at: None,
+            })
+            .expect("successive in-scope check-ins");
+        let child = EntityId::from_hex(&checkin.id_hex).unwrap();
+        assert!(
+            vault
+                .edges_out(&child)
+                .unwrap()
+                .iter()
+                .any(|edge| { edge.kind == EdgeKind::ChildOf && edge.target == habit_id })
+        );
+        assert!(vault.record_scope(&habit_id).unwrap().is_some());
+    }
+    let habit_body = member_facade
+        .get_entity(&habit.id_hex)
+        .unwrap()
+        .unwrap()
+        .body
+        .unwrap();
+    assert_eq!(habit_body["currentStreak"], serde_json::json!(1));
+    assert_eq!(habit_body["longestStreak"], serde_json::json!(1));
     let accepted = member_facade
         .claim_upsert(&claim_input(
             "profile.name",

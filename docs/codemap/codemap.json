@@ -16000,7 +16000,7 @@
      "path": "src/federation/record_scope.rs",
      "purpose": "Digest-bound record-position stamps and scoped read/delete/export doors",
      "surface": {
-      "crate-vis": 5,
+      "crate-vis": 6,
       "enum": 1,
       "fn": 4,
       "struct": 1

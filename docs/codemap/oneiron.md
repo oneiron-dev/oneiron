@@ -1277,7 +1277,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/federation/org_admin.rs` | src | s | 1 struct · 2 enum · 8 fn | OrgAdminError, OrgAdminPolicy, OrgAdminPower | Closed organization-administration powers |
 | `src/federation/pact_scope.rs` | src | m | 2 struct · 3 enum · 6 fn · 1 const · 1 re-export · 7 crate-vis | FederationDirectionScope, FederationPactScope, FederationScopeBands, FederationScopeFacets, FederationScopeWorlds | Pact direction-scope lattice (worlds/facets/bands axes) and canonical codec |
 | `src/federation/peer_authority.rs` | src | s | 4 fn · 2 const · 2 crate-vis | — | Peer authority-log admission (FED-03) and roster refolding |
-| `src/federation/record_scope.rs` | src | m | 1 struct · 1 enum · 4 fn · 5 crate-vis | ScopeView, ScopedRecord | Digest-bound record-position stamps and scoped read/delete/export doors |
+| `src/federation/record_scope.rs` | src | m | 1 struct · 1 enum · 4 fn · 6 crate-vis | ScopeView, ScopedRecord | Digest-bound record-position stamps and scoped read/delete/export doors |
 | `src/federation/relationships.rs` | src | m | 1 struct · 2 enum · 6 fn · 3 const | MemberRelationship, MemberRelationshipContext, RelationshipTrustClass | Member-to-person binding, label trust classes, and relationship claim doors |
 | `src/federation/ruling_integrity.rs` | src | s | 4 crate-vis | — | Stored authority bindings and append-only protection for administrative rulings |
 | `src/federation/rulings.rs` | src | s | 2 struct · 4 fn · 2 crate-vis | AdminRuling, AdminRulingReceipt | Append-only equal-holder rulings and deterministic newest-wins projection |

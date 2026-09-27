@@ -268,10 +268,37 @@ impl Memory<'_> {
             let writer = WriteActor::new(self.actor, self.actor_class);
             self.vault
                 .authorize_shared_content_write_in_txn(wtxn, habit_id, &writer)?;
+            // The reducer changes the parent's streak fields. Preserve the
+            // positively verified pre-write scope on its final body, not a
+            // freshly inferred permission over arbitrary unstamped bytes.
+            let prior_habit = self
+                .vault
+                .shared_vault_creation_in_txn(wtxn)?
+                .map(|_| self.vault.get_raw_in(wtxn, &habit_id))
+                .transpose()?
+                .flatten();
             self.vault
                 .batch_in()
                 .put_habit_checkin(&habit_id, &checkin_id, occurred, learned_at, &data)
                 .apply(wtxn)?;
+            if let Some(before) = prior_habit {
+                let after = self
+                    .vault
+                    .get_raw_in(wtxn, &habit_id)?
+                    .ok_or(crate::Error::EntityNotFound)?;
+                let header = crate::batch::EntityMetadataHeader::parse(&before)
+                    .ok_or(crate::Error::CorruptedIndex("habit header"))?;
+                if header.entity_type != crate::registry::ENTITY_TYPE_TASK {
+                    return Err(crate::Error::InvalidEntityType(header.entity_type).into());
+                }
+                crate::federation::record_scope::rebind_local_task_projection(
+                    &self.vault.store,
+                    wtxn,
+                    habit_id,
+                    &before[crate::batch::ENTITY_METADATA_HEADER_LEN..],
+                    &after[crate::batch::ENTITY_METADATA_HEADER_LEN..],
+                )?;
+            }
             self.vault.authorize_shared_local_put_content_in_txn(
                 wtxn,
                 checkin_id,
