@@ -138,7 +138,12 @@ pub(crate) fn reconcile_project_rooms(
         for row in store.edges_out.prefix_iter(txn, &prefix)? {
             let (key, value) = row?;
             let edge = crate::edge::parse_strict_edge_record(&key, &value)?;
-            existing.insert(edge.target.to_hex(), edge.decoded.weight);
+            // The PROJECT body owns only PROJECT-to-PROJECT parent links.
+            // A venture may also belong to an ORG; saving its body must not
+            // remove or rewrite that independently owned relationship.
+            if is_project_entity(store, txn, edge.target)? {
+                existing.insert(edge.target.to_hex(), edge.decoded.weight);
+            }
         }
         for parent in existing.keys() {
             if !body.parents.contains(parent) {

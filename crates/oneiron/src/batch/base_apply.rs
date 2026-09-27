@@ -475,12 +475,8 @@ pub(super) fn apply_ops_with_origin(
                 if !internal_lexical_query_hint {
                     claim_materialization::record_committed_claim(store, wtxn, &id, true)?;
                 }
-                if applied.had_graph_mutation {
-                    had_graph_mutation = true;
-                }
-                if applied.had_vector_mutation {
-                    had_vector_mutation = true;
-                }
+                had_graph_mutation |= applied.had_graph_mutation;
+                had_vector_mutation |= applied.had_vector_mutation;
                 if let Some(token) = applied.pending_embedding_token {
                     pending_embedding_tokens_written.insert(id, token);
                     #[cfg(feature = "sync")]
@@ -545,17 +541,7 @@ pub(super) fn apply_ops_with_origin(
             | BatchOp::SetEdgeWeight { .. }
             | BatchOp::SetEdgeVad { .. }
             | BatchOp::DeleteEdge { .. }) => {
-                match &op {
-                    BatchOp::Edge { src, tgt, .. }
-                    | BatchOp::PublicEdgeWithCreatedAt { src, tgt, .. }
-                    | BatchOp::EdgeWithCreatedAt { src, tgt, .. }
-                    | BatchOp::SetEdgeWeight { src, tgt, .. }
-                    | BatchOp::SetEdgeVad { src, tgt, .. }
-                    | BatchOp::DeleteEdge { src, tgt, .. } => {
-                        project_edge_endpoints.extend([*src, *tgt]);
-                    }
-                    _ => unreachable!("edge arm contains only edge operations"),
-                }
+                project_edge_endpoints.extend(edge_op_endpoints(&op));
                 had_graph_mutation |= apply_edge_op(store, wtxn, op)?;
             }
             BatchOp::Text { id, fields } => {
@@ -729,6 +715,20 @@ fn finalize_batch_indexes(
     }
 
     Ok(())
+}
+
+/// Both endpoints may acquire a PROJECT/CLAIM type later in this same batch.
+/// Collect them so the final graph check sees that type change.
+fn edge_op_endpoints(op: &BatchOp) -> [EntityId; 2] {
+    match op {
+        BatchOp::Edge { src, tgt, .. }
+        | BatchOp::PublicEdgeWithCreatedAt { src, tgt, .. }
+        | BatchOp::EdgeWithCreatedAt { src, tgt, .. }
+        | BatchOp::SetEdgeWeight { src, tgt, .. }
+        | BatchOp::SetEdgeVad { src, tgt, .. }
+        | BatchOp::DeleteEdge { src, tgt, .. } => [*src, *tgt],
+        _ => unreachable!("edge arm contains only edge operations"),
+    }
 }
 
 /// Applies one op of the edge family and invalidates the PPR caches of both

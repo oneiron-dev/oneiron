@@ -486,3 +486,73 @@ fn collection_membership_is_low_weight_and_never_accepts_claims() -> Result<()> 
     assert!(matches!(err, Error::InvalidConfig(_)));
     Ok(())
 }
+
+#[test]
+fn project_body_updates_preserve_venture_org_edge_and_retire_only_old_project_parent() -> Result<()>
+{
+    let dir = tempfile::tempdir()?;
+    let vault = Vault::open(dir.path(), crate::VaultConfig::default())?;
+    let root = vault.root_project()?;
+    let leader = EntityId::from_hex(&vault.project(root)?.unwrap().leader)?;
+    let second_parent = EntityId::now();
+    vault.put_project(
+        second_parent,
+        &ProjectRecord::new(second_parent, Some(root), root, leader),
+        1,
+    )?;
+    let venture = EntityId::now();
+    let original = ProjectRecord::new(venture, Some(root), root, leader);
+    vault.put_project(venture, &original, 2)?;
+    let org = EntityId::now();
+    vault.put_entity(
+        &org,
+        crate::registry::ENTITY_TYPE_ORG,
+        TimeRange { start: 3, end: 3 },
+        3,
+        b"org",
+    )?;
+    vault.put_edge(&venture, EdgeKind::BelongsTo, &org, 0.7)?;
+    let org_edge = vault
+        .edges_out(&venture)?
+        .into_iter()
+        .find(|edge| edge.kind == EdgeKind::BelongsTo && edge.target == org)
+        .expect("venture belongs to org");
+    let check = |vault: &Vault, parent: EntityId| -> Result<()> {
+        let edges = vault.edges_out(&venture)?;
+        let org_after = edges
+            .iter()
+            .find(|edge| edge.kind == EdgeKind::BelongsTo && edge.target == org)
+            .expect("org link survives");
+        assert_eq!(org_after.weight, org_edge.weight);
+        assert_eq!(org_after.created_at, org_edge.created_at);
+        assert_eq!(org_after.vad, org_edge.vad);
+        assert_eq!(org_after.provenance, org_edge.provenance);
+        assert_eq!(vault.targets(&venture, EdgeKind::BelongsTo, None)?.len(), 2);
+        assert!(vault.edge_exists(&venture, EdgeKind::BelongsTo, &parent)?);
+        Ok(())
+    };
+    check(&vault, root)?;
+    vault.put_project(venture, &original, 4)?;
+    check(&vault, root)?;
+    let mut edited = original;
+    edited.roster.push(EntityId::now().to_hex());
+    vault.put_project(venture, &edited, 5)?;
+    check(&vault, root)?;
+    // Same shared projection door as replay, with a replicated body op.
+    vault
+        .batch()
+        .put_replicated(
+            &venture,
+            vault.project_type_byte()?,
+            TimeRange { start: 6, end: 6 },
+            6,
+            &encode(&edited)?,
+        )
+        .commit()?;
+    check(&vault, root)?;
+    edited.parents = vec![second_parent.to_hex()];
+    vault.put_project(venture, &edited, 7)?;
+    check(&vault, second_parent)?;
+    assert!(!vault.edge_exists(&venture, EdgeKind::BelongsTo, &root)?);
+    Ok(())
+}
