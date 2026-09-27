@@ -4,6 +4,7 @@
 //! module does not mint a new receipt store and does not change emitter schema.
 
 mod brief_share;
+mod direct_dispatch;
 mod dispatch_observation;
 mod family;
 mod field_set;
@@ -42,6 +43,7 @@ pub use self::projection::{
 };
 pub use self::session::{SessionLocalReceiptLog, SessionReceiptClose};
 
+pub(crate) use self::direct_dispatch::record as record_direct_dispatch_receipt;
 pub(crate) use self::dispatch_observation::{
     DispatchObservationKey, append_dispatch_observation_in_txn, read_dispatch_observation,
 };
