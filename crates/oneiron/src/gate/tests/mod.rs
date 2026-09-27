@@ -57,6 +57,7 @@ mod evaluator_core;
 mod external_effect_grants;
 mod failure_policy;
 mod gate_door;
+mod hosted_tts_policy;
 mod isolation_persona;
 mod manifest_authenticity;
 mod manifest_auto;

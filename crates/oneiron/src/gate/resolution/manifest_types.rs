@@ -10,6 +10,7 @@ use crate::gate::ceiling::{
     PolicySignature, SourceTrustCeiling,
 };
 use crate::gate::grants::PolicyScopedGrant;
+use crate::gate::hosted_tts_policy::HostedTtsPolicy;
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub(crate) struct PolicyManifestDiagnostics {
@@ -104,6 +105,7 @@ pub(crate) struct PolicyManifestResolution {
     pub(super) budget_policy: BudgetPolicyTable,
     pub(super) dreamer_failure_rules: Vec<DreamerFailureRule>,
     pub(super) dreamer_failure_precedence: Option<DreamerFailurePrecedence>,
+    pub(super) hosted_tts: HostedTtsPolicy,
 }
 
 impl PolicyManifestResolution {

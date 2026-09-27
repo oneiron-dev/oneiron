@@ -85,6 +85,7 @@ pub use scope_stamp::{
 };
 pub(crate) use scope_stamp::{default_facet_in, upgrade_pre_scope_body};
 pub use scoped_read::*;
+pub(crate) use scoped_read::{ReadAdmission, admit_stored_edge_in};
 pub use source_trust::*;
 pub use status::*;
 pub(crate) use write_target::validate_claim_write_target_in_txn;

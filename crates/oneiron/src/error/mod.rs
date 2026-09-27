@@ -299,6 +299,7 @@ pub enum ErrorKind {
     InvalidSuppressionReceiptBody,
     SuppressionReceiptDivergence,
     PackPredicateNameCollision,
+    ResidentOwnerDependencyPending,
 }
 
 /// Crate error type.

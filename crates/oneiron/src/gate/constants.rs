@@ -69,6 +69,7 @@ pub(super) const POLICY_AUTO_CHECKER_KEY: &str = "auto_checker";
 pub(super) const POLICY_BUDGET_POLICY_KEY: &str = "budget_policy";
 pub(super) const POLICY_DREAMER_FAILURE_RULES_KEY: &str = "dreamer_failure_rules";
 pub(super) const POLICY_DREAMER_FAILURE_PRECEDENCE_KEY: &str = "dreamer_failure_precedence";
+pub(super) const POLICY_HOSTED_TTS_KEY: &str = "hosted_tts";
 pub(super) const BUDGET_POLICY_PURPOSE_KEY: &str = "purpose";
 pub(super) const BUDGET_POLICY_ACTOR_KEY: &str = "actor";
 pub(super) const BUDGET_POLICY_FLOOR_KEY: &str = "floor";
