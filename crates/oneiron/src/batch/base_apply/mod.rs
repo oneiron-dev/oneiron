@@ -206,7 +206,6 @@ pub(super) fn apply_ops_with_origin(
     let mut pending_embedding_tokens_written = HashMap::<EntityId, Vec<u8>>::new();
     #[cfg(feature = "sync")]
     let mut pending_embedding_enqueue_priorities = HashMap::<EntityId, u8>::new();
-    let companion_retired_histories = companion_retired_histories_in_batch(&ops)?;
     let iter = ReplayIter {
         remaining: std::mem::take(&mut ops.ops).into_iter(),
         replay,
@@ -331,7 +330,6 @@ pub(super) fn apply_ops_with_origin(
                     include_source_in_gate_input,
                     claim_gate_prechecked,
                     preflight_decision_id,
-                    Some(&companion_retired_histories),
                     origin,
                 )?;
                 if let Some((source_id, source_bytes)) = applied.portable_agent_source {
