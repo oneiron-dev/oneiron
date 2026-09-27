@@ -375,8 +375,8 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/booking/companion_preset/tests.rs` | test | L | — | — | Companion preset and proposal test suite |
 | `src/booking/config.rs` | src | m | 5 struct · 1 enum · 6 fn · 7 const · 11 crate-vis | BookingEventTypeClaimValue, ClaimClassDescriptorRow, EventTypeConfig, HostAvailabilityConfig, RoutingMode, WeeklyWallWindow | ONE-1823 [BK-00] booking-page event-type configuration |
 | `src/booking/constraint.rs` | src | m | 12 struct · 3 enum · 1 trait · 7 fn · 2 const · 9 crate-vis | BookingError, ConstraintObject, ConstraintParseConfig, ConstraintParseDisposition, ConstraintParseRequest, ConstraintSessionCaps, ConstraintSessionState, ConstraintWeekday +8 | ONE-1816 [BK-05] booking constraint seam |
-| `src/booking/conversion.rs` | src | m | 5 struct · 5 enum · 10 fn | BookingIntakeStages, BookingReminder, BookingReminderWake, BookingShortlist, ConversionError, MeetingLocation, ReminderAction, ReminderStep +2 | BK-07 conversion data |
-| `src/booking/conversion/tests.rs` | test | s | — | — | — |
+| `src/booking/conversion.rs` | src | m | 6 struct · 5 enum · 11 fn | BookingIntakeStages, BookingReminder, BookingReminderWake, BookingShortlist, BookingSlotLinkHint, ConversionError, MeetingLocation, ReminderAction +3 | BK-07 conversion data |
+| `src/booking/conversion/tests.rs` | test | m | — | — | — |
 | `src/booking/disclosure_rung.rs` | src | m | 4 struct · 4 enum · 8 fn · 4 crate-vis | BusyBlockRow, CalendarDisclosureDefault, DisclosureRung, EventDetailsRow, EventRow, RungProjection, SurfaceClass, TitledEventRow | Calendar disclosure rungs — ARCH-0062 R1's ladder and its one projection chokepoint |
 | `src/booking/emergency_reschedule.rs` | src | m | 2 struct · 1 enum · 2 fn · 1 const · 4 re-export · 9 crate-vis | EmergencyActionPolicy, EmergencyRescheduleRequest, OwnerInstructionRecord | BK-09: logged owner instructions, real solver proposals, and resumable emergency revisions |
 | `src/booking/emergency_reschedule/enumeration.rs` | src | s | 1 struct · 1 fn · 2 crate-vis | AffectedBooking | — |
@@ -401,7 +401,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/booking/invite_grant/mod.rs` | src | s | 4 re-export · 2 crate-vis | — | ONE-1814 [BK-A-3] the booking page's standing invite grant |
 | `src/booking/invite_grant/tests/faceted_sender.rs` | test | s | — | — | — |
 | `src/booking/invite_grant/tests/mod.rs` | test | L | — | — | Lane tests for the booking page's standing invite grant |
-| `src/booking/invite_grant/types.rs` | src | s | 3 struct · 2 crate-vis | BookingPageInviteContext, ConfirmedBookingInvite, PublishBookingPageGrantRequest | Caller-facing shapes for the booking page's standing invite grant |
+| `src/booking/invite_grant/types.rs` | src | s | 3 struct · 1 crate-vis | BookingPageInviteContext, ConfirmedBookingInvite, PublishBookingPageGrantRequest | Caller-facing shapes for the booking page's standing invite grant |
 | `src/booking/lifecycle/claim.rs` | src | m | 1 struct · 6 fn · 8 crate-vis | BookingConfirmationContext | Booking facts on the EVENT: the four exact claims, their writes and supersessions, the family validator, and… |
 | `src/booking/lifecycle/confirmation_state.rs` | src | s | 3 crate-vis | — | The confirmation receipt's session and invite-identity bindings, read and bound inside the caller's… |
 | `src/booking/lifecycle/door.rs` | src | m | 2 struct · 1 enum · 4 fn | BookingLifecycleConsumerInput, BookingLifecycleTurn, BookingOracleRequest | The public verb door and the home-node consumer turn: enqueue, checkout lease, and one claimed attempt run… |
@@ -449,7 +449,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/build_cache/tests/hit_metadata.rs` | test | m | — | — | — |
 | `src/calendar/caldav.rs` | src | s | 2 struct · 1 trait · 4 fn · 1 const | CalDavConnector, CalDavDiscovery, CalDavWire | CalDAV provider adapter (CAL-05, ONE-1787) |
 | `src/calendar/claims/codec.rs` | src | m | 1 fn · 40 crate-vis | — | Calendar claim validation dispatch plus MessagePack encode/decode and field helpers |
-| `src/calendar/claims/mod.rs` | src | s | 3 re-export · 3 crate-vis | — | The `calendar.*` claim family (CAL-00) |
+| `src/calendar/claims/mod.rs` | src | s | 3 re-export · 4 crate-vis | — | The `calendar.*` claim family (CAL-00) |
 | `src/calendar/claims/predicates.rs` | src | s | 1 struct · 2 fn · 15 const · 3 crate-vis | ClaimClassDescriptorRow | Calendar claim predicates, descriptor rows, and shared limits |
 | `src/calendar/claims/tests.rs` | test | m | — | — | Accept/reject fixtures and per-type contract tests for the calendar claim family |
 | `src/calendar/claims/values.rs` | src | m | 8 struct · 7 enum · 16 fn | CalendarAttendeeValue, CalendarBusyTransparency, CalendarOrigin, CalendarPassportDirection, CalendarPassportPresence, CalendarPassportValue, CalendarSeriesExceptionValue, CalendarSeriesMasterValue +7 | Calendar claim value types with their wire-token impls |
@@ -462,8 +462,8 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/calendar/connectors/seat.rs` | src | m | 4 struct · 1 enum · 8 fn · 4 const · 1 crate-vis | CalendarConnectorError, CalendarConnectorKillSwitchState, CalendarConnectorSeatConfig, CalendarConnectorSeatState, CalendarConnectorSyncPayload | Seat configs, cursors, kill switch, error type, and sync verbs |
 | `src/calendar/freebusy.rs` | src | m | 1 struct · 2 fn · 1 type | BusyInterval | Busy-only freebusy projection (CAL-09, C5) |
 | `src/calendar/google_internal.rs` | src | s | 1 struct · 1 trait · 3 fn · 2 const | GoogleInternalConnector, GoogleInternalWire | Workspace-Internal Google calendar adapter (CAL-05, ONE-1787) |
-| `src/calendar/ics/emit.rs` | src | m | 1 struct · 2 fn · 2 const | ImipEmitRequest | ICS emit half (CAL-04, ONE-1786): meeting state into deterministic iMIP bytes |
-| `src/calendar/ics/mod.rs` | src | s | 2 re-export · 2 crate-vis | — | ICS (RFC 5545) codec: feed parse half plus iMIP emit half |
+| `src/calendar/ics/emit.rs` | src | m | 1 struct · 2 fn · 2 const · 1 crate-vis | ImipEmitRequest | ICS emit half (CAL-04, ONE-1786): meeting state into deterministic iMIP bytes |
+| `src/calendar/ics/mod.rs` | src | s | 2 re-export · 3 crate-vis | — | ICS (RFC 5545) codec: feed parse half plus iMIP emit half |
 | `src/calendar/ics/parse.rs` | src | m | 2 struct · 1 fn · 1 re-export · 1 crate-vis | ParsedIcsFeed, ParsedVEvent | ICS feed parse half (CAL-02, ONE-1784): RFC 5545 bytes into calendar-owned rows |
 | `src/calendar/ics/parse/properties.rs` | src | s | 1 struct · 1 crate-vis | ParsedCalendarProperties | RFC 5545 fields retained for calendar claim admission |
 | `src/calendar/ingest/admission.rs` | src | m | 1 fn · 13 crate-vis | — | Diff-to-claim admission path and its test module |

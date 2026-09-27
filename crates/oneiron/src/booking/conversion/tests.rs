@@ -1,4 +1,5 @@
 use super::*;
+use crate::booking::EventTypeKey;
 
 fn slot(start_utc: u64, rank: f32) -> RankedSlot {
     RankedSlot {
@@ -43,19 +44,33 @@ fn shortlist_is_a_ranked_prefix_with_one_recommended_slot_and_see_more() {
 
 #[test]
 fn snippet_link_hints_only_live_exact_solver_slots() {
+    let event = EventTypeKey("consultation&60".to_owned());
     let slots = [slot(1_800_000_000, 1.0), slot(1_800_003_600, 0.9)];
+    let query = format!(
+        "event_type={}&visitor_tz={}&start_utc=1800000000&end_utc=1800001800",
+        hex_text(&event.0),
+        hex_text("Europe/London")
+    );
+    let hint = parse_booking_slot_link(Some(&query)).expect("complete link context");
+    assert_eq!(hint.event_type, event);
+    assert_eq!(hint.visitor_tz, "Europe/London");
     assert_eq!(
-        booking_suggested_slot(&slots, Some("start_utc=1800000000&end_utc=1800001800")),
+        booking_suggested_slot(&slots, &hint),
         Some(slots[0].clone())
     );
-    for query in [
-        None,
-        Some("start_utc=1800000000&end_utc=1800001801"),
-        Some("start_utc=1&end_utc=2"),
-        Some("start_utc=1800000000&end_utc=1800001800&redirect=bad"),
-        Some("start_utc=%31&end_utc=1800001800"),
+    let stale = BookingSlotLinkHint {
+        end_utc: 1_800_001_801,
+        ..hint
+    };
+    assert_eq!(booking_suggested_slot(&slots, &stale), None);
+    for invalid in [
+        "start_utc=1800000000&end_utc=1800001800".to_owned(),
+        format!("{query}&redirect=bad"),
+        query.replace("event_type=", "event_type=%"),
+        query.replace("visitor_tz=", "visitor_tz=00"),
+        query.replace("start_utc=1800000000", "start_utc=1800001800"),
     ] {
-        assert_eq!(booking_suggested_slot(&slots, query), None);
+        assert_eq!(parse_booking_slot_link(Some(&invalid)), None);
     }
 }
 
@@ -227,9 +242,11 @@ fn legislation_date_does_not_inherit_a_neighbouring_region_rule() {
 fn copy_paste_times_are_linked_to_one_owned_page_and_zone_labeled() {
     let token = PublicBookingPageToken(format!("bkp_{}", "ab".repeat(16)));
     let times = [slot(1_800_000_000, 1.0), slot(1_800_003_600, 0.9)];
+    let event = EventTypeKey("consultation&60".to_owned());
     let text = booking_slots_snippet(
         "https://book.example.org",
         &token,
+        &event,
         &times,
         "Europe/London",
         "Available times:",
@@ -243,7 +260,11 @@ fn copy_paste_times_are_linked_to_one_owned_page_and_zone_labeled() {
         3
     );
     assert!(text.contains("(Europe/London)](https://"));
-    assert!(text.contains("?start_utc=1800000000&end_utc=1800001800"));
+    assert!(text.contains(&format!(
+        "?event_type={}&visitor_tz={}&start_utc=1800000000&end_utc=1800001800",
+        hex_text(&event.0),
+        hex_text("Europe/London")
+    )));
     for origin in [
         "http://book.example.org",
         "https://book.example.org/path",
@@ -252,7 +273,7 @@ fn copy_paste_times_are_linked_to_one_owned_page_and_zone_labeled() {
         "https://book.example.org/#fragment",
     ] {
         assert_eq!(
-            booking_slots_snippet(origin, &token, &times, "UTC", "Intro", "Link"),
+            booking_slots_snippet(origin, &token, &event, &times, "UTC", "Intro", "Link"),
             Err(ConversionError::InvalidOrigin)
         );
     }
@@ -260,6 +281,7 @@ fn copy_paste_times_are_linked_to_one_owned_page_and_zone_labeled() {
         booking_slots_snippet(
             "https://book.example.org",
             &token,
+            &event,
             &times,
             "Missing/Zone",
             "Intro",
@@ -271,6 +293,7 @@ fn copy_paste_times_are_linked_to_one_owned_page_and_zone_labeled() {
         booking_slots_snippet(
             "https://book.example.org",
             &token,
+            &event,
             &[],
             "UTC",
             "Intro",

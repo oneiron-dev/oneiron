@@ -86,6 +86,13 @@ fn two_host_page(vault: &Vault, routing: RoutingMode, first_available: bool) -> 
 }
 
 fn confirm_with_real_solver(vault: &Vault) -> (ConfirmReceipt, SolveResult) {
+    confirm_with_real_solver_in_zone(vault, "UTC")
+}
+
+fn confirm_with_real_solver_in_zone(
+    vault: &Vault,
+    visitor_zone: &str,
+) -> (ConfirmReceipt, SolveResult) {
     vault
         .put_entity(
             &id(0x53),
@@ -107,7 +114,7 @@ fn confirm_with_real_solver(vault: &Vault) -> (ConfirmReceipt, SolveResult) {
             event_type: EventTypeKey("intro".to_owned()),
             slot,
             session_key: session,
-            visitor_tz: "UTC".to_owned(),
+            visitor_tz: visitor_zone.to_owned(),
             constraint: None,
             lease: HoldLeaseSpec::Ordinary,
             idempotency_key: None,
@@ -135,7 +142,7 @@ fn confirm_with_real_solver(vault: &Vault) -> (ConfirmReceipt, SolveResult) {
                 end: slot.end - 1,
             },
             constraint: None,
-            visitor_tz: "UTC".to_owned(),
+            visitor_tz: visitor_zone.to_owned(),
         })
         .unwrap();
     assert!(
@@ -218,6 +225,7 @@ fn either_confirmation_persists_the_host_that_actually_offered_the_slot() {
             start_utc: NOW + 3_600,
             end_utc: NOW + 5_400,
             host_refs: vec![id(OTHER).to_hex()],
+            host_zones: vec!["UTC".to_owned()],
         }]
     );
     let context = crate::booking::lifecycle::booking_confirmation_context(
@@ -598,4 +606,77 @@ fn both_secondary_owner_and_rotated_sender_keep_the_actual_initial_organizer() {
         "host@example.test"
     );
     assert_eq!(plan.organizer, "host@example.test");
+}
+
+#[test]
+fn confirmation_freezes_both_party_zones_and_emits_them_after_config_changes() {
+    let (_dir, vault) = open_test_vault_with(VaultConfig::default());
+    let mut config = two_host_page(&vault, RoutingMode::Either, false);
+    config.hosts[0].host_tz = "America/New_York".to_owned();
+    config.hosts[1].host_tz = "Europe/London".to_owned();
+    replace_config(&vault, config.clone());
+    let (receipt, solved) = confirm_with_real_solver_in_zone(&vault, "Asia/Tokyo");
+    assert_eq!(solved.host_bindings[0].host_zones, vec!["Europe/London"]);
+    let context = crate::booking::lifecycle::booking_confirmation_context(
+        &vault,
+        &receipt.calendar.event_ref,
+    )
+    .unwrap()
+    .unwrap();
+    assert_eq!(context.owner_refs, vec![id(OTHER).to_hex()]);
+    assert_eq!(context.host_zones, vec!["Europe/London"]);
+    assert_eq!(context.visitor_tz, "Asia/Tokyo");
+
+    // The page has changed, but this booking's invite still uses the zones
+    // selected by the confirmation's solver, not current config or UTC.
+    config.hosts[1].host_tz = "America/Los_Angeles".to_owned();
+    replace_config(&vault, config);
+    bind_delivery(&vault, receipt.calendar.event_ref, OWNER);
+    policy(&vault);
+    crate::booking::mint_publish_page_invite_grant(
+        &vault,
+        &crate::booking::PublishBookingPageGrantRequest {
+            page_ref: id(PAGE),
+            publisher_principal: id(OWNER),
+            issued_at: NOW,
+        },
+    )
+    .unwrap();
+    let intent = crate::booking::invite_grant::dispatch_confirm_booking_invite(
+        &vault,
+        id(OWNER),
+        &receipt,
+        &mut Delivered,
+        NOW,
+    )
+    .unwrap();
+    assert_eq!(
+        crate::booking::invite_grant::dispatch_confirm_booking_invite(
+            &vault,
+            id(OWNER),
+            &receipt,
+            &mut Delivered,
+            NOW,
+        )
+        .unwrap(),
+        intent,
+        "a retry keeps the one frozen invite and its original party zones"
+    );
+    let listing = crate::outbound_intent_ledger::intent_ledger_records(&vault).unwrap();
+    let row = listing.records.iter().find(|row| row.id == intent).unwrap();
+    let frozen = crate::calendar::decode_frozen_calendar_invite(row.payload()).unwrap();
+    let blob = EntityId::from_hex(frozen.ics_blob_ref.strip_prefix("blob:").unwrap()).unwrap();
+    let head = vault.blob_artifact_head(&blob).unwrap().unwrap();
+    let ics = String::from_utf8(
+        vault
+            .read_blob_artifact_version(&blob, head.version)
+            .unwrap()
+            .unwrap(),
+    )
+    .unwrap();
+    assert!(ics.contains("X-WR-TIMEZONE:Asia/Tokyo\r\n"));
+    assert!(ics.contains("X-ONEIRON-TZID:Asia/Tokyo\r\n"));
+    assert!(ics.contains("X-ONEIRON-ORGANIZER-TZID:Europe/London\r\n"));
+    assert!(!ics.contains("X-ONEIRON-ORGANIZER-TZID:America/Los_Angeles"));
+    assert!(ics.contains("DTSTART:") && ics.contains("Z\r\n"));
 }

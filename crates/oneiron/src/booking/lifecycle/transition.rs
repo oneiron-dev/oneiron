@@ -324,12 +324,16 @@ fn confirm_in_writer(
         .host_bindings
         .iter()
         .filter(|binding| binding.start_utc == hold.slot.start && binding.end_utc == hold.slot.end);
-    let owner_refs = bindings
+    let chosen = bindings
         .next()
-        .ok_or_else(|| refused("oracle did not bind the selected slot's hosts"))?
-        .host_refs
-        .clone();
+        .ok_or_else(|| refused("oracle did not bind the selected slot's hosts"))?;
+    let owner_refs = chosen.host_refs.clone();
+    let host_zones = chosen.host_zones.clone();
     if owner_refs.is_empty()
+        || host_zones.len() != owner_refs.len()
+        || host_zones
+            .iter()
+            .any(|zone| crate::calendar::tz::utc_to_wall(hold.slot.start, zone).is_err())
         || bindings.next().is_some()
         || owner_refs.windows(2).any(|pair| pair[0] >= pair[1])
         || owner_refs
@@ -342,6 +346,7 @@ fn confirm_in_writer(
     }
     let context = BookingConfirmationContext {
         owner_refs,
+        host_zones,
         booker_ref: spec.booker_contact.to_hex(),
         visitor_tz: hold.visitor_tz.clone(),
         constraint: hold.constraint.clone(),

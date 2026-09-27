@@ -98,6 +98,7 @@ impl SlotOracle for Offered {
                 start_utc: self.0.start,
                 end_utc: self.0.end,
                 host_refs: vec![id(self.1).to_hex()],
+                host_zones: vec!["UTC".to_owned()],
             }],
         })
     }

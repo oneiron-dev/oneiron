@@ -46,11 +46,12 @@ pub use constraint::{
     SlotOracle, SolveRequest, SolveResult,
 };
 pub use conversion::{
-    BookingIntakeStages, BookingReminder, BookingReminderWake, BookingShortlist, ConversionError,
-    MeetingLocation, ReminderAction, ReminderStep, RepeatNoShowOffer, ZonedBookingTime,
-    booking_display_zones, booking_due_reminder, booking_intake_stages, booking_reminder_wakes,
-    booking_reminders, booking_shortlist, booking_slots_snippet, booking_suggested_slot,
-    booking_zoned_time, repeat_no_show_offer,
+    BookingIntakeStages, BookingReminder, BookingReminderWake, BookingShortlist,
+    BookingSlotLinkHint, ConversionError, MeetingLocation, ReminderAction, ReminderStep,
+    RepeatNoShowOffer, ZonedBookingTime, booking_display_zones, booking_due_reminder,
+    booking_intake_stages, booking_reminder_wakes, booking_reminders, booking_shortlist,
+    booking_slots_snippet, booking_suggested_slot, booking_zoned_time, parse_booking_slot_link,
+    repeat_no_show_offer,
 };
 pub use disclosure_rung::{
     BusyBlockRow, CalendarDisclosureDefault, DisclosureRung, EventDetailsRow, EventRow,

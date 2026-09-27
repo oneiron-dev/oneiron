@@ -4311,6 +4311,7 @@
       "BookingReminder",
       "BookingReminderWake",
       "BookingShortlist",
+      "BookingSlotLinkHint",
       "ConversionError",
       "MeetingLocation",
       "ReminderAction",
@@ -4322,12 +4323,12 @@
      "purpose": "BK-07 conversion data",
      "surface": {
       "enum": 5,
-      "fn": 10,
-      "struct": 5
+      "fn": 11,
+      "struct": 6
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "test",
      "notable": [],
      "path": "src/booking/conversion/tests.rs",
@@ -4606,7 +4607,7 @@
      "path": "src/booking/invite_grant/types.rs",
      "purpose": "Caller-facing shapes for the booking page's standing invite grant",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 1,
       "struct": 3
      }
     },
@@ -5182,7 +5183,7 @@
      "path": "src/calendar/claims/mod.rs",
      "purpose": "The `calendar.*` claim family (CAL-00)",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 4,
       "re-export": 3
      }
     },
@@ -5377,6 +5378,7 @@
      "purpose": "ICS emit half (CAL-04, ONE-1786): meeting state into deterministic iMIP bytes",
      "surface": {
       "const": 2,
+      "crate-vis": 1,
       "fn": 2,
       "struct": 1
      }
@@ -5388,7 +5390,7 @@
      "path": "src/calendar/ics/mod.rs",
      "purpose": "ICS (RFC 5545) codec: feed parse half plus iMIP emit half",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 3,
       "re-export": 2
      }
     },

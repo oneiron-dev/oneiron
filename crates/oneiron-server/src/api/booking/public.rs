@@ -78,9 +78,31 @@ pub(crate) async fn render_public_booking_page(
         "public-render-{}",
         transport.source_ip.to_string().replace(':', "-")
     );
-    let input = publication
-        .initial_availability
-        .request(now_secs()?.div_ceil(30) * 30, session)?;
+    let hint = oneiron::booking::parse_booking_slot_link(query.as_deref()).filter(|hint| {
+        publication.event_types.iter().any(|card| {
+            card.key == hint.event_type
+                && hint.end_utc - hint.start_utc == u64::from(card.duration_min) * 60
+        })
+    });
+    let input = if let Some(hint) = &hint {
+        // Re-solve only the hinted event's exact interval. This is an ordinary
+        // availability operation with the same admission and publication
+        // checks, never authority granted by the query string.
+        BookingAvailabilityInput {
+            event_type: hint.event_type.clone(),
+            window: oneiron::TimeRange {
+                start: hint.start_utc,
+                end: hint.end_utc - 1,
+            },
+            visitor_tz: hint.visitor_tz.clone(),
+            constraint: None,
+            session_ref: session,
+        }
+    } else {
+        publication
+            .initial_availability
+            .request(now_secs()?.div_ceil(30) * 30, session)?
+    };
     let request = SolveRequest {
         event_type: input.event_type.clone(),
         window: input.window,
@@ -128,18 +150,19 @@ pub(crate) async fn render_public_booking_page(
         tracing::error!(?defect, "public booking model invariant failed");
         ApiError::internal_server_error("public booking model assembly failed")
     })?;
-    public_booking_page_json(model, PublicBookingPageToken(page_token), query.as_deref()).map(Json)
+    public_booking_page_json(model, PublicBookingPageToken(page_token), hint.as_ref()).map(Json)
 }
 
 fn public_booking_page_json(
     model: BookingPageModel,
     token: PublicBookingPageToken,
-    query: Option<&str>,
+    hint: Option<&oneiron::booking::BookingSlotLinkHint>,
 ) -> Result<serde_json::Value, ApiError> {
     let oneiron::booking::RungProjection::Slots(mask) = &model.slots else {
         unreachable!("validated public slot projection")
     };
-    let selected = oneiron::booking::booking_suggested_slot(&mask.slots, query);
+    let selected =
+        hint.and_then(|hint| oneiron::booking::booking_suggested_slot(&mask.slots, hint));
     let card = BookingPageLens::card_with_actions(&model, &token, &[PublicBookingAction::Hold])
         .map_err(|_| ApiError::internal_server_error("public booking lens assembly failed"))?;
     Ok(serde_json::json!({ "model": model, "card": card, "suggested_slot": selected }))

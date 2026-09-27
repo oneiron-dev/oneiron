@@ -74,34 +74,112 @@ async fn public_booking_render_requires_no_authentication() {
 async fn linked_time_preselects_only_a_live_solver_slot() {
     let fixture = Fixture::new();
     let path = format!("/public/booking/{}", fixture.token);
-    let response = fixture.route("GET", &path, Value::Null).await;
+    let initial = fixture.route("GET", &path, Value::Null).await;
+    let initial: Value = serde_json::from_slice(&bytes(initial).await).expect("initial page");
+    let initial_end = initial["model"]["slots"]["rows"]["window_end_utc"]
+        .as_u64()
+        .expect("initial window");
+
+    // A second owner-published event type is an hour long. Its proposed
+    // slot sits well outside the page's initial intro-only 24h projection.
+    let vault = &fixture.server.vault;
+    let mut claim = vault
+        .get_claim(&id(0x72))
+        .expect("config read")
+        .expect("config");
+    let mut second = oneiron::booking::decode_event_type_claim_value(&claim.value).unwrap();
+    second.config.key = EventTypeKey("consultation&60".to_owned());
+    second.config.duration_min = 60;
+    claim.value = encode_event_type_claim_value(&second).unwrap();
+    vault
+        .put_claim(&id(0x75), &claim, TimeRange { start: 1, end: 1 }, 1)
+        .expect("second config");
+    let mut publication = publication_input(fixture.page, true, 1, now_secs().unwrap() + 86_400);
+    publication.value["event_types"]
+        .as_array_mut()
+        .unwrap()
+        .push(json!({
+            "key": "consultation&60", "title": "Consultation", "duration_min": 60,
+            "description": "Fixture",
+        }));
+    publication.value["event_config_hashes"]["consultation&60"] =
+        json!(oneiron::booking::booking_config_hash(&second.config).unwrap());
+    let owner = vault.memory(id(0x77), EdgeActorClass::Human);
+    let pending = owner
+        .claim_upsert(&publication)
+        .expect("owner updates page");
+    assert_eq!(pending.approval, "proposed");
+    owner
+        .confirm_booking_publication(&pending.claim_short_id, now_secs().unwrap())
+        .expect("owner confirms page revision");
+
+    let response = fixture
+        .route(
+            "POST",
+            &format!("{path}/availability"),
+            json!({
+                "event_type": "consultation&60",
+                "window": { "start": initial_end + 86_400, "end": initial_end + 2 * 86_400 - 1 },
+                "visitor_tz": "Europe/London", "constraint": null, "session_ref": "snippet-test",
+            }),
+        )
+        .await;
     assert_eq!(response.status(), StatusCode::OK);
-    let page: Value = serde_json::from_slice(&bytes(response).await).expect("page");
-    let slot = &page["model"]["slots"]["rows"]["slots"][0];
-    let start = slot["start_utc"].as_u64().expect("start");
-    let end = slot["end_utc"].as_u64().expect("end");
-    let linked = fixture
-        .route(
-            "GET",
-            &format!("{path}?start_utc={start}&end_utc={end}"),
-            Value::Null,
+    let answer: BookingOperationResponse =
+        serde_json::from_slice(&bytes(response).await).expect("availability");
+    let BookingOperationResponse::Availability { slots, .. } = answer else {
+        panic!("availability response")
+    };
+    let proposed = slots.first().expect("second event offers a future slot");
+    assert!(proposed.start_utc > initial_end);
+    assert_eq!(proposed.end_utc - proposed.start_utc, 3_600);
+    let snippet = oneiron::booking::booking_slots_snippet(
+        "https://book.example.org",
+        &PublicBookingPageToken(fixture.token.clone()),
+        &EventTypeKey("consultation&60".to_owned()),
+        std::slice::from_ref(proposed),
+        "Europe/London",
+        "Available:",
+        "All slots",
+    )
+    .unwrap();
+    let linked = snippet
+        .lines()
+        .nth(1)
+        .unwrap()
+        .split_once("](")
+        .unwrap()
+        .1
+        .trim_end_matches(')')
+        .strip_prefix("https://book.example.org")
+        .unwrap();
+    let page = fixture.route("GET", linked, Value::Null).await;
+    assert_eq!(page.status(), StatusCode::OK);
+    let selected: Value = serde_json::from_slice(&bytes(page).await).expect("linked page");
+    assert_eq!(
+        selected["model"]["slots"]["rows"]["event_type"],
+        "consultation&60"
+    );
+    assert_eq!(selected["model"]["visitor_zone"], "Europe/London");
+    assert_eq!(selected["suggested_slot"]["start_utc"], proposed.start_utc);
+    assert_eq!(selected["suggested_slot"]["end_utc"], proposed.end_utc);
+    // An unaligned (not solver-offered) slot keeps the event context but is
+    // never presented as a selectable booking.
+    let unoffered = linked
+        .replace(
+            &format!("start_utc={}", proposed.start_utc),
+            &format!("start_utc={}", proposed.start_utc + 60),
         )
-        .await;
-    assert_eq!(linked.status(), StatusCode::OK);
-    let selected: Value = serde_json::from_slice(&bytes(linked).await).expect("linked page");
-    assert_eq!(selected["suggested_slot"]["start_utc"], start);
-    assert_eq!(selected["suggested_slot"]["end_utc"], end);
-    let unoffered = fixture
-        .route(
-            "GET",
-            &format!("{path}?start_utc={start}&end_utc={}", end + 1),
-            Value::Null,
-        )
-        .await;
-    let page: Value = serde_json::from_slice(&bytes(unoffered).await).expect("unoffered page");
-    assert!(
-        page["suggested_slot"].is_null(),
-        "a query never invents availability"
+        .replace(
+            &format!("end_utc={}", proposed.end_utc),
+            &format!("end_utc={}", proposed.end_utc + 60),
+        );
+    let rejected = fixture.route("GET", &unoffered, Value::Null).await;
+    let rejected: Value = serde_json::from_slice(&bytes(rejected).await).expect("unoffered page");
+    assert!(rejected["suggested_slot"].is_null());
+    assert_eq!(
+        rejected["model"]["slots"]["rows"]["event_type"],
+        "consultation&60"
     );
 }
 

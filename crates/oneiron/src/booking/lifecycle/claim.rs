@@ -19,7 +19,9 @@ use super::types::{
 };
 use crate::booking::config::ClaimClassDescriptorRow;
 use crate::booking::{BookingError, ConstraintObject, EventTypeKey};
-use crate::calendar::claims::{CalendarStatus, CalendarStatusBasis};
+use crate::calendar::claims::{
+    CalendarStatus, CalendarStatusBasis, PREDICATE_CALENDAR_STATUS, decode_status_value,
+};
 use crate::claim::{
     ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSource, ClaimSubject,
 };
@@ -40,6 +42,8 @@ pub fn is_booking_lifecycle_claim_predicate(predicate: &str) -> bool {
 #[serde(deny_unknown_fields)]
 pub struct BookingConfirmationContext {
     pub owner_refs: Vec<String>,
+    /// IANA zone per selected host, in `owner_refs` order, frozen at confirm.
+    pub host_zones: Vec<String>,
     pub booker_ref: String,
     pub visitor_tz: String,
     pub constraint: Option<ConstraintObject>,
@@ -76,7 +80,27 @@ pub(in crate::booking) fn confirmed_start_for_reminder(
 ) -> Result<Option<u64>, BookingError> {
     let rtxn = read_txn(vault)?;
     let facts = read_booking_facts(vault, &rtxn, event_ref)?;
-    Ok((facts.status == BookingStatus::Confirmed).then_some(facts.slot.start))
+    if facts.status != BookingStatus::Confirmed {
+        return Ok(None);
+    }
+    // An inbound calendar-provider cancellation need not change booking.status.
+    // Check the effective CAL head in the same snapshot as the booking and
+    // occurrence, never an unapproved or superseded claim.
+    for claim_id in claims_for_subject(vault, &rtxn, event_ref)? {
+        let body = vault
+            .get_claim_in_txn(&rtxn, &claim_id)
+            .map_err(|error| engine_failure("calendar status read", error))?;
+        if let Some(body) = body.filter(crate::claim::claim_surfaceable)
+            && body.predicate == PREDICATE_CALENDAR_STATUS
+            && decode_status_value(&body.value)
+                .map_err(|error| engine_failure("calendar status decode", error))?
+                .status
+                == CalendarStatus::Cancelled
+        {
+            return Ok(None);
+        }
+    }
+    Ok(Some(facts.slot.start))
 }
 
 /// Creates the EVENT and its four exact booking claims.

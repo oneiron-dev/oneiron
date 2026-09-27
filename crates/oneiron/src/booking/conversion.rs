@@ -54,18 +54,85 @@ pub fn booking_shortlist(
     })
 }
 
-/// A copy-paste link's query hints at a live slot. It grants no authority:
-/// a hold still passes the ordinary oracle and writer revalidation. Unknown,
-/// malformed, or stale intervals are ignored rather than becoming offers.
+/// A link carries the configured event type, selected visitor zone, and one
+/// half-open UTC slot. It is a hint only, never proof that the solver offered
+/// the slot or that a hold is authorized.
+#[derive(Clone, Debug, PartialEq)]
+pub struct BookingSlotLinkHint {
+    pub event_type: super::EventTypeKey,
+    pub visitor_tz: String,
+    pub start_utc: u64,
+    pub end_utc: u64,
+}
+
+fn hex_text(value: &str) -> String {
+    use std::fmt::Write;
+    let mut hex = String::with_capacity(value.len() * 2);
+    for byte in value.bytes() {
+        write!(&mut hex, "{byte:02x}").expect("write to string");
+    }
+    hex
+}
+
+fn decode_hex_text(value: &str, max_bytes: usize) -> Option<String> {
+    if value.is_empty()
+        || value.len() > max_bytes * 2
+        || !value.len().is_multiple_of(2)
+        || !value
+            .bytes()
+            .all(|byte| matches!(byte, b'0'..=b'9' | b'a'..=b'f'))
+    {
+        return None;
+    }
+    let bytes = value
+        .as_bytes()
+        .chunks_exact(2)
+        .map(|pair| u8::from_str_radix(std::str::from_utf8(pair).ok()?, 16).ok())
+        .collect::<Option<Vec<_>>>()?;
+    String::from_utf8(bytes).ok()
+}
+
+/// Parse only the snippet generator's closed query shape. No arbitrary URL
+/// or query member can become an operation argument or an event identifier.
 #[must_use]
-pub fn booking_suggested_slot(slots: &[RankedSlot], query: Option<&str>) -> Option<RankedSlot> {
-    let query = query.filter(|query| query.len() <= 128)?;
-    let (start, end) = query.split_once('&')?;
-    let start = start.strip_prefix("start_utc=")?.parse::<u64>().ok()?;
-    let end = end.strip_prefix("end_utc=")?.parse::<u64>().ok()?;
+pub fn parse_booking_slot_link(query: Option<&str>) -> Option<BookingSlotLinkHint> {
+    let mut parts = query.filter(|query| query.len() <= 512)?.split('&');
+    let event_type = decode_hex_text(parts.next()?.strip_prefix("event_type=")?, 64)?;
+    let visitor_tz = decode_hex_text(parts.next()?.strip_prefix("visitor_tz=")?, 64)?;
+    let start_utc = parts
+        .next()?
+        .strip_prefix("start_utc=")?
+        .parse::<u64>()
+        .ok()?;
+    let end_utc = parts
+        .next()?
+        .strip_prefix("end_utc=")?
+        .parse::<u64>()
+        .ok()?;
+    if parts.next().is_some()
+        || event_type.trim().is_empty()
+        || start_utc >= end_utc
+        || booking_zoned_time(start_utc, &visitor_tz).is_err()
+    {
+        return None;
+    }
+    Some(BookingSlotLinkHint {
+        event_type: super::EventTypeKey(event_type),
+        visitor_tz,
+        start_utc,
+        end_utc,
+    })
+}
+
+/// A parsed hint selects only an exact slot in the fresh solver answer.
+#[must_use]
+pub fn booking_suggested_slot(
+    slots: &[RankedSlot],
+    hint: &BookingSlotLinkHint,
+) -> Option<RankedSlot> {
     slots
         .iter()
-        .find(|slot| slot.start_utc == start && slot.end_utc == end)
+        .find(|slot| slot.start_utc == hint.start_utc && slot.end_utc == hint.end_utc)
         .cloned()
 }
 
@@ -311,6 +378,7 @@ pub fn booking_display_zones(
 pub fn booking_slots_snippet(
     origin: &str,
     page_token: &PublicBookingPageToken,
+    event_type: &super::EventTypeKey,
     slots: &[RankedSlot],
     zone: &str,
     introduction: &str,
@@ -341,6 +409,8 @@ pub fn booking_slots_snippet(
         return Err(ConversionError::InvalidToken);
     }
     if !(1..=2).contains(&slots.len())
+        || event_type.0.trim().is_empty()
+        || event_type.0.len() > 64
         || introduction.trim().is_empty()
         || optional_link_label.trim().is_empty()
         || introduction.len() > 4096
@@ -352,11 +422,13 @@ pub fn booking_slots_snippet(
         return Err(ConversionError::InvalidConfig);
     }
     let page = format!("{origin}{PUBLIC_BOOKING_ROUTE_PREFIX}/{}", page_token.0);
+    let event_hex = hex_text(&event_type.0);
+    let zone_hex = hex_text(zone);
     let mut lines = vec![introduction.to_owned()];
     for slot in slots {
         let local = booking_zoned_time(slot.start_utc, zone)?;
         lines.push(format!(
-            "[{} ({})]({page}?start_utc={}&end_utc={})",
+            "[{} ({})]({page}?event_type={event_hex}&visitor_tz={zone_hex}&start_utc={}&end_utc={})",
             local.local, local.zone, slot.start_utc, slot.end_utc
         ));
     }
