@@ -756,7 +756,7 @@
      "path": "src/agent_dispatch/workflow_host.rs",
      "purpose": "Typed headless host door for running the one ready workflow leaf",
      "surface": {
-      "fn": 1
+      "fn": 2
      }
     },
     {
@@ -780,7 +780,7 @@
      "path": "src/agent_dispatch/workflow_record.rs",
      "purpose": "Durable, inert workflow admission and result provenance",
      "surface": {
-      "crate-vis": 10,
+      "crate-vis": 11,
       "enum": 1,
       "fn": 1,
       "struct": 2
@@ -9704,7 +9704,7 @@
      "purpose": "Recoverable output references and local derived summaries (ARCH-0026)",
      "surface": {
       "enum": 2,
-      "fn": 4,
+      "fn": 7,
       "struct": 4
      }
     },
@@ -11590,7 +11590,8 @@
      "kind": "src",
      "notable": [
       "ContextResolutionRequest",
-      "ResolvedContextProjection"
+      "ResolvedContextProjection",
+      "WorkflowOutputContextRef"
      ],
      "path": "src/context_projection/resolution.rs",
      "purpose": "Dispatch-time resolution of a `ContextSpec` against live vault state",
@@ -11598,7 +11599,7 @@
       "const": 2,
       "crate-vis": 1,
       "fn": 2,
-      "struct": 2
+      "struct": 3
      }
     },
     {
