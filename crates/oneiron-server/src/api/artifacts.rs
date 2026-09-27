@@ -60,7 +60,7 @@ pub(crate) async fn serve_artifact_root(
     Path(artifact): Path<String>,
     Query(query): Query<ArtifactServeQuery>,
 ) -> Result<Response, EnvelopedApiError> {
-    let response = serve_artifact_file(server, artifact, "", query, &headers, None)?;
+    let response = serve_artifact_file(server, artifact, "", query, &headers, None, None)?;
     if !uri.path().ends_with('/') {
         return artifact_root_redirect_response(&uri);
     }
@@ -74,8 +74,25 @@ pub(crate) async fn serve_artifact_path(
     Path((artifact, path)): Path<(String, String)>,
     Query(query): Query<ArtifactServeQuery>,
 ) -> Result<Response, EnvelopedApiError> {
-    let (token, file_path) = artifact_token_route_path(&path);
-    let response = serve_artifact_file(server, artifact, file_path, query, &headers, token)?;
+    let (token, selected, file_path) = artifact_token_route_path(&path)?;
+    let explicit_query =
+        query.channel.is_some() || query.fork_hash.is_some() || query.blob_version.is_some();
+    if token.is_some() && selected.is_some() && explicit_query {
+        return Err(ApiError::not_found("artifact", None).into());
+    }
+    let query_selector = if token.is_some() && selected.is_none() && explicit_query {
+        Some(artifact_snapshot_selector(&query)?)
+    } else {
+        None
+    };
+    let response = serve_artifact_file(
+        server, artifact, file_path, query, &headers, token, selected,
+    )?;
+    if let (Some(token), Some(selector)) = (token, query_selector) {
+        // Canonicalize a query-selected bundle BEFORE navigation. A browser
+        // drops a document's query when it requests relative JS/CSS/links.
+        return artifact_selection_redirect_response(&uri, token, selector, file_path);
+    }
     if token.is_some() && file_path.is_empty() && !uri.path().ends_with('/') {
         return artifact_root_redirect_response(&uri);
     }
@@ -89,8 +106,9 @@ pub(crate) fn serve_artifact_file(
     query: ArtifactServeQuery,
     request_headers: &HeaderMap,
     token: Option<&str>,
+    selected: Option<oneiron::ArtifactSnapshotSelector>,
 ) -> Result<Response, EnvelopedApiError> {
-    let selector = artifact_snapshot_selector(&query)?;
+    let selector = selected.map_or_else(|| artifact_snapshot_selector(&query), Ok)?;
     // Only a verified, bound principal can claim membership. An invalid bearer
     // cannot turn an anonymous hit into a different error shape.
     let principal =
@@ -155,14 +173,89 @@ pub(crate) fn artifact_snapshot_selector(
     Ok(oneiron::ArtifactSnapshotSelector::Channel(channel))
 }
 
-/// A capability is a path segment so ordinary relative bundle URLs inherit
-/// it. The reserved `_t` prefix is not a stored bundle path.
-pub(crate) fn artifact_token_route_path(path: &str) -> (Option<&str>, &str) {
+/// The selected export is part of the capability URL namespace. Browsers
+/// resolve relative bundle resources beneath this prefix without a query.
+pub(crate) fn artifact_token_route_path(
+    path: &str,
+) -> Result<
+    (
+        Option<&str>,
+        Option<oneiron::ArtifactSnapshotSelector>,
+        &str,
+    ),
+    EnvelopedApiError,
+> {
     let Some(rest) = path.strip_prefix("_t/") else {
-        return (None, path);
+        return Ok((None, None, path));
     };
-    let (token, file_path) = rest.split_once('/').unwrap_or((rest, ""));
-    (Some(token), file_path)
+    let (token, path) = rest.split_once('/').unwrap_or((rest, ""));
+    let Some((kind, tail)) = path.split_once('/') else {
+        return Ok((Some(token), None, path));
+    };
+    let parsed = match kind {
+        "c" => {
+            let (channel, file) = tail.split_once('/').unwrap_or((tail, ""));
+            let channel = oneiron::ArtifactPointerChannel::parse(channel)
+                .map_err(|_| ApiError::not_found("artifact", None))?;
+            Some((oneiron::ArtifactSnapshotSelector::Channel(channel), file))
+        }
+        "f" => {
+            let (hash, file) = tail.split_once('/').unwrap_or((tail, ""));
+            let hash = oneiron::parse_codebase_fork_hash_hex(hash)
+                .map_err(|_| ApiError::not_found("artifact", None))?;
+            Some((oneiron::ArtifactSnapshotSelector::ForkHash(hash), file))
+        }
+        "b" => {
+            let (version, file) = tail.split_once('/').unwrap_or((tail, ""));
+            let version = version
+                .parse::<u64>()
+                .ok()
+                .filter(|n| *n > 0)
+                .ok_or_else(|| ApiError::not_found("artifact", None))?;
+            Some((
+                oneiron::ArtifactSnapshotSelector::BlobVersion(version),
+                file,
+            ))
+        }
+        _ => None,
+    };
+    if let Some((selector, file)) = parsed {
+        Ok((Some(token), Some(selector), file))
+    } else {
+        Ok((Some(token), None, path))
+    }
+}
+
+fn artifact_selection_redirect_response(
+    uri: &Uri,
+    token: &str,
+    selector: oneiron::ArtifactSnapshotSelector,
+    file_path: &str,
+) -> Result<Response, EnvelopedApiError> {
+    let segment = match selector {
+        oneiron::ArtifactSnapshotSelector::Channel(channel) => format!("c/{}", channel.as_str()),
+        oneiron::ArtifactSnapshotSelector::ForkHash(hash) => {
+            format!("f/{}", oneiron::artifact_hex(&hash))
+        }
+        oneiron::ArtifactSnapshotSelector::BlobVersion(version) => format!("b/{version}"),
+        _ => return Err(ApiError::not_found("artifact", None).into()),
+    };
+    let prefix = uri
+        .path()
+        .split_once("/_t/")
+        .map(|(before, _)| before)
+        .ok_or_else(|| ApiError::not_found("artifact", None))?;
+    let target = format!("{prefix}/_t/{token}/{segment}/{file_path}");
+    let mut response = Response::new(Body::empty());
+    *response.status_mut() = StatusCode::PERMANENT_REDIRECT;
+    response
+        .headers_mut()
+        .insert(REFERRER_POLICY, HeaderValue::from_static("no-referrer"));
+    response.headers_mut().insert(
+        LOCATION,
+        HeaderValue::from_str(&target).map_err(|_| ApiError::not_found("artifact", None))?,
+    );
+    Ok(response)
 }
 
 pub(crate) fn normalize_artifact_route_path(route_path: &str) -> String {

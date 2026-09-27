@@ -227,7 +227,6 @@ struct ArtifactPublishAdmission {
     gate_id: GateDecisionId,
     occurred_at: u64,
     stale_taint_override: bool,
-    #[serde(default)]
     serve_tier: ArtifactServeTier,
 }
 

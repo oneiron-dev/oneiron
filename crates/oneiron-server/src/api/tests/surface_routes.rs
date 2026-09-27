@@ -1471,6 +1471,23 @@ async fn artifact_tiers_bind_tokens_and_live_world_grants_without_an_existence_o
             .unwrap(),
     )
     .await;
+    assert_eq!(direct.0, StatusCode::PERMANENT_REDIRECT);
+    let direct_url = direct.1.get(LOCATION).unwrap().to_str().unwrap();
+    assert_eq!(
+        direct_url,
+        format!(
+            "/a/site/_t/{token}/f/{}/index.html",
+            oneiron::artifact_hex(&hash)
+        )
+    );
+    let direct = route_bytes(
+        server.clone(),
+        Request::builder()
+            .uri(direct_url)
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await;
     assert_eq!(direct.0, StatusCode::OK);
     assert_eq!(direct.1.get(CACHE_CONTROL).unwrap(), "private, no-store");
 
@@ -1593,6 +1610,320 @@ async fn artifact_tiers_bind_tokens_and_live_world_grants_without_an_existence_o
             (missing.0, stable_error(&missing.2))
         );
     }
+    let member_grant = oneiron::EntityId::from_hex(&creation.grant_refs[0]).unwrap();
+    let disconnect = bind_artifact_member_to_divergent_pacts(&server.vault, member_grant);
+    let discarded = route_bytes(
+        server.clone(),
+        core_request_with_principal_ref("GET", "/a/site/", "core:read", &member.to_hex(), None),
+    )
+    .await;
+    assert_eq!(
+        (discarded.0, stable_error(&discarded.2)),
+        (missing.0, stable_error(&missing.2))
+    );
+    let now = server.vault.now_recorded_at();
+    server
+        .vault
+        .put_authority_log_entry(
+            &disconnect,
+            oneiron::TimeRange {
+                start: now,
+                end: now,
+            },
+            now,
+        )
+        .unwrap();
+    assert!(matches!(
+        oneiron::authority::federation_grant_activation(
+            &server.vault.authority_fold().unwrap(),
+            &member_grant
+        ),
+        oneiron::authority::FederationGrantActivation::Inactive(
+            oneiron::authority::FederationPactStatus::Disconnected
+        )
+    ));
+    let terminated = route_bytes(
+        server.clone(),
+        core_request_with_principal_ref("GET", "/a/site/", "core:read", &member.to_hex(), None),
+    )
+    .await;
+    assert_eq!(
+        (terminated.0, stable_error(&terminated.2)),
+        (missing.0, stable_error(&missing.2))
+    );
+    server
+        .vault
+        .unpublish_artifact_pointer("site", oneiron::ArtifactPointerChannel::Published)
+        .unwrap();
+    let revoked = route_bytes(
+        server,
+        core_request_with_principal_ref(
+            "GET",
+            &format!(
+                "/a/site/index.html?forkHash={}",
+                oneiron::artifact_hex(&hash)
+            ),
+            "core:read",
+            &member.to_hex(),
+            None,
+        ),
+    )
+    .await;
+    assert_eq!(
+        (revoked.0, stable_error(&revoked.2)),
+        (missing.0, stable_error(&missing.2))
+    );
+}
+
+#[tokio::test]
+async fn preview_link_bundle_keeps_its_selector_for_relative_assets_and_navigation() {
+    let (_dir, server) = test_server_with_config(SyncServerConfig {
+        auth_secret: Some("secret".into()),
+        allow_unauthenticated: false,
+        ..Default::default()
+    });
+    let repo = create_artifact_repo(
+        b"<script src=\"app.js\"></script><link rel=\"stylesheet\" href=\"style.css\"><a href=\"next.html\">next</a>",
+    );
+    std::fs::write(repo.path().join("app.js"), b"window.preview = true;\n").unwrap();
+    std::fs::write(repo.path().join("style.css"), b"body { color: blue; }\n").unwrap();
+    std::fs::write(repo.path().join("next.html"), b"preview next\n").unwrap();
+    run_artifact_git(repo.path(), &["add", "."]);
+    run_artifact_git(repo.path(), &["commit", "-m", "preview bundle"]);
+    let preview = ingest_artifact_snapshot(&server, repo.path(), "site", 10);
+    let (tier, token) = oneiron::artifact_hosting::ArtifactServeTier::mint_link_token();
+    server
+        .vault
+        .publish_artifact_pointer_with_tier(
+            "site",
+            oneiron::ArtifactPointerChannel::Preview,
+            &preview.snapshot.fork_hash,
+            tier,
+        )
+        .unwrap();
+    let missing = route_bytes(
+        server.clone(),
+        Request::builder()
+            .uri("/a/missing/")
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await;
+    let requested = format!("/a/site/_t/{token}/?channel=preview");
+    let landing = route_bytes(
+        server.clone(),
+        Request::builder()
+            .uri(&requested)
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(landing.0, StatusCode::PERMANENT_REDIRECT);
+    let target = landing.1.get(LOCATION).unwrap().to_str().unwrap();
+    assert_eq!(target, format!("/a/site/_t/{token}/c/preview/"));
+    let loaded = route_bytes(
+        server.clone(),
+        Request::builder().uri(target).body(Body::empty()).unwrap(),
+    )
+    .await;
+    assert_eq!(loaded.0, StatusCode::OK);
+    assert!(
+        std::str::from_utf8(&loaded.2)
+            .unwrap()
+            .contains("src=\"app.js\"")
+    );
+    for (relative, preview_bytes) in [
+        ("app.js", b"window.preview = true;\n".as_slice()),
+        ("style.css", b"body { color: blue; }\n".as_slice()),
+        ("next.html", b"preview next\n".as_slice()),
+    ] {
+        let asset = route_bytes(
+            server.clone(),
+            Request::builder()
+                .uri(format!("{target}{relative}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await;
+        assert_eq!(asset.0, StatusCode::OK, "{relative}");
+        assert_eq!(asset.2.as_ref(), preview_bytes, "{relative}");
+        assert_eq!(asset.1.get(CACHE_CONTROL).unwrap(), "private, no-store");
+    }
+    let absent_published = route_bytes(
+        server.clone(),
+        Request::builder()
+            .uri(format!("/a/site/_t/{token}/app.js"))
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(absent_published.0, missing.0);
+
+    std::fs::write(
+        repo.path().join("index.html"),
+        b"<script src=\"app.js\"></script>public",
+    )
+    .unwrap();
+    std::fs::write(repo.path().join("app.js"), b"window.published = true;\n").unwrap();
+    std::fs::write(repo.path().join("style.css"), b"body { color: red; }\n").unwrap();
+    std::fs::write(repo.path().join("next.html"), b"published next\n").unwrap();
+    run_artifact_git(repo.path(), &["add", "."]);
+    run_artifact_git(repo.path(), &["commit", "-m", "published bundle"]);
+    let published = ingest_artifact_snapshot(&server, repo.path(), "site", 20);
+    server
+        .vault
+        .publish_artifact_pointer_with_tier(
+            "site",
+            oneiron::ArtifactPointerChannel::Published,
+            &published.snapshot.fork_hash,
+            oneiron::artifact_hosting::ArtifactServeTier::Public,
+        )
+        .unwrap();
+    let published_asset = route_bytes(
+        server.clone(),
+        Request::builder()
+            .uri("/a/site/app.js")
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(published_asset.2.as_ref(), b"window.published = true;\n");
+    for (relative, preview_bytes) in [
+        ("app.js", b"window.preview = true;\n".as_slice()),
+        ("style.css", b"body { color: blue; }\n".as_slice()),
+        ("next.html", b"preview next\n".as_slice()),
+    ] {
+        let asset = route_bytes(
+            server.clone(),
+            Request::builder()
+                .uri(format!("{target}{relative}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await;
+        assert_eq!(asset.0, StatusCode::OK);
+        assert_eq!(asset.2.as_ref(), preview_bytes);
+    }
+    let hash_landing = route_bytes(
+        server.clone(),
+        Request::builder()
+            .uri(format!(
+                "/a/site/_t/{token}/?forkHash={}",
+                oneiron::artifact_hex(&preview.snapshot.fork_hash)
+            ))
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(hash_landing.0, StatusCode::PERMANENT_REDIRECT);
+    let hash_root = hash_landing.1.get(LOCATION).unwrap().to_str().unwrap();
+    assert_eq!(
+        hash_root,
+        format!(
+            "/a/site/_t/{token}/f/{}/",
+            oneiron::artifact_hex(&preview.snapshot.fork_hash)
+        )
+    );
+    let hash_asset = route_bytes(
+        server.clone(),
+        Request::builder()
+            .uri(format!("{hash_root}app.js"))
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(hash_asset.0, StatusCode::OK);
+    assert_eq!(hash_asset.2.as_ref(), b"window.preview = true;\n");
+    let wrong = route_bytes(
+        server.clone(),
+        Request::builder()
+            .uri(format!("/a/site/_t/{}/c/preview/app.js", "0".repeat(64)))
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(wrong.0, missing.0);
+    server
+        .vault
+        .unpublish_artifact_pointer("site", oneiron::ArtifactPointerChannel::Preview)
+        .unwrap();
+    let dead_hash = route_bytes(
+        server.clone(),
+        Request::builder()
+            .uri(format!("{hash_root}app.js"))
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(dead_hash.0, missing.0);
+    let dead = route_bytes(
+        server,
+        Request::builder()
+            .uri(format!("{target}app.js"))
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(dead.0, missing.0);
+}
+
+#[tokio::test]
+async fn blob_link_and_member_tiers_follow_pact_revocation_and_pointer_death() {
+    fn stable_error(bytes: &Bytes) -> Value {
+        let mut body: Value = serde_json::from_slice(bytes).unwrap();
+        body["error"].as_object_mut().unwrap().remove("requestId");
+        body
+    }
+    let (_dir, server) = test_server_with_config(SyncServerConfig {
+        auth_secret: Some("secret".to_owned()),
+        allow_unauthenticated: false,
+        ..Default::default()
+    });
+    let owner = oneiron::EntityId::now();
+    let member = oneiron::EntityId::now();
+    let stranger = oneiron::EntityId::now();
+    for id in [owner, member, stranger] {
+        server
+            .vault
+            .put_entity(
+                &id,
+                oneiron::registry::ENTITY_TYPE_PERSON,
+                oneiron::TimeRange { start: 1, end: 1 },
+                1,
+                b"human",
+            )
+            .unwrap();
+    }
+    let authenticated_owner = server
+        .vault
+        .authenticate_owner(
+            owner,
+            &owner.to_hex(),
+            true,
+            oneiron::store::GateDecisionId::now(),
+        )
+        .unwrap();
+    let creation = server
+        .vault
+        .initialize_shared_vault(
+            &authenticated_owner,
+            42,
+            None,
+            &[oneiron::federation::InitialSharedMember {
+                member_ref: member,
+                role: Some(oneiron::federation::FederationGrantRole::Viewer),
+            }],
+            10,
+        )
+        .unwrap();
+    let missing = route_bytes(
+        server.clone(),
+        Request::builder()
+            .uri("/a/missing/")
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await;
     // The same grant law applies to pinned blob exports and their immutable
     // version URL, not just CODE_ARTIFACT bundles.
     let blob = oneiron::EntityId::now();
@@ -1668,6 +1999,20 @@ async fn artifact_tiers_bind_tokens_and_live_world_grants_without_an_existence_o
             .unwrap(),
     )
     .await;
+    assert_eq!(linked_blob.0, StatusCode::PERMANENT_REDIRECT);
+    let blob_target = linked_blob.1.get(LOCATION).unwrap().to_str().unwrap();
+    assert_eq!(
+        blob_target,
+        format!("/a/{}/_t/{blob_token}/b/{version}/export", blob.to_hex())
+    );
+    let linked_blob = route_bytes(
+        server.clone(),
+        Request::builder()
+            .uri(blob_target)
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await;
     assert_eq!(linked_blob.0, StatusCode::OK);
     assert_eq!(
         linked_blob.1.get(CACHE_CONTROL).unwrap(),
@@ -1697,15 +2042,6 @@ async fn artifact_tiers_bind_tokens_and_live_world_grants_without_an_existence_o
 
     let member_grant = oneiron::EntityId::from_hex(&creation.grant_refs[0]).unwrap();
     let disconnect = bind_artifact_member_to_divergent_pacts(&server.vault, member_grant);
-    let discarded = route_bytes(
-        server.clone(),
-        core_request_with_principal_ref("GET", "/a/site/", "core:read", &member.to_hex(), None),
-    )
-    .await;
-    assert_eq!(
-        (discarded.0, stable_error(&discarded.2)),
-        (missing.0, stable_error(&missing.2))
-    );
     let blob_discarded = route_bytes(
         server.clone(),
         core_request_with_principal_ref(
@@ -1733,24 +2069,6 @@ async fn artifact_tiers_bind_tokens_and_live_world_grants_without_an_existence_o
             now,
         )
         .unwrap();
-    assert!(matches!(
-        oneiron::authority::federation_grant_activation(
-            &server.vault.authority_fold().unwrap(),
-            &member_grant
-        ),
-        oneiron::authority::FederationGrantActivation::Inactive(
-            oneiron::authority::FederationPactStatus::Disconnected
-        )
-    ));
-    let terminated = route_bytes(
-        server.clone(),
-        core_request_with_principal_ref("GET", "/a/site/", "core:read", &member.to_hex(), None),
-    )
-    .await;
-    assert_eq!(
-        (terminated.0, stable_error(&terminated.2)),
-        (missing.0, stable_error(&missing.2))
-    );
     let blob_terminated = route_bytes(
         server.clone(),
         core_request_with_principal_ref("GET", &blob_route, "core:read", &member.to_hex(), None),
@@ -1777,28 +2095,6 @@ async fn artifact_tiers_bind_tokens_and_live_world_grants_without_an_existence_o
     .await;
     assert_eq!(
         (dead_blob.0, stable_error(&dead_blob.2)),
-        (missing.0, stable_error(&missing.2))
-    );
-    server
-        .vault
-        .unpublish_artifact_pointer("site", oneiron::ArtifactPointerChannel::Published)
-        .unwrap();
-    let revoked = route_bytes(
-        server,
-        core_request_with_principal_ref(
-            "GET",
-            &format!(
-                "/a/site/index.html?forkHash={}",
-                oneiron::artifact_hex(&hash)
-            ),
-            "core:read",
-            &member.to_hex(),
-            None,
-        ),
-    )
-    .await;
-    assert_eq!(
-        (revoked.0, stable_error(&revoked.2)),
         (missing.0, stable_error(&missing.2))
     );
 }
