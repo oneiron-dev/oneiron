@@ -111,3 +111,53 @@ pub(crate) trait ShortIdStoreMaintenance: Transactions {
     fn port_short_id_recompute_hashes(&self, txn: &mut Self::Write<'_>) -> Result<(u64, u64)>;
     fn port_short_id_mapping_exists(&self, txn: &Self::Read<'_>, id: &EntityId) -> Result<bool>;
 }
+
+/// Already-authorized internal batch and repair writes. The caller retains its
+/// domain admission, index maintenance, revision capture and transaction.
+/// Unlike `EntityStore::port_entity_put`, these must not recurse through Batch.
+pub(crate) trait EntityStoreStaging: Transactions {
+    fn port_stage_entity_row(
+        &self,
+        txn: &mut Self::Write<'_>,
+        id: &EntityId,
+        encoded: &[u8],
+    ) -> Result<()>;
+    fn port_remove_entity_row(&self, txn: &mut Self::Write<'_>, id: &EntityId) -> Result<bool>;
+}
+
+/// Paired physical edge writes after the domain's validation. A single method
+/// keeps the forward and reverse indexes in one caller-owned transaction.
+pub(crate) trait EdgeStoreStaging: Transactions {
+    /// Raw value is needed only by metadata-preserving operational setters.
+    fn port_edge_encoded(
+        &self,
+        txn: &Self::Read<'_>,
+        src: &EntityId,
+        kind: crate::EdgeKind,
+        dst: &EntityId,
+    ) -> Result<Option<Vec<u8>>>;
+    fn port_stage_edge_rows(
+        &self,
+        txn: &mut Self::Write<'_>,
+        src: &EntityId,
+        kind: crate::EdgeKind,
+        dst: &EntityId,
+        encoded: &[u8],
+    ) -> Result<()>;
+    fn port_remove_edge_rows(
+        &self,
+        txn: &mut Self::Write<'_>,
+        src: &EntityId,
+        kind: crate::EdgeKind,
+        dst: &EntityId,
+    ) -> Result<bool>;
+}
+
+/// Physical edge inventory for canonical snapshots, not user-facing graph reads.
+/// Raw bytes preserve the storage-ABI payload and malformed rows for recovery.
+pub(crate) trait EdgeStoreInventory: Transactions {
+    fn port_edge_rows_raw<'a>(
+        &self,
+        txn: &'a Self::Read<'_>,
+    ) -> Result<super::PortRows<'a, (Vec<u8>, Vec<u8>)>>;
+}

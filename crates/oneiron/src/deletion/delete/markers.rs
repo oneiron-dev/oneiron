@@ -21,7 +21,8 @@ impl Vault {
         id: &EntityId,
         tombstone: &TombstoneValueV2,
     ) -> Result<bool> {
-        let Some(raw) = self.store.entities.get(wtxn, id.as_bytes())? else {
+        let Some(raw) = crate::ports::EntityStoreRead::port_entity_raw(&self.store, wtxn, id)?
+        else {
             return Ok(false);
         };
         let header = crate::batch::EntityMetadataHeader::parse(&raw)

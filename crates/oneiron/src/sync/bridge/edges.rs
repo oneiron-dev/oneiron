@@ -486,9 +486,14 @@ pub(super) fn committed_edge_state_matches(vault: &Vault, edge_key: &[u8; 33], b
     let Ok(rtxn) = vault.store.env.read_txn() else {
         return false;
     };
+    let Ok((source, kind, target)) = crate::edge::parse_strict_edge_record_key(edge_key) else {
+        return false;
+    };
     matches!(
-        vault.store.edges_out.get(&rtxn, edge_key),
-        Ok(Some(existing)) if *existing == *buf
+        crate::ports::EdgeStoreStaging::port_edge_encoded(
+            &vault.store, &rtxn, &source, kind, &target,
+        ),
+        Ok(Some(existing)) if existing == buf
     )
 }
 

@@ -4,6 +4,14 @@ impl EntityStoreRead for Memory {
     fn port_entity_raw(&self, txn: &Snapshot, id: &EntityId) -> Result<Option<Vec<u8>>> {
         Ok(txn.entities.get(id).map(EntityRecord::encode))
     }
+    fn port_entity_raw_records<'a>(
+        &self,
+        txn: &'a Snapshot,
+    ) -> Result<PortRows<'a, (EntityId, Vec<u8>)>> {
+        Ok(Box::new(
+            txn.entities.iter().map(|(id, row)| Ok((*id, row.encode()))),
+        ))
+    }
     fn port_entity_records<'a>(
         &self,
         txn: &'a Snapshot,
@@ -130,6 +138,47 @@ impl EntityStoreRead for Memory {
 }
 
 impl EdgeStoreRead for Memory {
+    fn port_edge_has_any(
+        &self,
+        txn: &Snapshot,
+        center: &EntityId,
+        direction: EdgeDirection,
+    ) -> Result<bool> {
+        Ok(txn.edges.keys().any(|(source, _, target)| {
+            (direction != EdgeDirection::In && source == center)
+                || (direction != EdgeDirection::Out && target == center)
+        }))
+    }
+    fn port_edge_peers<'a>(
+        &self,
+        txn: &'a Snapshot,
+        center: &EntityId,
+        direction: EdgeDirection,
+        kind: EdgeKind,
+    ) -> Result<PortRows<'a, EntityId>> {
+        let center = *center;
+        let rows = [EdgeDirection::Out, EdgeDirection::In]
+            .into_iter()
+            .filter(move |selected| direction == EdgeDirection::Both || *selected == direction)
+            .flat_map(move |selected| {
+                txn.edges
+                    .keys()
+                    .filter_map(move |(source, stored_kind, target)| {
+                        (*stored_kind == kind as u8
+                            && (if selected == EdgeDirection::Out {
+                                *source
+                            } else {
+                                *target
+                            }) == center)
+                            .then_some(Ok(if selected == EdgeDirection::Out {
+                                *target
+                            } else {
+                                *source
+                            }))
+                    })
+            });
+        Ok(Box::new(rows))
+    }
     fn port_edge_cursor<'a>(
         &self,
         txn: &'a Snapshot,
@@ -322,5 +371,21 @@ impl RetrievalIndexExecution for Memory {
             rows.clear();
         }
         Ok(rows)
+    }
+}
+
+impl EdgeStoreInventory for Memory {
+    fn port_edge_rows_raw<'a>(
+        &self,
+        txn: &'a Snapshot,
+    ) -> Result<PortRows<'a, (Vec<u8>, Vec<u8>)>> {
+        Ok(Box::new(txn.edges.iter().map(
+            |((src, kind, dst), value)| {
+                let kind =
+                    EdgeKind::try_from_u8(*kind).ok_or(Error::CorruptedIndex("edge kind"))?;
+                let key = crate::store::Store::encode_edge_key(src, kind, dst);
+                Ok((key.to_vec(), value.clone()))
+            },
+        )))
     }
 }

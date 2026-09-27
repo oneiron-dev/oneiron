@@ -138,10 +138,7 @@ fn require_type(
     id: &EntityId,
     kind: u8,
 ) -> crate::Result<Vec<u8>> {
-    let raw = vault
-        .store
-        .entities
-        .get(txn, id.as_bytes())?
+    let raw = crate::ports::EntityStoreRead::port_entity_raw(&vault.store, txn, id)?
         .ok_or(Error::EntityNotFound)?;
     let header = crate::batch::EntityMetadataHeader::parse(&raw)
         .ok_or(Error::CorruptedIndex("extraction source header"))?;

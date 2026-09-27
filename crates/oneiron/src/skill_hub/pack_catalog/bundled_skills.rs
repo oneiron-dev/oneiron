@@ -63,7 +63,7 @@ impl Vault {
                 b"oneiron.pack-skill.v1",
                 &[hash.as_bytes()],
             )?;
-            if self.store.entities.get(txn, id.as_bytes())?.is_some() {
+            if crate::ports::EntityStoreRead::port_entity_raw(&self.store, txn, &id)?.is_some() {
                 return Err(invalid("pack skill id collision"));
             }
             self.import_archived_skill_in_txn(

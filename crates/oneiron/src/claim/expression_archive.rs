@@ -98,7 +98,9 @@ impl ExpressionPreferenceArchive {
             if vault.store.off_record_sessions.contains_entity(&row.id)? {
                 return Err(invalid("ID belongs to an off-record overlay"));
             }
-            if let Some(raw) = vault.store.entities.get(txn, row.id.as_bytes())? {
+            if let Some(raw) =
+                crate::ports::EntityStoreRead::port_entity_raw(&vault.store, txn, &row.id)?
+            {
                 if !crate::vault::live_entity_row_in_txn(&vault.store, txn, &row.id)?.is_live() {
                     return Err(invalid("ID collides with a deleted entity"));
                 }
@@ -152,10 +154,7 @@ impl ExpressionPreferenceArchive {
         // Only source and provenance change. Lifecycle, validity and header
         // times must be reconstructed exactly by the native transitions.
         for row in &self.rows {
-            let raw = vault
-                .store
-                .entities
-                .get(txn, row.id.as_bytes())?
+            let raw = crate::ports::EntityStoreRead::port_entity_raw(&vault.store, txn, &row.id)?
                 .ok_or(Error::EntityNotFound)?;
             let header = EntityMetadataHeader::parse(&raw)
                 .ok_or(Error::CorruptedIndex("expression archive header"))?;

@@ -59,7 +59,9 @@ impl Vault {
         // not silently disappear.
         for row in self.store.vectors.iter(&txn)? {
             let (id, _) = row?;
-            let raw = self.store.entities.get(&txn, &id)?;
+            let id =
+                crate::EntityId::from_bytes(id.as_ref().try_into().map_err(|_| codec_error())?)?;
+            let raw = crate::ports::EntityStoreRead::port_entity_raw(&self.store, &txn, &id)?;
             let reconstructable = match raw.as_deref() {
                 Some(raw) => {
                     rebuild::has_embedding_source(raw)?
@@ -97,12 +99,12 @@ impl Vault {
             }
         }
         let mut excluded = std::collections::BTreeSet::<Vec<u8>>::new();
-        for row in self.store.entities.iter(&txn)? {
+        for row in crate::ports::EntityStoreRead::port_entity_raw_records(&self.store, &txn)? {
             let (key, value) = row?;
             if crate::batch::EntityMetadataHeader::parse(&value)
                 .is_some_and(|h| h.entity_type == crate::registry::ENTITY_TYPE_DIAGNOSTIC)
             {
-                excluded.insert(key.to_vec());
+                excluded.insert(key.as_bytes().to_vec());
             }
         }
         let mut databases = BTreeMap::new();

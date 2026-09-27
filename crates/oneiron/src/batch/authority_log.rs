@@ -45,7 +45,7 @@ pub(super) fn check_authority_log_store_key(
             id: *id,
         }));
     }
-    let Some(existing) = store.entities.get(wtxn, id.as_bytes())? else {
+    let Some(existing) = crate::ports::EntityStoreRead::port_entity_raw(store, wtxn, id)? else {
         return Ok(AuthorityLogKeyOccupant::Admissible);
     };
     let existing_type = EntityMetadataHeader::parse(&existing)
@@ -217,9 +217,7 @@ pub(super) fn stored_authority_log_entries(
     {
         let (key, _) = entry?;
         let id = authority_type_index_entity_id(&key)?;
-        let raw = store
-            .entities
-            .get(wtxn, id.as_bytes())?
+        let raw = crate::ports::EntityStoreRead::port_entity_raw(store, wtxn, &id)?
             .ok_or(Error::CorruptedIndex("type index row without entity"))?;
         let header =
             EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity header"))?;
@@ -254,7 +252,7 @@ pub(super) fn validate_companion_register_put(
     record.validate_current_schema_lifecycle_events()?;
     let key = record.key();
 
-    if let Some(existing_raw) = store.entities.get(&*wtxn, id.as_bytes())? {
+    if let Some(existing_raw) = crate::ports::EntityStoreRead::port_entity_raw(store, &*wtxn, id)? {
         let header = EntityMetadataHeader::parse(&existing_raw)
             .ok_or(Error::CorruptedIndex("entity header"))?;
         if header.entity_type == crate::registry::ENTITY_TYPE_FACET {

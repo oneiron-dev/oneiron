@@ -256,10 +256,7 @@ impl Vault {
             }
         }
         self.clear_archive_tombstone_in_txn(wtxn, entity)?;
-        let raw = self
-            .store
-            .entities
-            .get(wtxn, entity.as_bytes())?
+        let raw = crate::ports::EntityStoreRead::port_entity_raw(&self.store, wtxn, entity)?
             .ok_or_else(|| {
                 Error::Maintenance(MaintenanceError::VaultCleanupRestoreNotArchived {
                     entity: entity.to_hex(),

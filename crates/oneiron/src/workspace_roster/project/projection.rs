@@ -16,7 +16,7 @@ fn dependency(
     id: EntityId,
     kind: u8,
 ) -> Result<ProjectRecord> {
-    let Some(raw) = store.entities.get(txn, id.as_bytes())? else {
+    let Some(raw) = crate::ports::EntityStoreRead::port_entity_raw(store, txn, &id)? else {
         if store
             .sync_state
             .get(txn, &crate::deletion::local_hard_delete_key(&id))?
@@ -92,7 +92,7 @@ pub(crate) fn reconcile_project_rooms(
     };
     let mut room_ops = Vec::new();
     for id in touched {
-        let Some(raw) = store.entities.get(txn, id.as_bytes())? else {
+        let Some(raw) = crate::ports::EntityStoreRead::port_entity_raw(store, txn, id)? else {
             continue;
         };
         let header = EntityMetadataHeader::parse(&raw)
@@ -178,7 +178,7 @@ pub(crate) fn reconcile_project_rooms(
     }
     // Generic room writes cannot silently widen the derived membership/scope.
     for id in touched {
-        let Some(raw) = store.entities.get(txn, id.as_bytes())? else {
+        let Some(raw) = crate::ports::EntityStoreRead::port_entity_raw(store, txn, id)? else {
             continue;
         };
         let header = EntityMetadataHeader::parse(&raw)

@@ -178,11 +178,9 @@ fn publication_read_still_rejects_corrupt_surfaceability_states() {
         // Deliberate internal corruption fixture, not a supported write door.
         vault
             .with_write_txn(|txn| {
-                let raw = vault
-                    .store
-                    .entities
-                    .get(txn, claim.as_bytes())?
-                    .expect("row");
+                let raw =
+                    crate::ports::EntityStoreRead::port_entity_raw(&vault.store, txn, &claim)?
+                        .expect("row");
                 let mut changed = raw[..crate::batch::ENTITY_METADATA_HEADER_LEN].to_vec();
                 changed.extend_from_slice(&crate::claim::encode_claim_body(&body)?);
                 vault.store.entities.put(txn, claim.as_bytes(), &changed)?;

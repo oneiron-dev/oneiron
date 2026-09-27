@@ -121,7 +121,9 @@ impl Vault {
             for id in
                 crate::claim::pending_claim_ids_for_producer_in_txn(&self.store, txn, authority)?
             {
-                let Some(bytes) = self.store.entities.get(txn, id.as_bytes())? else {
+                let Some(bytes) =
+                    crate::ports::EntityStoreRead::port_entity_raw(&self.store, txn, &id)?
+                else {
                     continue;
                 };
                 let header = EntityMetadataHeader::parse(&bytes).ok_or_else(invalid)?;

@@ -28,7 +28,7 @@ pub(super) fn reconcile_identity_facet(
     if person == id {
         return Err(Error::CorruptedIndex("persona and facet ids must differ"));
     }
-    if let Some(raw) = store.entities.get(txn, person.as_bytes())? {
+    if let Some(raw) = crate::ports::EntityStoreRead::port_entity_raw(store, txn, &person)? {
         if EntityMetadataHeader::parse(&raw).is_none_or(|h| h.entity_type != ENTITY_TYPE_PERSON) {
             return Err(Error::CorruptedIndex("persona subject is not PERSON"));
         }
@@ -116,7 +116,7 @@ pub(super) fn validate_facet_overwrite(
             }
         }
     }
-    let Some(raw) = store.entities.get(txn, id.as_bytes())? else {
+    let Some(raw) = crate::ports::EntityStoreRead::port_entity_raw(store, txn, &id)? else {
         return Ok(());
     };
     if EntityMetadataHeader::parse(&raw).is_none_or(|h| h.entity_type != ENTITY_TYPE_FACET) {

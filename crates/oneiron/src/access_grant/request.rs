@@ -151,7 +151,7 @@ impl Vault {
         request.decided_by = Some(owner.actor());
         request.decided_at = Some(now);
         if approve {
-            if self.store.entities.get(&txn, id.as_bytes())?.is_some() {
+            if crate::ports::EntityStoreRead::port_entity_raw(&self.store, &txn, &id)?.is_some() {
                 return Err(invalid_grant());
             }
             self.apply_access_grant_body(

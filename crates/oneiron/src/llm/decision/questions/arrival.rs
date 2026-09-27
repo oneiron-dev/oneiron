@@ -7,6 +7,7 @@ use super::{
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::claim::{ClaimBody, ClaimSubject, ScopedReadActorKey};
 use crate::gate::PolicyManifestResolution;
+use crate::ports::{EdgeDirection, EdgeStoreRead};
 use crate::store::Store;
 use crate::{EntityId, Error, Result};
 
@@ -74,7 +75,7 @@ fn project(
     let policy = crate::gate::resolve_policy_manifest(store, txn)?;
     let mut count = 0;
     for id in ids {
-        let Some(raw) = store.entities.get(txn, id.as_bytes())? else {
+        let Some(raw) = crate::ports::EntityStoreRead::port_entity_raw(store, txn, id)? else {
             continue;
         };
         let header = EntityMetadataHeader::parse(&raw)
@@ -242,7 +243,8 @@ pub(super) fn evaluate_fact(
     {
         return Ok(None);
     }
-    let Some(raw) = store.entities.get(txn, answer.claim.as_bytes())? else {
+    let Some(raw) = crate::ports::EntityStoreRead::port_entity_raw(store, txn, &answer.claim)?
+    else {
         return Ok(None);
     };
     let header =
@@ -256,7 +258,7 @@ pub(super) fn evaluate_fact(
     let encoded = encode(answer)?;
     let expected = rmpv::decode::read_value(&mut encoded.as_slice())
         .map_err(|_| Error::CorruptedIndex("outcome answer value"))?;
-    let facets = crate::claim::facet_refs_in_db(&store.edges_out, txn, &answer.claim)?;
+    let facets = crate::claim::facet_refs_in_port(store, txn, &answer.claim)?;
     if crate::vault_cleanup::is_archived_in_txn(store, txn, &answer.claim)?
         || !crate::gate::scoped_read_claim_allowed(policy, &actor, &prediction, &facets)
         || prediction.stale
@@ -318,9 +320,8 @@ fn linked(
     let Some(relation) = relation else {
         return Ok(false);
     };
-    for row in store.edges_out.prefix_iter(txn, unit.as_bytes())? {
-        let (key, value) = row?;
-        let edge = crate::vault::parse_edge_record(&key, &value)?;
+    for edge in store.port_edges(txn, unit, EdgeDirection::Out, None, None)? {
+        let edge = edge?;
         if edge.target == *subject
             && Some(edge.kind) == crate::edge::parse_relation(relation)
             && edge.provenance.is_none_or(|p| {
@@ -343,7 +344,7 @@ pub(super) fn readable(
     if crate::vault_cleanup::is_archived_in_txn(store, txn, id)? {
         return Ok(false);
     }
-    let Some(raw) = store.entities.get(txn, id.as_bytes())? else {
+    let Some(raw) = crate::ports::EntityStoreRead::port_entity_raw(store, txn, id)? else {
         return Ok(false);
     };
     let header =
@@ -355,7 +356,7 @@ pub(super) fn readable(
         return Ok(true);
     }
     let body = crate::claim::decode_claim_body(&raw[ENTITY_METADATA_HEADER_LEN..], true)?;
-    let facets = crate::claim::facet_refs_in_db(&store.edges_out, txn, id)?;
+    let facets = crate::claim::facet_refs_in_port(store, txn, id)?;
     Ok(crate::claim::claim_surfaceable(&body)
         && crate::gate::scoped_read_claim_allowed(policy, actor, &body, &facets))
 }

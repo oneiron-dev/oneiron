@@ -115,30 +115,34 @@ pub(super) fn admit_selected_in_txn(
     // The export's facet closure is ONE hop from a selected seed, never a
     // transitive walk. Re-read both endpoint rows and every live facet stamp
     // from this writer; a stale window cannot preserve a removed seed.
-    for edges in [&vault.store.edges_out, &vault.store.edges_in] {
-        for row in edges.prefix_iter(txn, id.as_bytes())? {
-            spend(&mut budget)?;
-            let (key, value) = row?;
-            let edge = crate::vault::parse_edge_record(&key, &value)?;
-            if edge.kind == EdgeKind::SameAs
-                && !super::scope::document_coreference_context_in_txn(
-                    vault,
-                    txn,
-                    &admission.fold,
-                    selector,
-                    id,
-                    edge.target,
-                )?
-                .allows(id, edge.target)
-            {
-                continue;
-            }
-            if selection
-                .candidate(edge.target, &mut budget)?
-                .is_some_and(|(_, seed)| seed)
-            {
-                return Ok(());
-            }
+    for row in crate::ports::EdgeStoreRead::port_edges(
+        &vault.store,
+        txn,
+        &id,
+        crate::ports::EdgeDirection::Both,
+        None,
+        None,
+    )? {
+        spend(&mut budget)?;
+        let edge = row?;
+        if edge.kind == EdgeKind::SameAs
+            && !super::scope::document_coreference_context_in_txn(
+                vault,
+                txn,
+                &admission.fold,
+                selector,
+                id,
+                edge.target,
+            )?
+            .allows(id, edge.target)
+        {
+            continue;
+        }
+        if selection
+            .candidate(edge.target, &mut budget)?
+            .is_some_and(|(_, seed)| seed)
+        {
+            return Ok(());
         }
     }
     Err(denied())
@@ -221,11 +225,16 @@ impl StoredSelection<'_, '_> {
         };
         let mut seed = false;
         if let Some(facets) = facet_filter(&self.admission.position) {
-            let prefix = crate::vault::edge_kind_prefix(&id, EdgeKind::FacetOf);
-            for row in self.vault.store.edges_out.prefix_iter(self.txn, &prefix)? {
+            for row in crate::ports::EdgeStoreRead::port_edges(
+                &self.vault.store,
+                self.txn,
+                &id,
+                crate::ports::EdgeDirection::Out,
+                Some(EdgeKind::FacetOf),
+                None,
+            )? {
                 spend(budget)?;
-                let (key, value) = row?;
-                let edge = crate::vault::parse_edge_record(&key, &value)?;
+                let edge = row?;
                 let target_type = self.vault.get_entity_type_in_txn(self.txn, &edge.target)?;
                 // The same stored endpoint type table used by the export
                 // mirror: off-table rows neither seed nor suppress selection.

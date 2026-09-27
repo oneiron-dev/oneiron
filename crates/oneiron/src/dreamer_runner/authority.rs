@@ -37,10 +37,7 @@ impl Vault {
         if let Some(raw) = self.store.vault_meta.get(&*txn, ACTOR_KEY)? {
             let raw_id: &[u8] = &raw;
             let id = EntityId::from_bytes(raw_id.try_into().map_err(|_| invalid())?)?;
-            let entity = self
-                .store
-                .entities
-                .get(&*txn, id.as_bytes())?
+            let entity = crate::ports::EntityStoreRead::port_entity_raw(&self.store, &*txn, &id)?
                 .ok_or_else(invalid)?;
             if EntityMetadataHeader::parse(&entity)
                 .is_none_or(|h| h.entity_type != crate::registry::ENTITY_TYPE_PERSON)
@@ -53,7 +50,9 @@ impl Vault {
         // namespace identity across nodes. Queue-local caches do not mint peers.
         let actor =
             crate::codebase::entity_id_from_hash_material(b"oneiron.dreamer.authority.v1", &[])?;
-        if let Some(raw) = self.store.entities.get(&*txn, actor.as_bytes())? {
+        if let Some(raw) =
+            crate::ports::EntityStoreRead::port_entity_raw(&self.store, &*txn, &actor)?
+        {
             if EntityMetadataHeader::parse(&raw)
                 .is_none_or(|h| h.entity_type != crate::registry::ENTITY_TYPE_PERSON)
                 || raw.get(crate::batch::ENTITY_METADATA_HEADER_LEN..)
@@ -151,12 +150,13 @@ impl Vault {
                     || stamp.facet.trim().is_empty()
                     || self.store.vault_meta.get(&txn, ACTOR_KEY)?.as_deref()
                         != Some(stamp.actor.as_bytes().as_slice())
-                    || self
-                        .store
-                        .entities
-                        .get(&txn, stamp.actor.as_bytes())?
-                        .and_then(|raw| EntityMetadataHeader::parse(&raw))
-                        .is_none_or(|h| h.entity_type != crate::registry::ENTITY_TYPE_PERSON)
+                    || crate::ports::EntityStoreRead::port_entity_raw(
+                        &self.store,
+                        &txn,
+                        &stamp.actor,
+                    )?
+                    .and_then(|raw| EntityMetadataHeader::parse(&raw))
+                    .is_none_or(|h| h.entity_type != crate::registry::ENTITY_TYPE_PERSON)
                 {
                     return Err(invalid());
                 }

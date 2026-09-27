@@ -268,13 +268,10 @@ impl Vault {
             .map_err(|_| Error::InvariantViolation("encode Imported test policy"))?;
 
         self.with_write_txn(|wtxn| {
-            let raw =
-                self.store
-                    .entities
-                    .get(wtxn, id.as_bytes())?
-                    .ok_or(Error::InvariantViolation(
-                        "test permit requires a seeded default policy",
-                    ))?;
+            let raw = crate::ports::EntityStoreRead::port_entity_raw(&self.store, wtxn, &id)?
+                .ok_or(Error::InvariantViolation(
+                    "test permit requires a seeded default policy",
+                ))?;
             let header = EntityMetadataHeader::parse(&raw)
                 .ok_or(Error::CorruptedIndex("test policy header"))?;
             if header.entity_type != ENTITY_TYPE_POLICY_MANIFEST
@@ -399,13 +396,10 @@ impl Vault {
             .map_err(|_| Error::InvariantViolation("encode Generated test policy"))?;
 
         self.with_write_txn(|wtxn| {
-            let raw =
-                self.store
-                    .entities
-                    .get(wtxn, id.as_bytes())?
-                    .ok_or(Error::InvariantViolation(
-                        "test permit requires a seeded default policy",
-                    ))?;
+            let raw = crate::ports::EntityStoreRead::port_entity_raw(&self.store, wtxn, &id)?
+                .ok_or(Error::InvariantViolation(
+                    "test permit requires a seeded default policy",
+                ))?;
             let header = EntityMetadataHeader::parse(&raw)
                 .ok_or(Error::CorruptedIndex("test policy header"))?;
             if header.entity_type != ENTITY_TYPE_POLICY_MANIFEST

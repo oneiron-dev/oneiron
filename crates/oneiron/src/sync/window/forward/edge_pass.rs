@@ -9,7 +9,6 @@ use super::{RematCtx, RematLedger};
 use crate::batch::EdgeValueFields;
 use crate::edge::decode_edge_value_for_kind;
 use crate::error::{Error, Result};
-use crate::store::Store;
 
 /// Run the edge pass: iterate the window `edges` map, filter tombstoned
 /// endpoints, byte-compare against LMDB, and write what differs.
@@ -156,8 +155,12 @@ pub(super) fn run(ctx: &RematCtx<'_>, ledger: &mut RematLedger) -> Result<()> {
                     }
                 }
 
-                let src_exists = vault.store.entities.get(&*wtxn, src.as_bytes())?.is_some();
-                let tgt_exists = vault.store.entities.get(&*wtxn, tgt.as_bytes())?.is_some();
+                let src_exists =
+                    crate::ports::EntityStoreRead::port_entity_raw(&vault.store, &*wtxn, &src)?
+                        .is_some();
+                let tgt_exists =
+                    crate::ports::EntityStoreRead::port_entity_raw(&vault.store, &*wtxn, &tgt)?
+                        .is_some();
                 if !src_exists || !tgt_exists {
                     return Ok(EdgeRematOutcome::Deferred);
                 }
@@ -211,19 +214,24 @@ pub(super) fn run(ctx: &RematCtx<'_>, ledger: &mut RematLedger) -> Result<()> {
                     Err(local) => return Err(local),
                 }
 
-                let out_key = Store::encode_edge_key(&src, kind, &tgt);
-                let in_key = Store::encode_edge_key(&tgt, kind, &src);
-                let out_matches = vault
-                    .store
-                    .edges_out
-                    .get(&*wtxn, &out_key)?
-                    .is_some_and(|value| value == buf);
-                let in_matches = vault
-                    .store
-                    .edges_in
-                    .get(&*wtxn, &in_key)?
-                    .is_some_and(|value| value == buf);
-                if out_matches && in_matches {
+                let out_matches = crate::ports::EdgeStoreStaging::port_edge_encoded(
+                    &vault.store,
+                    &*wtxn,
+                    &src,
+                    kind,
+                    &tgt,
+                )?
+                .as_deref()
+                    == Some(buf);
+                if out_matches
+                    && crate::ports::EdgeStoreRead::port_edge_consistent(
+                        &vault.store,
+                        &*wtxn,
+                        &src,
+                        kind,
+                        &tgt,
+                    )?
+                {
                     return Ok(EdgeRematOutcome::Unchanged);
                 }
 

@@ -3,6 +3,7 @@
 use super::{DocAuthorization, EntityDoc, invalid};
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::error::{Error, Result};
+use crate::ports::{EntityStoreRead, EntityStoreStaging};
 use crate::store::Store;
 use crate::vault::{LiveEntityRow, live_entity_row_in_txn};
 use crate::write_envelope::WriteActor;
@@ -209,10 +210,7 @@ impl Vault {
             {
                 return Err(invalid("entity already owns a document"));
             }
-            let raw = self
-                .store
-                .entities
-                .get(txn, entity.as_bytes())?
+            let raw = crate::ports::EntityStoreRead::port_entity_raw(&self.store, txn, entity)?
                 .ok_or(Error::EntityNotFound)?
                 .to_vec();
             let header =
@@ -258,9 +256,12 @@ impl Vault {
             replacement.extend_from_slice(&pointer);
             // The immutable envelope, type/time indexes and other body fields do
             // not change. The only replaced bytes are text -> head pointer.
-            self.store
-                .entities
-                .put(txn, entity.as_bytes(), &replacement)?;
+            crate::ports::EntityStoreStaging::port_stage_entity_row(
+                &self.store,
+                txn,
+                entity,
+                &replacement,
+            )?;
             crate::federation::record_scope::restamp_document_pointer(
                 &self.store,
                 txn,
@@ -348,9 +349,7 @@ pub(crate) fn guard_record_put(
         .get(txn, head_key(entity).as_bytes())?
         .is_some()
     {
-        let old = store
-            .entities
-            .get(txn, entity.as_bytes())?
+        let old = crate::ports::EntityStoreRead::port_entity_raw(store, txn, entity)?
             .ok_or(Error::EntityNotFound)?;
         if old.get(ENTITY_METADATA_HEADER_LEN..) != Some(data) {
             return Err(invalid(
@@ -391,10 +390,8 @@ pub(super) fn move_pointer(
     document: &str,
 ) -> Result<()> {
     let raw = store
-        .entities
-        .get(txn, entity.as_bytes())?
-        .ok_or(Error::EntityNotFound)?
-        .to_vec();
+        .port_entity_raw(txn, entity)?
+        .ok_or(Error::EntityNotFound)?;
     let value = rmpv::decode::read_value(&mut std::io::Cursor::new(
         &raw[ENTITY_METADATA_HEADER_LEN..],
     ))
@@ -419,7 +416,7 @@ pub(super) fn move_pointer(
         &raw[ENTITY_METADATA_HEADER_LEN..],
         &out[ENTITY_METADATA_HEADER_LEN..],
     )?;
-    store.entities.put(txn, entity.as_bytes(), &out)?;
+    store.port_stage_entity_row(txn, entity, &out)?;
     Ok(())
 }
 

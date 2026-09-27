@@ -295,10 +295,7 @@ pub(super) fn read_skill(
     txn: &heed::RoTxn<'_>,
     id: &EntityId,
 ) -> Result<SkillRecord> {
-    let raw = vault
-        .store
-        .entities
-        .get(txn, id.as_bytes())?
+    let raw = crate::ports::EntityStoreRead::port_entity_raw(&vault.store, txn, id)?
         .ok_or(Error::EntityNotFound)?;
     let header = EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity header"))?;
     if header.entity_type != crate::registry::ENTITY_TYPE_SKILL {

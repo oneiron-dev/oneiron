@@ -112,9 +112,7 @@ pub(crate) fn validate_put_in_txn(
     // authority. PERSON rows may arrive later; only the local ledger grants reads.
     if !replicated {
         for person in &body.member_ids {
-            let raw = store
-                .entities
-                .get(txn, person.as_bytes())?
+            let raw = crate::ports::EntityStoreRead::port_entity_raw(store, txn, person)?
                 .ok_or(invalid("member must be a PERSON"))?;
             if EntityMetadataHeader::parse(&raw).is_none_or(|h| h.entity_type != ENTITY_TYPE_PERSON)
             {

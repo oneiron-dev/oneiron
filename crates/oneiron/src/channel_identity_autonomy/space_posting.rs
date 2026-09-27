@@ -118,10 +118,7 @@ impl Vault {
         let head = head_key(identity, space)?;
         self.with_write_txn(|txn| {
             self.autonomy_identity_actor(txn, identity)?;
-            let raw = self
-                .store
-                .entities
-                .get(txn, identity.as_bytes())?
+            let raw = crate::ports::EntityStoreRead::port_entity_raw(&self.store, txn, &identity)?
                 .ok_or_else(invalid_autonomy)?;
             let record = crate::channel_identity::decode_channel_identity_body(
                 &raw[crate::batch::ENTITY_METADATA_HEADER_LEN..],
@@ -218,10 +215,7 @@ impl Vault {
     ) -> Result<PostingState> {
         let head = head_key(identity, space)?;
         let actor = self.autonomy_identity_actor(txn, identity)?;
-        let raw = self
-            .store
-            .entities
-            .get(txn, identity.as_bytes())?
+        let raw = crate::ports::EntityStoreRead::port_entity_raw(&self.store, txn, &identity)?
             .ok_or_else(invalid_autonomy)?;
         let record = crate::channel_identity::decode_channel_identity_body(
             &raw[crate::batch::ENTITY_METADATA_HEADER_LEN..],

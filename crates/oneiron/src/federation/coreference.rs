@@ -1,6 +1,6 @@
 //! Cross-vault same_as links and per-pact share consent (FED-07).
 
-use crate::ports::EntityStoreRead;
+use crate::ports::{EdgeStoreRead, EntityStoreRead};
 use rmpv::Value;
 
 use crate::affect::Vad;
@@ -196,8 +196,10 @@ pub(crate) fn coreference_shared_for_pact_in_txn(
     pact_id: &[u8; COREFERENCE_PACT_ID_LEN],
 ) -> Result<bool> {
     for (source, target) in [(a, b), (b, a)] {
-        let key = crate::store::Store::encode_edge_key(&source, EdgeKind::SameAs, &target);
-        if vault.store.edges_out.get(txn, &key)?.is_some()
+        if vault
+            .store
+            .port_edge_get(txn, &source, EdgeKind::SameAs, &target)?
+            .is_some()
             && coreference_consent_names_pact(vault, txn, source, target, pact_id)?
         {
             return Ok(true);

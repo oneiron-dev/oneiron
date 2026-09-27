@@ -132,7 +132,7 @@ pub(in crate::batch) fn apply_put(
     // for why the mutation cannot ride along with the check.
     let mut authority_dominates_key_squatter = false;
     if let Some(body) = incoming_claim_body {
-        if let Some(prior) = store.entities.get(wtxn, id.as_bytes())?
+        if let Some(prior) = crate::ports::EntityStoreRead::port_entity_raw(store, wtxn, &id)?
             && prior.get(ENTITY_METADATA_HEADER_LEN..) != Some(data)
         {
             crate::blob_artifact::esign::reject_event_delete(store, wtxn, &id)?;
@@ -143,7 +143,7 @@ pub(in crate::batch) fn apply_put(
                     "esign events require the local authenticated organ",
                 ));
             }
-            if let Some(prior) = store.entities.get(wtxn, id.as_bytes())?
+            if let Some(prior) = crate::ports::EntityStoreRead::port_entity_raw(store, wtxn, &id)?
                 && prior.get(ENTITY_METADATA_HEADER_LEN..) != Some(data)
             {
                 return Err(Error::InvalidClaimBody("esign events are append-only"));
@@ -155,7 +155,7 @@ pub(in crate::batch) fn apply_put(
         if is_lexical_query_hint_claim {
             super::lexical_hint::validate_lexical_query_hint(store, wtxn, id, &body, replicated)?;
         }
-        if let Some(prior) = store.entities.get(wtxn, id.as_bytes())?
+        if let Some(prior) = crate::ports::EntityStoreRead::port_entity_raw(store, wtxn, &id)?
             && crate::batch::EntityMetadataHeader::parse(&prior)
                 .is_some_and(|header| header.entity_type == crate::registry::ENTITY_TYPE_CLAIM)
             && crate::claim::decode_claim_body(&prior[ENTITY_METADATA_HEADER_LEN..], true)
@@ -405,7 +405,7 @@ pub(in crate::batch) fn apply_put(
     // the ONE-1604-D1 eviction above takes, and for the same reason: the arm
     // that decides holds a read borrow of `wtxn`.
     let mut optimizer_birth_marker = None;
-    if let Some(old_record) = store.entities.get(wtxn, id.as_bytes())? {
+    if let Some(old_record) = crate::ports::EntityStoreRead::port_entity_raw(store, wtxn, &id)? {
         let (old_type, old_occurred, old_learned) = parse_entity_metadata(&old_record)?;
         previous_skill_record = decode_previous_skill_record(old_type, &old_record)?;
         // ONE-1141 + ONE-1168 (ARCH-0031 amendment): body-changing overwrites
@@ -739,9 +739,7 @@ fn reconcile_replicated_critical_confirm(
     data: &[u8],
     decoded_claim_body: &mut Option<ClaimBody>,
 ) -> Result<Option<Vec<u8>>> {
-    let body_changed = store
-        .entities
-        .get(wtxn, id.as_bytes())?
+    let body_changed = crate::ports::EntityStoreRead::port_entity_raw(store, wtxn, id)?
         .map(|old| {
             old.get(ENTITY_METADATA_HEADER_LEN..)
                 .ok_or(Error::CorruptedIndex("entity header"))
@@ -782,7 +780,7 @@ fn validate_note_birth_put(
     data: &[u8],
 ) -> Result<()> {
     crate::note::decode_note_body_in_txn(store, txn, data)?;
-    if let Some(old) = store.entities.get(txn, id.as_bytes())?
+    if let Some(old) = crate::ports::EntityStoreRead::port_entity_raw(store, txn, id)?
         && old.get(ENTITY_METADATA_HEADER_LEN..) != Some(data)
     {
         return Err(Error::Record(RecordError::InvalidNoteBody(

@@ -7,6 +7,8 @@ use crate::Vault;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::overlay_db::OverlayDb;
+#[cfg(feature = "sync")]
+use crate::ports::{EdgeDirection, EdgeStoreRead};
 
 pub mod model_versioning;
 
@@ -680,7 +682,7 @@ pub(crate) fn device_only_withholds(
     if flagged.contains(id) {
         return Ok(true);
     }
-    let Some(raw) = store.entities.get(txn, id.as_bytes())? else {
+    let Some(raw) = crate::ports::EntityStoreRead::port_entity_raw(store, txn, id)? else {
         return Ok(false);
     };
     let header = crate::batch::EntityMetadataHeader::parse(&raw)
@@ -692,10 +694,14 @@ pub(crate) fn device_only_withholds(
         )
         .is_ok_and(|body| body.world.is_some_and(|world| flagged.contains(&world)))),
         crate::registry::ENTITY_TYPE_NOTE => {
-            let prefix = crate::vault::edge_kind_prefix(id, crate::edge::EdgeKind::InWorld);
-            for row in store.edges_out.prefix_iter(txn, &prefix)? {
-                let (key, value) = row?;
-                if flagged.contains(&crate::vault::parse_edge_record(&key, &value)?.target) {
+            for edge in store.port_edges(
+                txn,
+                id,
+                EdgeDirection::Out,
+                Some(crate::edge::EdgeKind::InWorld),
+                None,
+            )? {
+                if flagged.contains(&edge?.target) {
                     return Ok(true);
                 }
             }

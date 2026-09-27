@@ -586,10 +586,7 @@ fn clone_doc(doc: &LoroDoc) -> Result<LoroDoc> {
 
 fn eligible(vault: &Vault, txn: &heed::RoTxn<'_>, id: EntityId) -> Result<()> {
     crate::note::ensure_citations_ready(&vault.store, txn, id)?;
-    let raw = vault
-        .store
-        .entities
-        .get(txn, id.as_bytes())?
+    let raw = crate::ports::EntityStoreRead::port_entity_raw(&vault.store, txn, &id)?
         .ok_or_else(|| Error::sync_protocol(SyncProtocolValidation::DocumentAdmissionDenied))?;
     let header = crate::batch::EntityMetadataHeader::parse(&raw)
         .ok_or_else(|| Error::sync_protocol(SyncProtocolValidation::DocumentAdmissionDenied))?;

@@ -129,10 +129,7 @@ impl ConsolidationFence {
             if !read.is_entity_readable_with_policy_in(txn, &policy, id)? {
                 return Err(invalid_consolidation("pinned source read revoked"));
             }
-            let raw = vault
-                .store
-                .entities
-                .get(txn, id.as_bytes())?
+            let raw = crate::ports::EntityStoreRead::port_entity_raw(&vault.store, txn, id)?
                 .ok_or_else(|| invalid_consolidation("pinned source missing"))?;
             let header = crate::batch::EntityMetadataHeader::parse(&raw)
                 .ok_or_else(|| invalid_consolidation("pinned source header"))?;
@@ -145,23 +142,15 @@ impl ConsolidationFence {
             }
         }
         for turn in &self.turns {
-            let prefix = [
-                turn.as_bytes().as_slice(),
-                &[crate::edge::EdgeKind::ChildOf as u8],
-            ]
-            .concat();
-            let expected = crate::store::Store::encode_edge_key(
+            let peers = crate::ports::EdgeStoreRead::port_edge_peers(
+                &vault.store,
+                txn,
                 turn,
+                crate::ports::EdgeDirection::Out,
                 crate::edge::EdgeKind::ChildOf,
-                &self.conversation,
-            );
-            let keys = vault
-                .store
-                .edges_out
-                .prefix_iter(txn, &prefix)?
-                .map(|row| row.map(|(key, _)| key.to_vec()))
-                .collect::<std::result::Result<Vec<_>, _>>()?;
-            if keys.len() != 1 || keys[0] != expected {
+            )?
+            .collect::<Result<Vec<_>>>()?;
+            if peers != [self.conversation] {
                 return Err(invalid_consolidation("pinned source partition changed"));
             }
         }

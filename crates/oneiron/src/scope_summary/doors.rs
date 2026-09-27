@@ -124,7 +124,7 @@ pub(crate) fn validate_summary_put(
     kind: u8,
     bytes: &[u8],
 ) -> Result<()> {
-    let previous = store.entities.get(txn, id.as_bytes())?;
+    let previous = crate::ports::EntityStoreRead::port_entity_raw(store, txn, id)?;
     let was_summary = previous.as_ref().is_some_and(|raw| {
         raw.first() == Some(&ENTITY_TYPE_SUMMARY)
             && raw

@@ -384,10 +384,7 @@ impl Vault {
             if let BatchOp::Put {
                 id, entity_type, ..
             } = op
-                && self
-                    .store
-                    .entities
-                    .get(&txn, id.as_bytes())?
+                && crate::ports::EntityStoreRead::port_entity_raw(&self.store, &txn, id)?
                     .is_some_and(|raw| {
                         crate::batch::EntityMetadataHeader::parse(&raw)
                             .is_none_or(|header| header.entity_type != *entity_type)

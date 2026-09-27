@@ -354,7 +354,7 @@ pub(super) fn run(ctx: &RematCtx<'_>, ledger: &mut RematLedger) -> Result<()> {
                     return;
                 }
                 vault.with_write_txn(|wtxn| {
-                    if let Some(local) = vault.store.entities.get(&*wtxn, id.as_bytes())? {
+                    if let Some(local) = crate::ports::EntityStoreRead::port_entity_raw(&vault.store, &*wtxn, &id)? {
                         if *local == *blob {
                             return Ok(false);
                         }
@@ -423,7 +423,8 @@ pub(super) fn run(ctx: &RematCtx<'_>, ledger: &mut RematLedger) -> Result<()> {
                     // byte-compare did — left a tombstone-first replica's
                     // false delete marker permanent, and the hard-erase
                     // sweep would then scrub append-only authority evidence.
-                    if let Some(local) = vault.store.entities.get(&*wtxn, id.as_bytes())?
+                    if let Some(local) =
+                        crate::ports::EntityStoreRead::port_entity_raw(&vault.store, &*wtxn, &id)?
                         && *local == *blob
                     {
                         vault.neutralize_delete_protected_marker_in_txn(

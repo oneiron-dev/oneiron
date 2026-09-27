@@ -289,7 +289,7 @@ impl Vault {
             return Err(invalid_authority());
         }
         let admin = holder.ok_or_else(invalid_authority)?;
-        if self.store.entities.get(txn, admin.as_bytes())?.is_none()
+        if crate::ports::EntityStoreRead::port_entity_raw(&self.store, txn, &admin)?.is_none()
             || self.archive_tombstone_in_txn(txn, &admin)?.is_some()
         {
             return Err(invalid_authority());

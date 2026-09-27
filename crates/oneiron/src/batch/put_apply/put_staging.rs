@@ -6,6 +6,7 @@ use super::{ENTITY_METADATA_HEADER_LEN, LONG_INTERVAL_THRESHOLD_SECS};
 use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;
 use crate::error::Result;
+use crate::ports::{EdgeStoreStaging, EntityStoreStaging};
 use crate::store::{ManifestDbs, Store};
 use crate::temporal::TimeRange;
 
@@ -54,7 +55,7 @@ pub(in crate::batch) fn stage_entity_body_row(
     payload.extend_from_slice(&learned_at.to_be_bytes());
     payload.extend_from_slice(data);
     crate::vault::entity_revision::capture_entity_revision(store, wtxn, id, &payload)?;
-    store.entities().put(wtxn, id.as_bytes(), &payload)?;
+    store.port_stage_entity_row(wtxn, id, &payload)?;
     crate::conversation_dag::pin_typed_record(store, wtxn, id, entity_type, data)?;
     Ok(())
 }
@@ -162,10 +163,7 @@ pub(in crate::batch) fn stage_edge_rows(
     tgt: &EntityId,
     value: &[u8],
 ) -> Result<()> {
-    let key_out = Store::encode_edge_key(src, kind, tgt);
-    let key_in = Store::encode_edge_key(tgt, kind, src);
-    store.edges_out().put(wtxn, &key_out, value)?;
-    store.edges_in().put(wtxn, &key_in, value)?;
+    store.port_stage_edge_rows(wtxn, src, kind, tgt, value)?;
     crate::conversation_dag::pin_membership(store, wtxn, src, kind, tgt)?;
     if kind == EdgeKind::DerivedFrom {
         crate::ports::record_derived_edge_in_txn(store, wtxn, src, tgt)?;

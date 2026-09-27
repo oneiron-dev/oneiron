@@ -474,16 +474,12 @@ impl Vault {
             {
                 return Err(Error::InvalidClaimBody("derived support evidence mismatch"));
             }
-            let source_row = self
-                .store
-                .entities
-                .get(wtxn, subject.source.as_bytes())?
-                .ok_or(Error::EntityNotFound)?;
-            let head_row = self
-                .store
-                .entities
-                .get(wtxn, subject.target.as_bytes())?
-                .ok_or(Error::EntityNotFound)?;
+            let source_row =
+                crate::ports::EntityStoreRead::port_entity_raw(&self.store, wtxn, &subject.source)?
+                    .ok_or(Error::EntityNotFound)?;
+            let head_row =
+                crate::ports::EntityStoreRead::port_entity_raw(&self.store, wtxn, &subject.target)?
+                    .ok_or(Error::EntityNotFound)?;
             if EntityMetadataHeader::parse(&source_row)
                 .is_none_or(|header| header.entity_type != crate::registry::ENTITY_TYPE_TURN)
                 || EntityMetadataHeader::parse(&head_row)

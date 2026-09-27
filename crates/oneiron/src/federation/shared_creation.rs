@@ -106,7 +106,8 @@ impl Vault {
         };
         let mut ops = Vec::new();
         for (member, role) in rows {
-            if self.store.entities.get(&txn, member.as_bytes())?.is_none() {
+            if crate::ports::EntityStoreRead::port_entity_raw(&self.store, &txn, &member)?.is_none()
+            {
                 return Err(Error::EntityNotFound);
             }
             let grant = FederationGrant::new(
@@ -134,15 +135,12 @@ impl Vault {
         if preset.is_some() {
             let id = crate::gate::default_policy_manifest_id()?;
             // Creation cannot overwrite policy the owner has already customized.
-            if self
-                .store
-                .entities
-                .get(&txn, id.as_bytes())?
-                .is_some_and(|raw| {
+            if crate::ports::EntityStoreRead::port_entity_raw(&self.store, &txn, &id)?.is_some_and(
+                |raw| {
                     raw.get(crate::batch::ENTITY_METADATA_HEADER_LEN..)
                         != Some(crate::gate::default_policy_manifest().as_slice())
-                })
-            {
+                },
+            ) {
                 return Err(invalid("shared preset must precede customized policy"));
             }
             // Defaults are ordinary editable stored policy, not a second runtime policy engine.

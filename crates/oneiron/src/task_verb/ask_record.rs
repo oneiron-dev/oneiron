@@ -606,7 +606,7 @@ pub(crate) fn guard_ask_fact_put(
     data: &[u8],
 ) -> Result<()> {
     let kind = fact_kind(data);
-    if let Some(raw) = store.entities.get(txn, id.as_bytes())? {
+    if let Some(raw) = crate::ports::EntityStoreRead::port_entity_raw(store, txn, &id)? {
         let old = raw.get(ENTITY_METADATA_HEADER_LEN..).ok_or_else(invalid)?;
         if (kind.is_some() || fact_kind(old).is_some()) && old != data {
             return Err(invalid());

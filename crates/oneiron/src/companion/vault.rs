@@ -80,7 +80,9 @@ impl Vault {
             CompanionSubject::Persona { persona_ref } => persona_ref,
             CompanionSubject::Relationship { source_ref, .. } => source_ref,
         };
-        if let Some(raw) = self.store.entities.get(wtxn, person.as_bytes())? {
+        if let Some(raw) =
+            crate::ports::EntityStoreRead::port_entity_raw(&self.store, wtxn, &person)?
+        {
             let header = EntityMetadataHeader::parse(&raw)
                 .ok_or(Error::CorruptedIndex("persona PERSON header"))?;
             if header.entity_type != crate::registry::ENTITY_TYPE_PERSON {

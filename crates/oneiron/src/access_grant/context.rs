@@ -54,10 +54,7 @@ impl AccessContext {
             for row in vault.store.type_index.prefix_iter(txn, &[kind])? {
                 let (key, _) = row?;
                 let id = crate::vault::entity_id_from_type_index_key(&key)?;
-                let raw = vault
-                    .store
-                    .entities
-                    .get(txn, id.as_bytes())?
+                let raw = crate::ports::EntityStoreRead::port_entity_raw(&vault.store, txn, &id)?
                     .ok_or(Error::CorruptedIndex("access context row"))?;
                 let header = EntityMetadataHeader::parse(&raw)
                     .ok_or(Error::CorruptedIndex("access context header"))?;
@@ -83,14 +80,13 @@ impl AccessContext {
                         && let ClaimSubject::Entity(space) = body.subject
                     {
                         // A member binding is only a relationship membership when its subject really is one.
-                        if vault
-                            .store
-                            .entities
-                            .get(txn, space.as_bytes())?
-                            .and_then(|raw| EntityMetadataHeader::parse(&raw))
-                            .is_some_and(|h| {
-                                h.entity_type == crate::registry::ENTITY_TYPE_RELATIONSHIP
-                            })
+                        if crate::ports::EntityStoreRead::port_entity_raw(
+                            &vault.store,
+                            txn,
+                            &space,
+                        )?
+                        .and_then(|raw| EntityMetadataHeader::parse(&raw))
+                        .is_some_and(|h| h.entity_type == crate::registry::ENTITY_TYPE_RELATIONSHIP)
                         {
                             context.relationships.insert(space);
                         }
@@ -297,7 +293,8 @@ mod tests {
             // Corrupt/legacy payloads cannot enter through today's witness door.
             // Seed only this read fixture, preserving the valid MESSAGE header.
             let mut txn = vault.store.env.write_txn()?;
-            let raw = vault.store.entities.get(&txn, message.as_bytes())?.unwrap();
+            let raw = crate::ports::EntityStoreRead::port_entity_raw(&vault.store, &txn, &message)?
+                .unwrap();
             let mut malformed_raw = raw[..ENTITY_METADATA_HEADER_LEN].to_vec();
             malformed_raw.extend_from_slice(&bytes);
             vault

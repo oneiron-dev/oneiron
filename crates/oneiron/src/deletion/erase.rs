@@ -19,7 +19,10 @@ use crate::identity_topology::{
     StoredIdentityOpAction, decode_identity_topology_event_body,
     encode_identity_topology_event_body,
 };
-use crate::ports::{RetrievalIndexMaintenance, ShortIdStoreMaintenance};
+use crate::ports::{
+    EdgeDirection, EdgeStoreRead, EdgeStoreStaging, EntityStoreRead, EntityStoreStaging,
+    RetrievalIndexMaintenance, ShortIdStoreMaintenance,
+};
 use crate::ppr;
 use crate::provenance::EdgeRef;
 use crate::provenance::PREDICATE_EDGE_PROVENANCE;
@@ -30,7 +33,7 @@ use crate::provenance::downgrade_edge_to_bare;
 use crate::provenance::restamp_edge_flags;
 use crate::provenance::winner_index;
 use crate::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_IDENTITY_TOPOLOGY_EVENT};
-use crate::store::{GateDecisionId, Store};
+use crate::store::GateDecisionId;
 
 use super::receipt::{RedactionReceiptInput, RedactionScope};
 use super::sweep_queue::HardEraseSweepExtras;
@@ -129,7 +132,7 @@ impl Vault {
         rtxn: &heed::RoTxn<'_>,
         id: &EntityId,
     ) -> Result<Option<CapturedProvenanceDelete>> {
-        let Some(raw) = self.store.entities.get(rtxn, id.as_bytes())? else {
+        let Some(raw) = self.store.port_entity_raw(rtxn, id)? else {
             return Ok(None);
         };
         let header =
@@ -181,8 +184,11 @@ impl Vault {
         deleted_claim_id: &EntityId,
         subject: &EdgeRef,
     ) -> Result<()> {
-        let edge_key = Store::encode_edge_key(&subject.source, subject.kind, &subject.target);
-        if self.store.edges_out.get(wtxn, &edge_key)?.is_none() {
+        if self
+            .store
+            .port_edge_encoded(wtxn, &subject.source, subject.kind, &subject.target)?
+            .is_none()
+        {
             return Ok(());
         }
         let survivors =
@@ -339,7 +345,7 @@ impl Vault {
         {
             let (key, _) = entry?;
             let event_id = crate::vault::entity_id_from_type_index_key(&key)?;
-            let Some(raw) = self.store.entities.get(&*wtxn, event_id.as_bytes())? else {
+            let Some(raw) = self.store.port_entity_raw(&*wtxn, &event_id)? else {
                 continue;
             };
             if raw.len() < ENTITY_METADATA_HEADER_LEN {
@@ -360,7 +366,7 @@ impl Vault {
         for (event_id, record) in &scrubbed {
             // Erasure must remove the old author stamp from retained history too.
             crate::vault::entity_revision::remove_entity_revisions(&self.store, wtxn, event_id)?;
-            self.store.entities.put(wtxn, event_id.as_bytes(), record)?;
+            self.store.port_stage_entity_row(wtxn, event_id, record)?;
         }
         Ok(())
     }
@@ -446,7 +452,7 @@ impl Vault {
 
         crate::skill_hub::remove_hub_package_in_txn(&self.store, wtxn, id)?;
         crate::agent_def::remove_birth_custody_in_txn(&self.store, wtxn, id)?;
-        let Some(entity_record) = self.store.entities.get(wtxn, id.as_bytes())? else {
+        let Some(entity_record) = self.store.port_entity_raw(wtxn, id)? else {
             let cleanup = delete_vad_annotation_metadata_in_txn(&self.store, wtxn, id)?;
             had_vector |= cleanup.had_vector;
             if cleanup.had_graph_mutation {
@@ -490,7 +496,7 @@ impl Vault {
         crate::claim::remove_claim_projection_index(&self.store, wtxn, *id)?;
         crate::dreamer_runner::deindex_dreamer_milestone_claim(&self.store, wtxn, id)?;
         crate::llm::deindex_dreamer_step_claim(&self.store, wtxn, id)?;
-        self.store.entities.put(wtxn, id.as_bytes(), &payload)?;
+        self.store.port_stage_entity_row(wtxn, id, &payload)?;
         if changed {
             crate::ports::audit_mutation_in_txn(
                 &self.store,
@@ -604,10 +610,7 @@ impl Vault {
                 crate::agent_def::birth_custody_exists_in_txn(&self.store, wtxn, id)?;
             crate::agent_def::retire_birth_sources_for_entity_in_txn(&self.store, wtxn, id)?;
             crate::receipt::retire_receipt_archives_for_erased_id(&self.store, wtxn, id)?;
-            let had_body = self
-                .store
-                .entities
-                .get(&*wtxn, id.as_bytes())?
+            let had_body = crate::ports::EntityStoreRead::port_entity_raw(&self.store, &*wtxn, id)?
                 .is_some_and(|raw| raw.len() > ENTITY_METADATA_HEADER_LEN);
             let (existed, had_vector) = self.soft_erase_active_store_in_txn(wtxn, id)?;
             if had_vector {
@@ -753,7 +756,7 @@ impl Vault {
         rtxn: &heed::RoTxn<'_>,
         id: &EntityId,
     ) -> Result<Option<EntityMetadataHeader>> {
-        let Some(raw) = self.store.entities.get(rtxn, id.as_bytes())? else {
+        let Some(raw) = self.store.port_entity_raw(rtxn, id)? else {
             return Ok(None);
         };
         EntityMetadataHeader::parse(&raw)
@@ -810,18 +813,22 @@ impl Vault {
             || crate::skill_hub::source_custody_exists_in_txn(&self.store, txn, id)?
             || crate::agent_def::birth_custody_exists_in_txn(&self.store, txn, id)?
             || crate::receipt::receipt_archive_custody_exists(&self.store, txn, id)?
-            || self.store.entities.get(txn, id.as_bytes())?.is_some()
+            || self.store.port_entity_raw(txn, id)?.is_some()
             || self.port_retrieval_delete_scope_exists(txn, id)?
             || self.port_short_id_mapping_exists(txn, id)?
         {
             return Ok(true);
         }
 
-        let mut edges_out = self.store.edges_out.prefix_iter(txn, id.as_bytes())?;
+        let mut edges_out = self
+            .store
+            .port_edges(txn, id, EdgeDirection::Out, None, None)?;
         if edges_out.next().transpose()?.is_some() {
             return Ok(true);
         }
-        let mut edges_in = self.store.edges_in.prefix_iter(txn, id.as_bytes())?;
+        let mut edges_in = self
+            .store
+            .port_edges(txn, id, EdgeDirection::In, None, None)?;
         if edges_in.next().transpose()?.is_some() {
             return Ok(true);
         }

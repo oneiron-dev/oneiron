@@ -72,7 +72,7 @@ pub(crate) fn validate_hub_source_carrier_put(
     bytes: &[u8],
 ) -> Result<()> {
     super::source_custody::validate_registered_source_target(store, txn, id, entity_type, bytes)?;
-    let previous = store.entities.get(txn, id.as_bytes())?;
+    let previous = crate::ports::EntityStoreRead::port_entity_raw(store, txn, id)?;
     if let Some(raw) = &previous {
         let header = EntityMetadataHeader::parse(raw)
             .ok_or(Error::CorruptedIndex("hub source carrier header"))?;

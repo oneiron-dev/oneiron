@@ -109,7 +109,7 @@ pub(super) fn record<T: for<'a> Deserialize<'a>>(
     id: EntityId,
     kind: u8,
 ) -> Result<Option<T>> {
-    let Some(raw) = store.entities.get(txn, id.as_bytes())? else {
+    let Some(raw) = crate::ports::EntityStoreRead::port_entity_raw(store, txn, &id)? else {
         return Ok(None);
     };
     let header = EntityMetadataHeader::parse(&raw).ok_or_else(invalid)?;
