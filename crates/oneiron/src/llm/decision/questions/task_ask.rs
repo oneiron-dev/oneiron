@@ -64,7 +64,7 @@ pub(crate) fn bind_task_answer_in_txn(
                 band,
             },
             refresh: RefreshPolicy {
-                on_arrival: true,
+                on_arrival: false,
                 every_seconds: None,
             },
             delivery: "tasks.wait".into(),
@@ -88,6 +88,7 @@ pub(crate) fn bind_task_answer_in_txn(
                 principal: input.principal,
                 providers: Vec::new(),
                 band,
+                band_version: 0,
             },
             human_ask: None,
         },
