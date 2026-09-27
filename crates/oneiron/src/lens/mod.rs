@@ -15,12 +15,16 @@
 //! - `validate` — cross-cutting validators and the surface compiler.
 
 mod atom;
+mod guest;
 mod instrument;
 mod intent;
-pub use instrument::{InstrumentAtoms, InstrumentView, LensExecutionRuntime, render_instrument};
+pub use guest::LensExecutionRuntime;
+pub use instrument::{InstrumentAtoms, InstrumentView, render_instrument};
 pub use intent::{LENS_INTENT_MAX_BYTES, LensIntentRecord};
 mod generated_ui;
 mod mediation;
+mod mount;
+pub use mount::LensMount;
 mod self_ui;
 mod validate;
 mod wire_ids;
@@ -57,8 +61,8 @@ pub use mediation::{
     GeneratedUiValidatedAction, LensActingPrincipalKind, LensApprovedAction, LensApprovedActionArg,
     LensAtomSelectionRequest, LensBackingRefToken, LensBackingTarget, LensBackingTargetKind,
     LensExecutionBoundary, LensGateWriteChokepoint, LensHostBackingRef, LensHostImport,
-    LensHostMediatedWrite, LensPrincipalBinding, LensReadHandle, LensReadReach, LensRenderFrame,
-    LensSpanCursor, LensSpanSelectionRequest,
+    LensHostMediatedWrite, LensPrincipalBinding, LensQuoteHandle, LensQuoteRange, LensReadHandle,
+    LensReadReach, LensRenderFrame, LensSpanCursor, LensSpanSelectionRequest,
 };
 pub use self_ui::{
     ButtonControl, SegmentedControl, SelectControl, SelfUiAction, SelfUiControl, SelfUiOption,

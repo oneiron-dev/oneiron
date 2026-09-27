@@ -11,7 +11,7 @@ use zeroize::Zeroizing;
 const ROOT_CACHE: &str = "authority:host-root-slip:v2";
 const ROOT_LIFETIME: u64 = 10 * 365 * 24 * 60 * 60;
 
-/// A dedicated host signing/MAC key. Never loaded from device-key residue.
+/// A dedicated host signing key. Never loaded from device-key residue.
 /// The configured retained root secret is the recovery material for bootstrap.
 pub struct HostSlipIssuer {
     secret: Zeroizing<Vec<u8>>,
@@ -42,8 +42,24 @@ impl HostSlipIssuer {
     pub(super) fn sign_mesh(&self, transcript: &[u8]) -> [u8; 64] {
         self.signing.sign(transcript).to_bytes()
     }
+    pub(super) fn sign_slip(&self, transcript: &[u8]) -> Vec<u8> {
+        self.signing.sign(transcript).to_bytes().to_vec()
+    }
     pub(super) fn secret(&self) -> &[u8] {
         &self.secret
+    }
+    /// Narrow a slip held by this host, using its private binding key.
+    pub fn attenuate(&self, slip: &mut CapabilitySlip, caveat: SlipCaveat) -> Result<()> {
+        slip.attenuate(caveat, &self.signing)
+    }
+    /// Transfer an attenuated slip to a new holder without sharing this key.
+    pub fn attenuate_to(
+        &self,
+        slip: &mut CapabilitySlip,
+        caveat: SlipCaveat,
+        next_binding_key: [u8; 32],
+    ) -> Result<()> {
+        slip.attenuate_to(caveat, &self.signing, next_binding_key)
     }
     pub fn binding_proof(&self, slip: &CapabilitySlip, challenge: &[u8]) -> Result<Vec<u8>> {
         Ok(self
@@ -94,7 +110,7 @@ impl Vault {
         txn: &heed::RoTxn<'_>,
         verified: &VerifiedSlip,
     ) -> Result<bool> {
-        let fold = self.authority_fold_readonly_in_txn(txn)?;
+        let fold = self.authority_view_readonly_in_txn(txn)?;
         let now = self.instant_in_txn(txn)?.secs();
         let claims = verified.claims();
         Ok(now >= claims.issued_at
@@ -114,7 +130,7 @@ impl Vault {
         txn: &heed::RoTxn<'_>,
         id: &[u8; 32],
     ) -> Result<bool> {
-        let fold = self.authority_fold_readonly_in_txn(txn)?;
+        let fold = self.authority_view_readonly_in_txn(txn)?;
         let now = self.instant_in_txn(txn)?.secs();
         Ok(fold.slip_is_live(id)
             && fold.slips.mints.get(id).is_some_and(|mint| {
@@ -169,7 +185,7 @@ impl Vault {
         if let Some(raw) = self.store.sync_state.get(&txn, &cache_key)? {
             let token = std::str::from_utf8(&raw).map_err(|_| invalid_authority())?;
             let slip = CapabilitySlip::from_token(token)?;
-            slip.verify_authority(issuer.secret(), &fold, now)?;
+            slip.verify_authority(&issuer.public_key(), &fold, now)?;
             return Ok(slip);
         }
         let claims = SlipClaims {
@@ -188,7 +204,7 @@ impl Vault {
             actor_class: None,
             org_ref: None,
         };
-        let slip = CapabilitySlip::mint(claims.clone(), issuer.secret())?;
+        let slip = CapabilitySlip::mint(claims.clone(), issuer)?;
         let mint = next_entry(
             issuer,
             &fold,
@@ -210,8 +226,8 @@ impl Vault {
             })
             .collect();
         self.put_authority_log_entries_in_txn(&mut txn, &rows)?;
-        let fresh = self.authority_fold_readonly_in_txn(&txn)?;
-        slip.verify_authority(issuer.secret(), &fresh, now)?;
+        let fresh = self.authority_view_readonly_in_txn(&txn)?;
+        slip.verify_authority(&issuer.public_key(), &fresh, now)?;
         self.store
             .sync_state
             .put(&mut txn, &cache_key, slip.to_token()?.as_bytes())?;
@@ -222,9 +238,9 @@ impl Vault {
     pub fn verified_host_root_slip(&self, issuer: &HostSlipIssuer) -> Result<VerifiedSlip> {
         let slip = self.ensure_host_root_slip(issuer)?;
         let txn = self.store.env.read_txn()?;
-        let fold = self.authority_fold_readonly_in_txn(&txn)?;
+        let fold = self.authority_view_readonly_in_txn(&txn)?;
         slip.verify(
-            issuer.secret(),
+            &issuer.public_key(),
             &fold,
             self.instant_in_txn(&txn)?.secs(),
             b"local-host-root",
@@ -235,16 +251,33 @@ impl Vault {
     /// redemption uses authenticate_capability_slip or the secret door instead.
     pub fn verify_capability_slip(
         &self,
-        issuer: &HostSlipIssuer,
+        host_public_key: &AuthorityKey,
         slip: &CapabilitySlip,
         challenge: &[u8],
         signature: &[u8],
     ) -> Result<VerifiedSlip> {
         let txn = self.store.env.read_txn()?;
-        let fold = self.authority_fold_readonly_in_txn(&txn)?;
-        require_host(&fold, issuer)?;
+        let fold = self.authority_view_readonly_in_txn(&txn)?;
         slip.verify(
-            issuer.secret(),
+            host_public_key,
+            &fold,
+            self.instant_in_txn(&txn)?.secs(),
+            challenge,
+            signature,
+        )
+    }
+    /// Verify a slip and its holder-signed caveats against the logged issuing host key.
+    pub fn verify_capability_slip_with_host_key(
+        &self,
+        host_key: &AuthorityKey,
+        slip: &CapabilitySlip,
+        challenge: &[u8],
+        signature: &[u8],
+    ) -> Result<VerifiedSlip> {
+        let txn = self.store.env.read_txn()?;
+        let fold = self.authority_view_readonly_in_txn(&txn)?;
+        slip.verify_with_host_key(
+            host_key,
             &fold,
             self.instant_in_txn(&txn)?.secs(),
             challenge,
@@ -255,7 +288,7 @@ impl Vault {
     /// vault clock and signed challenge as atomic request admission.
     pub fn verify_capability_slip_request(
         &self,
-        issuer: &HostSlipIssuer,
+        host_public_key: &AuthorityKey,
         slip: &CapabilitySlip,
         timestamp: u64,
         signature: &[u8],
@@ -264,9 +297,63 @@ impl Vault {
         let txn = self.store.env.read_txn()?;
         let now = self.instant_in_txn(&txn)?.secs();
         let challenge = super::slip_replay::request_challenge(timestamp, nonce, now)?;
-        let fold = self.authority_fold_readonly_in_txn(&txn)?;
-        require_host(&fold, issuer)?;
-        slip.verify(issuer.secret(), &fold, now, &challenge, signature)
+        let fold = self.authority_view_readonly_in_txn(&txn)?;
+        slip.verify(host_public_key, &fold, now, &challenge, signature)
+    }
+
+    /// Log-derived minting key is the authority source, not a registry row or
+    /// retained server secret. Admission and nonce consumption share a txn.
+    pub fn admit_capability_slip_request(
+        &self,
+        slip: &CapabilitySlip,
+        timestamp: u64,
+        signature: &[u8],
+        nonce: &[u8],
+    ) -> Result<VerifiedSlip> {
+        let mut txn = self.store.env.write_txn()?;
+        let fold = self.authority_view_readonly_in_txn(&txn)?;
+        let now = self.instant_in_txn(&txn)?.secs();
+        let challenge = super::slip_replay::request_challenge(timestamp, nonce, now)?;
+        let key = &fold
+            .slips
+            .mints
+            .get(&slip.claims.slip_id)
+            .ok_or_else(invalid_authority)?
+            .signer;
+        let verified = slip.verify(key, &fold, now, &challenge, signature)?;
+        if verified.claims().single_use {
+            return Err(invalid_authority());
+        }
+        super::slip_replay::record_nonce(
+            self,
+            &mut txn,
+            &verified.claims().binding_key,
+            nonce,
+            timestamp,
+            now,
+        )?;
+        txn.commit()?;
+        Ok(verified)
+    }
+    /// Read-only transport verification from the signed authority-log mint.
+    pub fn verify_logged_capability_slip_request(
+        &self,
+        slip: &CapabilitySlip,
+        timestamp: u64,
+        signature: &[u8],
+        nonce: &[u8],
+    ) -> Result<VerifiedSlip> {
+        let txn = self.store.env.read_txn()?;
+        let fold = self.authority_view_readonly_in_txn(&txn)?;
+        let now = self.instant_in_txn(&txn)?.secs();
+        let challenge = super::slip_replay::request_challenge(timestamp, nonce, now)?;
+        let key = &fold
+            .slips
+            .mints
+            .get(&slip.claims.slip_id)
+            .ok_or_else(invalid_authority)?
+            .signer;
+        slip.verify(key, &fold, now, &challenge, signature)
     }
 
     /// Appends a signed mint in the same transaction that checks its ancestry.
@@ -286,13 +373,13 @@ impl Vault {
         issuer: &HostSlipIssuer,
         claims: SlipClaims,
     ) -> Result<CapabilitySlip> {
-        let fold = self.authority_fold_readonly_in_txn(txn)?;
+        let fold = self.authority_view_readonly_in_txn(txn)?;
         require_host(&fold, issuer)?;
         let now = self.instant_in_txn(txn)?.secs();
         if claims.issued_at > now || claims.expires_at <= now {
             return Err(invalid_authority());
         }
-        let slip = CapabilitySlip::mint(claims.clone(), issuer.secret())?;
+        let slip = CapabilitySlip::mint(claims.clone(), issuer)?;
         let entry = next_entry(
             issuer,
             &fold,
@@ -310,18 +397,30 @@ impl Vault {
                 now,
             )],
         )?;
-        slip.verify_authority(
-            issuer.secret(),
-            &self.authority_fold_readonly_in_txn(txn)?,
-            now,
-        )?;
+        let fresh = self.authority_view_readonly_in_txn(txn)?;
+        slip.verify_authority(&issuer.public_key(), &fresh, now)?;
         Ok(slip)
     }
     pub fn revoke_capability_slip(&self, issuer: &HostSlipIssuer, slip_id: [u8; 32]) -> Result<()> {
+        self.revoke_capability_slip_once(issuer, slip_id).map(drop)
+    }
+    /// Appends a signed revocation once per slip id. `true` means this call
+    /// appended the first explicit revoke; expiry, ancestor revocation, or an
+    /// absent mint does not prevent a first tombstone for a late mint.
+    pub fn revoke_capability_slip_once(
+        &self,
+        issuer: &HostSlipIssuer,
+        slip_id: [u8; 32],
+    ) -> Result<bool> {
         let mut txn = self.store.env.write_txn()?;
+        let fold = self.authority_view_readonly_in_txn(&txn)?;
+        require_host(&fold, issuer)?;
+        if fold.slips.explicit_revoked.contains(&slip_id) {
+            return Ok(false);
+        }
         self.append_slip_op_in_txn(&mut txn, issuer, AuthorityOp::SlipRevoke { slip_id })?;
         txn.commit()?;
-        Ok(())
+        Ok(true)
     }
     /// Verifies the binding and burns single-use authority before returning it.
     /// Request nonce consumption is transactionally shared with SlipConsume.
@@ -334,16 +433,16 @@ impl Vault {
         request_nonce: &[u8],
     ) -> Result<VerifiedSlip> {
         let mut txn = self.store.env.write_txn()?;
-        let fold = self.authority_fold_readonly_in_txn(&txn)?;
+        let fold = self.authority_view_readonly_in_txn(&txn)?;
         require_host(&fold, issuer)?;
         let now = self.instant_in_txn(&txn)?.secs();
         let challenge =
             super::slip_replay::request_challenge(request_timestamp, request_nonce, now)?;
-        let verified = slip.verify(issuer.secret(), &fold, now, &challenge, signature)?;
+        let verified = slip.verify(&issuer.public_key(), &fold, now, &challenge, signature)?;
         super::slip_replay::record_nonce(
             self,
             &mut txn,
-            &slip.claims.binding_key,
+            &verified.claims().binding_key,
             request_nonce,
             request_timestamp,
             now,
@@ -366,7 +465,7 @@ impl Vault {
         issuer: &HostSlipIssuer,
         op: AuthorityOp,
     ) -> Result<()> {
-        let fold = self.authority_fold_readonly_in_txn(txn)?;
+        let fold = self.authority_view_readonly_in_txn(txn)?;
         require_host(&fold, issuer)?;
         let now = self.instant_in_txn(txn)?.secs();
         let entry = next_entry(issuer, &fold, op, now)?;
@@ -383,7 +482,7 @@ impl Vault {
             )],
         )?;
         if !self
-            .authority_fold_readonly_in_txn(txn)?
+            .authority_view_readonly_in_txn(txn)?
             .valid_entries
             .contains(&hash)
         {

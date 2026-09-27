@@ -1702,6 +1702,75 @@ fn local_repo_ingest_preserves_clean_historical_body_at_newly_quarantined_path()
 }
 
 #[test]
+fn local_repo_ingest_sees_custody_registered_before_writer_and_keeps_blob_out() -> Result<()> {
+    let repo_dir = create_test_repo()?;
+    let newly_declared = b"pub fn newly_declared_symbol() -> u8 { 7 }\n";
+    commit_test_file(
+        repo_dir.path(),
+        "src/newly_declared.rs",
+        newly_declared,
+        "add later declared path",
+    )?;
+    let (_dir, vault) = crate::test_util::open_test_vault_with(embedding_test_config());
+    let vault = std::sync::Arc::new(vault);
+    let registering = std::sync::Arc::clone(&vault);
+    vault
+        .test_hooks()
+        .before_codebase_ingest_writer
+        .lock()
+        .expect("codebase ingest hook poisoned")
+        .replace(Box::new(move || {
+            registering
+                .register_secret(SecretCustodyRecord {
+                    schema_version: crate::secret_custody::SECRET_CUSTODY_SCHEMA_VERSION,
+                    name: "late-declared-source".to_owned(),
+                    class: CustodyClass::CustodyPortable,
+                    device_only: false,
+                    value_bytes: b"late declaration fixture".to_vec(),
+                    status: SecretCustodyStatus::Active,
+                    registered_at: 1,
+                    rotated_at: None,
+                    rotation_generation: 0,
+                    bindings: vec![],
+                    manifest_ref: "secrets.toml".to_owned(),
+                    declared_paths: vec!["src/newly_declared.rs".to_owned()],
+                    policy_floor_snapshot: SecretCustodyFloor::default(),
+                })
+                .expect("late custody registration");
+        }));
+    let config = RepoIngestConfig::new(repo_dir.path(), ["src/lib.rs"])?;
+    let result = vault.ingest_local_repo_at_commit(
+        "project.alpha",
+        &config,
+        "HEAD",
+        TimeRange { start: 10, end: 10 },
+        11,
+    )?;
+    let persisted = vault
+        .get_codebase_snapshot(&result.code_artifact_id)?
+        .expect("stored snapshot");
+    assert_eq!(result.snapshot, persisted);
+    assert!(
+        persisted
+            .files
+            .iter()
+            .all(|entry| entry.path != "src/newly_declared.rs")
+    );
+    let report = vault
+        .get_codebase_snapshot_custody_report(&persisted.fork_hash)?
+        .expect("custody report");
+    assert_eq!(report.excluded_secret_paths, ["src/newly_declared.rs"]);
+    let asset = codebase_asset_entity_id(blake3::hash(newly_declared).as_bytes())?;
+    assert_eq!(vault.get_entity_type(&asset)?, None);
+    assert!(
+        vault
+            .code_symbol_definitions(&result.code_artifact_id, "newly_declared_symbol")?
+            .is_empty()
+    );
+    Ok(())
+}
+
+#[test]
 fn local_repo_ingest_quarantines_detector_hit_without_persisting_its_blob() -> Result<()> {
     let repo_dir = create_test_repo()?;
     let leaked = format!("pub const LEAKED_TOKEN: &str = \"{GITHUB_TOKEN_SECRET_FIXTURE}\";\n");

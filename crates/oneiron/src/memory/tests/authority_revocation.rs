@@ -225,6 +225,239 @@ fn revoked_binding_forbids_owner_verbs() {
     assert_eq!(err.code, MEMORY_CODE_OWNER_BINDING_REQUIRED);
 }
 
+/// ONE-1611: owner B deletes owner A after A's gate evaluation, before A's
+/// first deletion transaction. Revoking a key is not the only way the initial
+/// actor binding can disappear: the PERSON row itself can be hard-purged.
+/// The in-transaction authority check must see that purge before publishing
+/// A's tombstone (sync) or staging a replayable one (featureless).
+/// Dropping that first in-txn recheck makes this test fail in both tiers.
+#[test]
+fn second_owner_hard_deletes_actor_before_target_delete_txn1() {
+    use crate::authority::{
+        AuthorityKey, AuthorityLogEntry, AuthorityOp, AuthoritySignature, AuthorityTier,
+        DeviceAuthority, ROLE_ADMIN, ROLE_OWNER,
+    };
+    use ed25519_dalek::Signer;
+
+    let clock = crate::ports::ManualClock::new(1_000);
+    let config = VaultConfig {
+        store_clock: clock.bundle(),
+        ..VaultConfig::default()
+    };
+    #[cfg(feature = "sync")]
+    let mut harness = PublishBoundaryHarness::open_with_config("owner-actor-race", false, config);
+    #[cfg(feature = "sync")]
+    let vault = std::sync::Arc::clone(&harness.vault);
+    #[cfg(not(feature = "sync"))]
+    let _dir = tempfile::tempdir().expect("tempdir");
+    #[cfg(not(feature = "sync"))]
+    let vault = std::sync::Arc::new(crate::Vault::open(_dir.path(), config).expect("open vault"));
+
+    let actor_a = put_person(&vault, 0x31);
+    let actor_b = put_person(&vault, 0x32);
+    let target = put_person(&vault, 0x33);
+    let target_body = vault.get_raw(&target).expect("target body");
+
+    // One root, two independently bound owner keys. B must be an authorized
+    // owner, not a raw Vault delete or a revocation masquerading as deletion.
+    let (genesis, signer_a) = authority_root(0xA4);
+    let signer_b = ed25519_dalek::SigningKey::from_bytes(&[0xA5; 32]);
+    let key_a = AuthorityKey::Ed25519(signer_a.verifying_key().to_bytes());
+    let key_b = AuthorityKey::Ed25519(signer_b.verifying_key().to_bytes());
+    let vault_id = crate::authority::genesis_vault_id(&genesis).expect("vault id");
+    let mut parent = crate::authority::authority_entry_hash(&genesis).expect("genesis hash");
+    let entry = |seq, parent, op| AuthorityLogEntry {
+        schema_version: crate::authority::AUTHORITY_LOG_SCHEMA_VERSION,
+        vault_id: Some(vault_id),
+        seq,
+        parent_hashes: vec![parent],
+        op,
+        signer: AuthoritySignature {
+            suite: key_a.suite(),
+            public_key: key_a.clone(),
+            signature: vec![0; 64],
+        },
+        cosigns: Vec::new(),
+        ts: 100 + seq,
+    };
+    let bind_a = sign_authority(
+        entry(
+            1,
+            parent,
+            AuthorityOp::BindActor {
+                authority_key: key_a.clone(),
+                actor_ref: actor_a,
+                actor_class: "human".to_owned(),
+                epoch: 1,
+            },
+        ),
+        &signer_a,
+    );
+    parent = crate::authority::authority_entry_hash(&bind_a).expect("A binding hash");
+    let enroll_b = sign_authority(
+        entry(
+            2,
+            parent,
+            AuthorityOp::EnrollDevice {
+                device: DeviceAuthority {
+                    key: key_b.clone(),
+                    transport_key_binding: [7; 32],
+                    attestation: crate::authority::AuthorityAttestation {
+                        kind: "SoftwareArgon2id".to_owned(),
+                        evidence: vec![1, 2, 3],
+                    },
+                    tier: AuthorityTier::Software,
+                    roles: ROLE_OWNER | ROLE_ADMIN,
+                },
+            },
+        ),
+        &signer_a,
+    );
+    parent = crate::authority::authority_entry_hash(&enroll_b).expect("B enrollment hash");
+    vault
+        .put_authority_log_entries(&[
+            (genesis, test_time(1), 1),
+            (bind_a, test_time(2), 2),
+            (enroll_b, test_time(3), 3),
+        ])
+        .expect("root A and enroll B");
+    // The authority clock uses a monotonic per-vault anchor, not the wall
+    // clock. Advance its persisted floor to model the elapsed veto window;
+    // the next fold rebases the anchor against this later local observation.
+    let matured_at = 1_000 + crate::authority::DEFAULT_PENDING_WIDEN_DELAY_SECS + 1;
+    clock.set(matured_at);
+    vault
+        .with_write_txn(|txn| {
+            vault.store.sync_state.put(
+                txn,
+                crate::authority::authority_first_seen_clock_sync_key(),
+                &matured_at.to_be_bytes(),
+            )?;
+            Ok(())
+        })
+        .expect("advance local authority clock floor");
+    // With two live roster keys a new BindActor needs B's peer cosign.
+    let mut bind_b = entry(
+        3,
+        parent,
+        AuthorityOp::BindActor {
+            authority_key: key_b.clone(),
+            actor_ref: actor_b,
+            actor_class: "human".to_owned(),
+            epoch: 1,
+        },
+    );
+    bind_b.cosigns.push(AuthoritySignature {
+        suite: key_b.suite(),
+        public_key: key_b,
+        signature: vec![0; 64],
+    });
+    let transcript = crate::authority::authority_transcript(&bind_b).expect("bind transcript");
+    bind_b.signer.signature = signer_a.sign(&transcript).to_bytes().to_vec();
+    bind_b.cosigns[0].signature = signer_b.sign(&transcript).to_bytes().to_vec();
+    vault
+        .put_authority_log_entries(&[(bind_b, test_time(4), 4)])
+        .expect("bind second verified owner");
+    assert!(crate::authority::actor_binding_is_active(
+        &vault.authority_fold().expect("authority fold"),
+        &actor_b,
+        "human"
+    ));
+
+    let (arrived_tx, arrived_rx) = std::sync::mpsc::sync_channel(0);
+    let (resume_tx, resume_rx) = std::sync::mpsc::sync_channel::<()>(0);
+    vault.test_hooks().install_delete_rendezvous(
+        crate::deletion::DeleteRendezvous::BeforeFirstDeletionTxn,
+        target,
+        arrived_tx,
+        resume_rx,
+    );
+    std::thread::scope(|scope| {
+        let deleter = scope.spawn(|| {
+            facade_for(&vault, actor_a)
+                .safe_delete(&target.to_hex(), SafeDeleteReason::UserHardDelete)
+        });
+        arrived_rx
+            .recv()
+            .expect("A reached pre-TXN1 after the gate");
+        let b_receipt = facade_for(&vault, actor_b)
+            .safe_delete(&actor_a.to_hex(), SafeDeleteReason::UserHardDelete)
+            .expect("B hard-deletes A through the owner facade");
+        assert!(b_receipt.existed, "B really purged A");
+        assert!(vault.get_raw(&actor_a).expect("actor A row").is_none());
+
+        let decisions_before = vault.gate_decisions(50).expect("decisions after B");
+        let receipts_before = vault
+            .entities_by_type(crate::registry::ENTITY_TYPE_REDACTION_AUDIT)
+            .expect("receipts after B");
+        let sweep_before = {
+            let txn = vault.store.env.read_txn().expect("read txn");
+            vault
+                .store
+                .sync_queue
+                .prefix_iter(&txn, crate::deletion::HARD_ERASE_SWEEP_PREFIX)
+                .expect("sweep rows")
+                .count()
+        };
+        #[cfg(feature = "sync")]
+        while harness.outbound.try_recv().is_ok() {} // B's authorized publication
+        resume_tx.send(()).expect("resume A after B commits");
+        let err = deleter
+            .join()
+            .expect("A's thread must not panic")
+            .expect_err("A must not delete with its missing actor binding");
+        assert_eq!(err.code, MEMORY_CODE_FORBIDDEN);
+        assert_eq!(vault.get_raw(&target).expect("target row"), target_body);
+        let txn = vault.store.env.read_txn().expect("read txn");
+        assert!(
+            !vault
+                .local_hard_delete_marker_exists_in_txn(&txn, &target)
+                .expect("target dt: marker")
+        );
+        assert_eq!(
+            vault
+                .store
+                .sync_queue
+                .prefix_iter(&txn, crate::deletion::HARD_ERASE_SWEEP_PREFIX)
+                .expect("sweep rows")
+                .count(),
+            sweep_before,
+            "A must not enqueue a purge"
+        );
+        #[cfg(not(feature = "sync"))]
+        assert!(
+            vault
+                .store
+                .sync_state
+                .get(
+                    &txn,
+                    &crate::deletion::pending_tombstone_key(
+                        &crate::deletion::window_label_from_timestamp(1),
+                        &target,
+                    )
+                )
+                .expect("target pt: marker")
+                .is_none(),
+            "A must not stage a replayable tombstone"
+        );
+        drop(txn);
+        assert_eq!(
+            vault.gate_decisions(50).expect("decisions after A"),
+            decisions_before,
+            "A must not append a gate decision"
+        );
+        assert_eq!(
+            vault
+                .entities_by_type(crate::registry::ENTITY_TYPE_REDACTION_AUDIT)
+                .expect("receipts after A"),
+            receipts_before,
+            "A must not mint a redaction receipt"
+        );
+        #[cfg(feature = "sync")]
+        harness.assert_nothing_published(&target, "A's refused deletion");
+    });
+}
+
 /// fix-leg 5 item 1: the delete owner-gate is TOCTOU-closed.
 ///
 /// `evaluate_deletion_gate` folds the owner binding in a read txn it then
@@ -1143,6 +1376,7 @@ fn owner_verbs_suspend_when_a_first_seen_sidecar_is_lost_after_migration() {
             for key in &sidecars {
                 assert!(vault.store.sync_state.delete(wtxn, key.as_str())?);
             }
+            crate::authority::advance_authority_cache_generation(&vault.store, wtxn)?;
             Ok(())
         })
         .expect("drop the sidecars");

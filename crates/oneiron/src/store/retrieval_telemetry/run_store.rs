@@ -107,6 +107,11 @@ impl SessionStoreView<'_> {
 }
 
 impl Store {
+    /// Runtime capture opt-in, separate from the write-failure fuse below.
+    pub(crate) fn retrieval_telemetry_capture_enabled(&self) -> bool {
+        self.core.retrieval_telemetry_capture
+    }
+
     pub fn retrieval_telemetry_writes_enabled(&self) -> bool {
         !self
             .retrieval_writes_disabled
@@ -217,6 +222,7 @@ impl Store {
             accepted: outcome.accepted,
             metadata: outcome.metadata,
             updated_at: self.clock.now_recorded_at(),
+            reward_evidence: None,
         };
         let key = retrieval_outcome_key(record.run_id, &record.key);
         let value = encode_retrieval_outcome(&record)?;
@@ -231,6 +237,15 @@ impl Store {
         if self.vault_meta.get(&wtxn, &provisional_key)?.is_some() {
             return Err(Error::InvalidConfig(
                 "retrieval outcome references unpublished context-pack run id".to_owned(),
+            ));
+        }
+        if let Some(existing) = self.vault_meta.get(&wtxn, &key)?
+            && decode_retrieval_outcome(&existing)?
+                .reward_evidence
+                .is_some()
+        {
+            return Err(Error::InvalidConfig(
+                "raw retrieval outcome cannot replace a gated end outcome".to_owned(),
             ));
         }
         self.vault_meta.put(&mut wtxn, &key, &value)?;
@@ -678,7 +693,7 @@ pub(in crate::store) fn decode_retrieval_run(raw: &[u8]) -> Result<RetrievalRunR
     Ok(record)
 }
 
-fn encode_retrieval_outcome(record: &RetrievalOutcomeRecord) -> Result<Vec<u8>> {
+pub(super) fn encode_retrieval_outcome(record: &RetrievalOutcomeRecord) -> Result<Vec<u8>> {
     rmp_serde::to_vec_named(record)
         .map_err(|_| Error::InvariantViolation("retrieval outcome telemetry encode failed"))
 }
@@ -715,7 +730,7 @@ pub(super) fn retrieval_outcomes_for_run_in_txn(
     Ok(records)
 }
 
-fn vet_retrieval_outcome(outcome: &RetrievalOutcome) -> Result<()> {
+pub(super) fn vet_retrieval_outcome(outcome: &RetrievalOutcome) -> Result<()> {
     if outcome.key.is_empty()
         || outcome.key.len() > RETRIEVAL_OUTCOME_KEY_MAX_LEN
         || !outcome
