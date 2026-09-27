@@ -275,8 +275,14 @@ pub(super) fn ingest_artifact_snapshot(
     artifact: &str,
     learned_at: u64,
 ) -> oneiron::codebase::RepoIngestResult {
-    let config = oneiron::codebase::RepoIngestConfig::new(repo_dir, ["index.html", "app.js"])
-        .expect("repo ingest config");
+    let mut paths = vec!["index.html", "app.js"];
+    for extra in ["style.css", "next.html"] {
+        if repo_dir.join(extra).is_file() {
+            paths.push(extra);
+        }
+    }
+    let config =
+        oneiron::codebase::RepoIngestConfig::new(repo_dir, paths).expect("repo ingest config");
     let result = server
         .vault
         .ingest_local_repo_at_commit(

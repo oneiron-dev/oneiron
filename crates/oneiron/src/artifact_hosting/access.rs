@@ -136,9 +136,11 @@ impl Vault {
             if grant.scope == FederationGrantScope::vault(world_id)
                 && grant.member_ref == principal
                 && grant.confers_at(now)
-                && fold.pact_for_grant(&id).is_none_or(|pact| {
-                    pact.status == crate::authority::FederationPactStatus::Active
-                })
+                && matches!(
+                    crate::authority::federation_grant_activation(&fold, &id),
+                    crate::authority::FederationGrantActivation::Unpacted
+                        | crate::authority::FederationGrantActivation::Active
+                )
             {
                 return Ok(true);
             }

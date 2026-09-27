@@ -1,5 +1,5 @@
 use super::core_engine_error;
-use crate::auth::CoreAuth;
+use crate::auth::{CoreAuth, CoreScope};
 use crate::error::ApiError;
 use crate::error::EnvelopedApiError;
 use crate::server::SyncServer;
@@ -18,6 +18,7 @@ use axum::http::header::CONTENT_TYPE;
 use axum::http::header::ETAG;
 use axum::http::header::IF_NONE_MATCH;
 use axum::http::header::LOCATION;
+use axum::http::header::REFERRER_POLICY;
 use axum::response::Response;
 use serde::Deserialize;
 use std::sync::Arc;
@@ -44,7 +45,6 @@ pub(crate) const ARTIFACT_CONTENT_SECURITY_POLICY: &str = concat!(
 pub(crate) struct ArtifactServeQuery {
     channel: Option<String>,
     fork_hash: Option<String>,
-    token: Option<String>,
 }
 
 pub(crate) async fn serve_artifact_root(
@@ -54,7 +54,7 @@ pub(crate) async fn serve_artifact_root(
     Path(artifact): Path<String>,
     Query(query): Query<ArtifactServeQuery>,
 ) -> Result<Response, EnvelopedApiError> {
-    let response = serve_artifact_file(server, artifact, "", query, &headers)?;
+    let response = serve_artifact_file(server, artifact, "", query, &headers, None)?;
     if !uri.path().ends_with('/') {
         return artifact_root_redirect_response(&uri);
     }
@@ -63,11 +63,17 @@ pub(crate) async fn serve_artifact_root(
 
 pub(crate) async fn serve_artifact_path(
     headers: HeaderMap,
+    OriginalUri(uri): OriginalUri,
     State(server): State<Arc<SyncServer>>,
     Path((artifact, path)): Path<(String, String)>,
     Query(query): Query<ArtifactServeQuery>,
 ) -> Result<Response, EnvelopedApiError> {
-    serve_artifact_file(server, artifact, &path, query, &headers)
+    let (token, file_path) = artifact_token_route_path(&path);
+    let response = serve_artifact_file(server, artifact, file_path, query, &headers, token)?;
+    if token.is_some() && file_path.is_empty() && !uri.path().ends_with('/') {
+        return artifact_root_redirect_response(&uri);
+    }
+    Ok(response)
 }
 
 pub(crate) fn serve_artifact_file(
@@ -76,6 +82,7 @@ pub(crate) fn serve_artifact_file(
     route_path: &str,
     query: ArtifactServeQuery,
     request_headers: &HeaderMap,
+    token: Option<&str>,
 ) -> Result<Response, EnvelopedApiError> {
     let selector = artifact_snapshot_selector(&query)?;
     // Only a verified, bound principal can claim membership. An invalid bearer
@@ -83,6 +90,9 @@ pub(crate) fn serve_artifact_file(
     let principal =
         CoreAuth::from_headers(request_headers, &server.config, server.vault().as_ref())
             .ok()
+            .filter(|auth| {
+                auth.has_scope(CoreScope::Read) && auth.require_unrestricted_record_scope().is_ok()
+            })
             .and_then(|auth| {
                 auth.principal_ref()
                     .and_then(|id| oneiron::EntityId::from_hex(id).ok())
@@ -90,13 +100,7 @@ pub(crate) fn serve_artifact_file(
     let path = normalize_artifact_route_path(route_path);
     let Some(file) = server
         .vault
-        .resolve_authorized_artifact_file(
-            &artifact,
-            selector,
-            &path,
-            query.token.as_deref(),
-            principal,
-        )
+        .resolve_authorized_artifact_file(&artifact, selector, &path, token, principal)
         .map_err(|error| core_engine_error("artifact serving failed", error))?
     else {
         return Err(ApiError::not_found("artifact", None).into());
@@ -128,6 +132,16 @@ pub(crate) fn artifact_snapshot_selector(
     Ok(oneiron::ArtifactSnapshotSelector::Channel(channel))
 }
 
+/// A capability is a path segment so ordinary relative bundle URLs inherit
+/// it. The reserved `_t` prefix is not a stored bundle path.
+pub(crate) fn artifact_token_route_path(path: &str) -> (Option<&str>, &str) {
+    let Some(rest) = path.strip_prefix("_t/") else {
+        return (None, path);
+    };
+    let (token, file_path) = rest.split_once('/').unwrap_or((rest, ""));
+    (Some(token), file_path)
+}
+
 pub(crate) fn normalize_artifact_route_path(route_path: &str) -> String {
     let path = route_path.trim_start_matches('/');
     if path.is_empty() {
@@ -152,6 +166,9 @@ pub(crate) fn artifact_root_redirect_response(uri: &Uri) -> Result<Response, Env
 
     let mut response = Response::new(Body::empty());
     *response.status_mut() = StatusCode::PERMANENT_REDIRECT;
+    response
+        .headers_mut()
+        .insert(REFERRER_POLICY, HeaderValue::from_static("no-referrer"));
     response.headers_mut().insert(
         LOCATION,
         HeaderValue::from_str(&target)
@@ -175,6 +192,7 @@ pub(crate) fn artifact_file_response(
         *response.status_mut() = StatusCode::NOT_MODIFIED;
         let headers = response.headers_mut();
         headers.insert(CACHE_CONTROL, HeaderValue::from_static(cache_control));
+        headers.insert(REFERRER_POLICY, HeaderValue::from_static("no-referrer"));
         headers.insert(
             CONTENT_SECURITY_POLICY,
             HeaderValue::from_static(ARTIFACT_CONTENT_SECURITY_POLICY),
@@ -194,6 +212,7 @@ pub(crate) fn artifact_file_response(
         HeaderValue::from_static(artifact_content_type(&file.path)),
     );
     headers.insert(CACHE_CONTROL, HeaderValue::from_static(cache_control));
+    headers.insert(REFERRER_POLICY, HeaderValue::from_static("no-referrer"));
     headers.insert(
         CONTENT_SECURITY_POLICY,
         HeaderValue::from_static(ARTIFACT_CONTENT_SECURITY_POLICY),

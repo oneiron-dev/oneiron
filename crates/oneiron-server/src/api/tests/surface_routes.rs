@@ -685,6 +685,173 @@ async fn configured_cimd_documents_are_served_without_client_capabilities() {
     }
 }
 
+/// Build a real signed authority DAG: P bound to G and H concurrently, Q
+/// bound to G. P elects H, so G's Q pact is Active while its historical P
+/// binding is discarded and suspended. Disconnecting P must keep G denied.
+fn bind_artifact_member_to_divergent_pacts(
+    vault: &oneiron::Vault,
+    grant_g: oneiron::EntityId,
+) -> oneiron::authority::AuthorityLogEntry {
+    use ed25519_dalek::{Signer, SigningKey};
+    use oneiron::authority::{
+        AUTHORITY_LOG_SCHEMA_VERSION, AuthorityKey, AuthorityLogEntry, AuthorityOp,
+        AuthoritySignature, FederationLifecycleAction, FederationLifecycleKind,
+        authority_entry_hash, authority_transcript, federation_scope_digest,
+        sign_federation_pact_gesture,
+    };
+    use oneiron::federation::{
+        FederationDirectionScope, FederationPactScope, FederationScopeBands, FederationScopeFacets,
+        FederationScopeWorlds, encode_federation_pact_scope,
+    };
+    let signing = SigningKey::from_bytes(&blake3::derive_key(
+        "oneiron/host-authority-signing/v2",
+        b"secret",
+    ));
+    let issuer = oneiron::authority::HostSlipIssuer::from_secret(b"secret").unwrap();
+    let host_key = issuer.public_key();
+    assert_eq!(signing.verifying_key().to_bytes(), issuer.binding_key());
+    let fold = vault.authority_fold().unwrap();
+    let vault_id = fold.vault_id.unwrap();
+    let mut heads = fold.valid_entries.clone();
+    let mut seq = 0_u64;
+    for id in vault
+        .entities_by_type(oneiron::registry::ENTITY_TYPE_AUTHORITY_LOG)
+        .unwrap()
+    {
+        let row = vault.get_authority_log_entry(&id).unwrap().unwrap();
+        let hash = authority_entry_hash(&row).unwrap();
+        if !fold.valid_entries.contains(&hash) {
+            continue;
+        }
+        for parent in &row.parent_hashes {
+            heads.remove(parent);
+        }
+        if row.signer.public_key == host_key {
+            seq = seq.max(row.seq + 1);
+        }
+    }
+    let peer = SigningKey::from_bytes(&[0x6d; 32]);
+    let peer_key = AuthorityKey::Ed25519(peer.verifying_key().to_bytes());
+    let peer_id = [0x6e; 32];
+    let half = FederationDirectionScope {
+        worlds: FederationScopeWorlds::All,
+        facets: FederationScopeFacets::All,
+        bands: FederationScopeBands::All,
+    };
+    let scope = FederationPactScope {
+        lo_to_hi: half.clone(),
+        hi_to_lo: half,
+    };
+    let grant_h =
+        oneiron::EntityId::from_bytes([0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1]).unwrap();
+    assert!(
+        grant_h < grant_g,
+        "fixture needs H < G for the divergent winner"
+    );
+    let p = [0xd4; 32];
+    let q = [0xd5; 32];
+    let nonce_p = [0x77; 16];
+    let nonce_q = [0x78; 16];
+    let entry = |seq: u64, parents: Vec<[u8; 32]>, action: FederationLifecycleAction| {
+        let mut row = AuthorityLogEntry {
+            schema_version: AUTHORITY_LOG_SCHEMA_VERSION,
+            vault_id: Some(vault_id),
+            seq,
+            parent_hashes: parents,
+            op: AuthorityOp::FederationLifecycle(action),
+            signer: AuthoritySignature {
+                suite: host_key.suite(),
+                public_key: host_key.clone(),
+                signature: vec![0; 64],
+            },
+            cosigns: Vec::new(),
+            ts: vault.now_recorded_at(),
+        };
+        row.signer.signature = signing
+            .sign(&authority_transcript(&row).unwrap())
+            .to_bytes()
+            .to_vec();
+        row
+    };
+    let connect = |pact_id: [u8; 32], grant: oneiron::EntityId, nonce: [u8; 16]| {
+        let digest =
+            federation_scope_digest(&nonce, &encode_federation_pact_scope(&scope).unwrap());
+        let gesture = sign_federation_pact_gesture(
+            FederationLifecycleKind::Connect,
+            &pact_id,
+            &vault_id,
+            &peer_id,
+            1,
+            &digest,
+            None,
+            &nonce,
+            peer_key.clone(),
+            |transcript| Ok(peer.sign(transcript).to_bytes().to_vec()),
+        )
+        .unwrap();
+        FederationLifecycleAction {
+            kind: FederationLifecycleKind::Connect,
+            pact_id,
+            grant_ref: grant,
+            peer_vault_id: peer_id,
+            pact_epoch: 1,
+            pact_scope: Some(scope.clone()),
+            effective_scope: None,
+            scope_digest: Some(digest),
+            gesture: Some(gesture),
+            successor_vault_id: None,
+            pact_nonce: nonce,
+        }
+    };
+    let parents: Vec<_> = heads.into_iter().collect();
+    let pg = entry(seq, parents.clone(), connect(p, grant_g, nonce_p));
+    let ph = entry(seq + 1, parents.clone(), connect(p, grant_h, nonce_p));
+    let qg = entry(seq + 2, parents, connect(q, grant_g, nonce_q));
+    let pg_hash = authority_entry_hash(&pg).unwrap();
+    let ph_hash = authority_entry_hash(&ph).unwrap();
+    let now = vault.now_recorded_at();
+    for row in [&pg, &ph, &qg] {
+        vault
+            .put_authority_log_entry(
+                row,
+                oneiron::TimeRange {
+                    start: now,
+                    end: now,
+                },
+                now,
+            )
+            .unwrap();
+    }
+    let fold = vault.authority_fold().unwrap();
+    assert_eq!(
+        fold.pact_for_grant(&grant_g).map(|p| p.status),
+        Some(oneiron::authority::FederationPactStatus::Active)
+    );
+    assert!(matches!(
+        oneiron::authority::federation_grant_activation(&fold, &grant_g),
+        oneiron::authority::FederationGrantActivation::Inactive(
+            oneiron::authority::FederationPactStatus::Suspended
+        )
+    ));
+    entry(
+        seq + 3,
+        vec![pg_hash, ph_hash],
+        FederationLifecycleAction {
+            kind: FederationLifecycleKind::Disconnect,
+            pact_id: p,
+            grant_ref: grant_h,
+            peer_vault_id: peer_id,
+            pact_epoch: 1,
+            pact_scope: None,
+            effective_scope: None,
+            scope_digest: None,
+            gesture: None,
+            successor_vault_id: None,
+            pact_nonce: nonce_p,
+        },
+    )
+}
+
 #[tokio::test]
 async fn artifact_tiers_bind_tokens_and_live_world_grants_without_an_existence_oracle() {
     fn stable_error(bytes: &Bytes) -> Value {
@@ -697,7 +864,13 @@ async fn artifact_tiers_bind_tokens_and_live_world_grants_without_an_existence_o
         allow_unauthenticated: false,
         ..Default::default()
     });
-    let repo = create_artifact_repo(b"<h1>tiered</h1>\n");
+    let repo = create_artifact_repo(
+        b"<link rel=\"stylesheet\" href=\"style.css\"><script src=\"app.js\"></script><a href=\"next.html\">next</a>\n",
+    );
+    std::fs::write(repo.path().join("style.css"), b"body { color: red; }\n").unwrap();
+    std::fs::write(repo.path().join("next.html"), b"<h1>next</h1>\n").unwrap();
+    run_artifact_git(repo.path(), &["add", "."]);
+    run_artifact_git(repo.path(), &["commit", "-m", "bundle resources"]);
     let snapshot = ingest_artifact_snapshot(&server, repo.path(), "site", 10);
     let hash = snapshot.snapshot.fork_hash;
     let (tier, token) = oneiron::artifact_hosting::ArtifactServeTier::mint_link_token();
@@ -734,7 +907,7 @@ async fn artifact_tiers_bind_tokens_and_live_world_grants_without_an_existence_o
     let wrong = route_bytes(
         server.clone(),
         Request::builder()
-            .uri(format!("/a/site/?token={}", "a".repeat(64)))
+            .uri(format!("/a/site/_t/{}/", "a".repeat(64)))
             .body(Body::empty())
             .unwrap(),
     )
@@ -743,7 +916,7 @@ async fn artifact_tiers_bind_tokens_and_live_world_grants_without_an_existence_o
         (wrong.0, stable_error(&wrong.2)),
         (missing.0, stable_error(&missing.2))
     );
-    let linked = route_bytes(
+    let query_only = route_bytes(
         server.clone(),
         Request::builder()
             .uri(format!("/a/site/?token={token}"))
@@ -751,14 +924,86 @@ async fn artifact_tiers_bind_tokens_and_live_world_grants_without_an_existence_o
             .unwrap(),
     )
     .await;
+    assert_eq!(
+        (query_only.0, stable_error(&query_only.2)),
+        (missing.0, stable_error(&missing.2)),
+        "a query token cannot carry into relative resources"
+    );
+    let link_root = format!("/a/site/_t/{token}/");
+    let linked = route_bytes(
+        server.clone(),
+        Request::builder()
+            .uri(&link_root)
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await;
     assert_eq!(linked.0, StatusCode::OK);
-    assert_eq!(linked.2.as_ref(), b"<h1>tiered</h1>\n");
+    assert!(
+        std::str::from_utf8(&linked.2)
+            .unwrap()
+            .contains("src=\"app.js\"")
+    );
+    for (relative, expected) in [
+        (
+            "app.js",
+            b"document.body.dataset.bundle = 'served';\n".as_slice(),
+        ),
+        ("style.css", b"body { color: red; }\n".as_slice()),
+        ("next.html", b"<h1>next</h1>\n".as_slice()),
+    ] {
+        // A browser resolves each relative URL below the token-bearing root.
+        let resource = route_bytes(
+            server.clone(),
+            Request::builder()
+                .uri(format!("{link_root}{relative}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await;
+        assert_eq!(resource.0, StatusCode::OK, "{relative}");
+        assert_eq!(resource.2.as_ref(), expected);
+        assert_eq!(resource.1.get(CACHE_CONTROL).unwrap(), "private, no-store");
+    }
+    let uncredentialed_asset = route_bytes(
+        server.clone(),
+        Request::builder()
+            .uri("/a/site/app.js")
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(
+        (
+            uncredentialed_asset.0,
+            stable_error(&uncredentialed_asset.2)
+        ),
+        (missing.0, stable_error(&missing.2))
+    );
     assert_eq!(linked.1.get(CACHE_CONTROL).unwrap(), "private, no-store");
+    assert_eq!(
+        linked.1.get(axum::http::header::REFERRER_POLICY).unwrap(),
+        "no-referrer"
+    );
+    let (status, headers, _) = route_bytes(
+        server.clone(),
+        Request::builder()
+            .uri(format!("/a/site/_t/{token}"))
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::PERMANENT_REDIRECT);
+    assert_eq!(headers.get(LOCATION).unwrap(), link_root.as_str());
+    assert_eq!(
+        headers.get(axum::http::header::REFERRER_POLICY).unwrap(),
+        "no-referrer"
+    );
     let direct = route_bytes(
         server.clone(),
         Request::builder()
             .uri(format!(
-                "/a/site/index.html?forkHash={}&token={token}",
+                "/a/site/_t/{token}/index.html?forkHash={}",
                 oneiron::artifact_hex(&hash)
             ))
             .body(Body::empty())
@@ -792,7 +1037,7 @@ async fn artifact_tiers_bind_tokens_and_live_world_grants_without_an_existence_o
             oneiron::store::GateDecisionId::now(),
         )
         .unwrap();
-    server
+    let creation = server
         .vault
         .initialize_shared_vault(
             &authenticated_owner,
@@ -821,6 +1066,50 @@ async fn artifact_tiers_bind_tokens_and_live_world_grants_without_an_existence_o
     .await;
     assert_eq!(permitted.0, StatusCode::OK);
     assert_eq!(permitted.1.get(CACHE_CONTROL).unwrap(), "private, no-store");
+    let write_only = route_bytes(
+        server.clone(),
+        core_request_with_principal_ref("GET", "/a/site/", "core:write", &member.to_hex(), None),
+    )
+    .await;
+    assert_eq!(
+        (write_only.0, stable_error(&write_only.2)),
+        (missing.0, stable_error(&missing.2))
+    );
+    let (mut narrowed, holder) = slip_credentials::credential(
+        &server,
+        &format!(
+            "scope=core:read;principal_ref={};jti=artifact-narrow",
+            member.to_hex()
+        ),
+    );
+    let mut scope = oneiron::federation::Scope::top();
+    scope.worlds = oneiron::federation::ScopeAxis::Some(std::collections::BTreeSet::from([
+        oneiron::federation::ScopeId(stranger),
+    ]));
+    narrowed
+        .attenuate(
+            oneiron::authority::SlipCaveat {
+                scope: Some(scope),
+                ..Default::default()
+            },
+            &holder,
+        )
+        .unwrap();
+    let narrowed_req = slip_credentials::bind_slip_request(
+        &server,
+        &narrowed,
+        &holder,
+        Request::builder()
+            .uri("/a/site/")
+            .body(Body::empty())
+            .unwrap(),
+    );
+    let narrowed_denied = route_bytes(server.clone(), narrowed_req).await;
+    assert_eq!(
+        (narrowed_denied.0, stable_error(&narrowed_denied.2)),
+        (missing.0, stable_error(&missing.2))
+    );
+
     for request in [
         Request::builder()
             .uri("/a/site/")
@@ -828,7 +1117,7 @@ async fn artifact_tiers_bind_tokens_and_live_world_grants_without_an_existence_o
             .unwrap(),
         core_request_with_principal_ref("GET", "/a/site/", "core:read", &stranger.to_hex(), None),
         Request::builder()
-            .uri(format!("/a/site/?token={token}"))
+            .uri(&link_root)
             .body(Body::empty())
             .unwrap(),
         Request::builder()
@@ -843,6 +1132,47 @@ async fn artifact_tiers_bind_tokens_and_live_world_grants_without_an_existence_o
             (missing.0, stable_error(&missing.2))
         );
     }
+    let member_grant = oneiron::EntityId::from_hex(&creation.grant_refs[0]).unwrap();
+    let disconnect = bind_artifact_member_to_divergent_pacts(&server.vault, member_grant);
+    let discarded = route_bytes(
+        server.clone(),
+        core_request_with_principal_ref("GET", "/a/site/", "core:read", &member.to_hex(), None),
+    )
+    .await;
+    assert_eq!(
+        (discarded.0, stable_error(&discarded.2)),
+        (missing.0, stable_error(&missing.2))
+    );
+    let now = server.vault.now_recorded_at();
+    server
+        .vault
+        .put_authority_log_entry(
+            &disconnect,
+            oneiron::TimeRange {
+                start: now,
+                end: now,
+            },
+            now,
+        )
+        .unwrap();
+    assert!(matches!(
+        oneiron::authority::federation_grant_activation(
+            &server.vault.authority_fold().unwrap(),
+            &member_grant
+        ),
+        oneiron::authority::FederationGrantActivation::Inactive(
+            oneiron::authority::FederationPactStatus::Disconnected
+        )
+    ));
+    let terminated = route_bytes(
+        server.clone(),
+        core_request_with_principal_ref("GET", "/a/site/", "core:read", &member.to_hex(), None),
+    )
+    .await;
+    assert_eq!(
+        (terminated.0, stable_error(&terminated.2)),
+        (missing.0, stable_error(&missing.2))
+    );
     server
         .vault
         .unpublish_artifact_pointer("site", oneiron::ArtifactPointerChannel::Published)
