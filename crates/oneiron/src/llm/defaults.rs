@@ -470,6 +470,77 @@ mod tests {
     }
 
     #[test]
+    fn registered_local_model_binds_under_stored_local_default_without_a_manifest() {
+        use super::super::{CallClass, LlmCatalogCost, LlmCatalogEntry, LlmRequest};
+        let dir = tempfile::tempdir().unwrap();
+        let vault = Vault::open(dir.path(), crate::VaultConfig::default()).unwrap();
+        let model = ModelId::new("local/consolidation@r1").unwrap();
+        vault
+            .put_model_registry_row(&ModelRegistryRow {
+                version: 1,
+                wire: ModelWireFormat::Local,
+                catalog: LlmCatalogEntry {
+                    model: model.clone(),
+                    display_name: "local consolidation".into(),
+                    locality: ModelLocality::OnDevice,
+                    context_window_tokens: 4096,
+                    max_output_tokens: None,
+                    cost: Some(LlmCatalogCost {
+                        input_per_million: "0".into(),
+                        output_per_million: "0".into(),
+                        cache_read_per_million: None,
+                        cache_write_per_million: None,
+                    }),
+                    capabilities: vec![],
+                    metadata: Default::default(),
+                },
+                scores: Default::default(),
+                fetched_at: Default::default(),
+            })
+            .unwrap();
+        let mut table = vault.purpose_default_table().unwrap();
+        table
+            .purposes
+            .get_mut(&CallPurpose::Consolidation)
+            .unwrap()
+            .locality = ModelLocality::OnDevice;
+        table
+            .purposes
+            .get_mut(&CallPurpose::Consolidation)
+            .unwrap()
+            .tier = ModelTierRef("resident-local".into());
+        vault.set_purpose_default_table(&table).unwrap();
+        assert!(vault.model_manifest().unwrap().is_none());
+        let mut request = LlmRequest {
+            model: model.clone(),
+            envelope: CallEnvelope {
+                scope: Default::default(),
+                purpose: CallPurpose::Consolidation,
+                class: CallClass::BestEffort,
+                tier: TierPrecedence::for_purpose(
+                    &CallPurpose::Consolidation,
+                    ModelTierRef("global".into()),
+                ),
+                response_format: super::super::ResponseFormat::Text,
+                locality: ModelLocality::OnDevice,
+            },
+            messages: vec![],
+            tools: vec![],
+            params: Default::default(),
+            provider_options: Default::default(),
+        };
+        vault
+            .bind_model_role(
+                super::super::manifest::ModelRole::GenerativeReasoner,
+                &mut request,
+            )
+            .unwrap();
+        assert_eq!(request.model, model);
+        assert_eq!(request.envelope.locality, ModelLocality::OnDevice);
+        assert_eq!(request.envelope.tier.resolved().as_str(), "resident-local");
+    }
+
+    #[test]
     fn resident_local_default_cannot_relabel_remote_model_to_bypass_budget() {
         use super::super::{BudgetExhaustionPolicy, BudgetGuard, LlmRequest, ModelId};
         let dir = tempfile::tempdir().unwrap();
@@ -500,27 +571,25 @@ mod tests {
             provider_options: Default::default(),
         };
         let original = request.clone();
-        assert!(
-            vault
-                .bind_model_role(
-                    super::super::manifest::ModelRole::GenerativeReasoner,
-                    &mut request
-                )
-                .is_err()
-        );
+        assert!(matches!(
+            vault.bind_model_role(
+                super::super::manifest::ModelRole::GenerativeReasoner,
+                &mut request
+            ),
+            Err(Error::InvalidConfig(_))
+        ));
         assert_eq!(request, original);
         let guard =
             BudgetGuard::with_reserve_units("spent", 0, 1, BudgetExhaustionPolicy::ContinueOnLocal);
         assert!(guard.admit_for_request(&request).is_err());
         request.envelope.locality = ModelLocality::OnDevice;
-        assert!(
-            vault
-                .bind_model_role(
-                    super::super::manifest::ModelRole::GenerativeReasoner,
-                    &mut request
-                )
-                .is_err()
-        );
+        assert!(matches!(
+            vault.bind_model_role(
+                super::super::manifest::ModelRole::GenerativeReasoner,
+                &mut request
+            ),
+            Err(Error::InvalidConfig(_))
+        ));
         vault
             .put_model_registry_row(&ModelRegistryRow {
                 version: 1,
@@ -544,13 +613,12 @@ mod tests {
                 fetched_at: Default::default(),
             })
             .unwrap();
-        assert!(
-            vault
-                .bind_model_role(
-                    super::super::manifest::ModelRole::GenerativeReasoner,
-                    &mut request
-                )
-                .is_err()
-        );
+        assert!(matches!(
+            vault.bind_model_role(
+                super::super::manifest::ModelRole::GenerativeReasoner,
+                &mut request
+            ),
+            Err(Error::InvalidConfig(_))
+        ));
     }
 }

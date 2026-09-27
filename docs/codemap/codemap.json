@@ -20487,7 +20487,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "CatalogSeed",
@@ -20500,7 +20500,7 @@
      "path": "src/llm/registry.rs",
      "purpose": "Vault-persisted, priced model catalogs",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 3,
       "enum": 1,
       "fn": 10,
       "struct": 5
@@ -33979,6 +33979,14 @@
      "bucket": "s",
      "kind": "test",
      "notable": [],
+     "path": "tests/inference_default_bind.rs",
+     "purpose": "Public no-manifest local binding must use one registry snapshot, not a nested reader",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
      "path": "tests/it/analyzer_asset_policy.rs",
      "purpose": "License + asset governance gate for the analyzer (plan ONE-317 §11)",
      "surface": {}
@@ -35937,7 +35945,7 @@
    "over_bar": 11,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
    "source_files": 2121,
-   "test_files": 722
+   "test_files": 723
   },
   "oneiron-android": {
    "files": [

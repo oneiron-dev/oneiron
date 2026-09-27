@@ -294,8 +294,7 @@ impl Vault {
             // locality label alone. Without a manifest, the registered model
             // and transport must both be local before budget admission.
             if row.locality == ModelLocality::OnDevice
-                && !self
-                    .model_registry_row(&bound.model)?
+                && !super::registry::read_model_registry_row(&self.store, &txn, &bound.model)?
                     .is_some_and(|binding| {
                         binding.catalog.locality == ModelLocality::OnDevice
                             && binding.wire == super::registry::ModelWireFormat::Local
