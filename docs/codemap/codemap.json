@@ -17406,13 +17406,13 @@
      "surface": {}
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/gate/resolution/accessors.rs",
      "purpose": "Read-only resolved-field accessors plus the frontier-hash entry",
      "surface": {
-      "crate-vis": 28
+      "crate-vis": 29
      }
     },
     {
@@ -34860,27 +34860,39 @@
      "path": "src/voice_identity/mod.rs",
      "purpose": "VOX-02 voice identity substrate: consent log, enrollment, local matching",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 2,
       "mod": 1,
       "re-export": 1
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
-      "OwnerVoiceRefPack",
+      "VoiceIdentity",
       "VoiceRefOrigin",
+      "VoiceRefPack",
       "VoiceRegisterClip",
-      "VoiceTargetClone"
+      "VoiceTargetClone",
+      "VoiceTargetRecord"
      ],
      "path": "src/voice_identity/ref_bank.rs",
-     "purpose": "Private per-vault owner reference bank",
+     "purpose": "Private per-vault voice reference bank",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 2,
       "enum": 1,
-      "fn": 4,
-      "struct": 3
+      "fn": 7,
+      "struct": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/voice_identity/ref_limits.rs",
+     "purpose": "Resolved policy-manifest limits for the private render-reference bank",
+     "surface": {
+      "crate-vis": 9
      }
     },
     {
@@ -36019,6 +36031,14 @@
      "notable": [],
      "path": "tests/vault_read_parity.rs",
      "purpose": "ONE-1433 adapter parity suite: one read contract whose behavior does not change with deployment topology",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/voice_ref_bank.rs",
+     "purpose": "—",
      "surface": {}
     },
     {
@@ -37314,7 +37334,7 @@
      "purpose": "ONE-1807: the engine half of a transport-neutral text-brain voice cascade"
     },
     "voice_identity": {
-     "files": 9,
+     "files": 10,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -37358,8 +37378,8 @@
    },
    "over_bar": 4,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2218,
-   "test_files": 756
+   "source_files": 2219,
+   "test_files": 757
   },
   "oneiron-android": {
    "files": [
