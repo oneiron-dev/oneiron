@@ -456,3 +456,78 @@ fn restore_does_not_reactivate_retired_default_or_overwrite_foreign_holder() -> 
     );
     Ok(())
 }
+
+#[test]
+fn later_normal_import_keeps_the_fresh_restored_source_holder() -> Result<()> {
+    let dir = tempfile::tempdir()?;
+    let vault = Vault::open_unseeded_for_test(dir.path(), crate::VaultConfig::default())?;
+    put_policy_manifest_bytes(
+        &vault,
+        crate::gate::default_policy_manifest_id()?,
+        &crate::gate::default_policy_manifest(),
+    )?;
+    let (name, markdown) = FILES[1];
+    let package = package(name, markdown)?;
+    let hash = package.content_hash()?;
+    let source = HubRef::new(stable_id("hub")?, name, HubPin::ContentHash(hash.to_hex()))?;
+    // The retired UUID sorts strictly before a restored clock UUID, so the
+    // previous first-imported-row selector would return the wrong holder.
+    let mut bytes = [0_u8; 16];
+    bytes[6] = 0x80;
+    bytes[8] = 0x80;
+    let old = EntityId::from_bytes(bytes)?;
+    assert_eq!(
+        vault.import_skill_from_hub_with_id(
+            &source,
+            &package,
+            old,
+            TimeRange { start: 1, end: 1 },
+            1
+        )?,
+        old
+    );
+    let mut record = vault.get_skill_record(&old)?.unwrap();
+    record.lifecycle_status = SkillLifecycle::Active;
+    let data = crate::skill::encode_skill_record(&record)?;
+    vault.with_write_txn(|txn| {
+        vault.admit_hub_skill_record_in_txn(
+            txn,
+            TimeRange { start: 2, end: 2 },
+            2,
+            data.clone(),
+            HubAdmissionProof {
+                id: old,
+                binding: blake3::hash(&data),
+            },
+        )
+    })?;
+    record.lifecycle_status = SkillLifecycle::Stale;
+    vault.update_skill_record(&old, &record, TimeRange { start: 3, end: 3 }, 3)?;
+    let restored = vault.restore_default_skills(TimeRange { start: 4, end: 4 }, 4)?;
+    let replacement = restored
+        .into_iter()
+        .find(|id| {
+            vault
+                .get_skill_record(id)
+                .ok()
+                .flatten()
+                .is_some_and(|row| row.skill_id == name)
+        })
+        .expect("restored judge");
+    assert_ne!(replacement, old);
+    assert!(old.as_bytes() < replacement.as_bytes());
+    assert_eq!(
+        vault.import_skill_from_hub(&source, &package, TimeRange { start: 5, end: 5 }, 5)?,
+        replacement
+    );
+    assert_eq!(
+        vault.get_skill_record(&old)?.unwrap().lifecycle_status,
+        SkillLifecycle::Stale
+    );
+    assert_eq!(vault.skill_hub_provenance_count(&replacement)?, 1);
+    assert_eq!(
+        vault.restore_default_skills(TimeRange { start: 6, end: 6 }, 6)?,
+        Vec::<EntityId>::new()
+    );
+    Ok(())
+}

@@ -36,7 +36,7 @@ impl Vault {
             let package = super::super::folder::package_from_files(files)?;
             let hash = package.content_hash()?;
             let skill_ref = pack_skill_hub_ref(hub, &folder, hash)?;
-            if let Some(id) = self.imported_skill_entity_for_content_hash_in_txn(txn, hash)? {
+            if let Some(id) = self.imported_skill_entity_for_content_hash_in_txn(txn, hash, None)? {
                 let existing = self.stored_hub_package_in_txn(txn, &id)?;
                 if existing.files != package.files {
                     return Err(invalid("pack skill source collision"));

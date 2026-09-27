@@ -230,7 +230,7 @@ impl Vault {
         source: &HubRef,
         hash: crate::skill::SkillContentHash,
         name: &str,
-    ) -> Result<bool> {
+    ) -> Result<Option<EntityId>> {
         for (id, record) in self.structured_skills_for_content_hash_in_txn(txn, hash)? {
             if record.skill_id != name
                 || !matches!(
@@ -241,10 +241,10 @@ impl Vault {
                 continue;
             }
             if self.default_skill_present_for_entity_in_txn(txn, &id, source)? {
-                return Ok(true);
+                return Ok(Some(id));
             }
         }
-        Ok(false)
+        Ok(None)
     }
 
     pub(super) fn default_skill_present_for_entity_in_txn(
@@ -281,7 +281,10 @@ impl Vault {
             let package = package(name, markdown)?;
             let hash = package.content_hash()?;
             let source = HubRef::new(stable_id("hub")?, name, HubPin::ContentHash(hash.to_hex()))?;
-            if self.default_skill_present_in_txn(&txn, &source, hash, name)? {
+            if self
+                .default_skill_present_in_txn(&txn, &source, hash, name)?
+                .is_some()
+            {
                 continue;
             }
             let id = self.store.clock.entity_id()?;

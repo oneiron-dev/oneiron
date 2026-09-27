@@ -284,7 +284,7 @@ impl Vault {
         let entity = match if fresh {
             None
         } else {
-            self.imported_skill_entity_for_content_hash_in_txn(wtxn, content_hash)?
+            self.imported_skill_entity_for_content_hash_in_txn(wtxn, content_hash, Some(hub_ref))?
         } {
             Some(existing) => {
                 let existing_record = self.read_skill_record_in_txn(wtxn, &existing)?;

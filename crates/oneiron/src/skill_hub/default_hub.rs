@@ -139,6 +139,20 @@ impl Vault {
         let source = HubRef::new(id, subtree, HubPin::Commit(commit.to_owned()))?;
         let package = adapter.fetch_package(&source)?;
         let hash = package.content_hash()?;
+        // A no-op restore makes no advisory request. Recheck after the
+        // network work inside the write transaction before minting an ID.
+        let existing = {
+            let txn = self.store.env.read_txn()?;
+            if self.hub_record_in_txn(&txn, &id)? != row {
+                return Err(crate::error::Error::InvalidConfig(
+                    "default skill hub configuration changed during fetch".to_owned(),
+                ));
+            }
+            self.default_skill_present_in_txn(&txn, &source, hash, &package.record.skill_id)?
+        };
+        if let Some(entity) = existing {
+            return Ok(entity);
+        }
         let coordinates = super::osv::dependency_inventory(&package)?;
         let (_, _, scans) =
             self.dependency_advisories(hash, &coordinates, &super::osv::OsvDevClient, learned_at)?;
@@ -148,21 +162,10 @@ impl Vault {
                 "default skill hub configuration changed during fetch".to_owned(),
             ));
         }
-        if self.default_skill_present_in_txn(&txn, &source, hash, &package.record.skill_id)? {
-            // The exact default already exists; unlike restore, ordinary
-            // import may attach an alias, so resolve it by source claim.
-            for (entity, record) in self.structured_skills_for_content_hash_in_txn(&txn, hash)? {
-                if record.skill_id == package.record.skill_id
-                    && matches!(
-                        record.lifecycle_status,
-                        crate::skill::SkillLifecycle::Candidate
-                            | crate::skill::SkillLifecycle::Active
-                    )
-                    && self.default_skill_present_for_entity_in_txn(&txn, &entity, &source)?
-                {
-                    return Ok(entity);
-                }
-            }
+        if let Some(entity) =
+            self.default_skill_present_in_txn(&txn, &source, hash, &package.record.skill_id)?
+        {
+            return Ok(entity);
         }
         let entity = self.restore_skill_from_hub_in_txn(
             &mut txn,
