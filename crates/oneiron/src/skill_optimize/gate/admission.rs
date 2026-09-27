@@ -85,7 +85,7 @@ pub(crate) fn with_optimized_skill_admission(
     // Exiting on a bare `EntityNotFound` instead left the acceptance
     // standing, the proposal open, and the real score pair unrecorded.
     let Some(accepted) = standing_verdict_in_txn(vault, &*wtxn, proposal)?
-        .filter(|verdict| verdict.disposition.admits())
+        .filter(|verdict| verdict.disposition.admits() && verdict.displaced_by_revision.is_none())
     else {
         return Err(invalid(
             "an optimizer-born candidate is admitted only on a standing accepted gate verdict",
