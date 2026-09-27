@@ -24,7 +24,9 @@ pub use pins::{CitationPin, CursorResolution, PurgeReceipt};
 pub(crate) use registry::EntityDocRegistry;
 pub use registry::RegistryStatus;
 pub use storage::TextField;
-pub(crate) use storage::{erase_in_txn, guard_record_put, has_record_head, resolve_record_body};
+pub(crate) use storage::{
+    erase_in_txn, guard_record_put, has_record_head, record_head_bytes, resolve_record_body,
+};
 pub use verbs::{AnchoredEdit, EditVerb, TextAnchor, TextUpdateOutcome, TextUpdateRequest};
 
 /// Resolve an active document's identity and live frontier in a caller-owned

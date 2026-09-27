@@ -65,7 +65,7 @@ pub(crate) fn bind_task_answer_in_txn(
             },
             activation: QuestionActivation::OneOff,
             refresh: RefreshPolicy {
-                on_arrival: true,
+                on_arrival: false,
                 every_seconds: None,
             },
             delivery: "tasks.wait".into(),
