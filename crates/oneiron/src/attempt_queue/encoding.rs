@@ -222,6 +222,7 @@ pub(crate) fn decode_record(raw: &[u8], expected_id: AttemptId) -> Result<Attemp
     validate_attempt_events(&record.events)?;
     validate_attempt_manifest(&record.manifest)?;
     validate_cancel_state(&record.cancel_state)?;
+    crate::run_tree::validate_signal_rows(&record)?;
     validate_optional_result_ref(record.result_ref.as_ref())?;
     if let Some(lease_owner) = record.lease_owner.as_deref() {
         validate_lease_owner(lease_owner)?;

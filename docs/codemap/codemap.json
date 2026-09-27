@@ -1394,7 +1394,7 @@
      "path": "src/attempt_queue/mod.rs",
      "purpose": "Generic LMDB-backed background attempt queue",
      "surface": {
-      "crate-vis": 5,
+      "crate-vis": 9,
       "re-export": 4
      }
     },
@@ -26591,6 +26591,20 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
+      "RunAskWait"
+     ],
+     "path": "src/run_tree/ask_wait.rs",
+     "purpose": "Durable step-local wait bindings for run-branch ask handles",
+     "surface": {
+      "crate-vis": 1,
+      "enum": 1,
+      "fn": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
       "GateConsentBundle",
       "GateConsentBundleAction",
       "GateConsentBundleMember",
@@ -26613,8 +26627,8 @@
      "path": "src/run_tree/mod.rs",
      "purpose": "Run tree projection and control adapter over generic AttemptQueue rows",
      "surface": {
-      "crate-vis": 1,
-      "re-export": 5
+      "crate-vis": 2,
+      "re-export": 7
      }
     },
     {
@@ -26629,7 +26643,30 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "RunAsk",
+      "RunAskAnswer",
+      "RunAskAnswerKind",
+      "RunAskQuestion",
+      "RunAskState",
+      "RunBranchSignal",
+      "RunSignalInput",
+      "RunSignalKind",
+      "RunSignalState"
+     ],
+     "path": "src/run_tree/signal.rs",
+     "purpose": "Durable, branch-addressed Signal inbox",
+     "surface": {
+      "crate-vis": 1,
+      "enum": 4,
+      "fn": 7,
+      "struct": 5
+     }
+    },
+    {
+     "bucket": "XL",
      "kind": "test",
      "notable": [],
      "path": "src/run_tree/tests.rs",
@@ -35164,7 +35201,7 @@
      "purpose": "Shared retrieval execution quality, independent of result counts and ranking"
     },
     "run_tree": {
-     "files": 7,
+     "files": 9,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -35488,7 +35525,7 @@
    },
    "over_bar": 10,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2095,
+   "source_files": 2097,
    "test_files": 718
   },
   "oneiron-android": {

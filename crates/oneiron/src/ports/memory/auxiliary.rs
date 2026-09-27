@@ -426,6 +426,8 @@ impl JobQueue for Memory {
             manifest: Vec::new(),
             cancel_state: Default::default(),
             result_ref: None,
+            signals: Vec::new(),
+            asks: Vec::new(),
             placement: None,
         };
         txn.jobs.insert(*record.id.as_bytes(), record.clone());
