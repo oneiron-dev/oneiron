@@ -162,6 +162,8 @@ pub(in crate::batch) fn stage_edge_rows(
     tgt: &EntityId,
     value: &[u8],
 ) -> Result<()> {
+    let weight = crate::edge::decode_edge_value_for_kind(kind, value)?.weight;
+    crate::workspace_roster::validate_project_edge_put(store, wtxn, *src, kind, *tgt, weight)?;
     let key_out = Store::encode_edge_key(src, kind, tgt);
     let key_in = Store::encode_edge_key(tgt, kind, src);
     store.edges_out().put(wtxn, &key_out, value)?;
@@ -209,17 +211,99 @@ pub(super) fn stage_claim_projection_indexes(
     crate::llm::index_dreamer_step_claim_for_put(store, wtxn, id, body, learned_at)
 }
 
+/// The caller's write stamps and origin for the three carrier guards.
+pub(super) struct PutCarrierContext<'a> {
+    entity_type: u8,
+    occurred: TimeRange,
+    learned_at: u64,
+    replicated: bool,
+    origin: super::BaseWriteOrigin<'a>,
+    posture: crate::HostingPrivacyPosture,
+}
+
+impl<'a> PutCarrierContext<'a> {
+    pub(super) fn new(
+        entity_type: u8,
+        occurred: TimeRange,
+        learned_at: u64,
+        replicated: bool,
+        origin: super::BaseWriteOrigin<'a>,
+        posture: crate::HostingPrivacyPosture,
+    ) -> Self {
+        Self {
+            entity_type,
+            occurred,
+            learned_at,
+            replicated,
+            origin,
+            posture,
+        }
+    }
+}
+
+/// Run the existing scope, storage-owned, and domain guards in order.
+pub(super) fn validate_put_carriers(
+    store: &Store,
+    txn: &mut RwTxn<'_>,
+    id: EntityId,
+    data: &[u8],
+    context: PutCarrierContext<'_>,
+) -> Result<()> {
+    validate_scope_carriers(
+        store,
+        txn,
+        id,
+        context.entity_type,
+        data,
+        context.origin,
+        context.posture,
+    )?;
+    super::owned_body::guard_storage_owned_body(
+        store,
+        txn,
+        &id,
+        context.entity_type,
+        context.occurred,
+        data,
+        context.replicated,
+    )?;
+    validate_domain_carriers(
+        store,
+        txn,
+        id,
+        context.entity_type,
+        (context.occurred, context.learned_at),
+        data,
+        context.replicated,
+    )
+}
+
+/// Validate producer-owned source carriers before any body or index is
+/// staged. Preserve their existing write-door order on the same snapshot.
+pub(super) fn validate_source_carriers(
+    store: &Store,
+    txn: &RwTxn<'_>,
+    row: (EntityId, u8, &[u8], TimeRange, u64),
+) -> Result<()> {
+    let (id, entity_type, data, occurred, learned_at) = row;
+    crate::skill_hub::pack_catalog::validate_pack_source_put(store, txn, &id, entity_type, data)?;
+    crate::skill_hub::validate_hub_source_carrier_put(store, txn, &id, entity_type, data)?;
+    crate::agent_def::validate_birth_source_put(store, txn, &id, entity_type, data)?;
+    crate::receipt::validate_put(store, txn, (&id, entity_type, data), (occurred, learned_at))
+}
+
 /// Validate typed storage carriers before any put effect is staged.
 pub(super) fn validate_domain_carriers(
     store: &Store,
     txn: &RwTxn<'_>,
     id: EntityId,
     entity_type: u8,
+    timestamps: (TimeRange, u64),
     data: &[u8],
     replicated: bool,
 ) -> Result<()> {
     if entity_type == crate::registry::ENTITY_TYPE_TASK {
-        crate::task_verb::guard_ask_fact_put(store, txn, id, data)?;
+        crate::task_verb::guard_ask_fact_put(store, txn, id, timestamps.0, timestamps.1, data)?;
     }
     if entity_type == crate::registry::ENTITY_TYPE_TURN {
         crate::conversation_dag::validate_session_carrier(store, txn, id, data, replicated)?;
@@ -287,6 +371,7 @@ pub(super) fn validate_scope_carriers(
     entity_type: u8,
     data: &[u8],
     origin: super::BaseWriteOrigin<'_>,
+    posture: crate::HostingPrivacyPosture,
 ) -> Result<()> {
     if entity_type == crate::registry::ENTITY_TYPE_FACET {
         super::super::facet_identity::validate_facet_overwrite(store, wtxn, id, data)?;
@@ -295,6 +380,14 @@ pub(super) fn validate_scope_carriers(
         for referenced in crate::workspace_roster::validate_project_body(id, data)? {
             super::reject_overlay_member_base_write(store, &referenced, origin)?;
         }
+        crate::workspace_roster::validate_project_transition(
+            store,
+            wtxn,
+            id,
+            entity_type,
+            data,
+            posture,
+        )?;
     }
     if entity_type == crate::registry::ENTITY_TYPE_CONVERSATION {
         crate::workspace_roster::validate_room_body(store, wtxn, id, data)?;

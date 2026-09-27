@@ -65,7 +65,6 @@ pub(crate) trait RevokedTokenJtis {
     }
     fn verify_slip(
         &self,
-        _secret: &str,
         _slip: &oneiron::authority::CapabilitySlip,
         _timestamp: u64,
         _nonce: &[u8],
@@ -85,15 +84,12 @@ impl RevokedTokenJtis for oneiron::Vault {
     }
     fn verify_slip(
         &self,
-        secret: &str,
         slip: &oneiron::authority::CapabilitySlip,
         timestamp: u64,
         nonce: &[u8],
         signature: &[u8],
     ) -> Result<oneiron::authority::VerifiedSlip, ()> {
-        let issuer =
-            oneiron::authority::HostSlipIssuer::from_secret(secret.as_bytes()).map_err(drop)?;
-        self.verify_capability_slip_request(&issuer, slip, timestamp, signature, nonce)
+        self.verify_logged_capability_slip_request(slip, timestamp, signature, nonce)
             .map_err(drop)
     }
 
@@ -129,11 +125,15 @@ pub(crate) fn revoke_token_jti(vault: &oneiron::Vault, jti: &str) -> anyhow::Res
         anyhow::bail!("token id must be exactly {CORE_TOKEN_JTI_LEN} lowercase hex characters");
     }
     let key = revoked_token_jti_key(jti);
-    if vault.sync_state_get(&key)?.is_some() {
-        return Ok(false);
-    }
-    vault.sync_state_put(&key, &[])?;
-    Ok(true)
+    // LMDB serializes writers. Read the marker under the SAME write transaction
+    // that creates it, so only the first concurrent caller can report `true`.
+    Ok(vault.with_write_txn(|txn| {
+        if vault.sync_state_get_in_write_txn(txn, &key)?.is_some() {
+            return Ok(false);
+        }
+        vault.sync_state_put_in_write_txn(txn, &key, &[])?;
+        Ok(true)
+    })?)
 }
 
 /// Mints a fresh token identifier.
@@ -156,8 +156,6 @@ pub(crate) enum CoreScope {
     Auth,
     CompanionProfileRead,
     CompanionAccessGrantWrite,
-    CompanionRegisterRead,
-    CompanionRegisterWrite,
     OrgAdmin(oneiron::federation::OrgAdminPower),
 }
 
@@ -170,8 +168,6 @@ impl CoreScope {
             Self::Auth => "core:auth",
             Self::CompanionProfileRead => "companion:profile:read",
             Self::CompanionAccessGrantWrite => "companion:access-grant:write",
-            Self::CompanionRegisterRead => "companion:register:read",
-            Self::CompanionRegisterWrite => "companion:register:write",
             Self::OrgAdmin(power) => power.as_str(),
         }
     }
@@ -184,8 +180,6 @@ impl CoreScope {
             "core:auth" => Some(Self::Auth),
             "companion:profile:read" => Some(Self::CompanionProfileRead),
             "companion:access-grant:write" => Some(Self::CompanionAccessGrantWrite),
-            "companion:register:read" => Some(Self::CompanionRegisterRead),
-            "companion:register:write" => Some(Self::CompanionRegisterWrite),
             value => oneiron::federation::OrgAdminPower::parse(value).map(Self::OrgAdmin),
         }
     }
@@ -198,8 +192,6 @@ impl CoreScope {
             Self::Auth,
             Self::CompanionProfileRead,
             Self::CompanionAccessGrantWrite,
-            Self::CompanionRegisterRead,
-            Self::CompanionRegisterWrite,
             Self::OrgAdmin(oneiron::federation::OrgAdminPower::AddMember),
             Self::OrgAdmin(oneiron::federation::OrgAdminPower::RemoveMember),
             Self::OrgAdmin(oneiron::federation::OrgAdminPower::AssignRole),
@@ -281,7 +273,6 @@ impl CoreAuth {
                 return Self::from_slip_token(
                     token,
                     &BindingProof::from_headers(headers)?,
-                    config,
                     revoked,
                 );
             }

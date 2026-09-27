@@ -4221,7 +4221,7 @@ fn claim_aging_class_treats_core_relationship_root_as_durable() {
         // from being reclassified by a namespace rule.
         "core.hobby.collects",
         "core.identity.legal_name",
-        "eiri.location.city",
+        "persona.location.city",
     ] {
         assert_eq!(
             claim_aging_class(predicate),
@@ -4378,7 +4378,7 @@ fn claim_access_factor_override_is_a_bounded_live_claim_seam() {
 fn classifier_table() {
     for (predicate, expected) in [
         ("companion.expression", DreamerIsolationClass::PersonaCore),
-        ("eiri.persona.voice", DreamerIsolationClass::PersonaCore),
+        ("persona.identity.voice", DreamerIsolationClass::PersonaCore),
         ("core.identity.name", DreamerIsolationClass::PersonaCore),
         ("core.opinion.food", DreamerIsolationClass::MirroringProne),
         ("core.belief.justice", DreamerIsolationClass::MirroringProne),
@@ -4440,7 +4440,7 @@ fn classifier_table() {
         "core.conflict.open",
         "companion",
         "companionship.tone",
-        "eiri.personality.voice",
+        "persona.personality.voice",
         "core.identityx.name",
         "core.values.list",
         "affect",

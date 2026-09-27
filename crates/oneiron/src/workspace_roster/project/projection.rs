@@ -10,7 +10,7 @@ fn invalid() -> Error {
 fn invalid_room() -> Error {
     RecordError::InvalidProjectRoomBody("invalid derived home room").into()
 }
-fn dependency(
+pub(super) fn dependency(
     store: &Store,
     txn: &heed::RoTxn<'_>,
     id: EntityId,
@@ -49,7 +49,13 @@ pub(crate) fn validate_project_body(id: EntityId, bytes: &[u8]) -> Result<Vec<En
         return Err(invalid());
     }
     let mut refs = vec![&body.claims_scope_ref, &body.leader, &body.home_room];
-    refs.extend(body.parent.iter());
+    if body.parents.len() > 256
+        || body.parents.contains(&id.to_hex())
+        || body.parents.iter().collect::<BTreeSet<_>>().len() != body.parents.len()
+    {
+        return Err(invalid());
+    }
+    refs.extend(&body.parents);
     refs.extend(body.goal.iter());
     refs.extend(body.budget.iter());
     for list in [
@@ -131,7 +137,7 @@ pub(crate) fn reconcile_project_rooms(
             if body.depth_remaining > body.depth_limit {
                 return Err(invalid());
             }
-            if let Some(parent_id) = &body.parent {
+            for parent_id in &body.parents {
                 let parent = dependency(
                     store,
                     txn,
@@ -141,7 +147,7 @@ pub(crate) fn reconcile_project_rooms(
                 if body.depth_limit > parent.depth_limit
                     || parent.depth_remaining == 0
                     || body.depth_remaining >= parent.depth_remaining
-                    || parent.slice.attenuate(body.slice).is_err()
+                    || parent.slice.attenuate(body.slice.clone()).is_err()
                 {
                     return Err(invalid());
                 }
@@ -162,10 +168,14 @@ pub(crate) fn reconcile_project_rooms(
             .map_err(|_| Error::CorruptedIndex("project projection body"))?;
         // Fail closed on cycles, dangling parents, and non-project parents.
         let mut visited = BTreeSet::from([id.to_hex()]);
-        let mut parent = body.parent.clone();
-        while let Some(next) = parent {
-            if !visited.insert(next.clone()) || visited.len() > 256 {
+        let mut pending = body.parents.clone();
+        while let Some(next) = pending.pop() {
+            if next == id.to_hex() || visited.len() > 256 {
                 return Err(invalid());
+            }
+            // A shared ancestor in a diamond is not a cycle.
+            if !visited.insert(next.clone()) {
+                continue;
             }
             let parent_body = dependency(
                 store,
@@ -173,7 +183,46 @@ pub(crate) fn reconcile_project_rooms(
                 EntityId::from_hex(&next).map_err(|_| invalid())?,
                 project_kind,
             )?;
-            parent = parent_body.parent;
+            pending.extend(parent_body.parents);
+        }
+        // The body is the authority for the project DAG. Materialize its
+        // `belongs_to` links in the same batch as the home room, so PPR and
+        // graph readers see both parents (or neither on a rejected write).
+        let mut existing = std::collections::BTreeMap::new();
+        let prefix = [
+            id.as_bytes().as_slice(),
+            &[crate::edge::EdgeKind::BelongsTo as u8],
+        ]
+        .concat();
+        for row in store.edges_out.prefix_iter(txn, &prefix)? {
+            let (key, value) = row?;
+            let edge = crate::edge::parse_strict_edge_record(&key, &value)?;
+            // The PROJECT body owns only PROJECT-to-PROJECT parent links.
+            // A venture may also belong to an ORG; saving its body must not
+            // remove or rewrite that independently owned relationship.
+            if is_project_entity(store, txn, edge.target)? {
+                existing.insert(edge.target.to_hex(), edge.decoded.weight);
+            }
+        }
+        for parent in existing.keys() {
+            if !body.parents.contains(parent) {
+                room_ops.push(BatchOp::DeleteEdge {
+                    src: *id,
+                    kind: crate::edge::EdgeKind::BelongsTo,
+                    tgt: EntityId::from_hex(parent).map_err(|_| invalid())?,
+                });
+            }
+        }
+        for parent in &body.parents {
+            if existing.get(parent).copied() != Some(HUB_MEMBERSHIP_WEIGHT) {
+                room_ops.push(BatchOp::Edge {
+                    src: *id,
+                    kind: crate::edge::EdgeKind::BelongsTo,
+                    tgt: EntityId::from_hex(parent).map_err(|_| invalid())?,
+                    weight: HUB_MEMBERSHIP_WEIGHT,
+                    vad: crate::affect::Vad::NEUTRAL,
+                });
+            }
         }
         let room_id = EntityId::from_hex(&body.home_room)?;
         let room = ProjectRoom {
@@ -188,6 +237,9 @@ pub(crate) fn reconcile_project_rooms(
                 Err(Error::InvalidConfig(_)) => return Err(invalid_room()),
                 other => other?,
             };
+        if previous.is_none() && !crate::conversation::fresh_id_in_txn(store, txn, room_id)? {
+            return Err(invalid_room());
+        }
         if previous
             .as_ref()
             .is_some_and(|old| old.project_id != id.to_hex())
@@ -195,6 +247,12 @@ pub(crate) fn reconcile_project_rooms(
             return Err(invalid());
         }
         if previous.as_ref() == Some(&room) {
+            // A batch can submit the exact derived room beside its PROJECT.
+            // Even when no room rewrite is needed, its owner marker must land.
+            let marker = [ROOM_PROJECT, room_id.as_bytes()].concat();
+            if store.vault_meta.get(txn, &marker)?.as_deref() != Some(id.as_bytes()) {
+                store.vault_meta.put(txn, &marker, id.as_bytes())?;
+            }
             continue;
         }
         let change = ProjectRoomChange {

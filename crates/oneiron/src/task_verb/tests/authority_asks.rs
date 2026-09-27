@@ -37,6 +37,8 @@ fn scope_spec(vault: &Vault, key: &str) -> TaskAskSpec {
                 context_refs: vec![],
                 label: None,
                 outcome_binding: None,
+                ladder_answer: None,
+                class_key: None,
             },
             Some(unix_seconds_now() + 3600),
             crate::task_verb::TaskAskDefault::AskMe,
@@ -313,13 +315,17 @@ fn ask_winner_and_membership_survive_replicated_rows_in_either_order() {
             ordered.reverse();
         }
         for (id, raw) in ordered {
+            let header = crate::batch::EntityMetadataHeader::parse(&raw).expect("source header");
             target
                 .batch()
                 .put_replicated(
                     &id,
                     ENTITY_TYPE_TASK,
-                    TimeRange { start: 1, end: 1 },
-                    1,
+                    TimeRange {
+                        start: header.occurred_start,
+                        end: header.occurred_end,
+                    },
+                    header.learned_at,
                     &raw[crate::batch::ENTITY_METADATA_HEADER_LEN..],
                 )
                 .commit()

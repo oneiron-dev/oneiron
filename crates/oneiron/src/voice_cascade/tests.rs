@@ -18,11 +18,13 @@ mod preparation;
 mod retrieval;
 mod safeguard;
 mod session;
+mod stream;
 
 fn vault() -> (tempfile::TempDir, Arc<Vault>) {
     let dir = tempfile::tempdir().expect("temporary vault");
-    let vault =
-        Vault::open(dir.path(), crate::test_util::embedding_test_config()).expect("open vault");
+    let mut config = crate::test_util::embedding_test_config();
+    config.retrieval_telemetry_capture = true;
+    let vault = Vault::open(dir.path(), config).expect("open vault");
     (dir, Arc::new(vault))
 }
 

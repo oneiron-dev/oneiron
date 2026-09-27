@@ -1845,8 +1845,9 @@ fn forward_remat_quarantines_uppercase_alias_entity_key() {
 
 #[test]
 fn agent_record_rejections_do_not_wedge_replay_and_missing_projects_readmit() {
+    use oneiron::authority::HostSlipIssuer;
     use oneiron::registry::ENTITY_TYPE_CONVERSATION;
-    use oneiron::workspace_roster::ProjectRecord;
+    use oneiron::workspace_roster::{ProjectRecord, ProjectWriteProof};
     for observer in [false, true] {
         let (_dir, vault) = test_vault_with_dir();
         let window = WindowKey::new(WINDOW);
@@ -1857,6 +1858,44 @@ fn agent_record_rejections_do_not_wedge_replay_and_missing_projects_readmit() {
         let root = vault.project(root_id).unwrap().unwrap();
         let leader = EntityId::from_hex(&root.leader).unwrap();
         let kind = vault.project_type_byte().unwrap();
+        let issuer = HostSlipIssuer::from_secret(b"project replay fixture host").unwrap();
+        let root_slip = vault.ensure_host_root_slip(&issuer).unwrap();
+        let sign = |id: EntityId, body: &mut ProjectRecord| {
+            use ed25519_dalek::Signer;
+            let signer =
+                ed25519_dalek::SigningKey::from_bytes(blake3::hash(leader.as_bytes()).as_bytes());
+            let mut claims = root_slip.claims.clone();
+            claims.slip_id = *blake3::hash(EntityId::now().as_bytes()).as_bytes();
+            claims.parent_id = None;
+            claims.holder_ref = leader.to_hex();
+            claims.binding_key = signer.verifying_key().to_bytes();
+            let mut slip = vault.mint_capability_slip(&issuer, claims).unwrap();
+            let mut scope = oneiron::federation::Scope::top();
+            scope.audience =
+                oneiron::federation::ScopeAxis::Some(std::collections::BTreeSet::from([
+                    oneiron::federation::ScopeId(EntityId::from_hex(&body.parents[0]).unwrap()),
+                ]));
+            scope.verbs = oneiron::federation::ScopeAxis::Some(std::collections::BTreeSet::from([
+                "project.write".into(),
+            ]));
+            slip.attenuate(
+                oneiron::authority::SlipCaveat {
+                    scope: Some(scope),
+                    ..Default::default()
+                },
+                &signer,
+            )
+            .unwrap();
+            body.board.push(leader.to_hex());
+            let challenge = body.write_challenge(id).unwrap();
+            body.write_proof = Some(ProjectWriteProof {
+                slip_wire: slip.to_token().unwrap(),
+                holder_signature: signer
+                    .sign(&slip.binding_transcript(&challenge).unwrap())
+                    .to_bytes()
+                    .to_vec(),
+            });
+        };
         let bad = EntityId::now();
         let bad_ref = EntityId::now();
         let cycle = EntityId::now();
@@ -1873,7 +1912,8 @@ fn agent_record_rejections_do_not_wedge_replay_and_missing_projects_readmit() {
         let mut invalid_ref = ProjectRecord::new(bad_ref, None, root_id, leader);
         invalid_ref.goal = Some("not-an-id".into());
         let cyclic = ProjectRecord::new(cycle, Some(cycle), root_id, leader);
-        let waiting = ProjectRecord::new(child, Some(parent), root_id, leader);
+        let mut waiting = ProjectRecord::new(child, Some(parent), root_id, leader);
+        sign(child, &mut waiting);
         let mut body =
             rmpv::decode::read_value(&mut claim_body_with_bad_predicate().as_slice()).unwrap();
         let rmpv::Value::Map(fields) = &mut body else {
@@ -1943,6 +1983,7 @@ fn agent_record_rejections_do_not_wedge_replay_and_missing_projects_readmit() {
         // The waiting child has zero descendant-spawn levels; its parent
         // must retain one for out-of-order replay to admit the child.
         parent_body.depth_remaining = 1;
+        sign(parent, &mut parent_body);
         insert_bytes(
             &entities,
             &parent.to_hex(),
@@ -1959,5 +2000,96 @@ fn agent_record_rejections_do_not_wedge_replay_and_missing_projects_readmit() {
         forward_rematerialize(&vault, &doc, &materializer, &window).unwrap();
         forward_rematerialize(&vault, &doc, &materializer, &window).unwrap();
         assert_eq!(vault.project(child).unwrap(), Some(waiting));
+    }
+}
+
+#[test]
+fn forward_remat_quarantines_stale_project_parents_and_claim_membership() {
+    use oneiron::claim::{ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSubject};
+    use oneiron::workspace_roster::ProjectRecord;
+
+    let (_dir, vault) = test_vault_with_dir();
+    let root = vault.root_project().unwrap();
+    let leader = EntityId::from_hex(&vault.project(root).unwrap().unwrap().leader).unwrap();
+    let other = EntityId::now();
+    vault
+        .put_project(
+            other,
+            &ProjectRecord::new(other, Some(root), root, leader),
+            1,
+        )
+        .unwrap();
+    let child = EntityId::now();
+    vault
+        .put_project(
+            child,
+            &ProjectRecord::new(child, Some(root), root, leader),
+            2,
+        )
+        .unwrap();
+    let mut body = vault.project(child).unwrap().unwrap();
+    body.parents = vec![other.to_hex()];
+    vault.put_project(child, &body, 3).unwrap();
+    let person = EntityId::now();
+    vault
+        .put_entity(
+            &person,
+            ENTITY_TYPE_PERSON,
+            valid_time_range(),
+            LEARNED_AT,
+            b"person",
+        )
+        .unwrap();
+    let claim = EntityId::now();
+    vault
+        .put_claim(
+            &claim,
+            &ClaimBody::new(
+                "test.project_membership",
+                ClaimSubject::Entity(person),
+                rmpv::Value::from("fixture"),
+                0.9,
+                ClaimApprovalStatus::Auto,
+                ClaimLifecycleStatus::Active,
+            ),
+            valid_time_range(),
+            LEARNED_AT,
+        )
+        .unwrap();
+    let window = WindowKey::new(WINDOW);
+    let doc = create_window_doc("test-user", &window);
+    let edges = doc.get_map("edges");
+    let stale = format_edge_key(&child, EdgeKind::BelongsTo, &root);
+    let cycle = format_edge_key(&root, EdgeKind::BelongsTo, &child);
+    let claim_link = format_edge_key(&claim, EdgeKind::BelongsTo, &root);
+    let value = structural_edge_value(0.05, LEARNED_AT);
+    for key in [&stale, &cycle, &claim_link] {
+        insert_bytes(&edges, key, &value);
+    }
+    doc.commit();
+    forward_rematerialize(&vault, &doc, &Materializer::new(), &window).unwrap();
+    assert_eq!(
+        vault.targets(&child, EdgeKind::BelongsTo, None).unwrap(),
+        vec![other]
+    );
+    assert!(
+        !vault
+            .edge_exists(&root, EdgeKind::BelongsTo, &child)
+            .unwrap()
+    );
+    assert!(
+        !vault
+            .edge_exists(&claim, EdgeKind::BelongsTo, &root)
+            .unwrap()
+    );
+    let records = quarantined_records(&vault).unwrap();
+    for key in [&stale, &cycle, &claim_link] {
+        assert!(
+            records.iter().any(|(_, record)| {
+                record.crdt_key_hash == xxh3_64(key.as_bytes())
+                    && record.reason_code == "InvalidProjectBody"
+            }),
+            "missing edge quarantine for {key}"
+        );
     }
 }

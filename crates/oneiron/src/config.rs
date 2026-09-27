@@ -275,6 +275,10 @@ pub struct VaultConfig {
     pub ppr_vad_alpha: f32,
     /// Default-off community prior for Uniform (`expand_ppr`) retrieval only.
     pub ppr_community: PprCommunityConfig,
+    /// Capture retrieval-run telemetry for ordinary searches. Disabled by default;
+    /// enable explicitly for diagnostics or eval. This is a runtime setting,
+    /// independent of the store's write-failure fuse.
+    pub retrieval_telemetry_capture: bool,
     /// Embedding vector dimension.
     pub dimensions: usize,
     /// MRL fast-lane prefix length (ONE-EMBED E3). When `Some(fd)`, the NSW
@@ -543,6 +547,7 @@ impl VaultConfig {
             store_clock: crate::ports::StoreClock::default(),
             ppr_vad_alpha: PPR_VAD_ALPHA_DEFAULT,
             ppr_community: PprCommunityConfig::default(),
+            retrieval_telemetry_capture: false,
             dimensions: 1024,
             fast_dims: None,
             embedding_model: None,
@@ -567,6 +572,7 @@ impl VaultConfig {
             store_clock: crate::ports::StoreClock::default(),
             ppr_vad_alpha: PPR_VAD_ALPHA_DEFAULT,
             ppr_community: PprCommunityConfig::default(),
+            retrieval_telemetry_capture: false,
             dimensions: 4096,
             fast_dims: None,
             embedding_model: None,

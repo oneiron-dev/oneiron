@@ -25,6 +25,7 @@ pub(super) struct AppliedClaimCandidate {
 )]
 pub(super) fn apply_claim_candidate(
     store: &Store,
+    config: &crate::VaultConfig,
     wtxn: &mut RwTxn<'_>,
     id: EntityId,
     candidate: ClaimCandidate,
@@ -100,6 +101,7 @@ pub(super) fn apply_claim_candidate(
     let data = crate::claim::encode_claim_body(&body)?;
     let applied_put = apply_put(
         store,
+        config,
         wtxn,
         id,
         crate::registry::ENTITY_TYPE_CLAIM,
@@ -120,7 +122,6 @@ pub(super) fn apply_claim_candidate(
         include_source_in_gate_input,
         claim_gate_prechecked,
         preflight_gate_decision_id,
-        None,
         // A claim candidate is never part of a promotion closure: promote
         // replays the session's typed journal, which stages no candidate op.
         BaseWriteOrigin::Ordinary,

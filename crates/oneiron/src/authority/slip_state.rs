@@ -12,7 +12,10 @@ pub struct FoldedSlip {
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct SlipAuthorityState {
     pub mints: BTreeMap<[u8; 32], FoldedSlip>,
+    /// Denied identifiers: explicit withdrawals AND colliding mint IDs.
     pub revoked: BTreeSet<[u8; 32]>,
+    /// Only verified `SlipRevoke` operations. A collision is not an operator act.
+    pub explicit_revoked: BTreeSet<[u8; 32]>,
     pub consumed: BTreeSet<[u8; 32]>,
 }
 impl SlipAuthorityState {
@@ -49,6 +52,7 @@ impl SlipAuthorityState {
             }
             AuthorityOp::SlipRevoke { slip_id } => {
                 self.revoked.insert(*slip_id);
+                self.explicit_revoked.insert(*slip_id);
             }
             AuthorityOp::SlipConsume { slip_id } => {
                 // Consumption is a monotone subtree kill. An offline single-use
@@ -79,6 +83,7 @@ impl SlipAuthorityState {
     /// Union is commutative; colliding identifiers are unusable, never first-wins.
     pub(super) fn merge_from(&mut self, other: &Self) {
         self.revoked.extend(&other.revoked);
+        self.explicit_revoked.extend(&other.explicit_revoked);
         self.consumed.extend(&other.consumed);
         for (id, mint) in &other.mints {
             match self.mints.get(id) {
@@ -126,21 +131,15 @@ impl SlipAuthorityState {
 }
 
 impl AuthorityFold {
-    /// Log provenance, signer liveness and unresolved fork quarantine all apply
-    /// to every ancestor of a delegated slip, including a pre-fork mint.
+    /// Log provenance and signer liveness apply to every ancestor of a delegated slip.
     #[must_use]
     pub fn slip_is_live(&self, id: &[u8; 32]) -> bool {
         self.vault_id.is_some()
             && !self.vault_root_is_conflicted()
             && self.slips.is_live(id, &self.roster)
             && self.slips.ancestors(id).is_some_and(|path| {
-                path.iter().all(|mint| {
-                    self.valid_entries.contains(&mint.entry_hash)
-                        && !self.authority_forks.iter().any(|fork| {
-                            fork.signer == mint.signer
-                                && fork.status == AuthorityForkStatus::Quarantined
-                        })
-                })
+                path.iter()
+                    .all(|mint| self.valid_entries.contains(&mint.entry_hash))
             })
     }
 }

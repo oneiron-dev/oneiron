@@ -34,6 +34,7 @@ pub(super) use std::sync::{
 pub(super) use std::task::{Context, Poll, RawWaker, RawWakerVTable, Waker};
 pub(super) use tempfile::TempDir;
 
+mod anonymous_chat;
 mod cloud_dual;
 mod dial_pattern_roles;
 mod edge_identity;

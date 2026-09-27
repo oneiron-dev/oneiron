@@ -11,6 +11,7 @@ mod identity_kind;
 mod kernel;
 mod ledgers;
 mod projection;
+mod record;
 mod send_receipt_txn;
 mod session;
 
@@ -52,21 +53,42 @@ pub(crate) use self::kernel::{
     FIELD_PREFILTER_TURN, FIELD_SCOPE_ACTOR, FIELD_SKILL_EDIT_ACCEPTED_VERDICT,
     FIELD_SKILL_EDIT_CYCLE, FIELD_SKILL_EDIT_DISPOSITION, FIELD_SKILL_EDIT_HELD_OUT_COUNT,
     FIELD_SKILL_EDIT_HELD_OUT_DIGEST, FIELD_SKILL_EDIT_HELD_OUT_RECEIPTS,
-    FIELD_SKILL_EDIT_HELD_OUT_TRUNCATED, FIELD_SKILL_EDIT_MISSING_SOURCES,
-    FIELD_SKILL_EDIT_PROPOSAL, FIELD_SKILL_EDIT_PROPOSAL_DIGEST, FIELD_SKILL_EDIT_SCORE_AFTER,
-    FIELD_SKILL_EDIT_SCORE_BEFORE, FIELD_SKILL_EDIT_SKILL, FIELD_SKILL_EDIT_TARGET_DIGEST,
-    FIELD_TARGET_CLASS, MAX_RECEIPT_QUERY_SCAN, hex_lower, retain_newest_receipt,
+    FIELD_SKILL_EDIT_HELD_OUT_TRUNCATED, FIELD_SKILL_EDIT_MEASUREMENTS,
+    FIELD_SKILL_EDIT_MISSING_SOURCES, FIELD_SKILL_EDIT_PROPOSAL, FIELD_SKILL_EDIT_PROPOSAL_DIGEST,
+    FIELD_SKILL_EDIT_SCORE_AFTER, FIELD_SKILL_EDIT_SCORE_BEFORE, FIELD_SKILL_EDIT_SKILL,
+    FIELD_SKILL_EDIT_TARGET_DIGEST, FIELD_TARGET_CLASS, MAX_RECEIPT_QUERY_SCAN, hex_lower,
+    retain_newest_receipt,
 };
 pub(crate) use self::ledgers::{
-    SendReceiptOutcome, delivered_send_receipt_for_task, persist_send_receipt,
-    stamp_attempt_pack_receipt_in_txn,
+    SendReceiptOutcome, delivered_send_receipt_for_task, durable_send_receipts,
+    persist_send_receipt, stamp_attempt_pack_receipt_in_txn,
 };
 #[cfg(test)]
 pub(crate) use self::ledgers::{
     overwrite_attempt_pack_receipt_for_test, put_attempt_pack_receipt_for_test,
 };
 pub(crate) use self::projection::{COMMITMENT_TRIGGER_PREFIX, commitment_trigger_ref};
-pub(crate) use self::send_receipt_txn::persist_send_receipt_in_txn;
+pub(crate) use self::record::{
+    canonical_records_in_window, put_suppression_in_txn, stage_receipt_record_index,
+    suppression_for_intent, suppression_receipt_id, validate_receipt_record_put,
+};
+#[cfg(feature = "sync")]
+pub(crate) use self::record::{validate_receipt_record_body, validate_receipt_record_time};
+pub(crate) use self::send_receipt_txn::{
+    delivered_send_exists_in_txn, persist_send_receipt_in_txn,
+};
+
+/// One pre-write check for the two receipt carrier families. Both are judged
+/// before the batch stages a body or index, on the caller's write snapshot.
+pub(crate) fn validate_put(
+    store: &crate::store::Store,
+    txn: &heed::RoTxn<'_>,
+    target: (&crate::entity_id::EntityId, u8, &[u8]),
+    stamps: (crate::temporal::TimeRange, u64),
+) -> crate::Result<()> {
+    validate_receipt_archive_put(store, txn, target.0, target.1, target.2)?;
+    validate_receipt_record_put(store, txn, target.0, target.1, target.2, stamps.0, stamps.1)
+}
 
 // The flat receipt.rs module used to provide these names to the test module
 // through `use super::*`; after the directory split the seam re-imports them so

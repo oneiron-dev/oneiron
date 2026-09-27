@@ -19,6 +19,8 @@ both bindings and their export-census tests in one reviewed change.
 - `key_value_delete`
 - `key_value_search`
 - `key_value_namespaces`
+- `can`
+- `peek`
 - `tasks.ask`
 - `tasks.wait`
 - `tasks.answer`
