@@ -521,23 +521,7 @@ pub(super) fn build_outbound_capability_manifests() -> Vec<OutboundCapabilityMan
                 "iMIP invites require a prior thread or a confirmed booking standing grant, and must leave from the primary calendar domain — never from sequencer-class infrastructure.",
             )],
         ),
-        manifest(
-            "voice",
-            "voice_call",
-            "Voice call schema; dialing is interruption-heavy and permission-sensitive.",
-            vec![verb(
-                "call",
-                "start_voice_call",
-                json!({"to": "e164", "script_ref": "optional string", "recording_disclosure": "required string"}),
-                OutboundInterruptionClass::Interrupt,
-                OutboundDeliverySemanticsKind::FireAndForget,
-                None,
-                OutboundRetryClass::IdempotentEmulated,
-                OutboundPermissionState::ProviderReview,
-                true,
-                "Voice calls require recipient consent, jurisdictional compliance, and provider approval.",
-            )],
-        ),
+        voice_manifest(),
     ];
     // Email is a provider family, not one retry guarantee. SES and Postmark
     // must never inherit Resend's provider-native idempotency guarantee.
@@ -547,6 +531,26 @@ pub(super) fn build_outbound_capability_manifests() -> Vec<OutboundCapabilityMan
         email_provider_manifest("email_postmark", None, "POST /email"),
     ]);
     manifests
+}
+
+fn voice_manifest() -> OutboundCapabilityManifest {
+    manifest(
+        "voice",
+        "voice_call",
+        "Voice call schema; dialing is interruption-heavy and permission-sensitive.",
+        vec![verb(
+            "call",
+            "start_voice_call",
+            json!({"to": "e164", "script_ref": "optional string", "recording_disclosure": "required string"}),
+            OutboundInterruptionClass::Interrupt,
+            OutboundDeliverySemanticsKind::FireAndForget,
+            None,
+            OutboundRetryClass::IdempotentEmulated,
+            OutboundPermissionState::ProviderReview,
+            true,
+            "Voice calls require recipient consent, jurisdictional compliance, and provider approval.",
+        )],
+    )
 }
 
 fn email_provider_manifest(
