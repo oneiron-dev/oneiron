@@ -133,18 +133,14 @@ fn authority_log_first_seen_sidecar_drives_live_fold() -> Result<()> {
             .store
             .sync_state
             .delete(wtxn, enroll_sidecar.as_str())?;
+        crate::authority::advance_authority_cache_generation(&vault.store, wtxn)?;
         Ok(())
     })?;
-    let missing_sidecar_fold = vault.authority_fold()?;
-    assert_eq!(
-        missing_sidecar_fold
-            .pending_widens
-            .get(&enroll_hash)
-            .and_then(|pending| pending.first_seen_at_secs),
-        None,
-        "missing local first-seen data must fail closed instead of trusting entity metadata"
+    let error = vault.authority_fold().unwrap_err();
+    assert!(
+        crate::authority::is_corrupt_first_seen_sidecar(&error),
+        "{error}"
     );
-    assert!(!missing_sidecar_fold.roster.contains_key(&enroll_key));
     Ok(())
 }
 
@@ -1015,10 +1011,9 @@ fn authority_fold_backfills_legacy_missing_first_seen_sidecars_once() -> Result<
     config.store_clock = crate::ports::ManualClock::new(1_000_000).bundle();
     let vault = Vault::open(dir.path(), config)?;
     clear_default_policy_manifest_for_test(&vault);
-    assert_eq!(
-        crate::authority::authority_observation_secs(&vault.store, 0, 1_000_000),
-        1_000_000
-    );
+    // Bootstrap can finish after the next monotonic second; the manual clock
+    // sets a floor, not an exact observation timestamp.
+    assert!(crate::authority::authority_observation_secs(&vault.store, 0, 1_000_000) >= 1_000_000);
     let owner = authority_test_key(84);
     let genesis = authority_genesis_fixture(84);
     let vault_id = crate::authority::genesis_vault_id(&genesis)?;
@@ -1087,19 +1082,13 @@ fn authority_fold_backfills_legacy_missing_first_seen_sidecars_once() -> Result<
             .store
             .sync_state
             .delete(wtxn, enroll_sidecar.as_str())?;
+        crate::authority::advance_authority_cache_generation(&vault.store, wtxn)?;
         Ok(())
     })?;
-    let missing_after_marker = vault.authority_fold()?;
+    let error = vault.authority_fold().unwrap_err();
     assert!(
-        !missing_after_marker.roster.contains_key(&enroll_key),
-        "after migration, a missing sidecar must still fail closed"
-    );
-    assert_eq!(
-        missing_after_marker
-            .pending_widens
-            .get(&enroll_hash)
-            .and_then(|pending| pending.first_seen_at_secs),
-        None
+        crate::authority::is_corrupt_first_seen_sidecar(&error),
+        "{error}"
     );
     Ok(())
 }

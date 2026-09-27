@@ -131,7 +131,7 @@ impl PurposeDefaultTable {
         global_default: ModelTierRef,
     ) -> TierPrecedence {
         TierPrecedence {
-            per_call: None,
+            per_seat: None,
             vault_policy: None,
             purpose_default: self.purpose(purpose).map(|row| row.tier.clone()),
             global_default,
