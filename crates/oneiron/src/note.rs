@@ -374,6 +374,14 @@ mod birth;
 #[cfg(feature = "sync")]
 mod brief_view;
 mod document;
+pub(crate) fn live_frontier_in_txn(
+    vault: &crate::Vault,
+    txn: &heed::RoTxn<'_>,
+    id: EntityId,
+) -> Result<Vec<u8>> {
+    Ok(document_store::load(vault, txn, id)?.view()?.frontier)
+}
+
 mod document_store;
 pub(crate) use birth::document_birth_in_txn;
 mod operations;

@@ -93,6 +93,21 @@ pub fn edit_question(
         definition.question.id = id;
         definition.question.version = version;
         definition.validate()?;
+        let old: QuestionRecord = load(
+            vault,
+            txn,
+            &key(id, b"version", &head.version.to_be_bytes()),
+        )?
+        .ok_or(Error::CorruptedIndex("question version"))?;
+        super::arrival::unwatch_units(&vault.store, txn, &old)?;
+        for unit in &old.definition.units {
+            if !definition.refresh.on_arrival || !definition.units.contains(unit) {
+                vault
+                    .store
+                    .vault_meta
+                    .delete(txn, &super::arrival::pending_key(id, *unit))?;
+            }
+        }
         let record = QuestionRecord {
             schema_version: 1,
             principal,
@@ -107,6 +122,7 @@ pub fn edit_question(
         )?;
         super::arrival::watch(&vault.store, txn, &record)?;
         head.version = version;
+        head.last_refresh = None;
         put(vault, txn, &key(id, b"head", &[]), &head)?;
         Ok(record)
     })
