@@ -7,7 +7,7 @@ use crate::llm::{BudgetExhaustionPolicy, BudgetPolicyTable};
 
 use super::frontier_hash::hash_policy_frontier_v0;
 use super::manifest_types::{
-    CommOptOutPosture, PolicyManifestDiagnostics, PolicyManifestResolution,
+    AttributionLimits, CommOptOutPosture, PolicyManifestDiagnostics, PolicyManifestResolution,
 };
 use crate::gate::ceiling::{
     PolicyAxes, PolicyCriticality, PolicyOwnerPatternRow, PolicyOwnerPolicyRow, PolicySensitivity,
@@ -36,6 +36,13 @@ impl PolicyManifestResolution {
         // A completely absent manifest preserves the existing bootstrap
         // behavior; any loaded malformed/unsupported manifest fails closed.
         self.diagnostics.manifest_count > 0 || self.diagnostics.loaded_manifest_forces_fail_closed()
+    }
+
+    /// Limits are resolved by nested narrowing across trusted manifests.
+    /// A malformed loaded manifest never gets to relax admission by omission.
+    #[must_use]
+    pub(crate) fn attribution_limits(&self) -> Option<&AttributionLimits> {
+        (!self.diagnostics.loaded_manifest_forces_fail_closed()).then_some(&self.attribution_limits)
     }
 
     #[must_use]

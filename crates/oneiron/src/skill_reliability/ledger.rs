@@ -3,7 +3,6 @@
 use rmpv::Value;
 
 use crate::Vault;
-use crate::attempt_queue::ManifestEntry;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::receipt::ReceiptRecord;
@@ -83,23 +82,7 @@ pub(super) fn receipt_manifest_names_skill(receipt: &ReceiptRecord, record: &Ski
     };
     manifest
         .iter()
-        .any(|entry| manifest_entry_names_skill(entry, &record.skill_id, &record.version))
-}
-
-/// A manifest wire form is `reference@version`; a SKILL row's reference is its
-/// `skill_id` and its version is the REVISION the pack loaded.
-/// [`ManifestEntry::parse_wire_form`] owns the split.
-///
-/// The version is compared exactly whenever the entry carries one. A revision
-/// is its own SKILL entity with its own posterior (`supersede_skill_record`
-/// freezes the old one), so a `skill@1` receipt crediting the `skill@2` entity
-/// would move a claim about bytes that attempt never ran. An entry with an
-/// empty version is an absent fact — it names no revision to disagree with —
-/// and still resolves, exactly as an absent manifest does above.
-fn manifest_entry_names_skill(wire_form: &str, skill_id: &str, version: &str) -> bool {
-    ManifestEntry::parse_wire_form(wire_form).is_some_and(|(reference, entry_version)| {
-        reference == skill_id && (entry_version.is_empty() || entry_version == version)
-    })
+        .any(|entry| crate::skill_attribution::manifest_entry_names_skill(entry, record))
 }
 
 /// Writes one outcome row, keyed `(skill, receipt)`.

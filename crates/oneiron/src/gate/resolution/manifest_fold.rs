@@ -148,6 +148,14 @@ pub(crate) fn resolve_policy_manifest(
                 }
                 // Advisory threshold composition is deterministic and never
                 // authorizes or refuses a write. The earliest question wins.
+                if let Some(limits) = decoded.attribution_limits {
+                    if resolution.attribution_limits_set {
+                        resolution.attribution_limits.restrict(limits);
+                    } else {
+                        resolution.attribution_limits = limits;
+                        resolution.attribution_limits_set = true;
+                    }
+                }
                 if let Some(threshold) = decoded.proposal_check_threshold {
                     resolution.proposal_check_threshold = Some(
                         resolution

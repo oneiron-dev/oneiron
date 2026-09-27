@@ -26,10 +26,19 @@ fn put_actor(vault: &Vault, id: EntityId) -> Result<EntityId> {
 /// The vault-resident SKILL an evidence row names, under `skill_id` so the
 /// receipt manifest's `reference@version` rows can be matched against it.
 fn put_skill(vault: &Vault, id: EntityId, skill_id: &str) -> Result<EntityId> {
+    put_skill_version(vault, id, skill_id, "1.0.0")
+}
+
+fn put_skill_version(
+    vault: &Vault,
+    id: EntityId,
+    skill_id: &str,
+    version: &str,
+) -> Result<EntityId> {
     let record = SkillRecord::new(
         skill_id,
         "attribution fixture skill",
-        "1.0.0",
+        version,
         ClaimApprovalStatus::Approved,
         SkillLifecycle::Candidate,
         ClaimSource::Imported,
@@ -426,6 +435,7 @@ fn fabricated_evidence_references_are_refused_at_the_door() -> Result<()> {
     let Grounded { actor, skill } = ground(&vault, 0x31, 0x32)?;
     let receipt = stamped_receipt(&vault, FIXTURE_SKILL_ID)?;
     let unloaded_skill = put_skill(&vault, entity(0x33), "attribution.fixture.other")?;
+    let wrong_revision = put_skill_version(&vault, entity(0x36), FIXTURE_SKILL_ID, "2.0.0")?;
 
     let cases = [
         evidence(
@@ -456,6 +466,14 @@ fn fabricated_evidence_references_are_refused_at_the_door() -> Result<()> {
             &receipt,
             actor,
             unloaded_skill,
+            AttemptOutcome::Failed,
+            true,
+            true,
+        ),
+        evidence(
+            &receipt,
+            actor,
+            wrong_revision,
             AttemptOutcome::Failed,
             true,
             true,

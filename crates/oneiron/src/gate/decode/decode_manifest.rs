@@ -9,7 +9,10 @@ use crate::gate::ceiling::{
     PolicySignature, SourceTrustCeiling,
 };
 use crate::gate::constants::{
-    POLICY_ACTOR_CEILINGS_KEY, POLICY_AUTO_CHECKER_KEY, POLICY_BUDGET_POLICY_KEY,
+    ATTRIBUTION_HOLDER_ACTOR_KEY, ATTRIBUTION_HOLDER_MAX_BYTES_KEY,
+    ATTRIBUTION_HOLDER_REASON_BYTES_KEY, ATTRIBUTION_PRECEDENCE_KEY,
+    ATTRIBUTION_REASON_MAX_BYTES_KEY, ATTRIBUTION_RECEIPTS_PER_PASS_KEY, POLICY_ACTOR_CEILINGS_KEY,
+    POLICY_ATTRIBUTION_LIMITS_KEY, POLICY_AUTO_CHECKER_KEY, POLICY_BUDGET_POLICY_KEY,
     POLICY_COMM_OPT_OUT_POSTURE_KEY, POLICY_DEFAULTS_KEY, POLICY_DELEGATED_GRANTS_KEY,
     POLICY_LEGAL_FLOOR_ROWS_KEY, POLICY_MIN_ENGINE_VERSION_KEY, POLICY_ON_BUDGET_EXHAUSTED_KEY,
     POLICY_OWNER_POLICY_DOCUMENT_KEY, POLICY_OWNER_POLICY_ENABLED_KEY,
@@ -19,7 +22,7 @@ use crate::gate::constants::{
     POLICY_SIGNATURE_KEY, POLICY_SIGNATURES_KEY, POLICY_SOURCE_TRUST_KEY,
 };
 use crate::gate::grants::PolicyScopedGrant;
-use crate::gate::resolution::CommOptOutPosture;
+use crate::gate::resolution::{AttributionLimits, CommOptOutPosture};
 use crate::llm::{BudgetExhaustionPolicy, BudgetPolicyTable};
 
 use super::decode_map_util::{
@@ -58,6 +61,7 @@ pub(in crate::gate) struct DecodedPolicyManifest {
     pub(in crate::gate) budget_policy: BudgetPolicyTable,
     pub(in crate::gate) diagnostic_bounds: Option<crate::self_heal::tripwires::TripwireBounds>,
     pub(in crate::gate) proposal_check_threshold: Option<u64>,
+    pub(in crate::gate) attribution_limits: Option<AttributionLimits>,
     pub(in crate::gate) unsupported_schema: bool,
     pub(in crate::gate) engine_version_floor: bool,
     pub(in crate::gate) unknown_axis_seen: bool,
@@ -103,6 +107,7 @@ pub(in crate::gate) fn decode_policy_manifest(data: &[u8]) -> Option<DecodedPoli
                 | POLICY_BUDGET_POLICY_KEY
                 | "diagnostic_bounds"
                 | "proposal_check_threshold"
+                | POLICY_ATTRIBUTION_LIMITS_KEY
         ) {
             return None;
         }
@@ -238,6 +243,12 @@ pub(in crate::gate) fn decode_policy_manifest(data: &[u8]) -> Option<DecodedPoli
         MapValue::Present(value) => Some(value.as_u64().filter(|value| *value > 0)?),
     };
 
+    let attribution_limits = match single_map_value(&entries, POLICY_ATTRIBUTION_LIMITS_KEY) {
+        MapValue::Missing => None,
+        MapValue::Duplicate => return None,
+        MapValue::Present(value) => Some(parse_attribution_limits(value)?),
+    };
+
     let unknown_axis_seen =
         defaults.unknown_axis_seen || rules.iter().any(|rule| rule.axes.unknown_axis_seen);
 
@@ -268,10 +279,76 @@ pub(in crate::gate) fn decode_policy_manifest(data: &[u8]) -> Option<DecodedPoli
         budget_policy,
         diagnostic_bounds,
         proposal_check_threshold,
+        attribution_limits,
         unsupported_schema,
         engine_version_floor,
         unknown_axis_seen,
     })
+}
+
+/// A policy-manifest row. Numeric knobs are positive; unknown/duplicate keys
+/// refuse the row instead of silently widening its meaning. Holder entries
+/// are narrow-only relative to the vault limit and to other packs.
+fn parse_attribution_limits(value: &Value) -> Option<AttributionLimits> {
+    let Value::Map(entries) = value else {
+        return None;
+    };
+    for (key, _) in entries {
+        if !matches!(
+            key.as_str()?,
+            ATTRIBUTION_REASON_MAX_BYTES_KEY
+                | ATTRIBUTION_RECEIPTS_PER_PASS_KEY
+                | ATTRIBUTION_HOLDER_REASON_BYTES_KEY
+                | ATTRIBUTION_PRECEDENCE_KEY
+        ) {
+            return None;
+        }
+    }
+    if required_string(entries, ATTRIBUTION_PRECEDENCE_KEY)?.as_str() != "nested_narrowing" {
+        return None;
+    }
+    let mut limits = AttributionLimits::default();
+    for (key, target) in [
+        (
+            ATTRIBUTION_REASON_MAX_BYTES_KEY,
+            &mut limits.reason_max_bytes,
+        ),
+        (
+            ATTRIBUTION_RECEIPTS_PER_PASS_KEY,
+            &mut limits.receipts_per_pass,
+        ),
+    ] {
+        match single_map_value(entries, key) {
+            MapValue::Missing => {}
+            MapValue::Duplicate => return None,
+            MapValue::Present(value) => *target = value.as_u64().filter(|v| *v > 0)?,
+        }
+    }
+    match single_map_value(entries, ATTRIBUTION_HOLDER_REASON_BYTES_KEY) {
+        MapValue::Missing => {}
+        MapValue::Duplicate => return None,
+        MapValue::Present(Value::Array(rows)) => {
+            for row in rows {
+                let Value::Map(fields) = row else { return None };
+                if fields.len() != 2 {
+                    return None;
+                }
+                let actor = required_string(fields, ATTRIBUTION_HOLDER_ACTOR_KEY)?;
+                let holder = crate::EntityId::from_hex(&actor).ok()?;
+                if holder.to_hex() != actor {
+                    return None;
+                }
+                let bytes = required_value(fields, ATTRIBUTION_HOLDER_MAX_BYTES_KEY)?
+                    .as_u64()
+                    .filter(|v| *v > 0)?;
+                if limits.holder_reason_bytes.insert(holder, bytes).is_some() {
+                    return None;
+                }
+            }
+        }
+        MapValue::Present(_) => return None,
+    }
+    Some(limits)
 }
 
 /// Longest owner policy document a manifest may carry, mirroring the bound the

@@ -8,6 +8,7 @@ use crate::Vault;
 use crate::attempt_queue::ManifestEntry;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
+use crate::skill::SkillRecord;
 
 use super::audit::AttributionAuditReport;
 use super::types::{
@@ -88,12 +89,20 @@ pub(super) fn validate_evidence(vault: &Vault, evidence: &OutcomeEvidence) -> Re
     if evidence.followed_state.is_some() && evidence.followed_skill.is_some() {
         return Err(invalid("attribution followed states conflict"));
     }
-    if let Some(FollowedState::DeviatedWithReason { reason, .. }) = &evidence.followed_state
-        && (reason.trim().is_empty() || reason.len() > 1024)
-    {
-        return Err(invalid(
-            "attribution deviation needs a bounded stated reason",
-        ));
+    if let Some(FollowedState::DeviatedWithReason { reason, .. }) = &evidence.followed_state {
+        if reason.trim().is_empty() {
+            return Err(invalid("attribution deviation needs a stated reason"));
+        }
+        let txn = vault.store.env.read_txn()?;
+        let policy = crate::gate::resolve_policy_manifest(&vault.store, &txn)?;
+        let limits = policy
+            .attribution_limits()
+            .ok_or(invalid("attribution deviation policy is malformed"))?;
+        if (reason.len() as u64) > limits.reason_bytes_for(&evidence.actor) {
+            return Err(invalid(
+                "attribution deviation exceeds policy reason budget",
+            ));
+        }
     }
     if evidence.receipt_ref.is_empty() {
         return Err(invalid("attribution evidence must cite a receipt"));
@@ -120,7 +129,7 @@ pub(super) fn validate_evidence(vault: &Vault, evidence: &OutcomeEvidence) -> Re
     };
     if !manifest
         .iter()
-        .any(|entry| manifest_entry_names_skill(entry, &record.skill_id))
+        .any(|entry| manifest_entry_names_skill(entry, &record))
     {
         return Err(invalid(
             "attribution evidence names a skill absent from the receipt manifest",
@@ -129,10 +138,13 @@ pub(super) fn validate_evidence(vault: &Vault, evidence: &OutcomeEvidence) -> Re
     Ok(())
 }
 
-/// A manifest wire form is `reference@version` and the reference of a SKILL
-/// row is its `skill_id`. [`ManifestEntry::parse_wire_form`] owns the split.
-fn manifest_entry_names_skill(wire_form: &str, skill_id: &str) -> bool {
-    ManifestEntry::parse_wire_form(wire_form).is_some_and(|(reference, _)| reference == skill_id)
+/// The one exact-revision check shared by evidence admission, sweep capture
+/// and the downstream reliability doors. Empty versions on historical receipt
+/// fixtures carry no revision fact; the attempt write door now refuses them.
+pub(crate) fn manifest_entry_names_skill(wire_form: &str, record: &SkillRecord) -> bool {
+    ManifestEntry::parse_wire_form(wire_form).is_some_and(|(reference, version)| {
+        reference == record.skill_id && (version.is_empty() || version == record.version)
+    })
 }
 
 pub(super) fn sequenced_key(prefix: &[u8], sequence: u64) -> Vec<u8> {
@@ -256,10 +268,8 @@ fn decode_followed_state(value: &Value) -> Result<Option<FollowedState>> {
                 }
             }
             let reason = reason.ok_or(invalid("attribution deviation missing reason"))?;
-            if reason.trim().is_empty() || reason.len() > 1024 {
-                return Err(invalid(
-                    "attribution deviation needs a bounded stated reason",
-                ));
+            if reason.trim().is_empty() {
+                return Err(invalid("attribution deviation needs a stated reason"));
             }
             Ok(Some(FollowedState::DeviatedWithReason { reason, cause }))
         }

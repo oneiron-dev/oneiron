@@ -50,6 +50,8 @@ pub(super) fn hash_policy_frontier_v0(
         hash_u64(hasher, bounds.actor_writes);
     }
 
+    // Attribution limits bound post-terminal receipt capture, not Gate authority.
+    // Tuning them must not rebind existing consent/grant frontiers.
     if let Some(threshold) = resolution.proposal_check_threshold {
         hash_str(hasher, "proposal_check_threshold");
         hash_u64(hasher, threshold);

@@ -30,6 +30,7 @@
 
 mod audit;
 mod codec;
+pub(crate) use self::codec::manifest_entry_names_skill;
 mod judge;
 mod projector;
 mod types;

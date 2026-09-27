@@ -1,12 +1,13 @@
 //! TASK-lane receipt pump: capture once, route, then resume both idempotent projections.
 
 use super::codec::{decode_u64, evidence_after, validate_evidence};
+use super::manifest_entry_names_skill;
 use super::projector::record_evidence_in_txn;
 use super::{
     AttemptOutcome, AttributionJudge, FollowedState, OutcomeEvidence, RuleAttributionJudge,
     attribution_judgments, read_attribution_cursor, run_attribution_projector_with_judge,
 };
-use crate::attempt_queue::ManifestEntry;
+use crate::attempt_queue::MAX_ATTEMPT_MANIFEST_ENTRIES;
 use crate::receipt::{ReceiptRecord, attempt_pack_receipt_page};
 use crate::{EntityId, Error, Result, Vault};
 
@@ -68,7 +69,18 @@ pub fn run_task_attribution_sweep_with_judge(
             })
             .transpose()?
     };
-    let (receipts, complete) = attempt_pack_receipt_page(vault, after.as_deref(), limit)?;
+    let page_limit = {
+        let txn = vault.store.env.read_txn()?;
+        let policy = crate::gate::resolve_policy_manifest(&vault.store, &txn)?;
+        let budget = policy
+            .attribution_limits()
+            .ok_or_else(|| {
+                Error::InvalidConfig("attribution work budget policy is malformed".to_owned())
+            })?
+            .receipts_per_pass;
+        limit.min(usize::try_from(budget).unwrap_or(usize::MAX))
+    };
+    let (receipts, complete) = attempt_pack_receipt_page(vault, after.as_deref(), page_limit)?;
     let mut report = AttributionSweepReport {
         scanned: receipts.len(),
         ..Default::default()
@@ -173,42 +185,49 @@ fn capture_receipt(
     let Some(facts) = source.facts(receipt)? else {
         return Ok(None);
     };
-    if facts.len() > 64 {
+    if facts.len() > MAX_ATTEMPT_MANIFEST_ENTRIES {
         return Err(Error::InvalidConfig(
-            "too many attribution facts for one receipt".to_owned(),
+            "attribution facts exceed the attempt manifest structural maximum".to_owned(),
         ));
     }
     // A partial host answer must not mark this receipt captured forever. The
     // terminal manifest is the authority on which tier-2 skills were loaded.
     if let Some(manifest) = receipt.pack_manifest_skills() {
-        let loaded = manifest
-            .iter()
-            .map(|wire| {
-                ManifestEntry::parse_wire_form(wire)
-                    .map(|(reference, _)| reference.to_owned())
-                    .ok_or(Error::InvalidConfig(
-                        "invalid skill manifest reference".to_owned(),
-                    ))
-            })
-            .collect::<Result<std::collections::BTreeSet<_>>>()?;
+        let loaded: std::collections::BTreeSet<_> = manifest.iter().collect();
         let named = facts
             .iter()
             .map(|fact| {
                 let skill = fact.skill.ok_or(Error::InvalidConfig(
                     "attribution fact must name a loaded skill".to_owned(),
                 ))?;
-                vault
-                    .get_skill_record(&skill)?
-                    .map(|record| record.skill_id)
-                    .ok_or(Error::InvalidConfig(
-                        "attribution fact names an unknown skill".to_owned(),
-                    ))
+                vault.get_skill_record(&skill)?.ok_or(Error::InvalidConfig(
+                    "attribution fact names an unknown skill".to_owned(),
+                ))
             })
             .collect::<Result<Vec<_>>>()?;
-        let unique_named: std::collections::BTreeSet<_> = named.iter().cloned().collect();
-        if unique_named != loaded || unique_named.len() != named.len() {
+        let named_revisions: std::collections::BTreeSet<_> = named
+            .iter()
+            .map(|record| (record.skill_id.as_str(), record.version.as_str()))
+            .collect();
+        if named_revisions.len() != named.len()
+            || loaded.len() != named.len()
+            || loaded.iter().any(|wire| {
+                named
+                    .iter()
+                    .filter(|record| manifest_entry_names_skill(wire, record))
+                    .count()
+                    != 1
+            })
+            || named.iter().any(|record| {
+                loaded
+                    .iter()
+                    .filter(|wire| manifest_entry_names_skill(wire, record))
+                    .count()
+                    != 1
+            })
+        {
             return Err(Error::InvalidConfig(
-                "attribution facts must cover every loaded skill exactly once".to_owned(),
+                "attribution facts must cover every loaded skill revision exactly once".to_owned(),
             ));
         }
     }
