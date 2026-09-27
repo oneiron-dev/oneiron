@@ -2,7 +2,7 @@
 
 use std::collections::BTreeSet;
 
-use super::owned_body::guard_storage_owned_body;
+use super::put_staging::{PutCarrierContext, validate_put_carriers};
 use heed::RwTxn;
 
 use super::{
@@ -71,14 +71,14 @@ pub(in crate::batch) fn apply_put(
         None
     };
     let data = normalized_policy.as_deref().unwrap_or(data);
-    super::put_staging::validate_scope_carriers(store, wtxn, id, entity_type, data, origin)?;
-    guard_storage_owned_body(store, wtxn, &id, entity_type, occurred, data, replicated)?;
-    super::put_staging::validate_domain_carriers(store, wtxn, id, entity_type, data, replicated)?;
+    let carriers = PutCarrierContext::new(entity_type, occurred, learned_at, replicated, origin);
+    validate_put_carriers(store, wtxn, id, data, carriers)?;
     let mutation_recorded_at = crate::ports::recorded_at_in_txn(store, wtxn)?;
-    crate::skill_hub::pack_catalog::validate_pack_source_put(store, wtxn, &id, entity_type, data)?;
-    crate::skill_hub::validate_hub_source_carrier_put(store, wtxn, &id, entity_type, data)?;
-    crate::agent_def::validate_birth_source_put(store, wtxn, &id, entity_type, data)?;
-    crate::receipt::validate_receipt_archive_put(store, wtxn, &id, entity_type, data)?;
+    super::put_staging::validate_source_carriers(
+        store,
+        wtxn,
+        (id, entity_type, data, occurred, learned_at),
+    )?;
     let mut portable_agent_source = None;
     store.guard_pack_map_carrier_put_in_txn(wtxn, &id, entity_type, data)?;
     store.guard_pack_instance_identity_in_txn(wtxn, &id, entity_type, data)?;
@@ -577,6 +577,8 @@ pub(in crate::batch) fn apply_put(
         }
     }
 
+    crate::ingest::invalidate_docs_source_before_put(store, wtxn, &id, entity_type, data)?;
+
     // ONE-1449 MATERIAL-6 R1: staged in the SAME transaction as the body it
     // marks, so a rolled-back create leaves no marker and a committed one can
     // never be re-presented as an ordinary birth. Only a genuine optimizer-born
@@ -688,6 +690,7 @@ pub(in crate::batch) fn apply_put(
     }
     crate::agent_def::stage_birth_custody_put(store, wtxn, &id, entity_type, data)?;
     crate::receipt::stage_receipt_archive_put(store, wtxn, &id, entity_type, data)?;
+    crate::receipt::stage_receipt_record_index(store, wtxn, &id, entity_type, data)?;
 
     if let Some(plan) = short_id_plan {
         apply_short_id_plan(store, wtxn, &id, plan)?;

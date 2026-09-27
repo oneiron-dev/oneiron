@@ -19,16 +19,30 @@ use super::super::rendezvous::{
 use super::super::tombstone::{
     DeleteReason, TombstoneValueV2, local_hard_delete_key, window_label_from_timestamp,
 };
-use super::DeleteEntityOutcome;
+use super::{DeleteEntityOptions, DeleteEntityOutcome};
 use crate::error::RegistryError;
 
 impl Vault {
-    /// Deletes an entity blob by ID using the destructive user-hard-delete
-    /// contract.
+    /// Plain deletion retains a tombstone shell. Use `delete_entity_with_options`
+    /// to request irreversible active-store purge explicitly.
     pub fn delete_entity(&self, id: &EntityId) -> Result<bool> {
-        Ok(self
-            .delete_entity_with_reason(id, DeleteReason::UserHardDelete)?
-            .existed)
+        self.delete_entity_with_options(id, DeleteEntityOptions::default())
+    }
+
+    /// `purge` selects the ARCH-0038 hard tier; false is a shell-keeping
+    /// user-delete. Hosts must display an impact preview before a confirmed
+    /// purge of shared content.
+    pub fn delete_entity_with_options(
+        &self,
+        id: &EntityId,
+        options: DeleteEntityOptions,
+    ) -> Result<bool> {
+        let reason = if options.purge {
+            DeleteReason::UserHardDelete
+        } else {
+            DeleteReason::UserDelete
+        };
+        Ok(self.delete_entity_with_reason(id, reason)?.existed)
     }
 
     /// Deletes an entity according to the pinned ARCH-0038 reason behavior.
@@ -57,6 +71,39 @@ impl Vault {
         let outcome = self.delete_entity_with_reason_impl(id, reason, Some(gate))?;
         while self.collect_lfs_garbage(32)? != 0 {}
         Ok(outcome)
+    }
+
+    /// Under the single LMDB writer, refuse live grants and fence the target
+    /// before either headerful or headerless tombstone publication. Fully
+    /// absent IDs never reach this method.
+    pub(super) fn reserve_user_brief_delete(
+        &self,
+        id: &EntityId,
+        reason: DeleteReason,
+        gate: Option<&GatedDeletion<'_>>,
+    ) -> Result<()> {
+        if matches!(
+            reason,
+            DeleteReason::UserDelete | DeleteReason::UserHardDelete
+        ) {
+            let mut txn = self.store.env.write_txn()?;
+            reverify_deletion_authority_before_publication(gate, &txn)?;
+            if !crate::share::active_brief_shares_for(
+                &self.store,
+                &txn,
+                id,
+                self.store.clock.now_recorded_at(),
+            )?
+            .is_empty()
+            {
+                return Err(Error::InvariantViolation(
+                    "active brief share requires confirmed delete",
+                ));
+            }
+            crate::share::reserve_brief_delete(&self.store, &mut txn, id)?;
+            txn.commit()?;
+        }
+        Ok(())
     }
 
     fn delete_entity_with_reason_impl(
@@ -102,6 +149,7 @@ impl Vault {
         // production.
         signal_after_delete_probe(self);
         signal_delete_rendezvous(self, DeleteRendezvous::BeforeFirstDeletionTxn, id, None);
+        self.reserve_user_brief_delete(id, reason, gate.as_ref())?;
         // ONE-1132: ONE deletion request UUID correlates the CRDT tombstone's
         // `request_id` with the REDACTION_AUDIT receipt's `request_id`.
         // ONE-1149: minted only AFTER the header read proves there is
@@ -172,6 +220,10 @@ impl Vault {
                 }
             }
             wtxn.commit()?;
+            if existed {
+                gate.as_ref()
+                    .inspect(|gate| gate.note_soft_scrub_committed());
+            }
             // An archive publishes nothing (`publishes_crdt_tombstone` is
             // false for exactly one reason): there is no remote-binding act
             // to re-gate, and nothing for a peer to obey, so the local `ac:`

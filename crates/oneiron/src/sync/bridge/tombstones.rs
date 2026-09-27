@@ -118,7 +118,8 @@ pub(super) fn materialize_tombstones_from_delta(
                 }
                 if matches!(vault.read_entity_header(&id), Ok(None))
                     && let Some(entity_blob) = map_get_bytes(&entities_map, &id.to_hex())
-                    && let Some(header) = admitted_concurrent_delete_protected_header(&entity_blob)
+                    && let Some(header) =
+                        admitted_concurrent_delete_protected_header(&id, &entity_blob)
                 {
                     let rejection = Error::Registry(RegistryError::MaintenanceKindNotWritable(
                         header.entity_type,
@@ -455,6 +456,7 @@ pub(super) fn quarantine_and_neutralize_protected_tombstone_in_txn(
 /// ingestion. Other established protected kinds retain their existing
 /// classification; type-76 must never gain protection from its header alone.
 pub(in crate::sync) fn admitted_concurrent_delete_protected_header(
+    id: &EntityId,
     blob: &[u8],
 ) -> Option<EntityMetadataHeader> {
     let header = EntityMetadataHeader::parse(blob)?;
@@ -464,6 +466,9 @@ pub(in crate::sync) fn admitted_concurrent_delete_protected_header(
     if header.entity_type == crate::registry::ENTITY_TYPE_IDENTITY_TOPOLOGY_EVENT {
         let data = &blob[ENTITY_METADATA_HEADER_LEN..];
         crate::identity_topology::decode_replicated_identity_topology_event_body(data).ok()?;
+    }
+    if header.entity_type == crate::registry::ENTITY_TYPE_RECEIPT_RECORD {
+        crate::sync::receipt_ingest::validate_envelope(id, blob).ok()?;
     }
     Some(header)
 }

@@ -106,7 +106,8 @@ pub(super) fn run(ctx: &RematCtx<'_>, ledger: &mut RematLedger) -> TombstonePass
         }
         if matches!(vault.read_entity_header(&id), Ok(None))
             && let Some(entity_blob) = map_get_bytes(entities_map, &id.to_hex())
-            && let Some(header) = bridge::admitted_concurrent_delete_protected_header(&entity_blob)
+            && let Some(header) =
+                bridge::admitted_concurrent_delete_protected_header(&id, &entity_blob)
         {
             let rejection = Error::Registry(RegistryError::MaintenanceKindNotWritable(
                 header.entity_type,

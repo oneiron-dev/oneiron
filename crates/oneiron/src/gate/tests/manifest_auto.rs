@@ -54,7 +54,7 @@ fn policy_manifest_valid_fixture_resolves_gate_inputs() -> Result<()> {
     assert!(policy.signatures().iter().any(|signature| {
         signature.alg == "ed25519"
             && signature.key_id.as_deref() == Some("owner")
-            && signature.sig == "first-party-eiri-auto"
+            && signature.sig == "first-party-agent-auto"
     }));
 
     let id = test_id(0x63);

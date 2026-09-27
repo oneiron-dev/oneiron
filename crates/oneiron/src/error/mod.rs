@@ -296,6 +296,8 @@ pub enum ErrorKind {
     PackKindNameCollision,
     PackKindNotInstalled,
     InvalidPackByteMap,
+    InvalidSuppressionReceiptBody,
+    SuppressionReceiptDivergence,
     PackPredicateNameCollision,
     DreamerActorImmutable,
 }

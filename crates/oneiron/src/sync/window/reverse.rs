@@ -187,7 +187,14 @@ pub fn reverse_rematerialize(vault: &Vault, doc: &LoroDoc, window_key: &WindowKe
             // construction when the key carries nothing (`map_get_bytes` →
             // `None`), so hoisting it past the short circuit is semantics-
             // preserving.
-            let dominates = authority_row_dominates_map_carrier(&entities_map, id, &hex_id, &raw);
+            let dominates = authority_row_dominates_map_carrier(&entities_map, id, &hex_id, &raw)
+                || crate::sync::receipt_ingest::local_receipt_dominates(
+                    vault,
+                    window_key,
+                    &entities_map,
+                    id,
+                    &raw,
+                )?;
             let fixed_actor_mismatch = *id == crate::dreamer_runner::authority::dreamer_actor_id()?
                 && map_get_bytes(&entities_map, &hex_id).as_deref() != Some(raw.as_slice());
             if !map_contains_binary(&entities_map, &hex_id) || dominates || fixed_actor_mismatch {
