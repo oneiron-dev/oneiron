@@ -109,9 +109,13 @@ fn sent_request() -> (
     };
     use oneiron::{EdgeActorClass, EntityId, TimeRange, Vault, VaultConfig, WriteActor};
 
-    let dir = tempfile::tempdir().unwrap();
-    let vault = Arc::new(Vault::open(dir.path(), VaultConfig::server()).unwrap());
-    let owner = vault.ensure_embedded_owner_actor().unwrap();
+    let dir = tempfile::tempdir().expect("seed sent signing request");
+    let vault = Arc::new(
+        Vault::open(dir.path(), VaultConfig::server()).expect("seed sent signing request"),
+    );
+    let owner = vault
+        .ensure_embedded_owner_actor()
+        .expect("seed sent signing request");
     let artifact = EntityId::now();
     let when = TimeRange { start: 1, end: 1 };
     vault
@@ -121,7 +125,7 @@ fn sent_request() -> (
             when,
             1,
         )
-        .unwrap();
+        .expect("seed sent signing request");
     vault
         .append_blob_artifact_version(
             &artifact,
@@ -131,10 +135,10 @@ fn sent_request() -> (
             when,
             1,
         )
-        .unwrap();
+        .expect("seed sent signing request");
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
-        .unwrap()
+        .expect("seed sent signing request")
         .as_secs();
     let recipient = EntityId::now().to_hex();
     let field = EntityId::now().to_hex();
@@ -185,7 +189,7 @@ fn sent_request() -> (
             },
             now,
         )
-        .unwrap();
+        .expect("seed sent signing request");
     let mut effect = Scope::top();
     effect.verbs = ScopeAxis::Some(["effect".to_owned()].into());
     oneiron::conversation_dag::test_support::put_test_policy_manifest(
@@ -202,7 +206,7 @@ fn sent_request() -> (
                 "scope":effect,"selectors":{"channel":"esign"}}]
         }),
     )
-    .unwrap();
+    .expect("seed sent signing request");
     let authenticated = vault
         .authenticate_owner(
             owner,
@@ -210,10 +214,10 @@ fn sent_request() -> (
             true,
             oneiron::store::GateDecisionId::now(),
         )
-        .unwrap();
+        .expect("seed sent signing request");
     let token = vault
         .issue_esign_capabilities(&authenticated, artifact)
-        .unwrap()
+        .expect("seed sent signing request")
         .remove(0)
         .1
         .expose_for_delivery()
@@ -254,7 +258,9 @@ fn sent_request() -> (
         now,
         OutboundDeliveryWindowDecision::DeliverNow,
     );
-    let sent = vault.dispatch_esign(request, &command, None, None).unwrap();
+    let sent = vault
+        .dispatch_esign(request, &command, None, None)
+        .expect("seed sent signing request");
     assert_eq!(
         sent.outcome,
         OutboundDispatchOutcome::DeliveredToChannel,
@@ -268,7 +274,7 @@ fn sent_request() -> (
                 ..Default::default()
             },
         )
-        .unwrap(),
+        .expect("seed sent signing request"),
     );
     (dir, server, token, field, artifact)
 }
@@ -368,20 +374,25 @@ async fn real_managed_tcp_listener_loads_saves_and_reads_without_device_lease() 
 
 async fn over_unix(path: &std::path::Path, method: &str, target: &str, body: &str) -> Vec<u8> {
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
-    let mut stream = tokio::net::UnixStream::connect(path).await.unwrap();
+    let mut stream = tokio::net::UnixStream::connect(path)
+        .await
+        .expect("exchange Unix signing request");
     let request = format!(
         "{method} {target} HTTP/1.1\r\nHost: localhost\r\nContent-Type: application/json\r\nX-Forwarded-For: 203.0.113.9\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
         body.len()
     );
-    stream.write_all(request.as_bytes()).await.unwrap();
+    stream
+        .write_all(request.as_bytes())
+        .await
+        .expect("exchange Unix signing request");
     let mut response = Vec::new();
     tokio::time::timeout(
         std::time::Duration::from_secs(10),
         stream.read_to_end(&mut response),
     )
     .await
-    .unwrap()
-    .unwrap();
+    .expect("exchange Unix signing request")
+    .expect("exchange Unix signing request");
     response
 }
 
@@ -394,7 +405,7 @@ fn http_body(response: &[u8]) -> &[u8] {
     let end = response
         .windows(4)
         .position(|chunk| chunk == b"\r\n\r\n")
-        .unwrap()
+        .expect("parse HTTP response headers")
         + 4;
     &response[end..]
 }
