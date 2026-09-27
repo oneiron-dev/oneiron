@@ -74,18 +74,10 @@ pub(in crate::batch) fn apply_put(
     guard_storage_owned_body(store, wtxn, &id, entity_type, occurred, data, replicated)?;
     super::put_staging::validate_domain_carriers(store, wtxn, id, entity_type, data, replicated)?;
     let mutation_recorded_at = crate::ports::recorded_at_in_txn(store, wtxn)?;
-    crate::skill_hub::pack_catalog::validate_pack_source_put(store, wtxn, &id, entity_type, data)?;
-    crate::skill_hub::validate_hub_source_carrier_put(store, wtxn, &id, entity_type, data)?;
-    crate::agent_def::validate_birth_source_put(store, wtxn, &id, entity_type, data)?;
-    crate::receipt::validate_receipt_archive_put(store, wtxn, &id, entity_type, data)?;
-    crate::receipt::validate_receipt_record_put(
+    super::put_staging::validate_source_carriers(
         store,
         wtxn,
-        &id,
-        entity_type,
-        data,
-        occurred,
-        learned_at,
+        (id, entity_type, data, occurred, learned_at),
     )?;
     let mut portable_agent_source = None;
     store.guard_pack_map_carrier_put_in_txn(wtxn, &id, entity_type, data)?;
@@ -430,14 +422,15 @@ pub(in crate::batch) fn apply_put(
         // (occurred/learned) changes are not body changes.
         body_changed = old_record[ENTITY_METADATA_HEADER_LEN..] != *data;
         // Retaining an indexed text revision is not permission to retain a
-        // withdrawn claim in the search index. Lifecycle/approval takes effect
-        // immediately; only still-surfaceable text edits await idle publication.
+        // withdrawn claim or a replicated LWW loser in the search index.
+        // Local, still-surfaceable text edits alone await idle publication.
         let withdrawn_claim = decoded_claim_body
             .as_ref()
             .is_some_and(|body| !crate::claim::claim_surfaceable(body));
         let should_deindex_stale_text = body_changed
             && (withdrawn_claim
-                || ((replicated || !has_later_covering_text_op)
+                || replicated
+                || (!has_later_covering_text_op
                     && !crate::vault::entity_revision::storage_manages_text(
                         store, wtxn, &id, data,
                     )?));
@@ -624,6 +617,28 @@ pub(in crate::batch) fn apply_put(
         new_skill_record.as_ref(),
     )?;
     stage_entity_body_row(store, wtxn, &id, entity_type, occurred, learned_at, data)?;
+    // Count authenticated local Proposed submissions, including changed bodies
+    // under an actor-owned claim ID. An exact same-body retry is not new.
+    // Replays and envelope-less system puts cannot be assigned to an actor.
+    if !replicated
+        && decoded_claim_body
+            .as_ref()
+            .is_some_and(|body| body.approval == ClaimApprovalStatus::Proposed)
+        && let Some(envelope) = write_envelope
+    {
+        let threshold = match write_policy {
+            Some(policy) => policy.proposal_check_threshold(),
+            None => crate::gate::resolve_policy_manifest(store, &*wtxn)?.proposal_check_threshold(),
+        };
+        crate::gate::proposal_observation::observe_submission_in_txn(
+            store,
+            wtxn,
+            envelope.actor().entity_ref(),
+            &format!("claim:{}", id.to_hex()),
+            threshold,
+            body_changed,
+        )?;
+    }
     if entity_type == ENTITY_TYPE_TASK {
         crate::task_verb::index_owner_fact(store, wtxn, &id, Some(data))?;
         if body_changed {

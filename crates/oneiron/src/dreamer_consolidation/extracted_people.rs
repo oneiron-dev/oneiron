@@ -10,6 +10,7 @@ use crate::Vault;
 use crate::analyzer::normalize::{casefold, nfkc};
 use crate::claim::ClaimSource;
 use crate::dreamer_runner::{dreamer_extraction_role_admissible, dreamer_turn_role};
+use crate::dreamer_wake::WakePassDeadline;
 use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::llm::{ContentPart, LlmResponse};
@@ -53,6 +54,7 @@ pub(super) fn mint_extracted_people(
     working_set: &[EntityId],
     scope: &crate::llm::Scope,
     now: u64,
+    deadline: Option<&WakePassDeadline>,
 ) -> Result<()> {
     let text: String = response
         .message
@@ -69,6 +71,13 @@ pub(super) fn mint_extracted_people(
         return Ok(());
     };
     vault.with_write_txn(|txn| {
+        // Check before the first write. Once admitted, the gated write is not
+        // interrupted mid-transaction by the wake clock.
+        if deadline.is_some_and(WakePassDeadline::expired) {
+            return Err(invalid_consolidation(
+                "wake pass expired before person mint",
+            ));
+        }
         for person in people {
             let Some(id) = person
                 .get("id")
