@@ -1,11 +1,7 @@
 use super::*;
 use rmpv::Value;
 
-use crate::affect::Vad;
 use crate::claim::{ClaimApprovalStatus, ClaimSource};
-use crate::companion::{
-    CompanionProvenance, CompanionRecord, CompanionScope, encode_companion_record_body,
-};
 use crate::config::VaultConfig;
 use crate::edge::{EdgeActorClass, EdgeKind};
 use crate::error::SyncError;
@@ -179,26 +175,6 @@ fn commit_entity(window: &LoadedWindow, learned_at: u64, data: &[u8]) -> EntityI
     .unwrap();
     window.doc.commit();
     id
-}
-
-fn companion_record(
-    persona_ref: EntityId,
-    sensitivity: crate::federation::Sensitivity,
-) -> CompanionRecord {
-    CompanionRecord::relationship(
-        CompanionScope::neutral(),
-        persona_ref,
-        EntityId::from_bytes_unchecked([0xFE; 16]),
-        Value::from("private companion tuning"),
-        CompanionProvenance::new(
-            EntityId::from_bytes([0xB9; 16]).unwrap(),
-            EdgeActorClass::Agent,
-            ClaimSource::UserStated,
-            ClaimApprovalStatus::Approved,
-            Value::from("private provenance"),
-        ),
-        sensitivity,
-    )
 }
 
 /// ONE-1151 prune: `persist_state` deletes exactly the `u:w:{key}:*`
@@ -388,204 +364,25 @@ fn persist_state_prunes_subsumed_rows_and_spares_other_families() {
 }
 
 #[test]
-fn companion_register_api_reverse_remat_excludes_local_only_records() -> Result<()> {
-    let (_dir, vault) = test_vault();
-    let window_key = WindowKey::new("2026-03");
-    let learned_at = window_key.start_timestamp().unwrap() + 60;
-    let local_id = EntityId::from_bytes([0x31; 16]).unwrap();
-    let portable_id = EntityId::from_bytes([0x32; 16]).unwrap();
-    let external_local_id = EntityId::from_bytes([0x35; 16]).unwrap();
-    let local_persona = EntityId::from_bytes([0x3A; 16]).unwrap();
-    let portable_persona = EntityId::from_bytes([0x3B; 16]).unwrap();
-    let external_persona = EntityId::from_bytes([0x3C; 16]).unwrap();
-    let local = companion_record(local_persona, crate::federation::Sensitivity::Restricted);
-    let portable = companion_record(portable_persona, crate::federation::Sensitivity::Public);
-    let external_local =
-        companion_record(external_persona, crate::federation::Sensitivity::Restricted);
-
-    vault.create_companion_record(&local_id, &local, learned_at)?;
-    vault.create_companion_record(&portable_id, &portable, learned_at)?;
-    vault.create_companion_record(
-        &external_local_id,
-        &external_local,
-        window_key.end_timestamp().unwrap() + 60,
-    )?;
-    vault.put_edge(&portable_id, EdgeKind::Mentions, &external_local_id, 0.8)?;
-
-    let doc = create_window_doc("source", &window_key);
-    let entities = doc.get_map("entities");
-    let edges = doc.get_map("edges");
-    let mut stale_local_blob = Vec::new();
-    stale_local_blob.push(ENTITY_TYPE_FACET);
-    stale_local_blob.extend_from_slice(&learned_at.to_be_bytes());
-    stale_local_blob.extend_from_slice(&learned_at.to_be_bytes());
-    stale_local_blob.extend_from_slice(&learned_at.to_be_bytes());
-    stale_local_blob.extend_from_slice(&encode_companion_record_body(
-        &local.created_at(learned_at)?,
-    )?);
-    map_insert_bytes(&entities, &local_id.to_hex(), &stale_local_blob)?;
-    let local_edge_key = format_edge_key(&local_id, EdgeKind::Mentions, &portable_id);
-    map_insert_bytes(
-        &edges,
-        &local_edge_key,
-        &encode_edge_value_for_crdt(
-            EdgeKind::Mentions,
-            0.7,
-            learned_at,
-            Some(Vad::NEUTRAL),
-            None,
-        )?,
-    )?;
-    doc.commit();
-
-    reverse_rematerialize(&vault, &doc, &window_key)?;
-    let external_local_edge_key =
-        format_edge_key(&portable_id, EdgeKind::Mentions, &external_local_id);
-
-    assert!(
-        map_get_bytes(&entities, &local_id.to_hex()).is_none(),
-        "reverse remat must remove stale local-only companion register rows"
-    );
-    assert!(
-        map_get_bytes(&entities, &portable_id.to_hex()).is_some(),
-        "reverse remat should mirror syncable companion register rows"
-    );
-    assert!(
-        map_get_bytes(&edges, &local_edge_key).is_none(),
-        "reverse remat must remove edges touching local-only companion register rows"
-    );
-    assert!(
-        map_get_bytes(&edges, &external_local_edge_key).is_none(),
-        "reverse remat must not backfill edges to out-of-window local-only companion targets"
-    );
-    Ok(())
-}
-
-#[test]
-fn companion_register_api_forward_remat_excludes_local_only_records() -> Result<()> {
+fn forward_remat_never_materializes_public_legacy_persona_facet() -> Result<()> {
     let (_dir, vault) = test_vault();
     let window_key = WindowKey::new("2026-03");
     let learned_at = window_key.start_timestamp().unwrap() + 90;
-    let local_id = EntityId::from_bytes([0x33; 16]).unwrap();
-    let portable_id = EntityId::from_bytes([0x34; 16]).unwrap();
-    let local_persona = EntityId::from_bytes([0x3D; 16]).unwrap();
-    let portable_persona = EntityId::from_bytes([0x3E; 16]).unwrap();
-    let local = companion_record(local_persona, crate::federation::Sensitivity::Restricted);
-    let portable = companion_record(portable_persona, crate::federation::Sensitivity::Public);
-
+    let id = EntityId::from_bytes([0x33; 16]).unwrap();
+    let person = EntityId::from_bytes([0x3D; 16]).unwrap();
+    let body = crate::companion::tests::support::retired_persona_facet_body(person);
     let doc = create_window_doc("remote", &window_key);
-    let entities = doc.get_map("entities");
-    let edges = doc.get_map("edges");
     map_insert_bytes(
-        &entities,
-        &local_id.to_hex(),
-        &make_entity_blob(
-            ENTITY_TYPE_FACET,
-            learned_at,
-            &encode_companion_record_body(&local.created_at(learned_at)?)?,
-        ),
-    )?;
-    map_insert_bytes(
-        &entities,
-        &portable_id.to_hex(),
-        &make_entity_blob(
-            ENTITY_TYPE_FACET,
-            learned_at,
-            &encode_companion_record_body(&portable.created_at(learned_at)?)?,
-        ),
-    )?;
-    let local_edge_key = format_edge_key(&portable_id, EdgeKind::Mentions, &local_id);
-    map_insert_bytes(
-        &edges,
-        &local_edge_key,
-        &encode_edge_value_for_crdt(
-            EdgeKind::Mentions,
-            0.8,
-            learned_at,
-            Some(Vad::NEUTRAL),
-            None,
-        )?,
+        &doc.get_map("entities"),
+        &id.to_hex(),
+        &make_entity_blob(ENTITY_TYPE_FACET, learned_at, &body),
     )?;
     doc.commit();
-
     let materializer = Materializer::new();
-    let rematerialized = forward_rematerialize(&vault, &doc, &materializer, &window_key)?;
-    assert_eq!(rematerialized, 1);
-    assert!(
-        map_get_bytes(&entities, &local_id.to_hex()).is_none(),
-        "forward remat must remove local-only companion register rows"
-    );
-    assert!(
-        vault.get_companion_record(&local_id)?.is_none(),
-        "forward remat must not materialize local-only companion records"
-    );
-    assert!(
-        vault.get_companion_record(&portable_id)?.is_some(),
-        "forward remat should materialize syncable companion register rows"
-    );
-    assert!(
-        map_get_bytes(&edges, &local_edge_key).is_none(),
-        "forward remat must remove edges touching local-only companion register rows"
-    );
-    Ok(())
-}
-
-#[test]
-fn companion_register_api_pending_mirror_replay_excludes_local_only_edges() -> Result<()> {
-    let (_dir, vault) = test_vault();
-    let window_key = WindowKey::new("2026-03");
-    let learned_at = window_key.start_timestamp().unwrap() + 120;
-    let local_id = EntityId::from_bytes([0x35; 16]).unwrap();
-    let portable_id = EntityId::from_bytes([0x36; 16]).unwrap();
-    let local_persona = EntityId::from_bytes([0x3F; 16]).unwrap();
-    let portable_persona = EntityId::from_bytes([0x40; 16]).unwrap();
-    let local = companion_record(local_persona, crate::federation::Sensitivity::Restricted);
-    let portable = companion_record(portable_persona, crate::federation::Sensitivity::Public);
-
-    vault.create_companion_record(&local_id, &local, learned_at)?;
-    vault.create_companion_record(&portable_id, &portable, learned_at)?;
-    let marker_key = format!("pm:{window_key}:{}", local_id.to_hex());
-    vault.sync_state_put(&marker_key, &[1])?;
-
-    let doc = create_window_doc("source", &window_key);
-    let entities = doc.get_map("entities");
-    let edges = doc.get_map("edges");
-    map_insert_bytes(
-        &entities,
-        &local_id.to_hex(),
-        &make_entity_blob(
-            ENTITY_TYPE_FACET,
-            learned_at,
-            &encode_companion_record_body(&local.created_at(learned_at)?)?,
-        ),
-    )?;
-    let local_edge_key = format_edge_key(&local_id, EdgeKind::Mentions, &portable_id);
-    map_insert_bytes(
-        &edges,
-        &local_edge_key,
-        &encode_edge_value_for_crdt(
-            EdgeKind::Mentions,
-            0.9,
-            learned_at,
-            Some(Vad::NEUTRAL),
-            None,
-        )?,
-    )?;
-    doc.commit();
-
-    assert_eq!(replay_pending_mirrors(&vault, &doc, &window_key)?, 0);
-    assert!(
-        map_get_bytes(&entities, &local_id.to_hex()).is_none(),
-        "pending mirror replay must remove stale local-only companion register rows"
-    );
-    assert!(
-        map_get_bytes(&edges, &local_edge_key).is_none(),
-        "pending mirror replay must remove edges touching local-only companion register rows"
-    );
-    assert!(
-        vault.sync_state_get(&marker_key)?.is_none(),
-        "local-only pending mirror markers should clear after the CRDT carriers are scrubbed"
-    );
+    let _ = forward_rematerialize(&vault, &doc, &materializer, &window_key)?;
+    assert!(vault.get(&id)?.is_none());
+    assert!(vault.get(&person)?.is_none());
+    assert!(map_get_bytes(&doc.get_map("entities"), &id.to_hex()).is_none());
     Ok(())
 }
 
