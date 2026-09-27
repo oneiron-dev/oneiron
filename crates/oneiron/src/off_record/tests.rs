@@ -623,8 +623,11 @@ fn promote_replay_refuses_another_live_rooms_overlay_id_and_rolls_back() -> Resu
             created_at: 1000,
             vad: crate::affect::Vad::NEUTRAL,
         });
-    let refusal = vault
-        .with_write_txn(|wtxn| {
+    // Fail on the FIRST replay op: the builder's copied Put bodies are still
+    // queued, so iterator teardown must scrub them without consuming them.
+    overreaching.ops.rotate_right(1);
+    let early_refusal = crate::session_overlay::hygiene_tests::observe_replay_copy(|| {
+        vault.with_write_txn(|wtxn| {
             FloorWrites::new(&vault.store).promote(
                 &vault,
                 wtxn,
@@ -633,7 +636,22 @@ fn promote_replay_refuses_another_live_rooms_overlay_id_and_rolls_back() -> Resu
                 2000,
             )
         })
-        .expect_err("another room's overlay id must taint the replay");
+    })
+    .expect_err("foreign room reference before replay puts must fail");
+    assert_eq!(early_refusal.kind(), ErrorKind::OffRecordTaintedBaseWrite);
+    overreaching.ops.rotate_left(1);
+    let refusal = crate::session_overlay::hygiene_tests::observe_replay_copy(|| {
+        vault.with_write_txn(|wtxn| {
+            FloorWrites::new(&vault.store).promote(
+                &vault,
+                wtxn,
+                "sess-grant-scope",
+                &overreaching,
+                2000,
+            )
+        })
+    })
+    .expect_err("another room's overlay id must taint the replay");
     assert_eq!(refusal.kind(), ErrorKind::OffRecordTaintedBaseWrite);
     {
         let rtxn = vault.store.env.read_txn()?;
@@ -656,7 +674,8 @@ fn promote_replay_refuses_another_live_rooms_overlay_id_and_rolls_back() -> Resu
     // The SAME closure is still promotable through the ordinary path — and
     // the other room stays live, because a closure that stops at its own
     // endpoints has nothing to say about anyone else's ids.
-    let outcome = session.promote_turn(&turn)?;
+    let outcome =
+        crate::session_overlay::hygiene_tests::observe_replay_copy(|| session.promote_turn(&turn))?;
     assert_eq!(
         outcome.replayed.len(),
         4,
@@ -1336,6 +1355,8 @@ fn anonymous_telemetry_never_falls_back_to_base_even_for_existing_run_ids() -> R
         claims_suppressed: 0,
         surfaced_result_ids: &[],
         empty_reason: None,
+        pack_output: None,
+        pack_config: None,
     })?;
     telemetry.discard_run(existing)?;
     assert_eq!(vault.retrieval_run(existing)?, Some(before));

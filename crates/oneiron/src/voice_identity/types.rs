@@ -445,6 +445,8 @@ pub struct VoicePrintRecordV1 {
     pub sample_ids: Vec<String>,
     pub sample_languages: Vec<String>,
     pub calibration: VoicePrintCalibration,
+    /// Fresh on every enrollment, including same-space replacement.
+    pub print_generation: EntityId,
     pub created_at: u64,
     pub updated_at: u64,
     pub delete_after: Option<u64>,
@@ -511,6 +513,8 @@ pub enum VoiceAttributionEvidence {
         subject_ref: EntityId,
         score: f32,
         calibration: VoicePrintCalibration,
+        /// The exact print generation that produced this score.
+        print_generation: EntityId,
     },
     /// Non-biometric: the unique remaining invite attendee.
     InviteElimination { attendee_ref: EntityId },

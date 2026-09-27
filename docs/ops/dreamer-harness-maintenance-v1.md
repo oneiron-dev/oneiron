@@ -3,8 +3,10 @@
 The engine reads immutable `DreamerTuningConfig` blob-artifact versions and scheduled
 `HarnessEvaluation` scores. The first valid observation is a baseline, not a finding.
 A later backbone change flags **prompts, weights, and manifest thresholds** together.
-Otherwise the observed aggregate score drop from the last accepted baseline flags
-only the targets whose configured cutoffs it exceeds:
+Otherwise the observed aggregate score drop from the last accepted baseline
+flags targets whose configured cutoffs it exceeds. If config surfaces changed,
+only those changed surfaces are flagged; with no typed config change, crossed
+cutoffs remain score-only diagnostic flags:
 
 | Target | Default absolute drop (score range 0–1) | Review question |
 |---|---:|---|
