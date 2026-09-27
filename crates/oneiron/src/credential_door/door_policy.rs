@@ -250,6 +250,45 @@ impl DoorPolicy {
     }
 }
 
+/// Re-resolve the door's narrowing policy in the secret materialization's
+/// existing writer. Only the door's own effectors belong to this dial; other
+/// secret bindings remain governed by their custody floor and binding.
+/// The writer does not open a second transaction or trust an earlier dial.
+pub(crate) fn admit_materialization_in_txn(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    effector: &str,
+    ttl_secs: Option<u64>,
+) -> crate::error::Result<()> {
+    use crate::error::{Error, SecretError};
+
+    let Some(effector) = DoorEffector::parse(effector) else {
+        return Ok(());
+    };
+    let policy = DoorPolicy::resolve(store, txn).map_err(|error| match error {
+        CredentialDoorError::Custody(error) => error,
+        CredentialDoorError::InvalidDoorPolicy { .. } | CredentialDoorError::FloorNamed { .. } => {
+            Error::Secret(SecretError::SecretDoorPolicyRefused {
+                reason: "door policy declaration is invalid",
+            })
+        }
+        _ => Error::Secret(SecretError::SecretDoorPolicyRefused {
+            reason: "door policy resolution failed",
+        }),
+    })?;
+    if !policy.dial.admits(effector) {
+        return Err(Error::Secret(SecretError::SecretDoorPolicyRefused {
+            reason: "effector narrowed away",
+        }));
+    }
+    if ttl_secs.is_some_and(|secs| secs > policy.floors.lease_ttl.secs()) {
+        return Err(Error::Secret(SecretError::SecretDoorPolicyRefused {
+            reason: "lease TTL exceeds the resolved door ceiling",
+        }));
+    }
+    Ok(())
+}
+
 /// Decodes the `secret.door.*` rows of one canonically-decoded manifest body.
 ///
 /// An ABSENT effector row means "this pack declares no effector narrowing" and

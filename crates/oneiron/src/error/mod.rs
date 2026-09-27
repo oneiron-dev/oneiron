@@ -225,6 +225,7 @@ pub enum ErrorKind {
     SecretBindingDenied,
     ManifestWidensFloor,
     SecretTierDenied,
+    SecretDoorPolicyRefused,
     SecretRefNotFound,
     SecretLeaseNotFound,
     SecretLeaseNotActive,

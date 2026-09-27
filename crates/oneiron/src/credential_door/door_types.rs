@@ -318,4 +318,8 @@ impl TtlCeiling {
     pub(super) fn meet(self, other: Self) -> Self {
         Self(self.0.min(other.0))
     }
+
+    pub(super) fn secs(self) -> u64 {
+        self.0
+    }
 }

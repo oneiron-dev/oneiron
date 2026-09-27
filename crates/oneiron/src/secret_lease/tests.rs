@@ -1375,3 +1375,208 @@ fn lease_survives_record_rotation_with_observable_staleness() {
     assert_eq!(fresh.lease.value_generation, 1);
     assert_eq!(fresh.value.as_slice(), VALUE_V2);
 }
+
+// The door dial is a vault-resident policy, not a custody tier floor. A
+// secret bound to the door effector must see the dial in its minting writer.
+fn door_secret(vault: &Vault) {
+    let mut rec = default_record(
+        "dial-secret",
+        CustodyClass::CustodyPortable,
+        CustodyTier::T1Leased,
+    );
+    rec.bindings[0].effector = crate::credential_door::DOOR_RECEIVE_PACK_EFFECTOR.to_owned();
+    register(vault, rec);
+}
+
+fn narrow_door_policy(vault: &Vault, seed: u8, rows: Vec<(rmpv::Value, rmpv::Value)>) {
+    use crate::batch::ENTITY_METADATA_HEADER_LEN;
+    use crate::registry::ENTITY_TYPE_POLICY_MANIFEST;
+
+    let id = EntityId::from_bytes([seed; crate::entity_id::ENTITY_ID_LEN]).expect("manifest id");
+    let mut body = Vec::new();
+    rmpv::encode::write_value(&mut body, &rmpv::Value::Map(rows)).expect("encode policy");
+    let mut payload = Vec::with_capacity(ENTITY_METADATA_HEADER_LEN + body.len());
+    payload.push(ENTITY_TYPE_POLICY_MANIFEST);
+    for _ in 0..3 {
+        payload.extend_from_slice(&2_u64.to_be_bytes());
+    }
+    payload.extend_from_slice(&body);
+    let mut txn = vault.store.env.write_txn().expect("policy writer");
+    vault
+        .store
+        .entities
+        .put(&mut txn, id.as_bytes(), &payload)
+        .expect("policy entity");
+    vault
+        .store
+        .type_index
+        .put(
+            &mut txn,
+            &crate::store::Store::encode_type_key(ENTITY_TYPE_POLICY_MANIFEST, &id),
+            &[],
+        )
+        .expect("policy index");
+    txn.commit().expect("commit policy");
+}
+
+#[test]
+fn door_policy_narrowed_after_prior_read_refuses_both_materialization_rungs() {
+    use crate::credential_door::DOOR_RECEIVE_PACK_EFFECTOR;
+    use rmpv::Value;
+    use std::sync::{Arc, mpsc};
+
+    let (_tmp, vault) = temp_vault();
+    door_secret(&vault);
+    let vault = Arc::new(vault);
+    let (ready_tx, ready_rx) = mpsc::channel();
+    let (continue_tx, continue_rx) = mpsc::channel();
+    let worker_vault = Arc::clone(&vault);
+    let worker = std::thread::spawn(move || {
+        let door = crate::credential_door::CredentialDoorService::new(Arc::clone(&worker_vault));
+        assert!(
+            door.door_policy()
+                .expect("early policy read")
+                .admits_effector(DOOR_RECEIVE_PACK_EFFECTOR)
+        );
+        ready_tx.send(()).expect("signal early read");
+        continue_rx.recv().expect("policy changed");
+        let mut injected = false;
+        let injection = worker_vault.inject_secret_at_door(
+            "dial-secret",
+            DOOR_RECEIVE_PACK_EFFECTOR,
+            &mut |_| {
+                injected = true;
+                Ok(())
+            },
+        );
+        let lease =
+            worker_vault.materialize_secret_lease("dial-secret", DOOR_RECEIVE_PACK_EFFECTOR, 60);
+        (injection, lease, injected)
+    });
+    ready_rx.recv().expect("worker read initial dial");
+    narrow_door_policy(
+        &vault,
+        0x71,
+        vec![(
+            Value::from("secret.door.allowed_effectors"),
+            Value::Array(vec![]),
+        )],
+    );
+    continue_tx.send(()).expect("release materialization");
+    let (injection, lease, injected) = worker.join().expect("worker completes");
+    assert!(
+        matches!(
+            injection,
+            Err(Error::Secret(SecretError::SecretDoorPolicyRefused { .. }))
+        ),
+        "{injection:?}"
+    );
+    assert!(
+        matches!(
+            lease,
+            Err(Error::Secret(SecretError::SecretDoorPolicyRefused { .. }))
+        ),
+        "{lease:?}"
+    );
+    assert!(!injected, "no value may reach the T0 callback");
+    assert_eq!(count_rows(&vault, SECRET_LEASE_KEY_PREFIX), 0);
+    assert_eq!(count_rows(&vault, SECRET_MATERIALIZATION_RECEIPT_PREFIX), 0);
+}
+
+#[test]
+fn door_ttl_narrowing_and_unreadable_policy_refuse_materialization() {
+    use crate::credential_door::DOOR_RECEIVE_PACK_EFFECTOR;
+    use rmpv::Value;
+
+    let (_tmp, vault) = temp_vault();
+    door_secret(&vault);
+    narrow_door_policy(
+        &vault,
+        0x72,
+        vec![(
+            Value::from("secret.door.max_lease_ttl_secs"),
+            Value::from(30_u64),
+        )],
+    );
+    let refused = vault.materialize_secret_lease("dial-secret", DOOR_RECEIVE_PACK_EFFECTOR, 60);
+    assert!(
+        matches!(
+            refused,
+            Err(Error::Secret(SecretError::SecretDoorPolicyRefused { .. }))
+        ),
+        "{refused:?}"
+    );
+    assert_eq!(count_rows(&vault, SECRET_LEASE_KEY_PREFIX), 0);
+    let granted = vault
+        .materialize_secret_lease("dial-secret", DOOR_RECEIVE_PACK_EFFECTOR, 30)
+        .expect("narrowed TTL admits");
+    assert_eq!(granted.lease.expires_at - granted.lease.granted_at, 30);
+    narrow_door_policy(
+        &vault,
+        0x73,
+        vec![(
+            Value::from("secret.door.max_lease_ttl_secs"),
+            Value::from("unreadable"),
+        )],
+    );
+    let mut injected = false;
+    let refused =
+        vault.inject_secret_at_door("dial-secret", DOOR_RECEIVE_PACK_EFFECTOR, &mut |_| {
+            injected = true;
+            Ok(())
+        });
+    assert!(
+        matches!(
+            refused,
+            Err(Error::Secret(SecretError::SecretDoorPolicyRefused { .. }))
+        ),
+        "{refused:?}"
+    );
+    assert!(!injected);
+}
+
+#[test]
+fn bounded_door_lease_checks_effective_duration_against_dial() {
+    use crate::credential_door::DOOR_RECEIVE_PACK_EFFECTOR;
+    use rmpv::Value;
+
+    let (_tmp, vault) = temp_vault();
+    door_secret(&vault);
+    narrow_door_policy(
+        &vault,
+        0x74,
+        vec![(
+            Value::from("secret.door.max_lease_ttl_secs"),
+            Value::from(30_u64),
+        )],
+    );
+    let now = vault.store.clock.now_recorded_at();
+    let bound = now + 25;
+    let granted = vault
+        .materialize_secret_lease_bounded(
+            "dial-secret",
+            DOOR_RECEIVE_PACK_EFFECTOR,
+            60,
+            Some(bound),
+        )
+        .expect("the effective 25-second lease fits the narrowed ceiling");
+    assert_eq!(granted.lease.expires_at, bound);
+    assert!(granted.lease.expires_at - granted.lease.granted_at <= 30);
+    assert_eq!(count_rows(&vault, SECRET_LEASE_KEY_PREFIX), 1);
+
+    let refused = vault.materialize_secret_lease_bounded(
+        "dial-secret",
+        DOOR_RECEIVE_PACK_EFFECTOR,
+        60,
+        Some(now + 120),
+    );
+    assert!(
+        matches!(
+            refused,
+            Err(Error::Secret(SecretError::SecretDoorPolicyRefused { .. }))
+        ),
+        "the effective 60-second lease must exceed the ceiling: {refused:?}"
+    );
+    assert_eq!(count_rows(&vault, SECRET_LEASE_KEY_PREFIX), 1);
+    assert_eq!(count_rows(&vault, SECRET_MATERIALIZATION_RECEIPT_PREFIX), 1);
+}

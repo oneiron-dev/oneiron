@@ -277,7 +277,6 @@ pub(super) fn stamp_secret_lease_in_txn(
     let (id, rec) = read_record_for_ref_in_txn(&vault.store, wtxn, secret_ref)?;
     let floor = SecretCustodyFloor::resolve(&vault.store, wtxn)?;
     admit_record_use(&rec, effector, CustodyTier::T1Leased, &floor)?;
-    let value = read_value_for_ref_in_txn(vault, wtxn, &id, effector)?;
     // ONE instant stamps `granted_at`, dates the receipt, and answers the
     // bound. Nothing between authorization and here can move them apart.
     let now = now.secs();
@@ -293,6 +292,17 @@ pub(super) fn stamp_secret_lease_in_txn(
         Some(bound) => now.saturating_add(ttl_secs).min(bound),
         None => now.saturating_add(ttl_secs),
     };
+    // The dial caps actual exposure, not the caller's pre-bound request. A
+    // shorter live not_after may make a larger requested TTL safe; both the
+    // bound and this recheck happen under the committing writer, before the
+    // value read or either durable row write.
+    crate::credential_door::admit_materialization_in_txn(
+        &vault.store,
+        wtxn,
+        effector,
+        Some(expires_at - now),
+    )?;
+    let value = read_value_for_ref_in_txn(vault, wtxn, &id, effector)?;
     let lease = SecretLease {
         lease_id: vault.store.clock.entity_id()?,
         secret_ref: secret_ref.to_owned(),
