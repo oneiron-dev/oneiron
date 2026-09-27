@@ -11679,7 +11679,7 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "m",
      "kind": "test",
      "notable": [],
      "path": "src/context_board/tasks/tests.rs",
@@ -23961,7 +23961,7 @@
      "purpose": "—",
      "surface": {
       "const": 1,
-      "crate-vis": 20,
+      "crate-vis": 18,
       "enum": 1,
       "fn": 4,
       "struct": 1
@@ -24158,7 +24158,7 @@
      "path": "src/outbound/executor.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 4,
+      "crate-vis": 1,
       "enum": 1,
       "fn": 2
      }
@@ -24213,13 +24213,13 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "src",
      "notable": [],
      "path": "src/outbound/retry_audit.rs",
-     "purpose": "Atomic send-receipt retry and terminal settlement",
+     "purpose": "Atomic persistence of a failed send receipt and its retry",
      "surface": {
-      "crate-vis": 7
+      "crate-vis": 2
      }
     },
     {
@@ -24698,7 +24698,7 @@
      "purpose": "Pinned key sets, content digest, and MessagePack encode/decode",
      "surface": {
       "const": 1,
-      "crate-vis": 29
+      "crate-vis": 28
      }
     },
     {
@@ -24719,18 +24719,8 @@
      "path": "src/outbound_intent_ledger/mod.rs",
      "purpose": "Device-local durable intent ledger for effectful outbound calls",
      "surface": {
-      "crate-vis": 6,
+      "crate-vis": 5,
       "re-export": 3
-     }
-    },
-    {
-     "bucket": "s",
-     "kind": "src",
-     "notable": [],
-     "path": "src/outbound_intent_ledger/resolution.rs",
-     "purpose": "One delivery-knowledge reducer for a logical outbound send",
-     "surface": {
-      "crate-vis": 6
      }
     },
     {
@@ -24740,7 +24730,7 @@
      "path": "src/outbound_intent_ledger/store.rs",
      "purpose": "Storage-transaction reads, inserts, transitions, and the admission-gate validator",
      "surface": {
-      "crate-vis": 21
+      "crate-vis": 19
      }
     },
     {
@@ -26968,7 +26958,7 @@
      "path": "src/receipt/mod.rs",
      "purpose": "Unified receipt-family query surface over existing receipt emitters",
      "surface": {
-      "crate-vis": 16,
+      "crate-vis": 15,
       "re-export": 8
      }
     },
@@ -36840,7 +36830,7 @@
      "purpose": "Standing outbound-grant records for OF-367 RS6.2/RS6.5"
     },
     "outbound_intent_ledger": {
-     "files": 7,
+     "files": 6,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -37311,7 +37301,7 @@
    },
    "over_bar": 2,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2214,
+   "source_files": 2213,
    "test_files": 756
   },
   "oneiron-android": {

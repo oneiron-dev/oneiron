@@ -2785,3 +2785,336 @@ fn terminal_reconciliation_stale_lease_rolls_back_ledger_receipt_and_task() -> c
     );
     Ok(())
 }
+
+/// The TASK's one durable send receipt outcome, if the ledger holds one.
+fn durable_send_receipt_outcome(
+    vault: &Vault,
+    task_ref: EntityId,
+) -> crate::Result<Option<String>> {
+    #[derive(serde::Deserialize)]
+    struct Summary {
+        receipt: crate::receipt::ReceiptRecord,
+    }
+    Ok(vault.store.get_send_receipt_by_task(&task_ref)?.map(|raw| {
+        let summary: Summary = rmp_serde::from_slice(&raw).expect("receipt envelope");
+        summary.receipt.outcome
+    }))
+}
+
+/// A live quiet claim parks the next attempt (the task froze no local offset)
+/// and the revoked key makes the gate deny the parked attempt.
+fn park_and_revoke(
+    vault: &Vault,
+    actor_seed: u8,
+    claim_seed: u8,
+    key_ref: EntityId,
+    at: u64,
+) -> crate::Result<()> {
+    put_claim_body(
+        vault,
+        claim_seed,
+        &quiet_delivery_window_claim_body(actor_seed),
+    )?;
+    vault.revoke_connector_key(&key_ref, at)?;
+    Ok(())
+}
+
+#[test]
+fn parked_refusal_keeps_prior_uncertainty_ambiguous() -> crate::Result<()> {
+    use crate::attempt_queue::{AttemptQueue, AttemptState};
+    let (_tmp, vault) = temp_vault();
+    let actor = entity(0xD4);
+    let key_ref = entity(0xD5);
+    put_connector_task_actor(&vault, actor, 2_100)?;
+    put_policy_manifest_bytes(
+        &vault,
+        entity(0xD6),
+        &policy_manifest(&actor.to_hex(), "email", &["replace"]),
+    )?;
+    vault.register_connector_key(&key_ref, sends_per_day_key(5))?;
+    let mut draft = connector_task_draft("parked-uncertain:test", "session:parked", 2_100);
+    draft.verb = "replace".to_owned();
+    vault
+        .memory(actor, EdgeActorClass::Agent)
+        .schedule_outbound(&draft)
+        .expect("schedule");
+    let task_ref = vault.connector_send_tasks()?[0].task_ref;
+    let mut sink = RecordingExecutor {
+        outcome: OutboundExecutionOutcome::failed("provider_timeout").with_possible_delivery(),
+        ..Default::default()
+    };
+    vault.run_connector_task_executor(&mut sink, 2_101).unwrap();
+    assert_eq!(sink.calls.len(), 1);
+    assert_eq!(vault.connector_send_task(&task_ref)?.unwrap().outcome, None);
+    let retry_at = next_connector_send_retry_at(&vault)?;
+    park_and_revoke(&vault, 0xD4, 0xDC, key_ref, 2_102)?;
+    assert_eq!(
+        vault
+            .run_connector_task_executor(&mut sink, retry_at)
+            .unwrap(),
+        0
+    );
+    assert_eq!(
+        sink.calls.len(),
+        1,
+        "a parked refusal never reaches transport"
+    );
+    assert_eq!(
+        vault.connector_send_task(&task_ref)?.unwrap().outcome,
+        Some(ConnectorSendTaskOutcome::Ambiguous)
+    );
+    assert_eq!(
+        durable_send_receipt_outcome(&vault, task_ref)?.as_deref(),
+        Some("ambiguous")
+    );
+    let terminal = vault
+        .receipts(
+            crate::receipt::ReceiptQuery::new(10).with_kind(crate::receipt::ReceiptKind::Outbound),
+        )?
+        .into_iter()
+        .find(|receipt| receipt.fields.get("window_action").map(String::as_str) == Some("hold"))
+        .expect("terminal receipt of the parked attempt");
+    assert_eq!(terminal.outcome, "ambiguous");
+    let ledger = crate::outbound_intent_ledger::intent_ledger_records(&vault).expect("ledger");
+    assert_eq!(
+        ledger[0].recorded_outcome,
+        Some(
+            crate::outbound_intent_ledger::RecordedOutboundOutcome::Abandoned(
+                crate::outbound_intent_ledger::IntentEscalationReason::ConnectorRevoked
+            )
+        )
+    );
+    assert!(ledger[0].delivery_uncertain);
+    // The terminal receipt, TASK and queue settle under one writer: the parked
+    // attempt closes as a terminal stop and nothing stays claimable.
+    let attempts = AttemptQueue::new(&vault).list()?;
+    assert!(attempts.iter().any(|row| {
+        row.state == AttemptState::Failed
+            && row.last_error.as_deref() == Some("terminal_outbound_stop")
+    }));
+    assert!(
+        attempts
+            .iter()
+            .all(|row| matches!(row.state, AttemptState::Failed | AttemptState::Completed))
+    );
+    assert_ambiguous_on_task_board(&vault, actor, task_ref);
+    Ok(())
+}
+
+#[test]
+fn parked_refusal_of_fresh_send_is_failed() -> crate::Result<()> {
+    use crate::attempt_queue::{AttemptQueue, AttemptState};
+    use crate::task_verb::TaskDescription;
+    let (_tmp, vault) = temp_vault();
+    let actor = entity(0xD8);
+    let key_ref = entity(0xD9);
+    put_connector_task_actor(&vault, actor, 2_200)?;
+    put_policy_manifest_bytes(
+        &vault,
+        entity(0xDA),
+        &policy_manifest(&actor.to_hex(), "email", &["replace"]),
+    )?;
+    vault.register_connector_key(&key_ref, sends_per_day_key(5))?;
+    let mut draft = connector_task_draft("parked-fresh:test", "session:parked-fresh", 2_200);
+    draft.verb = "replace".to_owned();
+    vault
+        .memory(actor, EdgeActorClass::Agent)
+        .schedule_outbound(&draft)
+        .expect("schedule");
+    let task_ref = vault.connector_send_tasks()?[0].task_ref;
+    park_and_revoke(&vault, 0xD8, 0xDB, key_ref, 2_200)?;
+    let mut sink = RecordingExecutor::default();
+    assert_eq!(
+        vault.run_connector_task_executor(&mut sink, 2_201).unwrap(),
+        0
+    );
+    assert!(sink.calls.is_empty());
+    assert!(
+        crate::outbound_intent_ledger::intent_ledger_records(&vault)
+            .expect("ledger")
+            .records
+            .is_empty(),
+        "a parked refusal admits no logical send"
+    );
+    assert_eq!(
+        vault.connector_send_task(&task_ref)?.unwrap().outcome,
+        Some(ConnectorSendTaskOutcome::Failed)
+    );
+    // Nothing crossed, so no receipt may claim more than a failure.
+    assert!(
+        durable_send_receipt_outcome(&vault, task_ref)?.is_none_or(|outcome| outcome == "failed")
+    );
+    let attempts = AttemptQueue::new(&vault).list()?;
+    assert_eq!(attempts.len(), 1);
+    assert_eq!(attempts[0].state, AttemptState::Failed);
+    let memory = vault.memory(actor, EdgeActorClass::Agent);
+    let TaskDescription::Section(section) = memory.describe(None).expect("ordinary task board")
+    else {
+        panic!("expected section");
+    };
+    let row = section
+        .rows
+        .iter()
+        .find(|row| row.id == task_ref.to_hex())
+        .expect("TASK row");
+    assert_eq!(row.status, crate::context_board::TaskBoardStatus::Failed);
+    assert_eq!(
+        row.connector_outcome,
+        Some(ConnectorSendTaskOutcome::Failed)
+    );
+    assert!(!row.line.contains("ambiguous"));
+    Ok(())
+}
+
+#[test]
+fn terminal_outcome_follows_ledger_resolution_on_every_door() -> crate::Result<()> {
+    use crate::attempt_queue::{AttemptQueue, EnqueueAttempt};
+    use crate::memory::BRIDGE_OUTBOUND_ATTEMPT_KIND;
+    use crate::outbound::executor::set_before_delivered_receipt_hook;
+
+    #[derive(Clone, Copy, Debug)]
+    enum Door {
+        /// D2: the originating actor is gone, so dispatch rejects it.
+        LostActor,
+        /// D5: a live quiet claim parks the attempt and the revoked key
+        /// denies it.
+        ParkedRefusal,
+        /// D7: the revoked key stops the admitted send on the replay lane.
+        ReplayStop,
+    }
+    #[derive(Clone, Copy, Debug)]
+    enum History {
+        /// Nothing crossed. D7 can only stop an admitted row, so there the
+        /// history is one definite no-wire attempt.
+        Fresh,
+        /// One attempt may have delivered.
+        Uncertain,
+        /// A later attempt was ACKed, then cut before its receipt.
+        UncertainThenAckCut,
+    }
+
+    let actor = entity(0xE0);
+    let key_ref = entity(0xE4);
+    for door in [Door::LostActor, Door::ParkedRefusal, Door::ReplayStop] {
+        for (history, expected) in [
+            (History::Fresh, ConnectorSendTaskOutcome::Failed),
+            (History::Uncertain, ConnectorSendTaskOutcome::Ambiguous),
+            (
+                History::UncertainThenAckCut,
+                ConnectorSendTaskOutcome::Delivered,
+            ),
+        ] {
+            let case = format!("{door:?} x {history:?}");
+            let (tmp, vault) = temp_vault();
+            put_connector_task_actor(&vault, actor, 2_300)?;
+            put_policy_manifest_bytes(
+                &vault,
+                entity(0xE2),
+                &policy_manifest(&actor.to_hex(), "email", &["replace"]),
+            )?;
+            vault.register_connector_key(&key_ref, sends_per_day_key(5))?;
+            let mut draft = connector_task_draft("door-table:test", "session:door-table", 2_300);
+            draft.verb = "replace".to_owned();
+            vault
+                .memory(actor, EdgeActorClass::Agent)
+                .schedule_outbound(&draft)
+                .expect("schedule");
+            let task_ref = vault.connector_send_tasks()?[0].task_ref;
+            let mut history_sink = RecordingExecutor {
+                outcome: OutboundExecutionOutcome::failed("provider_timeout")
+                    .with_possible_delivery(),
+                ..Default::default()
+            };
+            let (vault, at) = match history {
+                History::Fresh => match door {
+                    Door::ReplayStop => {
+                        history_sink.outcome =
+                            OutboundExecutionOutcome::failed("transport_not_started");
+                        vault
+                            .run_connector_task_executor(&mut history_sink, 2_301)
+                            .unwrap();
+                        let at = next_connector_send_retry_at(&vault)?;
+                        (vault, at)
+                    }
+                    Door::LostActor | Door::ParkedRefusal => (vault, 2_301),
+                },
+                History::Uncertain => {
+                    vault
+                        .run_connector_task_executor(&mut history_sink, 2_301)
+                        .unwrap();
+                    let at = next_connector_send_retry_at(&vault)?;
+                    (vault, at)
+                }
+                History::UncertainThenAckCut => {
+                    vault
+                        .run_connector_task_executor(&mut history_sink, 2_301)
+                        .unwrap();
+                    let retry_at = next_connector_send_retry_at(&vault)?;
+                    history_sink.outcome =
+                        OutboundExecutionOutcome::delivered_to_channel("provider:ack");
+                    set_before_delivered_receipt_hook(|| panic!("cut after ACK before receipt"));
+                    assert!(
+                        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                            let _ = vault.run_connector_task_executor(&mut history_sink, retry_at);
+                        }))
+                        .is_err(),
+                        "{case}"
+                    );
+                    assert!(!send_receipt_exists_for_task(&vault, task_ref)?, "{case}");
+                    drop(vault);
+                    let clock = crate::ports::ManualClock::new(retry_at + 1);
+                    let vault = Vault::open(
+                        tmp.path(),
+                        VaultConfig {
+                            store_clock: clock.bundle(),
+                            ..VaultConfig::default()
+                        },
+                    )?;
+                    AttemptQueue::new(&vault).enqueue(EnqueueAttempt {
+                        kind: BRIDGE_OUTBOUND_ATTEMPT_KIND.to_owned(),
+                        payload: connector_send_attempt_payload(task_ref)?,
+                        dedupe_key: None,
+                        run_id: None,
+                        now: retry_at + 1,
+                    })?;
+                    (TimedVault { vault, clock }, retry_at + 2)
+                }
+            };
+            assert_eq!(
+                vault.connector_send_task(&task_ref)?.unwrap().outcome,
+                None,
+                "{case}: history leaves the TASK open"
+            );
+            match door {
+                Door::LostActor => {
+                    vault.delete_entity(&actor)?;
+                }
+                Door::ParkedRefusal => park_and_revoke(&vault, 0xE0, 0xE3, key_ref, at - 1)?,
+                Door::ReplayStop => {
+                    vault.revoke_connector_key(&key_ref, at - 1)?;
+                }
+            }
+            let mut sink = RecordingExecutor::default();
+            vault.run_connector_task_executor(&mut sink, at).unwrap();
+            assert!(sink.calls.is_empty(), "{case}: no new transport call");
+            assert_eq!(
+                vault.connector_send_task(&task_ref)?.unwrap().outcome,
+                Some(expected),
+                "{case}"
+            );
+            let receipt = durable_send_receipt_outcome(&vault, task_ref)?;
+            match expected {
+                ConnectorSendTaskOutcome::Delivered => {
+                    assert_eq!(receipt.as_deref(), Some("delivered_to_channel"), "{case}");
+                }
+                ConnectorSendTaskOutcome::Ambiguous => {
+                    assert_eq!(receipt.as_deref(), Some("ambiguous"), "{case}");
+                }
+                ConnectorSendTaskOutcome::Failed => {
+                    assert!(receipt.is_none_or(|outcome| outcome == "failed"), "{case}");
+                }
+            }
+        }
+    }
+    Ok(())
+}

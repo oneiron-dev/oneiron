@@ -22,7 +22,9 @@ use crate::attempt_queue::{
 };
 use crate::entity_id::EntityId;
 use crate::error::Error;
-use crate::outbound_intent_ledger::{IntentEscalationReason, IntentResolution, RetryDisposition};
+use crate::outbound_intent_ledger::{
+    IntentEscalationReason, IntentResolution, RetryDisposition, UnconfirmedDelivery,
+};
 use crate::receipt::SendReceiptOutcome;
 
 pub(super) const CONNECTOR_TASK_EXECUTOR_LEASE_OWNER: &str = "connector-task-executor";
@@ -345,15 +347,38 @@ impl Vault {
                         settle_suppressed_send(self, &attempt, task_ref, now)?;
                         continue;
                     }
-                    fail_connector_task_attempt_and_project(
+                    // A refusal only stops this attempt. Whether an earlier
+                    // attempt of the same logical send may have delivered is
+                    // the ledger's to say, not the refusal's.
+                    let reason = result.outcome.as_str();
+                    let stop = if result.gate_reason_codes.iter().any(|code| {
+                        code == crate::gate::GateReasonCode::DenyConnectorKeySuspended.as_str()
+                    }) {
+                        IntentEscalationReason::ConnectorRevoked
+                    } else {
+                        IntentEscalationReason::BindingInvalid
+                    };
+                    if !reconcile_connector_task(
                         self,
-                        &queue,
                         &attempt,
-                        task_ref,
+                        &task,
+                        &receipt_id,
                         now,
-                        result.outcome.as_str(),
-                        ConnectorSendTaskOutcome::Failed,
-                    )?;
+                        Some(stop),
+                        Some(result.receipt),
+                    )? {
+                        // No logical send was ever admitted for this binding.
+                        // The refused attempt certainly did not cross.
+                        fail_connector_task_attempt_and_project(
+                            self,
+                            &queue,
+                            &attempt,
+                            task_ref,
+                            now,
+                            reason,
+                            ConnectorSendTaskOutcome::Failed,
+                        )?;
+                    }
                 }
                 OutboundDispatchOutcome::Failed | OutboundDispatchOutcome::Ambiguous => {
                     let ambiguous = result.outcome == OutboundDispatchOutcome::Ambiguous;
@@ -428,7 +453,20 @@ impl Vault {
                     } else {
                         // A non-idempotent definite no-wire attempt is terminal
                         // for this queue row, but the logical ledger remains
-                        // Pending and may be manually retried under O6.
+                        // Pending and may be manually retried under O6. An
+                        // earlier attempt the ledger still holds unresolved
+                        // keeps the terminal outcome ambiguous.
+                        let ambiguous = ambiguous
+                            || matches!(
+                                result.resolution,
+                                Some(IntentResolution::Pending {
+                                    delivery: UnconfirmedDelivery::Unresolved,
+                                    ..
+                                })
+                            );
+                        if ambiguous {
+                            result.receipt.outcome = "ambiguous".to_owned();
+                        }
                         super::retry_audit::persist_terminal_send_receipt_and_fail(
                             self,
                             super::retry_audit::TerminalSendSettlement {
