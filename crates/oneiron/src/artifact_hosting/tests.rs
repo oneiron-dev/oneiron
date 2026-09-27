@@ -3,10 +3,14 @@ use std::path::Path;
 use std::process::{Command, Stdio};
 
 use super::*;
+use crate::blob_artifact::{BlobArtifactBody, BlobVersionProvenance};
 use crate::codebase::RepoIngestConfig;
 use crate::config::{HnswConfig, TextAnalyzerConfig, VaultConfig};
+use crate::edge::EdgeActorClass;
 use crate::error::ErrorKind;
+use crate::registry::ENTITY_TYPE_PERSON;
 use crate::temporal::TimeRange;
+use crate::write_envelope::WriteActor;
 
 fn test_config() -> VaultConfig {
     let mut config = VaultConfig::device();
@@ -272,8 +276,8 @@ fn ungranted_publish_proposes_until_grant_then_receipts_and_replays() -> Result<
         Some("site")
     );
     assert_eq!(
-        published.pointer.expect("published pointer").fork_hash,
-        result.snapshot.fork_hash
+        published.pointer.expect("published pointer").export,
+        ArtifactExportRef::ForkHash(result.snapshot.fork_hash)
     );
     let stored = vault.receipts(ReceiptQuery::new(10).with_kind(ReceiptKind::Share))?;
     assert!(stored.contains(&receipt));
@@ -411,7 +415,7 @@ fn one_off_owner_approval_publishes_exact_request_without_standing_grant() -> Re
     commit_index(repo.path(), b"<h1>v2</h1>\n", "v2")?;
     let second = ingest_artifact(&vault, repo.path(), "site", 11)?;
     let different_fork = ArtifactPublishVerbRequest {
-        fork_hash: second.snapshot.fork_hash,
+        export: ArtifactExportRef::ForkHash(second.snapshot.fork_hash),
         ..request.clone()
     };
     assert_ne!(
@@ -482,7 +486,7 @@ fn publish_receipt_replays_after_snapshot_entity_deletion() -> Result<()> {
     assert!(vault.delete_entity(&result.code_artifact_id)?);
     assert!(
         vault
-            .resolve_artifact_snapshot_by_fork("site", &request.fork_hash)?
+            .resolve_artifact_snapshot_by_fork("site", &result.snapshot.fork_hash)?
             .is_none()
     );
     let replay = vault.request_artifact_publish(&request)?;
@@ -532,13 +536,13 @@ fn publish_receipt_replays_after_same_entity_snapshot_replacement() -> Result<()
             .cloned()
             .collect(),
     )?;
-    assert_ne!(replacement.fork_hash, request.fork_hash);
+    assert_ne!(replacement.fork_hash, result.snapshot.fork_hash);
     vault.put_codebase_snapshot(&result.code_artifact_id, &replacement, &|path| {
         fs::read(repo.path().join(path)).ok()
     })?;
     assert!(
         vault
-            .resolve_artifact_snapshot_by_fork("site", &request.fork_hash)?
+            .resolve_artifact_snapshot_by_fork("site", &result.snapshot.fork_hash)?
             .is_none()
     );
     let replay = vault.request_artifact_publish(&request)?;
@@ -596,4 +600,441 @@ fn malformed_artifact_fork_hash_fails_closed() {
     let err = parse_codebase_fork_hash_hex("not-a-fork")
         .expect_err("fork hash parser must reject malformed hex");
     assert_eq!(err.kind(), ErrorKind::InvalidCodebaseSnapshotBody);
+}
+
+fn blob_fixture(vault: &Vault) -> Result<(EntityId, WriteActor)> {
+    let id = EntityId::now();
+    vault.put_blob_artifact(
+        &id,
+        &BlobArtifactBody::new("report.pdf", "application/pdf"),
+        TimeRange { start: 1, end: 1 },
+        1,
+    )?;
+    let person = EntityId::now();
+    vault.put_entity(
+        &person,
+        ENTITY_TYPE_PERSON,
+        TimeRange { start: 1, end: 1 },
+        1,
+        b"publisher",
+    )?;
+    Ok((id, WriteActor::new(person, EdgeActorClass::Human)))
+}
+
+#[test]
+fn blob_export_published_preview_pin_repoint_unpublish_and_direct_version() -> Result<()> {
+    let (_dir, vault) = crate::test_util::open_test_vault_with(test_config());
+    let (id, actor) = blob_fixture(&vault)?;
+    let first = vault.append_blob_artifact_version(
+        &id,
+        b"%PDF-first",
+        &BlobVersionProvenance::UserUpload,
+        actor,
+        TimeRange { start: 2, end: 2 },
+        2,
+    )?;
+    let artifact = id.to_hex();
+    assert!(
+        vault
+            .resolve_artifact_file(
+                &artifact,
+                ArtifactSnapshotSelector::Channel(ArtifactPointerChannel::Published),
+                "report.pdf"
+            )?
+            .is_none()
+    );
+    let published = vault.publish_blob_artifact_pointer(
+        &id,
+        ArtifactPointerChannel::Published,
+        first.version,
+    )?;
+    assert_eq!(
+        published.export,
+        ArtifactExportRef::BlobVersion {
+            artifact_id: id,
+            version: 1
+        }
+    );
+    let second = vault.append_blob_artifact_version(
+        &id,
+        b"%PDF-second",
+        &BlobVersionProvenance::UserUpload,
+        actor,
+        TimeRange { start: 3, end: 3 },
+        3,
+    )?;
+    vault.publish_blob_artifact_pointer(&id, ArtifactPointerChannel::Preview, second.version)?;
+    let served = |selector| -> Result<ArtifactServedFile> {
+        vault
+            .resolve_artifact_file(&artifact, selector, "report.pdf")?
+            .ok_or(Error::EntityNotFound)
+    };
+    assert_eq!(
+        served(ArtifactSnapshotSelector::Channel(
+            ArtifactPointerChannel::Published
+        ))?
+        .bytes,
+        b"%PDF-first"
+    );
+    let preview = served(ArtifactSnapshotSelector::Channel(
+        ArtifactPointerChannel::Preview,
+    ))?;
+    assert_eq!(preview.bytes, b"%PDF-second");
+    assert_eq!(preview.media_type.as_deref(), Some("application/pdf"));
+    assert_eq!(
+        served(ArtifactSnapshotSelector::BlobVersion(1))?.bytes,
+        b"%PDF-first"
+    );
+    assert_eq!(
+        vault
+            .resolve_artifact_file(
+                &artifact,
+                ArtifactSnapshotSelector::BlobVersion(1),
+                "export"
+            )?
+            .expect("stable export route")
+            .bytes,
+        b"%PDF-first"
+    );
+    vault.publish_blob_artifact_pointer(&id, ArtifactPointerChannel::Published, second.version)?;
+    assert_eq!(
+        served(ArtifactSnapshotSelector::Channel(
+            ArtifactPointerChannel::Published
+        ))?
+        .bytes,
+        b"%PDF-second"
+    );
+    assert!(vault.unpublish_artifact_pointer(&artifact, ArtifactPointerChannel::Published)?);
+    assert!(
+        vault
+            .resolve_artifact_file(
+                &artifact,
+                ArtifactSnapshotSelector::Channel(ArtifactPointerChannel::Published),
+                "report.pdf"
+            )?
+            .is_none()
+    );
+    assert_eq!(
+        served(ArtifactSnapshotSelector::Channel(
+            ArtifactPointerChannel::Preview
+        ))?
+        .bytes,
+        b"%PDF-second"
+    );
+    assert_eq!(
+        served(ArtifactSnapshotSelector::BlobVersion(1))?.bytes,
+        b"%PDF-first"
+    );
+    assert!(
+        vault
+            .publish_blob_artifact_pointer(&id, ArtifactPointerChannel::Preview, 99)
+            .is_err()
+    );
+    assert!(
+        vault
+            .resolve_artifact_file(
+                &artifact,
+                ArtifactSnapshotSelector::BlobVersion(0),
+                "report.pdf"
+            )?
+            .is_none()
+    );
+    assert!(
+        vault
+            .resolve_artifact_file(
+                "another",
+                ArtifactSnapshotSelector::Channel(ArtifactPointerChannel::Preview),
+                "report.pdf"
+            )?
+            .is_none()
+    );
+    Ok(())
+}
+
+#[test]
+fn deleting_blob_export_removes_both_channel_pointers() -> Result<()> {
+    let (_dir, vault) = crate::test_util::open_test_vault_with(test_config());
+    let (id, actor) = blob_fixture(&vault)?;
+    vault.append_blob_artifact_version(
+        &id,
+        b"report",
+        &BlobVersionProvenance::UserUpload,
+        actor,
+        TimeRange { start: 2, end: 2 },
+        2,
+    )?;
+    for channel in [
+        ArtifactPointerChannel::Published,
+        ArtifactPointerChannel::Preview,
+    ] {
+        vault.publish_blob_artifact_pointer(&id, channel, 1)?;
+    }
+    assert!(vault.delete_entity(&id)?);
+    for channel in [
+        ArtifactPointerChannel::Published,
+        ArtifactPointerChannel::Preview,
+    ] {
+        assert!(
+            !vault.unpublish_blob_artifact_pointer(&id, channel)?,
+            "deletion must already have removed the pointer row"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn blob_publish_after_delete_in_the_writer_cannot_revive_on_id_reuse() -> Result<()> {
+    let (_dir, vault) = crate::test_util::open_test_vault_with(test_config());
+    let (id, actor) = blob_fixture(&vault)?;
+    let first = vault.append_blob_artifact_version(
+        &id,
+        b"old bytes",
+        &BlobVersionProvenance::UserUpload,
+        actor,
+        TimeRange { start: 2, end: 2 },
+        2,
+    )?;
+    let artifact = id.to_hex();
+    let mut wtxn = vault.store.env.write_txn()?;
+    vault.batch_in().delete(&id).apply(&mut wtxn)?;
+    // The delete and attempted publish share the writer. This is the
+    // dangerous order if publish validated before taking that writer.
+    let error = vault
+        .publish_export_pointer_in_txn(
+            &mut wtxn,
+            &artifact,
+            ArtifactPointerChannel::Published,
+            ArtifactExportRef::BlobVersion {
+                artifact_id: id,
+                version: first.version,
+            },
+        )
+        .expect_err("deleted export cannot be published");
+    assert!(matches!(error, Error::EntityNotFound));
+    wtxn.commit()?;
+
+    vault.put_blob_artifact(
+        &id,
+        &BlobArtifactBody::new("report.pdf", "application/pdf"),
+        TimeRange { start: 3, end: 3 },
+        3,
+    )?;
+    let replacement = vault.append_blob_artifact_version(
+        &id,
+        b"replacement bytes",
+        &BlobVersionProvenance::UserUpload,
+        actor,
+        TimeRange { start: 4, end: 4 },
+        4,
+    )?;
+    assert_ne!(replacement.version, first.version);
+    assert!(
+        vault
+            .artifact_pointer(&artifact, ArtifactPointerChannel::Published)?
+            .is_none()
+    );
+    assert!(
+        vault
+            .resolve_artifact_file(
+                &artifact,
+                ArtifactSnapshotSelector::Channel(ArtifactPointerChannel::Published),
+                "export"
+            )?
+            .is_none()
+    );
+    assert!(
+        vault
+            .resolve_artifact_file(
+                &artifact,
+                ArtifactSnapshotSelector::BlobVersion(first.version),
+                "export"
+            )?
+            .is_none()
+    );
+    assert_eq!(
+        vault
+            .resolve_artifact_file(
+                &artifact,
+                ArtifactSnapshotSelector::BlobVersion(replacement.version),
+                "export"
+            )?
+            .expect("replacement has only its new version URL")
+            .bytes,
+        b"replacement bytes"
+    );
+    Ok(())
+}
+
+#[test]
+fn deleted_blob_id_never_reuses_a_direct_version_url() -> Result<()> {
+    let (_dir, vault) = crate::test_util::open_test_vault_with(test_config());
+    let (id, actor) = blob_fixture(&vault)?;
+    let first = vault.append_blob_artifact_version(
+        &id,
+        b"first",
+        &BlobVersionProvenance::UserUpload,
+        actor,
+        TimeRange { start: 2, end: 2 },
+        2,
+    )?;
+    assert!(vault.delete_entity(&id)?);
+    vault.put_blob_artifact(
+        &id,
+        &BlobArtifactBody::new("report.pdf", "application/pdf"),
+        TimeRange { start: 3, end: 3 },
+        3,
+    )?;
+    let second = vault.append_blob_artifact_version(
+        &id,
+        b"second",
+        &BlobVersionProvenance::UserUpload,
+        actor,
+        TimeRange { start: 4, end: 4 },
+        4,
+    )?;
+    assert_eq!(second.version, first.version + 1);
+    assert!(
+        vault
+            .resolve_artifact_file(
+                &id.to_hex(),
+                ArtifactSnapshotSelector::BlobVersion(first.version),
+                "export"
+            )?
+            .is_none()
+    );
+    assert_eq!(vault.blob_artifact_versions(&id)?, vec![second]);
+    Ok(())
+}
+
+#[test]
+fn pinned_blob_export_keeps_name_and_media_type_after_body_reput() -> Result<()> {
+    let (_dir, vault) = crate::test_util::open_test_vault_with(test_config());
+    let (id, actor) = blob_fixture(&vault)?;
+    let first = vault.append_blob_artifact_version(
+        &id,
+        b"original",
+        &BlobVersionProvenance::UserUpload,
+        actor,
+        TimeRange { start: 2, end: 2 },
+        2,
+    )?;
+    vault.publish_blob_artifact_pointer(&id, ArtifactPointerChannel::Published, first.version)?;
+    vault.put_blob_artifact(
+        &id,
+        &BlobArtifactBody::new("renamed.txt", "text/plain"),
+        TimeRange { start: 3, end: 3 },
+        3,
+    )?;
+    let pinned = vault
+        .resolve_artifact_file(
+            &id.to_hex(),
+            ArtifactSnapshotSelector::Channel(ArtifactPointerChannel::Published),
+            "report.pdf",
+        )?
+        .expect("old export name is pinned");
+    assert_eq!(pinned.bytes, b"original");
+    assert_eq!(pinned.media_type.as_deref(), Some("application/pdf"));
+    assert!(
+        vault
+            .resolve_artifact_file(
+                &id.to_hex(),
+                ArtifactSnapshotSelector::BlobVersion(first.version),
+                "renamed.txt"
+            )?
+            .is_none()
+    );
+    assert_eq!(
+        vault
+            .resolve_artifact_file(
+                &id.to_hex(),
+                ArtifactSnapshotSelector::BlobVersion(first.version),
+                "export"
+            )?
+            .expect("stable export path")
+            .media_type
+            .as_deref(),
+        Some("application/pdf")
+    );
+    let next = vault.append_blob_artifact_version(
+        &id,
+        b"new content",
+        &BlobVersionProvenance::UserUpload,
+        actor,
+        TimeRange { start: 4, end: 4 },
+        4,
+    )?;
+    assert_eq!(next.export_name, "renamed.txt");
+    assert_eq!(next.export_media_type, "text/plain");
+    assert_eq!(first.export_name, "report.pdf");
+    assert_eq!(first.export_media_type, "application/pdf");
+    Ok(())
+}
+
+#[test]
+fn blob_publish_requires_grant_then_receipts_and_replays() -> Result<()> {
+    let (_dir, vault) = crate::test_util::open_test_vault_with(test_config());
+    let (id, uploader) = blob_fixture(&vault)?;
+    vault.append_blob_artifact_version(
+        &id,
+        b"report",
+        &BlobVersionProvenance::UserUpload,
+        uploader,
+        TimeRange { start: 2, end: 2 },
+        2,
+    )?;
+    let actor = test_publisher(&vault)?;
+    let request = ArtifactPublishVerbRequest::new_blob(
+        id,
+        ArtifactPointerChannel::Published,
+        1,
+        actor,
+        EntityId::from_bytes([0x63; 16])?,
+        12,
+    );
+    let proposed = vault.request_artifact_publish(&request)?;
+    assert_eq!(proposed.status, ArtifactPublishVerbStatus::Proposed);
+    assert!(proposed.receipt.is_none());
+    assert!(
+        vault
+            .artifact_pointer(&id.to_hex(), ArtifactPointerChannel::Published)?
+            .is_none()
+    );
+    grant_artifact_publish(&vault, actor, &id.to_hex())?;
+    let published = vault.request_artifact_publish(&request)?;
+    assert_eq!(published.status, ArtifactPublishVerbStatus::Published);
+    assert_eq!(
+        published.pointer.as_ref().expect("pointer").export,
+        ArtifactExportRef::BlobVersion {
+            artifact_id: id,
+            version: 1
+        }
+    );
+    let receipt = published.receipt.expect("share receipt");
+    assert_eq!(receipt.receipt_kind, ReceiptKind::Share);
+    assert_eq!(receipt.fields.get("blob_artifact_id"), Some(&id.to_hex()));
+    assert_eq!(
+        receipt.fields.get("blob_version").map(String::as_str),
+        Some("1")
+    );
+    assert!(
+        vault
+            .receipts(ReceiptQuery::new(10).with_kind(ReceiptKind::Share))?
+            .contains(&receipt)
+    );
+    assert!(vault.unpublish_blob_artifact_pointer(&id, ArtifactPointerChannel::Published)?);
+    let replay = vault.request_artifact_publish(&request)?;
+    assert_eq!(replay.receipt, Some(receipt));
+    assert!(
+        replay.pointer.is_none(),
+        "replay must not restore a dead channel"
+    );
+    let rebound = ArtifactPublishVerbRequest {
+        export: ArtifactExportRef::BlobVersion {
+            artifact_id: id,
+            version: 2,
+        },
+        ..request
+    };
+    assert!(vault.request_artifact_publish(&rebound).is_err());
+    Ok(())
 }

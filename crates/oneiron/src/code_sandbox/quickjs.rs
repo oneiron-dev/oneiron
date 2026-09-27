@@ -38,7 +38,7 @@ impl QuickJsRuntimeFactory {
         let mut host = ProbeHost;
         let result = template.run_step(JsCodeModeStep {
             run_id: EntityId::from_bytes([1; 16])?, seq: 0,
-            script: "const xs = [1,2,3].map(x => x * 7); finish(JSON.stringify({sum:xs.reduce((a,b)=>a+b,0), now:Date.now(), clean:typeof process === 'undefined' && typeof fetch === 'undefined', typed:typeof self !== 'undefined' && ['search','put_claim','supersede_claim','put_edge'].every(k => typeof self.memory[k] === 'function') && ['ask_human','askHuman','speak','think','express'].every(k => typeof self[k] === 'function') && typeof sandbox.fs.read_file === 'function' && typeof sandbox.credential.call === 'function' && typeof oneiron.clock.now_unix_ms === 'function' && typeof oneiron.random.bytes === 'function'}));",
+            script: "const xs = [1,2,3].map(x => x * 7); finish(JSON.stringify({sum:xs.reduce((a,b)=>a+b,0), now:Date.now(), clean:typeof process === 'undefined' && typeof fetch === 'undefined', typed:typeof self !== 'undefined' && ['search','put_claim','supersede_claim','put_edge'].every(k => typeof self.memory[k] === 'function') && typeof ask === 'function' && ['speak','think','express'].every(k => typeof self[k] === 'function') && typeof sandbox.fs.read_file === 'function' && typeof sandbox.credential.call === 'function' && typeof oneiron.clock.now_unix_ms === 'function' && typeof oneiron.random.bytes === 'function'}));",
             boundary: SandboxBoundaryContract::for_tier(SandboxGuestTier::FirstPartyDreamer),
             determinism: CodeRunDeterminism::new(1_700_000_000_000, [7; 32]),
         }, &mut host)?;
