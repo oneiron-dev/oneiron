@@ -53,6 +53,8 @@ pub(crate) struct TestHooks {
     force_sync_calls: AtomicUsize,
     /// One-shot stage boundary for deadline tests; never shared across vaults.
     pub(crate) after_retrieval_text: Mutex<Option<Box<dyn FnOnce() + Send>>>,
+    /// One-shot local-repo ingest boundary before its writer transaction.
+    pub(crate) before_codebase_ingest_writer: Mutex<Option<Box<dyn FnOnce() + Send>>>,
 }
 
 impl TestHooks {
