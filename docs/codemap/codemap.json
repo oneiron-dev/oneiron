@@ -22289,6 +22289,25 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "AnonymousChatBlockReason",
+      "AnonymousChatResponder",
+      "AnonymousChatSession",
+      "AnonymousChatTarget",
+      "AnonymousChatTurn"
+     ],
+     "path": "src/off_record/anonymous_chat.rs",
+     "purpose": "Stateless, memory-free chat beside (not inside) agent chat and off-record promote",
+     "surface": {
+      "enum": 3,
+      "fn": 3,
+      "struct": 1,
+      "trait": 1
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
@@ -22392,6 +22411,7 @@
      "purpose": "Off-record sessions — ARCH-0052 branch store, ONE-1725..ONE-1732",
      "surface": {
       "crate-vis": 5,
+      "mod": 1,
       "re-export": 2
      }
     },
@@ -24467,13 +24487,23 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/policy_model/classifier_lease.rs",
+     "purpose": "Cancellation-safe ownership of a stateless classifier's private reservation",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/policy_model/classify.rs",
      "purpose": "Vault-egress classification, which is the owner plane and nothing else",
      "surface": {
-      "crate-vis": 9,
+      "crate-vis": 11,
       "fn": 8
      }
     },
@@ -24545,6 +24575,7 @@
      "path": "src/policy_model/mod.rs",
      "purpose": "Policy classification over two planes",
      "surface": {
+      "crate-vis": 1,
       "re-export": 10
      }
     },
@@ -24726,6 +24757,14 @@
       "fn": 9,
       "struct": 3
      }
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "src/policy_model/tests/anonymous_chat.rs",
+     "purpose": "Stateless chat is not Memory::chat, agent chat, or an off-record room read",
+     "surface": {}
     },
     {
      "bucket": "L",
@@ -35301,7 +35340,7 @@
      "purpose": "Attributed NOTE records with built-in, plugin and registered PACK kinds"
     },
     "off_record": {
-     "files": 11,
+     "files": 12,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -35371,7 +35410,7 @@
      "purpose": "—"
     },
     "policy_model": {
-     "files": 32,
+     "files": 34,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -35814,8 +35853,8 @@
    },
    "over_bar": 11,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2113,
-   "test_files": 723
+   "source_files": 2115,
+   "test_files": 724
   },
   "oneiron-android": {
    "files": [
