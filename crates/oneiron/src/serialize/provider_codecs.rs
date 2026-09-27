@@ -33,7 +33,7 @@ pub(super) fn serialize_provider(format: PackFormat, prepared: PreparedPack) -> 
     };
     serde_json::to_vec(&body).expect("provider value is serializable")
 }
-fn scrub(key: &str, value: &mut Value) {
+pub(crate) fn scrub(key: &str, value: &mut Value) {
     let lower: String = key
         .chars()
         .filter(char::is_ascii_alphanumeric)
