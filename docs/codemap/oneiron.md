@@ -1481,7 +1481,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/ingest/docs.rs` | src | s | 4 struct · 3 fn · 1 const | DocsExport, DocsExportSource, DocsPage, DocsSegment | Export-seam docs normalization |
 | `src/ingest/docs_deep.rs` | src | m | 2 struct · 1 enum · 1 trait · 1 fn · 6 crate-vis | DocsDeepClaim, DocsDeepExtractor, DocsDeepReceipt, DocsDeepTrigger | On-demand docs NER: only a named trigger crosses the thin-star boundary |
 | `src/ingest/docs_import.rs` | src | m | 3 struct · 2 trait · 3 fn | DocsDerivationEnvelope, DocsImportCeiling, DocsImportReceipt, DocsInjectionClassifier, DocsSummaryModel | Atomic bulk consent and thin-star docs membership |
-| `src/ingest/docs_tests.rs` | test | m | — | — | — |
+| `src/ingest/docs_tests.rs` | test | L | — | — | — |
 | `src/ingest/exports.rs` | src | m | 1 struct · 1 enum | ExportLayout, ExportSource | Native export layouts with catalog-supplied platform identity (ARCH-0027) |
 | `src/ingest/exports/tests.rs` | test | s | — | — | — |
 | `src/ingest/fingerprint.rs` | src | s | 1 struct · 2 enum · 1 fn · 6 crate-vis | BlobBirthDecision, BlobFingerprintSnapshot, FingerprintRung | Entity-local four-rung birth fingerprints over the ingest pipeline's own segments |

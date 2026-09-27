@@ -796,3 +796,64 @@ fn ordinary_docs_source_put_invalidates_live_deep_claims() -> Result<()> {
     }
     Ok(())
 }
+
+#[test]
+fn heading_reimport_keeps_rewritten_summaries_readable() -> Result<()> {
+    let (_dir, vault) =
+        crate::test_util::open_test_vault_with(crate::test_util::embedding_test_config());
+    let person = EntityId::now();
+    vault.put_entity(
+        &person,
+        crate::registry::ENTITY_TYPE_PERSON,
+        TimeRange { start: 1, end: 1 },
+        1,
+        b"owner",
+    )?;
+    let owner =
+        vault.authenticate_owner(person, "owner", true, crate::store::GateDecisionId::now())?;
+    let ceiling = DocsImportCeiling {
+        max_pages: 2,
+        max_bytes: 10_000,
+        allow_derivations: true,
+    };
+    let mut docs = document();
+    let request = EntityId::now();
+    vault.approve_once(
+        &owner,
+        vault
+            .docs_import_effect(&owner, request, &docs, ceiling)?
+            .digest(),
+    )?;
+    let first =
+        vault.ingest_docs_export(&owner, request, &docs, ceiling, Some(&Summary), None, 2)?;
+    assert_eq!(first.summary_refs.len(), 2);
+    grant_core_read(&vault, "owner")?;
+    let reader = vault.scoped_read(crate::claim::ScopedReadActorKey::new("owner").unwrap());
+    let before: Vec<_> = first
+        .summary_refs
+        .iter()
+        .map(|reference| reader.expand_doc_ref(reference).map(|row| row.value))
+        .collect::<Result<_>>()?;
+    assert!(before.iter().all(Option::is_some));
+
+    docs.pages[0].text.insert_str(0, "# Preface\n\n");
+    let request = EntityId::now();
+    vault.approve_once(
+        &owner,
+        vault
+            .docs_import_effect(&owner, request, &docs, ceiling)?
+            .digest(),
+    )?;
+    let second =
+        vault.ingest_docs_export(&owner, request, &docs, ceiling, Some(&Summary), None, 3)?;
+    for (reference, expected) in first.summary_refs.iter().zip(before) {
+        assert!(second.summary_refs.contains(reference));
+        assert_eq!(reader.expand_doc_ref(reference)?.value, expected);
+    }
+    let hits = reader.search_docs_summaries("Gravity", 4)?;
+    assert!(hits.value.iter().any(|hit| {
+        hit.entity_type == crate::registry::ENTITY_TYPE_SUMMARY
+            && first.summary_refs.contains(&hit.reference)
+    }));
+    Ok(())
+}

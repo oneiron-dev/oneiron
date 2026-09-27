@@ -18381,7 +18381,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "test",
      "notable": [],
      "path": "src/ingest/docs_tests.rs",
