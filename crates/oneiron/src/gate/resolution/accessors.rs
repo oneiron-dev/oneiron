@@ -9,7 +9,7 @@ use crate::llm::{BudgetExhaustionPolicy, BudgetPolicyTable};
 
 use super::frontier_hash::hash_policy_frontier_v0;
 use super::manifest_types::{
-    CommOptOutPosture, PolicyManifestDiagnostics, PolicyManifestResolution,
+    CommOptOutPosture, PolicyManifestDiagnostics, PolicyManifestResolution, SheetAnswerPrecedence,
 };
 use crate::gate::ceiling::{
     PolicyAxes, PolicyCriticality, PolicyOwnerPatternRow, PolicyOwnerPolicyRow, PolicySensitivity,
@@ -47,6 +47,58 @@ impl PolicyManifestResolution {
         // A completely absent manifest preserves the existing bootstrap
         // behavior; any loaded malformed/unsupported manifest fails closed.
         self.diagnostics.manifest_count > 0 || self.diagnostics.loaded_manifest_forces_fail_closed()
+    }
+
+    /// Resolved restrictive cap, with vault cap and applicable artifact/sheet
+    /// rows combined by minimum. An untrusted row can only narrow this cap.
+    /// The holder may request a smaller limit, never exceed the vault cap.
+    pub(crate) fn sheet_answer_limit(
+        &self,
+        artifact_ref: &str,
+        sheet: &str,
+        holder_override: Option<u64>,
+    ) -> Option<u64> {
+        if self.diagnostics.loaded_manifest_forces_fail_closed() {
+            return None;
+        }
+        let SheetAnswerPrecedence::NestedNarrowingHolderCappedAtVault =
+            self.sheet_answer_precedence?;
+        let mut trusted_vault_cap = None::<u64>;
+        let mut scoped_cap = u64::MAX;
+        for row in &self.sheet_answer_limits {
+            match (row.artifact_ref.as_deref(), row.sheet.as_deref()) {
+                (None, None) => {
+                    trusted_vault_cap = Some(
+                        trusted_vault_cap.map_or(row.max_count, |old: u64| old.min(row.max_count)),
+                    );
+                }
+                (Some(artifact), None) if artifact == artifact_ref => {
+                    scoped_cap = scoped_cap.min(row.max_count);
+                }
+                (Some(artifact), Some(name)) if artifact == artifact_ref && name == sheet => {
+                    scoped_cap = scoped_cap.min(row.max_count);
+                }
+                _ => {}
+            }
+        }
+        // Untrusted rows can narrow the trusted vault cap, never replace the
+        // shipped fallback when the owner omitted their vault row.
+        let vault_cap = trusted_vault_cap.or(self.sheet_answer_default_max_count)?;
+        let mut cap = vault_cap.min(scoped_cap);
+        for row in &self.untrusted_sheet_answer_limits {
+            match (row.artifact_ref.as_deref(), row.sheet.as_deref()) {
+                (None, None) => cap = cap.min(row.max_count),
+                (Some(artifact), None) if artifact == artifact_ref => cap = cap.min(row.max_count),
+                (Some(artifact), Some(name)) if artifact == artifact_ref && name == sheet => {
+                    cap = cap.min(row.max_count);
+                }
+                _ => {}
+            }
+        }
+        if holder_override == Some(0) {
+            return None;
+        }
+        Some(cap.min(holder_override.unwrap_or(u64::MAX)))
     }
 
     /// Effective correction quota from the resolved manifest, never from a

@@ -108,6 +108,7 @@ fn proposal(run_ref: &str, new_bytes: &[u8], ops: Vec<EditOp>) -> EditProposal {
         calc_engine: None,
         base_version: Some(1),
         base_content_hash: *blake3::hash(WORKBOOK_V1_BYTES).as_bytes(),
+        sheet_answers: None,
     }
 }
 
@@ -667,6 +668,7 @@ fn settlement_record_round_trips_through_msgpack() -> Result<()> {
             },
         ],
         reason: None,
+        sheet_answers: None,
     };
     let bytes = encode_settlement_record(&selected)?;
     assert_eq!(decode_settlement_record(&bytes)?, selected);
@@ -699,6 +701,7 @@ fn settlement_record_round_trips_through_msgpack() -> Result<()> {
         pptx_review_identities: Vec::new(),
         anchors: Vec::new(),
         reason: Some("not wanted".to_owned()),
+        sheet_answers: None,
     };
     let bytes = encode_settlement_record(&discarded)?;
     assert_eq!(decode_settlement_record(&bytes)?, discarded);
