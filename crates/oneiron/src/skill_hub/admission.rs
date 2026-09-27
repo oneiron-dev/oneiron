@@ -39,6 +39,27 @@ pub enum HubAdmissionDisposition {
     Ruled(Box<HubAdmissionReceipt>),
 }
 impl Vault {
+    /// Restore is owner-only even for a no-op. Plain user delete retains a
+    /// PERSON shell; the generic registry-lifecycle check alone cannot see
+    /// its deletion tombstone.
+    pub(super) fn check_restore_owner_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        owner: &AuthenticatedOwner,
+    ) -> Result<()> {
+        owner.revalidate_in_txn(self, txn)?;
+        if crate::ports::TombstoneStoreRead::port_deletion_state(&self.store, txn, &owner.actor())?
+            .deleted
+        {
+            return Err(crate::error::Error::Gate(
+                crate::error::GateError::ConsentOwnerNotAuthenticated(
+                    "authenticated owner is deleted",
+                ),
+            ));
+        }
+        Ok(())
+    }
+
     /// Single restore install/admission door. It checks the authenticated
     /// owner inside the write transaction, then uses the ordinary import
     /// scanner, source, and receipt path. Until the fit/readiness evaluator
@@ -60,7 +81,7 @@ impl Vault {
         occurred: TimeRange,
         learned_at: u64,
     ) -> Result<EntityId> {
-        owner.revalidate_in_txn(self, txn)?;
+        self.check_restore_owner_in_txn(txn, owner)?;
         let id = self.restore_skill_from_hub_in_txn(
             txn,
             source,

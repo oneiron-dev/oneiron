@@ -28924,7 +28924,7 @@
      "path": "src/skill_hub/admission.rs",
      "purpose": "Consent-bound held-out admission, using the existing host scorer and lifecycle write door",
      "surface": {
-      "crate-vis": 4,
+      "crate-vis": 5,
       "enum": 1,
       "fn": 3,
       "struct": 1

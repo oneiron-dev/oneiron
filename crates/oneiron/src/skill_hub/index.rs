@@ -98,6 +98,14 @@ impl Vault {
             let entity =
                 crate::entity_id::parse_entity_id(&key[prefix.len()..], "skill content hash index")
                     .map_err(|_| Error::CorruptedIndex("skill content hash index"))?;
+            // User delete can retain an erased body as a tombstone shell.
+            // The hash-index entry may still exist, but a shell is not a
+            // candidate holder and its bytes are not a SkillRecord.
+            if crate::ports::TombstoneStoreRead::port_deletion_state(&self.store, rtxn, &entity)?
+                .deleted
+            {
+                continue;
+            }
             let Some(raw) = self
                 .store
                 .port_entity_record(rtxn, &entity)?
@@ -142,6 +150,11 @@ impl Vault {
                 return Err(Error::IndexOverflow("skill_entity_for_content_hash"));
             }
             let id = entry?;
+            if crate::ports::TombstoneStoreRead::port_deletion_state(&self.store, rtxn, &id)?
+                .deleted
+            {
+                continue;
+            }
             let raw = self
                 .store
                 .port_entity_record(rtxn, &id)?

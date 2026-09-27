@@ -2342,7 +2342,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/skill_convert/tests.rs` | test | L | — | — | — |
 | `src/skill_convert/types.rs` | src | s | 5 struct · 2 enum · 1 trait · 3 fn · 5 const | ConvertOutcome, ConvertRequest, ConvertUtterance, RefineVerdict, RefinedSkill, SkillNeighbor, SkillRefineBrief, SkillRefiner | What a conversion is asked for and what it returns: the request, the refiner's brief and verdict, and the… |
 | `src/skill_hub/adapter.rs` | src | s | 2 struct · 1 trait · 4 fn | HttpIndexSkillHubAdapter, SkillHubAdapter | — |
-| `src/skill_hub/admission.rs` | src | s | 1 struct · 1 enum · 3 fn · 4 crate-vis | HubAdmissionDisposition, HubAdmissionReceipt | Consent-bound held-out admission, using the existing host scorer and lifecycle write door |
+| `src/skill_hub/admission.rs` | src | s | 1 struct · 1 enum · 3 fn · 5 crate-vis | HubAdmissionDisposition, HubAdmissionReceipt | Consent-bound held-out admission, using the existing host scorer and lifecycle write door |
 | `src/skill_hub/admission_guard.rs` | src | s | 2 crate-vis | — | Imported and hub-derived instruction authority at the single SKILL materialization door |
 | `src/skill_hub/admission_tests.rs` | test | L | — | — | The externally observable consent, raw-door, held-out, dedup, and shared-merge laws |
 | `src/skill_hub/admission_view.rs` | src | m | 1 struct · 1 enum · 8 fn · 3 crate-vis | HubActivationAsk, HubAskSurface | Engine-computed install asks: trust changes presentation, never authorization |

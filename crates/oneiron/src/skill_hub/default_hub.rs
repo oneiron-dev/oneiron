@@ -131,7 +131,7 @@ impl Vault {
     ) -> Result<EntityId> {
         use super::SkillHubAdapter;
         let id = default_skill_hub_id()?;
-        owner.revalidate_in_txn(self, &self.store.env.read_txn()?)?;
+        self.check_restore_owner_in_txn(&self.store.env.read_txn()?, owner)?;
         let row = self.skill_hub_record(&id)?;
         if row.kind != SkillHubKind::Git || row.sync_policy != HubSyncPolicy::PinnedCommit {
             return Err(crate::error::Error::InvalidConfig(
@@ -146,7 +146,7 @@ impl Vault {
         // network work inside the write transaction before minting an ID.
         let existing = {
             let txn = self.store.env.read_txn()?;
-            owner.revalidate_in_txn(self, &txn)?;
+            self.check_restore_owner_in_txn(&txn, owner)?;
             if self.hub_record_in_txn(&txn, &id)? != row {
                 return Err(crate::error::Error::InvalidConfig(
                     "default skill hub configuration changed during fetch".to_owned(),
@@ -161,7 +161,7 @@ impl Vault {
         let (_, _, scans) =
             self.dependency_advisories(hash, &coordinates, &super::osv::OsvDevClient, learned_at)?;
         let mut txn = self.store.env.write_txn()?;
-        owner.revalidate_in_txn(self, &txn)?;
+        self.check_restore_owner_in_txn(&txn, owner)?;
         if self.hub_record_in_txn(&txn, &id)? != row {
             return Err(crate::error::Error::InvalidConfig(
                 "default skill hub configuration changed during fetch".to_owned(),

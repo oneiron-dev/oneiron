@@ -283,7 +283,7 @@ impl Vault {
         learned_at: u64,
     ) -> Result<Vec<EntityId>> {
         let mut txn = self.store.env.write_txn()?;
-        owner.revalidate_in_txn(self, &txn)?;
+        self.check_restore_owner_in_txn(&txn, owner)?;
         let mut restored = Vec::new();
         for (name, markdown) in FILES {
             let package = package(name, markdown)?;
