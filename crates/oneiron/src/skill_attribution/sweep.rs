@@ -115,11 +115,26 @@ pub fn run_task_attribution_sweep_with_judge(
         .collect();
     report.judgments = judgments.len();
     report.skills = crate::skill_reliability::project_skill_reliability(vault, &judgments)?;
+    for judgment in &judgments {
+        if judgment.verdict == super::AttributionVerdict::SkillDefect {
+            for receipt in &judgment.evidence_receipts {
+                crate::skill_reliability::project_callable_receipt_outcome(
+                    vault,
+                    &judgment.subject,
+                    receipt,
+                    false,
+                )?;
+            }
+        }
+    }
     report.actor_claims =
         crate::actor_claims::project_actor_claims_from_judgments(vault, &judgments)?;
     for (sequence, evidence) in evidence_after(vault, applied)? {
         if sequence <= routed
             && evidence.outcome == AttemptOutcome::Succeeded
+            && !judgments
+                .iter()
+                .any(|judgment| judgment.sequence == sequence)
             && let Some(skill) = evidence.skill
         {
             crate::skill_reliability::record_skill_contributing_win(
@@ -129,6 +144,12 @@ pub fn run_task_attribution_sweep_with_judge(
                 evidence.at,
             )?;
             crate::skill_reliability::project_skill_reliability_for(vault, &skill, evidence.at)?;
+            crate::skill_reliability::project_callable_receipt_outcome(
+                vault,
+                &skill,
+                &evidence.receipt_ref,
+                true,
+            )?;
             if !report.skills.contains(&skill) {
                 report.skills.push(skill);
             }

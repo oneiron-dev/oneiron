@@ -61,6 +61,7 @@ impl HostSelfDispatcher<'_> {
             | SelfEffect::MemoryWriteFixture
             | SelfEffect::ReportBlocked
             | SelfEffect::AgentsSpawn
+            | SelfEffect::AgentsPut
             | SelfEffect::TasksAsk
             | SelfEffect::TasksWait
             | SelfEffect::TaskDelegate => {

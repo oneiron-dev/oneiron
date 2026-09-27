@@ -27,6 +27,12 @@ world guest {
     record wait-output { wait-id: string }
     record speech-output { order: u32, is-visible: bool }
     record blocked-output { receipt: string }
+    record agent-put-input {
+        id: string,
+        // @json
+        definition: string,
+    }
+    record agent-put-output { id: string, disposition: string }
     record supersede-input { new-id: string, old-id: string, now: u64 }
     record edge-input { src: string, kind: string, tgt: string, weight: option<f32> }
     record prompt-input { prompt: string }
@@ -58,6 +64,8 @@ world guest {
 
     // First-party-only imports. Foreign components must not import these;
     // their writes are exported as proposals and never linked as host effects.
+    // @js vault.agents.put
+    import agents-put: func(input: agent-put-input) -> result<agent-put-output, string>;
     // @js self.memory.search
     import memory-search: func(input: search-input) -> result<search-output, string>;
     // @js self.memory.put_claim

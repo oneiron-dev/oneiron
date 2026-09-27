@@ -17,35 +17,7 @@ pub(super) fn package_from_files(files: Vec<HubFile>) -> Result<HubPackage> {
         let value = *fields
             .get(key)
             .ok_or_else(|| invalid("missing required frontmatter scalar"))?;
-        if value.starts_with('"') {
-            return serde_json::from_str(value)
-                .map_err(|_| invalid("invalid quoted frontmatter scalar"));
-        }
-        if let Some(quoted) = value.strip_prefix('\'') {
-            let inner = quoted
-                .strip_suffix('\'')
-                .ok_or_else(|| invalid("unterminated single-quoted frontmatter scalar"))?;
-            let mut decoded = String::with_capacity(inner.len());
-            let mut chars = inner.chars();
-            while let Some(c) = chars.next() {
-                if c == '\'' && chars.next() != Some('\'') {
-                    return Err(invalid("single quote must be doubled in a quoted scalar"));
-                }
-                decoded.push(c);
-            }
-            if decoded.is_empty() {
-                return Err(invalid("empty frontmatter scalar"));
-            }
-            return Ok(decoded);
-        }
-        if value.is_empty()
-            || value
-                .chars()
-                .any(|c| matches!(c, '&' | '*' | '!' | '{' | '[' | '|' | '>' | '#'))
-        {
-            return Err(invalid("unsupported YAML scalar"));
-        }
-        Ok(value.to_owned())
+        frontmatter_scalar(value)
     };
     let record = SkillRecord::new(
         scalar("name")?,
@@ -77,6 +49,38 @@ pub(super) fn package_from_files(files: Vec<HubFile>) -> Result<HubPackage> {
     let mut package = HubPackage::new(record, files, caps);
     package.record.content_hash = Some(package.content_hash()?);
     Ok(package)
+}
+
+fn frontmatter_scalar(value: &str) -> Result<String> {
+    if value.starts_with('"') {
+        return serde_json::from_str(value)
+            .map_err(|_| invalid("invalid quoted frontmatter scalar"));
+    }
+    if let Some(quoted) = value.strip_prefix('\'') {
+        let inner = quoted
+            .strip_suffix('\'')
+            .ok_or_else(|| invalid("unterminated single-quoted frontmatter scalar"))?;
+        let mut decoded = String::with_capacity(inner.len());
+        let mut chars = inner.chars();
+        while let Some(c) = chars.next() {
+            if c == '\'' && chars.next() != Some('\'') {
+                return Err(invalid("single quote must be doubled in a quoted scalar"));
+            }
+            decoded.push(c);
+        }
+        if decoded.is_empty() {
+            return Err(invalid("empty frontmatter scalar"));
+        }
+        return Ok(decoded);
+    }
+    if value.is_empty()
+        || value
+            .chars()
+            .any(|c| matches!(c, '&' | '*' | '!' | '{' | '[' | '|' | '>' | '#'))
+    {
+        return Err(invalid("unsupported YAML scalar"));
+    }
+    Ok(value.to_owned())
 }
 
 type ParsedFrontmatter<'a> = (
@@ -191,7 +195,7 @@ fn frontmatter_fields(front: &str) -> Result<ParsedFrontmatter<'_>> {
     let role = fields
         .get("role")
         .map(|value| {
-            SkillRole::parse(value)
+            SkillRole::parse(&frontmatter_scalar(value)?)
                 .ok_or_else(|| invalid("role must be knowledge|workflow|callable"))
         })
         .transpose()?
@@ -235,6 +239,18 @@ fn call_field_value(value: &str) -> Result<serde_json::Value> {
         return Err(invalid("invalid call field"));
     }
     Ok(serde_json::Value::String(value.to_owned()))
+}
+
+/// Reads any declared role/call from an authored source tree. Absence stays
+/// absence: a merge inherits its target rather than silently downgrading it.
+pub(crate) fn declared_role_call(
+    files: &[HubFile],
+) -> Result<(Option<SkillRole>, Option<SkillCallContract>)> {
+    let Some(front) = source_frontmatter(instruction_text(files)?)? else {
+        return Ok((None, None));
+    };
+    let (fields, _, role, call) = frontmatter_fields(front)?;
+    Ok((fields.contains_key("role").then_some(role), call))
 }
 
 /// Reconstructs an untrusted package without changing one byte of its source.

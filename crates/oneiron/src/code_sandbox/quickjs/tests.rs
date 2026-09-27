@@ -216,6 +216,13 @@ impl crate::code_sandbox::wasmtime_boundary::bindings::GuestImports for ForeignH
     ) -> std::result::Result<String, String> {
         Err("unlinked capability".into())
     }
+    fn agents_put(
+        &mut self,
+        _: crate::code_sandbox::wasmtime_boundary::bindings::AgentPutInput,
+    ) -> std::result::Result<crate::code_sandbox::wasmtime_boundary::bindings::AgentPutOutput, String>
+    {
+        Err("unlinked capability".into())
+    }
     fn memory_search(
         &mut self,
         _: crate::code_sandbox::wasmtime_boundary::bindings::SearchInput,

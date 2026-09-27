@@ -10,6 +10,7 @@ pub mod blocked;
 pub mod consent;
 pub mod vault_read;
 
+mod agent_authoring;
 mod codec;
 mod coordination_codec;
 mod dispatcher;
@@ -42,6 +43,7 @@ pub(crate) use self::storage::ExecutorStorage;
 // ONE-1686: a canonical run's transcript identity is DERIVED from its run ref,
 // so the tests that assert where its bubbles landed derive it the same way
 // rather than hard-coding a hash.
+pub(crate) use self::agent_authoring::parse_agent_put_request;
 #[cfg(test)]
 use self::storage::canonical_speech_conversation_id;
 #[cfg(test)]
@@ -49,12 +51,13 @@ pub(crate) use self::storage::{
     canonical_speech_conversation_id_for_run, executor_speech_message_id,
 };
 pub use self::types::{
-    SelfAgentSpawnCall, SelfAgentSpawnResult, SelfAskHumanCall, SelfCall, SelfContextCall,
-    SelfContextResult, SelfDeniedResult, SelfDispatchOutcome, SelfDispatcher, SelfDurableWait,
-    SelfDurableWaitReason, SelfEffect, SelfFailedResult, SelfFixtureEffectCall,
-    SelfMemoryEdgeWriteResult, SelfMemoryPutClaimCall, SelfMemoryPutEdgeCall, SelfMemorySearchCall,
-    SelfMemorySearchResult, SelfMemorySupersedeClaimCall, SelfMemoryWriteFixtureCall,
-    SelfMemoryWriteResult, SelfSpeechCall, SelfSpeechResult, peer_result_wait,
+    SelfAgentDefinitionPutCall, SelfAgentDefinitionPutResult, SelfAgentSpawnCall,
+    SelfAgentSpawnResult, SelfAskHumanCall, SelfCall, SelfContextCall, SelfContextResult,
+    SelfDeniedResult, SelfDispatchOutcome, SelfDispatcher, SelfDurableWait, SelfDurableWaitReason,
+    SelfEffect, SelfFailedResult, SelfFixtureEffectCall, SelfMemoryEdgeWriteResult,
+    SelfMemoryPutClaimCall, SelfMemoryPutEdgeCall, SelfMemorySearchCall, SelfMemorySearchResult,
+    SelfMemorySupersedeClaimCall, SelfMemoryWriteFixtureCall, SelfMemoryWriteResult,
+    SelfSpeechCall, SelfSpeechResult, peer_result_wait,
 };
 
 // The flat code_run.rs module used to provide these names to the test module

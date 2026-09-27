@@ -8,28 +8,28 @@
   "toolchain": {
     "wit-bindgen": "wit-bindgen-cli 0.46.0",
     "wasm-tools": "wasm-tools 1.239.0 (35f8671bc 2025-09-09)",
-    "clang": "clang version 20.1.8-wasi-sdk (https://github.com/llvm/llvm-project 87f0227cb60147a26a1eeb4fb06e3b505e9c7261)\nTarget: wasm32-unknown-wasi\nThread model: posix\nInstalledDir: /mnt/wd16/w8-build/lin-2381-toolchain/wasi-sdk-27.0-x86_64-linux/bin\nConfiguration file: /mnt/wd16/w8-build/lin-2381-toolchain/wasi-sdk-27.0-x86_64-linux/bin/clang.cfg"
+    "clang": "clang version 20.1.8-wasi-sdk (https://github.com/llvm/llvm-project 87f0227cb60147a26a1eeb4fb06e3b505e9c7261)\nTarget: wasm32-unknown-wasi\nThread model: posix\nInstalledDir: /mnt/wd16/w8-build/lin-2635-tools/wasi-sdk-27.0-x86_64-linux/bin\nConfiguration file: /mnt/wd16/w8-build/lin-2635-tools/wasi-sdk-27.0-x86_64-linux/bin/clang.cfg"
   },
   "patched_quickjs_sha256": "81d6e4a91d3167b307b7feca196da09bfecde996ebe360499d0f40d3c9c5640c",
   "patched_dtoa_sha256": "bcbbcff57f97d02d3cbe662b059e1aaad90ef9da213cf8aefee35f548beca2fe",
-  "wit_sha256": "9d39a674c18acdf2e5a8f1c4ed3ace0c4e561df3b98797e3bf8b17da9413c795",
+  "wit_sha256": "bc8bf613cf379fed5b98d6ad3c834ff1b5a6f5bb7a6d1a1007b776527d68870d",
   "sources": {
     "guest.c": "aef63e7b6e6f5cf3946db2cc6dcef69de2c943d54e2ee48ce137e9309772f1c0",
     "libc_denials.c": "34d4078d819b41381cfec7773434bc0a04a9c1d9c2895246a0a22ddf427808fd",
-    "bootstrap.js": "836072a8147e255783ad6c9e4cb70e5f10fb0efb4082fa48984d62344e022270",
-    "generate_bridge.py": "66a741d0af994b17fbfe58863c5563ea3c948071fc68d3301b320e7d50e2e9fc",
-    "build.py": "2b20ac3c6f0440e8f0e07f6f440d1571625d4fbadeb51b5267bbab9523ef3eb8"
+    "bootstrap.js": "5b22f5f00741f194aa72bf911060d978296085eaf4eff682a52fd305319a7751",
+    "generate_bridge.py": "7fd9aec7b4b9256dffc7651316b20d867603e562faac05523f041e6861963a32",
+    "build.py": "29aef412a3a9b6b47b0de6c6c4cb4e7d6141ec3a7aed0bf4dc47c4f5ebb50053"
   },
   "artifacts": {
     "first-party": {
       "file": "quickjs-first-party.wasm",
-      "sha256": "61deac61e1d83ee3be5b44d8aae6079f3be01ae9b5581d24f887149c98ecd03b",
-      "bytes": 1041817
+      "sha256": "2825a8363fde1523b3bd6cf6bfeb7eb1ea0285bfdc6977939eb9ccd8290b8224",
+      "bytes": 1043463
     },
     "foreign": {
       "file": "quickjs-foreign.wasm",
-      "sha256": "3b7b11fbeb6b67812793456591b515b0562825618f07f7b5ecfb700406926d9c",
-      "bytes": 1031139
+      "sha256": "9d7fdc5d1da552e7d01b7c15cb8933b488d8c7051da4cff31d0b4aa87f9d8060",
+      "bytes": 1031645
     }
   }
 }

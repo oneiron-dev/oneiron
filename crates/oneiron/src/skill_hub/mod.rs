@@ -58,7 +58,7 @@ pub use self::index::PREDICATE_SKILL_HUB_PROVENANCE;
 pub use self::package::{
     HubFile, HubIndexEntry, HubPackage, SkillCapabilitySurface, SkillPackageFormat,
 };
-pub(crate) use folder::package_from_source;
+pub(crate) use folder::{declared_role_call, package_from_source};
 mod fork_source;
 pub use self::record::{
     HUB_PIN_KEYS, HUB_REF_KEYS, HubPin, HubRef, HubSyncPolicy, SKILL_HUB_BODY_KEYS, SkillHubKind,

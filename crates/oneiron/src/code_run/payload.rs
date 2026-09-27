@@ -25,6 +25,16 @@ const CODE_RUN_REPLAY_CANONICAL_REQUEST_ACTOR: [u8; 16] = [0x42; 16];
 pub(super) fn self_call_request_value(call: &SelfCall) -> Result<Value> {
     Ok(match call {
         SelfCall::AgentsSpawn(call) => super::coordination_codec::spawn_request(call)?,
+        SelfCall::AgentsPut(call) => request_map(vec![
+            ("id", entity_id_value(call.id)),
+            (
+                "definition",
+                Value::Binary(crate::agent_def::encode_agent_definition(&call.definition)?),
+            ),
+            ("occurred_start", Value::from(call.occurred.start)),
+            ("occurred_end", Value::from(call.occurred.end)),
+            ("learned_at", Value::from(call.learned_at)),
+        ]),
         SelfCall::TasksAsk(call) => super::coordination_codec::ask_request(call)?,
         SelfCall::TasksWait(handle) => {
             request_map(vec![("handle", entity_id_value(handle.group_ref))])
@@ -135,6 +145,11 @@ fn canonical_replay_request_envelope() -> Result<WriteEnvelope> {
 pub(super) fn self_dispatch_outcome_value(outcome: &SelfDispatchOutcome) -> Result<Value> {
     Ok(match outcome {
         SelfDispatchOutcome::AgentSpawn(result) => super::coordination_codec::spawn_value(result),
+        SelfDispatchOutcome::AgentDefinitionPut(result) => request_map(vec![
+            ("kind", Value::from("agent_definition_put")),
+            ("id", entity_id_value(result.id)),
+            ("disposition", Value::from(result.disposition.as_str())),
+        ]),
         SelfDispatchOutcome::TaskAsk(result) => super::coordination_codec::ask_value(result),
         SelfDispatchOutcome::TaskAskStatus(result) => {
             super::coordination_codec::status_value(result)?
@@ -229,6 +244,23 @@ pub(super) fn decode_self_dispatch_outcome(value: &Value) -> Result<SelfDispatch
             receipt: entity_value(map_get(entries, "receipt")?)?,
         }),
 
+        "agent_definition_put" => {
+            let disposition = match str_value(map_get(entries, "disposition")?)? {
+                "active" => crate::agent_def::AgentDefinitionPutDisposition::Active,
+                "proposed" => crate::agent_def::AgentDefinitionPutDisposition::Proposed,
+                _ => {
+                    return Err(invalid_code_run_replay(
+                        "invalid definition put disposition",
+                    ));
+                }
+            };
+            Ok(SelfDispatchOutcome::AgentDefinitionPut(
+                super::SelfAgentDefinitionPutResult {
+                    id: entity_value(map_get(entries, "id")?)?,
+                    disposition,
+                },
+            ))
+        }
         "agent_spawn" => Ok(SelfDispatchOutcome::AgentSpawn(
             super::coordination_codec::decode_spawn(value)?,
         )),
@@ -359,6 +391,7 @@ fn decode_scored_entity(value: &Value) -> Result<ScoredEntity> {
 pub(super) fn self_effect_from_str(value: &str) -> Result<SelfEffect> {
     match value {
         "agents.spawn" => Ok(SelfEffect::AgentsSpawn),
+        "vault.agents.put" => Ok(SelfEffect::AgentsPut),
         "tasks.ask" => Ok(SelfEffect::TasksAsk),
         "tasks.wait" => Ok(SelfEffect::TasksWait),
         "self.memory.search" => Ok(SelfEffect::MemorySearch),

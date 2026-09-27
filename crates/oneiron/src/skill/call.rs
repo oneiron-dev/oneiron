@@ -149,6 +149,7 @@ pub fn execute_callable_skill(
         skill,
         executor,
         &loaded.record.version,
+        seq,
         None,
     )?;
     let outcome = runtime.run_step(
@@ -175,6 +176,7 @@ pub fn execute_callable_skill(
         skill,
         executor,
         &loaded.record.version,
+        seq,
         Some(&outcome.observation),
     )?;
     Ok(outcome)

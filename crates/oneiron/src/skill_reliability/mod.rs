@@ -43,7 +43,7 @@
 
 mod codec;
 mod executor;
-pub(crate) use executor::record_callable_invocation;
+pub(crate) use executor::{project_callable_receipt_outcome, record_callable_invocation};
 mod floor;
 mod ledger;
 mod posterior;
@@ -51,7 +51,10 @@ mod projector;
 mod provenance;
 mod read;
 
-pub use self::executor::{record_skill_executor_outcome, skill_executor_reliability_posterior};
+pub use self::executor::{
+    project_executor_reliability_for, record_skill_executor_outcome,
+    skill_executor_reliability_posterior,
+};
 pub use self::floor::{
     DEFAULT_SKILL_RELIABILITY_FLOOR, PREDICATE_SKILL_QUARANTINE_PROPOSAL,
     SKILL_RELIABILITY_FLOOR_KEY, SKILL_RELIABILITY_FLOOR_MIN_OUTCOMES, check_reliability_floor,

@@ -19,6 +19,12 @@ impl GuestImports for Host {
         }
         Ok(vec![7; n as usize])
     }
+    fn agents_put(&mut self, input: AgentPutInput) -> Result<AgentPutOutput, String> {
+        Ok(AgentPutOutput {
+            id: input.id,
+            disposition: "proposed".into(),
+        })
+    }
     fn memory_search(&mut self, _: SearchInput) -> Result<SearchOutput, String> {
         Ok(SearchOutput { results: vec![] })
     }

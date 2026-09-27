@@ -1,12 +1,14 @@
 //! Code-mode composition: host-bound agents.spawn / tasks.ask / tasks.wait.
 use super::HostSelfDispatcher;
 use crate::EntityId;
-use crate::agent_def::{AgentDefinition, AgentDefinitionPutDisposition, AgentScope};
+use crate::agent_def::{
+    AgentAuthorLease, AgentDefinition, AgentDefinitionPutDisposition, AgentScope,
+};
 use crate::agent_dispatch::{
     AgentDispatchOutcome, AgentDispatcher, DispatchAgent, agent_dispatch_actor,
     decode_agent_dispatch_input,
 };
-use crate::attempt_queue::{AttemptId, AttemptState};
+use crate::attempt_queue::{AttemptId, AttemptRecord, AttemptState};
 use crate::code_run::storage::ExecutorStorage;
 use crate::code_run::{
     SelfAgentSpawnCall, SelfAgentSpawnResult, SelfDispatchOutcome, SelfEffect, SelfFailedResult,
@@ -52,6 +54,28 @@ impl<'a> HostSelfDispatcher<'a> {
         Ok(dispatcher)
     }
 
+    /// The SDK authoring door needs the worker's actual acquired lease.
+    /// A caller that only knows the attempt id may spawn, but cannot author.
+    pub fn for_leased_agent_attempt(
+        vault: &'a Vault,
+        actor: WriteActor,
+        leased: &AttemptRecord,
+    ) -> Result<Self> {
+        let mut dispatcher = Self::for_agent_attempt(vault, actor, leased.id)?;
+        let binding = AgentAuthorLease::from_leased(leased)?;
+        let current = DreamerRunnerStore::new(vault)
+            .status(leased.id)?
+            .ok_or_else(invalid)?;
+        if current.attempt.state != AttemptState::Leased
+            || current.attempt.lease_owner.as_deref() != Some(binding.owner.as_str())
+            || current.attempt.attempt_count != binding.generation
+        {
+            return Err(invalid());
+        }
+        dispatcher.agent_lease = Some(binding);
+        Ok(dispatcher)
+    }
+
     fn coordination_vault(&self) -> Result<&Vault> {
         match &self.storage {
             ExecutorStorage::Canonical(vault) => Ok(vault),
@@ -88,24 +112,16 @@ impl<'a> HostSelfDispatcher<'a> {
                 AgentScope::World(id) => *id != world,
                 AgentScope::All => true,
             });
-        if scope_widens {
-            vault.put_agent_definition_for_author_with_scope(
-                &self.actor.entity_ref(),
-                id,
-                definition,
-                true,
-                occurred,
-                learned_at,
-            )
-        } else {
-            vault.put_agent_definition_for_author(
-                &self.actor.entity_ref(),
-                id,
-                definition,
-                occurred,
-                learned_at,
-            )
-        }
+        let lease = self.agent_lease.as_ref().ok_or_else(invalid)?;
+        vault.put_agent_definition_for_author_with_scope(
+            &self.actor.entity_ref(),
+            id,
+            definition,
+            scope_widens,
+            Some(lease),
+            occurred,
+            learned_at,
+        )
     }
 
     pub(super) fn dispatch_agents_spawn(

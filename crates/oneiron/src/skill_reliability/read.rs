@@ -83,6 +83,7 @@ pub(super) fn active_reliability_heads_in_txn(
             .filter(|(_, body, _)| {
                 body.source == Some(crate::claim::ClaimSource::Observed)
                     && body.approval == crate::claim::ClaimApprovalStatus::Auto
+                    && super::codec::map_str(&body.value, "executor").is_none()
             })
             .collect(),
     )

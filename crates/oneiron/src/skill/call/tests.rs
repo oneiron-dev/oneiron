@@ -209,6 +209,20 @@ fn callable_runs_in_caller_sandbox_and_records_pair_specific_reliability() -> Re
         )
         .is_err()
     );
+    let second = execute_callable_skill(
+        &vault,
+        &leased,
+        &id,
+        "next-model",
+        &serde_json::json!({"value":41}),
+        runtime.as_mut(),
+        &mut NoEffects,
+        run_id,
+        2,
+        CodeRunDeterminism::new(1_700_000_000_000, [1; 32]),
+        13,
+    )?;
+    assert_eq!(second.observation, outcome.observation);
     assert!(matches!(
         queue.complete(CompleteAttempt {
             id: attempt.id,
@@ -228,7 +242,7 @@ fn callable_runs_in_caller_sandbox_and_records_pair_specific_reliability() -> Re
             runtime.as_mut(),
             &mut NoEffects,
             run_id,
-            2,
+            3,
             CodeRunDeterminism::new(1_700_000_000_000, [1; 32]),
             15,
         )
@@ -256,13 +270,20 @@ fn callable_runs_in_caller_sandbox_and_records_pair_specific_reliability() -> Re
         crate::skill_reliability::record_skill_executor_outcome(
             &vault,
             &id,
-            "next-model",
+            "third-model",
             &receipt,
             true,
         )
         .is_err(),
-        "the same receipt cannot credit another executor"
+        "an invocation cannot credit an executor that did not run"
     );
+    crate::skill_reliability::record_skill_executor_outcome(
+        &vault,
+        &id,
+        "next-model",
+        &receipt,
+        true,
+    )?;
     let current = crate::skill_reliability::skill_executor_reliability_posterior(
         &vault,
         &id,
@@ -271,8 +292,9 @@ fn callable_runs_in_caller_sandbox_and_records_pair_specific_reliability() -> Re
     assert_eq!(current.alpha, other.alpha + 1.0);
     assert_eq!(current.beta, other.beta);
     assert_eq!(
-        crate::skill_reliability::skill_executor_reliability_posterior(&vault, &id, "next-model")?,
-        other
+        crate::skill_reliability::skill_executor_reliability_posterior(&vault, &id, "next-model")?
+            .alpha,
+        other.alpha + 1.0
     );
     let EnqueueOutcome::Enqueued(listed) = queue.enqueue(EnqueueAttempt {
         kind: "call.listed-only".into(),

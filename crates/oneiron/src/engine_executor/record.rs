@@ -314,6 +314,7 @@ pub(super) fn self_effect_from_str(value: &str) -> EngineExecutorResult<SelfEffe
         "self.fixture.destructive" => Ok(SelfEffect::DestructiveFixture),
         "self.fixture.outbound" => Ok(SelfEffect::OutboundFixture),
         "agents.spawn" => Ok(SelfEffect::AgentsSpawn),
+        "vault.agents.put" => Ok(SelfEffect::AgentsPut),
         "tasks.ask" => Ok(SelfEffect::TasksAsk),
         "tasks.wait" => Ok(SelfEffect::TasksWait),
         "self.tasks.delegate" => Ok(SelfEffect::TaskDelegate),

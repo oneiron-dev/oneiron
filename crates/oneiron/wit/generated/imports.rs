@@ -4,6 +4,7 @@
     ("credential-call", "sandbox.credential.call"),
     ("clock-now-unix-ms", "oneiron.clock.now_unix_ms"),
     ("random-bytes", "oneiron.random.bytes"),
+    ("agents-put", "vault.agents.put"),
     ("memory-search", "self.memory.search"),
     ("memory-put-claim", "self.memory.put_claim"),
     ("memory-supersede-claim", "self.memory.supersede_claim"),

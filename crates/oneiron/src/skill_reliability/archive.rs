@@ -33,7 +33,20 @@ pub(crate) fn imported_reliability_body(body: &ClaimBody) -> Result<ClaimBody> {
         return Err(invalid("reliability archive is neither native nor inert"));
     }
     let posterior = SkillReliabilityPosterior::from_value(&body.value)?;
-    if body.value != posterior.to_value() {
+    let expected = if let Some(executor) = super::codec::map_str(&body.value, "executor") {
+        if executor.trim().is_empty() || executor.len() > 256 {
+            return Err(invalid("invalid reliability executor identity"));
+        }
+        let mut value = posterior.to_value();
+        let Value::Map(entries) = &mut value else {
+            unreachable!("posterior is a map")
+        };
+        entries.push((Value::from("executor"), Value::from(executor)));
+        value
+    } else {
+        posterior.to_value()
+    };
+    if body.value != expected {
         return Err(invalid(
             "reliability archive requires the exact posterior codec",
         ));

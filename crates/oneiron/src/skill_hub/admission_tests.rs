@@ -785,3 +785,62 @@ fn imported_callable_stays_candidate_without_foreign_sandbox_qualification() -> 
     );
     Ok(())
 }
+
+#[test]
+fn edited_shared_fork_persists_each_role_and_callable_contract_change() -> Result<()> {
+    let fixture = Fixture::new();
+    let fork_id = EntityId::now();
+    fixture.vault.fork_skill_record(
+        &fixture.baseline,
+        &fork_id,
+        "fixture.edited-fork",
+        at(40),
+        40,
+    )?;
+    let callable = |version: &str, reference: &str, output: &str| -> Result<HubPackage> {
+        super::folder::package_from_files(vec![
+            HubFile::new("SKILL.md", format!("---\nname: fixture.edited-fork\ndescription: fixture\nversion: {version}\nrole: callable\ncall:\n  reference: {reference}\n  arguments: {{\"value\":\"integer\"}}\n  returns: {{\"value\":\"{output}\"}}\n---\nBody\n").into_bytes()),
+            HubFile::new("scripts/run.js", b"finish(JSON.stringify({value:skillArgs.value}));".to_vec()),
+            HubFile::new("scripts/other.js", b"finish(JSON.stringify({value:skillArgs.value}));".to_vec()),
+        ])
+    };
+    fixture.vault.write_shared_skill_fork_package(
+        &fork_id,
+        &callable("2", "scripts/run.js", "integer")?,
+        at(41),
+        41,
+    )?;
+    let first = fixture
+        .vault
+        .get_skill_record(&fork_id)?
+        .expect("callable fork");
+    assert_eq!(first.role, crate::skill::SkillRole::Callable);
+    assert_eq!(first.call.as_ref().unwrap().reference, "scripts/run.js");
+    fixture.vault.write_shared_skill_fork_package(
+        &fork_id,
+        &callable("3", "scripts/other.js", "number")?,
+        at(42),
+        42,
+    )?;
+    let second = fixture
+        .vault
+        .get_skill_record(&fork_id)?
+        .expect("changed call");
+    assert_eq!(second.call.as_ref().unwrap().reference, "scripts/other.js");
+    assert_eq!(
+        second.call.as_ref().unwrap().returns,
+        serde_json::json!({"value":"number"})
+    );
+    let knowledge = super::folder::package_from_files(vec![HubFile::new("SKILL.md",
+        b"---\nname: fixture.edited-fork\ndescription: fixture\nversion: 4\nrole: knowledge\n---\nBody\n".to_vec())])?;
+    fixture
+        .vault
+        .write_shared_skill_fork_package(&fork_id, &knowledge, at(43), 43)?;
+    let third = fixture
+        .vault
+        .get_skill_record(&fork_id)?
+        .expect("knowledge fork");
+    assert_eq!(third.role, crate::skill::SkillRole::Knowledge);
+    assert_eq!(third.call, None);
+    Ok(())
+}

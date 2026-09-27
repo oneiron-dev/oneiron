@@ -6,6 +6,7 @@ use super::codec::{
 };
 use super::types::{AgentDefinition, AgentScope};
 use crate::Vault;
+use crate::attempt_queue::{AttemptId, AttemptQueue, AttemptRecord, AttemptState};
 use crate::batch::{BatchOp, ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader, apply_ops};
 use crate::claim::{ClaimApprovalStatus, ClaimLifecycleStatus};
 use crate::entity_id::EntityId;
@@ -14,11 +15,46 @@ use crate::ports::EntityStoreRead;
 use crate::registry::ENTITY_TYPE_AGENT_DEF;
 use crate::temporal::TimeRange;
 
+/// Host-captured attempt generation. Guest input cannot construct this lease.
+#[derive(Debug, Clone)]
+pub(crate) struct AgentAuthorLease {
+    pub(crate) attempt: AttemptId,
+    pub(crate) owner: String,
+    pub(crate) generation: u32,
+}
+
+impl AgentAuthorLease {
+    pub(crate) fn from_leased(record: &AttemptRecord) -> Result<Self> {
+        if record.state != AttemptState::Leased {
+            return Err(Error::Artifact(ArtifactError::AgentNotDispatchable(
+                "agent authoring requires a leased attempt",
+            )));
+        }
+        Ok(Self {
+            attempt: record.id,
+            owner: record.lease_owner.clone().ok_or(Error::Artifact(
+                ArtifactError::AgentNotDispatchable("leased author needs a lease owner"),
+            ))?,
+            generation: record.attempt_count,
+        })
+    }
+}
+
 /// The result of authoring a saved definition. Neither arm launches an attempt.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AgentDefinitionPutDisposition {
     Active,
     Proposed,
+}
+
+impl AgentDefinitionPutDisposition {
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Active => "active",
+            Self::Proposed => "proposed",
+        }
+    }
 }
 
 fn within_author_slice(request: &AgentDefinition, author: &AgentDefinition) -> bool {
@@ -50,6 +86,7 @@ impl Vault {
     /// An in-slice definition is active at exactly the author's ceiling; a
     /// wider request is held as a non-dispatchable proposal. The author read
     /// and the create share one transaction so an edit cannot race this check.
+    #[cfg(test)]
     pub(crate) fn put_agent_definition_for_author(
         &self,
         author: &EntityId,
@@ -59,7 +96,7 @@ impl Vault {
         learned_at: u64,
     ) -> Result<AgentDefinitionPutDisposition> {
         self.put_agent_definition_for_author_with_scope(
-            author, id, requested, false, occurred, learned_at,
+            author, id, requested, false, None, occurred, learned_at,
         )
     }
 
@@ -69,6 +106,7 @@ impl Vault {
         id: &EntityId,
         requested: &AgentDefinition,
         scope_widens: bool,
+        lease: Option<&AgentAuthorLease>,
         occurred: TimeRange,
         learned_at: u64,
     ) -> Result<AgentDefinitionPutDisposition> {
@@ -78,6 +116,19 @@ impl Vault {
             )));
         }
         let mut wtxn = self.store.env.write_txn()?;
+        if let Some(lease) = lease {
+            let current = AttemptQueue::new(self)
+                .get_in_txn(&wtxn, lease.attempt)?
+                .ok_or(Error::EntityNotFound)?;
+            if current.state != AttemptState::Leased
+                || current.lease_owner.as_deref() != Some(lease.owner.as_str())
+                || current.attempt_count != lease.generation
+            {
+                return Err(Error::Artifact(ArtifactError::AgentNotDispatchable(
+                    "authoring lease is no longer held by this worker",
+                )));
+            }
+        }
         let author_def = self.read_agent_definition_in_txn(&wtxn, author)?;
         if author_def.lifecycle_status != ClaimLifecycleStatus::Active
             || !author_def.enabled
