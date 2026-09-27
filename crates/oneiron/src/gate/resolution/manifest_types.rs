@@ -1,5 +1,6 @@
 //! Resolved-view types plus the `PolicyManifestResolution` struct definition.
 
+use crate::autoreason_campaign::selection::SelectionPolicyRow;
 use crate::llm::{BudgetExhaustionPolicy, BudgetPolicyTable};
 
 use crate::gate::ceiling::{
@@ -79,6 +80,7 @@ pub(crate) struct PolicyManifestResolution {
     pub(crate) diagnostic_bounds: Option<crate::self_heal::tripwires::TripwireBounds>,
     pub(crate) proposal_check_threshold: Option<u64>,
     pub(crate) weave_correction_policy: Option<crate::gate::WeaveCorrectionPolicy>,
+    pub(crate) experiment_selection: Vec<SelectionPolicyRow>,
     pub(super) packs: Vec<PolicyPack>,
     pub(super) actor_ceilings: Vec<ActorCeiling>,
     pub(crate) delegation_fold: DelegationFoldCache,

@@ -5,6 +5,8 @@ use std::io::Cursor;
 use rmpv::Value;
 
 use crate::gate::PackInstallPolicy;
+use super::experiment_selection::parse_experiment_selection;
+use crate::autoreason_campaign::selection::SelectionPolicyRow;
 use crate::gate::ceiling::{
     ActorCeiling, DelegationGrantRecord, PolicyOwnerPatternRow, PolicyOwnerPolicyRow, PolicyPack,
     PolicySignature, SourceTrustCeiling,
@@ -67,6 +69,7 @@ pub(in crate::gate) struct DecodedPolicyManifest {
     pub(in crate::gate) diagnostic_bounds: Option<crate::self_heal::tripwires::TripwireBounds>,
     pub(in crate::gate) proposal_check_threshold: Option<u64>,
     pub(in crate::gate) weave_correction_policy: Option<crate::gate::WeaveCorrectionPolicy>,
+    pub(in crate::gate) experiment_selection: Vec<SelectionPolicyRow>,
     pub(in crate::gate) unsupported_schema: bool,
     pub(in crate::gate) engine_version_floor: bool,
     pub(in crate::gate) unknown_axis_seen: bool,
@@ -116,6 +119,7 @@ pub(in crate::gate) fn decode_policy_manifest(data: &[u8]) -> Option<DecodedPoli
                 | "diagnostic_bounds"
                 | "proposal_check_threshold"
                 | POLICY_WEAVE_CORRECTION_POLICY_KEY
+                | "experiment_selection"
         ) {
             return None;
         }
@@ -267,6 +271,11 @@ pub(in crate::gate) fn decode_policy_manifest(data: &[u8]) -> Option<DecodedPoli
             MapValue::Duplicate => return None,
             MapValue::Present(value) => Some(crate::gate::WeaveCorrectionPolicy::parse(value)?),
         };
+    let experiment_selection = match single_map_value(&entries, "experiment_selection") {
+        MapValue::Missing => Vec::new(),
+        MapValue::Duplicate => return None,
+        MapValue::Present(value) => parse_experiment_selection(value)?,
+    };
 
     let unknown_axis_seen =
         defaults.unknown_axis_seen || rules.iter().any(|rule| rule.axes.unknown_axis_seen);
@@ -302,6 +311,7 @@ pub(in crate::gate) fn decode_policy_manifest(data: &[u8]) -> Option<DecodedPoli
         diagnostic_bounds,
         proposal_check_threshold,
         weave_correction_policy,
+        experiment_selection,
         unsupported_schema,
         engine_version_floor,
         unknown_axis_seen,
