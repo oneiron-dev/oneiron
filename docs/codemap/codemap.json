@@ -7606,7 +7606,7 @@
      "path": "src/claim/scoped_read/actor_key.rs",
      "purpose": "Authenticated identity carried by a scoped read",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 2,
       "fn": 6,
       "struct": 1
      }
@@ -11451,7 +11451,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "L2BaseSummary"
@@ -11459,13 +11459,13 @@
      "path": "src/context_pack/l2_base.rs",
      "purpose": "Content-addressed persona/user evidence prefix",
      "surface": {
-      "crate-vis": 5,
+      "crate-vis": 6,
       "fn": 1,
       "struct": 1
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "test",
      "notable": [],
      "path": "src/context_pack/l2_base/tests.rs",
@@ -21605,6 +21605,14 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/memory/tests_regressions/recall_l2.rs",
+     "purpose": "Typed recall retains a ranked owner claim even when L2 also caches it",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/memory/tests_regressions/recall_revision.rs",
      "purpose": "Exact revision consistency across facade recall, hydration, and document chat",
      "surface": {}
@@ -27751,7 +27759,7 @@
      "path": "src/serialize/mod.rs",
      "purpose": "Context-pack serialization",
      "surface": {
-      "crate-vis": 5,
+      "crate-vis": 7,
       "re-export": 4
      }
     },
@@ -27800,7 +27808,7 @@
      "path": "src/serialize/provider_codecs.rs",
      "purpose": "Provider read formats share prepared rows and always null credential-bearing fields",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 3
      }
     },
     {
@@ -35222,7 +35230,7 @@
      "purpose": "—"
     },
     "memory": {
-     "files": 75,
+     "files": 76,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -35756,7 +35764,7 @@
    },
    "over_bar": 10,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2109,
+   "source_files": 2110,
    "test_files": 722
   },
   "oneiron-android": {

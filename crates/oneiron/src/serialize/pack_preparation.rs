@@ -11,6 +11,7 @@ use crate::context_pack::FieldProfile;
 use crate::context_pack::PackFormat;
 use crate::context_pack::PackStats;
 use crate::context_pack::TokenAllocation;
+use crate::entity_id::EntityId;
 use crate::registry::ENTITY_TYPE_FEDERATION_GRANT;
 use crate::tokenizer::{DEFAULT_CONTEXT_PACK_TOKENIZER, PackTokenizer};
 
@@ -31,26 +32,47 @@ pub(super) fn prepare_pack(
     config: &SerializeConfig,
     json_mode: bool,
 ) -> PreparedPack {
+    prepare_pack_with_l2(pack, config, json_mode, true, false)
+}
+
+fn prepare_pack_with_l2(
+    pack: &ContextPack,
+    config: &SerializeConfig,
+    json_mode: bool,
+    include_l2: bool,
+    omitted_by_token_budget: bool,
+) -> PreparedPack {
     let l2_base = pack.l2_base.clone().filter(|summary| {
-        (config.max_item_tokens == 0
-            || crate::tokenizer::count_context_pack_tokens(&summary.body) <= config.max_item_tokens)
+        include_l2
+            && (config.max_item_tokens == 0
+                || crate::tokenizer::count_context_pack_tokens(&summary.body)
+                    <= config.max_item_tokens)
             && summary.fits_field_budget(config.max_field_chars)
     });
     let skip_budget = config.budget == 0;
     let value_depth_limit = value_depth_limit_for_format(config.format);
     let mut stats = pack.stats.clone();
     if pack.l2_base.is_some() && l2_base.is_none() {
-        stats.items_dropped.reason = crate::context_pack::PackItemAccountingReason::ItemBudget;
+        stats.items_dropped.reason = if omitted_by_token_budget {
+            crate::context_pack::PackItemAccountingReason::TokenBudget
+        } else {
+            crate::context_pack::PackItemAccountingReason::ItemBudget
+        };
         stats.items_dropped.count = stats.items_dropped.count.saturating_add(1);
     }
     stats.critical_count = 0;
     let tokenizer = DEFAULT_CONTEXT_PACK_TOKENIZER;
 
+    let skip_evidence = l2_base
+        .as_ref()
+        .map(crate::context_pack::L2BaseSummary::evidence_ids);
+    let had_l2 = l2_base.is_some();
     let mut prepared = if config.merge_neighbors {
         let mut merged = Vec::with_capacity(pack.results.len() + pack.neighbors.len());
         merged.extend(prepare_entities(
             &pack.results,
             PreparedEntitySource::Result,
+            skip_evidence,
             config,
             json_mode,
             value_depth_limit,
@@ -59,6 +81,7 @@ pub(super) fn prepare_pack(
         merged.extend(prepare_entities(
             &pack.neighbors,
             PreparedEntitySource::Neighbor,
+            skip_evidence,
             config,
             json_mode,
             value_depth_limit,
@@ -93,6 +116,7 @@ pub(super) fn prepare_pack(
         let results_source = group_entities(prepare_entities(
             &pack.results,
             PreparedEntitySource::Result,
+            skip_evidence,
             config,
             json_mode,
             value_depth_limit,
@@ -101,6 +125,7 @@ pub(super) fn prepare_pack(
         let neighbors_source = group_entities(prepare_entities(
             &pack.neighbors,
             PreparedEntitySource::Neighbor,
+            skip_evidence,
             config,
             json_mode,
             value_depth_limit,
@@ -154,6 +179,12 @@ pub(super) fn prepare_pack(
         tokenizer,
         (!skip_budget).then_some(config.budget),
     );
+    // A serialized-token budget can shed the base after initial selection.
+    // Rebudget the original ranked rows if the prefix did not survive; typed
+    // consumers keep those rows independently of serialized deduplication.
+    if had_l2 && prepared.l2_base.is_none() {
+        return prepare_pack_with_l2(pack, config, json_mode, false, true);
+    }
     prepared
 }
 
@@ -258,6 +289,7 @@ fn value_depth_limit_for_format(format: PackFormat) -> ValueDepthLimit {
 fn prepare_entities(
     entities: &[ContextEntity],
     source: PreparedEntitySource,
+    skip_evidence: Option<&[EntityId]>,
     config: &SerializeConfig,
     json_mode: bool,
     value_depth_limit: ValueDepthLimit,
@@ -266,6 +298,7 @@ fn prepare_entities(
     let now = crate::unix_seconds_now();
     entities
         .iter()
+        .filter(|entity| skip_evidence.is_none_or(|ids| ids.binary_search(&entity.id).is_err()))
         .filter_map(|entity| {
             let mut fields = Vec::new();
 
