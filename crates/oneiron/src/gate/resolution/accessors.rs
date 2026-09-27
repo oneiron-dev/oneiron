@@ -112,6 +112,24 @@ impl PolicyManifestResolution {
         self.auto_checker.as_deref()
     }
 
+    /// The quality floor lives in a trusted, seeded POLICY_MANIFEST row.
+    /// Holder overrides are nested restrict-only rows capped at the vault.
+    #[must_use]
+    pub(crate) fn teacher_probe_policy(
+        &self,
+        holder_ref: Option<&str>,
+    ) -> Option<crate::llm::manifest::TeacherProbePolicy> {
+        if self.is_fail_closed() || !self.teacher_probe_trusted {
+            return None;
+        }
+        let vault_min = self.teacher_probe_vault_min?;
+        let effective = holder_ref
+            .and_then(|holder| self.teacher_probe_holders.get(holder).copied())
+            .unwrap_or(vault_min)
+            .max(vault_min);
+        crate::llm::manifest::TeacherProbePolicy::resolved(vault_min, effective, holder_ref).ok()
+    }
+
     /// The resolved `budget_policy` rows, fail-closed: a loaded manifest that
     /// forces fail-closed (malformed, unsupported schema, engine-version
     /// floor, unknown axis, row-count overflow) exposes no usable table, and
