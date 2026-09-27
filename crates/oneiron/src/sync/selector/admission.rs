@@ -342,36 +342,17 @@ fn downweight_federated_claim(
 ///
 /// Only the STATELESS half of `apply_put`'s per-kind chain is mirrored, and it
 /// delegates to the very same validators, so this door cannot judge a body
-/// materialization would accept. The store-reading rules (companion duplicate
-/// keys, the authority-log store-key bind, gate policy) stay where they can
+/// materialization would accept. Store-reading rules (authority-log store-key
+/// binding and gate policy) stay where they can
 /// read a transaction — this is a fail-closed prefilter, never the authority:
 /// materialization still re-validates every row it is handed. Kinds with no
 /// pinned body schema stay opaque here exactly as they are at the storage
 /// layer, and the maintenance kinds are unreachable — the writability test
 /// above has already rejected them.
 ///
-/// FED-1380 closes COMPANION_REGISTER, the one pinned-body kind this door still
-/// skipped. Leaving it open was not harmless. An undecodable companion body
-/// entered the ADMITTED doc and staged `Pending`; the operator's confirmation
-/// won the CAS and deleted the staged bytes in the SAME write txn; replay then
-/// quarantined the row as a remote rejection (`InvalidClaimBody`) and continued,
-/// so the entity never materialized — while the receipt read `Confirmed`
-/// forever. Re-presenting the artifact cannot repair it either: `receipt_id` is
-/// re-derived from the same bytes, finds the terminal receipt, and returns an
-/// idempotent EMPTY admitted update. A `Confirmed` receipt for a row that can
-/// never materialize is silent consent to a permanent drop, so the body is
-/// judged here, before any receipt exists.
-///
-/// The refusal is deliberately RETRYABLE, which is what preserves the
-/// quarantine-not-terminal choice at materialization:
-/// `decode_companion_record_body` reports faults as `InvalidClaimBody`, which
-/// `stage_foreign_vault_import` classifies TERMINAL, so this arm re-labels them
-/// `InvalidCompanionRecordBody` — same verdict text, same coarse `ErrorKind`,
-/// and absent from that terminal list by design. Nothing is staged, so nothing
-/// is left for a confirmation to GC. Only the STATELESS half is mirrored here,
-/// as everywhere else in this function: the duplicate-`(scope, subject)` rule
-/// reads a transaction and stays at materialization, which still re-validates
-/// every row it is handed.
+/// Retired companion-register rows and persona/relationship-shaped FACETs are
+/// refused before an import receipt can be staged. The typed refusal stays
+/// retryable: a peer cannot confirm bytes that materialization must discard.
 #[cfg(feature = "sync")]
 fn validate_admitted_replicated_body(id: &EntityId, entity_type: u8, body: &[u8]) -> Result<()> {
     match entity_type {
@@ -400,15 +381,9 @@ fn validate_admitted_replicated_body(id: &EntityId, entity_type: u8, body: &[u8]
             crate::agent_def::validate_reserved_logical_id(id, &definition)?;
         }
         crate::registry::ENTITY_TYPE_FACET if crate::companion::is_identity_facet_body(body) => {
-            // Re-label only the variant whose staging classification is
-            // TERMINAL; the verdict text and every other decoder error (already
-            // non-terminal) pass through unchanged. See the note above.
-            crate::companion::decode_companion_record_body(body).map_err(|error| match error {
-                Error::InvalidClaimBody(reason) => {
-                    Error::Record(RecordError::InvalidCompanionRecordBody(reason))
-                }
-                other => other,
-            })?;
+            return Err(Error::Record(RecordError::InvalidCompanionRecordBody(
+                "retired companion-shaped FACET; use PERSON identity and scenario masks",
+            )));
         }
         _ => {}
     }
@@ -483,6 +458,30 @@ fn validate_federated_pack(store: &crate::store::Store, blob: &[u8]) -> Result<(
     let txn = store.env.read_txn()?;
     let (handle, local) = store.remap_pack_instance_in_txn(&txn, &source)?;
     store.validate_pack_instance_in_txn(&txn, handle, &local.to_bytes()?)
+}
+
+#[cfg(all(test, feature = "sync"))]
+mod retired_facet_tests {
+    use super::*;
+
+    #[test]
+    fn valid_legacy_facet_refused_before_sync_admission_but_scenario_is_allowed() {
+        let person = crate::test_util::entity(0x71);
+        let id = crate::test_util::entity(0x72);
+        let legacy = crate::companion::tests::support::retired_persona_facet_body(person);
+        assert!(matches!(
+            validate_admitted_replicated_body(&id, crate::registry::ENTITY_TYPE_FACET, &legacy),
+            Err(Error::Record(RecordError::InvalidCompanionRecordBody(_)))
+        ));
+        let scenario = rmp_serde::to_vec_named(&serde_json::json!({
+            "kind": "scenario", "person_ref": person.to_hex()
+        }))
+        .expect("scenario fixture");
+        assert!(
+            validate_admitted_replicated_body(&id, crate::registry::ENTITY_TYPE_FACET, &scenario,)
+                .is_ok()
+        );
+    }
 }
 
 #[cfg(all(test, feature = "sync"))]
