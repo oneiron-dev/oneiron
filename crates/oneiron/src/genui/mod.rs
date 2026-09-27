@@ -8,6 +8,7 @@ mod consent_cards;
 mod consent_eval;
 mod failure_card;
 mod failure_card_validation;
+mod project_proposal;
 mod protocol;
 mod receipt_view;
 
@@ -25,6 +26,10 @@ use self::failure_card::parse_card_ref;
 pub use self::failure_card::{
     FailureDiagnosisState, HealerQaEntryRef, HealerQaFeed, SURFACED_FAILURE_CARD_SCHEMA_VERSION,
     SurfacedFailureCard, SurfacedFailureCardInput, surfaced_failure_card,
+};
+pub use self::project_proposal::{
+    PROJECT_PROPOSAL_MINT_ACTION_ID, ProjectGoalDraft, ProjectMintIntent, ProjectProposalCard,
+    ProjectProposalPicks,
 };
 pub use self::protocol::{
     OF336_CARD_CATALOG_VERSION, OF336_MCP_UI_MIME, OF336_PROTOCOL_VERSION, Of336ActionDescriptor,
