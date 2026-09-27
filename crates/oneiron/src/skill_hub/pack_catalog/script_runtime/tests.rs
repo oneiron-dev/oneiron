@@ -526,7 +526,7 @@ fn foreign_script_cannot_route_to_a_different_channel_agent() -> Result<()> {
 #[test]
 fn same_pack_receives_run_local_grants_for_two_vault_custody_names() -> Result<()> {
     for secret_ref in ["email-token", "work-mail-token"] {
-        let (_dir, vault, agent, grant, image) = setup_with_secret(false, secret_ref)?;
+        let (_dir, vault, agent, grant, image) = setup_with_secret(true, secret_ref)?;
         let scratch = tempfile::tempdir()?;
         let seen = Arc::new(Mutex::new(Vec::new()));
         let outcome = vault.run_script_pack_in_vm(
