@@ -644,3 +644,124 @@ fn request_buffered_adapter_drains_responses_between_twenty_chunks() {
     );
     assert_eq!(ledger.lock().unwrap().len(), 1);
 }
+
+#[test]
+fn both_hosted_adapters_keep_two_chunks_from_one_delta_and_end_while_responses_wait() -> Result<()>
+{
+    use crate::voice_cascade::hosted_tts::{
+        HostedProvider, HostedTransport, HostedTtsAdapter, HostedWork,
+    };
+    use crate::voice_identity::ref_bank::{OwnerVoiceRefPack, VoiceRefOrigin, VoiceRegisterClip};
+    #[derive(Clone)]
+    struct Capture(Arc<Mutex<Vec<HostedWork>>>);
+    impl HostedTransport for Capture {
+        fn try_submit(&mut self, work: HostedWork) -> Result<()> {
+            self.0.lock().unwrap().push(work);
+            Ok(())
+        }
+    }
+    for provider in [HostedProvider::Cartesia, HostedProvider::ElevenLabsFlash] {
+        let _dir = tempfile::tempdir().expect("temporary vault");
+        let vault = crate::Vault::open(_dir.path(), crate::VaultConfig::device())
+            .expect("open seeded vault");
+        let pack = OwnerVoiceRefPack {
+            version: 1,
+            id: "owner-stream".into(),
+            owner: crate::EntityId::now(),
+            origin: VoiceRefOrigin::OwnerCapture,
+            clips: vec![VoiceRegisterClip {
+                register: "neutral".into(),
+                media_type: "audio/wav".into(),
+                audio: vec![1, 2],
+                transcript: "reference".into(),
+            }],
+        };
+        vault.store_owner_voice_refs(&pack)?;
+        let generation = GenerationEpoch {
+            session: uuid::Uuid::new_v4(),
+            value: 1,
+        };
+        let queue = Arc::new(Mutex::new(Vec::new()));
+        let mut adapter = HostedTtsAdapter::bind(
+            &vault,
+            &pack.id,
+            provider,
+            "provisioned",
+            Capture(queue.clone()),
+        )?;
+        let ledger = Arc::new(Mutex::new(Vec::new()));
+        let mut bus = LlmEventBus::new(Box::new(Sink(ledger.clone())));
+        let events = vec![
+            LlmStreamEvent::TextStart {
+                part_id: "t".into(),
+            },
+            LlmStreamEvent::TextDelta {
+                part_id: "t".into(),
+                text: "Hello. World.".into(),
+            },
+            LlmStreamEvent::Done {
+                message: LlmMessage {
+                    role: LlmMessageRole::Assistant,
+                    content: vec![ContentPart::Text {
+                        text: "Hello. World.".into(),
+                    }],
+                },
+                usage: LlmUsage::zero(),
+                finish_reason: FinishReason::Stop,
+            },
+        ];
+        {
+            let mut work = std::pin::pin!(drive_voice_stream(
+                &mut bus,
+                LlmStream::new(Source {
+                    events,
+                    position: Arc::new(AtomicUsize::new(0)),
+                    time: Arc::new(AtomicU64::new(0))
+                }),
+                Ticks {
+                    position: Arc::new(AtomicUsize::new(0)),
+                    time: Arc::new(AtomicU64::new(0))
+                },
+                || 0,
+                VoiceStreamConfig {
+                    generation,
+                    policy: VoiceChunkPolicy::default()
+                },
+                |command| adapter.submit(command),
+                |_| {},
+            ));
+            assert!(matches!(
+                work.as_mut().poll(&mut Context::from_waker(Waker::noop())),
+                Poll::Ready(Ok(()))
+            ));
+        }
+        assert_eq!(ledger.lock().unwrap().len(), 1);
+        let commands = queue.lock().unwrap().clone();
+        assert_eq!(commands.len(), 2);
+        let texts: Vec<_> = commands
+            .iter()
+            .map(|command| {
+                let HostedWork::Render(request) = command else {
+                    panic!("normal delta cancelled")
+                };
+                assert_eq!(request.generation, generation);
+                request.body[match provider {
+                    HostedProvider::Cartesia => "transcript",
+                    HostedProvider::ElevenLabsFlash => "text",
+                }]
+                .as_str()
+                .unwrap()
+                .to_owned()
+            })
+            .collect();
+        assert_eq!(texts, ["Hello.", " World."]);
+        // Both requests were admitted with no response yet; End is already accepted.
+        assert_eq!(adapter.receive_pcm(generation, 0, 0, &[1, 0])?.samples, [1]);
+        assert!(adapter.receive_pcm(generation, 1, 0, &[1, 0]).is_err());
+        adapter.finish_response(generation, 0)?;
+        assert_eq!(adapter.receive_pcm(generation, 1, 0, &[2, 0])?.samples, [2]);
+        adapter.finish_response(generation, 1)?;
+        assert_eq!(queue.lock().unwrap().len(), 2);
+    }
+    Ok(())
+}
