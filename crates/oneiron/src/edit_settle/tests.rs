@@ -88,6 +88,7 @@ fn proposal(run_ref: &str, new_bytes: &[u8], ops: Vec<EditOp>) -> EditProposal {
             touched_parts: BTreeSet::new(),
             mutation_mode: MutationMode::Full,
             warnings: Vec::new(),
+            pptx_holder_limits: None,
         },
         inspection: StructureSummary {
             format: OfficeFormat::Xlsx,
@@ -651,6 +652,8 @@ fn settlement_record_round_trips_through_msgpack() -> Result<()> {
         content_hash: Some([0xA5; BLOB_ARTIFACT_CONTENT_HASH_LEN]),
         manifest_ref: Some([0xB6; 32]),
         manifest_ops: 3,
+        pptx_slide_creation_id_mints: Vec::new(),
+        pptx_review_identities: Vec::new(),
         anchors: vec![
             SettledAnchor {
                 thread_id: EntityId::now(),
@@ -667,6 +670,19 @@ fn settlement_record_round_trips_through_msgpack() -> Result<()> {
     };
     let bytes = encode_settlement_record(&selected)?;
     assert_eq!(decode_settlement_record(&bytes)?, selected);
+    for absent in ["pptx_slide_creation_id_mints", "pptx_review_identities"] {
+        let mut value = rmpv::decode::read_value(&mut std::io::Cursor::new(&bytes)).unwrap();
+        let rmpv::Value::Map(entries) = &mut value else {
+            unreachable!()
+        };
+        entries.retain(|(key, _)| key.as_str() != Some(absent));
+        let mut incomplete = Vec::new();
+        rmpv::encode::write_value(&mut incomplete, &value).unwrap();
+        assert!(
+            decode_settlement_record(&incomplete).is_err(),
+            "missing {absent}"
+        );
+    }
 
     let discarded = SettlementRecord {
         proposal_ref: "run:codec-d".to_owned(),
@@ -679,6 +695,8 @@ fn settlement_record_round_trips_through_msgpack() -> Result<()> {
         content_hash: None,
         manifest_ref: None,
         manifest_ops: 0,
+        pptx_slide_creation_id_mints: Vec::new(),
+        pptx_review_identities: Vec::new(),
         anchors: Vec::new(),
         reason: Some("not wanted".to_owned()),
     };
