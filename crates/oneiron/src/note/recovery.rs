@@ -113,7 +113,7 @@ pub(crate) fn restore_head(
     guard(vault, txn, note)?;
     super::documents::set_head(&vault.store, txn, note, head_and_seq.0, head_and_seq.1)?;
     let doc = NoteDocument::from_loro(note, rebuild(note, text, title, authorship)?)?;
-    super::document_store::persist(vault, txn, &doc)
+    super::document_store::persist_recovered_document(vault, txn, &doc)
 }
 
 #[cfg(feature = "sync")]
@@ -152,5 +152,5 @@ pub(crate) fn restore(
             .sync_state
             .delete(txn, &format!("{prefix}{}", slot.to_hex()))?;
     }
-    super::document_store::persist(vault, txn, &doc)
+    super::document_store::persist_recovered_document(vault, txn, &doc)
 }

@@ -1,7 +1,9 @@
 //! Authenticated semantic NOTE commands. Peer Loro bytes never authorize writes.
 
 use super::document::{NoteDocument, invalid};
-use super::document_store::{load, persist, require_note_writer, validate_pin_source};
+use super::document_store::{
+    load, persist_authoritative, require_note_writer, validate_pin_source,
+};
 use super::{NoteEdit, NoteEditOutcome, NotePin};
 use crate::memory::{CommitReceipt, Memory, MemoryResult};
 use crate::{EdgeActorClass, EntityId, WriteActor};
@@ -308,7 +310,7 @@ impl Memory<'_> {
                         command_hash: hash,
                     },
                 )?;
-                persist(self.vault(), txn, &doc)?;
+                persist_authoritative(self.vault(), txn, &doc)?;
                 NoteEditOutcome::Applied(doc.view()?)
             }
         };

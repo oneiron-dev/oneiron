@@ -281,37 +281,6 @@ pub(crate) fn run_in_txn(
         .iter()
         .map(|row| (row.entity_id, row.head))
         .collect();
-    // Recovery replaces a set of already-admitted documents, not one socket
-    // frame at a time. Validate the FINAL title keys before releasing the
-    // old reservations; two notes may have swapped titles while this vault
-    // was offline. Notes outside this recovery set still own their keys.
-    let mut final_titles = BTreeMap::new();
-    for row in snapshot
-        .doc_snapshots
-        .iter()
-        .filter(|row| heads.get(&row.entity_id) == Some(&row.head))
-    {
-        let note = id(row.entity_id)?;
-        if let Some(key) =
-            crate::note::title_reservation_key(vault, txn, note, row.title.as_deref())?
-        {
-            if final_titles.insert(key.clone(), note).is_some() {
-                return Err(invalid("duplicate NOTE title in recovery set"));
-            }
-            if let Some(owner) = vault.store.vault_meta.get(txn, key.as_bytes())? {
-                let owner: [u8; 16] = owner
-                    .as_ref()
-                    .try_into()
-                    .map_err(|_| invalid("NOTE title reservation owner"))?;
-                if !admitted.contains(&owner) {
-                    return Err(invalid("NOTE title collides outside recovery set"));
-                }
-            }
-        }
-    }
-    for owner in &admitted {
-        crate::note::release_title_reservation(vault, txn, id(*owner)?)?;
-    }
     for row in &snapshot.doc_snapshots {
         let note = id(row.entity_id)?;
         if !admitted.contains(&row.entity_id) {
@@ -365,6 +334,9 @@ pub(crate) fn run_in_txn(
                 .put(txn, &key, &crate::note::documents::snapshot(&doc)?)?;
         }
     }
+    // Install the NOTE-owned final title set even when every live document
+    // was value-equal and its history-free restore took the no-op path.
+    crate::note::replace_recovered_titles_in_txn(vault, txn, snapshot)?;
     for receipt in &snapshot.head_move_receipts {
         vault
             .store

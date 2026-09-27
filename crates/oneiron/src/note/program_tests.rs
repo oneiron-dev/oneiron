@@ -750,3 +750,19 @@ fn note_title_reservation_is_atomic_and_normalized_in_featureless_mode() {
             .is_err()
     );
 }
+
+#[test]
+fn erased_note_releases_title_for_another_authoritative_note() {
+    let (_dir, vault, actor) = fixture();
+    let first = vault.create_note("research", "first", actor).unwrap();
+    let second = vault.create_note("research", "second", actor).unwrap();
+    let memory = vault.memory(actor.entity_ref(), actor.actor_class());
+    memory.set_note_title(first, "Reusable title").unwrap();
+    assert!(memory.set_note_title(second, "reusable TITLE").is_err());
+    vault.delete_entity(&first).unwrap();
+    memory.set_note_title(second, "reusable TITLE").unwrap();
+    assert_eq!(
+        vault.note_document(second).unwrap().title.as_deref(),
+        Some("reusable TITLE")
+    );
+}

@@ -399,6 +399,15 @@ fn standard_forward_rebuild_restores_documents_shells_graph_and_indexes() -> Res
         RecoveryBudget::default(),
     )?;
     assert_eq!(again.tier, RecoveryTier::Healthy);
+    drop(target);
+    let target = Vault::open(dir.path(), VaultConfig::default())?;
+    assert!(
+        target
+            .memory(owner, EdgeActorClass::Human)
+            .set_note_title(second, "recovered TITLE")
+            .is_err(),
+        "unchanged recovery and reopen must preserve the reservation"
+    );
     let head = target.note_program_document(fixture.note)?.unwrap().head();
     let redacted = fixture.snapshot.excluding_document_span(
         fixture.note,
@@ -490,6 +499,29 @@ fn existing_vault_recovers_title_swap_in_both_orders_and_refuses_external_collis
             &initial,
             RecoveryBudget::default(),
         )?;
+        // Only alpha changes; beta is an unchanged member of this recovery set.
+        set(alpha, "gamma");
+        let mixed = capture()?;
+        recover_vault_window(
+            &target,
+            &materializer,
+            &path,
+            &mixed,
+            RecoveryBudget::default(),
+        )?;
+        recover_vault_window(
+            &target,
+            &materializer,
+            &path,
+            &mixed,
+            RecoveryBudget::default(),
+        )?;
+        let outside = target
+            .create_note("research", "outside body", actor)
+            .expect("outside note");
+        let reader = target.memory(owner, EdgeActorClass::Human);
+        assert!(reader.set_note_title(outside, "GAMMA").is_err());
+        assert!(reader.set_note_title(outside, " BETA ").is_err());
         set(alpha, "temporary");
         set(beta, "alpha");
         set(alpha, "beta");
@@ -510,9 +542,8 @@ fn existing_vault_recovers_title_swap_in_both_orders_and_refuses_external_collis
             &swapped,
             RecoveryBudget::default(),
         )?;
-        let outside = target
-            .create_note("research", "outside body", actor)
-            .expect("outside note");
+        assert!(reader.set_note_title(outside, " BETA ").is_err());
+        assert!(reader.set_note_title(outside, "ALPHA").is_err());
         target
             .memory(owner, EdgeActorClass::Human)
             .set_note_title(outside, "outside")
@@ -537,6 +568,8 @@ fn existing_vault_recovers_title_swap_in_both_orders_and_refuses_external_collis
             target.note_document(outside)?.title.as_deref(),
             Some("outside")
         );
+        assert!(reader.set_note_title(outside, " BETA ").is_err());
+        assert!(reader.set_note_title(outside, "ALPHA").is_err());
     }
     Ok(())
 }

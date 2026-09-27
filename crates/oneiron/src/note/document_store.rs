@@ -10,55 +10,6 @@ use crate::memory::{EntityRefReceipt, Memory, MemoryError, MemoryResult};
 use crate::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_NOTE};
 use crate::{EdgeActorClass, EdgeKind, EntityId, TimeRange, Vault, WriteActor};
 
-/// The authoritative per-author normalized title key. Recovery uses the same
-/// key as socket admission when it validates a replacement set as one unit.
-pub(crate) fn title_reservation_key(
-    vault: &Vault,
-    txn: &heed::RoTxn<'_>,
-    id: EntityId,
-    title: Option<&str>,
-) -> Result<Option<String>> {
-    title
-        .map(|title| {
-            super::document::validate_title(title)?;
-            let normalized = title
-                .split_whitespace()
-                .collect::<Vec<_>>()
-                .join(" ")
-                .to_lowercase();
-            let (_, core) = super::verbs::note_core(vault, txn, id)?;
-            Ok(format!(
-                "note.title/v1/author/{}:{}",
-                core.author_ref.to_hex(),
-                blake3::hash(normalized.as_bytes()).to_hex()
-            ))
-        })
-        .transpose()
-}
-
-/// Remove the old reservation only for this NOTE, under the recovery writer.
-#[cfg(feature = "sync")]
-pub(crate) fn release_title_reservation(
-    vault: &Vault,
-    txn: &mut heed::RwTxn<'_>,
-    id: EntityId,
-) -> Result<()> {
-    let reverse = format!("note.title/v1/id/{}", id.to_hex());
-    if let Some(key) = vault
-        .store
-        .vault_meta
-        .get(txn, reverse.as_bytes())?
-        .map(|key| key.to_vec())
-    {
-        if vault.store.vault_meta.get(txn, &key)?.as_deref() != Some(id.as_bytes()) {
-            return Err(invalid("NOTE title reservation mismatch"));
-        }
-        vault.store.vault_meta.delete(txn, &key)?;
-        vault.store.vault_meta.delete(txn, reverse.as_bytes())?;
-    }
-    Ok(())
-}
-
 pub(super) fn key(id: EntityId) -> String {
     format!("d:e:{}", id.to_hex())
 }
@@ -85,7 +36,35 @@ pub(super) fn load(vault: &Vault, txn: &heed::RoTxn<'_>, id: EntityId) -> Result
     NoteDocument::from_loro(id, doc)
 }
 
-pub(super) fn persist(vault: &Vault, txn: &mut heed::RwTxn<'_>, doc: &NoteDocument) -> Result<()> {
+pub(super) fn persist_authoritative(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    doc: &NoteDocument,
+) -> Result<()> {
+    persist_structural(vault, txn, doc)?;
+    super::title_index::replace_authoritative_document_in_txn(vault, txn, doc)
+}
+
+#[cfg(feature = "sync")]
+pub(super) fn persist_replica(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    doc: &NoteDocument,
+) -> Result<()> {
+    super::title_index::remove_replica_projection_in_txn(vault, txn, doc.id)?;
+    persist_structural(vault, txn, doc)
+}
+
+#[cfg(feature = "sync")]
+pub(super) fn persist_recovered_document(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    doc: &NoteDocument,
+) -> Result<()> {
+    persist_structural(vault, txn, doc)
+}
+
+fn persist_structural(vault: &Vault, txn: &mut heed::RwTxn<'_>, doc: &NoteDocument) -> Result<()> {
     super::ensure_citations_ready(&vault.store, txn, doc.id)?;
     super::citation_erase::validate_pins(vault, txn, &doc.pins()?)?;
     // Keep the live NOTE projection valid, including after concurrent
@@ -97,52 +76,6 @@ pub(super) fn persist(vault: &Vault, txn: &mut heed::RwTxn<'_>, doc: &NoteDocume
     }
     if doc.snapshot()?.len() > super::operations::MAX_RECEIPT_PAYLOAD - 18 {
         return Err(invalid("NOTE snapshot exceeds wire bound"));
-    }
-    // Reserve a normalized title under the same writer as the document commit.
-    // A reverse entry makes retitles and erasure exact; never scan the vault
-    // or use the text body as a content-hash dedup oracle.
-    let reverse = format!("note.title/v1/id/{}", doc.id.to_hex());
-    let previous = vault
-        .store
-        .vault_meta
-        .get(txn, reverse.as_bytes())?
-        .map(|key| key.to_vec());
-    // A replica receives already-admitted authority state one document at a
-    // time. Its local reservation is not a second admission authority: an
-    // offline cross-document title swap could otherwise deadlock in either
-    // arrival order. Drop any old reservation when this vault is a replica.
-    let replica = vault
-        .store
-        .sync_state
-        .get(txn, &format!("ds:e:{}", doc.id.to_hex()))?
-        .is_some();
-    let next = if replica {
-        None
-    } else {
-        title_reservation_key(vault, txn, doc.id, doc.title()?.as_deref())?
-    };
-    if let Some(ref key) = next
-        && let Some(owner) = vault.store.vault_meta.get(txn, key.as_bytes())?
-        && owner.as_ref() != doc.id.as_bytes()
-    {
-        return Err(invalid("duplicate NOTE title"));
-    }
-    if previous.as_deref() != next.as_ref().map(String::as_bytes) {
-        if let Some(old) = previous {
-            vault.store.vault_meta.delete(txn, &old)?;
-        }
-        if let Some(key) = next {
-            vault
-                .store
-                .vault_meta
-                .put(txn, key.as_bytes(), doc.id.as_bytes())?;
-            vault
-                .store
-                .vault_meta
-                .put(txn, reverse.as_bytes(), key.as_bytes())?;
-        } else {
-            vault.store.vault_meta.delete(txn, reverse.as_bytes())?;
-        }
     }
     super::storage::snapshot(vault, txn, doc.id, &doc.doc, false)?;
     vault
@@ -267,7 +200,7 @@ impl Memory<'_> {
                     command_hash: *blake3::hash(&body).as_bytes(),
                 },
             )?;
-            persist(self.vault(), txn, &doc)?;
+            persist_authoritative(self.vault(), txn, &doc)?;
             Ok(())
         })?;
         #[cfg(feature = "sync")]
