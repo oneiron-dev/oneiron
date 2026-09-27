@@ -59,6 +59,19 @@ impl WeaveRecipePin {
         Ok(pin)
     }
 
+    pub(crate) fn binding_hash(&self) -> [u8; 32] {
+        *blake3::Hasher::new()
+            .update(b"oneiron:dreamer:weave-execution-pin:v1")
+            .update(self.skill.as_bytes())
+            .update(&(self.version.len() as u64).to_be_bytes())
+            .update(self.version.as_bytes())
+            .update(self.content_hash.as_bytes())
+            .update(self.subject.as_bytes())
+            .update(self.evidence.as_bytes())
+            .finalize()
+            .as_bytes()
+    }
+
     fn encode(&self) -> Value {
         Value::Map(vec![
             ("skill".into(), self.skill.to_hex().into()),

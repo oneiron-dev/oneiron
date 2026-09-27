@@ -134,8 +134,19 @@ impl crate::dreamer_wake::WeaveRecipeRuntime for RecipeInterpreter {
             .lines()
             .find_map(|line| line.strip_prefix("VALUE_PREFIX: "))
             .ok_or(Error::InvalidClaimBody("recipe has no instruction"))?;
-        let source = std::str::from_utf8(evidence)
-            .map_err(|_| Error::InvalidClaimBody("source is not text"))?;
+        let mut input: &[u8] = evidence;
+        let value = rmpv::decode::read_value(&mut input)
+            .map_err(|_| Error::InvalidClaimBody("source is not a TURN"))?;
+        let source = value
+            .as_map()
+            .and_then(|fields| {
+                fields.iter().find_map(|(key, value)| {
+                    (key.as_str() == Some("txt"))
+                        .then(|| value.as_str())
+                        .flatten()
+                })
+            })
+            .ok_or(Error::InvalidClaimBody("TURN has no text"))?;
         Ok(crate::dreamer_wake::WeaveRecipeDraft {
             predicate: predicate.to_owned(),
             value: rmpv::Value::from(format!("{instruction}{source}")),
@@ -167,10 +178,20 @@ fn agent_authored_weave_recipe_executes_with_system_write_stamp() -> Result<()> 
         (agent, b"resident".as_slice()),
         (owner, b"owner".as_slice()),
         (subject, b"subject".as_slice()),
-        (evidence, b"retained evidence".as_slice()),
     ] {
         vault.put_entity(&id, crate::registry::ENTITY_TYPE_PERSON, at, 1, body)?;
     }
+    let mut turn = Vec::new();
+    rmpv::encode::write_value(
+        &mut turn,
+        &Value::Map(vec![
+            ("txt".into(), "retained evidence".into()),
+            ("spkr".into(), "user".into()),
+        ]),
+    )
+    .map_err(|_| Error::InvariantViolation("TURN fixture encode"))?;
+    vault.put_entity(&evidence, crate::registry::ENTITY_TYPE_TURN, at, 1, &turn)?;
+    vault.install_read_permit_for_test(dreamer)?;
     let skill = EntityId::now();
     let proposal = SkillRecord::new(
         "weave.recipe",

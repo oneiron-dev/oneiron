@@ -13039,7 +13039,7 @@
      "path": "src/dreamer_consolidation/provenance.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 2,
       "enum": 1,
       "fn": 7,
       "struct": 5,
@@ -13755,7 +13755,7 @@
      "path": "src/dreamer_runner/recipe.rs",
      "purpose": "Per-vault, owner-admitted workflow skill binding for the Dreamer weave",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 2,
       "fn": 1,
       "struct": 1
      }
@@ -13973,7 +13973,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "WeaveRecipeDraft",
@@ -13986,6 +13986,14 @@
       "struct": 2,
       "trait": 1
      }
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "src/dreamer_wake/recipe/tests.rs",
+     "purpose": "Recipe read, trust and commit-to-settlement recovery regressions",
+     "surface": {}
     },
     {
      "bucket": "s",
@@ -35042,7 +35050,7 @@
      "purpose": "OF-366 tournament claim-authoring runner primitives"
     },
     "dreamer_wake": {
-     "files": 10,
+     "files": 11,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -35843,7 +35851,7 @@
    "over_bar": 11,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
    "source_files": 2115,
-   "test_files": 721
+   "test_files": 722
   },
   "oneiron-android": {
    "files": [

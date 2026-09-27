@@ -551,10 +551,18 @@ impl oneiron::dreamer_wake::WeaveRecipeRuntime for TestWeaveRuntime {
             .ok_or(oneiron::Error::InvalidClaimBody("no recipe predicate"))?;
         Ok(oneiron::dreamer_wake::WeaveRecipeDraft {
             predicate: predicate.into(),
-            value: rmpv::Value::from(
-                std::str::from_utf8(evidence)
-                    .map_err(|_| oneiron::Error::InvalidClaimBody("invalid evidence"))?,
-            ),
+            value: rmpv::decode::read_value(&mut &evidence[..])
+                .map_err(|_| oneiron::Error::InvalidClaimBody("invalid TURN"))?
+                .as_map()
+                .and_then(|fields| {
+                    fields.iter().find_map(|(key, value)| {
+                        (key.as_str() == Some("txt"))
+                            .then(|| value.as_str())
+                            .flatten()
+                    })
+                })
+                .ok_or(oneiron::Error::InvalidClaimBody("TURN text missing"))?
+                .into(),
             confidence: 0.8,
         })
     }
@@ -580,7 +588,6 @@ async fn production_factory_executes_owner_admitted_agent_authored_recipe() -> R
         (agent, b"agent".as_slice()),
         (owner, b"owner".as_slice()),
         (subject, b"subject".as_slice()),
-        (evidence, b"evidence".as_slice()),
     ] {
         vault.put_entity(
             &id,
@@ -590,6 +597,23 @@ async fn production_factory_executes_owner_admitted_agent_authored_recipe() -> R
             body,
         )?;
     }
+    let mut turn = Vec::new();
+    rmpv::encode::write_value(
+        &mut turn,
+        &rmpv::Value::Map(vec![
+            ("txt".into(), "evidence".into()),
+            ("spkr".into(), "user".into()),
+        ]),
+    )
+    .map_err(|_| oneiron::Error::InvalidClaimBody("TURN fixture encode"))?;
+    vault.put_entity(
+        &evidence,
+        oneiron::registry::ENTITY_TYPE_TURN,
+        TimeRange { start: 1, end: 1 },
+        1,
+        &turn,
+    )?;
+    vault.install_read_permit_for_test(vault.dreamer_authority()?)?;
     let skill = EntityId::from_bytes([0x68; 16])?;
     let proposed = SkillRecord::new(
         "weave.recipe",
