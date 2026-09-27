@@ -16916,7 +16916,7 @@
      "path": "src/gate/mod.rs",
      "purpose": "DEC-0005 Gate policy manifest resolver",
      "surface": {
-      "crate-vis": 26,
+      "crate-vis": 27,
       "re-export": 3
      }
     },
@@ -17033,6 +17033,24 @@
      "kind": "test",
      "notable": [],
      "path": "src/gate/retrieval_filter/tests.rs",
+     "purpose": "—",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/gate/retrieval_retention.rs",
+     "purpose": "Declared retrieval-telemetry retention rows and restrictive resolution",
+     "surface": {
+      "crate-vis": 9
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/gate/retrieval_retention/tests.rs",
      "purpose": "—",
      "surface": {}
     },
@@ -30308,7 +30326,7 @@
      "path": "src/store/retrieval_telemetry/retention.rs",
      "purpose": "Bounded, expirable base-ledger retrieval runs and crash-orphan reconciliation",
      "surface": {
-      "crate-vis": 9
+      "crate-vis": 6
      }
     },
     {
@@ -35577,7 +35595,7 @@
      "purpose": "—"
     },
     "gate": {
-     "files": 75,
+     "files": 77,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -36265,8 +36283,8 @@
    },
    "over_bar": 11,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2140,
-   "test_files": 731
+   "source_files": 2141,
+   "test_files": 732
   },
   "oneiron-android": {
    "files": [

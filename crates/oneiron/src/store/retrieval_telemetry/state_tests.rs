@@ -1,6 +1,6 @@
-use super::retention::{RETRIEVAL_RUN_MAX_ROWS, RETRIEVAL_RUN_TTL_SECONDS};
 use super::*;
 use crate::VaultConfig;
+use crate::gate::retrieval_retention::{DEFAULT_RETRIEVAL_AGE_SECS, DEFAULT_RETRIEVAL_MAX_RUNS};
 use crate::test_util::open_test_vault_with;
 
 fn record(started: u64) -> RetrievalRunRecord {
@@ -531,9 +531,85 @@ fn disabled_capture_never_asks_the_telemetry_id_source() -> crate::Result<()> {
     Ok(())
 }
 
+fn install_retention_rows(
+    vault: &crate::Vault,
+    vault_age_secs: u64,
+    vault_max_runs: u64,
+    holder_age_secs: u64,
+    holder_max_runs: u64,
+) -> crate::Result<()> {
+    use crate::gate::retrieval_retention::RETRIEVAL_RETENTION_ROWS_KEY;
+    let mut value =
+        rmpv::decode::read_value(&mut crate::gate::default_policy_manifest().as_slice())
+            .expect("shipped manifest decodes");
+    let rmpv::Value::Map(entries) = &mut value else {
+        unreachable!("default manifest map")
+    };
+    let rows = rmpv::Value::Array(vec![
+        rmpv::Value::Map(vec![
+            ("scope".into(), "vault".into()),
+            ("max_age_secs".into(), vault_age_secs.into()),
+            ("max_runs".into(), vault_max_runs.into()),
+        ]),
+        rmpv::Value::Map(vec![
+            ("scope".into(), "holder".into()),
+            ("max_age_secs".into(), holder_age_secs.into()),
+            ("max_runs".into(), holder_max_runs.into()),
+        ]),
+        rmpv::Value::Map(vec![
+            ("scope".into(), "precedence".into()),
+            ("order".into(), "nested_narrowing".into()),
+        ]),
+    ]);
+    let row = entries
+        .iter_mut()
+        .find(|(key, _)| key.as_str() == Some(RETRIEVAL_RETENTION_ROWS_KEY))
+        .expect("default manifest ships retention rows");
+    row.1 = rows;
+    let mut bytes = Vec::new();
+    rmpv::encode::write_value(&mut bytes, &value).expect("encode policy rows");
+    crate::test_util::put_policy_manifest_bytes(
+        vault,
+        crate::gate::default_policy_manifest_id()?,
+        &bytes,
+    )
+}
+
+#[test]
+fn shipped_manifest_declares_default_retention_and_precedence() -> crate::Result<()> {
+    let dir = tempfile::tempdir()?;
+    let vault = crate::Vault::open(dir.path(), telemetry_config())?;
+    let txn = vault.store.env.read_txn()?;
+    let resolved = crate::gate::resolve_policy_manifest(&vault.store, &txn)?;
+    assert_eq!(
+        resolved.retrieval_retention.effective(),
+        (DEFAULT_RETRIEVAL_AGE_SECS, DEFAULT_RETRIEVAL_MAX_RUNS)
+    );
+    let default = rmpv::decode::read_value(&mut crate::gate::default_policy_manifest().as_slice())
+        .expect("shipped manifest decodes");
+    assert!(
+        default
+            .as_map()
+            .expect("manifest map")
+            .iter()
+            .any(|(key, value)| key.as_str()
+                == Some(crate::gate::retrieval_retention::RETRIEVAL_RETENTION_ROWS_KEY)
+                && value.as_array().is_some_and(|rows| rows.len() == 2))
+    );
+    Ok(())
+}
+
 #[test]
 fn published_retention_evicts_old_runs_and_their_sidecars() -> crate::Result<()> {
     let (_dir, vault) = open_test_vault_with(telemetry_config());
+    // The holder asks for more rows; the vault ceiling still wins.
+    install_retention_rows(
+        &vault,
+        DEFAULT_RETRIEVAL_AGE_SECS,
+        3,
+        DEFAULT_RETRIEVAL_AGE_SECS,
+        9,
+    )?;
     let turn = RetrievalTurn {
         turn_id: [0xA1; 16],
         episode_id: [0xB1; 16],
@@ -550,13 +626,10 @@ fn published_retention_evicts_old_runs_and_their_sidecars() -> crate::Result<()>
         accepted: Some(true),
         metadata: Default::default(),
     })?;
-    for _ in 0..RETRIEVAL_RUN_MAX_ROWS {
+    for _ in 0..3 {
         vault.store.record_retrieval_run(&record(11))?;
     }
-    assert_eq!(
-        vault.retrieval_runs(RETRIEVAL_RUN_MAX_ROWS + 1)?.len(),
-        RETRIEVAL_RUN_MAX_ROWS
-    );
+    assert_eq!(vault.retrieval_runs(10)?.len(), 3);
     assert!(vault.retrieval_run(first.run_id)?.is_none());
     assert!(vault.retrieval_outcomes(first.run_id)?.is_empty());
     assert!(vault.retrieval_runs_by_turn(&turn.turn_id)?.is_empty());
@@ -571,14 +644,54 @@ fn telemetry_age_expires_on_write() -> crate::Result<()> {
     config.retrieval_telemetry_capture = true;
     let dir = tempfile::tempdir()?;
     let vault = crate::Vault::open(dir.path(), config)?;
+    // Holder override narrows both vault limits (ten seconds / three runs).
+    install_retention_rows(&vault, 10, 3, 1, 2)?;
     let published = record(1_000_000);
     vault.store.record_retrieval_run(&published)?;
-    clock.set(1_000_000 + RETRIEVAL_RUN_TTL_SECONDS + 1);
-    vault
-        .store
-        .record_retrieval_run(&record(1_000_000 + RETRIEVAL_RUN_TTL_SECONDS + 1))?;
+    clock.set(1_000_002);
+    vault.store.record_retrieval_run(&record(1_000_002))?;
     assert!(vault.retrieval_run(published.run_id)?.is_none());
     assert_eq!(vault.retrieval_runs(10)?.len(), 1);
+    Ok(())
+}
+
+#[test]
+fn holder_policy_bounds_finalization_and_reopen_pruning() -> crate::Result<()> {
+    let clock = crate::ports::ManualClock::new(1_000_000);
+    let mut config = telemetry_config();
+    config.store_clock = clock.bundle();
+    let dir = tempfile::tempdir()?;
+    let first = record(1_000_000);
+    let second = record(1_000_000);
+    {
+        let vault = crate::Vault::open(dir.path(), config.clone())?;
+        install_retention_rows(&vault, 10, 2, 1, 1)?;
+        for run in [&first, &second] {
+            vault
+                .store
+                .record_context_pack_provisional_retrieval_run(run)?;
+        }
+        for run in [&first, &second] {
+            vault
+                .store
+                .finalize_context_pack_retrieval_run(RetrievalRunFinalize {
+                    run_id: run.run_id,
+                    elapsed_us: 100,
+                    total_in_scope: 0,
+                    claims_suppressed: 0,
+                    surfaced_result_ids: &[],
+                    empty_reason: None,
+                    pack_output: None,
+                    pack_config: None,
+                })?;
+        }
+        assert!(vault.retrieval_run(first.run_id)?.is_none());
+        assert!(vault.retrieval_run(second.run_id)?.is_some());
+    }
+    clock.set(1_000_002);
+    let vault = crate::Vault::open(dir.path(), config)?;
+    assert!(vault.retrieval_run(second.run_id)?.is_none());
+    assert!(vault.retrieval_runs(10)?.is_empty());
     Ok(())
 }
 
@@ -825,7 +938,13 @@ fn pathname_open_cannot_sweep_a_live_replacement_with_unbound_lock() -> crate::R
         std::fs::rename(path, &moved).expect("rename captured root");
         std::fs::rename(&replacement, path).expect("install live vault");
     });
-    let vault = crate::Vault::open(&original, config)?;
+    // The already-bound A cannot be used to open B. Refusal happens before
+    // reconciliation; it is not permission to discard B's live run.
+    assert!(matches!(
+        crate::Vault::open(&original, config.clone()),
+        Err(crate::Error::InvalidConfig(_))
+    ));
+    let vault = crate::Vault::open(&original, config.clone())?;
     assert!(
         vault
             .store
@@ -841,6 +960,19 @@ fn pathname_open_cannot_sweep_a_live_replacement_with_unbound_lock() -> crate::R
     // SAFETY: this process still owns the descriptor; release the test hold.
     let released = unsafe { libc::flock(owner_lock.as_raw_fd(), libc::LOCK_UN) };
     assert_eq!(released, 0);
+    // Even without another owner's lock, non-Linux cannot prove that an
+    // unfinished row is orphaned, so another fresh open must not sweep it.
+    let vault = crate::Vault::open(&original, config)?;
+    assert!(
+        vault
+            .store
+            .vault_meta
+            .get(
+                &vault.store.env.read_txn()?,
+                &retrieval_run_key(live.run_id)
+            )?
+            .is_some()
+    );
     Ok(())
 }
 

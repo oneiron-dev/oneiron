@@ -1,7 +1,7 @@
 //! Process path registry, owned environment close semantics, manifest create/open/validate pairs, and storage ABI/schema gates.
 
 use std::collections::HashSet;
-#[cfg(unix)]
+#[cfg(target_os = "linux")]
 use std::fs::File;
 use std::path::PathBuf;
 use std::sync::MutexGuard;
@@ -135,7 +135,7 @@ pub(crate) struct OwnedEnv {
 impl OwnedEnv {
     /// Moves the bound root directory descriptor into the environment that was
     /// opened through it.
-    #[cfg(unix)]
+    #[cfg(target_os = "linux")]
     pub(super) fn retain_bound_root(&mut self, dir: File) {
         self._bound_root_dir = Some(dir);
     }

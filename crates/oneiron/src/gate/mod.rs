@@ -26,6 +26,7 @@ pub(crate) mod proposal_observation;
 mod repair;
 mod resolution;
 mod retrieval_filter;
+pub(crate) mod retrieval_retention;
 mod share;
 mod witness_message;
 

@@ -177,10 +177,6 @@ pub struct StoreOwner {
     pub(in crate::store) core: Weak<StoreCore>,
     /// Sole owner of the environment's close-on-last-clone semantics
     /// (ONE-1142).
-    #[cfg_attr(
-        not(target_os = "linux"),
-        expect(dead_code, reason = "held for close-on-last-clone Drop on non-Linux")
-    )]
     pub(in crate::store) env: OwnedEnv,
     // DROP-ORDER: keep this field after `env`. Fields drop in declaration
     // order, so the path registry releases the path only after [`OwnedEnv`]

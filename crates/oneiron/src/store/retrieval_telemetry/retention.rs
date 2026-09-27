@@ -14,11 +14,6 @@ use super::run_store::{RETRIEVAL_RUN_PROVISIONAL_KEY_PREFIX, retrieval_run_id_fr
 // cannot be evicted while an in-flight room assembly still owns them.
 const RETRIEVAL_AGE_KEY_PREFIX: &[u8] = b"retr_age:v0:";
 const RETRIEVAL_AGE_BY_RUN_KEY_PREFIX: &[u8] = b"retr_age_run:v0:";
-pub(super) const RETRIEVAL_RUN_TTL_SECONDS: u64 = 7 * 24 * 60 * 60;
-#[cfg(not(test))]
-pub(super) const RETRIEVAL_RUN_MAX_ROWS: usize = 1024;
-#[cfg(test)]
-pub(super) const RETRIEVAL_RUN_MAX_ROWS: usize = 128;
 
 /// On Linux every live Store holds a shared lock for its lifetime. The sole opener may
 /// take an exclusive lock, sweep crashed provisional rows, then downgrade.
@@ -195,8 +190,10 @@ pub(super) fn prune_retrieval_runs(
     txn: &mut RwTxn<'_>,
     reserve: usize,
 ) -> Result<()> {
+    let resolved = crate::gate::resolve_policy_manifest(store, txn)?;
+    let (max_age_secs, max_runs) = resolved.retrieval_retention.effective();
     let now = store.clock.now_recorded_at();
-    let cutoff = now.saturating_sub(RETRIEVAL_RUN_TTL_SECONDS);
+    let cutoff = now.saturating_sub(max_age_secs);
     // Collect keys before any delete; heed forbids mutating under an active cursor.
     let mut age_rows = Vec::new();
     for row in store
@@ -213,7 +210,7 @@ pub(super) fn prune_retrieval_runs(
     }
     let over = age_rows
         .len()
-        .saturating_sub(RETRIEVAL_RUN_MAX_ROWS.saturating_sub(reserve));
+        .saturating_sub(max_runs.saturating_sub(reserve));
     for (index, (at, id)) in age_rows.into_iter().enumerate() {
         if index >= over && at >= cutoff {
             break;
