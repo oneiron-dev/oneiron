@@ -2670,3 +2670,22 @@ fn schema_guard_bounds_large_host_side_validation_before_native_execution() {
     let schema = json!({"$dynamicRef":"#"});
     assert!(super::validate_json_schema(&schema, &json!(null)).is_err());
 }
+
+#[test]
+fn schema_guard_checks_tuple_items_and_preserves_empty_pointer_segments() {
+    use serde_json::json;
+    let tuple_cycle = json!({"$schema":"http://json-schema.org/draft-07/schema#",
+        "items":[{"allOf":[{"$ref":"#/items/0"}]}]});
+    assert!(super::validate_json_schema(&tuple_cycle, &json!([null])).is_err());
+    let tuple = json!({"$schema":"http://json-schema.org/draft-07/schema#",
+        "items":[{"type":"integer"}]});
+    assert!(super::validate_json_schema(&tuple, &json!([3])).is_ok());
+    assert!(super::validate_json_schema(&tuple, &json!(["bad"])).is_err());
+
+    let empty_name = json!({"$defs":{"":{"type":"integer"}},"$ref":"#/$defs/"});
+    assert!(super::validate_json_schema(&empty_name, &json!(3)).is_ok());
+    assert!(super::validate_json_schema(&empty_name, &json!("bad")).is_err());
+    let empty_property = json!({"properties":{"":{"type":"integer"}},
+        "$ref":"#/properties/"});
+    assert!(super::validate_json_schema(&empty_property, &json!(3)).is_ok());
+}

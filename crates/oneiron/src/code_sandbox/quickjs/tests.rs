@@ -177,15 +177,27 @@ fn quickjs_json_validate_recursive_schemas_are_bounded() {
             &mut factory.runtime().expect("runtime"),
             "const bad = {allOf:[{$ref:'#'}]}; \
              const recursive = {type:'object',properties:{next:{$ref:'#'}}}; \
+             const tupleCycle = {$schema:'http://json-schema.org/draft-07/schema#', \
+                items:[{allOf:[{$ref:'#/items/0'}]}]}; \
+             const tuple = {$schema:'http://json-schema.org/draft-07/schema#', \
+                items:[{type:'integer'}]}; \
+             const emptyKey = {$defs:{'':{type:'integer'}},$ref:'#/$defs/'}; \
              finish(JSON.stringify({loop:await self.json.validate(bad,null), \
                 valid:await self.json.validate(recursive,{next:{next:{}}}), \
-                invalid:await self.json.validate(recursive,{next:5})}));",
+                invalid:await self.json.validate(recursive,{next:5}), \
+                tupleLoop:await self.json.validate(tupleCycle,[null]), \
+                tupleValid:await self.json.validate(tuple,[3]), \
+                tupleInvalid:await self.json.validate(tuple,['bad']), \
+                emptyValid:await self.json.validate(emptyKey,3), \
+                emptyInvalid:await self.json.validate(emptyKey,'bad')}));",
             &mut Host::default(),
         )
         .expect("sandbox returns without aborting the host");
         assert_eq!(
             serde_json::from_str::<Value>(&result.observation).unwrap(),
-            serde_json::json!({"loop":false,"valid":true,"invalid":false})
+            serde_json::json!({"loop":false,"valid":true,"invalid":false,
+                "tupleLoop":false,"tupleValid":true,"tupleInvalid":false,
+                "emptyValid":true,"emptyInvalid":false})
         );
         return;
     }

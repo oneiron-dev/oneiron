@@ -88,7 +88,7 @@ fn check_reference_cycles(schema: &Value) -> Result<(), String> {
         }
         for (keyword, entry) in fields {
             let (children, consumes) = match keyword.as_str() {
-                "allOf" | "anyOf" | "oneOf" | "prefixItems" => {
+                "allOf" | "anyOf" | "oneOf" | "prefixItems" | "items" if entry.is_array() => {
                     let Some(items) = entry.as_array() else {
                         continue;
                     };
@@ -102,9 +102,9 @@ fn check_reference_cycles(schema: &Value) -> Result<(), String> {
                         items
                             .iter()
                             .enumerate()
-                            .map(|(i, v)| (i.to_string(), v))
+                            .map(|(i, v)| (Some(i.to_string()), v))
                             .collect::<Vec<_>>(),
-                        keyword == "prefixItems",
+                        matches!(keyword.as_str(), "prefixItems" | "items"),
                     )
                 }
                 "properties" | "patternProperties" | "dependentSchemas" | "dependencies"
@@ -114,7 +114,7 @@ fn check_reference_cycles(schema: &Value) -> Result<(), String> {
                     };
                     (
                         map.iter()
-                            .map(|(name, v)| (escape(name), v))
+                            .map(|(name, v)| (Some(escape(name)), v))
                             .collect::<Vec<_>>(),
                         matches!(keyword.as_str(), "properties" | "patternProperties"),
                     )
@@ -131,7 +131,7 @@ fn check_reference_cycles(schema: &Value) -> Result<(), String> {
                 | "if"
                 | "then"
                 | "else" => (
-                    vec![(String::new(), entry)],
+                    vec![(None, entry)],
                     !matches!(
                         keyword.as_str(),
                         "not" | "if" | "then" | "else" | "contentSchema"
@@ -143,10 +143,9 @@ fn check_reference_cycles(schema: &Value) -> Result<(), String> {
                 if !child.is_object() && !child.is_boolean() {
                     continue;
                 }
-                let child_path = if name.is_empty() {
-                    format!("{path}/{}", escape(keyword))
-                } else {
-                    format!("{path}/{}/{}", escape(keyword), name)
+                let child_path = match name {
+                    None => format!("{path}/{}", escape(keyword)),
+                    Some(name) => format!("{path}/{}/{}", escape(keyword), name),
                 };
                 if !matches!(keyword.as_str(), "$defs" | "definitions") {
                     work_children.push((child_path.clone(), consumes));
