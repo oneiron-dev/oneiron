@@ -39,7 +39,9 @@
 pub use crate::registry::ENTITY_TYPE_DIAGNOSTIC;
 
 mod admission;
-pub(crate) use admission::validate_diagnostic_event_admission;
+pub(crate) use admission::{
+    reject_off_record_diagnostic_sources, validate_diagnostic_event_admission,
+};
 mod consent_detector;
 pub mod tripwires;
 pub use consent_detector::ConsentDeniedDetector;

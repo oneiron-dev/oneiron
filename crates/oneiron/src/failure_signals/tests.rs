@@ -3,7 +3,7 @@ use crate::config::VaultConfig;
 use crate::off_record::OffRecordBackendClass;
 use crate::self_heal::{
     ConsentDeniedDetector, DeterministicDetector, DiagnosticObservation, DiagnosticWorkingSet,
-    diagnostic_event_id, encode_diagnostic_event_body,
+    diagnostic_event_id, encode_diagnostic_event_body, run_deterministic_detectors,
 };
 
 const ALL: [FailureClassV1; 9] = [
@@ -22,25 +22,30 @@ fn input(class: FailureClassV1) -> FailureSignalInput {
     FailureSignalInput {
         taxonomy: FailureTaxonomy::V1(class),
         agent_surface: AgentSurface::Chat,
-        agent_kind: AgentKind::System,
+        agent_kind: AgentKind::Custom,
         agent: VersionedComponent {
             name: "assistant".into(),
             version: "2".into(),
         },
-        model: VersionedComponent {
-            name: "model".into(),
-            version: "3".into(),
-        },
-        engine: VersionedComponent {
-            name: "oneiron".into(),
-            version: "4".into(),
-        },
+        agent_ref: None,
+        model_role: LlmRole::Orchestrator,
     }
 }
 
 fn on_record_diagnostic(vault: &crate::Vault, time: u64) -> Result<EntityId> {
+    let source_ref = EntityId::now();
+    vault.put_entity(
+        &source_ref,
+        crate::registry::ENTITY_TYPE_TURN,
+        crate::temporal::TimeRange {
+            start: time,
+            end: time,
+        },
+        time,
+        b"on-record evidence",
+    )?;
     let fact = DiagnosticObservation {
-        source_ref: EntityId::now(),
+        source_ref,
         kind: crate::consent::CONSENT_REASON_DENIED,
         payload_digest: [2; 32],
         observed_at: time,
@@ -65,9 +70,9 @@ fn nine_classes_count_independently_per_hour_and_surface() -> Result<()> {
         ..Default::default()
     };
     for class in ALL {
-        counts.record(config, input(class), 3_601, "detector-1")?;
-        counts.record(config, input(class), 7_199, "detector-1")?;
-        counts.record(config, input(class), 7_200, "detector-1")?;
+        counts.record(config, input(class), None, 3_601, "detector-1")?;
+        counts.record(config, input(class), None, 7_199, "detector-1")?;
+        counts.record(config, input(class), None, 7_200, "detector-1")?;
     }
     let rows = counts.export(config)?;
     assert_eq!(rows.len(), 18);
@@ -89,7 +94,7 @@ fn nine_classes_count_independently_per_hour_and_surface() -> Result<()> {
     }
     let mut different = input(FailureClassV1::Other);
     different.agent_surface = AgentSurface::Code;
-    counts.record(config, different, 3_601, "detector-1")?;
+    counts.record(config, different, None, 3_601, "detector-1")?;
     assert_eq!(
         counts
             .export(config)?
@@ -103,8 +108,8 @@ fn nine_classes_count_independently_per_hour_and_surface() -> Result<()> {
     );
     let mut different = input(FailureClassV1::Other);
     different.agent_kind = AgentKind::Custom;
-    different.model.version = "4".into();
-    counts.record(config, different, -1, "detector-2")?;
+    different.model_role = LlmRole::Summarizer;
+    counts.record(config, different, None, -1, "detector-2")?;
     assert_eq!(
         counts
             .export(config)?
@@ -135,8 +140,7 @@ fn taxonomy_round_trip_and_payload_has_only_opaque_identifiers() -> Result<()> {
         let mut input = input(class);
         input.agent.name = "Alice-Smith".into();
         input.agent.version = "123-45-6789".into();
-        input.model.name = "private-medical-fact".into();
-        counts.record(config, input, 3601, "private-medical-fact")?;
+        counts.record(config, input, None, 3601, "private-medical-fact")?;
         let row = counts
             .export(config)?
             .into_iter()
@@ -185,10 +189,12 @@ fn taxonomy_round_trip_and_payload_has_only_opaque_identifiers() -> Result<()> {
                     .collect::<std::collections::BTreeSet<_>>(),
                 ["name", "version"].into_iter().collect()
             );
-            for token in ["name", "version"] {
-                let value = payload[component][token].as_str().expect("opaque token");
-                assert_eq!(value.len(), 64);
-                assert!(value.bytes().all(|c| c.is_ascii_hexdigit()));
+            if component == "agent" {
+                for token in ["name", "version"] {
+                    let value = payload[component][token].as_str().expect("opaque token");
+                    assert_eq!(value.len(), 64);
+                    assert!(value.bytes().all(|c| c.is_ascii_hexdigit()));
+                }
             }
         }
         assert_eq!(payload["taxonomy_version"], "v1");
@@ -219,6 +225,7 @@ fn hourly_rounding_rejects_overflow_without_changing_counts() -> Result<()> {
             counts.record(
                 config,
                 input(FailureClassV1::TaskFailure),
+                None,
                 invalid,
                 "detector"
             ),
@@ -229,12 +236,14 @@ fn hourly_rounding_rejects_overflow_without_changing_counts() -> Result<()> {
     counts.record(
         config,
         input(FailureClassV1::TaskFailure),
+        None,
         first,
         "detector",
     )?;
     counts.record(
         config,
         input(FailureClassV1::TaskFailure),
+        None,
         i64::MAX,
         "detector",
     )?;
@@ -320,6 +329,7 @@ fn opt_in_and_vault_isolation() -> Result<()> {
     default_off.record(
         FailureSignalConfig::default(),
         input(FailureClassV1::TaskFailure),
+        None,
         1,
         "detector",
     )?;
@@ -332,7 +342,148 @@ fn opt_in_and_vault_isolation() -> Result<()> {
         deployment: crate::config::failure_signals::DeploymentTier::Managed,
         ..Default::default()
     };
-    default_off.record(managed, input(FailureClassV1::TaskFailure), 1, "detector")?;
+    default_off.record(
+        managed,
+        input(FailureClassV1::TaskFailure),
+        None,
+        1,
+        "detector",
+    )?;
     assert_eq!(default_off.export(managed)?.len(), 1);
+    Ok(())
+}
+
+#[test]
+fn detector_cannot_materialize_off_record_source_in_base_or_export_after_close() -> Result<()> {
+    let dir = tempfile::tempdir()?;
+    let mut config = VaultConfig::default();
+    config.failure_signals.export_opt_in = true;
+    let vault = crate::Vault::open(dir.path(), config)?;
+    let session = vault
+        .off_record_session_vault()
+        .enter("detector-room", OffRecordBackendClass::Local)?;
+    let source_ref = EntityId::now();
+    let overlay = session.overlay();
+    let segment = overlay.install_txn_segment()?;
+    overlay.put(
+        crate::session_overlay::OverlayKeyspace::Entities,
+        source_ref.as_bytes(),
+        b"private turn",
+    )?;
+    segment.commit()?;
+    let fact = DiagnosticObservation {
+        source_ref,
+        kind: crate::consent::CONSENT_REASON_DENIED,
+        payload_digest: [7; 32],
+        observed_at: 3_601,
+    };
+    let working_set = DiagnosticWorkingSet {
+        scope_ref: "scope.consent",
+        observations: &[fact],
+    };
+    let event = ConsentDeniedDetector.detect(&working_set).remove(0);
+    let body = encode_diagnostic_event_body(&event)?;
+    let diagnostic_id = diagnostic_event_id(&event.detector_id, &body);
+    assert!(run_deterministic_detectors(&vault, &working_set, &[&ConsentDeniedDetector]).is_err());
+    assert!(
+        vault
+            .record_failure_signal(diagnostic_id, input(FailureClassV1::Other))
+            .is_err()
+    );
+    assert!(vault.export_tier1_failure_counts()?.is_empty());
+    session.close()?;
+    // A caller still holding the vanished source's ID can author a canonical
+    // base diagnostic, but the tier-1 door requires a live base source.
+    vault.emit_diagnostic_event(&diagnostic_id, &event)?;
+    assert!(
+        vault
+            .record_failure_signal(diagnostic_id, input(FailureClassV1::Other))
+            .is_err()
+    );
+    assert!(vault.export_tier1_failure_counts()?.is_empty());
+    Ok(())
+}
+
+#[test]
+fn registered_system_and_platform_versions_are_stable_across_vaults_and_reopen() -> Result<()> {
+    let one = tempfile::tempdir()?;
+    let two = tempfile::tempdir()?;
+    let mut config = VaultConfig::default();
+    config.failure_signals.export_opt_in = true;
+    let vault = crate::Vault::open(one.path(), config.clone())?;
+    let other = crate::Vault::open(two.path(), config.clone())?;
+    let (agent_ref, definition) = vault
+        .get_seeded_agent_definition_by_logical_id("sys.default")?
+        .expect("seeded system agent");
+    let registered = |role| {
+        let mut signal = input(FailureClassV1::Other);
+        signal.agent_kind = AgentKind::System;
+        signal.agent_ref = Some(agent_ref);
+        signal.agent = VersionedComponent {
+            name: "sys.default".into(),
+            version: definition.version.clone(),
+        };
+        signal.model_role = role;
+        signal
+    };
+    let id_one = on_record_diagnostic(&vault, 3_601)?;
+    let id_two = on_record_diagnostic(&other, 3_601)?;
+    vault.record_failure_signal(id_one, registered(LlmRole::Orchestrator))?;
+    other.record_failure_signal(id_two, registered(LlmRole::Orchestrator))?;
+    let first = vault.export_tier1_failure_counts()?.remove(0).dimensions;
+    let second = other.export_tier1_failure_counts()?.remove(0).dimensions;
+    assert_eq!(first, second);
+    assert_eq!(first.agent.name, "sys.default");
+    assert_eq!(first.agent.version, definition.version);
+    assert_eq!(first.engine.version, env!("CARGO_PKG_VERSION"));
+    assert_eq!(first.detector_id.as_deref(), Some("consent.denied.v1"));
+    other.record_failure_signal(id_two, registered(LlmRole::Summarizer))?;
+    let changed = other
+        .export_tier1_failure_counts()?
+        .into_iter()
+        .find(|r| r.dimensions.model.name != first.model.name)
+        .expect("changed registered model")
+        .dimensions;
+    assert_eq!(changed.agent, first.agent);
+    assert_eq!(changed.engine, first.engine);
+    assert_ne!(changed.model, first.model);
+    drop(vault);
+    let reopened = crate::Vault::open(one.path(), config)?;
+    reopened.record_failure_signal(id_one, registered(LlmRole::Orchestrator))?;
+    assert_eq!(
+        reopened.export_tier1_failure_counts()?.remove(0).dimensions,
+        first
+    );
+    let mut impersonated = registered(LlmRole::Orchestrator);
+    impersonated.agent.name = "Alice-Smith".into();
+    assert!(
+        reopened
+            .record_failure_signal(id_one, impersonated)
+            .is_err()
+    );
+    Ok(())
+}
+
+#[test]
+fn custom_agent_revision_changes_only_agent_revision_token() -> Result<()> {
+    let counts = FailureSignalCounts::default();
+    let config = FailureSignalConfig {
+        export_opt_in: true,
+        ..Default::default()
+    };
+    let first = input(FailureClassV1::TaskFailure);
+    let mut next = first.clone();
+    next.agent.version = "new-private-version".into();
+    counts.record(config, first, None, 3_601, "detector")?;
+    counts.record(config, next, None, 3_601, "detector")?;
+    let rows = counts.export(config)?;
+    assert_eq!(rows.len(), 2);
+    assert_eq!(rows[0].dimensions.agent.name, rows[1].dimensions.agent.name);
+    assert_ne!(
+        rows[0].dimensions.agent.version,
+        rows[1].dimensions.agent.version
+    );
+    assert_eq!(rows[0].dimensions.model, rows[1].dimensions.model);
+    assert_eq!(rows[0].dimensions.engine, rows[1].dimensions.engine);
     Ok(())
 }

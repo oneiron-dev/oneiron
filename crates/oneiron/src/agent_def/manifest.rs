@@ -311,6 +311,18 @@ pub(super) fn system_agent_manifest() -> Result<&'static SystemAgentDefinitionMa
         )))
 }
 
+/// Canonical export-safe identity from the compiled seeded roster, never from
+/// user-editable AGENT_DEF display names or version text.
+pub(crate) fn system_export_identity(
+    id: &EntityId,
+) -> Result<Option<(&'static str, &'static str)>> {
+    Ok(system_agent_manifest()?
+        .definitions
+        .iter()
+        .find(|seed| seed.entity_id.0 == *id)
+        .map(|seed| (seed.logical_id.as_str(), seed.definition.version.as_str())))
+}
+
 /// The `sys.*` logical-id reservation, enforced at the AGENT_DEF put-decode
 /// chokepoint where both the body and its destination row id are in hand: a
 /// `sys.`-prefixed logical id is admissible only at its own pinned row id.

@@ -10,6 +10,7 @@ use serde::{Deserialize, Serialize};
 use crate::config::failure_signals::FailureSignalConfig;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
+use crate::llm::LlmRole;
 use crate::vault::LiveEntityRow;
 
 /// Graduating `Other` requires a new taxonomy variant and version; never
@@ -71,8 +72,10 @@ pub struct FailureSignalInput {
     pub agent_surface: AgentSurface,
     pub agent_kind: AgentKind,
     pub agent: VersionedComponent,
-    pub model: VersionedComponent,
-    pub engine: VersionedComponent,
+    /// Required for system agents; pinned to the compiled seeded roster.
+    pub agent_ref: Option<EntityId>,
+    /// Only code-registered role defaults have public platform model revisions.
+    pub model_role: LlmRole,
 }
 
 /// Only keyed, per-vault opaque tokens enter the export. The secret key stays
@@ -168,6 +171,7 @@ impl FailureSignalCounts {
         &self,
         config: FailureSignalConfig,
         input: FailureSignalInput,
+        registered_agent: Option<VersionedComponent>,
         observed_at: i64,
         detector_id: &str,
     ) -> Result<()> {
@@ -175,10 +179,7 @@ impl FailureSignalCounts {
             return Ok(());
         }
         let ts_bucket = bucket_start(observed_at)?;
-        if ![&input.agent, &input.model, &input.engine]
-            .into_iter()
-            .all(bounded)
-        {
+        if !bounded(&input.agent) {
             return Err(Error::InvalidConfig(
                 "failure signal component must be a bounded identifier".into(),
             ));
@@ -187,11 +188,25 @@ impl FailureSignalCounts {
             taxonomy: input.taxonomy,
             agent_surface: input.agent_surface,
             agent_kind: input.agent_kind,
-            agent: component(self, b"agent", &input.agent),
-            model: component(self, b"model", &input.model),
-            engine: component(self, b"engine", &input.engine),
-            detector_id: matches!(input.taxonomy, FailureTaxonomy::V1(FailureClassV1::Other))
-                .then(|| self.token(b"detector", detector_id)),
+            agent: if let Some(identity) = registered_agent {
+                ExportVersionedComponent {
+                    name: identity.name,
+                    version: identity.version,
+                }
+            } else {
+                component(self, b"agent", &input.agent)
+            },
+            model: platform_model(input.model_role),
+            engine: ExportVersionedComponent {
+                name: "oneiron".into(),
+                version: env!("CARGO_PKG_VERSION").into(),
+            },
+            detector_id: matches!(input.taxonomy, FailureTaxonomy::V1(FailureClassV1::Other)).then(
+                || {
+                    registered_detector(detector_id)
+                        .map_or_else(|| self.token(b"detector", detector_id), str::to_owned)
+                },
+            ),
             ts_bucket,
         };
         let mut counts = self
@@ -221,6 +236,29 @@ impl FailureSignalCounts {
             })
             .collect())
     }
+}
+
+fn platform_model(role: LlmRole) -> ExportVersionedComponent {
+    let id = role.default_model_id();
+    ExportVersionedComponent {
+        name: format!("{}/{}", id.provider(), id.name()),
+        version: id.revision().to_owned(),
+    }
+}
+
+/// Only compiled detector identities may travel across vaults in clear.
+/// Unknown/custom detector IDs remain per-vault opaque tokens.
+fn registered_detector(id: &str) -> Option<&'static str> {
+    const IDS: [&str; 7] = [
+        "consent.denied.v1",
+        "retrieval.miss.v1",
+        "consolidation.error.v1",
+        "dreamer.degenerate.v1",
+        "conversation.silent.v1",
+        "consent.storm.v1",
+        "predicate.drift.v1",
+    ];
+    IDS.into_iter().find(|registered| *registered == id)
 }
 
 fn bounded(component: &VersionedComponent) -> bool {
@@ -288,11 +326,69 @@ impl crate::Vault {
                 "failure signal diagnostic address changed",
             ));
         }
+        // A materialized diagnostic alone is not proof that its observation
+        // was on record. Every cited source must itself be a live base row;
+        // an overlay-only source (even one whose room has since closed) fails.
+        // Receipt/telemetry-only source families need their own positive
+        // ledger witness before they can enter this export door.
+        if event.evidence_refs.is_empty() {
+            return Err(Error::InvalidConfig(
+                "failure signal requires on-record source evidence".into(),
+            ));
+        }
+        for source in event.evidence_refs.iter().chain(event.actor_ref.iter()) {
+            if self.store.off_record_sessions.contains_entity(source)?
+                || !matches!(
+                    crate::vault::live_entity_row_in_txn(&self.store, &rtxn, source)?,
+                    LiveEntityRow::Live { .. }
+                )
+            {
+                return Err(Error::InvalidConfig(
+                    "failure signal source is not a live base entity".into(),
+                ));
+            }
+        }
+        // heed permits only one read slot per thread on this handle. The
+        // source check is complete; release its snapshot before resolving the
+        // seeded AGENT_DEF through the ordinary vault reader.
+        drop(rtxn);
+        let registered_agent = if input.agent_kind == AgentKind::System {
+            let id = input.agent_ref.ok_or(Error::InvalidConfig(
+                "system failure signal requires seeded agent id".into(),
+            ))?;
+            let (name, version) = crate::agent_def::system_export_identity(&id)?.ok_or(
+                Error::InvalidConfig("system failure signal agent is not seeded".into()),
+            )?;
+            let stored = self
+                .get_agent_definition(&id)?
+                .ok_or(Error::InvalidConfig("seeded system agent is absent".into()))?;
+            if stored.logical_id.as_deref() != Some(name)
+                || stored.version != version
+                || input.agent.name != name
+                || input.agent.version != version
+            {
+                return Err(Error::InvalidConfig(
+                    "system failure signal identity differs from compiled roster".into(),
+                ));
+            }
+            Some(VersionedComponent {
+                name: name.to_owned(),
+                version: version.to_owned(),
+            })
+        } else {
+            if input.agent_ref.is_some() {
+                return Err(Error::InvalidConfig(
+                    "custom failure signal cannot claim a seeded agent".into(),
+                ));
+            }
+            None
+        };
         let observed_at = i64::try_from(event.valid_from)
             .map_err(|_| Error::ArithmeticOverflow("failure signal observation time"))?;
         self.store.diagnostics.failure_signals.record(
             self.config.failure_signals,
             input,
+            registered_agent,
             observed_at,
             &event.detector_id,
         )
