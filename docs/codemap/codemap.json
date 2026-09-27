@@ -2375,11 +2375,11 @@
       "CampaignError"
      ],
      "path": "src/autoreason_campaign.rs",
-     "purpose": "Engine-side AR-3 campaign reports and read-only experiment selection",
+     "purpose": "Engine-side AR-3 autoreason campaign configuration and report join",
      "surface": {
       "const": 4,
       "enum": 1,
-      "mod": 3,
+      "mod": 2,
       "re-export": 4,
       "type": 1
      }
@@ -2493,32 +2493,6 @@
       "fn": 3,
       "struct": 3
      }
-    },
-    {
-     "bucket": "s",
-     "kind": "src",
-     "notable": [
-      "MeasuredBranch",
-      "OracleSignal",
-      "SelectionDecision",
-      "SelectionError",
-      "SelectionPolicy"
-     ],
-     "path": "src/autoreason_campaign/selection.rs",
-     "purpose": "Read-only DECIDE floor for an experiment campaign over the durable run tree",
-     "surface": {
-      "enum": 3,
-      "fn": 1,
-      "struct": 2
-     }
-    },
-    {
-     "bucket": "s",
-     "kind": "test",
-     "notable": [],
-     "path": "src/autoreason_campaign/selection/tests.rs",
-     "purpose": "—",
-     "surface": {}
     },
     {
      "bucket": "XL",
@@ -36170,11 +36144,11 @@
      "purpose": "AUTHORITY_LOG record substrate"
     },
     "autoreason_campaign": {
-     "files": 11,
+     "files": 9,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "file+dir",
-     "purpose": "Engine-side AR-3 campaign reports and read-only experiment selection"
+     "purpose": "Engine-side AR-3 autoreason campaign configuration and report join"
     },
     "batch": {
      "files": 89,
