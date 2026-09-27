@@ -9,6 +9,8 @@ pub enum ScopePath {
     Canonical,
     /// The ancestor path ending at this record, even after a HEAD move.
     Branch(EntityId),
+    /// Replies strictly after `after` through `through`, without the trunk or forks.
+    BranchSpan { after: EntityId, through: EntityId },
     /// Exactly the records admitted into this sub-session.
     SubSession(EntityId),
 }

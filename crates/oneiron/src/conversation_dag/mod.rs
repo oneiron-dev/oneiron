@@ -17,17 +17,22 @@ mod membership;
 mod migration;
 pub(crate) use membership::{stage_session_carrier, validate_session_carrier};
 
+mod branch_scope;
 mod policy;
 mod reply;
 mod scopes;
+mod thread_projection;
 mod types;
 mod writes;
 
+pub(crate) use branch_scope::{prove_branch_anchor, prove_branch_span};
 pub(crate) use graph::{
     actor_in_txn, conversation_of, edge_ids, is_sub_session_record, require_type,
 };
-pub use reply::{ReplyStrip, Thread};
+pub use reply::{ReplyStrip, Thread, ThreadMeta};
+pub(crate) use reply::{invalidate_thread_meta, invalidate_thread_meta_for_turn_put};
 pub(crate) use scopes::resolve_in_txn;
+pub(crate) use thread_projection::selected_thread_in_txn;
 pub use types::{
     AppendRecord, AppendedRecord, DagPage, DagPageRequest, ResolvedScope, ScopePath, ScopeSelector,
 };
