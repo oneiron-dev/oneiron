@@ -27451,6 +27451,23 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "ClosedFormPredicate",
+      "GraduatedT1",
+      "MintedT2",
+      "ReviewedFinding"
+     ],
+     "path": "src/self_heal/distillation.rs",
+     "purpose": "Owner-labeled T3 evidence -> T2 policy -> closed-form T1 proof",
+     "surface": {
+      "enum": 1,
+      "fn": 4,
+      "struct": 3
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [
@@ -27521,7 +27538,7 @@
      "purpose": "GATE-14 layer 1 (ONE-1394): deterministic detectors and the typed `DiagnosticEvent` maintenance entity",
      "surface": {
       "crate-vis": 4,
-      "mod": 3,
+      "mod": 5,
       "re-export": 7
      }
     },
@@ -27626,6 +27643,33 @@
      "notable": [],
      "path": "src/self_heal/text_tests.rs",
      "purpose": "—",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "DetectorPolicy",
+      "ProposedDiagnostic",
+      "ProposedTier",
+      "TelemetryJudge"
+     ],
+     "path": "src/self_heal/tiered.rs",
+     "purpose": "Model-graded detection over ARCH-0037 runs",
+     "surface": {
+      "crate-vis": 2,
+      "enum": 1,
+      "fn": 4,
+      "struct": 2,
+      "trait": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/self_heal/tiered_tests.rs",
+     "purpose": "Observable propose-only outputs and reviewed distillation",
      "surface": {}
     },
     {
@@ -35534,7 +35578,7 @@
      "purpose": "Snapshot-time secret custody filtering (ARCH-0069 S4/S5)"
     },
     "self_heal": {
-     "files": 23,
+     "files": 26,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -35802,8 +35846,8 @@
    },
    "over_bar": 11,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2113,
-   "test_files": 722
+   "source_files": 2115,
+   "test_files": 723
   },
   "oneiron-android": {
    "files": [
