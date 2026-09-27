@@ -204,6 +204,95 @@ fn fanout_approve_policy_deny_resume_exact_digest_and_gate_receipts() {
 }
 
 #[test]
+fn fanout_rulings_use_the_vault_id_source_and_replay_the_same_receipt() {
+    let clock = crate::ports::ManualClock::new(100);
+    let dir = tempfile::tempdir().expect("tempdir");
+    let vault = Vault::open(
+        dir.path(),
+        VaultConfig {
+            store_clock: clock.bundle(),
+            ..VaultConfig::default()
+        },
+    )
+    .expect("open vault");
+    let actor = own_agent(&vault);
+    let human = owner(&vault);
+    let mut input = plan(&vault, 26);
+    input.now = Some(100);
+    input.deadline_at = 300;
+    let facade = vault.memory(actor, EdgeActorClass::Agent);
+    let paused = facade.fan_out_consults(&input).expect("paused plan");
+    assert!(paused.paused.is_some());
+    let denied = facade
+        .resume_fan_out_consults(
+            paused.correlation_ref,
+            paused.meter.plan_digest,
+            ConsultFanOutChoice::Deny,
+            &human,
+        )
+        .expect("denied ruling");
+    let denied_ref = denied.choice_receipt_ref.as_deref().expect("deny receipt");
+    let denied_id = EntityId::from_hex(denied_ref.strip_prefix("gate:").expect("typed gate ref"))
+        .expect("valid receipt id");
+    assert_eq!(denied_id.as_bytes()[0], 0x71);
+    let approved = facade
+        .resume_fan_out_consults(
+            paused.correlation_ref,
+            paused.meter.plan_digest,
+            ConsultFanOutChoice::ApproveOnce,
+            &human,
+        )
+        .expect("approval ruling");
+    let approved_ref = approved
+        .choice_receipt_ref
+        .as_deref()
+        .expect("approve receipt");
+    let approved_id =
+        EntityId::from_hex(approved_ref.strip_prefix("gate:").expect("typed gate ref"))
+            .expect("valid receipt id");
+    assert_eq!(approved_id.as_bytes()[0], 0x71);
+    assert_ne!(denied_id, approved_id);
+    let before_replay = vault
+        .store
+        .gate_decisions(100)
+        .expect("durable gate decisions")
+        .into_iter()
+        .filter(|row| row.content_kind == "consult_fanout")
+        .collect::<Vec<_>>();
+    assert_eq!(before_replay.len(), 2);
+    assert!(
+        before_replay
+            .iter()
+            .any(|row| row.decision_id.as_bytes() == *denied_id.as_bytes()
+                && row.outcome == "kept_paused")
+    );
+    assert!(
+        before_replay
+            .iter()
+            .any(|row| row.decision_id.as_bytes() == *approved_id.as_bytes())
+    );
+    let repeated = facade
+        .resume_fan_out_consults(
+            paused.correlation_ref,
+            paused.meter.plan_digest,
+            ConsultFanOutChoice::ApproveOnce,
+            &human,
+        )
+        .expect("idempotent replay");
+    assert_eq!(repeated.choice_receipt_ref, approved.choice_receipt_ref);
+    assert_eq!(
+        vault
+            .store
+            .gate_decisions(100)
+            .expect("persisted decisions")
+            .into_iter()
+            .filter(|row| row.content_kind == "consult_fanout")
+            .count(),
+        2
+    );
+}
+
+#[test]
 fn fanout_pathologies_park_with_count_fan_out_board_rows_and_evidence() {
     let (_dir, vault) = open_vault();
     let actor = own_agent(&vault);
