@@ -47,8 +47,11 @@ pub const GIT_WIRE_FIXED_ENV: [(&str, &str); 8] = [
 /// The closed configuration policy. It is delivered through
 /// `GIT_CONFIG_COUNT`/`GIT_CONFIG_KEY_<n>`/`GIT_CONFIG_VALUE_<n>`, which git
 /// treats with command-line precedence, so no repository-local or system
-/// setting can reintroduce an executable hook, filter, helper, or signer — and
-/// the policy also reaches any git child a git child spawns.
+/// setting can reintroduce a known hook, helper, or signer. Git has no wildcard
+/// override for arbitrary filter-driver names: the process seam separately
+/// refuses effective `filter.*.{clean,smudge,process}` commands before running
+/// any operation that can use repository attributes. The policy also reaches
+/// any git child a git child spawns.
 pub const GIT_WIRE_CONFIG_POLICY: [(&str, &str); 18] = [
     ("core.hooksPath", "/dev/null"),
     ("core.fsmonitor", ""),

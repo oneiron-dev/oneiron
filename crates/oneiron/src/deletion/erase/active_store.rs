@@ -18,6 +18,10 @@ impl Vault {
         self.mark_dependent_skills_stale_in_txn(wtxn, id)?;
         crate::note::erase_citations_in_txn(self, wtxn, id)?;
         crate::calendar::origin::invalidate_dependents(self, wtxn, id)?;
+        let had_refinement =
+            crate::skill_hub::erase_claim_refinement_in_txn(&self.store, wtxn, id)?;
+        let had_merge_receipt =
+            crate::skill_hub::erase_refinement_custody_in_txn(&self.store, wtxn, id)?;
         let (existed, had_vector, had_graph_mutation, neighbors) =
             deindex_entity(&self.store, wtxn, id)?;
         crate::codebase::delete_codebase_snapshot_in_txn(&self.store, wtxn, id)?;
@@ -30,7 +34,7 @@ impl Vault {
         if had_vector {
             crate::hnsw::increment_vector_version(&self.store, wtxn)?;
         }
-        Ok(existed || note_removed)
+        Ok(existed || note_removed || had_refinement || had_merge_receipt)
     }
 
     pub(in crate::deletion) fn soft_erase_active_store_in_txn(
@@ -82,6 +86,12 @@ impl Vault {
             hint_had_vector | entity_had_vector | blob_cleanup.had_vector | room_had_vector;
 
         crate::skill_hub::remove_hub_package_in_txn(&self.store, wtxn, id)?;
+        let had_refinement =
+            crate::skill_hub::erase_claim_refinement_in_txn(&self.store, wtxn, id)?;
+        let had_merge_receipt =
+            crate::skill_hub::erase_refinement_custody_in_txn(&self.store, wtxn, id)?;
+        crate::skill_hub::remove_refinement_carrier_in_txn(&self.store, wtxn, id)?;
+        crate::skill_hub::retire_refinement_holder_in_txn(&self.store, wtxn, id)?;
         crate::agent_def::remove_birth_custody_in_txn(&self.store, wtxn, id)?;
         let Some(entity_record) = self.store.entities.get(wtxn, id.as_bytes())? else {
             let cleanup = delete_vad_annotation_metadata_in_txn(&self.store, wtxn, id)?;
@@ -90,7 +100,7 @@ impl Vault {
                 ppr::invalidate_ppr_for_delete(&self.store, wtxn, id, &cleanup.neighbors)?;
                 ppr::increment_graph_version(&self.store, wtxn)?;
             }
-            return Ok((false, had_vector));
+            return Ok((had_refinement || had_merge_receipt, had_vector));
         };
         let header = EntityMetadataHeader::parse(&entity_record)
             .ok_or(Error::CorruptedIndex("entity metadata"))?;
