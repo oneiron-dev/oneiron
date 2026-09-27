@@ -20,7 +20,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/supervisor/factory.rs` | src | s | 1 struct · 1 trait · 4 fn | ConsolidationExecutorFactory, PassExecutorFactory | Per-pass attempt-executor factory trait and default implementation |
 | `src/supervisor/factory_tests.rs` | test | m | — | — | Factory, planner-routing, and attempt-fixture tests |
 | `src/supervisor/loop.rs` | src | m | 2 struct · 5 fn · 2 crate-vis | WakeSupervisor, WakeSupervisorReport | Biased-select supervisor loop with panic containment and backoff |
-| `src/supervisor/loop_tests.rs` | test | m | — | — | Loop, panic-containment, shutdown, and redrive acceptance tests |
+| `src/supervisor/loop_tests.rs` | test | L | — | — | Loop, panic-containment, shutdown, and redrive acceptance tests |
 | `src/supervisor/mod.rs` | src | s | 4 re-export | — | The wake-pass supervisor (ONE-1683): a plain `tokio::select!` loop that pumps… |
 | `src/supervisor/pass.rs` | src | s | 4 crate-vis | — | Single wake-pass assembly and engine delegation |
 | `src/supervisor/shutdown.rs` | src | s | 1 struct · 1 fn · 3 crate-vis | ShutdownHandle | Cooperative shutdown handle and listener channels |

@@ -8,7 +8,7 @@ use oneiron::attempt_queue::AttemptState;
 use oneiron::{
     BudgetGuard, DREAMER_EXECUTOR_ERROR_PARK_REASON, DreamerAdmittedAttempt,
     DreamerAttemptExecution, DreamerAttemptExecutor, DreamerConsolidationScope, DreamerRunnerStore,
-    Result, WakeAttemptContext, WakeTrigger,
+    Result, WakeAttemptContext, WakeCancellation, WakeTrigger,
 };
 
 #[test]
@@ -664,4 +664,155 @@ async fn failed_digest_projection_does_not_block_due_attempt() {
     // The digest fault remains discoverable; the pass did not falsely
     // consume or repair its data while servicing the independent lane.
     assert!(vault.next_proactivity_digest_at().is_err());
+}
+
+#[tokio::test]
+async fn presentation_failure_does_not_repeat_digest_tick_or_starve_macro_and_push() {
+    use crate::tick::{AttemptQueueDeadlines, HybridTick, TickSource, TimerTick};
+    use oneiron::ClaimCandidate;
+    use oneiron::claim::{ClaimApprovalStatus, ClaimSource, ClaimSubject};
+    use oneiron::temporal::TimeRange;
+    use oneiron::write_envelope::{WriteEnvelope, WriteProvenance};
+    use oneiron::{DreamerHomeNodeCandidate, EnqueueDreamerConsolidationAttempt, EntityId};
+    use rmpv::Value;
+    let (_dir, vault) = open_vault();
+    let store = DreamerRunnerStore::new(&vault);
+    let local = store
+        .local_home_node_candidate(false, false, false)
+        .unwrap()
+        .node_id;
+    store
+        .elect_home_node(
+            &[DreamerHomeNodeCandidate {
+                node_id: local,
+                cloud: true,
+                attached: true,
+                always_on_local: false,
+                primary_device: false,
+            }],
+            1,
+        )
+        .unwrap();
+    let actor = vault.dreamer_authority().unwrap();
+    let envelope = WriteEnvelope::new(
+        actor,
+        ClaimSource::Generated,
+        WriteProvenance::new(Value::Map(vec![(
+            Value::from("surface"),
+            Value::from("dreamer"),
+        )]))
+        .unwrap(),
+        ClaimApprovalStatus::Proposed,
+    );
+    let claim_id = EntityId::from_bytes([0x67; 16]).unwrap();
+    vault
+        .batch()
+        .claim_candidate(
+            &claim_id,
+            ClaimCandidate::new(
+                "dreamer.proactivity.follow_up",
+                ClaimSubject::Entity(actor.entity_ref()),
+                Value::from("pending"),
+                0.7,
+            ),
+            &envelope,
+            TimeRange { start: 1, end: 1 },
+            1,
+        )
+        .commit()
+        .unwrap();
+    let macro_id = match store
+        .enqueue_consolidation(EnqueueDreamerConsolidationAttempt {
+            scope: DreamerConsolidationScope::Macro,
+            input: Value::from("independent"),
+            parent_attempt: None,
+            dedupe_key: Some("macro-after-digest-failure".into()),
+            run_id: None,
+            now: 1,
+        })
+        .unwrap()
+    {
+        oneiron::EnqueueDreamerAttemptOutcome::Enqueued(status) => status.attempt.id,
+        other => panic!("expected queued macro: {other:?}"),
+    };
+    let now = store
+        .status(macro_id)
+        .unwrap()
+        .unwrap()
+        .attempt
+        .created_at
+        .saturating_add(1);
+    let now_secs: NowSeconds = Arc::new(move || now);
+    let now_ms: crate::tick::NowMillis = Arc::new(move || now.saturating_mul(1_000));
+    let timer = TimerTick::with_clock(
+        AttemptQueueDeadlines::with_commitment_clock(&vault, local, Arc::clone(&now_ms)),
+        Arc::clone(&now_ms),
+    );
+    let (push, wake, _hint) = PushTick::channel_with_clock(now_ms, 1_000);
+    wake.push_wake(WakeTrigger::Compaction, DreamerConsolidationScope::Micro)
+        .unwrap();
+    let mut ticks = HybridTick::new(timer, push);
+    let first = ticks.next_tick().await.unwrap();
+    assert!(
+        matches!(first, Tick::Deadline(d) if d.scope == DreamerConsolidationScope::Micro && d.due_at_ms == 0)
+    );
+    // Corrupt after the first deadline snapshot: selection succeeded but
+    // assembly fails. The error must suspend ONLY the digest lane.
+    vault.corrupt_proactivity_presentation_for_test().unwrap();
+    let mut config = test_config();
+    config.local_node_id = local;
+    let mut factory = TestExecFactory {
+        panics_left: 0,
+        factory_panics_left: 0,
+        factory_errors_left: 0,
+        completed_units: 40,
+    };
+    let cancel = WakeCancellation::new();
+    let first_report = run_one_pass(
+        &vault,
+        &config,
+        "failed-digest",
+        &now_secs,
+        &mut factory,
+        &first,
+        &cancel,
+    )
+    .await
+    .unwrap_or_else(|_| panic!("first pass must continue"));
+    assert_eq!(first_report.completed, 0);
+    assert!(
+        vault.next_proactivity_digest_at().is_err(),
+        "digest fault stays observable"
+    );
+    let second = tokio::time::timeout(Duration::from_secs(2), ticks.next_tick())
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(
+        matches!(second, Tick::Deadline(d) if d.scope == DreamerConsolidationScope::Macro),
+        "failed digest cannot win the next deadline"
+    );
+    let second_report = run_one_pass(
+        &vault,
+        &config,
+        "independent-macro",
+        &now_secs,
+        &mut factory,
+        &second,
+        &cancel,
+    )
+    .await
+    .unwrap_or_else(|_| panic!("macro must run"));
+    assert_eq!(second_report.completed, 1);
+    assert_eq!(
+        store.status(macro_id).unwrap().unwrap().attempt.state,
+        AttemptState::Completed
+    );
+    let third = tokio::time::timeout(Duration::from_secs(2), ticks.next_tick())
+        .await
+        .unwrap();
+    assert!(
+        matches!(third, Some(Tick::Wake(_))),
+        "buffered push cannot starve behind digest"
+    );
 }

@@ -214,6 +214,12 @@ impl Vault {
         let txn = self.store.env.read_txn()?;
         let cadence = load_cadence(self, &txn)?;
         let state = load_state(self, &txn)?;
+        // Validate the same presentation bytes assembly will consume. An
+        // unreadable template must not arm an instantly repeating deadline.
+        load_presentation(self, &txn)?;
+        if self.store.proactivity_digest_suspended() {
+            return Ok(None);
+        }
         if pending_proposals(self, &txn, authority, &state, &cadence)?.is_empty() {
             return Ok(None);
         }
@@ -240,7 +246,13 @@ impl Vault {
         {
             return Ok(None);
         }
-        self.assemble_proactivity_digest(None, now, None)
+        let generation = self.store.proactivity_generation();
+        let result = self.assemble_proactivity_digest(None, now, None);
+        if result.is_err() {
+            self.store
+                .suspend_proactivity_digest_if_unchanged(generation);
+        }
+        result
     }
 
     /// Builds a display projection only. Pending decisions remain pending.
@@ -373,6 +385,18 @@ impl Vault {
             self.store
                 .vault_meta
                 .put(txn, STATE_KEY, b"invalid digest state")?;
+            Ok(())
+        })
+    }
+
+    /// Fault injection for a presentation-only failure after a deadline has
+    /// already been selected. The row remains corrupt until explicitly edited.
+    #[cfg(feature = "test-support")]
+    pub fn corrupt_proactivity_presentation_for_test(&self) -> Result<()> {
+        self.with_write_txn(|txn| {
+            self.store
+                .vault_meta
+                .put(txn, PRESENTATION_KEY, b"invalid presentation")?;
             Ok(())
         })
     }
@@ -512,9 +536,36 @@ fn pending_proposals(
 impl crate::store::Store {
     /// Only post-commit callers signal; the watch value carries no user data.
     pub(crate) fn notify_proactivity_changes(&self) {
+        let mut suspended = self
+            .proactivity_suspended
+            .lock()
+            .expect("digest watch lock");
+        *suspended = None;
         self.proactivity_updates.send_modify(|generation| {
             *generation = generation.wrapping_add(1);
         });
+    }
+
+    fn proactivity_generation(&self) -> u64 {
+        *self.proactivity_updates.borrow()
+    }
+
+    fn proactivity_digest_suspended(&self) -> bool {
+        let suspended = self
+            .proactivity_suspended
+            .lock()
+            .expect("digest watch lock");
+        *suspended == Some(self.proactivity_generation())
+    }
+
+    fn suspend_proactivity_digest_if_unchanged(&self, generation: u64) {
+        let mut suspended = self
+            .proactivity_suspended
+            .lock()
+            .expect("digest watch lock");
+        if self.proactivity_generation() == generation {
+            *suspended = Some(generation);
+        }
     }
 }
 
