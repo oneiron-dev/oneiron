@@ -18,6 +18,45 @@ fn current(vault: &Vault, id: EntityId) -> String {
 }
 
 #[test]
+fn brief_ids_and_recorded_time_use_the_vault_source() {
+    use crate::ports::{EntityStoreRead, ManualClock};
+    let clock = ManualClock::new(123);
+    let mut config = VaultConfig::device();
+    config.store_clock = clock.bundle();
+    let dir = tempfile::tempdir().unwrap();
+    let vault = Vault::open(dir.path(), config).unwrap();
+    let author = EntityId::from_bytes([0x41; 16]).unwrap();
+    vault
+        .put_entity(
+            &author,
+            ENTITY_TYPE_PERSON,
+            TimeRange { start: 1, end: 1 },
+            1,
+            b"person",
+        )
+        .unwrap();
+    let memory = vault.memory(author, EdgeActorClass::Human);
+    memory.bless_brief_kind().unwrap();
+    let brief = memory.author_brief("from clock", &[]).unwrap();
+    let id = EntityId::from_hex(&brief.id_hex).unwrap();
+    let txn = vault.store.env.read_txn().unwrap();
+    let stored = vault.port_entity_record(&txn, &id).unwrap().unwrap();
+    assert_eq!(stored.learned_at, 123);
+    assert_eq!(
+        stored.occurred,
+        TimeRange {
+            start: 123,
+            end: 123
+        }
+    );
+    assert_eq!(id.as_bytes()[0], 0x71);
+    drop(txn);
+    clock.set(124);
+    let another = memory.author_brief("next", &[]).unwrap();
+    assert_ne!(brief.id_hex, another.id_hex);
+}
+
+#[test]
 fn six_descriptors_and_namespaced_kind_round_trip() {
     let (_dir, vault, actor) = fixture();
     for kind in [
@@ -682,5 +721,89 @@ fn switch_moves_the_head_pointer_to_the_fork() {
     assert_eq!(
         vault.note_program_document(note).unwrap().unwrap().head(),
         fork
+    );
+}
+
+#[test]
+fn titled_body_rewrite_switch_retains_title_and_reservation() {
+    let (_dir, vault, actor) = fixture();
+    let note = vault.create_note("research", "origin", actor).unwrap();
+    let other = vault.create_note("research", "other", actor).unwrap();
+    let title = |text: &str| NoteOperation {
+        request_id: EntityId::now(),
+        change: NoteChange::SetTitle { title: text.into() },
+    };
+    let memory = vault.memory(actor.entity_ref(), actor.actor_class());
+    memory
+        .apply_local_note_operation(note, &title("A titled note"))
+        .unwrap();
+    switched_to_rewrite(&vault, actor, note);
+    assert_eq!(
+        vault.note_document(note).unwrap().title.as_deref(),
+        Some("A titled note")
+    );
+    assert!(
+        memory
+            .apply_local_note_operation(other, &title("a   titled note"))
+            .is_err()
+    );
+}
+
+#[test]
+fn note_title_reservation_is_atomic_and_normalized_in_featureless_mode() {
+    let (_dir, vault, actor) = fixture();
+    let a = vault.create_note("research", "first", actor).unwrap();
+    let b = vault.create_note("research", "second", actor).unwrap();
+    let title = |title: &str| NoteOperation {
+        request_id: EntityId::now(),
+        change: NoteChange::SetTitle {
+            title: title.into(),
+        },
+    };
+    vault
+        .memory(actor.entity_ref(), actor.actor_class())
+        .apply_local_note_operation(a, &title("  Field   Notes  "))
+        .unwrap();
+    let before = vault.note_document(b).unwrap();
+    assert!(
+        vault
+            .memory(actor.entity_ref(), actor.actor_class())
+            .apply_local_note_operation(b, &title("field notes"))
+            .is_err()
+    );
+    assert_eq!(vault.note_document(b).unwrap(), before);
+    vault
+        .memory(actor.entity_ref(), actor.actor_class())
+        .apply_local_note_operation(a, &title("Renamed"))
+        .unwrap();
+    vault
+        .memory(actor.entity_ref(), actor.actor_class())
+        .apply_local_note_operation(b, &title("FIELD NOTES"))
+        .unwrap();
+    assert_eq!(
+        vault.note_document(b).unwrap().title.as_deref(),
+        Some("FIELD NOTES")
+    );
+    assert!(
+        vault
+            .memory(actor.entity_ref(), actor.actor_class())
+            .apply_local_note_operation(b, &title("\ninvalid"))
+            .is_err()
+    );
+}
+
+#[test]
+fn erased_note_releases_title_for_another_authoritative_note() {
+    let (_dir, vault, actor) = fixture();
+    let first = vault.create_note("research", "first", actor).unwrap();
+    let second = vault.create_note("research", "second", actor).unwrap();
+    let memory = vault.memory(actor.entity_ref(), actor.actor_class());
+    memory.set_note_title(first, "Reusable title").unwrap();
+    assert!(memory.set_note_title(second, "reusable TITLE").is_err());
+    vault.delete_entity(&first).unwrap();
+    memory.set_note_title(second, "reusable TITLE").unwrap();
+    assert_eq!(
+        vault.note_document(second).unwrap().title.as_deref(),
+        Some("reusable TITLE")
     );
 }

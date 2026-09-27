@@ -36,7 +36,35 @@ pub(super) fn load(vault: &Vault, txn: &heed::RoTxn<'_>, id: EntityId) -> Result
     NoteDocument::from_loro(id, doc)
 }
 
-pub(super) fn persist(vault: &Vault, txn: &mut heed::RwTxn<'_>, doc: &NoteDocument) -> Result<()> {
+pub(super) fn persist_authoritative(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    doc: &NoteDocument,
+) -> Result<()> {
+    persist_structural(vault, txn, doc)?;
+    super::title_index::replace_authoritative_document_in_txn(vault, txn, doc)
+}
+
+#[cfg(feature = "sync")]
+pub(super) fn persist_replica(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    doc: &NoteDocument,
+) -> Result<()> {
+    super::title_index::remove_replica_projection_in_txn(vault, txn, doc.id)?;
+    persist_structural(vault, txn, doc)
+}
+
+#[cfg(feature = "sync")]
+pub(super) fn persist_recovered_document(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    doc: &NoteDocument,
+) -> Result<()> {
+    persist_structural(vault, txn, doc)
+}
+
+fn persist_structural(vault: &Vault, txn: &mut heed::RwTxn<'_>, doc: &NoteDocument) -> Result<()> {
     super::ensure_citations_ready(&vault.store, txn, doc.id)?;
     super::citation_erase::validate_pins(vault, txn, &doc.pins()?)?;
     // Keep the live NOTE projection valid, including after concurrent
@@ -130,7 +158,7 @@ impl Memory<'_> {
         pins: &[NotePin],
     ) -> MemoryResult<EntityRefReceipt> {
         let markdown = markdown.into();
-        let id = EntityId::now();
+        let id = self.vault().new_entity_id()?;
         let actor = WriteActor::new(self.actor(), self.actor_class());
         let body = encode_note_body(&NoteBody {
             kind: NoteKind::Plugin("brief".into()),
@@ -147,7 +175,7 @@ impl Memory<'_> {
                 validate_pin_source(self.vault(), txn, pin)?;
                 doc.add_pin(pin, &actor)?;
             }
-            let now = crate::unix_seconds_now();
+            let now = self.vault().now_recorded_at();
             self.vault()
                 .batch_in()
                 .put_authored_note(
@@ -165,14 +193,14 @@ impl Memory<'_> {
             super::operations::record_authorship(
                 &doc,
                 &super::NoteAuthorship {
-                    operation: EntityId::now(),
+                    operation: self.vault().new_entity_id()?,
                     actor: self.actor(),
                     actor_class: self.actor_class().gate_actor_class().to_owned(),
                     grant: None,
                     command_hash: *blake3::hash(&body).as_bytes(),
                 },
             )?;
-            persist(self.vault(), txn, &doc)?;
+            persist_authoritative(self.vault(), txn, &doc)?;
             Ok(())
         })?;
         #[cfg(feature = "sync")]
@@ -186,11 +214,30 @@ impl Memory<'_> {
         self.apply_local_note_operation(
             note,
             &super::NoteOperation {
-                request_id: EntityId::now(),
+                request_id: self.vault().new_entity_id()?,
                 change: super::NoteChange::Cite { pin: pin.clone() },
             },
         )
         .map(|_| ())
+    }
+
+    /// Set editable NOTE metadata under the same actor and title gate as socket ops.
+    pub fn set_note_title(
+        &self,
+        note: EntityId,
+        title: impl Into<String>,
+    ) -> MemoryResult<NoteEditOutcome> {
+        Ok(self
+            .apply_local_note_operation(
+                note,
+                &super::NoteOperation {
+                    request_id: EntityId::now(),
+                    change: super::NoteChange::SetTitle {
+                        title: title.into(),
+                    },
+                },
+            )?
+            .outcome)
     }
 
     /// Free prose commits now. Cited spans go through the reviewed claim door.
@@ -204,7 +251,7 @@ impl Memory<'_> {
             .apply_local_note_operation(
                 note,
                 &super::NoteOperation {
-                    request_id: EntityId::now(),
+                    request_id: self.vault().new_entity_id()?,
                     change: super::NoteChange::Edit {
                         base: base.to_vec(),
                         edits: edits.to_vec(),

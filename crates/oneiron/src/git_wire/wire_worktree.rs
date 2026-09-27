@@ -1,5 +1,6 @@
 //! Journaled worktree effects: list, prune, add, remove, and crash-journal settlement.
 
+use std::fs;
 use std::path::{Path, PathBuf};
 
 use super::argv::FrozenGitArgv;
@@ -82,12 +83,46 @@ impl GitWire<'_> {
         now: u64,
     ) -> Result<GitWireReceipt> {
         let _guard = lock_repository(&repo.common_dir)?;
+        let admitted = if operation == GitWireOperation::WorktreeAdd {
+            // Refuse unsupported layout and semantics before writing even the
+            // durable intent. The process seam re-admits against the actual
+            // consuming child, so a config change between checks stays inert.
+            Some(super::repository_profile::AdmittedRepoProfile::admit(
+                &self.process_env,
+                repo.repo_root(),
+                &[],
+                true,
+            )?)
+        } else {
+            None
+        };
         let scope = worktree_scope(path);
         let key = worktree_record_key(repo.identity(), operation, &scope);
         let mut record = new_record(repo, key, operation, &[], &[], now);
         record.worktree_scope = Some(scope);
+        if let Some(admitted) = &admitted {
+            record.worktree_settings_hash = Some(admitted.worktree_settings_hash());
+            record.worktree_commit = Some(
+                argv.worktree_target()
+                    .ok_or_else(|| invalid("worktree add has no typed target"))?
+                    .1
+                    .as_str()
+                    .to_owned(),
+            );
+        }
         self.put_record(repo, &record)?;
         self.run_mutation(repo, argv)?;
+        if operation == GitWireOperation::WorktreeAdd {
+            let requested = argv
+                .worktree_target()
+                .ok_or_else(|| invalid("worktree add has no typed target"))?;
+            self.confirm_added_worktree(
+                repo,
+                requested.0,
+                requested.1,
+                record.worktree_settings_hash.as_ref(),
+            )?;
+        }
         self.run_mutation(repo, &FrozenGitArgv::worktree_prune())?;
         self.drop_record(repo, &key)?;
         receipt_from_stored(&finish_state(
@@ -96,6 +131,49 @@ impl GitWire<'_> {
             Vec::new(),
             now,
         ))
+    }
+
+    /// The public effect is Applied only after the private execution view is
+    /// gone and ordinary Git can still resolve the requested commit through
+    /// the real registration. Failure retains the prepared journal for repair.
+    fn confirm_added_worktree(
+        &self,
+        repo: &GitWireRepo,
+        path: &Path,
+        commit: &GitOid,
+        settings_hash: Option<&[u8; 32]>,
+    ) -> Result<()> {
+        if !self.worktree_registered(repo, path)? {
+            return Err(invalid("created worktree is not registered"));
+        }
+        let worktree = self.open_repo(repo.repo_ref().clone(), path)?;
+        let observed = self.resolve_commit(&worktree, "HEAD")?;
+        if &observed != commit {
+            return Err(invalid("created worktree has the wrong commit"));
+        }
+        let expected =
+            settings_hash.ok_or_else(|| invalid("worktree intent has no semantic proof"))?;
+        let git_file = fs::read_to_string(path.join(".git"))?;
+        let prefix = format!("gitdir: {}/worktrees/", repo.common_dir.display());
+        let name = git_file
+            .strip_prefix(&prefix)
+            .map(|name| name.trim_end_matches('\n'))
+            .filter(|name| !name.is_empty() && !name.contains('/') && !name.contains('\\'))
+            .ok_or_else(|| invalid("worktree registration does not belong to this repository"))?;
+        let config = repo
+            .common_dir
+            .join("worktrees")
+            .join(name)
+            .join("config.worktree");
+        let bytes = match fs::read(config) {
+            Ok(bytes) => bytes,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Vec::new(),
+            Err(error) => return Err(error.into()),
+        };
+        if &super::repository_profile::hash_worktree_settings(&bytes) != expected {
+            return Err(invalid("created worktree lost its admitted semantics"));
+        }
+        Ok(())
     }
 
     /// Resolves a prepared worktree record by re-observing registration. The
@@ -121,9 +199,24 @@ impl GitWire<'_> {
                 self.run_mutation(repo, &argv)?;
                 true
             }
-            (GitWireOperation::WorktreeAdd, Some(_))
-            | (GitWireOperation::WorktreeRemove, None)
-            | (GitWireOperation::WorktreePrune, _) => true,
+            (GitWireOperation::WorktreeAdd, Some(path)) => {
+                let requested = record
+                    .worktree_commit
+                    .as_deref()
+                    .map(GitOid::parse_hex)
+                    .transpose()?;
+                match requested {
+                    Some(commit) => self.confirm_added_worktree(
+                        repo,
+                        &path,
+                        &commit,
+                        record.worktree_settings_hash.as_ref(),
+                    )?,
+                    None => return Err(invalid("prepared worktree has no requested commit")),
+                }
+                true
+            }
+            (GitWireOperation::WorktreeRemove, None) | (GitWireOperation::WorktreePrune, _) => true,
             (_, _) => false,
         };
         self.settle_worktree(repo, record, resolved, now)

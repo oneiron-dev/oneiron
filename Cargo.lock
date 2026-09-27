@@ -7137,6 +7137,8 @@ dependencies = [
  "ocrs",
  "oneiron",
  "oneiron-docedit",
+ "oneiron-guest",
+ "oneiron-sandbox-contract",
  "oneiron-seal",
  "oneiron-vault-contract",
  "p256",
@@ -7174,6 +7176,7 @@ dependencies = [
  "unicode-segmentation",
  "uuid",
  "wasmtime",
+ "wat",
  "whichlang",
  "windows-sys 0.61.2",
  "xxhash-rust",
@@ -7260,6 +7263,7 @@ version = "0.1.0"
 dependencies = [
  "blake3",
  "libc",
+ "oneiron-sandbox-contract",
  "serde",
  "serde_json",
  "tempfile",
@@ -7285,6 +7289,20 @@ dependencies = [
  "base64 0.22.1",
  "oneiron",
  "serde_json",
+]
+
+[[package]]
+name = "oneiron-linear"
+version = "0.1.0"
+dependencies = [
+ "blake3",
+ "chrono",
+ "oneiron",
+ "reqwest 0.12.28",
+ "rmp-serde",
+ "rmpv",
+ "serde_json",
+ "tempfile",
 ]
 
 [[package]]
@@ -7432,6 +7450,10 @@ dependencies = [
  "tempfile",
  "tokio",
 ]
+
+[[package]]
+name = "oneiron-sandbox-contract"
+version = "0.1.0"
 
 [[package]]
 name = "oneiron-seal"
