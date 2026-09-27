@@ -968,7 +968,7 @@ fn golden_wire_shapes() {
 
     // context pack: top-level `edge_hop`, alias spellings, and the vector-only
     // form all canonicalize to snake_case.
-    let canonical_pack = r#"{"query":"blue hallway","query_vector":null,"limit":10,"depth":null,"edge_hop":1,"max_neighbors":null,"budget":null}"#;
+    let canonical_pack = r#"{"executor_model":null,"query":"blue hallway","query_vector":null,"limit":10,"depth":null,"edge_hop":1,"max_neighbors":null,"budget":null}"#;
     for literal in [
         canonical_pack,
         r#"{"query":"blue hallway","edgeHop":1}"#,
@@ -978,7 +978,7 @@ fn golden_wire_shapes() {
             serde_json::from_str(literal).expect("context pack literal");
         assert_eq!(encode(&request), canonical_pack);
     }
-    let vector_only_pack = r#"{"query":null,"query_vector":[0.25,0.75],"limit":10,"depth":null,"edge_hop":null,"max_neighbors":null,"budget":null}"#;
+    let vector_only_pack = r#"{"executor_model":null,"query":null,"query_vector":[0.25,0.75],"limit":10,"depth":null,"edge_hop":null,"max_neighbors":null,"budget":null}"#;
     for literal in [
         vector_only_pack,
         r#"{"queryVector":[0.25,0.75]}"#,
@@ -992,7 +992,7 @@ fn golden_wire_shapes() {
             ContextPackDepthControls::default()
         );
     }
-    let nested_pack = r#"{"query":null,"query_vector":[0.25,0.75],"limit":10,"depth":{"edge_hop":2,"max_neighbors":9},"edge_hop":1,"max_neighbors":null,"budget":null}"#;
+    let nested_pack = r#"{"executor_model":null,"query":null,"query_vector":[0.25,0.75],"limit":10,"depth":{"edge_hop":2,"max_neighbors":9},"edge_hop":1,"max_neighbors":null,"budget":null}"#;
     for literal in [
         nested_pack,
         r#"{"queryVector":[0.25,0.75],"depth":{"edgeHop":2,"maxNeighbors":9},"edgeHop":1}"#,
@@ -1003,7 +1003,7 @@ fn golden_wire_shapes() {
         assert_eq!(request.resolved_depth().edge_hop, Some(2));
         assert_eq!(request.resolved_depth().max_neighbors, Some(9));
     }
-    let budget_pack = r#"{"query":"blue hallway","query_vector":null,"limit":10,"depth":null,"edge_hop":null,"max_neighbors":null,"budget":{"token_budget":4000,"max_item_tokens":512,"max_field_chars":500,"retrieval":{"claims":4,"turns":2,"summaries":2,"facets":1,"other":1,"selected_edges":50}}}"#;
+    let budget_pack = r#"{"executor_model":null,"query":"blue hallway","query_vector":null,"limit":10,"depth":null,"edge_hop":null,"max_neighbors":null,"budget":{"token_budget":4000,"max_item_tokens":512,"max_field_chars":500,"retrieval":{"claims":4,"turns":2,"summaries":2,"facets":1,"other":1,"selected_edges":50}}}"#;
     for literal in [
         budget_pack,
         r#"{"query":"blue hallway","budget":{"tokenBudget":4000,"maxItemTokens":512,"maxFieldChars":500,"retrieval":{"claims":4,"turns":2,"summaries":2,"facets":1,"other":1,"selectedEdges":50}}}"#,
@@ -1012,6 +1012,26 @@ fn golden_wire_shapes() {
             serde_json::from_str(literal).expect("budget literal");
         assert_eq!(encode(&request), budget_pack);
     }
+
+    let named_pack: CoreContextPackRequest =
+        serde_json::from_str(r#"{"executor_model":"provider/model@rev2","query":"blue hallway"}"#)
+            .expect("named executor pack");
+    assert_eq!(
+        named_pack.executor_model.as_deref(),
+        Some("provider/model@rev2")
+    );
+    assert_eq!(
+        encode(&named_pack),
+        r#"{"executor_model":"provider/model@rev2","query":"blue hallway","query_vector":null,"limit":10,"depth":null,"edge_hop":null,"max_neighbors":null,"budget":null}"#,
+    );
+    assert_eq!(round_trip(&named_pack), named_pack);
+    assert!(
+        serde_json::from_str::<CoreContextPackRequest>(
+            r#"{"executorModel":"provider/model@rev2","query":"blue hallway"}"#,
+        )
+        .is_err(),
+        "only canonical executor_model is accepted"
+    );
 
     // hydrate: `ref` plus every accepted alias, and the parts form.
     let canonical_hydrate = r#"{"ref":"tn1:a7","short_id":null,"content_hash":null,"view":"full"}"#;

@@ -1809,3 +1809,59 @@ fn displaced_attribution_judge_cannot_commit_a_new_inflight_verdict() -> crate::
     );
     Ok(())
 }
+
+#[test]
+fn displacement_scan_cannot_miss_a_judgment_committed_before_its_writer() -> crate::error::Result<()>
+{
+    let (_tmp, vault) = temp_vault();
+    let skill = EntityId::now();
+    let actor = EntityId::now();
+    put_active_import(&vault, &skill, "sk05.replacement-scan");
+    put_actor(&vault, &actor);
+    let receipt =
+        stamped_receipt_for_model(&vault, "sk05.replacement-scan", "1.0.0", Some("model@1"));
+    std::thread::scope(|scope| -> crate::error::Result<()> {
+        let (ready_tx, ready_rx) = std::sync::mpsc::sync_channel(0);
+        let (resume_tx, resume_rx) = std::sync::mpsc::sync_channel(0);
+        let replacement = scope.spawn(|| {
+            crate::skill_attribution::set_pre_writer_hook(Box::new(move || {
+                ready_tx.send(()).expect("replacement about to take writer");
+                resume_rx.recv().expect("wait for new J1 judgment");
+            }));
+            crate::skill_attribution::supersede_displaced_judge_receipts(
+                &vault,
+                "rule-attribution@1",
+                "new-judge@2",
+                40,
+            )
+        });
+        ready_rx.recv().expect("replacement prepared");
+        record_attribution_evidence(
+            &vault,
+            &OutcomeEvidence::new(&receipt, actor, AttemptOutcome::Failed, 30)
+                .with_skill(skill)
+                .with_routing_facts(true, true),
+        )?;
+        let rows = run_attribution_projector(&vault, read_attribution_cursor(&vault)?)?;
+        assert_eq!(rows.len(), 1);
+        resume_tx.send(()).expect("release replacement");
+        let displaced = replacement.join().expect("replacement thread")?;
+        assert_eq!(displaced.len(), 1);
+        project_skill_reliability(&vault, &rows)?;
+        Ok(())
+    })?;
+    assert_eq!(
+        skill_executor_reliability(&vault, &skill, "model@1")?.runs,
+        0
+    );
+    assert!(
+        claims(
+            &vault,
+            &skill,
+            PREDICATE_SKILL_QUARANTINE_PROPOSAL,
+            ClaimLifecycleStatus::Active
+        )
+        .is_empty()
+    );
+    Ok(())
+}

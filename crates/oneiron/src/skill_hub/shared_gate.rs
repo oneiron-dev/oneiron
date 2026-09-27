@@ -51,7 +51,7 @@ pub struct SharedSkillMergeReceipt {
     pub held_out_digest: String,
     pub accepted: bool,
     pub judge_revision: Option<String>,
-    #[serde(skip)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub displaced_by_revision: Option<String>,
     pub at: u64,
 }

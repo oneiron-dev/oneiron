@@ -316,8 +316,9 @@ fn skill_discovery_blends_relevance_with_posterior_and_explores() -> Result<()> 
 fn executor_pair_controls_production_pack_skill_ranking() -> Result<()> {
     use crate::claim::{ClaimBody, ClaimSubject};
     use crate::skill_reliability::PREDICATE_SKILL_RELIABILITY;
-    let (_dir, vault) =
-        crate::test_util::open_test_vault_with(crate::test_util::embedding_test_config());
+    let mut config = crate::test_util::embedding_test_config();
+    config.retrieval_telemetry_capture = true;
+    let (_dir, vault) = crate::test_util::open_test_vault_with(config);
     let mut ids = Vec::new();
     for index in 1..=2 {
         let id = crate::test_util::entity(index);
@@ -404,6 +405,36 @@ fn executor_pair_controls_production_pack_skill_ranking() -> Result<()> {
     );
     let unmeasured = rank("new@3")?;
     assert_eq!(unmeasured.len(), 2);
+    let captured = |model: Option<&str>| -> Result<_> {
+        let mut builder = vault
+            .context_pack()
+            .search_text("private-query-sentinel", 20)
+            .replay_query_ref("eval://pair-routing")
+            .capture_retrieval_trace(true);
+        if let Some(model) = model {
+            builder = builder.skill_executor(model)?;
+        }
+        let run = builder.run_with_telemetry()?;
+        let row = vault
+            .retrieval_run(run.run_id.expect("recorded run"))?
+            .expect("row");
+        let inputs = row.replay_inputs.expect("captured replay inputs");
+        assert!(!inputs.config.to_string().contains("private-query-sentinel"));
+        Ok((inputs.config, row.trace.expect("trace").fork_hash))
+    };
+    let (old_config, old_hash) = captured(Some("old@1"))?;
+    let (new_config, new_hash) = captured(Some("new@2"))?;
+    let (unknown_config, unknown_hash) = captured(None)?;
+    assert_eq!(old_config["skill_executor"], "old@1");
+    assert_eq!(old_config["pack"]["assembly"]["skill_executor"], "old@1");
+    assert_eq!(new_config["skill_executor"], "new@2");
+    assert_eq!(new_config["pack"]["assembly"]["skill_executor"], "new@2");
+    assert!(unknown_config["skill_executor"].is_null());
+    assert!(unknown_config["pack"]["assembly"]["skill_executor"].is_null());
+    assert_ne!(old_hash, new_hash);
+    assert_ne!(old_hash, unknown_hash);
+    assert_ne!(new_hash, unknown_hash);
+    assert_eq!(old_hash, captured(Some("old@1"))?.1);
     Ok(())
 }
 

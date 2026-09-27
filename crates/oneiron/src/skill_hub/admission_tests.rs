@@ -898,6 +898,38 @@ fn marketplace_and_shared_merge_keep_scores_but_mark_displaced_judge() -> Result
         old_merge.displaced_by_revision.as_deref(),
         Some("fixture-judge@2")
     );
+    // Outward JSON and MessagePack views carry the derived mark; the stored
+    // receipt remains the immutable score pair written before displacement.
+    let marketplace_json = serde_json::to_value(&old)
+        .map_err(|_| crate::Error::InvariantViolation("marketplace fixture JSON"))?;
+    let merge_json = serde_json::to_value(&old_merge)
+        .map_err(|_| crate::Error::InvariantViolation("merge fixture JSON"))?;
+    assert_eq!(marketplace_json["displaced_by_revision"], "fixture-judge@2");
+    assert_eq!(merge_json["displaced_by_revision"], "fixture-judge@2");
+    assert_eq!(
+        serde_json::from_value::<HubAdmissionReceipt>(marketplace_json)
+            .map_err(|_| crate::Error::InvariantViolation("marketplace JSON read"))?,
+        old
+    );
+    assert_eq!(
+        serde_json::from_value::<SharedSkillMergeReceipt>(merge_json)
+            .map_err(|_| crate::Error::InvariantViolation("merge JSON read"))?,
+        old_merge
+    );
+    let bytes = rmp_serde::to_vec_named(&old)
+        .map_err(|_| crate::Error::InvariantViolation("marketplace msgpack"))?;
+    assert_eq!(
+        rmp_serde::from_slice::<HubAdmissionReceipt>(&bytes)
+            .map_err(|_| crate::Error::InvariantViolation("marketplace msgpack read"))?,
+        old
+    );
+    let bytes = rmp_serde::to_vec_named(&old_merge)
+        .map_err(|_| crate::Error::InvariantViolation("merge msgpack"))?;
+    assert_eq!(
+        rmp_serde::from_slice::<SharedSkillMergeReceipt>(&bytes)
+            .map_err(|_| crate::Error::InvariantViolation("merge msgpack read"))?,
+        old_merge
+    );
     Ok(())
 }
 

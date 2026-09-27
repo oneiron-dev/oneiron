@@ -32,6 +32,8 @@ mod audit;
 mod codec;
 mod judge;
 mod judge_supersession;
+#[cfg(test)]
+pub(crate) use judge_supersession::set_pre_writer_hook;
 pub(crate) use judge_supersession::{judgment_displaced, judgment_displaced_in_txn};
 mod projector;
 mod types;

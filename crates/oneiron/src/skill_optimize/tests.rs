@@ -3804,7 +3804,7 @@ fn a_verdict_row_is_schema_v5_and_every_older_row_fails_closed() -> Result<()> {
 
     // …and so is the retired disposition, whatever schema claims to carry it.
     rewrite_verdict_row(&vault, |entries: &mut [(Value, Value)]| {
-        set_row_field(entries, "v", &Value::from(4u64));
+        set_row_field(entries, "v", &Value::from(5u64));
         set_row_field(
             entries,
             "disposition",

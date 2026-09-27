@@ -15,7 +15,7 @@ use super::types::default_limit;
 #[serde(deny_unknown_fields)]
 pub struct CoreContextPackRequest {
     /// Executor model@revision for pair-specific skill reliability ranking.
-    #[serde(default, alias = "executorModel")]
+    #[serde(default)]
     pub executor_model: Option<String>,
     /// Optional BM25 text seed.
     #[serde(default)]

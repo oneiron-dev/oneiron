@@ -147,8 +147,15 @@ pub fn run_attribution_projector_with_judge(
 /// this: it is the stack seam.
 pub fn attribution_judgments(vault: &Vault) -> Result<Vec<AttributionJudgment>> {
     let rtxn = vault.store.env.read_txn()?;
+    attribution_judgments_in_txn(vault, &rtxn)
+}
+
+pub(super) fn attribution_judgments_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+) -> Result<Vec<AttributionJudgment>> {
     let mut out = Vec::new();
-    for row in vault.store.vault_meta.prefix_iter(&rtxn, JUDGMENT_PREFIX)? {
+    for row in vault.store.vault_meta.prefix_iter(txn, JUDGMENT_PREFIX)? {
         let (_, raw) = row?;
         out.push(decode_judgment(&raw)?);
     }

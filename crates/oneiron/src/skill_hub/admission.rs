@@ -34,7 +34,7 @@ pub struct HubAdmissionReceipt {
     /// Immutable revision of the skill that scored this candidate.
     pub judge_revision: String,
     /// Read projection of the replacement fence; original scores stay intact.
-    #[serde(skip)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub displaced_by_revision: Option<String>,
     pub at: u64,
 }

@@ -241,7 +241,7 @@ pub(crate) struct CoreContextPackRequest {
     #[serde(default)]
     pub(super) session_id: Option<String>,
     /// Executor model@revision for pair-specific skill reliability ranking.
-    #[serde(default, alias = "executorModel")]
+    #[serde(default)]
     pub(super) executor_model: Option<String>,
     /// Optional BM25 text query.
     #[serde(default)]

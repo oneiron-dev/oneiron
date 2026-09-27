@@ -1,6 +1,6 @@
 //! Judge-revision provenance for routed receipts, and non-destructive displacement.
 
-use super::attribution_judgments;
+use super::{attribution_judgments, projector::attribution_judgments_in_txn};
 use crate::Vault;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
@@ -142,32 +142,17 @@ pub fn supersede_displaced_judge_receipts(
         return Err(Error::InvalidClaimBody("invalid judge replacement"));
     }
     let mut affected: Vec<(EntityId, Option<String>)> = Vec::new();
-    // Read immutable terminal receipts before acquiring LMDB's writer: opening
-    // a nested read transaction while this thread owns the writer is BadRslot.
-    let judgments = attribution_judgments(vault)?;
-    let prepared = judgments
-        .into_iter()
-        .map(|judgment| {
-            let executor = if judgment.verdict == super::AttributionVerdict::SkillDefect {
-                judgment
-                    .evidence_receipts
-                    .first()
-                    .map(|id| {
-                        crate::receipt::attempt_pack_receipt(vault, id).map(|receipt| {
-                            receipt.and_then(|row| {
-                                row.fields.get("model").filter(|id| !id.is_empty()).cloned()
-                            })
-                        })
-                    })
-                    .transpose()?
-                    .flatten()
-            } else {
-                None
-            };
-            Ok((judgment, executor))
-        })
-        .collect::<Result<Vec<_>>>()?;
+    #[cfg(test)]
+    PRE_WRITER_HOOK.with(|slot| {
+        if let Some(hook) = slot.borrow_mut().take() {
+            hook();
+        }
+    });
     vault.with_write_txn(|txn| {
+        // Scan on the same writer snapshot that installs the fence. A J1
+        // verdict committed before this lock is present here; one committed
+        // afterward is refused by the revision fence in its own writer.
+        let judgments = attribution_judgments_in_txn(vault, txn)?;
         let fence = revision_key(displaced);
         if let Some(held) = vault.store.vault_meta.get(txn, &fence)? {
             if held.as_ref() != replacement.as_bytes() {
@@ -181,7 +166,7 @@ pub fn supersede_displaced_judge_receipts(
                 .vault_meta
                 .put(txn, &fence, replacement.as_bytes())?;
         }
-        for (judgment, executor) in &prepared {
+        for judgment in &judgments {
             let origin = vault
                 .store
                 .vault_meta
@@ -206,6 +191,15 @@ pub fn supersede_displaced_judge_receipts(
                 let Some(receipt_ref) = judgment.evidence_receipts.first() else {
                     continue;
                 };
+                let executor =
+                    crate::receipt::attempt_pack_receipt_in_txn(&vault.store, txn, receipt_ref)?
+                        .and_then(|receipt| {
+                            receipt
+                                .fields
+                                .get("model")
+                                .filter(|id| !id.is_empty())
+                                .cloned()
+                        });
                 crate::skill_reliability::mark_displaced_outcome_in_txn(
                     vault,
                     txn,
@@ -215,7 +209,7 @@ pub fn supersede_displaced_judge_receipts(
                     displaced,
                     replacement,
                 )?;
-                let pair = (judgment.subject, executor.clone());
+                let pair = (judgment.subject, executor);
                 if !affected.contains(&pair) {
                     affected.push(pair);
                 }
@@ -241,4 +235,14 @@ pub fn supersede_displaced_judge_receipts(
             row.displaced_revision == displaced && row.replacement_revision == replacement
         })
         .collect())
+}
+
+#[cfg(test)]
+thread_local! {
+    static PRE_WRITER_HOOK: std::cell::RefCell<Option<Box<dyn FnOnce()>>> = const { std::cell::RefCell::new(None) };
+}
+
+#[cfg(test)]
+pub(crate) fn set_pre_writer_hook(hook: Box<dyn FnOnce()>) {
+    PRE_WRITER_HOOK.with(|slot| *slot.borrow_mut() = Some(hook));
 }
