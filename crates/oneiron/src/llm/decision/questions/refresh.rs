@@ -5,6 +5,7 @@ use super::{arrival, records::*, store::*};
 use crate::batch::ENTITY_METADATA_HEADER_LEN;
 use crate::claim::{ClaimApprovalStatus, ClaimSource, ClaimSubject, ScopedReadActorKey};
 use crate::llm::decision::{DecisionReceipt, TypedDecision};
+use crate::side_table::SideKey;
 use crate::{
     ClaimCandidate, EntityId, Error, Result, TimeRange, Vault, WriteActor, WriteEnvelope,
     WriteProvenance,
@@ -223,8 +224,15 @@ pub fn refresh_due_questions(
     let work = {
         let txn = vault.store.env.read_txn()?;
         let mut work = Vec::new();
-        for row in QUESTION_HEAD.iter_from(&vault.store, &txn, &[])? {
-            let (HeadKey(id), head) = row?;
+        // Four row families share the declaration; decode only exact head keys.
+        for row in QUESTION_HEAD.iter_raw_from(&vault.store, &txn, &[])? {
+            let (key, _) = row?;
+            let Some(HeadKey(id)) = HeadKey::decode_key(&key) else {
+                continue;
+            };
+            let Some(head) = QUESTION_HEAD.get(&vault.store, &txn, &HeadKey(id))? else {
+                continue;
+            };
             if head.paused {
                 continue;
             }
