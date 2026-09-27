@@ -156,6 +156,9 @@ pub struct WakeAttemptContext<'a> {
     pub deadline: &'a WakePassDeadline,
     pub budget_id: &'a str,
     pub now_ms: u64,
+    /// One frozen LMDB ledger revision for this entire wake, if the driver
+    /// supplied it. Standalone direct executor calls own a local snapshot.
+    pub ledger_pin: Option<&'a crate::dreamer_consolidation::WakeEvidenceSnapshot>,
 }
 
 impl WakeAttemptContext<'_> {

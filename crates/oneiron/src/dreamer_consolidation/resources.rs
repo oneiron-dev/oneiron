@@ -4,7 +4,10 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use super::conflict::{candidate_facts, deterministic_claim_id, swarm_evidence_content_hash};
+use super::conflict::{
+    SwarmEvidenceRef, VerifiedSwarmEvidence, candidate_facts, deterministic_claim_id,
+    swarm_evidence_content_hash, turn_trust_class,
+};
 
 mod prior;
 mod signals;
@@ -25,15 +28,80 @@ use crate::{Result, Vault};
 pub(crate) use write::ConsolidationFence;
 pub use write::ScopedConsolidationWrite;
 
+/// Source bodies frozen by the Dreamer at ONE ledger snapshot, before the
+/// wake starts any writes. The read transaction closes immediately after this
+/// bounded projection; a wake never holds an LMDB reader slot across writes.
+#[derive(Debug, Default)]
+pub struct WakeEvidenceSnapshot {
+    sources: BTreeMap<EntityId, (u8, u64, Vec<u8>)>,
+}
+
+impl WakeEvidenceSnapshot {
+    pub(crate) fn capture(
+        vault: &Vault,
+        scope: crate::dreamer_runner::DreamerConsolidationScope,
+    ) -> Result<Self> {
+        let mut ids = BTreeSet::new();
+        for attempt in crate::attempt_queue::AttemptQueue::new(vault).list()? {
+            if attempt.kind == scope.attempt_kind() && !attempt.state.is_terminal() {
+                // A malformed queued row is not a source grant. The normal
+                // admission/executor door still rejects it; do not abort an
+                // unrelated wake before that row is even selected.
+                let Ok(payload) =
+                    crate::dreamer_runner::decode_dreamer_attempt_payload(&attempt.payload)
+                else {
+                    continue;
+                };
+                let Ok((partition, turns, _)) =
+                    super::partition::decode_partition_payload(&payload.input)
+                else {
+                    continue;
+                };
+                ids.insert(partition.conversation_ref);
+                ids.extend(turns);
+            }
+        }
+        Self::capture_ids(vault, &ids.into_iter().collect::<Vec<_>>())
+    }
+
+    fn capture_ids(vault: &Vault, ids: &[EntityId]) -> Result<Self> {
+        if ids.is_empty() {
+            return Ok(Self::default());
+        }
+        let actor = vault.dreamer_authority()?;
+        let key = ScopedReadActorKey::with_actor_class(
+            actor.entity_ref().to_hex(),
+            actor.actor_class().gate_actor_class(),
+        )
+        .ok_or_else(|| invalid_consolidation("invalid consolidation read actor"))?;
+        let read = vault.scoped_read(key);
+        let txn = vault.store.env.read_txn()?;
+        let rows = read.get_entities_parts_in_txn(&txn, ids)?;
+        let sources = ids
+            .iter()
+            .copied()
+            .zip(rows)
+            .filter_map(|(id, row)| row.map(|body| (id, body)))
+            .collect();
+        Ok(Self { sources })
+    }
+
+    fn source(&self, id: &EntityId) -> Option<(u8, u64, Vec<u8>)> {
+        self.sources.get(id).cloned()
+    }
+}
+
 #[derive(Clone)]
 struct SourcePin {
     resource: ScopeResource,
     entity_type: u8,
     learned_at: u64,
+    trust_class: Option<crate::claim::ClaimSource>,
 }
 
 pub(super) struct BranchResources<'a> {
     read: ScopedRead<'a>,
+    ledger_pin: Option<&'a WakeEvidenceSnapshot>,
     partition: ConsolidationPartitionKey,
     sources: BTreeMap<EntityId, SourcePin>,
     turns: BTreeSet<EntityId>,
@@ -49,6 +117,7 @@ pub(super) struct BranchResources<'a> {
 impl<'a> BranchResources<'a> {
     /// Admit the already queued partition, never a model-selected resource set.
     /// The executor checks the queued Dreamer actor before entering this door.
+    #[cfg(test)]
     pub(super) fn open(
         vault: &'a Vault,
         actor: WriteActor,
@@ -56,6 +125,18 @@ impl<'a> BranchResources<'a> {
         turns: &[EntityId],
         attempt: AttemptId,
         requested: Option<&Scope>,
+    ) -> Result<Self> {
+        Self::open_at_pin(vault, actor, partition, turns, attempt, requested, None)
+    }
+
+    pub(super) fn open_at_pin(
+        vault: &'a Vault,
+        actor: WriteActor,
+        partition: ConsolidationPartitionKey,
+        turns: &[EntityId],
+        attempt: AttemptId,
+        requested: Option<&Scope>,
+        ledger_pin: Option<&'a WakeEvidenceSnapshot>,
     ) -> Result<Self> {
         let actor_key = ScopedReadActorKey::with_actor_class(
             actor.entity_ref().to_hex(),
@@ -72,8 +153,20 @@ impl<'a> BranchResources<'a> {
         let output = output_projection(&partition, turns);
         let mut sources = BTreeMap::new();
         let mut readable = BTreeSet::from([bucket.clone()]);
-        for id in std::iter::once(&partition.conversation_ref).chain(turns) {
-            let (entity_type, learned_at, body) = read_source(&read, id)?;
+        // One LMDB read transaction pins all branch sources at one ledger
+        // revision. Later reads and the write fence must match these pins.
+        let source_ids: Vec<_> = std::iter::once(partition.conversation_ref)
+            .chain(turns.iter().copied())
+            .collect();
+        let source_rows = if let Some(pin) = ledger_pin {
+            source_ids.iter().map(|id| pin.source(id)).collect()
+        } else {
+            read.get_entities_parts_with_receipt(&source_ids, None)?
+                .value
+        };
+        for (id, row) in source_ids.iter().zip(source_rows) {
+            let (entity_type, learned_at, body) =
+                row.ok_or_else(|| invalid_consolidation("branch source is not readable"))?;
             if (*id == partition.conversation_ref
                 && !matches!(entity_type, ENTITY_TYPE_SESSION | ENTITY_TYPE_CONVERSATION))
                 || (*id != partition.conversation_ref && entity_type != ENTITY_TYPE_TURN)
@@ -82,12 +175,25 @@ impl<'a> BranchResources<'a> {
             }
             let resource = document_version(*id, &body);
             readable.insert(resource.clone());
+            let trust_class = (entity_type == ENTITY_TYPE_TURN)
+                .then(|| {
+                    let facts = decode_turn_body(&body);
+                    turn_trust_class(
+                        dreamer_turn_role(
+                            facts.speaker.as_deref(),
+                            &vault.config.assistant_display_names,
+                        ),
+                        false,
+                    )
+                })
+                .flatten();
             sources.insert(
                 *id,
                 SourcePin {
                     resource,
                     entity_type,
                     learned_at,
+                    trust_class,
                 },
             );
         }
@@ -113,6 +219,7 @@ impl<'a> BranchResources<'a> {
         let scope = requested.cloned().unwrap_or(granted);
         let mut resources = Self {
             read,
+            ledger_pin,
             partition,
             sources,
             turns: turns.iter().copied().collect(),
@@ -219,6 +326,91 @@ impl<'a> BranchResources<'a> {
             ));
         }
         Ok(transcript)
+    }
+
+    /// Parent-only evidence accounting: one actor-scoped read transaction for
+    /// every cited source, then content hash and source classification. Both
+    /// the branch pins and the sink's live fence reject revision drift.
+    pub(in crate::dreamer_consolidation) fn verify_evidence_refs(
+        &self,
+        refs: &[SwarmEvidenceRef],
+    ) -> Result<Vec<VerifiedSwarmEvidence>> {
+        self.check_axes(&self.scope)?;
+        let ids: Vec<_> = refs.iter().map(|entry| entry.source_id).collect();
+        for entry in refs {
+            if let Some(claim) = entry.claim_id {
+                if claim != entry.source_id
+                    || entry.byte_range.is_some()
+                    || !self.priors.contains_key(&claim)
+                {
+                    return Err(invalid_consolidation("unadmitted branch claim evidence"));
+                }
+            } else if !self.turns.contains(&entry.source_id) {
+                return Err(invalid_consolidation("unlisted branch evidence"));
+            }
+            let pin = self
+                .sources
+                .get(&entry.source_id)
+                .ok_or_else(|| invalid_consolidation("unlisted branch evidence"))?;
+            if !self.scope.allows_read(&self.bucket) || !self.scope.allows_read(&pin.resource) {
+                return Err(invalid_consolidation("branch evidence read refused"));
+            }
+        }
+        let source_rows = if let Some(pin) = self.ledger_pin {
+            ids.iter().map(|id| pin.source(id)).collect()
+        } else {
+            self.read.get_entities_parts_with_receipt(&ids, None)?.value
+        };
+        refs.iter()
+            .zip(source_rows)
+            .map(|(entry, row)| {
+                let (kind, learned_at, body) =
+                    row.ok_or_else(|| invalid_consolidation("branch evidence is not readable"))?;
+                let pin = &self.sources[&entry.source_id];
+                if kind != pin.entity_type
+                    || learned_at != pin.learned_at
+                    || document_version(entry.source_id, &body) != pin.resource
+                {
+                    return Err(invalid_consolidation("branch evidence revision changed"));
+                }
+                let trust_class = if entry.claim_id.is_some() {
+                    if kind != crate::registry::ENTITY_TYPE_CLAIM {
+                        return Err(invalid_consolidation("branch claim evidence type changed"));
+                    }
+                    let claim = crate::claim::decode_claim_body(&body, true)?;
+                    if !crate::claim::claim_evidence_admissible(&claim) {
+                        return Err(invalid_consolidation("generated claim cannot corroborate"));
+                    }
+                    let source = claim.source.unwrap_or(crate::claim::ClaimSource::Imported);
+                    crate::dreamer_consolidation::provenance::source_meet(
+                        source,
+                        crate::claim::claim_evidence_taint(&claim).unwrap_or(source),
+                    )
+                } else {
+                    if kind != crate::registry::ENTITY_TYPE_TURN {
+                        return Err(invalid_consolidation("branch turn evidence type changed"));
+                    }
+                    let facts = decode_turn_body(&body);
+                    let role = dreamer_turn_role(
+                        facts.speaker.as_deref(),
+                        &self.read.vault().config.assistant_display_names,
+                    );
+                    turn_trust_class(role, false)
+                        .ok_or_else(|| invalid_consolidation("inadmissible branch evidence role"))?
+                };
+                let bytes = if let Some((start, end)) = entry.byte_range {
+                    body.get(start..end)
+                        .ok_or_else(|| invalid_consolidation("invalid evidence byte range"))?
+                } else {
+                    &body
+                };
+                Ok(VerifiedSwarmEvidence {
+                    source_id: entry.source_id,
+                    content_hash: swarm_evidence_content_hash(bytes),
+                    trust_class,
+                })
+            })
+            .collect()
     }
 
     pub(super) fn evidence_time(&self, scope: &Scope, id: &EntityId) -> Result<u64> {

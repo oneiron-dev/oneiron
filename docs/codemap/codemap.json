@@ -7555,6 +7555,7 @@
      "path": "src/claim/scoped_read/point_reads.rs",
      "purpose": "Same-snapshot, receipted point and short-reference hydration doors",
      "surface": {
+      "crate-vis": 1,
       "fn": 9
      }
     },
@@ -12809,14 +12810,15 @@
       "ConsolidationBucketPlan",
       "PriorHead",
       "SwarmChildReturn",
-      "SwarmEvidenceRef"
+      "SwarmEvidenceRef",
+      "VerifiedSwarmEvidence"
      ],
      "path": "src/dreamer_consolidation/conflict.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 5,
-      "fn": 10,
-      "struct": 8
+      "crate-vis": 6,
+      "fn": 9,
+      "struct": 9
      }
     },
     {
@@ -12828,6 +12830,7 @@
      "path": "src/dreamer_consolidation/executor.rs",
      "purpose": "—",
      "surface": {
+      "crate-vis": 1,
       "struct": 1
      }
     },
@@ -12838,7 +12841,7 @@
      "path": "src/dreamer_consolidation/executor/extraction.rs",
      "purpose": "Extraction request/response projection for one admitted branch",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 3
      }
     },
     {
@@ -12963,12 +12966,15 @@
     {
      "bucket": "m",
      "kind": "src",
-     "notable": [],
+     "notable": [
+      "WakeEvidenceSnapshot"
+     ],
      "path": "src/dreamer_consolidation/resources.rs",
      "purpose": "Exact resource bounds for a consolidation partition",
      "surface": {
-      "crate-vis": 15,
-      "re-export": 1
+      "crate-vis": 18,
+      "re-export": 1,
+      "struct": 1
      }
     },
     {

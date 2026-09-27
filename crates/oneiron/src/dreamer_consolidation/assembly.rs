@@ -1,5 +1,8 @@
 //! Store-backed mechanical inputs for the consolidation executor.
-use super::conflict::candidate_facts;
+use super::conflict::{
+    SwarmChildReturn, SwarmEvidenceRef, VerifiedSwarmEvidence, candidate_facts,
+    collapse_sibling_evidence, evidence_trust_meet,
+};
 use super::resources::BranchResources;
 use super::routing::{attach_duplicate_evidence, judge_queue};
 use super::selection::{SelectionCandidate, SelectionConfig, StrengthSignals, select_candidates};
@@ -23,14 +26,48 @@ pub(super) fn assemble(
     resources.validate_candidates(resources.scope(), &candidates)?;
     let config = vault.consolidation_selection()?;
     let rules = resources.key_rules();
-    let candidates = attach_duplicate_evidence(candidates, rules)?;
+    let mut candidates = attach_duplicate_evidence(candidates, rules)?;
+    // The returned ids are citations, not evidence facts. Hydrate ALL sibling
+    // citations at one actor-scoped ledger revision before selection counts
+    // independent signals or the write can inherit a trust class.
+    let children: Vec<_> = candidates
+        .iter()
+        .map(|candidate| SwarmChildReturn {
+            evidence: candidate
+                .evidence_turn_refs
+                .iter()
+                .copied()
+                .map(SwarmEvidenceRef::whole_turn)
+                .collect(),
+            candidates: Vec::new(),
+        })
+        .collect();
+    let collapsed = collapse_sibling_evidence(resources, &children)?;
+    let verified: BTreeMap<_, _> = collapsed
+        .independent
+        .iter()
+        .map(|entry| (entry.source_id, *entry))
+        .collect();
+    for candidate in &mut candidates {
+        candidate.evidence_turn_refs.sort_unstable();
+        candidate.evidence_turn_refs.dedup();
+        candidate.evidence_meet = super::provenance::source_meet(
+            candidate.evidence_meet,
+            evidence_trust_meet(
+                candidate
+                    .evidence_turn_refs
+                    .iter()
+                    .filter_map(|id| verified.get(id)),
+            ),
+        );
+    }
     let mut inputs = Vec::new();
     let mut embeddings = BTreeMap::new();
     for candidate in &candidates {
         let (fan_in, new_refs, vector) =
             resources.candidate_signals(resources.scope(), candidate)?;
         inputs.push(selection_input(
-            resources, candidate, now, &config, fan_in, new_refs,
+            resources, candidate, &verified, now, &config, fan_in, new_refs,
         )?);
         if let Some(vector) = vector {
             embeddings.insert(candidate.claim_id, vector);
@@ -74,18 +111,25 @@ pub(super) fn assemble(
 fn selection_input(
     resources: &BranchResources<'_>,
     candidate: &PromotionCandidate,
+    verified: &BTreeMap<EntityId, VerifiedSwarmEvidence>,
     now: u64,
     config: &SelectionConfig,
     fan_in: u64,
     new_refs: u64,
 ) -> Result<SelectionCandidate> {
     let facts = candidate_facts(&candidate.candidate)?;
-    let refs: BTreeSet<_> = candidate.evidence_turn_refs.iter().copied().collect();
+    let mut seen = BTreeSet::new();
     let mut earliest = None;
     let mut latest = 0;
     let mut count = 0;
     let mut sessions = BTreeSet::new();
-    for id in refs {
+    for &id in &candidate.evidence_turn_refs {
+        let entry = verified
+            .get(&id)
+            .ok_or_else(|| super::support::invalid_consolidation("unverified evidence signal"))?;
+        if !seen.insert((entry.source_id, entry.content_hash)) {
+            continue;
+        }
         let learned_at = resources
             .evidence_time(resources.scope(), &id)?
             .saturating_mul(1_000);

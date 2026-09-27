@@ -127,6 +127,46 @@ impl LlmBackend for ScopeBackend {
 }
 
 #[test]
+fn assembly_preserves_stricter_internal_taint_after_parent_reread() -> Result<()> {
+    let (_dir, vault) = open_vault();
+    let store = DreamerRunnerStore::new(&vault);
+    let (attempt, turns, conversation) =
+        admitted_attempt_fixture(&vault, &store, 0x41, &[("user", "one cited statement")])?;
+    let (partition, _, _) = decode_partition_payload(&attempt.status.payload.input)?;
+    let snapshot = WakeEvidenceSnapshot::capture(&vault, DreamerConsolidationScope::Micro)?;
+    let branch = BranchResources::open_at_pin(
+        &vault,
+        vault.dreamer_authority()?,
+        partition,
+        &turns,
+        attempt.status.attempt.id,
+        None,
+        Some(&snapshot),
+    )?;
+    vault.set_consolidation_selection(&selection::SelectionConfig {
+        soak_ms: 0,
+        evidence_minimum: 1,
+        ..Default::default()
+    })?;
+    let mut output = candidate(conversation, "profile.name", "a value", None);
+    output.evidence_turn_refs = turns;
+    // An already derived restriction (e.g. a prior-head ancestor) must not
+    // be overwritten just because this turn's own source is UserStated.
+    output.evidence_meet = ClaimSource::Imported;
+    derive_id(&mut output, attempt.status.attempt.id)?;
+    let assembled = super::super::assembly::assemble(&vault, &branch, vec![output], 21_000)?;
+    assert_eq!(assembled.candidates.len(), 1);
+    assert_eq!(assembled.candidates[0].evidence_meet, ClaimSource::Imported);
+    assert_eq!(
+        branch
+            .write_fence()
+            .evidence_source(&assembled.candidates[0])?,
+        ClaimSource::Imported
+    );
+    Ok(())
+}
+
+#[test]
 fn production_executor_carries_scope_and_refuses_unlisted_evidence_and_output() -> Result<()> {
     let (_dir, vault) = open_vault();
     let store = DreamerRunnerStore::new(&vault);
@@ -155,6 +195,7 @@ fn production_executor_carries_scope_and_refuses_unlisted_evidence_and_output() 
         deadline: &deadline,
         budget_id: "wake",
         now_ms: 21_000,
+        ledger_pin: None,
     };
     let mut executor = ConsolidationExecutor {
         backend: &backend,
@@ -443,6 +484,7 @@ fn production_scoped_embeddings_nominate_only_the_judge() -> Result<()> {
             deadline: &deadline,
             budget_id: "wake",
             now_ms: 21_000,
+            ledger_pin: None,
         };
         let result = block_on_ready(executor.execute(&attempt, &mut ctx));
         if resolution == "missing" {
@@ -704,6 +746,7 @@ fn queued_four_axis_scope_is_inherited_and_cannot_be_erased() -> Result<()> {
         deadline: &deadline,
         budget_id: "wake",
         now_ms: 21_000,
+        ledger_pin: None,
     };
     assert!(matches!(
         block_on_ready(executor.execute(&attempt, &mut ctx))?,
@@ -1016,6 +1059,7 @@ fn scheduled_selection_retry_reextracts_new_admitted_evidence() -> Result<()> {
             deadline: &deadline,
             budget_id: "wake",
             now_ms: 21_000,
+            ledger_pin: None,
         };
         let result = {
             let mut executor = ConsolidationExecutor {

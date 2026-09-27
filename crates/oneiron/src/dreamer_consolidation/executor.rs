@@ -1,6 +1,6 @@
 use std::collections::{BTreeMap, BTreeSet};
 
-mod extraction;
+pub(super) mod extraction;
 mod retry;
 
 use super::resources::BranchResources;
@@ -135,6 +135,7 @@ impl ConsolidationExecutor<'_> {
         let candidates = self.decode_candidates(
             &partition,
             &response,
+            resources,
             resources.scope(),
             attempt_id,
             ctx.now_ms,
@@ -715,13 +716,14 @@ impl DreamerAttemptExecutor for ConsolidationExecutor<'_> {
             branch_scope.as_ref(),
         )?;
         let (partition, turns, _) = decode_partition_payload(&payload)?;
-        let resources = BranchResources::open(
+        let resources = BranchResources::open_at_pin(
             ctx.vault,
             self.actor,
             partition,
             &turns,
             attempt.status.attempt.id,
             branch_scope.as_ref(),
+            ctx.ledger_pin,
         )?;
         let run_id = attempt.status.attempt.run_id.clone();
         let mut charges = StepChargeTally::default();

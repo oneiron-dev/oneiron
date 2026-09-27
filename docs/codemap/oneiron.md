@@ -626,7 +626,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/claim/scoped_read/lifecycle.rs` | src | s | 1 crate-vis | — | Status-only history reads for already-served session rows, without weakening body reads |
 | `src/claim/scoped_read/note_visibility.rs` | src | s | 1 crate-vis | — | Actor and class checks for private NOTE bodies in scoped reads |
 | `src/claim/scoped_read/pinned_reads.rs` | src | s | 1 fn | — | Manifest-derived safety pins bypass query relevance, never actor authority |
-| `src/claim/scoped_read/point_reads.rs` | src | s | 9 fn | — | Same-snapshot, receipted point and short-reference hydration doors |
+| `src/claim/scoped_read/point_reads.rs` | src | s | 9 fn · 1 crate-vis | — | Same-snapshot, receipted point and short-reference hydration doors |
 | `src/claim/scoped_read/receipt.rs` | src | s | 3 struct · 4 fn · 1 crate-vis | ReadScope, ScopedReadReceipt, ScopedReadResult | Mandatory read receipts |
 | `src/claim/scoped_read/retrieval_visibility.rs` | src | s | 3 crate-vis | — | The retrieval authority floor for graph channels on a scoped read |
 | `src/claim/scoped_read/slip_tests.rs` | test | s | — | — | Root provisioning and fail-closed read admission land together |
@@ -1029,9 +1029,9 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/distance/tests.rs` | test | m | — | — | — |
 | `src/dreamer_consolidation/assembly.rs` | src | s | 2 crate-vis | — | Store-backed mechanical inputs for the consolidation executor |
 | `src/dreamer_consolidation/branch_scope.rs` | src | s | 4 fn · 6 crate-vis | — | Durable branch restriction alongside a partition payload, not a partition or consolidation identity axis |
-| `src/dreamer_consolidation/conflict.rs` | src | m | 8 struct · 10 fn · 5 crate-vis | CollapsedEvidence, ConflictIdentity, ConflictSet, ConsolidationBucketKey, ConsolidationBucketPlan, PriorHead, SwarmChildReturn, SwarmEvidenceRef | — |
-| `src/dreamer_consolidation/executor.rs` | src | m | 1 struct | ConsolidationExecutor | — |
-| `src/dreamer_consolidation/executor/extraction.rs` | src | s | 2 crate-vis | — | Extraction request/response projection for one admitted branch |
+| `src/dreamer_consolidation/conflict.rs` | src | m | 9 struct · 9 fn · 6 crate-vis | CollapsedEvidence, ConflictIdentity, ConflictSet, ConsolidationBucketKey, ConsolidationBucketPlan, PriorHead, SwarmChildReturn, SwarmEvidenceRef +1 | — |
+| `src/dreamer_consolidation/executor.rs` | src | m | 1 struct · 1 crate-vis | ConsolidationExecutor | — |
+| `src/dreamer_consolidation/executor/extraction.rs` | src | s | 3 crate-vis | — | Extraction request/response projection for one admitted branch |
 | `src/dreamer_consolidation/executor/retry.rs` | src | s | 1 crate-vis | — | Fresh source reads for scheduled selection retries, within the original partition |
 | `src/dreamer_consolidation/extracted_people.rs` | src | s | 2 crate-vis | — | Explicit PERSON outputs from the production extraction response |
 | `src/dreamer_consolidation/gap.rs` | src | m | 2 struct · 1 enum · 4 fn · 2 crate-vis | GapQueueDelta, ReflectionGap, ReflectionGapKind | — |
@@ -1041,7 +1041,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/dreamer_consolidation/partition.rs` | src | m | 3 struct · 6 fn · 6 crate-vis | ConsolidationCursor, ConsolidationPartitionKey, ConsolidationPartitionPlan | — |
 | `src/dreamer_consolidation/persistence.rs` | src | s | 1 fn · 2 crate-vis | — | Persistent contradiction markers and prior-head context for consolidation |
 | `src/dreamer_consolidation/provenance.rs` | src | m | 5 struct · 1 enum · 2 trait · 7 fn · 1 crate-vis | ConsolidationEvidenceEnvelope, ConsolidationProvenanceHop, ConsolidationProvenanceHopKind, ConsolidationSink, PeerAnswerLineage, PeerTrustDigestLine, PeerTrustDigestSink, PromotionCandidate | — |
-| `src/dreamer_consolidation/resources.rs` | src | m | 1 re-export · 15 crate-vis | — | Exact resource bounds for a consolidation partition |
+| `src/dreamer_consolidation/resources.rs` | src | m | 1 struct · 1 re-export · 18 crate-vis | WakeEvidenceSnapshot | Exact resource bounds for a consolidation partition |
 | `src/dreamer_consolidation/resources/prior.rs` | src | s | 5 crate-vis | — | Exact stored-head admission and question routing |
 | `src/dreamer_consolidation/resources/signals.rs` | src | s | 3 crate-vis | — | Actor- and branch-filtered graph/vector inputs for mechanical selection |
 | `src/dreamer_consolidation/resources/write.rs` | src | s | 1 struct · 1 fn · 6 crate-vis | ScopedConsolidationWrite | Sealed resource handoff |

@@ -69,6 +69,7 @@ fn prior_head_judge_routes_merge_accumulate_escalate_and_down() -> Result<()> {
             deadline: &deadline,
             budget_id: "wake",
             now_ms: 21_000,
+            ledger_pin: None,
         };
         let outcome = block_on_ready(executor.execute(&admitted, &mut ctx))?;
         // A fatal judge runs the declared escalation fallback, so "down"
@@ -179,6 +180,7 @@ fn manifest_single_value_skips_judge_only_at_sufficient_trust() -> Result<()> {
             deadline: &deadline,
             budget_id: "wake",
             now_ms: 21_000,
+            ledger_pin: None,
         };
         block_on_ready(executor.execute(&admitted, &mut ctx))?;
         if source == ClaimSource::Inferred {

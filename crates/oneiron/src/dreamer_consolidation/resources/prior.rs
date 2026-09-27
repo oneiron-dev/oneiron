@@ -30,10 +30,10 @@ impl BranchResources<'_> {
             {
                 continue;
             }
-            let crate::claim::ScopedReadResult {
-                value,
-                receipt: _receipt,
-            } = self.read.get_entity_parts_with_receipt(&id, None)?;
+            // Uncited stored heads are merge context. The wake snapshot owns
+            // evidence citations, while this prior still uses the scoped read
+            // door and the existing write-time source fence.
+            let value = self.read.get_entity_parts_with_receipt(&id, None)?.value;
             let (kind, learned_at, bytes) =
                 value.ok_or_else(|| invalid_consolidation("prior head is not actor-readable"))?;
             let resource = document_version(id, &bytes);
@@ -66,6 +66,7 @@ impl BranchResources<'_> {
                     resource,
                     entity_type: kind,
                     learned_at,
+                    trust_class: None,
                 },
             );
             self.priors.insert(id, prior);

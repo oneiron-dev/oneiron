@@ -63,6 +63,7 @@ impl ConsolidationExecutor<'_> {
         &self,
         partition: &ConsolidationPartitionKey,
         response: &LlmResponse,
+        resources: &BranchResources<'_>,
         scope: &crate::llm::Scope,
         attempt_id: crate::attempt_queue::AttemptId,
         now_ms: u64,
@@ -81,6 +82,17 @@ impl ConsolidationExecutor<'_> {
         let Some(items) = parsed.get("candidates").and_then(|value| value.as_array()) else {
             return Ok(Vec::new());
         };
+        // A child hash is not part of the return contract. If a model still
+        // reports one, compare it with our pinned source reread only to flag
+        // an integrity failure. It never enters dedup or the write envelope.
+        for source_id in disagreeing_child_hashes(resources, items)? {
+            tracing::warn!(
+                target: "oneiron::dreamer",
+                child_integrity = "evidence_hash_mismatch",
+                source_id = %source_id.to_hex(),
+                "child evidence hash disagrees with the ledger"
+            );
+        }
 
         let mut candidates = Vec::new();
         for item in items {
@@ -197,4 +209,41 @@ const fn hex_nibble(byte: u8) -> Option<u8> {
         b'A'..=b'F' => Some(byte - b'A' + 10),
         _ => None,
     }
+}
+
+/// A diagnostic side channel for out-of-contract hashes in the raw model
+/// response. The typed child return cannot carry them as evidence authority.
+pub(in crate::dreamer_consolidation) fn disagreeing_child_hashes(
+    resources: &BranchResources<'_>,
+    items: &[serde_json::Value],
+) -> Result<Vec<EntityId>> {
+    let mut reported = Vec::new();
+    for item in items {
+        let Some(hashes) = item
+            .get("evidence_hashes")
+            .and_then(|value| value.as_object())
+        else {
+            continue;
+        };
+        for (id, value) in hashes {
+            let id = entity_id_from_hex(id)
+                .ok_or_else(|| invalid_consolidation("invalid child evidence hash source"))?;
+            let hash = value
+                .as_str()
+                .ok_or_else(|| invalid_consolidation("invalid child evidence hash"))?;
+            reported.push((id, hash));
+        }
+    }
+    let refs: Vec<_> = reported
+        .iter()
+        .map(|(id, _)| super::super::SwarmEvidenceRef::whole_turn(*id))
+        .collect();
+    let verified = resources.verify_evidence_refs(&refs)?;
+    Ok(reported
+        .into_iter()
+        .zip(verified)
+        .filter_map(|((id, claimed), actual)| {
+            (!claimed.eq_ignore_ascii_case(&bytes_to_hex_lower(&actual.content_hash))).then_some(id)
+        })
+        .collect())
 }

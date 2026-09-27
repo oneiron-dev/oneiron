@@ -76,6 +76,32 @@ impl ScopedRead<'_> {
         })
     }
 
+    /// Actor-gated entity bodies at a caller-owned ledger snapshot. A wake
+    /// can pass the SAME read transaction to every child accounting step.
+    pub(crate) fn get_entities_parts_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        ids: &[EntityId],
+    ) -> Result<Vec<Option<EntityParts>>> {
+        let (filter, policy) = self.resolve_retrieval_filter_in(txn, None)?;
+        ids.iter()
+            .map(|id| {
+                let raw =
+                    self.entity_raw_with_mode_in(txn, &policy, &filter, id, ReadMode::Live)?;
+                raw.map(|raw| {
+                    let header = EntityMetadataHeader::parse(&raw)
+                        .ok_or(Error::CorruptedIndex("entity header"))?;
+                    Ok((
+                        header.entity_type,
+                        header.learned_at,
+                        raw[ENTITY_METADATA_HEADER_LEN..].to_vec(),
+                    ))
+                })
+                .transpose()
+            })
+            .collect()
+    }
+
     pub fn hydrate_short_id(
         &self,
         short_id: &str,

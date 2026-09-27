@@ -294,6 +294,7 @@ fn execute_wrapped(
         deadline: &deadline,
         budget_id: "wake",
         now_ms: DUE_AT.saturating_mul(1_000),
+        ledger_pin: None,
     };
     let mut executor = CommitmentWakeExecutor::new(inner, planner, actor)?;
     block_on_ready(executor.execute(attempt, &mut ctx))

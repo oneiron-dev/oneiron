@@ -178,11 +178,21 @@ impl ConsolidationFence {
         {
             return Err(invalid_consolidation("unadmitted consolidation evidence"));
         }
-        // This branch admits native user/assistant TURNs only. Imported histories
-        // are RECORDs, not TURNs. Generated is the existing evidence-meet floor;
-        // a prior is context, never corroboration or a source upgrade.
+        // The candidate's label is never a source of authority. The sealed
+        // snapshot recorded the source class for each admitted TURN; a lower
+        // candidate meet may carry an additional (e.g. prior) taint, but an
+        // inflated meet cannot erase the stored source's restriction.
+        let mut stored_meet = ClaimSource::Generated;
+        for id in &candidate.evidence_turn_refs {
+            let trust = self
+                .sources
+                .get(id)
+                .and_then(|pin| pin.trust_class)
+                .ok_or_else(|| invalid_consolidation("unclassified consolidation evidence"))?;
+            stored_meet = crate::dreamer_consolidation::provenance::source_meet(stored_meet, trust);
+        }
         if crate::dreamer_consolidation::provenance::source_meet(
-            ClaimSource::Generated,
+            stored_meet,
             candidate.evidence_meet,
         ) != candidate.evidence_meet
         {

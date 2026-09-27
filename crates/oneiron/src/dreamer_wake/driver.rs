@@ -268,6 +268,10 @@ impl<'a> DreamerWakeDriver<'a> {
             stop: WakePassStop::QueueEmpty,
         };
 
+        // Keep one MVCC revision for the wake's evidence accounting. Any source
+        // changed before commit is rejected by the existing write fence.
+        let ledger_pin =
+            crate::dreamer_consolidation::WakeEvidenceSnapshot::capture(self.vault, input.scope)?;
         loop {
             // Attempt-boundary yield (ONE-1683): one Pending poll with a
             // self-wake per iteration, so a supervisor selecting over this
@@ -455,6 +459,7 @@ impl<'a> DreamerWakeDriver<'a> {
                     deadline: &self.deadline,
                     budget_id: &self.budget_id,
                     now_ms: input.now.saturating_mul(1_000),
+                    ledger_pin: Some(&ledger_pin),
                 };
                 // Panic containment at the per-attempt boundary (ONE-1683): a
                 // panicking executor unwinding past the driver would skip

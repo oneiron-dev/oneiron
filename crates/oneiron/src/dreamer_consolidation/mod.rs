@@ -54,7 +54,7 @@ pub use gap::*;
 pub use partition::*;
 pub use persistence::close_persistent_conflict;
 pub use provenance::*;
-pub use resources::ScopedConsolidationWrite;
+pub use resources::{ScopedConsolidationWrite, WakeEvidenceSnapshot};
 pub use support::*;
 pub use watermark::*;
 

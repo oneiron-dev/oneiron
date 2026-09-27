@@ -173,6 +173,7 @@ fn extraction_keeps_same_answers_for_different_topics_distinct_on_replay() -> Re
             deadline: &deadline,
             budget_id: "wake",
             now_ms: 21_000,
+            ledger_pin: None,
         };
         assert!(matches!(
             block_on_ready(executor.execute(&admitted, &mut ctx))?,

@@ -208,6 +208,7 @@ fn execute(
             deadline: &deadline,
             budget_id: "wake",
             now_ms: 21_000,
+            ledger_pin: None,
         },
     ))
 }
@@ -232,6 +233,46 @@ fn names(vault: &Vault, subject: EntityId) -> Result<Vec<EntityId>> {
             _ => None,
         })
         .collect()
+}
+
+#[test]
+fn parent_classifies_admitted_claim_from_stored_body() -> Result<()> {
+    let (_dir, vault) = open_vault();
+    let fx = fixture(&vault)?;
+    let (partition, turns, _) = decode_partition_payload(&fx.attempt.status.payload.input)?;
+    let resources = BranchResources::open(
+        &vault,
+        fx.run.agent_actor,
+        partition,
+        &turns,
+        fx.run.attempt_id,
+        Some(&fx.scope),
+    )?;
+    let claim = SwarmEvidenceRef {
+        source_id: fx.head,
+        claim_id: Some(fx.head),
+        byte_range: None,
+    };
+    let collapsed = collapse_sibling_evidence(
+        &resources,
+        &[SwarmChildReturn {
+            evidence: vec![claim, claim],
+            candidates: Vec::new(),
+        }],
+    )?;
+    assert_eq!(collapsed.independent.len(), 1);
+    assert_eq!(collapsed.duplicates_collapsed, 1);
+    assert_eq!(
+        collapsed.independent[0].trust_class,
+        ClaimSource::UserStated
+    );
+    let unbound = SwarmEvidenceRef {
+        source_id: fx.turn,
+        claim_id: Some(fx.head),
+        byte_range: None,
+    };
+    assert!(resources.verify_evidence_refs(&[unbound]).is_err());
+    Ok(())
 }
 
 #[test]
