@@ -191,6 +191,7 @@ pub async fn decide_at_remote_seat(
             principal,
             providers,
             band: dial.band,
+            band_version: 0,
         },
         human_ask,
     })

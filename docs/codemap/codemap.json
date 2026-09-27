@@ -19950,12 +19950,50 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [
+      "DecisionLadder",
+      "DecisionModel",
+      "DecisionProvider",
+      "HumanDecisionQueue",
+      "HumanDecisionRequest",
+      "ModelDecisionProvider",
+      "ProviderDecision",
+      "RuleDecisionProvider"
+     ],
+     "path": "src/llm/decision/ladder.rs",
+     "purpose": "Host-injected, one-step decision ladder",
+     "surface": {
+      "fn": 4,
+      "struct": 5,
+      "trait": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [],
      "path": "src/llm/decision/mod.rs",
      "purpose": "Typed question records and shared outcome projection",
      "surface": {
       "mod": 1,
-      "re-export": 2
+      "re-export": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "BandMode",
+      "DecisionBandPolicy",
+      "LearnedBand",
+      "Reversibility"
+     ],
+     "path": "src/llm/decision/policy.rs",
+     "purpose": "Question- and reversibility-scoped escalation bands; learning starts in shadow",
+     "surface": {
+      "enum": 2,
+      "fn": 3,
+      "struct": 2
      }
     },
     {
@@ -20057,6 +20095,14 @@
      "kind": "test",
      "notable": [],
      "path": "src/llm/decision/seat/tests.rs",
+     "purpose": "—",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "src/llm/decision/tests.rs",
      "purpose": "—",
      "surface": {}
     },
@@ -20277,7 +20323,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "test",
      "notable": [],
      "path": "src/llm/registry/tests.rs",
@@ -20326,9 +20372,37 @@
      "path": "src/llm/score_scraper.rs",
      "purpose": "Config-driven benchmark scraping",
      "surface": {
-      "fn": 4,
+      "fn": 5,
+      "re-export": 2,
       "struct": 3,
       "trait": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "HttpScoreFetch"
+     ],
+     "path": "src/llm/score_scraper/http.rs",
+     "purpose": "Bounded HTTPS JSON transport for configured score sources",
+     "surface": {
+      "fn": 1,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "ScoreScraperWorker"
+     ],
+     "path": "src/llm/score_scraper/worker.rs",
+     "purpose": "Lifecycle-owned background score refresh: one immediate attempt, then the configured cadence",
+     "surface": {
+      "crate-vis": 1,
+      "fn": 1,
+      "struct": 1
      }
     },
     {
@@ -34795,7 +34869,7 @@
      "purpose": "Deterministic LinkedIn entity resolution and explicit runtime-path corpus preload"
     },
     "llm": {
-     "files": 66,
+     "files": 71,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -35350,8 +35424,8 @@
    },
    "over_bar": 9,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2085,
-   "test_files": 717
+   "source_files": 2089,
+   "test_files": 718
   },
   "oneiron-android": {
    "files": [
