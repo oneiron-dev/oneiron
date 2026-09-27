@@ -88,6 +88,7 @@ pub(crate) fn bind_task_answer_in_txn(
                 principal: input.principal,
                 providers: Vec::new(),
                 band,
+                band_version: 0,
             },
             human_ask: None,
         },
