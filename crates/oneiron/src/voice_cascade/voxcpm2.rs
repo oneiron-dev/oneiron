@@ -3,6 +3,7 @@
 //! A host must supply a queue connected to an already-loaded GPU process. Neither
 //! queue admission nor a host readiness claim alone proves a GPU is deployed.
 
+pub use crate::gate::voice_serving::VoiceServingLimits;
 use serde::{Deserialize, Serialize};
 use std::{collections::VecDeque, sync::Arc};
 
@@ -13,11 +14,8 @@ use crate::{
     voice_identity::ref_bank::VoiceRegisterClip,
 };
 
-pub const TARGET: &str = "voxcpm2";
+const TARGET: &str = "voxcpm2";
 pub const MODEL: &str = "VoxCPM2";
-const MAX_TEXT_BYTES: usize = 8 * 1024;
-const MAX_PCM_BYTES: usize = 2 * 1024 * 1024;
-const MAX_PENDING: usize = 16;
 
 fn invalid(message: &str) -> Error {
     Error::InvalidConfig(format!("VoxCPM2: {message}"))
@@ -27,6 +25,7 @@ fn invalid(message: &str) -> Error {
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct WarmTarget {
+    pub limits: VoiceServingLimits,
     pub model: String,
     pub checkpoint: String,
     pub boot_id: String,
@@ -35,7 +34,8 @@ pub struct WarmTarget {
 
 impl WarmTarget {
     fn validate(&self) -> Result<()> {
-        if self.model != MODEL
+        if !self.limits.valid()
+            || self.model != MODEL
             || self.checkpoint.trim().is_empty()
             || self.checkpoint.len() > 512
             || self.boot_id.trim().is_empty()
@@ -54,18 +54,38 @@ pub struct RenderTarget {
     pub source_pack: String,
     pub owner: EntityId,
     pub register: String,
+    pub reference_revision: String,
+    pub limits: VoiceServingLimits,
     pub warm: WarmTarget,
+}
+
+impl RenderTarget {
+    fn with_current<T>(
+        &self,
+        vault: &Vault,
+        operation: impl FnOnce(&VoiceRegisterClip) -> Result<T>,
+    ) -> Result<T> {
+        vault.with_current_owner_voice_ref(
+            &self.source_pack,
+            self.owner,
+            &self.reference_revision,
+            &self.register,
+            TARGET,
+            operation,
+        )
+    }
+
+    /// Hosts must recheck at playback, not only on initial PCM admission.
+    #[must_use]
+    pub fn is_current_in(&self, vault: &Vault) -> bool {
+        self.with_current(vault, |_| Ok(())).is_ok()
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum VoxCpm2Operation {
-    Start {
-        target: Box<RenderTarget>,
-        reference: VoiceRegisterClip,
-    },
-    Render {
-        text: String,
-    },
+    Start { target: Box<RenderTarget> },
+    Render { text: String },
     Cancel,
 }
 
@@ -98,12 +118,16 @@ pub struct VoxCpm2Audio<'a> {
 #[must_use = "filter and forward PCM through the active cascade, or discard it"]
 pub struct VoxCpm2Pcm {
     frame: PcmFrame,
+    vault: Arc<Vault>,
     pub target: RenderTarget,
 }
 
 impl VoxCpm2Pcm {
     #[must_use]
     pub fn filter_pcm(self, session: &VoiceCascadeSession) -> Option<(PcmFrame, RenderTarget)> {
+        if !self.target.is_current_in(&self.vault) {
+            return None;
+        }
         session
             .filter_pcm(self.frame)
             .map(|frame| (frame, self.target))
@@ -114,6 +138,7 @@ impl VoxCpm2Pcm {
 /// start; the ref is read at Start so withdrawn refs cannot be queued later.
 pub struct VoxCpm2Adapter<Q> {
     vault: Arc<Vault>,
+    limits: VoiceServingLimits,
     pack_id: String,
     register: String,
     queue: Q,
@@ -130,11 +155,24 @@ pub struct VoxCpm2Adapter<Q> {
 
 impl<Q: VoxCpm2Queue> VoxCpm2Adapter<Q> {
     pub fn new(vault: Arc<Vault>, pack_id: &str, register: &str, queue: Q) -> Result<Self> {
+        Self::new_for_holder(vault, pack_id, register, None, queue)
+    }
+
+    /// `holder` must come from the authenticated host identity, not speech.
+    pub fn new_for_holder(
+        vault: Arc<Vault>,
+        pack_id: &str,
+        register: &str,
+        holder: Option<EntityId>,
+        queue: Q,
+    ) -> Result<Self> {
+        let limits = vault.voice_serving_limits(holder)?;
         if pack_id.trim().is_empty() || register.trim().is_empty() || register.len() > 128 {
             return Err(invalid("invalid reference selection"));
         }
         Ok(Self {
             vault,
+            limits,
             pack_id: pack_id.into(),
             register: register.into(),
             queue,
@@ -179,7 +217,18 @@ impl<Q: VoxCpm2Queue> VoxCpm2Adapter<Q> {
 
     fn boundary(&mut self, generation: GenerationEpoch, end: bool) -> Result<()> {
         if !self.buffer.is_empty() {
-            if self.pending.len() == MAX_PENDING {
+            if !self
+                .target
+                .as_ref()
+                .is_some_and(|target| target.is_current_in(&self.vault))
+            {
+                self.cancelled = true;
+                self.buffer.clear();
+                self.pending.clear();
+                let _ = self.send(generation, VoxCpm2Operation::Cancel);
+                return Err(invalid("owner voice reference withdrawn or replaced"));
+            }
+            if self.pending.len() >= self.limits.max_queued_renders as usize {
                 return Err(invalid("responses must drain"));
             }
             let submission = self.send(
@@ -207,10 +256,15 @@ impl<Q: VoxCpm2Queue> VoxCpm2Adapter<Q> {
             || self.target.as_ref() != Some(&audio.target)
             || audio.channels != 1
             || audio.bytes.is_empty()
-            || audio.bytes.len() > MAX_PCM_BYTES
+            || audio.bytes.len() as u64 > self.limits.max_pcm_bytes
             || !audio.bytes.len().is_multiple_of(2)
         {
             return Err(invalid("unmatched target, submission or PCM format"));
+        }
+        if !audio.target.is_current_in(&self.vault) {
+            self.cancelled = true;
+            self.pending.clear();
+            return Err(invalid("owner voice reference withdrawn or replaced"));
         }
         let next = self
             .chunk_index
@@ -224,6 +278,7 @@ impl<Q: VoxCpm2Queue> VoxCpm2Adapter<Q> {
         self.chunk_index = next;
         self.pending.pop_front();
         Ok(VoxCpm2Pcm {
+            vault: Arc::clone(&self.vault),
             frame: PcmFrame {
                 generation: audio.generation,
                 sample_rate: audio.target.warm.sample_rate,
@@ -249,6 +304,9 @@ impl<Q: VoxCpm2Queue> TtsSeamClient for VoxCpm2Adapter<Q> {
             }
             let warm = self.queue.warm_target()?;
             warm.validate()?;
+            if !self.limits.within(warm.limits) {
+                return Err(invalid("worker serving limits narrower than vault policy"));
+            }
             let cloned = self.vault.clone_voice_refs_into(&self.pack_id, TARGET)?;
             let reference = cloned
                 .clips
@@ -260,6 +318,7 @@ impl<Q: VoxCpm2Queue> TtsSeamClient for VoxCpm2Adapter<Q> {
                 || !reference.audio.starts_with(b"RIFF")
                 || &reference.audio[8..12] != b"WAVE"
                 || reference.transcript.trim().is_empty()
+                || reference.audio.len() as u64 > self.limits.max_ref_bytes
             {
                 return Err(invalid("VoxCPM2 requires a WAV reference and transcript"));
             }
@@ -267,13 +326,14 @@ impl<Q: VoxCpm2Queue> TtsSeamClient for VoxCpm2Adapter<Q> {
                 source_pack: cloned.source_pack,
                 owner: cloned.owner,
                 register: self.register.clone(),
+                reference_revision: cloned.revision,
+                limits: self.limits,
                 warm,
             };
             self.send(
                 generation,
                 VoxCpm2Operation::Start {
                     target: Box::new(target.clone()),
-                    reference,
                 },
             )?;
             self.target = Some(target);
@@ -303,7 +363,9 @@ impl<Q: VoxCpm2Queue> TtsSeamClient for VoxCpm2Adapter<Q> {
         }
         match command {
             TtsCommand::Text { text, .. } => {
-                if text.trim().is_empty() || text.len() > MAX_TEXT_BYTES - self.text_bytes {
+                if text.trim().is_empty()
+                    || text.len() as u64 > self.limits.max_text_bytes - self.text_bytes as u64
+                {
                     return Err(invalid("empty or oversized text"));
                 }
                 self.text_bytes += text.len();
@@ -314,6 +376,15 @@ impl<Q: VoxCpm2Queue> TtsSeamClient for VoxCpm2Adapter<Q> {
             _ => unreachable!("Start and Cancel handled above"),
         }
         Ok(())
+    }
+}
+
+impl Vault {
+    /// Resolve the live trusted manifest, including vault and authenticated
+    /// holder narrowing. Missing or malformed policy refuses serving.
+    pub fn voice_serving_limits(&self, holder: Option<EntityId>) -> Result<VoiceServingLimits> {
+        let txn = self.store.env.read_txn()?;
+        crate::gate::resolve_policy_manifest(&self.store, &txn)?.voice_serving_limits(holder)
     }
 }
 

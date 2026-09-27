@@ -43,6 +43,40 @@ pub(super) fn hash_policy_frontier_v0(
     // manifest contributes no decoded rows at all and its malformed-ness is
     // already frontier-relevant through `hash_diagnostics`.
     hash_budget_policy_table(hasher, &resolution.budget_policy);
+    if !resolution.voice_serving.is_empty() {
+        hash_str(hasher, "voice_serving_nested_narrowing");
+        hash_len(hasher, resolution.voice_serving.len());
+        for row in &resolution.voice_serving {
+            for value in [
+                row.vault.max_text_bytes,
+                row.vault.max_pcm_bytes,
+                row.vault.max_ref_bytes,
+                row.vault.max_queued_renders,
+                row.vault.max_inflight_uploads,
+                row.vault.upload_read_deadline_ms,
+                row.vault.http_deadline_ms,
+                row.vault.max_header_bytes,
+            ] {
+                hash_u64(hasher, value);
+            }
+            hash_len(hasher, row.holders.len());
+            for (holder, limits) in &row.holders {
+                hash_bytes(hasher, holder.as_bytes());
+                for value in [
+                    limits.max_text_bytes,
+                    limits.max_pcm_bytes,
+                    limits.max_ref_bytes,
+                    limits.max_queued_renders,
+                    limits.max_inflight_uploads,
+                    limits.upload_read_deadline_ms,
+                    limits.http_deadline_ms,
+                    limits.max_header_bytes,
+                ] {
+                    hash_u64(hasher, value);
+                }
+            }
+        }
+    }
     if let Some(bounds) = resolution.diagnostic_bounds {
         hash_str(hasher, "diagnostic_bounds");
         hash_u64(hasher, bounds.window_secs);

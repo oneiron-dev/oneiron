@@ -6,6 +6,7 @@ use crate::{
 use serde::{Deserialize, Serialize};
 const OWNER_PREFIX: &[u8] = b"voice:owner_ref_owner:v1:";
 const PREFIX: &[u8] = b"voice:owner_ref:v1:";
+const REVISION_PREFIX: &[u8] = b"voice:owner_ref_revision:v1:";
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum VoiceRefOrigin {
@@ -35,6 +36,8 @@ pub struct VoiceTargetClone {
     pub target: String,
     pub source_pack: String,
     pub owner: EntityId,
+    /// Unique at every bank insertion, even when identical bytes are re-banked.
+    pub revision: String,
     pub clips: Vec<VoiceRegisterClip>,
 }
 fn invalid(message: &str) -> Error {
@@ -45,6 +48,15 @@ fn key(id: &str) -> Result<Vec<u8>> {
         return Err(invalid("invalid voice reference id"));
     }
     Ok([PREFIX, id.as_bytes()].concat())
+}
+fn decode_pack(bytes: &[u8], id: &str) -> Result<OwnerVoiceRefPack> {
+    let pack: OwnerVoiceRefPack =
+        rmp_serde::from_slice(bytes).map_err(|_| invalid("corrupt voice reference pack"))?;
+    pack.validate()?;
+    if pack.id != id {
+        return Err(invalid("voice reference key mismatch"));
+    }
+    Ok(pack)
 }
 impl OwnerVoiceRefPack {
     pub fn validate(&self) -> Result<()> {
@@ -91,6 +103,10 @@ pub(super) fn delete_owner_refs(
         if store.vault_meta.delete(txn, &key)? {
             deleted += 1;
         }
+        let id = &index[OWNER_PREFIX.len() + owner.as_bytes().len()..];
+        store
+            .vault_meta
+            .delete(txn, &[REVISION_PREFIX, id].concat())?;
         store.vault_meta.delete(txn, &index)?;
     }
     Ok(deleted)
@@ -99,17 +115,30 @@ pub(super) fn delete_owner_refs(
 impl Vault {
     /// The caller is the authenticated owner capture path. Vendor identities are refused.
     pub fn store_owner_voice_refs(&self, pack: &OwnerVoiceRefPack) -> Result<()> {
+        let _guard = self
+            .voice_ref_guard
+            .write()
+            .map_err(|_| Error::InvariantViolation("voice reference guard poisoned"))?;
         pack.validate()?;
         let key = key(&pack.id)?;
         let bytes =
             rmp_serde::to_vec_named(pack).map_err(|e| Error::InvalidConfig(e.to_string()))?;
         let mut txn = self.store.env.write_txn()?;
+        let revision_key = [REVISION_PREFIX, pack.id.as_bytes()].concat();
         if let Some(existing) = self.store.vault_meta.get(&txn, &key)? {
             if existing != bytes {
                 return Err(invalid("voice reference id already exists"));
             }
+            if self.store.vault_meta.get(&txn, &revision_key)?.is_none() {
+                return Err(invalid("voice reference revision missing"));
+            }
         } else {
             self.store.vault_meta.put(&mut txn, &key, &bytes)?;
+            self.store.vault_meta.put(
+                &mut txn,
+                &revision_key,
+                uuid::Uuid::new_v4().simple().to_string().as_bytes(),
+            )?;
             let index = [OWNER_PREFIX, pack.owner.as_bytes(), pack.id.as_bytes()].concat();
             self.store.vault_meta.put(&mut txn, &index, &key)?;
         }
@@ -122,13 +151,7 @@ impl Vault {
         let Some(bytes) = self.store.vault_meta.get(&txn, &key)? else {
             return Ok(None);
         };
-        let pack: OwnerVoiceRefPack =
-            rmp_serde::from_slice(&bytes).map_err(|_| invalid("corrupt voice reference pack"))?;
-        pack.validate()?;
-        if pack.id != id {
-            return Err(invalid("voice reference key mismatch"));
-        }
-        Ok(Some(pack))
+        Ok(Some(decode_pack(&bytes, id)?))
     }
     /// Each target receives its own owned copy. No target id can be written back
     /// as the identity's origin. Raw refs remain private, never retrieval entities.
@@ -136,15 +159,61 @@ impl Vault {
         if target.trim().is_empty() || target.len() > 128 {
             return Err(invalid("invalid voice render target"));
         }
-        let pack = self
-            .owner_voice_refs(id)?
+        let key = key(id)?;
+        let txn = self.store.env.read_txn()?;
+        let bytes = self
+            .store
+            .vault_meta
+            .get(&txn, &key)?
             .ok_or_else(|| invalid("unknown owner voice reference"))?;
+        let revision_key = [REVISION_PREFIX, id.as_bytes()].concat();
+        let revision = self
+            .store
+            .vault_meta
+            .get(&txn, &revision_key)?
+            .ok_or_else(|| invalid("voice reference revision missing"))?;
+        let revision = std::str::from_utf8(&revision)
+            .map_err(|_| invalid("corrupt voice reference revision"))?
+            .to_owned();
+        if uuid::Uuid::parse_str(&revision).is_err() {
+            return Err(invalid("corrupt voice reference revision"));
+        }
+        let pack = decode_pack(&bytes, id)?;
         Ok(VoiceTargetClone {
             target: target.into(),
             source_pack: pack.id,
             owner: pack.owner,
+            revision,
             clips: pack.clips,
         })
+    }
+
+    /// Read-guarded dispatch: a committed withdrawal wins before any later upload.
+    /// The guard spans only this vault's voice-ref upload/validation, not its
+    /// ordinary reads or writes. A new insertion never inherits an old revision.
+    pub(crate) fn with_current_owner_voice_ref<T>(
+        &self,
+        id: &str,
+        owner: EntityId,
+        revision: &str,
+        register: &str,
+        target: &str,
+        operation: impl FnOnce(&VoiceRegisterClip) -> Result<T>,
+    ) -> Result<T> {
+        let _guard = self
+            .voice_ref_guard
+            .read()
+            .map_err(|_| Error::InvariantViolation("voice reference guard poisoned"))?;
+        let cloned = self.clone_voice_refs_into(id, target)?;
+        if cloned.owner != owner || cloned.revision != revision {
+            return Err(invalid("owner voice reference has been replaced"));
+        }
+        let clip = cloned
+            .clips
+            .iter()
+            .find(|clip| clip.register == register)
+            .ok_or_else(|| invalid("owner voice register is absent"))?;
+        operation(clip)
     }
 }
 #[cfg(test)]

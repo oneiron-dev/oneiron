@@ -66,6 +66,7 @@ mod special_doors;
 mod support;
 mod trust_boundary;
 mod vad_vetting;
+mod voice_serving;
 mod witness_message;
 
 mod auto_signals;

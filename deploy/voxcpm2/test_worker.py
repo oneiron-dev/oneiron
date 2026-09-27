@@ -5,11 +5,12 @@ import struct
 import tempfile
 import threading
 import unittest
-from http.server import ThreadingHTTPServer
+import socket
+from pathlib import Path
 
 import numpy as np
 
-from worker import Worker, handler_for, pack, unpack
+from worker import Worker, BoundedHTTPServer, handler_for, pack, unpack, load_policy
 
 
 class FakeModel:
@@ -28,8 +29,10 @@ class WorkerTest(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         self.model = FakeModel()
-        self.worker = Worker(self.model, "pinned-checkpoint", self.tmp.name, "t" * 32)
-        self.server = ThreadingHTTPServer(("127.0.0.1", 0), handler_for(self.worker))
+        self.limits = load_policy(Path(__file__).with_name("serving-policy.default.json"))
+        self.worker = Worker(self.model, "pinned-checkpoint", self.tmp.name, "t" * 32, self.limits)
+        self.server = BoundedHTTPServer(("127.0.0.1", 0), handler_for(self.worker),
+                                        self.limits["upload_read_deadline_ms"])
         self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
         self.thread.start()
         self.conn = http.client.HTTPConnection("127.0.0.1", self.server.server_port, timeout=2)
@@ -49,7 +52,8 @@ class WorkerTest(unittest.TestCase):
 
     def test_banked_ref_render_returns_pcm_and_exact_target_metadata(self):
         target = {"source_pack": "banked-owner", "owner": "5e" * 16,
-                  "register": "neutral", "warm": self.worker.target()}
+                  "register": "neutral", "reference_revision": "a" * 32,
+                  "limits": self.limits, "warm": self.worker.target()}
         wav = b"RIFF0000WAVEfmt "
         status, ready = self.request("GET", "/ready")
         self.assertEqual(status, 200)
@@ -68,6 +72,24 @@ class WorkerTest(unittest.TestCase):
         self.assertEqual(call["reference_wav_path"], call["prompt_wav_path"])
         self.assertFalse(__import__("pathlib").Path(call["reference_wav_path"]).exists())
 
+    def target(self):
+        return {"source_pack": "banked-owner", "owner": "5e" * 16,
+                "register": "neutral", "reference_revision": "a" * 32,
+                "limits": self.limits, "warm": self.worker.target()}
+
+    def replace_worker(self, model, limits):
+        self.conn.close()
+        self.server.shutdown()
+        self.server.server_close()
+        self.thread.join(timeout=2)
+        self.limits = limits
+        self.worker = Worker(model, "pinned-checkpoint", self.tmp.name, "t" * 32, limits)
+        self.server = BoundedHTTPServer(("127.0.0.1", 0), handler_for(self.worker),
+                                        limits["upload_read_deadline_ms"])
+        self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
+        self.thread.start()
+        self.conn = http.client.HTTPConnection("127.0.0.1", self.server.server_port, timeout=2)
+
     def test_refuses_unauthorized_and_stale_targets(self):
         status, _ = self.request("GET", "/ready", authorized=False)
         self.assertEqual(status, 401)
@@ -78,6 +100,72 @@ class WorkerTest(unittest.TestCase):
                                       b"RIFF0000WAVEfmt "))
         self.assertEqual(status, 400)
         self.assertEqual(self.model.calls, [])
+
+    def test_changed_policy_narrows_render_and_worker_rejects_widening(self):
+        narrower = {**self.limits, "max_text_bytes": 4}
+        target = {**self.target(), "limits": narrower}
+        body = pack({"target": target, "text": "hello", "transcript": "ref"},
+                    b"RIFF0000WAVEfmt ")
+        self.assertEqual(self.request("POST", "/render", body)[0], 400)
+        target["limits"] = {**self.limits, "max_text_bytes": 65536}
+        self.assertEqual(self.request("POST", "/render", pack(
+            {"target": target, "text": "hi", "transcript": "ref"},
+            b"RIFF0000WAVEfmt "))[0], 400)
+
+    def test_overload_and_incomplete_upload_release_admission(self):
+        class BlockingModel(FakeModel):
+            def __init__(self):
+                super().__init__()
+                self.started = threading.Event()
+                self.release = threading.Event()
+            def generate(self, **kwargs):
+                self.started.set()
+                if not self.release.wait(3):
+                    raise TimeoutError("test inference timeout")
+                return super().generate(**kwargs)
+        model = BlockingModel()
+        limits = {**self.limits, "max_inflight_uploads": 2,
+                  "upload_read_deadline_ms": 250}
+        self.replace_worker(model, limits)
+        target = self.target()
+        body = pack({"target": target, "text": "hi", "transcript": "ref"},
+                    b"RIFF0000WAVEfmt ")
+        outcomes = []
+        observed = threading.Condition()
+        def post():
+            conn = http.client.HTTPConnection("127.0.0.1", self.server.server_port, timeout=3)
+            conn.request("POST", "/render", body=body,
+                         headers={"Authorization": "Bearer " + "t" * 32})
+            response = conn.getresponse()
+            with observed:
+                outcomes.append(response.status)
+                observed.notify_all()
+            response.read()
+            conn.close()
+        threads = [threading.Thread(target=post) for _ in range(12)]
+        threads[0].start()
+        self.assertTrue(model.started.wait(2))
+        for thread in threads[1:]:
+            thread.start()
+        # Readiness remains usable even while inference holds a slot.
+        self.assertEqual(self.request("GET", "/ready")[0], 200)
+        with observed:
+            self.assertTrue(observed.wait_for(lambda: outcomes.count(429) >= 10, timeout=3))
+        model.release.set()
+        for thread in threads:
+            thread.join(timeout=4)
+            self.assertFalse(thread.is_alive())
+        self.assertLessEqual(outcomes.count(200), 2)
+        self.assertGreaterEqual(outcomes.count(429), 10)
+        # One partial body times out; its slot is freed for the next request.
+        sock = socket.create_connection(("127.0.0.1", self.server.server_port), 2)
+        sock.sendall(("POST /render HTTP/1.1\r\nHost: localhost\r\n"
+                      "Authorization: Bearer " + "t" * 32 +
+                      "\r\nContent-Length: 100\r\n\r\npart").encode())
+        sock.settimeout(2)
+        self.assertIn(b"408", sock.recv(4096))
+        sock.close()
+        self.assertEqual(self.request("POST", "/render", body)[0], 200)
 
 
 if __name__ == "__main__":

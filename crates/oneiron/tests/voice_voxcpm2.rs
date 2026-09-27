@@ -8,8 +8,8 @@ use oneiron::{
         AsrEvent, AsrEventKind, AsrUpdate, PartialEnricher, PartialEnrichment, TtsCommand,
         TtsSeamClient, VoiceCascadeSession, VoiceSessionConfig,
         voxcpm2::{
-            MODEL, RenderTarget, VoxCpm2Adapter, VoxCpm2Audio, VoxCpm2Queue, VoxCpm2Work,
-            WarmTarget, http::VoxCpm2HttpQueue,
+            MODEL, RenderTarget, VoiceServingLimits, VoxCpm2Adapter, VoxCpm2Audio, VoxCpm2Queue,
+            VoxCpm2Work, WarmTarget, http::VoxCpm2HttpQueue,
         },
     },
     voice_identity::ref_bank::{OwnerVoiceRefPack, VoiceRefOrigin, VoiceRegisterClip},
@@ -29,10 +29,14 @@ impl PartialEnricher for EmptyEnricher {
     }
 }
 #[derive(Default)]
-struct Capture(Vec<VoxCpm2Work>);
+struct Capture {
+    work: Vec<VoxCpm2Work>,
+    limits: Option<VoiceServingLimits>,
+}
 impl VoxCpm2Queue for Capture {
     fn warm_target(&self) -> Result<WarmTarget> {
         Ok(WarmTarget {
+            limits: self.limits.expect("test serving policy"),
             model: MODEL.into(),
             checkpoint: "pinned-revision".into(),
             boot_id: "warm-worker".into(),
@@ -40,7 +44,7 @@ impl VoxCpm2Queue for Capture {
         })
     }
     fn try_submit(&mut self, work: VoxCpm2Work) -> Result<()> {
-        self.0.push(work);
+        self.work.push(work);
         Ok(())
     }
 }
@@ -94,7 +98,10 @@ fn one_banked_ref_renders_pcm_with_target_metadata() -> Result<()> {
         Arc::clone(&vault),
         "owner-ref",
         "neutral",
-        Capture::default(),
+        Capture {
+            limits: Some(vault.voice_serving_limits(None)?),
+            ..Capture::default()
+        },
     )?;
     let generation = brain.generation;
     tts.submit(TtsCommand::Start { generation })?;
@@ -110,7 +117,12 @@ fn one_banked_ref_renders_pcm_with_target_metadata() -> Result<()> {
             source_pack: "owner-ref".into(),
             owner,
             register: "neutral".into(),
+            reference_revision: vault
+                .clone_voice_refs_into("owner-ref", "voxcpm2")?
+                .revision,
+            limits: vault.voice_serving_limits(None)?,
             warm: WarmTarget {
+                limits: vault.voice_serving_limits(None)?,
                 model: MODEL.into(),
                 checkpoint: "pinned-revision".into(),
                 boot_id: "warm-worker".into(),
@@ -130,9 +142,44 @@ fn one_banked_ref_renders_pcm_with_target_metadata() -> Result<()> {
     assert_eq!(frame.samples, [1, -1]);
     assert_eq!(frame.sample_rate, 48_000);
     assert_eq!(origin, target);
-    // Queue admission carried a cloned banked clip, not a vendor voice ID.
-    // The public target is bound to the owner/pack/register above.
+    // Bank identity is pinned by the revision, not a vendor voice ID.
     assert_eq!(MODEL, "VoxCPM2");
+    // A callback accepted before withdrawal cannot be played afterwards.
+    let mut second = VoxCpm2Adapter::new(
+        Arc::clone(&vault),
+        "owner-ref",
+        "neutral",
+        Capture {
+            limits: Some(vault.voice_serving_limits(None)?),
+            ..Capture::default()
+        },
+    )?;
+    second.submit(TtsCommand::Start { generation })?;
+    second.submit(TtsCommand::Text {
+        generation,
+        text: "later".into(),
+    })?;
+    second.submit(TtsCommand::End { generation })?;
+    let second_target = second.target().unwrap().clone();
+    let pending = second.handle_pcm(VoxCpm2Audio {
+        generation,
+        submission: 1,
+        chunk_index: 0,
+        target: second_target,
+        channels: 1,
+        bytes: &[1, 0],
+    })?;
+    vault.withdraw_voice_consent(&oneiron::voice_identity::VoiceWithdrawalRequest {
+        event_id: "withdraw-before-playback".into(),
+        subject_ref: owner,
+        recorded_by_ref: owner,
+        occurred_at: 10,
+        purposes: vec![oneiron::voice_identity::VoicePrintPurpose::LiveInterlocutor],
+        basis: oneiron::voice_identity::VoiceConsentBasis::ConversationalNotice {
+            notice: "withdraw".into(),
+        },
+    })?;
+    assert!(pending.filter_pcm(&cascade).is_none());
     Ok(())
 }
 
@@ -184,6 +231,7 @@ fn loopback_worker_queue_roundtrips_a_banked_ref_and_pcm() -> Result<()> {
     else {
         panic!("final ASR")
     };
+    let limits = vault.voice_serving_limits(None)?;
     let listener = TcpListener::bind("127.0.0.1:0")?;
     let endpoint = format!("http://{}/", listener.local_addr()?);
     let (done, ready) = mpsc::channel();
@@ -210,7 +258,9 @@ fn loopback_worker_queue_roundtrips_a_banked_ref_and_pcm() -> Result<()> {
             let response = if index == 0 {
                 assert!(request_line.starts_with("GET /ready "));
                 serde_json::to_vec(&serde_json::json!({"model": MODEL,
-                    "checkpoint": "pinned-revision", "boot_id": "warm-worker", "sample_rate": 48000})).unwrap()
+                    "checkpoint": "pinned-revision", "boot_id": "warm-worker", "sample_rate": 48000,
+                    "limits": limits}))
+                .unwrap()
             } else {
                 assert!(request_line.starts_with("POST /render "));
                 let mut body = vec![0; length];
@@ -241,7 +291,7 @@ fn loopback_worker_queue_roundtrips_a_banked_ref_and_pcm() -> Result<()> {
             stream.write_all(&response).unwrap();
         }
     });
-    let queue = VoxCpm2HttpQueue::connect(&endpoint, &"t".repeat(32))?;
+    let queue = VoxCpm2HttpQueue::connect(Arc::clone(&vault), &endpoint, &"t".repeat(32))?;
     let mut tts = VoxCpm2Adapter::new(Arc::clone(&vault), "owner-ref", "neutral", queue)?;
     let generation = brain.generation;
     tts.submit(TtsCommand::Start { generation })?;

@@ -82,6 +82,20 @@ impl PolicyManifestResolution {
         }
     }
 
+    /// The trusted, nested-narrow voice limits. A malformed or absent policy
+    /// never falls back to compiled operational allowances.
+    pub(crate) fn voice_serving_limits(
+        &self,
+        holder: Option<crate::EntityId>,
+    ) -> Result<crate::gate::VoiceServingLimits> {
+        if self.diagnostics.is_fail_closed() {
+            return Err(crate::error::Error::InvalidConfig(
+                "voice serving policy unavailable".into(),
+            ));
+        }
+        crate::gate::voice_serving::resolve(&self.voice_serving, holder)
+    }
+
     /// Rendering pins follow declared critical classes, not the fail-closed
     /// write fallback for unknown predicates. Only trusted folded policy can pin.
     #[must_use]

@@ -45,6 +45,10 @@ pub(crate) fn default_policy_manifest() -> Vec<u8> {
         ),
         (Value::from(POLICY_PACK_VERSION_KEY), Value::from("v1")),
         (
+            Value::from(super::voice_serving::KEY),
+            super::voice_serving::VoiceServingRows::seeded(),
+        ),
+        (
             Value::from(POLICY_MIN_ENGINE_VERSION_KEY),
             Value::from(env!("CARGO_PKG_VERSION")),
         ),

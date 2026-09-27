@@ -375,6 +375,10 @@ impl Vault {
     /// subject and a withdrawn subject are left in exactly the same state.
     /// Returns the pruned subjects in ascending id order.
     pub fn prune_expired_voice_prints(&self, now: u64) -> Result<Vec<EntityId>> {
+        let _guard = self
+            .voice_ref_guard
+            .write()
+            .map_err(|_| Error::InvariantViolation("voice reference guard poisoned"))?;
         let store = &self.store;
         self.with_write_txn(|wtxn| {
             let mut expired: Vec<EntityId> = Vec::new();
@@ -416,6 +420,10 @@ impl Vault {
         let body = encode_consent_event(&event)?;
         let consent_key = voice_consent_key(&event.subject_ref, &event.event_id);
 
+        let _guard = self
+            .voice_ref_guard
+            .write()
+            .map_err(|_| Error::InvariantViolation("voice reference guard poisoned"))?;
         let store = &self.store;
         let subject = request.subject_ref;
         let tally = self.with_write_txn(|wtxn| {

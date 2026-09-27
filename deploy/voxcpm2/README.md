@@ -20,12 +20,18 @@ Example on a provisioned CUDA host (install a matching CUDA PyTorch wheel first)
 uv pip install 'voxcpm==2.0.3' 'huggingface_hub' 'numpy'
 export VOXCPM_REV=32279effe8c19989596f05d353d1447f51d9e915
 export VOXCPM_TOKEN=<host-generated-unguessable-secret>
-python3 deploy/voxcpm2/worker.py --runtime-dir /run/user/$(id -u)/voxcpm2 --port 8769
+python3 deploy/voxcpm2/worker.py --runtime-dir /run/user/$(id -u)/voxcpm2 \
+  --policy-file deploy/voxcpm2/serving-policy.default.json --port 8769
 ```
 
 The revision above is an example full commit. The operator must verify and pin
 it before deployment. The Rust `VoxCpm2HttpQueue::connect("http://127.0.0.1:8769/", token)`
-checks `/ready` outside the session lock. `VoxCpm2Adapter` reads a fresh owner
+checks `/ready` outside the session lock. The host supplies `Arc<Vault>` to
+`connect` so each queued render rechecks the exact bank revision under a
+vault-scoped read guard; withdrawal takes its write guard and deletes that
+revision atomically. An old returned PCM fails both `handle_pcm()` and
+`filter_pcm()` after withdrawal; repeat `RenderTarget::is_current_in` just before
+playback. `VoxCpm2Adapter` reads a fresh owner
 ref at Start and submits work through that bounded queue. The host drains
 `try_recv()` outside the session lock; for each Audio, call `handle_pcm()` and
 then `filter_pcm()` on the active cascade, and recheck its generation at playback.
@@ -45,3 +51,17 @@ with the owner; this worker does not make them.
 
 Upstream: <https://voxcpm.readthedocs.io/en/latest/reference/api.html> and
 <https://voxcpm.readthedocs.io/en/latest/usage_guide.html>.
+
+Serving policy: the seeded trusted Gate manifest has a `voice_serving` row with
+`precedence: nested_narrowing`, required vault limits, and optional per-holder
+limits. The Rust adapter resolves it from the live vault. Each holder row must
+fit below the resolved vault ceiling; multiple trusted packs compose by minima.
+The worker must receive the same deployment vault ceiling in a private policy
+file (copy `serving-policy.default.json`, then apply the vault's resolved row).
+It refuses any request that tries to widen that ceiling. Changed rows require
+worker restart/reconnection to make `/ready` advertise matching limits; a
+worker with narrower limits rejects a host whose manifest was widened. This
+file is deployment data, not an invitation to publish raw references.
+Upload admission is shared across all sessions and occurs before reading body
+bytes. A bounded upload deadline also covers incomplete uploads; `/ready`
+remains available when all render slots are occupied.

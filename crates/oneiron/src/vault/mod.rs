@@ -50,6 +50,8 @@ pub(crate) use self::open::{embedded_owner_actor_id, encode_embedded_owner_actor
 /// Main vault API wrapping LMDB storage and configuration.
 pub struct Vault {
     pub(crate) message_streams: crate::memory::MessageStreamRuntime,
+    /// Serializes owner-ref uploads with consent withdrawal and retention deletion.
+    pub(crate) voice_ref_guard: std::sync::RwLock<()>,
     #[cfg(feature = "sync")]
     pub(crate) entity_docs: std::sync::Mutex<crate::entity_doc::EntityDocRegistry>,
     pub(crate) store: Store,

@@ -16916,7 +16916,7 @@
      "path": "src/gate/mod.rs",
      "purpose": "DEC-0005 Gate policy manifest resolver",
      "surface": {
-      "crate-vis": 26,
+      "crate-vis": 28,
       "re-export": 3
      }
     },
@@ -16961,7 +16961,7 @@
      "path": "src/gate/resolution/accessors.rs",
      "purpose": "Read-only resolved-field accessors plus the frontier-hash entry",
      "surface": {
-      "crate-vis": 24
+      "crate-vis": 25
      }
     },
     {
@@ -17295,12 +17295,33 @@
      "surface": {}
     },
     {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/gate/tests/voice_serving.rs",
+     "purpose": "Manifest-backed voice serving limits: precedence, narrowing, and fail closure",
+     "surface": {}
+    },
+    {
      "bucket": "m",
      "kind": "test",
      "notable": [],
      "path": "src/gate/tests/witness_message.rs",
      "purpose": "Witness messages: ceilings, envelope binding, and replicated refusal",
      "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "VoiceServingLimits"
+     ],
+     "path": "src/gate/voice_serving.rs",
+     "purpose": "Resolved, narrow-only limits for the generic voice serving seam",
+     "surface": {
+      "crate-vis": 9,
+      "struct": 1
+     }
     },
     {
      "bucket": "m",
@@ -33760,10 +33781,11 @@
      "path": "src/voice_cascade/voxcpm2.rs",
      "purpose": "VoxCPM2's warm, host-owned rendering seam",
      "surface": {
-      "const": 2,
+      "const": 1,
       "enum": 1,
-      "fn": 5,
+      "fn": 8,
       "mod": 1,
+      "re-export": 1,
       "struct": 6,
       "trait": 1
      }
@@ -33785,6 +33807,14 @@
     },
     {
      "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/voice_cascade/voxcpm2/http/tests.rs",
+     "purpose": "—",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
      "kind": "test",
      "notable": [],
      "path": "src/voice_cascade/voxcpm2/tests.rs",
@@ -33845,7 +33875,7 @@
      "path": "src/voice_identity/ref_bank.rs",
      "purpose": "Private per-vault owner reference bank",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 2,
       "enum": 1,
       "fn": 4,
       "struct": 3
@@ -34974,7 +35004,7 @@
      "surface": {}
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "test",
      "notable": [],
      "path": "tests/voice_voxcpm2.rs",
@@ -35622,7 +35652,7 @@
      "purpose": "—"
     },
     "gate": {
-     "files": 75,
+     "files": 77,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -36259,8 +36289,8 @@
      "purpose": "ARCH-0073 vault auto-cleanup: the Dreamer ARCHIVE cron (ONE-1931)"
     },
     "voice_cascade": {
-     "files": 27,
-     "impl_vault": false,
+     "files": 28,
+     "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "file+dir",
      "purpose": "ONE-1807: the engine half of a transport-neutral text-brain voice cascade"
@@ -36310,8 +36340,8 @@
    },
    "over_bar": 11,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2141,
-   "test_files": 733
+   "source_files": 2142,
+   "test_files": 735
   },
   "oneiron-android": {
    "files": [
