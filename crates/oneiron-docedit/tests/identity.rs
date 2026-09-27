@@ -1,4 +1,18 @@
+use oneiron_docedit::retained_opc::XmlLimits;
 use oneiron_docedit::retained_opc::{Error, Limits, Package};
+
+fn fixture_limits() -> Limits {
+    Limits {
+        archive_bytes: 32 * 1024 * 1024,
+        entries: 10_000,
+        part_bytes: 16 * 1024 * 1024,
+        expanded_bytes: 64 * 1024 * 1024,
+        xml: XmlLimits {
+            max_depth: 256,
+            max_nodes: 1_000_000,
+        },
+    }
+}
 
 const PATH: &[&str] = &["root", "item"];
 const SAMPLES: [(&str, &[u8]); 3] = [
@@ -15,7 +29,7 @@ fn corpus_noop_is_archive_exact_and_edits_keep_opaque_parts_and_nodes() {
             "xlsx" => "xl/worksheets/sheet1.xml",
             _ => "ppt/slides/slide1.xml",
         };
-        let mut package = Package::open(source, Limits::default()).expect("open fixture");
+        let mut package = Package::open(source, fixture_limits()).expect("open fixture");
         assert_eq!(package.export().expect("no-op export"), source, "{format}");
         let old_names: Vec<_> = package.names().map(str::to_owned).collect();
         let unknown = package
@@ -30,7 +44,7 @@ fn corpus_noop_is_archive_exact_and_edits_keep_opaque_parts_and_nodes() {
             .replace_text(part, PATH, "old", "new & <text>")
             .expect("narrow patch");
         let edited = package.export().expect("edit export");
-        let reopened = Package::open(&edited, Limits::default()).expect("reopen candidate");
+        let reopened = Package::open(&edited, fixture_limits()).expect("reopen candidate");
         assert_eq!(
             reopened.names().collect::<Vec<_>>(),
             old_names.iter().map(String::as_str).collect::<Vec<_>>()
@@ -82,7 +96,7 @@ fn corpus_noop_is_archive_exact_and_edits_keep_opaque_parts_and_nodes() {
 }
 
 fn package_part(source: &[u8], part: &str) -> Vec<u8> {
-    Package::open(source, Limits::default())
+    Package::open(source, fixture_limits())
         .expect("fixture operation")
         .part(part)
         .expect("fixture operation")
@@ -92,7 +106,7 @@ fn package_part(source: &[u8], part: &str) -> Vec<u8> {
 #[test]
 fn pinned_office_deck_is_archive_exact_and_edit_confined() {
     let source = include_bytes!("../../../scripts/office/fixtures/clean.pptx");
-    let mut package = Package::open(source, Limits::default()).expect("pinned clean deck");
+    let mut package = Package::open(source, fixture_limits()).expect("pinned clean deck");
     assert_eq!(package.export().expect("fixture operation"), source);
     let names: Vec<String> = package.names().map(str::to_owned).collect();
     package
@@ -107,7 +121,7 @@ fn pinned_office_deck_is_archive_exact_and_edit_confined() {
         .expect("fixture operation");
     let candidate = Package::open(
         &package.export().expect("fixture operation"),
-        Limits::default(),
+        fixture_limits(),
     )
     .expect("fixture operation");
     for name in names {
@@ -137,7 +151,7 @@ fn limits_missing_target_and_stale_expected_fail_closed() {
             source,
             Limits {
                 entries: 2,
-                ..Limits::default()
+                ..fixture_limits()
             }
         ),
         Err(Error::Invalid(_))
@@ -147,12 +161,12 @@ fn limits_missing_target_and_stale_expected_fail_closed() {
             source,
             Limits {
                 part_bytes: 4,
-                ..Limits::default()
+                ..fixture_limits()
             }
         ),
         Err(Error::Invalid(_))
     ));
-    let mut package = Package::open(source, Limits::default()).expect("fixture operation");
+    let mut package = Package::open(source, fixture_limits()).expect("fixture operation");
     assert!(matches!(
         package.replace_text("word/document.xml", PATH, "stale", "other"),
         Err(Error::Edit(_))
@@ -175,7 +189,7 @@ fn limits_missing_target_and_stale_expected_fail_closed() {
 #[test]
 fn signed_duplicate_and_unsafe_paths_refuse_mutation_or_open() {
     let signed = include_bytes!("fixtures/signed.zip");
-    let mut package = Package::open(signed, Limits::default()).expect("fixture operation");
+    let mut package = Package::open(signed, fixture_limits()).expect("fixture operation");
     assert_eq!(package.export().expect("signed no-op"), signed);
     assert!(matches!(
         package.replace_text("word/document.xml", PATH, "old", "new"),
@@ -186,7 +200,7 @@ fn signed_duplicate_and_unsafe_paths_refuse_mutation_or_open() {
         include_bytes!("fixtures/traversal.zip").as_slice(),
     ] {
         assert!(matches!(
-            Package::open(bad, Limits::default()),
+            Package::open(bad, fixture_limits()),
             Err(Error::Invalid(_))
         ));
     }
@@ -214,7 +228,7 @@ fn optional_pinned_pptarena_pair_proves_identity_without_redistributing_decks() 
         use sha2::Digest;
         let bytes = std::fs::read(folder.join(file)).expect("fixture operation");
         assert_eq!(format!("{:x}", sha2::Sha256::digest(&bytes)), digest);
-        let mut package = Package::open(&bytes, Limits::default()).expect("fixture operation");
+        let mut package = Package::open(&bytes, fixture_limits()).expect("fixture operation");
         assert_eq!(
             package.export().expect("fixture operation"),
             bytes,
@@ -243,7 +257,7 @@ fn optional_pinned_pptarena_pair_proves_identity_without_redistributing_decks() 
             )
             .expect("fixture operation");
         let changed = package.export().expect("fixture operation");
-        let reopened = Package::open(&changed, Limits::default()).expect("fixture operation");
+        let reopened = Package::open(&changed, fixture_limits()).expect("fixture operation");
         let new = reopened
             .part(slide)
             .expect("fixture operation")
@@ -275,7 +289,7 @@ fn optional_pinned_pptarena_pair_proves_identity_without_redistributing_decks() 
 
 #[test]
 fn ambiguous_target_and_invalid_xml_character_refuse() {
-    let mut package = Package::open(include_bytes!("fixtures/ambiguous.zip"), Limits::default())
+    let mut package = Package::open(include_bytes!("fixtures/ambiguous.zip"), fixture_limits())
         .expect("fixture operation");
     assert!(matches!(
         package.replace_text("word/document.xml", PATH, "old", "new"),
@@ -294,7 +308,7 @@ fn ambiguous_target_and_invalid_xml_character_refuse() {
 #[test]
 fn data_descriptors_survive_noop_and_changed_entry_drops_only_its_descriptor() {
     let source = include_bytes!("fixtures/descriptor.docx");
-    let mut package = Package::open(source, Limits::default()).expect("fixture operation");
+    let mut package = Package::open(source, fixture_limits()).expect("fixture operation");
     assert_eq!(package.export().expect("fixture operation"), source);
     let unknown = package
         .part("customXml/unreachable.bin")
@@ -303,7 +317,7 @@ fn data_descriptors_survive_noop_and_changed_entry_drops_only_its_descriptor() {
         .replace_text("word/document.xml", PATH, "old", "edited")
         .expect("fixture operation");
     let output = package.export().expect("fixture operation");
-    let reopened = Package::open(&output, Limits::default()).expect("fixture operation");
+    let reopened = Package::open(&output, fixture_limits()).expect("fixture operation");
     assert_eq!(
         reopened
             .part("customXml/unreachable.bin")

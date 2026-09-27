@@ -1,7 +1,11 @@
 # oneiron-docedit: retained OPC substrate
 
-`retained_opc::Package::open(bytes, Limits)` reads ZIP32 OPC packages with checked entry counts,
-compressed archive size, per-part expansion, and total expansion. It retains
+`retained_opc::Package::open(bytes, Limits)` requires caller-supplied positive
+ZIP and XML budgets. The engine host resolves its shipped
+`docedit_resource_policy` manifest row (or tighter trusted rows) and passes a
+plain `Limits` value. Standalone organ callers supply their own values. The
+ZIP32 reader checks entry counts, compressed archive size, per-part expansion,
+and total expansion. It retains
 original archive bytes, central metadata, entry ordering, and even ZIP entries
 outside the relationship graph. It rejects unsupported compression, encryption,
 ZIP64, overlapping records, unsafe or duplicate part names, and CRC errors.
@@ -10,8 +14,12 @@ ZIP64, overlapping records, unsafe or duplicate part names, and CRC errors.
 edit door today, `replace_text`, targets a unique leaf by QName path and prior
 text; it splices escaped text into the retained XML bytes, leaving unknown
 attributes, node order, namespace context, extensions, and alternate content
-at their original offsets. The touched part must be well-formed UTF-8 XML 1.0
-without a DTD; ambiguous or mixed-content targets refuse without mutation.
+at their original offsets. A bounded Expat XML 1.0/Namespaces parse owns both
+the semantic text and source offsets, including UTF-8 BOM. It refuses DTDs,
+invalid references and namespace bindings, and over-budget depth/nodes before
+minting a leaf target. The candidate is parsed again under the same budgets and
+checked against its requested text and unchanged prefix/suffix before it can
+replace the old part. Ambiguous or mixed-content targets refuse atomically.
 Changed parts retain their compression method; other local records, compressed
 payloads, and central metadata pass through. Digital-signature relationships
 and content types, including non-default locations, make the package read-only.

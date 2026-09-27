@@ -103,4 +103,6 @@ pub(crate) struct PolicyManifestResolution {
     pub(super) budget_policy: BudgetPolicyTable,
     pub(crate) pack_install_policy: Option<crate::gate::PackInstallPolicy>,
     pub(super) hosted_tts: HostedTtsPolicy,
+    pub(in crate::gate) docedit_resource_policy:
+        Option<crate::gate::docedit_resource::DoceditResourcePolicy>,
 }

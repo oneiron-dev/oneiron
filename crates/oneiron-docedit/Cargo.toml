@@ -10,13 +10,13 @@ homepage.workspace = true
 
 [dependencies]
 flate2 = "1"
-quick-xml = "0.42"
-roxmltree = "0.21"
+expat-sys = "2.1.6"
 crc32fast = "1"
 thiserror.workspace = true
 
 [dev-dependencies]
 sha2 = "0.10"
+roxmltree = "0.21"
 
 [lints]
 workspace = true

@@ -1,6 +1,6 @@
 //! ZIP central-directory reader and copy-through writer. All source records
 //! remain owned by the package; only declared XML leaf edits can produce output.
-use super::{Error, Result, xml};
+use super::{Error, Result, XmlLimits, xml};
 use flate2::{Compression, read::DeflateDecoder, write::DeflateEncoder};
 use std::{
     collections::HashSet,
@@ -22,17 +22,17 @@ pub struct Limits {
     pub part_bytes: usize,
     /// Maximum total expanded bytes.
     pub expanded_bytes: usize,
+    /// Maximum XML depth and parser nodes at both the signature and edit doors.
+    pub xml: XmlLimits,
 }
 
-impl Default for Limits {
-    fn default() -> Self {
-        Self {
-            archive_bytes: 512 * 1024 * 1024,
-            entries: 10_000,
-            part_bytes: 64 * 1024 * 1024,
-            expanded_bytes: 512 * 1024 * 1024,
-        }
-    }
+/// A package may still be exported exactly when XML metadata cannot be
+/// inspected. Only the Unsigned state admits a checked edit.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Editability {
+    Unsigned,
+    Signed,
+    MetadataUnsupported,
 }
 
 #[derive(Debug, Clone)]
@@ -58,7 +58,7 @@ pub struct Package {
     cd_offset: usize,
     eocd: usize,
     limits: Limits,
-    signed: bool,
+    editability: Editability,
 }
 
 impl Package {
@@ -66,6 +66,18 @@ impl Package {
     /// Supported payload methods are STORED and DEFLATE. Every entry is CRC
     /// checked; duplicate, unsafe or ambiguous names are rejected.
     pub fn open(source: &[u8], limits: Limits) -> Result<Self> {
+        if [
+            limits.archive_bytes,
+            limits.entries,
+            limits.part_bytes,
+            limits.expanded_bytes,
+            limits.xml.max_depth,
+            limits.xml.max_nodes,
+        ]
+        .contains(&0)
+        {
+            return Err(Error::Invalid("resource limits must be positive"));
+        }
         if source.len() > limits.archive_bytes {
             return Err(Error::Invalid("archive size limit"));
         }
@@ -263,38 +275,46 @@ impl Package {
             cd_offset,
             eocd,
             limits,
-            signed: false,
+            editability: Editability::Unsigned,
         };
-        package.signed = package.signature_or_unsafe_metadata();
+        package.editability = package.signature_or_unsafe_metadata();
         Ok(package)
     }
 
     /// Detect OPC digital signatures by type declarations and relationships,
     /// not only their conventional path. Invalid metadata leaves the package
     /// open for byte-exact no-op export but makes every edit read-only.
-    fn signature_or_unsafe_metadata(&self) -> bool {
+    fn signature_or_unsafe_metadata(&self) -> Editability {
         if self.entries.iter().any(|entry| {
             entry
                 .name
                 .to_ascii_lowercase()
                 .starts_with("_xmlsignatures/")
         }) {
-            return true;
+            return Editability::Signed;
         }
-        self.entries
-            .iter()
-            .filter(|entry| {
-                entry.name == "[Content_Types].xml" || {
-                    let lower = entry.name.to_ascii_lowercase();
-                    lower.ends_with(".rels")
-                        && (lower.starts_with("_rels/") || lower.contains("/_rels/"))
-                }
-            })
-            .any(|entry| {
-                self.expanded(entry)
-                    .and_then(|data| xml::signature_metadata(&data))
-                    .unwrap_or(true)
-            })
+        let mut editability = Editability::Unsigned;
+        for entry in self.entries.iter().filter(|entry| {
+            entry.name == "[Content_Types].xml" || {
+                let lower = entry.name.to_ascii_lowercase();
+                lower.ends_with(".rels")
+                    && (lower.starts_with("_rels/") || lower.contains("/_rels/"))
+            }
+        }) {
+            match self.expanded(entry).and_then(|data| {
+                xml::ValidatedXmlPart::parse(&data, self.limits.xml).map(|part| part.signature())
+            }) {
+                Ok(true) => return Editability::Signed,
+                Ok(false) => {}
+                Err(_) => editability = Editability::MetadataUnsupported,
+            }
+        }
+        editability
+    }
+
+    /// The observable edit refusal reason; no-op export remains exact in every state.
+    pub fn editability(&self) -> Editability {
+        self.editability
     }
 
     /// Names in central-directory order, including unreachable entries.
@@ -321,8 +341,8 @@ impl Package {
         expected: &str,
         value: &str,
     ) -> Result<()> {
-        if self.signed {
-            return Err(Error::Edit("signed package is read-only"));
+        if self.editability != Editability::Unsigned {
+            return Err(Error::Edit("signed or unsupported metadata is read-only"));
         }
         if !name.ends_with(".xml") {
             return Err(Error::Edit("not an XML part"));
@@ -333,7 +353,30 @@ impl Package {
             .position(|entry| entry.name == name)
             .ok_or(Error::Edit("part missing"))?;
         let old = self.expanded(&self.entries[index])?;
-        let new = xml::replace_leaf_text(&old, path, expected, value)?;
+        let other_size =
+            self.entries
+                .iter()
+                .enumerate()
+                .try_fold(0usize, |total, (at, entry)| {
+                    total
+                        .checked_add(if at == index {
+                            0
+                        } else {
+                            entry
+                                .replacement
+                                .as_ref()
+                                .map_or(entry.uncompressed, Vec::len)
+                        })
+                        .ok_or(Error::Edit("edited package size overflow"))
+                })?;
+        let budget = self.limits.part_bytes.min(
+            self.limits
+                .expanded_bytes
+                .checked_sub(other_size)
+                .ok_or(Error::Edit("edited package size limit"))?,
+        );
+        let part = xml::ValidatedXmlPart::parse(&old, self.limits.xml)?;
+        let new = part.replace_text(path, expected, value, budget)?.0;
         if new.len() > self.limits.part_bytes {
             return Err(Error::Edit("edited part size limit"));
         }
@@ -363,7 +406,47 @@ impl Package {
             } else {
                 old
             };
-            self.entries[index].replacement = (new != original).then_some(new);
+            let replacement = (new != original).then_some(new);
+            self.check_export_size(index, replacement.as_deref())?;
+            self.entries[index].replacement = replacement;
+        }
+        Ok(())
+    }
+
+    /// Compute the exact compressed output length with a counting sink before
+    /// committing a replacement; no over-budget ZIP allocation is attempted.
+    fn check_export_size(&self, edited: usize, candidate: Option<&[u8]>) -> Result<()> {
+        let mut total = self.source.len();
+        for (index, entry) in self.entries.iter().enumerate() {
+            let replacement = if index == edited {
+                candidate
+            } else {
+                entry.replacement.as_deref()
+            };
+            let Some(data) = replacement else {
+                continue;
+            };
+            let header = entry
+                .data
+                .start
+                .checked_sub(entry.local.start)
+                .ok_or(Error::Edit("ZIP header size overflow"))?;
+            let padding = entry
+                .local
+                .end
+                .checked_sub(entry.trailer)
+                .ok_or(Error::Edit("ZIP padding size overflow"))?;
+            let emitted = header
+                .checked_add(compressed_length(entry.method, data)?)
+                .and_then(|size| size.checked_add(padding))
+                .ok_or(Error::Edit("edited ZIP size overflow"))?;
+            total = total
+                .checked_sub(entry.local.len())
+                .and_then(|size| size.checked_add(emitted))
+                .ok_or(Error::Edit("edited ZIP size overflow"))?;
+        }
+        if total > self.limits.archive_bytes || u32::try_from(total).is_err() {
+            return Err(Error::Edit("edited archive size limit"));
         }
         Ok(())
     }
@@ -508,6 +591,33 @@ fn has_zip64_extra(mut extra: &[u8]) -> Result<bool> {
     Ok(false)
 }
 
+struct CountedBytes(usize);
+impl Write for CountedBytes {
+    fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+        self.0 = self
+            .0
+            .checked_add(bytes.len())
+            .ok_or(std::io::ErrorKind::OutOfMemory)?;
+        Ok(bytes.len())
+    }
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+fn compressed_length(method: u16, data: &[u8]) -> Result<usize> {
+    if method == 0 {
+        return Ok(data.len());
+    }
+    let mut encoder = DeflateEncoder::new(CountedBytes(0), Compression::default());
+    encoder
+        .write_all(data)
+        .map_err(|_| Error::Edit("compression failed"))?;
+    let sink = encoder
+        .finish()
+        .map_err(|_| Error::Edit("compression failed"))?;
+    Ok(sink.0)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -515,12 +625,38 @@ mod tests {
     #[test]
     fn edited_export_copies_other_zip_records_and_payloads_verbatim() {
         let original = include_bytes!("../../tests/fixtures/retained.pptx");
-        let mut package = Package::open(original, Limits::default()).expect("fixture operation");
+        let mut package = Package::open(
+            original,
+            Limits {
+                archive_bytes: 32 * 1024 * 1024,
+                entries: 1000,
+                part_bytes: 16 * 1024 * 1024,
+                expanded_bytes: 32 * 1024 * 1024,
+                xml: XmlLimits {
+                    max_depth: 256,
+                    max_nodes: 100_000,
+                },
+            },
+        )
+        .expect("fixture operation");
         package
             .replace_text("ppt/slides/slide1.xml", &["root", "item"], "old", "changed")
             .expect("fixture operation");
         let edited = package.export().expect("fixture operation");
-        let reopened = Package::open(&edited, Limits::default()).expect("fixture operation");
+        let reopened = Package::open(
+            &edited,
+            Limits {
+                archive_bytes: 32 * 1024 * 1024,
+                entries: 1000,
+                part_bytes: 16 * 1024 * 1024,
+                expanded_bytes: 32 * 1024 * 1024,
+                xml: XmlLimits {
+                    max_depth: 256,
+                    max_nodes: 100_000,
+                },
+            },
+        )
+        .expect("fixture operation");
         for (before, after) in package.entries.iter().zip(&reopened.entries) {
             if before.name == "ppt/slides/slide1.xml" {
                 continue;

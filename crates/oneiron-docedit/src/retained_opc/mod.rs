@@ -3,7 +3,8 @@
 mod package;
 mod xml;
 
-pub use package::{Limits, Package};
+pub use package::{Editability, Limits, Package};
+pub use xml::XmlLimits;
 
 /// An archive or edit that cannot be proven safe to retain.
 #[derive(Debug, thiserror::Error, PartialEq, Eq)]

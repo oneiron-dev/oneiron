@@ -114,6 +114,19 @@ impl PolicyManifestResolution {
         }
         self.hosted_tts.limits(provider, holder)
     }
+    /// Only a valid loaded policy resolves document resource ceilings.
+    /// An absent row uses the shipped manifest's baseline, not organ literals.
+    pub(in crate::gate) fn docedit_resource_policy(
+        &self,
+    ) -> Option<crate::gate::docedit_resource::DoceditResourcePolicy> {
+        if self.diagnostics.is_fail_closed() {
+            return None;
+        }
+        Some(
+            self.docedit_resource_policy
+                .unwrap_or_else(crate::gate::docedit_resource::DoceditResourcePolicy::shipped),
+        )
+    }
 
     /// Rendering pins follow declared critical classes, not the fail-closed
     /// write fallback for unknown predicates. Only trusted folded policy can pin.

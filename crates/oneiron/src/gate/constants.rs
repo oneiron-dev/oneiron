@@ -69,6 +69,8 @@ pub(super) const POLICY_AUTO_CHECKER_KEY: &str = "auto_checker";
 /// ```
 pub(super) const POLICY_BUDGET_POLICY_KEY: &str = "budget_policy";
 pub(super) const POLICY_HOSTED_TTS_KEY: &str = "hosted_tts";
+/// Vault-wide resource ceilings for bounded office package parsing.
+pub(super) const POLICY_DOCEDIT_RESOURCE_KEY: &str = "docedit_resource_policy";
 pub(super) const BUDGET_POLICY_PURPOSE_KEY: &str = "purpose";
 pub(super) const BUDGET_POLICY_ACTOR_KEY: &str = "actor";
 pub(super) const BUDGET_POLICY_FLOOR_KEY: &str = "floor";

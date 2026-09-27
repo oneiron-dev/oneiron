@@ -1,9 +1,24 @@
+use oneiron_docedit::retained_opc::XmlLimits;
 use oneiron_docedit::retained_opc::{Error, Limits, Package};
+
+fn fixture_limits() -> Limits {
+    Limits {
+        archive_bytes: 32 * 1024 * 1024,
+        entries: 10_000,
+        part_bytes: 16 * 1024 * 1024,
+        expanded_bytes: 64 * 1024 * 1024,
+        xml: XmlLimits {
+            max_depth: 256,
+            max_nodes: 1_000_000,
+        },
+    }
+}
+
 const PART: &str = "word/document.xml";
 const PATH: &[&str] = &["root", "item"];
 
 fn edit_must_refuse(bytes: &[u8], prior: &str) {
-    let mut package = Package::open(bytes, Limits::default()).expect("well-formed ZIP");
+    let mut package = Package::open(bytes, fixture_limits()).expect("well-formed ZIP");
     assert_eq!(package.export().expect("no-op"), bytes);
     let before = package.part(PART).expect("part read");
     let result = package.replace_text(PART, PATH, prior, "changed");
@@ -59,7 +74,7 @@ fn nonstandard_signature_location_and_case_refuse_edits_but_keep_noop() {
 #[test]
 fn unsigned_descriptor_crc_equal_to_signature_is_still_valid() {
     let bytes = include_bytes!("fixtures/adversarial/crc-signature.zip");
-    let package = Package::open(bytes, Limits::default()).expect("unsigned descriptor");
+    let package = Package::open(bytes, fixture_limits()).expect("unsigned descriptor");
     assert_eq!(package.export().expect("no-op"), bytes);
 }
 
@@ -69,7 +84,7 @@ fn raw_crlf_and_cr_are_normalized_but_character_reference_is_not() {
         include_bytes!("fixtures/adversarial/cr-input.zip").as_slice(),
         include_bytes!("fixtures/adversarial/cr-lone.zip").as_slice(),
     ] {
-        let mut package = Package::open(bytes, Limits::default()).expect("input ZIP");
+        let mut package = Package::open(bytes, fixture_limits()).expect("input ZIP");
         package
             .replace_text(PART, PATH, "a\nb", "changed")
             .expect("normalized raw EOL");
@@ -83,7 +98,7 @@ fn raw_crlf_and_cr_are_normalized_but_character_reference_is_not() {
         );
     }
     let bytes = include_bytes!("fixtures/adversarial/cr-ref.zip");
-    let mut package = Package::open(bytes, Limits::default()).expect("reference ZIP");
+    let mut package = Package::open(bytes, fixture_limits()).expect("reference ZIP");
     assert!(matches!(
         package.replace_text(PART, PATH, "a\nb", "changed"),
         Err(Error::Edit(_))
@@ -98,7 +113,7 @@ fn raw_crlf_and_cr_are_normalized_but_character_reference_is_not() {
 fn emitted_carriage_return_is_a_character_reference() {
     let mut package = Package::open(
         include_bytes!("fixtures/adversarial/plain.zip"),
-        Limits::default(),
+        fixture_limits(),
     )
     .expect("input ZIP");
     package
@@ -146,7 +161,7 @@ fn valid_declarations_namespaces_and_cdata_siblings_stay_in_place() {
         include_bytes!("fixtures/xml-grammar/valid_namespaced_sibling.zip").as_slice(),
         include_bytes!("fixtures/xml-grammar/valid_cdata_sibling.zip").as_slice(),
     ] {
-        let mut package = Package::open(bytes, Limits::default()).expect("valid ZIP");
+        let mut package = Package::open(bytes, fixture_limits()).expect("valid ZIP");
         let original = package
             .part(PART)
             .expect("part read")
@@ -163,6 +178,6 @@ fn valid_declarations_namespaces_and_cdata_siblings_stay_in_place() {
         expected.extend_from_slice(b"changed");
         expected.extend_from_slice(&original[at + 3..]);
         assert_eq!(edited, expected, "only intended leaf changed");
-        assert!(Package::open(&package.export().expect("write"), Limits::default()).is_ok());
+        assert!(Package::open(&package.export().expect("write"), fixture_limits()).is_ok());
     }
 }
