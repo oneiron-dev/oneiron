@@ -108,6 +108,7 @@ impl OutboundDispatchPipeline {
                 .as_ref()
                 .map(crate::outbound_intent_ledger::IntentLedgerRecord::payload),
         )?;
+        bind_native_mail_recipient(vault, &mut request)?;
         let space_posting = {
             let txn = vault.store.env.read_txn().map_err(Error::from)?;
             vault.outbound_space_posting_in_txn(
@@ -607,6 +608,45 @@ impl OutboundDispatchPipeline {
             budget_ladder_events,
         })
     }
+}
+
+/// Bind one canonical native-mail recipient to gate, ledger and transport.
+/// The generic dispatch API must not bypass the adapter's target check.
+fn bind_native_mail_recipient(
+    vault: &Vault,
+    request: &mut OutboundDispatchRequest,
+) -> std::result::Result<(), OutboundDispatchError> {
+    // MAIL-09: the public generic door is also a native-mail send door.
+    // Bind the delivery target to the Gate counterparty BEFORE freezing or
+    // comparing a replay. Never authorize a different address from the
+    // one the sink receives, even when the caller supplies a contact ref.
+    if request.intent.channel == "email"
+        && request.intent.verb == "send"
+        && let Some(identity) = request.channel_identity_ref
+    {
+        let txn = vault.store.env.read_txn().map_err(Error::from)?;
+        if crate::channel_identity_provider::native_mail::is_native_mail_sender_in_txn(
+            &vault.store,
+            &txn,
+            identity,
+        )? {
+            let recipient = crate::channel_identity_provider::native_mail::canonical_recipient(
+                &request.intent.target,
+            )?;
+            if let Some(contact) = request.counterparty_ref.as_deref()
+                && crate::channel_identity_provider::native_mail::canonical_recipient(contact)?
+                    != recipient
+            {
+                return Err(Error::InvalidConfig(
+                    "native-mail target and counterparty differ".into(),
+                )
+                .into());
+            }
+            request.intent.target = recipient.clone();
+            request.counterparty_ref = Some(recipient);
+        }
+    }
+    Ok(())
 }
 
 fn apply_apns_window_cap(

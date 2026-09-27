@@ -56,12 +56,14 @@ impl RampScope {
         actor: impl Into<String>,
     ) -> Result<Self> {
         let (op_kind, target_class, actor) = (op_kind.into(), target_class.into(), actor.into());
-        Ok(Self {
+        let scope = Self {
             op_kind: normalized_scope_field(SCOPE_OP_KIND_LABEL, &op_kind)?.to_owned(),
             target_class: normalized_scope_field(SCOPE_TARGET_CLASS_LABEL, &target_class)?
                 .to_owned(),
             actor: normalized_scope_field(SCOPE_ACTOR_LABEL, &actor)?.to_owned(),
-        })
+        };
+        scope.validate()?;
+        Ok(scope)
     }
 
     /// Re-checks the tuple [`RampScope::new`] would have produced.
@@ -87,6 +89,12 @@ impl RampScope {
             if normalized_scope_field(label, value)? != value.as_str() {
                 return Err(Error::Gate(GateError::InvalidConsentBound(label)));
             }
+        }
+        if self.op_kind == "send"
+            && let Some(identity) = self.target_class.strip_prefix("recipient:cold_external:")
+        {
+            crate::entity_id::EntityId::from_hex(identity)
+                .map_err(|_| Error::Gate(GateError::InvalidConsentBound("mail ramp identity")))?;
         }
         Ok(())
     }
@@ -125,13 +133,12 @@ impl RampScope {
             let identity = crate::entity_id::EntityId::from_hex(identity)?;
             return GrantBound::action(
                 ActorBound::new(self.actor.clone())?,
-                ActionClass::new("send")?,
-                ActionEnvelope::new([
-                    "verb:send".to_owned(),
-                    "recipient:cold_external".to_owned(),
-                    format!("identity:{}", identity.to_hex()),
-                ])?
-                .with_target("email")?,
+                // Distinct class: a cold-mail grant cannot contain an ordinary
+                // `send` requirement (including one for a known recipient).
+                // The gate echoes the ordinary send requirement only after it
+                // verifies this exact scope against the current cold target.
+                ActionClass::new("native_mail_cold_send")?,
+                ActionEnvelope::new([format!("identity:{}", identity.to_hex())])?,
             );
         }
         GrantBound::action(

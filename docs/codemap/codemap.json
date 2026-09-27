@@ -6945,12 +6945,20 @@
      "path": "src/channel_identity_provider/native_mail.rs",
      "purpose": "Native mail fulfillment adapter",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 4,
       "enum": 1,
       "fn": 6,
       "struct": 1,
       "trait": 1
      }
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "src/channel_identity_provider/native_mail/tests.rs",
+     "purpose": "Native-mail adapter and send-autonomy integration tests",
+     "surface": {}
     },
     {
      "bucket": "m",
@@ -34111,7 +34119,7 @@
      "purpose": "Channel identity capability manifests (OF-347 CID-4)"
     },
     "channel_identity_provider": {
-     "files": 10,
+     "files": 11,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -35248,7 +35256,7 @@
    "over_bar": 9,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
    "source_files": 2081,
-   "test_files": 714
+   "test_files": 715
   },
   "oneiron-android": {
    "files": [

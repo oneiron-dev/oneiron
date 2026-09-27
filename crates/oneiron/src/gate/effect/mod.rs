@@ -132,8 +132,22 @@ pub(crate) fn evaluate_external_effect_policy(
     // honors revocation immediately, and an UNGRANTED irreversible effect is
     // the only one that enters the ask lane (invariant 1).
     let mut consent_grants = crate::consent::load_active_standing_grants(store, wtxn)?;
+    let mail_graduated = crate::channel_identity_provider::native_mail::mail_graduated_in_txn(
+        store,
+        &*wtxn,
+        &hydrated_effect,
+    )?;
     let provisional = hydrated_effect.gate_input(agent_definition_ceiling, None);
     let requirement = external_effect_action_requirement(&hydrated_effect);
+    if mail_graduated
+        && let Some(bound) = requirement.as_ref()
+        && let Ok(grant) = crate::consent::ActionGrant::new(bound.clone())
+    {
+        // DEC-0006 evaluates its ordinary send requirement. The separate
+        // cold-mail class is echoed as coverage only after the gate has
+        // checked recipient class, actor, sender, and live owner grant here.
+        consent_grants.push(crate::consent::StandingConsentGrant::Action(grant));
+    }
     if let (Some(requirement), Some(effect_ctx)) =
         (requirement, provisional.external_effect.as_ref())
     {
@@ -197,12 +211,7 @@ pub(crate) fn evaluate_external_effect_policy(
         .flatten();
     if let Some(effect) = input.external_effect.as_mut() {
         effect.scoped_mcp_grant_authorized = scoped_mcp_grant_authorized;
-        effect.mail_graduated =
-            crate::channel_identity_provider::native_mail::mail_graduated_in_txn(
-                store,
-                &*wtxn,
-                &hydrated_effect,
-            )?;
+        effect.mail_graduated = mail_graduated;
         // ONE-1752: the same post-conversion seam. Hydration cannot reach a
         // context that does not exist until `gate_input()` builds it, so the
         // override it resolved is written on here, once, before evaluation.
