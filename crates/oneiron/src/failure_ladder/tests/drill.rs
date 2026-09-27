@@ -5,6 +5,37 @@ use crate::error::{Error, GateError};
 use crate::registry::ENTITY_TYPE_PERSON;
 use crate::store::GateDecisionId;
 
+fn embedded_owner(vault: &Vault) -> Result<crate::consent::AuthenticatedOwner> {
+    let id = vault.ensure_embedded_owner_actor().expect("seed owner");
+    vault.authenticate_owner(id, &id.to_hex(), true, GateDecisionId::now())
+}
+
+/// The public runner's valid custom-dispatch envelope without the higher-level
+/// dispatcher skill-index stamp. This exercises a genuinely empty manifest.
+fn bare_custom_dispatch(vault: &Vault, agent: EntityId, now: u64) -> Result<AttemptRecord> {
+    use crate::agent_dispatch::{
+        AGENT_DISPATCH_ATTEMPT_TYPE, AgentDispatchInput, encode_agent_dispatch_input,
+    };
+
+    let definition = vault
+        .get_agent_definition(&agent)?
+        .ok_or(Error::EntityNotFound)?;
+    let input = AgentDispatchInput::frozen(AgentDispatchTarget::Custom(agent), definition);
+    let EnqueueDreamerAttemptOutcome::Enqueued(status) =
+        DreamerRunnerStore::new(vault).enqueue(EnqueueDreamerAttempt {
+            attempt_type: AGENT_DISPATCH_ATTEMPT_TYPE.to_owned(),
+            input: encode_agent_dispatch_input(&input)?,
+            parent_attempt: None,
+            dedupe_key: None,
+            run_id: Some(RUN_ID.to_owned()),
+            now,
+        })?
+    else {
+        panic!("expected a fresh custom dispatch");
+    };
+    claim(vault, status.attempt.id, now)
+}
+
 fn person(vault: &Vault, seed: u8) -> Result<crate::consent::AuthenticatedOwner> {
     let id = test_id(seed);
     vault.put_entity(
@@ -196,12 +227,11 @@ fn authority_bound_owner_drills_but_unbound_and_revoked_humans_cannot() -> Resul
         Err(Error::Gate(GateError::ConsentOwnerNotAuthenticated(_)))
     ));
     let revoke = bind_owner_with_revocation(&vault, owner.actor())?;
+    let drill = vault.drill_custom_agent_failure(&owner, class, leased.id)?;
+    assert_eq!(drill.trace.id, leased.id);
     assert_eq!(
-        vault
-            .drill_custom_agent_failure(&owner, class, leased.id)?
-            .trace
-            .id,
-        leased.id
+        drill.receipt_refs,
+        vec![crate::receipt::attempt_pack_receipt_id(&leased.id)]
     );
     assert!(matches!(
         vault.drill_custom_agent_failure(&unbound, class, leased.id),
@@ -242,5 +272,93 @@ fn deleted_agent_definition_keeps_retained_failure_member_drillable() -> Result<
         drill.receipt_refs,
         vec![crate::receipt::attempt_pack_receipt_id(&leased.id)]
     );
+    Ok(())
+}
+
+#[test]
+fn manifest_bearing_retry_source_stays_drillable_with_its_terminal_receipt() -> Result<()> {
+    let (_dir, vault) = open_vault();
+    let owner = embedded_owner(&vault)?;
+    let agent = put_scope_agent(&vault, 0xba, "custom.retry")?;
+    let leased = leased_dispatch(&vault, agent, 10)?;
+    AttemptQueue::new(&vault).append_manifest_entry(
+        leased.id,
+        ManifestEntry::new(ManifestKind::Skill, "skill.retry", "1", 11),
+    )?;
+    let FailureLadderOutcome::Retried {
+        source_attempt_id, ..
+    } = FailureLadder::new(&vault)
+        .handle_attempt_failure(failure_input(&leased, transient(), 20), auto_policy(agent))?
+    else {
+        panic!("expected retry source");
+    };
+    assert_eq!(source_attempt_id, leased.id);
+    let class = FailureSignalClass::TaskFailure;
+    vault.record_custom_agent_failure(source_attempt_id, class)?;
+    let group = vault.custom_agent_failure_groups()?.remove(0);
+    assert_eq!(group.member_refs, vec![source_attempt_id]);
+    let drill = vault.drill_custom_agent_failure(&owner, group.class, source_attempt_id)?;
+    assert_eq!(drill.trace.state, AttemptState::Failed);
+    assert_eq!(
+        drill.receipt_refs,
+        vec![crate::receipt::attempt_pack_receipt_id(&source_attempt_id)]
+    );
+    Ok(())
+}
+
+#[test]
+fn manifest_bearing_queued_cancellation_stays_drillable_with_its_receipt() -> Result<()> {
+    use crate::attempt_queue::{AttemptInterventionKind, InterveneAttempt};
+
+    let (_dir, vault) = open_vault();
+    let owner = embedded_owner(&vault)?;
+    let agent = put_scope_agent(&vault, 0xbb, "custom.cancel")?;
+    let queued = dispatch_attempt(&vault, agent, 10)?;
+    let queue = AttemptQueue::new(&vault);
+    queue.append_manifest_entry(
+        queued.id,
+        ManifestEntry::new(ManifestKind::Skill, "skill.cancel", "1", 11),
+    )?;
+    let cancelled = queue.intervene(InterveneAttempt {
+        id: queued.id,
+        kind: AttemptInterventionKind::Cancel,
+        actor: "vault-owner".to_owned(),
+        note: None,
+        now: 12,
+    })?;
+    assert_eq!(cancelled.record.state, AttemptState::Cancelled);
+    let class = FailureSignalClass::LatencyAbandon;
+    vault.record_custom_agent_failure(queued.id, class)?;
+    let group = vault.custom_agent_failure_groups()?.remove(0);
+    assert_eq!(group.member_refs, vec![queued.id]);
+    let drill = vault.drill_custom_agent_failure(&owner, group.class, queued.id)?;
+    assert_eq!(drill.trace.state, AttemptState::Cancelled);
+    assert_eq!(
+        drill.receipt_refs,
+        vec![crate::receipt::attempt_pack_receipt_id(&queued.id)]
+    );
+    Ok(())
+}
+
+#[test]
+fn skillless_actor_bound_failure_discovers_its_stored_receipt() -> Result<()> {
+    let (_dir, vault) = open_vault();
+    let owner = embedded_owner(&vault)?;
+    let agent = put_scope_agent(&vault, 0xbc, "custom.skillless")?;
+    let leased = bare_custom_dispatch(&vault, agent, 10)?;
+    assert!(leased.manifest().is_empty());
+    vault.bind_actor_attempt(leased.id, &agent)?;
+    FailureLadder::new(&vault).handle_attempt_failure(
+        failure_input(&leased, indeterminate(), 20),
+        policy_with(agent, 3, FailureEscalationMode::Human),
+    )?;
+    let class = FailureSignalClass::TaskFailure;
+    vault.record_custom_agent_failure(leased.id, class)?;
+    let group = vault.custom_agent_failure_groups()?.remove(0);
+    let drill = vault.drill_custom_agent_failure(&owner, group.class, group.member_refs[0])?;
+    assert!(drill.trace.manifest().is_empty());
+    let receipt_id = crate::receipt::attempt_pack_receipt_id(&leased.id);
+    assert_eq!(drill.receipt_refs, vec![receipt_id.clone()]);
+    assert!(crate::receipt::attempt_pack_receipt(&vault, &receipt_id)?.is_some());
     Ok(())
 }

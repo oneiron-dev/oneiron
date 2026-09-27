@@ -6,7 +6,7 @@ use crate::Vault;
 use crate::attempt_queue::{AttemptId, AttemptRecord};
 use crate::consent::AuthenticatedOwner;
 use crate::error::{Error, Result};
-use crate::receipt::{attempt_pack_receipt, attempt_pack_receipt_id};
+use crate::receipt::{ReceiptKind, attempt_pack_receipt, attempt_pack_receipt_id};
 
 use super::custom_review::{FailureSignalClass, member_in_txn};
 
@@ -57,18 +57,26 @@ impl Vault {
             }
             member_in_txn(self, &txn, attempt_id, class)?
         };
+        let id = attempt_pack_receipt_id(&trace.id);
         let mut receipt_refs = Vec::new();
-        if !trace.manifest().is_empty() {
-            let id = attempt_pack_receipt_id(&trace.id);
-            let receipt = attempt_pack_receipt(self, &id)?.ok_or(Error::CorruptedIndex(
-                "custom-agent failure receipt missing",
-            ))?;
-            if receipt.receipt_id != id {
+        if let Some(receipt) = attempt_pack_receipt(self, &id)? {
+            if receipt.receipt_id != id
+                || receipt.receipt_kind != ReceiptKind::Outbound
+                || receipt.outcome != trace.state.as_str()
+            {
                 return Err(Error::CorruptedIndex(
                     "custom-agent failure receipt mismatch",
                 ));
             }
             receipt_refs.push(id);
+        } else if !trace.manifest().is_empty()
+            || crate::skill::resident::receipt_resident(self, &id)?.is_some()
+        {
+            // Every terminal door stamps a pack/resident receipt in the same
+            // transaction as the attempt; absence here is lost evidence.
+            return Err(Error::CorruptedIndex(
+                "custom-agent failure receipt missing",
+            ));
         }
         Ok(CustomFailureDrill {
             trace,
