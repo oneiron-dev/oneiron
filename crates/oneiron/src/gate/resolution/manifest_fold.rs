@@ -184,6 +184,20 @@ pub(crate) fn resolve_policy_manifest(
                             .map_or(threshold, |old| old.min(threshold)),
                     );
                 }
+                if let Some(limits) = decoded.voice_ref_limits {
+                    if id == crate::gate::default_policy_manifest_id()? {
+                        resolution.voice_ref_defaults = Some(limits);
+                    } else {
+                        if let Some(precedence) = limits.precedence {
+                            match resolution.voice_ref_limits.precedence {
+                                None => resolution.voice_ref_limits.precedence = Some(precedence),
+                                Some(existing) if existing == precedence => {}
+                                Some(_) => resolution.diagnostics.malformed_manifest_seen = true,
+                            }
+                        }
+                        resolution.voice_ref_limits.narrow(limits);
+                    }
+                }
                 if let Some(quota) = decoded.weave_correction_policy {
                     match &mut resolution.weave_correction_policy {
                         Some(existing) => existing.restrict(quota),
