@@ -1020,6 +1020,94 @@ async fn rejected_wave_item_does_not_block_sibling_tick_or_new_plan() {
     );
 }
 
+#[tokio::test]
+async fn wave_scan_reaches_later_pages_despite_notifications() {
+    use oneiron::task_verb::{TaskAssignee, TaskCreateSpec};
+    let (_dir, vault) = open_vault();
+    let actor = seed_actor(&vault, 0xA6, oneiron::registry::ENTITY_TYPE_PERSON);
+    let memory = vault.memory(actor, oneiron::EdgeActorClass::Human);
+    for i in 0..260 {
+        memory
+            .tasks_create(
+                &TaskCreateSpec::new(
+                    rmpv::Value::from(format!("nonwave-{i}")),
+                    None,
+                    None,
+                    Some(100),
+                )
+                .with_assignee(TaskAssignee::Peer { actor_ref: actor }),
+            )
+            .expect("non-wave TASK");
+    }
+    let epic = memory
+        .tasks_create(
+            &TaskCreateSpec::new(rmpv::Value::from("epic"), None, None, Some(100))
+                .with_assignee(TaskAssignee::Peer { actor_ref: actor }),
+        )
+        .expect("epic")
+        .task_ref
+        .expect("epic ref");
+    vault
+        .enqueue_wave_plan(epic, "later page", serde_json::Value::Null, 100)
+        .expect("queue plan");
+    let (sent, mut received) = tokio::sync::mpsc::unbounded_channel();
+    let factory = consolidation_factory(WriteActor::new(actor, oneiron::EdgeActorClass::Human))
+        .with_wave_planner(
+            Arc::new(IndependentWavePlanner {
+                calls: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
+            }),
+            Box::new(move |vault, candidate| {
+                let WaveDispatchRoute::Attempt { id, generation } = candidate.route else {
+                    unreachable!()
+                };
+                let Some(_row) = vault.claim_wave_dispatch_attempt(
+                    candidate.task,
+                    id,
+                    generation,
+                    "executor",
+                    u64::MAX,
+                )?
+                else {
+                    return Ok(WaveHandoffOutcome::NoLongerCurrent);
+                };
+                // Claim notifications land while the raw cursor is active; both
+                // work items must still reach the host, beyond page one.
+                sent.send(candidate.task).expect("observer");
+                Ok(WaveHandoffOutcome::Accepted(WaveHandoffReceipt::Local {
+                    lease_owner: "executor".into(),
+                }))
+            }),
+        );
+    let (push, wake, hint) = PushTick::channel(crate::DEFAULT_SESSION_IDLE_FLOOR_SECS * 1_000);
+    let supervisor = WakeSupervisor::new(&vault, push, factory, test_config())
+        .with_wave_dispatch_limits(crate::WaveDispatchLimits {
+            page_size: 256,
+            retry_quantum: 1,
+            retry_initial: Duration::from_millis(10),
+            retry_max: Duration::from_millis(20),
+        });
+    let stop = supervisor.shutdown_handle();
+    let (report, ()) = tokio::time::timeout(Duration::from_secs(12), async {
+        tokio::join!(supervisor.run(), async {
+            let first = tokio::time::timeout(Duration::from_secs(8), received.recv())
+                .await
+                .expect("later page timed out")
+                .expect("first");
+            let second = tokio::time::timeout(Duration::from_secs(8), received.recv())
+                .await
+                .expect("claim notification stranded later page")
+                .expect("second");
+            assert_ne!(first, second);
+            stop.shutdown();
+        })
+    })
+    .await
+    .expect("later page pump timeout");
+    drop(wake);
+    drop(hint);
+    assert_eq!(report.passes_completed, 0);
+}
+
 #[test]
 fn wave_point_claim_never_claims_neighbor_or_stale_generation() {
     use oneiron::task_verb::{TaskAssignee, TaskCreateSpec, WaveDispatchGeneration};
