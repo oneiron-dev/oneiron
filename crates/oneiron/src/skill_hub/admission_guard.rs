@@ -105,6 +105,12 @@ pub(crate) fn check_hub_skill_put(
             .transpose()?
             == Some(crate::skill_optimize::skill_body_binding_digest(record)?);
     if record.lifecycle_status == SkillLifecycle::Active && !unchanged_active {
+        if record.source == ClaimSource::Imported
+            && let Some(hash) = record.content_hash
+            && super::import_receipt::marketplace_hash_blocked_in_txn(store, txn, hash)?
+        {
+            return Err(invalid("marketplace hash rule blocks activation"));
+        }
         let proof = proof.ok_or_else(|| {
             invalid("hub or fork activation requires local consent and held-out replay")
         })?;

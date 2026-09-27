@@ -66,6 +66,22 @@ fn rule_key(hash: SkillContentHash) -> Vec<u8> {
     key
 }
 
+/// Read the owner rule at the same write frontier as every imported activation.
+/// Scanner risk and provider governance remain independent advisory signals.
+pub(crate) fn marketplace_hash_blocked_in_txn(
+    store: &crate::store::Store,
+    txn: &heed::RoTxn<'_>,
+    hash: SkillContentHash,
+) -> Result<bool> {
+    match store.vault_meta.get(txn, &rule_key(hash))?.as_deref() {
+        None | Some([0]) => Ok(false),
+        Some([1]) => Ok(true),
+        Some(_) => Err(crate::error::Error::CorruptedIndex(
+            "marketplace blocked hash",
+        )),
+    }
+}
+
 /// A source receipt for a marketplace install. One content holder can have many source receipts.
 /// The publisher field is engine-stamped only by the admitted-publisher adapter door.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -222,15 +238,9 @@ impl Vault {
                 occurred,
                 learned_at,
             )?;
-            let rule_blocked = match self.store.vault_meta.get(txn, &rule_key(hash))?.as_deref() {
-                None | Some([0]) => false,
-                Some([1]) => true,
-                Some(_) => {
-                    return Err(crate::error::Error::CorruptedIndex(
-                        "marketplace blocked hash",
-                    ));
-                }
-            };
+            let rule_blocked = marketplace_hash_blocked_in_txn(&self.store, txn, hash)?;
+            let scan_posture =
+                crate::skill_scan::scan_gate_for_activation_in_txn(&self.store, txn, hash)?;
             let code_bearing = parsed
                 .files
                 .iter()
@@ -262,6 +272,13 @@ impl Vault {
                 "ask_permissions"
             } else if code_bearing && !code_enabled {
                 "code_auto_install_disabled"
+            } else if matches!(
+                scan_posture,
+                crate::skill_scan::ActivationPosture::ProposedRequired { .. }
+            ) {
+                // Do not write Active/Auto: batch escalation would persist Active/Proposed,
+                // which the runtime cannot load. This is an actionable review, not a rule hit.
+                "scan_review"
             } else {
                 "installed"
             };
@@ -346,8 +363,10 @@ impl Vault {
                 .ok_or_else(|| invalid("marketplace permission ask missing"))?;
             let mut receipt: HubImportReceipt =
                 serde_json::from_slice(&raw).map_err(|_| invalid("invalid hub import receipt"))?;
-            if receipt.outcome.as_deref() != Some("ask_permissions")
-                || receipt.hub_id != source.hub_id.to_hex()
+            if !matches!(
+                receipt.outcome.as_deref(),
+                Some("ask_permissions" | "scan_review")
+            ) || receipt.hub_id != source.hub_id.to_hex()
                 || receipt.ref_string != source.ref_string
                 || receipt.pin_type != source.pin.pin_type()
                 || receipt.pin_value != pin_value(&source.pin)
@@ -375,14 +394,8 @@ impl Vault {
                 ));
             }
             self.check_hub_source_alias(txn, entity, source, hash)?;
-            match self.store.vault_meta.get(txn, &rule_key(hash))?.as_deref() {
-                None | Some([0]) => {}
-                Some([1]) => return Err(invalid("marketplace hash rule blocks activation")),
-                Some(_) => {
-                    return Err(crate::error::Error::CorruptedIndex(
-                        "marketplace blocked hash",
-                    ));
-                }
+            if marketplace_hash_blocked_in_txn(&self.store, txn, hash)? {
+                return Err(invalid("marketplace hash rule blocks activation"));
             }
             let has_code = package
                 .files

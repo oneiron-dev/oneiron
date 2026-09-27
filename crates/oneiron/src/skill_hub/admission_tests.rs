@@ -233,6 +233,63 @@ fn every_hub_tier_requires_human_consent_before_replay_and_activation() -> Resul
     Ok(())
 }
 #[test]
+fn pending_legacy_admission_cannot_bypass_a_new_owner_hash_block() -> Result<()> {
+    let fixture = Fixture::new();
+    let (source, publisher) = fixture.hub(SkillHubTrustTier::Verified);
+    let id = fixture.import(&source);
+    let ask =
+        fixture
+            .vault
+            .prepare_marketplace_activation(id, &source, &publisher, fixture.baseline)?;
+    fixture
+        .vault
+        .approve_marketplace_activation(&ask, &fixture.owner)?;
+    let hash = package("fixture.new", "1", "check result").content_hash()?;
+    fixture
+        .vault
+        .set_marketplace_blocked_hash(&fixture.owner, hash, true)?;
+    assert_eq!(
+        fixture
+            .vault
+            .admit_marketplace_skill(&ask, &NoReplay, at(30), 30)
+            .expect_err("a later owner rule overrides the earlier ask")
+            .kind(),
+        ErrorKind::InvalidSkillBody,
+    );
+    assert_eq!(
+        fixture
+            .vault
+            .get_skill_record(&id)?
+            .expect("candidate")
+            .lifecycle_status,
+        SkillLifecycle::Candidate
+    );
+    assert!(fixture.vault.hub_admission_receipt(&id)?.is_none());
+    assert_eq!(
+        fixture
+            .vault
+            .prepare_marketplace_activation(id, &source, &publisher, fixture.baseline)
+            .expect_err("blocked even on new ask")
+            .kind(),
+        ErrorKind::InvalidSkillBody,
+    );
+    // The denied attempt spent no pre-existing consent. Unblocking restores
+    // the ask without accepting the blocked activation.
+    fixture
+        .vault
+        .set_marketplace_blocked_hash(&fixture.owner, hash, false)?;
+    let HubAdmissionDisposition::Ruled(receipt) =
+        fixture
+            .vault
+            .admit_marketplace_skill(&ask, &Replay::new(true), at(31), 31)?
+    else {
+        panic!("unblocked admission");
+    };
+    assert!(receipt.accepted);
+    Ok(())
+}
+
+#[test]
 fn two_hubs_dedup_and_raw_or_replayed_activation_cannot_bypass_rejection() -> Result<()> {
     let fixture = Fixture::new();
     let (first, publisher) = fixture.hub(SkillHubTrustTier::Verified);

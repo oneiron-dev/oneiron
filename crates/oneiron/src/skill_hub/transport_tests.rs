@@ -1,6 +1,7 @@
 //! Real Git repositories and loopback static HTTP fixtures; no mocked adapter calls.
 use super::*;
 use crate::{
+    attempt_queue::{AttemptQueue, EnqueueAttempt, EnqueueOutcome},
     entity_id::EntityId,
     error::{ErrorKind, Result},
 };
@@ -577,6 +578,28 @@ fn marketplace_code_and_rules_hits_remain_candidate_until_policy_allows() -> Res
         Some("blocked_hash")
     );
     vault.set_marketplace_blocked_hash(&owner, hash, false)?;
+    // Advisory scan escalation is a pending review, not Active/Proposed with
+    // a false "installed" receipt; lowering the risk dial is never a hash rule.
+    crate::skill_scan::set_skill_scan_activation_risk_threshold(&vault, ScanRiskLevel::Low)?;
+    assert_eq!(
+        vault.import_marketplace_skill_from_adapter(
+            &adapter, &source, &publisher, &ReadyFit, at, 14,
+        )?,
+        id
+    );
+    let pending = vault.get_skill_record(&id)?.expect("pending scan review");
+    assert_eq!(pending.lifecycle_status, SkillLifecycle::Candidate);
+    assert_eq!(
+        pending.approval_status,
+        crate::claim::ClaimApprovalStatus::Auto
+    );
+    let receipt = vault
+        .hub_import_receipt(&id, &source)?
+        .expect("scan review receipt");
+    assert_eq!(receipt.outcome.as_deref(), Some("scan_review"));
+    assert_eq!(receipt.installed_as.as_deref(), Some("candidate"));
+    crate::skill_scan::set_skill_scan_activation_risk_threshold(&vault, ScanRiskLevel::High)?;
+
     assert_eq!(
         vault.import_marketplace_skill_from_adapter(
             &adapter, &source, &publisher, &ReadyFit, at, 13
@@ -593,6 +616,22 @@ fn marketplace_code_and_rules_hits_remain_candidate_until_policy_allows() -> Res
             .unwrap()
             .installed_as,
         Some("active".to_owned())
+    );
+    let queue = AttemptQueue::new(&vault);
+    let EnqueueOutcome::Enqueued(attempt) = queue.enqueue(EnqueueAttempt {
+        kind: "marketplace.scan-reimport".into(),
+        payload: vec![],
+        dedupe_key: None,
+        run_id: None,
+        now: 30,
+    })?
+    else {
+        panic!("fresh attempt");
+    };
+    let loaded = vault.load_attempt_skill_pack(attempt.id, &id, 31)?;
+    assert_eq!(
+        loaded.record.approval_status,
+        crate::claim::ClaimApprovalStatus::Auto
     );
     Ok(())
 }
@@ -829,6 +868,106 @@ fn permission_ask_requires_current_rule_and_one_exact_owner_decision() -> Result
             .outcome
             .as_deref(),
         Some("installed_with_permission_consent")
+    );
+    assert!(
+        vault
+            .approve_marketplace_permission_ask(&owner, &id, &source, at, 13)
+            .is_err()
+    );
+    Ok(())
+}
+
+#[test]
+fn scan_review_is_candidate_until_owner_answers_and_runtime_loads() -> Result<()> {
+    use crate::skill::SkillLifecycle;
+    let mut tree = files("fixture.scan-review", "1", "Check the result.");
+    tree[0].content = b"---\nname: fixture.scan-review\ndescription: fixture\nversion: 1\nrequires-bins: [\"rg\"]\n---\nCheck the result.\n".to_vec();
+    let server = StaticHttp::new(routes(&tree));
+    let temp = tempfile::tempdir()?;
+    let vault = crate::Vault::open(temp.path(), crate::VaultConfig::default())?;
+    let owner_id = EntityId::now();
+    let at = crate::TimeRange { start: 10, end: 10 };
+    vault.put_entity(
+        &owner_id,
+        crate::registry::ENTITY_TYPE_PERSON,
+        at,
+        10,
+        b"owner",
+    )?;
+    let owner = vault.authenticate_owner(
+        owner_id,
+        "principal:ask",
+        true,
+        crate::store::GateDecisionId::now(),
+    )?;
+    let hub_id = EntityId::now();
+    vault.configure_skill_hub(
+        &owner,
+        &hub_id,
+        &SkillHubRecord::new(
+            SkillHubKind::HttpIndex,
+            server.index_url(),
+            SkillHubTrustTier::Community,
+            HubSyncPolicy::ContentHashFrozen,
+        )?,
+        at,
+        10,
+    )?;
+    let publisher = vault.admit_skill_publisher(&owner, "publisher:ask", hub_id)?;
+    let adapter = HttpEndpointSkillHubAdapter::new(hub_id, &server.index_url())?;
+    let hash = adapter.discover()?[0].content_hash;
+    let source = HubRef::new(hub_id, "fixture", HubPin::ContentHash(hash.to_hex()))?;
+    crate::skill_scan::set_skill_scan_activation_risk_threshold(&vault, ScanRiskLevel::Low)?;
+    let id = vault
+        .import_marketplace_skill_from_adapter(&adapter, &source, &publisher, &ReadyFit, at, 10)?;
+    assert_eq!(
+        vault.get_skill_record(&id)?.unwrap().lifecycle_status,
+        SkillLifecycle::Candidate
+    );
+    let ask = vault.hub_import_receipt(&id, &source)?.expect("ask");
+    assert_eq!(ask.requested_permissions, ["bin:rg"]);
+    assert_eq!(ask.outcome.as_deref(), Some("scan_review"));
+    assert_eq!(ask.installed_as.as_deref(), Some("candidate"));
+    let queue = AttemptQueue::new(&vault);
+    let EnqueueOutcome::Enqueued(attempt) = queue.enqueue(EnqueueAttempt {
+        kind: "marketplace.scan-review".into(),
+        payload: vec![],
+        dedupe_key: None,
+        run_id: None,
+        now: 30,
+    })?
+    else {
+        panic!("fresh attempt");
+    };
+    assert!(vault.load_attempt_skill_pack(attempt.id, &id, 30).is_err());
+    vault.set_marketplace_blocked_hash(&owner, hash, true)?;
+    assert!(
+        vault
+            .approve_marketplace_permission_ask(&owner, &id, &source, at, 11)
+            .is_err()
+    );
+    assert_eq!(
+        vault.get_skill_record(&id)?.unwrap().lifecycle_status,
+        SkillLifecycle::Candidate
+    );
+    vault.set_marketplace_blocked_hash(&owner, hash, false)?;
+    vault.approve_marketplace_permission_ask(&owner, &id, &source, at, 12)?;
+    assert_eq!(
+        vault.get_skill_record(&id)?.unwrap().lifecycle_status,
+        SkillLifecycle::Active
+    );
+    assert_eq!(
+        vault
+            .hub_import_receipt(&id, &source)?
+            .unwrap()
+            .outcome
+            .as_deref(),
+        Some("installed_with_permission_consent")
+    );
+    let loaded = vault.load_attempt_skill_pack(attempt.id, &id, 31)?;
+    assert_eq!(
+        loaded.record.approval_status,
+        crate::claim::ClaimApprovalStatus::Approved
     );
     assert!(
         vault

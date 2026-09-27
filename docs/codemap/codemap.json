@@ -28495,7 +28495,7 @@
      "path": "src/skill_hub/import_receipt.rs",
      "purpose": "Source receipts and admitted-publisher ingress beside content dedup, never in place of it",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 4,
       "enum": 1,
       "fn": 6,
       "struct": 2,
