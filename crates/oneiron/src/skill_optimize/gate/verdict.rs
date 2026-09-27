@@ -15,8 +15,12 @@ use super::*;
 pub enum SkillEditDisposition {
     /// Strict improvement, unprotected tier, within cap.
     Accepted,
+    /// A non-floor tradeoff approved by an authenticated owner decision.
+    AcceptedTradeoff,
     /// A floor regression, a dominated vector or a full tie; no epsilon.
     Rejected,
+    /// A tradeoff rejected by the authenticated decision door.
+    RejectedTradeoff,
     /// Non-floor gain and loss on different axes. No automatic decision is
     /// authorized; a host can route this typed, vector-bearing receipt through
     /// the preference / decision / responsible-person ladder. The proposal
@@ -52,7 +56,9 @@ impl SkillEditDisposition {
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::Accepted => "accepted",
+            Self::AcceptedTradeoff => "accepted_tradeoff",
             Self::Rejected => "rejected",
+            Self::RejectedTradeoff => "rejected_tradeoff",
             Self::NeedsTradeoffDecision => "needs_tradeoff_decision",
             Self::DeferredCycleCap => "deferred_cycle_cap",
             Self::RefusedProtectedTier => "refused_protected_tier",
@@ -66,7 +72,9 @@ impl SkillEditDisposition {
     pub(super) fn parse(value: &str) -> Option<Self> {
         match value {
             "accepted" => Some(Self::Accepted),
+            "accepted_tradeoff" => Some(Self::AcceptedTradeoff),
             "rejected" => Some(Self::Rejected),
+            "rejected_tradeoff" => Some(Self::RejectedTradeoff),
             "needs_tradeoff_decision" => Some(Self::NeedsTradeoffDecision),
             "deferred_cycle_cap" => Some(Self::DeferredCycleCap),
             // "deferred_evidence_changed" is deliberately ABSENT: the evidence
@@ -92,7 +100,7 @@ impl SkillEditDisposition {
     /// Whether this verdict makes the proposal eligible for admission.
     #[must_use]
     pub const fn admits(self) -> bool {
-        matches!(self, Self::Accepted)
+        matches!(self, Self::Accepted | Self::AcceptedTradeoff)
     }
 
     /// Whether the proposal remains an open question a later cycle may answer.
@@ -161,6 +169,24 @@ impl SkillEditDisposition {
     }
 }
 
+/// Owner-authenticated resolution of one exact pending vector. The evidence is
+/// an opaque host decision reference, not an unverified permission by itself.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct TradeoffResolution {
+    pub pending: EntityId,
+    pub owner: EntityId,
+    pub authentication: String,
+    pub evidence: String,
+}
+
+/// The owner decision on a mixed (non-floor) goal vector.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TradeoffChoice {
+    Approve,
+    Reject,
+}
+
 /// One durable gate ruling.
 ///
 /// The three blueprint fields (`before`, `after`, `accepted`) are the headline;
@@ -175,6 +201,10 @@ pub struct HeldOutVerdict {
     pub after: f32,
     /// Complete scored goal vector. Empty only on an unscored stale-target refusal.
     pub goal_axes: BTreeMap<String, GoalAxisScore>,
+    /// Authenticated goal-definition revision this vector was scored against.
+    pub goal_revision: String,
+    /// Decision evidence only on an owner-resolved tradeoff.
+    pub tradeoff_resolution: Option<TradeoffResolution>,
     /// Both receipt-only audits and judge agreement with available world labels.
     /// None only when a terminal refusal happened before any judging.
     pub measurements: Option<JudgeMeasurements>,

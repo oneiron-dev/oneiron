@@ -188,6 +188,7 @@ fn rule_on_proposal(
                     &held_out,
                     &outcomes,
                     tier_verdict_in_txn(vault, &*wtxn, proposal, &staged)?.tier(),
+                    goal_definition_in_txn(vault, wtxn, &target)?.revision,
                 )?;
                 // Idempotence, before the LLM tier rather than after it. A gate
                 // call is a DELIVERY, and deliveries are retried; asking the
@@ -206,6 +207,7 @@ fn rule_on_proposal(
                     target_record: current,
                     held_out,
                     basis,
+                    goal_definition: goal_definition_in_txn(vault, wtxn, &target)?,
                 })))
             }
             _ => Err(retry(
@@ -242,7 +244,12 @@ fn rule_on_proposal(
         &inputs.outcomes,
         &blind,
     )?;
-    let goal_axes = score_goal_axes(scorer, &current_case, &proposed_case)?;
+    let goal_axes = score_goal_axes(
+        scorer,
+        &current_case,
+        &proposed_case,
+        &inputs.goal_definition,
+    )?;
     let headline = goal_axes
         .values()
         .find(|axis| axis.kind == GoalAxisKind::Primary)
@@ -263,6 +270,11 @@ fn rule_on_proposal(
         // superseded and either tier may have been re-marked while it thought.
         let staged = vault.read_skill_record_in_txn(&*wtxn, proposal)?;
         let current = readable_target(vault.read_skill_record_in_txn(&*wtxn, &target).map(Some))?;
+        // A changed goal cannot return an old standing acceptance even if the
+        // bodies and evidence stayed fixed while the judge was thinking.
+        if goal_definition_in_txn(vault, wtxn, &target)?.revision != basis.goal_revision {
+            return Err(retry("goal definition moved while the scorer was thinking"));
+        }
         // The concurrent duplicate: two deliveries that both got past the read
         // above serialize HERE, and the second one finds the first's row.
         if let Some(standing) = standing_ruling_in_txn(vault, &*wtxn, proposal, &basis, cycle)? {
@@ -272,6 +284,8 @@ fn rule_on_proposal(
             before,
             after,
             goal_axes: goal_axes.clone(),
+            goal_revision: basis.goal_revision.clone(),
+            tradeoff_resolution: None,
             measurements: Some(measurements),
             accepted: false,
             id: vault.store.clock.entity_id()?,
@@ -326,6 +340,7 @@ struct ScoreInputs {
     held_out: Vec<String>,
     outcomes: Vec<(String, bool)>,
     basis: ScoredBasis,
+    goal_definition: GoalDefinition,
 }
 
 /// The one place a durable ruling becomes the caller's answer.
@@ -502,6 +517,9 @@ fn decide_in_txn(
             "world outcome labels moved while the judge was measuring",
         ));
     }
+    if goal_definition_in_txn(vault, wtxn, &target_of(staged)?)?.revision != basis.goal_revision {
+        return Err(retry("goal definition moved while the scorer was thinking"));
+    }
     // A floor regression never votes as a tradeoff, regardless of gains on
     // other axes. Pure ties and dominated vectors are final rejections.
     // Mixed non-floor gains and losses need a separate preference decision;
@@ -563,7 +581,7 @@ fn decide_in_txn(
 /// `spending` is excluded for the same reason from the other side: a proposal
 /// re-ruled over moved evidence must not be deferred by its own earlier
 /// acceptance.
-fn accepted_in_cycle_in_txn(
+pub(super) fn accepted_in_cycle_in_txn(
     vault: &Vault,
     rtxn: &heed::RoTxn<'_>,
     cycle: &SkillEditCycle,
@@ -655,6 +673,8 @@ fn refusal(
         before: 0.0,
         after: 0.0,
         goal_axes: BTreeMap::new(),
+        goal_revision: String::new(),
+        tradeoff_resolution: None,
         measurements: None,
         accepted: false,
         id,

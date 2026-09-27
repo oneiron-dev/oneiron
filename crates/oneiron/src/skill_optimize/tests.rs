@@ -3715,7 +3715,7 @@ fn set_row_field(entries: &mut [(Value, Value)], key: &str, value: &Value) {
 }
 
 #[test]
-fn a_verdict_row_is_schema_v5_and_every_older_row_fails_closed() -> Result<()> {
+fn a_verdict_row_is_schema_v6_and_every_older_row_fails_closed() -> Result<()> {
     let (_tmp, vault) = temp_vault();
     let (_, proposal) = losing_skill_with_proposal(&vault, "oneiron.skill.losing");
     let scorer = StubScorer::improving();
@@ -3729,7 +3729,7 @@ fn a_verdict_row_is_schema_v5_and_every_older_row_fails_closed() -> Result<()> {
     assert_eq!(
         skill_edit_verdict(&vault, &proposal)?.expect("a standing verdict"),
         accepted,
-        "a v5 row round-trips with measurements, goal axes and bound tier"
+        "a v6 row round-trips with measurements, goal axes and bound tier"
     );
     assert_eq!(accepted.proposal_tier, Some(SkillGovernanceTier::Standard));
 
@@ -3768,9 +3768,19 @@ fn a_verdict_row_is_schema_v5_and_every_older_row_fails_closed() -> Result<()> {
         ErrorKind::CorruptedIndex
     );
 
+    rewrite_verdict_row(&vault, |entries| {
+        set_row_field(entries, "v", &Value::from(5u64));
+    });
+    assert_eq!(
+        skill_edit_verdicts(&vault)
+            .expect_err("v5 lacks bound goal revision")
+            .kind(),
+        ErrorKind::CorruptedIndex
+    );
+
     // …and so is the retired disposition, whatever schema claims to carry it.
     rewrite_verdict_row(&vault, |entries: &mut [(Value, Value)]| {
-        set_row_field(entries, "v", &Value::from(5u64));
+        set_row_field(entries, "v", &Value::from(6u64));
         set_row_field(
             entries,
             "disposition",
@@ -3786,9 +3796,9 @@ fn a_verdict_row_is_schema_v5_and_every_older_row_fails_closed() -> Result<()> {
     rewrite_verdict_row(&vault, |entries: &mut [(Value, Value)]| {
         set_row_field(entries, "disposition", &Value::from("accepted"));
     });
-    // A judged v5 verdict cannot carry an absent or nil audit pair.
+    // A judged v6 verdict cannot carry an absent or nil audit pair.
     rewrite_verdict_row(&vault, |entries: &mut [(Value, Value)]| {
-        set_row_field(entries, "v", &Value::from(5u64));
+        set_row_field(entries, "v", &Value::from(6u64));
         set_row_field(entries, "measurements", &Value::Nil);
     });
     assert_eq!(
@@ -4673,6 +4683,38 @@ fn a_large_outcome_history_keeps_world_labels_aligned_at_all_gate_doors() -> Res
     Ok(())
 }
 
+fn vector_owner(vault: &Vault) -> crate::consent::AuthenticatedOwner {
+    let id = EntityId::now();
+    vault
+        .put_entity(&id, ENTITY_TYPE_PERSON, t(1), 1, b"goal owner")
+        .expect("person");
+    vault
+        .authenticate_owner(
+            id,
+            "principal:goal-owner",
+            true,
+            crate::store::GateDecisionId::now(),
+        )
+        .expect("owner")
+}
+
+fn vector_axes() -> Vec<GoalAxisSpec> {
+    vec![
+        GoalAxisSpec {
+            name: "quality".into(),
+            kind: GoalAxisKind::Primary,
+        },
+        GoalAxisSpec {
+            name: "safety".into(),
+            kind: GoalAxisKind::Floor,
+        },
+        GoalAxisSpec {
+            name: "human_minutes".into(),
+            kind: GoalAxisKind::Cost,
+        },
+    ]
+}
+
 // ONE-2114: a headline win is not an admission when any goal axis regresses.
 struct VectorScorer {
     primary: (f32, f32),
@@ -4697,20 +4739,7 @@ impl HeldOutReplayScorer for VectorScorer {
         panic!("a multi-axis scorer cannot fall back to a scalar")
     }
     fn goal_axes(&self, _: &HeldOutReplayCase<'_>) -> Result<Vec<GoalAxisSpec>> {
-        Ok(vec![
-            GoalAxisSpec {
-                name: "quality".into(),
-                kind: GoalAxisKind::Primary,
-            },
-            GoalAxisSpec {
-                name: "safety".into(),
-                kind: GoalAxisKind::Floor,
-            },
-            GoalAxisSpec {
-                name: "human_minutes".into(),
-                kind: GoalAxisKind::Cost,
-            },
-        ])
+        Ok(vector_axes())
     }
     fn score_goal_axis(&self, case: &HeldOutReplayCase<'_>, axis: &GoalAxisSpec) -> Result<f32> {
         self.seen.borrow_mut().push((
@@ -4796,6 +4825,8 @@ fn goal_vector_dominance_admits_rejects_regressions_and_defers_tradeoffs() -> Re
         let (_tmp, vault) = temp_vault();
         let (skill, proposal) =
             losing_skill_with_proposal(&vault, &format!("oneiron.skill.vector.{label}"));
+        let owner = vector_owner(&vault);
+        set_skill_edit_goal_axes(&vault, &owner, &skill, vector_axes())?;
         let scorer = VectorScorer::new(primary, floor, cost);
         let verdict = score_gate_skill_edit_in_cycle(
             &vault,
@@ -4859,7 +4890,8 @@ fn goal_vector_dominance_admits_rejects_regressions_and_defers_tradeoffs() -> Re
 #[test]
 fn invalid_goal_axis_score_aborts_without_a_verdict() -> Result<()> {
     let (_tmp, vault) = temp_vault();
-    let (_, proposal) = losing_skill_with_proposal(&vault, "oneiron.skill.vector.nan");
+    let (skill, proposal) = losing_skill_with_proposal(&vault, "oneiron.skill.vector.nan");
+    set_skill_edit_goal_axes(&vault, &vector_owner(&vault), &skill, vector_axes())?;
     let scorer = VectorScorer::new((0.4, 0.7), (0.8, f32::NAN), (0.5, 0.6));
     assert_eq!(
         score_gate_skill_edit_in_cycle(&vault, &proposal, &scorer, wake(&vault, "nan", 10), 900)
@@ -4874,7 +4906,8 @@ fn invalid_goal_axis_score_aborts_without_a_verdict() -> Result<()> {
 #[test]
 fn an_accepted_vector_cannot_be_rewritten_to_regress_a_floor() -> Result<()> {
     let (_tmp, vault) = temp_vault();
-    let (_, proposal) = losing_skill_with_proposal(&vault, "oneiron.skill.vector.corrupt");
+    let (skill, proposal) = losing_skill_with_proposal(&vault, "oneiron.skill.vector.corrupt");
+    set_skill_edit_goal_axes(&vault, &vector_owner(&vault), &skill, vector_axes())?;
     score_gate_skill_edit_in_cycle(
         &vault,
         &proposal,
@@ -4903,6 +4936,7 @@ fn an_accepted_vector_cannot_be_rewritten_to_regress_a_floor() -> Result<()> {
 fn a_protected_goal_tradeoff_refuses_instead_of_waiting_open() -> Result<()> {
     let (_tmp, vault) = temp_vault();
     let (skill, proposal) = losing_skill_with_proposal(&vault, "oneiron.skill.vector.protected");
+    set_skill_edit_goal_axes(&vault, &vector_owner(&vault), &skill, vector_axes())?;
     let mut marked = stored(&vault, &skill);
     marked.governance_tier = Some(SkillGovernanceTier::Identity);
     vault.update_skill_record(&skill, &marked, t(500), 501)?;
@@ -4924,5 +4958,197 @@ fn a_protected_goal_tradeoff_refuses_instead_of_waiting_open() -> Result<()> {
         SkillEditDisposition::RefusedProtectedTier
     );
     assert_eq!(verdict.goal_axes["human_minutes"].after, 0.5);
+    Ok(())
+}
+
+#[test]
+fn a_new_goal_floor_revokes_cached_acceptance_before_admission() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    let (skill, proposal) = losing_skill_with_proposal(&vault, "oneiron.skill.vector.goal_change");
+    let accepted = score_gate_skill_edit_in_cycle(
+        &vault,
+        &proposal,
+        &StubScorer::improving(),
+        wake(&vault, "goal-A", 10),
+        900,
+    )?;
+    assert_eq!(accepted.disposition, SkillEditDisposition::Accepted);
+    let owner = vector_owner(&vault);
+    let revision = set_skill_edit_goal_axes(&vault, &owner, &skill, vector_axes())?;
+    assert_ne!(accepted.goal_revision, revision);
+    assert_eq!(
+        admit_optimized_skill_revision(&vault, &proposal, t(400), 401)
+            .expect_err("old permission cannot cross a goal change")
+            .kind(),
+        ErrorKind::InvalidSkillBody
+    );
+    assert_eq!(
+        stored(&vault, &proposal).lifecycle_status,
+        SkillLifecycle::Candidate
+    );
+    // A gate retry must use the NEW scorer and cannot reuse the old acceptance.
+    // The admission refusal closes this proposal; use a second fixture to
+    // verify rescore of a still-open accepted candidate.
+    let (_other_tmp, other_vault) = temp_vault();
+    let (other, other_proposal) =
+        losing_skill_with_proposal(&other_vault, "oneiron.skill.vector.rescore");
+    score_gate_skill_edit_in_cycle(
+        &other_vault,
+        &other_proposal,
+        &StubScorer::improving(),
+        wake(&other_vault, "goal-C", 20),
+        900,
+    )?;
+    set_skill_edit_goal_axes(
+        &other_vault,
+        &vector_owner(&other_vault),
+        &other,
+        vector_axes(),
+    )?;
+    let rescored = score_gate_skill_edit_in_cycle(
+        &other_vault,
+        &other_proposal,
+        &VectorScorer::new((0.4, 0.9), (0.8, 0.7), (0.5, 0.6)),
+        wake(&other_vault, "goal-D", 30),
+        901,
+    )?;
+    assert_eq!(rescored.disposition, SkillEditDisposition::Rejected);
+    assert_ne!(rescored.id, accepted.id);
+    Ok(())
+}
+
+#[test]
+fn authenticated_tradeoff_resolution_approves_rejects_and_refuses_stale_decisions() -> Result<()> {
+    for choice in [TradeoffChoice::Approve, TradeoffChoice::Reject] {
+        let (_tmp, vault) = temp_vault();
+        let (skill, proposal) =
+            losing_skill_with_proposal(&vault, "oneiron.skill.vector.resolution");
+        let owner = vector_owner(&vault);
+        set_skill_edit_goal_axes(&vault, &owner, &skill, vector_axes())?;
+        let pending = score_gate_skill_edit_in_cycle(
+            &vault,
+            &proposal,
+            &VectorScorer::new((0.4, 0.8), (0.9, 0.9), (0.7, 0.4)),
+            wake(&vault, "resolution", 10),
+            900,
+        )?;
+        assert_eq!(
+            pending.disposition,
+            SkillEditDisposition::NeedsTradeoffDecision
+        );
+        let resolved = resolve_skill_edit_tradeoff(
+            &vault,
+            &proposal,
+            pending.id,
+            &owner,
+            "human-pick:123",
+            choice,
+            901,
+        )?;
+        assert_eq!(resolved.goal_axes, pending.goal_axes);
+        assert_eq!(
+            resolved.tradeoff_resolution.as_ref().unwrap().pending,
+            pending.id
+        );
+        assert_eq!(
+            resolved,
+            resolve_skill_edit_tradeoff(
+                &vault,
+                &proposal,
+                pending.id,
+                &owner,
+                "human-pick:123",
+                choice,
+                902
+            )?
+        );
+        assert_eq!(
+            skill_edit_verdicts_for_proposal(&vault, &proposal)?.len(),
+            2
+        );
+        assert!(
+            verdict_receipt(&vault, &resolved)
+                .fields
+                .contains_key("skill_edit_tradeoff_resolution")
+        );
+        match choice {
+            TradeoffChoice::Approve => {
+                assert_eq!(resolved.disposition, SkillEditDisposition::AcceptedTradeoff);
+                admit_optimized_skill_revision(&vault, &proposal, t(400), 401)?;
+                assert_eq!(
+                    stored(&vault, &proposal).lifecycle_status,
+                    SkillLifecycle::Active
+                );
+                assert_eq!(
+                    resolve_skill_edit_tradeoff(
+                        &vault,
+                        &proposal,
+                        pending.id,
+                        &owner,
+                        "human-pick:123",
+                        choice,
+                        903
+                    )?,
+                    resolved
+                );
+            }
+            TradeoffChoice::Reject => {
+                assert_eq!(resolved.disposition, SkillEditDisposition::RejectedTradeoff);
+                assert_eq!(
+                    stored(&vault, &proposal).approval_status,
+                    ClaimApprovalStatus::Rejected
+                );
+                assert_eq!(
+                    admit_optimized_skill_revision(&vault, &proposal, t(400), 401)
+                        .expect_err("rejected choice cannot activate")
+                        .kind(),
+                    ErrorKind::InvalidSkillBody
+                );
+            }
+        }
+    }
+    for protect in [false, true] {
+        let (_tmp, vault) = temp_vault();
+        let (skill, proposal) =
+            losing_skill_with_proposal(&vault, "oneiron.skill.vector.stale_decision");
+        let owner = vector_owner(&vault);
+        set_skill_edit_goal_axes(&vault, &owner, &skill, vector_axes())?;
+        let pending = score_gate_skill_edit_in_cycle(
+            &vault,
+            &proposal,
+            &VectorScorer::new((0.4, 0.8), (0.9, 0.9), (0.7, 0.4)),
+            wake(&vault, "stale", 10),
+            900,
+        )?;
+        if protect {
+            let mut marked = stored(&vault, &skill);
+            marked.governance_tier = Some(SkillGovernanceTier::Identity);
+            vault.update_skill_record(&skill, &marked, t(400), 401)?;
+        } else {
+            set_skill_edit_goal_axes(&vault, &owner, &skill, vector_axes())?;
+        }
+        assert_eq!(
+            resolve_skill_edit_tradeoff(
+                &vault,
+                &proposal,
+                pending.id,
+                &owner,
+                "human-pick:stale",
+                TradeoffChoice::Approve,
+                902
+            )
+            .expect_err("stale choice cannot authorize")
+            .kind(),
+            ErrorKind::InvalidSkillBody
+        );
+        assert_eq!(
+            skill_edit_verdicts_for_proposal(&vault, &proposal)?.len(),
+            1
+        );
+        assert_eq!(
+            stored(&vault, &proposal).approval_status,
+            ClaimApprovalStatus::Proposed
+        );
+    }
     Ok(())
 }

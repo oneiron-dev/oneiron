@@ -60,6 +60,105 @@ pub fn admit_optimized_skill_revision(
     }
 }
 
+/// Apply an authenticated human decision to one exact, still-pending tradeoff.
+/// The host supplies its decision evidence reference; this door checks the
+/// owner handle, current scored basis and every admission clamp. An approval
+/// writes a distinct accepted-tradeoff permission, not automatic dominance.
+/// # Errors
+/// Invalid input, changed goal/evidence/body/tier, exhausted cycle cap, or
+/// storage failures. A stale decision writes no permission or closure.
+pub fn resolve_skill_edit_tradeoff(
+    vault: &Vault,
+    proposal: &EntityId,
+    pending_id: EntityId,
+    owner: &crate::consent::AuthenticatedOwner,
+    evidence: &str,
+    choice: TradeoffChoice,
+    at: u64,
+) -> Result<HeldOutVerdict> {
+    if evidence.trim().is_empty() || evidence.len() > 256 {
+        return Err(invalid(
+            "tradeoff decision requires a bounded evidence reference",
+        ));
+    }
+    vault.with_write_txn(|txn| {
+        owner.revalidate_in_txn(vault, txn)?;
+        let decision = TradeoffResolution {
+            pending: pending_id,
+            owner: owner.actor(),
+            authentication: format!("{:?}", owner.decision_id()),
+            evidence: evidence.to_owned(),
+        };
+        let latest = standing_verdict_in_txn(vault, txn, proposal)?.ok_or(invalid(
+            "no scored tradeoff verdict stands for this proposal",
+        ))?;
+        if latest.tradeoff_resolution.as_ref() == Some(&decision)
+            && latest.disposition
+                == match choice {
+                    TradeoffChoice::Approve => SkillEditDisposition::AcceptedTradeoff,
+                    TradeoffChoice::Reject => SkillEditDisposition::RejectedTradeoff,
+                }
+        {
+            return Ok(latest); // exact redelivery, even after activation
+        }
+        if latest.id != pending_id
+            || latest.disposition != SkillEditDisposition::NeedsTradeoffDecision
+        {
+            return Err(invalid(
+                "tradeoff decision is not for the standing pending verdict",
+            ));
+        }
+        let staged = vault.read_skill_record_in_txn(txn, proposal)?;
+        require_open_optimizer_proposal(&staged)?;
+        let target = target_of(&staged)?;
+        let current = readable_target(vault.read_skill_record_in_txn(txn, &target).map(Some))?;
+        if admission_refusal_in_txn(
+            vault,
+            txn,
+            proposal,
+            &staged,
+            current.as_ref(),
+            &target,
+            &latest,
+            at,
+        )?
+        .is_some()
+        {
+            return Err(invalid(
+                "tradeoff decision is stale against the goal, tier, body or evidence",
+            ));
+        }
+        if floor_regressed(&latest.goal_axes) || !is_tradeoff(&latest.goal_axes) {
+            return Err(invalid("only a non-floor tradeoff may be resolved"));
+        }
+        if matches!(choice, TradeoffChoice::Approve) {
+            let cycle = SkillEditCycle::new(latest.cycle.clone())?;
+            if accepted_in_cycle_in_txn(vault, txn, &cycle, proposal)?
+                >= cycle_cap_in_txn(vault, txn)?
+            {
+                return Err(invalid("tradeoff approval exceeds the cycle admission cap"));
+            }
+        }
+        let disposition = match choice {
+            TradeoffChoice::Approve => SkillEditDisposition::AcceptedTradeoff,
+            TradeoffChoice::Reject => SkillEditDisposition::RejectedTradeoff,
+        };
+        let resolved = HeldOutVerdict {
+            id: vault.store.clock.entity_id()?,
+            disposition,
+            accepted: disposition.admits(),
+            tradeoff_resolution: Some(decision),
+            at,
+            ..latest
+        };
+        record_verdict_in_txn(vault, txn, &resolved)?;
+        if disposition.closes_proposal() {
+            close_answered_proposal_in_txn(vault, txn, proposal, at)?;
+        }
+        Ok(resolved)
+    })
+}
+
 pub(crate) fn with_optimized_skill_admission(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
@@ -183,7 +282,16 @@ fn admission_refusal_in_txn(
     // fact, which makes the strict gate a formality.
     let committed = held_out_receipts_in_txn(vault, wtxn, target)?;
     let outcomes = held_out_outcome_results_in_txn(vault, wtxn, target)?;
-    if !ScoredBasis::of(staged, current, &committed, &outcomes, proposal_tier)?.matches(accepted) {
+    if !ScoredBasis::of(
+        staged,
+        current,
+        &committed,
+        &outcomes,
+        proposal_tier,
+        goal_definition_in_txn(vault, wtxn, target)?.revision,
+    )?
+    .matches(accepted)
+    {
         return Ok(refused(SkillEditDisposition::RefusedBindingMismatch));
     }
     // ONE-1447's gap, closed at the door that owns it: the stale sweep

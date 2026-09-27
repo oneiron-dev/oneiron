@@ -122,8 +122,8 @@ use crate::receipt::{
     FIELD_SKILL_EDIT_HELD_OUT_RECEIPTS, FIELD_SKILL_EDIT_HELD_OUT_TRUNCATED,
     FIELD_SKILL_EDIT_MEASUREMENTS, FIELD_SKILL_EDIT_MISSING_SOURCES, FIELD_SKILL_EDIT_PROPOSAL,
     FIELD_SKILL_EDIT_PROPOSAL_DIGEST, FIELD_SKILL_EDIT_SCORE_AFTER, FIELD_SKILL_EDIT_SCORE_BEFORE,
-    FIELD_SKILL_EDIT_SKILL, FIELD_SKILL_EDIT_TARGET_DIGEST, ReceiptKind, ReceiptQuery,
-    ReceiptRecord, retain_newest_receipt,
+    FIELD_SKILL_EDIT_SKILL, FIELD_SKILL_EDIT_TARGET_DIGEST, FIELD_SKILL_EDIT_TRADEOFF_RESOLUTION,
+    ReceiptKind, ReceiptQuery, ReceiptRecord, retain_newest_receipt,
 };
 use crate::skill::{
     SkillGovernanceTier, SkillLifecycle, SkillRecord, encode_skill_record, validate_skill_update,
@@ -140,7 +140,7 @@ mod ledger;
 mod measurement;
 mod verdict;
 
-pub use admission::admit_optimized_skill_revision;
+pub use admission::{admit_optimized_skill_revision, resolve_skill_edit_tradeoff};
 pub use basis::{
     HELD_OUT_REPLAY_SCORER, HeldOutReplayCase, HeldOutReplayScorer, SkillEditCycle, dev_receipts,
     held_out_receipt_set_digest, held_out_receipts, receipt_is_held_out,
@@ -150,7 +150,7 @@ pub use basis::{
 pub use decision::{
     score_gate_skill_edit, score_gate_skill_edit_in_cycle, score_gate_skill_edit_with_scorer,
 };
-pub use goal_axis::{GoalAxisKind, GoalAxisScore, GoalAxisSpec};
+pub use goal_axis::{GoalAxisKind, GoalAxisScore, GoalAxisSpec, set_skill_edit_goal_axes};
 pub use ledger::{
     is_skill_edit_verdict_receipt, skill_edit_verdict, skill_edit_verdicts,
     skill_edit_verdicts_for_proposal,
@@ -158,7 +158,7 @@ pub use ledger::{
 pub use measurement::{
     AuditPair, BlindPreference, JudgeMeasurements, PreferredResponse, WorldAxisScore,
 };
-pub use verdict::{HeldOutVerdict, SkillEditDisposition};
+pub use verdict::{HeldOutVerdict, SkillEditDisposition, TradeoffChoice, TradeoffResolution};
 
 pub(crate) use admission::{
     check_optimizer_admission_in_txn, optimizer_birth_marker_for_create_in_txn,
@@ -181,8 +181,14 @@ use basis::{
     ScoredBasis, cycle_cap_in_txn, evidence_identity, held_out_outcome_results_in_txn,
     held_out_receipts_in_txn, host_replay_scorer, validate_score,
 };
-use decision::{close_answered_proposal_in_txn, readable_target, standing_verdict_in_txn};
-use goal_axis::{dominates, floor_regressed, is_tradeoff, score_goal_axes, validate_goal_vector};
+use decision::{
+    accepted_in_cycle_in_txn, close_answered_proposal_in_txn, readable_target,
+    standing_verdict_in_txn,
+};
+use goal_axis::{
+    GoalDefinition, dominates, floor_regressed, goal_definition_in_txn, is_tradeoff,
+    score_goal_axes, validate_goal_vector,
+};
 use ledger::{record_verdict_in_txn, verdict_rows_in_txn};
 use measurement::{measure, validate_measurements, world_labels_digest};
 
@@ -226,7 +232,8 @@ const SPLIT_DOMAIN: &[u8] = b"skill_optimize:heldout:v1\0";
 /// data rather than ordering (the `edit_distance::escalation` posture).
 pub(super) const VERDICT_PREFIX: &[u8] = b"skill_optimize/verdict/v1\0";
 
-/// Bumped by ONE-2114 (v4 → v5: the scored goal vector and dominance).
+/// Bumped for review (v5 → v6: authenticated goal revision and tradeoff resolution).
+/// ONE-2114 introduced v5 goal vectors and dominance.
 /// OF-214 introduced v4 audited measurements and bound world labels.
 /// Earlier repairs: MATERIAL-10 (v1 → v2: a v1 row carries no binding
 /// digests, so a reader that accepted one would be trusting an acceptance
@@ -236,9 +243,9 @@ pub(super) const VERDICT_PREFIX: &[u8] = b"skill_optimize/verdict/v1\0";
 /// `deferred_evidence_changed` disposition).
 ///
 /// Prerelease, and the honest answer to an unbindable row is to refuse it
-/// rather than to grow a second code path for it: every v1/v2/v3/v4 row decodes as
+/// rather than to grow a second code path for it: every v1/v2/v3/v4/v5 row decodes as
 /// [`Error::CorruptedIndex`]. There is no shim and no migration.
-const VERDICT_SCHEMA_VERSION: u64 = 5;
+const VERDICT_SCHEMA_VERSION: u64 = 6;
 const KEY_SCHEMA_VERSION: &str = "v";
 const KEY_PROPOSAL: &str = "proposal";
 const KEY_SKILL: &str = "skill";
@@ -258,6 +265,8 @@ const KEY_MISSING_SOURCES: &str = "missing_sources";
 const KEY_AT: &str = "at";
 const KEY_MEASUREMENTS: &str = "measurements";
 const KEY_GOAL_AXES: &str = "goal_axes";
+const KEY_GOAL_REVISION: &str = "goal_revision";
+const KEY_TRADEOFF_RESOLUTION: &str = "tradeoff_resolution";
 
 /// Domain separator of the canonical SKILL-body content digest.
 const BODY_DIGEST_DOMAIN: &[u8] = b"skill_optimize:body:v1\0";

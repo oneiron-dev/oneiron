@@ -151,6 +151,8 @@ pub(crate) const FIELD_SKILL_EDIT_SCORE_AFTER: &str = "skill_edit_score_after";
 pub(crate) const FIELD_SKILL_EDIT_MEASUREMENTS: &str = "skill_edit_measurements";
 /// The scored goal vector, including axis classes.
 pub(crate) const FIELD_SKILL_EDIT_GOAL_AXES: &str = "skill_edit_goal_axes";
+/// Bound human decision evidence for a scored tradeoff.
+pub(crate) const FIELD_SKILL_EDIT_TRADEOFF_RESOLUTION: &str = "skill_edit_tradeoff_resolution";
 /// The Dreamer cycle the verdict counted against, for the per-cycle accept cap.
 pub(crate) const FIELD_SKILL_EDIT_CYCLE: &str = "skill_edit_cycle";
 /// Comma-joined reserved receipt ids the score pair was computed over.

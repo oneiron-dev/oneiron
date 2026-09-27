@@ -194,6 +194,7 @@ pub(super) struct ScoredBasis {
     pub(super) evidence_count: u64,
     pub(super) evidence_digest: String,
     pub(super) world_digest: String,
+    pub(super) goal_revision: String,
     /// The PROPOSAL's own effective governance tier, resolved in the snapshot
     /// this basis was taken in ([`super::tier_verdict_in_txn`] over the
     /// proposal id and record).
@@ -217,6 +218,7 @@ impl ScoredBasis {
         held_out: &[String],
         outcomes: &[(String, bool)],
         proposal_tier: Option<SkillGovernanceTier>,
+        goal_revision: String,
     ) -> Result<Self> {
         let (evidence_count, evidence_digest) = evidence_identity(held_out);
         Ok(Self {
@@ -225,6 +227,7 @@ impl ScoredBasis {
             evidence_count,
             evidence_digest,
             world_digest: world_labels_digest(outcomes),
+            goal_revision,
             proposal_tier,
         })
     }
@@ -237,6 +240,7 @@ impl ScoredBasis {
             && verdict.held_out_count == self.evidence_count
             && verdict.held_out_digest == self.evidence_digest
             && verdict.proposal_tier == self.proposal_tier
+            && verdict.goal_revision == self.goal_revision
             && verdict
                 .measurements
                 .as_ref()

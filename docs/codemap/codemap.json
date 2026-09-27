@@ -25655,7 +25655,7 @@
      "purpose": "—",
      "surface": {
       "const": 4,
-      "crate-vis": 91,
+      "crate-vis": 92,
       "enum": 1,
       "fn": 10,
       "struct": 6
@@ -28895,7 +28895,7 @@
      "purpose": "Admission, its pinned keys, and the record-shape questions both doors ask",
      "surface": {
       "crate-vis": 9,
-      "fn": 1
+      "fn": 2
      }
     },
     {
@@ -28923,7 +28923,7 @@
      "path": "src/skill_optimize/gate/decision.rs",
      "purpose": "The gate itself: the entry points, and the transaction that rules",
      "surface": {
-      "crate-vis": 5,
+      "crate-vis": 6,
       "fn": 3
      }
     },
@@ -28938,8 +28938,9 @@
      "path": "src/skill_optimize/gate/goal_axis.rs",
      "purpose": "Goal-axis replay scores",
      "surface": {
-      "crate-vis": 5,
+      "crate-vis": 7,
       "enum": 1,
+      "fn": 1,
       "struct": 2
      }
     },
@@ -28977,15 +28978,17 @@
      "kind": "src",
      "notable": [
       "HeldOutVerdict",
-      "SkillEditDisposition"
+      "SkillEditDisposition",
+      "TradeoffChoice",
+      "TradeoffResolution"
      ],
      "path": "src/skill_optimize/gate/verdict.rs",
      "purpose": "What the gate ruled, and the durable row that says so",
      "surface": {
       "crate-vis": 4,
-      "enum": 1,
+      "enum": 2,
       "fn": 5,
-      "struct": 1
+      "struct": 2
      }
     },
     {
