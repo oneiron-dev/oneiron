@@ -1446,7 +1446,7 @@ fn execution_llm_request() -> LlmRequest {
             purpose: CallPurpose::AutoCheck,
             class: CallClass::BestEffort,
             tier: TierPrecedence {
-                per_call: None,
+                per_seat: None,
                 vault_policy: None,
                 purpose_default: None,
                 global_default: ModelTierRef("standard".to_owned()),
