@@ -89,31 +89,18 @@ impl DreamerRunnerStore<'_> {
         Ok(designation)
     }
 
-    /// Re-elects from the current sync candidates on a connectivity change.
+    /// Re-elects when the topology owner supplies a changed candidate set.
     ///
-    /// The sync connection owns `cloud_attached`: a configured cloud candidate
-    /// is eligible only after the connection has fully synced. Local candidates
-    /// retain their host-supplied always-on / primary roles while offline.
-    /// Hosts without a sync connection may call this when their own topology
-    /// source changes; an empty set clears the old designation.
+    /// This is an explicit topology update, not a socket liveness signal:
+    /// each cloud candidate's `attached` bit comes from the host-authorized
+    /// topology. A transport outage never revokes the current MACRO home.
+    /// An empty set clears the old designation after an explicit detach.
     pub fn sync_topology_changed(
         &self,
         candidates: &[DreamerHomeNodeCandidate],
-        cloud_attached: bool,
         now: u64,
     ) -> Result<Option<DreamerHomeNodeDesignation>> {
-        let current: Vec<_> = candidates
-            .iter()
-            .map(|candidate| DreamerHomeNodeCandidate {
-                attached: if candidate.cloud {
-                    cloud_attached
-                } else {
-                    candidate.attached
-                },
-                ..*candidate
-            })
-            .collect();
-        self.elect_home_node(&current, now)
+        self.elect_home_node(candidates, now)
     }
 
     /// Reads the persisted MACRO home-node designation, if one exists.

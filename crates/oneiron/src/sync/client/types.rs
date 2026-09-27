@@ -16,11 +16,6 @@ pub struct SyncClientConfig {
     /// Must be a MAC-verified actor-bound slip with core:read,core:write and jti.
     /// Only TLS or loopback URLs are accepted for this lane.
     pub note_session: Option<NoteSyncSession>,
-    /// Current host-authorized MACRO candidates. When set, the connection
-    /// re-elects on sync attach/detach; an attached cloud candidate is eligible
-    /// only while the socket has completed initial sync. None leaves manual
-    /// Dreamer election alone. The host supplies node IDs and local roles.
-    pub home_node_candidates: Option<Vec<crate::dreamer_runner::DreamerHomeNodeCandidate>>,
     /// Number of default windows to sync (current + previous). Default: 2.
     pub default_window_count: u8,
     /// Debounce interval for rapid edits before sending. Default: 50ms.
@@ -41,7 +36,6 @@ impl Default for SyncClientConfig {
             server_url: String::new(),
             auth_token: String::new(),
             note_session: None,
-            home_node_candidates: None,
             default_window_count: 2,
             sync_debounce_ms: 50,
             reconnect_backoff_max_ms: 60_000,

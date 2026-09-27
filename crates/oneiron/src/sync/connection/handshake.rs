@@ -76,11 +76,6 @@ impl SyncConnection {
         let event_tx = client.event_tx.clone();
         let mut client = client;
 
-        // A persisted cloud designation from a previous run is not evidence
-        // that this socket is attached after restart. Elect before attaching
-        // the outbound sink, so an election error leaves it detached.
-        self.update_home_node_for_sync_status(false, Self::topology_now())?;
-
         // Observer A → outbound wiring: while attached, persisted local
         // updates arrive on `local_rx` below.
         let (local_tx, mut local_rx) = mpsc::unbounded_channel::<LocalUpdate>();
@@ -110,12 +105,6 @@ impl SyncConnection {
                         )
                         .await;
 
-                    if let Err(error) =
-                        self.update_home_node_for_sync_status(false, Self::topology_now())
-                    {
-                        self.manager.outbound().detach();
-                        return Err(error);
-                    }
                     match reason {
                         LoopExit::Shutdown => {
                             let _ =
@@ -372,8 +361,6 @@ impl SyncConnection {
         // Reunite the stream
         let ws_stream = read.reunite(write).map_err(|e| format!("{e}"))?;
 
-        self.update_home_node_for_sync_status(true, Self::topology_now())
-            .map_err(|error| format!("Home-node election failed: {error}"))?;
         let _ = event_tx.send(SyncEvent::StatusChanged(SyncStatus::Synced));
 
         // m:last_sync (ARCH-0023b key table) — last successful sync stamp.
