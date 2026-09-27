@@ -236,6 +236,16 @@ pub(super) fn materialize_edges_from_delta(
                         // successful receive transaction can commit.
                         (Ok(_), Ok(_)) if kind == EdgeKind::Parent => {}
                         (Ok(_), Ok(_)) => {
+                            if kind == EdgeKind::SpawnedBy
+                                && !crate::sync::loro_support::tombstone_map_contains_id(&tombstones_map, &src)
+                                && !crate::sync::loro_support::tombstone_map_contains_id(&tombstones_map, &tgt)
+                                && !vault.local_hard_delete_marker_exists_in_txn(wtxn, &src)?
+                                && !vault.local_hard_delete_marker_exists_in_txn(wtxn, &tgt)?
+                            {
+                                super::parent_retry::defer_spawned_by(
+                                    vault, wtxn, window_key, &src, &tgt, buf,
+                                )?;
+                            }
                             tracing::debug!(
                                 edge = %key,
                                 "observer-b: edge deferred — endpoint absent or tombstoned"

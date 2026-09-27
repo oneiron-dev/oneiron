@@ -2441,9 +2441,9 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/sync/bridge/diagnostic_tests.rs` | test | s | — | — | Account-local diagnostic isolation at both replay paths and outbound packing |
 | `src/sync/bridge/edges.rs` | src | m | 5 crate-vis | — | Edge-delta materialization and per-op quarantine bookkeeping |
 | `src/sync/bridge/entities.rs` | src | m | 6 crate-vis | — | Entity-delta materialization and the per-entity blob writer |
-| `src/sync/bridge/mod.rs` | src | s | 3 re-export · 7 crate-vis | — | Entity bridge: CRDT ↔ LMDB materialization observers |
+| `src/sync/bridge/mod.rs` | src | s | 3 re-export · 8 crate-vis | — | Entity bridge: CRDT ↔ LMDB materialization observers |
 | `src/sync/bridge/observers.rs` | src | m | 5 struct · 1 trait · 13 fn · 1 const · 9 crate-vis | LiveQueryTee, MaterializedDiffSummary, Materializer, ObserverAState, OriginMark, OutboundSink | Observer A/B registration and the shared Materializer/OutboundSink state |
-| `src/sync/bridge/parent_retry.rs` | src | m | 5 crate-vis | — | Transactional Parent admission, exact pending work and dependency wake-up |
+| `src/sync/bridge/parent_retry.rs` | src | m | 7 crate-vis | — | Transactional Parent admission, exact pending work and dependency wake-up |
 | `src/sync/bridge/recovery.rs` | src | s | 1 crate-vis | — | Recovery preflight through the existing replay doors, in an aborted transaction |
 | `src/sync/bridge/tests.rs` | test | XL | — | — | — |
 | `src/sync/bridge/tombstones.rs` | src | m | 3 crate-vis | — | Tombstone materialization, savepoint batching, and protected-header handling |

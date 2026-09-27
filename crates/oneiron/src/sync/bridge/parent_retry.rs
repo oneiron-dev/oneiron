@@ -17,6 +17,9 @@ use super::format_edge_key;
 
 const PENDING: &str = "dp:w:";
 const INDEX: &str = "di:";
+const SOURCE_INDEX: &str = "ps:";
+const ANCHOR: &str = "sa:w:";
+const ANCHOR_INDEX: &str = "se:";
 const VALUE_LEN: usize = 12;
 const MAX_DEPENDENCIES: usize = 8;
 
@@ -56,6 +59,22 @@ fn index_prefix(dep: Dependency) -> String {
 }
 fn index_key(dep: Dependency, obligation: &str) -> String {
     format!("{}{obligation}", index_prefix(dep))
+}
+
+fn source_index_key(source: &EntityId, obligation: &str) -> String {
+    format!("{SOURCE_INDEX}{}:{obligation}", source.to_hex())
+}
+
+/// Maintenance checks the exact pending source in its per-conversation
+/// transaction before choosing a trunk root or writing HEAD.
+pub(crate) fn has_unresolved_parent_for_source_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    source: &EntityId,
+) -> Result<bool> {
+    let prefix = format!("{SOURCE_INDEX}{}:", source.to_hex());
+    let mut rows = vault.store.sync_state.prefix_iter(txn, &prefix)?;
+    Ok(rows.next().transpose()?.is_some())
 }
 
 fn encode_pending(value: &[u8], deps: &NonEmptyDependencies) -> Result<Vec<u8>> {
@@ -125,7 +144,12 @@ pub(in crate::sync) fn has_pending_source_in_txn(
 ) -> Result<bool> {
     let prefix = format!("{PENDING}{window}:{}:", source.to_hex());
     let mut rows = vault.store.sync_state.prefix_iter(txn, &prefix)?;
-    Ok(rows.next().transpose()?.is_some())
+    if rows.next().transpose()?.is_some() {
+        return Ok(true);
+    }
+    let anchor_prefix = format!("{ANCHOR}{window}:{}:", source.to_hex());
+    let mut anchors = vault.store.sync_state.prefix_iter(txn, &anchor_prefix)?;
+    Ok(anchors.next().transpose()?.is_some())
 }
 
 /// Remove an exact obligation and every dependency-index entry it owns.
@@ -153,6 +177,10 @@ fn settle(
             .delete(txn, &index_key(dep, &obligation))?;
     }
     vault.store.sync_state.delete(txn, &obligation)?;
+    vault
+        .store
+        .sync_state
+        .delete(txn, &source_index_key(source, &obligation))?;
     if !has_pending_source_in_txn(vault, txn, window, source)? {
         quarantine::clear_replay_remat_marker_in_txn(vault, txn, window, source)?;
     }
@@ -182,6 +210,10 @@ fn wait(
         .store
         .sync_state
         .put(txn, &obligation, &encode_pending(value, deps)?)?;
+    vault
+        .store
+        .sync_state
+        .put(txn, &source_index_key(source, &obligation), &[1])?;
     for dep in deps.iter() {
         vault
             .store
@@ -314,6 +346,201 @@ pub(in crate::sync) fn submit(
     }
 }
 
+fn anchor_key(window: &str, session: &EntityId, turn: &EntityId) -> String {
+    format!("{ANCHOR}{window}:{}:{}", session.to_hex(), turn.to_hex())
+}
+fn anchor_index_key(endpoint: &EntityId, row: &str) -> String {
+    format!("{ANCHOR_INDEX}{}:{row}", endpoint.to_hex())
+}
+fn parse_anchor_key(row: &str) -> Result<(&str, EntityId, EntityId)> {
+    let rest = row
+        .strip_prefix(ANCHOR)
+        .ok_or(Error::CorruptedIndex("deferred SpawnedBy obligation"))?;
+    let mut parts = rest.split(':');
+    let (Some(window), Some(session), Some(turn), None) =
+        (parts.next(), parts.next(), parts.next(), parts.next())
+    else {
+        return Err(Error::CorruptedIndex("deferred SpawnedBy obligation"));
+    };
+    if WindowKey::try_new(window).is_none() {
+        return Err(Error::CorruptedIndex("deferred SpawnedBy obligation"));
+    }
+    let session = EntityId::from_hex(session)
+        .map_err(|_| Error::CorruptedIndex("deferred SpawnedBy obligation"))?;
+    let turn = EntityId::from_hex(turn)
+        .map_err(|_| Error::CorruptedIndex("deferred SpawnedBy obligation"))?;
+    if row != anchor_key(window, &session, &turn) {
+        return Err(Error::CorruptedIndex("deferred SpawnedBy obligation"));
+    }
+    Ok((window, session, turn))
+}
+
+pub(in crate::sync) fn defer_spawned_by(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    window: &str,
+    session: &EntityId,
+    turn: &EntityId,
+    value: &[u8],
+) -> Result<()> {
+    let decoded = decode_edge_value_for_kind(EdgeKind::SpawnedBy, value)
+        .map_err(|_| Error::CorruptedIndex("deferred SpawnedBy obligation"))?;
+    if session == turn
+        || decoded.weight != 1.0
+        || decoded.vad.is_some()
+        || decoded.provenance.is_some()
+    {
+        let err =
+            crate::error::RecordError::InvalidConversationDag("invalid received SpawnedBy value");
+        quarantine::quarantine_rejected_op_in_txn(
+            vault,
+            txn,
+            window,
+            QuarantineContainer::Edges,
+            &format_edge_key(session, EdgeKind::SpawnedBy, turn),
+            &err.into(),
+            value,
+        )?;
+        return Ok(());
+    }
+    let row = anchor_key(window, session, turn);
+    vault.store.sync_state.put(txn, &row, value)?;
+    for endpoint in [session, turn] {
+        vault
+            .store
+            .sync_state
+            .put(txn, &anchor_index_key(endpoint, &row), &[1])?;
+    }
+    quarantine::set_replay_remat_marker_in_txn(vault, txn, window, session)
+}
+
+fn settle_spawned_by(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    window: &str,
+    session: &EntityId,
+    turn: &EntityId,
+) -> Result<()> {
+    let row = anchor_key(window, session, turn);
+    if vault.store.sync_state.get(txn, &row)?.is_none() {
+        return Ok(());
+    }
+    vault.store.sync_state.delete(txn, &row)?;
+    for endpoint in [session, turn] {
+        vault
+            .store
+            .sync_state
+            .delete(txn, &anchor_index_key(endpoint, &row))?;
+    }
+    let prefix = format!("{ANCHOR}{window}:{}:", session.to_hex());
+    if vault
+        .store
+        .sync_state
+        .prefix_iter(&*txn, &prefix)?
+        .next()
+        .transpose()?
+        .is_none()
+    {
+        quarantine::clear_replay_remat_marker_in_txn(vault, txn, window, session)?;
+    }
+    Ok(())
+}
+
+fn replay_spawned_by(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    row: &str,
+) -> Result<Option<Dependency>> {
+    let Some(value) = vault
+        .store
+        .sync_state
+        .get(txn, row)?
+        .map(|raw| raw.to_vec())
+    else {
+        return Ok(None);
+    };
+    let (window, session, turn) = parse_anchor_key(row)?;
+    let decoded = decode_edge_value_for_kind(EdgeKind::SpawnedBy, &value)
+        .map_err(|_| Error::CorruptedIndex("deferred SpawnedBy obligation"))?;
+    for id in [session, turn] {
+        match crate::vault::live_entity_row_in_txn(&vault.store, txn, &id)? {
+            crate::vault::LiveEntityRow::Absent => return Ok(None),
+            crate::vault::LiveEntityRow::DeletedShell => {
+                settle_spawned_by(vault, txn, window, &session, &turn)?;
+                return Ok(None);
+            }
+            crate::vault::LiveEntityRow::Live { .. } => {}
+        }
+    }
+    let verdict = crate::conversation_dag::validate_received_edge(
+        &vault.store,
+        &*txn,
+        session,
+        EdgeKind::SpawnedBy,
+        turn,
+        decoded,
+    );
+    match verdict {
+        Ok(()) => match vault
+            .batch_in()
+            .edge_with_value_fields(
+                &session,
+                EdgeKind::SpawnedBy,
+                &turn,
+                EdgeValueFields::from_decoded(decoded),
+            )
+            .apply(txn)
+        {
+            Ok(()) => {
+                settle_spawned_by(vault, txn, window, &session, &turn)?;
+                Ok(Some(Dependency::SessionAnchor(session)))
+            }
+            Err(err) if remote_rejection_reason(&err).is_some() => {
+                quarantine::quarantine_rejected_op_in_txn(
+                    vault,
+                    txn,
+                    window,
+                    QuarantineContainer::Edges,
+                    &format_edge_key(&session, EdgeKind::SpawnedBy, &turn),
+                    &err,
+                    &value,
+                )?;
+                settle_spawned_by(vault, txn, window, &session, &turn)?;
+                Ok(None)
+            }
+            Err(local) => Err(local),
+        },
+        Err(rejected) if remote_rejection_reason(&rejected).is_some() => {
+            quarantine::quarantine_rejected_op_in_txn(
+                vault,
+                txn,
+                window,
+                QuarantineContainer::Edges,
+                &format_edge_key(&session, EdgeKind::SpawnedBy, &turn),
+                &rejected,
+                &value,
+            )?;
+            settle_spawned_by(vault, txn, window, &session, &turn)?;
+            Ok(None)
+        }
+        Err(local) => Err(local),
+    }
+}
+
+fn anchors_for_endpoint(vault: &Vault, txn: &heed::RoTxn<'_>, id: EntityId) -> Result<Vec<String>> {
+    let prefix = format!("{ANCHOR_INDEX}{}:", id.to_hex());
+    let mut rows = Vec::new();
+    for entry in vault.store.sync_state.prefix_iter(txn, &prefix)? {
+        let (row, _) = entry?;
+        rows.push(
+            row.strip_prefix(&prefix)
+                .ok_or(Error::CorruptedIndex("deferred SpawnedBy index"))?
+                .to_string(),
+        );
+    }
+    Ok(rows)
+}
+
 fn indexed(vault: &Vault, txn: &heed::RoTxn<'_>, fact: Dependency) -> Result<Vec<String>> {
     let prefix = index_prefix(fact);
     let mut keys = Vec::new();
@@ -334,10 +561,23 @@ fn indexed(vault: &Vault, txn: &heed::RoTxn<'_>, fact: Dependency) -> Result<Vec
 /// which can wake another parent in this SAME transaction. Unsettled rows
 /// and their rm: summaries survive a budget boundary and restart.
 fn process(vault: &Vault, txn: &mut heed::RwTxn<'_>, mut ready: BTreeSet<String>) -> Result<()> {
+    // This is a bounded fixed point, NOT an ancestor-depth budget. There may
+    // be more independent shallow branches than MAX_ANCESTOR_DEPTH. Each
+    // obligation has at most MAX_DEPENDENCIES successive missing facts; if
+    // the bound is ever exceeded, abort rather than report a successful
+    // receive that silently drops ready work.
+    let mut pending = 0usize;
+    for entry in vault.store.sync_state.prefix_iter(&*txn, PENDING)? {
+        entry?;
+        pending = pending.saturating_add(1);
+    }
+    let budget = pending
+        .saturating_mul(MAX_DEPENDENCIES + 2)
+        .max(ready.len());
     let mut examined = 0usize;
     while let Some(obligation) = ready.pop_first() {
-        if examined >= crate::limits::MAX_ANCESTOR_DEPTH {
-            break;
+        if examined >= budget {
+            return Err(Error::IndexOverflow("dag_parent_ready"));
         }
         examined += 1;
         let Some(raw) = vault
@@ -363,17 +603,37 @@ pub(in crate::sync) fn wake_in_txn(
     txn: &mut heed::RwTxn<'_>,
     facts: &[Dependency],
 ) -> Result<()> {
-    let mut ready = BTreeSet::new();
+    let mut anchor_rows = BTreeSet::new();
     for &fact in facts {
+        if let Dependency::Entity(id) | Dependency::SessionAnchor(id) = fact {
+            anchor_rows.extend(anchors_for_endpoint(vault, txn, id)?);
+        }
+    }
+    let mut changed = facts.to_vec();
+    for row in anchor_rows {
+        if let Some(anchor) = replay_spawned_by(vault, txn, &row)? {
+            changed.push(anchor);
+        }
+    }
+    let mut ready = BTreeSet::new();
+    for fact in changed {
         ready.extend(indexed(vault, txn, fact)?);
     }
     process(vault, txn, ready)
 }
 
-/// Recovery/drain entrypoint: reconstruct ready work from durable dp: rows.
-/// The bounded processor leaves excess rows and their indexes for the next
-/// drain pass; no dependency is lost when the process stops.
+/// Recovery/drain entrypoint: reconstruct work from durable anchor and
+/// Parent obligations. Neither a process restart nor a consumed event loses
+/// a missing dependency or a ready Parent.
 pub(in crate::sync) fn retry_in_txn(vault: &Vault, txn: &mut heed::RwTxn<'_>) -> Result<()> {
+    let anchors: Vec<String> = {
+        let iter = vault.store.sync_state.prefix_iter(&*txn, ANCHOR)?;
+        iter.map(|entry| entry.map(|(key, _)| key.to_string()))
+            .collect::<Result<_>>()?
+    };
+    for row in anchors {
+        replay_spawned_by(vault, txn, &row)?;
+    }
     let rows: BTreeSet<String> = {
         let iter = vault.store.sync_state.prefix_iter(&*txn, PENDING)?;
         iter.map(|entry| entry.map(|(key, _)| key.to_string()))

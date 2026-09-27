@@ -199,6 +199,16 @@ pub(super) fn run(ctx: &RematCtx<'_>, ledger: &mut RematLedger) -> Result<()> {
                 let src_exists = vault.store.entities.get(&*wtxn, src.as_bytes())?.is_some();
                 let tgt_exists = vault.store.entities.get(&*wtxn, tgt.as_bytes())?.is_some();
                 if !src_exists || !tgt_exists {
+                    if kind == crate::edge::EdgeKind::SpawnedBy {
+                        bridge::defer_spawned_by(
+                            vault,
+                            wtxn,
+                            window_key.as_str(),
+                            &src,
+                            &tgt,
+                            buf,
+                        )?;
+                    }
                     return Ok(EdgeRematOutcome::Deferred);
                 }
                 if matches!(

@@ -37,6 +37,15 @@ pub(crate) fn migrate_in_txn(
         true,
         MAX_ANCESTOR_DEPTH,
     )?;
+    // A pending received Parent does not turn its source into a trunk root.
+    // Check the coordinator's exact source index in this same per-room txn;
+    // maintenance skips/names this incomplete room and continues scanning.
+    #[cfg(feature = "sync")]
+    for id in &candidates {
+        if crate::sync::bridge::has_unresolved_parent_for_source_in_txn(vault, txn, id)? {
+            return Err(graph::invalid("received DAG Parent dependency pending"));
+        }
+    }
     // Restore every carrier before classifying any parent, independent of
     // peer key order. Failure rolls back both membership indexes and adoption.
     for id in &candidates {

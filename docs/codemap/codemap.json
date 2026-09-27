@@ -29995,7 +29995,7 @@
      "path": "src/sync/bridge/mod.rs",
      "purpose": "Entity bridge: CRDT ↔ LMDB materialization observers",
      "surface": {
-      "crate-vis": 7,
+      "crate-vis": 8,
       "re-export": 3
      }
     },
@@ -30027,7 +30027,7 @@
      "path": "src/sync/bridge/parent_retry.rs",
      "purpose": "Transactional Parent admission, exact pending work and dependency wake-up",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 7
      }
     },
     {
