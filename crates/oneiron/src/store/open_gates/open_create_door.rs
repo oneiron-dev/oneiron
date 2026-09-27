@@ -26,7 +26,9 @@ use super::manifest_storage_gates::{
 use super::open_version_keys::{
     DefaultPolicySeedMode, MAX_DBS, STORAGE_ABI_VERSION, VAULT_ROOT_IDENTITY_CHECKS_AVAILABLE,
 };
-use super::vault_root_bind::{preflight_rejected_aliased_root, preflight_vault_root};
+use super::vault_root_bind::{
+    VaultRootPreflight, preflight_rejected_aliased_root, preflight_vault_root,
+};
 
 impl Store {
     /// Opens or creates a store at `path` and initializes all named databases.
@@ -113,7 +115,7 @@ impl Store {
             };
             #[cfg(not(target_os = "linux"))]
             let storage_path = canonical_path.clone();
-            let root_preflight = preflight_vault_root(&storage_path)?;
+            let root_preflight = preflight_named_root(&storage_path, &canonical_path)?;
             #[cfg(unix)]
             let bound_root_identity = file_identity(&bound_root_dir.metadata()?);
             let is_new_vault = root_preflight.is_new_vault;
@@ -208,7 +210,7 @@ impl Store {
                 // `VaultRootPreflight(MultipleHardLinks)`, returns no handle,
                 // and releases its path reservation; only the destructive
                 // unlink is withheld. Every other failure keeps cleanup armed.
-                let refreshed = match preflight_vault_root(&storage_path) {
+                let refreshed = match preflight_named_root(&storage_path, &canonical_path) {
                     Ok(refreshed) => refreshed,
                     Err(error) => {
                         if preflight_rejected_aliased_root(&error) {
@@ -401,4 +403,19 @@ impl Store {
         store.reconcile_retrieval_telemetry_on_open()?;
         Ok(store)
     }
+}
+
+/// Reads the LMDB pair through the bound root (`/proc/self/fd/<n>` on Linux)
+/// but names the root the caller asked for in a refusal: the descriptor path
+/// means nothing outside this process.
+fn preflight_named_root(storage_path: &Path, canonical_path: &Path) -> Result<VaultRootPreflight> {
+    preflight_vault_root(storage_path).map_err(|error| match error {
+        Error::Store(crate::error::StoreError::VaultRootPreflight { problem, .. }) => {
+            Error::Store(crate::error::StoreError::VaultRootPreflight {
+                path: canonical_path.to_path_buf(),
+                problem,
+            })
+        }
+        other => other,
+    })
 }
