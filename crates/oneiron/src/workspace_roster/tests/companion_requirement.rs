@@ -158,7 +158,6 @@ fn a_completed_principal_cannot_mint_another_companion_under_a_new_intent() -> R
     let birth = second.companion_birth.as_mut().expect("fixture birth");
     birth.person_ref = entity(0xD1);
     birth.actor_ref = entity(0xD2);
-    birth.companion_record_ref = entity(0xD3);
     birth.profile_grant_ref = entity(0xD4);
     second.grant_bundle.companion_profile_grant_ref = Some(birth.profile_grant_ref);
     let before = onboarding_rows(&vault)?;
