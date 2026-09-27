@@ -564,11 +564,11 @@ impl Vault {
         requested_scope_narrowing: Option<&ShareViewerScope>,
         brief_claim_refs: &[EntityId],
     ) -> Result<Option<ResolvedShare>> {
+        let now = self.store.authorization_now()?;
         let txn = self.store.env.read_txn()?;
         let Some((share, _)) = read_share_in_txn(&self.store, &txn, share_id)? else {
             return Ok(None);
         };
-        let now = self.store.clock.now_recorded_at();
         if share.grant().effective_status_at(now) != AccessGrantStatus::Active
             || share.recipient_ref != *viewer
         {
