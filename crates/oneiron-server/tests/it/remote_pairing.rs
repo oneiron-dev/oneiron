@@ -334,7 +334,7 @@ async fn an_expired_link_is_unauthorized_at_pair() {
     let (link, expires_at) = fixture.link(READ_WRITE, &fixture.person, Some("human"));
     fixture
         .vault
-        .sync_state_put("authlog:first_seen:clock_floor", &expires_at.to_be_bytes())
+        .advance_authority_clock_for_test(expires_at.saturating_add(1))
         .unwrap();
     let refused = blocking(move || code(OneironClient::pair(&link))).await;
     assert_eq!(refused, "UNAUTHORIZED");
