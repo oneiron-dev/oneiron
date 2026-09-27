@@ -57,6 +57,7 @@ fn fixture() -> (
     config.dimensions = 4;
     config.embedding_model = Some("test/model@v1".to_owned());
     config.max_readers = 16;
+    config.retrieval_telemetry_capture = true;
     let vault = Arc::new(oneiron::Vault::open(dir.path(), config).unwrap());
     let mut runtime = RuntimeConfig::default();
     runtime.role_defaults.summarizer.model = "test/tiny@v1".to_owned();
