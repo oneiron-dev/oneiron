@@ -9,8 +9,9 @@ mod task_ask;
 
 pub(crate) use arrival::project_arrivals_in_txn;
 pub use graph_ask::{
-    GraphAnswerer, GraphAskResult, GraphContextSource, GraphPrediction, GraphTypeSelection,
-    GraphUnitContext, run_graph_ask, run_graph_ask_by_type, select_graph_units_by_type,
+    GraphAnswerer, GraphAskFailure, GraphAskResult, GraphContextSource, GraphPrediction,
+    GraphTypeSelection, GraphUnitContext, run_graph_ask, run_graph_ask_by_type,
+    select_graph_units_by_type,
 };
 pub use outcomes::{calibration_pairs, project_bound_outcomes};
 pub use records::*;

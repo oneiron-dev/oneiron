@@ -7515,6 +7515,7 @@
      "path": "src/claim/scoped_read/graph_reads.rs",
      "purpose": "Receipted graph and timeline reads under the resolved actor floor",
      "surface": {
+      "crate-vis": 1,
       "fn": 2
      }
     },
@@ -19756,6 +19757,7 @@
      "kind": "src",
      "notable": [
       "GraphAnswerer",
+      "GraphAskFailure",
       "GraphAskResult",
       "GraphContextSource",
       "GraphPrediction",
@@ -19766,7 +19768,7 @@
      "purpose": "One-off graph judgment: scoped context, injected answerer, and proposed claims",
      "surface": {
       "fn": 3,
-      "struct": 5,
+      "struct": 6,
       "trait": 1
      }
     },
@@ -29353,7 +29355,7 @@
      "path": "src/store/test_hooks.rs",
      "purpose": "The test seams one open vault owns, plus the two path-keyed LMDB open hooks that necessarily predate it",
      "surface": {
-      "crate-vis": 15
+      "crate-vis": 17
      }
     },
     {
