@@ -42,7 +42,8 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/companion/access_grants.rs` | src | s | 9 crate-vis | — | Companion access-grant routes and DTOs |
 | `src/api/companion/auth.rs` | src | s | 5 crate-vis | — | Companion authorization helpers |
 | `src/api/companion/errors.rs` | src | s | 3 crate-vis | — | Companion error constructors |
-| `src/api/companion/mod.rs` | src | s | 5 crate-vis | — | Companion control-plane surface: access grants and psych-mirror profiles |
+| `src/api/companion/lists.rs` | src | s | 8 crate-vis | — | Bounded, authorization-checked companion list projections |
+| `src/api/companion/mod.rs` | src | s | 6 crate-vis | — | Companion control-plane surface: access grants and psych-mirror profiles |
 | `src/api/companion/profiles.rs` | src | m | 24 crate-vis | — | Companion profile routes, DTOs, and state builders |
 | `src/api/consumer_usage.rs` | src | s | 4 crate-vis | — | Per-vault usage facts |
 | `src/api/context_board/cursor.rs` | src | s | 12 crate-vis | — | Server-owned MEMORIES cursors and session read sets, keyed by principal and session |
@@ -58,14 +59,14 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/context_pack/resolve.rs` | src | m | 15 crate-vis | — | Route handler plus depth/policy/time/budget resolution for context-pack assembly |
 | `src/api/context_pack/response.rs` | src | m | 27 crate-vis | — | Response DTOs and engine-to-wire mapping functions for context-pack assembly |
 | `src/api/conversation_dag/mod.rs` | src | m | 15 crate-vis | — | HTTP adapters for transactional conversation DAG and summary doors |
-| `src/api/conversation_dag/types.rs` | src | s | 26 crate-vis | — | Closed wire inputs for conversation topology and merge operations |
+| `src/api/conversation_dag/types.rs` | src | s | 27 crate-vis | — | Closed wire inputs for conversation topology and merge operations |
 | `src/api/conversation_members.rs` | src | s | 5 crate-vis | — | Room membership routes |
-| `src/api/conversations.rs` | src | m | 10 crate-vis | — | — |
+| `src/api/conversations.rs` | src | m | 12 crate-vis | — | — |
 | `src/api/core/batch.rs` | src | s | 11 crate-vis | — | Batch-write DTOs, route handler, and entity-put staging |
 | `src/api/core/hydrate.rs` | src | m | 21 crate-vis | — | Hydrate and short-id hydrate DTOs, routes, and mappers |
 | `src/api/core/mod.rs` | src | s | 6 crate-vis | — | — |
 | `src/api/core/propose.rs` | src | s | 3 crate-vis | — | Proposal-only cloud leg |
-| `src/api/core/query.rs` | src | m | 17 crate-vis | — | Query/list/capability routes and their paging helpers |
+| `src/api/core/query.rs` | src | m | 16 crate-vis | — | Query/list/capability routes and their paging helpers |
 | `src/api/core/read_receipt.rs` | src | s | 4 crate-vis | — | OpenAPI shape for the engine-owned mandatory read receipt |
 | `src/api/core/write_shape.rs` | src | s | 19 crate-vis | — | Create-entity DTOs, announcement normalization, and body field helpers |
 | `src/api/discover.rs` | src | m | 25 crate-vis | — | — |
@@ -144,9 +145,9 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/tests/context_pack_disclosure.rs` | test | L | — | — | Context-pack telemetry, interlocutor echo/stamps, owner-absence clamping, scope-smuggling resistance |
 | `src/api/tests/context_pack_v4.rs` | test | L | — | — | Context-board memories/cursor/companion/assets, session scoping, evidence run-id omission |
 | `src/api/tests/contract_snapshots.rs` | test | L | — | — | v1 core OpenAPI/success/error contract fixture snapshots plus generated-OpenAPI spec assertions |
-| `src/api/tests/conversation_dag.rs` | test | m | — | — | Wire-level DAG, summary and reply-strip acceptance |
+| `src/api/tests/conversation_dag.rs` | test | L | — | — | Wire-level DAG, summary and reply-strip acceptance |
 | `src/api/tests/conversation_rooms.rs` | test | s | — | — | Room, membership, addressing, thread and listing routes through the HTTP router |
-| `src/api/tests/core_memory_conversations.rs` | test | L | — | — | Batch/query/hydrate smoke, memory timeline + verbs, conversations/turns, platform announcements |
+| `src/api/tests/core_memory_conversations.rs` | test | XL | — | — | Batch/query/hydrate smoke, memory timeline + verbs, conversations/turns, platform announcements |
 | `src/api/tests/depth_quality.rs` | test | m | 1 crate-vis | — | — |
 | `src/api/tests/depth_spend.rs` | test | s | — | — | — |
 | `src/api/tests/mcp_memory.rs` | test | s | — | — | Memory tool projections exercise the same scoped reads as native clients |
