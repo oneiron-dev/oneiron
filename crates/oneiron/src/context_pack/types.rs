@@ -74,7 +74,7 @@ pub struct ContextEntity {
 }
 
 /// Stats about the context pack query.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize)]
 pub struct PackStats {
     pub candidates_considered: usize,
     pub signals_used: Vec<Signal>,
@@ -105,7 +105,7 @@ pub struct PackStats {
     pub critical_count: usize,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, PartialEq, Eq, Default, serde::Serialize)]
 pub struct PackTokenStats {
     /// Stable tokenizer identifier used for every count in this struct.
     ///
@@ -129,7 +129,7 @@ pub struct PackTokenStats {
     pub items: Vec<PackItemTokenStats>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
 pub struct PackSectionTokenStats {
     /// Logical section name, for example `results`, `neighbors`, or `merged`.
     pub section: String,
@@ -137,7 +137,7 @@ pub struct PackSectionTokenStats {
     pub tokens: usize,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
 pub struct PackItemTokenStats {
     /// Logical section containing this item.
     pub section: String,
@@ -149,7 +149,7 @@ pub struct PackItemTokenStats {
     pub tokens: usize,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
 pub enum PackItemAccountingReason {
     ItemBudget,
     TokenBudget,
@@ -165,7 +165,7 @@ impl PackItemAccountingReason {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
 pub struct PackItemAccounting {
     pub count: usize,
     pub reason: PackItemAccountingReason,

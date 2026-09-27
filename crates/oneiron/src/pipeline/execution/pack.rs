@@ -245,6 +245,7 @@ impl PipelineBuilder<'_> {
         let mut access_factors = attempt.access_factors;
         let mut rerank_merged_components = attempt.rerank_merged_components;
         let mut retrieval_trace = attempt.retrieval_trace;
+        let mut replay_inputs = attempt.replay_inputs;
 
         if !self
             .session
@@ -333,6 +334,7 @@ impl PipelineBuilder<'_> {
                 access_factors = retry.access_factors;
                 rerank_merged_components = retry.rerank_merged_components;
                 retrieval_trace = retry.retrieval_trace;
+                replay_inputs = retry.replay_inputs;
                 ppr_expand_executed = retry.ppr_expand_executed;
                 claim_bodies.clear();
                 claims_suppressed = 0;
@@ -412,6 +414,8 @@ impl PipelineBuilder<'_> {
         .with_context(self.retrieval_state.clone(), self.retrieval_turn)
         .with_trace(retrieval_trace)
         .with_quality(&retrieval_quality);
+        let mut run_record = run_record;
+        run_record.replay_inputs = replay_inputs;
         // ONE-1728 K10: a retrieval issued inside a room registers through the
         // room's door, which writes under the route the run captured — into
         // the room's overlay `VaultMeta` while it is off record (so the base

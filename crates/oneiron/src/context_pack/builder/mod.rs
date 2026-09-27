@@ -8,6 +8,7 @@
 mod assembly;
 mod pack_run;
 mod query;
+mod replay;
 mod scoped;
 
 pub(super) use self::pack_run::{ContextPackRun, ContextPackTelemetry, HydrateOptions};

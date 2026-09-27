@@ -650,3 +650,36 @@ fn retrieval_quality_hyde_retry_retains_first_ppr_cache_miss() -> Result<()> {
     assert_eq!(row.degradation, output.retrieval_quality.degradation);
     Ok(())
 }
+
+#[test]
+fn replay_config_carries_effective_ppr_alpha_and_caller_community_usage() -> Result<()> {
+    let (_dir, mut vault) = open_test_vault();
+    put_text(&vault, entity_id(1), "community replay seed")?;
+    put_text(&vault, entity_id(2), "community replay target")?;
+    vault.put_edge(&entity_id(1), EdgeKind::Mentions, &entity_id(2), 0.5)?;
+    vault.config.ppr_vad_alpha = 0.4;
+    let community = crate::ppr_community::CommunityId::from_members(&[entity_id(1)])
+        .expect("valid community fixture");
+    let usage = std::collections::HashMap::from([(community, 3_u32)]);
+    let run = vault
+        .query()
+        .search_ppr(&[entity_id(1)], 1)
+        .with_community_session_usage(&usage)
+        .replay_query_ref("eval://queries/ppr-2182")
+        .corpus_snapshot_ref("eval://corpus/ppr-2182")
+        .capture_retrieval_trace(true)
+        .run_with_telemetry()?;
+    let row = vault.retrieval_run(run.run_id.expect("captured"))?.unwrap();
+    let config = row.replay_inputs.unwrap().config;
+    assert_eq!(
+        config["ppr_vad_alpha"].as_f64().map(|v| v as f32),
+        Some(0.4)
+    );
+    assert_eq!(
+        config["ppr_community"]["session_usage"][0][0],
+        community.to_hex()
+    );
+    assert_eq!(config["ppr_community"]["session_usage"][0][1], 3);
+    assert_eq!(config["channels"]["ppr_search"]["steps"], 1);
+    Ok(())
+}

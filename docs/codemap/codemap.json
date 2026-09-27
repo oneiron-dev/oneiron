@@ -11355,8 +11355,18 @@
      "purpose": "The fluent ContextPackBuilder surface: search, filter, boost, hydration, budget and format configuration",
      "surface": {
       "crate-vis": 2,
-      "fn": 55,
+      "fn": 58,
       "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/context_pack/builder/replay.rs",
+     "purpose": "Opt-in pack-assembly and terminal-projection settings for offline replay",
+     "surface": {
+      "crate-vis": 2
      }
     },
     {
@@ -11509,7 +11519,7 @@
      "path": "src/context_pack/telemetry.rs",
      "purpose": "Finalize or discard the retrieval-run row a pack assembly registered",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 3
      }
     },
     {
@@ -23998,9 +24008,20 @@
      "path": "src/pipeline/builder.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 10,
-      "fn": 46,
+      "crate-vis": 8,
+      "fn": 43,
       "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/pipeline/builder_capture.rs",
+     "purpose": "Retrieval telemetry capture and turn context options on the pipeline builder",
+     "surface": {
+      "crate-vis": 3,
+      "fn": 5
      }
     },
     {
@@ -24364,7 +24385,17 @@
      "path": "src/pipeline/trace/mod.rs",
      "purpose": "Retrieval trace recording and deterministic replay fork-hashing",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/pipeline/trace/replay_inputs.rs",
+     "purpose": "Opt-in replay input capture from the resolved query, never from a fork hash",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -29968,6 +29999,8 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
+      "RetrievalPackOutput",
+      "RetrievalReplayInputs",
       "RetrievalState",
       "RetrievalTurn"
      ],
@@ -29975,7 +30008,7 @@
      "purpose": "Query-free retrieval context, preserved verbatim for offline replay",
      "surface": {
       "crate-vis": 2,
-      "struct": 2
+      "struct": 4
      }
     },
     {
@@ -34881,7 +34914,7 @@
      "purpose": "Typed Context Board render projections"
     },
     "context_pack": {
-     "files": 23,
+     "files": 24,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -35371,7 +35404,7 @@
      "purpose": "OF-325 persona snapshot: compile + export the shareable person-card (PSNAP-1, mode A)"
     },
     "pipeline": {
-     "files": 50,
+     "files": 52,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -35821,7 +35854,7 @@
    },
    "over_bar": 11,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2113,
+   "source_files": 2116,
    "test_files": 721
   },
   "oneiron-android": {

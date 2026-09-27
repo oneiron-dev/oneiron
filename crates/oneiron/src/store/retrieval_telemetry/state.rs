@@ -106,3 +106,22 @@ pub struct RetrievalTurn {
     pub episode_id: [u8; 16],
     pub turn_idx: u64,
 }
+
+/// Query-free opt-in replay context. A host can point at its authorized, immutable
+/// query packet (or session message) and corpus snapshot. Neither raw query
+/// content nor a query hash is written to telemetry. An absent reference means
+/// this row alone cannot reconstruct that part of the request.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct RetrievalReplayInputs {
+    pub query_ref: Option<String>,
+    pub config: serde_json::Value,
+    pub corpus_snapshot_ref: Option<String>,
+}
+
+/// Exact serialized output bytes for a finalized context-pack run. The format
+/// identifies the representation; raw structured packs use MessagePack.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct RetrievalPackOutput {
+    pub format: String,
+    pub bytes: Vec<u8>,
+}

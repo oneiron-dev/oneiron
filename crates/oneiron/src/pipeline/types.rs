@@ -46,7 +46,7 @@ pub struct ScoredEntity {
 }
 
 /// Retrieval signal type.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize)]
 #[non_exhaustive]
 pub enum Signal {
     Vector,

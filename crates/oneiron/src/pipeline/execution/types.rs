@@ -43,6 +43,7 @@ pub(super) struct RetrievalTxnOutput {
     pub(super) access_factors: HashMap<EntityId, f32>,
     pub(super) rerank_merged_components: Option<HashMap<EntityId, Vec<RetrievalScoreComponent>>>,
     pub(super) retrieval_trace: Option<RetrievalTrace>,
+    pub(super) replay_inputs: Option<crate::store::RetrievalReplayInputs>,
     pub(super) ppr_expand_executed: bool,
     pub(super) early_empty_no_telemetry: bool,
 }
