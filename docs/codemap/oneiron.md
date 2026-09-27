@@ -172,7 +172,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/authority/recovery_ceremony.rs` | src | s | 1 enum · 1 fn · 1 const · 3 crate-vis | GenesisRecoveryStep | Explicit genesis recovery-secret acknowledgement and its visible fragile flag |
 | `src/authority/sequence_ancestry.rs` | src | s | 1 crate-vis | — | Causally vouched history may arrive after its already-observed descendant |
 | `src/authority/sequence_observation.rs` | src | s | 4 crate-vis | — | Durable signer sequence maxima and content-addressed first-observation receipts |
-| `src/authority/slip.rs` | src | m | 6 struct · 13 fn · 7 crate-vis | CapabilitySlip, SignedCaveat, SlipCaveat, SlipClaims, SlipMintAction, VerifiedSlip | Host-signed capability slips with holder-signed offline narrowing and proof |
+| `src/authority/slip.rs` | src | m | 6 struct · 14 fn · 7 crate-vis | CapabilitySlip, SignedCaveat, SlipCaveat, SlipClaims, SlipMintAction, VerifiedSlip | Host-signed capability slips with holder-signed offline narrowing and proof |
 | `src/authority/slip_pairing.rs` | src | m | 3 struct · 6 fn | PairingDescriptor, PairingLink, PairingPrincipal | Single-use pairing links bind a throwaway key and mint one log-backed slip |
 | `src/authority/slip_replay.rs` | src | s | 2 fn · 2 crate-vis | — | Bounded, timestamp-bound replay windows for authenticated slip requests |
 | `src/authority/slip_replay/tests.rs` | test | s | — | — | Replay-window boundaries, persistence, and eviction by timestamp |
@@ -242,7 +242,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/batch/export/bundle_validation.rs` | src | m | 2 crate-vis | — | Validate source identities, facet/body agreement and explicit archive-only omissions |
 | `src/batch/export/credential_filter.rs` | src | s | 5 fn | — | Credential filtering at memory serve and export serialization boundaries |
 | `src/batch/export/document_import.rs` | src | m | 3 fn · 3 crate-vis | — | Validating JSON import through ordinary admission doors, never sync replay |
-| `src/batch/export/document_snapshot.rs` | src | s | 1 fn · 2 crate-vis | — | Snapshot enumeration for whole-vault export |
+| `src/batch/export/document_snapshot.rs` | src | s | 1 fn · 3 crate-vis | — | Snapshot enumeration for whole-vault export |
 | `src/batch/export/document_tests.rs` | test | m | — | — | Observable whole-vault export/import contracts |
 | `src/batch/export/document_types.rs` | src | s | 11 struct · 1 enum · 4 fn · 1 const · 2 crate-vis | ExportAdapterDescriptor, ExportDerivationEnvelope, ExportEdge, ExportEntity, ExportLedger, ExportPack, ExportPackSource, ExportSourceVault +4 | Versioned six-part whole-vault interchange document |
 | `src/batch/export/document_validation.rs` | src | s | 1 crate-vis | — | Import-time validation of the serializer's full document, not its claims |
@@ -1707,6 +1707,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/memory/dreamer.rs` | src | s | 3 struct · 3 fn | ConsolidationAttemptInput, DreamerAttemptRef, DreamerAttemptView | Consolidation enqueue, dreamer attempt status, and claim seeding |
 | `src/memory/entity_delete.rs` | src | s | 3 fn · 3 crate-vis | — | Owner-bound preview and one-call unshare-before-delete confirmation |
 | `src/memory/error.rs` | src | m | 2 struct · 1 fn · 1 type · 9 const · 4 crate-vis | MemoryError, MemoryGateDenial | Memory error vocabulary: [`MemoryError`], the stable `MEMORY_CODE_*` strings, and the central engine-error… |
+| `src/memory/export.rs` | src | s | 2 struct · 3 fn | ExportOptions, MemoryExport | Full-vault memory export through the existing five-format pack writers |
 | `src/memory/expression_preference.rs` | src | s | 3 struct · 3 fn | ExpressionPreferenceInput, ExpressionPreferenceReceipt, ExpressionPreferenceView | Typed `companion.expression.*` doors on the [`Memory`] surface |
 | `src/memory/extraction/mod.rs` | src | s | 1 re-export | — | Host-served extraction beside witness, followed by separately authorized atomic persistence |
 | `src/memory/extraction/persist.rs` | src | s | 1 fn | — | One transaction composes mention, VAD and identity-proposal doors |
@@ -1717,7 +1718,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/memory/key_value/tests.rs` | test | L | — | — | Behavior proofs through the real facade and production gate |
 | `src/memory/key_value/types.rs` | src | s | 7 struct | KeyValueAddress, KeyValueDeleteReceipt, KeyValueItem, KeyValueNamespaces, KeyValuePut, KeyValuePutReceipt, KeyValueSearch | Typed actor-owned, worldless keyed-memory requests and results |
 | `src/memory/key_value/writes.rs` | src | s | 2 fn | — | Key mutations compose the existing claim gate and lifecycle door in ONE transaction |
-| `src/memory/mod.rs` | src | s | 2 mod · 20 re-export · 8 crate-vis | — | BRIDGE-01 (ONE-1454): transport-agnostic memory facade |
+| `src/memory/mod.rs` | src | s | 2 mod · 21 re-export · 8 crate-vis | — | BRIDGE-01 (ONE-1454): transport-agnostic memory facade |
 | `src/memory/notes.rs` | src | s | 3 fn | — | Agent-facing NOTE verbs; actor identity is bound to the memory facade |
 | `src/memory/outbound/calendar.rs` | src | s | 1 struct · 4 fn · 1 type | CalendarFreebusyIntervalDto | Calendar scoped-read surface (read/search/freebusy) plus the invite entry point |
 | `src/memory/outbound/dedupe.rs` | src | s | 7 crate-vis | — | Idempotent-replay receipts, retry-lineage walk, and gate-binding side index |
@@ -1742,6 +1743,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/memory/tests/authority_revocation.rs` | test | L | — | — | Owner bindings, rooting, revocation, revocation-vs-delete races, rotation, and sidecars |
 | `src/memory/tests/commit_claims.rs` | test | L | — | — | Commit gating and trust ceiling, claim upsert/supersede/retract, structural puts, blobs, and edge names |
 | `src/memory/tests/delete_tombstone.rs` | test | L | — | — | Safe-delete receipts, crash recovery, tombstone publish boundary, and soft-erase edge cases |
+| `src/memory/tests/export.rs` | test | m | — | — | The public export verb renders the full vault and hydratable short refs |
 | `src/memory/tests/mod.rs` | test | m | 25 crate-vis | — | BRIDGE-01 acceptance tests, engine side |
 | `src/memory/tests/self_grant.rs` | test | m | — | — | Self-Grant and private admin-ruling falsification tests |
 | `src/memory/tests/session_witness.rs` | test | L | — | — | Session overlay witness, room-shell claims, flip/replay races, and promoted turns |
@@ -2644,7 +2646,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/task_verb/route_receipts.rs` | src | s | 5 struct · 5 enum · 3 fn · 2 const · 1 crate-vis | TaskCancelMode, TaskCancelReceipt, TaskCancelTarget, TaskCreateReceipt, TaskDescription, TaskResultInput, TaskRouteLane, TaskRouteOutcome +2 | — |
 | `src/task_verb/scheduling.rs` | src | s | 3 crate-vis | — | Live TASK dependency and symbol readiness at every attempt-claim door |
 | `src/task_verb/sdk.rs` | src | m | 16 struct · 1 enum | BoardExpandRequest, BoardRefreshRequest, BoardSubscriptionRequest, DescribeRequest, EmptyRequest, RecallRequest, ReceiptsRequest, RoomClaimRequest +9 | Shared typed agent-verb inputs and generated transport dispatch |
-| `src/task_verb/sdk_generated.rs` | src | m | 32 fn | — | — |
+| `src/task_verb/sdk_generated.rs` | src | m | 33 fn | — | — |
 | `src/task_verb/symbol_lease.rs` | src | s | 1 struct · 1 enum · 4 fn · 3 crate-vis | SymbolLease, SymbolLeaseOutcome | Node-local time-held symbol declarations and atomic queue ordering |
 | `src/task_verb/symbol_lease_tests.rs` | test | s | — | — | — |
 | `src/task_verb/terminal_state.rs` | src | s | 1 struct · 4 enum · 4 fn · 3 crate-vis | ConsultResultPresence, ConsultResultSummary, TaskExecutionState, TaskTerminalDisposition, TaskTerminalRecord | — |
