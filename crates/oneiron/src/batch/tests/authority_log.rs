@@ -1015,10 +1015,9 @@ fn authority_fold_backfills_legacy_missing_first_seen_sidecars_once() -> Result<
     config.store_clock = crate::ports::ManualClock::new(1_000_000).bundle();
     let vault = Vault::open(dir.path(), config)?;
     clear_default_policy_manifest_for_test(&vault);
-    assert_eq!(
-        crate::authority::authority_observation_secs(&vault.store, 0, 1_000_000),
-        1_000_000
-    );
+    // Bootstrap can finish after the next monotonic second; the manual clock
+    // sets a floor, not an exact observation timestamp.
+    assert!(crate::authority::authority_observation_secs(&vault.store, 0, 1_000_000) >= 1_000_000);
     let owner = authority_test_key(84);
     let genesis = authority_genesis_fixture(84);
     let vault_id = crate::authority::genesis_vault_id(&genesis)?;
