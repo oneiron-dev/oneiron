@@ -179,6 +179,8 @@ impl<'a> AttemptQueue<'a> {
             events: Vec::new(),
             manifest: Vec::new(),
             cancel_state: AttemptCancelState::default(),
+            signals: Vec::new(),
+            asks: Vec::new(),
             placement: None,
             result_ref: None,
         };

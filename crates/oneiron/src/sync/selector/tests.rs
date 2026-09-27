@@ -5324,6 +5324,86 @@ fn explicit_crm_pack_registration_exports_by_family_after_reopen() {
 }
 
 #[test]
+fn peer_document_write_requires_stored_grant_scope_even_inside_selector() {
+    let member = entity_id(0x34);
+    let (_dir, vault, grant_id) = test_vault_with_grant(member);
+    let mut grant = FederationGrant::new(
+        test_selector_scope(),
+        member,
+        FederationGrantRole::Member,
+        FederationGrantPreset::Member,
+    );
+    vault
+        .batch()
+        .put_replicated(
+            &grant_id,
+            ENTITY_TYPE_FEDERATION_GRANT,
+            TimeRange { start: 1, end: 1 },
+            1,
+            &encode_federation_grant_body(&grant).unwrap(),
+        )
+        .commit()
+        .unwrap();
+    let id = entity_id(0x41);
+    vault
+        .put_entity(
+            &id,
+            crate::registry::ENTITY_TYPE_TURN,
+            TimeRange { start: 1, end: 1 },
+            1,
+            b"turn",
+        )
+        .unwrap();
+    let selector = SyncSelector::new(
+        grant_id,
+        member,
+        SyncSelectorWorld::All,
+        vec![],
+        vec![crate::federation::selector_range_of(crate::registry::ENTITY_TYPE_TURN).unwrap()],
+    );
+    {
+        let txn = vault.store.env.read_txn().unwrap();
+        super::document_admission::admit_document_write_in_txn(
+            &vault,
+            &txn,
+            id,
+            test_selector_scope(),
+            &selector,
+        )
+        .unwrap();
+    }
+    // The same selector and stamped TURN must be refused once the stored
+    // grant permits only reads. A matching selector cannot supply the verb.
+    grant.authority_scope = crate::federation::scope_codec::read_preset();
+    vault
+        .batch()
+        .put_replicated(
+            &grant_id,
+            ENTITY_TYPE_FEDERATION_GRANT,
+            TimeRange { start: 1, end: 1 },
+            2,
+            &encode_federation_grant_body(&grant).unwrap(),
+        )
+        .commit()
+        .unwrap();
+    let txn = vault.store.env.read_txn().unwrap();
+    let err = super::document_admission::admit_document_write_in_txn(
+        &vault,
+        &txn,
+        id,
+        test_selector_scope(),
+        &selector,
+    )
+    .unwrap_err();
+    assert!(matches!(
+        err,
+        Error::Sync(SyncError::SyncProtocolError {
+            context: SyncProtocolValidation::DocumentAdmissionDenied,
+        })
+    ));
+}
+
+#[test]
 fn document_peer_import_rechecks_pact_activation_ceiling_and_expiry_in_txn() {
     use crate::sync::transport::document_sub_tags;
     for active in [true, false] {

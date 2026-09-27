@@ -10,6 +10,31 @@ use crate::context_projection::ResolvedContextProjection;
 use crate::error::Result;
 
 impl AgentDispatcher<'_> {
+    /// Run a workflow agent whose host produces raw bytes. Persist the exact
+    /// result in the vault-local content-addressed store; the workflow and its
+    /// successors retain only a stable result handle, never the output body.
+    pub fn run_workflow_step_output<F>(
+        &self,
+        root: AttemptId,
+        lease_owner: &str,
+        now: u64,
+        execute: F,
+    ) -> Result<WorkflowProgress>
+    where
+        F: FnOnce(&AgentDispatchStatus, ResolvedContextProjection) -> Result<Vec<u8>>,
+    {
+        self.run_workflow_step(root, lease_owner, now, |status, context| {
+            let raw = execute(status, context)?;
+            let entry = crate::compaction::output::OutputContextEntry::capture(
+                self.vault,
+                &raw,
+                now,
+                String::new(),
+            )?;
+            AttemptResultRef::new(entry.source.handle())
+        })
+    }
+
     /// Claim the active leaf, resolve its live context, and call the host once.
     /// An already settled leaf is pumped without calling `execute` again.
     /// Concurrent hosts observe the lease and return `Waiting`.

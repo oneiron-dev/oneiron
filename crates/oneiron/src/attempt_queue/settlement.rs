@@ -36,19 +36,28 @@ impl AttemptQueue<'_> {
     /// Marks a leased attempt terminally failed. Failing an already-failed attempt is
     /// an idempotent success; all other states are rejected.
     pub fn fail(&self, input: FailAttempt) -> Result<FailOutcome> {
-        {
-            let rtxn = self.store.env.read_txn()?;
-            let Some(raw_record) = self.store.attempt_records.get(&rtxn, input.id.as_bytes())?
-            else {
-                return Err(invalid_transition("fail", "missing"));
-            };
-            let record = decode_record(&raw_record, input.id)?;
-            if record.state == AttemptState::Failed {
-                return Ok(FailOutcome::AlreadyFailed(record));
-            }
-        }
-
         let mut wtxn = self.store.env.write_txn()?;
+        // The generic public door has no detector verdict, policy, or healer
+        // case. Agent-dispatch attempts must enter the typed failure ladder;
+        // only that crate-private transaction may terminalize their leases.
+        let record = self
+            .get_in_write_txn(&wtxn, input.id)?
+            .ok_or_else(|| invalid_transition("fail", "missing"))?;
+        if record.kind == crate::dreamer_runner::DREAMER_RUNNER_ATTEMPT_KIND
+            && crate::dreamer_runner::decode_dreamer_attempt_payload(&record.payload).is_ok_and(
+                |payload| {
+                    payload.attempt_type == crate::agent_dispatch::AGENT_DISPATCH_ATTEMPT_TYPE
+                },
+            )
+        {
+            return Err(invalid_transition(
+                "fail",
+                "agent dispatch requires typed evidence",
+            ));
+        }
+        if record.state == AttemptState::Failed {
+            return Ok(FailOutcome::AlreadyFailed(record));
+        }
         let outcome = self.fail_in_txn(&mut wtxn, input)?;
         if matches!(outcome, FailOutcome::Failed(_)) {
             wtxn.commit()?;
