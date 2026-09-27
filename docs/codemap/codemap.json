@@ -2810,7 +2810,7 @@
      "purpose": "Companion-layer export filtering",
      "surface": {
       "const": 1,
-      "fn": 10,
+      "fn": 9,
       "struct": 2
      }
     },
@@ -9836,7 +9836,7 @@
      "surface": {
       "crate-vis": 4,
       "enum": 5,
-      "fn": 35,
+      "fn": 34,
       "struct": 4
      }
     },
@@ -9852,6 +9852,7 @@
      "purpose": "PERSON identity baselines and deterministic replay of recorded changes",
      "surface": {
       "const": 1,
+      "crate-vis": 2,
       "fn": 4,
       "struct": 3
      }
@@ -9906,7 +9907,7 @@
      "purpose": "In-memory companion registers with scope and expression resolution",
      "surface": {
       "enum": 1,
-      "fn": 20,
+      "fn": 19,
       "struct": 3
      }
     },
@@ -21344,7 +21345,7 @@
      "surface": {
       "const": 1,
       "crate-vis": 1,
-      "fn": 2
+      "fn": 4
      }
     },
     {
@@ -21440,9 +21441,9 @@
      "kind": "src",
      "notable": [],
      "path": "src/memory/structural/affiliated.rs",
-     "purpose": "Attributed takes, companion records, and imported-claim admission verbs",
+     "purpose": "Attributed takes and imported-claim admission verbs",
      "surface": {
-      "fn": 4
+      "fn": 3
      }
     },
     {
@@ -21470,7 +21471,7 @@
      "kind": "src",
      "notable": [],
      "path": "src/memory/structural/mod.rs",
-     "purpose": "Structural puts (habit checkins, companion records, imported-claim admission, blob artifacts) and…",
+     "purpose": "Structural puts (habit checkins, imported-claim admission, blob artifacts) and `author_take`",
      "surface": {
       "crate-vis": 1,
       "re-export": 1
@@ -21493,7 +21494,6 @@
       "AdmitImportedClaimInput",
       "BlobArtifactInput",
       "BlobVersionView",
-      "CompanionRecordInput",
       "EntityRefReceipt",
       "EntityView",
       "HabitCheckinInput",
@@ -21504,7 +21504,7 @@
      "path": "src/memory/structural/types.rs",
      "purpose": "Read-facing views and per-verb inputs for structural puts",
      "surface": {
-      "struct": 10
+      "struct": 9
      }
     },
     {
@@ -21545,7 +21545,7 @@
      "surface": {}
     },
     {
-     "bucket": "XL",
+     "bucket": "L",
      "kind": "test",
      "notable": [],
      "path": "src/memory/tests/commit_claims.rs",
@@ -23036,7 +23036,7 @@
      "purpose": "—",
      "surface": {
       "const": 3,
-      "crate-vis": 1,
+      "crate-vis": 2,
       "enum": 4,
       "fn": 10,
       "struct": 5
@@ -23280,7 +23280,7 @@
      "path": "src/outbound/mod.rs",
      "purpose": "Outbound action capability manifests and dispatch spine for OF-327",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 4,
       "re-export": 7
      }
     },
@@ -23305,7 +23305,7 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "XL",
      "kind": "test",
      "notable": [],
      "path": "src/outbound/tests/connector_schedule.rs",
@@ -33844,7 +33844,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "test",
      "notable": [],
      "path": "src/workspace_roster/tests/onboarding_replay.rs",
@@ -38557,7 +38557,6 @@
       "NapiClaimListFilter",
       "NapiClaimView",
       "NapiCommitReceipt",
-      "NapiCompanionRecordInput",
       "NapiConsolidationJobInput",
       "NapiDeleteReceipt",
       "NapiDreamerJobRef",
@@ -38589,7 +38588,7 @@
      "path": "src/facade/dtos.rs",
      "purpose": "All napi(object) DTO structs for the actor-scoped surface",
      "surface": {
-      "struct": 41
+      "struct": 40
      }
     },
     {
@@ -38648,7 +38647,7 @@
      "path": "src/facade/verbs_services.rs",
      "purpose": "Structural/blob/retrieval/outbound/calendar verbs of the actor surface",
      "surface": {
-      "fn": 18
+      "fn": 17
      }
     },
     {
@@ -43148,7 +43147,6 @@
       "ClaimListFilter",
       "ClaimView",
       "CommitReceipt",
-      "CompanionRecordInput",
       "ConsolidationJobInput",
       "DeleteReceipt",
       "DreamerJobRef",
@@ -43186,7 +43184,7 @@
      "purpose": "The complete DTO inventory for the WIRE head contract",
      "surface": {
       "enum": 3,
-      "struct": 37
+      "struct": 36
      }
     },
     {
