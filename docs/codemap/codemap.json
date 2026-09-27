@@ -126,7 +126,7 @@
      "purpose": "Durable request/response lifecycle",
      "surface": {
       "enum": 1,
-      "fn": 3,
+      "fn": 4,
       "struct": 1
      }
     },
@@ -1380,7 +1380,7 @@
      "path": "src/attempt_queue/engine/reads.rs",
      "purpose": "Point/list/dedupe reads plus retry-chain and dreamer-root walks",
      "surface": {
-      "crate-vis": 15,
+      "crate-vis": 16,
       "fn": 4
      }
     },
@@ -7840,7 +7840,7 @@
      "path": "src/claim/scoped_read/point_reads.rs",
      "purpose": "Same-snapshot, receipted point and short-reference hydration doors",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 2,
       "fn": 9
      }
     },
@@ -10250,7 +10250,7 @@
      "path": "src/companion/vault.rs",
      "purpose": "Vault access-grant query for a companion PERSON profile",
      "surface": {
-      "fn": 1
+      "fn": 2
      }
     },
     {
@@ -12222,6 +12222,16 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [],
+     "path": "src/conversation/preview.rs",
+     "purpose": "Visible text projection over a checked selected path or the current ChildOf writer",
+     "surface": {
+      "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [
       "SessionMode",
       "SessionPresence"
@@ -12268,7 +12278,7 @@
      "path": "src/conversation_dag/admission.rs",
      "purpose": "Close the legacy ChildOf-only append door after DAG adoption",
      "surface": {
-      "crate-vis": 12
+      "crate-vis": 16
      }
     },
     {
@@ -12329,7 +12339,7 @@
      "path": "src/conversation_dag/mod.rs",
      "purpose": "Conversation DAG topology, local HEAD state and exact scope resolution",
      "surface": {
-      "crate-vis": 12,
+      "crate-vis": 14,
       "mod": 1,
       "re-export": 2
      }
@@ -12364,6 +12374,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/conversation_dag/retained_path.rs",
+     "purpose": "Read-only selected topology over retained TURN and SESSION headers",
+     "surface": {
+      "crate-vis": 6
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/conversation_dag/scopes.rs",
      "purpose": "Exact, capped scope resolution over a single transaction snapshot",
      "surface": {
@@ -12382,7 +12402,7 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "XL",
      "kind": "test",
      "notable": [],
      "path": "src/conversation_dag/tests/mod.rs",
@@ -12421,6 +12441,7 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
+      "AddressMode",
       "AppendRecord",
       "AppendedRecord",
       "DagPage",
@@ -12432,7 +12453,7 @@
      "path": "src/conversation_dag/types.rs",
      "purpose": "Door inputs and snapshot results",
      "surface": {
-      "enum": 1,
+      "enum": 2,
       "struct": 6
      }
     },
@@ -13366,7 +13387,7 @@
      "path": "src/dreamer_consolidation/assembly.rs",
      "purpose": "Store-backed mechanical inputs for the consolidation executor",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 3
      }
     },
     {
@@ -13376,7 +13397,7 @@
      "path": "src/dreamer_consolidation/branch_scope.rs",
      "purpose": "Durable branch restriction alongside a partition payload, not a partition or consolidation identity axis",
      "surface": {
-      "crate-vis": 6,
+      "crate-vis": 7,
       "fn": 4
      }
     },
@@ -13391,18 +13412,29 @@
       "ConsolidationBucketPlan",
       "PriorHead",
       "SwarmChildReturn",
-      "SwarmEvidenceRef"
+      "SwarmEvidenceRef",
+      "VerifiedSwarmEvidence"
      ],
      "path": "src/dreamer_consolidation/conflict.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 5,
-      "fn": 10,
-      "struct": 8
+      "crate-vis": 6,
+      "fn": 9,
+      "struct": 9
      }
     },
     {
-     "bucket": "m",
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/dreamer_consolidation/evidence.rs",
+     "purpose": "Parent-verified evidence is the sole scoped consolidation handoff",
+     "surface": {
+      "crate-vis": 25
+     }
+    },
+    {
+     "bucket": "L",
      "kind": "src",
      "notable": [
       "ConsolidationExecutor"
@@ -13410,17 +13442,18 @@
      "path": "src/dreamer_consolidation/executor.rs",
      "purpose": "—",
      "surface": {
+      "crate-vis": 1,
       "struct": 1
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/dreamer_consolidation/executor/extraction.rs",
      "purpose": "Extraction request/response projection for one admitted branch",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 3
      }
     },
     {
@@ -13431,16 +13464,6 @@
      "purpose": "JSON merge outcome decoding for the scoped consolidation judge",
      "surface": {
       "crate-vis": 2
-     }
-    },
-    {
-     "bucket": "s",
-     "kind": "src",
-     "notable": [],
-     "path": "src/dreamer_consolidation/executor/retry.rs",
-     "purpose": "Fresh source reads for scheduled selection retries, within the original partition",
-     "surface": {
-      "crate-vis": 1
      }
     },
     {
@@ -13475,7 +13498,7 @@
      "path": "src/dreamer_consolidation/gap.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 3,
       "enum": 1,
       "fn": 4,
       "struct": 2
@@ -13498,9 +13521,9 @@
      "path": "src/dreamer_consolidation/mod.rs",
      "purpose": "Dreamer consolidation algorithm + reflection gap scan (ONE-1289, DREAM-002; DESIGN-PIN-20260710 Part A)",
      "surface": {
-      "crate-vis": 4,
+      "crate-vis": 7,
       "mod": 2,
-      "re-export": 9
+      "re-export": 10
      }
     },
     {
@@ -13556,7 +13579,7 @@
      "path": "src/dreamer_consolidation/provenance.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 3,
       "enum": 1,
       "fn": 7,
       "struct": 5,
@@ -13570,7 +13593,7 @@
      "path": "src/dreamer_consolidation/resources.rs",
      "purpose": "Exact resource bounds for a consolidation partition",
      "surface": {
-      "crate-vis": 15,
+      "crate-vis": 23,
       "re-export": 1
      }
     },
@@ -13730,7 +13753,7 @@
      "surface": {}
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "test",
      "notable": [],
      "path": "src/dreamer_consolidation/tests/prior_heads.rs",
@@ -13754,7 +13777,7 @@
      "path": "src/dreamer_consolidation/tests/support.rs",
      "purpose": "Shared backend fixture for deadline-driven consolidation tests",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 4
      }
     },
     {
@@ -13765,6 +13788,20 @@
      "purpose": "Data projection between extraction/merge JSON and claim MessagePack values",
      "surface": {
       "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "PreparedConsolidationAttempt",
+      "PreparedWake"
+     ],
+     "path": "src/dreamer_consolidation/wake_plan.rs",
+     "purpose": "One frozen read revision and exact preparation of queued consolidation work",
+     "surface": {
+      "crate-vis": 16,
+      "struct": 2
      }
     },
     {
@@ -13979,7 +14016,7 @@
      "path": "src/dreamer_runner/authority.rs",
      "purpose": "One vault-owned Dreamer principal; job kinds are facets, not new authorities",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 4,
       "fn": 3,
       "re-export": 1,
       "struct": 1
@@ -14452,7 +14489,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [
       "DreamerWakeDriver"
@@ -17317,7 +17354,7 @@
      "path": "src/gate/mod.rs",
      "purpose": "DEC-0005 Gate policy manifest resolver",
      "surface": {
-      "crate-vis": 29,
+      "crate-vis": 30,
       "re-export": 4
      }
     },
@@ -17369,13 +17406,13 @@
      "surface": {}
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/gate/resolution/accessors.rs",
      "purpose": "Read-only resolved-field accessors plus the frontier-hash entry",
      "surface": {
-      "crate-vis": 27
+      "crate-vis": 29
      }
     },
     {
@@ -17449,6 +17486,16 @@
      "path": "src/gate/retrieval_filter/tests.rs",
      "purpose": "—",
      "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/gate/retry_source_policy.rs",
+     "purpose": "Typed manifest work budget for consolidation retries",
+     "surface": {
+      "crate-vis": 8
+     }
     },
     {
      "bucket": "s",
@@ -26476,6 +26523,16 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [],
+     "path": "src/provenance/derived_attachment.rs",
+     "purpose": "Validate generated support evidence at the provenance write door",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [
       "EdgeRef",
       "SupersessionStatus"
@@ -26740,7 +26797,7 @@
      "path": "src/psych_profile/store.rs",
      "purpose": "Vault put/get/state maintenance-gated persistence for profiles",
      "surface": {
-      "fn": 4
+      "fn": 5
      }
     },
     {
@@ -27035,7 +27092,7 @@
      "purpose": "Canonical Layer-1 recovery, validated rebuilds and bounded repair",
      "surface": {
       "const": 3,
-      "crate-vis": 3,
+      "crate-vis": 4,
       "enum": 2,
       "fn": 7,
       "mod": 1,
@@ -27229,13 +27286,13 @@
      "surface": {}
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/recovery/validation.rs",
      "purpose": "Fail-closed whole-payload validation before a recovery mutation",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 4
      }
     },
     {
@@ -32950,32 +33007,9 @@
      "path": "src/task_verb/ask_facade.rs",
      "purpose": "Async scope-authority asks over existing consult TASKs",
      "surface": {
-      "crate-vis": 6,
+      "crate-vis": 5,
       "fn": 7
      }
-    },
-    {
-     "bucket": "m",
-     "kind": "src",
-     "notable": [
-      "TaskAskOptionLink",
-      "TaskAskOptionLinkView"
-     ],
-     "path": "src/task_verb/ask_option_link.rs",
-     "purpose": "Per-revision, per-person bearer ingress for generic ask options (no page UI)",
-     "surface": {
-      "crate-vis": 4,
-      "fn": 6,
-      "struct": 2
-     }
-    },
-    {
-     "bucket": "s",
-     "kind": "test",
-     "notable": [],
-     "path": "src/task_verb/ask_option_link/tests.rs",
-     "purpose": "—",
-     "surface": {}
     },
     {
      "bucket": "m",
@@ -33002,36 +33036,16 @@
      "path": "src/task_verb/ask_record.rs",
      "purpose": "Protected replicated ask facts",
      "surface": {
-      "crate-vis": 22
+      "crate-vis": 21
      }
     },
     {
      "bucket": "s",
-     "kind": "src",
-     "notable": [],
-     "path": "src/task_verb/ask_record/link_proof.rs",
-     "purpose": "Replicable admission proof for a locally checked option-link bearer",
-     "surface": {
-      "crate-vis": 4
-     }
-    },
-    {
-     "bucket": "m",
      "kind": "test",
      "notable": [],
      "path": "src/task_verb/ask_record/tests.rs",
      "purpose": "—",
      "surface": {}
-    },
-    {
-     "bucket": "s",
-     "kind": "src",
-     "notable": [],
-     "path": "src/task_verb/ask_record/word_admission.rs",
-     "purpose": "Single answer admission path for authenticated actors and bearer-bound friends",
-     "surface": {
-      "crate-vis": 2
-     }
     },
     {
      "bucket": "m",
@@ -33040,7 +33054,7 @@
      "path": "src/task_verb/ask_settlement.rs",
      "purpose": "Atomic ask cutoffs and the fixed human-word reducers",
      "surface": {
-      "crate-vis": 7
+      "crate-vis": 6
      }
     },
     {
@@ -33300,7 +33314,6 @@
      "path": "src/task_verb/lifecycle_facade.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 1,
       "fn": 5
      }
     },
@@ -33325,9 +33338,9 @@
      "path": "src/task_verb/mod.rs",
      "purpose": "Typed, actor-bound verbs over the Context Board TASKS section",
      "surface": {
-      "crate-vis": 12,
+      "crate-vis": 11,
       "mod": 1,
-      "re-export": 17
+      "re-export": 16
      }
     },
     {
@@ -34847,27 +34860,39 @@
      "path": "src/voice_identity/mod.rs",
      "purpose": "VOX-02 voice identity substrate: consent log, enrollment, local matching",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 2,
       "mod": 1,
       "re-export": 1
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
-      "OwnerVoiceRefPack",
+      "VoiceIdentity",
       "VoiceRefOrigin",
+      "VoiceRefPack",
       "VoiceRegisterClip",
-      "VoiceTargetClone"
+      "VoiceTargetClone",
+      "VoiceTargetRecord"
      ],
      "path": "src/voice_identity/ref_bank.rs",
-     "purpose": "Private per-vault owner reference bank",
+     "purpose": "Private per-vault voice reference bank",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 2,
       "enum": 1,
-      "fn": 4,
-      "struct": 3
+      "fn": 7,
+      "struct": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/voice_identity/ref_limits.rs",
+     "purpose": "Resolved policy-manifest limits for the private render-reference bank",
+     "surface": {
+      "crate-vis": 9
      }
     },
     {
@@ -35297,7 +35322,7 @@
      "path": "src/write_envelope.rs",
      "purpose": "Write-path stamping: `WriteActor`/`WriteProvenance`/`WriteEnvelope`/`ClaimCandidate` + evidence stamping",
      "surface": {
-      "crate-vis": 17,
+      "crate-vis": 18,
       "fn": 28,
       "struct": 5
      }
@@ -35754,14 +35779,6 @@
      "bucket": "s",
      "kind": "test",
      "notable": [],
-     "path": "tests/it_sync/ask_option_link_replication.rs",
-     "purpose": "A real Loro exchange preserves issuer-verified foreign-stated ask evidence",
-     "surface": {}
-    },
-    {
-     "bucket": "s",
-     "kind": "test",
-     "notable": [],
      "path": "tests/it_sync/main.rs",
      "purpose": "Consolidated integration-test binary for the `sync`-feature cluster",
      "surface": {}
@@ -36014,6 +36031,14 @@
      "notable": [],
      "path": "tests/vault_read_parity.rs",
      "purpose": "ONE-1433 adapter parity suite: one read contract whose behavior does not change with deployment topology",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/voice_ref_bank.rs",
+     "purpose": "—",
      "surface": {}
     },
     {
@@ -36434,14 +36459,14 @@
      "purpose": "Persisted, deterministic Rust API, schema and command-output contracts"
     },
     "conversation": {
-     "files": 7,
+     "files": 8,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
      "purpose": "Room bodies, membership windows, session presence and audience visibility"
     },
     "conversation_dag": {
-     "files": 17,
+     "files": 18,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -36511,9 +36536,9 @@
      "purpose": "—"
     },
     "dreamer_consolidation": {
-     "files": 38,
+     "files": 39,
      "impl_vault": true,
-     "largest_src_bucket": "m",
+     "largest_src_bucket": "L",
      "layout": "dir",
      "purpose": "Dreamer consolidation algorithm + reflection gap scan (ONE-1289, DREAM-002; DESIGN-PIN-20260710 Part A)"
     },
@@ -36555,7 +36580,7 @@
     "dreamer_wake": {
      "files": 11,
      "impl_vault": true,
-     "largest_src_bucket": "m",
+     "largest_src_bucket": "L",
      "layout": "dir",
      "purpose": "Dreamer wake-pass driver (ONE-1288, DREAM-001 residual)"
     },
@@ -36665,7 +36690,7 @@
      "purpose": "—"
     },
     "gate": {
-     "files": 79,
+     "files": 80,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -36952,7 +36977,7 @@
      "purpose": "—"
     },
     "provenance": {
-     "files": 15,
+     "files": 16,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -37232,7 +37257,7 @@
      "purpose": "Replicated TASK authority: owner proof, cancellation, and acknowledgement as immutable companion TASK entities"
     },
     "task_verb": {
-     "files": 64,
+     "files": 60,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -37309,7 +37334,7 @@
      "purpose": "ONE-1807: the engine half of a transport-neutral text-brain voice cascade"
     },
     "voice_identity": {
-     "files": 9,
+     "files": 10,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -37351,10 +37376,10 @@
      "purpose": "Write-path stamping: `WriteActor`/`WriteProvenance`/`WriteEnvelope`/`ClaimCandidate` + evidence stamping"
     }
    },
-   "over_bar": 2,
+   "over_bar": 4,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2216,
-   "test_files": 758
+   "source_files": 2219,
+   "test_files": 757
   },
   "oneiron-android": {
    "files": [
@@ -41629,10 +41654,20 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/api/companion/lists.rs",
+     "purpose": "Bounded, authorization-checked companion list projections",
+     "surface": {
+      "crate-vis": 8
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/api/companion/mod.rs",
      "purpose": "Companion control-plane surface: access grants and psych-mirror profiles",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 6
      }
     },
     {
@@ -41792,7 +41827,7 @@
      "path": "src/api/conversation_dag/types.rs",
      "purpose": "Closed wire inputs for conversation topology and merge operations",
      "surface": {
-      "crate-vis": 26
+      "crate-vis": 27
      }
     },
     {
@@ -41812,7 +41847,7 @@
      "path": "src/api/conversations.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 10
+      "crate-vis": 12
      }
     },
     {
@@ -41862,7 +41897,7 @@
      "path": "src/api/core/query.rs",
      "purpose": "Query/list/capability routes and their paging helpers",
      "surface": {
-      "crate-vis": 17
+      "crate-vis": 16
      }
     },
     {
@@ -42610,7 +42645,7 @@
      "surface": {}
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "test",
      "notable": [],
      "path": "src/api/tests/conversation_dag.rs",
@@ -42626,7 +42661,7 @@
      "surface": {}
     },
     {
-     "bucket": "L",
+     "bucket": "XL",
      "kind": "test",
      "notable": [],
      "path": "src/api/tests/core_memory_conversations.rs",
@@ -44825,7 +44860,7 @@
      "purpose": "Host-bound UI and agent action executor over the engine's one verb registry"
     },
     "api": {
-     "files": 160,
+     "files": 161,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -45002,7 +45037,7 @@
    },
    "over_bar": 0,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 235,
+   "source_files": 236,
    "test_files": 98
   },
   "oneiron-uniffi": {

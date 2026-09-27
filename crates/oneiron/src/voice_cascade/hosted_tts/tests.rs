@@ -1,5 +1,5 @@
 use super::*;
-use crate::voice_identity::ref_bank::{OwnerVoiceRefPack, VoiceRefOrigin, VoiceRegisterClip};
+use crate::voice_identity::ref_bank::{VoiceRefOrigin, VoiceRefPack, VoiceRegisterClip};
 
 #[derive(Default)]
 struct Capture {
@@ -15,23 +15,49 @@ impl HostedTransport for Capture {
         Ok(())
     }
 }
-fn bank() -> (tempfile::TempDir, Vault, OwnerVoiceRefPack) {
-    let dir = tempfile::tempdir().expect("temporary vault");
-    let vault = Vault::open(dir.path(), crate::VaultConfig::device()).expect("open seeded vault");
-    let pack = OwnerVoiceRefPack {
+const VOICE: &str = "banked-voice";
+
+fn pack(id: &str, owner: EntityId, origin: VoiceRefOrigin) -> VoiceRefPack {
+    VoiceRefPack {
         version: 1,
-        id: "banked-registers".into(),
-        owner: EntityId::now(),
-        origin: VoiceRefOrigin::OwnerCapture,
+        id: id.into(),
+        voice_id: VOICE.into(),
+        owner,
+        origin,
         clips: vec![VoiceRegisterClip {
             register: "neutral".into(),
             media_type: "audio/wav".into(),
             audio: vec![1, 2, 3],
             transcript: "example".into(),
         }],
-    };
-    vault.store_owner_voice_refs(&pack).unwrap();
+    }
+}
+/// The identity exists, but no hosted target has been provisioned yet.
+fn bank() -> (tempfile::TempDir, Vault, VoiceRefPack) {
+    let dir = tempfile::tempdir().expect("temporary vault");
+    let vault = Vault::open(dir.path(), crate::VaultConfig::device()).expect("open seeded vault");
+    let pack = pack(
+        "banked-registers",
+        EntityId::now(),
+        VoiceRefOrigin::Captured,
+    );
+    vault.store_voice_ref_pack(&pack).unwrap();
     (dir, vault, pack)
+}
+/// Stands in for the host's provisioning flow: the vendor clone call runs
+/// outside the adapter, and only its returned voice ID is recorded.
+fn provision(
+    vault: &Vault,
+    provider: HostedProvider,
+    include_generated: bool,
+    vendor_voice_id: &str,
+) -> Result<()> {
+    let request = vault.prepare_voice_clone(VOICE, provider.target(), include_generated)?;
+    vault.record_voice_target_clone(&request, vendor_voice_id, 1)?;
+    Ok(())
+}
+fn bind(vault: &Vault, provider: HostedProvider) -> Result<HostedTtsAdapter<'_, Capture>> {
+    HostedTtsAdapter::bind(vault, VOICE, provider, false, Capture::default())
 }
 fn epoch(n: u128) -> GenerationEpoch {
     GenerationEpoch {
@@ -50,15 +76,13 @@ fn text(generation: GenerationEpoch, text: &str) -> TtsCommand {
 fn both_hosted_targets_render_from_bank_with_only_provisioned_locators() -> Result<()> {
     let (_dir, vault, pack) = bank();
     for provider in [HostedProvider::Cartesia, HostedProvider::ElevenLabsFlash] {
-        let mut adapter = HostedTtsAdapter::bind(
-            &vault,
-            &pack.id,
-            provider,
-            "preprovisioned_id-1",
-            Capture::default(),
-        )?;
-        assert_eq!(adapter.binding().source_pack, pack.id);
+        // An identity with no target record has nothing to render through.
+        assert!(bind(&vault, provider).is_err());
+        provision(&vault, provider, false, "preprovisioned_id-1")?;
+        let mut adapter = bind(&vault, provider)?;
+        assert_eq!(adapter.binding().voice_id, VOICE);
         assert_eq!(adapter.binding().owner, pack.owner);
+        assert_eq!(adapter.binding().vendor_voice_id, "preprovisioned_id-1");
         let generation = epoch(1);
         adapter.submit(TtsCommand::Start { generation })?;
         adapter.submit(text(generation, "test sentence"))?;
@@ -70,6 +94,7 @@ fn both_hosted_targets_render_from_bank_with_only_provisioned_locators() -> Resu
         assert_eq!(request.submission, 0);
         let wire = request.body.to_string();
         assert!(!wire.contains("banked-registers"));
+        assert!(!wire.contains(VOICE));
         assert!(!wire.contains("example"));
         assert!(!wire.contains("1,2,3"));
         match provider {
@@ -117,15 +142,10 @@ fn both_hosted_targets_render_from_bank_with_only_provisioned_locators() -> Resu
 
 #[test]
 fn rejection_is_retryable_but_failed_cancellation_closes_output() -> Result<()> {
-    let (_dir, vault, pack) = bank();
+    let (_dir, vault, _pack) = bank();
     for provider in [HostedProvider::Cartesia, HostedProvider::ElevenLabsFlash] {
-        let mut adapter = HostedTtsAdapter::bind(
-            &vault,
-            &pack.id,
-            provider,
-            "preprovisioned",
-            Capture::default(),
-        )?;
+        provision(&vault, provider, false, "preprovisioned")?;
+        let mut adapter = bind(&vault, provider)?;
         let generation = epoch(1);
         adapter.submit(TtsCommand::Start { generation })?;
         adapter.submit(text(generation, "one"))?;
@@ -140,12 +160,11 @@ fn rejection_is_retryable_but_failed_cancellation_closes_output() -> Result<()> 
         adapter.submit(TtsCommand::Cancel { generation })?;
         adapter.submit(TtsCommand::Cancel { generation })?;
         assert_eq!(adapter.transport.work.len(), 2);
+        vault.evict_voice_target(VOICE, provider.target())?;
+        provision(&vault, provider, false, "../key")?;
+        assert!(bind(&vault, provider).is_err());
         assert!(
-            HostedTtsAdapter::bind(&vault, &pack.id, provider, "../key", Capture::default())
-                .is_err()
-        );
-        assert!(
-            HostedTtsAdapter::bind(&vault, "missing", provider, "id", Capture::default()).is_err()
+            HostedTtsAdapter::bind(&vault, "missing", provider, false, Capture::default()).is_err()
         );
     }
     Ok(())
@@ -171,18 +190,15 @@ fn withdrawal_before_first_flush_revokes_both_hosted_targets() -> Result<()> {
     for provider in [HostedProvider::Cartesia, HostedProvider::ElevenLabsFlash] {
         let (_dir, vault, pack) = bank();
         let generation = epoch(9);
-        let mut adapter =
-            HostedTtsAdapter::bind(&vault, &pack.id, provider, "voice", Capture::default())?;
+        provision(&vault, provider, false, "voice")?;
+        let mut adapter = bind(&vault, provider)?;
         adapter.submit(TtsCommand::Start { generation })?;
         adapter.submit(text(generation, "never send"))?;
         withdraw(&vault, pack.owner, "withdraw-before-flush")?;
         assert!(adapter.submit(TtsCommand::Flush { generation }).is_err());
         assert_eq!(adapter.transport.work, [HostedWork::Cancel { generation }]);
         assert!(adapter.submit(text(generation, "late")).is_err());
-        assert!(
-            HostedTtsAdapter::bind(&vault, &pack.id, provider, "voice", Capture::default())
-                .is_err()
-        );
+        assert!(bind(&vault, provider).is_err());
     }
     Ok(())
 }
@@ -192,8 +208,8 @@ fn withdrawal_between_responses_cancels_all_pending_and_never_revives_a_binding(
     for provider in [HostedProvider::Cartesia, HostedProvider::ElevenLabsFlash] {
         let (_dir, vault, pack) = bank();
         let generation = epoch(10);
-        let mut adapter =
-            HostedTtsAdapter::bind(&vault, &pack.id, provider, "voice", Capture::default())?;
+        provision(&vault, provider, false, "voice")?;
+        let mut adapter = bind(&vault, provider)?;
         adapter.submit(TtsCommand::Start { generation })?;
         for fragment in ["first", "second"] {
             adapter.submit(text(generation, fragment))?;
@@ -211,7 +227,8 @@ fn withdrawal_between_responses_cancels_all_pending_and_never_revives_a_binding(
         assert!(adapter.submit(text(generation, "third")).is_err());
         assert_eq!(adapter.transport.work.len(), 3);
         // Reusing an ID (even with identical bytes) cannot resurrect the old incarnation.
-        vault.store_owner_voice_refs(&pack)?;
+        vault.store_voice_ref_pack(&pack)?;
+        provision(&vault, provider, false, "voice")?;
         assert!(adapter.submit(TtsCommand::Flush { generation }).is_err());
     }
     Ok(())
@@ -219,10 +236,10 @@ fn withdrawal_between_responses_cancels_all_pending_and_never_revives_a_binding(
 
 #[test]
 fn many_small_drained_requests_exceed_old_cumulative_limit_without_cancellation() -> Result<()> {
-    let (_dir, vault, pack) = bank();
+    let (_dir, vault, _pack) = bank();
     for provider in [HostedProvider::Cartesia, HostedProvider::ElevenLabsFlash] {
-        let mut adapter =
-            HostedTtsAdapter::bind(&vault, &pack.id, provider, "voice", Capture::default())?;
+        provision(&vault, provider, false, "voice")?;
+        let mut adapter = bind(&vault, provider)?;
         let generation = epoch(11);
         adapter.submit(TtsCommand::Start { generation })?;
         for n in 0..20 {
@@ -295,8 +312,8 @@ fn narrow_policy(vault: &Vault, provider: HostedProvider, holder: EntityId) -> R
 fn manifest_holder_limit_applies_to_live_text_and_pcm_fragments() -> Result<()> {
     for provider in [HostedProvider::Cartesia, HostedProvider::ElevenLabsFlash] {
         let (_dir, vault, pack) = bank();
-        let mut adapter =
-            HostedTtsAdapter::bind(&vault, &pack.id, provider, "voice", Capture::default())?;
+        provision(&vault, provider, false, "voice")?;
+        let mut adapter = bind(&vault, provider)?;
         let generation = epoch(12);
         adapter.submit(TtsCommand::Start { generation })?;
         narrow_policy(&vault, provider, pack.owner)?; // change AFTER bind, at the admission door
@@ -318,26 +335,130 @@ fn manifest_holder_limit_applies_to_live_text_and_pcm_fragments() -> Result<()> 
 fn withdrawal_and_same_id_recreation_cannot_revive_unobserved_old_binding() -> Result<()> {
     let (_dir, vault, pack) = bank();
     let generation = epoch(13);
-    let mut adapter = HostedTtsAdapter::bind(
-        &vault,
-        &pack.id,
-        HostedProvider::Cartesia,
-        "old-voice",
-        Capture::default(),
-    )?;
+    provision(&vault, HostedProvider::Cartesia, false, "old-voice")?;
+    let mut adapter = bind(&vault, HostedProvider::Cartesia)?;
     adapter.submit(TtsCommand::Start { generation })?;
     adapter.submit(text(generation, "unadmitted"))?;
     withdraw(&vault, pack.owner, "withdraw-replace")?;
-    vault.store_owner_voice_refs(&pack)?;
+    // Same identity ID, pack bytes, vendor ID and clone time: only the
+    // record revision differs, and it alone refuses the old binding.
+    vault.store_voice_ref_pack(&pack)?;
+    provision(&vault, HostedProvider::Cartesia, false, "old-voice")?;
     assert!(adapter.submit(TtsCommand::Flush { generation }).is_err());
     assert_eq!(adapter.transport.work, [HostedWork::Cancel { generation }]);
-    let fresh = HostedTtsAdapter::bind(
+    let fresh = bind(&vault, HostedProvider::Cartesia)?;
+    assert_eq!(fresh.binding().voice_id, VOICE);
+    assert_eq!(fresh.binding().vendor_voice_id, "old-voice");
+    assert_ne!(fresh.binding().revision, adapter.binding().revision);
+    Ok(())
+}
+
+#[test]
+fn hosted_binding_follows_target_record_currency() -> Result<()> {
+    let (_dir, vault, source) = bank();
+    let generation = epoch(14);
+    // A source-only record on one target, a record with AI refs on the other.
+    provision(&vault, HostedProvider::Cartesia, false, "source-only")?;
+    provision(
         &vault,
-        &pack.id,
-        HostedProvider::Cartesia,
-        "new-voice",
-        Capture::default(),
+        HostedProvider::ElevenLabsFlash,
+        true,
+        "with-generated",
     )?;
-    assert_eq!(fresh.binding().source_pack, pack.id);
+    let with_generated = || {
+        HostedTtsAdapter::bind(
+            &vault,
+            VOICE,
+            HostedProvider::ElevenLabsFlash,
+            true,
+            Capture::default(),
+        )
+    };
+    let mut source_only = bind(&vault, HostedProvider::Cartesia)?;
+    let mut all_refs = with_generated()?;
+    for adapter in [&mut source_only, &mut all_refs] {
+        adapter.submit(TtsCommand::Start { generation })?;
+    }
+
+    let generated = pack("generated", source.owner, VoiceRefOrigin::Generated);
+    vault.store_voice_ref_pack(&generated)?;
+    source_only.submit(text(generation, "still mine"))?;
+    source_only.submit(TtsCommand::Flush { generation })?;
+    assert!(matches!(
+        source_only.transport.work[..],
+        [HostedWork::Render(_)]
+    ));
+    assert!(all_refs.submit(text(generation, "stale")).is_err());
+    assert_eq!(all_refs.transport.work, [HostedWork::Cancel { generation }]);
+    assert!(with_generated().is_err());
+    provision(
+        &vault,
+        HostedProvider::ElevenLabsFlash,
+        true,
+        "with-generated",
+    )?;
+    let mut all_refs = with_generated()?;
+    all_refs.submit(TtsCommand::Start { generation })?;
+
+    let designed = pack(
+        "designed",
+        source.owner,
+        VoiceRefOrigin::Designed {
+            vendor: "design-tool".into(),
+        },
+    );
+    vault.store_voice_ref_pack(&designed)?;
+    assert!(source_only.submit(text(generation, "stale")).is_err());
+    assert!(matches!(
+        source_only.transport.work[..],
+        [HostedWork::Render(_), HostedWork::Cancel { .. }]
+    ));
+    assert!(all_refs.submit(text(generation, "stale")).is_err());
+    assert!(bind(&vault, HostedProvider::Cartesia).is_err());
+    assert!(with_generated().is_err());
+    provision(&vault, HostedProvider::Cartesia, false, "source-only")?;
+    provision(
+        &vault,
+        HostedProvider::ElevenLabsFlash,
+        true,
+        "with-generated",
+    )?;
+    bind(&vault, HostedProvider::Cartesia)?;
+    with_generated()?;
+    Ok(())
+}
+
+#[test]
+fn hosted_bind_checks_url_safety_not_length() -> Result<()> {
+    let (_dir, vault, _pack) = bank();
+    let long = format!("{}_-9", "v".repeat(197));
+    assert_eq!(long.len(), 200);
+    for provider in [HostedProvider::Cartesia, HostedProvider::ElevenLabsFlash] {
+        provision(&vault, provider, false, &long)?;
+        let mut adapter = bind(&vault, provider)?;
+        assert_eq!(adapter.binding().vendor_voice_id, long);
+        let generation = epoch(15);
+        adapter.submit(TtsCommand::Start { generation })?;
+        adapter.submit(text(generation, "long id"))?;
+        adapter.submit(TtsCommand::Flush { generation })?;
+        let HostedWork::Render(request) = &adapter.transport.work[0] else {
+            panic!("render")
+        };
+        match provider {
+            HostedProvider::Cartesia => assert_eq!(request.body["voice"]["id"], long.as_str()),
+            HostedProvider::ElevenLabsFlash => {
+                assert!(
+                    request
+                        .url
+                        .contains(&format!("/text-to-speech/{long}/stream"))
+                );
+            }
+        }
+
+        vault.evict_voice_target(VOICE, provider.target())?;
+        provision(&vault, provider, false, "voice/../key")?;
+        assert!(bind(&vault, provider).is_err());
+        vault.evict_voice_target(VOICE, provider.target())?;
+    }
     Ok(())
 }

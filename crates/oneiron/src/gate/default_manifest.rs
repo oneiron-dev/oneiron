@@ -41,6 +41,14 @@ pub(crate) fn default_policy_manifest() -> Vec<u8> {
             Value::from(POLICY_SCHEMA_VERSION),
         ),
         (
+            Value::from("retry_source_policy"),
+            Value::Array(vec![Value::Map(vec![
+                (Value::from("selector"), Value::from("vault")),
+                (Value::from("max_sources"), Value::from(1_024_u64)),
+                (Value::from("precedence"), Value::from("nested_narrowing")),
+            ])]),
+        ),
+        (
             Value::from(POLICY_PACK_ID_KEY),
             Value::from("oneiron-default-policy"),
         ),
@@ -66,6 +74,35 @@ pub(crate) fn default_policy_manifest() -> Vec<u8> {
             Value::Map(vec![
                 (Value::from(AXIS_CRITICALITY_KEY), Value::from("critical")),
                 (Value::from(AXIS_SENSITIVITY_KEY), Value::from("normal")),
+            ]),
+        ),
+        // Shipped voice-reference limits are editable policy data. Owner packs
+        // replace named defaults; the default precedence keeps holders under
+        // the vault ceiling and narrows multiple trusted contributions.
+        (
+            Value::from("voice_ref_limits"),
+            Value::Map(vec![
+                (Value::from("precedence"), Value::from("nested_narrowing")),
+                (
+                    Value::from("vault"),
+                    Value::Map(vec![
+                        (Value::from("max_clips_per_pack"), Value::from(32u64)),
+                        (
+                            Value::from("max_audio_bytes_per_pack"),
+                            Value::from(16u64 * 1024 * 1024),
+                        ),
+                        (Value::from("max_register_bytes"), Value::from(128u64)),
+                        (Value::from("max_transcript_bytes"), Value::from(16_384u64)),
+                        (
+                            Value::from("max_design_vendor_bytes"),
+                            Value::from(4_096u64),
+                        ),
+                        (
+                            Value::from("max_vendor_voice_id_bytes"),
+                            Value::from(4_096u64),
+                        ),
+                    ]),
+                ),
             ]),
         ),
         (
