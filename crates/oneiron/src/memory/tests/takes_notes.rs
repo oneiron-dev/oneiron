@@ -591,10 +591,12 @@ fn diary_note_is_actor_private_across_reads_recall_and_pack_neighbors() {
     };
     let proof_of = |slip: &crate::authority::CapabilitySlip| {
         let signature = issuer.binding_proof(slip, b"diary-read").unwrap();
-        let proof = vault
+        vault
             .verify_capability_slip(&issuer.public_key(), slip, b"diary-read", &signature)
-            .unwrap();
-        ScopedReadActorKey::from_verified_slip(&proof).unwrap()
+            .unwrap()
+    };
+    let read_key = |slip: &crate::authority::CapabilitySlip| {
+        ScopedReadActorKey::from_verified_slip(&proof_of(slip)).unwrap()
     };
     let owner_slip = mint_actor(owner);
     let other_slip = mint_actor(other);

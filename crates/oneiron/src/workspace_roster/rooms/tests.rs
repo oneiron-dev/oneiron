@@ -263,7 +263,7 @@ fn exact_project_and_room_batch_still_has_a_roster_audience() -> Result<()> {
     assert_eq!(vault.room_audience_members(room)?, vec![leader, peer]);
     // The stored derived body identifies the substrate even if the auxiliary
     // marker is absent. Losing it cannot reinterpret this room as empty.
-    let key = [super::super::project::ROOM_PROJECT, room.as_bytes()].concat();
+    let key = super::super::project::ROOM_PROJECT.key_bytes(&room);
     let mut txn = vault.store.env.write_txn()?;
     vault.store.vault_meta.delete(&mut txn, &key)?;
     txn.commit()?;

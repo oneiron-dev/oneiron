@@ -262,7 +262,7 @@ fn companion_birth_retries_after_baseline_commit_and_grant_failure() -> Result<(
             // separate CompanionBorn journal write.
             birth_companion(&vault, &intent, &birth, &owner)?;
         }
-        let journal = read_journal(&vault, &onboarding_key(&intent.onboarding_id))?
+        let journal = read_journal(&vault, &intent.onboarding_id)?
             .expect("the birth step did not advance its journal");
         assert_eq!(
             journal.step,
@@ -290,7 +290,7 @@ fn companion_birth_retries_after_baseline_commit_and_grant_failure() -> Result<(
             Some(expected_grant)
         );
         assert_eq!(
-            read_journal(&vault, &onboarding_key(&intent.onboarding_id))?
+            read_journal(&vault, &intent.onboarding_id)?
                 .expect("completed journal")
                 .step,
             MemberOnboardingStep::Complete

@@ -242,12 +242,15 @@ fn a_manifest_without_a_read_grant_admits_only_what_a_verified_slip_scope_admits
     let mut world_only = root;
     let mut scope = Scope::top();
     scope.worlds = ScopeAxis::Some(BTreeSet::from([ScopeId(world)]));
-    world_only.attenuate(SlipCaveat {
-        scope: Some(scope),
-        ..Default::default()
-    })?;
+    issuer.attenuate(
+        &mut world_only,
+        SlipCaveat {
+            scope: Some(scope),
+            ..Default::default()
+        },
+    )?;
     let narrowed = vault.verify_capability_slip(
-        &issuer,
+        &issuer.public_key(),
         &world_only,
         b"t49-world",
         &issuer.binding_proof(&world_only, b"t49-world")?,
@@ -332,12 +335,15 @@ fn a_slip_granting_core_read_builds_a_read_key_and_a_write_slip_does_not() -> Re
         let mut slip = root.clone();
         let mut scope = Scope::top();
         scope.verbs = ScopeAxis::Some(BTreeSet::from([verb.to_owned()]));
-        slip.attenuate(SlipCaveat {
-            scope: Some(scope),
-            ..Default::default()
-        })?;
+        issuer.attenuate(
+            &mut slip,
+            SlipCaveat {
+                scope: Some(scope),
+                ..Default::default()
+            },
+        )?;
         let proof = vault.verify_capability_slip(
-            &issuer,
+            &issuer.public_key(),
             &slip,
             verb.as_bytes(),
             &issuer.binding_proof(&slip, verb.as_bytes())?,

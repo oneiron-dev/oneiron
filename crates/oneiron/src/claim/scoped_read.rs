@@ -152,7 +152,13 @@ impl<'a> ScopedRead<'a> {
         };
         let human = crate::edge::EdgeActorClass::Human;
         crate::memory::verify_actor_binding_in_txn(self.vault, txn, owner, human)
-            .and_then(|()| crate::memory::verify_owner_actor_binding_in_txn(self.vault, txn, owner))
+            .and_then(|()| {
+                if crate::vault::embedded_owner_actor_id().ok() == Some(owner) {
+                    Ok(())
+                } else {
+                    crate::memory::verify_owner_actor_binding_in_txn(self.vault, txn, owner)
+                }
+            })
             .map_err(|_| Error::InvalidClaimBody("scoped read owner binding no longer live"))
     }
 

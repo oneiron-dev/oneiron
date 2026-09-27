@@ -48,16 +48,24 @@ impl Memory<'_> {
                 })?;
             return Ok(self.vault.scoped_read(key).with_claim_status(claims));
         }
-        let owner = match self.verify_owner_in_txn(&txn) {
-            Ok(()) => true,
-            // Not the owner: a human without the binding, or another class.
-            Err(error)
-                if error.code == MEMORY_CODE_OWNER_BINDING_REQUIRED
-                    || error.code == MEMORY_CODE_FORBIDDEN =>
-            {
-                false
+        let owner = if self.actor_class == crate::EdgeActorClass::Human
+            && self.actor == crate::vault::embedded_owner_actor_id()?
+        {
+            // The local embedded-owner reader is the host's own-device read lane.
+            // A separately paired authority root does not turn it into a peer.
+            true
+        } else {
+            match self.verify_owner_in_txn(&txn) {
+                Ok(()) => true,
+                // Not the owner: a human without the binding, or another class.
+                Err(error)
+                    if error.code == MEMORY_CODE_OWNER_BINDING_REQUIRED
+                        || error.code == MEMORY_CODE_FORBIDDEN =>
+                {
+                    false
+                }
+                Err(error) => return Err(error),
             }
-            Err(error) => return Err(error),
         };
         let key = if owner {
             ScopedReadActorKey::vault_owner(self.actor)
@@ -69,6 +77,7 @@ impl Memory<'_> {
             .ok_or_else(|| {
                 MemoryError::bad_request("bound actor cannot be used as a scoped read key")
             })?
+            .require_access_grants(Some(self.actor))
         };
         Ok(self.vault.scoped_read(key).with_claim_status(claims))
     }

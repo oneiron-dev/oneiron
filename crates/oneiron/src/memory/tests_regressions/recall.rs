@@ -1368,6 +1368,7 @@ fn scoped_recall_never_renders_an_unreadable_edge_neighbor() {
         &facade
             .get_entity(&hidden.message_short_ids[0])
             .unwrap()
+            .value
             .unwrap()
             .id_hex,
     )
@@ -1735,6 +1736,7 @@ fn scoped_recall_provenance_does_not_name_a_denied_supersedes_target() {
         &facade_for(&vault, owner)
             .get_entity(&anchor.message_short_ids[0])
             .unwrap()
+            .value
             .unwrap()
             .id_hex,
     )
@@ -1754,6 +1756,7 @@ fn scoped_recall_provenance_does_not_name_a_denied_supersedes_target() {
         &facade_for(&vault, owner)
             .get_entity(&receipt.message_short_ids[0])
             .unwrap()
+            .value
             .unwrap()
             .id_hex,
     )

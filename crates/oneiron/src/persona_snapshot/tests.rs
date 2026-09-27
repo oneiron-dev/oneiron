@@ -898,7 +898,12 @@ fn persona_snapshot_reads_keep_their_receipts() -> Result<()> {
     ]));
     let slip = vault.mint_capability_slip(&issuer, claims)?;
     let signature = issuer.binding_proof(&slip, b"persona-receipt")?;
-    let verified = vault.verify_capability_slip(&issuer, &slip, b"persona-receipt", &signature)?;
+    let verified = vault.verify_capability_slip(
+        &issuer.public_key(),
+        &slip,
+        b"persona-receipt",
+        &signature,
+    )?;
     let reader = ScopedReadActorKey::from_verified_slip(&verified).expect("slip reader");
     let session = vault.begin_standing_block_session(
         &handle,
