@@ -1534,3 +1534,49 @@ fn door_ttl_narrowing_and_unreadable_policy_refuse_materialization() {
     );
     assert!(!injected);
 }
+
+#[test]
+fn bounded_door_lease_checks_effective_duration_against_dial() {
+    use crate::credential_door::DOOR_RECEIVE_PACK_EFFECTOR;
+    use rmpv::Value;
+
+    let (_tmp, vault) = temp_vault();
+    door_secret(&vault);
+    narrow_door_policy(
+        &vault,
+        0x74,
+        vec![(
+            Value::from("secret.door.max_lease_ttl_secs"),
+            Value::from(30_u64),
+        )],
+    );
+    let now = vault.store.clock.now_recorded_at();
+    let bound = now + 25;
+    let granted = vault
+        .materialize_secret_lease_bounded(
+            "dial-secret",
+            DOOR_RECEIVE_PACK_EFFECTOR,
+            60,
+            Some(bound),
+        )
+        .expect("the effective 25-second lease fits the narrowed ceiling");
+    assert_eq!(granted.lease.expires_at, bound);
+    assert!(granted.lease.expires_at - granted.lease.granted_at <= 30);
+    assert_eq!(count_rows(&vault, SECRET_LEASE_KEY_PREFIX), 1);
+
+    let refused = vault.materialize_secret_lease_bounded(
+        "dial-secret",
+        DOOR_RECEIVE_PACK_EFFECTOR,
+        60,
+        Some(now + 120),
+    );
+    assert!(
+        matches!(
+            refused,
+            Err(Error::Secret(SecretError::SecretDoorPolicyRefused { .. }))
+        ),
+        "the effective 60-second lease must exceed the ceiling: {refused:?}"
+    );
+    assert_eq!(count_rows(&vault, SECRET_LEASE_KEY_PREFIX), 1);
+    assert_eq!(count_rows(&vault, SECRET_MATERIALIZATION_RECEIPT_PREFIX), 1);
+}
