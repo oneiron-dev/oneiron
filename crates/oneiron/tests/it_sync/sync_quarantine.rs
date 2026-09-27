@@ -1939,7 +1939,10 @@ fn agent_record_rejections_do_not_wedge_replay_and_missing_projects_readmit() {
                 "missing quarantine for {reason}: {records:?}"
             );
         }
-        let parent_body = ProjectRecord::new(parent, Some(root_id), root_id, leader);
+        let mut parent_body = ProjectRecord::new(parent, Some(root_id), root_id, leader);
+        // The waiting child has zero descendant-spawn levels; its parent
+        // must retain one for out-of-order replay to admit the child.
+        parent_body.depth_remaining = 1;
         insert_bytes(
             &entities,
             &parent.to_hex(),

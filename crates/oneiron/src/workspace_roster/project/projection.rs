@@ -77,6 +77,21 @@ pub(crate) fn validate_project_body(id: EntityId, bytes: &[u8]) -> Result<Vec<En
     if !body.roster.contains(&body.leader) {
         return Err(invalid());
     }
+    ids.extend(
+        [
+            body.slice.world,
+            body.slice.facet,
+            body.slice.relationship,
+            body.slice.project,
+        ]
+        .into_iter()
+        .flatten(),
+    );
+    for resource in body.slice.readable.iter().chain(&body.slice.writable) {
+        if let crate::llm::ScopeResource::DocumentVersion { document, .. } = resource {
+            ids.push(*document);
+        }
+    }
     Ok(ids)
 }
 

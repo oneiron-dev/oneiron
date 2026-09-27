@@ -384,3 +384,119 @@ fn project_depth_is_bounded_by_its_row_and_zero_refuses_spawn() -> Result<()> {
     );
     Ok(())
 }
+
+#[test]
+fn project_slice_entity_refs_cannot_publish_live_off_record_ids() -> Result<()> {
+    use crate::llm::ScopeResource;
+    use crate::off_record::OffRecordBackendClass;
+    use crate::session_overlay::OverlayKeyspace;
+
+    let dir = tempfile::tempdir()?;
+    let vault = Vault::open(dir.path(), crate::VaultConfig::default())?;
+    let root_id = vault.root_project()?;
+    let original = vault.project(root_id)?.unwrap();
+    let room_id = EntityId::from_hex(&original.home_room)?;
+    let original_room = vault.project_room(room_id)?;
+    let tainted = EntityId::now();
+    let session = vault
+        .off_record_session_vault()
+        .enter("project-slice-taint", OffRecordBackendClass::Local)?;
+    let overlay = session.overlay();
+    let segment = overlay.install_txn_segment()?;
+    overlay.put(OverlayKeyspace::Entities, tainted.as_bytes(), b"overlay")?;
+    segment.commit()?;
+    for field in 0..6 {
+        let mut body = original.clone();
+        match field {
+            0 => body.slice.world = Some(tainted),
+            1 => body.slice.facet = Some(tainted),
+            2 => body.slice.relationship = Some(tainted),
+            3 => body.slice.project = Some(tainted),
+            4 => {
+                body.slice.readable.insert(ScopeResource::DocumentVersion {
+                    document: tainted,
+                    version: "rev".into(),
+                });
+            }
+            _ => {
+                body.slice.writable.insert(ScopeResource::DocumentVersion {
+                    document: tainted,
+                    version: "rev".into(),
+                });
+            }
+        }
+        let bytes = encode(&body)?;
+        for door in 0..2 {
+            let err = if door == 0 {
+                vault.put_project(root_id, &body, 1).unwrap_err()
+            } else {
+                vault
+                    .batch()
+                    .put(
+                        &root_id,
+                        vault.project_type_byte()?,
+                        TimeRange { start: 1, end: 1 },
+                        1,
+                        &bytes,
+                    )
+                    .commit()
+                    .unwrap_err()
+            };
+            assert_eq!(
+                err.kind(),
+                crate::error::ErrorKind::OffRecordTaintedBaseWrite,
+                "field {field}, door {door}"
+            );
+            assert_eq!(vault.project(root_id)?, Some(original.clone()));
+            assert_eq!(vault.project_room(room_id)?, original_room);
+        }
+    }
+    session.close()?;
+    Ok(())
+}
+
+#[cfg(all(feature = "sync", feature = "test-hooks"))]
+#[test]
+fn project_slice_replay_refuses_live_off_record_id() -> Result<()> {
+    use crate::off_record::OffRecordBackendClass;
+    use crate::session_overlay::OverlayKeyspace;
+
+    let dir = tempfile::tempdir()?;
+    let vault = Vault::open(dir.path(), crate::VaultConfig::default())?;
+    let root_id = vault.root_project()?;
+    let original = vault.project(root_id)?.unwrap();
+    let room_id = EntityId::from_hex(&original.home_room)?;
+    let room = vault.project_room(room_id)?;
+    let tainted = EntityId::now();
+    let session = vault
+        .off_record_session_vault()
+        .enter("project-replay-taint", OffRecordBackendClass::Local)?;
+    let overlay = session.overlay();
+    let segment = overlay.install_txn_segment()?;
+    overlay.put(OverlayKeyspace::Entities, tainted.as_bytes(), b"overlay")?;
+    segment.commit()?;
+    let mut body = original.clone();
+    body.slice.project = Some(tainted);
+    let err = vault
+        .with_write_txn(|txn| {
+            vault
+                .batch_in()
+                .put_replicated(
+                    &root_id,
+                    vault.project_type_byte()?,
+                    TimeRange { start: 2, end: 2 },
+                    2,
+                    &encode(&body)?,
+                )
+                .apply(txn)
+        })
+        .unwrap_err();
+    assert_eq!(
+        err.kind(),
+        crate::error::ErrorKind::OffRecordTaintedBaseWrite
+    );
+    assert_eq!(vault.project(root_id)?, Some(original));
+    assert_eq!(vault.project_room(room_id)?, room);
+    session.close()?;
+    Ok(())
+}
