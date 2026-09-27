@@ -10063,10 +10063,39 @@
      "path": "src/config/failure_signals.rs",
      "purpose": "Deployment-tier participation is separate from permission to train",
      "surface": {
+      "crate-vis": 1,
       "enum": 1,
       "fn": 2,
+      "re-export": 1,
       "struct": 1
      }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "RedactionKind",
+      "RedactionSpan",
+      "Tier2Redactor",
+      "Tier2Sample"
+     ],
+     "path": "src/config/failure_signals/samples.rs",
+     "purpose": "Vault-local tier-2 sampling",
+     "surface": {
+      "crate-vis": 1,
+      "enum": 1,
+      "fn": 2,
+      "struct": 2,
+      "trait": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "src/config/failure_signals/tests.rs",
+     "purpose": "—",
+     "surface": {}
     },
     {
      "bucket": "s",
@@ -35339,7 +35368,7 @@
      "purpose": "Companion relationship/persona record substrate"
     },
     "config": {
-     "files": 3,
+     "files": 5,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "file+dir",
@@ -36321,8 +36350,8 @@
    },
    "over_bar": 11,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2144,
-   "test_files": 730
+   "source_files": 2145,
+   "test_files": 731
   },
   "oneiron-android": {
    "files": [
