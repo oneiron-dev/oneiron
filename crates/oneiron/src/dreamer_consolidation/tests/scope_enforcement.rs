@@ -75,6 +75,7 @@ fn branch_resources_enforce_exact_reads_writes_and_revisions() -> Result<()> {
         kind: ReflectionGapKind::ContradictionLeftStanding,
         subject: conversation,
         evidence_turn_refs: turns.clone(),
+        evidence_refs: Vec::new(),
         first_seen: 0,
         last_seen: 0,
         escalations: 0,

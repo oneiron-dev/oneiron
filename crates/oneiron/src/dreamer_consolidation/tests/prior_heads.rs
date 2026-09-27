@@ -626,6 +626,119 @@ fn fast_path_and_judge_merge_share_deferred_closure() -> Result<()> {
     Ok(())
 }
 
+#[test]
+fn saved_execution_scope_pins_claim_across_retry_wakes() -> Result<()> {
+    let (_dir, vault) = open_vault();
+    let fx = fixture(&vault)?;
+    let store = DreamerRunnerStore::new(&vault);
+    vault.set_consolidation_selection(&selection::SelectionConfig {
+        soak_ms: 0,
+        evidence_minimum: 3,
+        ..Default::default()
+    })?;
+    let response = text_response(
+        serde_json::json!({"candidates":[{
+            "subject":fx.subject.to_hex(), "predicate":"profile.nickname", "value":"Lex",
+            "evidence_refs":[
+                {"source_id":fx.turn.to_hex(),"byte_range":[0,1]},
+                {"source_id":fx.head.to_hex(),"claim_id":fx.head.to_hex()}
+            ]
+        }]})
+        .to_string(),
+    );
+    let first_backend = ScriptedBackend::new(vec![Ok(response.clone())]);
+    let first_pin = WakeEvidenceSnapshot::capture_with_grants(
+        &vault,
+        DreamerConsolidationScope::Micro,
+        Some(&fx.scope),
+    )?;
+    let mut sink = CapturingSink::default();
+    let held = execute_at_pin(
+        &vault,
+        &fx,
+        &first_backend,
+        &mut sink,
+        fx.scope.clone(),
+        Some(&first_pin),
+    )?;
+    let DreamerAttemptExecution::Deferred {
+        completed_units,
+        retry_at,
+    } = held
+    else {
+        panic!("first wake must schedule a selection retry")
+    };
+    store.defer_selection(
+        &fx.attempt,
+        crate::dreamer_runner::SettleDreamerBudget {
+            budget_id: "wake".into(),
+            child_attempt: fx.attempt.status.attempt.id,
+            actual_units: completed_units,
+            now: 21,
+        },
+        retry_at,
+    )?;
+    // The exact CLAIM grant exists only in the saved execution scope. A new
+    // executor with no host bound must still pin it before retry admission.
+    let second_pin = WakeEvidenceSnapshot::capture(&vault, DreamerConsolidationScope::Micro)?;
+    let next = match store.admit_next_consolidation(AdmitDreamerConsolidationAttempt {
+        scope: DreamerConsolidationScope::Micro,
+        local_node_id: crate::identity::load_or_mint_client_id(&vault)?,
+        claim_authoring_tier: DreamerClaimAuthoringBatchTier::batch(),
+        claim_authoring: DreamerClaimAuthoringAdmission::single_pass(),
+        admission: AdmitDreamerAttempt {
+            lease_owner: "second-wake".into(),
+            now: retry_at,
+            budget_id: "wake".into(),
+            budget_total_units: 10_000,
+            reserve_units: 100,
+            started_milestone: None,
+        },
+    })? {
+        DreamerConsolidationAdmissionOutcome::Admission(DreamerAdmissionOutcome::Admitted(row)) => {
+            row
+        }
+        other => panic!("{other:?}"),
+    };
+    vault.set_consolidation_selection(&selection::SelectionConfig {
+        soak_ms: 0,
+        evidence_minimum: 2,
+        ..Default::default()
+    })?;
+    let second_backend = ScriptedBackend::new(vec![Ok(response)]);
+    let guard = crate::BudgetGuard::with_reserve_units(
+        "wake",
+        10_000,
+        100,
+        BudgetExhaustionPolicy::Suspend,
+    );
+    let deadline = WakePassDeadline::with_clock(180_000, std::sync::Arc::new(|| 0));
+    let mut executor = ConsolidationExecutor {
+        backend: &second_backend,
+        guard: &guard,
+        strategy: DreamerClaimAuthoringStrategy::SinglePass,
+        actor: vault.dreamer_authority()?,
+        model: crate::ModelId::new("test/model@r1").expect("model"),
+        sink: &mut sink,
+        scope: None,
+    };
+    let mut ctx = WakeAttemptContext {
+        vault: &vault,
+        deadline: &deadline,
+        budget_id: "wake",
+        now_ms: retry_at * 1_000,
+        ledger_pin: Some(&second_pin),
+    };
+    assert!(matches!(
+        block_on_ready(executor.execute(&next, &mut ctx))?,
+        DreamerAttemptExecution::Completed { .. }
+    ));
+    drop(executor);
+    assert_eq!(sink.accepted.len(), 1);
+    assert!(sink.accepted[0].evidence_turn_refs.contains(&fx.head));
+    Ok(())
+}
+
 fn attachment_wrapper(vault: &Vault, source: EntityId, head: EntityId) -> Result<ClaimBody> {
     let edge = crate::provenance::EdgeRef {
         source,
@@ -844,6 +957,139 @@ fn pinned_exact_head_attachment_accepts_other_claim_with_restrictive_meet() -> R
         )?))?,
         locators
     );
+    Ok(())
+}
+
+#[test]
+fn claim_cited_conflict_meets_taint_and_preserves_gap_and_survivor() -> Result<()> {
+    for fatal_judge in [false, true] {
+        let (_dir, vault) = open_vault();
+        let fx = fixture(&vault)?;
+        let cited = EntityId::now();
+        let actor = EntityId::now();
+        vault.put_entity(&actor, ENTITY_TYPE_PERSON, occurred(1), 1, b"owner")?;
+        let envelope = WriteEnvelope::new(
+            WriteActor::new(actor, EdgeActorClass::Human),
+            ClaimSource::Imported,
+            WriteProvenance::new("imported citation".into())?,
+            ClaimApprovalStatus::Approved,
+        );
+        vault
+            .batch()
+            .claim_candidate(
+                &cited,
+                ClaimCandidate::new(
+                    "profile.employer",
+                    ClaimSubject::Entity(fx.subject),
+                    "Acme".into(),
+                    0.8,
+                ),
+                &envelope,
+                occurred(2),
+                2,
+            )
+            .commit()?;
+        let bytes = vault.get(&cited)?.expect("stored citation");
+        let mut scope = fx.scope.clone();
+        scope.readable.insert(document_version(cited, &bytes));
+        let digest = swarm_evidence_content_hash(&bytes);
+        let pin = WakeEvidenceSnapshot::capture_with_grants(
+            &vault,
+            DreamerConsolidationScope::Micro,
+            Some(&scope),
+        )?;
+        let extraction = text_response(
+            serde_json::json!({"candidates":[
+                {"subject":fx.subject.to_hex(), "predicate":"profile.name", "value":"Alex",
+                 "evidence_refs":[{"source_id":cited.to_hex(), "claim_id":cited.to_hex()}]},
+                {"subject":fx.subject.to_hex(), "predicate":"profile.tone", "value":"warm",
+                 "evidence_refs":[{"source_id":fx.turn.to_hex(), "byte_range":[0,1]}]}
+            ]})
+            .to_string(),
+        );
+        let judge = if fatal_judge {
+            Err(crate::LlmError::Fatal(crate::FatalLlmError::Auth))
+        } else {
+            Ok(text_response(r#"{"resolution":"escalate"}"#.into()))
+        };
+        let backend = ScriptedBackend::new(vec![Ok(extraction), judge]);
+        let mut sink = PromotionWriterSink::new(&vault, fx.run.clone());
+        vault.set_consolidation_selection(&selection::SelectionConfig {
+            soak_ms: 0,
+            evidence_minimum: 1,
+            ..Default::default()
+        })?;
+        let outcome = execute_at_pin(&vault, &fx, &backend, &mut sink, scope, Some(&pin))?;
+        assert!(matches!(outcome, DreamerAttemptExecution::Completed { .. }));
+        let markers: Vec<_> = vault
+            .claims_for_subject(&fx.subject)?
+            .into_iter()
+            .map(|id| vault.get_claim(&id))
+            .collect::<Result<Vec<_>>>()?
+            .into_iter()
+            .flatten()
+            .filter(|body| body.predicate == crate::claim::PREDICATE_CONFLICT_OPEN)
+            .collect();
+        let [marker] = markers.as_slice() else {
+            panic!("one open marker")
+        };
+        assert_eq!(marker.source, Some(ClaimSource::Imported));
+        assert_eq!(
+            crate::claim::claim_evidence_taint(marker),
+            Some(ClaimSource::Imported)
+        );
+        let Value::Map(evidence) = marker.evidence.as_ref().expect("marker evidence") else {
+            panic!("evidence map")
+        };
+        let nested = evidence
+            .iter()
+            .find(|(key, _)| key.as_str() == Some("candidate_evidence"))
+            .map(|(_, value)| value)
+            .expect("candidate evidence");
+        assert_eq!(
+            super::super::decode_verified_locators(nested)?,
+            vec![(
+                SwarmEvidenceRef {
+                    source_id: cited,
+                    claim_id: Some(cited),
+                    byte_range: None
+                },
+                digest
+            )]
+        );
+        if !fatal_judge {
+            assert!(sink.outcome.landed.iter().any(|id| {
+                vault
+                    .get_claim(id)
+                    .is_ok_and(|claim| claim.is_some_and(|body| body.predicate == "profile.tone"))
+            }));
+            let resource = super::super::gap::branch_gap_projection(
+                &decode_partition_payload(&fx.attempt.status.payload.input)?.0,
+                &fx.scope,
+            );
+            let crate::llm::ScopeResource::Projection { key } = resource else {
+                panic!("gap key")
+            };
+            let txn = vault.store.env.read_txn()?;
+            let rows = vault
+                .store
+                .vault_meta
+                .prefix_iter(&txn, key.as_bytes())?
+                .collect::<std::result::Result<Vec<_>, _>>()?;
+            let [(_, raw)] = rows.as_slice() else {
+                panic!("durable contradiction gap")
+            };
+            let gap = super::super::gap::decode_gap_row(raw)?;
+            assert_eq!(
+                gap.evidence_refs,
+                vec![SwarmEvidenceRef {
+                    source_id: cited,
+                    claim_id: Some(cited),
+                    byte_range: None,
+                }]
+            );
+        }
+    }
     Ok(())
 }
 

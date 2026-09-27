@@ -55,6 +55,13 @@ pub(super) fn hash_policy_frontier_v0(
         hash_u64(hasher, threshold);
     }
 
+    // An absent optional budget preserves existing frontier bindings. When
+    // authored, the resolved effective ceiling is part of the policy hash.
+    if let Some(limit) = resolution.dreamer_retry_source_limit {
+        hash_str(hasher, "dreamer_retry_source_limit");
+        hash_u64(hasher, limit as u64);
+    }
+
     hash_len(hasher, resolution.packs.len());
     for pack in &resolution.packs {
         hash_str(hasher, &pack._pack_id);

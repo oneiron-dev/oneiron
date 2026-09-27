@@ -40,6 +40,10 @@ pub(crate) fn default_policy_manifest() -> Vec<u8> {
             Value::from(POLICY_SCHEMA_VERSION),
         ),
         (
+            Value::from("dreamer_retry_source_limit"),
+            Value::from(1_024_u64),
+        ),
+        (
             Value::from(POLICY_PACK_ID_KEY),
             Value::from("oneiron-default-policy"),
         ),

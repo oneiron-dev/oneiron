@@ -83,7 +83,10 @@ pub(super) fn refreshed_input(
     turns.sort_by_key(|turn| (turn.learned_at, turn.turn_id));
     // Keep all original evidence plus bounded recent additions. A new try has
     // a new durable-step identity and can extract the now-expanded evidence.
-    if turns.len() > 1_024 {
+    let txn = vault.store.env.read_txn()?;
+    let limit =
+        crate::gate::resolve_policy_manifest(&vault.store, &txn)?.dreamer_retry_source_limit();
+    if turns.len() > limit {
         return Err(super::invalid_consolidation(
             "selection retry source limit exceeded",
         ));

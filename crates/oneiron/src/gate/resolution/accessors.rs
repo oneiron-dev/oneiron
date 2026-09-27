@@ -38,6 +38,12 @@ impl PolicyManifestResolution {
         self.diagnostics.manifest_count > 0 || self.diagnostics.loaded_manifest_forces_fail_closed()
     }
 
+    /// Resolved vault retry budget, narrowed by additional holder policies.
+    #[must_use]
+    pub(crate) fn dreamer_retry_source_limit(&self) -> usize {
+        self.dreamer_retry_source_limit.unwrap_or(1_024)
+    }
+
     #[must_use]
     pub(crate) fn proposal_check_threshold(&self) -> u64 {
         self.proposal_check_threshold

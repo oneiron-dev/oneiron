@@ -1,8 +1,8 @@
 //! A judge outage is an open question, persisted through the shared write gate.
 use super::{ConflictSet, PromotionCandidate, conflict_open_marker_id};
 use crate::{
-    ClaimApprovalStatus, ClaimCandidate, ClaimSource, ClaimSubject, EntityId, Result, TimeRange,
-    Vault, WriteActor, WriteEnvelope, WriteProvenance,
+    ClaimApprovalStatus, ClaimCandidate, ClaimSource, ClaimSubject, EntityId, Result,
+    SourceLineage, TimeRange, Vault, WriteActor, WriteEnvelope, WriteProvenance,
 };
 use rmpv::Value;
 
@@ -20,17 +20,25 @@ pub(super) fn park_open_conflict(
         .iter()
         .flat_map(|c| c.evidence_turn_refs.iter().copied())
         .collect();
+    let mut meet = ClaimSource::Generated;
+    let mut locators = Vec::new();
     for member in members {
-        fence.evidence_source(member)?;
+        meet = super::source_meet(meet, fence.evidence_source(member)?);
+        locators.extend(fence.verified_locators(member)?);
     }
-    let evidence = super::encode_consolidation_evidence(&super::ConsolidationEvidenceEnvelope {
-        refs: refs.into_iter().collect(),
-        chain: Vec::new(),
-        source_meet: ClaimSource::Generated,
-    });
-    let envelope = WriteEnvelope::new(
+    locators.sort_by_key(|(locator, hash)| (locator.source_id, *hash, *locator));
+    locators.dedup_by_key(|(locator, hash)| (locator.source_id, *hash));
+    let evidence = super::encode_consolidation_evidence_with_locators(
+        &super::ConsolidationEvidenceEnvelope {
+            refs: refs.into_iter().collect(),
+            chain: Vec::new(),
+            source_meet: meet,
+        },
+        &locators,
+    );
+    let envelope = WriteEnvelope::with_lineage(
         actor,
-        ClaimSource::Generated,
+        meet,
         WriteProvenance::new(Value::Map(vec![
             (Value::from("surface"), Value::from("dreamer")),
             (
@@ -39,6 +47,7 @@ pub(super) fn park_open_conflict(
             ),
         ]))?,
         ClaimApprovalStatus::Proposed,
+        SourceLineage::of(ClaimSource::Generated).with(meet),
     );
     let mut candidate = ClaimCandidate::new(
         crate::claim::PREDICATE_CONFLICT_OPEN,
@@ -102,7 +111,9 @@ pub(super) fn park_open_conflict(
     if let Some(rel) = conflict.identity.rel {
         candidate = candidate.with_relationship(rel);
     }
-    candidate = candidate.with_scope(super::persistence::identity_scope(&conflict.identity)?);
+    candidate = candidate
+        .with_scope(super::persistence::identity_scope(&conflict.identity)?)
+        .with_evidence_taint(meet)?;
     vault.with_write_txn(|txn| {
         fence.validate_in_txn(vault, txn)?;
         vault

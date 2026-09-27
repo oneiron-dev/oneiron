@@ -97,3 +97,69 @@ fn type_prior_dominates_other_signals_and_surprise_is_not_an_input() -> Result<(
     assert!(strength_score(prior, &invalid).is_err());
     Ok(())
 }
+
+#[test]
+fn retry_source_budget_is_a_narrowing_manifest_row() -> Result<()> {
+    let dir = tempfile::tempdir()?;
+    let vault = Vault::open(dir.path(), crate::VaultConfig::device())?;
+    let default_id = crate::gate::default_policy_manifest_id()?;
+    let default = crate::gate::default_policy_manifest();
+    let decode = |bytes: &[u8]| -> rmpv::Value {
+        rmpv::decode::read_value(&mut std::io::Cursor::new(bytes)).expect("manifest map")
+    };
+    let encode = |value: &rmpv::Value| -> Vec<u8> {
+        let mut out = Vec::new();
+        rmpv::encode::write_value(&mut out, value).expect("manifest codec");
+        out
+    };
+    let limit = || -> Result<usize> {
+        let txn = vault.store.env.read_txn()?;
+        Ok(crate::gate::resolve_policy_manifest(&vault.store, &txn)?.dreamer_retry_source_limit())
+    };
+    assert_eq!(limit()?, 1_024);
+    let rmpv::Value::Map(mut vault_fields) = decode(&default) else {
+        panic!("default map")
+    };
+    let budget = vault_fields
+        .iter_mut()
+        .find(|(key, _)| key.as_str() == Some("dreamer_retry_source_limit"))
+        .expect("shipped retry budget");
+    budget.1 = 2_u64.into();
+    crate::test_util::put_policy_manifest_bytes(
+        &vault,
+        default_id,
+        &encode(&rmpv::Value::Map(vault_fields.clone())),
+    )?;
+    assert_eq!(limit()?, 2, "vault policy changes the source cap");
+    // A second pack acts as a holder restriction: the resolved minimum may
+    // narrow, but cannot widen the vault's two-source ceiling.
+    let holder_id = crate::test_util::entity(0x4f);
+    let pack = vault_fields
+        .iter_mut()
+        .find(|(key, _)| key.as_str() == Some("pack_id"))
+        .expect("pack id");
+    pack.1 = "holder-policy".into();
+    let budget = vault_fields
+        .iter_mut()
+        .find(|(key, _)| key.as_str() == Some("dreamer_retry_source_limit"))
+        .expect("retry cap");
+    budget.1 = 100_u64.into();
+    crate::test_util::put_policy_manifest_bytes(
+        &vault,
+        holder_id,
+        &encode(&rmpv::Value::Map(vault_fields.clone())),
+    )?;
+    assert_eq!(limit()?, 2, "holder cannot widen vault cap");
+    let budget = vault_fields
+        .iter_mut()
+        .find(|(key, _)| key.as_str() == Some("dreamer_retry_source_limit"))
+        .expect("retry cap");
+    budget.1 = 1_u64.into();
+    crate::test_util::put_policy_manifest_bytes(
+        &vault,
+        holder_id,
+        &encode(&rmpv::Value::Map(vault_fields)),
+    )?;
+    assert_eq!(limit()?, 1, "holder can narrow cap");
+    Ok(())
+}

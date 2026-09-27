@@ -155,6 +155,15 @@ pub(crate) fn resolve_policy_manifest(
                             .map_or(threshold, |old| old.min(threshold)),
                     );
                 }
+                // Each matching pack may narrow the vault's retry work budget.
+                // A holder-supplied policy can never widen the vault ceiling.
+                if let Some(limit) = decoded.dreamer_retry_source_limit {
+                    resolution.dreamer_retry_source_limit = Some(
+                        resolution
+                            .dreamer_retry_source_limit
+                            .map_or(limit, |old| old.min(limit)),
+                    );
+                }
                 resolution.packs.push(decoded.pack);
             }
             None => {

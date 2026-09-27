@@ -381,7 +381,7 @@ impl ConsolidationExecutor<'_> {
                         ctx.now_ms,
                     )?;
                     dropped.extend(conflict.candidate_indexes.iter().copied());
-                    escalated.push(contradiction_gap(conflict, &members, ctx.now_ms));
+                    escalated.push(contradiction_gap(conflict, &members, ctx.now_ms)?);
                     super::open_conflict::park_open_conflict(
                         ctx.vault,
                         self.actor,
@@ -586,24 +586,29 @@ fn contradiction_gap(
     conflict: &ConflictSet,
     members: &[&PromotionCandidate],
     now_ms: u64,
-) -> ReflectionGap {
+) -> Result<ReflectionGap> {
     let mut evidence: Vec<EntityId> = Vec::new();
+    let mut locators = Vec::new();
     for member in members {
+        locators.extend(super::conflict::candidate_locators(member)?);
         for turn in &member.evidence_turn_refs {
             if !evidence.contains(turn) {
                 evidence.push(*turn);
             }
         }
     }
-    ReflectionGap {
+    locators.sort_unstable();
+    locators.dedup();
+    Ok(ReflectionGap {
         kind: ReflectionGapKind::ContradictionLeftStanding,
         subject: conflict.identity.subject,
         evidence_turn_refs: evidence,
+        evidence_refs: locators,
         first_seen: now_ms,
         last_seen: now_ms,
         escalations: 0,
         decayed: false,
-    }
+    })
 }
 
 fn attempt_id_for_steps(

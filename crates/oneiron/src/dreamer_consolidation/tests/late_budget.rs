@@ -530,3 +530,95 @@ fn broken_retry_parks_without_poisoning_healthy_wake_work() -> Result<()> {
     );
     Ok(())
 }
+
+#[test]
+fn manifest_retry_source_budget_limits_pinned_attempt_and_holder_cannot_widen() -> Result<()> {
+    let (_dir, vault) = open_vault();
+    let store = DreamerRunnerStore::new(&vault);
+    let node = crate::identity::load_or_mint_client_id(&vault)?;
+    let parent = seed_session(&vault, 0x7e, 1);
+    seed_turn(&vault, &parent, "user", "first", 10);
+    let watermark = read_watermark(&vault, DreamerConsolidationScope::Micro)?;
+    let dirty = scan_dirty_turns(&vault, DreamerConsolidationScope::Micro, &watermark, 10)?;
+    enqueue_partition_attempts(
+        &vault,
+        DreamerConsolidationScope::Micro,
+        &dirty,
+        &watermark,
+        "budget-retry",
+        20,
+    )?;
+    let admitted = match store.admit_next_consolidation(AdmitDreamerConsolidationAttempt {
+        scope: DreamerConsolidationScope::Micro,
+        local_node_id: node,
+        claim_authoring_tier: DreamerClaimAuthoringBatchTier::batch(),
+        claim_authoring: DreamerClaimAuthoringAdmission::single_pass(),
+        admission: AdmitDreamerAttempt {
+            lease_owner: "budget".into(),
+            now: 21,
+            budget_id: "wake".into(),
+            budget_total_units: 10_000,
+            reserve_units: 100,
+            started_milestone: None,
+        },
+    })? {
+        DreamerConsolidationAdmissionOutcome::Admission(DreamerAdmissionOutcome::Admitted(row)) => {
+            row
+        }
+        other => panic!("{other:?}"),
+    };
+    store.defer_selection(
+        &admitted,
+        crate::dreamer_runner::SettleDreamerBudget {
+            budget_id: "wake".into(),
+            child_attempt: admitted.status.attempt.id,
+            actual_units: 0,
+            now: 21,
+        },
+        30,
+    )?;
+    let retry = AttemptQueue::new(&vault)
+        .list()?
+        .into_iter()
+        .find(|row| row.retry_of == Some(admitted.status.attempt.id))
+        .expect("retry");
+    seed_turn(&vault, &parent, "assistant", "second", 22);
+    let default_id = crate::gate::default_policy_manifest_id()?;
+    let manifest = vault.get(&default_id)?.expect("default policy");
+    let Value::Map(mut fields) =
+        rmpv::decode::read_value(&mut manifest.as_slice()).expect("manifest")
+    else {
+        panic!("manifest map")
+    };
+    let cap = fields
+        .iter_mut()
+        .find(|(key, _)| key.as_str() == Some("dreamer_retry_source_limit"))
+        .expect("shipped cap");
+    cap.1 = Value::from(1_u64);
+    let encode = |fields: &[(Value, Value)]| -> Vec<u8> {
+        let mut out = Vec::new();
+        rmpv::encode::write_value(&mut out, &Value::Map(fields.to_vec())).expect("manifest codec");
+        out
+    };
+    crate::test_util::put_policy_manifest_bytes(&vault, default_id, &encode(&fields))?;
+    let pinned = WakeEvidenceSnapshot::capture(&vault, DreamerConsolidationScope::Micro)?;
+    assert!(
+        pinned.retry_failure(retry.id).is_some(),
+        "vault's one-source row must hold a two-source retry"
+    );
+    // A separate holder pack cannot widen the vault's effective cap.
+    fields
+        .iter_mut()
+        .find(|(key, _)| key.as_str() == Some("pack_id"))
+        .expect("pack id")
+        .1 = "holder-budget".into();
+    fields
+        .iter_mut()
+        .find(|(key, _)| key.as_str() == Some("dreamer_retry_source_limit"))
+        .expect("cap")
+        .1 = Value::from(100_u64);
+    crate::test_util::put_policy_manifest_bytes(&vault, EntityId::now(), &encode(&fields))?;
+    let pinned = WakeEvidenceSnapshot::capture(&vault, DreamerConsolidationScope::Micro)?;
+    assert!(pinned.retry_failure(retry.id).is_some());
+    Ok(())
+}

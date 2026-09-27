@@ -142,22 +142,66 @@ fn stored_parent_scope(
     Ok(bound)
 }
 
-/// A retry with a durable caller bound cannot expand its queued source slice.
-pub(super) fn has_execution_scope_in(
+/// Reconstruct exact durable scope at the wake's one read revision. A saved
+/// caller attenuation and parent chain supply rights only by narrowing.
+pub(super) fn execution_scope_in(
     vault: &crate::Vault,
     txn: &heed::RoTxn<'_>,
     attempt: crate::attempt_queue::AttemptId,
-) -> Result<bool> {
-    let Some(raw) = vault
+    parent: Option<crate::attempt_queue::AttemptId>,
+    queued: Option<Scope>,
+    caller: Option<&Scope>,
+) -> Result<Option<Scope>> {
+    let mut seen = std::collections::BTreeSet::new();
+    let mut chain = Vec::new();
+    let mut cursor = parent;
+    while let Some(id) = cursor {
+        if !seen.insert(*id.as_bytes()) {
+            return Err(invalid_consolidation("cyclic branch scope lineage"));
+        }
+        let row = crate::attempt_queue::AttemptQueue::new(vault)
+            .get_in_txn(txn, id)?
+            .ok_or_else(|| invalid_consolidation("branch parent is missing"))?;
+        let payload = crate::dreamer_runner::decode_dreamer_attempt_payload(&row.payload)?;
+        let bound = if payload.attempt_type == crate::agent_dispatch::AGENT_DISPATCH_ATTEMPT_TYPE {
+            crate::agent_dispatch::decode_agent_dispatch_input(&payload.input)?.scope
+        } else if [
+            crate::dreamer_runner::DreamerConsolidationScope::Micro,
+            crate::dreamer_runner::DreamerConsolidationScope::Meso,
+            crate::dreamer_runner::DreamerConsolidationScope::Macro,
+        ]
+        .into_iter()
+        .any(|scope| row.kind == scope.attempt_kind() && payload.attempt_type == scope.as_str())
+        {
+            decode_branch_scope(&payload.input)?
+        } else {
+            chain.push(Some(Scope::default()));
+            break;
+        };
+        chain.push(bound);
+        cursor = payload.parent_attempt;
+    }
+    let inherited = if parent.is_some() {
+        let mut bound = chain.pop().flatten().unwrap_or_default();
+        for child in chain.into_iter().rev().flatten() {
+            bound = bound.attenuate(child)?;
+        }
+        effective_scope(Some(bound), queued.as_ref())?
+    } else {
+        queued
+    };
+    let stored: Option<Scope> = vault
         .store
         .vault_meta
         .get(txn, &execution_scope_key(attempt))?
-    else {
-        return Ok(false);
-    };
-    let scope: Option<Scope> = serde_json::from_slice(&raw)
-        .map_err(|_| invalid_consolidation("invalid execution scope"))?;
-    Ok(scope.is_some())
+        .map(|raw| {
+            serde_json::from_slice(&raw)
+                .map_err(|_| invalid_consolidation("invalid execution scope"))
+        })
+        .transpose()?
+        .flatten();
+    let bound = effective_scope(inherited, caller)?;
+    effective_scope(stored, bound.as_ref())
 }
 
 fn execution_scope_key(attempt: crate::attempt_queue::AttemptId) -> Vec<u8> {

@@ -57,6 +57,8 @@ impl WakeEvidenceSnapshot {
     ) -> Result<Self> {
         use crate::ports::EdgeDirection;
         let txn = vault.store.env.read_txn()?;
+        let retry_limit =
+            crate::gate::resolve_policy_manifest(&vault.store, &txn)?.dreamer_retry_source_limit();
         let records = crate::attempt_queue::AttemptQueue::new(vault).list_in_txn(&txn)?;
         let mut ids = BTreeSet::new();
         let mut attempts = BTreeSet::new();
@@ -88,23 +90,21 @@ impl WakeEvidenceSnapshot {
                     continue;
                 }
             };
-            let durable_scope = if attempt.retry_of.is_some() {
-                match super::branch_scope::has_execution_scope_in(vault, &txn, attempt.id) {
-                    Ok(value) => value,
-                    Err(_) => {
-                        retry_failures
-                            .insert(*attempt.id.as_bytes(), "invalid retry execution scope");
-                        continue;
-                    }
+            let effective_scope = match super::branch_scope::execution_scope_in(
+                vault,
+                &txn,
+                attempt.id,
+                payload.parent_attempt,
+                queued_scope,
+                caller_scope,
+            ) {
+                Ok(scope) => scope,
+                Err(_) => {
+                    retry_failures.insert(*attempt.id.as_bytes(), "invalid retry execution scope");
+                    continue;
                 }
-            } else {
-                false
             };
-            if attempt.retry_of.is_some()
-                && queued_scope.is_none()
-                && !durable_scope
-                && caller_scope.is_none()
-            {
+            if attempt.retry_of.is_some() && effective_scope.is_none() {
                 let peers = match vault.filtered_edge_peers(
                     &txn,
                     EdgeDirection::In,
@@ -126,7 +126,7 @@ impl WakeEvidenceSnapshot {
                 ids.extend(peers.iter().copied());
                 retries.push((*attempt.id.as_bytes(), partition, turns, watermark, peers));
             }
-            if let Some(bound) = queued_scope {
+            if let Some(bound) = effective_scope {
                 for resource in &bound.readable {
                     if let ScopeResource::DocumentVersion { document, .. } = resource
                         && vault.get_entity_type_in_txn(&txn, document)? == Some(ENTITY_TYPE_CLAIM)
@@ -199,7 +199,7 @@ impl WakeEvidenceSnapshot {
                 }
             }
             turns.sort_unstable();
-            if turns.len() > 1_024
+            if turns.len() > retry_limit
                 || !original
                     .iter()
                     .all(|id| turns.iter().any(|(_, got)| got == id))
@@ -659,8 +659,30 @@ impl<'a> BranchResources<'a> {
     ) -> Result<super::gap::GapQueueDelta> {
         self.check_axes(scope)?;
         for gap in &gaps {
-            for turn in &gap.evidence_turn_refs {
-                self.turn(scope, turn)?;
+            if gap.evidence_refs.is_empty() {
+                // TURN-only reflection detectors have no child locators.
+                for turn in &gap.evidence_turn_refs {
+                    self.turn(scope, turn)?;
+                }
+            } else {
+                let projected: BTreeSet<_> = gap.evidence_turn_refs.iter().copied().collect();
+                let cited: BTreeSet<_> = gap
+                    .evidence_refs
+                    .iter()
+                    .map(|entry| entry.source_id)
+                    .collect();
+                if projected != cited {
+                    return Err(invalid_consolidation("gap evidence projection mismatch"));
+                }
+                self.verify_evidence_refs(&gap.evidence_refs)?;
+                for source in projected {
+                    if self.turns.contains(&source) {
+                        self.turn(scope, &source)?;
+                    } else {
+                        self.prior(source)?;
+                        self.source(scope, &source)?;
+                    }
+                }
             }
         }
         super::gap::upsert_branch_gap_queue(self.read.vault(), scope, &self.partition, gaps, now)
