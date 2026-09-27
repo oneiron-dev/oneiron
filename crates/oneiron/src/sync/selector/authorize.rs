@@ -253,7 +253,7 @@ fn authorized_base_edge_endpoints(
     kept: &BTreeSet<EntityId>,
     grant_scope: FederationGrantScope,
     selector: &SyncSelector,
-    position: &FederationDirectionScope,
+    position: &Position,
 ) -> Result<BTreeSet<EntityId>> {
     let mut wanted = BTreeSet::new();
     map_for_each_value_bytes(edges, |raw, value| {
@@ -315,7 +315,7 @@ pub(super) fn filter_window_doc(
     selector: &SyncSelector,
     position: &Position,
 ) -> Result<LoroDoc> {
-    let position = position.as_scope();
+    let scope_position = position.as_scope();
     // A selector must not trigger Observer A with unselected NOTE sidecars.
     // Refresh a detached window, then copy only owners that pass this filter.
     let source_bytes = crate::sync::loro_support::export_snapshot(source)?;
@@ -357,9 +357,14 @@ pub(super) fn filter_window_doc(
         tombstoned.insert(id);
     });
 
-    let facets = facet_filter(position);
-    let facet_scope =
-        facet_scope_by_source(vault, &rtxn, &source_entities, &source_edges, position)?;
+    let facets = facet_filter(scope_position);
+    let facet_scope = facet_scope_by_source(
+        vault,
+        &rtxn,
+        &source_entities,
+        &source_edges,
+        scope_position,
+    )?;
     let coreference = coreference_export_context(vault, &rtxn, source, selector)?;
     let mut custody_ids = BTreeSet::new();
     map_for_each_value_bytes(&source_entities, |key, blob| {
@@ -447,7 +452,7 @@ pub(super) fn filter_window_doc(
             grant_scope,
             selector,
             &facet_scope,
-            position,
+            scope_position,
             &coreference,
         ) else {
             return;
@@ -557,7 +562,7 @@ pub(super) fn filter_window_doc(
         };
         if kept.contains(&id)
             || (facets.is_none()
-                && band_filter(position).is_none()
+                && band_filter(scope_position).is_none()
                 && matches!(selector.world, SyncSelectorWorld::All))
         {
             let _ = map_insert_bytes(&out_tombstones, raw_key, value);
