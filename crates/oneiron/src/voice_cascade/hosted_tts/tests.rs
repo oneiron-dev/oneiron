@@ -235,7 +235,7 @@ fn many_small_drained_requests_exceed_old_cumulative_limit_without_cancellation(
         assert_eq!(adapter.transport.work.len(), 20);
         assert!(
             adapter
-                .transport()
+                .transport
                 .work
                 .iter()
                 .all(|work| matches!(work, HostedWork::Render(_)))
