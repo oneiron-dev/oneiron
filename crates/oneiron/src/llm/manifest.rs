@@ -218,14 +218,6 @@ impl ModelManifest {
             .routes
             .get(&binding.slot)
             .ok_or_else(|| invalid("missing slot route"))?;
-        // The teacher is offline: a resident's served-slot route never swaps
-        // the probed checkpoint, or blocks narrowing other roles on that slot.
-        if role == ModelRole::ExtractionTeacher {
-            request.model = binding.model.clone();
-            request.envelope.locality = widest;
-            request.envelope.tier.vault_policy = Some(binding.tier.clone());
-            return Ok(());
-        }
         let route = routes.get(&binding.slot).copied().unwrap_or(widest);
         if route_rank(route) > route_rank(widest) {
             return Err(invalid("resident route cannot widen manifest pin"));

@@ -127,6 +127,91 @@ impl LlmBackend for ScopeBackend {
 }
 
 #[test]
+fn narrowed_route_refuses_teacher_before_transcript_reaches_backend() -> Result<()> {
+    use std::collections::BTreeMap;
+
+    use crate::llm::manifest::{
+        MODEL_ROLES, ModelBinding, ModelManifest, ModelRole, ModelSlot, TeacherProbeApproval,
+    };
+    use crate::llm::{ModelId, ModelLocality, ModelTierRef};
+
+    let (_dir, vault) = open_vault();
+    let store = DreamerRunnerStore::new(&vault);
+    let (attempt, _turns, _conversation) = admitted_attempt_fixture(
+        &vault,
+        &store,
+        0x73,
+        &[("user", "a private conversation transcript")],
+    )?;
+    let manifest = ModelManifest {
+        version: 2,
+        roles: MODEL_ROLES
+            .into_iter()
+            .map(|role| {
+                (
+                    role,
+                    ModelBinding {
+                        model: ModelId::new(format!("test/{role:?}@remote-r1")).unwrap(),
+                        slot: ModelSlot::Llm,
+                        tier: ModelTierRef("configured".into()),
+                        route_models: if role == ModelRole::ExtractionTeacher {
+                            BTreeMap::new()
+                        } else {
+                            BTreeMap::from([(
+                                ModelLocality::OnDevice,
+                                ModelId::new(format!("local/{role:?}@local-r1")).unwrap(),
+                            )])
+                        },
+                    },
+                )
+            })
+            .collect(),
+        routes: [ModelSlot::Llm, ModelSlot::Embedder, ModelSlot::Oneironer]
+            .into_iter()
+            .map(|slot| (slot, ModelLocality::OwnServer))
+            .collect(),
+        verdict: None,
+    };
+    let approval = TeacherProbeApproval::for_scored_checkpoint(&manifest, 1_000_000)?;
+    vault.set_model_manifest_with_teacher_approval(&manifest, &approval)?;
+    // Other served roles may narrow, but the teacher has no approved local checkpoint.
+    vault.set_model_route(ModelSlot::Llm, ModelLocality::OnDevice)?;
+
+    let backend = ScriptedBackend::new(Vec::new());
+    let guard = crate::BudgetGuard::with_reserve_units(
+        "wake",
+        10_000,
+        100,
+        BudgetExhaustionPolicy::Suspend,
+    );
+    let deadline = WakePassDeadline::with_clock(180_000, std::sync::Arc::new(|| 0));
+    let mut sink = CapturingSink::default();
+    let mut ctx = WakeAttemptContext {
+        vault: &vault,
+        deadline: &deadline,
+        budget_id: "wake",
+        now_ms: 21_000,
+    };
+    let mut executor = ConsolidationExecutor {
+        backend: &backend,
+        guard: &guard,
+        strategy: DreamerClaimAuthoringStrategy::SinglePass,
+        actor: vault.dreamer_authority()?,
+        model: ModelId::new("test/model@r1").unwrap(),
+        sink: &mut sink,
+        scope: None,
+    };
+    assert!(matches!(
+        block_on_ready(executor.execute(&attempt, &mut ctx)),
+        Err(Error::InvalidConfig(_))
+    ));
+    drop(executor);
+    assert_eq!(backend.calls.load(Ordering::SeqCst), 0);
+    assert!(sink.accepted.is_empty());
+    Ok(())
+}
+
+#[test]
 fn production_executor_carries_scope_and_refuses_unlisted_evidence_and_output() -> Result<()> {
     let (_dir, vault) = open_vault();
     let store = DreamerRunnerStore::new(&vault);

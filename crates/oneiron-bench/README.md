@@ -13,8 +13,9 @@ without re-running the teacher. A failing probe emits no new approval and
 cannot pin the candidate at this public write door. A teacher route override
 requires a separate probe for that model and is refused by this single-checkpoint
 command and by the vault write. Resident route narrowing still works for
-served roles on the same slot; the offline teacher always keeps its approved
-base binding. The approval is an operator receipt, not a
+served roles on the same slot. If consolidation then requests the offline
+teacher under a narrower resident route, binding fails closed instead of
+falling back to its wider approved base checkpoint. The approval is an operator receipt, not a
 signature: the checkpoint runner and publishing host must be trusted; this
 mechanism prevents accidental bypass, not a malicious host forging a score.
 

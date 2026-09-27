@@ -137,21 +137,26 @@ fn all_thirteen_roles_load_from_file_and_bind_with_narrow_vault_routes() {
             params: BTreeMap::new(),
             provider_options: BTreeMap::new(),
         };
+        if role == ModelRole::ExtractionTeacher {
+            // Narrowing a served slot may succeed, but must never send a
+            // transcript through the teacher's wider, probed checkpoint.
+            let before = request.clone();
+            assert!(matches!(
+                vault.bind_model_role(role, &mut request),
+                Err(Error::InvalidConfig(_))
+            ));
+            assert_eq!(request, before);
+            continue;
+        }
         vault.bind_model_role(role, &mut request).unwrap();
-        let expected_model = if role == ModelRole::ExtractionTeacher {
-            &loaded.binding(role).unwrap().model
-        } else {
+        assert_eq!(
+            &request.model,
             &loaded.binding(role).unwrap().route_models[&ModelLocality::OnDevice]
-        };
-        assert_eq!(&request.model, expected_model);
+        );
         let catalog = crate::llm::LlmCatalogEntry {
             model: request.model.clone(),
             display_name: "local fixture".into(),
-            locality: if role == ModelRole::ExtractionTeacher {
-                ModelLocality::OwnServer
-            } else {
-                ModelLocality::OnDevice
-            },
+            locality: ModelLocality::OnDevice,
             context_window_tokens: 4096,
             max_output_tokens: Some(100),
             cost: None,
