@@ -58,6 +58,7 @@
 mod address;
 mod formula;
 mod inspect;
+mod judgment;
 mod manifest;
 mod opc;
 mod ops;
@@ -67,6 +68,7 @@ mod xml;
 
 pub use self::address::{Axis, CellRef, OfficeFormat, RangeRef};
 pub use self::inspect::{CrossSheetDep, SheetSummary, StructureSummary};
+pub use self::judgment::{SheetAnswerBundle, SheetCellAnswer};
 pub use self::manifest::{
     EDIT_MANIFEST_SCHEMA_VERSION, EditManifest, EditWarning, MutationMode, WarningCode,
 };

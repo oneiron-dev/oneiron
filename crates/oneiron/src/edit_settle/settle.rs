@@ -8,7 +8,7 @@ use super::receipts::{
 };
 use super::records::{
     SettleConsent, SettleDiscardOutcome, SettleOutcomeKind, SettleReceiptDoor, SettleSelectOutcome,
-    SettlementRecord,
+    SettlementRecord, SheetAnswerReceipt,
 };
 use crate::Vault;
 use crate::anchored_annotation::{ReanchorOp, ReanchorSummary};
@@ -102,6 +102,7 @@ impl Vault {
                     manifest_ops,
                     anchors: Vec::new(),
                     reason: Some("stale_base".to_owned()),
+                    sheet_answers: proposal.sheet_answers.clone(),
                 };
                 self.store
                     .vault_meta
@@ -152,6 +153,7 @@ impl Vault {
                 manifest_ops,
                 anchors: settled_anchors_from_summary(&reanchor),
                 reason: None,
+                sheet_answers: proposal.sheet_answers.clone(),
             };
             self.store
                 .vault_meta
@@ -202,6 +204,7 @@ impl Vault {
             manifest_ops: 0,
             anchors: Vec::new(),
             reason: (!reason.is_empty()).then(|| reason.to_owned()),
+            sheet_answers: None,
         };
         let encoded = encode_settlement_record(&record)?;
 
@@ -265,6 +268,46 @@ impl Vault {
             version,
             anchors: record.anchors,
         }))
+    }
+
+    /// Reads per-cell typed answer receipts only after a successful Keep.
+    /// Discarded and stale proposals have no kept answers.
+    pub fn sheet_answer_receipts(
+        &self,
+        artifact_id: &EntityId,
+        proposal_ref: &str,
+    ) -> Result<Vec<SheetAnswerReceipt>> {
+        let Some(record) = self.blob_artifact_settlement(artifact_id, proposal_ref)? else {
+            return Ok(Vec::new());
+        };
+        if record.outcome != SettleOutcomeKind::Selected {
+            return Ok(Vec::new());
+        }
+        let Some(bundle) = record.sheet_answers else {
+            return Ok(Vec::new());
+        };
+        let version = record
+            .version
+            .ok_or(Error::CorruptedIndex("selected sheet answer version"))?;
+        let kept_by = record
+            .actor_ref
+            .ok_or(Error::CorruptedIndex("selected sheet answer actor"))?;
+        Ok(bundle
+            .answers
+            .into_iter()
+            .map(|answer| SheetAnswerReceipt {
+                artifact_id: *artifact_id,
+                proposal_ref: record.proposal_ref.clone(),
+                version,
+                question: bundle.question.clone(),
+                question_version: bundle.question_version.clone(),
+                principal: bundle.principal.clone(),
+                sheet: bundle.sheet.clone(),
+                answer,
+                kept_by: kept_by.clone(),
+                kept_at: record.settled_at,
+            })
+            .collect())
     }
 
     /// Whether a live DEC-0006 standing ACTION grant authorizes `actor` to
@@ -370,6 +413,13 @@ impl Vault {
         {
             return Err(Error::Artifact(ArtifactError::EditRoundtripFailed(
                 "recalculated proposal must name its engine and version",
+            )));
+        }
+        if let Some(bundle) = &proposal.sheet_answers
+            && bundle.ops()? != proposal.manifest.ops
+        {
+            return Err(Error::Artifact(ArtifactError::InvalidEditManifest(
+                "typed answers do not match the edit manifest",
             )));
         }
         // The op vocabulary and re-anchor replay are spreadsheet-specific, the

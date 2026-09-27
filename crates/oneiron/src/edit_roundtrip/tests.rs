@@ -1297,3 +1297,228 @@ fn named_lambda_calls_in_changed_worksheet_pass_formula_gate() {
         "valid named LAMBDA calls must not be rewritten: {report:?}"
     );
 }
+
+// The typed ask is an agent-computed answer over a selection. The landing
+// adapter writes one retained file copy and Keep consumes it exactly once.
+#[test]
+fn typed_sheet_range_lands_on_keep_with_per_cell_receipts() -> Result<()> {
+    use crate::blob_artifact::{BlobArtifactBody, BlobVersionProvenance};
+    use crate::edge::EdgeActorClass;
+    use crate::edit_settle::{SettleConsent, SettleOutcomeKind};
+    use crate::entity_id::EntityId;
+    use crate::registry::ENTITY_TYPE_PERSON;
+    use crate::temporal::TimeRange;
+    use crate::write_envelope::WriteActor;
+
+    struct CellSession;
+    impl EditSession for CellSession {
+        fn apply_edits(&self, doc: &OfficeDoc, plan: &EditPlan) -> Result<AppliedEdit> {
+            let mut pkg = opc::read(&doc.bytes)?;
+            let mut writes = String::new();
+            for op in &plan.ops {
+                let EditOp::SetCell {
+                    cell,
+                    after: CellValue::Number(n),
+                    ..
+                } = op
+                else {
+                    panic!("expected number cell");
+                };
+                writes.push_str(&format!(
+                    "<row r=\"{}\"><c r=\"{}\"><v>{n}</v></c></row>",
+                    cell.row,
+                    cell.to_a1()
+                ));
+            }
+            let sheet = String::from_utf8(pkg.part(SHEET_PART).unwrap().to_vec()).unwrap();
+            pkg.upsert(
+                SHEET_PART,
+                sheet
+                    .replace("</sheetData>", &format!("{writes}</sheetData>"))
+                    .into_bytes(),
+            );
+            Ok(AppliedEdit {
+                bytes: opc::write(&pkg),
+                applied_ops: plan.ops.clone(),
+                warnings: vec![],
+            })
+        }
+        fn recalc(&self, doc: &OfficeDoc) -> Result<Vec<u8>> {
+            Ok(doc.bytes.clone())
+        }
+        fn recalc_engine(&self) -> Option<crate::blob_artifact::CalcEngineStamp> {
+            Some(crate::blob_artifact::CalcEngineStamp::new("fixture", "1").unwrap())
+        }
+    }
+    let (_dir, vault) =
+        crate::test_util::open_test_vault_with(crate::test_util::embedding_test_config());
+    let time = TimeRange { start: 10, end: 10 };
+    let human = EntityId::now();
+    vault.put_entity(&human, ENTITY_TYPE_PERSON, time, 10, b"human")?;
+    let actor = WriteActor::new(human, EdgeActorClass::Human);
+    let artifact = EntityId::now();
+    vault.put_blob_artifact(
+        &artifact,
+        &BlobArtifactBody::new(
+            "asks.xlsx",
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        ),
+        time,
+        10,
+    )?;
+    let original = xlsx_bytes(&base_parts());
+    vault.append_blob_artifact_version(
+        &artifact,
+        &original,
+        &BlobVersionProvenance::UserUpload,
+        actor,
+        time,
+        10,
+    )?;
+    let answer = |row, n| SheetCellAnswer {
+        cell: CellRef::new(2, row),
+        before: None,
+        value: Some(CellValue::Number(n)),
+        probability: n / 10.0,
+        confidence: 0.92,
+        rung: "local".into(),
+        model: "fixture-head".into(),
+        revision: "r1".into(),
+        cost_per_thousand: 0.2,
+        evidence_versions: vec!["source@3".into()],
+    };
+    let bundle = SheetAnswerBundle {
+        question: "urgency".into(),
+        question_version: "q1".into(),
+        principal: human.to_hex(),
+        sheet: "Sheet1".into(),
+        range: RangeRef::parse("B2:B3")?,
+        answers: vec![answer(2, 6.0), answer(3, 8.0)],
+    };
+    let EditOutcome::Proposed(proposal) =
+        vault.propose_sheet_answers(&artifact, &CellSession, bundle.clone(), "ask:range")?
+    else {
+        panic!("valid sheet answers must propose");
+    };
+    assert_eq!(vault.blob_artifact_head(&artifact)?.unwrap().version, 1);
+    assert_eq!(
+        vault.read_blob_artifact_version(&artifact, 1)?.unwrap(),
+        original
+    );
+    assert_eq!(proposal.typed_sheet_answers(), Some(&bundle));
+    assert!(
+        vault
+            .sheet_answer_receipts(&artifact, "ask:range")?
+            .is_empty()
+    );
+    let mut forged = proposal.clone();
+    forged.manifest.ops.pop();
+    let refusal = vault
+        .settle_select_edit_proposal(
+            &artifact,
+            &forged,
+            &SettleConsent::OwnerConsent { brief_ref: None },
+            actor,
+            time,
+            11,
+        )
+        .expect_err("a changed manifest cannot get a typed answer receipt");
+    assert_eq!(refusal.kind(), crate::error::ErrorKind::InvalidEditManifest);
+    assert!(
+        vault
+            .blob_artifact_settlement(&artifact, "ask:range")?
+            .is_none()
+    );
+    assert_eq!(vault.blob_artifact_head(&artifact)?.unwrap().version, 1);
+    let out = vault.settle_select_edit_proposal(
+        &artifact,
+        &proposal,
+        &SettleConsent::OwnerConsent { brief_ref: None },
+        actor,
+        time,
+        11,
+    )?;
+    assert_eq!(out.version.version, 2);
+    assert_eq!(
+        out.receipt
+            .fields
+            .get("sheet_answer_count")
+            .map(String::as_str),
+        Some("2")
+    );
+    assert_eq!(
+        out.receipt
+            .fields
+            .get("question_version")
+            .map(String::as_str),
+        Some("q1")
+    );
+    let kept = vault
+        .blob_artifact_settlement(&artifact, "ask:range")?
+        .unwrap();
+    assert_eq!(kept.outcome, SettleOutcomeKind::Selected);
+    assert_eq!(kept.sheet_answers.as_deref(), Some(&bundle));
+    assert_eq!(kept.actor_ref.as_deref(), Some(human.to_hex().as_str()));
+    let sheet = opc::read(&vault.read_blob_artifact_version(&artifact, 2)?.unwrap())?;
+    let xml = std::str::from_utf8(sheet.part(SHEET_PART).unwrap()).unwrap();
+    assert!(xml.contains("<c r=\"B2\"><v>6</v></c>"));
+    assert!(xml.contains("<c r=\"B3\"><v>8</v></c>"));
+    let err = vault
+        .settle_select_edit_proposal(
+            &artifact,
+            &proposal,
+            &SettleConsent::OwnerConsent { brief_ref: None },
+            actor,
+            time,
+            12,
+        )
+        .unwrap_err();
+    assert_eq!(
+        err.kind(),
+        crate::error::ErrorKind::EditProposalAlreadySettled
+    );
+    Ok(())
+}
+
+#[test]
+fn typed_sheet_answers_refuse_invalid_positions_and_forged_manifest() -> Result<()> {
+    let base = SheetAnswerBundle {
+        question: "fit".into(),
+        question_version: "v1".into(),
+        principal: "owner".into(),
+        sheet: "Sheet1".into(),
+        range: RangeRef::parse("B2:B3")?,
+        answers: vec![SheetCellAnswer {
+            cell: CellRef::new(2, 2),
+            before: None,
+            value: Some(CellValue::Bool(true)),
+            probability: 0.8,
+            confidence: 0.9,
+            rung: "rule".into(),
+            model: "local".into(),
+            revision: "1".into(),
+            cost_per_thousand: 0.0,
+            evidence_versions: vec![],
+        }],
+    };
+    assert_eq!(base.ops()?.len(), 1);
+    let mut bad = base.clone();
+    bad.answers.push(bad.answers[0].clone());
+    assert!(bad.ops().is_err(), "a duplicated cell cannot land twice");
+    bad = base.clone();
+    bad.answers[0].cell = CellRef::new(3, 2);
+    assert!(bad.ops().is_err(), "out-of-range cell cannot land");
+    bad = base.clone();
+    bad.answers[0].probability = f64::NAN;
+    assert!(
+        bad.ops().is_err(),
+        "nonfinite probabilities cannot be receipted"
+    );
+    bad = base;
+    bad.answers[0].value = None;
+    assert!(
+        bad.ops().is_err(),
+        "an all-abstain bundle cannot create a phantom edit"
+    );
+    Ok(())
+}

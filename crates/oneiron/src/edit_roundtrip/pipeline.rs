@@ -7,7 +7,7 @@ use super::opc;
 use super::session_validate::{diff_parts, validate};
 use super::{
     EDIT_MANIFEST_SCHEMA_VERSION, EditManifest, EditOp, EditPlan, EditSession, MutationMode,
-    OfficeDoc, OfficeFormat, StructureSummary, ValidationReport,
+    OfficeDoc, OfficeFormat, SheetAnswerBundle, StructureSummary, ValidationReport,
 };
 use crate::blob_artifact::{BlobVersionProvenance, CalcEngineStamp};
 use crate::entity_id::EntityId;
@@ -48,6 +48,8 @@ pub struct EditProposal {
     /// artifact head's content hash — an intervening edit changes the head hash,
     /// so committing these bytes would clobber it and replay a stale manifest.
     pub base_content_hash: [u8; 32],
+    /// Typed answers bound to the manifest; persisted with Keep receipts.
+    pub sheet_answers: Option<Box<SheetAnswerBundle>>,
 }
 
 impl EditProposal {
@@ -202,6 +204,7 @@ pub fn run_edit_roundtrip<S: EditSession>(
         // input bytes it edited. `propose_blob_artifact_edit` fills base_version.
         base_version: None,
         base_content_hash: *blake3::hash(input_bytes).as_bytes(),
+        sheet_answers: None,
     }))
 }
 
