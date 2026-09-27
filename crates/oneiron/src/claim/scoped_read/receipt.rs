@@ -158,6 +158,18 @@ impl ScopedReadReceipt {
 }
 
 impl ScopedRead<'_> {
+    /// Same-snapshot denial accounting. Private NOTEs and diary-pair grants
+    /// are indistinguishable from missing rows in both counts and hints.
+    pub(super) fn countable_suppression_in(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        id: &crate::EntityId,
+    ) -> crate::Result<bool> {
+        Ok(self
+            .entity_record_in(txn, id)?
+            .is_some_and(|row| crate::note::countable_read_suppression(row.entity_type, &row.body)))
+    }
+
     pub(super) fn receipt_for(
         &self,
         requested: Option<&RetrievalFilter>,

@@ -65,7 +65,7 @@ impl ScopedRead<'_> {
                     raw[ENTITY_METADATA_HEADER_LEN..].to_vec(),
                 ))
             } else {
-                suppressed += usize::from(self.entity_record_in(&txn, id)?.is_some());
+                suppressed += usize::from(self.countable_suppression_in(&txn, id)?);
                 None
             };
             value.push(parts);
@@ -141,7 +141,7 @@ impl ScopedRead<'_> {
                                 })
                             } else {
                                 suppressed +=
-                                    usize::from(self.entity_record_in(&txn, &id)?.is_some());
+                                    usize::from(self.countable_suppression_in(&txn, &id)?);
                                 None
                             }
                         }
@@ -196,7 +196,7 @@ impl ScopedRead<'_> {
                         )
                 };
                 if !allowed {
-                    suppressed += usize::from(self.entity_record_in(&txn, &row.id)?.is_some());
+                    suppressed += usize::from(self.countable_suppression_in(&txn, &row.id)?);
                     hydrated = None;
                 }
             }

@@ -279,12 +279,7 @@ impl<'a> ScopedRead<'a> {
                 if value.len() < limit {
                     value.push(result);
                 }
-            } else if self
-                .entity_record_in(&txn, &result.id)?
-                .is_some_and(|row| row.entity_type != crate::registry::ENTITY_TYPE_NOTE)
-            {
-                // A private NOTE nominated by an index is not evidence a
-                // reader may learn even as a suppression count.
+            } else if self.countable_suppression_in(&txn, &result.id)? {
                 suppressed += 1;
             }
         }
@@ -367,7 +362,7 @@ impl<'a> ScopedRead<'a> {
         for result in results {
             if self.is_entity_retrievable_with_policy_in(&txn, &policy, &filter, &result.id)? {
                 value.push(result);
-            } else if self.entity_record_in(&txn, &result.id)?.is_some() {
+            } else if self.countable_suppression_in(&txn, &result.id)? {
                 suppressed += 1;
             }
         }
@@ -386,8 +381,7 @@ impl<'a> ScopedRead<'a> {
             for id in summary.evidence_ids() {
                 if !crate::ppr::PprNodeVisibility::ppr_node_visible(&visibility, &rtxn, id)? {
                     admitted = false;
-                    auxiliary_suppressed +=
-                        usize::from(self.entity_record_in(&rtxn, id)?.is_some());
+                    auxiliary_suppressed += usize::from(self.countable_suppression_in(&rtxn, id)?);
                     break;
                 }
             }
@@ -403,7 +397,7 @@ impl<'a> ScopedRead<'a> {
                     crate::pipeline::capability_hit(&self.vault.store, &rtxn, hit.id)?
             {
                 capabilities.push(current);
-            } else if self.entity_record_in(&rtxn, &hit.id)?.is_some() {
+            } else if self.countable_suppression_in(&rtxn, &hit.id)? {
                 auxiliary_suppressed += 1;
             }
         }
@@ -677,7 +671,7 @@ impl<'a> ScopedRead<'a> {
             {
                 self.filter_context_entity_edges(rtxn, policy, filter, &mut entity)?;
                 kept.push(entity);
-            } else if self.entity_record_in(rtxn, &entity.id)?.is_some() {
+            } else if self.countable_suppression_in(rtxn, &entity.id)? {
                 suppressed += 1;
                 if entity.entity_type == ENTITY_TYPE_CLAIM {
                     claims_suppressed += 1;

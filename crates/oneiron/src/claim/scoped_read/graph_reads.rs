@@ -27,13 +27,13 @@ impl ScopedRead<'_> {
                     &edge.target,
                 )? {
                     kept.push(edge);
-                } else if self.entity_record_in(&txn, &edge.target)?.is_some() {
+                } else if self.countable_suppression_in(&txn, &edge.target)? {
                     suppressed += 1;
                 }
             }
             Some(kept)
         } else {
-            suppressed += usize::from(self.entity_record_in(&txn, id)?.is_some());
+            suppressed += usize::from(self.countable_suppression_in(&txn, id)?);
             None
         };
         Ok(ScopedReadResult {
@@ -48,7 +48,7 @@ impl ScopedRead<'_> {
             let txn = self.vault.store.env.read_txn()?;
             let (filter, policy) = self.resolve_retrieval_filter_in(&txn, None)?;
             if !self.timeline_anchor_allowed_in(&txn, &policy, &filter, anchor)? {
-                let suppressed = usize::from(self.entity_record_in(&txn, anchor)?.is_some());
+                let suppressed = usize::from(self.countable_suppression_in(&txn, anchor)?);
                 return Ok(ScopedReadResult {
                     value: MemoryTimeline {
                         anchor: *anchor,
@@ -72,7 +72,7 @@ impl ScopedRead<'_> {
                 && self.timeline_record_allowed_in(&txn, &fresh_policy, &fresh_filter, &record)?
             {
                 kept.push(record);
-            } else if self.entity_record_in(&txn, &record.id)?.is_some() {
+            } else if self.countable_suppression_in(&txn, &record.id)? {
                 suppressed += 1;
             }
         }

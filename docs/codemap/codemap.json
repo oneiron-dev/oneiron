@@ -7625,7 +7625,7 @@
      "path": "src/claim/scoped_read/receipt.rs",
      "purpose": "Mandatory read receipts",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 2,
       "fn": 4,
       "struct": 3
      }
@@ -21397,7 +21397,7 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "XL",
      "kind": "test",
      "notable": [],
      "path": "src/memory/tests/takes_notes.rs",
@@ -21770,7 +21770,7 @@
      "purpose": "Attributed NOTE records with built-in, plugin and registered PACK kinds",
      "surface": {
       "const": 1,
-      "crate-vis": 21,
+      "crate-vis": 22,
       "enum": 3,
       "fn": 4,
       "re-export": 7,
@@ -24240,7 +24240,7 @@
      "purpose": "—",
      "surface": {
       "const": 5,
-      "crate-vis": 32,
+      "crate-vis": 33,
       "enum": 5,
       "fn": 12,
       "struct": 10
@@ -24727,7 +24727,9 @@
      "notable": [],
      "path": "src/ports/lmdb_index.rs",
      "purpose": "Search, short-id and deletion-ledger adapters",
-     "surface": {}
+     "surface": {
+      "crate-vis": 1
+     }
     },
     {
      "bucket": "s",
@@ -32428,7 +32430,7 @@
      "path": "src/vault/edges.rs",
      "purpose": "Vault edge writes, adjacency queries and graph traversal",
      "surface": {
-      "crate-vis": 8,
+      "crate-vis": 7,
       "fn": 13
      }
     },
@@ -35164,7 +35166,7 @@
     },
     "ports": {
      "files": 33,
-     "impl_vault": false,
+     "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
      "purpose": "Transaction-composable storage ports"

@@ -17,6 +17,7 @@ fn companion_value_to_json(value: &rmpv::Value) -> serde_json::Value {
 use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;
 use crate::error::Error;
+use crate::ports::EdgeStoreRead;
 use crate::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_NOTE};
 
 const SNIPPET_MAX_CHARS: usize = 160;
@@ -350,27 +351,28 @@ impl Memory<'_> {
             return Ok(Vec::new());
         }
         let mut hits = Vec::new();
-        // Push kind/min_weight/limit into the LMDB prefix walk per direction
-        // so a high-degree node stops after `limit` matches instead of
-        // materializing its full edge set (which errors with IndexOverflow
-        // past MAX_EDGE_QUERY_RESULTS).
+        // Scan inside the ONE read snapshot. Hidden edges are not results:
+        // count only edges admitted by both endpoint and exact-pair gates.
         for (direction, outbound) in [("out", true), ("in", false)] {
-            let remaining = opts.limit - hits.len();
-            if remaining == 0 {
-                break;
-            }
-            let edges = self.vault.neighbor_edges_bounded_in_txn(
-                &txn,
-                &id,
-                outbound,
-                kind_filter,
-                opts.min_weight,
-                remaining,
-            )?;
-            for edge in edges {
-                // Endpoint admission is not consent to a DIFFERENT link. In
-                // the same snapshot as both endpoint reads, require the exact
-                // pair's mutual grant before returning a diary same_as edge.
+            let edge_direction = if outbound {
+                crate::ports::EdgeDirection::Out
+            } else {
+                crate::ports::EdgeDirection::In
+            };
+            for (scanned, entry) in self
+                .vault
+                .store
+                .port_edges(&txn, &id, edge_direction, kind_filter, None)?
+                .enumerate()
+            {
+                if scanned >= crate::vault::MAX_EDGE_QUERY_RESULTS {
+                    return Err(Error::IndexOverflow("memory neighbors").into());
+                }
+                let edge = entry?;
+                if opts.min_weight.is_some_and(|min| edge.weight < min) {
+                    continue;
+                }
+                // Endpoint admission is not consent to a DIFFERENT link.
                 if edge.kind == EdgeKind::SameAs
                     && (self.vault.get_entity_type_in_txn(&txn, &id)? == Some(ENTITY_TYPE_NOTE)
                         || self.vault.get_entity_type_in_txn(&txn, &edge.target)?
@@ -398,6 +400,9 @@ impl Memory<'_> {
                     weight: edge.weight,
                     direction: direction.to_owned(),
                 });
+                if hits.len() >= opts.limit {
+                    return Ok(hits);
+                }
             }
         }
         Ok(hits)
