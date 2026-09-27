@@ -20,6 +20,7 @@ use super::{
     ProjectorRule,
 };
 use crate::Vault;
+use crate::counterparty_contact::normalize_channel_class;
 use crate::entity_id::EntityId;
 use crate::error::Error;
 use crate::ports::EntityStoreRead;
@@ -219,7 +220,7 @@ fn record_event(
             sequence,
             kind,
             party_ref,
-            channel_class: channel_class.map(str::to_owned),
+            channel_class: channel_class.map(normalize_channel_class),
             thread_ref,
             occurred_at,
             projected: false,
@@ -285,6 +286,10 @@ pub(super) fn project_event(
             .iter()
             .find(|rule| rule.event_kind == kind)
             .ok_or(CommError::InvalidRecord)?;
+        // Decode can read provider-spelled events already accepted by this
+        // build; project their recipient class through the same rule as new
+        // events, without changing the original audit event bytes.
+        let recipient_class = channel_class.as_deref().map(normalize_channel_class);
         let delta = apply_projector_rule_in_txn(
             vault,
             wtxn,
@@ -293,7 +298,7 @@ pub(super) fn project_event(
                 rule: *rule,
                 source_event_id: event_id,
                 party_ref,
-                channel_class: channel_class.as_deref(),
+                channel_class: recipient_class.as_deref(),
                 thread_ref: thread_ref.as_deref(),
                 occurred_at,
             },
@@ -438,7 +443,8 @@ fn apply_projector_rule_in_txn(
                     };
                     if !pending
                         || gate_party_ref != party_ref
-                        || gate_channel != channel
+                        || normalize_channel_class(&gate_channel)
+                            != normalize_channel_class(channel)
                         || claim_ref != candidate.claim_ref
                         || created_at > occurred_at
                     {

@@ -200,7 +200,8 @@ pub(super) fn outbound_delivery_window_is_chat_like_ambient(
     let connector = normalize_channel_class(&intent.channel);
     let verb = verb_contract.kind.as_str();
     match connector.as_str() {
-        "slack" | "discord" => matches!(verb, "send" | "send_media"),
+        "slack" => matches!(verb, "send" | "send_media"),
+        "discord" => matches!(verb, "send" | "send_media" | "cold_dm"),
         "email" => verb == "send",
         // "do not guess ambient from the string alone": the schedule context
         // must carry the resolved level for these compatibility verbs.

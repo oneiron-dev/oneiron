@@ -499,8 +499,9 @@ fn provider_email_opt_out_override_and_frozen_unsubscribe_headers()
 
         // Override validity uses the vault's trusted clock, not occurred_at.
         vault.clock.set(40);
-        // Only a human may mint this receipted override. It is scoped to email,
-        // not to an authorization alias for all email provider connectors.
+        // Only a human may mint this receipted override. Both generic-email
+        // and provider-spelled rulings share the recipient class, never the
+        // connector's authorization key.
         let owner = entity(0x7a);
         vault.put_entity(
             &owner,
@@ -512,7 +513,7 @@ fn provider_email_opt_out_override_and_frozen_unsubscribe_headers()
         crate::comm::mint_send_override(
             &vault,
             "kenji@example.com",
-            Some("email"),
+            Some(if index == 0 { "email" } else { channel }),
             SendOverrideScope::Standing,
             None,
             crate::WriteActor::new(owner, EdgeActorClass::Human),
@@ -565,9 +566,95 @@ fn provider_email_honors_email_do_not_contact_head() -> Result<(), Box<dyn std::
         .iter()
         .enumerate()
     {
+        for restriction in ["email", *channel] {
+            check_email_dnc(channel, restriction, index)?;
+        }
+    }
+    Ok(())
+}
+
+fn check_email_dnc(
+    channel: &str,
+    restriction: &str,
+    index: usize,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let (_tmp, vault) = temp_vault();
+    clear_bootstrap_policy(&vault)?;
+    let actor = entity(0x7b);
+    vault.put_entity(
+        &actor,
+        crate::registry::ENTITY_TYPE_PERSON,
+        crate::temporal::TimeRange { start: 1, end: 1 },
+        1,
+        b"agent",
+    )?;
+    put_policy_manifest_bytes(
+        &vault,
+        entity(0x7c),
+        &provider_email_policy_manifest(&actor.to_hex(), channel),
+    )?;
+    let address = format!("restricted-{index}-{restriction}@example.com");
+    let party = crate::comm::resolve_or_create_comm_party(&vault, &address)?;
+    let mut dnc = ClaimBody::new(
+        crate::campaign::claims::PREDICATE_COMM_DO_NOT_CONTACT,
+        ClaimSubject::Entity(party),
+        Value::Map(vec![
+            (Value::from("channel"), Value::from(restriction)),
+            (Value::from("scope"), Value::from("send")),
+        ]),
+        1.0,
+        ClaimApprovalStatus::Approved,
+        ClaimLifecycleStatus::Active,
+    );
+    dnc.valid_from = Some(1);
+    vault
+        .put_claim(
+            &entity(0x7d),
+            &dnc,
+            crate::temporal::TimeRange { start: 1, end: 1 },
+            1,
+        )
+        .expect("seed do-not-contact head");
+    assert_eq!(
+        vault.get_claim(&entity(0x7d))?.expect("stored DNC").value,
+        dnc.value,
+        "{channel}: accepted restriction remains stored"
+    );
+    let mut request = qualification_request(
+        channel,
+        "send",
+        actor,
+        &format!("dnc:{index}:{restriction}"),
+    )
+    .counterparty_ref(&address);
+    request.intent.target = address;
+    let mut sink = RecordingExecutor::default();
+    let held = vault.dispatch_outbound_intent(request, &mut sink)?;
+    assert_eq!(held.outcome, OutboundDispatchOutcome::Held, "{channel}");
+    assert!(
+        held.receipt
+            .fields
+            .get("gate_receipt_reasons")
+            .is_some_and(|reasons| reasons.contains("counterparty_opt_out_do_not_contact")),
+        "{channel}"
+    );
+    assert!(sink.calls.is_empty(), "{channel}: DNC reached transport");
+    Ok(())
+}
+
+#[test]
+fn provider_key_stop_projects_email_contact_and_holds_each_provider_send()
+-> Result<(), Box<dyn std::error::Error>> {
+    use crate::channel_identity::{
+        ChannelIdentity, ChannelIdentityBinding, ChannelIdentityState, SelfHeldShape,
+    };
+    for (index, channel) in ["email_resend", "email_ses", "email_postmark"]
+        .iter()
+        .enumerate()
+    {
         let (_tmp, vault) = temp_vault();
         clear_bootstrap_policy(&vault)?;
-        let actor = entity(0x7b);
+        let actor = entity(0x81);
         vault.put_entity(
             &actor,
             crate::registry::ENTITY_TYPE_PERSON,
@@ -577,45 +664,141 @@ fn provider_email_honors_email_do_not_contact_head() -> Result<(), Box<dyn std::
         )?;
         put_policy_manifest_bytes(
             &vault,
-            entity(0x7c),
+            entity(0x82),
             &provider_email_policy_manifest(&actor.to_hex(), channel),
         )?;
-        let address = format!("restricted-{index}@example.com");
-        let party = crate::comm::resolve_or_create_comm_party(&vault, &address)?;
-        let mut dnc = ClaimBody::new(
-            crate::campaign::claims::PREDICATE_COMM_DO_NOT_CONTACT,
-            ClaimSubject::Entity(party),
-            Value::Map(vec![
-                (Value::from("channel"), Value::from("email")),
-                (Value::from("scope"), Value::from("send")),
-            ]),
-            1.0,
-            ClaimApprovalStatus::Approved,
-            ClaimLifecycleStatus::Active,
+        let identity_ref = entity(0x83);
+        let mut identity = ChannelIdentity::requested(
+            "email",
+            "sender@example.com",
+            SelfHeldShape::DedicatedAddress,
+            ChannelIdentityBinding::actor(actor),
+            10,
         );
-        dnc.valid_from = Some(1);
-        vault
-            .put_claim(
-                &entity(0x7d),
-                &dnc,
-                crate::temporal::TimeRange { start: 1, end: 1 },
-                1,
-            )
-            .expect("seed do-not-contact head");
-        let mut request = qualification_request(channel, "send", actor, &format!("dnc:{index}"))
+        identity.state = ChannelIdentityState::Active;
+        vault.create_channel_identity(&identity_ref, &identity)?;
+        let address = format!("stop-{index}@example.com");
+        let contact_id = entity(0x84);
+        vault.create_counterparty_contact(
+            &contact_id,
+            &CounterpartyContactRecord::user_introduction(identity_ref, &address, 10)?,
+        )?;
+        crate::comm::record_comm_inbound_stop(&vault, &address, channel, 30)?;
+        crate::comm::run_comm_projector(&vault)?;
+        let contact = vault
+            .get_counterparty_contact(&contact_id)?
+            .expect("projected contact");
+        assert!(
+            contact.is_opted_out(),
+            "{channel}: STOP did not rematerialize email contact"
+        );
+        assert_eq!(
+            contact.opt_out.expect("standing stop").reason,
+            CounterpartyOptOutReason::Stop
+        );
+        let party = crate::comm::resolve_or_create_comm_party(&vault, &address)?;
+        let rtxn = vault.store.env.read_txn()?;
+        let heads = crate::comm::standing_opt_out_heads_in_txn(&vault, &rtxn, party)?;
+        assert!(
+            heads
+                .iter()
+                .any(|head| head.channel_class.as_deref() == Some("email")
+                    && head.matches_channel(channel)),
+            "{channel}: stored STOP class"
+        );
+        drop(rtxn);
+        let mut request = qualification_request(channel, "send", actor, &format!("stop:{index}"))
+            .channel_identity_ref(identity_ref)
             .counterparty_ref(&address);
         request.intent.target = address;
         let mut sink = RecordingExecutor::default();
         let held = vault.dispatch_outbound_intent(request, &mut sink)?;
         assert_eq!(held.outcome, OutboundDispatchOutcome::Held, "{channel}");
-        assert!(
-            held.receipt
-                .fields
-                .get("gate_receipt_reasons")
-                .is_some_and(|reasons| reasons.contains("counterparty_opt_out_do_not_contact")),
+        assert_eq!(
+            held.gate_reason_codes,
+            vec!["gate.pending.counterparty_opt_out"],
             "{channel}"
         );
-        assert!(sink.calls.is_empty(), "{channel}: DNC reached transport");
+        assert!(
+            sink.calls.is_empty(),
+            "{channel}: STOP crossed provider wire"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn discord_cold_dm_is_ambient_after_risk_grant_but_not_before()
+-> Result<(), Box<dyn std::error::Error>> {
+    for (index, minute) in [Some(23 * 60), None].into_iter().enumerate() {
+        let (_tmp, vault) = temp_vault();
+        let actor = entity(0x85);
+        vault.put_entity(
+            &actor,
+            crate::registry::ENTITY_TYPE_PERSON,
+            crate::temporal::TimeRange { start: 1, end: 1 },
+            1,
+            b"agent",
+        )?;
+        put_policy_manifest_bytes(
+            &vault,
+            entity(0x86),
+            &risk_scoped_manifest(&actor.to_hex(), "discord", "cold_dm", "normal"),
+        )?;
+        put_claim_body(&vault, 0x87, &quiet_delivery_window_claim_body(0x85))?;
+        let request = |suffix: &str| {
+            let mut request = qualification_request(
+                "discord",
+                "cold_dm",
+                actor,
+                &format!("cold-dm:{index}:{suffix}"),
+            );
+            request.occurred_at = ONE_1768_EXECUTE_AT;
+            if let Some(minute) = minute {
+                request = request.delivery_window_local_minute_of_day(minute);
+            }
+            request
+        };
+        let mut sink = RecordingExecutor::default();
+        let pending = vault.dispatch_outbound_intent(request("ungranted"), &mut sink)?;
+        assert_eq!(pending.outcome, OutboundDispatchOutcome::Held, "{minute:?}");
+        assert_eq!(pending.gate_outcome, "pending", "{minute:?}");
+        assert!(sink.calls.is_empty());
+        // The risk grant is deliberately exact-channel and exact-verb; it
+        // cannot turn a cold DM into a push or grant another workspace bot.
+        put_policy_manifest_bytes(
+            &vault,
+            entity(0x88),
+            &risk_scoped_manifest(&actor.to_hex(), "discord", "cold_dm", "hold_to_proposal"),
+        )?;
+        let sent = vault.dispatch_outbound_intent(request("granted"), &mut sink)?;
+        assert_eq!(
+            sent.outcome,
+            OutboundDispatchOutcome::DeliveredToChannel,
+            "owner-authorized async DM in live quiet window {minute:?}: {:?}",
+            sent.receipt.fields
+        );
+        assert_eq!(sink.calls.len(), 1);
+        assert_eq!(
+            sent.receipt
+                .fields
+                .get("window_ladder_rung")
+                .map(String::as_str),
+            Some("ambient")
+        );
+        assert_eq!(
+            sent.receipt
+                .fields
+                .get("window_effective_action")
+                .map(String::as_str),
+            Some("deliver_now")
+        );
+        assert!(
+            crate::attempt_queue::AttemptQueue::new(&vault)
+                .list()?
+                .is_empty(),
+            "{minute:?}: no hold/retry row"
+        );
     }
     Ok(())
 }

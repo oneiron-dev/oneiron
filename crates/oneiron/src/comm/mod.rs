@@ -169,7 +169,9 @@ impl CommProjectorIndex {
                     .pending_gates
                     .entry(PartyChannelKey {
                         party_ref: *party_ref,
-                        channel_class: channel_class.clone(),
+                        channel_class: crate::counterparty_contact::normalize_channel_class(
+                            channel_class,
+                        ),
                     })
                     .or_default()
                     .push(IndexedGate {
