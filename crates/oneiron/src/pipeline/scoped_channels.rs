@@ -49,12 +49,12 @@ impl PipelineBuilder<'_> {
                 || filters.candidate_filter.is_some()
                 || self.memory_category,
         )?;
-        let mut scores = crate::ports::RetrievalIndex::port_retrieval_vector_search_quality(
-            self.vault,
+        let mut scores = self.vault.scoped_vector_search_quality_in_txn(
             rtxn,
             query,
             channel_limit,
             self.skip_vector_rescore,
+            claim_gate.private_note_ids.as_deref(),
         )?;
         self.truncate_corpus_channel(
             &mut scores,
@@ -136,6 +136,7 @@ impl PipelineBuilder<'_> {
         // suppression stats. Import only the candidates that enter fusion.
         let mut probe_gate = ClaimStatusGateCache {
             include_stale: filters.authority_filter.include_stale,
+            private_note_ids: claim_gate.private_note_ids.clone(),
             ..ClaimStatusGateCache::default()
         };
         // Reuse known decisions from earlier channels in this read transaction,
