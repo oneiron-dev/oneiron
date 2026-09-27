@@ -85,7 +85,6 @@ mod shell_edge_reconcile;
 mod store_entity_helpers;
 mod stored_event;
 mod topology_queries;
-pub(crate) use topology_queries::ActiveMergeDeleteRole;
 mod transition_table;
 mod wire_keys;
 

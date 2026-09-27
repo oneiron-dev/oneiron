@@ -685,7 +685,12 @@ mod tests {
             resume_rx,
         );
         std::thread::scope(|scope| {
-            let deleter = scope.spawn(|| vault.delete_entity(&entity));
+            let deleter = scope.spawn(|| {
+                vault.delete_entity_with_reason(
+                    &entity,
+                    crate::deletion::DeleteReason::UserHardDelete,
+                )
+            });
             arrived_rx.recv().unwrap();
             let txn = vault.store.env.read_txn().unwrap();
             let intent = topology_delete_reservation_in_txn(&vault.store, &txn, &entity)
@@ -706,7 +711,7 @@ mod tests {
             );
             drop(txn);
             resume_tx.send(()).unwrap();
-            assert!(deleter.join().unwrap().unwrap());
+            assert!(deleter.join().unwrap().unwrap().existed);
             let txn = vault.store.env.read_txn().unwrap();
             assert!(
                 topology_delete_reservation_in_txn(&vault.store, &txn, &entity)

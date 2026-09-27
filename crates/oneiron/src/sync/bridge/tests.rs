@@ -4567,6 +4567,7 @@ fn invalid_deferred_participant_erasure_cannot_activate_verified_merge() {
     }
 }
 
+#[test]
 fn remote_proposed_claim_materialization_invalidates_digest_deadline_after_commit() -> Result<()> {
     use crate::write_envelope::{WriteEnvelope, WriteProvenance};
     let origin = test_vault();

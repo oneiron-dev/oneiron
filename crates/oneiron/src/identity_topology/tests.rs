@@ -4989,8 +4989,9 @@ fn active_merge_source_hard_delete_refuses_before_edge_deindex_and_stays_undoabl
         .expect("the live merge remains undoable");
     assert!(
         vault
-            .delete_entity(&source)
+            .delete_entity_with_reason(&source, crate::deletion::DeleteReason::UserHardDelete)
             .expect("after undo hard delete is safe")
+            .existed
     );
 }
 
@@ -5176,8 +5177,9 @@ fn hard_erasing_canonical_head_retains_history_without_recreating_shell_edge() {
     );
     assert!(
         vault
-            .delete_entity(&survivor)
+            .delete_entity_with_reason(&survivor, crate::deletion::DeleteReason::UserHardDelete)
             .expect("erase canonical head")
+            .existed
     );
     let rtxn = vault.store.env.read_txn().expect("read txn");
     let events = super::ledger_fold::fold_effective_identity_topology_events_for_store_in_txn(
@@ -5215,8 +5217,9 @@ fn tombstone_without_prior_admission_cannot_validate_a_late_merge() {
     let deleted = put_person(&vault, 0x62);
     assert!(
         vault
-            .delete_entity(&deleted)
+            .delete_entity_with_reason(&deleted, crate::deletion::DeleteReason::UserHardDelete)
             .expect("erase unrelated entity")
+            .existed
     );
     let event = id(0x70);
     put_identity_event_record(
@@ -5435,7 +5438,7 @@ fn writer_verified_event_arriving_after_author_and_head_erasure_keeps_history_wi
             .delete_entity_with_reason(&author, crate::deletion::DeleteReason::GdprDelete)
             .expect("author erased before decision arrives");
         vault
-            .delete_entity(&survivor)
+            .delete_entity_with_reason(&survivor, crate::deletion::DeleteReason::UserHardDelete)
             .expect("head erased before decision arrives");
         if witness_first {
             put_identity_event_record(&vault, witness_id, &witness);
