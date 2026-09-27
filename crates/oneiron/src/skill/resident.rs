@@ -5,7 +5,7 @@ use rmpv::Value;
 use crate::batch::EntityMetadataHeader;
 use crate::entity_id::EntityId;
 use crate::error::{ArtifactError, Error, Result};
-use crate::registry::{ENTITY_TYPE_AGENT_DEF, ENTITY_TYPE_PERSON};
+use crate::registry::{ENTITY_TYPE_AGENT_DEF, ENTITY_TYPE_MACHINE, ENTITY_TYPE_PERSON};
 use crate::store::Store;
 
 use super::SkillRecord;
@@ -65,6 +65,26 @@ pub(crate) fn require_resident_in_txn(
     Ok(true)
 }
 
+/// An attempt executor can also be a MACHINE system actor. This is NOT the
+/// resident-fork owner check above: MACHINE must never gain fork ownership.
+fn require_executor_in_txn(store: &Store, txn: &heed::RoTxn<'_>, actor: &EntityId) -> Result<()> {
+    let raw = store
+        .entities
+        .get(txn, actor.as_bytes())?
+        .ok_or(Error::EntityNotFound)?;
+    let header = EntityMetadataHeader::parse(&raw)
+        .ok_or(Error::CorruptedIndex("attempt executor entity header"))?;
+    if !matches!(
+        header.entity_type,
+        ENTITY_TYPE_PERSON | ENTITY_TYPE_AGENT_DEF | ENTITY_TYPE_MACHINE
+    ) {
+        return Err(Error::InvalidClaimBody(
+            "attempt executor must be an actor entity",
+        ));
+    }
+    Ok(())
+}
+
 /// Durable per-skill-id owner, including explicit ABSENCE. Deleting the
 /// entity does not free its identity for a different resident on recreation.
 const OWNER_MARKER_PREFIX: &[u8] = b"skill:resident_owner:v1:";
@@ -112,10 +132,10 @@ pub(crate) fn validate_owner_put_in_txn(
     check_owner_marker_in_txn(store, txn, skill, record)?;
     if let Some(resident) = resident_of(record)? {
         // Sync carries the CURRENT blob, not necessarily a Candidate first.
-        // Keep an Active owner-first dependency on the replay marker rather
-        // than terminal-quarantining a lawful out-of-order skill.
+        // An unresolved Candidate is inert; every other lawful lifecycle
+        // state needs its owner before materialization and keeps a retry.
         if replicated
-            && record.lifecycle_status == super::SkillLifecycle::Active
+            && record.lifecycle_status != super::SkillLifecycle::Candidate
             && store.entities.get(txn, resident.as_bytes())?.is_none()
         {
             return Err(Error::Artifact(
@@ -143,18 +163,18 @@ pub(crate) fn bind_receipt_in_txn(
     vault: &crate::Vault,
     txn: &mut heed::RwTxn<'_>,
     receipt: &str,
-    resident: &EntityId,
+    actor: &EntityId,
 ) -> Result<()> {
-    require_resident_in_txn(&vault.store, txn, resident, false)?;
+    require_executor_in_txn(&vault.store, txn, actor)?;
     let key = receipt_key(receipt);
     if let Some(held) = vault.store.vault_meta.get(txn, &key)? {
-        if held.as_ref() != resident.as_bytes() {
+        if held.as_ref() != actor.as_bytes() {
             return Err(Error::InvalidClaimBody(
-                "attempt belongs to a different resident",
+                "attempt belongs to a different actor",
             ));
         }
     } else {
-        vault.store.vault_meta.put(txn, &key, resident.as_bytes())?;
+        vault.store.vault_meta.put(txn, &key, actor.as_bytes())?;
     }
     Ok(())
 }

@@ -61,7 +61,7 @@ fn stamped_receipt(vault: &Vault, skill_id: &str, actor: EntityId) -> Result<Str
     else {
         panic!("a fresh dedupe-free enqueue is never Existing");
     };
-    vault.bind_resident_attempt(attempt.id, &actor)?;
+    vault.bind_actor_attempt(attempt.id, &actor)?;
     queue.append_manifest_entry(
         attempt.id,
         ManifestEntry::new(ManifestKind::Skill, skill_id, "1.0.0", 11),

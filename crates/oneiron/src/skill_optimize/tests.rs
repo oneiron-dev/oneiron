@@ -148,7 +148,7 @@ fn stamped_receipt_version_as(
     };
     if let Some(actor) = actor {
         vault
-            .bind_resident_attempt(attempt.id, &actor)
+            .bind_actor_attempt(attempt.id, &actor)
             .expect("bind executor");
     }
     queue

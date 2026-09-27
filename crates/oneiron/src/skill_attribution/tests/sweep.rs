@@ -14,7 +14,7 @@ fn terminal(vault: &Vault, actor: EntityId, failed: bool) -> Result<String> {
     else {
         panic!("new")
     };
-    vault.bind_resident_attempt(row.id, &actor)?;
+    vault.bind_actor_attempt(row.id, &actor)?;
     queue.append_manifest_entry(
         row.id,
         ManifestEntry::new(ManifestKind::Skill, FIXTURE_SKILL_ID, "1.0.0", 11),

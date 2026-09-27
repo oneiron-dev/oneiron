@@ -13,10 +13,10 @@ pub struct LoadedSkillPack {
 }
 
 impl Vault {
-    /// Bind one live attempt to the resident whose receipts it will produce,
-    /// even if this attempt loads only shared skills or no skill at all.
+    /// Bind one live attempt to its executing actor (PERSON, AGENT_DEF or
+    /// MACHINE), even when it loads only shared skills or no skill at all.
     /// The marker is written before terminalization and is immutable.
-    pub fn bind_resident_attempt(&self, attempt: AttemptId, resident: &EntityId) -> Result<()> {
+    pub fn bind_actor_attempt(&self, attempt: AttemptId, actor: &EntityId) -> Result<()> {
         self.with_write_txn(|txn| {
             let row = AttemptQueue::new(self)
                 .get_in_txn(txn, attempt)?
@@ -28,7 +28,7 @@ impl Vault {
                 self,
                 txn,
                 &crate::receipt::attempt_pack_receipt_id(&attempt),
-                resident,
+                actor,
             )
         })
     }

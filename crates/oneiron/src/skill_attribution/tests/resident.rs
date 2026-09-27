@@ -69,7 +69,7 @@ fn scoped_receipt(
         panic!("new attempt")
     };
     if let Some(resident) = resident {
-        vault.bind_resident_attempt(row.id, resident)?;
+        vault.bind_actor_attempt(row.id, resident)?;
     }
     if let Some(skill) = shared {
         vault.load_attempt_skill_pack(row.id, skill, 31)?;
@@ -283,7 +283,7 @@ fn shared_and_skillless_receipts_cannot_cross_or_skip_resident_ownership() -> Re
     }
     let (attempt, shared_receipt) = scoped_receipt(&vault, Some(&a), Some(&shared), true)?;
     assert!(
-        vault.bind_resident_attempt(attempt, &b).is_err(),
+        vault.bind_actor_attempt(attempt, &b).is_err(),
         "closed attempt is immutable"
     );
     assert!(
@@ -378,5 +378,68 @@ fn shared_and_skillless_receipts_cannot_cross_or_skip_resident_ownership() -> Re
         )
         .is_err()
     );
+    Ok(())
+}
+
+#[test]
+fn machine_executor_can_ground_its_own_task_but_not_a_foreign_actor() -> Result<()> {
+    let (_dir, vault) = open_test_vault_with(embedding_test_config());
+    let machine = EntityId::now();
+    vault.put_entity(
+        &machine,
+        crate::registry::ENTITY_TYPE_MACHINE,
+        at(1),
+        1,
+        b"system actor",
+    )?;
+    let foreign = put_actor(&vault, EntityId::now())?;
+    let (_, receipt) = scoped_receipt(&vault, Some(&machine), None, true)?;
+    assert!(crate::receipt::attempt_pack_receipt(&vault, &receipt)?.is_some());
+    assert!(
+        record_attribution_evidence(
+            &vault,
+            &OutcomeEvidence::new(&receipt, foreign, AttemptOutcome::Failed, 35)
+                .with_routing_facts(false, true)
+        )
+        .is_err()
+    );
+    record_attribution_evidence(
+        &vault,
+        &OutcomeEvidence::new(&receipt, machine, AttemptOutcome::Failed, 35)
+            .with_routing_facts(false, true),
+    )?;
+    let judgments = run_attribution_projector(&vault, 0)?;
+    assert_eq!(judgments.len(), 1);
+    assert_eq!(judgments[0].subject, machine);
+    let claims = crate::actor_claims::project_actor_claims_from_judgments(&vault, &judgments)?;
+    assert_eq!(claims.len(), 1);
+    assert_eq!(
+        vault
+            .get_claim(&claims[0])?
+            .expect("failure mode")
+            .predicate,
+        crate::actor_claims::PREDICATE_ACTOR_FAILURE_MODE
+    );
+    let evidence = crate::actor_claims::ActorClaimEvidence::task(vec![receipt], 35)?;
+    assert!(
+        crate::actor_claims::write_actor_claim(
+            &vault,
+            crate::actor_claims::ActorClaimRow::Lesson {
+                actor: foreign,
+                text: "foreign".into()
+            },
+            &evidence
+        )
+        .is_err()
+    );
+    let lesson = crate::actor_claims::write_actor_claim(
+        &vault,
+        crate::actor_claims::ActorClaimRow::Lesson {
+            actor: machine,
+            text: "own check".into(),
+        },
+        &evidence,
+    )?;
+    assert!(vault.get_claim(&lesson)?.is_some());
     Ok(())
 }
