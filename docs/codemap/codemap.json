@@ -13526,6 +13526,7 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
+      "CuratorQuestions",
       "CuratorRubric",
       "CuratorTrigger"
      ],
@@ -13535,7 +13536,7 @@
       "crate-vis": 1,
       "enum": 1,
       "fn": 2,
-      "struct": 1
+      "struct": 2
      }
     },
     {
@@ -20000,7 +20001,7 @@
      "purpose": "Typed question records and shared outcome projection",
      "surface": {
       "mod": 1,
-      "re-export": 3
+      "re-export": 4
      }
     },
     {
@@ -20094,6 +20095,33 @@
      "surface": {
       "crate-vis": 3
      }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "DecisionSeat",
+      "SeatAnswer",
+      "SeatPhase",
+      "SeatRequest"
+     ],
+     "path": "src/llm/decision/seat.rs",
+     "purpose": "Opt-in, non-light typed-decision seat and its receipt boundary",
+     "surface": {
+      "enum": 1,
+      "fn": 2,
+      "struct": 2,
+      "trait": 1,
+      "type": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/llm/decision/seat/tests.rs",
+     "purpose": "—",
+     "surface": {}
     },
     {
      "bucket": "m",
@@ -29355,7 +29383,7 @@
      "path": "src/store/gate_decision/ledger.rs",
      "purpose": "Gate-decision ledger Store methods plus the row append and record codec",
      "surface": {
-      "crate-vis": 19,
+      "crate-vis": 20,
       "fn": 1
      }
     },
@@ -29376,8 +29404,18 @@
      "path": "src/store/gate_decision/mod.rs",
      "purpose": "The append-only gate-decision ledger: decision rows, claim/grant-ref indexes, the pending-deletion sidecar…",
      "surface": {
-      "crate-vis": 10,
+      "crate-vis": 12,
       "re-export": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/store/gate_decision/orcb.rs",
+     "purpose": "ORCB v1: schema-only dictionary, per-claim hot-value AEAD and exterior key custody",
+     "surface": {
+      "crate-vis": 7
      }
     },
     {
@@ -34994,7 +35032,7 @@
      "purpose": "Deterministic LinkedIn entity resolution and explicit runtime-path corpus preload"
     },
     "llm": {
-     "files": 69,
+     "files": 71,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -35386,7 +35424,7 @@
      "purpose": "EMB-5 speculative retrieval over ASR partials (ONE-EMBED E7)"
     },
     "store": {
-     "files": 48,
+     "files": 49,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -35549,8 +35587,8 @@
    },
    "over_bar": 10,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2098,
-   "test_files": 718
+   "source_files": 2100,
+   "test_files": 719
   },
   "oneiron-android": {
    "files": [
@@ -37957,6 +37995,44 @@
    "purpose": "Own-server LlmBackend",
    "source_files": 1,
    "test_files": 2
+  },
+  "oneiron-llm-systemone": {
+   "files": [
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "SystemOneSeat"
+     ],
+     "path": "src/lib.rs",
+     "purpose": "The remote System One protocol adapter; policy and receipts live in `oneiron::llm::decision`",
+     "surface": {
+      "fn": 1,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "src/tests.rs",
+     "purpose": "—",
+     "surface": {}
+    }
+   ],
+   "modules": {
+    "tests": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "—",
+     "layout": "file",
+     "purpose": "—"
+    }
+   },
+   "over_bar": 0,
+   "purpose": "The remote System One protocol adapter; policy and receipts live in `oneiron::llm::decision`",
+   "source_files": 1,
+   "test_files": 1
   },
   "oneiron-mesh-transport": {
    "files": [
