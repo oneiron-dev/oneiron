@@ -405,7 +405,7 @@ fn telemetry_age_expires_on_write() -> crate::Result<()> {
     Ok(())
 }
 
-#[cfg(unix)]
+#[cfg(target_os = "linux")]
 #[test]
 fn crash_orphans_sweep_on_reopen() -> crate::Result<()> {
     let dir = tempfile::tempdir()?;
@@ -467,7 +467,7 @@ fn disabling_capture_on_reopen_keeps_recent_runs_readable() -> crate::Result<()>
     Ok(())
 }
 
-#[cfg(unix)]
+#[cfg(target_os = "linux")]
 #[test]
 fn open_does_not_sweep_a_provisional_run_while_another_owner_holds_the_vault() -> crate::Result<()>
 {
@@ -540,7 +540,7 @@ fn existing_only_open_sweeps_crashed_provisional_row() -> crate::Result<()> {
     Ok(())
 }
 
-#[cfg(unix)]
+#[cfg(target_os = "linux")]
 #[test]
 fn renamed_root_cannot_redirect_the_orphan_sweep_lock() -> crate::Result<()> {
     let tmp = tempfile::tempdir()?;
@@ -578,5 +578,89 @@ fn renamed_root_cannot_redirect_the_orphan_sweep_lock() -> crate::Result<()> {
             empty_reason: None,
         })?;
     assert!(vault.retrieval_run(run.run_id)?.is_some());
+    Ok(())
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn failed_unleased_creation_cleans_bound_root_not_replacement() -> crate::Result<()> {
+    let temp = tempfile::tempdir()?;
+    let original = temp.path().join("new-vault");
+    let replacement = temp.path().join("existing-vault");
+    let moved = temp.path().join("moved-new-vault");
+    let config = VaultConfig::device();
+    {
+        let _existing = crate::Vault::open(&replacement, config.clone())?;
+    }
+    let data_before = std::fs::read(replacement.join("data.mdb"))?;
+    let lock_before = std::fs::read(replacement.join("lock.mdb"))?;
+    std::fs::create_dir(&original)?;
+    let canonical = original.canonicalize()?;
+    crate::store::test_hooks::arm_after_create_root_bind(canonical.clone(), move |path| {
+        std::fs::rename(path, &moved).expect("rename captured empty root");
+        std::fs::rename(&replacement, path).expect("install existing replacement");
+    });
+    crate::store::test_hooks::fail_initial_seed_commit_for(canonical);
+    assert!(matches!(
+        crate::Vault::open(&original, config),
+        Err(crate::Error::InvalidConfig(_))
+    ));
+    assert_eq!(std::fs::read(original.join("data.mdb"))?, data_before);
+    assert_eq!(std::fs::read(original.join("lock.mdb"))?, lock_before);
+    assert!(!temp.path().join("moved-new-vault/data.mdb").exists());
+    assert!(!temp.path().join("moved-new-vault/lock.mdb").exists());
+    Ok(())
+}
+
+#[cfg(all(unix, not(target_os = "linux")))]
+#[test]
+fn pathname_open_cannot_sweep_a_live_replacement_with_unbound_lock() -> crate::Result<()> {
+    use std::os::fd::AsRawFd;
+    let temp = tempfile::tempdir()?;
+    let original = temp.path().join("original");
+    let replacement = temp.path().join("replacement");
+    let moved = temp.path().join("moved-original");
+    let mut config = VaultConfig::device();
+    config.retrieval_telemetry_capture = true;
+    let live = record(10);
+    {
+        let vault = crate::Vault::open(&replacement, config.clone())?;
+        vault
+            .store
+            .record_context_pack_provisional_retrieval_run(&live)?;
+    }
+    // A shared lock models a live owner in another process. This process
+    // must never use EX on the captured empty root as authority to delete B.
+    let owner_lock = std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .open(replacement.join("oneiron.retrieval-telemetry.lock"))?;
+    // SAFETY: owner_lock holds a live fd and flock takes no pointer.
+    let acquired = unsafe { libc::flock(owner_lock.as_raw_fd(), libc::LOCK_SH | libc::LOCK_NB) };
+    assert_eq!(acquired, 0);
+    std::fs::create_dir(&original)?;
+    let canonical = original.canonicalize()?;
+    crate::store::test_hooks::arm_after_create_root_bind(canonical, move |path| {
+        std::fs::rename(path, &moved).expect("rename captured root");
+        std::fs::rename(&replacement, path).expect("install live vault");
+    });
+    let vault = crate::Vault::open(&original, config)?;
+    assert!(
+        vault
+            .store
+            .vault_meta
+            .get(
+                &vault.store.env.read_txn()?,
+                &retrieval_run_key(live.run_id)
+            )?
+            .is_some()
+    );
+    assert!(vault.retrieval_run(live.run_id)?.is_none());
+    drop(vault);
+    // SAFETY: this process still owns the descriptor; release the test hold.
+    let released = unsafe { libc::flock(owner_lock.as_raw_fd(), libc::LOCK_UN) };
+    assert_eq!(released, 0);
     Ok(())
 }

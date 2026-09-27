@@ -129,7 +129,7 @@ pub struct StoreCore {
     /// this vault handle. No process-global state or cross-vault kill switch.
     pub(in crate::store) retrieval_writes_disabled: std::sync::atomic::AtomicBool,
     pub(in crate::store) retrieval_telemetry_capture: bool,
-    #[cfg(unix)]
+    #[cfg(target_os = "linux")]
     pub(in crate::store) retrieval_telemetry_lease:
         Mutex<Option<super::retrieval_telemetry::RetrievalTelemetryLease>>,
     /// This vault's monotonic authority first-seen observation clock. It dies
@@ -178,8 +178,8 @@ pub struct StoreOwner {
     /// Sole owner of the environment's close-on-last-clone semantics
     /// (ONE-1142).
     #[cfg_attr(
-        not(unix),
-        expect(dead_code, reason = "held for close-on-last-clone Drop on non-Unix")
+        not(target_os = "linux"),
+        expect(dead_code, reason = "held for close-on-last-clone Drop on non-Linux")
     )]
     pub(in crate::store) env: OwnedEnv,
     // DROP-ORDER: keep this field after `env`. Fields drop in declaration

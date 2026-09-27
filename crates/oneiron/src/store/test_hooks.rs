@@ -166,6 +166,11 @@ type LmdbOpenHookSlot = LazyLock<Mutex<Vec<TargetedLmdbOpenHook>>>;
 #[cfg(target_os = "linux")]
 static BEFORE_LMDB_OPEN: LmdbOpenHookSlot = LazyLock::new(|| Mutex::new(Vec::new()));
 
+#[cfg(unix)]
+thread_local! {
+    static AFTER_CREATE_ROOT_BIND: RefCell<Vec<TargetedLmdbOpenHook>> = const { RefCell::new(Vec::new()) };
+}
+
 /// The mirror of [`BEFORE_LMDB_OPEN`] on the other side of the open: on the
 /// existing-only door it runs the instant `mdb_env_open` returns, before any
 /// post-open identity check, which is what lets an ABA schedule restore the
@@ -213,6 +218,34 @@ pub(super) fn arm_before_lmdb_open(path: PathBuf, hook: impl FnOnce(&Path) + Sen
 #[cfg(target_os = "linux")]
 pub(super) fn run_before_lmdb_open(path: &Path) {
     run_lmdb_open_hook(&BEFORE_LMDB_OPEN, path);
+}
+
+/// Interleave after the create-capable door captures its root descriptor but
+/// before preflight or LMDB open observes the caller's pathname.
+#[cfg(unix)]
+pub(crate) fn arm_after_create_root_bind(path: PathBuf, hook: impl FnOnce(&Path) + Send + 'static) {
+    AFTER_CREATE_ROOT_BIND.with(|slot| {
+        let mut armed = slot.borrow_mut();
+        armed.retain(|armed| armed.path != path);
+        armed.push(TargetedLmdbOpenHook {
+            path,
+            hook: Box::new(hook),
+        });
+    });
+}
+
+#[cfg(unix)]
+pub(super) fn run_after_create_root_bind(path: &Path) {
+    let hook = AFTER_CREATE_ROOT_BIND.with(|slot| {
+        let mut armed = slot.borrow_mut();
+        armed
+            .iter()
+            .position(|armed| armed.path == path)
+            .map(|at| armed.swap_remove(at).hook)
+    });
+    if let Some(hook) = hook {
+        hook(path);
+    }
 }
 
 pub(crate) fn arm_after_lmdb_open(path: PathBuf, hook: impl FnOnce(&Path) + Send + 'static) {

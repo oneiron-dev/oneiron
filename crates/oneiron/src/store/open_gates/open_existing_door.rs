@@ -150,7 +150,7 @@ impl Store {
             retrieval_blend_tuning_lock: Mutex::new(()),
             retrieval_writes_disabled: std::sync::atomic::AtomicBool::new(false),
             retrieval_telemetry_capture: config.retrieval_telemetry_capture,
-            #[cfg(unix)]
+            #[cfg(target_os = "linux")]
             retrieval_telemetry_lease: Mutex::new(None),
             authority_local_clock: Mutex::new(AuthorityLocalClock::default()),
             authority_fold_cache: Mutex::new(None),

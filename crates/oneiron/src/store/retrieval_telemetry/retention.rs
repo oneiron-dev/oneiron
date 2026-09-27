@@ -7,7 +7,7 @@ use crate::store::{ManifestDbs, Store};
 
 use super::RetrievalRunId;
 use super::run_store::stage_retrieval_run_delete;
-#[cfg(unix)]
+#[cfg(target_os = "linux")]
 use super::run_store::{RETRIEVAL_RUN_PROVISIONAL_KEY_PREFIX, retrieval_run_id_from_value};
 
 // Base-ledger retention only. Session overlay rows evaporate on close and
@@ -20,21 +20,21 @@ pub(super) const RETRIEVAL_RUN_MAX_ROWS: usize = 1024;
 #[cfg(test)]
 pub(super) const RETRIEVAL_RUN_MAX_ROWS: usize = 128;
 
-/// Every live Store holds a shared lock for its lifetime. The sole opener may
+/// On Linux every live Store holds a shared lock for its lifetime. The sole opener may
 /// take an exclusive lock, sweep crashed provisional rows, then downgrade.
 /// A second process with an active run keeps its shared lock, so an opener
 /// cannot mistake that run for an orphan. The file is one stable inode per
 /// vault, not one file per retrieval.
-#[cfg(unix)]
+#[cfg(target_os = "linux")]
 pub(super) const RETRIEVAL_TELEMETRY_LOCK_FILE: &str = "oneiron.retrieval-telemetry.lock";
 
-#[cfg(unix)]
+#[cfg(target_os = "linux")]
 pub(in crate::store) struct RetrievalTelemetryLease {
     file: std::fs::File,
     pid: u32,
 }
 
-#[cfg(unix)]
+#[cfg(target_os = "linux")]
 impl RetrievalTelemetryLease {
     fn acquire(dir: &std::fs::File) -> Result<(Self, bool)> {
         use std::os::fd::AsRawFd;
@@ -93,7 +93,7 @@ impl RetrievalTelemetryLease {
     }
 }
 
-#[cfg(unix)]
+#[cfg(target_os = "linux")]
 impl Drop for RetrievalTelemetryLease {
     fn drop(&mut self) {
         if self.pid == std::process::id() {
@@ -109,7 +109,7 @@ impl Drop for RetrievalTelemetryLease {
 /// Runs after the open gates, before handing the vault to a caller.
 impl Store {
     pub(in crate::store) fn reconcile_retrieval_telemetry_on_open(&self) -> Result<()> {
-        #[cfg(unix)]
+        #[cfg(target_os = "linux")]
         {
             let (lease, sole_opener) =
                 RetrievalTelemetryLease::acquire(self.owner.env.bound_root_dir()?)?;
@@ -139,9 +139,10 @@ impl Store {
             *guard = Some(lease);
             Ok(())
         }
-        #[cfg(not(unix))]
+        #[cfg(not(target_os = "linux"))]
         {
-            // No cross-process ownership proof: do not delete provisional rows.
+            // LMDB is opened by pathname here. A retained directory fd may
+            // name a different inode: no lock can prove a row is orphaned.
             Ok(())
         }
     }

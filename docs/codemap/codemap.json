@@ -29686,7 +29686,7 @@
      "path": "src/store/open_gates/manifest_storage_gates.rs",
      "purpose": "Process path registry, owned environment close semantics, manifest create/open/validate pairs, and storage…",
      "surface": {
-      "crate-vis": 30
+      "crate-vis": 31
      }
     },
     {
@@ -30044,7 +30044,7 @@
      "path": "src/store/test_hooks.rs",
      "purpose": "The test seams one open vault owns, plus the two path-keyed LMDB open hooks that necessarily predate it",
      "surface": {
-      "crate-vis": 15
+      "crate-vis": 17
      }
     },
     {

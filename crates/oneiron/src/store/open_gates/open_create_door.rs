@@ -82,7 +82,7 @@ impl Store {
     ) -> Result<Self> {
         // Declared before the environment so its Drop runs after the env has
         // closed, releasing LMDB's file handles before removing torn files.
-        let mut torn_creation_cleanup = TornCreationCleanup { root: None };
+        let mut torn_creation_cleanup = TornCreationCleanup::default();
         let (env, registered_path, is_new_vault) = {
             let _vault_root_open_guard = vault_root_open_guard()?;
 
@@ -96,6 +96,8 @@ impl Store {
                 Some(lease) => lease.clone_directory()?,
                 None => crate::store::root_directory::open_root_directory(&canonical_path)?,
             };
+            #[cfg(all(test, unix))]
+            test_hooks::run_after_create_root_bind(&canonical_path);
             #[cfg(target_os = "linux")]
             let storage_path = match lease {
                 Some(lease) => lease.environment_path(),
@@ -112,14 +114,10 @@ impl Store {
             let root_preflight = preflight_vault_root(&storage_path)?;
             let is_new_vault = root_preflight.is_new_vault;
             if is_new_vault {
-                // On an unleased open the descriptor is owned by the Env and
-                // drops before torn-creation cleanup; keep the cleanup path
-                // independent of that fd's eventual number.
-                torn_creation_cleanup.arm(if lease.is_some() {
-                    storage_path.clone()
-                } else {
-                    canonical_path.clone()
-                });
+                #[cfg(target_os = "linux")]
+                torn_creation_cleanup.arm_bound(&bound_root_dir)?;
+                #[cfg(not(target_os = "linux"))]
+                torn_creation_cleanup.arm(storage_path.clone());
             }
             let mut registered_path =
                 RegisteredPath::reserve(canonical_path.clone(), root_preflight.identity)?;
