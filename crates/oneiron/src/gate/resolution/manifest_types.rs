@@ -9,6 +9,7 @@ use crate::gate::ceiling::{
     PolicySignature, SourceTrustCeiling,
 };
 use crate::gate::grants::PolicyScopedGrant;
+use crate::gate::hosted_tts_policy::HostedTtsPolicy;
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub(crate) struct PolicyManifestDiagnostics {
@@ -101,10 +102,9 @@ pub(crate) struct PolicyManifestResolution {
     /// from a resolved manifest.
     pub(super) auto_checker: Option<String>,
     pub(super) budget_policy: BudgetPolicyTable,
-    /// Vault-resident wait windows keyed by wait class (DEC-0005; owner rule
-    /// 2026-09-27). A class no row names stays ungoverned, and its caller keeps
-    /// the restrictive default it ships with.
+    /// Vault-resident wait windows keyed by class.
     pub(super) wait_policy: WaitPolicyTable,
-    /// Vault-resident act postures keyed by `(act class, subject class)`.
+    /// Vault-resident act postures keyed by act and subject class.
     pub(super) act_policy: ActPolicyTable,
+    pub(super) hosted_tts: HostedTtsPolicy,
 }

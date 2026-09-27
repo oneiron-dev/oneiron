@@ -43,13 +43,27 @@ pub(super) fn hash_policy_frontier_v0(
     // manifest contributes no decoded rows at all and its malformed-ness is
     // already frontier-relevant through `hash_diagnostics`.
     hash_budget_policy_table(hasher, &resolution.budget_policy);
-    // The class tables decide whether an act class may run and how long a wait
-    // holds, so a row change moves gate outcomes and must invalidate standing
-    // grants bound to the old rows. Hashed under a domain tag and ONLY when
-    // non-empty, exactly like `auto_checker`: a vault whose manifest carries
-    // neither table keeps its existing frontier hash, and every consent binding
-    // taken against it stays valid.
     hash_class_policy_tables(hasher, resolution);
+    // An absent/empty hosted policy changes no decision and keeps the
+    // established frontier bytes for manifests that never named this knob.
+    if !resolution.hosted_tts.rows.is_empty() {
+        hash_str(hasher, "hosted_tts");
+        hash_str(hasher, resolution.hosted_tts.precedence.as_str());
+        hash_len(hasher, resolution.hosted_tts.rows.len());
+        for row in &resolution.hosted_tts.rows {
+            hash_str(hasher, &row.provider);
+            match row.scope {
+                crate::gate::hosted_tts_policy::HostedTtsScope::Vault => hash_str(hasher, "vault"),
+                crate::gate::hosted_tts_policy::HostedTtsScope::Holder(id) => {
+                    hash_str(hasher, "holder");
+                    hash_bytes(hasher, id.as_bytes());
+                }
+            }
+            hash_u64(hasher, row.limits.max_text_bytes as u64);
+            hash_u64(hasher, row.limits.max_pcm_fragment_bytes as u64);
+        }
+    }
+
     if let Some(bounds) = resolution.diagnostic_bounds {
         hash_str(hasher, "diagnostic_bounds");
         hash_u64(hasher, bounds.window_secs);

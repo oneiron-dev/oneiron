@@ -2,14 +2,15 @@
 
 use sha2::{Digest, Sha256};
 
+use crate::EntityId;
 use crate::error::Result;
+use crate::gate::hosted_tts_policy::HostedTtsLimits;
 use crate::llm::{BudgetExhaustionPolicy, BudgetPolicyTable};
 
 use super::frontier_hash::hash_policy_frontier_v0;
 use super::manifest_types::{
     CommOptOutPosture, PolicyManifestDiagnostics, PolicyManifestResolution,
 };
-use crate::entity_id::EntityId;
 use crate::gate::class_policy::{ActPosture, WaitResolution};
 
 use crate::gate::ceiling::{
@@ -85,12 +86,7 @@ impl PolicyManifestResolution {
         }
     }
 
-    /// The resolved wait window for `wait_class`, fail-closed.
-    ///
-    /// A loaded manifest that forces fail-closed reports
-    /// [`WaitResolution::Contradictory`]: an unreadable manifest is not
-    /// evidence that a wait may be shorter, and the caller must refuse rather
-    /// than fall back to its own default.
+    /// The resolved wait window, or a fail-closed contradiction.
     #[must_use]
     pub(crate) fn resolved_wait(
         &self,
@@ -103,12 +99,7 @@ impl PolicyManifestResolution {
         self.wait_policy.resolve(wait_class, holder)
     }
 
-    /// The resolved posture for `(act_class, subject_class)`, fail-closed.
-    ///
-    /// A loaded manifest that forces fail-closed reports
-    /// [`ActPosture::Deny`] — the restrictive pole — rather than `None`, so a
-    /// caller that treats silence as "keep my own default" cannot read an
-    /// unreadable manifest as permission.
+    /// The resolved act posture, fail-closed on an unreadable manifest.
     #[must_use]
     pub(crate) fn resolved_act_posture(
         &self,
@@ -120,6 +111,17 @@ impl PolicyManifestResolution {
             return Some(ActPosture::Deny);
         }
         self.act_policy.resolve(act_class, subject_class, holder)
+    }
+
+    pub(crate) fn hosted_tts_limits(
+        &self,
+        provider: &str,
+        holder: EntityId,
+    ) -> Option<HostedTtsLimits> {
+        if self.diagnostics.loaded_manifest_forces_fail_closed() {
+            return None;
+        }
+        self.hosted_tts.limits(provider, holder)
     }
 
     /// Rendering pins follow declared critical classes, not the fail-closed
