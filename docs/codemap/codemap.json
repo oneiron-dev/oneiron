@@ -27776,7 +27776,7 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "XL",
      "kind": "test",
      "notable": [],
      "path": "src/skill_hub/admission_tests.rs",
@@ -28209,7 +28209,7 @@
      "path": "src/skill_hub/refinement_admission.rs",
      "purpose": "Content-free refinement identity and the transaction-local exact-admission capability",
      "surface": {
-      "crate-vis": 16
+      "crate-vis": 17
      }
     },
     {

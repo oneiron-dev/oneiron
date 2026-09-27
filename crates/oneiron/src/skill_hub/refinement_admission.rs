@@ -14,6 +14,7 @@ use serde::{Deserialize, Serialize};
 // Permanent candidate origin, keyed only by entity ID. The value is the hash
 // of the first native Proposed bytes, never the body or an approval receipt.
 const CLAIM_ORIGIN: &[u8] = b"skill_hub/refinement-claim-origin/v1\0";
+const SKILL_ORIGIN: &[u8] = b"skill_hub/refinement-skill-origin/v1\0";
 const CONTROL: &[u8] = b"skill_hub/refinement-control/v1\0";
 fn key(id: &EntityId) -> Vec<u8> {
     let mut out = CONTROL.to_vec();
@@ -290,31 +291,61 @@ fn declares_refinement(body: &crate::claim::ClaimBody) -> bool {
         })
     })
 }
-fn origin_key(id: &EntityId) -> Vec<u8> {
-    let mut key = CLAIM_ORIGIN.to_vec();
+fn origin_key(prefix: &[u8], id: &EntityId) -> Vec<u8> {
+    let mut key = prefix.to_vec();
     key.extend_from_slice(id.as_bytes());
     key
 }
-/// The ordinary put chokepoint stages this after validation, for local and
-/// replicated Proposed claims alike. Delete never removes it.
-pub(crate) fn stage_refinement_claim_origin(
+fn declares_skill_refinement(record: &crate::skill::SkillRecord) -> bool {
+    record.provenance.as_map().is_some_and(|fields| {
+        fields.iter().any(|(key, value)| {
+            key.as_str() == Some("source") && value.as_str() == Some("shared-skill-delta")
+        })
+    })
+}
+/// The useful-upstream requirement survives replay, same-byte aliases and
+/// deletion even when the receiver has no locally submitted delta row.
+pub(crate) fn skill_refinement_origin_in_txn(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    id: &EntityId,
+) -> Result<bool> {
+    let Some(raw) = store.vault_meta.get(txn, &origin_key(SKILL_ORIGIN, id))? else {
+        return Ok(false);
+    };
+    if raw.len() != 32 {
+        return Err(Error::CorruptedIndex("skill refinement origin"));
+    }
+    Ok(true)
+}
+/// The ordinary put chokepoint stages the first native Candidate/Proposed
+/// origin after validation, for local and replicated writes alike. Delete
+/// never removes these content-free facts.
+pub(crate) fn stage_refinement_origin(
     store: &Store,
     txn: &mut heed::RwTxn<'_>,
     id: &EntityId,
-    body: Option<&crate::claim::ClaimBody>,
+    claim: Option<&crate::claim::ClaimBody>,
+    skill: Option<&crate::skill::SkillRecord>,
     data: &[u8],
 ) -> Result<()> {
-    let Some(body) = body else {
+    let prefix = if claim.is_some_and(|body| {
+        body.approval == crate::claim::ClaimApprovalStatus::Proposed && declares_refinement(body)
+    }) {
+        CLAIM_ORIGIN
+    } else if skill.is_some_and(|record| {
+        record.lifecycle_status == crate::skill::SkillLifecycle::Candidate
+            && declares_skill_refinement(record)
+    }) {
+        SKILL_ORIGIN
+    } else {
         return Ok(());
     };
-    if body.approval != crate::claim::ClaimApprovalStatus::Proposed || !declares_refinement(body) {
-        return Ok(());
-    }
     let digest = blake3::hash(data);
-    let key = origin_key(id);
+    let key = origin_key(prefix, id);
     if let Some(prior) = store.vault_meta.get(txn, &key)? {
         if prior.as_ref() != digest.as_bytes() {
-            return Err(invalid("refinement claim origin changed"));
+            return Err(invalid("refinement origin changed"));
         }
     } else {
         store.vault_meta.put(txn, &key, digest.as_bytes())?;
@@ -331,7 +362,8 @@ pub(crate) fn validate_refinement_admission(
     data: &[u8],
     proof: Option<&RefinementAdmissionProof>,
 ) -> Result<()> {
-    let origin = store.vault_meta.get(txn, &origin_key(id))?;
+    let origin = store.vault_meta.get(txn, &origin_key(CLAIM_ORIGIN, id))?;
+    let skill_origin = store.vault_meta.get(txn, &origin_key(SKILL_ORIGIN, id))?;
     let control = read_control(store, txn, id)?;
     if let Some(ref origin) = origin {
         if origin.len() != 32 || kind != ENTITY_TYPE_CLAIM {
@@ -352,9 +384,41 @@ pub(crate) fn validate_refinement_admission(
             return Ok(());
         }
     }
+    if let Some(ref skill_origin) = skill_origin {
+        if skill_origin.len() != 32 || kind != ENTITY_TYPE_SKILL {
+            return Err(Error::CorruptedIndex("skill refinement origin binding"));
+        }
+        if control.is_none() {
+            let same_stored_candidate =
+                store.entities.get(txn, id.as_bytes())?.is_some_and(|raw| {
+                    raw.get(crate::batch::ENTITY_METADATA_HEADER_LEN..) == Some(data)
+                });
+            let record = crate::skill::decode_skill_record(data)?;
+            if !same_stored_candidate
+                || record.lifecycle_status != crate::skill::SkillLifecycle::Candidate
+                || !declares_skill_refinement(&record)
+                || skill_origin.as_ref() != blake3::hash(data).as_bytes()
+            {
+                return Err(invalid(
+                    "skill refinement origin requires useful-upstream admission",
+                ));
+            }
+            return Ok(());
+        }
+    }
     let Some(control) = control else {
+        if kind == ENTITY_TYPE_SKILL {
+            let record = crate::skill::decode_skill_record(data)?;
+            if declares_skill_refinement(&record)
+                && record.lifecycle_status != crate::skill::SkillLifecycle::Candidate
+            {
+                return Err(invalid(
+                    "skill refinement origin cannot publish without proof",
+                ));
+            }
+        }
         // A first Proposed copy may arrive before control. Its id is pinned
-        // as an origin fact by stage_refinement_claim_origin in this same put.
+        // as an origin fact by stage_refinement_origin in this same put.
         if kind == ENTITY_TYPE_CLAIM {
             let body = crate::claim::decode_claim_body(data, true)?;
             if declares_refinement(&body)
@@ -370,6 +434,9 @@ pub(crate) fn validate_refinement_admission(
     };
     if kind == ENTITY_TYPE_CLAIM && origin.is_none() {
         return Err(Error::CorruptedIndex("refinement proposal origin"));
+    }
+    if kind == ENTITY_TYPE_SKILL && skill_origin.is_none() {
+        return Err(Error::CorruptedIndex("skill refinement proposal origin"));
     }
     if control.state == RefinementState::Erased {
         return Err(invalid("erased refinement id cannot be reused"));

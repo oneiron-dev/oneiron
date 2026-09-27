@@ -38,7 +38,8 @@ pub(crate) use package_codec::remove_hub_package_in_txn;
 pub use package_codec::{decode_hub_package, encode_hub_package};
 pub use publisher::ForeignSkillPublisher;
 pub(crate) use refinement_admission::{
-    RefinementAdmissionProof, stage_refinement_claim_origin, validate_refinement_admission,
+    RefinementAdmissionProof, skill_refinement_origin_in_txn, stage_refinement_origin,
+    validate_refinement_admission,
 };
 #[cfg(test)]
 pub(crate) use refinement_custody::refinement_carriers_for_holder_in_txn;

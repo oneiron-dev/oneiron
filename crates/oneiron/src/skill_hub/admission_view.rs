@@ -129,7 +129,9 @@ impl Vault {
         // A shared delta retains its birth identity even if later imports add
         // hub aliases for the same bytes. Marketplace consent and replay are
         // not substitutes for its typed useful-upstream decision.
-        if self.delta_in_txn(txn, &candidate)?.is_some() {
+        if self.delta_in_txn(txn, &candidate)?.is_some()
+            || super::skill_refinement_origin_in_txn(&self.store, txn, &candidate)?
+        {
             return Err(invalid(
                 "shared delta must use the merge-back admission door",
             ));

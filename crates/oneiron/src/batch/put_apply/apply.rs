@@ -627,11 +627,12 @@ pub(in crate::batch) fn apply_put(
     )?;
     crate::skill_hub::stage_refinement_carrier_put(store, wtxn, &id, entity_type, data)?;
     stage_entity_body_row(store, wtxn, &id, entity_type, occurred, learned_at, data)?;
-    crate::skill_hub::stage_refinement_claim_origin(
+    crate::skill_hub::stage_refinement_origin(
         store,
         wtxn,
         &id,
         decoded_claim_body.as_ref(),
+        new_skill_record.as_ref(),
         data,
     )?;
     if entity_type == ENTITY_TYPE_TASK {

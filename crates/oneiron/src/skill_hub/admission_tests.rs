@@ -1241,6 +1241,127 @@ fn shared_skill_erase_matrix_retains_denial_after_raw_local_and_replayed_delete(
     Ok(())
 }
 
+fn replay_native_skill(
+    vault: &Vault,
+    id: EntityId,
+    record: &SkillRecord,
+    stamp: u64,
+) -> Result<()> {
+    let data = crate::skill::encode_skill_record(record)?;
+    #[cfg(feature = "sync")]
+    {
+        crate::sync::replay::replay_entity(
+            vault,
+            crate::sync::replay::ReplicatedEntity {
+                id,
+                entity_type: crate::registry::ENTITY_TYPE_SKILL,
+                occurred: at(stamp),
+                learned_at: stamp,
+                body: &data,
+            },
+            crate::sync::client::ImportTier::OwnDevice,
+        )
+    }
+    #[cfg(not(feature = "sync"))]
+    {
+        vault
+            .batch()
+            .put_replicated(
+                &id,
+                crate::registry::ENTITY_TYPE_SKILL,
+                at(stamp),
+                stamp,
+                &data,
+            )
+            .commit()
+    }
+}
+
+#[test]
+fn replayed_shared_skill_delta_cannot_activate_through_same_byte_marketplace_alias() -> Result<()> {
+    let sender = Fixture::new();
+    let fork = EntityId::now();
+    sender
+        .vault
+        .fork_skill_record(&sender.baseline, &fork, "fixture.branch", at(10), 10)?;
+    sender.vault.write_shared_skill_fork_package(
+        &fork,
+        &package("fixture.branch", "2", "check result"),
+        at(11),
+        11,
+    )?;
+    let offered = package("fixture.base", "2", "check result");
+    let submitted = encode_hub_package(&offered)?;
+    let candidate = sender.vault.submit_local_skill_refinement(
+        &sender.baseline,
+        &fork,
+        &sender.resident,
+        &submitted,
+        at(20),
+        20,
+    )?;
+    let native = sender
+        .vault
+        .get_skill_record(&candidate)?
+        .expect("native Candidate");
+    let receiver = Fixture::new();
+    replay_native_skill(&receiver.vault, candidate, &native, 20)?;
+    assert!(
+        receiver.vault.shared_skill_delta(&candidate)?.is_none(),
+        "the receiver did not submit this delta locally"
+    );
+    let (hub, publisher) = receiver.hub(SkillHubTrustTier::Verified);
+    let alias = HubRef::new(
+        hub.hub_id,
+        "same-bytes",
+        HubPin::ContentHash(offered.content_hash()?.to_hex()),
+    )?;
+    assert_eq!(
+        receiver
+            .vault
+            .import_skill_from_hub(&alias, &offered, at(22), 22)?,
+        candidate
+    );
+    assert_eq!(receiver.vault.skill_hub_provenance_count(&candidate)?, 1);
+    assert!(
+        receiver
+            .vault
+            .prepare_marketplace_activation(candidate, &alias, &publisher, receiver.baseline,)
+            .is_err(),
+        "marketplace held-out admission cannot replace useful-upstream"
+    );
+    assert_eq!(
+        receiver
+            .vault
+            .get_skill_record(&candidate)?
+            .unwrap()
+            .lifecycle_status,
+        SkillLifecycle::Candidate
+    );
+    assert_eq!(
+        receiver
+            .vault
+            .get_skill_record(&receiver.baseline)?
+            .unwrap()
+            .lifecycle_status,
+        SkillLifecycle::Active
+    );
+    receiver.vault.batch().delete(&candidate).commit()?;
+    let txn = receiver.vault.store.env.read_txn()?;
+    assert!(super::skill_refinement_origin_in_txn(
+        &receiver.vault.store,
+        &txn,
+        &candidate
+    )?);
+    drop(txn);
+    assert!(
+        replay_native_skill(&receiver.vault, candidate, &native, 30).is_err(),
+        "raw deletion cannot free the replayed refinement ID"
+    );
+    assert!(receiver.vault.get_skill_record(&candidate)?.is_none());
+    Ok(())
+}
+
 #[test]
 fn raw_package_cannot_understate_the_file_manifest_capabilities() -> Result<()> {
     let fixture = Fixture::new();
