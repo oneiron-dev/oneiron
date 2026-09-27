@@ -1410,3 +1410,131 @@ fn verified_revoke_floor_survives_invalid_grant_ancestry() {
     entries.reverse();
     assert_eq!(fold_authority_log_without_seen_time_delay(&entries), after);
 }
+
+/// A signer enrolled on a losing fork can have verified a revoke before the
+/// sibling enrollment arrived. The fork removes the permissive enrollment,
+/// never the signed revoke's restrictive effect on an independent binding.
+#[test]
+fn verified_revoke_survives_signer_enrollment_losing_equivocation() {
+    let owner = ed_key(143);
+    let owner_key = authority_key_from_ed(&owner);
+    let consent = ed_key(144);
+    let consent_key = authority_key_from_ed(&consent);
+    let genesis = genesis_entry(143, DEFAULT_PENDING_WIDEN_DELAY_SECS, 1);
+    let vault_id = genesis_vault_id(&genesis).unwrap();
+    let enroll_consent = enroll_device_entry(
+        vault_id,
+        &genesis,
+        &owner,
+        EnrollSpec {
+            seed: 144,
+            roles: ROLE_OWNER | ROLE_ADMIN,
+            tier: AuthorityTier::Software,
+            seq: 1,
+            ts: 2,
+        },
+    );
+    let actor = scope_entity(0x6c);
+    let bind = cosign_ed(
+        unsigned_entry(
+            Some(vault_id),
+            1,
+            vec![authority_entry_hash(&enroll_consent).unwrap()],
+            bind_op(&consent_key, actor, "human", 1),
+            consent_key.clone(),
+            3,
+        ),
+        &consent,
+        &owner,
+    );
+    let bind_hash = authority_entry_hash(&bind).unwrap();
+    let enroll_agent = |seed| {
+        cosign_ed(
+            unsigned_entry(
+                Some(vault_id),
+                2,
+                vec![bind_hash],
+                AuthorityOp::EnrollDevice {
+                    device: device(
+                        authority_key_from_ed(&ed_key(seed)),
+                        ROLE_AGENT,
+                        AuthorityTier::Software,
+                    ),
+                },
+                owner_key.clone(),
+                4,
+            ),
+            &owner,
+            &consent,
+        )
+    };
+    let first = enroll_agent(145);
+    let second = enroll_agent(146);
+    // Both candidates have equal rank except their hash. Sign the revoke with
+    // the key enrolled by the candidate that will LOSE when the sibling lands.
+    let (loser, signer_seed, winner) =
+        if authority_entry_hash(&first).unwrap() > authority_entry_hash(&second).unwrap() {
+            (first, 145, second)
+        } else {
+            (second, 146, first)
+        };
+    let loser_hash = authority_entry_hash(&loser).unwrap();
+    let winner_hash = authority_entry_hash(&winner).unwrap();
+    let signer = ed_key(signer_seed);
+    let signer_key = authority_key_from_ed(&signer);
+    let revoke = cosign_ed(
+        unsigned_entry(
+            Some(vault_id),
+            1,
+            vec![loser_hash],
+            revoke_actor_op(&consent_key, 2),
+            signer_key.clone(),
+            5,
+        ),
+        &signer,
+        &consent,
+    );
+    let revoke_hash = authority_entry_hash(&revoke).unwrap();
+    let mut entries = vec![genesis, enroll_consent, bind, loser, revoke];
+    let before = fold_authority_log_without_seen_time_delay(&entries);
+    assert!(
+        before.issues.is_empty(),
+        "valid revoke fixture: {:?}",
+        before.issues
+    );
+    assert!(before.valid_entries.contains(&revoke_hash));
+    assert_eq!(
+        folded_status(&before, &consent_key),
+        Some(ActorBindingStatus::Revoked)
+    );
+
+    entries.push(winner);
+    let after = fold_authority_log_without_seen_time_delay(&entries);
+    assert!(after.valid_entries.contains(&winner_hash));
+    assert!(!after.valid_entries.contains(&loser_hash));
+    assert!(!after.valid_entries.contains(&revoke_hash));
+    assert!(!after.roster.contains_key(&signer_key));
+    assert!(
+        after
+            .issues
+            .contains(&AuthorityFoldIssue::InvalidAncestry(revoke_hash))
+    );
+    assert_eq!(
+        folded_status(&after, &consent_key),
+        Some(ActorBindingStatus::Revoked)
+    );
+    assert!(!actor_binding_is_active(&after, &actor, "human"));
+    assert_eq!(
+        after.actor_write_disposition(&actor, "human", None),
+        CausalWriteDisposition::Quarantined
+    );
+    let mut bad_entries = entries.clone();
+    bad_entries[4].cosigns[0].signature[0] ^= 1;
+    let bad = fold_authority_log_without_seen_time_delay(&bad_entries);
+    assert_eq!(
+        folded_status(&bad, &consent_key),
+        Some(ActorBindingStatus::Active)
+    );
+    entries.reverse();
+    assert_eq!(fold_authority_log_without_seen_time_delay(&entries), after);
+}
