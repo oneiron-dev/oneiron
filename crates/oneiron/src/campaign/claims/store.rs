@@ -172,7 +172,10 @@ pub fn do_not_contact_applies(
 ) -> bool {
     let channel_matches = match (value.channel.as_deref(), channel) {
         (None, _) | (Some(_), None) => true,
-        (Some(stored), Some(queried)) => stored == normalize_token(queried),
+        (Some(stored), Some(queried)) => {
+            crate::counterparty_contact::normalize_channel_class(stored)
+                == crate::counterparty_contact::normalize_channel_class(queried)
+        }
     };
     let scope_matches =
         value.scope == DO_NOT_CONTACT_SCOPE_ALL || value.scope == normalize_token(scope);
