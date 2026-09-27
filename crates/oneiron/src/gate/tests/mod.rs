@@ -51,6 +51,7 @@ mod consent_bundle;
 mod critical_confirm_index;
 mod critical_confirm_lifecycle;
 mod delegation;
+mod document_limits;
 mod dreamer_precommit;
 mod effect_policy;
 mod evaluator_core;

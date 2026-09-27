@@ -5,6 +5,16 @@ use super::opc::{self, OpcPackage, OpcPart};
 use super::*;
 use crate::error::Error;
 
+fn run_edit_roundtrip<S: EditSession>(
+    session: &S,
+    input: &[u8],
+    format: OfficeFormat,
+    plan: &EditPlan,
+    run_ref: &str,
+) -> Result<EditOutcome> {
+    run_edit_roundtrip_with_limits(session, input, format, plan, run_ref, opc::fixture_limits())
+}
+
 const SHEET_PART: &str = "xl/worksheets/sheet1.xml";
 const UNKNOWN_PART: &str = "customXml/item1.xml";
 
@@ -717,6 +727,7 @@ fn stored_proposal_binds_the_version_read_by_storage() {
                 media_type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
                     .into(),
                 bytes: self.0.clone(),
+                limits: opc::fixture_limits(),
             }))
         }
         fn missing_artifact(&self) -> Error {
@@ -738,4 +749,28 @@ fn stored_proposal_binds_the_version_read_by_storage() {
     };
     assert_eq!(proposal.base_version, Some(7));
     assert_eq!(proposal.base_content_hash, *blake3::hash(&bytes).as_bytes());
+}
+
+#[test]
+fn output_package_must_fit_the_same_resolved_budget_as_input() {
+    let input = xlsx_bytes(&base_parts());
+    let size: u64 = opc::read(&input)
+        .expect("valid input")
+        .parts()
+        .iter()
+        .map(|part| part.data.len() as u64)
+        .sum();
+    let limits = opc::DocumentLimits::new(1024 * 1024, size).expect("valid budget");
+    let mut plan = EditPlan::new(Vec::new());
+    plan.request_recalc = Some(false);
+    let outcome = run_edit_roundtrip_with_limits(
+        &FixtureSession::faithful(),
+        &input,
+        OfficeFormat::Xlsx,
+        &plan,
+        "run:budget",
+        limits,
+    )
+    .expect("output over budget is a rejected proposal");
+    assert!(matches!(outcome, EditOutcome::Rejected { .. }));
 }

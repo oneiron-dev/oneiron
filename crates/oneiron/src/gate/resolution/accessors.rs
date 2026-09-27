@@ -76,6 +76,17 @@ impl PolicyManifestResolution {
         }
     }
 
+    /// Missing/malformed policy cannot silently grant a document budget.
+    pub(crate) fn document_limits(
+        &self,
+    ) -> Option<oneiron_docedit::edit_roundtrip::limits::DocumentLimits> {
+        if self.diagnostics.loaded_manifest_forces_fail_closed() {
+            None
+        } else {
+            self.document_limits
+        }
+    }
+
     /// Rendering pins follow declared critical classes, not the fail-closed
     /// write fallback for unknown predicates. Only trusted folded policy can pin.
     #[must_use]

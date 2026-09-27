@@ -98,4 +98,5 @@ pub(crate) struct PolicyManifestResolution {
     /// from a resolved manifest.
     pub(super) auto_checker: Option<String>,
     pub(super) budget_policy: BudgetPolicyTable,
+    pub(super) document_limits: Option<oneiron_docedit::edit_roundtrip::limits::DocumentLimits>,
 }

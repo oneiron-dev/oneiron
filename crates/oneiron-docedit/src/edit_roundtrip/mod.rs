@@ -56,6 +56,9 @@
 mod address;
 mod inspect;
 mod manifest;
+pub mod limits {
+    pub use super::opc::DocumentLimits;
+}
 mod opc;
 mod ops;
 mod pipeline;
@@ -67,7 +70,7 @@ pub use self::manifest::{
     EDIT_MANIFEST_SCHEMA_VERSION, EditManifest, EditWarning, MutationMode, WarningCode,
 };
 pub use self::ops::{AnchorEffect, CellValue, CellWrite, EditOp, StructuralShift};
-pub use self::pipeline::{EditOutcome, EditProposal, RecalcStatus, run_edit_roundtrip};
+pub use self::pipeline::{EditOutcome, EditProposal, RecalcStatus, run_edit_roundtrip_with_limits};
 pub use self::session_validate::{
     AppliedEdit, EditPlan, EditSession, OfficeDoc, ValidationCheck, ValidationReport,
 };

@@ -25,6 +25,8 @@ pub(crate) fn resolve_policy_manifest(
     let mut resolution = PolicyManifestResolution::default();
     let mut untrusted_source_rows = Vec::new();
     let mut delegated_rows: Vec<DelegationGrantRecord> = Vec::new();
+    let mut default_document_limits = None;
+    let mut untrusted_document_limits = Vec::new();
 
     for index_entry in store.port_entity_ids_by_type(txn, ENTITY_TYPE_POLICY_MANIFEST, None)? {
         let id = match index_entry {
@@ -59,6 +61,9 @@ pub(crate) fn resolve_policy_manifest(
             Some(decoded) => {
                 resolution.diagnostics.manifest_count += 1;
                 if !trusted {
+                    if let Some(limits) = decoded.document_limits {
+                        untrusted_document_limits.push(limits);
+                    }
                     untrusted_source_rows.push(decoded.source_trust);
                     continue;
                 }
@@ -139,6 +144,19 @@ pub(crate) fn resolve_policy_manifest(
                 // order, then row order inside each manifest. Row indices in
                 // ladder events index this concatenation.
                 resolution.budget_policy.extend_rows(decoded.budget_policy);
+                if let Some(limits) = decoded.document_limits {
+                    // The seeded row is a fallback, not a ceiling: a trusted
+                    // holder-authored row may explicitly widen it. Multiple
+                    // holder rows compose restrictively, independent of scan order.
+                    if id == crate::gate::default_policy_manifest_id()? {
+                        default_document_limits = Some(limits);
+                    } else {
+                        resolution.document_limits =
+                            Some(resolution.document_limits.map_or(limits, |existing| {
+                                crate::gate::document_limits::narrow_limits(existing, limits)
+                            }));
+                    }
+                }
                 if let Some(bounds) = decoded.diagnostic_bounds {
                     match resolution.diagnostic_bounds {
                         None => resolution.diagnostic_bounds = Some(bounds),
@@ -153,6 +171,13 @@ pub(crate) fn resolve_policy_manifest(
             }
         }
     }
+
+    let mut document_limits = resolution.document_limits.or(default_document_limits);
+    for limits in untrusted_document_limits {
+        document_limits = document_limits
+            .map(|existing| crate::gate::document_limits::narrow_limits(existing, limits));
+    }
+    resolution.document_limits = document_limits;
 
     for contribution in untrusted_source_rows {
         resolution.source_trust.restrict_only(contribution);

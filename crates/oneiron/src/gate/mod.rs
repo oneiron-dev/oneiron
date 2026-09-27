@@ -16,6 +16,7 @@ mod decision;
 mod decode;
 mod default_manifest;
 mod definition_ceiling;
+mod document_limits;
 mod doors;
 mod dreamer_precommit;
 mod effect;

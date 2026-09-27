@@ -324,3 +324,48 @@ fn read_rejects_unsupported_compression_method() {
         .expect_err("unsupported compression method must fail");
     assert!(matches!(err, Error::EditRoundtripFailed(_)));
 }
+
+#[test]
+fn policy_budget_changes_admission_without_relaxing_integrity() {
+    let body = b"<worksheet>payload</worksheet>";
+    let zip = build_zip(
+        &[RawEntry::deflated("xl/worksheets/sheet1.xml", body)],
+        0,
+        0,
+        None,
+    );
+    let small = DocumentLimits::new(body.len() as u64 - 1, body.len() as u64 + 4).unwrap();
+    assert!(matches!(
+        read_with_limits(&zip, small),
+        Err(Error::EditRoundtripFailed(_))
+    ));
+    let small_package = DocumentLimits::new(100, body.len() as u64 - 1).unwrap();
+    assert!(matches!(
+        read_with_limits(&zip, small_package),
+        Err(Error::EditRoundtripFailed(_))
+    ));
+    let bigger = DocumentLimits::new(body.len() as u64 + 8, body.len() as u64 + 8).unwrap();
+    assert_eq!(
+        read_with_limits(&zip, bigger)
+            .unwrap()
+            .part("xl/worksheets/sheet1.xml"),
+        Some(body.as_slice())
+    );
+    let mut bad_crc = RawEntry::deflated("xl/worksheets/sheet1.xml", body);
+    bad_crc.crc ^= 1;
+    assert!(matches!(
+        read_with_limits(&build_zip(&[bad_crc], 0, 0, None), bigger),
+        Err(Error::EditRoundtripFailed(_))
+    ));
+    assert!(DocumentLimits::new(0, 100).is_none());
+    assert!(DocumentLimits::new(100, u32::MAX as u64).is_none());
+}
+
+#[test]
+fn nested_limit_can_only_narrow_vault_budget() {
+    let vault = DocumentLimits::new(20, 40).unwrap();
+    let wider = DocumentLimits::new(50, 70).unwrap();
+    assert_eq!(vault.narrow(wider), vault);
+    let tighter = DocumentLimits::new(10, 30).unwrap();
+    assert_eq!(vault.narrow(tighter), tighter);
+}

@@ -40,14 +40,49 @@ const LOCAL_FILE_MIN_LEN: usize = 30;
 const ZIP_STORED: u16 = 0;
 const ZIP_DEFLATE: u16 = 8;
 
-/// Per-entry ceiling on a central-directory *declared* uncompressed size. An
-/// OPC part advertising more than this is rejected before inflation, bounding a
-/// single zip-bomb entry (this pipeline reasons over spreadsheet XML, not
-/// arbitrary archives).
-const MAX_ENTRY_UNCOMPRESSED: u64 = 256 * 1024 * 1024;
-/// Whole-package ceiling on the sum of every entry's declared uncompressed
-/// size, bounding an archive of many individually-modest entries.
-const MAX_PACKAGE_UNCOMPRESSED: u64 = 1024 * 1024 * 1024;
+/// Resolved document admission budget. The host reads this from vault policy;
+/// callers may narrow it, but a larger value needs a trusted policy update.
+/// ZIP32 cannot represent a single entry at the ZIP64 sentinel (`u32::MAX`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct DocumentLimits {
+    max_entry_uncompressed: u64,
+    max_package_uncompressed: u64,
+}
+
+impl DocumentLimits {
+    /// Reject empty or non-ZIP32 budgets before any decompression. Bounding
+    /// the total also bounds memory across an archive of many small entries.
+    #[must_use]
+    pub const fn new(entry: u64, package: u64) -> Option<Self> {
+        if entry == 0 || package == 0 || entry >= u32::MAX as u64 || package >= u32::MAX as u64 {
+            return None;
+        }
+        Some(Self {
+            max_entry_uncompressed: entry,
+            max_package_uncompressed: package,
+        })
+    }
+
+    #[must_use]
+    pub const fn entry_bytes(self) -> u64 {
+        self.max_entry_uncompressed
+    }
+
+    #[must_use]
+    pub const fn package_bytes(self) -> u64 {
+        self.max_package_uncompressed
+    }
+
+    /// A nested request can only lower either dimension of the vault limit.
+    #[must_use]
+    pub fn narrow(self, requested: Self) -> Self {
+        Self::new(
+            self.entry_bytes().min(requested.entry_bytes()),
+            self.package_bytes().min(requested.package_bytes()),
+        )
+        .expect("two valid document budgets have a valid minimum")
+    }
+}
 
 /// The OPC content-type manifest present in every well-formed package.
 pub(super) const CONTENT_TYPES_PART: &str = "[Content_Types].xml";
@@ -124,7 +159,7 @@ impl OpcPackage {
 /// this pipeline can safely reason about — a missing/blank EOCD, a truncated
 /// entry, or an unsupported compression method. Corruption checks upstream
 /// rely on this failing loudly rather than guessing.
-pub(crate) fn read(bytes: &[u8]) -> Result<OpcPackage> {
+pub(crate) fn read_with_limits(bytes: &[u8], limits: DocumentLimits) -> Result<OpcPackage> {
     let eocd = locate_eocd(bytes)?;
 
     // Multi-disk / spanned archives are out of scope: OPC packages are single
@@ -192,13 +227,13 @@ pub(crate) fn read(bytes: &[u8]) -> Result<OpcPackage> {
         // uncompressed size exceeds the per-entry cap, and any package whose
         // declared sizes sum past the whole-package cap.
         let declared_size = u64::from(declared_size);
-        if declared_size > MAX_ENTRY_UNCOMPRESSED {
+        if declared_size > limits.max_entry_uncompressed {
             return Err(Error::EditRoundtripFailed(
                 "opc entry declares an uncompressed size over the per-entry cap",
             ));
         }
         total_declared = total_declared.saturating_add(declared_size);
-        if total_declared > MAX_PACKAGE_UNCOMPRESSED {
+        if total_declared > limits.max_package_uncompressed {
             return Err(Error::EditRoundtripFailed(
                 "opc package declares an uncompressed size over the package cap",
             ));
@@ -456,6 +491,16 @@ fn read_name(bytes: &[u8], offset: usize, len: usize) -> Result<String> {
         .ok_or(Error::EditRoundtripFailed("opc part name truncated"))?;
     String::from_utf8(raw.to_vec())
         .map_err(|_| Error::EditRoundtripFailed("opc part name is not valid UTF-8"))
+}
+
+#[cfg(test)]
+pub(super) fn fixture_limits() -> DocumentLimits {
+    DocumentLimits::new(256 * 1024 * 1024, 1024 * 1024 * 1024).expect("valid fixture limits")
+}
+
+#[cfg(test)]
+pub(super) fn read(bytes: &[u8]) -> Result<OpcPackage> {
+    read_with_limits(bytes, fixture_limits())
 }
 
 #[cfg(test)]

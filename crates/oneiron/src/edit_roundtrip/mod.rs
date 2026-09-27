@@ -18,6 +18,10 @@ impl ArtifactStorage for Vault {
         else {
             return Ok(None);
         };
+        let policy = crate::gate::resolve_policy_manifest(&self.store, &rtxn)?;
+        let limits = policy.document_limits().ok_or_else(|| {
+            Error::InvalidConfig("document admission policy is missing or malformed".to_owned())
+        })?;
         let bytes = self
             .read_blob_artifact_version_in_txn(&rtxn, artifact_id, head.version)?
             .ok_or(Error::EntityNotFound)?;
@@ -28,6 +32,7 @@ impl ArtifactStorage for Vault {
             version: head.version,
             media_type: body.media_type,
             bytes,
+            limits,
         }))
     }
 
@@ -46,6 +51,26 @@ impl Vault {
         run_ref: &str,
     ) -> Result<EditOutcome> {
         oneiron_docedit::propose_artifact_edit(self, artifact_id, session, plan, run_ref)
+    }
+
+    /// Narrow the vault's resolved document budget for this proposal. A caller
+    /// cannot widen it; wider admission requires a trusted policy row.
+    pub fn propose_blob_artifact_edit_with_limits<S: EditSession>(
+        &self,
+        artifact_id: &EntityId,
+        session: &S,
+        plan: &EditPlan,
+        run_ref: &str,
+        requested: oneiron_docedit::edit_roundtrip::limits::DocumentLimits,
+    ) -> Result<EditOutcome> {
+        oneiron_docedit::propose_artifact_edit_with_limits(
+            self,
+            artifact_id,
+            session,
+            plan,
+            run_ref,
+            Some(requested),
+        )
     }
 }
 
@@ -79,6 +104,11 @@ mod tests {
     fn vault_adapter_returns_the_bound_head_snapshot() -> Result<()> {
         let (_dir, vault) =
             crate::test_util::open_test_vault_with(crate::test_util::embedding_test_config());
+        crate::test_util::put_policy_manifest_bytes(
+            &vault,
+            crate::gate::default_policy_manifest_id()?,
+            &crate::gate::default_policy_manifest(),
+        )?;
         let id = EntityId::now();
         assert!(ArtifactStorage::snapshot(&vault, &id)?.is_none());
         let time = TimeRange { start: 11, end: 11 };
@@ -103,6 +133,8 @@ mod tests {
         )?;
         let snapshot = ArtifactStorage::snapshot(&vault, &id)?.ok_or(Error::EntityNotFound)?;
         assert_eq!(snapshot.version, first.version);
+        assert_eq!(snapshot.limits.entry_bytes(), 256 * 1024 * 1024);
+        assert_eq!(snapshot.limits.package_bytes(), 1024 * 1024 * 1024);
         assert_eq!(snapshot.bytes, b"first");
         assert_eq!(
             snapshot.media_type,

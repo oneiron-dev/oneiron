@@ -2,7 +2,7 @@
 
 use super::address::validate_ops;
 use super::inspect::{inspect, mutation_mode_for};
-use super::opc;
+use super::opc::{self, DocumentLimits};
 use super::session_validate::{diff_parts, validate};
 use super::{
     EDIT_MANIFEST_SCHEMA_VERSION, EditManifest, EditOp, EditPlan, EditSession, MutationMode,
@@ -34,7 +34,7 @@ pub struct EditProposal {
     pub recalc: RecalcStatus,
     /// The artifact version these bytes were produced FROM, when the proposal
     /// was run against a blob artifact ([`crate::propose_artifact_edit`]).
-    /// `None` for a raw [`run_edit_roundtrip`] with no artifact binding. ARTL-4
+    /// `None` for a raw [`run_edit_roundtrip_with_limits`] with no artifact binding. ARTL-4
     /// settle records it as the receipt's before-version ref.
     pub base_version: Option<u64>,
     /// Content hash (blake3) of the base bytes the edit started from. ARTL-4
@@ -60,12 +60,13 @@ pub enum EditOutcome {
 ///
 /// The input bytes are never mutated. On success the returned
 /// [`EditProposal`] is a retained output — nothing is written to any store.
-pub fn run_edit_roundtrip<S: EditSession>(
+pub fn run_edit_roundtrip_with_limits<S: EditSession>(
     session: &S,
     input_bytes: &[u8],
     format: OfficeFormat,
     plan: &EditPlan,
     run_ref: &str,
+    limits: DocumentLimits,
 ) -> Result<EditOutcome> {
     if run_ref.trim().is_empty() {
         return Err(Error::EditRoundtripFailed("run_ref must be non-empty"));
@@ -88,7 +89,7 @@ pub fn run_edit_roundtrip<S: EditSession>(
 
     // Stage 0: decompose the input. A bad input is a hard error (the caller
     // handed us a broken blob), distinct from a session producing bad output.
-    let before = opc::read(input_bytes)?;
+    let before = opc::read_with_limits(input_bytes, limits)?;
     let doc_before = OfficeDoc::new(format, input_bytes.to_vec(), before.clone());
 
     // Stage 1: inspect-first.
@@ -120,7 +121,7 @@ pub fn run_edit_roundtrip<S: EditSession>(
                 "edit may change formula values but the session cannot recalc; route to a recalc-capable session",
             ));
         }
-        match opc::read(&current) {
+        match opc::read_with_limits(&current, limits) {
             Ok(package) => {
                 let edited = OfficeDoc::new(format, current.clone(), package);
                 current = session.recalc(&edited)?;
@@ -133,7 +134,7 @@ pub fn run_edit_roundtrip<S: EditSession>(
     };
 
     // Stage 4: corruption + passthrough gate over the actual output bytes.
-    let after = match opc::read(&current) {
+    let after = match opc::read_with_limits(&current, limits) {
         Ok(package) => package,
         Err(_) => {
             let report = ValidationReport::single_failure(
@@ -167,7 +168,7 @@ pub fn run_edit_roundtrip<S: EditSession>(
         validation: report,
         recalc,
         // The raw round-trip has no artifact/version context; the base is the
-        // input bytes it edited. `propose_blob_artifact_edit` fills base_version.
+        // input bytes it edited. the host adapter fills base_version.
         base_version: None,
         base_content_hash: *blake3::hash(input_bytes).as_bytes(),
     }))

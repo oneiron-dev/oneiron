@@ -10,7 +10,10 @@ pub mod edit_roundtrip;
 pub mod edit_settle;
 pub mod error;
 
-use edit_roundtrip::{EditOutcome, EditPlan, EditSession, OfficeFormat, run_edit_roundtrip};
+use edit_roundtrip::limits::DocumentLimits;
+use edit_roundtrip::{
+    EditOutcome, EditPlan, EditSession, OfficeFormat, run_edit_roundtrip_with_limits,
+};
 
 /// A consistent artifact snapshot for one edit. Implementations must read the
 /// head and its bytes together, not mix versions from separate reads.
@@ -19,6 +22,8 @@ pub struct ArtifactSnapshot {
     pub version: u64,
     pub media_type: String,
     pub bytes: Vec<u8>,
+    /// Vault-resolved admission budget from the same read snapshot.
+    pub limits: DocumentLimits,
 }
 
 /// Host storage boundary for the read-only retained-proposal stage.
@@ -44,17 +49,33 @@ pub fn propose_artifact_edit<T: ArtifactStorage, S: EditSession>(
     plan: &EditPlan,
     run_ref: &str,
 ) -> std::result::Result<EditOutcome, T::Error> {
+    propose_artifact_edit_with_limits(storage, artifact, session, plan, run_ref, None)
+}
+
+/// A nested request can restrict, but never widen, the resolved vault budget.
+/// The caller's position is applied after the vault snapshot is obtained.
+pub fn propose_artifact_edit_with_limits<T: ArtifactStorage, S: EditSession>(
+    storage: &T,
+    artifact: &T::Id,
+    session: &S,
+    plan: &EditPlan,
+    run_ref: &str,
+    requested: Option<DocumentLimits>,
+) -> std::result::Result<EditOutcome, T::Error> {
     let snapshot = storage
         .snapshot(artifact)?
         .ok_or_else(|| storage.missing_artifact())?;
     let format = OfficeFormat::from_media_type(&snapshot.media_type)?;
-    let mut outcome = run_edit_roundtrip(session, &snapshot.bytes, format, plan, run_ref)?;
+    let limits = requested.map_or(snapshot.limits, |requested| {
+        snapshot.limits.narrow(requested)
+    });
+    let mut outcome =
+        run_edit_roundtrip_with_limits(session, &snapshot.bytes, format, plan, run_ref, limits)?;
     if let EditOutcome::Proposed(proposal) = &mut outcome {
         proposal.base_version = Some(snapshot.version);
     }
     Ok(outcome)
 }
-
 #[cfg(test)]
 mod tests {
     use super::*;

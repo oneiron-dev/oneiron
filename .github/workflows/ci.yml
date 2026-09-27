@@ -148,6 +148,7 @@ jobs:
           python3 -m unittest discover -s scripts/ci -p 'test_*.py' -v
           python3 -m unittest discover -s scripts/tests -p 'test_codemap.py' -v
           python3 -m unittest discover -s scripts/tests -p 'test_verify.py' -v
+          python3 -m unittest discover -s scripts/tests -p 'test_docedit_direction.py' -v
           python3 -m unittest discover -s scripts/tests -p 'test_ci_workflow.py' -v
           python3 scripts/sdk/generate.py --check
           python3 -m unittest discover -s scripts/tests -p 'test_agent_sdk.py' -v
