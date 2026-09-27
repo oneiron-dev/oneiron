@@ -4,7 +4,7 @@
 //! statements and resolved call bindings can clear. Unsupported syntax, AST
 //! recovery, reassignment of callable bindings and dynamic flows refuse.
 use icu_normalizer::ComposingNormalizer;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use tree_sitter::{Node, Parser};
 
 const MAX_SCRIPT_BYTES: usize = 256 * 1024;
@@ -40,13 +40,18 @@ struct Analyzer<'a> {
     bindings: BTreeMap<String, Binding>,
     effects: Vec<ScriptEffect>,
     remaining: usize,
+    allowed_calls: &'a BTreeSet<String>,
 }
 
-pub(super) fn screen_script(path: &str, source: &str) -> Option<String> {
-    AnalyzedScript::parse(path, source).err()
+pub(super) fn screen_script(
+    path: &str,
+    source: &str,
+    allowed_calls: &BTreeSet<String>,
+) -> Option<String> {
+    AnalyzedScript::parse(path, source, allowed_calls).err()
 }
 impl AnalyzedScript {
-    fn parse(path: &str, source: &str) -> Result<Self, String> {
+    fn parse(path: &str, source: &str, allowed_calls: &BTreeSet<String>) -> Result<Self, String> {
         if !path.ends_with(".py") {
             return Err("unsupported script format for sandbox screening".into());
         }
@@ -68,6 +73,7 @@ impl AnalyzedScript {
             bindings: BTreeMap::new(),
             effects: Vec::new(),
             remaining: MAX_AST_NODES,
+            allowed_calls,
         };
         analyzer.statement(tree.root_node(), 0)?;
         Ok(Self {
@@ -121,12 +127,19 @@ impl Analyzer<'_> {
             _ => None,
         }
     }
-    fn safe_function(module: &str, name: &str) -> bool {
+    fn supported_function(module: &str, name: &str) -> bool {
         match module {
-            "math" => matches!(name, "sqrt" | "floor" | "ceil" | "sin" | "cos" | "isfinite"),
+            "math" => matches!(
+                name,
+                "sqrt" | "floor" | "ceil" | "sin" | "cos" | "isfinite" | "log"
+            ),
             "json" => matches!(name, "loads" | "dumps"),
             _ => false,
         }
+    }
+    fn allowed_function(&self, module: &str, name: &str) -> bool {
+        Self::supported_function(module, name)
+            && self.allowed_calls.contains(&format!("{module}.{name}"))
     }
     fn import_name(&self, node: Node<'_>) -> Result<(String, String), String> {
         let (target, alias) = if node.kind() == "aliased_import" {
@@ -184,7 +197,7 @@ impl Analyzer<'_> {
                 }
                 for entry in entries {
                     let (name, bound) = self.import_name(entry)?;
-                    if !Self::safe_function(module, &name) {
+                    if !Self::supported_function(module, &name) {
                         return Err("call outside the sandbox: import".into());
                     }
                     self.bindings
@@ -232,8 +245,13 @@ impl Analyzer<'_> {
         if matches!(name.as_str(), "eval" | "exec" | "open" | "__import__") {
             return Err("call outside the sandbox".into());
         }
+        let mut cursor = node.walk();
+        let has_async = node
+            .children(&mut cursor)
+            .any(|child| child.kind() == "async");
         if node.child_by_field_name("return_type").is_some()
             || node.child_by_field_name("type_parameters").is_some()
+            || has_async
         {
             return Err("unsupported Python function signature".into());
         }
@@ -246,6 +264,7 @@ impl Analyzer<'_> {
             bindings: BTreeMap::new(),
             effects: Vec::new(),
             remaining: self.remaining,
+            allowed_calls: self.allowed_calls,
         };
         for param in Self::named(parameters) {
             let name = local.name(param)?;
@@ -259,6 +278,11 @@ impl Analyzer<'_> {
     }
     fn assignment(&mut self, node: Node<'_>, depth: usize) -> Result<(), String> {
         self.charge(node, depth)?;
+        // Module/function annotations can execute expressions in Python.
+        // They are outside this closed profile, even with a harmless RHS.
+        if node.child_by_field_name("type").is_some() {
+            return Err("unsupported Python annotation".into());
+        }
         let left = Self::child(node, "left")?;
         let name = self.name(left)?;
         // An imported module or callable cannot be laundered by a local alias.
@@ -274,15 +298,19 @@ impl Analyzer<'_> {
                 match self.bindings.get(&name) {
                     Some(Binding::LocalFunction) => Ok(CallTarget::Local),
                     Some(Binding::LibraryCall(module, function))
-                        if Self::safe_function(module, function) =>
+                        if self.allowed_function(module, function) =>
                     {
                         Ok(CallTarget::Library)
                     }
                     Some(Binding::Data | Binding::Library(_)) => {
                         Err("unsupported Python callable flow".into())
                     }
-                    _ if name == "print" => Ok(CallTarget::Print),
-                    _ if name == "len" => Ok(CallTarget::Length),
+                    _ if name == "print" && self.allowed_calls.contains("print") => {
+                        Ok(CallTarget::Print)
+                    }
+                    _ if name == "len" && self.allowed_calls.contains("len") => {
+                        Ok(CallTarget::Length)
+                    }
                     _ => Err("call outside the sandbox".into()),
                 }
             }
@@ -294,7 +322,7 @@ impl Analyzer<'_> {
                 let name = self.name(object)?;
                 let attribute = self.name(Self::child(node, "attribute")?)?;
                 if let Some(Binding::Library(module)) = self.bindings.get(&name)
-                    && Self::safe_function(module, &attribute)
+                    && self.allowed_function(module, &attribute)
                 {
                     Ok(CallTarget::Library)
                 } else {
@@ -329,11 +357,13 @@ impl Analyzer<'_> {
             }
             "integer" | "float" | "true" | "false" | "none" => {}
             "string" => {
-                if Self::named(node)
-                    .iter()
-                    .any(|child| child.kind() == "interpolation")
-                {
-                    return Err("unverifiable script syntax".into());
+                for child in Self::named(node) {
+                    if !matches!(
+                        child.kind(),
+                        "string_start" | "string_content" | "string_end"
+                    ) {
+                        return Err("unverifiable script syntax".into());
+                    }
                 }
             }
             "call" => {

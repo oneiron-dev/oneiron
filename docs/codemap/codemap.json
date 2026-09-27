@@ -16693,8 +16693,21 @@
      "path": "src/gate/mod.rs",
      "purpose": "DEC-0005 Gate policy manifest resolver",
      "surface": {
-      "crate-vis": 26,
-      "re-export": 3
+      "crate-vis": 27,
+      "re-export": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "PackInstallPolicyOverride"
+     ],
+     "path": "src/gate/pack_install_policy.rs",
+     "purpose": "Vault-resident connector-pack install rows; default behavior is shipped data",
+     "surface": {
+      "crate-vis": 12,
+      "struct": 1
      }
     },
     {
@@ -16738,7 +16751,7 @@
      "path": "src/gate/resolution/accessors.rs",
      "purpose": "Read-only resolved-field accessors plus the frontier-hash entry",
      "surface": {
-      "crate-vis": 24
+      "crate-vis": 25
      }
     },
     {
@@ -28686,7 +28699,7 @@
      "purpose": "Exact, inert PACK.md source catalogs",
      "surface": {
       "crate-vis": 2,
-      "re-export": 6
+      "re-export": 7
      }
     },
     {
@@ -28709,7 +28722,7 @@
      "purpose": "Bounded, source-bound install rules for connector tool manifests",
      "surface": {
       "crate-vis": 2,
-      "fn": 1,
+      "fn": 2,
       "struct": 1
      }
     },
@@ -34964,7 +34977,7 @@
      "purpose": "—"
     },
     "gate": {
-     "files": 75,
+     "files": 76,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -35652,7 +35665,7 @@
    },
    "over_bar": 10,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2104,
+   "source_files": 2105,
    "test_files": 720
   },
   "oneiron-android": {

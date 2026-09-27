@@ -74,7 +74,10 @@ fn fixture(
     let mut config = VaultConfig::device();
     config.dimensions = 4;
     config.map_size = 16 * 1024 * 1024;
-    let (dir, vault) = crate::test_util::open_test_vault_with(config);
+    // Install admission consults the real seeded POLICY_MANIFEST. The generic
+    // legacy test helper deliberately deindexes it and is not this fixture.
+    let dir = tempfile::tempdir()?;
+    let vault = Vault::open(dir.path(), config)?;
     let owner = EntityId::now();
     let at = TimeRange { start: 1, end: 1 };
     vault.put_entity(&owner, crate::registry::ENTITY_TYPE_PERSON, at, 1, b"owner")?;
@@ -1443,6 +1446,7 @@ fn python_grammar_profile_checks_every_import_and_binding() -> Result<()> {
         "import math, json\nprint(math.sqrt(4))\nprint(json.dumps([1, 2]))\n",
         "from math import sqrt as root\nprint(root(4))\n",
         "def local(x):\n    return x + 1\nprint(local(4))\n",
+        "value = 0\nprint(value)\n",
     ];
     for script in clean {
         let mut files = source(true)?.files().to_vec();
@@ -1470,6 +1474,14 @@ fn python_grammar_profile_checks_every_import_and_binding() -> Result<()> {
         ("value = lambda: 1", "unsupported Python expression"),
         ("from math import *", "unsupported Python wildcard import"),
         ("value = f'{1}'", "unverifiable script syntax"),
+        (
+            "value: __import__(\"os\").system(\"true\") = 0",
+            "unsupported Python annotation",
+        ),
+        (
+            "async def local():\n    return 1",
+            "unsupported Python function signature",
+        ),
         ("def broken(:\n    pass", "unverifiable script syntax"),
     ] {
         let mut files = source(true)?.files().to_vec();
@@ -1508,5 +1520,241 @@ fn python_grammar_profile_checks_every_import_and_binding() -> Result<()> {
         );
         assert!(vault.installed_pack("alice.tools")?.is_none());
     }
+    Ok(())
+}
+
+#[test]
+fn shipped_policy_rows_and_owner_narrowing_recheck_before_consent() -> Result<()> {
+    let source = source(true)?;
+    let (_dir, vault, owner, reference, publisher) = fixture(SkillHubTrustTier::Verified, &source)?;
+    let id = vault.stage_pack_source(&source, TimeRange { start: 3, end: 3 }, 3)?;
+    let qualification = Qualification {
+        runtime: true,
+        passed: true,
+    };
+    let original = vault.prepare_pack_install(id, &reference, &publisher, &qualification)?;
+    assert_eq!(original.blocked_reason(), None);
+    // The real seeded manifest, not Rust match tables, carries defaults and
+    // the owner/holder precedence row.
+    let txn = vault.store.env.read_txn()?;
+    let resolved = crate::gate::resolve_policy_manifest(&vault.store, &txn)?;
+    let rows = resolved.pack_install_policy().expect("seeded policy rows");
+    let json = serde_json::to_value(rows).expect("manifest row");
+    assert_eq!(
+        json["precedence"],
+        "nested_narrowing_holder_capped_at_vault"
+    );
+    assert!(
+        json["vault"]["hidden_instructions"]
+            .as_array()
+            .is_some_and(|a| !a.is_empty())
+    );
+    drop(txn);
+    vault.set_pack_install_policy_override(
+        &owner,
+        PackInstallPolicyOverride {
+            hidden_instruction_phrases: vec!["bounded-term".into()],
+            ..PackInstallPolicyOverride::default()
+        },
+    )?;
+    let mut fields = source.files().to_vec();
+    let tool = fields
+        .iter_mut()
+        .find(|f| f.path == "knowledge/tools/read.json")
+        .unwrap();
+    tool.content = String::from_utf8(tool.content.clone())
+        .unwrap()
+        .replace("Maximum items", "bounded-term")
+        .into_bytes();
+    let changed = PackSource::from_files(fields)?;
+    let changed_id = vault.stage_pack_source(&changed, TimeRange { start: 4, end: 4 }, 4)?;
+    let changed_ref = HubRef::new(
+        reference.hub_id,
+        "changed",
+        HubPin::ContentHash(changed.content_hash().to_hex()),
+    )?;
+    let blocked =
+        vault.prepare_pack_install(changed_id, &changed_ref, &publisher, &qualification)?;
+    assert!(
+        blocked
+            .blocked_reason()
+            .unwrap()
+            .contains("hidden instructions")
+    );
+    assert!(matches!(
+        vault.install_pack(&blocked)?,
+        PackInstallDisposition::Blocked { .. }
+    ));
+    // The override has no permission to delete the shipped default rule.
+    let original_after = vault.prepare_pack_install(id, &reference, &publisher, &qualification)?;
+    assert_eq!(original_after.blocked_reason(), None);
+    vault.set_pack_install_policy_override(
+        &owner,
+        PackInstallPolicyOverride {
+            allowed_python_calls: Some(vec!["print".into(), "len".into()]),
+            ..PackInstallPolicyOverride::default()
+        },
+    )?;
+    let mut scripts = source.files().to_vec();
+    scripts.push(HubFile::new(
+        "scripts/runner.py",
+        b"import math
+print(math.sqrt(4))
+"
+        .to_vec(),
+    ));
+    let script = PackSource::from_files(scripts)?;
+    let script_id = vault.stage_pack_source(&script, TimeRange { start: 5, end: 5 }, 5)?;
+    let script_ref = HubRef::new(
+        reference.hub_id,
+        "script",
+        HubPin::ContentHash(script.content_hash().to_hex()),
+    )?;
+    let denied = vault.prepare_pack_install(script_id, &script_ref, &publisher, &qualification)?;
+    assert!(
+        denied
+            .blocked_reason()
+            .unwrap()
+            .contains("outside the sandbox")
+    );
+    assert!(matches!(
+        vault.approve_pack_install(&denied, &owner),
+        Err(crate::error::Error::Registry(
+            crate::error::RegistryError::PackInstallRuleBlocked { .. }
+        ))
+    ));
+    assert!(matches!(
+        vault.install_pack(&denied)?,
+        PackInstallDisposition::Blocked { .. }
+    ));
+    vault.set_pack_install_policy_override(&owner, PackInstallPolicyOverride::default())?;
+    let admitted =
+        vault.prepare_pack_install(script_id, &script_ref, &publisher, &qualification)?;
+    assert_eq!(admitted.blocked_reason(), None);
+    assert_eq!(
+        vault.install_pack(&admitted)?,
+        PackInstallDisposition::PendingConsent
+    );
+    vault.approve_pack_install(&admitted, &owner)?;
+    assert!(matches!(
+        vault.install_pack(&admitted)?,
+        PackInstallDisposition::Installed(_)
+    ));
+    Ok(())
+}
+#[test]
+fn holder_policy_is_capped_by_vault_and_only_narrows_its_publisher() -> Result<()> {
+    let mut files = source(true)?.files().to_vec();
+    files.push(HubFile::new(
+        "scripts/runner.py",
+        b"import math
+print(math.sqrt(4))
+"
+        .to_vec(),
+    ));
+    let source = PackSource::from_files(files)?;
+    let (_dir, vault, owner, reference, holder) = fixture(SkillHubTrustTier::Verified, &source)?;
+    let second = vault.admit_skill_publisher(&owner, "publisher:other", reference.hub_id)?;
+    let id = vault.stage_pack_source(&source, TimeRange { start: 3, end: 3 }, 3)?;
+    let qualification = Qualification {
+        runtime: true,
+        passed: true,
+    };
+    vault.set_pack_install_policy_override(
+        &owner,
+        PackInstallPolicyOverride {
+            holder_ref: Some(holder.identity().to_owned()),
+            allowed_python_calls: Some(vec!["print".into()]),
+            ..PackInstallPolicyOverride::default()
+        },
+    )?;
+    let held = vault.prepare_pack_install(id, &reference, &holder, &qualification)?;
+    assert!(
+        held.blocked_reason()
+            .unwrap()
+            .contains("outside the sandbox")
+    );
+    let other = vault.prepare_pack_install(id, &reference, &second, &qualification)?;
+    assert_eq!(other.blocked_reason(), None);
+    // A holder row cannot restore an operation removed at vault scope.
+    vault.set_pack_install_policy_override(
+        &owner,
+        PackInstallPolicyOverride {
+            allowed_python_calls: Some(vec!["print".into()]),
+            ..PackInstallPolicyOverride::default()
+        },
+    )?;
+    let other_now = vault.prepare_pack_install(id, &reference, &second, &qualification)?;
+    assert!(
+        other_now
+            .blocked_reason()
+            .unwrap()
+            .contains("outside the sandbox")
+    );
+    assert!(matches!(
+        vault.approve_pack_install(&other, &owner),
+        Err(crate::error::Error::Registry(
+            crate::error::RegistryError::PackInstallRuleBlocked { .. }
+        ))
+    ));
+    assert_eq!(
+        vault.install_pack(&other)?,
+        PackInstallDisposition::Blocked {
+            reason: other_now.blocked_reason().unwrap().into()
+        }
+    );
+    assert!(vault.installed_pack("alice.tools")?.is_none());
+    Ok(())
+}
+
+#[test]
+fn missing_resolved_install_policy_holds_with_a_card_reason() -> Result<()> {
+    let source = source(true)?;
+    let (_dir, vault, owner, reference, publisher) = fixture(SkillHubTrustTier::Verified, &source)?;
+    let id = vault.stage_pack_source(&source, TimeRange { start: 3, end: 3 }, 3)?;
+    let ask = vault.prepare_pack_install(
+        id,
+        &reference,
+        &publisher,
+        &Qualification {
+            runtime: true,
+            passed: true,
+        },
+    )?;
+    assert_eq!(ask.blocked_reason(), None);
+    // Simulate lost type-index custody of the manifest. A missing resolved
+    // policy does not become an empty, permissive scan.
+    vault.with_write_txn(|txn| {
+        crate::batch::deindex_entity_for_test(
+            &vault.store,
+            txn,
+            &crate::gate::default_policy_manifest_id()?,
+        )?;
+        Ok(())
+    })?;
+    let unavailable = vault.prepare_pack_install(
+        id,
+        &reference,
+        &publisher,
+        &Qualification {
+            runtime: true,
+            passed: true,
+        },
+    )?;
+    let reason = unavailable.blocked_reason().expect("fail-closed policy");
+    assert_eq!(reason, "pack install policy unavailable");
+    assert!(matches!(
+        vault.approve_pack_install(&ask, &owner),
+        Err(crate::error::Error::Registry(
+            crate::error::RegistryError::PackInstallRuleBlocked { .. }
+        ))
+    ));
+    assert_eq!(
+        vault.install_pack(&ask)?,
+        PackInstallDisposition::Blocked {
+            reason: reason.into()
+        }
+    );
+    assert!(vault.installed_pack("alice.tools")?.is_none());
     Ok(())
 }

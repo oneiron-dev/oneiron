@@ -36,7 +36,8 @@ impl Vault {
         let txn = self.store.env.read_txn()?;
         let (binding, surface) =
             self.pack_install_binding(&txn, source_id, hub, publisher, &qualification)?;
-        let blocked_reason = self.screen_pack_in_txn(&txn, &source, &qualification)?;
+        let blocked_reason =
+            self.screen_pack_in_txn(&txn, &source, &qualification, publisher.identity())?;
         let scan_risk = self.pack_scan_risk_in_txn(&txn, source.content_hash())?;
         let effect = ComposedEffect::new(
             EffectFacts::new(format!("pack.install:{binding}"))?
@@ -63,7 +64,9 @@ impl Vault {
     ) -> Result<ConsentReceipt> {
         self.with_write_txn(|txn| {
             let source = self.check_pack_install_ask(txn, ask)?;
-            if let Some(reason) = self.screen_pack_in_txn(txn, &source, &ask.qualification)? {
+            if let Some(reason) =
+                self.screen_pack_in_txn(txn, &source, &ask.qualification, ask.publisher.identity())?
+            {
                 return Err(Error::Registry(RegistryError::PackInstallRuleBlocked {
                     reason,
                 }));
@@ -74,7 +77,9 @@ impl Vault {
     pub fn install_pack(&self, ask: &PackInstallAsk) -> Result<PackInstallDisposition> {
         self.with_write_txn(|txn| {
             let source = self.check_pack_install_ask(txn, ask)?;
-            if let Some(reason) = self.screen_pack_in_txn(txn, &source, &ask.qualification)? {
+            if let Some(reason) =
+                self.screen_pack_in_txn(txn, &source, &ask.qualification, ask.publisher.identity())?
+            {
                 return Ok(PackInstallDisposition::Blocked { reason });
             }
             let Some(authorization) =

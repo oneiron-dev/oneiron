@@ -1,14 +1,15 @@
 //! Bounded, source-bound install rules for connector tool manifests.
 use super::tool_schema::{ResolvedToolSchema, TextRole};
 use super::{PackKind, PackObservedTool, PackQualification, PackSource, invalid};
+use crate::gate::{
+    EffectivePackInstallPolicy, HolderInstallRow, PackInstallPolicyOverride, PackInstallRuleRow,
+};
 use crate::{Vault, consent::AuthenticatedOwner, error::Result, skill::SkillContentHash};
 use icu_normalizer::ComposingNormalizer;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::{BTreeMap, BTreeSet};
 use unicode_script::{Script, UnicodeScript};
-
-const RULES_KEY: &[u8] = b"pack.install.rules.v1";
 
 /// Owner-managed install prohibitions. A scan verdict is a signal, not a rule.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -37,10 +38,39 @@ impl Vault {
         {
             return Err(invalid("invalid install rules"));
         }
-        self.with_write_txn(|txn| {
-            owner.revalidate_in_txn(self, txn)?;
-            let bytes = serde_json::to_vec(rules).map_err(|_| invalid("install rules encoding"))?;
-            self.store.vault_meta.put(txn, RULES_KEY, &bytes)?;
+        self.update_pack_install_policy(owner, |policy| {
+            policy.owner.removed_hashes = rules.removed_hashes.clone();
+            policy.owner.known_bad_patterns = rules.known_bad_patterns.clone();
+            Ok(())
+        })
+    }
+    /// Replace one owner-authored narrowing row in the vault policy manifest.
+    /// A holder row may tighten but never widen its vault row; all operations
+    /// remain capped by the analyzed grammar's immutable supported set.
+    pub fn set_pack_install_policy_override(
+        &self,
+        owner: &AuthenticatedOwner,
+        override_row: PackInstallPolicyOverride,
+    ) -> Result<()> {
+        self.update_pack_install_policy(owner, |policy| {
+            let holder = override_row.holder_ref.clone();
+            let row = PackInstallRuleRow::from(override_row);
+            if let Some(holder_ref) = holder {
+                if let Some(existing) = policy
+                    .holders
+                    .iter_mut()
+                    .find(|item| item.holder_ref == holder_ref)
+                {
+                    existing.rules = row;
+                } else {
+                    policy.holders.push(HolderInstallRow {
+                        holder_ref,
+                        rules: row,
+                    });
+                }
+            } else {
+                policy.owner = row;
+            }
             Ok(())
         })
     }
@@ -69,14 +99,13 @@ impl Vault {
         txn: &heed::RoTxn<'_>,
         source: &PackSource,
         qualification: &PackQualification,
+        holder: &str,
     ) -> Result<Option<String>> {
-        let rules: PackInstallRules = self
-            .store
-            .vault_meta
-            .get(txn, RULES_KEY)?
-            .map(|raw| serde_json::from_slice(&raw).map_err(|_| invalid("install rules corrupt")))
-            .transpose()?
-            .unwrap_or_default();
+        let resolution = crate::gate::resolve_policy_manifest(&self.store, txn)?;
+        let Some(policy) = resolution.pack_install_policy() else {
+            return Ok(Some("pack install policy unavailable".into()));
+        };
+        let rules = policy.effective(holder);
         if rules
             .removed_hashes
             .iter()
@@ -99,7 +128,8 @@ impl Vault {
                 return Ok(Some(format!("secret-shaped string in {}", file.path)));
             }
             if file.path.starts_with("scripts/")
-                && let Some(reason) = super::script_policy::screen_script(&file.path, text)
+                && let Some(reason) =
+                    super::script_policy::screen_script(&file.path, text, &rules.allowed_calls)
             {
                 return Ok(Some(format!("{reason} in {}", file.path)));
             }
@@ -139,7 +169,7 @@ impl Vault {
         if let Some(pack) = source.files().iter().find(|file| file.path == "PACK.md") {
             let text =
                 std::str::from_utf8(&pack.content).map_err(|_| invalid("PACK.md is not UTF-8"))?;
-            if let Some(reason) = screen_text(text) {
+            if let Some(reason) = screen_text(text, &rules) {
                 return Ok(Some(format!("PACK.md: {reason}")));
             }
         }
@@ -232,7 +262,10 @@ impl Vault {
     }
 }
 
-fn screen_resolved_schema(schema: &ResolvedToolSchema, rules: &PackInstallRules) -> Option<String> {
+fn screen_resolved_schema(
+    schema: &ResolvedToolSchema,
+    rules: &EffectivePackInstallPolicy,
+) -> Option<String> {
     let fields = match schema.text() {
         Ok(fields) => fields,
         Err(reason) => return Some(reason),
@@ -240,7 +273,7 @@ fn screen_resolved_schema(schema: &ResolvedToolSchema, rules: &PackInstallRules)
     for field in fields {
         let reason = decoded_rule(&field.text, rules).or_else(|| {
             (field.role == TextRole::ParameterDescription)
-                .then(|| screen_parameter(&field.text))
+                .then(|| screen_parameter(&field.text, rules))
                 .flatten()
         });
         if let Some(reason) = reason {
@@ -249,14 +282,14 @@ fn screen_resolved_schema(schema: &ResolvedToolSchema, rules: &PackInstallRules)
     }
     None
 }
-fn decoded_rule(text: &str, rules: &PackInstallRules) -> Option<&'static str> {
+fn decoded_rule(text: &str, rules: &EffectivePackInstallPolicy) -> Option<&'static str> {
     let normalized = ComposingNormalizer::new_nfkc().normalize(text);
     if crate::batch::secret_scan::scan_file_content("", normalized.as_bytes()).is_some() {
         return Some("secret-shaped string");
     }
-    screen_text(text).or_else(|| known_bad(text, rules))
+    screen_text(text, rules).or_else(|| known_bad(text, rules))
 }
-fn known_bad(text: &str, rules: &PackInstallRules) -> Option<&'static str> {
+fn known_bad(text: &str, rules: &EffectivePackInstallPolicy) -> Option<&'static str> {
     let lower = ComposingNormalizer::new_nfkc()
         .normalize(text)
         .to_lowercase();
@@ -266,23 +299,17 @@ fn known_bad(text: &str, rules: &PackInstallRules) -> Option<&'static str> {
         .any(|pattern| lower.contains(&pattern.to_lowercase()))
         .then_some("known-bad pattern")
 }
-fn screen_parameter(text: &str) -> Option<&'static str> {
+fn screen_parameter(text: &str, rules: &EffectivePackInstallPolicy) -> Option<&'static str> {
     let lower = ComposingNormalizer::new_nfkc()
         .normalize(text)
         .to_lowercase();
-    [
-        "ignore",
-        "instruction",
-        "system prompt",
-        "developer message",
-        "exfiltrat",
-        "send secrets",
-    ]
-    .iter()
-    .any(|pattern| lower.contains(pattern))
-    .then_some("parameter-description injection")
+    rules
+        .parameter_injection
+        .iter()
+        .any(|pattern| lower.contains(&pattern.to_lowercase()))
+        .then_some("parameter-description injection")
 }
-fn screen_text(text: &str) -> Option<&'static str> {
+fn screen_text(text: &str, rules: &EffectivePackInstallPolicy) -> Option<&'static str> {
     if text.len() > 16384 {
         return Some("manifest text bound exceeded");
     }
@@ -311,17 +338,9 @@ fn screen_text(text: &str) -> Option<&'static str> {
         return Some("compatibility homoglyph deception");
     }
     let lower = normalized.to_lowercase();
-    [
-        "ignore previous",
-        "ignore all",
-        "override instructions",
-        "act as system",
-        "system prompt",
-        "developer message",
-        "do not tell",
-        "reveal secret",
-    ]
-    .iter()
-    .any(|pattern| lower.contains(pattern))
-    .then_some("hidden instructions")
+    rules
+        .hidden_instructions
+        .iter()
+        .any(|pattern| lower.contains(&pattern.to_lowercase()))
+        .then_some("hidden instructions")
 }

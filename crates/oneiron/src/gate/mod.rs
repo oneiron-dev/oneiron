@@ -22,6 +22,7 @@ mod effect;
 mod foreign_agent;
 mod grants;
 mod input;
+mod pack_install_policy;
 pub(crate) mod proposal_observation;
 mod repair;
 mod resolution;
@@ -72,6 +73,10 @@ pub(crate) use self::doors::{
     check_claim_policy_for_write_with_preflight_decision, check_claim_policy_for_write_with_record,
     check_edge_provenance_claim_policy, check_reserved_claim_policy, claim_consent_binding_parts,
     standing_outbound_grant_binding_parts, validate_write_envelope,
+};
+pub use self::pack_install_policy::PackInstallPolicyOverride;
+pub(crate) use self::pack_install_policy::{
+    EffectivePackInstallPolicy, HolderInstallRow, PackInstallPolicy, PackInstallRuleRow,
 };
 // The validator itself is reached through the write door; the direct
 // visibility below exists for the tests that pin its checks in isolation.
