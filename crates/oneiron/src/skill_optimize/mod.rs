@@ -163,7 +163,7 @@ pub use gate::{
     score_gate_skill_edit, score_gate_skill_edit_in_cycle, score_gate_skill_edit_with_scorer,
     set_skill_edit_cycle_cap, skill_body_binding_digest, skill_edit_cycle_cap,
     skill_edit_score_call_purpose, skill_edit_verdict, skill_edit_verdicts,
-    skill_edit_verdicts_for_proposal,
+    skill_edit_verdicts_for_proposal, supersede_skill_edit_judge,
 };
 pub(crate) use gate::{
     check_optimizer_admission_in_txn, optimizer_birth_marker_for_create_in_txn,

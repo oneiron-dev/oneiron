@@ -32,7 +32,7 @@ mod audit;
 mod codec;
 mod judge;
 mod judge_supersession;
-pub(crate) use judge_supersession::judgment_displaced;
+pub(crate) use judge_supersession::{judgment_displaced, judgment_displaced_in_txn};
 mod projector;
 mod types;
 

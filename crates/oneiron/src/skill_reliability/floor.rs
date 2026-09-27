@@ -15,7 +15,9 @@ use super::ledger::tally_outcomes;
 use super::posterior::{KEY_ALPHA, KEY_BETA, SkillReliabilityPosterior};
 use super::projector::attributed_outcomes;
 use super::provenance::skill_reliability_prior;
-use super::read::{active_claims_in_txn, resolved_reliability_posterior_in_txn};
+use super::read::{
+    active_claims_in_txn, active_reliability_heads_in_txn, resolved_reliability_posterior_in_txn,
+};
 
 /// The floor-crossing PROPOSAL predicate. A proposal to quarantine is a ROW,
 /// never a lifecycle state (`skill.rs` lifecycle machine): the record stays
@@ -167,21 +169,31 @@ pub(super) fn floor_check_in_txn(
     outcomes: u32,
     at: u64,
 ) -> Result<Option<EntityId>> {
-    if outcomes < SKILL_RELIABILITY_FLOOR_MIN_OUTCOMES {
-        return Ok(None);
-    }
     let floor = floor_in_txn(vault, wtxn)?;
     let lower_bound = posterior.lower_bound();
-    if lower_bound >= floor {
-        return Ok(None);
-    }
-    if let Some((existing, _, _)) =
+    let open: Vec<_> =
         active_claims_in_txn(vault, wtxn, skill, PREDICATE_SKILL_QUARANTINE_PROPOSAL)?
             .into_iter()
-            .find(|(_, body, _)| {
+            .filter(|(_, body, _)| {
                 super::codec::map_entry(&body.value, "executor").and_then(Value::as_str) == executor
             })
-    {
+            .collect();
+    if outcomes < SKILL_RELIABILITY_FLOOR_MIN_OUTCOMES || lower_bound >= floor {
+        // The proposal remains history, but a no-longer-crossing pair must
+        // not leave an actionable retirement recommendation behind. The
+        // current reliability claim is the superseding evidence-bearing head.
+        if !open.is_empty() {
+            let head = active_reliability_heads_in_txn(vault, wtxn, skill, executor)?
+                .into_iter()
+                .next()
+                .ok_or(invalid("floor withdrawal requires a reliability head"))?;
+            for (old_id, _, old_start) in open {
+                vault.supersede_reserved_claim_in_txn(wtxn, &head.0, &old_id, at.max(old_start))?;
+            }
+        }
+        return Ok(None);
+    }
+    if let Some((existing, _, _)) = open.into_iter().next() {
         return Ok(Some(existing));
     }
     let proposal_id = vault.store.clock.entity_id()?;

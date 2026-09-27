@@ -40,10 +40,18 @@ pub(super) fn stamp_judge_revision(
 
 pub(crate) fn judgment_displaced(vault: &Vault, sequence: u64) -> Result<bool> {
     let txn = vault.store.env.read_txn()?;
+    judgment_displaced_in_txn(vault, &txn, sequence)
+}
+
+pub(crate) fn judgment_displaced_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    sequence: u64,
+) -> Result<bool> {
     Ok(vault
         .store
         .vault_meta
-        .get(&txn, &key(DISPLACED_PREFIX, sequence))?
+        .get(txn, &key(DISPLACED_PREFIX, sequence))?
         .is_some())
 }
 

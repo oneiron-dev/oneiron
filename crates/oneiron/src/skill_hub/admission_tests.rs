@@ -125,6 +125,9 @@ impl Replay {
 }
 struct NoReplay;
 impl HeldOutReplayScorer for NoReplay {
+    fn judge_revision(&self) -> &str {
+        "fixture-judge@1"
+    }
     fn score(&self, _: &HeldOutReplayCase<'_>) -> Result<f32> {
         panic!("replay must not run before consent or usefulness");
     }
@@ -149,6 +152,9 @@ impl HeldOutReplayScorer for NoReplay {
     }
 }
 impl HeldOutReplayScorer for Replay {
+    fn judge_revision(&self) -> &str {
+        "fixture-judge@1"
+    }
     fn score(&self, case: &HeldOutReplayCase<'_>) -> Result<f32> {
         assert!(!case.held_out_receipts.is_empty());
         Ok(
@@ -350,6 +356,9 @@ struct MoveBaseline<'a> {
     moved: Cell<bool>,
 }
 impl HeldOutReplayScorer for MoveBaseline<'_> {
+    fn judge_revision(&self) -> &str {
+        "fixture-judge@1"
+    }
     fn score(&self, _: &HeldOutReplayCase<'_>) -> Result<f32> {
         if !self.moved.replace(true) {
             let mut record = self
@@ -618,7 +627,7 @@ fn admitted_pack_load_returns_actual_files_and_stamps_once() -> Result<()> {
     assert!(
         fixture
             .vault
-            .load_attempt_skill_pack(attempt.id, &id, 25)
+            .load_attempt_skill_pack(attempt.id, &id, "worker", 1, "fixture/model@1", 25)
             .is_err()
     );
     assert!(queue.get(attempt.id)?.unwrap().manifest.is_empty());
@@ -637,7 +646,22 @@ fn admitted_pack_load_returns_actual_files_and_stamps_once() -> Result<()> {
         panic!("consented")
     };
     assert!(receipt.accepted);
-    let loaded = fixture.vault.load_attempt_skill_pack(attempt.id, &id, 32)?;
+    let crate::attempt_queue::ClaimOutcome::Claimed(leased) =
+        queue.claim(crate::attempt_queue::ClaimAttempt {
+            lease_owner: "worker".to_owned(),
+            now: 32,
+        })?
+    else {
+        panic!("claim")
+    };
+    let loaded = fixture.vault.load_attempt_skill_pack(
+        attempt.id,
+        &id,
+        "worker",
+        leased.attempt_count,
+        "fixture/model@1",
+        32,
+    )?;
     assert_eq!(
         loaded.source_files,
         Some(package("fixture.new", "1", "check result").files)

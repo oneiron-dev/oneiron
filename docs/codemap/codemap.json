@@ -1373,6 +1373,7 @@
      "path": "src/attempt_queue/executor.rs",
      "purpose": "Write-once executor identity for a skill-bearing attempt's terminal receipt",
      "surface": {
+      "crate-vis": 1,
       "fn": 1
      }
     },
@@ -27897,7 +27898,7 @@
      "path": "src/skill_attribution/judge_supersession.rs",
      "purpose": "Judge-revision provenance for routed receipts, and non-destructive displacement",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 3,
       "fn": 2,
       "struct": 1
      }
@@ -28777,7 +28778,7 @@
      "purpose": "The verdict ledger, and the `Gate` receipts projected from it",
      "surface": {
       "crate-vis": 3,
-      "fn": 4
+      "fn": 5
      }
     },
     {
@@ -28956,7 +28957,7 @@
      "purpose": "Projecting the `skill.reliability` claim from the outcome ledger, including the imported base",
      "surface": {
       "const": 1,
-      "crate-vis": 2,
+      "crate-vis": 3,
       "fn": 3
      }
     },

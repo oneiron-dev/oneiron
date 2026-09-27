@@ -152,7 +152,7 @@ pub use decision::{
 };
 pub use ledger::{
     is_skill_edit_verdict_receipt, skill_edit_verdict, skill_edit_verdicts,
-    skill_edit_verdicts_for_proposal,
+    skill_edit_verdicts_for_proposal, supersede_skill_edit_judge,
 };
 pub use measurement::{
     AuditPair, BlindPreference, JudgeMeasurements, PreferredResponse, WorldAxisScore,
@@ -235,7 +235,7 @@ pub(super) const VERDICT_PREFIX: &[u8] = b"skill_optimize/verdict/v1\0";
 /// Prerelease, and the honest answer to an unbindable row is to refuse it
 /// rather than to grow a second code path for it: every v1/v2/v3 row decodes as
 /// [`Error::CorruptedIndex`]. There is no shim and no migration.
-const VERDICT_SCHEMA_VERSION: u64 = 4;
+const VERDICT_SCHEMA_VERSION: u64 = 5;
 const KEY_SCHEMA_VERSION: &str = "v";
 const KEY_PROPOSAL: &str = "proposal";
 const KEY_SKILL: &str = "skill";
@@ -254,6 +254,9 @@ const KEY_ACCEPTED_VERDICT: &str = "accepted_verdict";
 const KEY_MISSING_SOURCES: &str = "missing_sources";
 const KEY_AT: &str = "at";
 const KEY_MEASUREMENTS: &str = "measurements";
+const KEY_JUDGE_REVISION: &str = "judge_revision";
+const FIELD_SKILL_EDIT_JUDGE_REVISION: &str = "skill_edit_judge_revision";
+const FIELD_SKILL_EDIT_JUDGE_DISPLACED_BY: &str = "skill_edit_judge_displaced_by";
 
 /// Domain separator of the canonical SKILL-body content digest.
 const BODY_DIGEST_DOMAIN: &[u8] = b"skill_optimize:body:v1\0";

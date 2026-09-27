@@ -1598,3 +1598,152 @@ fn skill_posterior_sample_rejects_invalid_public_parameters() {
         );
     }
 }
+
+#[test]
+fn replay_cannot_reassign_an_unknown_judgment_to_a_new_judge() -> crate::error::Result<()> {
+    use crate::skill_attribution::{
+        AttributionJudge, RuleAttributionJudge, run_attribution_projector_with_judge,
+    };
+    struct Unknown;
+    impl AttributionJudge for Unknown {
+        fn judge(
+            &self,
+            evidence: &OutcomeEvidence,
+        ) -> crate::error::Result<Option<AttributionVerdict>> {
+            RuleAttributionJudge.judge(evidence)
+        }
+    }
+    let (_tmp, vault) = temp_vault();
+    let skill = EntityId::now();
+    let actor = EntityId::now();
+    put_active_import(&vault, &skill, "sk05.unknown-judge");
+    put_actor(&vault, &actor);
+    let receipt = stamped_receipt_for_model(&vault, "sk05.unknown-judge", "1.0.0", Some("model@1"));
+    record_attribution_evidence(
+        &vault,
+        &OutcomeEvidence::new(&receipt, actor, AttemptOutcome::Failed, 30)
+            .with_skill(skill)
+            .with_routing_facts(true, true),
+    )?;
+    let rows = run_attribution_projector_with_judge(&vault, 0, &Unknown)?;
+    project_skill_reliability(&vault, &rows)?;
+    run_attribution_projector_with_judge(&vault, 0, &RuleAttributionJudge)?;
+    assert!(
+        crate::skill_attribution::supersede_displaced_judge_receipts(
+            &vault,
+            "rule-attribution@1",
+            "rule-attribution@2",
+            40
+        )?
+        .is_empty()
+    );
+    assert_eq!(
+        skill_executor_reliability(&vault, &skill, "model@1")?.runs,
+        1
+    );
+    Ok(())
+}
+
+#[test]
+fn displaced_floor_crossing_retires_only_its_own_proposal() -> crate::error::Result<()> {
+    let (_tmp, vault) = temp_vault();
+    let skill = EntityId::now();
+    let actor = EntityId::now();
+    put_active_import(&vault, &skill, "sk05.displaced-floor");
+    put_actor(&vault, &actor);
+    for _ in 0..9 {
+        let receipt =
+            stamped_receipt_for_model(&vault, "sk05.displaced-floor", "1.0.0", Some("old@1"));
+        record_attribution_evidence(
+            &vault,
+            &OutcomeEvidence::new(&receipt, actor, AttemptOutcome::Failed, 30)
+                .with_skill(skill)
+                .with_routing_facts(true, true),
+        )?;
+        let rows = run_attribution_projector(&vault, read_attribution_cursor(&vault)?)?;
+        project_skill_reliability(&vault, &rows)?;
+    }
+    let open = claims(
+        &vault,
+        &skill,
+        PREDICATE_SKILL_QUARANTINE_PROPOSAL,
+        ClaimLifecycleStatus::Active,
+    );
+    assert_eq!(open.len(), 1);
+    let original = open[0].clone();
+    crate::skill_attribution::supersede_displaced_judge_receipts(
+        &vault,
+        "rule-attribution@1",
+        "new-judge@2",
+        50,
+    )?;
+    assert!(
+        claims(
+            &vault,
+            &skill,
+            PREDICATE_SKILL_QUARANTINE_PROPOSAL,
+            ClaimLifecycleStatus::Active
+        )
+        .is_empty()
+    );
+    assert_eq!(
+        claims(
+            &vault,
+            &skill,
+            PREDICATE_SKILL_QUARANTINE_PROPOSAL,
+            ClaimLifecycleStatus::Superseded
+        )
+        .len(),
+        1
+    );
+    assert_eq!(original.approval, ClaimApprovalStatus::Proposed);
+    assert_eq!(skill_executor_reliability(&vault, &skill, "old@1")?.runs, 0);
+    Ok(())
+}
+
+#[test]
+fn displacement_between_batch_read_and_writer_cannot_restore_loss() -> crate::error::Result<()> {
+    let (_tmp, vault) = temp_vault();
+    let skill = EntityId::now();
+    let actor = EntityId::now();
+    put_active_import(&vault, &skill, "sk05.race");
+    put_actor(&vault, &actor);
+    let receipt = stamped_receipt_for_model(&vault, "sk05.race", "1.0.0", Some("model@1"));
+    record_attribution_evidence(
+        &vault,
+        &OutcomeEvidence::new(&receipt, actor, AttemptOutcome::Failed, 30)
+            .with_skill(skill)
+            .with_routing_facts(true, true),
+    )?;
+    let rows = run_attribution_projector(&vault, read_attribution_cursor(&vault)?)?;
+    std::thread::scope(|scope| -> crate::error::Result<()> {
+        let (ready_tx, ready_rx) = std::sync::mpsc::sync_channel(0);
+        let (resume_tx, resume_rx) = std::sync::mpsc::sync_channel(0);
+        let projector = scope.spawn(|| {
+            super::projector::set_pre_write_hook(Box::new(move || {
+                ready_tx.send(()).expect("notify before writer");
+                resume_rx.recv().expect("wait for judge displacement");
+            }));
+            project_skill_reliability(&vault, &rows)
+        });
+        ready_rx.recv().expect("projector completed its pre-read");
+        crate::skill_attribution::supersede_displaced_judge_receipts(
+            &vault,
+            "rule-attribution@1",
+            "replacement@2",
+            31,
+        )?;
+        resume_tx.send(()).expect("release projector");
+        projector.join().expect("projector thread")?;
+        Ok(())
+    })?;
+    assert_eq!(
+        skill_executor_reliability(&vault, &skill, "model@1")?.runs,
+        0
+    );
+    assert_eq!(
+        crate::skill_attribution::displaced_judge_receipts(&vault)?.len(),
+        1
+    );
+    Ok(())
+}

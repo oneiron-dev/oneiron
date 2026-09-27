@@ -35,20 +35,18 @@ pub(crate) fn mark_displaced_outcome_in_txn(
     replacement: &str,
 ) -> Result<bool> {
     let outcome = outcome_key(skill, executor, receipt);
-    if vault.store.vault_meta.get(txn, &outcome)?.is_none() {
-        return Ok(false);
-    }
     let mut key = DISPLACED_PREFIX.to_vec();
     key.extend_from_slice(&outcome);
     let mark = Value::Map(vec![
         (Value::from("displaced"), Value::from(old)),
         (Value::from("replacement"), Value::from(replacement)),
     ]);
+    let existed = vault.store.vault_meta.get(txn, &outcome)?.is_some();
     vault
         .store
         .vault_meta
         .put(txn, &key, &encode_value(&mark)?)?;
-    Ok(true)
+    Ok(existed)
 }
 
 fn is_displaced(vault: &Vault, txn: &heed::RoTxn<'_>, outcome: &[u8]) -> Result<bool> {

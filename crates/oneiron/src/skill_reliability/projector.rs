@@ -112,12 +112,24 @@ pub fn project_skill_reliability(
         }
     }
 
+    #[cfg(test)]
+    PRE_WRITE_HOOK.with(|slot| {
+        if let Some(hook) = slot.borrow_mut().take() {
+            hook();
+        }
+    });
     let mut projected = Vec::with_capacity(batches.len());
     for (skill, executor, rows) in batches {
         let at = rows.iter().map(|row| row.at).max().unwrap_or_default();
         let prior = skill_reliability_prior(vault, &skill)?;
         vault.with_write_txn(|wtxn| {
             for row in &rows {
+                // Close the TOCTOU window: a displacement can commit after the
+                // pre-read but before this writer. Recheck under the same writer
+                // lock as the ledger update and posterior fold.
+                if crate::skill_attribution::judgment_displaced_in_txn(vault, wtxn, row.sequence)? {
+                    continue;
+                }
                 // ONE judgment is ONE attributed outcome, so it writes ONE row.
                 // `evidence_receipts` is a list because the type is general —
                 // SK-04 emits a single receipt per routed outcome — and keying
@@ -441,4 +453,14 @@ fn persisted_judgments_by_sequence(vault: &Vault) -> Result<HashMap<u64, Attribu
         .into_iter()
         .map(|judgment| (judgment.sequence, judgment))
         .collect())
+}
+
+#[cfg(test)]
+thread_local! {
+    static PRE_WRITE_HOOK: std::cell::RefCell<Option<Box<dyn FnOnce()>>> = const { std::cell::RefCell::new(None) };
+}
+
+#[cfg(test)]
+pub(super) fn set_pre_write_hook(hook: Box<dyn FnOnce()>) {
+    PRE_WRITE_HOOK.with(|slot| *slot.borrow_mut() = Some(hook));
 }

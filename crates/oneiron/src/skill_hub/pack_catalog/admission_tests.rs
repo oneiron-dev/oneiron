@@ -361,6 +361,9 @@ fn invalid_bundled_skill_rolls_back_map_catalog_and_consent_spend() -> Result<()
 
 struct Replay;
 impl crate::skill_optimize::HeldOutReplayScorer for Replay {
+    fn judge_revision(&self) -> &str {
+        "fixture-judge@1"
+    }
     fn score(&self, case: &crate::skill_optimize::HeldOutReplayCase<'_>) -> Result<f32> {
         Ok(if case.instructions.contains("Keep facts exact.") {
             0.9

@@ -18,6 +18,9 @@ pub(super) fn record_verdict_in_txn(
     wtxn: &mut heed::RwTxn<'_>,
     verdict: &HeldOutVerdict,
 ) -> Result<()> {
+    if verdict.measurements.is_some() != verdict.judge_revision.is_some() {
+        return Err(invalid("judged verdict requires a judge revision"));
+    }
     if let Some(measurements) = &verdict.measurements {
         validate_measurements(measurements, verdict.held_out_count)?;
     } else if verdict.disposition != SkillEditDisposition::RefusedStaleTarget
@@ -105,6 +108,13 @@ pub(super) fn record_verdict_in_txn(
                 ),
                 None => Value::Nil,
             },
+        ),
+        (
+            Value::from(KEY_JUDGE_REVISION),
+            verdict
+                .judge_revision
+                .as_deref()
+                .map_or(Value::Nil, Value::from),
         ),
         (Value::from(KEY_AT), Value::from(verdict.at)),
     ]);
@@ -200,11 +210,24 @@ fn decode_verdict(key: &[u8], raw: &[u8]) -> Result<HeldOutVerdict> {
     {
         return Err(Error::CorruptedIndex(VERDICT_ROW_LABEL));
     }
+    let scored = measurements.is_some();
     Ok(HeldOutVerdict {
         before: score(KEY_BEFORE)?,
         after: score(KEY_AFTER)?,
         measurements,
         accepted: disposition.admits(),
+        judge_revision: match field(KEY_JUDGE_REVISION) {
+            Some(Value::Nil) if !scored => None,
+            Some(value) => Some(
+                value
+                    .as_str()
+                    .filter(|id| !id.is_empty())
+                    .ok_or(Error::CorruptedIndex(VERDICT_ROW_LABEL))?
+                    .to_owned(),
+            ),
+            None => return Err(Error::CorruptedIndex(VERDICT_ROW_LABEL)),
+        },
+        displaced_by_revision: None,
         id,
         proposal: entity(KEY_PROPOSAL)?,
         skill: entity(KEY_SKILL)?,
@@ -259,6 +282,24 @@ fn decode_verdict(key: &[u8], raw: &[u8]) -> Result<HeldOutVerdict> {
     })
 }
 
+fn decode_verdict_with_marker(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    key: &[u8],
+    raw: &[u8],
+) -> Result<HeldOutVerdict> {
+    let mut verdict = decode_verdict(key, raw)?;
+    verdict.displaced_by_revision = vault
+        .store
+        .vault_meta
+        .get(txn, &displaced_verdict_key(&verdict.id))?
+        .map(|raw| {
+            String::from_utf8(raw.to_vec()).map_err(|_| Error::CorruptedIndex(VERDICT_ROW_LABEL))
+        })
+        .transpose()?;
+    Ok(verdict)
+}
+
 pub(super) fn verdict_rows_in_txn(
     vault: &Vault,
     rtxn: &heed::RoTxn<'_>,
@@ -266,7 +307,7 @@ pub(super) fn verdict_rows_in_txn(
     let mut out = Vec::new();
     for row in vault.store.vault_meta.prefix_iter(rtxn, VERDICT_PREFIX)? {
         let (key, raw) = row?;
-        out.push(decode_verdict(&key, &raw)?);
+        out.push(decode_verdict_with_marker(vault, rtxn, &key, &raw)?);
     }
     Ok(out)
 }
@@ -381,7 +422,8 @@ pub(crate) fn skill_edit_verdict_receipts(
             break;
         }
         let (key, raw) = row?;
-        let record = skill_edit_verdict_receipt(&decode_verdict(&key, &raw)?);
+        let record =
+            skill_edit_verdict_receipt(&decode_verdict_with_marker(vault, &rtxn, &key, &raw)?);
         if !query.matches(&record) {
             continue;
         }
@@ -442,6 +484,15 @@ fn skill_edit_verdict_receipt(verdict: &HeldOutVerdict) -> ReceiptRecord {
             verdict.held_out_digest.clone(),
         ),
     ]);
+    if let Some(judge) = &verdict.judge_revision {
+        fields.insert(FIELD_SKILL_EDIT_JUDGE_REVISION.to_owned(), judge.clone());
+    }
+    if let Some(replacement) = &verdict.displaced_by_revision {
+        fields.insert(
+            FIELD_SKILL_EDIT_JUDGE_DISPLACED_BY.to_owned(),
+            replacement.clone(),
+        );
+    }
     if let Some(measurements) = &verdict.measurements {
         fields.insert(
             FIELD_SKILL_EDIT_MEASUREMENTS.to_owned(),
@@ -504,4 +555,54 @@ fn skill_edit_verdict_receipt(verdict: &HeldOutVerdict) -> ReceiptRecord {
         )],
         fields,
     }
+}
+
+const DISPLACED_VERDICT_PREFIX: &[u8] = b"skill_optimize:displaced_judge:v1:";
+fn displaced_verdict_key(id: &EntityId) -> Vec<u8> {
+    let mut key = DISPLACED_VERDICT_PREFIX.to_vec();
+    key.extend_from_slice(id.as_bytes());
+    key
+}
+
+/// Retire candidate-scoring judgments by their immutable judge revision.
+/// Their scores and original verdict rows remain readable, while admissions
+/// and repeat deliveries no longer treat their acceptances as standing.
+pub fn supersede_skill_edit_judge(
+    vault: &Vault,
+    displaced: &str,
+    replacement: &str,
+) -> Result<Vec<EntityId>> {
+    if displaced == replacement
+        || displaced.is_empty()
+        || replacement.is_empty()
+        || displaced.len() > 256
+        || replacement.len() > 256
+        || displaced.chars().any(char::is_control)
+        || replacement.chars().any(char::is_control)
+    {
+        return Err(invalid("invalid candidate judge replacement"));
+    }
+    vault.with_write_txn(|txn| {
+        let mut ids = Vec::new();
+        for verdict in verdict_rows_in_txn(vault, txn)? {
+            if verdict.judge_revision.as_deref() != Some(displaced) {
+                continue;
+            }
+            let key = displaced_verdict_key(&verdict.id);
+            if let Some(held) = vault.store.vault_meta.get(txn, &key)? {
+                if held.as_ref() != replacement.as_bytes() {
+                    return Err(invalid(
+                        "candidate verdict already displaced by another judge",
+                    ));
+                }
+            } else {
+                vault
+                    .store
+                    .vault_meta
+                    .put(txn, &key, replacement.as_bytes())?;
+            }
+            ids.push(verdict.id);
+        }
+        Ok(ids)
+    })
 }
