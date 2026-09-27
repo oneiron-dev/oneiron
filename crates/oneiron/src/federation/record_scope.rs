@@ -194,7 +194,11 @@ fn stored_scope(
     if stamp.version != 2 || stamp.kind != kind {
         return Ok(None);
     }
-    let facet = if kind == crate::registry::ENTITY_TYPE_FACET {
+    let facet = if kind == crate::registry::ENTITY_TYPE_CLAIM {
+        // CLAIM carries its immutable facet in its body; `stamp_put` and the
+        // promoted-replay door compare that body to this birth stamp.
+        EntityId::from_bytes(stamp.birth_facet).ok()
+    } else if kind == crate::registry::ENTITY_TYPE_FACET {
         Some(id)
     } else if carries_birth_stamp(kind) {
         birth_facet(store, txn, id)?
@@ -208,6 +212,7 @@ fn stored_scope(
 }
 /// A promoted edit may change content but cannot re-position the same id.
 /// Read this in the author admission snapshot, before importing peer ops.
+#[cfg(feature = "sync")]
 pub(crate) fn validate_edit_birth_scope(
     store: &Store,
     txn: &heed::RoTxn<'_>,

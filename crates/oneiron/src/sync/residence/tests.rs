@@ -1,7 +1,3 @@
-#![expect(
-    clippy::unwrap_used,
-    reason = "test fixture failures should panic immediately"
-)]
 use super::*;
 use crate::federation::{
     FederationGrant, FederationGrantPreset, FederationGrantRole, FederationGrantScope,

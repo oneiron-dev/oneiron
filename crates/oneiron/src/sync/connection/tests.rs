@@ -373,6 +373,7 @@ async fn sync_socket_disconnect_and_restart_do_not_fail_over_macro_home() {
                 client_config: SyncClientConfig {
                     server_url,
                     home_node_topology: Some(topology.clone()),
+                    residence_mode: crate::sync::SyncResidenceMode::All,
                     ..Default::default()
                 },
                 auto_reconnect: false,

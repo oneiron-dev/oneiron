@@ -371,7 +371,7 @@ fn opened_item_residence_rejects_unsolicited_full_window_updates() {
 fn sync_client_generate_initial_sync() {
     let manager = test_manager();
     let (client, _rx) = SyncClient::new(
-        manager.clone(),
+        manager,
         SyncClientConfig {
             residence_mode: SyncResidenceMode::All,
             ..Default::default()
