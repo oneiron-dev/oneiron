@@ -1,81 +1,12 @@
-//! PERSON/FACET persona materialization shared by authored and replayed masks.
+//! FACET overwrite checks for immutable substrate identity and retired privacy axes.
 use super::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
-use crate::registry::{ENTITY_TYPE_FACET, ENTITY_TYPE_PERSON};
+use crate::registry::ENTITY_TYPE_FACET;
 use crate::{
     EntityId,
     error::{Error, Result},
     store::Store,
-    temporal::TimeRange,
 };
 
-pub(super) fn reconcile_identity_facet(
-    store: &Store,
-    txn: &mut heed::RwTxn<'_>,
-    id: EntityId,
-    data: &[u8],
-    occurred: TimeRange,
-    learned: u64,
-) -> Result<()> {
-    if !crate::companion::is_identity_facet_body(data) {
-        return Ok(());
-    }
-    let record = crate::companion::decode_companion_record_body(data)?;
-    let person = match record.subject {
-        crate::companion::CompanionSubject::Persona { persona_ref } => persona_ref,
-        crate::companion::CompanionSubject::Relationship { source_ref, .. } => source_ref,
-    };
-    super::person_substrate::validate_scope_identity(person)?;
-    if person == id {
-        return Err(Error::CorruptedIndex("persona and facet ids must differ"));
-    }
-    if let Some(raw) = store.entities.get(txn, person.as_bytes())? {
-        if EntityMetadataHeader::parse(&raw).is_none_or(|h| h.entity_type != ENTITY_TYPE_PERSON) {
-            return Err(Error::CorruptedIndex("persona subject is not PERSON"));
-        }
-    } else {
-        super::put_apply::stage_entity_body_row(
-            store,
-            txn,
-            &person,
-            ENTITY_TYPE_PERSON,
-            occurred,
-            learned,
-            b"",
-        )?;
-        super::put_apply::stage_entity_index_rows(
-            store,
-            txn,
-            &person,
-            ENTITY_TYPE_PERSON,
-            occurred,
-            learned,
-        )?;
-        let prefix = store.short_id_prefix(ENTITY_TYPE_PERSON)?;
-        let plan =
-            super::plan_short_id_update(store, txn, &person, ENTITY_TYPE_PERSON, &prefix, b"")?;
-        super::apply_short_id_plan(store, txn, &person, plan)?;
-        crate::federation::record_scope::stamp_put(
-            store,
-            txn,
-            person,
-            ENTITY_TYPE_PERSON,
-            b"",
-            false,
-        )?;
-    }
-    super::person_substrate::ensure_person_substrate(store, txn, person, occurred, learned)?;
-    super::edge_apply::apply_edge_with_created_at(
-        store,
-        txn,
-        person,
-        crate::edge::EdgeKind::HasFacet,
-        id,
-        1.0,
-        learned,
-        crate::affect::Vad::NEUTRAL,
-        None,
-    )
-}
 /// A substrate cannot be replaced by an arbitrary opaque mask or old identity.
 pub(super) fn validate_facet_overwrite(
     store: &Store,
