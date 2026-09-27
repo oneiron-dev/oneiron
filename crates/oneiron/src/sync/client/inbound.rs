@@ -5,6 +5,7 @@ use std::cmp::Ordering::{Equal, Less};
 use loro::VersionVector;
 
 use super::base::{SyncClient, load_root_doc};
+use super::types::SyncResidenceMode;
 use crate::error::{Error, SyncError};
 use crate::sync::SyncEvent;
 use crate::sync::bridge::persist_window_update;
@@ -150,10 +151,20 @@ impl SyncClient {
                 responses.extend(self.handle_window_sync(window_key, sub_tag, inner)?);
             }
             TAG_BULK_TRANSFER => {
+                if self.config.residence_mode == SyncResidenceMode::Opened {
+                    return Err(TransportError::InvalidPayload(
+                        "full-window bulk transfer on opened-item lane",
+                    ));
+                }
                 let (window_key, compressed) = transport::decode_bulk_transfer(payload)?;
                 self.handle_bulk_transfer(window_key, compressed)?;
             }
             TAG_BULK_TRANSFER_DONE => {
+                if self.config.residence_mode == SyncResidenceMode::Opened {
+                    return Err(TransportError::InvalidPayload(
+                        "full-window bulk transfer on opened-item lane",
+                    ));
+                }
                 let (window_key, doc_state) = transport::decode_bulk_transfer_done(payload)?;
                 self.handle_bulk_transfer_done(window_key, doc_state)?;
             }
@@ -177,6 +188,24 @@ impl SyncClient {
         sub_tag: u8,
         payload: &[u8],
     ) -> std::result::Result<Vec<Vec<u8>>, TransportError> {
+        if self.config.residence_mode == SyncResidenceMode::Opened
+            && self.config.federation_peer.is_none()
+            && matches!(
+                sub_tag,
+                window_sub_tags::UPDATE
+                    | window_sub_tags::VV_REQUEST
+                    | window_sub_tags::VV_RESPONSE
+            )
+            && self
+                .vault
+                .sync_state_get(&format!("rp:w:{window_key}"))
+                .map_err(|e| TransportError::Storage(e.to_string()))?
+                .is_none()
+        {
+            return Err(TransportError::InvalidPayload(
+                "full-window exchange requires causal promotion",
+            ));
+        }
         if self.config.federation_peer.is_some()
             && matches!(
                 sub_tag,
@@ -188,6 +217,56 @@ impl SyncClient {
             ));
         }
         match sub_tag {
+            window_sub_tags::PROMOTION_GRANTED | window_sub_tags::PROMOTED_INVALIDATE
+                if self.config.residence_mode == SyncResidenceMode::Opened =>
+            {
+                if !payload.is_empty()
+                    || self
+                        .vault
+                        .sync_state_get(&format!("rp:w:{window_key}"))
+                        .map_err(|e| TransportError::Storage(e.to_string()))?
+                        .is_none()
+                {
+                    return Err(TransportError::InvalidPayload("unpromoted window control"));
+                }
+                if sub_tag == window_sub_tags::PROMOTION_GRANTED {
+                    return Ok(Vec::new());
+                }
+                let window = self.ensure_window(window_key)?;
+                Ok(vec![
+                    transport::encode_window_sync(
+                        window_key,
+                        window_sub_tags::VV_REQUEST,
+                        &doc_version_vector(&window.doc),
+                    )
+                    .into_result()?,
+                ])
+            }
+            window_sub_tags::RESIDENCE_ACK
+                if self.config.residence_mode == SyncResidenceMode::Opened =>
+            {
+                let (seq, digest) =
+                    payload
+                        .split_at_checked(8)
+                        .ok_or(TransportError::InvalidPayload(
+                            "short residence acknowledgment",
+                        ))?;
+                let seq = u64::from_be_bytes(seq.try_into().expect("length checked"));
+                let digest: [u8; 32] = digest.try_into().map_err(|_| {
+                    TransportError::InvalidPayload("invalid residence acknowledgment")
+                })?;
+                if seq == 0
+                    || self
+                        .residence_acks
+                        .insert(seq, digest)
+                        .is_some_and(|old| old != digest)
+                {
+                    return Err(TransportError::InvalidPayload(
+                        "conflicting residence acknowledgment",
+                    ));
+                }
+                Ok(Vec::new())
+            }
             window_sub_tags::SELECTOR_DEFERRED => {
                 if payload.len() > MAX_DECODED_PAYLOAD_BYTES || payload.len() <= 32 {
                     return Err(TransportError::InvalidPayload(
@@ -223,12 +302,23 @@ impl SyncClient {
                     .map_err(|_| TransportError::VersionVectorDecode)?;
                 let window = self.ensure_window(window_key)?;
                 let doc = &window.doc;
-                let delta = crate::sync::window::export_window_updates_since(
-                    &self.vault,
-                    &window.key,
-                    doc,
-                    payload,
-                )
+                let delta = if self.config.residence_mode == SyncResidenceMode::Opened
+                    && self.config.federation_peer.is_none()
+                {
+                    crate::sync::window::export_promoted_window_updates_since(
+                        &self.vault,
+                        &window.key,
+                        doc,
+                        payload,
+                    )
+                } else {
+                    crate::sync::window::export_window_updates_since(
+                        &self.vault,
+                        &window.key,
+                        doc,
+                        payload,
+                    )
+                }
                 .map_err(map_delta_export_err)?;
                 let responses = vec![
                     transport::encode_window_sync(window_key, window_sub_tags::UPDATE, &delta)
@@ -270,12 +360,23 @@ impl SyncClient {
                     .map_err(|_| TransportError::VersionVectorDecode)?;
                 let window = self.ensure_window(window_key)?;
                 let doc = &window.doc;
-                let delta = crate::sync::window::export_window_updates_since(
-                    &self.vault,
-                    &window.key,
-                    doc,
-                    payload,
-                )
+                let delta = if self.config.residence_mode == SyncResidenceMode::Opened
+                    && self.config.federation_peer.is_none()
+                {
+                    crate::sync::window::export_promoted_window_updates_since(
+                        &self.vault,
+                        &window.key,
+                        doc,
+                        payload,
+                    )
+                } else {
+                    crate::sync::window::export_window_updates_since(
+                        &self.vault,
+                        &window.key,
+                        doc,
+                        payload,
+                    )
+                }
                 .map_err(map_delta_export_err)?;
                 let responses = vec![
                     transport::encode_window_sync(window_key, window_sub_tags::UPDATE, &delta)

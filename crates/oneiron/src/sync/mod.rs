@@ -45,6 +45,7 @@ pub mod quarantine;
 pub mod queue;
 pub mod quota;
 pub mod replay;
+pub mod residence;
 pub mod schema;
 pub mod selector;
 pub mod server_state;
@@ -52,7 +53,10 @@ pub mod transport;
 pub mod types;
 pub mod window;
 
-pub use client::{EphemeralChangeOrigin, SyncClient, SyncClientConfig, SyncEvent, SyncStatus};
+pub use client::{
+    EphemeralChangeOrigin, ResidenceHit, ResidenceSearch, SearchSource, SyncClient,
+    SyncClientConfig, SyncEvent, SyncResidenceMode, SyncStatus, ThinItem,
+};
 pub use connection::{ConnectionConfig, LocalUpdate, SyncConnection};
 pub use lease::{
     LEASE_DURATION_SECS, LEASE_KEY_PREFIX, LEASE_POP_DOMAIN, LEASE_RECORD_LEN,

@@ -15916,13 +15916,21 @@
       "ScopedRecord"
      ],
      "path": "src/federation/record_scope.rs",
-     "purpose": "Digest-bound record-position stamps and scoped read/delete/export doors",
+     "purpose": "Birth-facet-bound record-position stamps and scoped read/delete/export doors",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 4,
       "enum": 1,
       "fn": 4,
       "struct": 1
      }
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/federation/record_scope/tests.rs",
+     "purpose": "—",
+     "surface": {}
     },
     {
      "bucket": "m",
@@ -29748,7 +29756,7 @@
      "path": "src/sync/client/mod.rs",
      "purpose": "Client-side sync over WebSocket",
      "surface": {
-      "re-export": 4
+      "re-export": 5
      }
     },
     {
@@ -29759,6 +29767,23 @@
      "purpose": "The existing app-tier MessagePack auth.bind handshake on the sync socket",
      "surface": {
       "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "ResidenceHit",
+      "ResidenceSearch",
+      "SearchSource",
+      "ThinItem"
+     ],
+     "path": "src/sync/client/residence.rs",
+     "purpose": "Bounded on-demand home reads on an independent short-lived authenticated socket",
+     "surface": {
+      "enum": 1,
+      "fn": 5,
+      "struct": 3
      }
     },
     {
@@ -29788,13 +29813,14 @@
       "NoteSyncSession",
       "SyncClientConfig",
       "SyncEvent",
+      "SyncResidenceMode",
       "SyncStatus"
      ],
      "path": "src/sync/client/types.rs",
      "purpose": "Sync client configuration, events, and sync_state key constants",
      "surface": {
       "crate-vis": 9,
-      "enum": 3,
+      "enum": 4,
       "fn": 1,
       "struct": 2
      }
@@ -29830,7 +29856,7 @@
      "path": "src/sync/connection/mod.rs",
      "purpose": "WebSocket connection manager with debounced sync and reconnection",
      "surface": {
-      "fn": 2,
+      "fn": 7,
       "re-export": 1,
       "struct": 2
      }
@@ -29842,7 +29868,7 @@
      "path": "src/sync/connection/session.rs",
      "purpose": "Session types: WS aliases, pump budget, convergence session, resync markers",
      "surface": {
-      "crate-vis": 14
+      "crate-vis": 15
      }
     },
     {
@@ -30036,7 +30062,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [
       "WindowManager"
@@ -30044,7 +30070,7 @@
      "path": "src/sync/manager.rs",
      "purpose": "Production window manager: ARCH-0023b startup orchestration + registry",
      "surface": {
-      "crate-vis": 7,
+      "crate-vis": 9,
       "fn": 12,
       "struct": 1
      }
@@ -30057,7 +30083,7 @@
      "purpose": "Entity document access through the vault's canonical window/selector owner",
      "surface": {
       "crate-vis": 2,
-      "fn": 3
+      "fn": 4
      }
     },
     {
@@ -30076,7 +30102,7 @@
      "purpose": "CRDT sync layer for Oneiron",
      "surface": {
       "crate-vis": 3,
-      "mod": 18,
+      "mod": 19,
       "re-export": 14
      }
     },
@@ -30338,6 +30364,30 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "IndexPage",
+      "WindowIndexEntry"
+     ],
+     "path": "src/sync/residence.rs",
+     "purpose": "Grant-checked, per-item residence projections over a window document",
+     "surface": {
+      "const": 2,
+      "crate-vis": 1,
+      "fn": 5,
+      "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/sync/residence/tests.rs",
+     "purpose": "—",
+     "surface": {}
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
@@ -30399,7 +30449,7 @@
      "path": "src/sync/selector/document_admission.rs",
      "purpose": "Transaction-bound peer document admission from stored ledger truth",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 5
      }
     },
     {
@@ -30472,9 +30522,9 @@
      "path": "src/sync/transport.rs",
      "purpose": "Wire protocol encoding/decoding for WebSocket transport",
      "surface": {
-      "const": 29,
+      "const": 35,
       "enum": 1,
-      "fn": 20,
+      "fn": 21,
       "mod": 1,
       "re-export": 1,
       "struct": 2
@@ -30536,7 +30586,7 @@
      "path": "src/sync/window/egress.rs",
      "purpose": "Window egress: packing policy, local-only scrub, exports, and mirror replay",
      "surface": {
-      "crate-vis": 5,
+      "crate-vis": 6,
       "fn": 4
      }
     },
@@ -34197,7 +34247,7 @@
      "purpose": "ES-07: the learned AUTO-mode decider behind ONE-1719's fan-out seam"
     },
     "federation": {
-     "files": 22,
+     "files": 23,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -34764,9 +34814,9 @@
      "purpose": "ARCH-0038 historical-carrier sweep executor — ONE-1087 / ONE-1091 phase 1 (manual trigger via…"
     },
     "sync": {
-     "files": 100,
+     "files": 103,
      "impl_vault": true,
-     "largest_src_bucket": "m",
+     "largest_src_bucket": "L",
      "layout": "dir",
      "purpose": "CRDT sync layer for Oneiron"
     },
@@ -34897,10 +34947,10 @@
      "purpose": "Write-path stamping: `WriteActor`/`WriteProvenance`/`WriteEnvelope`/`ClaimCandidate` + evidence stamping"
     }
    },
-   "over_bar": 9,
+   "over_bar": 10,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2062,
-   "test_files": 705
+   "source_files": 2064,
+   "test_files": 707
   },
   "oneiron-android": {
    "files": [
@@ -40367,6 +40417,14 @@
      "surface": {}
     },
     {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "src/handler/residence_socket_tests.rs",
+     "purpose": "—",
+     "surface": {}
+    },
+    {
      "bucket": "XL",
      "kind": "test",
      "notable": [],
@@ -40385,13 +40443,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/handler/window_sync.rs",
      "purpose": "WindowSync sub-tag dispatcher with selector and VV paths",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 5
      }
     },
     {
@@ -40431,7 +40489,7 @@
      "path": "src/livequery.rs",
      "purpose": "App-tier framing and coarse live-query state, separate from WindowSync",
      "surface": {
-      "crate-vis": 16
+      "crate-vis": 17
      }
     },
     {
@@ -40517,6 +40575,24 @@
      "kind": "test",
      "notable": [],
      "path": "src/livequery/remediation_tests.rs",
+     "purpose": "—",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/livequery/residence.rs",
+     "purpose": "Grant-scoped home-node reads for opened-item devices",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/livequery/residence/tests.rs",
      "purpose": "—",
      "surface": {}
     },
@@ -41742,7 +41818,7 @@
      "purpose": "Deployment-selected feedback transport"
     },
     "handler": {
-     "files": 15,
+     "files": 16,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -41756,7 +41832,7 @@
      "purpose": "—"
     },
     "livequery": {
-     "files": 17,
+     "files": 19,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "file+dir",
@@ -41849,8 +41925,8 @@
    },
    "over_bar": 1,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 230,
-   "test_files": 96
+   "source_files": 231,
+   "test_files": 98
   },
   "oneiron-uniffi": {
    "files": [

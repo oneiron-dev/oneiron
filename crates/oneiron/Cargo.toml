@@ -71,6 +71,7 @@ unicode-segmentation = "1"
 loro = "1.10"
 tokio = { version = "1", features = ["net", "sync", "time", "rt", "macros"], optional = true }
 tokio-tungstenite = { version = "0.26", optional = true }
+base64 = { version = "0.22", optional = true }
 futures-util = { version = "0.3", optional = true }
 zstd = { version = "0.13", optional = true }
 tracing = { version = "0.1" }
@@ -186,6 +187,7 @@ microvm-dev = []
 sync = [
     "dep:tokio",
     "dep:tokio-tungstenite",
+    "dep:base64",
     "dep:futures-util",
     "dep:zstd",
     "dep:postcard",

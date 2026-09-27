@@ -293,6 +293,56 @@ async fn handle_connection(
                             }
                             continue;
                         }
+                        if protocol_version == protocol::RESIDENCE_PROTOCOL_VERSION
+                            && data.first() == Some(&protocol::TAG_WINDOW_SYNC)
+                        {
+                            let Ok((raw_key, sub_tag, _)) =
+                                protocol::decode_window_sync(&data[1..])
+                            else {
+                                break;
+                            };
+                            if sub_tag == protocol::window_sub_tags::UPDATE {
+                                let Some(key) = oneiron::sync::WindowKey::try_new(raw_key) else {
+                                    break;
+                                };
+                                if let Some(selector) = conn_state.promoted_windows.get(&key) {
+                                    let Ok(auth) = require_bound_app_auth(&server, &conn_state)
+                                    else {
+                                        break;
+                                    };
+                                    let Ok(window) = server.reassert_manager.open_window(&key)
+                                    else {
+                                        break;
+                                    };
+                                    if super::window_sync::authorize_promoted_window(
+                                        &server,
+                                        auth,
+                                        &key,
+                                        selector,
+                                        &window.doc,
+                                    )
+                                    .is_err()
+                                    {
+                                        break;
+                                    }
+                                    let Ok(frame) = protocol::encode_window_sync(
+                                        raw_key,
+                                        protocol::window_sub_tags::PROMOTED_INVALIDATE,
+                                        &[],
+                                    )
+                                    .into_result() else {
+                                        break;
+                                    };
+                                    transport.app_jti = auth.jti().map(str::to_owned);
+                                    let sent = transport.send_binary(frame).await;
+                                    transport.app_jti = None;
+                                    if !sent {
+                                        break;
+                                    }
+                                }
+                            }
+                            continue;
+                        }
                         if (should_forward_broadcast(protocol_version, &data)
                             || (conn_state.window_sync_mode
                                 == super::conn_state::WindowSyncMode::FullWindow
@@ -334,9 +384,12 @@ async fn handle_connection(
                             | oneiron::sync::transport::TAG_DOCUMENT
                             | oneiron::sync::transport::TAG_BATCH
                     )
-                ) || (conn_state.window_sync_mode
-                    == super::conn_state::WindowSyncMode::Selector
-                    && data.first().copied() == Some(protocol::TAG_WINDOW_SYNC));
+                ) || (matches!(
+                    conn_state.window_sync_mode,
+                    super::conn_state::WindowSyncMode::Selector
+                        | super::conn_state::WindowSyncMode::Residence
+                ) && data.first().copied()
+                    == Some(protocol::TAG_WINDOW_SYNC));
                 if app_frame
                     && conn_state.bound_auth.as_ref().is_none_or(|auth| {
                         session_credential_revoked(server.vault().as_ref(), auth.jti())

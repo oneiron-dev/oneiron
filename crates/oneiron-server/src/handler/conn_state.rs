@@ -2,7 +2,7 @@
 
 use std::collections::HashSet;
 
-use oneiron::sync::WindowKey;
+use oneiron::sync::{SyncSelector, WindowKey};
 
 use crate::auth::CoreAuth;
 use crate::protocol::{self, ProtocolError};
@@ -11,6 +11,8 @@ use crate::protocol::{self, ProtocolError};
 /// Phase-1 auth has only a shared secret, so user-scoped limits are not sound.
 pub(super) struct ConnState {
     windows_touched: HashSet<WindowKey>,
+    /// Only windows rechecked under a live bound grant can exchange full VVs.
+    pub(super) promoted_windows: std::collections::HashMap<WindowKey, SyncSelector>,
     pub(super) documents:
         std::collections::HashMap<oneiron::EntityId, oneiron::sync::SelectorVvRequest>,
     /// Owner-lane NOTE subscriptions of an own device, with its last VV.
@@ -26,6 +28,7 @@ impl ConnState {
     pub(super) fn new(protocol_version: u8) -> Self {
         Self {
             windows_touched: HashSet::new(),
+            promoted_windows: std::collections::HashMap::new(),
             documents: std::collections::HashMap::new(),
             owner_documents: std::collections::HashMap::new(),
             window_sync_mode: WindowSyncMode::Unbound,
@@ -80,6 +83,13 @@ impl ConnState {
                     "full-window sync requires the current full-window protocol",
                 ));
             }
+            WindowSyncMode::Residence
+                if self.protocol_version != protocol::RESIDENCE_PROTOCOL_VERSION =>
+            {
+                return Err(ProtocolError::InvalidPayload(
+                    "opened-item sync requires the residence protocol",
+                ));
+            }
             _ => {}
         }
 
@@ -89,7 +99,8 @@ impl ConnState {
                 Ok(())
             }
             (WindowSyncMode::FullWindow, WindowSyncMode::FullWindow)
-            | (WindowSyncMode::Selector, WindowSyncMode::Selector) => Ok(()),
+            | (WindowSyncMode::Selector, WindowSyncMode::Selector)
+            | (WindowSyncMode::Residence, WindowSyncMode::Residence) => Ok(()),
             (WindowSyncMode::Selector, WindowSyncMode::FullWindow) => {
                 Err(ProtocolError::InvalidPayload(
                     "selector-scoped connection cannot use full-window sync",
@@ -99,6 +110,9 @@ impl ConnState {
                 ProtocolError::InvalidPayload("full-window connection cannot use selector sync"),
             ),
             (_, WindowSyncMode::Unbound) => Ok(()),
+            _ => Err(ProtocolError::InvalidPayload(
+                "opened-item sync cannot mix with full-window or federation sync",
+            )),
         }
     }
 }
@@ -108,4 +122,5 @@ pub(super) enum WindowSyncMode {
     Unbound,
     FullWindow,
     Selector,
+    Residence,
 }

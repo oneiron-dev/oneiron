@@ -17,6 +17,7 @@ mod budget;
 mod error;
 mod history;
 mod reads;
+mod residence;
 mod routing;
 mod wire;
 use error::AppError;
@@ -105,6 +106,14 @@ fn bound_actor_class(auth: &CoreAuth) -> Result<oneiron::EdgeActorClass, AppErro
             ],
         )),
     }
+}
+
+pub(crate) fn residence_rpc(
+    server: &crate::server::SyncServer,
+    auth: &CoreAuth,
+    request: RpcRequest,
+) -> Result<Vec<Vec<u8>>, ProtocolError> {
+    residence::run(server, auth, request)
 }
 
 pub(crate) fn bound_rpc(

@@ -10,7 +10,9 @@ pub(crate) use admission::admit_federated_entity_blob;
 mod authorize;
 mod codec;
 mod document_admission;
-pub(in crate::sync) use document_admission::admit_document_write_in_txn;
+pub(in crate::sync) use document_admission::{
+    admit_document_write_in_txn, admit_promoted_entity_write_in_txn,
+};
 #[cfg(feature = "sync")]
 mod edge;
 mod note_admission;

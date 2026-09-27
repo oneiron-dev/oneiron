@@ -9,7 +9,7 @@ use crate::sync::client::{SyncClient, SyncEvent};
 use crate::sync::transport::{self, window_sub_tags};
 use crate::sync::types::parse_window_key_str;
 
-use super::session::EPHEMERAL_HOUSEKEEPING_INTERVAL_SECS;
+use super::session::{EPHEMERAL_HOUSEKEEPING_INTERVAL_SECS, residence_update_frame};
 use super::{LocalUpdate, LoopExit, SyncConnection, flush_to_queue};
 
 impl SyncConnection {
@@ -22,6 +22,7 @@ impl SyncConnection {
         client: &mut SyncClient,
         event_tx: &mpsc::UnboundedSender<SyncEvent>,
         local_rx: &mut mpsc::UnboundedReceiver<LocalUpdate>,
+        promotion_rx: &mut tokio::sync::broadcast::Receiver<crate::sync::WindowKey>,
         shutdown_rx: &mut tokio::sync::oneshot::Receiver<()>,
     ) -> LoopExit {
         let (mut write, mut read) = ws_stream.split();
@@ -62,6 +63,12 @@ impl SyncConnection {
                                             return LoopExit::Disconnected(format!("Send failed: {e}"));
                                         }
                                     }
+                                    if client.config.residence_mode == crate::sync::SyncResidenceMode::Opened
+                                        && !client.residence_acks.is_empty()
+                                        && let Err(e) = self.clear_residence_acks(client)
+                                    {
+                                        return LoopExit::Disconnected(e);
+                                    }
                                 }
                                 Err(e) => {
                                     let _ = event_tx.send(SyncEvent::Error(format!("Protocol error: {e}")));
@@ -84,6 +91,50 @@ impl SyncConnection {
                             return LoopExit::Disconnected(format!("WS error: {e}"));
                         }
                         _ => {} // Text, Pong — ignore
+                    }
+                }
+
+                promotion = promotion_rx.recv() => {
+                    let key = match promotion {
+                        Ok(key) => key,
+                        Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {
+                            return LoopExit::Disconnected("promotion notice lagged; reconnect required".into());
+                        }
+                        Err(tokio::sync::broadcast::error::RecvError::Closed) => {
+                            return LoopExit::Disconnected("promotion channel closed".into());
+                        }
+                    };
+                    if client.config.residence_mode != crate::sync::SyncResidenceMode::Opened {
+                        continue;
+                    }
+                    let Some(selector) = client.config.residence_selector.as_ref() else {
+                        return LoopExit::Disconnected("promoted window missing grant selector".into());
+                    };
+                    let bytes = match crate::sync::encode_sync_selector(selector) {
+                        Ok(bytes) => bytes,
+                        Err(e) => return LoopExit::Disconnected(format!("promotion selector: {e}")),
+                    };
+                    let proof = match transport::encode_window_sync(
+                        key.as_str(), window_sub_tags::PROMOTION_REQUEST, &bytes,
+                    ).into_result() {
+                        Ok(frame) => frame,
+                        Err(e) => return LoopExit::Disconnected(e.to_string()),
+                    };
+                    let window = match client.ensure_window(key.as_str()) {
+                        Ok(window) => window,
+                        Err(e) => return LoopExit::Disconnected(e.to_string()),
+                    };
+                    let vv = match transport::encode_window_sync(
+                        key.as_str(), window_sub_tags::VV_REQUEST,
+                        &crate::sync::loro_support::doc_version_vector(&window.doc),
+                    ).into_result() {
+                        Ok(frame) => frame,
+                        Err(e) => return LoopExit::Disconnected(e.to_string()),
+                    };
+                    for frame in [proof, vv] {
+                        if let Err(e) = write.send(Message::Binary(frame.into())).await {
+                            return LoopExit::Disconnected(e.to_string());
+                        }
                     }
                 }
 
@@ -158,14 +209,34 @@ impl SyncConnection {
                     let mut failed_at = None;
                     let pending: Vec<LocalUpdate> = std::mem::take(&mut debounce_buffer);
 
+                    let opened = client.config.residence_mode == crate::sync::SyncResidenceMode::Opened;
+                    let mut queued_count = 0;
                     for (i, local_update) in pending.iter().enumerate() {
-                        let wire_msg = match transport::encode_window_sync(
-                            &local_update.window_key,
-                            window_sub_tags::UPDATE,
-                            &local_update.update_bytes,
-                        )
-                        .into_result()
-                        {
+                        let seq = if opened {
+                            match self.queue.push(&local_update.window_key, &local_update.update_bytes) {
+                                Ok(seq) => {
+                                    queued_count += 1;
+                                    Some(seq)
+                                }
+                                Err(e) => {
+                                    failed_at = Some((i, format!("Durable residence queue failed: {e}")));
+                                    break;
+                                }
+                            }
+                        } else {
+                            None
+                        };
+                        let encoded = match seq {
+                            Some(seq) => residence_update_frame(
+                                seq, &local_update.window_key, &local_update.update_bytes,
+                            ),
+                            None => transport::encode_window_sync(
+                                &local_update.window_key,
+                                window_sub_tags::UPDATE,
+                                &local_update.update_bytes,
+                            ).into_result(),
+                        };
+                        let wire_msg = match encoded {
                             Ok(frame) => frame,
                             Err(e) => {
                                 failed_at = Some((i, format!("Encode failed: {e}")));
@@ -182,7 +253,7 @@ impl SyncConnection {
 
                     if let Some((fail_idx, err)) = failed_at {
                         // Queue all unsent updates (including the failed one)
-                        for local_update in &pending[fail_idx..] {
+                        for local_update in &pending[if opened { queued_count } else { fail_idx }..] {
                             let queue_result = self.queue.push(
                                 &local_update.window_key,
                                 &local_update.update_bytes,

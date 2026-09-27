@@ -39,6 +39,8 @@ pub struct SyncClient {
     /// may only be cleared once the server's OWN vv proves it holds every op
     /// the local doc holds.
     pub(crate) server_vvs: HashMap<String, VersionVector>,
+    /// Durable home ACKs of opened-item queue updates, keyed by queue sequence.
+    pub(crate) residence_acks: HashMap<u64, [u8; 32]>,
     pub(crate) ephemeral_store: EphemeralStore,
     pub(crate) _ephemeral_subscription: Subscription,
     pub(crate) _message_stream_subscription: Subscription,
@@ -139,6 +141,7 @@ impl SyncClient {
             client_id,
             config,
             server_vvs: HashMap::new(),
+            residence_acks: HashMap::new(),
             ephemeral_store,
             _ephemeral_subscription: ephemeral_subscription,
             _message_stream_subscription: message_stream_subscription,

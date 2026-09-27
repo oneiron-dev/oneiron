@@ -3,7 +3,7 @@
 use loro::{LoroDoc, VersionVector};
 
 use super::base::SyncClient;
-use super::types::{SVF_FRESH, SyncEvent};
+use super::types::{SVF_FRESH, SyncEvent, SyncResidenceMode};
 use crate::error::Result;
 use crate::sync::loro_support::doc_version_vector;
 use crate::sync::transport;
@@ -27,6 +27,7 @@ impl SyncClient {
             self.manager.discard_window(&key);
         }
         self.server_vvs.clear();
+        self.residence_acks.clear();
         let root_doc = LoroDoc::new();
         let _meta = root_doc.get_map("meta");
         // Same peer-id pinning as `new`: the client never authors root ops,
@@ -85,7 +86,14 @@ impl SyncClient {
         // on the same connection; authentication uses a paired capability.
         // Device lease requests are retired (C07); the NOTE session bind
         // (HEAD) still rides along when configured.
-        let mut messages = vec![transport::encode_chunk_full_window_protocol_hello()];
+        let mut messages = vec![if self.config.federation_peer.is_some() {
+            transport::encode_protocol_hello()
+        } else {
+            match self.config.residence_mode {
+                SyncResidenceMode::Opened => transport::encode_residence_protocol_hello(),
+                SyncResidenceMode::All => transport::encode_chunk_full_window_protocol_hello(),
+            }
+        }];
         if let Some(session) = &self.config.note_session {
             messages.push(super::note_session::bind_frame(session)?);
         }
@@ -118,15 +126,31 @@ impl SyncClient {
             .map_or(0, |d| d.as_secs());
 
         let mut keys: Vec<WindowKey> = Vec::new();
-        let mut next = Some(WindowKey::from_timestamp(now_secs));
-        for _ in 0..self.config.default_window_count {
-            let Some(key) = next else { break };
-            next = key.previous_month();
-            keys.push(key);
-        }
-        for key in self.manager.loaded_keys() {
-            if !keys.contains(&key) {
+        if self.config.residence_mode == SyncResidenceMode::All {
+            let mut next = Some(WindowKey::from_timestamp(now_secs));
+            for _ in 0..self.config.default_window_count {
+                let Some(key) = next else { break };
+                next = key.previous_month();
                 keys.push(key);
+            }
+            for key in self.manager.loaded_keys() {
+                if !keys.contains(&key) {
+                    keys.push(key);
+                }
+            }
+        } else {
+            for marker in self
+                .vault
+                .sync_state_keys_with_prefix("rp:w:")
+                .map_err(|e| TransportError::Storage(e.to_string()))?
+            {
+                let key = marker
+                    .strip_prefix("rp:w:")
+                    .and_then(WindowKey::try_new)
+                    .ok_or(TransportError::InvalidWindowKey)?;
+                if !keys.contains(&key) {
+                    keys.push(key);
+                }
             }
         }
         for key in extra_windows {
@@ -142,6 +166,23 @@ impl SyncClient {
         }
 
         for key in keys {
+            if self.config.residence_mode == SyncResidenceMode::Opened
+                && self.config.federation_peer.is_none()
+            {
+                let selector = self.config.residence_selector.as_ref().ok_or(
+                    TransportError::InvalidPayload("promoted window has no selector"),
+                )?;
+                let bytes = crate::sync::encode_sync_selector(selector)
+                    .map_err(|_| TransportError::InvalidPayload("invalid promotion selector"))?;
+                messages.push(
+                    transport::encode_window_sync(
+                        key.as_str(),
+                        window_sub_tags::PROMOTION_REQUEST,
+                        &bytes,
+                    )
+                    .into_result()?,
+                );
+            }
             match self.window_vv_for_initial_sync(&key) {
                 Ok(vv) => {
                     let frame = transport::encode_window_sync(
