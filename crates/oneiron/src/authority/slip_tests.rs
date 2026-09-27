@@ -125,6 +125,116 @@ fn v2_roundtrip_tamper_and_missing_binding_deny() {
     assert!(verify(&vault, &issuer, &unsupported).is_err());
 }
 #[test]
+fn public_host_key_verifies_logged_mint_and_rejects_forgery_and_wrong_host() {
+    let (_dir, vault, issuer, root) = fixture();
+    let fold = vault.authority_fold().unwrap();
+    let now = root.claims.issued_at;
+    let proof = issuer.binding_proof(&root, b"public-host-check").unwrap();
+    let decoded = CapabilitySlip::from_token(&root.to_token().unwrap()).unwrap();
+    assert!(
+        decoded
+            .verify_with_host_key(
+                &issuer.public_key(),
+                &fold,
+                now,
+                b"public-host-check",
+                &proof
+            )
+            .unwrap()
+            .allows_verb("read")
+    );
+    assert!(
+        vault
+            .verify_capability_slip_with_host_key(
+                &issuer.public_key(),
+                &decoded,
+                b"public-host-check",
+                &proof,
+            )
+            .is_ok()
+    );
+    let wrong = HostSlipIssuer::from_secret(b"another independent host").unwrap();
+    let wrong_signed = CapabilitySlip::mint(root.claims, &wrong).unwrap();
+    let wrong_proof = issuer
+        .binding_proof(&wrong_signed, b"public-host-check")
+        .unwrap();
+    assert!(
+        wrong_signed
+            .verify_with_host_key(
+                &wrong.public_key(),
+                &fold,
+                now,
+                b"public-host-check",
+                &wrong_proof
+            )
+            .is_err()
+    );
+    assert!(
+        decoded
+            .verify_with_host_key(
+                &wrong.public_key(),
+                &fold,
+                now,
+                b"public-host-check",
+                &proof
+            )
+            .is_err()
+    );
+    let mut forged: serde_json::Value = serde_json::to_value(&decoded).unwrap();
+    forged["host_signature"][0] =
+        serde_json::json!(forged["host_signature"][0].as_u64().unwrap() ^ 1);
+    let forged: CapabilitySlip = serde_json::from_value(forged).unwrap();
+    assert!(
+        forged
+            .verify_with_host_key(
+                &issuer.public_key(),
+                &fold,
+                now,
+                b"public-host-check",
+                &proof
+            )
+            .is_err()
+    );
+    assert!(verify(&vault, &issuer, &forged).is_err());
+    // Public-only verification must not guess at the private MAC caveat chain.
+    let mut caveated = decoded;
+    caveated
+        .attenuate(SlipCaveat {
+            ttl_secs: Some(30),
+            ..Default::default()
+        })
+        .unwrap();
+    assert!(
+        caveated
+            .verify_with_host_key(
+                &issuer.public_key(),
+                &fold,
+                now,
+                b"public-host-check",
+                &proof
+            )
+            .is_err()
+    );
+    // Even a holder with the binding key cannot convert a final caveat MAC
+    // into the initial MAC committed by the host signature.
+    let mut stripped = caveated;
+    stripped.caveats.clear();
+    let stripped_proof = issuer
+        .binding_proof(&stripped, b"public-host-check")
+        .unwrap();
+    assert!(
+        stripped
+            .verify_with_host_key(
+                &issuer.public_key(),
+                &fold,
+                now,
+                b"public-host-check",
+                &stripped_proof,
+            )
+            .is_err()
+    );
+}
+#[test]
 fn offline_meet_order_and_ttl_expiry_never_widen() {
     let (_dir, vault, issuer, root) = fixture();
     let mut narrow = Scope::top();

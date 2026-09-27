@@ -42,6 +42,9 @@ impl HostSlipIssuer {
     pub(super) fn sign_mesh(&self, transcript: &[u8]) -> [u8; 64] {
         self.signing.sign(transcript).to_bytes()
     }
+    pub(super) fn sign_slip(&self, transcript: &[u8]) -> Vec<u8> {
+        self.signing.sign(transcript).to_bytes().to_vec()
+    }
     pub(super) fn secret(&self) -> &[u8] {
         &self.secret
     }
@@ -188,7 +191,7 @@ impl Vault {
             actor_class: None,
             org_ref: None,
         };
-        let slip = CapabilitySlip::mint(claims.clone(), issuer.secret())?;
+        let slip = CapabilitySlip::mint(claims.clone(), issuer)?;
         let mint = next_entry(
             issuer,
             &fold,
@@ -251,6 +254,25 @@ impl Vault {
             signature,
         )
     }
+    /// Verify an uncaveated slip against only its logged issuing host key.
+    /// A caveated slip needs the private MAC root and must use the issuer door.
+    pub fn verify_capability_slip_with_host_key(
+        &self,
+        host_key: &AuthorityKey,
+        slip: &CapabilitySlip,
+        challenge: &[u8],
+        signature: &[u8],
+    ) -> Result<VerifiedSlip> {
+        let txn = self.store.env.read_txn()?;
+        let fold = self.authority_fold_readonly_in_txn(&txn)?;
+        slip.verify_with_host_key(
+            host_key,
+            &fold,
+            self.instant_in_txn(&txn)?.secs(),
+            challenge,
+            signature,
+        )
+    }
     /// Verify a transport proof without consuming its nonce, using the same
     /// vault clock and signed challenge as atomic request admission.
     pub fn verify_capability_slip_request(
@@ -292,7 +314,7 @@ impl Vault {
         if claims.issued_at > now || claims.expires_at <= now {
             return Err(invalid_authority());
         }
-        let slip = CapabilitySlip::mint(claims.clone(), issuer.secret())?;
+        let slip = CapabilitySlip::mint(claims.clone(), issuer)?;
         let entry = next_entry(
             issuer,
             &fold,
