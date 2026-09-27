@@ -54,20 +54,36 @@ pub struct SkillOptimizeCandidate {
 ///
 /// Storage errors; body errors from an undecodable SKILL record.
 pub fn optimize_candidates(vault: &Vault) -> Result<Vec<SkillOptimizeCandidate>> {
-    select_candidates(vault, false)
+    select_candidates(vault, false, None)
 }
 
-pub(super) fn affirm_candidates(vault: &Vault) -> Result<Vec<SkillOptimizeCandidate>> {
-    select_candidates(vault, true)
+/// Rank only forks belonging to this resident, never another resident's
+/// evidence or the shared upstream skill's outcomes.
+pub fn optimize_candidates_for_resident(
+    vault: &Vault,
+    resident: &EntityId,
+) -> Result<Vec<SkillOptimizeCandidate>> {
+    select_candidates(vault, false, Some(*resident))
 }
 
-fn select_candidates(vault: &Vault, affirm: bool) -> Result<Vec<SkillOptimizeCandidate>> {
+pub(super) fn affirm_candidates(
+    vault: &Vault,
+    resident: Option<EntityId>,
+) -> Result<Vec<SkillOptimizeCandidate>> {
+    select_candidates(vault, true, resident)
+}
+
+fn select_candidates(
+    vault: &Vault,
+    affirm: bool,
+    resident: Option<EntityId>,
+) -> Result<Vec<SkillOptimizeCandidate>> {
     let min_outcomes = skill_optimize_min_outcomes(vault)?;
     let skills = all_skill_ids(vault)?;
 
     // One pass to learn which `skillId`s already have an unanswered proposed
     // revision, so the second pass can skip asking again.
-    let mut open_questions: HashSet<String> = HashSet::new();
+    let mut open_questions: HashSet<(Option<EntityId>, String)> = HashSet::new();
     let mut records = Vec::with_capacity(skills.len());
     for id in skills {
         let Some(record) = vault.get_skill_record(&id)? else {
@@ -76,17 +92,19 @@ fn select_candidates(vault: &Vault, affirm: bool) -> Result<Vec<SkillOptimizeCan
         if record.lifecycle_status == SkillLifecycle::Candidate
             && record.approval_status == ClaimApprovalStatus::Proposed
         {
-            open_questions.insert(record.skill_id.clone());
+            open_questions.insert((crate::skill::resident_of(&record)?, record.skill_id.clone()));
         }
         records.push((id, record));
     }
 
     let mut candidates = Vec::new();
     for (id, record) in records {
-        if record.lifecycle_status != SkillLifecycle::Active {
+        if record.lifecycle_status != SkillLifecycle::Active
+            || crate::skill::resident_of(&record)? != resident
+        {
             continue;
         }
-        if open_questions.contains(&record.skill_id) {
+        if open_questions.contains(&(resident, record.skill_id.clone())) {
             continue;
         }
         if !tier_verdict(vault, &id, &record)?.optimizable() {

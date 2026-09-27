@@ -32,6 +32,7 @@ fn fixture(vault: &Vault) -> Result<(EntityId, ReceiptRecord)> {
     else {
         panic!("new attempt")
     };
+    vault.bind_actor_attempt(row.id, &actor)?;
     queue.append_manifest_entry(
         row.id,
         ManifestEntry::new(ManifestKind::Skill, "archive.fixture.skill", "1.0.0", 11),

@@ -71,6 +71,11 @@ pub enum ArtifactError {
     /// Nothing was written.
     #[error("invalid SKILL body: {0}")]
     InvalidSkillBody(&'static str),
+    /// A replicated resident skill arrived before its PERSON or AGENT_DEF owner.
+    /// Retry after the dependency materializes; malformed and wrong-kind
+    /// owners still fail as invalid SKILL bodies.
+    #[error("resident skill owner has not materialized")]
+    ResidentOwnerDependencyPending,
     /// A hub Git read of a SKILL package failed or exceeded its budget. Same
     /// kind as [`Self::InvalidSkillBody`]; the text names the git operation
     /// and the cause (exit code and stderr head, timeout, truncated output or
@@ -168,6 +173,7 @@ impl ArtifactError {
             Self::EditProposalStale => ErrorKind::EditProposalStale,
             Self::SettleNotAuthorized(_) => ErrorKind::SettleNotAuthorized,
             Self::InvalidSkillBody(_) | Self::SkillHubGitRead(_) => ErrorKind::InvalidSkillBody,
+            Self::ResidentOwnerDependencyPending => ErrorKind::ResidentOwnerDependencyPending,
             Self::SkillEditGateRetry(_) => ErrorKind::SkillEditGateRetry,
             Self::SkillContentAnchorTypeMismatch { .. } => {
                 ErrorKind::SkillContentAnchorTypeMismatch

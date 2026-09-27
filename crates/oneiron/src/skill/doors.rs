@@ -135,7 +135,64 @@ impl Vault {
         occurred: TimeRange,
         learned_at: u64,
     ) -> Result<SkillRecord> {
+        self.fork_skill_record_bound(
+            parent_id,
+            fork_id,
+            fork_skill_id,
+            None,
+            occurred,
+            learned_at,
+        )
+    }
+
+    /// Forks a shared skill for one persistent resident. The owner stamp is
+    /// born in the same transaction as the fork and survives later revisions.
+    pub fn fork_skill_for_resident(
+        &self,
+        resident: &EntityId,
+        parent_id: &EntityId,
+        fork_id: &EntityId,
+        fork_skill_id: &str,
+        occurred: TimeRange,
+        learned_at: u64,
+    ) -> Result<SkillRecord> {
+        self.fork_skill_record_bound(
+            parent_id,
+            fork_id,
+            fork_skill_id,
+            Some(*resident),
+            occurred,
+            learned_at,
+        )
+    }
+
+    fn fork_skill_record_bound(
+        &self,
+        parent_id: &EntityId,
+        fork_id: &EntityId,
+        fork_skill_id: &str,
+        resident: Option<EntityId>,
+        occurred: TimeRange,
+        learned_at: u64,
+    ) -> Result<SkillRecord> {
         self.with_write_txn(|wtxn| {
+            if let Some(resident) = resident {
+                let raw = self
+                    .store
+                    .port_entity_record(wtxn, &resident)?
+                    .map(|row| row.encode())
+                    .ok_or(Error::EntityNotFound)?;
+                let header = EntityMetadataHeader::parse(&raw)
+                    .ok_or(Error::CorruptedIndex("resident entity header"))?;
+                if !matches!(
+                    header.entity_type,
+                    crate::registry::ENTITY_TYPE_AGENT_DEF | crate::registry::ENTITY_TYPE_PERSON
+                ) {
+                    return Err(Error::Artifact(ArtifactError::InvalidSkillBody(
+                        "resident must be an agent definition or person identity",
+                    )));
+                }
+            }
             let parent = self.read_skill_record_in_txn(wtxn, parent_id)?;
             if fork_id == parent_id || self.store.entities.get(wtxn, fork_id.as_bytes())?.is_some()
             {
@@ -168,6 +225,15 @@ impl Vault {
                     ),
                 ]),
             );
+            if let Some(resident) = resident {
+                let Value::Map(entries) = &mut fork.provenance else {
+                    return Err(Error::CorruptedIndex("skill fork provenance"));
+                };
+                entries.push((
+                    Value::from(super::resident::RESIDENT_PROVENANCE_KEY),
+                    Value::from(resident.to_hex()),
+                ));
+            }
             fork.forked_from = Some(*parent_id);
             fork.governance_tier = parent.governance_tier;
             let package = self.fork_skill_package_in_txn(wtxn, parent_id, &parent, &mut fork)?;
@@ -233,6 +299,11 @@ impl Vault {
         if new.skill_id != old.skill_id {
             return Err(Error::Artifact(ArtifactError::InvalidSkillBody(
                 "supersession links two revisions of one skill",
+            )));
+        }
+        if super::resident_of(&old)? != super::resident_of(&new)? {
+            return Err(Error::Artifact(ArtifactError::InvalidSkillBody(
+                "supersession cannot cross resident ownership",
             )));
         }
         if new.version == old.version {

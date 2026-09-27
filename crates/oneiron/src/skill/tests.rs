@@ -1251,3 +1251,5 @@ fn forged_fork_lineage_rejected_at_local_create() -> Result<()> {
     );
     Ok(())
 }
+
+mod resident;
