@@ -1,8 +1,11 @@
 use super::gmail::{
     GMAIL_CONNECTOR_EFFECTOR, GMAIL_INBOX_POLL_ATTEMPT_KIND, GMAIL_METADATA_OAUTH_SCOPE,
-    GmailDelegatedAdapter, GmailDelegatedAdapterConfig, GmailInboxPollConfig,
-    delegated_scope_for_google_oauth_scope, gmail_inbox_poll_dedupe_key,
+    GmailDelegatedAdapter, GmailDelegatedAdapterConfig, GmailInboxPage, GmailInboxPollConfig,
+    GmailMessageMetadata, GmailReadWire, delegated_scope_for_google_oauth_scope,
+    gmail_inbox_poll_dedupe_key,
 };
+use super::mail_placement::{MailPlacement, PlacementPolicy};
+use super::mailbox_cursor::{MailboxPageToken, mailbox_cursor_snapshot};
 use super::*;
 use crate::attempt_queue::{AttemptQueue, EnqueueOutcome};
 use crate::channel_identity::{
@@ -1076,5 +1079,195 @@ fn gmail_delegated_grant_admits_read_scopes_only() -> Result<()> {
         delegated_scope_for_google_oauth_scope("https://mail.google.com/"),
         None,
     );
+    Ok(())
+}
+
+// Placement and cursor are tested through the real routing/queue door, not a
+// string scan of the adapter's source.
+struct GmailPageWire {
+    pages: std::cell::RefCell<Vec<GmailInboxPage>>,
+    seen: std::cell::RefCell<Vec<(PlacementPolicy, Option<String>)>>,
+}
+
+impl GmailPageWire {
+    fn new(pages: Vec<GmailInboxPage>) -> Self {
+        Self {
+            pages: std::cell::RefCell::new(pages),
+            seen: std::cell::RefCell::new(Vec::new()),
+        }
+    }
+}
+
+impl GmailReadWire for GmailPageWire {
+    fn fetch_inbox_page(
+        &self,
+        secret_ref: &str,
+        mailbox_address: &str,
+        policy: PlacementPolicy,
+        cursor: Option<&MailboxPageToken>,
+    ) -> Result<GmailInboxPage> {
+        assert_eq!(secret_ref, GMAIL_CUSTODY_REF);
+        assert_eq!(mailbox_address, "member@member-owned.example");
+        self.seen
+            .borrow_mut()
+            .push((policy, cursor.map(|token| token.as_str().to_owned())));
+        Ok(self.pages.borrow_mut().remove(0))
+    }
+}
+
+fn live_gmail_identity(vault: &Vault, adapter: &GmailDelegatedAdapter, id: EntityId) -> Result<()> {
+    register_gmail_custody(vault)?;
+    adapter.provision_delegated_identity(vault, id, entity(0xC2), 1_800_000_000)?;
+    vault.transition_channel_identity(
+        &id,
+        ChannelIdentityState::PendingFulfillment,
+        Some(ChannelIdentityFulfillment::Api),
+        1_800_000_001,
+        None,
+    )?;
+    vault.transition_channel_identity(
+        &id,
+        ChannelIdentityState::Active,
+        None,
+        1_800_000_002,
+        None,
+    )?;
+    Ok(())
+}
+
+fn gmail_message(id: &str, placement: MailPlacement) -> GmailMessageMetadata {
+    GmailMessageMetadata::new(
+        id,
+        "thread-1",
+        "alias@example.com",
+        "sender@example.com",
+        1_800_000_003,
+        placement,
+    )
+}
+
+#[test]
+fn gmail_placement_policy_refuses_wire_escape_before_any_admission() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    let adapter = gmail_adapter()?;
+    let id = entity(0xE5);
+    live_gmail_identity(&vault, &adapter, id)?;
+    let wire = GmailPageWire::new(vec![GmailInboxPage::new(
+        vec![
+            gmail_message("m1", MailPlacement::Inbox),
+            gmail_message("m2", MailPlacement::Spam),
+        ],
+        Some(MailboxPageToken::new("next")?),
+    )]);
+    assert!(matches!(
+        adapter.run_mailbox_page(&vault, id, &wire, 1_800_000_004),
+        Err(Error::InvalidConfig(_))
+    ));
+    assert_eq!(
+        wire.seen.borrow().as_slice(),
+        &[(PlacementPolicy::InboxOnly, None)]
+    );
+    assert!(mailbox_cursor_snapshot(&vault, id)?.is_none());
+    assert!(
+        AttemptQueue::new(&vault)
+            .list()?
+            .iter()
+            .all(|row| row.kind != "surface_event")
+    );
+    assert!(PlacementPolicy::InboxAndArchive.includes(MailPlacement::Archive));
+    assert!(!PlacementPolicy::InboxAndArchive.includes(MailPlacement::Trash));
+    assert!(PlacementPolicy::EntireMailbox.includes(MailPlacement::Spam));
+    Ok(())
+}
+
+#[test]
+fn gmail_page_progress_survives_reopen_and_policy_change_restarts_scan() -> Result<()> {
+    let (tmp, vault) = temp_vault();
+    let id = entity(0xE2);
+    let adapter = gmail_adapter()?;
+    live_gmail_identity(&vault, &adapter, id)?;
+    let wire = GmailPageWire::new(vec![
+        GmailInboxPage::new(
+            vec![gmail_message("m1", MailPlacement::Inbox)],
+            Some(MailboxPageToken::new("page-2")?),
+        ),
+        GmailInboxPage::new(vec![gmail_message("m2", MailPlacement::Inbox)], None),
+    ]);
+    let first = adapter.run_mailbox_page(&vault, id, &wire, 1_800_000_004)?;
+    assert_eq!(first.messages_admitted, 1);
+    assert_eq!(
+        first
+            .progress
+            .next_cursor
+            .as_ref()
+            .map(MailboxPageToken::as_str),
+        Some("page-2")
+    );
+    assert_eq!(first.progress.last_complete_at, None);
+    drop(vault);
+    let mut cfg = VaultConfig::device();
+    cfg.map_size = 16 * 1024 * 1024;
+    cfg.dimensions = 4;
+    cfg.embedding_model = None;
+    let vault = Vault::open(tmp.path(), cfg)?;
+    let second = adapter.run_mailbox_page(&vault, id, &wire, 1_800_000_005)?;
+    assert_eq!(second.progress.pages_completed, 2);
+    assert_eq!(second.progress.last_complete_at, Some(1_800_000_005));
+    assert_eq!(
+        wire.seen.borrow().as_slice(),
+        &[
+            (PlacementPolicy::InboxOnly, None),
+            (PlacementPolicy::InboxOnly, Some("page-2".to_owned())),
+        ]
+    );
+    assert_eq!(mailbox_cursor_snapshot(&vault, id)?, Some(second.progress));
+
+    let widened = GmailDelegatedAdapter::new(
+        GmailDelegatedAdapterConfig::new(GMAIL_MAILBOX, GMAIL_CUSTODY_REF)?
+            .with_placement_policy(PlacementPolicy::InboxAndArchive),
+    );
+    let new_wire = GmailPageWire::new(vec![GmailInboxPage::new(
+        vec![gmail_message("m3", MailPlacement::Archive)],
+        None,
+    )]);
+    let restarted = widened.run_mailbox_page(&vault, id, &new_wire, 1_800_000_006)?;
+    assert_eq!(
+        new_wire.seen.borrow().as_slice(),
+        &[(PlacementPolicy::InboxAndArchive, None)]
+    );
+    assert_eq!(restarted.progress.pages_completed, 1);
+    assert_eq!(
+        restarted.progress.placement_policy,
+        PlacementPolicy::InboxAndArchive
+    );
+    Ok(())
+}
+
+#[test]
+fn gmail_bad_message_does_not_advance_page_cursor() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    let id = entity(0xE3);
+    let adapter = gmail_adapter()?;
+    live_gmail_identity(&vault, &adapter, id)?;
+    let wire = GmailPageWire::new(vec![GmailInboxPage::new(
+        vec![gmail_message("bad:id", MailPlacement::Inbox)],
+        Some(MailboxPageToken::new("should-not-commit")?),
+    )]);
+    assert!(matches!(
+        adapter.run_mailbox_page(&vault, id, &wire, 1_800_000_004),
+        Err(Error::InvalidConfig(_))
+    ));
+    assert_eq!(mailbox_cursor_snapshot(&vault, id)?, None);
+    let payload = GmailInboxPollConfig {
+        mailbox_address: adapter.config().mailbox_address().to_owned(),
+        custody_record_ref: GMAIL_CUSTODY_REF.to_owned(),
+        identity_ref: id.to_hex(),
+        placement_policy: PlacementPolicy::EntireMailbox,
+    };
+    let roundtrip: GmailInboxPollConfig =
+        serde_json::from_slice(&serde_json::to_vec(&payload).expect("poll payload encodes"))
+            .expect("poll payload decodes");
+    assert_eq!(roundtrip.placement_policy, PlacementPolicy::EntireMailbox);
+    assert!(MailboxPageToken::new("  ").is_err());
     Ok(())
 }

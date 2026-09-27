@@ -6909,16 +6909,27 @@
       "GmailDelegatedProvision",
       "GmailInboxPage",
       "GmailInboxPollConfig",
+      "GmailMailboxRunOutcome",
       "GmailMessageMetadata",
       "GmailReadWire"
      ],
-     "path": "src/channel_identity_provider/gmail.rs",
+     "path": "src/channel_identity_provider/gmail/mod.rs",
      "purpose": "Gmail/Workspace read-side adapter for `delegated_grant` rows",
      "surface": {
       "const": 5,
-      "fn": 18,
-      "struct": 6,
+      "fn": 20,
+      "struct": 7,
       "trait": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/channel_identity_provider/gmail/run.rs",
+     "purpose": "Page admission and persisted mailbox progress for a delegated read",
+     "surface": {
+      "fn": 2
      }
     },
     {
@@ -6960,11 +6971,40 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [
+      "MailPlacement",
+      "PlacementPolicy"
+     ],
+     "path": "src/channel_identity_provider/mail_placement.rs",
+     "purpose": "Provider-neutral mailbox placement and read policy",
+     "surface": {
+      "enum": 2,
+      "fn": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "MailboxCursor",
+      "MailboxPageToken"
+     ],
+     "path": "src/channel_identity_provider/mailbox_cursor.rs",
+     "purpose": "Node-local Gmail mailbox progress, keyed by delegated identity",
+     "surface": {
+      "crate-vis": 1,
+      "fn": 6,
+      "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [],
      "path": "src/channel_identity_provider/mod.rs",
      "purpose": "Provider-adapter seam for ChannelIdentity fulfillment (OF-347 CID-3)",
      "surface": {
-      "mod": 2,
+      "mod": 4,
       "re-export": 5
      }
     },
@@ -34187,7 +34227,7 @@
      "purpose": "Channel identity capability manifests (OF-347 CID-4)"
     },
     "channel_identity_provider": {
-     "files": 10,
+     "files": 13,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -35323,7 +35363,7 @@
    },
    "over_bar": 9,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2084,
+   "source_files": 2087,
    "test_files": 716
   },
   "oneiron-android": {
