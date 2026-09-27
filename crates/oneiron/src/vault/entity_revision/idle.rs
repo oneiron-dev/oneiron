@@ -1,7 +1,10 @@
 //! Idle debounce and atomic BM25/vector/frontier publication.
 
 use super::storage::{STATE, put_state, read_entity_revision_in_txn, state, text_fields};
-use super::{IndexedRefreshReport, IndexedRevisionEmbedder, IndexedRevisionInput, ReadMode};
+use super::{
+    IndexedPublication, IndexedRefreshReport, IndexedRevisionEmbedder, IndexedRevisionInput,
+    ReadMode,
+};
 use crate::batch::{BatchOp, ENTITY_METADATA_HEADER_LEN, apply_ops};
 use crate::error::{Error, Result};
 use crate::{EntityId, Vault};
@@ -39,7 +42,7 @@ impl Vault {
         now_ms: u64,
         embedder: &dyn IndexedRevisionEmbedder,
     ) -> Result<IndexedRefreshReport> {
-        self.refresh_indexed(now_ms, Some(embedder), &mut |_, _| {})
+        self.refresh_indexed(now_ms, Some(embedder), &mut |_| {})
     }
 
     /// Reports each successful indexed transaction as soon as it commits. A
@@ -49,7 +52,7 @@ impl Vault {
         &self,
         now_ms: u64,
         embedder: &dyn IndexedRevisionEmbedder,
-        mut published: impl FnMut(EntityId, super::RevisionRef),
+        mut published: impl FnMut(IndexedPublication),
     ) -> Result<IndexedRefreshReport> {
         self.refresh_indexed(now_ms, Some(embedder), &mut published)
     }
@@ -59,14 +62,14 @@ impl Vault {
     /// A dirty entity with an existing vector needs a newly staged vector;
     /// otherwise this refuses rather than pair old vectors with new content.
     pub fn refresh_staged_indexed_at_idle(&self, now_ms: u64) -> Result<IndexedRefreshReport> {
-        self.refresh_indexed(now_ms, None, &mut |_, _| {})
+        self.refresh_indexed(now_ms, None, &mut |_| {})
     }
 
     fn refresh_indexed(
         &self,
         now_ms: u64,
         embedder: Option<&dyn IndexedRevisionEmbedder>,
-        published: &mut dyn FnMut(EntityId, super::RevisionRef),
+        published: &mut dyn FnMut(IndexedPublication),
     ) -> Result<IndexedRefreshReport> {
         let candidates = {
             let txn = self.store.env.read_txn()?;
@@ -188,7 +191,9 @@ impl Vault {
             crate::batch::delete_from_phonetic_postings(&self.store, &mut txn, &input.entity)?;
             // Publish the stamp before the batch vector door in this SAME
             // transaction. On any text/vector failure LMDB rolls all back.
+            let previous_indexed = current.indexed;
             current.indexed = current.live;
+            let indexed = current.indexed;
             put_state(&self.store, &mut txn, &input.entity, &current)?;
             let generated_vector = staged.vector.is_none() && embedder.is_some();
             let vector = staged.vector.or(vector);
@@ -238,7 +243,11 @@ impl Vault {
             }
             super::pending_index::clear(&self.store, &mut txn, &input.entity)?;
             txn.commit()?;
-            published(input.entity, input.source_revision_ref);
+            published(IndexedPublication {
+                entity: input.entity,
+                previous_indexed,
+                indexed,
+            });
             report
                 .refreshed
                 .push((input.entity, input.source_revision_ref));

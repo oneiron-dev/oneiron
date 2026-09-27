@@ -215,22 +215,29 @@ fn each_index_commit_is_published_before_a_later_provider_failure() {
     let b = EntityId::from_bytes([0xD5; 16]).unwrap();
     put(&vault, &a, "first old");
     put(&vault, &b, "second old");
+    let indexed_a = vault.indexed_revision(&a).unwrap().unwrap();
     let indexed_b = vault.indexed_revision(&b).unwrap();
     put(&vault, &a, "first new");
     put(&vault, &b, "second new");
     let live_a = vault.pin_entity_revision(&a).unwrap();
     vault.set_indexed_idle_delay_ms(0).unwrap();
-    let mut published = Vec::new();
-    let error = vault.refresh_indexed_at_idle_with_publication(
-        u64::MAX,
-        &FailsSecond(b),
-        |id, revision| published.push((id, revision)),
-    );
+    let mut published: Vec<crate::memory::IndexedPublication> = Vec::new();
+    let error =
+        vault.refresh_indexed_at_idle_with_publication(u64::MAX, &FailsSecond(b), |publication| {
+            published.push(publication)
+        });
     assert!(matches!(
         error,
         Err(crate::Error::UpstreamToolFailure { .. })
     ));
-    assert_eq!(published, vec![(a, live_a)]);
+    assert_eq!(
+        published,
+        vec![crate::memory::IndexedPublication {
+            entity: a,
+            previous_indexed: indexed_a,
+            indexed: live_a,
+        }]
+    );
     assert_eq!(vault.indexed_revision(&a).unwrap(), Some(live_a));
     assert_eq!(vault.indexed_revision(&b).unwrap(), indexed_b);
 }
