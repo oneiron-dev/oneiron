@@ -70,6 +70,41 @@ fn validate_pairings(source: &Value) -> BeamResult<()> {
     Ok(())
 }
 
+fn disclosed(row: &Value, key: &str) -> bool {
+    row[key]
+        .as_str()
+        .is_some_and(|value| !value.trim().is_empty() && !value.trim().starts_with("unknown"))
+}
+
+// A published label never overrides the independent seven-axis publication gate.
+fn clears_publication_axes(row: &Value) -> bool {
+    [
+        "system",
+        "benchmark",
+        "tier",
+        "metric",
+        "backbone",
+        "judge",
+        "answerer",
+        "provenance",
+        "card_caveat",
+    ]
+    .iter()
+    .all(|key| disclosed(row, key))
+        && row["retrieval_k"].as_u64().is_some()
+        && row["in_family_judge"] == false
+        && row["regime"] == "full"
+        && row["benchmark"] == "BEAM"
+        && row["scale"] == "0-1"
+        && row["metric"] == "nugget_mean"
+        && row["value"].is_number()
+        && row["comparison_basis"] == "aggregate_tier"
+        && matches!(
+            row["provenance"].as_str(),
+            Some("self" | "independent" | "our_rerun")
+        )
+}
+
 fn parse_pairing(row: &Value) -> BeamResult<BackboneSoloPairing> {
     let pairing: BackboneSoloPairing =
         serde_json::from_value(row["backbone_solo_pairing"].clone())?;
@@ -92,6 +127,7 @@ pub(super) struct CitationCorpus {
     pub appendix: Vec<CitationNumber>,
     pub dropped: Vec<CitationNumber>,
     pub infra_status: String,
+    pub infra_cost_framing: Vec<super::infra::InfraRow>,
 }
 pub(super) fn corpus() -> BeamResult<CitationCorpus> {
     let source: Value =
@@ -106,10 +142,11 @@ fn corpus_from_source(source: &Value) -> BeamResult<CitationCorpus> {
         main_table: Vec::new(),
         appendix: Vec::new(),
         dropped: Vec::new(),
-        infra_status: source["vector_db_infra_walled_reason"]
+        infra_status: source["vector_db_infra_status"]
             .as_str()
             .unwrap_or_default()
             .to_owned(),
+        infra_cost_framing: super::infra::carded_rows()?,
     };
     for group in [
         "beam_paper_baselines",
@@ -143,7 +180,7 @@ fn corpus_from_source(source: &Value) -> BeamResult<CitationCorpus> {
             });
             let disposition = if named.contains("drop") || group == "dropped_or_unverifiable" {
                 CitationDisposition::Dropped
-            } else if row["scale"].as_str() != Some("0-1")
+            } else if !clears_publication_axes(&row)
                 || incomplete
                 || unpaired
                 || row["regime"] == "oracle"
@@ -249,6 +286,56 @@ mod tests {
         let mut source = fixture();
         source["honcho"] = source["honcho"][0].clone();
         assert!(corpus_from_source(&source).is_err());
+    }
+
+    #[test]
+    fn seven_axis_gate_walls_missing_or_incomparable_cards() {
+        for key in [
+            "benchmark",
+            "tier",
+            "regime",
+            "scale",
+            "backbone",
+            "judge",
+            "answerer",
+            "in_family_judge",
+            "retrieval_k",
+            "provenance",
+            "metric",
+            "comparison_basis",
+        ] {
+            let mut source = fixture();
+            source["beam_paper_baselines"][0]
+                .as_object_mut()
+                .unwrap()
+                .remove(key);
+            match corpus_from_source(&source) {
+                Ok(corpus) => assert!(
+                    corpus.appendix.iter().any(|number| {
+                        number.evidence["system"] == "BEAM paper (LIGHT, Llama-4-Maverick)"
+                            && number.evidence["tier"] == source["beam_paper_baselines"][0]["tier"]
+                    }),
+                    "{key}"
+                ),
+                Err(_) => assert!(matches!(key, "benchmark" | "tier" | "backbone")),
+            }
+        }
+        for (key, value) in [
+            ("regime", serde_json::json!("oracle")),
+            ("in_family_judge", serde_json::json!(true)),
+            ("judge", serde_json::json!("unknown (not named)")),
+        ] {
+            let mut source = fixture();
+            source["beam_paper_baselines"][0][key] = value;
+            let corpus = corpus_from_source(&source).unwrap();
+            assert!(
+                corpus.appendix.iter().any(|number| {
+                    number.evidence["system"] == "BEAM paper (LIGHT, Llama-4-Maverick)"
+                        && number.evidence["tier"] == "10M"
+                }),
+                "{key}"
+            );
+        }
     }
 
     #[test]
