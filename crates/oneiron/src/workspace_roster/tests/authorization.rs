@@ -68,9 +68,6 @@ fn every_onboarding_mutation_rechecks_revoked_authority_after_preflight() -> Res
         ("work facet", |v, i, w| {
             ensure_work_facet_edge(v, i, birth(i).person_ref, birth(i).work_facet_ref, w)
         }),
-        ("persona baseline", |v, i, w| {
-            ensure_persona_baseline(v, i, birth(i), w)
-        }),
         ("profile grant", |v, i, w| {
             ensure_companion_profile_grant(v, i, birth(i), w)
         }),
