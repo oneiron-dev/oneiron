@@ -49,7 +49,7 @@ impl RetuneThresholds {
 struct Baseline {
     version: u64,
     score: f64,
-    backbone: String,
+    config: DreamerTuningConfig,
     observed_at: u64,
 }
 fn config(vault: &Vault, evaluation: &HarnessEvaluation) -> Result<DreamerTuningConfig> {
@@ -131,29 +131,34 @@ pub(super) fn run(
             return Ok(None);
         }
         let proposal = if let Some(prior) = prior {
-            let backbone_changed = prior.backbone != current.backbone;
+            let backbone_changed = prior.config.backbone != current.backbone;
             let score_drop = prior.score - evaluation.score;
-            let prompt_regressed = score_drop > thresholds.prompts_score_regression;
-            let weights_regressed = score_drop > thresholds.weights_score_regression;
-            let manifest_regressed = score_drop > thresholds.manifest_thresholds_score_regression;
-            let mut targets = Vec::new();
-            if backbone_changed || prompt_regressed {
-                targets.push("prompts");
-            }
-            if backbone_changed || weights_regressed {
-                targets.push("weights");
-            }
-            if backbone_changed || manifest_regressed {
-                targets.push("manifest_thresholds");
-            }
+            let surfaces = [
+                ("prompts", score_drop > thresholds.prompts_score_regression,
+                    prior.config.prompts != current.prompts),
+                ("weights", score_drop > thresholds.weights_score_regression,
+                    prior.config.weights != current.weights),
+                ("manifest_thresholds", score_drop > thresholds.manifest_thresholds_score_regression,
+                    prior.config.manifest_thresholds != current.manifest_thresholds),
+            ];
+            // Attribute a changed configuration only to the surfaces that
+            // changed. An unchanged configuration needs score-only diagnosis.
+            let unchanged = surfaces.iter().all(|(_, _, changed)| !changed);
+            let targets: Vec<_> = surfaces.into_iter()
+                .filter_map(|(name, regressed, changed)|
+                    (backbone_changed || (regressed && (unchanged || changed))).then_some(name))
+                .collect();
             if !targets.is_empty() {
-                let value = serde_json::json!({"artifact":evaluation.artifact.to_hex(),"version":evaluation.version,"backbone_changed":backbone_changed,"score_regressed":prompt_regressed || weights_regressed || manifest_regressed,"targets":targets,"previous_score":prior.score,"score":evaluation.score,"thresholds":thresholds});
+                let score_regressed = score_drop > thresholds.prompts_score_regression
+                    || score_drop > thresholds.weights_score_regression
+                    || score_drop > thresholds.manifest_thresholds_score_regression;
+                let value = serde_json::json!({"artifact":evaluation.artifact.to_hex(),"version":evaluation.version,"backbone_changed":backbone_changed,"score_regressed":score_regressed,"targets":targets,"previous_score":prior.score,"score":evaluation.score,"thresholds":thresholds});
                 Some(proposals::emit_in_txn(vault, txn, evaluation.artifact,
                     "dreamer.harness.retune_proposal", &value, &envelope, now)?)
             } else { None }
         } else { None };
         let baseline = Baseline { version: evaluation.version, score: evaluation.score,
-            backbone: current.backbone, observed_at: now };
+            config: current, observed_at: now };
         vault.store.vault_meta.put(txn, &key, &serde_json::to_vec(&baseline).map_err(|_| invalid())?)?;
         Ok(proposal)
     })

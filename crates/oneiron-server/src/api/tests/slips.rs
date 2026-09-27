@@ -512,7 +512,28 @@ async fn relay_server_with_transport_secret_never_bootstraps_owner_authority() {
 
 #[tokio::test]
 async fn vault_clock_owns_http_proof_freshness_and_replay_admission() {
-    let (_dir, server) = server();
+    let wall = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs();
+    let floor = wall + 300;
+    let clock = oneiron::store::ports::ManualClock::new(floor);
+    let dir = tempfile::tempdir().unwrap();
+    let mut vault_config = oneiron::VaultConfig::device();
+    vault_config.retrieval_telemetry_capture = true;
+    vault_config.store_clock = clock.bundle();
+    let vault = Arc::new(oneiron::Vault::open(dir.path(), vault_config).unwrap());
+    assert_default_policy_manifest_fixture(vault.as_ref());
+    let server = Arc::new(
+        SyncServer::new(
+            vault,
+            SyncServerConfig {
+                auth_secret: Some(SLIP_SECRET.into()),
+                ..Default::default()
+            },
+        )
+        .unwrap(),
+    );
     let issuer = HostSlipIssuer::from_secret(SLIP_SECRET.as_bytes()).unwrap();
     let holder = SigningKey::from_bytes(&[89; 32]);
     let mut claims = server
@@ -528,17 +549,9 @@ async fn vault_clock_owns_http_proof_freshness_and_replay_admission() {
         .vault()
         .mint_capability_slip(&issuer, claims)
         .unwrap();
-    // Persisted authority time ahead of raw wall time models a backward clock
-    // step without changing the process clock or another test's vault.
-    let wall = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap()
-        .as_secs();
-    let floor = wall + 300;
-    server
-        .vault()
-        .sync_state_put("authlog:first_seen:clock_floor", &floor.to_be_bytes())
-        .unwrap();
+    // Roll back the source after minting. The vault's observed clock stays at
+    // its prior floor; proof admission uses that floor, not raw wall time.
+    clock.set(wall);
     let token = slip.to_token().unwrap();
     let request = |proof: &str| {
         Request::builder()
