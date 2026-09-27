@@ -1650,7 +1650,17 @@
      "path": "src/authority/ancestry_bypass.rs",
      "purpose": "Stalled-revocation bypass with freeze classifier and chain probe",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/authority/ancestry_evaluator.rs",
+     "purpose": "Shared stalled-revocation ancestry evaluation for ordinary and proof folds",
+     "surface": {
+      "crate-vis": 4
      }
     },
     {
@@ -1923,7 +1933,7 @@
      "path": "src/authority/op_apply.rs",
      "purpose": "Applies one [`super::AuthorityOp`] to a [`super::fold_state::FoldState`]",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 7
      }
     },
     {
@@ -1949,6 +1959,16 @@
       "crate-vis": 3,
       "enum": 1,
       "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/authority/revoke_proof.rs",
+     "purpose": "Log-derived, typed actor revocation facts, independent of roster survivors",
+     "surface": {
+      "crate-vis": 3
      }
     },
     {
@@ -2082,7 +2102,7 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "XL",
      "kind": "test",
      "notable": [],
      "path": "src/authority/tests/actor_binding.rs",
@@ -2228,11 +2248,19 @@
      "surface": {}
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "test",
      "notable": [],
      "path": "src/authority/tests/revoke_freeze_bypass.rs",
      "purpose": "Pending-widen freeze with RevokeActor emergency bypass",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "src/authority/tests/revoke_proof_matrix.rs",
+     "purpose": "Composition of signed revoke proof across independent ancestry invalidations",
      "surface": {}
     },
     {
@@ -2629,7 +2657,7 @@
      "path": "src/batch/claim_materialization.rs",
      "purpose": "Exact-operation envelope handoff",
      "surface": {
-      "crate-vis": 15
+      "crate-vis": 16
      }
     },
     {
@@ -3013,7 +3041,7 @@
      "path": "src/batch/gate_mode.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 8
+      "crate-vis": 9
      }
     },
     {
@@ -3183,7 +3211,7 @@
      "path": "src/batch/put_apply/put_staging.rs",
      "purpose": "Body/index/edge row staging helpers shared by the put and update paths",
      "surface": {
-      "crate-vis": 15
+      "crate-vis": 20
      }
     },
     {
@@ -3203,7 +3231,7 @@
      "path": "src/batch/secret_scan.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 7
      }
     },
     {
@@ -7634,11 +7662,11 @@
      "path": "src/claim/scope.rs",
      "purpose": "The engine-RECOGNIZED entries inside a claim's otherwise opaque `scope` map, and their fail-closed…",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 2
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/claim/scope_stamp.rs",
@@ -10557,7 +10585,7 @@
      "path": "src/consent/doors.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 8,
+      "crate-vis": 10,
       "fn": 16,
       "struct": 2
      }
@@ -10618,8 +10646,46 @@
      "surface": {
       "crate-vis": 3,
       "mod": 1,
-      "re-export": 7
+      "re-export": 8
      }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "OwnerReasonConfirm",
+      "OwnerReasonConfirmation",
+      "OwnerReasonUndo",
+      "OwnerReasonVerdict",
+      "ReasonMatchConfidence"
+     ],
+     "path": "src/consent/owner_reason.rs",
+     "purpose": "Owner-authenticated confirm reasons, bounded rule rows, and their derived grants",
+     "surface": {
+      "const": 1,
+      "crate-vis": 1,
+      "enum": 2,
+      "fn": 3,
+      "struct": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/consent/owner_reason/selection.rs",
+     "purpose": "Pure nearest-reason selection: remove dominated covering bounds first",
+     "surface": {
+      "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/consent/owner_reason/selection/tests.rs",
+     "purpose": "—",
+     "surface": {}
     },
     {
      "bucket": "s",
@@ -10655,6 +10721,14 @@
      "notable": [],
      "path": "src/consent/tests.rs",
      "purpose": "DEC-0006 unified consent-mode conformance",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "src/consent/tests/owner_reason.rs",
+     "purpose": "—",
      "surface": {}
     },
     {
@@ -12271,21 +12345,17 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
-      "CorpusId",
       "CorpusScope"
      ],
      "path": "src/corpus.rs",
-     "purpose": "Corpus scope for CLAIM records (ONE-1914): the AUDIENCE a claim belongs to, carried as a typed nested entry…",
+     "purpose": "Project-axis selection for corpus queries",
      "surface": {
-      "const": 1,
       "crate-vis": 2,
-      "enum": 1,
-      "fn": 4,
-      "struct": 1
+      "enum": 1
      }
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "test",
      "notable": [],
      "path": "src/corpus/tests.rs",
@@ -18756,6 +18826,7 @@
      "path": "src/ingest/docs_import.rs",
      "purpose": "Atomic bulk consent and thin-star docs membership",
      "surface": {
+      "crate-vis": 1,
       "fn": 3,
       "struct": 3,
       "trait": 2
@@ -29358,7 +29429,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "HubAdmissionDisposition",
@@ -29367,7 +29438,7 @@
      "path": "src/skill_hub/admission.rs",
      "purpose": "Consent-bound held-out admission, using the existing host scorer and lifecycle write door",
      "surface": {
-      "crate-vis": 5,
+      "crate-vis": 6,
       "enum": 1,
       "fn": 3,
       "struct": 1
@@ -29380,11 +29451,11 @@
      "path": "src/skill_hub/admission_guard.rs",
      "purpose": "Imported and hub-derived instruction authority at the single SKILL materialization door",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 3
      }
     },
     {
-     "bucket": "L",
+     "bucket": "XL",
      "kind": "test",
      "notable": [],
      "path": "src/skill_hub/admission_tests.rs",
@@ -29434,6 +29505,36 @@
      "notable": [],
      "path": "src/skill_hub/bootstrap/tests.rs",
      "purpose": "—",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "ClaimRefinementMergeAsk",
+      "ClaimRefinementMergeDisposition",
+      "ClaimRefinementMergeReceipt",
+      "HeldOutClaimReplayCase",
+      "HeldOutClaimReplayScorer",
+      "LocalClaimRefinement",
+      "UsefulUpstreamClaimJudge"
+     ],
+     "path": "src/skill_hub/claim_refinement.rs",
+     "purpose": "Session-branch claim edits: typed usefulness, owner-held reserve, and atomic admission",
+     "surface": {
+      "crate-vis": 2,
+      "enum": 1,
+      "fn": 10,
+      "struct": 4,
+      "trait": 2
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "src/skill_hub/claim_refinement_tests.rs",
+     "purpose": "Claim refinements use the same typed question and independent held-out rule",
      "surface": {}
     },
     {
@@ -29560,9 +29661,9 @@
      "path": "src/skill_hub/mod.rs",
      "purpose": "Skill-hub records, provenance aliases, adapter contracts, and update gates",
      "surface": {
-      "crate-vis": 14,
+      "crate-vis": 19,
       "mod": 2,
-      "re-export": 16
+      "re-export": 17
      }
     },
     {
@@ -29859,6 +29960,34 @@
      }
     },
     {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/skill_hub/refinement_admission.rs",
+     "purpose": "Content-free refinement identity and the transaction-local exact-admission capability",
+     "surface": {
+      "crate-vis": 17
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/skill_hub/refinement_custody.rs",
+     "purpose": "Candidate-owned custody for inert refinement rulings",
+     "surface": {
+      "crate-vis": 12
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "src/skill_hub/refinement_custody/tests.rs",
+     "purpose": "The same source custody laws for claim and skill refinement receipts",
+     "surface": {}
+    },
+    {
      "bucket": "s",
      "kind": "src",
      "notable": [
@@ -29868,9 +29997,9 @@
      "path": "src/skill_hub/shared_delta.rs",
      "purpose": "Submitted-byte federation merge-back and company PR staging",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 2,
       "enum": 1,
-      "fn": 3,
+      "fn": 4,
       "struct": 1
      }
     },
@@ -29886,6 +30015,7 @@
      "path": "src/skill_hub/shared_gate.rs",
      "purpose": "Useful-upstream and held-out merge gate for submitted shared-skill deltas",
      "surface": {
+      "crate-vis": 1,
       "enum": 1,
       "fn": 6,
       "struct": 2,
@@ -34751,7 +34881,7 @@
      "path": "src/write_envelope.rs",
      "purpose": "Write-path stamping: `WriteActor`/`WriteProvenance`/`WriteEnvelope`/`ClaimCandidate` + evidence stamping",
      "surface": {
-      "crate-vis": 16,
+      "crate-vis": 17,
       "fn": 28,
       "struct": 5
      }
@@ -35375,6 +35505,14 @@
      "surface": {}
     },
     {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/owner_reason.rs",
+     "purpose": "Public confirm → unsure re-ask → reconfirm → undo contract",
+     "surface": {}
+    },
+    {
      "bucket": "s",
      "kind": "test",
      "notable": [],
@@ -35550,7 +35688,7 @@
      "purpose": "Generic LMDB-backed background attempt queue"
     },
     "authority": {
-     "files": 61,
+     "files": 64,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -35823,7 +35961,7 @@
      "purpose": "Connector-key registry records with effector budgets for OF-277 GOV-01"
     },
     "consent": {
-     "files": 13,
+     "files": 17,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -35890,7 +36028,7 @@
      "impl_vault": false,
      "largest_src_bucket": "s",
      "layout": "file+dir",
-     "purpose": "Corpus scope for CLAIM records (ONE-1914): the AUDIENCE a claim belongs to, carried as a typed nested entry…"
+     "purpose": "Project-axis selection for corpus queries"
     },
     "counterparty_contact": {
      "files": 7,
@@ -36586,7 +36724,7 @@
      "purpose": "Message-to-skill conversion — the user-initiated middle road into the skill library (ARCH-0017, registry…"
     },
     "skill_hub": {
-     "files": 53,
+     "files": 58,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -36791,8 +36929,8 @@
    },
    "over_bar": 2,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2181,
-   "test_files": 738
+   "source_files": 2188,
+   "test_files": 744
   },
   "oneiron-android": {
    "files": [

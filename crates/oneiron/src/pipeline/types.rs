@@ -184,7 +184,7 @@ pub(super) struct PipelineFilterConfig<'a> {
     /// per run under the run's read transaction and borrowed by every
     /// per-candidate check. `None` for every other scope.
     pub(super) world_active_set: Option<&'a WorldAuthoritySet>,
-    /// The query's audience scope (ONE-1914); [`CorpusScope::All`] is the
+    /// The query's project-axis selection; [`CorpusScope::All`] is the
     /// default and a no-op, exactly like [`WorldScope::All`].
     ///
     /// Borrowed, not owned, so this config stays `Copy`
