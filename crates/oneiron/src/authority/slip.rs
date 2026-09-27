@@ -165,7 +165,8 @@ impl VerifiedSlip {
                 .federation_grant_bindings
                 .get(grant)
                 .is_none_or(|ids| ids.len() != 1)
-            || !requested.is_narrowing_of(&effective)
+            || !crate::federation::Ceiling::new(requested.clone())
+                .is_within(&crate::federation::Ceiling::new(effective.clone()))
             || matches!(
                 effective.worlds,
                 crate::federation::FederationScopeWorlds::Bottom

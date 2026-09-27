@@ -11,15 +11,13 @@ use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::edge::EdgeKind;
 use crate::error::{Error, Result, SyncSelectorValidation as SelectorError};
 use crate::federation::decode_federation_grant_body;
-use crate::federation::{
-    FederationDirectionScope, FederationGrant, FederationGrantRole, FederationGrantScope,
-};
+use crate::federation::{FederationGrant, FederationGrantRole, FederationGrantScope, Position};
 use crate::{EntityId, Vault};
 
 pub(super) struct DocumentGrant {
     pub(super) grant: FederationGrant,
     pub(super) fold: AuthorityFold,
-    pub(super) position: FederationDirectionScope,
+    pub(super) position: Position,
 }
 
 pub(super) fn authorize_in_txn(
@@ -106,7 +104,7 @@ pub(super) fn admit_selected_in_txn(
     let Some((visible, seed)) = selection.candidate(id, &mut budget)? else {
         return Err(denied());
     };
-    if facet_filter(&admission.position).is_none() || visible || seed {
+    if facet_filter(admission.position.as_scope()).is_none() || visible || seed {
         return Ok(());
     }
     // The export's facet closure is ONE hop from a selected seed, never a
@@ -191,13 +189,13 @@ impl StoredSelection<'_, '_> {
             self.scope,
             self.selector,
             &Default::default(),
-            &self.admission.position,
+            self.admission.position.as_scope(),
             &coreference,
         ) else {
             return Ok(None);
         };
         let mut seed = false;
-        if let Some(facets) = facet_filter(&self.admission.position) {
+        if let Some(facets) = facet_filter(self.admission.position.as_scope()) {
             let prefix = crate::vault::edge_kind_prefix(&id, EdgeKind::FacetOf);
             for row in self.vault.store.edges_out.prefix_iter(self.txn, &prefix)? {
                 spend(budget)?;

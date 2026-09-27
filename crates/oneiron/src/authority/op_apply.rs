@@ -414,7 +414,9 @@ pub(super) fn apply_federation_lifecycle(
                 .ok_or(FederationLifecycleRejection::ScopeInvalid)?;
             let ceiling =
                 local_outbound_scope(&local_vault_id, &pact.peer_vault_id, &pact.pact_scope);
-            if !effective.is_narrowing_of(&ceiling) {
+            if !crate::federation::Ceiling::new(effective.clone())
+                .is_within(&crate::federation::Ceiling::new(ceiling))
+            {
                 return Err(FederationLifecycleRejection::WidenWithoutGesture);
             }
             pact.effective_scope = effective.clone();
