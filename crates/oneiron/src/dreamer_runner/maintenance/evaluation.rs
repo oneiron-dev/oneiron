@@ -25,11 +25,20 @@ pub struct HarnessEvaluation {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct RetuneThresholds {
-    pub score_regression: f64,
+    pub prompts_score_regression: f64,
+    pub weights_score_regression: f64,
+    pub manifest_thresholds_score_regression: f64,
 }
 impl RetuneThresholds {
     fn validate(&self) -> Result<()> {
-        if !self.score_regression.is_finite() || !(0.0..=1.0).contains(&self.score_regression) {
+        if [
+            self.prompts_score_regression,
+            self.weights_score_regression,
+            self.manifest_thresholds_score_regression,
+        ]
+        .iter()
+        .any(|x| !x.is_finite() || !(0.0..=1.0).contains(x))
+        {
             return Err(invalid());
         }
         Ok(())
@@ -123,9 +132,22 @@ pub(super) fn run(
         }
         let proposal = if let Some(prior) = prior {
             let backbone_changed = prior.backbone != current.backbone;
-            let regressed = prior.score - evaluation.score > thresholds.score_regression;
-            if backbone_changed || regressed {
-                let value = serde_json::json!({"artifact":evaluation.artifact.to_hex(),"version":evaluation.version,"backbone_changed":backbone_changed,"score_regressed":regressed,"targets":["prompts","weights","manifest_thresholds"],"previous_score":prior.score,"score":evaluation.score});
+            let score_drop = prior.score - evaluation.score;
+            let prompt_regressed = score_drop > thresholds.prompts_score_regression;
+            let weights_regressed = score_drop > thresholds.weights_score_regression;
+            let manifest_regressed = score_drop > thresholds.manifest_thresholds_score_regression;
+            let mut targets = Vec::new();
+            if backbone_changed || prompt_regressed {
+                targets.push("prompts");
+            }
+            if backbone_changed || weights_regressed {
+                targets.push("weights");
+            }
+            if backbone_changed || manifest_regressed {
+                targets.push("manifest_thresholds");
+            }
+            if !targets.is_empty() {
+                let value = serde_json::json!({"artifact":evaluation.artifact.to_hex(),"version":evaluation.version,"backbone_changed":backbone_changed,"score_regressed":prompt_regressed || weights_regressed || manifest_regressed,"targets":targets,"previous_score":prior.score,"score":evaluation.score,"thresholds":thresholds});
                 Some(proposals::emit_in_txn(vault, txn, evaluation.artifact,
                     "dreamer.harness.retune_proposal", &value, &envelope, now)?)
             } else { None }
