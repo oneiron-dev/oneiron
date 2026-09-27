@@ -421,7 +421,7 @@ async fn local_artifact_route_serves_pinned_pointer_and_hash_mounts() {
     let (status, headers, body) = route_bytes(
         server.clone(),
         Request::builder()
-            .uri("/a/site/")
+            .uri("/a/site/_s/c/published/")
             .body(Body::empty())
             .expect("artifact request"),
     )
@@ -461,7 +461,7 @@ async fn local_artifact_route_serves_pinned_pointer_and_hash_mounts() {
     let (status, headers, body) = route_bytes(
         server.clone(),
         Request::builder()
-            .uri("/a/site/")
+            .uri("/a/site/_s/c/published/")
             .header(IF_NONE_MATCH, etag)
             .body(Body::empty())
             .expect("artifact request"),
@@ -487,7 +487,7 @@ async fn local_artifact_route_serves_pinned_pointer_and_hash_mounts() {
     assert!(body.is_empty());
     assert_eq!(
         headers.get(LOCATION).and_then(|value| value.to_str().ok()),
-        Some("/a/site/?channel=published")
+        Some("/a/site/_s/c/published/")
     );
 
     commit_artifact_index(repo.path(), b"<h1>v2</h1>\n", "second");
@@ -496,7 +496,7 @@ async fn local_artifact_route_serves_pinned_pointer_and_hash_mounts() {
     let (status, _, body) = route_bytes(
         server.clone(),
         Request::builder()
-            .uri("/a/site/index.html")
+            .uri("/a/site/_s/c/published/index.html")
             .body(Body::empty())
             .expect("artifact request"),
     )
@@ -505,7 +505,7 @@ async fn local_artifact_route_serves_pinned_pointer_and_hash_mounts() {
     assert_eq!(body.as_ref(), b"<h1>v1</h1>\n");
 
     let direct_fork_uri = format!(
-        "/a/site/index.html?forkHash={}",
+        "/a/site/_s/f/{}/index.html",
         oneiron::artifact_hex(&second.snapshot.fork_hash)
     );
     let (status, _, body) = route_bytes(
@@ -531,7 +531,7 @@ async fn local_artifact_route_serves_pinned_pointer_and_hash_mounts() {
     let (status, _, body) = route_bytes(
         server.clone(),
         Request::builder()
-            .uri("/a/site/")
+            .uri("/a/site/_s/c/published/")
             .body(Body::empty())
             .expect("artifact request"),
     )
@@ -546,7 +546,7 @@ async fn local_artifact_route_serves_pinned_pointer_and_hash_mounts() {
     let (status, _, _) = route_bytes(
         server.clone(),
         Request::builder()
-            .uri("/a/site/")
+            .uri("/a/site/_s/c/published/")
             .body(Body::empty())
             .expect("artifact request"),
     )
@@ -554,7 +554,7 @@ async fn local_artifact_route_serves_pinned_pointer_and_hash_mounts() {
     assert_eq!(status, StatusCode::NOT_FOUND);
 
     let old_fork_uri = format!(
-        "/a/site/index.html?forkHash={}",
+        "/a/site/_s/f/{}/index.html",
         oneiron::artifact_hex(&first.snapshot.fork_hash)
     );
     let (status, _, body) = route_bytes(
@@ -621,7 +621,7 @@ async fn local_blob_artifact_route_serves_pinned_and_direct_versions() {
         .expect("append second blob version");
     assert_eq!((first.version, second.version), (1, 2));
 
-    let unpublished_route = format!("/a/{}/export", artifact_id.to_hex());
+    let unpublished_route = format!("/a/{}/_s/c/published/export", artifact_id.to_hex());
     let (status, _, _) = route_bytes(
         server.clone(),
         Request::builder()
@@ -651,7 +651,7 @@ async fn local_blob_artifact_route_serves_pinned_and_direct_versions() {
         )
         .expect("pin preview blob version");
 
-    let route = format!("/a/{}/report.pdf", artifact_id.to_hex());
+    let route = format!("/a/{}/_s/c/published/report.pdf", artifact_id.to_hex());
     let (status, headers, body) = route_bytes(
         server.clone(),
         Request::builder()
@@ -678,7 +678,7 @@ async fn local_blob_artifact_route_serves_pinned_and_direct_versions() {
     let (status, _, body) = route_bytes(
         server.clone(),
         Request::builder()
-            .uri(format!("/a/{}/export", artifact_id.to_hex()))
+            .uri(format!("/a/{}/_s/c/published/export", artifact_id.to_hex()))
             .body(Body::empty())
             .expect("stable export request"),
     )
@@ -689,7 +689,7 @@ async fn local_blob_artifact_route_serves_pinned_and_direct_versions() {
     let (status, _, body) = route_bytes(
         server.clone(),
         Request::builder()
-            .uri(format!("/a/{}/", artifact_id.to_hex()))
+            .uri(format!("/a/{}/_s/c/published/", artifact_id.to_hex()))
             .body(Body::empty())
             .expect("blob root request"),
     )
@@ -697,7 +697,7 @@ async fn local_blob_artifact_route_serves_pinned_and_direct_versions() {
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body.as_ref(), b"%PDF-1.7\nfirst version");
 
-    let preview_route = format!("{route}?channel=preview");
+    let preview_route = format!("/a/{}/_s/c/preview/report.pdf", artifact_id.to_hex());
     let (status, _, body) = route_bytes(
         server.clone(),
         Request::builder()
@@ -709,7 +709,11 @@ async fn local_blob_artifact_route_serves_pinned_and_direct_versions() {
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body.as_ref(), b"%PDF-1.7\nsecond version");
 
-    let direct_route = format!("{route}?blobVersion={}", first.version);
+    let direct_route = format!(
+        "/a/{}/_s/b/{}/report.pdf",
+        artifact_id.to_hex(),
+        first.version
+    );
     let (status, headers, body) = route_bytes(
         server.clone(),
         Request::builder()
@@ -755,7 +759,7 @@ async fn local_blob_artifact_route_serves_pinned_and_direct_versions() {
     .await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body.as_ref(), b"%PDF-1.7\nsecond version");
-    let repointed_preview_route = format!("{route}?channel=preview");
+    let repointed_preview_route = format!("/a/{}/_s/c/preview/report.pdf", artifact_id.to_hex());
     let (status, _, body) = route_bytes(
         server.clone(),
         Request::builder()
@@ -816,10 +820,15 @@ async fn local_blob_artifact_route_serves_pinned_and_direct_versions() {
     assert!(!body.is_empty());
 
     for invalid_route in [
-        format!("{route}?blobVersion=0"),
-        format!("{route}?blobVersion={}&channel=published", first.version),
+        format!("/a/{}/report.pdf?blobVersion=0", artifact_id.to_hex()),
         format!(
-            "{route}?blobVersion={}&forkHash={}",
+            "/a/{}/report.pdf?blobVersion={}&channel=published",
+            artifact_id.to_hex(),
+            first.version
+        ),
+        format!(
+            "/a/{}/report.pdf?blobVersion={}&forkHash={}",
+            artifact_id.to_hex(),
             first.version,
             "00".repeat(32)
         ),
@@ -872,7 +881,7 @@ async fn local_blob_artifact_route_serves_pinned_and_direct_versions() {
     let (status, headers, body) = route_bytes(
         server.clone(),
         Request::builder()
-            .uri(format!("/a/{}/export", active_id.to_hex()))
+            .uri(format!("/a/{}/_s/c/published/export", active_id.to_hex()))
             .body(Body::empty())
             .expect("active-media request"),
     )
@@ -930,7 +939,7 @@ async fn local_blob_artifact_route_serves_pinned_and_direct_versions() {
     );
     let old_pdf_etag = headers[ETAG].clone();
     let renamed_direct = format!(
-        "/a/{}/renamed.txt?blobVersion={}",
+        "/a/{}/_s/b/{}/renamed.txt",
         artifact_id.to_hex(),
         first.version
     );
@@ -970,7 +979,7 @@ async fn local_blob_artifact_route_serves_pinned_and_direct_versions() {
     let (status, headers, body) = route_bytes(
         server.clone(),
         Request::builder()
-            .uri(format!("/a/{}/export", artifact_id.to_hex()))
+            .uri(format!("/a/{}/_s/c/published/export", artifact_id.to_hex()))
             .header(IF_NONE_MATCH, old_pdf_etag.clone())
             .body(Body::empty())
             .expect("conditional MIME repoint"),
@@ -1016,7 +1025,7 @@ async fn local_blob_artifact_route_serves_pinned_and_direct_versions() {
     let (status, headers, body) = route_bytes(
         server,
         Request::builder()
-            .uri(format!("/a/{}/export", active_id.to_hex()))
+            .uri(format!("/a/{}/_s/c/published/export", active_id.to_hex()))
             .header(IF_NONE_MATCH, attachment_etag.clone())
             .body(Body::empty())
             .expect("conditional attachment repoint"),
@@ -1051,7 +1060,7 @@ async fn local_artifact_route_public_bypasses_api_auth_when_configured() {
     let (status, _, _) = route_bytes(
         server.clone(),
         Request::builder()
-            .uri("/a/site/")
+            .uri("/a/site/_s/c/published/")
             .body(Body::empty())
             .expect("artifact request"),
     )
@@ -1061,7 +1070,7 @@ async fn local_artifact_route_public_bypasses_api_auth_when_configured() {
     let (status, _, body) = route_bytes(
         server,
         Request::builder()
-            .uri("/a/site/")
+            .uri("/a/site/_s/c/published/")
             .header(AUTHORIZATION, owner_bearer())
             .body(Body::empty())
             .expect("artifact request"),
@@ -1094,7 +1103,7 @@ async fn local_artifact_route_serves_preview_pointer_and_rejects_ambiguous_selec
     let (status, _, body) = route_bytes(
         server.clone(),
         Request::builder()
-            .uri("/a/site/index.html?channel=preview")
+            .uri("/a/site/_s/c/preview/index.html")
             .body(Body::empty())
             .expect("preview request"),
     )
@@ -1347,7 +1356,7 @@ async fn artifact_tiers_bind_tokens_and_live_world_grants_without_an_existence_o
     let denied = route_bytes(
         server.clone(),
         Request::builder()
-            .uri("/a/site/")
+            .uri("/a/site/_s/c/published/")
             .body(Body::empty())
             .unwrap(),
     )
@@ -1440,7 +1449,7 @@ async fn artifact_tiers_bind_tokens_and_live_world_grants_without_an_existence_o
     let uncredentialed_asset = route_bytes(
         server.clone(),
         Request::builder()
-            .uri("/a/site/app.js")
+            .uri("/a/site/_s/c/published/app.js")
             .body(Body::empty())
             .unwrap(),
     )
@@ -1550,14 +1559,26 @@ async fn artifact_tiers_bind_tokens_and_live_world_grants_without_an_existence_o
         .unwrap();
     let permitted = route_bytes(
         server.clone(),
-        core_request_with_principal_ref("GET", "/a/site/", "core:read", &member.to_hex(), None),
+        core_request_with_principal_ref(
+            "GET",
+            "/a/site/_s/c/published/",
+            "core:read",
+            &member.to_hex(),
+            None,
+        ),
     )
     .await;
     assert_eq!(permitted.0, StatusCode::OK);
     assert_eq!(permitted.1.get(CACHE_CONTROL).unwrap(), "private, no-store");
     let write_only = route_bytes(
         server.clone(),
-        core_request_with_principal_ref("GET", "/a/site/", "core:write", &member.to_hex(), None),
+        core_request_with_principal_ref(
+            "GET",
+            "/a/site/_s/c/published/",
+            "core:write",
+            &member.to_hex(),
+            None,
+        ),
     )
     .await;
     assert_eq!(
@@ -1589,7 +1610,7 @@ async fn artifact_tiers_bind_tokens_and_live_world_grants_without_an_existence_o
         &narrowed,
         &holder,
         Request::builder()
-            .uri("/a/site/")
+            .uri("/a/site/_s/c/published/")
             .body(Body::empty())
             .unwrap(),
     );
@@ -1601,16 +1622,22 @@ async fn artifact_tiers_bind_tokens_and_live_world_grants_without_an_existence_o
 
     for request in [
         Request::builder()
-            .uri("/a/site/")
+            .uri("/a/site/_s/c/published/")
             .body(Body::empty())
             .unwrap(),
-        core_request_with_principal_ref("GET", "/a/site/", "core:read", &stranger.to_hex(), None),
+        core_request_with_principal_ref(
+            "GET",
+            "/a/site/_s/c/published/",
+            "core:read",
+            &stranger.to_hex(),
+            None,
+        ),
         Request::builder()
             .uri(&link_root)
             .body(Body::empty())
             .unwrap(),
         Request::builder()
-            .uri("/a/site/")
+            .uri("/a/site/_s/c/published/")
             .header(AUTHORIZATION, owner_bearer())
             .body(Body::empty())
             .unwrap(),
@@ -1625,7 +1652,13 @@ async fn artifact_tiers_bind_tokens_and_live_world_grants_without_an_existence_o
     let disconnect = bind_artifact_member_to_divergent_pacts(&server.vault, member_grant);
     let discarded = route_bytes(
         server.clone(),
-        core_request_with_principal_ref("GET", "/a/site/", "core:read", &member.to_hex(), None),
+        core_request_with_principal_ref(
+            "GET",
+            "/a/site/_s/c/published/",
+            "core:read",
+            &member.to_hex(),
+            None,
+        ),
     )
     .await;
     assert_eq!(
@@ -1655,7 +1688,13 @@ async fn artifact_tiers_bind_tokens_and_live_world_grants_without_an_existence_o
     ));
     let terminated = route_bytes(
         server.clone(),
-        core_request_with_principal_ref("GET", "/a/site/", "core:read", &member.to_hex(), None),
+        core_request_with_principal_ref(
+            "GET",
+            "/a/site/_s/c/published/",
+            "core:read",
+            &member.to_hex(),
+            None,
+        ),
     )
     .await;
     assert_eq!(
@@ -1670,10 +1709,7 @@ async fn artifact_tiers_bind_tokens_and_live_world_grants_without_an_existence_o
         server,
         core_request_with_principal_ref(
             "GET",
-            &format!(
-                "/a/site/index.html?forkHash={}",
-                oneiron::artifact_hex(&hash)
-            ),
+            &format!("/a/site/_s/f/{}/index.html", oneiron::artifact_hex(&hash)),
             "core:read",
             &member.to_hex(),
             None,
@@ -1793,7 +1829,7 @@ async fn preview_link_bundle_keeps_its_selector_for_relative_assets_and_navigati
     let published_asset = route_bytes(
         server.clone(),
         Request::builder()
-            .uri("/a/site/app.js")
+            .uri("/a/site/_s/c/published/app.js")
             .body(Body::empty())
             .unwrap(),
     )
@@ -1968,8 +2004,8 @@ async fn blob_link_and_member_tiers_follow_pact_revocation_and_pointer_death() {
             oneiron::artifact_hosting::ArtifactServeTier::WorldMembers(42),
         )
         .unwrap();
-    let blob_route = format!("/a/{}/export", blob.to_hex());
-    let blob_version_route = format!("{blob_route}?blobVersion={version}");
+    let blob_route = format!("/a/{}/_s/c/published/export", blob.to_hex());
+    let blob_version_route = format!("/a/{}/_s/b/{version}/export", blob.to_hex());
     for route in [&blob_route, &blob_version_route] {
         let served = route_bytes(
             server.clone(),
@@ -2118,15 +2154,17 @@ async fn published_token_root_keeps_reserved_directories_and_encoded_code_names(
         ..Default::default()
     });
     let repo = create_artifact_repo(
-        b"<script src=\"c/app.js\"></script><link rel=\"stylesheet\" href=\"f/style.css\"><a href=\"b/next.html\">next</a>",
+        b"<script src=\"c/app.js\"></script><link rel=\"stylesheet\" href=\"f/style.css\"><a href=\"b/next.html\">next</a><script src=\"_s/nested/app.js\"></script><link rel=\"stylesheet\" href=\"_t/nested/style.css\">",
     );
-    for dir in ["c", "f", "b"] {
-        std::fs::create_dir(repo.path().join(dir)).unwrap();
+    for dir in ["c", "f", "b", "_s/nested", "_t/nested"] {
+        std::fs::create_dir_all(repo.path().join(dir)).unwrap();
     }
     for (path, bytes) in [
         ("c/app.js", b"window.c = true;".as_slice()),
         ("f/style.css", b"body { color: green; }".as_slice()),
         ("b/next.html", b"<h1>next</h1>".as_slice()),
+        ("_s/nested/app.js", b"window.marker = true;".as_slice()),
+        ("_t/nested/style.css", b"body { color: orange; }".as_slice()),
         ("report#1.js", b"hash name".as_slice()),
         ("report?2.js", b"query name".as_slice()),
         ("literal%20.js", b"percent name".as_slice()),
@@ -2175,6 +2213,8 @@ async fn published_token_root_keeps_reserved_directories_and_encoded_code_names(
         ("c/app.js", b"window.c = true;".as_slice()),
         ("f/style.css", b"body { color: green; }".as_slice()),
         ("b/next.html", b"<h1>next</h1>".as_slice()),
+        ("_s/nested/app.js", b"window.marker = true;".as_slice()),
+        ("_t/nested/style.css", b"body { color: orange; }".as_slice()),
     ] {
         // These are the browser's normal relative URLs from the redirected HTML.
         let asset = route_bytes(
@@ -2189,7 +2229,12 @@ async fn published_token_root_keeps_reserved_directories_and_encoded_code_names(
         assert_eq!(asset.2.as_ref(), expected, "{relative}");
     }
     // The unselected legacy prefix also treats c/f/b as stored file paths.
-    for relative in ["c/app.js", "f/style.css", "b/next.html"] {
+    for relative in [
+        "c/app.js",
+        "f/style.css",
+        "b/next.html",
+        "_t/nested/style.css",
+    ] {
         let asset = route_bytes(
             server.clone(),
             Request::builder()
@@ -2198,7 +2243,14 @@ async fn published_token_root_keeps_reserved_directories_and_encoded_code_names(
                 .unwrap(),
         )
         .await;
-        assert_eq!(asset.0, StatusCode::OK, "{relative}");
+        assert_eq!(asset.0, StatusCode::PERMANENT_REDIRECT, "{relative}");
+        let target = asset.1.get(LOCATION).unwrap().to_str().unwrap();
+        let followed = route_bytes(
+            server.clone(),
+            Request::builder().uri(target).body(Body::empty()).unwrap(),
+        )
+        .await;
+        assert_eq!(followed.0, StatusCode::OK, "{relative}");
     }
     let hash = oneiron::artifact_hex(&snapshot.snapshot.fork_hash);
     for (encoded, expected) in [
@@ -2314,4 +2366,347 @@ async fn blob_token_redirect_round_trips_escaped_export_names() {
         assert_eq!(followed.2.as_ref(), bytes, "{name}");
         assert_eq!(followed.1.get(CACHE_CONTROL).unwrap(), "private, no-store");
     }
+}
+
+#[tokio::test]
+async fn member_grant_scope_must_admit_the_exact_code_or_blob_export() {
+    use oneiron::federation::{ScopeAxis, ScopeId, Sensitivity, SensitivityCeiling};
+    use std::collections::BTreeSet;
+    let (_dir, server) = test_server_with_config(SyncServerConfig {
+        auth_secret: Some("secret".into()),
+        allow_unauthenticated: false,
+        ..Default::default()
+    });
+    let repo = create_artifact_repo(b"<h1>code</h1>");
+    let snapshot = ingest_artifact_snapshot(&server, repo.path(), "site", 10);
+    let blob = oneiron::EntityId::now();
+    server
+        .vault
+        .put_blob_artifact(
+            &blob,
+            &oneiron::blob_artifact::BlobArtifactBody::new("report.pdf", "application/pdf"),
+            oneiron::TimeRange { start: 10, end: 10 },
+            10,
+        )
+        .unwrap();
+    let owner = oneiron::EntityId::now();
+    let member = oneiron::EntityId::now();
+    for id in [owner, member] {
+        server
+            .vault
+            .put_entity(
+                &id,
+                oneiron::registry::ENTITY_TYPE_PERSON,
+                oneiron::TimeRange { start: 1, end: 1 },
+                1,
+                b"human",
+            )
+            .unwrap();
+    }
+    server
+        .vault
+        .append_blob_artifact_version(
+            &blob,
+            b"%PDF-scope",
+            &oneiron::blob_artifact::BlobVersionProvenance::UserUpload,
+            oneiron::WriteActor::new(owner, oneiron::EdgeActorClass::Human),
+            oneiron::TimeRange { start: 11, end: 11 },
+            11,
+        )
+        .unwrap();
+    let authenticated = server
+        .vault
+        .authenticate_owner(
+            owner,
+            &owner.to_hex(),
+            true,
+            oneiron::store::GateDecisionId::now(),
+        )
+        .unwrap();
+    let creation = server
+        .vault
+        .initialize_shared_vault(
+            &authenticated,
+            42,
+            None,
+            &[oneiron::federation::InitialSharedMember {
+                member_ref: member,
+                role: Some(oneiron::federation::FederationGrantRole::Viewer),
+            }],
+            10,
+        )
+        .unwrap();
+    let grant_id = oneiron::EntityId::from_hex(&creation.grant_refs[0]).unwrap();
+    let grant = oneiron::federation::FederationGrant::new(
+        oneiron::federation::FederationGrantScope::vault(42),
+        member,
+        oneiron::federation::FederationGrantRole::Viewer,
+        oneiron::federation::FederationGrantPreset::ReadOnly,
+    );
+    server
+        .vault
+        .publish_artifact_pointer_with_tier(
+            "site",
+            oneiron::ArtifactPointerChannel::Published,
+            &snapshot.snapshot.fork_hash,
+            oneiron::artifact_hosting::ArtifactServeTier::WorldMembers(42),
+        )
+        .unwrap();
+    server
+        .vault
+        .publish_blob_artifact_pointer_with_tier(
+            &blob,
+            oneiron::ArtifactPointerChannel::Published,
+            1,
+            oneiron::artifact_hosting::ArtifactServeTier::WorldMembers(42),
+        )
+        .unwrap();
+    let code = "/a/site/_s/c/published/index.html";
+    let blob_uri = format!("/a/{}/_s/b/1/export", blob.to_hex());
+    let code_scope = server
+        .vault
+        .record_scope(&snapshot.code_artifact_id)
+        .unwrap()
+        .unwrap();
+    let blob_scope = server.vault.record_scope(&blob).unwrap().unwrap();
+    assert!(
+        code_scope
+            .bands
+            .contains(&oneiron::registry::ENTITY_TYPE_CODE_ARTIFACT)
+    );
+    assert!(
+        blob_scope
+            .bands
+            .contains(&oneiron::registry::ENTITY_TYPE_BLOB_ARTIFACT)
+    );
+    let request = |uri: &str| {
+        core_request_with_principal_ref("GET", uri, "core:read", &member.to_hex(), None)
+    };
+    let baseline_code = route_bytes(server.clone(), request(code)).await;
+    let baseline_blob = route_bytes(server.clone(), request(&blob_uri)).await;
+    assert_eq!(baseline_code.0, StatusCode::OK);
+    assert_eq!(baseline_blob.0, StatusCode::OK);
+    let etag = baseline_code.1.get(ETAG).unwrap().clone();
+    let missing = route_bytes(
+        server.clone(),
+        Request::builder()
+            .uri("/a/missing/")
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await;
+    let stable = |body: &Bytes| {
+        let mut value: Value = serde_json::from_slice(body).unwrap();
+        value["error"].as_object_mut().unwrap().remove("requestId");
+        value
+    };
+    for (index, narrowed) in [
+        {
+            let mut scope = grant.authority_scope.clone();
+            scope.bands = ScopeAxis::Some(BTreeSet::from([oneiron::registry::ENTITY_TYPE_NOTE]));
+            scope
+        },
+        {
+            let mut scope = grant.authority_scope.clone();
+            scope.worlds = ScopeAxis::Some(BTreeSet::from([ScopeId(oneiron::EntityId::now())]));
+            scope
+        },
+        {
+            let mut scope = grant.authority_scope.clone();
+            scope.audience = ScopeAxis::Some(BTreeSet::from([ScopeId(oneiron::EntityId::now())]));
+            scope
+        },
+        {
+            let mut scope = grant.authority_scope.clone();
+            scope.sensitivity = SensitivityCeiling::AtMost(Sensitivity::Public);
+            scope
+        },
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let mut changed = grant.clone();
+        changed.authority_scope = narrowed;
+        oneiron::sync::put_selector_test_federation_grant(
+            &server.vault,
+            &grant_id,
+            &changed,
+            20 + index as u64,
+        )
+        .unwrap();
+        if index == 0 {
+            let mut conditional = request(code);
+            conditional
+                .headers_mut()
+                .insert(IF_NONE_MATCH, etag.clone());
+            let denied = route_bytes(server.clone(), conditional).await;
+            assert_eq!(
+                (denied.0, stable(&denied.2)),
+                (missing.0, stable(&missing.2)),
+                "a 304 must not bypass grant scope"
+            );
+        }
+        for uri in [code, blob_uri.as_str()] {
+            let refused = route_bytes(server.clone(), request(uri)).await;
+            assert_eq!(
+                (refused.0, stable(&refused.2)),
+                (missing.0, stable(&missing.2)),
+                "case {index}: {uri}"
+            );
+        }
+    }
+    for (band, allowed, denied) in [
+        (
+            oneiron::registry::ENTITY_TYPE_CODE_ARTIFACT,
+            code,
+            blob_uri.as_str(),
+        ),
+        (
+            oneiron::registry::ENTITY_TYPE_BLOB_ARTIFACT,
+            blob_uri.as_str(),
+            code,
+        ),
+    ] {
+        let mut changed = grant.clone();
+        changed.authority_scope.bands = ScopeAxis::Some(BTreeSet::from([band]));
+        oneiron::sync::put_selector_test_federation_grant(
+            &server.vault,
+            &grant_id,
+            &changed,
+            30 + band as u64,
+        )
+        .unwrap();
+        assert_eq!(
+            route_bytes(server.clone(), request(allowed)).await.0,
+            StatusCode::OK
+        );
+        let refused = route_bytes(server.clone(), request(denied)).await;
+        assert_eq!(
+            (refused.0, stable(&refused.2)),
+            (missing.0, stable(&missing.2))
+        );
+    }
+    oneiron::sync::put_selector_test_federation_grant(&server.vault, &grant_id, &grant, 99)
+        .unwrap();
+    let mut conditional = request(code);
+    conditional.headers_mut().insert(IF_NONE_MATCH, etag);
+    assert_eq!(
+        route_bytes(server.clone(), conditional).await.0,
+        StatusCode::NOT_MODIFIED
+    );
+}
+
+#[tokio::test]
+async fn token_bundle_address_round_trips_artifact_named_control_marker() {
+    let (_dir, server) = test_server_with_config(SyncServerConfig {
+        auth_secret: Some("secret".into()),
+        allow_unauthenticated: false,
+        ..Default::default()
+    });
+    let repo = create_artifact_repo(b"<script src=\"app.js\"></script>");
+    std::fs::write(repo.path().join("report#1.js"), b"encoded export").unwrap();
+    run_artifact_git(repo.path(), &["add", "."]);
+    run_artifact_git(repo.path(), &["commit", "-m", "encoded resource"]);
+    let snapshot = ingest_artifact_snapshot(&server, repo.path(), "_t", 10);
+    let (tier, token) = oneiron::artifact_hosting::ArtifactServeTier::mint_link_token();
+    server
+        .vault
+        .publish_artifact_pointer_with_tier(
+            "_t",
+            oneiron::ArtifactPointerChannel::Published,
+            &snapshot.snapshot.fork_hash,
+            tier,
+        )
+        .unwrap();
+    let missing = route_bytes(
+        server.clone(),
+        Request::builder()
+            .uri("/a/missing/")
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await;
+    let root = route_bytes(
+        server.clone(),
+        Request::builder()
+            .uri(format!("/a/_t/_t/{token}/"))
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(root.0, StatusCode::PERMANENT_REDIRECT);
+    let canonical = root.1.get(LOCATION).unwrap().to_str().unwrap();
+    assert_eq!(canonical, format!("/a/_t/_t/{token}/_s/c/published/"));
+    let html = route_bytes(
+        server.clone(),
+        Request::builder()
+            .uri(canonical)
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(html.0, StatusCode::OK);
+    let no_slash = route_bytes(
+        server.clone(),
+        Request::builder()
+            .uri(format!("/a/_t/_t/{token}/_s/c/published"))
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(no_slash.0, StatusCode::PERMANENT_REDIRECT);
+    assert_eq!(no_slash.1.get(LOCATION).unwrap(), canonical);
+    let asset = route_bytes(
+        server.clone(),
+        Request::builder()
+            .uri(format!("{canonical}app.js"))
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(asset.0, StatusCode::OK);
+    let old = format!(
+        "/a/_t/_t/{token}/report%231.js?forkHash={}",
+        oneiron::artifact_hex(&snapshot.snapshot.fork_hash)
+    );
+    let redirect = route_bytes(
+        server.clone(),
+        Request::builder().uri(old).body(Body::empty()).unwrap(),
+    )
+    .await;
+    assert_eq!(redirect.0, StatusCode::PERMANENT_REDIRECT);
+    let target = redirect.1.get(LOCATION).unwrap().to_str().unwrap();
+    assert_eq!(
+        target,
+        format!(
+            "/a/_t/_t/{token}/_s/f/{}/report%231.js",
+            oneiron::artifact_hex(&snapshot.snapshot.fork_hash)
+        )
+    );
+    let followed = route_bytes(
+        server.clone(),
+        Request::builder().uri(target).body(Body::empty()).unwrap(),
+    )
+    .await;
+    assert_eq!(followed.0, StatusCode::OK);
+    assert_eq!(followed.2.as_ref(), b"encoded export");
+    let wrong = route_bytes(
+        server.clone(),
+        Request::builder()
+            .uri(format!("/a/_t/_t/{}/_s/c/published/app.js", "0".repeat(64)))
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(wrong.0, missing.0);
+    server
+        .vault
+        .unpublish_artifact_pointer("_t", oneiron::ArtifactPointerChannel::Published)
+        .unwrap();
+    let dead = route_bytes(
+        server,
+        Request::builder().uri(target).body(Body::empty()).unwrap(),
+    )
+    .await;
+    assert_eq!(dead.0, missing.0);
 }
