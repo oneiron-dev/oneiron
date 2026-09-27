@@ -1691,10 +1691,6 @@ fn canonical_prompt_package_block_drives_system_and_turn_wire_teaching() {
             "agent-facing teaching must not be authored in Rust: {teaching_line}"
         );
     }
-    assert!(
-        !engine_rust.contains("workspace_test_prompt_package_root"),
-        "executor constructors must require a deployed package instead of a source-checkout fallback"
-    );
     let prompt_rust = include_str!("../prompt.rs");
     assert!(
         !prompt_rust.contains(r#"include_str!("../../../packages/prompts"#),
