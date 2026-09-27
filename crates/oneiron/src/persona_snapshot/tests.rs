@@ -1,13 +1,12 @@
 use super::*;
-use crate::claim::ClaimSource;
-use crate::companion::{CompanionProvenance, CompanionRecord, CompanionScope};
+use crate::authority::{HostSlipIssuer, SlipCaveat};
+use crate::claim::{ClaimSource, ScopedReadActorKey};
 use crate::config::VaultConfig;
 use crate::deletion::DeleteReason;
-use crate::edge::EdgeActorClass;
-use crate::federation::Sensitivity;
+use crate::federation::{Scope, ScopeAxis, Sensitivity, SensitivityCeiling};
 use crate::receipt::{ReceiptKind, ReceiptQuery};
-use crate::registry::ENTITY_TYPE_PERSON;
-use crate::{ErrorKind, Vault};
+use crate::registry::{ENTITY_TYPE_PERSON, ENTITY_TYPE_RELATIONSHIP};
+use crate::{EdgeKind, ErrorKind, Vault};
 
 fn test_vault() -> (tempfile::TempDir, Vault) {
     let dir = tempfile::tempdir().expect("tempdir");
@@ -74,21 +73,24 @@ fn put_relationship(
     role: &str,
     sensitivity: Sensitivity,
 ) -> Result<()> {
-    let record = CompanionRecord::relationship(
-        CompanionScope::neutral(),
-        source,
-        target,
-        Value::Map(vec![(Value::from("role"), Value::from(role))]),
-        CompanionProvenance::new(
-            source,
-            EdgeActorClass::Human,
-            ClaimSource::UserStated,
-            ClaimApprovalStatus::Approved,
-            Value::from("test"),
-        ),
-        sensitivity,
-    );
-    vault.create_companion_record(&EntityId::now(), &record, 5)
+    let relation = EntityId::now();
+    let body = rmp_serde::to_vec_named(&serde_json::json!({
+        "role": role,
+        "sensitivity": sensitivity.as_str(),
+    }))
+    .expect("relationship body");
+    vault
+        .batch()
+        .put(
+            &relation,
+            ENTITY_TYPE_RELATIONSHIP,
+            TimeRange { start: 5, end: 5 },
+            5,
+            &body,
+        )
+        .edge(&source, EdgeKind::ParticipatesIn, &relation, 1.0)
+        .edge(&target, EdgeKind::ParticipatesIn, &relation, 1.0)
+        .commit()
 }
 
 fn owner_consent(compile: &PersonaSnapshotCompile) -> PersonaSnapshotExportConsent {
@@ -766,6 +768,177 @@ fn struck_identity_line_stays_out_of_export_record() -> Result<()> {
         !record.identity_line.contains("Lexi"),
         "struck identity text must not survive in the queryable export record"
     );
+    Ok(())
+}
+
+#[test]
+fn group_relationship_compiles_all_people_and_rejects_wrong_kind_member() -> Result<()> {
+    let (_dir, vault) = test_vault();
+    let subject = put_person(&vault, 0x61)?;
+    let bob = put_person(&vault, 0xB1)?;
+    let carol = put_person(&vault, 0xB2)?;
+    put_claim(&vault, bob, "profile.name", "Bob", 0.9, Some(0))?;
+    put_claim(&vault, carol, "profile.name", "Carol", 0.9, Some(0))?;
+    let relation = EntityId::now();
+    let body = rmp_serde::to_vec_named(&serde_json::json!({
+        "sensitivity": "public", "role": "teammate"
+    }))
+    .expect("group relationship body");
+    vault
+        .batch()
+        .put(
+            &relation,
+            ENTITY_TYPE_RELATIONSHIP,
+            TimeRange { start: 5, end: 5 },
+            5,
+            &body,
+        )
+        .edge(&subject, EdgeKind::ParticipatesIn, &relation, 1.0)
+        .edge(&bob, EdgeKind::ParticipatesIn, &relation, 1.0)
+        .edge(&carol, EdgeKind::ParticipatesIn, &relation, 1.0)
+        .commit()?;
+    assert_eq!(
+        vault
+            .record_scope(&relation)?
+            .expect("position")
+            .sensitivity,
+        SensitivityCeiling::AtMost(Sensitivity::Public)
+    );
+    let compile =
+        vault.compile_persona_snapshot(&subject, &PersonaSnapshotCompileOptions::default())?;
+    let related: Vec<_> = compile
+        .rows
+        .iter()
+        .filter(|row| row.kind == PersonaSnapshotRowKind::Relationship)
+        .collect();
+    assert_eq!(related.len(), 2);
+    assert!(
+        related
+            .iter()
+            .any(|row| row.subject_ref == bob && row.text == "Bob — teammate")
+    );
+    assert!(
+        related
+            .iter()
+            .any(|row| row.subject_ref == carol && row.text == "Carol — teammate")
+    );
+    let wrong_kind = EntityId::now();
+    vault.put_entity(
+        &wrong_kind,
+        crate::registry::ENTITY_TYPE_TURN,
+        TimeRange { start: 5, end: 5 },
+        5,
+        b"turn",
+    )?;
+    vault.put_edge(&wrong_kind, EdgeKind::ParticipatesIn, &relation, 1.0)?;
+    let invalid =
+        vault.compile_persona_snapshot(&subject, &PersonaSnapshotCompileOptions::default())?;
+    assert!(
+        invalid
+            .rows
+            .iter()
+            .all(|row| row.kind != PersonaSnapshotRowKind::Relationship)
+    );
+    Ok(())
+}
+
+#[test]
+fn public_body_cannot_export_relationship_hidden_from_audience() -> Result<()> {
+    let (_dir, vault) = test_vault();
+    let subject = put_person(&vault, 0x61)?;
+    let other = put_person(&vault, 0xB1)?;
+    let relation = EntityId::now();
+    let secret_role = "private association needle2284";
+    let body = rmp_serde::to_vec_named(&serde_json::json!({
+        "sensitivity": "public", "role": secret_role
+    }))
+    .expect("public relationship body");
+    vault
+        .batch()
+        .put(
+            &relation,
+            ENTITY_TYPE_RELATIONSHIP,
+            TimeRange { start: 5, end: 5 },
+            5,
+            &body,
+        )
+        .edge(&subject, EdgeKind::ParticipatesIn, &relation, 1.0)
+        .edge(&other, EdgeKind::ParticipatesIn, &relation, 1.0)
+        .commit()?;
+    let issuer = HostSlipIssuer::from_secret(b"persona snapshot audience proof")?;
+    let mut slip = vault.ensure_host_root_slip(&issuer)?;
+    let mut ceiling = Scope::top();
+    ceiling.bands = ScopeAxis::Some([ENTITY_TYPE_PERSON].into());
+    issuer.attenuate(
+        &mut slip,
+        SlipCaveat {
+            scope: Some(ceiling),
+            ..Default::default()
+        },
+    )?;
+    let proof = vault.verify_capability_slip(
+        &issuer.public_key(),
+        &slip,
+        b"snapshot-read",
+        &issuer.binding_proof(&slip, b"snapshot-read")?,
+    )?;
+    let key = ScopedReadActorKey::from_verified_slip(&proof).expect("read proof");
+    let read = vault.scoped_read(key.clone());
+    assert!(read.is_entity_readable(&subject)?);
+    assert!(read.is_entity_readable(&other)?);
+    assert!(read.get(&relation)?.value.is_none());
+    let compile = vault.compile_persona_snapshot(
+        &subject,
+        &PersonaSnapshotCompileOptions {
+            audience: Some(key),
+            ..PersonaSnapshotCompileOptions::default()
+        },
+    )?;
+    assert!(compile.rows.iter().all(|row| row.subject_ref != other && row.kind != PersonaSnapshotRowKind::Relationship));
+    let artifact = vault.export_persona_snapshot(
+        &compile,
+        &PersonaSnapshotStrikeList::default(),
+        &owner_consent(&compile),
+    )?;
+    for text in [
+        &compile.identity_line,
+        &artifact.memory_pack_json,
+        &artifact.markdown,
+    ] {
+        assert!(!text.contains(secret_role));
+        assert!(!text.contains(&other.to_hex()));
+        assert!(!text.contains(&relation.to_hex()));
+    }
+    Ok(())
+}
+
+#[test]
+fn portable_card_refuses_shared_relationship_even_with_public_label() -> Result<()> {
+    let (_dir, vault) = test_vault();
+    let subject = put_person(&vault, 0x61)?;
+    let other = put_person(&vault, 0xB1)?;
+    let relation = EntityId::now();
+    let body = rmp_serde::to_vec_named(&serde_json::json!({
+        "sensitivity": "public",
+        "role": "colleague",
+        "scope": {"kind": "shared_vault", "vault_id": 42},
+    }))
+    .expect("shared relationship body");
+    vault
+        .batch()
+        .put(
+            &relation,
+            ENTITY_TYPE_RELATIONSHIP,
+            TimeRange { start: 5, end: 5 },
+            5,
+            &body,
+        )
+        .edge(&subject, EdgeKind::ParticipatesIn, &relation, 1.0)
+        .edge(&other, EdgeKind::ParticipatesIn, &relation, 1.0)
+        .commit()?;
+    let card =
+        vault.compile_persona_snapshot(&subject, &PersonaSnapshotCompileOptions::default())?;
+    assert!(card.rows.iter().all(|row| row.subject_ref != other));
     Ok(())
 }
 
