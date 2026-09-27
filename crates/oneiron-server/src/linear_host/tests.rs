@@ -277,8 +277,87 @@ fn linked_update_sends_expected_base_and_refuses_remote_precondition_miss() {
         identifier: "TEAM-1".into(),
     };
     assert!(matches!(
-        bridge.update_issue([1u8; 32], &issue, &expected, &fields),
+        bridge.update_issue_conditional([1u8; 32], &issue, &expected, &fields),
         Err(LinearSyncError::RemoteChanged)
     ));
     server.join().expect("provider checked precondition");
+}
+
+#[tokio::test]
+async fn narrowed_vault_timeout_controls_authenticated_bridge_request() {
+    use oneiron::{LinearChangeSource, Vault, VaultConfig};
+    let dir = tempfile::tempdir().expect("tempdir");
+    let vault = Vault::open(dir.path(), VaultConfig::default()).expect("vault");
+    let policy = vault.linear_mirror_policy().expect("seeded manifest");
+    let mut holder = policy;
+    holder.request_timeout_secs = 1;
+    holder.poll_interval_secs = policy.poll_interval_secs + 1;
+    let narrowed = policy.with_holder(Some(holder)).expect("holder narrowing");
+    assert!(narrowed.request_timeout_secs < policy.request_timeout_secs);
+    assert!(narrowed.poll_interval_secs > policy.poll_interval_secs);
+
+    let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
+    let addr = listener.local_addr().expect("addr");
+    let server = std::thread::spawn(move || {
+        for pass in 0..2 {
+            let (mut socket, _) = listener.accept().expect("accept");
+            socket
+                .set_read_timeout(Some(Duration::from_secs(4)))
+                .expect("read timeout");
+            let mut request = [0u8; 2048];
+            let size = socket.read(&mut request).expect("request");
+            assert!(size > 0);
+            assert!(
+                String::from_utf8_lossy(&request[..size])
+                    .to_lowercase()
+                    .contains("authorization: bearer test-token")
+            );
+            if pass == 0 {
+                std::thread::sleep(Duration::from_millis(1_200));
+            }
+            let payload = b"{\"changes\":[],\"next_cursor\":null}";
+            let _ = write!(
+                socket,
+                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                payload.len()
+            );
+            let _ = socket.write_all(payload);
+        }
+    });
+    let url = format!("http://{addr}/");
+    let short = build_bridge(
+        Some(url.clone()),
+        Some("test-token".into()),
+        narrowed.request_timeout_secs,
+    )
+    .await
+    .expect("bridge")
+    .expect("configured");
+    let short_result = tokio::task::spawn_blocking(move || {
+        let mut short = short;
+        short.changes_since(None)
+    })
+    .await
+    .expect("blocking task");
+    assert!(
+        matches!(short_result, Err(LinearSyncError::Transport(_))),
+        "one-second policy must time out the slow response"
+    );
+    let long = build_bridge(
+        Some(url),
+        Some("test-token".into()),
+        policy.request_timeout_secs,
+    )
+    .await
+    .expect("bridge")
+    .expect("configured");
+    let page = tokio::task::spawn_blocking(move || {
+        let mut long = long;
+        long.changes_since(None)
+    })
+    .await
+    .expect("blocking task")
+    .expect("longer policy succeeds");
+    assert!(page.changes.is_empty());
+    server.join().expect("requests");
 }

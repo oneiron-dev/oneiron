@@ -65,6 +65,22 @@ impl WaveDispatchLimits {
     }
 }
 
+/// One bounded pump quantum. Failures are per candidate; an outer `Err`
+/// means the page itself could not be read or evaluated.
+#[derive(Debug, Default)]
+pub(crate) struct WaveDispatchPass {
+    pub(crate) progressed: bool,
+    pub(crate) next_cursor: Option<EntityId>,
+    pub(crate) earliest_retry: Option<Duration>,
+    pub(crate) item_failures: Vec<WaveHandoffFailure>,
+}
+
+#[derive(Debug)]
+pub(crate) struct WaveHandoffFailure {
+    pub(crate) candidate: WaveDispatchCandidate,
+    pub(crate) reason: String,
+}
+
 #[derive(Debug, Clone, Copy)]
 struct Retry {
     due: Instant,
@@ -165,23 +181,29 @@ impl WaveDispatchPump {
         actor: WriteActor,
         lease_owner: &str,
         now: u64,
-    ) {
+    ) -> Result<WaveDispatchPass> {
         let host = WaveHost::new(
             vault,
             Arc::clone(planner),
             actor.entity_ref(),
             actor.actor_class(),
         );
+        let mut pass = WaveDispatchPass::default();
         if self.plan_pending {
             self.plan_pending = false;
             match host.run_plan_once(lease_owner, now) {
-                Ok(Some(_)) => self.notify(), // one plan per arbitration turn
+                Ok(Some(_)) => {
+                    self.notify();
+                    pass.progressed = true;
+                }
                 Ok(None) => {}
+                // The planning attempt stays queued; its lease expiry retries it.
                 Err(error) => tracing::error!(%error, "wave plan attempt failed"),
             }
-            return;
+            pass.next_cursor = self.cursor;
+            pass.earliest_retry = self.next_delay(now);
+            return Ok(pass);
         }
-        let mut retried = 0;
         let due: Vec<_> = self
             .failed
             .iter()
@@ -190,20 +212,23 @@ impl WaveDispatchPump {
             .map(|(&candidate, _)| candidate)
             .collect();
         for candidate in due {
-            self.handoff(vault, factory, &host, candidate, now);
-            retried += 1;
+            match self.handoff(vault, factory, &host, candidate, now) {
+                Ok(accepted) => pass.progressed |= accepted,
+                Err(failure) => pass.item_failures.push(failure),
+            }
         }
-        // A retry quantum and a raw page are the maximum synchronous work.
+        // A retry quantum and one raw page are the maximum synchronous work.
         if self.scanning && self.scan_retry.is_none_or(|due| due <= Instant::now()) {
             self.scan_retry = None;
-            let result = self.scan_page(vault, factory, &host, now);
-            if let Err(error) = result {
-                tracing::error!(?error, "wave page scan failed; retrying with delay");
+            if let Err(error) = self.scan_page(vault, factory, &host, now, &mut pass) {
                 self.scan_retry = Some(Instant::now() + self.limits.retry_initial);
+                return Err(error);
             }
-        } else if retried == 0 {
-            // Nothing ready: the supervisor will await an event or due timer.
+            pass.progressed = true; // raw cursor advanced, even if no candidates matched
         }
+        pass.next_cursor = self.cursor;
+        pass.earliest_retry = self.next_delay(now);
+        Ok(pass)
     }
 
     fn scan_page<F: PassExecutorFactory>(
@@ -212,6 +237,7 @@ impl WaveDispatchPump {
         factory: &mut F,
         host: &WaveHost<'_, Arc<dyn WavePlanner + Send + Sync>>,
         now: u64,
+        pass: &mut WaveDispatchPass,
     ) -> Result<()> {
         let page = vault.wave_dispatch_page(self.cursor, self.limits.page_size)?;
         let ready = host
@@ -232,13 +258,16 @@ impl WaveDispatchPump {
                     };
                     self.failed
                         .retain(|key, _| key.task != task || key.route == route);
-                    self.handoff(
+                    match self.handoff(
                         vault,
                         factory,
                         host,
                         WaveDispatchCandidate { task, route },
                         now,
-                    );
+                    ) {
+                        Ok(accepted) => pass.progressed |= accepted,
+                        Err(failure) => pass.item_failures.push(failure),
+                    }
                 }
                 Ok(None) => {
                     self.failed.retain(|key, _| key.task != task);
@@ -248,7 +277,13 @@ impl WaveDispatchPump {
                     // transiently unreadable TASK after a bounded delay.
                     self.dirty = true;
                     self.scan_retry = Some(Instant::now() + self.limits.retry_initial);
-                    tracing::error!(?error, ?task, "wave TASK generation read failed");
+                    pass.item_failures.push(WaveHandoffFailure {
+                        candidate: WaveDispatchCandidate {
+                            task,
+                            route: WaveDispatchRoute::External,
+                        },
+                        reason: error.to_string(),
+                    });
                 }
             }
         }
@@ -268,17 +303,17 @@ impl WaveDispatchPump {
         host: &WaveHost<'_, Arc<dyn WavePlanner + Send + Sync>>,
         candidate: WaveDispatchCandidate,
         now: u64,
-    ) {
+    ) -> std::result::Result<bool, WaveHandoffFailure> {
         if self.delivered.get(&candidate.task) == Some(&candidate.route) {
             self.failed.remove(&candidate);
-            return;
+            return Ok(false);
         }
         if self
             .failed
             .get(&candidate)
             .is_some_and(|retry| retry.due > Instant::now())
         {
-            return;
+            return Ok(false);
         }
         // Re-evaluate blockers and generation before each retry. A claim or
         // terminal transition since the scan makes the old receipt stale.
@@ -305,43 +340,58 @@ impl WaveDispatchPump {
         match current {
             Ok(false) => {
                 self.failed.remove(&candidate);
-                return;
+                return Ok(false);
             }
             Err(error) => {
                 self.defer(candidate);
-                tracing::error!(?error, "wave handoff preflight failed");
-                return;
+                return Err(WaveHandoffFailure {
+                    candidate,
+                    reason: error.to_string(),
+                });
             }
             Ok(true) => {}
         }
-        let outcome = factory.dispatch_wave_candidate(vault, candidate);
-        match outcome {
+        match factory.dispatch_wave_candidate(vault, candidate) {
             Ok(WaveHandoffOutcome::Accepted(receipt)) => {
                 match verify_receipt(vault, candidate, &receipt) {
                     Ok(true) => {
                         self.failed.remove(&candidate);
                         self.delivered.insert(candidate.task, candidate.route);
+                        Ok(true)
                     }
                     Ok(false) => {
                         self.defer(candidate);
-                        tracing::warn!(
-                            ?candidate,
-                            "wave handoff receipt did not match current lease"
-                        );
+                        Err(WaveHandoffFailure {
+                            candidate,
+                            reason: "handoff receipt is stale".into(),
+                        })
                     }
                     Err(error) => {
                         self.defer(candidate);
-                        tracing::error!(?error, "wave handoff receipt verification failed");
+                        Err(WaveHandoffFailure {
+                            candidate,
+                            reason: error.to_string(),
+                        })
                     }
                 }
             }
             Ok(WaveHandoffOutcome::NoLongerCurrent) => {
                 self.failed.remove(&candidate);
+                Ok(false)
             }
-            Ok(WaveHandoffOutcome::Deferred) => self.defer(candidate),
+            Ok(WaveHandoffOutcome::Deferred) => {
+                self.defer(candidate);
+                Err(WaveHandoffFailure {
+                    candidate,
+                    reason: "deferred".into(),
+                })
+            }
             Err(error) => {
                 self.defer(candidate);
-                tracing::error!(?error, "wave TASK handoff failed");
+                Err(WaveHandoffFailure {
+                    candidate,
+                    reason: error.to_string(),
+                })
             }
         }
     }

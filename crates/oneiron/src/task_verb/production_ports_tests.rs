@@ -277,9 +277,19 @@ impl LinearEgress for Tracker {
         &mut self,
         _: [u8; 32],
         issue: &LinearIssueRef,
-        _expected_base: &std::collections::BTreeMap<String, [u8; 32]>,
+        expected_remote: &std::collections::BTreeMap<String, [u8; 32]>,
         fields: &MirroredTaskFields,
     ) -> LinearSyncResult<LinearIssueChange> {
+        if self
+            .current
+            .borrow()
+            .get(&issue.issue_id)
+            .map(|change| change.fields.field_hashes())
+            .as_ref()
+            != Some(expected_remote)
+        {
+            return Err(LinearSyncError::RemoteChanged);
+        }
         *self.updates.borrow_mut() += 1;
         let change = LinearIssueChange {
             event_id: format!("update-{}", issue.issue_id),
@@ -295,7 +305,7 @@ impl LinearEgress for Tracker {
 }
 
 #[test]
-fn scheduled_mirror_preflights_linked_issue_before_full_snapshot_push() -> LinearSyncResult<()> {
+fn scheduled_mirror_refuses_unpulled_remote_edit_at_conditional_push() -> LinearSyncResult<()> {
     let dir = tempfile::tempdir().map_err(crate::Error::from)?;
     let vault = Vault::open(dir.path(), VaultConfig::default())?;
     let owner = EntityId::now();
@@ -327,7 +337,7 @@ fn scheduled_mirror_preflights_linked_issue_before_full_snapshot_push() -> Linea
         tracker.clone(),
     );
     assert_eq!(
-        adapter.synchronize(100)?.0[0].status,
+        adapter.synchronize(100, 64)?.0[0].status,
         LinearMirrorStatus::Linked
     );
     let initial = adapter.tasks().task_snapshot(task)?;
@@ -349,15 +359,15 @@ fn scheduled_mirror_preflights_linked_issue_before_full_snapshot_push() -> Linea
             fields: remote.clone(),
         },
     );
-    // The remote event is NOT in a cursor page; only the exact-issue preflight
-    // can prevent the scheduled full snapshot from overwriting it.
-    let (pushed, _) = adapter.synchronize(102)?;
-    assert_eq!(pushed[0].status, LinearMirrorStatus::Conflict);
+    // This edit has NOT reached the cursor page. The atomic remote-hash CAS
+    // refuses the stale local full snapshot without a read-then-write window.
+    assert!(matches!(
+        adapter.synchronize(102, 64),
+        Err(LinearSyncError::RemoteChanged)
+    ));
     assert_eq!(*tracker.updates.borrow(), 0);
     assert_eq!(tracker.current.borrow()[&issue.issue_id].fields, remote);
-    let stored = adapter.tasks().task_snapshot(task)?;
-    assert_eq!(stored.fields.title, "local");
-    assert_eq!(stored.fields.status, "remote-status");
+    assert_eq!(adapter.tasks().task_snapshot(task)?.fields.title, "local");
     assert!(!adapter.tasks().dirty_tasks()?.is_empty());
     Ok(())
 }
