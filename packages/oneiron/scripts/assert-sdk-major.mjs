@@ -35,7 +35,7 @@ function read(path, what) {
 /** `MEMORY_PACK_VERSION: u32 = <n>;` — the one source of truth. */
 function packVersion() {
   const source = read(
-    join(repoRoot, "crates/oneiron/src/memory/recall.rs"),
+    join(repoRoot, "crates/oneiron/src/memory/recall/mod.rs"),
     "the engine MemoryPack version",
   )
   const match = source.match(/pub const MEMORY_PACK_VERSION: u32 = (\d+)\s*;/)

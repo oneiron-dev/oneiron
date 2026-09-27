@@ -31,6 +31,7 @@ impl ScopedRead<'_> {
             .vault
             .query()
             .authority_filter(filter.clone())
+            .scoped_note_reader(self.actor_key.clone())
             .search_vector(query, fetch_limit)
             .limit(fetch_limit)
             .run_for_pack()?;
@@ -74,6 +75,7 @@ impl ScopedRead<'_> {
             .vault
             .query()
             .authority_filter(filter.clone())
+            .scoped_note_reader(self.actor_key.clone())
             .search_text(query, fetch_limit)
             .limit(fetch_limit)
             .run_for_pack()?;
