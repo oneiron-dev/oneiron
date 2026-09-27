@@ -39,7 +39,19 @@ impl Vault {
         now_ms: u64,
         embedder: &dyn IndexedRevisionEmbedder,
     ) -> Result<IndexedRefreshReport> {
-        self.refresh_indexed(now_ms, Some(embedder))
+        self.refresh_indexed(now_ms, Some(embedder), &mut |_, _| {})
+    }
+
+    /// Reports each successful indexed transaction as soon as it commits. A
+    /// later provider failure cannot erase earlier publication notifications.
+    /// The callback must not write to this vault or re-enter the indexer.
+    pub fn refresh_indexed_at_idle_with_publication(
+        &self,
+        now_ms: u64,
+        embedder: &dyn IndexedRevisionEmbedder,
+        mut published: impl FnMut(EntityId, super::RevisionRef),
+    ) -> Result<IndexedRefreshReport> {
+        self.refresh_indexed(now_ms, Some(embedder), &mut published)
     }
 
     /// Publishes caller-staged text/vectors at idle without a model backend.
@@ -47,13 +59,14 @@ impl Vault {
     /// A dirty entity with an existing vector needs a newly staged vector;
     /// otherwise this refuses rather than pair old vectors with new content.
     pub fn refresh_staged_indexed_at_idle(&self, now_ms: u64) -> Result<IndexedRefreshReport> {
-        self.refresh_indexed(now_ms, None)
+        self.refresh_indexed(now_ms, None, &mut |_, _| {})
     }
 
     fn refresh_indexed(
         &self,
         now_ms: u64,
         embedder: Option<&dyn IndexedRevisionEmbedder>,
+        published: &mut dyn FnMut(EntityId, super::RevisionRef),
     ) -> Result<IndexedRefreshReport> {
         let candidates = {
             let txn = self.store.env.read_txn()?;
@@ -225,6 +238,7 @@ impl Vault {
             }
             super::pending_index::clear(&self.store, &mut txn, &input.entity)?;
             txn.commit()?;
+            published(input.entity, input.source_revision_ref);
             report
                 .refreshed
                 .push((input.entity, input.source_revision_ref));

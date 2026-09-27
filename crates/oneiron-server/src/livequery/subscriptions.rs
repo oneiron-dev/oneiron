@@ -138,6 +138,7 @@ pub(crate) struct LiveQueries {
     hub_budget: Arc<Budget>,
     state: Mutex<State>,
     invalidations: Mutex<VecDeque<(String, MaterializedDiffSummary, OriginMark)>>,
+    index_origins: Mutex<BTreeMap<String, OriginMark>>,
     invalidation_gap: AtomicBool,
 }
 
@@ -200,6 +201,7 @@ impl LiveQueries {
                 index: BTreeMap::new(),
             }),
             invalidations: Mutex::new(VecDeque::new()),
+            index_origins: Mutex::new(BTreeMap::new()),
             invalidation_gap: AtomicBool::new(false),
         }
     }
@@ -583,6 +585,10 @@ impl LiveQueries {
             std::mem::take(&mut *pending)
         };
         if self.invalidation_gap.swap(false, Ordering::AcqRel) {
+            self.index_origins
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .clear();
             self.require_resync();
             return Ok(());
         }
@@ -629,8 +635,24 @@ impl LiveQueries {
     }
 }
 
-impl LiveQueryTee for LiveQueries {
-    fn on_materialized(&self, path: &str, diff: &MaterializedDiffSummary, by: &OriginMark) {
+impl LiveQueries {
+    pub(super) fn on_indexed_published(&self, path: &str, diff: &MaterializedDiffSummary) {
+        let by = self
+            .index_origins
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .remove(path)
+            .unwrap_or_default();
+        self.enqueue_invalidation(path, diff, &by, false);
+    }
+
+    fn enqueue_invalidation(
+        &self,
+        path: &str,
+        diff: &MaterializedDiffSummary,
+        by: &OriginMark,
+        capture_origin: bool,
+    ) {
         let Ok(mut pending) = self.invalidations.lock() else {
             self.invalidation_gap.store(true, Ordering::Release);
             return;
@@ -660,6 +682,10 @@ impl LiveQueryTee for LiveQueries {
                 .sum::<usize>();
         if pending.len() >= LIVEQUERY_RING_CAPACITY || bytes.saturating_add(incoming) > 64 * 1024 {
             pending.clear();
+            self.index_origins
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .clear();
             self.invalidation_gap.store(true, Ordering::Release);
             return;
         }
@@ -675,6 +701,44 @@ impl LiveQueryTee for LiveQueries {
                 containers.insert(format!("e:{}", id.to_hex()));
             }
         }
+        // Bridge mirror notices describe the same committed write a second
+        // time; they must not turn its client origin into a mixed-origin write.
+        if capture_origin
+            && !matches!(
+                by.origin.as_deref(),
+                Some("deletion_tombstone" | oneiron::sync::bridge::BRIDGE_ORIGIN)
+            )
+        {
+            let mut origins = self
+                .index_origins
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            for changed in &containers {
+                if changed
+                    .strip_prefix("e:")
+                    .is_some_and(|id| oneiron::EntityId::from_hex(id).is_ok())
+                {
+                    origins
+                        .entry(changed.clone())
+                        .and_modify(|prior| {
+                            if prior.conn_id != by.conn_id || prior.origin != by.origin {
+                                *prior = OriginMark::default();
+                            }
+                        })
+                        .or_insert_with(|| by.clone());
+                }
+            }
+            let size: usize = origins
+                .iter()
+                .map(|(path, by)| path.len() + by.origin.as_ref().map_or(0, String::len) + 64)
+                .sum();
+            if origins.len() > LIVEQUERY_RING_CAPACITY || size > 64 * 1024 {
+                origins.clear();
+                pending.clear();
+                self.invalidation_gap.store(true, Ordering::Release);
+                return;
+            }
+        }
         pending.push_back((
             path.to_owned(),
             MaterializedDiffSummary {
@@ -683,6 +747,12 @@ impl LiveQueryTee for LiveQueries {
             },
             by.clone(),
         ));
+    }
+}
+
+impl LiveQueryTee for LiveQueries {
+    fn on_materialized(&self, path: &str, diff: &MaterializedDiffSummary, by: &OriginMark) {
+        self.enqueue_invalidation(path, diff, by, true);
     }
 }
 

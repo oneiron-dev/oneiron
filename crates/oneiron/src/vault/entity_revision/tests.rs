@@ -194,6 +194,48 @@ fn concurrent_edit_discards_embedding_without_advancing_indexed_frontier() {
 }
 
 #[test]
+fn each_index_commit_is_published_before_a_later_provider_failure() {
+    struct FailsSecond(EntityId);
+    impl IndexedRevisionEmbedder for FailsSecond {
+        fn embed_revision(&self, input: &IndexedRevisionInput) -> Result<Vec<f32>> {
+            if input.entity == self.0 {
+                Err(crate::Error::UpstreamToolFailure {
+                    tool: "indexed test provider",
+                    code: "unavailable".into(),
+                })
+            } else {
+                Ok(vec![0.0, 1.0, 0.0, 0.0])
+            }
+        }
+    }
+    let (_dir, vault) =
+        crate::test_util::open_test_vault_with(crate::test_util::embedding_test_config());
+    crate::test_util::publish_seeded_revisions(&vault);
+    let a = EntityId::from_bytes([0xD4; 16]).unwrap();
+    let b = EntityId::from_bytes([0xD5; 16]).unwrap();
+    put(&vault, &a, "first old");
+    put(&vault, &b, "second old");
+    let indexed_b = vault.indexed_revision(&b).unwrap();
+    put(&vault, &a, "first new");
+    put(&vault, &b, "second new");
+    let live_a = vault.pin_entity_revision(&a).unwrap();
+    vault.set_indexed_idle_delay_ms(0).unwrap();
+    let mut published = Vec::new();
+    let error = vault.refresh_indexed_at_idle_with_publication(
+        u64::MAX,
+        &FailsSecond(b),
+        |id, revision| published.push((id, revision)),
+    );
+    assert!(matches!(
+        error,
+        Err(crate::Error::UpstreamToolFailure { .. })
+    ));
+    assert_eq!(published, vec![(a, live_a)]);
+    assert_eq!(vault.indexed_revision(&a).unwrap(), Some(live_a));
+    assert_eq!(vault.indexed_revision(&b).unwrap(), indexed_b);
+}
+
+#[test]
 fn old_citation_survives_reopen_but_delete_cannot_resurrect_document() {
     let (dir, vault) =
         crate::test_util::open_test_vault_with(crate::test_util::embedding_test_config());

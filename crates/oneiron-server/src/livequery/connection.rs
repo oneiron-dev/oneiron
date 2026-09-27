@@ -107,7 +107,7 @@ impl Hub {
                 bytes: 0,
             };
             for queries in &sessions {
-                queries.on_materialized(&path, &diff, &Default::default());
+                queries.on_indexed_published(&path, &diff);
             }
         }
     }

@@ -31973,7 +31973,7 @@
      "purpose": "Idle debounce and atomic BM25/vector/frontier publication",
      "surface": {
       "crate-vis": 1,
-      "fn": 5
+      "fn": 6
      }
     },
     {
@@ -40916,7 +40916,7 @@
      "path": "src/livequery/subscriptions.rs",
      "purpose": "Coarse derivation, retained rings and cumulative cursor acknowledgements",
      "surface": {
-      "crate-vis": 19
+      "crate-vis": 20
      }
     },
     {
@@ -41602,7 +41602,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/server/embedding.rs",

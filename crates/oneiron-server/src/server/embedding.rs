@@ -167,15 +167,15 @@ impl SyncServer {
                     // Entity-local debounce, not global queue emptiness,
                     // determines whether a staged revision can be published.
                     let server = Arc::clone(self);
-                    let refreshed =
-                        tokio::task::spawn_blocking(move || server.refresh_indexed_idle()).await;
-                    match refreshed {
-                        Ok(Ok(report)) if !report.refreshed.is_empty() => {
-                            crate::livequery::connection::Hub::for_server(self)
-                                .indexed_published(&report.refreshed);
-                        }
-                        Ok(Ok(_)) => {}
-                        _ => tracing::warn!("indexed revision idle refresh deferred"),
+                    let hub = crate::livequery::connection::Hub::for_server(self);
+                    let refreshed = tokio::task::spawn_blocking(move || {
+                        server.refresh_indexed_idle(|id, revision| {
+                            hub.indexed_published(&[(id, revision)]);
+                        })
+                    })
+                    .await;
+                    if !matches!(refreshed, Ok(Ok(_))) {
+                        tracing::warn!("indexed revision idle refresh deferred");
                     }
                     if report.leased == 0 {
                         tokio::time::sleep(idle).await;
@@ -269,7 +269,10 @@ impl oneiron::memory::IndexedRevisionEmbedder for IndexedProvider<'_> {
     }
 }
 impl SyncServer {
-    fn refresh_indexed_idle(&self) -> oneiron::Result<oneiron::memory::IndexedRefreshReport> {
+    fn refresh_indexed_idle(
+        &self,
+        published: impl FnMut(oneiron::EntityId, oneiron::memory::RevisionRef),
+    ) -> oneiron::Result<oneiron::memory::IndexedRefreshReport> {
         let slot = self
             .embedder
             .as_ref()
@@ -283,7 +286,7 @@ impl SyncServer {
                 "indexed revisions require an on-device or owner-hosted embedder".into(),
             ));
         }
-        self.vault().refresh_indexed_at_idle(
+        self.vault().refresh_indexed_at_idle_with_publication(
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap_or_default()
@@ -291,6 +294,7 @@ impl SyncServer {
                 .try_into()
                 .unwrap_or(u64::MAX),
             &provider,
+            published,
         )
     }
 }

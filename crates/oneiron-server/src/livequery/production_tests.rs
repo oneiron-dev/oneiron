@@ -20,8 +20,12 @@ const CONVERSATION: &str = "44444444444444444444444444444444";
 pub(super) const AT: u64 = 1_772_000_000;
 
 pub(super) fn server() -> (tempfile::TempDir, Arc<SyncServer>) {
+    server_with_config(oneiron::VaultConfig::device())
+}
+
+fn server_with_config(config: oneiron::VaultConfig) -> (tempfile::TempDir, Arc<SyncServer>) {
     let dir = tempfile::tempdir().unwrap();
-    let vault = Arc::new(oneiron::Vault::open(dir.path(), oneiron::VaultConfig::device()).unwrap());
+    let vault = Arc::new(oneiron::Vault::open(dir.path(), config).unwrap());
     for (id, kind) in [
         (ACTOR, oneiron::registry::ENTITY_TYPE_PERSON),
         (MACHINE, oneiron::registry::ENTITY_TYPE_MACHINE),
@@ -1016,4 +1020,255 @@ async fn indexed_publication_wakes_an_open_entity_subscription() {
             .to_string()
             .contains("indexwake new")
     );
+}
+
+#[tokio::test]
+async fn earlier_index_commit_wakes_its_subscriber_when_later_provider_fails() {
+    use oneiron::memory::{IndexedRevisionEmbedder, IndexedRevisionInput};
+
+    struct FailsSecond(EntityId);
+    impl IndexedRevisionEmbedder for FailsSecond {
+        fn embed_revision(&self, input: &IndexedRevisionInput) -> oneiron::Result<Vec<f32>> {
+            if input.entity == self.0 {
+                Err(oneiron::Error::UpstreamToolFailure {
+                    tool: "indexed test provider",
+                    code: "unavailable".into(),
+                })
+            } else {
+                {
+                    let mut vector = vec![0.0; 1024];
+                    vector[0] = 1.0;
+                    Ok(vector)
+                }
+            }
+        }
+    }
+
+    let mut config = oneiron::VaultConfig::device();
+    config.embedding_model = Some("test/indexed-publication@v1".into());
+    let (_dir, server) = server_with_config(config);
+    server.vault().set_indexed_idle_delay_ms(0).unwrap();
+    server
+        .vault()
+        .refresh_staged_indexed_at_idle(u64::MAX)
+        .unwrap();
+    let a = EntityId::from_hex("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa").unwrap();
+    let b = EntityId::from_hex("bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb").unwrap();
+    let put = |id: EntityId, text: &str| {
+        server
+            .vault()
+            .batch()
+            .put(
+                &id,
+                oneiron::registry::ENTITY_TYPE_ASSET_TEXT,
+                oneiron::temporal::TimeRange { start: AT, end: AT },
+                AT,
+                &rmp_serde::to_vec_named(&json!({"content": text})).unwrap(),
+            )
+            .text(&id, &[("content", text)])
+            .commit()
+            .unwrap();
+    };
+    put(a, "firstpartial old");
+    put(b, "secondpartial old");
+    let indexed_b = server.vault().indexed_revision(&b).unwrap();
+    let hub = connection::Hub::for_server(&server);
+    let source = Arc::new(BoundSource::new(
+        Arc::downgrade(&server),
+        auth(&server, "human"),
+        "partial-index".into(),
+    ));
+    let queries = hub.install_source(auth(&server, "human"), "partial-index".into(), source);
+    let view = |query: &str| ScopedView {
+        query: Some(query.into()),
+        ..Default::default()
+    };
+    for (sub, query) in [(1, "firstpartial"), (2, "secondpartial")] {
+        let opened = queries
+            .open(sub, view(query), Channel::View, None, None)
+            .unwrap();
+        assert_eq!(
+            opened[0].result.as_ref().unwrap().as_array().unwrap().len(),
+            1
+        );
+        queries.ack(sub, &opened[0].cursor).unwrap();
+    }
+    put(a, "firstpartial new");
+    put(b, "secondpartial new");
+    for id in [a, b] {
+        let path = format!("e:{}", id.to_hex());
+        oneiron::sync::bridge::LiveQueryTee::on_materialized(
+            queries.as_ref(),
+            &path,
+            &oneiron::sync::bridge::MaterializedDiffSummary {
+                containers: vec![path.clone()],
+                bytes: 0,
+            },
+            &oneiron::sync::bridge::OriginMark::default(),
+        );
+    }
+    queries.refresh().unwrap();
+    assert!(queries.pending(1).unwrap().is_empty());
+    assert!(queries.pending(2).unwrap().is_empty());
+    server.vault().set_indexed_idle_delay_ms(0).unwrap();
+    let outcome = server.vault().refresh_indexed_at_idle_with_publication(
+        u64::MAX,
+        &FailsSecond(b),
+        |id, revision| hub.indexed_published(&[(id, revision)]),
+    );
+    assert!(
+        matches!(outcome, Err(oneiron::Error::UpstreamToolFailure { .. })),
+        "{outcome:?}"
+    );
+    assert_eq!(server.vault().indexed_revision(&b).unwrap(), indexed_b);
+    queries.refresh().unwrap();
+    let a_tail = queries.pending(1).unwrap();
+    assert_eq!(a_tail.len(), 1);
+    assert!(
+        a_tail[0]
+            .result
+            .as_ref()
+            .unwrap()
+            .to_string()
+            .contains("firstpartial new")
+    );
+    assert!(queries.pending(2).unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn delayed_index_publication_filters_own_echo_but_delivers_foreign_and_mixed_writes() {
+    use oneiron::sync::bridge::{LiveQueryTee, MaterializedDiffSummary, OriginMark};
+
+    let (_dir, server) = server();
+    server.vault().set_indexed_idle_delay_ms(0).unwrap();
+    server
+        .vault()
+        .refresh_staged_indexed_at_idle(u64::MAX)
+        .unwrap();
+    let id = EntityId::from_hex("cececececececececececececececece").unwrap();
+    let put = |text: &str| {
+        server
+            .vault()
+            .batch()
+            .put(
+                &id,
+                oneiron::registry::ENTITY_TYPE_ASSET_TEXT,
+                oneiron::temporal::TimeRange { start: AT, end: AT },
+                AT,
+                &rmp_serde::to_vec_named(&json!({"content": text})).unwrap(),
+            )
+            .text(&id, &[("content", text)])
+            .commit()
+            .unwrap();
+    };
+    put("originwake old");
+    let hub = connection::Hub::for_server(&server);
+    let mut clients = Vec::new();
+    for (conn, document) in [(1, "origin-one"), (2, "origin-two")] {
+        let source = Arc::new(BoundSource::new(
+            Arc::downgrade(&server),
+            auth(&server, "human"),
+            document.into(),
+        ));
+        let queries = hub.install_source(auth(&server, "human"), document.into(), source);
+        queries.reconnect(conn).unwrap();
+        let opened = queries
+            .open(
+                7,
+                ScopedView {
+                    query: Some("originwake".into()),
+                    ..Default::default()
+                },
+                Channel::View,
+                None,
+                Some(format!("conn:{conn}")),
+            )
+            .unwrap();
+        queries.ack(7, &opened[0].cursor).unwrap();
+        clients.push(queries);
+    }
+    let path = format!("e:{}", id.to_hex());
+    let diff = MaterializedDiffSummary {
+        containers: vec![path.clone()],
+        bytes: 0,
+    };
+    let notify = |by: OriginMark| {
+        for client in &clients {
+            client.on_materialized(&path, &diff, &by);
+        }
+    };
+    put("originwake writer");
+    notify(OriginMark {
+        conn_id: Some(1),
+        origin: Some("conn:1".into()),
+    });
+    // The replication mirror is not a second writer of this revision.
+    notify(OriginMark {
+        conn_id: None,
+        origin: Some(oneiron::sync::bridge::BRIDGE_ORIGIN.into()),
+    });
+    for client in &clients {
+        client.refresh().unwrap();
+        assert!(client.pending(7).unwrap().is_empty());
+    }
+    server.vault().set_indexed_idle_delay_ms(0).unwrap();
+    let report = server
+        .vault()
+        .refresh_staged_indexed_at_idle(u64::MAX)
+        .unwrap();
+    hub.indexed_published(&report.refreshed);
+    for client in &clients {
+        client.refresh().unwrap();
+    }
+    assert!(
+        clients[0].pending(7).unwrap().is_empty(),
+        "no echo to writer: {:?}",
+        clients[0].pending(7).unwrap()
+    );
+    let foreign = clients[1].pending(7).unwrap();
+    assert_eq!(foreign.len(), 1);
+    assert!(
+        foreign[0]
+            .result
+            .as_ref()
+            .unwrap()
+            .to_string()
+            .contains("originwake writer")
+    );
+    clients[1].ack(7, &foreign[0].cursor).unwrap();
+
+    // A later index batch contains both clients' edits. Neither client may
+    // suppress the other client's contribution as its own optimistic write.
+    put("originwake interim");
+    notify(OriginMark {
+        conn_id: Some(1),
+        origin: Some("conn:1".into()),
+    });
+    put("originwake foreign");
+    notify(OriginMark {
+        conn_id: Some(2),
+        origin: Some("conn:2".into()),
+    });
+    for client in &clients {
+        client.refresh().unwrap();
+        assert!(client.pending(7).unwrap().is_empty());
+    }
+    let report = server
+        .vault()
+        .refresh_staged_indexed_at_idle(u64::MAX)
+        .unwrap();
+    hub.indexed_published(&report.refreshed);
+    for client in &clients {
+        client.refresh().unwrap();
+        let tail = client.pending(7).unwrap();
+        assert_eq!(tail.len(), 1);
+        assert!(
+            tail[0]
+                .result
+                .as_ref()
+                .unwrap()
+                .to_string()
+                .contains("originwake foreign")
+        );
+    }
 }
