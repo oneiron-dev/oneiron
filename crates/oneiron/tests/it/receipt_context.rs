@@ -12,9 +12,8 @@ use oneiron::{
     HnswConfig, MemoriesBudget, MemoriesSection, Result, TimeRange, Vault, VaultConfig,
     context_board::project_memories_section, genui::GrantMintIntent, genui::GrantMintIntentScope,
     outbound::OutboundIntent, outbound::OutboundIntentDraft, outbound::OutboundIntentTrigger,
-    prompt::PromptRecompileStamp, prompt::resolve_session_prompt_v3,
-    prompt::workspace_prompt_package_root, receipt::ContextReceiptFields, receipt::ReceiptQuery,
-    receipt::ReceiptRecord, receipt::SessionLocalReceiptLog,
+    prompt::PromptRecompileStamp, prompt::resolve_prompt, receipt::ContextReceiptFields,
+    receipt::ReceiptQuery, receipt::ReceiptRecord, receipt::SessionLocalReceiptLog,
     receipt::append_context_receipt_fields, receipt::memories_state_ref,
     receipt::outbound_intent_receipt, registry::ENTITY_TYPE_TURN,
 };
@@ -60,9 +59,11 @@ fn assembled_board(vault: &Vault) -> Result<MemoriesSection> {
 }
 
 fn persona_stamp() -> PromptRecompileStamp {
-    let package_root = workspace_prompt_package_root().expect("monorepo prompt package");
-    resolve_session_prompt_v3(package_root)
-        .expect("eiri v3 prompt resolves")
+    let temp = tempfile::tempdir().expect("temporary host prompt package");
+    let prompt = temp.path().join("session.md");
+    std::fs::write(&prompt, "host-provided session instructions\n").expect("write host prompt");
+    resolve_prompt(prompt, temp.path())
+        .expect("host prompt resolves")
         .stamp
 }
 

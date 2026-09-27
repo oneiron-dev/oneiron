@@ -426,7 +426,7 @@ fn profile_fields(entity_type: u8, profile: FieldProfile) -> &'static [&'static 
             "attribution",
             "render_voice",
             "platform_voice",
-            "is_eiri",
+            "is_companion",
             "announcement_status",
             "retracted",
             "corrected",

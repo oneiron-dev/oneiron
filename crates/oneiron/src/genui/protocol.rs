@@ -1,7 +1,7 @@
 //! OF-336 envelope, adapters, component enum and render dispatch.
 
 use super::consent_cards::{BundleApproveCard, ConsentAskCard};
-use super::consent_eval::{ConsentActionKind, append_eirispec_actions};
+use super::consent_eval::{ConsentActionKind, append_care_register_actions};
 use super::project_proposal::ProjectProposalCard;
 use super::receipt_view::ReceiptViewComponent;
 use crate::lens::{
@@ -14,7 +14,7 @@ use serde_json::{Value, json};
 
 pub const OF336_PROTOCOL_VERSION: u16 = 1;
 
-pub const OF336_CARD_CATALOG_VERSION: &str = "eirispec.card.v1";
+pub const OF336_CARD_CATALOG_VERSION: &str = "of336.card.v1";
 
 pub const OF336_MCP_UI_MIME: &str = "application/vnd.mcp-ui.remote-dom";
 
@@ -22,7 +22,7 @@ pub const OF336_MCP_UI_MIME: &str = "application/vnd.mcp-ui.remote-dom";
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Of336SurfaceAdapter {
-    EiriSpecCareRegister,
+    CareRegister,
     DashboardAtomKitAudit,
     McpUi,
 }
@@ -31,7 +31,7 @@ impl Of336SurfaceAdapter {
     #[must_use]
     pub const fn as_str(self) -> &'static str {
         match self {
-            Self::EiriSpecCareRegister => "eirispec_care_register",
+            Self::CareRegister => "care_register",
             Self::DashboardAtomKitAudit => "dashboard_atom_kit_audit",
             Self::McpUi => "mcp_ui",
         }
@@ -137,7 +137,7 @@ impl Of336Component {
             card.validate()?;
         }
         let tree = match adapter {
-            Of336SurfaceAdapter::EiriSpecCareRegister => self.render_eirispec(),
+            Of336SurfaceAdapter::CareRegister => self.render_care_register(),
             Of336SurfaceAdapter::DashboardAtomKitAudit => self.render_atom_kit()?,
             Of336SurfaceAdapter::McpUi => self.render_mcp_ui()?,
         };
@@ -152,7 +152,7 @@ impl Of336Component {
         })
     }
 
-    fn render_eirispec(&self) -> Value {
+    fn render_care_register(&self) -> Value {
         let card_id = self.component_id();
         let fallback_text = self.fallback_text();
         let mut elements = serde_json::Map::new();
@@ -165,7 +165,7 @@ impl Of336Component {
                 elements.insert(
                     receipt_id.to_owned(),
                     json!({
-                        "type": "eiriNote",
+                        "type": "careNote",
                         "props": {
                             "title": component.title(),
                             "body": component.receipt_lines(),
@@ -201,7 +201,7 @@ impl Of336Component {
                 elements.insert(
                     "prompt".to_owned(),
                     json!({
-                        "type": "eiriNote",
+                        "type": "careNote",
                         "props": {
                             "title": "Consent ask",
                             "body": [component.prompt, component.preview],
@@ -211,7 +211,11 @@ impl Of336Component {
                         "fallbackText": fallback_text
                     }),
                 );
-                append_eirispec_actions(&mut elements, &mut root_children, &component.actions());
+                append_care_register_actions(
+                    &mut elements,
+                    &mut root_children,
+                    &component.actions(),
+                );
             }
             Self::BundleApprove(component) => {
                 root_children.push("bundle".to_owned());
@@ -227,14 +231,18 @@ impl Of336Component {
                         "fallbackText": fallback_text
                     }),
                 );
-                append_eirispec_actions(&mut elements, &mut root_children, &component.actions());
+                append_care_register_actions(
+                    &mut elements,
+                    &mut root_children,
+                    &component.actions(),
+                );
             }
             Self::ProjectProposal(component) => {
                 root_children.push("proposal".to_owned());
                 elements.insert(
                     "proposal".to_owned(),
                     json!({
-                        "type": "eiriNote",
+                        "type": "careNote",
                         "props": {
                             "title": component.goal.goal,
                             "body": [
@@ -252,7 +260,7 @@ impl Of336Component {
                         "fallbackText": fallback_text
                     }),
                 );
-                append_eirispec_actions(&mut elements, &mut root_children, &component.actions());
+                append_care_register_actions(&mut elements, &mut root_children, &component.actions());
             }
         }
 

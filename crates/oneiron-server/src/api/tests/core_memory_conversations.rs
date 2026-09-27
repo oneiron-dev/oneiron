@@ -859,7 +859,7 @@ async fn platform_announcement_turn_never_projects_as_eiri_voice() {
         Value::from(PLATFORM_ANNOUNCEMENT_VOICE)
     );
     assert_eq!(item["platform_voice"], Value::from(true));
-    assert_eq!(item["is_eiri"], Value::from(false));
+    assert_eq!(item["is_companion"], Value::from(false));
 
     let (read_status, read_body) = route_json(
         server,

@@ -25099,7 +25099,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "src",
      "notable": [
       "PromptRecompileStamp",
@@ -25111,8 +25111,8 @@
      "path": "src/prompt.rs",
      "purpose": "—",
      "surface": {
-      "const": 4,
-      "fn": 6,
+      "const": 3,
+      "fn": 5,
       "struct": 5
      }
     },
@@ -34991,7 +34991,7 @@
     "prompt": {
      "files": 1,
      "impl_vault": false,
-     "largest_src_bucket": "m",
+     "largest_src_bucket": "s",
      "layout": "file",
      "purpose": "—"
     },
