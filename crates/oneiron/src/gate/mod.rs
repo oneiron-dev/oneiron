@@ -27,6 +27,7 @@ mod repair;
 mod resolution;
 mod retrieval_filter;
 mod share;
+pub(crate) mod weave_policy;
 mod witness_message;
 
 #[cfg(test)]

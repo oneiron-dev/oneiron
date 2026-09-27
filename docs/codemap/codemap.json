@@ -7672,7 +7672,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "test",
      "notable": [],
      "path": "src/claim/scoped_read/weave_digest/tests.rs",
@@ -7693,7 +7693,7 @@
      "path": "src/claim/scoped_read/weave_report.rs",
      "purpose": "Live weave data for a reader, not a saved digest or a rendered section recipe",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 5,
       "enum": 3,
       "fn": 1,
       "struct": 3
@@ -16814,7 +16814,7 @@
      "path": "src/gate/mod.rs",
      "purpose": "DEC-0005 Gate policy manifest resolver",
      "surface": {
-      "crate-vis": 26,
+      "crate-vis": 27,
       "re-export": 3
      }
     },
@@ -17198,6 +17198,24 @@
      "notable": [],
      "path": "src/gate/tests/witness_message.rs",
      "purpose": "Witness messages: ceilings, envelope binding, and replicated refusal",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/gate/weave_policy.rs",
+     "purpose": "Trusted manifest rows for the weave lens: nested narrowing, never read authority",
+     "surface": {
+      "crate-vis": 11
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/gate/weave_policy/tests.rs",
+     "purpose": "—",
      "surface": {}
     },
     {
@@ -35363,7 +35381,7 @@
      "purpose": "—"
     },
     "gate": {
-     "files": 75,
+     "files": 77,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -36051,8 +36069,8 @@
    },
    "over_bar": 11,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2128,
-   "test_files": 725
+   "source_files": 2129,
+   "test_files": 726
   },
   "oneiron-android": {
    "files": [

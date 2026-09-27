@@ -373,6 +373,14 @@ pub(crate) fn default_policy_manifest() -> Vec<u8> {
             Value::Array(Vec::new()),
         ),
         (
+            Value::from(crate::gate::weave_policy::KEY),
+            crate::gate::weave_policy::default_value(),
+        ),
+        (
+            Value::from(crate::gate::weave_policy::PRECEDENCE_KEY),
+            Value::from(crate::gate::weave_policy::NESTED_NARROWING),
+        ),
+        (
             Value::from(POLICY_SIGNATURES_KEY),
             Value::Array(vec![Value::Map(vec![
                 (Value::from(SIGNATURE_ALG_KEY), Value::from("ed25519")),

@@ -365,7 +365,8 @@ pub(crate) fn invalidate_weave_digest_source_in_txn(
 /// deletion tombstone has committed before its active-store purge.
 fn sources_live_in_txn(store: &Store, txn: &heed::RoTxn<'_>, report: &WeaveReport) -> Result<bool> {
     for source in report_sources(report)? {
-        if store.port_deletion_state(txn, &source)?.deleted {
+        let state = store.port_deletion_state(txn, &source)?;
+        if state.deleted || state.stale {
             return Ok(false);
         }
     }
@@ -397,21 +398,14 @@ impl Vault {
             WeaveDigestReader::Owner(_) => return Err(invalid()),
             WeaveDigestReader::Agent(id) => WeaveReader::Agent(id),
         };
-        if row.recipe.is_empty()
-            || row.recipe.len() > 16
-            || row.recipe.iter().any(|s| {
-                s.predicates.len() > 32
-                    || s.edge_kinds.len() > 32
-                    || (!s.edge_kinds.is_empty() && s.kind != WeaveSectionKind::Links)
-                    || s.predicates.iter().any(|p| p.is_empty() || p.len() > 128)
-                    || !s.kind.allowed_for(&reader)
-            })
-        {
+        if row.recipe.is_empty() {
             return Err(invalid());
         }
         let bytes = serde_json::to_vec(&WireSchedule::from_row(row)).map_err(|_| invalid())?;
         self.with_write_txn(|txn| {
             owner.revalidate_in_txn(self, txn)?;
+            let policy = crate::gate::resolve_policy_manifest(&self.store, txn)?;
+            super::weave_report::validate_weave_recipe(&policy, &reader, &row.recipe)?;
             self.store
                 .vault_meta
                 .put(txn, &row.reader.key(SCHEDULE_PREFIX), &bytes)?;
@@ -565,30 +559,17 @@ impl ScopedRead<'_> {
             if let Some(owner) = owner {
                 owner.revalidate_in_txn(self.vault, txn)?;
             }
-            // Verified credentials and the actor's current floor must still
-            // authorize the copied projection at the commit linearization point.
-            let (filter, policy) = self.resolve_retrieval_filter_in(txn, None)?;
+            // Re-run the identical scoped lens in this writer's snapshot.
+            // Its claim, project, budget, link and edge-endpoint checks must
+            // all still produce the report and receipt we intend to save.
             if self.vault.store.vault_meta.get(&*txn, &key)?.as_deref() != Some(saved.as_slice()) {
                 return Ok(None);
             }
             if !sources_live_in_txn(&self.vault.store, txn, &report.value)? {
                 return Ok(None);
             }
-            for section in &report.value.sections {
-                for item in &section.items {
-                    if let WeaveItem::Claim { id, body } = item {
-                        let fresh = self.vault.store.entities.get(&*txn, id.as_bytes())?;
-                        let encoded = encode_claim_body(body)?;
-                        if fresh.is_none_or(|raw| {
-                            raw.get(crate::batch::ENTITY_METADATA_HEADER_LEN..)
-                                != Some(encoded.as_slice())
-                        }) || !self
-                            .is_entity_retrievable_with_policy_in(txn, &policy, &filter, id)?
-                        {
-                            return Ok(None);
-                        }
-                    }
-                }
+            if self.weave_report_in(txn, reader, &row.recipe)? != report {
+                return Ok(None);
             }
             if let Some(raw) = self.vault.store.vault_meta.get(&*txn, &digest_key)? {
                 let previous: WireDigest = serde_json::from_slice(&raw).map_err(|_| invalid())?;

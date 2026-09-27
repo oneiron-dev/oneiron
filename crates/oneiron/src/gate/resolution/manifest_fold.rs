@@ -80,6 +80,9 @@ pub(crate) fn resolve_policy_manifest(
                 delegated_rows.extend(decoded.delegated_grants);
                 resolution.scoped_grants.extend(decoded.scoped_grants);
                 resolution
+                    .weave_report_policy
+                    .extend(decoded.weave_report_policy);
+                resolution
                     .owner_policy_rows
                     .extend(decoded.owner_policy_rows);
                 resolution.owner_policy_rows_dropped |= decoded.owner_policy_rows_dropped;

@@ -56,6 +56,7 @@ pub(in crate::gate) struct DecodedPolicyManifest {
     /// names one.
     pub(in crate::gate) auto_checker: Option<String>,
     pub(in crate::gate) budget_policy: BudgetPolicyTable,
+    pub(in crate::gate) weave_report_policy: Vec<crate::gate::weave_policy::Row>,
     pub(in crate::gate) diagnostic_bounds: Option<crate::self_heal::tripwires::TripwireBounds>,
     pub(in crate::gate) proposal_check_threshold: Option<u64>,
     pub(in crate::gate) unsupported_schema: bool,
@@ -103,6 +104,8 @@ pub(in crate::gate) fn decode_policy_manifest(data: &[u8]) -> Option<DecodedPoli
                 | POLICY_BUDGET_POLICY_KEY
                 | "diagnostic_bounds"
                 | "proposal_check_threshold"
+                | crate::gate::weave_policy::KEY
+                | crate::gate::weave_policy::PRECEDENCE_KEY
         ) {
             return None;
         }
@@ -238,6 +241,17 @@ pub(in crate::gate) fn decode_policy_manifest(data: &[u8]) -> Option<DecodedPoli
         MapValue::Present(value) => Some(value.as_u64().filter(|value| *value > 0)?),
     };
 
+    match single_map_value(&entries, crate::gate::weave_policy::PRECEDENCE_KEY) {
+        MapValue::Missing => {} // old manifests inherit the shipped rule
+        MapValue::Present(value)
+            if value.as_str() == Some(crate::gate::weave_policy::NESTED_NARROWING) => {}
+        MapValue::Duplicate | MapValue::Present(_) => return None,
+    }
+    let weave_report_policy = match single_map_value(&entries, crate::gate::weave_policy::KEY) {
+        MapValue::Missing => Vec::new(),
+        MapValue::Duplicate => return None,
+        MapValue::Present(value) => crate::gate::weave_policy::parse(value)?,
+    };
     let unknown_axis_seen =
         defaults.unknown_axis_seen || rules.iter().any(|rule| rule.axes.unknown_axis_seen);
 
@@ -266,6 +280,7 @@ pub(in crate::gate) fn decode_policy_manifest(data: &[u8]) -> Option<DecodedPoli
         comm_opt_out_posture,
         auto_checker,
         budget_policy,
+        weave_report_policy,
         diagnostic_bounds,
         proposal_check_threshold,
         unsupported_schema,
