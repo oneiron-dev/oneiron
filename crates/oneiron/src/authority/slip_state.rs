@@ -131,21 +131,15 @@ impl SlipAuthorityState {
 }
 
 impl AuthorityFold {
-    /// Log provenance, signer liveness and unresolved fork quarantine all apply
-    /// to every ancestor of a delegated slip, including a pre-fork mint.
+    /// Log provenance and signer liveness apply to every ancestor of a delegated slip.
     #[must_use]
     pub fn slip_is_live(&self, id: &[u8; 32]) -> bool {
         self.vault_id.is_some()
             && !self.vault_root_is_conflicted()
             && self.slips.is_live(id, &self.roster)
             && self.slips.ancestors(id).is_some_and(|path| {
-                path.iter().all(|mint| {
-                    self.valid_entries.contains(&mint.entry_hash)
-                        && !self.authority_forks.iter().any(|fork| {
-                            fork.signer == mint.signer
-                                && fork.status == AuthorityForkStatus::Quarantined
-                        })
-                })
+                path.iter()
+                    .all(|mint| self.valid_entries.contains(&mint.entry_hash))
             })
     }
 }
