@@ -13,6 +13,24 @@ fn key(id: &EntityId, prefix: &str) -> String {
 pub(crate) fn trusted_manifest_key(id: &EntityId) -> String {
     key(id, "trusted")
 }
+
+/// Separate proof that an authenticated vault owner authored an override
+/// row. A generic local manifest trust stamp is not holder authority.
+pub(in crate::gate) fn retention_holder_key(id: &EntityId) -> String {
+    key(id, "retention-holder")
+}
+
+pub(in crate::gate) fn retention_holder_verified(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    id: &EntityId,
+    body: &[u8],
+) -> Result<bool> {
+    Ok(store
+        .sync_state
+        .get(txn, &retention_holder_key(id))?
+        .is_some_and(|hash| hash.as_ref() == blake3::hash(body).as_bytes()))
+}
 pub(crate) fn stamp_manifest_origin(
     store: &Store,
     txn: &mut heed::RwTxn<'_>,
@@ -54,7 +72,7 @@ pub(crate) fn manifest_is_trusted(
         .is_some_and(|hash| hash.as_ref() == blake3::hash(body).as_bytes()))
 }
 
-pub(in crate::gate) fn manifest_is_quarantined(
+pub(crate) fn manifest_is_quarantined(
     store: &Store,
     txn: &heed::RoTxn<'_>,
     id: &EntityId,
@@ -153,6 +171,7 @@ impl Vault {
                 ));
             }
         }
+        let holder_hash = blake3::hash(&data);
         crate::batch::apply_ops(
             &self.store,
             &self.config,
@@ -175,7 +194,11 @@ impl Vault {
                 .load(std::sync::atomic::Ordering::Acquire),
             false,
             true,
-        )
+        )?;
+        self.store
+            .sync_state
+            .put(txn, &retention_holder_key(&id), holder_hash.as_bytes())?;
+        Ok(())
     }
 
     /// Explicit owner re-authoring, never grandfathering a product-band permit.
@@ -222,6 +245,9 @@ pub(crate) fn update_manifest_origin(
     body: &[u8],
     replicated: bool,
 ) -> Result<()> {
+    // Any generic write (including replay) invalidates the holder's exact
+    // body attestation. The authenticated owner door re-stamps it afterwards.
+    store.sync_state.delete(txn, &retention_holder_key(id))?;
     if kind == ENTITY_TYPE_POLICY_MANIFEST {
         stamp_manifest_origin(store, txn, id, body, replicated)?;
     } else {

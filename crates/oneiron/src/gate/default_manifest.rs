@@ -381,6 +381,7 @@ pub(crate) fn default_policy_manifest() -> Vec<u8> {
                     Value::from(GATE_RETENTION_HOLDER_OVERRIDE_CEILING_KEY),
                     Value::from("vault"),
                 ),
+                (Value::from("rows"), Value::Array(Vec::new())),
             ]),
         ),
         // The owner policy plane ships OFF with zero rows: a fresh vault

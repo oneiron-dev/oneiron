@@ -107,6 +107,13 @@ pub(crate) fn resolve_policy_manifest(
                 );
                 resolution.signatures.extend(decoded.signatures);
                 if let Some(retention) = decoded.gate_decision_retention {
+                    if retention.rows.iter().any(|row| row.override_parent)
+                        && !crate::gate::manifest_authenticity::retention_holder_verified(
+                            store, txn, &id, body,
+                        )?
+                    {
+                        resolution.diagnostics.malformed_manifest_seen = true;
+                    }
                     // The seeded D7 row is a FALLBACK, not an owner vote.
                     // Byte-exact matching avoids treating a later owner update
                     // at that same ID as another copy of the seeded default.
@@ -116,9 +123,9 @@ pub(crate) fn resolve_policy_manifest(
                     {
                         default_retention = Some(retention);
                     } else {
-                        match owner_retention {
+                        match owner_retention.as_ref() {
                             None => owner_retention = Some(retention),
-                            Some(existing) if existing == retention => {}
+                            Some(existing) if *existing == retention => {}
                             Some(_) => resolution.diagnostics.malformed_manifest_seen = true,
                         }
                     }
@@ -244,6 +251,56 @@ pub(crate) fn resolve_gate_decision_retention(
         ));
     }
     Ok(resolution.gate_decision_retention)
+}
+
+/// The only carrier a narrow owner retention edit may rewrite. Determine the
+/// effective trusted row in the same snapshot as resolution, never by a fixed
+/// ID whose body may have been replaced by an untrusted peer contribution.
+pub(crate) fn retention_edit_target(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+) -> Result<(GateDecisionRetentionPolicy, crate::EntityId)> {
+    let policy = resolve_gate_decision_retention(store, txn)?.ok_or(Error::InvalidConfig(
+        "gate decision retention manifest missing".into(),
+    ))?;
+    let default_id = crate::gate::default_manifest::default_policy_manifest_id()?;
+    let seeded = crate::gate::default_manifest::default_policy_manifest();
+    let mut owner_ids = Vec::new();
+    let mut default_present = false;
+    for index_entry in store.port_entity_ids_by_type(txn, ENTITY_TYPE_POLICY_MANIFEST, None)? {
+        let id = index_entry?;
+        let Some(raw) = store.port_entity_record(txn, &id)? else {
+            continue;
+        };
+        if raw.entity_type != ENTITY_TYPE_POLICY_MANIFEST
+            || crate::gate::manifest_authenticity::manifest_is_quarantined(
+                store, txn, &id, &raw.body,
+            )?
+            || !crate::gate::manifest_authenticity::manifest_is_trusted(store, txn, &id, &raw.body)?
+        {
+            continue;
+        }
+        let decoded = decode_policy_manifest(&raw.body)
+            .ok_or(Error::CorruptedIndex("trusted retention manifest"))?;
+        if decoded.gate_decision_retention.is_none() {
+            continue;
+        }
+        if id == default_id && raw.body == seeded {
+            default_present = true;
+        } else {
+            owner_ids.push(id);
+        }
+    }
+    let target = match owner_ids.as_slice() {
+        [one] => *one,
+        [] if default_present => default_id,
+        _ => {
+            return Err(Error::InvalidConfig(
+                "retention edit has no unique trusted carrier".into(),
+            ));
+        }
+    };
+    Ok((policy, target))
 }
 
 /// Folds a once-per-vault owner string across manifests. A second manifest

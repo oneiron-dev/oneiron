@@ -324,7 +324,8 @@ impl Vault {
                 .and_then(|()| {
                     if value.reason.is_hard() {
                         self.store
-                            .reject_held_gate_partition_in_txn(&wtxn, id.as_bytes())
+                            .reject_held_gate_partition_in_txn(&wtxn, id.as_bytes())?;
+                        self.reject_held_redirect_shells_in_txn(&wtxn, id)
                     } else {
                         Ok(())
                     }

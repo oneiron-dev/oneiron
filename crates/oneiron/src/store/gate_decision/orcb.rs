@@ -191,12 +191,29 @@ fn safe_open(path: &Path, write_new: bool, directory: bool) -> Result<File> {
     Ok(file)
 }
 
+#[cfg(test)]
+thread_local! {
+    static AFTER_KEY_MARKER_CHECK: std::cell::RefCell<Option<Box<dyn FnOnce()>>> =
+        std::cell::RefCell::new(None);
+}
+
+#[cfg(test)]
+pub(in crate::store) fn arm_after_key_marker_check(callback: impl FnOnce() + 'static) {
+    AFTER_KEY_MARKER_CHECK.with(|slot| *slot.borrow_mut() = Some(Box::new(callback)));
+}
+
 fn read_key(root: &Path, claim_id: &[u8; 16], generation: u64) -> Result<Zeroizing<[u8; 32]>> {
     let dir = key_directory(root)?;
     let _ = safe_open(&dir, false, true)?;
     if is_retired(&dir, claim_id, generation)? {
         return Err(corrupt());
     }
+    #[cfg(test)]
+    AFTER_KEY_MARKER_CHECK.with(|slot| {
+        if let Some(callback) = slot.borrow_mut().take() {
+            callback();
+        }
+    });
     let mut file = safe_open(&claim_key_path(root, claim_id, generation)?, false, false)?;
     let mut key = Zeroizing::new([0; 32]);
     file.read_exact(&mut *key).map_err(|_| corrupt())?;

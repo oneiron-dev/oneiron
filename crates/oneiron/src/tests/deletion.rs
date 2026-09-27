@@ -275,6 +275,18 @@ fn hard_erase_of_a_merge_head_cascades_to_its_redirect_shell() -> Result<()> {
     };
     assert_eq!(vault.resolve_entity(&loser)?, vec![survivor]);
     assert!(!vault.get(&loser)?.expect("shell body").is_empty());
+    vault.set_gate_decision_partition_hold(Some(*loser.as_bytes()), true)?;
+    assert!(
+        vault
+            .delete_entity_with_reason(&survivor, DeleteReason::UserHardDelete)
+            .is_err()
+    );
+    assert!(!vault.get(&loser)?.expect("held shell body").is_empty());
+    assert!(
+        vault.get(&survivor)?.is_some(),
+        "head cannot erase without held shell"
+    );
+    vault.set_gate_decision_partition_hold(Some(*loser.as_bytes()), false)?;
 
     let author_pin = vault.pin_entity_revision(&event)?;
     let outcome = vault.delete_entity_with_reason(&survivor, DeleteReason::UserHardDelete)?;
@@ -938,5 +950,60 @@ fn held_partition_after_tombstone_publication_defers_local_purge() -> Result<()>
             .delete_entity_with_reason(&id, DeleteReason::UserHardDelete)?
             .existed
     );
+    Ok(())
+}
+
+#[test]
+fn replayed_hard_erase_defers_entire_redirect_cascade_for_held_shell() -> Result<()> {
+    let (_dir, vault) = open_test_vault();
+    let actor = EntityId::now();
+    let survivor = EntityId::now();
+    let shell = EntityId::now();
+    for id in [&actor, &survivor, &shell] {
+        vault.put_entity(
+            id,
+            ENTITY_TYPE_PERSON,
+            test_time_range(200, 200),
+            201,
+            b"replay body",
+        )?;
+    }
+    let outcome = vault.apply_identity_topology_op(
+        &crate::identity_topology::IdentityTopologyOp::Merge(crate::identity_topology::MergeOp {
+            sources: vec![shell],
+            survivor,
+            evidence: crate::identity_topology::IdentityOpEvidence::default(),
+            survivorship_plan: crate::identity_topology::SurvivorshipPlan::ReadThrough,
+        }),
+        &crate::identity_topology::IdentityOpWrite::auto(ClaimSource::Inferred)
+            .with_actor(WriteActor::new(actor, EdgeActorClass::Human)),
+        202,
+    )?;
+    assert!(matches!(
+        outcome,
+        crate::identity_topology::IdentityOpOutcome::Applied { .. }
+    ));
+    vault.set_gate_decision_partition_hold(Some(*shell.as_bytes()), true)?;
+    let tombstone = wire_tombstone(2, 1_771_300_100, 0xB7);
+    assert!(
+        vault
+            .apply_replayed_tombstone(&survivor, &tombstone)
+            .is_err()
+    );
+    let txn = vault.store.env.read_txn()?;
+    for id in [&survivor, &shell] {
+        assert!(
+            vault.store.entities.get(&txn, id.as_bytes())?.is_some(),
+            "held cascade must preserve both physical rows"
+        );
+    }
+    drop(txn);
+    vault.set_gate_decision_partition_hold(Some(*shell.as_bytes()), false)?;
+    assert!(matches!(
+        vault.apply_replayed_tombstone(&survivor, &tombstone)?,
+        ReplayedTombstoneOutcome::HardPurged { erased: true, .. }
+    ));
+    assert!(vault.get(&survivor)?.is_none());
+    assert_eq!(vault.get(&shell)?.expect("soft shell").len(), 0);
     Ok(())
 }

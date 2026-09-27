@@ -1038,3 +1038,72 @@ fn blob_publish_requires_grant_then_receipts_and_replays() -> Result<()> {
     assert!(vault.request_artifact_publish(&rebound).is_err());
     Ok(())
 }
+
+#[test]
+fn receipt_retention_keeps_publish_admission_for_idempotent_replay() -> Result<()> {
+    let (_dir, vault) = crate::test_util::open_test_vault_with(test_config());
+    let repo = create_test_repo(b"<h1>v1</h1>\n")?;
+    let result = ingest_artifact(&vault, repo.path(), "site", 10)?;
+    let actor = test_publisher(&vault)?;
+    grant_artifact_publish(&vault, actor, "site")?;
+    let request = ArtifactPublishVerbRequest::new(
+        "site",
+        ArtifactPointerChannel::Published,
+        result.snapshot.fork_hash,
+        actor,
+        EntityId::from_bytes([0xC3; 16])?,
+        12,
+    );
+    let receipt = vault
+        .request_artifact_publish(&request)?
+        .receipt
+        .expect("publish receipt");
+    let gate_id = vault
+        .store
+        .gate_decisions(100)?
+        .into_iter()
+        .find(|row| {
+            format!("gate:{}", row.decision_id.to_hex()) == receipt.fields["gate_receipt_ref"]
+        })
+        .expect("publish decision")
+        .decision_id;
+    let unrelated = vault.with_write_txn(|txn| {
+        let mut old = vault
+            .store
+            .gate_decision_in_txn(txn, gate_id)?
+            .expect("publish gate");
+        vault.store.delete_gate_decision_in_txn(txn, gate_id)?;
+        old.created_at = 1;
+        vault.store.append_gate_decision_in_txn(txn, &old)?;
+        let mut unrelated = old;
+        unrelated.decision_id = crate::store::GateDecisionId::now();
+        vault.store.append_gate_decision_in_txn(txn, &unrelated)?;
+        Ok(unrelated.decision_id)
+    })?;
+    let owner = vault.authenticate_owner(
+        actor.entity_ref(),
+        "principal:publish-retention",
+        true,
+        crate::store::GateDecisionId::now(),
+    )?;
+    vault.set_gate_decision_retention_secs(&owner, Some(60))?;
+    assert_eq!(vault.sweep_gate_decision_retention()?, 1);
+    assert!(
+        vault
+            .store
+            .gate_decisions(100)?
+            .iter()
+            .all(|row| row.decision_id != unrelated)
+    );
+    assert!(vault.delete_entity(&result.code_artifact_id)?);
+    assert_eq!(
+        vault.request_artifact_publish(&request)?.receipt,
+        Some(receipt.clone())
+    );
+    assert!(
+        vault
+            .receipts(ReceiptQuery::new(20).with_kind(ReceiptKind::Share))?
+            .contains(&receipt)
+    );
+    Ok(())
+}

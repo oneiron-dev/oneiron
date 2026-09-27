@@ -23,6 +23,8 @@ use super::vet::vet_gate_decision_record;
 thread_local! {
     static BEFORE_GATE_PAGE_DECODE: std::cell::RefCell<Option<Box<dyn FnOnce()>>> =
         std::cell::RefCell::new(None);
+    static BEFORE_GATE_GRANT_DECODE: std::cell::RefCell<Option<Box<dyn FnOnce()>>> =
+        std::cell::RefCell::new(None);
 }
 
 #[cfg(test)]
@@ -30,7 +32,22 @@ pub(in crate::store) fn arm_before_gate_page_decode(callback: impl FnOnce() + 's
     BEFORE_GATE_PAGE_DECODE.with(|slot| *slot.borrow_mut() = Some(Box::new(callback)));
 }
 
+#[cfg(test)]
+pub(in crate::store) fn arm_before_gate_grant_decode(callback: impl FnOnce() + 'static) {
+    BEFORE_GATE_GRANT_DECODE.with(|slot| *slot.borrow_mut() = Some(Box::new(callback)));
+}
+
 impl Store {
+    /// Readers acquire this BEFORE opening an LMDB snapshot. Retirement takes
+    /// the write half BEFORE the exterior marker/unlink, so no healthy live
+    /// snapshot loses custody between its key check and file open.
+    pub(crate) fn gate_custody_read_guard(&self) -> Result<std::sync::RwLockReadGuard<'_, ()>> {
+        self.core
+            .gate_retirement_lock
+            .read()
+            .map_err(|_| Error::InvariantViolation("gate decision custody lock poisoned"))
+    }
+
     /// Decode one row against its key, decrypting only claim-bound ORCB values.
     pub(in crate::store) fn decode_gate_decision_value(
         &self,
@@ -203,6 +220,7 @@ impl Store {
     ) -> Result<()> {
         self.delete_gate_decision_grant_ref_index_in_txn(wtxn, record)?;
         self.delete_gate_decision_claim_index_in_txn(wtxn, record)?;
+        self.delete_gate_retention_context_in_txn(wtxn, record.decision_id)?;
         self.vault_meta
             .delete(wtxn, &gate_decision_key(record.decision_id))?;
         Ok(())
@@ -227,7 +245,14 @@ impl Store {
         &self,
         grant_ref: &str,
     ) -> Result<Vec<GateDecisionRecord>> {
+        let _custody = self.gate_custody_read_guard()?;
         let rtxn = self.env.read_txn()?;
+        #[cfg(test)]
+        BEFORE_GATE_GRANT_DECODE.with(|slot| {
+            if let Some(callback) = slot.borrow_mut().take() {
+                callback();
+            }
+        });
         let prefix = gate_decision_grant_ref_index_prefix(grant_ref);
         let mut records = Vec::new();
         for row in self.vault_meta.prefix_iter(&rtxn, &prefix)? {
@@ -455,6 +480,7 @@ impl Store {
         before: Option<GateDecisionId>,
         limit: usize,
     ) -> Result<Vec<GateDecisionRecord>> {
+        let _custody = self.gate_custody_read_guard()?;
         let rtxn = self.env.read_txn()?;
         match self.gate_decisions_page_in_txn(&rtxn, before, limit) {
             Ok(rows) => Ok(rows),
@@ -577,6 +603,7 @@ fn append_gate_decision_row_in_txn(
         encode_gate_decision(record)?
     };
     store.vault_meta().put(wtxn, &key, &value)?;
+    super::retention_scope::append_context_in_txn(store, wtxn, record)?;
     if let Some(grant_ref) = record.grant_ref.as_deref() {
         store.vault_meta().put(
             wtxn,

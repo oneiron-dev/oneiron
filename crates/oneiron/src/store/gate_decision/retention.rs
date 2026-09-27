@@ -138,10 +138,7 @@ impl Vault {
         let mut txn = self.store.env.write_txn()?;
         // Read the effective trusted row in the SAME transaction that writes
         // the owner replacement; no policy override gets lost between reads.
-        let current = crate::gate::resolve_gate_decision_retention(&self.store, &txn)?.ok_or(
-            Error::InvalidConfig("gate decision retention manifest missing".into()),
-        )?;
-        let id = crate::gate::default_policy_manifest_id()?;
+        let (current, id) = crate::gate::retention_edit_target(&self.store, &txn)?;
         let raw = self
             .store
             .entities
@@ -149,45 +146,68 @@ impl Vault {
             .ok_or(Error::CorruptedIndex("default policy manifest"))?;
         let manifest_body = raw
             .get(ENTITY_METADATA_HEADER_LEN..)
-            .ok_or(Error::CorruptedIndex("default policy manifest"))?;
+            .ok_or(Error::CorruptedIndex("retention policy manifest"))?;
+        // A narrow edit MUST NOT authenticate any unrelated peer-authored
+        // permissions carried at this ID. Prove the exact amended body is
+        // trusted and not quarantined under this same LMDB writer snapshot.
+        if !crate::gate::manifest_authenticity::manifest_is_trusted(
+            &self.store,
+            &txn,
+            &id,
+            manifest_body,
+        )? || crate::gate::manifest_authenticity::manifest_is_quarantined(
+            &self.store,
+            &txn,
+            &id,
+            manifest_body,
+        )? {
+            return Err(Error::InvalidConfig(
+                "retention edit target is not trusted".into(),
+            ));
+        }
         let mut body: rmpv::Value = rmpv::decode::read_value(&mut &manifest_body[..])
             .map_err(|_| Error::CorruptedIndex("default policy manifest"))?;
         let rmpv::Value::Map(ref mut fields) = body else {
             return Err(Error::CorruptedIndex("default policy manifest"));
         };
-        fields.retain(|(key, _)| key.as_str() != Some("gate_decision_retention"));
-        fields.push((
-            rmpv::Value::from("gate_decision_retention"),
-            rmpv::Value::Map(vec![
-                (
-                    rmpv::Value::from("horizon_secs"),
-                    horizon
-                        .unwrap_or(current.horizon_secs)
-                        .map_or(rmpv::Value::Nil, rmpv::Value::from),
-                ),
-                (
-                    rmpv::Value::from("max_sweep_rows"),
-                    rmpv::Value::from(
-                        u64::try_from(budget.unwrap_or(current.max_sweep_rows)).map_err(|_| {
-                            Error::InvalidConfig("gate decision sweep budget too large".into())
-                        })?,
-                    ),
-                ),
-                (
-                    rmpv::Value::from("precedence"),
-                    rmpv::Value::from("nested_narrowing"),
-                ),
-                (
-                    rmpv::Value::from("holder_override_ceiling"),
-                    rmpv::Value::from("vault"),
-                ),
-            ]),
-        ));
+        let (_, retention) = fields
+            .iter_mut()
+            .find(|(key, _)| key.as_str() == Some("gate_decision_retention"))
+            .ok_or(Error::CorruptedIndex("retention manifest row"))?;
+        let rmpv::Value::Map(rows) = retention else {
+            return Err(Error::CorruptedIndex("retention manifest row"));
+        };
+        if let Some(horizon) = horizon {
+            let (_, value) = rows
+                .iter_mut()
+                .find(|(key, _)| key.as_str() == Some("horizon_secs"))
+                .ok_or(Error::CorruptedIndex("retention horizon row"))?;
+            *value = horizon.map_or(rmpv::Value::Nil, rmpv::Value::from);
+        }
+        if let Some(budget) = budget {
+            let (_, value) = rows
+                .iter_mut()
+                .find(|(key, _)| key.as_str() == Some("max_sweep_rows"))
+                .ok_or(Error::CorruptedIndex("retention budget row"))?;
+            *value = rmpv::Value::from(u64::try_from(budget).map_err(|_| {
+                Error::InvalidConfig("gate decision sweep budget too large".into())
+            })?);
+        }
         let mut data = Vec::new();
         rmpv::encode::write_value(&mut data, &body)
             .map_err(|_| Error::InvariantViolation("gate decision retention manifest encode"))?;
         let now = self.store.clock.now_recorded_at();
         self.write_owner_policy_manifest_in_txn(owner, &mut txn, id, data, now)?;
+        let expected = crate::gate::GateDecisionRetentionPolicy {
+            horizon_secs: horizon.unwrap_or(current.horizon_secs),
+            max_sweep_rows: budget.unwrap_or(current.max_sweep_rows),
+            ..current
+        };
+        if crate::gate::resolve_gate_decision_retention(&self.store, &txn)? != Some(expected) {
+            return Err(Error::InvalidConfig(
+                "retention edit changed manifest precedence".into(),
+            ));
+        }
         txn.commit()?;
         Ok(())
     }
@@ -285,10 +305,14 @@ impl Vault {
                     callback();
                 }
             });
-            // One LMDB writer owns hold admission, live-row inspection,
-            // exterior destruction and intent consumption as one boundary.
-            // A hold accepted before this txn defers retirement; a hold after
-            // the key is retired is refused by the setter.
+            // Wait for ALL live reader snapshots before touching exterior
+            // custody, then take the LMDB writer for hold/intent ordering.
+            // The lock comes FIRST: never wait on readers while holding the
+            // LMDB writer slot they may need to finish a read.
+            let _custody =
+                self.store.core.gate_retirement_lock.write().map_err(|_| {
+                    Error::InvariantViolation("gate decision custody lock poisoned")
+                })?;
             let mut txn = self.store.env.write_txn()?;
             match self
                 .store
@@ -337,8 +361,15 @@ impl Vault {
         let Some(seconds) = policy.horizon_secs else {
             return Ok(0);
         };
-        let cutoff = now.saturating_sub(seconds);
         let retain_until = now.saturating_add(seconds);
+        // An admission that still names its original allowing receipt is an
+        // operational dependency, including revoked shares and publishes with
+        // removed pointers. Scan source-of-truth rows, not an unproven index.
+        let mut operational_refs =
+            crate::share::share_gate_decision_refs_in_txn(&self.store, &txn)?;
+        operational_refs.extend(crate::artifact_hosting::artifact_publish_gate_refs_in_txn(
+            self, &txn,
+        )?);
         // Decode BEFORE mutating. A corrupt ciphertext/key aborts the entire
         // sweep instead of quietly miscounting the rows that share that key.
         let mut eligible: Vec<GateDecisionRecord> = Vec::new();
@@ -355,7 +386,17 @@ impl Vault {
                 if let Some(claim) = claim {
                     live_claims.insert(claim);
                 }
-            } else if record.created_at < cutoff && eligible.len() < policy.max_sweep_rows {
+            } else if policy
+                .horizon_for(self.store.gate_retention_context_in_txn(&txn, &record)?)
+                .is_some_and(|horizon| record.created_at < now.saturating_sub(horizon))
+                && eligible.len() < policy.max_sweep_rows
+            {
+                if operational_refs.contains(&record.decision_id) {
+                    if let Some(claim) = claim {
+                        live_claims.insert(claim);
+                    }
+                    return Ok(());
+                }
                 // An unanswered consent must retain its exact source receipt;
                 // closure loads it by decision ID in this same key partition.
                 let required_by_pending = if let Some(claim) = claim {

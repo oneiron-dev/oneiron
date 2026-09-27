@@ -4762,3 +4762,49 @@ fn relationship_candidate_stamps_and_rejects_unknown_or_wrong_kind() -> Result<(
     }
     Ok(())
 }
+
+#[test]
+fn claim_gate_receipt_stamps_verified_world_project_retention_context() -> Result<()> {
+    let dir = tempfile::tempdir()?;
+    let vault = Vault::open(dir.path().join("vault"), crate::VaultConfig::device())?;
+    let subject = EntityId::now();
+    let claim = EntityId::now();
+    let world = EntityId::now();
+    let project = EntityId::now();
+    vault.put_entity(
+        &subject,
+        crate::registry::ENTITY_TYPE_PERSON,
+        TimeRange { start: 1, end: 1 },
+        1,
+        b"subject",
+    )?;
+    let mut body = ClaimBody::new(
+        "profile.lives_in",
+        ClaimSubject::Entity(subject),
+        Value::from("osaka"),
+        0.9,
+        ClaimApprovalStatus::Auto,
+        ClaimLifecycleStatus::Active,
+    );
+    body.world = Some(world);
+    body.scope_project = project;
+    vault.put_claim(&claim, &body, TimeRange { start: 2, end: 2 }, 2)?;
+    vault.retract_claim(&claim, vault.store.clock.now_recorded_at())?;
+    let txn = vault.store.env.read_txn()?;
+    let decisions = vault
+        .store
+        .gate_decisions_for_claim_in_txn(&txn, claim.as_bytes())?;
+    assert!(!decisions.is_empty());
+    for decision in decisions {
+        assert_eq!(
+            vault.store.gate_retention_context_in_txn(&txn, &decision)?,
+            crate::gate::GateRetentionContext {
+                world: Some(world),
+                project: Some(project),
+                sub_project: None,
+                thread: None
+            }
+        );
+    }
+    Ok(())
+}
