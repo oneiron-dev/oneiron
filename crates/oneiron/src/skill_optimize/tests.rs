@@ -1,5 +1,6 @@
 use std::cell::RefCell;
 
+use super::job::PROVENANCE_OPTIMIZE_PRINCIPAL_KEY;
 use super::*;
 
 use crate::attempt_queue::{
@@ -1084,6 +1085,266 @@ fn the_split_is_deterministic_disjoint_and_invisible_to_the_author() -> Result<(
     assert!(
         proved,
         "one in five reserved means dev rows are the common case"
+    );
+    Ok(())
+}
+
+/// The second author sees the failed edit and its reason, not the held-out
+/// receipts or numeric scores, and can draft a different correction.
+#[test]
+fn a_rejected_edit_informs_the_next_draft_without_repeating_it() -> Result<()> {
+    struct AvoidRejectedEdit {
+        seen: RefCell<Option<SkillOptimizeBrief>>,
+    }
+
+    impl SkillOptimizeAuthor for AvoidRejectedEdit {
+        fn draft(&self, brief: &SkillOptimizeBrief) -> Result<SkillEditDraft> {
+            *self.seen.borrow_mut() = Some(brief.clone());
+            let desc = if brief
+                .rejected_edits
+                .iter()
+                .any(|edit| edit.desc == DRAFTED_DESC)
+            {
+                "Do the thing. Verify the result, then the other thing."
+            } else {
+                DRAFTED_DESC
+            };
+            Ok(SkillEditDraft::Edit {
+                desc: desc.to_owned(),
+                rationale: "use the prior rejection to avoid repeating it".to_owned(),
+            })
+        }
+    }
+
+    let (_tmp, vault) = temp_vault();
+    let (skill, _) = put_standard_active(&vault, "oneiron.skill.rejected-buffer");
+    attribute_defects_across_split(&vault, &skill, "oneiron.skill.rejected-buffer");
+    let first_author = StubAuthor::editing();
+    let first = run(&vault, &first_author)?.proposal.expect("first edit");
+    assert!(first_author.brief().rejected_edits.is_empty());
+    let verdict = score_gate_skill_edit_in_cycle(
+        &vault,
+        &first,
+        &StubScorer::new(0.60, 0.55),
+        wake(&vault, "wake-rejected", 10),
+        900,
+    )?;
+    assert_eq!(verdict.disposition, SkillEditDisposition::Rejected);
+
+    let second_author = AvoidRejectedEdit {
+        seen: RefCell::new(None),
+    };
+    let second = run(&vault, &second_author)?.proposal.expect("second edit");
+    let brief = second_author.seen.borrow();
+    let brief = brief.as_ref().expect("the second author saw a brief");
+    assert_eq!(brief.skill, skill);
+    assert_eq!(brief.rejected_edits.len(), 1);
+    assert_eq!(brief.rejected_edits[0].proposal, first);
+    assert_eq!(brief.rejected_edits[0].desc, DRAFTED_DESC);
+    assert_eq!(
+        brief.rejected_edits[0].author_rationale,
+        "five attributed defects name the missing check"
+    );
+    assert_eq!(
+        brief.rejected_edits[0].rejection_reason,
+        RejectedSkillEditReason::Regression
+    );
+    assert_ne!(stored(&vault, &second).desc, stored(&vault, &first).desc);
+    assert!(
+        brief
+            .cited_receipts
+            .iter()
+            .all(|id| !verdict.held_out_receipts.contains(id))
+    );
+    Ok(())
+}
+
+/// A tie is still feedback; verdicts for another target never appear here.
+#[test]
+fn rejected_edit_buffer_is_scoped_and_classifies_ties() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    let (skill, proposal) = losing_skill_with_proposal(&vault, "oneiron.skill.tie-buffer");
+    let (other, other_proposal) = losing_skill_with_proposal(&vault, "oneiron.skill.other-buffer");
+    let tie = score_gate_skill_edit_in_cycle(
+        &vault,
+        &proposal,
+        &StubScorer::new(0.60, 0.60),
+        wake(&vault, "wake-tie", 10),
+        900,
+    )?;
+    score_gate_skill_edit_in_cycle(
+        &vault,
+        &other_proposal,
+        &StubScorer::new(0.60, 0.55),
+        wake(&vault, "wake-other", 10),
+        901,
+    )?;
+    let candidate = optimize_candidates(&vault)?
+        .into_iter()
+        .find(|candidate| candidate.skill == skill)
+        .expect("skill still eligible after rejection");
+    let brief = optimize_brief(&vault, &candidate)?;
+    assert_eq!(brief.rejected_edits.len(), 1);
+    assert_eq!(brief.rejected_edits[0].proposal, tie.proposal);
+    assert_eq!(
+        brief.rejected_edits[0].rejection_reason,
+        RejectedSkillEditReason::Tie
+    );
+    assert_ne!(brief.rejected_edits[0].proposal, other_proposal);
+    assert_ne!(brief.skill, other);
+    Ok(())
+}
+
+/// Owner-scoped rejection feedback is not a back door into another
+/// principal's preference evidence, including an unbound optimizer job.
+#[test]
+fn rejected_edit_buffer_keeps_preference_principals_separate() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    let (skill, _) = put_standard_active(&vault, "oneiron.skill.private-buffer");
+    attribute_defects_across_split(&vault, &skill, "oneiron.skill.private-buffer");
+    let owner_id = EntityId::now();
+    let other_id = EntityId::now();
+    put_actor(&vault, &owner_id);
+    put_actor(&vault, &other_id);
+    let owner = crate::write_envelope::WriteActor::new(owner_id, crate::EdgeActorClass::Human);
+    let other = crate::write_envelope::WriteActor::new(other_id, crate::EdgeActorClass::Human);
+    let first = run_skill_optimize_as(
+        &vault,
+        enqueue_attempt(&vault, None, 5),
+        &StubAuthor::editing(),
+        t(300),
+        301,
+        owner,
+    )?
+    .proposal
+    .expect("owner-scoped edit");
+    score_gate_skill_edit_in_cycle(
+        &vault,
+        &first,
+        &StubScorer::new(0.60, 0.55),
+        wake(&vault, "wake-private", 10),
+        900,
+    )?;
+    // The ordinary candidate update door permits this provenance value to
+    // change before scoring. The verdict digest therefore binds the MALFORMED
+    // body: a digest comparison by itself does not make the stamp unbound.
+    for (index, malformed_value) in [Value::Nil, Value::from(42), Value::from("not-an-id")]
+        .into_iter()
+        .enumerate()
+    {
+        let proposal = run_skill_optimize_as(
+            &vault,
+            enqueue_attempt(&vault, None, 20 + index as u64),
+            &StubAuthor::editing(),
+            t(400 + index as u64),
+            401 + index as u64,
+            owner,
+        )?
+        .proposal
+        .expect("owner-scoped edit");
+        let mut malformed = stored(&vault, &proposal);
+        malformed.version = format!("opt-malformed-{index}");
+        let Value::Map(ref mut provenance) = malformed.provenance else {
+            panic!("optimizer provenance is a map");
+        };
+        let (_, stamp) = provenance
+            .iter_mut()
+            .find(|(key, _)| key.as_str() == Some(PROVENANCE_OPTIMIZE_PRINCIPAL_KEY))
+            .expect("owner stamp");
+        *stamp = malformed_value;
+        vault.update_skill_record(
+            &proposal,
+            &malformed,
+            t(500 + index as u64),
+            501 + index as u64,
+        )?;
+        score_gate_skill_edit_in_cycle(
+            &vault,
+            &proposal,
+            &StubScorer::new(0.60, 0.55),
+            wake(&vault, "wake-malformed", 10),
+            910 + index as u64,
+        )?;
+    }
+    let candidate = optimize_candidates(&vault)?
+        .into_iter()
+        .find(|candidate| candidate.skill == skill)
+        .expect("still eligible");
+    assert!(
+        optimize_brief(&vault, &candidate)?
+            .rejected_edits
+            .is_empty()
+    );
+    assert!(
+        optimize_brief_for_principal_at(&vault, &candidate, other, 301)?
+            .rejected_edits
+            .is_empty()
+    );
+    assert_eq!(
+        optimize_brief_for_principal_at(&vault, &candidate, owner, 301)?.rejected_edits[0].proposal,
+        first
+    );
+    Ok(())
+}
+
+/// The cap bounds what the author can READ, not the verdicts visited: 64
+/// later rejections for another owner cannot evict one usable rejection.
+#[test]
+fn rejected_edit_buffer_caps_after_audience_filtering() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    let (skill, _) = put_standard_active(&vault, "oneiron.skill.crowded-buffer");
+    attribute_defects_across_split(&vault, &skill, "oneiron.skill.crowded-buffer");
+    let a_id = EntityId::now();
+    let b_id = EntityId::now();
+    put_actor(&vault, &a_id);
+    put_actor(&vault, &b_id);
+    let a = crate::write_envelope::WriteActor::new(a_id, crate::EdgeActorClass::Human);
+    let b = crate::write_envelope::WriteActor::new(b_id, crate::EdgeActorClass::Human);
+    let cycle = wake(&vault, "wake-crowded", 10);
+    let first = run_skill_optimize_as(
+        &vault,
+        enqueue_attempt(&vault, None, 20),
+        &StubAuthor::editing(),
+        t(300),
+        301,
+        a,
+    )?
+    .proposal
+    .expect("A's draft");
+    score_gate_skill_edit_in_cycle(&vault, &first, &StubScorer::new(0.60, 0.55), cycle, 900)?;
+
+    for index in 0..SKILL_OPTIMIZE_MAX_BRIEF_EVIDENCE {
+        let now = 400 + index as u64;
+        let proposal = run_skill_optimize_as(
+            &vault,
+            enqueue_attempt(&vault, None, now),
+            &StubAuthor::editing(),
+            t(now),
+            now + 1,
+            b,
+        )?
+        .proposal
+        .expect("B's draft");
+        score_gate_skill_edit_in_cycle(
+            &vault,
+            &proposal,
+            &StubScorer::new(0.60, 0.55),
+            cycle,
+            901 + index as u64,
+        )?;
+    }
+    let candidate = optimize_candidates(&vault)?
+        .into_iter()
+        .find(|candidate| candidate.skill == skill)
+        .expect("still eligible");
+    let a_edits = optimize_brief_for_principal_at(&vault, &candidate, a, 500)?.rejected_edits;
+    assert_eq!(a_edits.len(), 1);
+    assert_eq!(a_edits[0].proposal, first);
+    assert_eq!(
+        optimize_brief_for_principal_at(&vault, &candidate, b, 500)?
+            .rejected_edits
+            .len(),
+        SKILL_OPTIMIZE_MAX_BRIEF_EVIDENCE
     );
     Ok(())
 }
@@ -4399,4 +4660,339 @@ fn a_large_outcome_history_keeps_world_labels_aligned_at_all_gate_doors() -> Res
         SkillLifecycle::Active
     );
     Ok(())
+}
+
+// ─── OF-495 goal-axis measurements ──────────────────────────────────────
+
+struct AxisJudge {
+    events: RefCell<Vec<String>>,
+    bad_offline: bool,
+    bad_minutes: bool,
+}
+
+impl AxisJudge {
+    fn new() -> Self {
+        Self {
+            events: RefCell::new(Vec::new()),
+            bad_offline: false,
+            bad_minutes: false,
+        }
+    }
+}
+
+impl GoalAxisScorer for AxisJudge {
+    fn offline_score(&self, axis: &str, case: &HeldOutReplayCase<'_>) -> Result<f64> {
+        assert!(!case.held_out_receipts.is_empty());
+        assert!(
+            case.held_out_receipts
+                .iter()
+                .all(|receipt| receipt_is_held_out(&case.skill, receipt))
+        );
+        self.events
+            .borrow_mut()
+            .push(format!("offline:{axis}:{}", case.version));
+        Ok(if self.bad_offline {
+            f64::NAN
+        } else if case.version == FIXTURE_VERSION {
+            0.4
+        } else {
+            0.8
+        })
+    }
+
+    fn human_minutes(&self, case: &HeldOutReplayCase<'_>) -> Result<f64> {
+        self.events
+            .borrow_mut()
+            .push(format!("minutes:{}", case.version));
+        Ok(if self.bad_minutes {
+            -1.0
+        } else if case.version == FIXTURE_VERSION {
+            3.5
+        } else {
+            1.25
+        })
+    }
+}
+
+struct AxisBanditStub {
+    events: RefCell<Vec<AxisArm>>,
+    separated: bool,
+    invalid_bound: bool,
+}
+
+impl AxisBanditStub {
+    fn new(separated: bool) -> Self {
+        Self {
+            events: RefCell::new(Vec::new()),
+            separated,
+            invalid_bound: false,
+        }
+    }
+}
+
+impl GoalAxisBandit for AxisBanditStub {
+    fn pull(&self, _axis: &str, arm: AxisArm) -> Result<OnlineAxisSample> {
+        self.events.borrow_mut().push(arm);
+        Ok(OnlineAxisSample {
+            success: arm == AxisArm::Candidate,
+            human_minutes: if arm == AxisArm::Candidate { 0.25 } else { 0.5 },
+        })
+    }
+
+    fn confidence_interval(
+        &self,
+        _axis: &str,
+        arm: AxisArm,
+        _wins: u32,
+        _pulls: u32,
+    ) -> Result<ConfidenceInterval> {
+        Ok(if self.invalid_bound {
+            ConfidenceInterval {
+                lower: f64::NAN,
+                upper: 1.0,
+            }
+        } else if self.separated {
+            match arm {
+                AxisArm::Incumbent => ConfidenceInterval {
+                    lower: 0.1,
+                    upper: 0.3,
+                },
+                AxisArm::Candidate => ConfidenceInterval {
+                    lower: 0.7,
+                    upper: 0.9,
+                },
+            }
+        } else {
+            ConfidenceInterval {
+                lower: 0.2,
+                upper: 0.8,
+            }
+        })
+    }
+}
+
+fn goal_axis_plan(pulls_per_axis: u32) -> GoalAxisPlan {
+    GoalAxisPlan {
+        offline: vec!["quality".to_owned(), "safety".to_owned()],
+        online: vec!["world_outcome".to_owned()],
+        pulls_per_axis,
+    }
+}
+
+#[test]
+fn goal_axes_score_held_out_first_then_bounded_live_slice_with_human_cost() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    let (skill, incumbent) = put_standard_active(&vault, "goal-axis-test");
+    attribute_defects_across_split(&vault, &skill, "goal-axis-test");
+    let mut candidate = incumbent.clone();
+    candidate.version = "2.0.0".to_owned();
+    candidate.desc = DRAFTED_DESC.to_owned();
+    let judge = AxisJudge::new();
+    let bandit = AxisBanditStub::new(true);
+    let report = measure_goal_axes(
+        &vault,
+        skill,
+        &incumbent,
+        &candidate,
+        &goal_axis_plan(6),
+        &judge,
+        &bandit,
+    )?;
+    assert_eq!(report.offline.len(), 2);
+    assert_eq!(
+        report.offline[0].1,
+        AxisScores {
+            before: 0.4,
+            after: 0.8
+        }
+    );
+    assert_eq!(
+        report.human_minutes,
+        AxisScores {
+            before: 4.0,
+            after: 1.5
+        }
+    );
+    assert_eq!(report.online[0].outcome, OnlineAxisOutcome::CandidateBetter);
+    assert_eq!(
+        report.online[0].human_minutes,
+        AxisScores {
+            before: 0.5,
+            after: 0.25
+        }
+    );
+    assert_eq!(
+        (report.online[0].before_pulls, report.online[0].after_pulls),
+        (1, 1)
+    );
+    assert_eq!(
+        bandit.events.borrow().as_slice(),
+        &[AxisArm::Incumbent, AxisArm::Candidate]
+    );
+    assert_eq!(
+        judge.events.borrow().as_slice(),
+        &[
+            "offline:quality:1.0.0",
+            "offline:quality:2.0.0",
+            "offline:safety:1.0.0",
+            "offline:safety:2.0.0",
+            "minutes:1.0.0",
+            "minutes:2.0.0",
+        ]
+    );
+    assert_eq!(report.held_out_receipts, held_out_receipts(&vault, &skill)?);
+    assert!(
+        report
+            .held_out_receipts
+            .iter()
+            .all(|receipt| !dev_receipts(&vault, &skill).unwrap().contains(receipt))
+    );
+    Ok(())
+}
+
+#[test]
+fn goal_axes_reject_bad_offline_or_cost_before_any_live_pull() {
+    let (_tmp, vault) = temp_vault();
+    let (skill, incumbent) = put_standard_active(&vault, "goal-axis-errors");
+    attribute_defects_across_split(&vault, &skill, "goal-axis-errors");
+    let bandit = AxisBanditStub::new(true);
+    for judge in [
+        AxisJudge {
+            bad_offline: true,
+            ..AxisJudge::new()
+        },
+        AxisJudge {
+            bad_minutes: true,
+            ..AxisJudge::new()
+        },
+    ] {
+        assert!(
+            measure_goal_axes(
+                &vault,
+                skill,
+                &incumbent,
+                &incumbent,
+                &goal_axis_plan(2),
+                &judge,
+                &bandit
+            )
+            .is_err()
+        );
+        assert!(bandit.events.borrow().is_empty());
+    }
+}
+
+#[test]
+fn goal_axes_unseparated_bounds_exhaust_cap_and_never_claim_improvement() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    let (skill, incumbent) = put_standard_active(&vault, "goal-axis-bounds");
+    attribute_defects_across_split(&vault, &skill, "goal-axis-bounds");
+    let judge = AxisJudge::new();
+    let bandit = AxisBanditStub::new(false);
+    let report = measure_goal_axes(
+        &vault,
+        skill,
+        &incumbent,
+        &incumbent,
+        &goal_axis_plan(5),
+        &judge,
+        &bandit,
+    )?;
+    assert_eq!(
+        report.online[0].before_pulls + report.online[0].after_pulls,
+        5
+    );
+    assert_eq!(report.online[0].outcome, OnlineAxisOutcome::Inconclusive);
+    assert_eq!(bandit.events.borrow().len(), 5);
+    let bad = AxisBanditStub {
+        invalid_bound: true,
+        ..AxisBanditStub::new(false)
+    };
+    assert!(
+        measure_goal_axes(
+            &vault,
+            skill,
+            &incumbent,
+            &incumbent,
+            &goal_axis_plan(5),
+            &judge,
+            &bad
+        )
+        .is_err()
+    );
+    assert_eq!(bad.events.borrow().len(), 1);
+    Ok(())
+}
+
+#[test]
+fn goal_axes_empty_reserve_or_invalid_plan_never_reaches_scorer_or_bandit() {
+    let (_tmp, vault) = temp_vault();
+    let (skill, incumbent) = put_standard_active(&vault, "goal-axis-empty");
+    let judge = AxisJudge::new();
+    let bandit = AxisBanditStub::new(false);
+    assert!(
+        measure_goal_axes(
+            &vault,
+            skill,
+            &incumbent,
+            &incumbent,
+            &goal_axis_plan(2),
+            &judge,
+            &bandit
+        )
+        .is_err()
+    );
+    let mut plan = goal_axis_plan(2);
+    plan.online[0] = "quality".into();
+    assert!(
+        measure_goal_axes(
+            &vault, skill, &incumbent, &incumbent, &plan, &judge, &bandit
+        )
+        .is_err()
+    );
+    assert!(judge.events.borrow().is_empty());
+    assert!(bandit.events.borrow().is_empty());
+}
+
+#[test]
+fn goal_axes_refuse_another_skills_evidence_before_any_measurement() {
+    let (_tmp, vault) = temp_vault();
+    let (skill_a, _) = put_standard_active(&vault, "goal-axis-a");
+    attribute_defects_across_split(&vault, &skill_a, "goal-axis-a");
+    let (_, incumbent_b) = put_standard_active(&vault, "goal-axis-b");
+    let judge = AxisJudge::new();
+    let bandit = AxisBanditStub::new(true);
+
+    // A has a reserve, but neither of these B records belongs to A.
+    let mut candidate_b = incumbent_b.clone();
+    candidate_b.version = "2.0.0".to_owned();
+    let error = measure_goal_axes(
+        &vault,
+        skill_a,
+        &incumbent_b,
+        &candidate_b,
+        &goal_axis_plan(4),
+        &judge,
+        &bandit,
+    )
+    .expect_err("B's record cannot be scored against A's evidence");
+    assert_eq!(error.kind(), ErrorKind::InvalidConfig);
+
+    // Matching skill_id alone is not enough: a fabricated incumbent body
+    // cannot masquerade as the version currently stored at A.
+    let mut invented_a = stored(&vault, &skill_a);
+    invented_a.desc.push_str(" Incorrectly revised.");
+    let error = measure_goal_axes(
+        &vault,
+        skill_a,
+        &invented_a,
+        &invented_a,
+        &goal_axis_plan(4),
+        &judge,
+        &bandit,
+    )
+    .expect_err("an invented incumbent cannot use A's reserve");
+    assert_eq!(error.kind(), ErrorKind::InvalidConfig);
+    assert!(judge.events.borrow().is_empty());
+    assert!(bandit.events.borrow().is_empty());
 }
