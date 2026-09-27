@@ -114,7 +114,20 @@ pub(crate) fn stamp_attempt_pack_receipt_in_txn(
         policy_trace: Vec::new(),
         fields: BTreeMap::new(),
     };
+    if record
+        .manifest()
+        .iter()
+        .any(|entry| entry.kind == crate::attempt_queue::ManifestKind::Skill)
+        && record.executor_model.is_none()
+    {
+        return Err(Error::InvalidClaimBody(
+            "skill-bearing attempt requires executor model",
+        ));
+    }
     append_pack_manifest_fields(&mut receipt, record.manifest())?;
+    if let Some(model) = &record.executor_model {
+        receipt.fields.insert("model".to_owned(), model.clone());
+    }
     let encoded = rmp_serde::to_vec_named(&receipt)
         .map_err(|_| Error::InvariantViolation("attempt pack receipt encode failed"))?;
     store.vault_meta.put(
@@ -458,4 +471,34 @@ pub(crate) fn attempt_pack_receipt_in_txn(
         return Err(Error::CorruptedIndex("attempt receipt key/body identity"));
     }
     Ok(Some(receipt))
+}
+
+/// Test fixture only: emulate a pack receipt imported from the pre-model wire.
+/// Production never removes the immutable executor stamp.
+#[cfg(test)]
+pub(crate) fn make_attempt_receipt_legacy_for_tests(vault: &Vault, receipt_id: &str) -> Result<()> {
+    let key = attempt_pack_receipt_key(receipt_id);
+    vault.with_write_txn(|txn| {
+        let raw = vault
+            .store
+            .vault_meta
+            .get(txn, &key)?
+            .ok_or(Error::InvalidClaimBody(
+                "legacy fixture needs an attempt receipt",
+            ))?;
+        let mut receipt: ReceiptRecord = rmp_serde::from_slice(&raw)
+            .map_err(|_| Error::CorruptedIndex("attempt pack receipt"))?;
+        if receipt.fields.remove("model").is_none() {
+            return Err(Error::InvalidClaimBody(
+                "legacy fixture needs a stamped model",
+            ));
+        }
+        vault.store.vault_meta.put(
+            txn,
+            &key,
+            &rmp_serde::to_vec_named(&receipt)
+                .map_err(|_| Error::InvariantViolation("legacy fixture encode"))?,
+        )?;
+        Ok(())
+    })
 }
