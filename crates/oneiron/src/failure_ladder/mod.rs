@@ -12,14 +12,14 @@
 //! agent-definition/skill/prompt/environment mutation, the ARCH-0066 detector
 //! tiers, TASK persistence, and surface rendering.
 //!
-//! DECLARED DEFERRED (OF-418 open integration edge): the production failure
-//! call sites in `dreamer_runner`, `companion`, and `outbound` adopt
-//! [`FailureLadder::handle_attempt_failure`] only once OF-418 lands the typed
-//! detector evidence substrate. This lane ships and composition-tests the
-//! policy and its helpers; it deliberately adds no evidence-less caller.
+//! Agent-dispatch failures with producer-supplied typed detector evidence
+//! enter through `DreamerRunnerStore::fail_agent_dispatch_with_evidence`.
+//! Other queue kinds retain their own terminal doors: no error string can
+//! masquerade as a T1 detector verdict.
 
 mod blocked_reports;
 mod classify;
+mod custom_review;
 mod healer_case;
 mod ladder;
 mod lineage;
@@ -31,6 +31,9 @@ pub use self::blocked_reports::{BlockedReportRef, FailureIssueEntry, ingest_repo
 pub use self::classify::{
     DEFAULT_MAX_CONSECUTIVE_TRANSIENTS, DetectorTier, FailureClass, TypedFailureEvidence,
     TypedFailureVerdict, classify_failure,
+};
+pub use self::custom_review::{
+    AgentKind, CustomFailureGroup, FailureSignalClass, TierOneFailureCount,
 };
 pub(crate) use self::healer_case::require_in_txn as require_healer_case_in_txn;
 pub use self::ladder::{FailureLadder, failure_card_ref, failure_case_ref};
@@ -52,9 +55,7 @@ use crate::Vault;
 #[cfg(test)]
 use crate::agent_dispatch::{AgentDispatchTarget, AgentDispatcher, HealerSlotOutcome};
 #[cfg(test)]
-use crate::attempt_queue::{
-    AttemptId, AttemptQueue, AttemptRecord, FailAttempt, FailOutcome, RetryAttempt, RetryOutcome,
-};
+use crate::attempt_queue::{AttemptId, AttemptQueue, AttemptRecord, RetryAttempt, RetryOutcome};
 #[cfg(test)]
 use crate::entity_id::{EntityId, bytes_to_hex_lower};
 #[cfg(test)]

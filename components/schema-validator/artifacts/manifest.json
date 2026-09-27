@@ -1,0 +1,15 @@
+{
+  "schema_version": 1,
+  "target": "wasm32-unknown-unknown",
+  "rust_toolchain": "1.96",
+  "crate": "jsonschema =0.33.0 default-features=false",
+  "rustflags": "--cfg getrandom_backend=\"custom\"",
+  "sha256": "bd82dc89962e5dd043404ffb19206462ed91348caf2d45103e51929d3e0154a1",
+  "bytes": 2235582,
+  "sources": {
+    "Cargo.toml": "75c574093a315162154a24b1ec720f7c01a21cabc708e89dd61c93fdcb077dfe",
+    "Cargo.lock": "54dc5a85cc1bc25ab8be8ebe4e544c51a08dd8a43dcc99f2fb2a8f8d72336e2d",
+    "src/lib.rs": "ad27bbccf05b79b38c35a1b5e5861a24342c47d68713653523a57999c9a5782e",
+    "build.py": "f9b614a06e7949794db9cc280cf0591a974e6a16b4eba33d0ed15df9a93d3bc1"
+  }
+}

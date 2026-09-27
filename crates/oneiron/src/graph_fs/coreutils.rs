@@ -296,6 +296,7 @@ impl GraphFsResolver<'_, '_> {
         let mut last_emitted = cursor.map(TemporalCursor::encode);
         let mut last_scanned: Option<TemporalCursor> = None;
         let mut total = 0;
+        self.scoped_read.persist_grant_clock()?;
         let rtxn = self.scoped_read.vault().store.env.read_txn()?;
         let policy = self.scoped_read.policy_manifest_in(&rtxn)?;
         let query = crate::ports::TimelineQuery {
@@ -360,6 +361,7 @@ impl GraphFsResolver<'_, '_> {
         let mut last_emitted = cursor.map(TemporalCursor::encode);
         let mut last_scanned: Option<TemporalCursor> = None;
         let mut total = 0;
+        self.scoped_read.persist_grant_clock()?;
         let rtxn = self.scoped_read.vault().store.env.read_txn()?;
         let policy = self.scoped_read.policy_manifest_in(&rtxn)?;
         let query = crate::ports::TimelineQuery {
@@ -512,6 +514,7 @@ impl GraphFsResolver<'_, '_> {
     }
 
     fn coreutils_entity_visible(&self, id: &EntityId) -> Result<bool> {
+        self.scoped_read.persist_grant_clock()?;
         let rtxn = self.scoped_read.vault().store.env.read_txn()?;
         let policy = self.scoped_read.policy_manifest_in(&rtxn)?;
         self.coreutils_entity_visible_in(&rtxn, &policy, id)
@@ -560,38 +563,51 @@ impl GraphFsResolver<'_, '_> {
         signals: Vec<RetrievalSignal>,
         total_in_scope: usize,
     ) -> Result<GraphFsCommandOutput> {
-        let run_id = RetrievalRunId::from_bytes(self.scoped_read.vault().store.clock.ulid()?);
-        let elapsed_us = u64::try_from(started.elapsed().as_micros()).unwrap_or(u64::MAX);
-        let telemetry_reason = format!(
-            "graph_fs_coreutils:{}:{}:{}",
-            verb.stable_label(),
-            decision.stable_label(),
-            decision_reason
-        );
-        let record = RetrievalRunRecord::new(
-            run_id,
-            RetrievalAction::GraphFsCoreutils,
-            started_at,
-            elapsed_us,
-            signals,
-            Vec::new(),
-            total_in_scope,
-            0,
-            Some(telemetry_reason),
-        );
-        if let Err(error) = self.scoped_read.vault().store.record_retrieval_run(&record) {
-            tracing::warn!(
-                ?error,
-                command = verb.stable_label(),
-                "graph-fs coreutils telemetry failed"
+        let telemetry_run_id = if self
+            .scoped_read
+            .vault()
+            .store
+            .retrieval_telemetry_capture_enabled()
+        {
+            let run_id = RetrievalRunId::from_bytes(self.scoped_read.vault().store.clock.ulid()?);
+            let elapsed_us = u64::try_from(started.elapsed().as_micros()).unwrap_or(u64::MAX);
+            let telemetry_reason = format!(
+                "graph_fs_coreutils:{}:{}:{}",
+                verb.stable_label(),
+                decision.stable_label(),
+                decision_reason
             );
-        }
+            let record = RetrievalRunRecord::new(
+                run_id,
+                RetrievalAction::GraphFsCoreutils,
+                started_at,
+                elapsed_us,
+                signals,
+                Vec::new(),
+                total_in_scope,
+                0,
+                Some(telemetry_reason),
+            );
+            match self.scoped_read.vault().store.record_retrieval_run(&record) {
+                Ok(()) => Some(run_id),
+                Err(error) => {
+                    tracing::warn!(
+                        ?error,
+                        command = verb.stable_label(),
+                        "graph-fs coreutils telemetry failed"
+                    );
+                    None
+                }
+            }
+        } else {
+            None
+        };
         Ok(GraphFsCommandOutput {
             bytes,
             next_cursor,
             decision,
             decision_reason: decision_reason.to_owned(),
-            telemetry_run_id: run_id,
+            telemetry_run_id,
             search_receipt: None,
         })
     }

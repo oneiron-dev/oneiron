@@ -71,7 +71,7 @@ async fn context_board_memories_enforces_slots_and_carries_cursor() {
         .commit()
         .expect("seed context v4 rows");
     // Principal-scoped v1 context packs assemble under AbsenceClamp, so the
-    // ported caller is a known contact whose disclosure scope contains the
+    // ported caller is a known contact whose broad Scope clearance admits the
     // rows exercised by this memory-board contract.
     seed_counterparty_contact(
         &server,
@@ -79,7 +79,7 @@ async fn context_board_memories_enforces_slots_and_carries_cursor() {
         seeded_test_entity_id(0x1741_0005),
         "eiri-session-api@example.com",
     );
-    seed_disclosure_scope(&server, principal_id, vec![turn_a, turn_b, summary]);
+    seed_disclosure_scope(&server, principal_id, oneiron::federation::Scope::top());
     // Disclosure is not an access grant. This delegated reader gets only the
     // summary's declared relationship space, not arbitrary unscoped summaries.
     server
@@ -209,8 +209,8 @@ async fn context_board_asset_text_consumer_hydrates_asset_text_by_ref() {
     });
     let asset_text = seeded_test_entity_id(0x1482_0001);
     // ONE-1517: principal_ref tokens assemble under AbsenceClamp, so the
-    // consumer principal is a known contact whose disclosure scope
-    // allowlists the ASSET_TEXT entity — the intended scoped-read shape.
+    // consumer principal is a known contact with broad Scope clearance
+    // for the ASSET_TEXT record — the intended scoped-read shape.
     let principal_contact = seeded_test_entity_id(0x1482_0002);
     let principal_ref = principal_contact.to_hex();
     seed_counterparty_contact(
@@ -241,7 +241,11 @@ async fn context_board_asset_text_consumer_hydrates_asset_text_by_ref() {
         .text(&asset_text, &[("body", needle)])
         .commit()
         .expect("seed ASSET_TEXT");
-    seed_disclosure_scope(&server, principal_contact, vec![asset_text]);
+    seed_disclosure_scope(
+        &server,
+        principal_contact,
+        oneiron::federation::Scope::top(),
+    );
 
     let request = json!({
         "retrieval": { "query": needle, "limit": 3, "view": "full" },
@@ -304,35 +308,26 @@ async fn context_board_companion_resolves_warm_personal_relationship_without_pri
         auth_secret: Some("secret".to_owned()),
         ..Default::default()
     });
-    let private_note = "private warm companion note one1266";
+    let private_note = "private identity note one1266";
     let person_ref = seeded_test_entity_id(0x1266_0001);
     let persona_ref = seeded_test_entity_id(0x1266_0002);
-    let companion_id = seeded_test_entity_id(0x1266_0003);
     let turn_id = seeded_test_entity_id(0x1266_0004);
-    let actor_ref = seeded_test_entity_id(0x1266_0005);
     let principal_ref = seeded_test_entity_id(0x1266_0006);
     let grant_id = seeded_test_entity_id(0x1266_0007);
 
-    let record = oneiron::CompanionRecord::relationship(
-        oneiron::CompanionScope::personal(person_ref),
-        person_ref,
-        persona_ref,
-        oneiron::companion_value_from_json(&json!({ "note": private_note }))
-            .expect("companion value"),
-        oneiron::CompanionProvenance::new(
-            actor_ref,
-            oneiron::EdgeActorClass::Agent,
-            oneiron::ClaimSource::UserStated,
-            oneiron::ClaimApprovalStatus::Approved,
-            oneiron::companion_value_from_json(&json!({ "source": "test" }))
-                .expect("provenance value"),
-        ),
-        oneiron::federation::Sensitivity::Restricted,
-    );
-    server
-        .vault
-        .create_companion_record(&companion_id, &record, 10)
-        .expect("create companion record");
+    for id in [person_ref, persona_ref] {
+        server
+            .vault
+            .put_entity(
+                &id,
+                oneiron::registry::ENTITY_TYPE_PERSON,
+                oneiron::TimeRange { start: 9, end: 9 },
+                9,
+                &rmp_serde::to_vec_named(&json!({ "private_note": private_note }))
+                    .expect("encode PERSON identity"),
+            )
+            .expect("create PERSON identity");
+    }
     let turn_body = json!({ "txt": "warm companion route needle" });
     let turn_data = rmp_serde::to_vec_named(&turn_body).expect("encode turn body");
     server
@@ -401,10 +396,7 @@ async fn context_board_companion_resolves_warm_personal_relationship_without_pri
     assert_eq!(status, StatusCode::OK);
     let companion = &body["memories"]["companion"];
     assert_eq!(companion["scope"], Value::from("personal"));
-    assert_eq!(
-        companion["scope_source"],
-        Value::from("relationship_record")
-    );
+    assert_eq!(companion["scope_source"], Value::from("person_identity"));
     assert_eq!(companion["expression"], Value::from("warm"));
     assert_eq!(companion["person_ref"], Value::from(person_ref.to_hex()));
     assert_eq!(companion["persona_ref"], Value::from(persona_ref.to_hex()));
@@ -777,7 +769,7 @@ async fn context_board_feeds_explicit_subjects_to_the_l2_producer() {
         seeded_test_entity_id(0x236_0007),
         "l2@example.com",
     );
-    seed_disclosure_scope(&server, principal, vec![user_claim, persona_claim, turn]);
+    seed_disclosure_scope(&server, principal, oneiron::federation::Scope::top());
     let request = json!({
         "session":{"session_id":"l2-observed"},
         "retrieval": {"query":"l2route", "budget":{"max_field_chars":0,"max_item_tokens":0,"token_budget":0}},
@@ -890,7 +882,7 @@ async fn pinned_memories_bypass_query_scope_but_not_audience_disclosure() {
     let row = pack.results.iter().find(|row| row.id == pinned).unwrap();
     let reference = format!("{}:{:02x}", row.short_id, row.content_hash);
     seed_counterparty_contact(&server, principal, contact, "pin-reader@example.com");
-    seed_disclosure_scope(&server, principal, Vec::new());
+    seed_disclosure_scope(&server, principal, oneiron::federation::Scope::default());
     let request = json!({
         "retrieval": {"query":"unrelated empty query", "limit":1},
         "memories": {"shared_total":0, "pinned_refs":[reference]},
@@ -915,7 +907,7 @@ async fn pinned_memories_bypass_query_scope_but_not_audience_disclosure() {
             .unwrap()
             .contains(&reference)
     );
-    seed_disclosure_scope(&server, principal, vec![pinned]);
+    seed_disclosure_scope(&server, principal, oneiron::federation::Scope::top());
     let (status, allowed) = route_json(server, read()).await;
     assert_eq!(status, StatusCode::OK, "{allowed}");
     assert!(allowed["pack"]["results"].as_array().unwrap().is_empty());

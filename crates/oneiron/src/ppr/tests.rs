@@ -179,7 +179,7 @@ fn legacy_dep_key(
 
 /// Cache identity hashes `sorted seeds ‖ depth ‖ teleport_alpha ‖ ppr_vad_alpha ‖
 /// FORMULA_VERSION ‖ weighting byte` with the LITERAL pinned values:
-/// version 6 and mode bytes Uniform = 0 / Specificity = 1 (hand-built
+/// version 7 and mode bytes Uniform = 0 / Specificity = 1 (hand-built
 /// here, NOT read from the constants, so a wrong bump fails). The two
 /// weighting modes must never collide — `search_ppr` rows are not
 /// servable to `expand_ppr` and vice versa.
@@ -198,7 +198,7 @@ fn hash_seeds_uses_full_xxh3_digest_and_is_order_insensitive() {
     bytes.extend_from_slice(&depth.to_le_bytes());
     bytes.extend_from_slice(&alpha.to_le_bytes());
     bytes.extend_from_slice(&0.0_f32.to_le_bytes());
-    bytes.extend_from_slice(&6_u32.to_le_bytes());
+    bytes.extend_from_slice(&7_u32.to_le_bytes());
 
     let mut uniform_bytes = bytes.clone();
     uniform_bytes.push(0_u8);
@@ -209,8 +209,8 @@ fn hash_seeds_uses_full_xxh3_digest_and_is_order_insensitive() {
     let expected_specificity = xxh3_128(&specificity_bytes).to_le_bytes();
 
     assert_eq!(
-        PPR_FORMULA_VERSION, 6,
-        "residual Forward-Push propagation must pin version 6"
+        PPR_FORMULA_VERSION, 7,
+        "project hub traversal must pin formula version 7"
     );
     assert_eq!(
         hash_seeds(&[a, b], depth, alpha, 0.0, SeedWeighting::Uniform),
@@ -953,7 +953,7 @@ fn ppr_cache_invalidated_on_entity_delete() -> Result<()> {
     assert_eq!(cache_before[CACHE_STALE_OFFSET], 0);
 
     // Delete entity b — removes a->b and b->c edges.
-    vault.delete_entity(&b)?;
+    vault.delete_entity_with_options(&b, crate::deletion::DeleteEntityOptions { purge: true })?;
 
     // Cache for seeds [a] must now be stale because a's edge to b was removed.
     let cache_after = cache_row(&vault, &[a], 3, 0.15)?;
@@ -1062,7 +1062,10 @@ fn delete_entity_increments_graph_version_once_when_edges_removed() -> Result<()
     let old_scores = ppr_query(&vault.store, &vault.config, &[a], 3, 0.15)?;
     assert!(score_for(&old_scores, b) > 0.0);
     assert!(score_for(&old_scores, c) > 0.0);
-    assert!(vault.delete_entity(&b)?);
+    assert!(
+        vault
+            .delete_entity_with_options(&b, crate::deletion::DeleteEntityOptions { purge: true })?
+    );
 
     // Restore an unflagged pre-delete row without dependency rows so that
     // the graph-version gate, not stale-byte invalidation, must reject it.
@@ -1189,7 +1192,10 @@ fn delete_isolated_entity_increments_graph_version_once() -> Result<()> {
         match path {
             Path::Direct => {
                 assert!(
-                    vault.delete_entity(&a)?,
+                    vault.delete_entity_with_options(
+                        &a,
+                        crate::deletion::DeleteEntityOptions { purge: true }
+                    )?,
                     "case {case_name}: first direct delete should report found",
                 );
             }
@@ -1217,7 +1223,10 @@ fn delete_isolated_entity_increments_graph_version_once() -> Result<()> {
         match path {
             Path::Direct => {
                 assert!(
-                    !vault.delete_entity(&a)?,
+                    !vault.delete_entity_with_options(
+                        &a,
+                        crate::deletion::DeleteEntityOptions { purge: true }
+                    )?,
                     "case {case_name}: second direct delete should report missing",
                 );
             }
@@ -1991,6 +2000,45 @@ fn pre_bump_formula_v2_rows_are_never_served() -> Result<()> {
         vault.store.ppr_cache.get(&rtxn, &current_hash)?.is_some(),
         "live current-version row must survive cleanup"
     );
+    Ok(())
+}
+
+/// A persisted v6 score predates hub damping; the v7 query cannot reuse it
+/// even when neither the graph version nor the TTL changed.
+#[test]
+fn project_hub_rejects_cached_pre_damping_formula() -> Result<()> {
+    let dir = tempdir()?;
+    let vault = Vault::open(dir.path(), embedding_test_config())?;
+    let project = vault.root_project()?;
+    let asset = entity(143);
+    vault.put_entity(
+        &asset,
+        crate::registry::ENTITY_TYPE_ASSET,
+        TimeRange { start: 1, end: 1 },
+        1,
+        b"document",
+    )?;
+    vault.put_project_member(asset, project)?;
+    let mut old_key = Vec::new();
+    old_key.extend_from_slice(project.as_bytes());
+    old_key.extend_from_slice(&1_u32.to_le_bytes());
+    old_key.extend_from_slice(&0.15_f32.to_le_bytes());
+    old_key.extend_from_slice(&0.0_f32.to_le_bytes());
+    old_key.extend_from_slice(&6_u32.to_le_bytes());
+    old_key.push(SeedWeighting::Uniform.cache_key_byte());
+    let old_hash = xxh3_128(&old_key).to_le_bytes();
+    let value = encode_cache_value(
+        crate::unix_seconds_now(),
+        graph_version(&vault)?,
+        0,
+        &sentinel_scores(),
+    );
+    let mut txn = vault.store.env.write_txn()?;
+    vault.store.ppr_cache.put(&mut txn, &old_hash, &value)?;
+    txn.commit()?;
+    let scores = ppr_query(&vault.store, &vault.config, &[project], 1, 0.15)?;
+    assert!(!scores.iter().any(|row| row.id == sentinel_entity()));
+    assert!((score_for(&scores, asset) - 0.0425).abs() < 1e-6);
     Ok(())
 }
 
@@ -4625,7 +4673,9 @@ fn retrieval_quality_ppr_empty_cached_scores_still_report_hit() -> Result<()> {
 fn retrieval_quality_cached_empty_ppr_yields_full_no_data_context() -> Result<()> {
     use crate::retrieval_quality::{ConfidenceAdjustment, RetrievalQuality};
 
-    let (_dir, vault) = open_test_vault_with(embedding_test_config());
+    let mut config = embedding_test_config();
+    config.retrieval_telemetry_capture = true;
+    let (_dir, vault) = open_test_vault_with(config);
     let seed = entity(0x76);
     // A servable zero-score cache row exercises completion independently of
     // candidate presence. Vault open still seeds AGENT_DEF records at time 0;
@@ -4851,5 +4901,32 @@ fn cache_scores_refuse_negative_mass_at_both_codec_doors() -> Result<()> {
             score.to_bits()
         );
     }
+    Ok(())
+}
+
+#[test]
+fn project_hub_membership_lambda_damps_both_directions() -> Result<()> {
+    let dir = tempdir()?;
+    let vault = Vault::open(dir.path(), embedding_test_config())?;
+    let project = vault.root_project()?;
+    let a = entity(140);
+    let b = entity(141);
+    for asset in [a, b] {
+        vault.put_entity(
+            &asset,
+            crate::registry::ENTITY_TYPE_ASSET,
+            TimeRange { start: 1, end: 1 },
+            1,
+            b"document",
+        )?;
+        vault.put_project_member(asset, project)?;
+    }
+    let txn = vault.store.env.read_txn()?;
+    let inbound = ppr_compute(&vault.store, &txn, &[project], 1, 0.15)?;
+    // Each member gets half the 0.05 budget, not half of ordinary λ=1.
+    assert!((score_for(&inbound, a) - 0.02125).abs() < 1e-6);
+    assert!((score_for(&inbound, b) - 0.02125).abs() < 1e-6);
+    let outbound = ppr_compute(&vault.store, &txn, &[a], 1, 0.15)?;
+    assert!((score_for(&outbound, project) - 0.0425).abs() < 1e-6);
     Ok(())
 }

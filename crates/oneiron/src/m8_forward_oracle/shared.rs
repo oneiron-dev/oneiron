@@ -163,5 +163,7 @@ pub(super) fn oracle_prepared_effect(
             prepared: Box::new(prepared),
         },
         verified_actor: None,
+        dedupe_key: None,
+        suppression_receipt: None,
     }
 }

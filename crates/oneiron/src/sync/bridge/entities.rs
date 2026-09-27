@@ -5,8 +5,7 @@ use std::collections::HashSet;
 use loro::{LoroDoc, LoroMap};
 
 use super::companion_identity::{
-    CompanionCrdtScrub, companion_register_blob_is_local_only, companion_register_sync_admitted,
-    ensure_companion_register_kind_for_entity_delta,
+    CompanionCrdtScrub, companion_register_blob_is_local_only,
     ingest_replicated_identity_topology_event_in_txn, scrub_local_only_companions_from_crdt,
 };
 use super::tombstones::quarantine_and_neutralize_protected_tombstone_in_txn;
@@ -50,8 +49,7 @@ pub(super) fn materialize_entities_from_delta(
     // the full list to flag retry markers.
     let mut applied_ops: Vec<(EntityId, Vec<u8>)> = Vec::new();
     let mut pending_companion_scrubs = Vec::new();
-    let result = ensure_companion_register_kind_for_entity_delta(vault, delta).and_then(|()| {
-        vault.with_write_txn(|wtxn| {
+    let result = vault.with_write_txn(|wtxn| {
         for (key, new_val) in &delta.updated {
             match new_val {
                 Some(loro::ValueOrContainer::Value(loro::LoroValue::Binary(blob))) => {
@@ -175,6 +173,12 @@ pub(super) fn materialize_entities_from_delta(
                         ) {
                             Ok(applied) => {
                                 savepoint.commit()?;
+                                // The savepoint has no postcommit owner. Carry
+                                // its claim change to the outer transaction's
+                                // watch, which fires only after THAT commit.
+                                if applied && header.entity_type == crate::registry::ENTITY_TYPE_CLAIM {
+                                    crate::batch::queue_proactivity_change(vault, wtxn);
+                                }
                                 Ok(applied)
                             }
                             Err(error) => Err(error),
@@ -219,6 +223,10 @@ pub(super) fn materialize_entities_from_delta(
                 }
             }
         }
+        let facts: Vec<_> = applied_ops.iter().map(|(id, _)| {
+            crate::conversation_dag::topology::Dependency::Entity(*id)
+        }).collect();
+        super::parent_retry::wake_in_txn(vault, wtxn, &facts)?;
         #[cfg(test)]
         if take_injected_batch_commit_failure() {
             return Err(Error::Io(std::io::Error::other(
@@ -226,7 +234,6 @@ pub(super) fn materialize_entities_from_delta(
             )));
         }
         Ok(())
-        })
     });
 
     if result.is_ok()
@@ -237,6 +244,45 @@ pub(super) fn materialize_entities_from_delta(
             window = %window_key,
             "observer-b: local-only companion CRDT scrub failed after entity batch commit"
         );
+    }
+
+    // An earlier ChildOf or SpawnedBy can have arrived before this body's
+    // endpoint and been deferred by the edge observer. Re-present only the
+    // now-reachable structural keys through that SAME edge gauntlet; no raw
+    // LMDB write or peer-controlled edge bypasses its validators. A pending
+    // Parent then wakes from the accepted membership/anchor fact.
+    if result.is_ok() && !applied_ops.is_empty() {
+        let arrived: HashSet<_> = applied_ops.iter().map(|(id, _)| *id).collect();
+        let edges = doc.get_map("edges");
+        let mut retry = loro::event::MapDelta {
+            updated: Default::default(),
+        };
+        edges.for_each(|key, value| {
+            if let Some((src, kind, tgt)) = super::parse_edge_key(key)
+                && matches!(
+                    kind,
+                    crate::edge::EdgeKind::ChildOf | crate::edge::EdgeKind::SpawnedBy
+                )
+                && (arrived.contains(&src) || arrived.contains(&tgt))
+                && matches!(
+                    value,
+                    loro::ValueOrContainer::Value(loro::LoroValue::Binary(_))
+                )
+            {
+                retry
+                    .updated
+                    .insert(std::borrow::Cow::Owned(key.to_string()), Some(value));
+            }
+        });
+        if !retry.updated.is_empty() {
+            super::edges::materialize_edges_from_delta(
+                doc,
+                &retry,
+                vault,
+                window_key,
+                lease_vault_id,
+            );
+        }
     }
 
     let committed = result.is_ok();
@@ -366,6 +412,16 @@ pub(super) fn materialize_entity_blob_in_txn(
     {
         return Ok(false);
     }
+    if header.entity_type == crate::registry::ENTITY_TYPE_RECEIPT_RECORD {
+        return crate::sync::receipt_ingest::ingest_in_txn(
+            vault,
+            wtxn,
+            tombstones_map,
+            window_key,
+            &id,
+            blob,
+        );
+    }
     let delete_protected = crate::registry::is_delete_protected_engine_record(header.entity_type);
 
     // Tombstone gate — fires BEFORE the put, never heals after (ARCH-0023b:
@@ -405,10 +461,7 @@ pub(super) fn materialize_entity_blob_in_txn(
         &[]
     };
 
-    if header.entity_type == crate::registry::ENTITY_TYPE_FACET
-        && crate::companion::is_identity_facet_body(data)
-        && !companion_register_sync_admitted(data)?
-    {
+    if crate::companion::is_retired_identity_carrier(header.entity_type, data) {
         tracing::warn!(
             entity = %key,
             "observer-b: refused local-only companion register materialization"
