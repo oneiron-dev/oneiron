@@ -14,8 +14,10 @@ use crate::attempt_queue::{AttemptId, AttemptQueue, AttemptRecord};
 use crate::dreamer_runner::{DREAMER_RUNNER_ATTEMPT_KIND, decode_dreamer_attempt_payload};
 use crate::error::{Error, Result};
 use crate::registry::ENTITY_TYPE_AGENT_DEF;
+use crate::side_table::{self, CodecError, Raw, RawValue, SideTable};
 
-const PREFIX: &[u8] = b"custom-agent:failure:v1:";
+const FAILURE: SideTable<[u8; 16], FailureSignalClass, Raw> =
+    SideTable::new(&side_table::CUSTOM_AGENT_FAILURE);
 const VERSION: u8 = 1;
 
 /// Version-one agent observability taxonomy; not the failure ladder's routing class.
@@ -58,8 +60,34 @@ pub struct TierOneFailureCount {
     pub count: u64,
 }
 
-fn key(id: AttemptId) -> Vec<u8> {
-    [PREFIX, id.as_bytes()].concat()
+impl RawValue for FailureSignalClass {
+    fn to_raw(&self) -> std::result::Result<Vec<u8>, CodecError> {
+        Ok(vec![VERSION, *self as u8])
+    }
+
+    fn from_raw(bytes: &[u8]) -> std::result::Result<Self, CodecError> {
+        match bytes {
+            [VERSION, 0] => Ok(Self::RefusalOverreach),
+            [VERSION, 1] => Ok(Self::TaskFailure),
+            [VERSION, 2] => Ok(Self::UserFrustration),
+            [VERSION, 3] => Ok(Self::MemoryMiss),
+            [VERSION, 4] => Ok(Self::MemoryIntrusion),
+            [VERSION, 5] => Ok(Self::PersonaBreak),
+            [VERSION, 6] => Ok(Self::LatencyAbandon),
+            [VERSION, 7] => Ok(Self::SilentDegradation),
+            [VERSION, 8] => Ok(Self::Other),
+            _ => Err(Error::CorruptedIndex("custom-agent failure").into()),
+        }
+    }
+}
+
+fn row_error(error: Error) -> Error {
+    match error {
+        Error::Store(crate::error::StoreError::SideTableRow { .. }) => {
+            Error::CorruptedIndex("custom-agent failure")
+        }
+        other => other,
+    }
 }
 
 fn invalid() -> Error {
@@ -117,18 +145,16 @@ impl Vault {
             {
                 return Err(invalid());
             }
-            let key = key(attempt_id);
-            if let Some(existing) = self.store.vault_meta.get(txn, &key)? {
-                if existing.as_ref() == [VERSION, class as u8] {
+            let key = *attempt_id.as_bytes();
+            if let Some(existing) = FAILURE.get_bytes(&self.store, txn, &key)? {
+                if existing.as_slice() == [VERSION, class as u8] {
                     return Ok(());
                 }
                 return Err(Error::InvalidConfig(
                     "conflicting custom-agent failure class".into(),
                 ));
             }
-            self.store
-                .vault_meta
-                .put(txn, &key, &[VERSION, class as u8])?;
+            FAILURE.put(&self.store, txn, &key, &class)?;
             Ok(())
         })
     }
@@ -142,25 +168,10 @@ impl Vault {
         let txn = self.store.env.read_txn()?;
         let queue = AttemptQueue::new(self);
         let mut groups: BTreeMap<FailureSignalClass, Vec<AttemptId>> = BTreeMap::new();
-        for item in self.store.vault_meta.prefix_iter(&txn, PREFIX)? {
-            let (key, bytes) = item?;
-            let id = AttemptId::from_bytes(
-                key.get(PREFIX.len()..)
-                    .ok_or(Error::CorruptedIndex("custom-agent failure"))?,
-            )
-            .map_err(|_| Error::CorruptedIndex("custom-agent failure"))?;
-            let class = match bytes.as_ref() {
-                [VERSION, 0] => FailureSignalClass::RefusalOverreach,
-                [VERSION, 1] => FailureSignalClass::TaskFailure,
-                [VERSION, 2] => FailureSignalClass::UserFrustration,
-                [VERSION, 3] => FailureSignalClass::MemoryMiss,
-                [VERSION, 4] => FailureSignalClass::MemoryIntrusion,
-                [VERSION, 5] => FailureSignalClass::PersonaBreak,
-                [VERSION, 6] => FailureSignalClass::LatencyAbandon,
-                [VERSION, 7] => FailureSignalClass::SilentDegradation,
-                [VERSION, 8] => FailureSignalClass::Other,
-                _ => return Err(Error::CorruptedIndex("custom-agent failure")),
-            };
+        for item in FAILURE.iter_from(&self.store, &txn, &[])? {
+            let (key, class) = item.map_err(row_error)?;
+            let id = AttemptId::from_bytes(&key)
+                .map_err(|_| Error::CorruptedIndex("custom-agent failure"))?;
             let record = queue
                 .get_in_txn(&txn, id)?
                 .ok_or(Error::CorruptedIndex("custom-agent failure"))?;

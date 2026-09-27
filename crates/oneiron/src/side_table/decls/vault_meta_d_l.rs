@@ -110,6 +110,10 @@ side_tables! {
     /// Private binding of a Budget/Consent trap anchor claim to its owning step. Key: id16(anchor
     /// claim).
     DREAMER_TRAP_BINDING: VaultMeta b"dreamer:trap_binding:v1:" Raw;
+    /// Coalesced recipe input for one wake recipe. Key: u8(recipe).
+    DREAMER_WAKE_RECIPE_INPUT: VaultMeta b"dreamer:wake-policy:recipe-input:v1:" LegacyJson;
+    /// Wake cursor and pending state. Key: ().
+    DREAMER_WAKE_STATE: VaultMeta b"dreamer:wake-policy:state:v1" LegacyJson;
     /// Per-scope (micro/meso/macro) consolidation watermark: last learned_at/turn_id progress. Key:
     /// u8.
     DREAMER_WATERMARK: VaultMeta b"dreamer:watermark:v1:" Raw;
@@ -300,6 +304,8 @@ side_tables! {
     PENDING_GATE_CONSENT: VaultMeta b"gate_pending:v0:" Raw;
     /// Durable journal record of one prepared/applied/failed git ref, stage, or worktree effect. Key:
     /// hex64(repo identity) ":" hex64(record key).
+    /// Owner-confirmed voice disclosure grant offer. Key: hex64 nonce.
+    GENUI_VOICE_GRANT_OFFER: VaultMeta b"genui.voice_grant_offer.v1:" LegacyJson;
     GIT_WIRE_RECORD: VaultMeta b"git_wire:record:v2:" Named;
     /// Node-local Gmail page cursor keyed by lower-case hex identity id. Key: hex32.
     GMAIL_MAILBOX_CURSOR: VaultMeta b"gmail:mailbox_cursor:v1:" LegacyJson;

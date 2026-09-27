@@ -371,4 +371,6 @@ side_tables! {
     /// Lookup index from (identity ref, normalized counterparty) to the contact entity id. Key: id16
     /// + hash32(sha256).
     COUNTERPARTY_CONTACT_INDEX: VaultMeta b"counterparty_contact.index.v1:" Raw;
+    /// Terminal custom-agent dispatch failure classification. Key: id16(attempt).
+    CUSTOM_AGENT_FAILURE: VaultMeta b"custom-agent:failure:v1:" Raw;
 }

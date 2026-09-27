@@ -91,6 +91,8 @@ side_tables! {
     DREAMER_PROACTIVITY_CADENCE: VaultMeta b"settings:dreamer:proactivity:cadence:v1" LegacyJson;
     /// Owner on/off dial for proactive Dreamer plugin suggestions. Key: ().
     PLUGIN_SUGGESTIONS_ENABLED: VaultMeta b"settings:dreamer:v1:plugin_suggestions_enabled" Raw;
+    /// Owner-controlled wake thresholds. Key: ().
+    DREAMER_WAKE_POLICY: VaultMeta b"settings:dreamer:wake-policy:v1" LegacyJson;
     /// Dial: distinct-receipt count K needed before the substitution miner acts on a cluster. Key:
     /// ().
     EDIT_DISTANCE_MINER_K: VaultMeta b"settings:edit_distance:v1:miner_k" Raw;
