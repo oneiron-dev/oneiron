@@ -259,9 +259,19 @@ impl Vault {
         channel: &str,
         address_or_handle: &str,
     ) -> Result<Option<(EntityId, ChannelIdentity)>> {
-        let key = AssignmentKey::of(channel, address_or_handle);
         let rtxn = self.store.env.read_txn()?;
-        super::assignment::by_assignment(&self.store, &rtxn, &key)
+        self.channel_identity_by_assignment_in_txn(&rtxn, channel, address_or_handle)
+    }
+
+    /// One-snapshot assignment lookup, backed by the two-slot index.
+    pub(crate) fn channel_identity_by_assignment_in_txn(
+        &self,
+        rtxn: &heed::RoTxn<'_>,
+        channel: &str,
+        address_or_handle: &str,
+    ) -> Result<Option<(EntityId, ChannelIdentity)>> {
+        let key = AssignmentKey::of(channel, address_or_handle);
+        super::assignment::by_assignment(&self.store, rtxn, &key)
     }
 
     /// Rebuilds the assignment projection explicitly after index loss.

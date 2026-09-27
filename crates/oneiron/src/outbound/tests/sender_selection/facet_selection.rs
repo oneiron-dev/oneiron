@@ -163,3 +163,49 @@ fn automatic_outbound_selection_matches_actor_not_facet_and_preserves_safety() -
     );
     Ok(())
 }
+
+#[test]
+fn provider_email_selection_reuses_email_sender_but_not_another_provider_key() -> crate::Result<()>
+{
+    use super::dispatch_pipeline::resolve_channel_identity_ref_for_connector;
+    use crate::channel_identity::{ChannelIdentityBinding, ChannelIdentityState, SelfHeldShape};
+    use crate::connector_key::ConnectorKeyRecord;
+
+    for channel in ["email_resend", "email_ses", "email_postmark"] {
+        let (_tmp, vault) = temp_vault();
+        let actor = entity(0x75);
+        vault.put_entity(
+            &actor,
+            crate::registry::ENTITY_TYPE_PERSON,
+            TimeRange { start: 1, end: 1 },
+            1,
+            b"sender",
+        )?;
+        vault.register_connector_key(
+            &entity(0x76),
+            ConnectorKeyRecord::active(channel, Some(actor), Vec::new(), 10),
+        )?;
+        let sender = entity(0x77);
+        let identity = crate::test_util::self_held_identity_in_state(
+            "email",
+            "sender@example.com",
+            SelfHeldShape::DedicatedAddress,
+            ChannelIdentityBinding::actor(actor),
+            ChannelIdentityState::Active,
+            10,
+        );
+        vault.create_channel_identity(&sender, &identity)?;
+        let txn = vault.store.env.read_txn()?;
+        assert_eq!(
+            resolve_channel_identity_ref_for_connector(&vault.store, &txn, channel, Some(&actor))?,
+            Some(sender),
+            "{channel} selects the email identity"
+        );
+        assert_eq!(
+            resolve_channel_identity_ref_for_connector(&vault.store, &txn, "email", Some(&actor))?,
+            None,
+            "{channel} cannot grant generic email authority"
+        );
+    }
+    Ok(())
+}

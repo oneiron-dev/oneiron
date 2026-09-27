@@ -217,36 +217,6 @@ impl ChannelIdentity {
         Ok(identity)
     }
 
-    /// Rebuilds a row from stored parts WITHOUT the bounds checks. TEST fixtures
-    /// only, and gated to exactly them.
-    ///
-    /// Some laws are about rows no lawful road produces: an export filter must
-    /// refuse a body whose vault binding is zero, and a delegated row must never
-    /// carry companion content. Before R1 a test assembled those by writing
-    /// fields; now the only other door validates, so the fixture needs its own
-    /// — a `#[cfg(test)]` door that says what it skips, rather than a production
-    /// constructor loose enough for a test to abuse.
-    #[cfg(test)]
-    pub(crate) fn from_parts_unchecked(
-        auth_mode: ChannelAuthMode,
-        channel: String,
-        address_or_handle: String,
-        binding: ChannelIdentityBinding,
-        custody: Custody,
-        state_changed_at: u64,
-    ) -> Self {
-        Self {
-            auth_mode,
-            channel,
-            address_or_handle,
-            binding,
-            custody,
-            state_changed_at,
-            reputation_ref: None,
-            manifest_ref: None,
-        }
-    }
-
     /// The channel key, normalized at construction.
     #[must_use]
     pub fn channel(&self) -> &str {
@@ -404,31 +374,7 @@ impl ChannelIdentity {
         self.custody.inbound()
     }
 
-    /// Shared-vault content stays on a live sending identity bound to that exact
-    /// vault. A matching sensitivity ceiling alone never supplies this binding.
-    pub(crate) fn permits_companion_export_scope(
-        &self,
-        scope: &crate::companion::CompanionScope,
-    ) -> bool {
-        if !self.may_send() || self.validate().is_err() {
-            return false;
-        }
-        self.binding.permits_companion_scope(scope)
-    }
-
-    /// Validates what is still derivable-apart after R1: the two identity
-    /// strings, the binding, and the grant's own bounds.
-    ///
-    /// Everything CID-1's `validate()` and `validate_custody()` re-derived — the
-    /// shape/grant tie, the pending lane, the quarantine window, the two states
-    /// a delegated row has no business being in — is carried by [`Custody`] and
-    /// has no failing inhabitant left to check.
-    ///
-    /// # Errors
-    ///
-    /// [`RecordError::InvalidChannelIdentityBody`](crate::error::RecordError::InvalidChannelIdentityBody)
-    /// for a blank or over-long channel or address, a zero vault binding, a
-    /// malformed grant, or a delegated row whose auth mode is not OAuth.
+    /// Validates what remains after custody and lifecycle are represented as values.
     pub fn validate(&self) -> Result<()> {
         if let Some(required) = self.custody.required_auth_mode()
             && self.auth_mode != required
