@@ -514,6 +514,7 @@ fn run_graph_expansion(
     acc.mark(SIGNAL_PPR);
     acc.attempt(RetrievalSignal::Ppr);
     let vault = scoped.vault();
+    scoped.persist_grant_clock()?;
     let rtxn = vault.store.env.read_txn()?;
     // Graph candidates must inherit the same retrieval floor as direct hits;
     // actor readability alone does not enforce entity-type and numeric limits.

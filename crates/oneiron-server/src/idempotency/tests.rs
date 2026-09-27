@@ -342,10 +342,13 @@ async fn same_key_and_body_are_isolated_by_principal() {
     scope.sensitivity =
         oneiron::federation::SensitivityCeiling::AtMost(oneiron::federation::Sensitivity::Public);
     narrow
-        .attenuate(oneiron::authority::SlipCaveat {
-            scope: Some(scope),
-            ..Default::default()
-        })
+        .attenuate(
+            oneiron::authority::SlipCaveat {
+                scope: Some(scope),
+                ..Default::default()
+            },
+            &read_key,
+        )
         .unwrap();
     let third = http_post_bound(
         &server,

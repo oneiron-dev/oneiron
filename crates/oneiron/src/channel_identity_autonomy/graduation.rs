@@ -179,10 +179,16 @@ impl Vault {
             PREDICATE_GRADUATION_EVIDENCE,
             &address("scope", &scope_value(scope)?)?.to_hex(),
         );
+        let recorded_now = self.store.authorization_now()?;
         let txn = self.store.env.read_txn()?;
-        let now = now.min(self.store.clock.now_recorded_at());
-        let mode =
-            self.autonomy_mode_in_txn(&txn, scope.identity_ref, scope.relationship_context, now)?;
+        let now = now.min(recorded_now);
+        let mode = self.autonomy_mode_in_txn(
+            &txn,
+            scope.identity_ref,
+            scope.relationship_context,
+            now,
+            recorded_now,
+        )?;
         if !matches!(
             mode.rung,
             ChannelIdentityAutonomyRung::DraftOnly | ChannelIdentityAutonomyRung::SendWithApproval
@@ -191,7 +197,7 @@ impl Vault {
         {
             return Ok(None);
         }
-        let state = self.autonomy_state(&txn, mode, now)?;
+        let state = self.autonomy_state(&txn, mode, now, recorded_now)?;
         let proposed_envelope = state.action_envelope.ok_or_else(invalid_autonomy)?;
         if proposed_envelope.counterparty_class != scope.counterparty_class {
             return Ok(None);
