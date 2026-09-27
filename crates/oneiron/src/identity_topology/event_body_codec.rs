@@ -25,9 +25,9 @@ use super::wire_keys::{
     BODY_KEY_MAP, BODY_KEY_OUTCOME, BODY_KEY_PAIR_A, BODY_KEY_PAIR_B, BODY_KEY_PLAN,
     BODY_KEY_PROPOSAL, BODY_KEY_SCOPE_ACTOR, BODY_KEY_SCOPE_OP_KIND, BODY_KEY_SCOPE_TARGET_CLASS,
     BODY_KEY_SOURCES, BODY_KEY_SURVIVOR, BODY_KEY_TARGET, EVENT_KIND_ASSERT_DISTINCT,
-    EVENT_KIND_FACET, EVENT_KIND_MERGE, EVENT_KIND_PROPOSAL_RESOLUTION, EVENT_KIND_SPLIT,
-    EVENT_KIND_UNDO, EVIDENCE_KEY_RATIONALE, EVIDENCE_KEY_REFS,
-    IDENTITY_TOPOLOGY_REPLICATED_SEQ_LIMIT, PLAN_READ_THROUGH,
+    EVENT_KIND_FACET, EVENT_KIND_MERGE, EVENT_KIND_PROPOSAL_CANCELLATION,
+    EVENT_KIND_PROPOSAL_RESOLUTION, EVENT_KIND_SPLIT, EVENT_KIND_UNDO, EVIDENCE_KEY_RATIONALE,
+    EVIDENCE_KEY_REFS, IDENTITY_TOPOLOGY_REPLICATED_SEQ_LIMIT, PLAN_READ_THROUGH,
 };
 use super::{
     IDENTITY_TOPOLOGY_REPLICATED_SEQ_CEILING, MAX_IDENTITY_TOPOLOGY_EVENT_BODY_BYTES,
@@ -85,6 +85,13 @@ pub(super) fn encode_action_entries(
         }
         StoredIdentityOpAction::Undo { target } => {
             entries.push((Value::from(BODY_KEY_TARGET), id_value(target)));
+        }
+        StoredIdentityOpAction::ProposalCancellation {
+            proposal,
+            participant,
+        } => {
+            entries.push((Value::from(BODY_KEY_PROPOSAL), id_value(proposal)));
+            entries.push((Value::from(BODY_KEY_ENTITY), id_value(participant)));
         }
         StoredIdentityOpAction::ProposalResolution {
             proposal,
@@ -230,6 +237,14 @@ pub(super) fn decode_action(kind: &str, map: &[(Value, Value)]) -> Result<Stored
         EVENT_KIND_UNDO => Ok(StoredIdentityOpAction::Undo {
             target: decode_id_field(map, BODY_KEY_TARGET, "identity topology event target")?,
         }),
+        EVENT_KIND_PROPOSAL_CANCELLATION => Ok(StoredIdentityOpAction::ProposalCancellation {
+            proposal: decode_id_field(map, BODY_KEY_PROPOSAL, "proposal cancellation proposal")?,
+            participant: decode_id_field(
+                map,
+                BODY_KEY_ENTITY,
+                "proposal cancellation participant",
+            )?,
+        }),
         EVENT_KIND_PROPOSAL_RESOLUTION => {
             const RESOLUTION_CONTEXT: &str = "identity topology proposal resolution";
             let outcome = ProposalOutcome::parse(decode_str_field(
@@ -349,6 +364,18 @@ fn validate_identity_topology_event_stateless(record: &StoredIdentityOpEvent) ->
     if record.approval == ClaimApprovalStatus::Rejected {
         return Err(Error::Sync(SyncError::InvalidIdentityTopologyEventBody(
             "rejected identity topology decisions are not stored",
+        )));
+    }
+    if let StoredIdentityOpAction::ProposalCancellation {
+        proposal,
+        participant,
+    } = &record.action
+        && (proposal == participant
+            || record.approval != ClaimApprovalStatus::Auto
+            || record.actor.is_some())
+    {
+        return Err(Error::Sync(SyncError::InvalidIdentityTopologyEventBody(
+            "proposal cancellation requires automatic consent and a distinct participant",
         )));
     }
     validate_resolution_scope_stateless(record)?;

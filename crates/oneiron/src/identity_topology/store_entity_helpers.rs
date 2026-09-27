@@ -16,6 +16,126 @@ use super::op_vocabulary::IdentityTopologyOp;
 use super::stored_event::{StoredIdentityOpAction, StoredIdentityOpEvent};
 use super::transition_table::IdentityTopologyRejection;
 
+const VALIDATED_EVENT_PREFIX: &[u8] = b"it:validated:";
+
+fn validated_event_key(id: &EntityId) -> Vec<u8> {
+    let mut key = Vec::with_capacity(VALIDATED_EVENT_PREFIX.len() + 16);
+    key.extend_from_slice(VALIDATED_EVENT_PREFIX);
+    key.extend_from_slice(id.as_bytes());
+    key
+}
+
+pub(super) fn identity_event_validated_in_txn(
+    store: &Store,
+    rtxn: &heed::RoTxn<'_>,
+    id: &EntityId,
+) -> Result<bool> {
+    Ok(store
+        .vault_meta
+        .get(rtxn, &validated_event_key(id))?
+        .is_some())
+}
+
+pub(super) fn mark_identity_event_validated_in_txn(
+    store: &Store,
+    wtxn: &mut heed::RwTxn<'_>,
+    id: &EntityId,
+) -> Result<()> {
+    store.vault_meta.put(wtxn, &validated_event_key(id), &[])?;
+    Ok(())
+}
+
+pub(crate) fn forget_identity_event_validation_in_txn(
+    store: &Store,
+    wtxn: &mut heed::RwTxn<'_>,
+    id: &EntityId,
+) -> Result<()> {
+    store.vault_meta.delete(wtxn, &validated_event_key(id))?;
+    Ok(())
+}
+
+/// Seal a replicated event only after all available references have passed
+/// the same validation as admission. A missing actor/participant never earns
+/// this witness merely because it later got a deletion marker.
+pub(super) fn mark_complete_identity_events_in_txn(
+    store: &Store,
+    wtxn: &mut heed::RwTxn<'_>,
+) -> Result<()> {
+    for event in identity_topology_events_for_store_in_txn(store, &*wtxn)? {
+        if identity_event_validated_in_txn(store, wtxn, &event.event_id)? {
+            continue;
+        }
+        if let super::ledger_fold::IdentityTopologyAction::Apply(op) = &event.action
+            && !matches!(
+                validate_identity_op_participants_for_store_in_txn(store, wtxn, op)?,
+                IdentityTopologyParticipantValidation::Complete
+            )
+        {
+            continue;
+        }
+        let record = identity_topology_event_for_store_in_txn(store, wtxn, &event.event_id)?
+            .ok_or(Error::CorruptedIndex("identity topology event index"))?;
+        if let Some(actor) = record.actor {
+            let Some(kind) =
+                identity_topology_entity_type_for_store_in_txn(store, wtxn, &actor.entity_ref())?
+            else {
+                continue;
+            };
+            if crate::provenance::validate_actor_class(kind, actor.actor_class()).is_err() {
+                continue;
+            }
+        }
+        mark_identity_event_validated_in_txn(store, wtxn, &event.event_id)?;
+    }
+    Ok(())
+}
+
+/// Generic batch deletion has no reason/tombstone/receipt transaction. Refuse
+/// every active merge participant or author and every open proposal participant
+/// before `deindex_entity` can remove a shell edge or silently strand a park.
+pub(crate) fn guard_batch_identity_delete_in_txn(
+    store: &Store,
+    rtxn: &heed::RoTxn<'_>,
+    id: &EntityId,
+) -> Result<()> {
+    let events =
+        super::ledger_fold::fold_effective_identity_topology_events_for_store_in_txn(store, rtxn)?;
+    let fold = super::ledger_fold::fold_identity_topology_log(&events);
+    for event in events {
+        let Some(record) = identity_topology_event_for_store_in_txn(store, rtxn, &event.event_id)?
+        else {
+            return Err(Error::CorruptedIndex("identity topology event index"));
+        };
+        if let StoredIdentityOpAction::Merge { sources, survivor } = &record.action
+            && sources
+                .iter()
+                .any(|source| fold.current_event.get(source) == Some(&event.event_id))
+            && (*id == *survivor
+                || sources.contains(id)
+                || record.actor.is_some_and(|actor| actor.entity_ref() == *id))
+        {
+            return Err(Error::Sync(
+                crate::error::SyncError::IdentityTopologyRejected(
+                    IdentityTopologyRejection::ActiveMergeParticipantDeletion { entity: *id },
+                ),
+            ));
+        }
+        if record.approval == crate::claim::ClaimApprovalStatus::Proposed
+            && !fold.resolved_proposals.contains_key(&event.event_id)
+            && !fold.moot_proposals.contains(&event.event_id)
+            && let super::ledger_fold::IdentityTopologyAction::Apply(op) = event.action
+            && op.participants().contains(id)
+        {
+            return Err(Error::Sync(
+                crate::error::SyncError::IdentityTopologyRejected(
+                    IdentityTopologyRejection::ActiveMergeParticipantDeletion { entity: *id },
+                ),
+            ));
+        }
+    }
+    Ok(())
+}
+
 pub(super) fn topology_edge_weight(kind: EdgeKind) -> Result<f32> {
     kind.default_weight().ok_or(Error::InvariantViolation(
         "identity topology edge missing default weight",
@@ -102,23 +222,6 @@ pub(super) fn validate_identity_op_participants_for_store_in_txn(
     Ok(validation)
 }
 
-pub(super) fn identity_topology_actor_complete_for_store_in_txn(
-    store: &Store,
-    rtxn: &heed::RoTxn<'_>,
-    record: &StoredIdentityOpEvent,
-) -> Result<bool> {
-    let Some(actor) = record.actor else {
-        return Ok(true);
-    };
-    let Some(actor_type) =
-        identity_topology_entity_type_for_store_in_txn(store, rtxn, &actor.entity_ref())?
-    else {
-        return Ok(false);
-    };
-    crate::provenance::validate_actor_class(actor_type, actor.actor_class())?;
-    Ok(true)
-}
-
 pub(super) fn desired_shell_edges_for_store_entity_in_txn(
     store: &Store,
     rtxn: &heed::RoTxn<'_>,
@@ -130,7 +233,12 @@ pub(super) fn desired_shell_edges_for_store_entity_in_txn(
         .get(entity)
         .copied()
         .unwrap_or(EntityLifecycleState::Active);
-    if state == EntityLifecycleState::Active {
+    if state == EntityLifecycleState::Active
+        || store
+            .sync_state
+            .get(rtxn, &crate::deletion::local_hard_delete_key(entity))?
+            .is_some()
+    {
         return Ok(Vec::new());
     }
     let event_id = fold
@@ -141,7 +249,15 @@ pub(super) fn desired_shell_edges_for_store_entity_in_txn(
         .ok_or(Error::CorruptedIndex("identity topology event index"))?;
     Ok(match (&record.action, state) {
         (StoredIdentityOpAction::Merge { survivor, .. }, EntityLifecycleState::Merged) => {
-            vec![(EdgeKind::MergedInto, *survivor, record.at)]
+            if store
+                .sync_state
+                .get(rtxn, &crate::deletion::local_hard_delete_key(survivor))?
+                .is_some()
+            {
+                Vec::new()
+            } else {
+                vec![(EdgeKind::MergedInto, *survivor, record.at)]
+            }
         }
         (StoredIdentityOpAction::Split { heads, .. }, EntityLifecycleState::Split) => heads
             .iter()

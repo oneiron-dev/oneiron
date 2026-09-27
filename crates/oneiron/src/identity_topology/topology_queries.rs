@@ -5,15 +5,87 @@ use std::collections::BTreeSet;
 
 use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;
-use crate::error::Result;
+use crate::error::{Error, Result, SyncError};
 use crate::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_FACET};
 use crate::vault::Vault;
 
+use super::ledger_fold::fold_identity_topology_log;
 use super::reassignment_map::reassignment_claims_for_prefix_in_txn;
-use super::stored_event::StoredIdentityOpEvent;
+use super::stored_event::{StoredIdentityOpAction, StoredIdentityOpEvent};
+use super::transition_table::IdentityTopologyRejection;
 use super::{REASSIGNMENT_ORIGIN_META_PREFIX, REASSIGNMENT_TARGET_META_PREFIX};
 
+/// Role relative to the currently applied merge (not old/undone events).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ActiveMergeDeleteRole {
+    None,
+    Source,
+    Survivor,
+    Actor,
+}
+
 impl Vault {
+    /// The delete precondition for an active merge. Both source shells and
+    /// the survivor are participants: tearing either row/edge before undo
+    /// would make the merge un-undoable. Actor-only deletes instead retain a
+    /// tombstone; the actor stamp in the event remains self-contained.
+    pub(crate) fn active_merge_delete_role_in_txn(
+        &self,
+        rtxn: &heed::RoTxn<'_>,
+        id: &EntityId,
+    ) -> Result<ActiveMergeDeleteRole> {
+        let events = self.fold_effective_identity_topology_events_in_txn(rtxn)?;
+        let fold = fold_identity_topology_log(&events);
+        let mut actor = false;
+        for event in events {
+            let StoredIdentityOpAction::Merge { sources, survivor } = self
+                .identity_topology_event_in_txn(rtxn, &event.event_id)?
+                .ok_or(Error::CorruptedIndex("identity topology event index"))?
+                .action
+            else {
+                continue;
+            };
+            if !sources
+                .iter()
+                .any(|source| fold.current_event.get(source) == Some(&event.event_id))
+            {
+                continue;
+            }
+            if sources.contains(id) {
+                return Ok(ActiveMergeDeleteRole::Source);
+            }
+            if *id == survivor {
+                return Ok(ActiveMergeDeleteRole::Survivor);
+            }
+            let record = self
+                .identity_topology_event_in_txn(rtxn, &event.event_id)?
+                .ok_or(Error::CorruptedIndex("identity topology event index"))?;
+            actor |= record
+                .actor
+                .is_some_and(|author| author.entity_ref() == *id);
+        }
+        Ok(if actor {
+            ActiveMergeDeleteRole::Actor
+        } else {
+            ActiveMergeDeleteRole::None
+        })
+    }
+
+    /// A hard purge of a live source would remove its canonical shell edge.
+    /// The survivor hard-erase instead walks/scrubs its whole redirect tree.
+    pub(crate) fn guard_active_merge_hard_delete_in_txn(
+        &self,
+        rtxn: &heed::RoTxn<'_>,
+        id: &EntityId,
+    ) -> Result<()> {
+        if self.active_merge_delete_role_in_txn(rtxn, id)? == ActiveMergeDeleteRole::Source {
+            return Err(Error::Sync(SyncError::IdentityTopologyRejected(
+                IdentityTopologyRejection::ActiveMergeParticipantDeletion { entity: *id },
+            )));
+        }
+        Ok(())
+    }
+
     /// Reads one type-76 ledger event record. `Ok(None)` when the id is
     /// absent; a present id of another type is a typed mismatch; a present
     /// record that fails decode is corruption (the family is engine-

@@ -83,6 +83,7 @@ mod shell_edge_reconcile;
 mod store_entity_helpers;
 mod stored_event;
 mod topology_queries;
+pub(crate) use topology_queries::ActiveMergeDeleteRole;
 mod transition_table;
 mod wire_keys;
 
@@ -123,6 +124,9 @@ pub(crate) use op_vocabulary::is_identity_topology_op_kind;
 use reassignment_map::{
     REASSIGNMENT_ORIGIN_META_PREFIX, REASSIGNMENT_TARGET_META_PREFIX, ReassignmentContext,
     apply_reassignment_in_txn,
+};
+pub(crate) use store_entity_helpers::{
+    forget_identity_event_validation_in_txn, guard_batch_identity_delete_in_txn,
 };
 // Reached only from the sync bridge's test lane, so a plain re-export would read
 // as unused in a non-sync test build of the library.

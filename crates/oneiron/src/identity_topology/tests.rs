@@ -4801,3 +4801,434 @@ fn distinct_from_claim_structure_pins_the_pair_and_its_subject() {
         ));
     }
 }
+
+#[test]
+fn active_merge_source_hard_delete_refuses_before_edge_deindex_and_stays_undoable() {
+    let (_dir, vault) = open_vault();
+    let survivor = put_person(&vault, 0x61);
+    let source = put_person(&vault, 0x62);
+    let write = IdentityOpWrite::auto(ClaimSource::Inferred);
+    let (event, _) = expect_applied(
+        vault
+            .apply_identity_topology_op(&merge_op(vec![source], survivor), &write, 200)
+            .expect("apply merge"),
+    );
+    for reason in [
+        crate::deletion::DeleteReason::UserHardDelete,
+        crate::deletion::DeleteReason::GdprDelete,
+        crate::deletion::DeleteReason::PolicyDelete,
+    ] {
+        let err = vault
+            .delete_entity_with_reason(&source, reason)
+            .expect_err("current source cannot be hard-purged");
+        assert_eq!(
+            expect_rejection(err),
+            IdentityTopologyRejection::ActiveMergeParticipantDeletion { entity: source }
+        );
+    }
+    let err = vault
+        .apply_replayed_tombstone(&source, &[])
+        .expect_err("replicated hard delete cannot deindex a live shell");
+    assert_eq!(
+        expect_rejection(err),
+        IdentityTopologyRejection::ActiveMergeParticipantDeletion { entity: source }
+    );
+    assert!(
+        vault
+            .edge_exists(&source, EdgeKind::MergedInto, &survivor)
+            .expect("edge remains")
+    );
+    vault
+        .undo_identity_topology_event(&event, &write, 300)
+        .expect("the live merge remains undoable");
+    assert!(
+        vault
+            .delete_entity(&source)
+            .expect("after undo hard delete is safe")
+    );
+}
+
+#[test]
+fn deleting_merge_author_defaults_to_shell_and_keeps_both_folds_current() {
+    let (_dir, vault) = open_vault();
+    let survivor = put_person(&vault, 0x61);
+    let source = put_person(&vault, 0x62);
+    let author = put_person(&vault, 0x63);
+    let write = IdentityOpWrite::auto(ClaimSource::Inferred)
+        .with_actor(WriteActor::new(author, EdgeActorClass::Human));
+    let (event, _) = expect_applied(
+        vault
+            .apply_identity_topology_op(&merge_op(vec![source], survivor), &write, 200)
+            .expect("apply authored merge"),
+    );
+    assert!(
+        vault
+            .delete_entity(&author)
+            .expect("author deletion tombstones")
+    );
+    assert!(
+        vault
+            .read_entity_header(&author)
+            .expect("read header")
+            .is_some(),
+        "default delete of a merge author must retain a shell"
+    );
+    let rtxn = vault.store.env.read_txn().expect("read txn");
+    let store_events =
+        super::ledger_fold::fold_effective_identity_topology_events_for_store_in_txn(
+            &vault.store,
+            &rtxn,
+        )
+        .expect("store fold");
+    let vault_events = vault
+        .fold_effective_identity_topology_events_in_txn(&rtxn)
+        .expect("vault fold");
+    assert_eq!(store_events, vault_events);
+    assert_eq!(
+        fold_identity_topology_log(&vault_events)
+            .current_event
+            .get(&source),
+        Some(&event)
+    );
+    drop(rtxn);
+    vault
+        .undo_identity_topology_event(&event, &IdentityOpWrite::auto(ClaimSource::Inferred), 300)
+        .expect("author deletion must not wedge undo");
+}
+
+#[test]
+fn pending_proposal_survives_author_delete_but_participant_delete_moots_with_receipt() {
+    let (_dir, vault) = open_vault();
+    let survivor = put_person(&vault, 0x61);
+    let source = put_person(&vault, 0x62);
+    let author = put_person(&vault, 0x63);
+    let mut write = IdentityOpWrite::auto(ClaimSource::Inferred)
+        .with_actor(WriteActor::new(author, EdgeActorClass::Human));
+    write.approval = ClaimApprovalStatus::Proposed;
+    let IdentityOpOutcome::Parked { event: proposal } = vault
+        .apply_identity_topology_op(&merge_op(vec![source], survivor), &write, 200)
+        .expect("park merge")
+    else {
+        panic!("expected a park")
+    };
+    assert!(
+        vault
+            .delete_entity(&author)
+            .expect("delete proposing author")
+    );
+    assert_eq!(
+        vault
+            .open_merge_proposals_for_pair(&source, &survivor)
+            .expect("open proposals"),
+        vec![proposal]
+    );
+    assert!(
+        vault
+            .delete_entity_with_reason(&source, crate::deletion::DeleteReason::UserDelete)
+            .expect("delete participant")
+            .existed
+    );
+    assert!(
+        vault
+            .open_merge_proposals_for_pair(&source, &survivor)
+            .expect("mooted proposals")
+            .is_empty()
+    );
+    let receipts = identity_receipts(&vault);
+    let cancellations: Vec<_> = receipts
+        .iter()
+        .filter(|r| r.outcome == "proposal_cancellation")
+        .collect();
+    assert_eq!(cancellations.len(), 1);
+    assert_eq!(
+        cancellations[0].fields.get("proposal_ref"),
+        Some(&proposal.to_hex())
+    );
+    assert_eq!(
+        cancellations[0].fields.get("participant"),
+        Some(&source.to_hex())
+    );
+    assert_eq!(
+        cancellations[0].fields.get("reason").map(String::as_str),
+        Some("participant_deleted")
+    );
+    assert!(
+        proposal_outcome_receipts(&vault).is_empty(),
+        "automatic cancellation is not a human rejection or a ramp outcome"
+    );
+    vault
+        .delete_entity_with_reason(&source, crate::deletion::DeleteReason::UserDelete)
+        .expect("idempotent soft delete");
+    assert_eq!(
+        identity_receipts(&vault)
+            .iter()
+            .filter(|r| r.outcome == "proposal_cancellation")
+            .count(),
+        1
+    );
+}
+
+#[test]
+fn author_hard_erasure_scrubs_stamp_without_voiding_an_applied_event() {
+    let (_dir, vault) = open_vault();
+    let survivor = put_person(&vault, 0x61);
+    let source = put_person(&vault, 0x62);
+    let author = put_person(&vault, 0x63);
+    let write = IdentityOpWrite::auto(ClaimSource::Inferred)
+        .with_actor(WriteActor::new(author, EdgeActorClass::Human));
+    let (event, _) = expect_applied(
+        vault
+            .apply_identity_topology_op(&merge_op(vec![source], survivor), &write, 200)
+            .expect("apply merge"),
+    );
+    vault
+        .delete_entity_with_reason(&author, crate::deletion::DeleteReason::GdprDelete)
+        .expect("explicit actor erasure");
+    assert_eq!(
+        vault
+            .identity_topology_event(&event)
+            .expect("read event")
+            .expect("record")
+            .actor,
+        None
+    );
+    let rtxn = vault.store.env.read_txn().expect("read txn");
+    let store_events =
+        super::ledger_fold::fold_effective_identity_topology_events_for_store_in_txn(
+            &vault.store,
+            &rtxn,
+        )
+        .expect("store fold");
+    assert_eq!(
+        store_events,
+        vault
+            .fold_effective_identity_topology_events_in_txn(&rtxn)
+            .expect("vault fold")
+    );
+    assert_eq!(
+        fold_identity_topology_log(&store_events)
+            .current_event
+            .get(&source),
+        Some(&event)
+    );
+    drop(rtxn);
+    vault
+        .undo_identity_topology_event(&event, &IdentityOpWrite::auto(ClaimSource::Inferred), 300)
+        .expect("undo after author erasure");
+}
+
+#[test]
+fn hard_erasing_canonical_head_retains_history_without_recreating_shell_edge() {
+    let (_dir, vault) = open_vault();
+    let survivor = put_person(&vault, 0x61);
+    let source = put_person(&vault, 0x62);
+    let write = IdentityOpWrite::auto(ClaimSource::Inferred);
+    let (event, _) = expect_applied(
+        vault
+            .apply_identity_topology_op(&merge_op(vec![source], survivor), &write, 200)
+            .expect("apply merge"),
+    );
+    assert!(
+        vault
+            .delete_entity(&survivor)
+            .expect("erase canonical head")
+    );
+    let rtxn = vault.store.env.read_txn().expect("read txn");
+    let events = super::ledger_fold::fold_effective_identity_topology_events_for_store_in_txn(
+        &vault.store,
+        &rtxn,
+    )
+    .expect("store fold after erase");
+    assert_eq!(
+        events,
+        vault
+            .fold_effective_identity_topology_events_in_txn(&rtxn)
+            .expect("vault fold after erase")
+    );
+    assert_eq!(
+        fold_identity_topology_log(&events)
+            .current_event
+            .get(&source),
+        Some(&event)
+    );
+    drop(rtxn);
+    vault
+        .with_write_txn(|wtxn| vault.reconcile_identity_topology_edges_in_txn(wtxn))
+        .expect("rebuild without a ghost shell");
+    assert!(
+        !vault
+            .edge_exists(&source, EdgeKind::MergedInto, &survivor)
+            .expect("read canonical edge")
+    );
+}
+
+#[test]
+fn tombstone_without_prior_admission_cannot_validate_a_late_merge() {
+    let (_dir, vault) = open_vault();
+    let survivor = put_person(&vault, 0x61);
+    let deleted = put_person(&vault, 0x62);
+    assert!(
+        vault
+            .delete_entity(&deleted)
+            .expect("erase unrelated entity")
+    );
+    let event = id(0x70);
+    put_identity_event_record(
+        &vault,
+        event,
+        &replicated_merge_record(vec![deleted], survivor, 50),
+    );
+    let rtxn = vault.store.env.read_txn().expect("read txn");
+    assert!(
+        vault
+            .fold_effective_identity_topology_events_in_txn(&rtxn)
+            .expect("vault fold")
+            .is_empty()
+    );
+    assert!(
+        super::ledger_fold::fold_effective_identity_topology_events_for_store_in_txn(
+            &vault.store,
+            &rtxn
+        )
+        .expect("store fold")
+        .is_empty()
+    );
+}
+
+#[test]
+fn cancellation_without_a_participant_delete_is_not_effective_or_receipted() {
+    let (_dir, vault) = open_vault();
+    let survivor = put_person(&vault, 0x61);
+    let source = put_person(&vault, 0x62);
+    let mut write = IdentityOpWrite::auto(ClaimSource::Inferred);
+    write.approval = ClaimApprovalStatus::Proposed;
+    let IdentityOpOutcome::Parked { event: proposal } = vault
+        .apply_identity_topology_op(&merge_op(vec![source], survivor), &write, 200)
+        .expect("park merge")
+    else {
+        panic!("expected park")
+    };
+    let fake = id(0x70);
+    let record = StoredIdentityOpEvent {
+        seq: 50,
+        at: 300,
+        actor: None,
+        source: ClaimSource::Inferred,
+        approval: ClaimApprovalStatus::Auto,
+        confidence: 1.0,
+        evidence: None,
+        action: StoredIdentityOpAction::ProposalCancellation {
+            proposal,
+            participant: source,
+        },
+    };
+    put_identity_event_record(&vault, fake, &record);
+    assert_eq!(
+        vault
+            .open_merge_proposals_for_pair(&source, &survivor)
+            .expect("proposal stays open"),
+        vec![proposal]
+    );
+    assert!(
+        identity_receipts(&vault)
+            .iter()
+            .all(|receipt| receipt.outcome != "proposal_cancellation")
+    );
+    // The same event becomes honest after the participant is truly deleted.
+    vault
+        .delete_entity_with_reason(&source, crate::deletion::DeleteReason::UserDelete)
+        .expect("delete participant");
+    let fold = fold_identity_topology_log(
+        &vault
+            .fold_effective_identity_topology_events_in_txn(
+                &vault.store.env.read_txn().expect("read txn"),
+            )
+            .expect("fold"),
+    );
+    assert!(fold.moot_proposals.contains(&proposal));
+    assert_eq!(
+        identity_receipts(&vault)
+            .iter()
+            .filter(|receipt| receipt.outcome == "proposal_cancellation")
+            .count(),
+        1
+    );
+}
+
+#[test]
+fn replayed_hard_delete_moots_a_parked_op_even_without_a_local_participant_row() {
+    let (_dir, vault) = open_vault();
+    let survivor = put_person(&vault, 0x61);
+    let absent = id(0x62);
+    let proposal = id(0x70);
+    let mut record = replicated_merge_record(vec![absent], survivor, 50);
+    record.approval = ClaimApprovalStatus::Proposed;
+    put_identity_event_record(&vault, proposal, &record);
+    let outcome = vault
+        .apply_replayed_tombstone(&absent, &[])
+        .expect("hard tombstone for never-materialized participant");
+    assert!(matches!(
+        outcome,
+        crate::deletion::ReplayedTombstoneOutcome::HardPurged { erased: false, .. }
+    ));
+    let fold = fold_identity_topology_log(
+        &vault
+            .fold_effective_identity_topology_events_in_txn(
+                &vault.store.env.read_txn().expect("read txn"),
+            )
+            .expect("fold"),
+    );
+    assert!(fold.moot_proposals.contains(&proposal));
+    assert_eq!(
+        identity_receipts(&vault)
+            .iter()
+            .filter(|receipt| receipt.outcome == "proposal_cancellation")
+            .count(),
+        1
+    );
+}
+
+#[test]
+fn generic_batch_delete_cannot_bypass_active_merge_or_open_proposal_guard() {
+    let (_dir, vault) = open_vault();
+    let survivor = put_person(&vault, 0x61);
+    let source = put_person(&vault, 0x62);
+    let author = put_person(&vault, 0x63);
+    let write = IdentityOpWrite::auto(ClaimSource::Inferred)
+        .with_actor(WriteActor::new(author, EdgeActorClass::Human));
+    let (event, _) = expect_applied(
+        vault
+            .apply_identity_topology_op(&merge_op(vec![source], survivor), &write, 200)
+            .expect("apply merge"),
+    );
+    for participant in [source, survivor, author] {
+        let err = vault
+            .batch()
+            .delete(&participant)
+            .commit()
+            .expect_err("generic batch cannot tear an active merge");
+        assert_eq!(
+            expect_rejection(err),
+            IdentityTopologyRejection::ActiveMergeParticipantDeletion {
+                entity: participant
+            }
+        );
+    }
+    vault
+        .undo_identity_topology_event(&event, &IdentityOpWrite::auto(ClaimSource::Inferred), 300)
+        .expect("undo remains possible");
+    let mut proposed = IdentityOpWrite::auto(ClaimSource::Inferred);
+    proposed.approval = ClaimApprovalStatus::Proposed;
+    vault
+        .apply_identity_topology_op(&merge_op(vec![source], survivor), &proposed, 350)
+        .expect("park merge");
+    let err = vault
+        .batch()
+        .delete(&source)
+        .commit()
+        .expect_err("batch delete cannot strand a parked participant");
+    assert_eq!(
+        expect_rejection(err),
+        IdentityTopologyRejection::ActiveMergeParticipantDeletion { entity: source }
+    );
+}

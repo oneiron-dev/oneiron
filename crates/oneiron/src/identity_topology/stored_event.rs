@@ -22,8 +22,9 @@ use super::transition_table::{ProposalOutcome, ProposalScope};
 use super::wire_keys::{
     BODY_KEY_ACTOR, BODY_KEY_ACTOR_CLASS, BODY_KEY_APPROVAL, BODY_KEY_AT, BODY_KEY_CONFIDENCE,
     BODY_KEY_EVIDENCE, BODY_KEY_KIND, BODY_KEY_SEQ, BODY_KEY_SOURCE, EVENT_KIND_ASSERT_DISTINCT,
-    EVENT_KIND_FACET, EVENT_KIND_MERGE, EVENT_KIND_PROPOSAL_RESOLUTION, EVENT_KIND_SPLIT,
-    EVENT_KIND_UNDO, EVIDENCE_KEY_RATIONALE, EVIDENCE_KEY_REFS,
+    EVENT_KIND_FACET, EVENT_KIND_MERGE, EVENT_KIND_PROPOSAL_CANCELLATION,
+    EVENT_KIND_PROPOSAL_RESOLUTION, EVENT_KIND_SPLIT, EVENT_KIND_UNDO, EVIDENCE_KEY_RATIONALE,
+    EVIDENCE_KEY_REFS,
 };
 use crate::error::SyncError;
 
@@ -86,6 +87,14 @@ pub enum StoredIdentityOpAction {
         /// The reverted ledger event.
         target: EntityId,
     },
+    /// A participant-delete cancellation, not a human rejection or a ramp
+    /// outcome. The proposal is retained as history, but no longer open.
+    ProposalCancellation {
+        /// The parked op retired by this deletion.
+        proposal: EntityId,
+        /// The deleted participant (never the proposing author alone).
+        participant: EntityId,
+    },
     /// The r7 resolution of a parked `Proposed` event (ONE-1747). Appending
     /// this row IS the retirement of the park: a proposal carrying one is
     /// already resolved and refuses a second ruling. The resolution itself
@@ -116,6 +125,7 @@ impl StoredIdentityOpAction {
             Self::Facet { .. } => EVENT_KIND_FACET,
             Self::AssertDistinct { .. } => EVENT_KIND_ASSERT_DISTINCT,
             Self::Undo { .. } => EVENT_KIND_UNDO,
+            Self::ProposalCancellation { .. } => EVENT_KIND_PROPOSAL_CANCELLATION,
             Self::ProposalResolution { .. } => EVENT_KIND_PROPOSAL_RESOLUTION,
         }
     }
@@ -131,6 +141,7 @@ impl StoredIdentityOpAction {
             Self::Merge { .. }
             | Self::AssertDistinct { .. }
             | Self::Undo { .. }
+            | Self::ProposalCancellation { .. }
             | Self::ProposalResolution { .. } => None,
         }
     }
@@ -160,6 +171,7 @@ impl StoredIdentityOpAction {
             Self::Merge { .. }
             | Self::AssertDistinct { .. }
             | Self::Undo { .. }
+            | Self::ProposalCancellation { .. }
             | Self::ProposalResolution { .. } => None,
         }
     }
@@ -221,6 +233,9 @@ impl StoredIdentityOpAction {
                 }),
             ),
             Self::Undo { target } => IdentityTopologyAction::Undo { target: *target },
+            Self::ProposalCancellation { proposal, .. } => IdentityTopologyAction::CancelProposal {
+                proposal: *proposal,
+            },
             Self::ProposalResolution {
                 proposal, outcome, ..
             } => IdentityTopologyAction::ResolveProposal {

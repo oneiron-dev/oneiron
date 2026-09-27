@@ -23,7 +23,8 @@ use super::lifecycle_state::EntityLifecycleState;
 use super::reassignment_map::maintain_split_reassignment_projection_in_txn;
 use super::store_entity_helpers::{
     desired_shell_edges_for_store_entity_in_txn, identity_topology_event_for_store_in_txn,
-    identity_topology_events_for_store_in_txn, topology_edge_weight,
+    identity_topology_events_for_store_in_txn, mark_complete_identity_events_in_txn,
+    topology_edge_weight,
 };
 use super::stored_event::StoredIdentityOpAction;
 use super::{
@@ -38,6 +39,7 @@ fn reconcile_identity_topology_edges_for_store_in_txn(
     text_index_trusted: bool,
     wtxn: &mut heed::RwTxn<'_>,
 ) -> Result<()> {
+    mark_complete_identity_events_in_txn(store, wtxn)?;
     let touched = shell_edge_sources_for_store_in_txn(store, &*wtxn)?;
     reconcile_shell_edges_for_sources_in_txn(
         store,
@@ -274,7 +276,8 @@ pub(crate) fn identity_topology_shell_sources_for_store_in_txn(
         StoredIdentityOpAction::Undo { .. }
         | StoredIdentityOpAction::Facet { .. }
         | StoredIdentityOpAction::AssertDistinct { .. }
-        | StoredIdentityOpAction::ProposalResolution { .. } => BTreeSet::new(),
+        | StoredIdentityOpAction::ProposalResolution { .. }
+        | StoredIdentityOpAction::ProposalCancellation { .. } => BTreeSet::new(),
     }))
 }
 
@@ -313,7 +316,8 @@ pub(crate) fn reconcile_identity_topology_for_materialized_entities_in_txn(
             // not duplicate that pass from the generic put hook. A
             // resolution moves no shell edge at all.
             IdentityTopologyAction::Undo { .. }
-            | IdentityTopologyAction::ResolveProposal { .. } => false,
+            | IdentityTopologyAction::ResolveProposal { .. }
+            | IdentityTopologyAction::CancelProposal { .. } => false,
         };
         let record = identity_topology_event_for_store_in_txn(store, &*wtxn, &event.event_id)?
             .ok_or(Error::CorruptedIndex("identity topology event index"))?;

@@ -111,6 +111,8 @@ pub(super) const EVENT_KIND_UNDO: &str = "undo";
 /// resolution event IS the retirement of the park: the projector finds a
 /// proposal already resolved by this row, so a second ruling is refused.
 pub(super) const EVENT_KIND_PROPOSAL_RESOLUTION: &str = "proposal_resolution";
+/// Automatic retirement of a proposal whose participant was deleted.
+pub(super) const EVENT_KIND_PROPOSAL_CANCELLATION: &str = "proposal_cancellation";
 
 /// Ramp-scope actor stamped when the resolved proposal bound no deciding
 /// actor. The DEC-0006 tuple is total — an unattributed proposer is its own

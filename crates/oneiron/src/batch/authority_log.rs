@@ -147,11 +147,15 @@ pub(super) fn evict_authority_log_store_key_squatter(
     );
     // Captured BEFORE the deindex: afterwards the action bytes are gone and
     // the induced sources are unrecoverable.
-    let induced_shell_sources =
+    let displaced_topology_event =
         crate::identity_topology::identity_topology_shell_sources_for_store_in_txn(
             store, wtxn, id,
-        )?
-        .unwrap_or_default();
+        )?;
+    let was_topology_event = displaced_topology_event.is_some();
+    let induced_shell_sources = displaced_topology_event.unwrap_or_default();
+    if was_topology_event {
+        crate::identity_topology::forget_identity_event_validation_in_txn(store, wtxn, id)?;
+    }
     let (_existed, had_vector, had_graph_mutation, neighbors) = deindex_entity(store, wtxn, id)?;
     ppr::invalidate_ppr_for_delete(store, wtxn, id, &neighbors)?;
     if had_graph_mutation {

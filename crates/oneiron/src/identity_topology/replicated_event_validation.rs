@@ -160,6 +160,37 @@ impl Vault {
                     return Err(Error::Sync(SyncError::IdentityTopologyRejected(rejection)));
                 }
             }
+            IdentityTopologyAction::CancelProposal { proposal } => {
+                let StoredIdentityOpAction::ProposalCancellation { participant, .. } =
+                    &record.action
+                else {
+                    return Err(Error::InvariantViolation("cancellation action codec"));
+                };
+                let Some(target) = self.identity_topology_event_in_txn(rtxn, &proposal)? else {
+                    return Ok(());
+                };
+                let IdentityTopologyAction::Apply(op) = target.action.to_fold_action() else {
+                    return Err(Error::Sync(SyncError::InvalidIdentityTopologyEventBody(
+                        "proposal cancellation must name a parked op",
+                    )));
+                };
+                if target.approval != crate::claim::ClaimApprovalStatus::Proposed
+                    || !matches!(
+                        op,
+                        IdentityTopologyOp::Merge(_) | IdentityTopologyOp::Split(_)
+                    )
+                    || !op.participants().contains(participant)
+                    || !matches!(
+                        record.approval,
+                        crate::claim::ClaimApprovalStatus::Auto
+                            | crate::claim::ClaimApprovalStatus::Approved
+                    )
+                {
+                    return Err(Error::Sync(SyncError::InvalidIdentityTopologyEventBody(
+                        "proposal cancellation must name a deleted participant in a parked op",
+                    )));
+                }
+            }
             IdentityTopologyAction::ResolveProposal { proposal, .. } => {
                 let StoredIdentityOpAction::ProposalResolution {
                     scope,

@@ -70,7 +70,8 @@ fn identity_op_event_touches(
         StoredIdentityOpAction::Facet { .. }
         | StoredIdentityOpAction::AssertDistinct { .. }
         | StoredIdentityOpAction::Undo { .. }
-        | StoredIdentityOpAction::ProposalResolution { .. } => false,
+        | StoredIdentityOpAction::ProposalResolution { .. }
+        | StoredIdentityOpAction::ProposalCancellation { .. } => false,
     }
 }
 
@@ -332,6 +333,31 @@ impl Vault {
         wtxn: &mut heed::RwTxn<'_>,
         touched: &BTreeSet<EntityId>,
     ) -> Result<()> {
+        self.scrub_identity_op_stamps_matching_in_txn(wtxn, |event| {
+            identity_op_event_touches(&event.action, touched)
+        })
+    }
+
+    /// Explicit erasure of an author removes the stamp without deleting the
+    /// self-contained decision. This is distinct from the redirect walk's
+    /// participant-scoped stamp scrub above.
+    fn scrub_identity_op_actor_in_txn(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+        actor: &EntityId,
+    ) -> Result<()> {
+        self.scrub_identity_op_stamps_matching_in_txn(wtxn, |event| {
+            event
+                .actor
+                .is_some_and(|stamp| stamp.entity_ref() == *actor)
+        })
+    }
+
+    fn scrub_identity_op_stamps_matching_in_txn(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+        matches: impl Fn(&crate::identity_topology::StoredIdentityOpEvent) -> bool,
+    ) -> Result<()> {
         let mut scrubbed: Vec<(EntityId, Vec<u8>)> = Vec::new();
         for entry in self
             .store
@@ -348,7 +374,7 @@ impl Vault {
             }
             let event = decode_identity_topology_event_body(&raw[ENTITY_METADATA_HEADER_LEN..])
                 .map_err(|_| Error::CorruptedIndex("identity topology event body"))?;
-            if !identity_op_event_touches(&event.action, touched) {
+            if !matches(&event) {
                 continue;
             }
             let Some(event) = event.without_author_stamp() else {
@@ -372,6 +398,7 @@ impl Vault {
         id: &EntityId,
     ) -> Result<bool> {
         crate::blob_artifact::esign::reject_event_delete(&self.store, wtxn, id)?;
+        self.guard_active_merge_hard_delete_in_txn(wtxn, id)?;
         #[cfg(feature = "sync")]
         crate::entity_doc::erase_in_txn(&self.store, wtxn, id)?;
         // The content-hash index row is dropped by `deindex_entity` below;
@@ -383,6 +410,8 @@ impl Vault {
         self.mark_dependent_skills_stale_in_txn(wtxn, id)?;
         crate::note::erase_citations_in_txn(self, wtxn, id)?;
         crate::calendar::origin::invalidate_dependents(self, wtxn, id)?;
+        self.moot_identity_proposals_for_participant_in_txn(wtxn, id)?;
+        self.scrub_identity_op_actor_in_txn(wtxn, id)?;
         let (existed, had_vector, had_graph_mutation, neighbors) =
             deindex_entity(&self.store, wtxn, id)?;
         crate::codebase::delete_codebase_snapshot_in_txn(&self.store, wtxn, id)?;
@@ -405,6 +434,7 @@ impl Vault {
     ) -> Result<(bool, bool)> {
         crate::federation::reject_ruling_delete(&self.store, wtxn, id)?;
         crate::blob_artifact::esign::reject_event_delete(&self.store, wtxn, id)?;
+        self.moot_identity_proposals_for_participant_in_txn(wtxn, id)?;
         #[cfg(feature = "sync")]
         crate::entity_doc::erase_in_txn(&self.store, wtxn, id)?;
         self.store.guard_pack_map_carrier_delete_in_txn(wtxn, id)?;
@@ -493,6 +523,9 @@ impl Vault {
         crate::dreamer_runner::deindex_dreamer_milestone_claim(&self.store, wtxn, id)?;
         crate::llm::deindex_dreamer_step_claim(&self.store, wtxn, id)?;
         self.store.entities.put(wtxn, id.as_bytes(), &payload)?;
+        self.store
+            .sync_state
+            .put(wtxn, &super::tombstone::identity_soft_delete_key(id), &[])?;
         if changed {
             crate::ports::audit_mutation_in_txn(
                 &self.store,
@@ -575,6 +608,9 @@ impl Vault {
         crate::blob_artifact::esign::reject_event_delete(&self.store, wtxn, id)?;
         crate::origin::lfs::reject_direct_lfs_chunk_delete(&self.store, wtxn, id)?;
         let mutation_recorded_at = crate::ports::recorded_at_in_txn(&self.store, wtxn)?;
+        if decode_tombstone_value(raw_value).is_hard() {
+            self.guard_active_merge_hard_delete_in_txn(wtxn, id)?;
+        }
         self.store.guard_pack_map_carrier_delete_in_txn(wtxn, id)?;
         let decoded = decode_tombstone_value(raw_value);
         // Cleanup is local visibility, never a replicated deletion intent.
@@ -620,6 +656,11 @@ impl Vault {
             if existed && let Some(captured) = &captured {
                 self.refresh_subject_edge_after_claim_delete_in_txn(wtxn, id, &captured.subject)?;
             }
+            self.store.sync_state.put(
+                wtxn,
+                &super::tombstone::identity_soft_delete_key(id),
+                &[],
+            )?;
             return Ok(ReplayedTombstoneOutcome::SoftErased {
                 changed: had_body
                     || had_vector
@@ -649,6 +690,7 @@ impl Vault {
                     .sync_state
                     .put(wtxn, &marker_key, &marker_value)?;
             }
+            self.moot_identity_proposals_for_participant_in_txn(wtxn, id)?;
             if let Some((request_id, tombstone_reason)) =
                 decoded.request_id.zip(raw_value.first().copied())
             {

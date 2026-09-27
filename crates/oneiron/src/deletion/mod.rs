@@ -40,7 +40,7 @@ pub(crate) use sweep_queue::{
 };
 pub(crate) use tombstone::{
     ARCHIVE_TOMBSTONE_PREFIX, LOCAL_HARD_DELETE_PREFIX, archive_tombstone_key,
-    local_hard_delete_key,
+    identity_soft_delete_key, local_hard_delete_key,
 };
 // The `pt:` window vocabulary and the replay outcome are read by sync
 // production (`sync::window`, `sync::quarantine`, `sync::types`) and by the

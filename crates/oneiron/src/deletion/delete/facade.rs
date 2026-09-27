@@ -84,6 +84,23 @@ impl Vault {
             crate::federation::reject_ruling_delete(&self.store, &txn, id)?;
             self.store.guard_pack_map_carrier_delete_in_txn(&txn, id)?;
         }
+        // Check before the tombstone publish: refusal must not leave a
+        // remote-visible deletion that tears a current merge edge.
+        let actor_only = {
+            let rtxn = self.store.env.read_txn()?;
+            let role = self.active_merge_delete_role_in_txn(&rtxn, id)?;
+            if reason.active_store_hard_purge_v1() {
+                self.guard_active_merge_hard_delete_in_txn(&rtxn, id)?;
+            }
+            role == crate::identity_topology::ActiveMergeDeleteRole::Actor
+        };
+        // An author's ordinary hard-delete defaults to a tombstoned shell.
+        // Explicit GDPR/policy erasure is not silently downgraded.
+        let reason = if actor_only && reason == DeleteReason::UserHardDelete {
+            DeleteReason::UserDelete
+        } else {
+            reason
+        };
         let requested_at = self.store.clock.now_recorded_at();
         let Some(header) = self.read_entity_header(id)? else {
             return self.delete_entity_without_header(id, reason, requested_at, gate.as_ref());

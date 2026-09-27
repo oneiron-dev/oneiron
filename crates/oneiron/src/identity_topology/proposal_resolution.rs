@@ -233,7 +233,9 @@ pub fn decode_identity_op_amendment(data: &[u8]) -> Result<IdentityTopologyOp> {
         IdentityTopologyAction::Apply(op) => op,
         // undo / resolution rows are not ops a proposal can name, so they
         // are not amendable shapes either.
-        IdentityTopologyAction::Undo { .. } | IdentityTopologyAction::ResolveProposal { .. } => {
+        IdentityTopologyAction::Undo { .. }
+        | IdentityTopologyAction::ResolveProposal { .. }
+        | IdentityTopologyAction::CancelProposal { .. } => {
             return Err(Error::Sync(SyncError::InvalidIdentityTopologyEventBody(
                 "identity topology amendment is not an op",
             )));
@@ -248,6 +250,54 @@ pub fn decode_identity_op_amendment(data: &[u8]) -> Result<IdentityTopologyOp> {
 }
 
 impl Vault {
+    /// A participant deletion retires its still-open merge/split proposals in
+    /// the SAME transaction as the destructive mutation. The cancellation is
+    /// its own ledger action and receipt, never a human rejection or a ramp
+    /// observation. A deleted author who is not a participant leaves the park.
+    pub(crate) fn moot_identity_proposals_for_participant_in_txn(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+        participant: &EntityId,
+    ) -> Result<()> {
+        let fold = fold_identity_topology_log(
+            &self.fold_effective_identity_topology_events_in_txn(&*wtxn)?,
+        );
+        let events = self.identity_topology_events_in_txn(&*wtxn)?;
+        for event in events {
+            if event.approval != ClaimApprovalStatus::Proposed
+                || fold.resolved_proposals.contains_key(&event.event_id)
+                || fold.moot_proposals.contains(&event.event_id)
+            {
+                continue;
+            }
+            let IdentityTopologyAction::Apply(op) = event.action else {
+                continue;
+            };
+            if !matches!(
+                op,
+                IdentityTopologyOp::Merge(_) | IdentityTopologyOp::Split(_)
+            ) || !op.participants().contains(participant)
+            {
+                continue;
+            }
+            let write = IdentityOpWrite::auto(crate::claim::ClaimSource::Inferred);
+            self.write_identity_event_in_txn(
+                wtxn,
+                self.store.clock.entity_id()?,
+                &write,
+                self.store.clock.now_recorded_at(),
+                StoredIdentityOpAction::ProposalCancellation {
+                    proposal: event.event_id,
+                    participant: *participant,
+                },
+                None,
+                Vec::new(),
+                Vec::new(),
+            )?;
+        }
+        Ok(())
+    }
+
     /// Resolves a parked `Proposed` identity-topology event (ARCH-0055 r7):
     /// applies the proposed op (`Approve`), applies an AMENDED form of it
     /// (`AmendThenApprove`), or retires the park with zero topology effects
@@ -517,7 +567,8 @@ impl Vault {
         // alone, and the local door runs this before its own row exists.
         let fold =
             fold_identity_topology_log(&self.fold_effective_identity_topology_events_in_txn(rtxn)?);
-        if fold.resolved_proposals.contains_key(proposal) {
+        if fold.resolved_proposals.contains_key(proposal) || fold.moot_proposals.contains(proposal)
+        {
             return Err(Error::Sync(SyncError::IdentityTopologyRejected(
                 IdentityTopologyRejection::ProposalAlreadyResolved {
                     proposal: *proposal,

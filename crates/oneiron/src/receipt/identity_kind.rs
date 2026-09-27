@@ -141,21 +141,22 @@ pub(super) fn identity_topology_receipts(
             record.action,
             crate::identity_topology::StoredIdentityOpAction::ProposalResolution { .. }
         );
-        if action_is_resolution {
-            let fold = crate::identity_topology::fold_identity_topology_log(
-                &vault.fold_effective_identity_topology_events_in_txn(rtxn)?,
-            );
-            if fold
-                .rejections
-                .iter()
-                .any(|(rejected, reason)| {
-                    *rejected == event_id
-                        && matches!(
-                            reason,
-                            crate::identity_topology::IdentityTopologyRejection::ProposalAlreadyResolved { .. }
-                        )
-                })
-            {
+        let action_is_cancellation = matches!(
+            record.action,
+            crate::identity_topology::StoredIdentityOpAction::ProposalCancellation { .. }
+        );
+        if action_is_resolution || action_is_cancellation {
+            let effective = vault.fold_effective_identity_topology_events_in_txn(rtxn)?;
+            // A cancellation whose proposal has not arrived (or whose
+            // participant does not belong to it) is not a completed act.
+            if action_is_cancellation && !effective.iter().any(|event| event.event_id == event_id) {
+                continue;
+            }
+            let fold = crate::identity_topology::fold_identity_topology_log(&effective);
+            if fold.rejections.iter().any(|(rejected, reason)| {
+                *rejected == event_id && matches!(reason,
+                    crate::identity_topology::IdentityTopologyRejection::ProposalAlreadyResolved { .. })
+            }) {
                 continue;
             }
         }
@@ -324,6 +325,15 @@ fn identity_topology_receipt(
         StoredIdentityOpAction::Undo { target } => {
             fields.insert("undo_of".to_owned(), target.to_hex());
             Some(format!("event:{}", target.to_hex()))
+        }
+        StoredIdentityOpAction::ProposalCancellation {
+            proposal,
+            participant,
+        } => {
+            fields.insert("proposal_ref".to_owned(), proposal.to_hex());
+            fields.insert("participant".to_owned(), participant.to_hex());
+            fields.insert("reason".to_owned(), "participant_deleted".to_owned());
+            Some(format!("event:{}", proposal.to_hex()))
         }
         // Resolution rows project the ProposalOutcome receipt instead; the
         // caller dispatches on the action before reaching this projector.

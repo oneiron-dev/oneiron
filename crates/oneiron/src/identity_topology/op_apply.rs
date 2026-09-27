@@ -463,6 +463,13 @@ impl Vault {
         // precede the `facet_of` stamps that point at them, and ONE-1645's
         // write-time table fails closed on a stamp whose endpoint has no row.
         ops.extend(effects);
+        // Pre-seal this validated decision before the reserved shell edges
+        // consult the fold in this batch; an error rolls it all back.
+        super::store_entity_helpers::mark_identity_event_validated_in_txn(
+            &self.store,
+            wtxn,
+            &event_id,
+        )?;
         apply_ops(
             &self.store,
             &self.config,

@@ -12399,7 +12399,7 @@
      "purpose": "—",
      "surface": {
       "const": 2,
-      "crate-vis": 17,
+      "crate-vis": 18,
       "enum": 2,
       "fn": 7,
       "struct": 2
@@ -17743,7 +17743,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "IdentityTopologyAction",
@@ -17780,7 +17780,7 @@
      "path": "src/identity_topology/mod.rs",
      "purpose": "ARCH-0055 identity-topology op family: merge / split / facet / assert_distinct as typed ops over an…",
      "surface": {
-      "crate-vis": 8,
+      "crate-vis": 10,
       "re-export": 10
      }
     },
@@ -17839,7 +17839,7 @@
      "path": "src/identity_topology/proposal_resolution.rs",
      "purpose": "The ARCH-0055 r7 proposal-resolution lane: scope derivation, the amendment codec and its narrowing bounds…",
      "surface": {
-      "crate-vis": 5,
+      "crate-vis": 6,
       "fn": 3
      }
     },
@@ -17888,7 +17888,7 @@
      "path": "src/identity_topology/store_entity_helpers.rs",
      "purpose": "Store-level (pre-vault) readers for the type-76 entity kind: the helpers the batch write/materialize path…",
      "surface": {
-      "crate-vis": 7
+      "crate-vis": 11
      }
     },
     {
@@ -17922,6 +17922,7 @@
      "path": "src/identity_topology/topology_queries.rs",
      "purpose": "Read-only vault queries over the ledger and the reassignment projection: one event record, the claims a…",
      "surface": {
+      "crate-vis": 3,
       "fn": 5
      }
     },
@@ -17950,7 +17951,7 @@
      "purpose": "Pinned wire vocabulary of the identity-topology family: the type-76 body field keys, the reassignment-map…",
      "surface": {
       "const": 2,
-      "crate-vis": 47
+      "crate-vis": 48
      }
     },
     {
