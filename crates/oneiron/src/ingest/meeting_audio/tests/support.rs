@@ -1,6 +1,8 @@
 //! Synthetic callback fixtures only: no decoder or model runs in these tests.
 
-use super::super::provenance::{COMMUNITY1_MODEL, pcm_sha256};
+use super::super::provenance::pcm_sha256;
+
+const FIXTURE_DIARIZER_MODEL: &str = "pyannote/speaker-diarization-community-1";
 use super::super::*;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -22,6 +24,7 @@ pub(super) enum Fault {
     OverlappingTracks,
     MissingTrack,
     InventedCleanup,
+    AcousticCorrection,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -55,6 +58,7 @@ pub(super) struct FixtureHost {
     pub(super) spans: Vec<SpeechSpan>,
     pub(super) requests: Vec<HostRequest>,
     pub(super) fault: Fault,
+    pub(super) diarization_model_id: String,
 }
 
 pub(super) fn options() -> ProducerOptions {
@@ -63,6 +67,7 @@ pub(super) fn options() -> ProducerOptions {
         batch_default: BatchDefault::Provisional {
             model_id: "fixture-asr".into(),
         },
+        diarization_model_id: FIXTURE_DIARIZER_MODEL.into(),
         local_only: false,
     }
 }
@@ -93,6 +98,7 @@ impl FixtureHost {
             ],
             requests: Vec::new(),
             fault,
+            diarization_model_id: FIXTURE_DIARIZER_MODEL.into(),
         }
     }
 
@@ -119,6 +125,7 @@ impl FixtureHost {
             ],
             requests: Vec::new(),
             fault: Fault::None,
+            diarization_model_id: FIXTURE_DIARIZER_MODEL.into(),
         }
     }
 }
@@ -217,8 +224,20 @@ impl MeetingAudioHost for FixtureHost {
             words.push(AsrWord {
                 start_ms,
                 end_ms: start_ms + 100,
-                text: if index % 2 == 0 { "hello" } else { "world" }.into(),
+                text: if self.fault == Fault::AcousticCorrection && index == 0 {
+                    "allice"
+                } else if index % 2 == 0 {
+                    "hello"
+                } else {
+                    "world"
+                }
+                .into(),
                 confidence: Some(0.9),
+                acoustic_candidates: if self.fault == Fault::AcousticCorrection && index == 0 {
+                    vec!["Alice".into()]
+                } else {
+                    Vec::new()
+                },
             });
         }
         if self.fault == Fault::WordCrossesSeam {
@@ -251,11 +270,7 @@ impl MeetingAudioHost for FixtureHost {
         })
     }
 
-    fn community1_exclusive_full_file(
-        &mut self,
-        audio: &Pcm16,
-        hash: &str,
-    ) -> AudioResult<GlobalDiarization> {
+    fn diarize_full_file(&mut self, audio: &Pcm16, hash: &str) -> AudioResult<GlobalDiarization> {
         assert_eq!(pcm_sha256(audio), hash);
         self.requests.push(HostRequest::Global {
             samples: audio.samples.len(),
@@ -293,7 +308,7 @@ impl MeetingAudioHost for FixtureHost {
                 if self.fault == Fault::WrongGlobalModel {
                     "pyannote/3.1"
                 } else {
-                    COMMUNITY1_MODEL
+                    &self.diarization_model_id
                 },
                 if self.fault == Fault::WrongGlobalHash {
                     "pack-hash-not-full-file"
@@ -313,6 +328,9 @@ impl MeetingAudioHost for FixtureHost {
             .collect();
         if self.fault == Fault::InventedCleanup {
             texts[0] = "Approved the budget.".into();
+        }
+        if self.fault == Fault::AcousticCorrection {
+            texts[0] = "Alice.".into();
         }
         Ok(CleanupOutput {
             texts,

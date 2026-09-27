@@ -1,6 +1,24 @@
 //! Conservative fix-don't-invent cleanup with no lexical or speaker edits.
 
-use super::{AudioError, AudioResult, TranscriptTurn};
+use std::collections::HashMap;
+
+use serde::Serialize;
+
+use super::{AudioError, AudioResult, TranscriptTurn, TranscriptWord};
+
+pub(super) struct AcousticCandidate {
+    pub words: Vec<String>,
+    pub pack_sha256: String,
+}
+
+#[derive(Debug, PartialEq, Eq, Serialize)]
+pub(super) struct AcceptedCorrection {
+    word_id: String,
+    pack_id: String,
+    pack_sha256: String,
+    from: String,
+    to: String,
+}
 
 /// Lexical corrections cannot be proved from text alone. They need a separate
 /// acoustic evidence path; this door therefore rejects lexical additions,
@@ -59,15 +77,77 @@ fn lexical_tokens(text: &str) -> Vec<String> {
     tokens
 }
 
-pub(super) fn apply_cleanup(turns: &mut [TranscriptTurn], texts: Vec<String>) -> AudioResult<()> {
+/// A cleanup model alone is never evidence for lexical replacement. Only a
+/// 1:1 acoustic alternative from the same hash-bound ASR pack can correct a
+/// single word. Raw words, clocks, speakers and source IDs never change.
+pub(super) fn apply_cleanup(
+    turns: &mut [TranscriptTurn],
+    texts: Vec<String>,
+    words: &[TranscriptWord],
+    candidates: &HashMap<String, AcousticCandidate>,
+) -> AudioResult<Vec<AcceptedCorrection>> {
     if turns.len() != texts.len() {
         return Err(AudioError::CleanupChangedTurns);
     }
+    let by_id: HashMap<_, _> = words
+        .iter()
+        .map(|word| (word.word_id.as_str(), word))
+        .collect();
+    let mut accepted = Vec::new();
     for (turn, text) in turns.iter().zip(&texts) {
-        validate_cleanup(&turn.text, text)?;
+        if validate_cleanup(&turn.text, text).is_ok() {
+            continue;
+        }
+        let original = lexical_tokens(&turn.text);
+        let cleaned = lexical_tokens(text);
+        if original.is_empty()
+            || original.len() != cleaned.len()
+            || original.len() != turn.source_word_ids.len()
+        {
+            return Err(AudioError::CleanupInventedContent);
+        }
+        for (index, word_id) in turn.source_word_ids.iter().enumerate() {
+            let word = by_id
+                .get(word_id.as_str())
+                .ok_or(AudioError::CleanupInventedContent)?;
+            if lexical_tokens(&word.text) != [original[index].clone()]
+                || word.speaker_cluster != turn.speaker_cluster
+            {
+                return Err(AudioError::CleanupInventedContent);
+            }
+            if original[index] == cleaned[index] {
+                continue;
+            }
+            // Polarity-bearing source words are never silently corrected.
+            // A candidate alone cannot establish semantic safety.
+            if matches!(original[index].as_str(), "not" | "no" | "never" | "n't")
+                || matches!(cleaned[index].as_str(), "not" | "no" | "never" | "n't")
+            {
+                return Err(AudioError::CleanupInventedContent);
+            }
+            let candidate = candidates
+                .get(word_id)
+                .ok_or(AudioError::CleanupInventedContent)?;
+            let replacement = lexical_tokens(&cleaned[index]);
+            if replacement.len() != 1
+                || !candidate
+                    .words
+                    .iter()
+                    .any(|value| lexical_tokens(value) == replacement)
+            {
+                return Err(AudioError::CleanupInventedContent);
+            }
+            accepted.push(AcceptedCorrection {
+                word_id: word_id.clone(),
+                pack_id: word.pack_id.clone(),
+                pack_sha256: candidate.pack_sha256.clone(),
+                from: word.text.clone(),
+                to: cleaned[index].clone(),
+            });
+        }
     }
     for (turn, text) in turns.iter_mut().zip(texts) {
         turn.text = text.trim().to_owned();
     }
-    Ok(())
+    Ok(accepted)
 }

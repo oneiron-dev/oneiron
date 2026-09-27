@@ -1,15 +1,15 @@
 //! File → VAD → routed packs → one full-file diarization → cleanup → native artifact.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use serde_json::json;
 
 use crate::ingest::MEETING_TRANSCRIPT_SCHEMA_V1;
 
 use super::alignment::make_turns;
-use super::cleanup::apply_cleanup;
+use super::cleanup::{AcousticCandidate, apply_cleanup};
 use super::packing::{packed_audio, source_times};
-use super::provenance::{COMMUNITY1_MODEL, execution_mode, pcm_sha256, sha256, validate_receipt};
+use super::provenance::{execution_mode, pcm_sha256, sha256, validate_receipt};
 use super::{
     AsrPackRequest, AsrRole, AudioError, AudioFile, AudioResult, BatchAsrRequest, BatchDefault,
     CleanupRequest, InferenceExecution, MeetingAudioHost, ProcessingTier,
@@ -58,6 +58,7 @@ pub fn produce_meeting_transcript<H: MeetingAudioHost + ?Sized>(
     }
 
     let mut words = Vec::new();
+    let mut acoustic_candidates = HashMap::new();
     let mut pack_receipts = Vec::new();
     let mut asr_fixture = false;
     let mut aligner_model: Option<String> = None;
@@ -92,6 +93,11 @@ pub fn produce_meeting_transcript<H: MeetingAudioHost + ?Sized>(
             if word.start_ms < previous_pack_end
                 || word.end_ms > pack.audio_ms
                 || word.text.trim().is_empty()
+                || word.acoustic_candidates.len() > 16
+                || word
+                    .acoustic_candidates
+                    .iter()
+                    .any(|candidate| candidate.trim().is_empty() || candidate.len() > 256)
                 || word.confidence.is_some_and(|confidence| {
                     !confidence.is_finite() || !(0.0..=1.0).contains(&confidence)
                 })
@@ -104,8 +110,18 @@ pub fn produce_meeting_transcript<H: MeetingAudioHost + ?Sized>(
             }
             previous_pack_end = word.end_ms;
             previous_source_end = end_ms;
+            let word_id = format!("word-{:06}", words.len() + 1);
+            if !word.acoustic_candidates.is_empty() {
+                acoustic_candidates.insert(
+                    word_id.clone(),
+                    AcousticCandidate {
+                        words: word.acoustic_candidates,
+                        pack_sha256: pack_hash.clone(),
+                    },
+                );
+            }
             words.push(TranscriptWord {
-                word_id: format!("word-{:06}", words.len() + 1),
+                word_id,
                 pack_id: pack.pack_id.clone(),
                 start_ms,
                 end_ms,
@@ -119,9 +135,9 @@ pub fn produce_meeting_transcript<H: MeetingAudioHost + ?Sized>(
 
     // Deliberately outside the pack loop. The host gets the original complete
     // PCM (not concatenated speech, not an ASR pack), once and only once.
-    let diarization = host.community1_exclusive_full_file(&audio, &pcm_hash)?;
+    let diarization = host.diarize_full_file(&audio, &pcm_hash)?;
     validate_receipt(&diarization.provenance, &pcm_hash, &mut invocation_ids)?;
-    if diarization.provenance.model_id != COMMUNITY1_MODEL {
+    if diarization.provenance.model_id != options.diarization_model_id {
         return Err(AudioError::InvalidProvenance);
     }
     align_words_to_speakers(&mut words, &diarization.exclusive_tracks, duration_ms)?;
@@ -133,7 +149,13 @@ pub fn produce_meeting_transcript<H: MeetingAudioHost + ?Sized>(
         input_sha256: &cleanup_hash,
     })?;
     validate_receipt(&cleanup.provenance, &cleanup_hash, &mut invocation_ids)?;
-    apply_cleanup(&mut turns, cleanup.texts)?;
+    let accepted_corrections =
+        apply_cleanup(&mut turns, cleanup.texts, &words, &acoustic_candidates)?;
+    let cleanup_policy = if accepted_corrections.is_empty() {
+        "lexical_content_preserving_v1"
+    } else {
+        "acoustic_word_corrections_v1"
+    };
     let glossary_bytes =
         serde_json::to_vec(&options.glossary).map_err(|_| AudioError::Serialization)?;
     // All execution modes are host reports. A fixture at any stage marks the
@@ -179,7 +201,8 @@ pub fn produce_meeting_transcript<H: MeetingAudioHost + ?Sized>(
         "turns": turns,
         "cleanup": {
             "status": "turns_only",
-            "policy": "lexical_content_preserving_v1",
+            "policy": cleanup_policy,
+            "accepted_corrections": accepted_corrections,
             "provenance": cleanup.provenance,
             "summary": null,
             "decisions": [],
@@ -210,6 +233,7 @@ fn validate_options(file: &AudioFile<'_>, options: &ProducerOptions) -> AudioRes
             .language_hint
             .is_some_and(|hint| hint.trim().is_empty())
         || options.batch_default.model_id().trim().is_empty()
+        || options.diarization_model_id.trim().is_empty()
         || options.glossary.iter().any(|entry| entry.trim().is_empty())
         || matches!(&options.batch_default, BatchDefault::MeasuredE1 { evidence_ref, .. }
             if evidence_ref.trim().is_empty())

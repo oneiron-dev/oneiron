@@ -18659,7 +18659,7 @@
      "purpose": "Immutable producer artifact and one approval for the complete import batch",
      "surface": {
       "crate-vis": 1,
-      "fn": 9,
+      "fn": 10,
       "struct": 2
      }
     },
@@ -18670,7 +18670,7 @@
      "path": "src/ingest/meeting_audio/cleanup.rs",
      "purpose": "Conservative fix-don't-invent cleanup with no lexical or speaker edits",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 3,
       "fn": 1
      }
     },
@@ -18789,7 +18789,7 @@
      "path": "src/ingest/meeting_audio/provenance.rs",
      "purpose": "Input-bound inference receipts; validation is not a claim of measured quality",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 4
      }
     },
     {

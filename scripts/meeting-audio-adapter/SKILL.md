@@ -25,8 +25,9 @@ Use the same immutable glossary on *each* pack. The cleanup instruction file
 must have exactly one `{{TRANSCRIPT_JSON}}` placeholder. It asks for one JSON
 `{"texts":[...]}` array, one nonblank correction per turn, with punctuation
 and ASR-only fixes; no invented words, changed speaker IDs or facts. The
-engine's lexical validator enforces this narrower behavior even if the prompt
-asks for more. The host pins exact prompt bytes and hash in its runtime profile
+engine permits a one-for-one word correction only when the ASR port supplies
+an acoustic candidate from the hash-bound speech pack. Raw words, clocks and
+speaker IDs remain unchanged; without a candidate, lexical edits refuse. The host pins exact prompt bytes and hash in its runtime profile
 (`scripts/meeting-audio-runtime.md`); no fixed product prompt lives in Rust.
 
 The resident agent also chooses policy for E1/E3 experiments and the
@@ -73,6 +74,7 @@ secret). For example, replace **every** placeholder:
   "language_hint": "English",
   "capture_started_at": null,
   "glossary": "/absolute/private/glossary-v1.json",
+  "policy_manifest": null,
   "routes": {
     "asr": {"model_id": "host-selected-asr", "model_revision": "asr-snapshot-revision", "route_receipt_ref": "host-asr-selection", "execution": "native"},
     "aligner": {"model_id": "host-selected-aligner", "model_revision": "aligner-snapshot-revision", "route_receipt_ref": "host-alignment-selection", "execution": "native"},
@@ -82,6 +84,14 @@ secret). For example, replace **every** placeholder:
   "measured_e1": null
 }
 ```
+
+`policy_manifest` can point to a host-owned JSON object with `vault` and
+`holder` rows. Each row may set `glossary_max_bytes`, `glossary_max_terms`,
+`glossary_max_term_bytes` and `stage_timeout_seconds`. Absent rows inherit
+`scripts/meeting-audio-adapter/policy-defaults.json`. The vault can adjust
+shipped workload defaults within the independent protocol ceilings; the holder
+may narrow but never exceed the vault. No glossary sizes or inference deadlines
+are hard-coded as product policy in Rust.
 
 Run from the repository root, with an owned target and a timeout:
 
@@ -101,8 +111,8 @@ one new file only after `ProducedMeetingTranscript` has passed the real ingest
 normalizer and its registry/skill parity check. It refuses to overwrite a
 previous artifact; retain the source recording and immutable JSON together.
 Import is a **separate** host action: an authenticated owner-facing host calls
-`ProducedMeetingTranscript::authorize_import` with its `BulkImportAuthorizer`
-for that exact artifact hash, vault and all turn IDs. Pending or denied consent
+`ProducedMeetingTranscript::from_json` on the exact saved bytes, then
+`authorize_import` with its `BulkImportAuthorizer` for that exact artifact hash, vault and all turn IDs. Pending or denied consent
 cannot ingest. Normalized evidence enters `ClaimSource::Imported` /
 `ClaimApprovalStatus::Proposed`; import is no authority to auto-approve claims
 or enroll voices. The consumer's SESSION-first / NOTE-fallback mapping remains
@@ -112,6 +122,9 @@ the existing [CAL-08] seam, not a new parser in this skill.
 
 - Run `cargo test -p oneiron --example meeting_audio_import` and the ingest
   featureless/all-features test tiers. `scripts/codemap/check.sh` pins the map.
+- The shipped public MP4 fixture test uses hash-bound retained decoded PCM and
+  fixture-only model ports to prove the complete adapter path without a model.
+  Its execution marker is `fixture`, never an E1/E3 accuracy claim.
 - A native mp4 import proof must retain the exact media hash, output artifact,
   normalizer result, host-profile hashes, invocation receipts and bulk-import
   approval receipt. A fixture-only run may prove plumbing, never model quality.
