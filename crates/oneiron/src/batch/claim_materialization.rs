@@ -315,6 +315,25 @@ impl ClaimMaterialization {
         op: BatchOp,
         persist_pending: bool,
     ) -> Result<()> {
+        Self::apply_approval_inner(vault, txn, op, persist_pending, None)
+    }
+
+    pub(crate) fn apply_refinement_approval(
+        vault: &Vault,
+        txn: &mut heed::RwTxn<'_>,
+        op: BatchOp,
+        proof: crate::skill_hub::RefinementAdmissionProof,
+    ) -> Result<()> {
+        Self::apply_approval_inner(vault, txn, op, false, Some(proof))
+    }
+
+    fn apply_approval_inner(
+        vault: &Vault,
+        txn: &mut heed::RwTxn<'_>,
+        op: BatchOp,
+        persist_pending: bool,
+        proof: Option<crate::skill_hub::RefinementAdmissionProof>,
+    ) -> Result<()> {
         let BatchOp::Put {
             id,
             entity_type: crate::registry::ENTITY_TYPE_CLAIM,
@@ -371,7 +390,13 @@ impl ClaimMaterialization {
             vault
                 .text_index_trusted
                 .load(std::sync::atomic::Ordering::Acquire),
-            ApplyOpsGateMode::new(false, persist_pending).with_claim_materializations(bindings),
+            match proof {
+                Some(proof) => ApplyOpsGateMode::new(false, persist_pending)
+                    .with_claim_materializations(bindings)
+                    .with_refinement_admission(proof),
+                None => ApplyOpsGateMode::new(false, persist_pending)
+                    .with_claim_materializations(bindings),
+            },
         )
     }
 

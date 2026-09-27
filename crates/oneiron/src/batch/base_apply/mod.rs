@@ -146,6 +146,7 @@ pub(super) fn apply_ops_with_origin(
     let replay = matches!(origin, BaseWriteOrigin::PromoteReplay(_));
     let mut ops = ReplayOps { ops, replay };
     let hub_admission = gate_mode.hub_admission;
+    let refinement_admission = gate_mode.refinement_admission;
     let birth_mask = gate_mode.birth_mask;
     let mutation_recorded_at = crate::ports::recorded_at_in_txn(store, wtxn)?;
     let record_gate_decisions = gate_mode.record_decisions;
@@ -318,6 +319,7 @@ pub(super) fn apply_ops_with_origin(
                     replicated,
                     hub_sync_imported,
                     hub_admission.as_ref(),
+                    refinement_admission.as_ref(),
                     later_text_coverage_by_op[op_index],
                     write_policy.as_ref(),
                     materialization

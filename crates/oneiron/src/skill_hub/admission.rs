@@ -204,6 +204,31 @@ impl Vault {
             super::HubAdmissionProof::consent(&self.store, txn, *candidate, &data, authorization)?;
         self.admit_hub_skill_record_in_txn(txn, occurred, learned_at, data, proof)
     }
+    pub(super) fn activate_refined_hub_record_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        record: &crate::skill::SkillRecord,
+        occurred: TimeRange,
+        learned_at: u64,
+        authorization: &crate::consent::ApproveOnceAuthorization,
+        refinement: super::refinement_admission::RefinementAdmissionProof,
+    ) -> Result<()> {
+        let candidate = refinement.candidate();
+        let mut admitted = record.clone();
+        admitted.approval_status = ClaimApprovalStatus::Approved;
+        admitted.lifecycle_status = SkillLifecycle::Active;
+        let data = crate::skill::encode_skill_record(&admitted)?;
+        let proof =
+            super::HubAdmissionProof::consent(&self.store, txn, candidate, &data, authorization)?;
+        self.admit_hub_skill_record_with_refinement_in_txn(
+            txn,
+            occurred,
+            learned_at,
+            data,
+            proof,
+            Some(refinement),
+        )
+    }
     /// Reads the most recent hub admission ruling (including a scored refusal).
     pub fn hub_admission_receipt(
         &self,
