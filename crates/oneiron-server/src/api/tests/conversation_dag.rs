@@ -443,7 +443,7 @@ async fn list_preview_falls_back_only_through_selected_dag_ancestors() {
         &server,
         &format!("{records}/{}/thread", root["id"].as_str().unwrap()),
         json!({
-            "actor": actor, "body": {"txt": "thread reply"}, "occurred_start": 103_u64,
+            "actor": actor, "advance": false, "body": {"txt": "thread reply"}, "occurred_start": 103_u64,
         }),
     )
     .await;
