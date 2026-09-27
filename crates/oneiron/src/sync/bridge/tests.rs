@@ -128,9 +128,10 @@ fn companion_record(
     persona_ref: EntityId,
     sensitivity: crate::federation::Sensitivity,
 ) -> CompanionRecord {
-    CompanionRecord::persona(
+    CompanionRecord::relationship(
         CompanionScope::neutral(),
         persona_ref,
+        EntityId::from_bytes_unchecked([0xFE; 16]),
         Value::from("private companion tuning"),
         CompanionProvenance::new(
             EntityId::from_bytes_unchecked([0xB8; 16]),
@@ -895,7 +896,14 @@ fn apply_materialized_edge_ops_keeps_other_edges_after_child_of_failure() {
                 },
             ];
             let metas = test_metas_for_ops(&ops);
-            apply_materialized_edge_ops(&vault, wtxn, ops, &metas, "2026-03")?;
+            apply_materialized_edge_ops(
+                &vault,
+                wtxn,
+                ops,
+                &metas,
+                "2026-03",
+                &LoroDoc::new().get_map("tombstones"),
+            )?;
             Ok(())
         })
         .unwrap();
@@ -938,7 +946,14 @@ fn apply_materialized_edge_ops_keeps_valid_child_of_delete_when_add_fails() {
                 },
             ];
             let metas = test_metas_for_ops(&ops);
-            apply_materialized_edge_ops(&vault, wtxn, ops, &metas, "2026-03")?;
+            apply_materialized_edge_ops(
+                &vault,
+                wtxn,
+                ops,
+                &metas,
+                "2026-03",
+                &LoroDoc::new().get_map("tombstones"),
+            )?;
             Ok(())
         })
         .unwrap();
@@ -986,7 +1001,14 @@ fn apply_materialized_edge_ops_child_of_subset_is_deterministic() {
                 },
             ];
             let metas = test_metas_for_ops(&ops);
-            apply_materialized_edge_ops(&vault, wtxn, ops, &metas, "2026-03")?;
+            apply_materialized_edge_ops(
+                &vault,
+                wtxn,
+                ops,
+                &metas,
+                "2026-03",
+                &LoroDoc::new().get_map("tombstones"),
+            )?;
             Ok(())
         })
         .unwrap();
