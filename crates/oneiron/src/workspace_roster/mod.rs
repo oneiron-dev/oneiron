@@ -120,4 +120,7 @@ pub(crate) use project::{
 
 mod rooms;
 pub(crate) use rooms::admit_witness as admit_room_witness;
-pub use rooms::{RoomClaimOutcome, RoomClaimReceipt, RoomPage, RoomTurn};
+pub use rooms::{
+    RoomClaimOutcome, RoomClaimReceipt, RoomPage, RoomThread, RoomThreadList, RoomThreadPolicy,
+    RoomThreadTask, RoomThreadWait, RoomThreads, RoomTurn,
+};

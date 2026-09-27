@@ -31843,7 +31843,7 @@
      "path": "src/task_verb/mod.rs",
      "purpose": "Typed, actor-bound verbs over the Context Board TASKS section",
      "surface": {
-      "crate-vis": 10,
+      "crate-vis": 11,
       "mod": 1,
       "re-export": 16
      }
@@ -31926,6 +31926,16 @@
      "surface": {
       "crate-vis": 1,
       "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/task_verb/room_thread.rs",
+     "purpose": "Existing TASK intent and follow-up facts projected onto a room thread",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -33608,9 +33618,36 @@
      "path": "src/workspace_roster/rooms/history.rs",
      "purpose": "Bounded room-local history and transactional auxiliary-row cleanup",
      "surface": {
-      "crate-vis": 2,
-      "fn": 3
+      "crate-vis": 3,
+      "fn": 7
      }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "RoomThread",
+      "RoomThreadList",
+      "RoomThreadPolicy",
+      "RoomThreadTask",
+      "RoomThreadWait",
+      "RoomThreads"
+     ],
+     "path": "src/workspace_roster/rooms/liveness.rs",
+     "purpose": "Read-time room thread liveness; the room history and TASK rows remain truth",
+     "surface": {
+      "crate-vis": 1,
+      "fn": 2,
+      "struct": 6
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/workspace_roster/rooms/liveness/tests.rs",
+     "purpose": "Read-time room thread liveness acceptance fixtures",
+     "surface": {}
     },
     {
      "bucket": "s",
@@ -33627,11 +33664,12 @@
       "crate-vis": 2,
       "enum": 1,
       "fn": 4,
+      "re-export": 1,
       "struct": 3
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "test",
      "notable": [],
      "path": "src/workspace_roster/rooms/tests.rs",
@@ -35643,7 +35681,7 @@
      "purpose": "Replicated TASK authority: owner proof, cancellation, and acknowledgement as immutable companion TASK entities"
     },
     "task_verb": {
-     "files": 59,
+     "files": 60,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -35748,7 +35786,7 @@
      "purpose": "OF-444 web acquisition primitive: one HTTP(S) URL in, one fixed six-field [`FetchResult`] out, produced by a…"
     },
     "workspace_roster": {
-     "files": 19,
+     "files": 21,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -35764,8 +35802,8 @@
    },
    "over_bar": 10,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2110,
-   "test_files": 722
+   "source_files": 2112,
+   "test_files": 723
   },
   "oneiron-android": {
    "files": [

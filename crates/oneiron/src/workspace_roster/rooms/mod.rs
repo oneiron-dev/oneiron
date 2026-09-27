@@ -1,5 +1,6 @@
 //! Room participation and addressed turn claims. Joining grants no memory scope.
 mod history;
+mod liveness;
 #[cfg(test)]
 mod tests;
 mod witness;
@@ -8,6 +9,9 @@ use crate::error::{Error, Result};
 use crate::memory::{Memory, MemoryError, MemoryResult, WitnessReceipt, WitnessTurn};
 use crate::{EntityId, Vault};
 pub(super) use history::delete_room_metadata;
+pub use liveness::{
+    RoomThread, RoomThreadList, RoomThreadPolicy, RoomThreadTask, RoomThreadWait, RoomThreads,
+};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 pub(crate) use witness::admit_witness;
