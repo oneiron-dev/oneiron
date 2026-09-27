@@ -27,12 +27,12 @@ or an automatic acceptance of this review cue.
 
 ## Re-tune flag rubric
 
-Harness maintenance compares immutable config artifact versions. The default
-score-regression threshold is strictly greater than 0.05 on the [0, 1] score.
-A backbone change flags all three review surfaces, even without score loss.
-On score loss without a backbone change, flag only surfaces that changed since
-the prior evaluated version: prompt references, weight map, or manifest-threshold
-map. If the config is byte-equivalent at the typed-value level, flag all three
-for diagnosis rather than hiding a genuine score loss. A non-regressing change
-in prompts, weights, or manifest values is not enough to emit a re-tune flag.
-The flag is a proposal to review settings, not an automatic retune.
+Harness maintenance compares immutable config artifact versions. Score drops
+must exceed each target's [0, 1] cutoff: prompts 0.05, weights 0.08, and
+manifest thresholds 0.10. A backbone change flags all three review surfaces,
+even without score loss. Otherwise a changed config flags only the changed
+surfaces whose cutoff was crossed: prompt references, weight map, or
+manifest-threshold map. If the typed config is unchanged, the crossed cutoffs
+still flag their respective surfaces for diagnosis. A non-regressing change
+alone does not emit a re-tune flag. The flag is a proposal to review settings,
+not an automatic retune.

@@ -25,11 +25,20 @@ pub struct HarnessEvaluation {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct RetuneThresholds {
-    pub score_regression: f64,
+    pub prompts_score_regression: f64,
+    pub weights_score_regression: f64,
+    pub manifest_thresholds_score_regression: f64,
 }
 impl RetuneThresholds {
     fn validate(&self) -> Result<()> {
-        if !self.score_regression.is_finite() || !(0.0..=1.0).contains(&self.score_regression) {
+        if [
+            self.prompts_score_regression,
+            self.weights_score_regression,
+            self.manifest_thresholds_score_regression,
+        ]
+        .iter()
+        .any(|x| !x.is_finite() || !(0.0..=1.0).contains(x))
+        {
             return Err(invalid());
         }
         Ok(())
@@ -123,21 +132,27 @@ pub(super) fn run(
         }
         let proposal = if let Some(prior) = prior {
             let backbone_changed = prior.config.backbone != current.backbone;
-            let regressed = prior.score - evaluation.score > thresholds.score_regression;
-            if backbone_changed || regressed {
-                // A changed backbone warrants inspecting every tuning surface. For a
-                // score regression, flag only changed surfaces; unchanged configs
-                // still need a full diagnosis rather than a silent no-op.
-                let all = backbone_changed || prior.config == current;
-                let targets: Vec<_> = [
-                    ("prompts", prior.config.prompts != current.prompts),
-                    ("weights", prior.config.weights != current.weights),
-                    ("manifest_thresholds", prior.config.manifest_thresholds != current.manifest_thresholds),
-                ]
-                .into_iter()
-                .filter_map(|(name, changed)| (all || changed).then_some(name))
+            let score_drop = prior.score - evaluation.score;
+            let surfaces = [
+                ("prompts", score_drop > thresholds.prompts_score_regression,
+                    prior.config.prompts != current.prompts),
+                ("weights", score_drop > thresholds.weights_score_regression,
+                    prior.config.weights != current.weights),
+                ("manifest_thresholds", score_drop > thresholds.manifest_thresholds_score_regression,
+                    prior.config.manifest_thresholds != current.manifest_thresholds),
+            ];
+            // Attribute a changed configuration only to the surfaces that
+            // changed. An unchanged configuration needs score-only diagnosis.
+            let unchanged = surfaces.iter().all(|(_, _, changed)| !changed);
+            let targets: Vec<_> = surfaces.into_iter()
+                .filter_map(|(name, regressed, changed)|
+                    (backbone_changed || (regressed && (unchanged || changed))).then_some(name))
                 .collect();
-                let value = serde_json::json!({"artifact":evaluation.artifact.to_hex(),"version":evaluation.version,"backbone_changed":backbone_changed,"score_regressed":regressed,"targets":targets,"previous_score":prior.score,"score":evaluation.score});
+            if !targets.is_empty() {
+                let score_regressed = score_drop > thresholds.prompts_score_regression
+                    || score_drop > thresholds.weights_score_regression
+                    || score_drop > thresholds.manifest_thresholds_score_regression;
+                let value = serde_json::json!({"artifact":evaluation.artifact.to_hex(),"version":evaluation.version,"backbone_changed":backbone_changed,"score_regressed":score_regressed,"targets":targets,"previous_score":prior.score,"score":evaluation.score,"thresholds":thresholds});
                 Some(proposals::emit_in_txn(vault, txn, evaluation.artifact,
                     "dreamer.harness.retune_proposal", &value, &envelope, now)?)
             } else { None }
