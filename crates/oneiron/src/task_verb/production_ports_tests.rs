@@ -125,13 +125,14 @@ fn wave_plan_attempt_lands_idempotent_tasks_and_dispatch_reads_live_blockers() -
 struct Tracker {
     changes: Rc<RefCell<Vec<LinearIssueChange>>>,
     cursors: Rc<RefCell<Vec<Option<String>>>>,
+    updates: Rc<RefCell<usize>>,
 }
 impl LinearChangeSource for Tracker {
     fn changes_since(&mut self, cursor: Option<&str>) -> LinearSyncResult<LinearChangePage> {
         self.cursors.borrow_mut().push(cursor.map(str::to_owned));
         Ok(LinearChangePage {
             changes: std::mem::take(&mut *self.changes.borrow_mut()),
-            next_cursor: Some("next".into()),
+            next_cursor: None,
         })
     }
 }
@@ -159,6 +160,7 @@ impl LinearEgress for Tracker {
         issue: &LinearIssueRef,
         fields: &MirroredTaskFields,
     ) -> LinearSyncResult<LinearIssueChange> {
+        *self.updates.borrow_mut() += 1;
         Ok(LinearIssueChange {
             event_id: format!("update-{}", issue.issue_id),
             issue: issue.clone(),
@@ -192,6 +194,7 @@ fn linear_vault_occ_cas_reverse_lookup_and_production_push_poll() -> LinearSyncR
     let tracker = Tracker {
         changes: Rc::new(RefCell::new(Vec::new())),
         cursors: Rc::new(RefCell::new(Vec::new())),
+        updates: Rc::new(RefCell::new(0)),
     };
     let mut adapter = LinearSyncAdapter::new(
         VaultLinearTaskStore::new(&vault),
@@ -268,10 +271,69 @@ fn linear_vault_occ_cas_reverse_lookup_and_production_push_poll() -> LinearSyncR
     assert_eq!(pushed.len(), 1);
     assert_eq!(pushed[0].status, LinearMirrorStatus::Applied);
     assert!(reopened.tasks().dirty_tasks()?.is_empty());
-    assert_eq!(
-        *tracker.cursors.borrow(),
-        vec![None, Some("next".into()), Some("next".into())]
-    );
+    assert_eq!(*tracker.cursors.borrow(), vec![None, None, None]);
     assert!(reopened.synchronize(105)?.0.is_empty());
+    Ok(())
+}
+
+#[test]
+fn scheduled_linear_pull_blocks_same_field_overwrite_before_egress() -> LinearSyncResult<()> {
+    let dir = tempfile::tempdir().map_err(crate::Error::from)?;
+    let vault = Vault::open(dir.path(), VaultConfig::default())?;
+    let owner = EntityId::now();
+    vault.put_entity(
+        &owner,
+        crate::registry::ENTITY_TYPE_PERSON,
+        TimeRange { start: 1, end: 1 },
+        1,
+        b"owner",
+    )?;
+    let task = vault
+        .memory(owner, EdgeActorClass::Human)
+        .tasks_create(&TaskCreateSpec::new(
+            Value::from("work"),
+            Some("original".into()),
+            None,
+            Some(100),
+        ))
+        .expect("task")
+        .task_ref
+        .unwrap();
+    let tracker = Tracker {
+        changes: Rc::new(RefCell::new(Vec::new())),
+        cursors: Rc::new(RefCell::new(Vec::new())),
+        updates: Rc::new(RefCell::new(0)),
+    };
+    let mut adapter = LinearSyncAdapter::new(
+        VaultLinearTaskStore::new(&vault),
+        tracker.clone(),
+        tracker.clone(),
+    );
+    let (created, _) = adapter.synchronize(100)?;
+    assert_eq!(created[0].status, LinearMirrorStatus::Linked);
+    let link = adapter.tasks().link(task)?.unwrap();
+    let old = adapter.tasks().task_snapshot(task)?;
+    let mut local = old.fields.clone();
+    local.description = Some("local edit".into());
+    adapter
+        .tasks_mut()
+        .apply_issue_fields(task, old.revision, &local, 101)?;
+    let mut remote = old.fields;
+    remote.description = Some("remote edit".into());
+    tracker.changes.borrow_mut().push(LinearIssueChange {
+        event_id: "remote-change".into(),
+        issue: link.issue,
+        updated_at_ms: 3000,
+        fields: remote,
+    });
+    let (pushed, pulled) = adapter.synchronize(102)?;
+    assert_eq!(pulled.conflicts.len(), 1);
+    assert_eq!(pushed[0].status, LinearMirrorStatus::Conflict);
+    assert_eq!(
+        *tracker.updates.borrow(),
+        0,
+        "remote edit must not be overwritten"
+    );
+    assert_eq!(adapter.tasks().dirty_tasks()?.len(), 1);
     Ok(())
 }

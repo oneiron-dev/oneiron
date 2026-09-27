@@ -434,6 +434,7 @@ fn hex_bytes(bytes: &[u8]) -> String {
 
 async fn serve_with_config(config: ServeConfig) -> anyhow::Result<()> {
     use oneiron_vault_contract::host::{Host, HostLimits};
+    let linear_config = crate::linear_host::LinearHostConfig::from_env()?;
 
     tracing::info!(
         vault_path = %config.vault_path.display(),
@@ -517,6 +518,9 @@ async fn serve_with_config(config: ServeConfig) -> anyhow::Result<()> {
     let listener = tokio::net::TcpListener::from_std(host.listener()?)?;
     let lifecycle_handle = sync_server.spawn_lifecycle_scheduler();
     let embedding_handle = sync_server.spawn_embedding_worker();
+    let linear_handle = linear_config
+        .map(|config| crate::linear_host::spawn_linear_sync(Arc::clone(&sync_server.vault), config))
+        .transpose()?;
     let app = build_app(sync_server).layer(cors_layer);
     host.ready()?;
     let result = axum::serve(
@@ -527,6 +531,10 @@ async fn serve_with_config(config: ServeConfig) -> anyhow::Result<()> {
     host.on_stop()?;
     lifecycle_handle.abort();
     let _ = lifecycle_handle.await;
+    if let Some(handle) = linear_handle {
+        handle.abort();
+        let _ = handle.await;
+    }
     if let Some(handle) = embedding_handle {
         handle.abort();
         let _ = handle.await;

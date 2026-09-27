@@ -259,21 +259,19 @@ impl LinearTaskStore for VaultLinearTaskStore<'_> {
 
 const PULL_CURSOR: &[u8] = b"linear.pull_cursor.v1";
 impl<I: LinearChangeSource, O: LinearEgress> LinearSyncAdapter<VaultLinearTaskStore<'_>, I, O> {
-    /// Scheduled host entry: drain TASK writes then consume one source page.
+    /// Scheduled host entry: pull one source page before draining TASK writes.
+    /// A pending page defers outbound writes, so the remote conflict barrier
+    /// is caught up before a dirty TASK can overwrite tracker fields.
     /// Errors retain dirty revisions/cursor for retry. The injected egress is
     /// still the authenticated OF-327 rail, never a credential in core.
     pub fn synchronize(
         &mut self,
         now: u64,
     ) -> LinearSyncResult<(Vec<LinearMirrorReceipt>, LinearPullReceipt)> {
-        let mut pushed = Vec::new();
-        for (task, revision) in self.tasks().dirty_tasks()? {
-            let receipt = self.push_task(task, now)?;
-            if receipt.status != LinearMirrorStatus::Conflict {
-                self.tasks().acknowledge_push(task, revision)?;
-            }
-            pushed.push(receipt);
-        }
+        // Pull first. Pushing a dirty TASK before observing a remote edit
+        // would overwrite the tracker field before the conflict barrier has a
+        // chance to see it. A nonempty page cursor defers all outbound writes
+        // until the source reports that the backlog is caught up.
         let cursor = {
             let txn = self
                 .tasks()
@@ -303,6 +301,15 @@ impl<I: LinearChangeSource, O: LinearEgress> LinearSyncAdapter<VaultLinearTaskSt
                     .put(txn, PULL_CURSOR, cursor.as_bytes())?;
                 Ok(())
             })?;
+            return Ok((Vec::new(), pulled));
+        }
+        let mut pushed = Vec::new();
+        for (task, revision) in self.tasks().dirty_tasks()? {
+            let receipt = self.push_task(task, now)?;
+            if receipt.status != LinearMirrorStatus::Conflict {
+                self.tasks().acknowledge_push(task, revision)?;
+            }
+            pushed.push(receipt);
         }
         Ok((pushed, pulled))
     }

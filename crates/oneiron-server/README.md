@@ -84,3 +84,25 @@ lms load text-embedding-harrier-oss-v1-0.6b --context-length 4096 -y
 # Linux, llama-server
 llama-server -m harrier-oss-v1-0.6b.f16.gguf --embeddings --pooling last -c 4096 --port 8089
 ```
+
+## Optional Linear TASK mirror
+
+The **bare** `oneiron-server serve` host can run a vault's Linear mirror every
+60 seconds. It is off by default. Supply all four variables in the host's
+secret-bearing environment, not in a repository, checkout, or vault row:
+
+- `ONEIRON_LINEAR_SYNC_ENABLED=true`
+- `ONEIRON_LINEAR_API_KEY` — a Linear API key for the intended workspace
+- `ONEIRON_LINEAR_TEAM_ID` — the team's opaque Linear ID
+- `ONEIRON_LINEAR_STATUS_NAMES` — a JSON map from TASK status tokens to exact
+  Linear workflow state names for that team, e.g. `{"queued":"Backlog", "completed":"Done"}`.
+  Names must be unique. Unmapped inbound or outbound states fail closed.
+
+A partial configuration refuses server startup. The adapter uses only
+`https://api.linear.app/graphql` with a 15-second timeout, no redirects or
+ambient proxy, and bounded responses. The key stays in the host process; no
+credential is persisted in the engine. A pass pulls one change page first.
+Only after the page stream catches up does it push dirty TASK rows. Failed
+passes retain their cursor and dirty revisions for the next tick. Conflicts
+leave the affected dirty TASK queued for resolution, not silently overwritten.
+The supervised managed child does not read these variables or start this worker.
