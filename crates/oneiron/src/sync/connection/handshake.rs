@@ -76,6 +76,23 @@ impl SyncConnection {
         let event_tx = client.event_tx.clone();
         let mut client = client;
 
+        // The host topology is authoritative even before the first socket
+        // attempt, and its watcher remains active during reconnect backoff.
+        // There is no fallback election on transport loss or cancellation.
+        let _topology_watcher = self
+            .config
+            .client_config
+            .home_node_topology
+            .as_ref()
+            .map(|source| {
+                super::topology::watch_topology(
+                    Arc::clone(self.manager.vault()),
+                    source,
+                    event_tx.clone(),
+                )
+            })
+            .transpose()?;
+
         // Observer A → outbound wiring: while attached, persisted local
         // updates arrive on `local_rx` below.
         let (local_tx, mut local_rx) = mpsc::unbounded_channel::<LocalUpdate>();
