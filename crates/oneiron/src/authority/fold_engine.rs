@@ -4,6 +4,7 @@
 //! peer, and seen-time variants. Per-entry state transitions are delegated
 //! to [`super::entry_transition`].
 
+use std::cell::Cell;
 use std::collections::{BTreeMap, BTreeSet};
 
 use super::*;
@@ -12,6 +13,9 @@ use super::*;
 pub(super) struct FoldContext<'a> {
     pub(super) first_seen_at_secs: &'a BTreeMap<AuthorityEntryHash, u64>,
     pub(super) now_secs: Option<u64>,
+    /// Minimum future eligibility observed during ANY fold pass, including a
+    /// pending widen subsequently removed by an accepted veto.
+    pub(super) deadline_observer: Option<&'a Cell<Option<u64>>>,
     pub(super) sequence_floors: Option<&'a BTreeMap<AuthorityEntryHash, u64>>,
     pub(super) enforce_seen_time_delay: bool,
     pub(super) vetoed_widens: &'a BTreeSet<AuthorityEntryHash>,
@@ -39,6 +43,12 @@ impl FoldContext<'_> {
     }
 }
 
+#[derive(Default)]
+struct FoldLocalInputs<'a> {
+    observations: Option<&'a AuthorityLocalObservations>,
+    deadline_observer: Option<&'a Cell<Option<u64>>>,
+}
+
 /// Folds a set of authority entries into a deterministic roster.
 ///
 /// Entries missing local first-seen timestamps remain pending; callers with
@@ -53,7 +63,7 @@ pub fn fold_authority_log(entries: &[AuthorityLogEntry]) -> AuthorityFold {
         true,
         &peer_consent_roots,
         folded_device_can_authority_consent,
-        None,
+        FoldLocalInputs::default(),
     )
 }
 
@@ -70,7 +80,7 @@ pub(super) fn fold_authority_log_without_seen_time_delay(
         false,
         &peer_consent_roots,
         folded_device_can_authority_consent,
-        None,
+        FoldLocalInputs::default(),
     )
 }
 
@@ -112,7 +122,7 @@ pub(crate) fn fold_authority_log_with_peer_consent_roots(
         true,
         peer_consent_roots,
         folded_device_can_authority_consent,
-        None,
+        FoldLocalInputs::default(),
     )
 }
 
@@ -137,7 +147,7 @@ pub fn fold_authority_log_for_posture(
         true,
         peer_consent_roots,
         consent,
-        None,
+        FoldLocalInputs::default(),
     )
 }
 
@@ -162,32 +172,41 @@ pub fn fold_peer_authority_log(entries: &[AuthorityLogEntry]) -> AuthorityFold {
         false,
         &peer_consent_roots,
         folded_peer_device_is_consent_root,
-        None,
+        FoldLocalInputs::default(),
     )
 }
 
-pub(super) fn fold_authority_log_with_local_observations_and_posture(
+/// Return the same reference fold plus the earliest future eligibility
+/// observed in its fixed-point passes. This is cache metadata, not fold output.
+/// A veto can erase its target from the final pending map even though that
+/// target's eligibility still changes whether the veto is valid later.
+pub(super) fn fold_authority_log_with_local_observations_and_posture_with_deadline(
     entries: &[AuthorityLogEntry],
     first_seen_at_secs: &BTreeMap<AuthorityEntryHash, u64>,
     now_secs: u64,
     peer_consent_roots: &BTreeMap<AuthorityVaultId, BTreeSet<AuthorityKey>>,
     observations: &AuthorityLocalObservations,
     posture: crate::HostingPrivacyPosture,
-) -> AuthorityFold {
+) -> (AuthorityFold, Option<u64>) {
     let consent = if posture == crate::HostingPrivacyPosture::Hosted {
         folded_host_device_can_consent
     } else {
         folded_device_can_authority_consent
     };
-    fold_authority_log_inner(
+    let deadline = Cell::new(None);
+    let fold = fold_authority_log_inner(
         entries,
         first_seen_at_secs,
         Some(now_secs),
         true,
         peer_consent_roots,
         consent,
-        Some(observations),
-    )
+        FoldLocalInputs {
+            observations: Some(observations),
+            deadline_observer: Some(&deadline),
+        },
+    );
+    (fold, deadline.get())
 }
 
 fn fold_authority_log_inner(
@@ -197,18 +216,23 @@ fn fold_authority_log_inner(
     enforce_seen_time_delay: bool,
     peer_consent_roots: &BTreeMap<AuthorityVaultId, BTreeSet<AuthorityKey>>,
     consent_arm: fn(&FoldedDevice) -> bool,
-    observations: Option<&AuthorityLocalObservations>,
+    local: FoldLocalInputs<'_>,
 ) -> AuthorityFold {
     let mut vetoed_widens = BTreeSet::new();
-    let sequence_floors = observations.map(|local| &local.sequence_floors);
-    let stale_roster_window_secs = observations.map_or(DEFAULT_STALE_ROSTER_WINDOW_SECS, |local| {
-        local.policy.stale_roster_window_secs
-    });
+    let sequence_floors = local
+        .observations
+        .map(|observations| &observations.sequence_floors);
+    let stale_roster_window_secs = local
+        .observations
+        .map_or(DEFAULT_STALE_ROSTER_WINDOW_SECS, |local| {
+            local.policy.stale_roster_window_secs
+        });
     let mut fold = fold_authority_log_once(
         entries,
         FoldContext {
             first_seen_at_secs,
             now_secs,
+            deadline_observer: local.deadline_observer,
             sequence_floors,
             enforce_seen_time_delay,
             vetoed_widens: &vetoed_widens,
@@ -227,6 +251,7 @@ fn fold_authority_log_inner(
             FoldContext {
                 first_seen_at_secs,
                 now_secs,
+                deadline_observer: local.deadline_observer,
                 sequence_floors,
                 enforce_seen_time_delay,
                 vetoed_widens: &vetoed_widens,
