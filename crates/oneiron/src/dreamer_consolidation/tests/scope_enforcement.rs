@@ -1016,9 +1016,13 @@ fn production_epoch_timestamps_hold_then_release_and_rank_source_diversity() -> 
         },
     };
     assert_eq!(
-        selection::select_candidates(&[input.clone()], epoch * 1_000 + 49_999, &diversity)?
-            .held
-            .len(),
+        selection::select_candidates(
+            std::slice::from_ref(&input),
+            epoch * 1_000 + 49_999,
+            &diversity
+        )?
+        .held
+        .len(),
         1,
     );
     assert_eq!(
