@@ -3086,6 +3086,7 @@ fn coordination_effects_and_outcomes_round_trip_through_replay_wire() {
         word_ref: EntityId::now(),
     };
     let ask_result = crate::task_verb::TaskAskResult {
+        effect_authorization: crate::task_verb::TaskAskEffectAuthorization::NotEvaluatedByAsk,
         coverage: crate::task_verb::TaskAskCoverage {
             met: true,
             required: 1,
@@ -3102,6 +3103,7 @@ fn coordination_effects_and_outcomes_round_trip_through_replay_wire() {
             person_ref: actor,
             order: 1,
             reason: crate::task_verb::TaskAskEvidenceReason::Counted,
+            ladder_changed: None,
         }],
         settlement: crate::task_verb::TaskAskSettlement {
             group_ref: group,
