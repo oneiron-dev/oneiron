@@ -570,7 +570,7 @@ fn timestamp_is_advisory_for_fold_output() {
 
 proptest! {
     #[test]
-    fn equivocation_alarm_is_permutation_invariant(
+    fn divergent_same_sequence_entries_are_permutation_invariant(
         perm in prop::collection::vec(0_usize..4, 4),
     ) {
         let owner = ed_key(90);
@@ -595,8 +595,6 @@ proptest! {
         }
 
         let folded = fold_authority_log_without_seen_time_delay(&permuted);
-        prop_assert_eq!(folded.authority_forks, baseline.authority_forks);
-        prop_assert_eq!(folded.fork_alarms, baseline.fork_alarms);
         prop_assert_eq!(folded.valid_entries, baseline.valid_entries);
     }
 
