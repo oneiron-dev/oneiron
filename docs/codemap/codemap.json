@@ -28286,7 +28286,7 @@
      "path": "src/skill/resident.rs",
      "purpose": "Resident ownership of skill forks: an immutable birth mark, not a claim on the shared base",
      "surface": {
-      "crate-vis": 12
+      "crate-vis": 10
      }
     },
     {
@@ -28298,7 +28298,7 @@
      "surface": {}
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "test",
      "notable": [],
      "path": "src/skill/tests/resident.rs",
@@ -30552,6 +30552,14 @@
      "kind": "test",
      "notable": [],
      "path": "src/sync/bridge/tests.rs",
+     "purpose": "—",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/sync/bridge/tests/resident.rs",
      "purpose": "—",
      "surface": {}
     },
@@ -35719,7 +35727,7 @@
      "purpose": "ARCH-0038 historical-carrier sweep executor — ONE-1087 / ONE-1091 phase 1 (manual trigger via…"
     },
     "sync": {
-     "files": 100,
+     "files": 101,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -35855,7 +35863,7 @@
    "over_bar": 11,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
    "source_files": 2115,
-   "test_files": 726
+   "test_files": 727
   },
   "oneiron-android": {
    "files": [

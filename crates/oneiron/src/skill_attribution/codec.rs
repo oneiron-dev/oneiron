@@ -88,16 +88,13 @@ pub(super) fn validate_evidence(vault: &Vault, evidence: &OutcomeEvidence) -> Re
     if vault.get_raw(&evidence.actor)?.is_none() {
         return Err(invalid("attribution evidence names an unknown actor"));
     }
-    // Attribution belongs to the executing resident, even when the pack
-    // loaded only shared skills or did not load a skill at all. Historical
-    // actorless receipts remain usable for unregistered generic actors only.
-    let owner = crate::skill::resident::receipt_resident(vault, &evidence.receipt_ref)?;
-    if owner.is_some_and(|resident| resident != evidence.actor)
-        || owner.is_none() && crate::skill::resident::is_registered(vault, &evidence.actor)?
+    // A caller-chosen actor ID cannot assign an unbound receipt to a
+    // resident. This check precedes the optional skill: shared-skill and
+    // skillless outcomes need the same executor proof as fork outcomes.
+    if crate::skill::resident::receipt_resident(vault, &evidence.receipt_ref)?
+        != Some(evidence.actor)
     {
-        return Err(invalid(
-            "attribution receipt belongs to another resident or is unbound",
-        ));
+        return Err(invalid("attribution receipt is not bound to its actor"));
     }
     let Some(skill) = evidence.skill else {
         return Ok(());

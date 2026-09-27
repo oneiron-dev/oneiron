@@ -12,7 +12,7 @@ fn terminal_receipt_keeps_index_pull_and_actor_claim_in_load_order() -> Result<(
             actor,
             text: "read the source".to_owned(),
         },
-        &task_evidence(&vault, 30),
+        &task_evidence(&vault, actor, 30),
     )?;
     let dispatcher = AgentDispatcher::new(&vault);
     let AgentDispatchOutcome::Dispatched(status) = dispatcher.dispatch_default_base(

@@ -1,4 +1,8 @@
 use super::*;
+use crate::attempt_queue::{
+    AttemptQueue, ClaimAttempt, ClaimOutcome, EnqueueAttempt, EnqueueOutcome, FailAttempt,
+    ManifestEntry, ManifestKind,
+};
 
 #[test]
 fn supersession_never_crosses_resident_or_shared_ownership() -> Result<()> {
@@ -128,9 +132,9 @@ fn owner_birth_is_validated_by_typed_raw_and_replay_doors() -> Result<()> {
                 &encode_skill_record(&active)?
             )
             .commit()
-            .expect_err("active replay cannot trust an unresolved owner")
+            .expect_err("active replay must wait for its owner")
             .kind(),
-        ErrorKind::InvalidSkillBody
+        ErrorKind::ResidentOwnerDependencyPending
     );
     // An out-of-order Candidate is inert until its actor arrives; a wrong-kind
     // owner is refused immediately, and neither path grants a pack load.
@@ -182,6 +186,66 @@ fn owner_birth_is_validated_by_typed_raw_and_replay_doors() -> Result<()> {
         6,
         b"resident",
     )?;
+    // Candidate arrived before its owner. The later PERSON birth must not
+    // leave a gap where an unbound receipt can become this actor's lesson.
+    let queue = AttemptQueue::new(&vault);
+    let EnqueueOutcome::Enqueued(attempt) = queue.enqueue(EnqueueAttempt {
+        kind: "resident.deferred".into(),
+        payload: Vec::new(),
+        dedupe_key: None,
+        run_id: None,
+        now: 7,
+    })?
+    else {
+        panic!("new attempt")
+    };
+    queue.append_manifest_entry(
+        attempt.id,
+        ManifestEntry::new(ManifestKind::SkillIndex, "index", "1", 8),
+    )?;
+    let ClaimOutcome::Claimed(leased) = queue.claim_kind(
+        "resident.deferred",
+        ClaimAttempt {
+            lease_owner: "host".into(),
+            now: 9,
+        },
+    )?
+    else {
+        panic!("claim")
+    };
+    queue.fail(FailAttempt {
+        id: attempt.id,
+        lease_owner: "host".into(),
+        attempt_count: leased.attempt_count,
+        reason: "failed".into(),
+        now: 10,
+    })?;
+    let receipt = crate::receipt::attempt_pack_receipt_id(&attempt.id);
+    assert!(crate::receipt::attempt_pack_receipt(&vault, &receipt)?.is_some());
+    assert!(
+        crate::skill_attribution::record_attribution_evidence(
+            &vault,
+            &crate::skill_attribution::OutcomeEvidence::new(
+                &receipt,
+                missing,
+                crate::skill_attribution::AttemptOutcome::Failed,
+                10,
+            )
+            .with_routing_facts(false, true)
+        )
+        .is_err()
+    );
+    assert!(
+        crate::actor_claims::write_actor_claim(
+            &vault,
+            crate::actor_claims::ActorClaimRow::Lesson {
+                actor: missing,
+                text: "first-use".into()
+            },
+            &crate::actor_claims::ActorClaimEvidence::task(vec![receipt], 10)?,
+        )
+        .is_err()
+    );
     vault
         .batch()
         .put_replicated(

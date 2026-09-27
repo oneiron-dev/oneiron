@@ -139,7 +139,7 @@ fn put_actor(vault: &Vault, id: &EntityId) -> Result<()> {
 /// Runs one attempt whose pack loaded `skill_id` to its terminal door and
 /// returns the receipt id that close STAMPED. Attribution evidence cites these
 /// — a hand-written receipt string is refused at the evidence door.
-fn stamped_pack_receipt(vault: &Vault, skill_id: &str) -> Result<String> {
+fn stamped_pack_receipt(vault: &Vault, skill_id: &str, actor: EntityId) -> Result<String> {
     let queue = AttemptQueue::new(vault);
     let EnqueueOutcome::Enqueued(attempt) = queue.enqueue(EnqueueAttempt {
         kind: "oracle.attempt".to_owned(),
@@ -151,6 +151,7 @@ fn stamped_pack_receipt(vault: &Vault, skill_id: &str) -> Result<String> {
     else {
         panic!("a fresh dedupe-free enqueue is never Existing");
     };
+    vault.bind_resident_attempt(attempt.id, &actor)?;
     queue.append_manifest_entry(
         attempt.id,
         ManifestEntry::new(ManifestKind::Skill, skill_id, "1.0.0", 11),
@@ -1066,8 +1067,8 @@ fn sk04_attribution_routes_defect_to_skill_and_lapse_to_actor() -> Result<()> {
             .with_skill(skill_entity)
             .with_routing_facts(followed_skill, true)
     };
-    let defect_receipt = stamped_pack_receipt(&vault, "oracle.skill.attrib")?;
-    let lapse_receipt = stamped_pack_receipt(&vault, "oracle.skill.attrib")?;
+    let defect_receipt = stamped_pack_receipt(&vault, "oracle.skill.attrib", actor_entity)?;
+    let lapse_receipt = stamped_pack_receipt(&vault, "oracle.skill.attrib", actor_entity)?;
     record_attribution_evidence(&vault, &failed(&defect_receipt, true))?;
     record_attribution_evidence(&vault, &failed(&lapse_receipt, false))?;
     let judgments = run_attribution_projector(&vault, 0)?;
@@ -1127,7 +1128,7 @@ fn sk04_discovery_outcome_mints_edit_proposal_not_claim() -> Result<()> {
     // ARMED (ONE-1737): the projector runs over an outcome the routing table
     // judges DISCOVERY — the attempt failed, the actor DID follow the skill,
     // and the skill did NOT cover the failing step (missing content).
-    let discovery_receipt = stamped_pack_receipt(&vault, "oracle.skill.discovery")?;
+    let discovery_receipt = stamped_pack_receipt(&vault, "oracle.skill.discovery", actor_entity)?;
     record_attribution_evidence(
         &vault,
         &OutcomeEvidence::new(discovery_receipt, actor_entity, AttemptOutcome::Failed, 20)
@@ -1198,7 +1199,7 @@ fn sk05_reliability_is_a_superseding_claim_citing_receipts() -> Result<()> {
     // rides its own stamped pack receipt, which is what the claim cites.
     let mut minted = Vec::new();
     for at in [30_u64, 31] {
-        let receipt = stamped_pack_receipt(&vault, "oracle.skill.reliability")?;
+        let receipt = stamped_pack_receipt(&vault, "oracle.skill.reliability", actor_entity)?;
         record_attribution_evidence(
             &vault,
             &OutcomeEvidence::new(&receipt, actor_entity, AttemptOutcome::Failed, at)
@@ -1290,7 +1291,7 @@ fn sk05_record_score_is_a_rebuildable_cache_claims_are_truth() -> Result<()> {
     // ARMED (ONE-1738): project a reliability claim, capture the posterior mean
     // it asserts, clobber the record's cached score through the ordinary update
     // door, then run the rebuild door.
-    let receipt = stamped_pack_receipt(&vault, "oracle.skill.cache")?;
+    let receipt = stamped_pack_receipt(&vault, "oracle.skill.cache", actor_entity)?;
     record_attribution_evidence(
         &vault,
         &OutcomeEvidence::new(&receipt, actor_entity, AttemptOutcome::Failed, 30)
@@ -1363,7 +1364,7 @@ fn sk05_floor_crossing_proposes_quarantine_never_auto() -> Result<()> {
     // crossing is not re-proposed once a proposal is open.
     let mut floor_crossed = false;
     for at in 30..30 + u64::from(SKILL_RELIABILITY_FLOOR_MIN_OUTCOMES) + 2 {
-        let receipt = stamped_pack_receipt(&vault, "oracle.skill.floor")?;
+        let receipt = stamped_pack_receipt(&vault, "oracle.skill.floor", actor_entity)?;
         record_attribution_evidence(
             &vault,
             &OutcomeEvidence::new(&receipt, actor_entity, AttemptOutcome::Failed, at)
@@ -1421,7 +1422,7 @@ fn sk06_actor_row_cardinalities_are_pinned() -> Result<()> {
     // ARMED (ONE-1739): every row goes through `write_actor_claim`, the ONE
     // door both inlets share — cardinality is the door's contract, so this is
     // where it is pinned.
-    let receipt = stamped_pack_receipt(&vault, "oracle.skill.fit.a")?;
+    let receipt = stamped_pack_receipt(&vault, "oracle.skill.fit.a", actor_entity)?;
     let evidence = |at: u64| ActorClaimEvidence::task(vec![receipt.clone()], at);
     for (row, at) in [
         (
@@ -1571,7 +1572,7 @@ fn sk06_two_inlets_one_ledger_both_through_the_write_gate() -> Result<()> {
     // receipt-grounded (`ToolOutput`-lineage) evidence. The projector itself
     // mints no lesson — a routing boolean cannot source prose — so the note is
     // the distiller tier's, exactly as on the chat side.
-    let receipt = stamped_pack_receipt(&vault, "oracle.skill.inlets")?;
+    let receipt = stamped_pack_receipt(&vault, "oracle.skill.inlets", actor_entity)?;
     record_attribution_evidence(
         &vault,
         &OutcomeEvidence::new(&receipt, actor_entity, AttemptOutcome::Failed, 40)

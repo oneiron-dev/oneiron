@@ -62,8 +62,8 @@ fn put_skill(vault: &Vault, skill_id: &str) -> Result<EntityId> {
 
 /// TASK-lane evidence citing a receipt an attempt actually STAMPED — the door
 /// resolves every citation, so a hand-written receipt string lands nothing.
-fn task_evidence(vault: &Vault, at: u64) -> ActorClaimEvidence {
-    let receipt = stamped_pack_receipt(vault, "sk06.evidence").expect("stamped receipt");
+fn task_evidence(vault: &Vault, actor: EntityId, at: u64) -> ActorClaimEvidence {
+    let receipt = stamped_pack_receipt(vault, "sk06.evidence", actor).expect("stamped receipt");
     ActorClaimEvidence::task(vec![receipt], at).expect("task evidence")
 }
 
@@ -111,7 +111,7 @@ fn rows(
 /// Claimed BY KIND, like every production worker: a fresh row's ready key is
 /// `(0, attempt_id)`, so an untyped claim takes the oldest row in the whole
 /// vault — including the ones a fixture's session close registers.
-fn stamped_pack_receipt(vault: &Vault, skill_id: &str) -> Result<String> {
+fn stamped_pack_receipt(vault: &Vault, skill_id: &str, actor: EntityId) -> Result<String> {
     const KIND: &str = "sk06.attempt";
     let queue = AttemptQueue::new(vault);
     let EnqueueOutcome::Enqueued(attempt) = queue.enqueue(EnqueueAttempt {
@@ -124,6 +124,7 @@ fn stamped_pack_receipt(vault: &Vault, skill_id: &str) -> Result<String> {
     else {
         panic!("a fresh dedupe-free enqueue is never Existing");
     };
+    vault.bind_resident_attempt(attempt.id, &actor)?;
     queue.append_manifest_entry(
         attempt.id,
         ManifestEntry::new(ManifestKind::Skill, skill_id, "1.0.0", 11),
@@ -190,7 +191,7 @@ fn set_rows_dedupe_on_the_normalized_note() -> Result<()> {
             actor,
             text: "cite the receipt".to_owned(),
         },
-        &task_evidence(&vault, 30),
+        &task_evidence(&vault, actor, 30),
     )?;
     // Same meaning, different spacing: one standing fact, not two.
     let repeat = write_actor_claim(
@@ -199,7 +200,7 @@ fn set_rows_dedupe_on_the_normalized_note() -> Result<()> {
             actor,
             text: "  cite   the receipt  ".to_owned(),
         },
-        &task_evidence(&vault, 31),
+        &task_evidence(&vault, actor, 31),
     )?;
     assert_eq!(
         first, repeat,
@@ -212,7 +213,7 @@ fn set_rows_dedupe_on_the_normalized_note() -> Result<()> {
             actor,
             text: "read the diff".to_owned(),
         },
-        &task_evidence(&vault, 32),
+        &task_evidence(&vault, actor, 32),
     )?;
 
     let (active, superseded) = rows(&vault, &actor, PREDICATE_ACTOR_LESSON)?;
@@ -243,7 +244,7 @@ fn a_duplicate_head_fork_collapses_on_the_next_write() -> Result<()> {
             actor,
             text: note.to_owned(),
         },
-        &task_evidence(&vault, 30),
+        &task_evidence(&vault, actor, 30),
     )?;
     let (active, _) = rows(&vault, &actor, PREDICATE_ACTOR_LESSON)?;
     let [head] = active.as_slice() else {
@@ -259,7 +260,7 @@ fn a_duplicate_head_fork_collapses_on_the_next_write() -> Result<()> {
             actor,
             text: note.to_owned(),
         },
-        &task_evidence(&vault, 32),
+        &task_evidence(&vault, actor, 32),
     )?;
     let (active, superseded) = rows(&vault, &actor, PREDICATE_ACTOR_LESSON)?;
     assert_eq!(active.len(), 1, "the fork collapses to ONE standing note");
@@ -283,7 +284,7 @@ fn a_note_reobserved_from_the_other_lane_folds_the_meet_down() -> Result<()> {
             actor,
             text: note.to_owned(),
         },
-        &task_evidence(&vault, 40),
+        &task_evidence(&vault, actor, 40),
     )?;
     let distilled = write_actor_claim(
         &vault,
@@ -319,7 +320,7 @@ fn a_note_reobserved_from_the_other_lane_folds_the_meet_down() -> Result<()> {
             actor,
             text: note.to_owned(),
         },
-        &task_evidence(&vault, 42),
+        &task_evidence(&vault, actor, 42),
     )?;
     assert_eq!(standing, distilled, "the standing prose-derived row stands");
     let (active, superseded) = rows(&vault, &actor, PREDICATE_ACTOR_LESSON)?;
@@ -348,7 +349,7 @@ fn skill_fit_supersedes_per_pair_not_per_actor() -> Result<()> {
         write_actor_claim(
             &vault,
             ActorClaimRow::SkillFit { actor, skill, fit },
-            &task_evidence(&vault, at),
+            &task_evidence(&vault, actor, at),
         )?;
     }
 
@@ -377,7 +378,7 @@ fn a_backfilled_fit_never_closes_a_later_head() -> Result<()> {
             skill,
             fit: 0.75,
         },
-        &task_evidence(&vault, 100),
+        &task_evidence(&vault, actor, 100),
     )?;
     write_actor_claim(
         &vault,
@@ -386,7 +387,7 @@ fn a_backfilled_fit_never_closes_a_later_head() -> Result<()> {
             skill,
             fit: 0.25,
         },
-        &task_evidence(&vault, 50),
+        &task_evidence(&vault, actor, 50),
     )?;
 
     let (active, superseded) = rows(&vault, &actor, PREDICATE_ACTOR_SKILL_FIT)?;
@@ -417,7 +418,7 @@ fn fit_outside_the_unit_interval_or_non_finite_is_refused() -> Result<()> {
         let error = write_actor_claim(
             &vault,
             ActorClaimRow::SkillFit { actor, skill, fit },
-            &task_evidence(&vault, 50),
+            &task_evidence(&vault, actor, 50),
         )
         .expect_err("an out-of-range or non-finite fit is refused");
         assert!(
@@ -440,7 +441,7 @@ fn an_empty_note_and_an_unknown_actor_are_refused() -> Result<()> {
             actor,
             text: "   ".to_owned(),
         },
-        &task_evidence(&vault, 60),
+        &task_evidence(&vault, actor, 60),
     )
     .expect_err("a blank note is refused");
     assert!(matches!(blank, Error::InvalidClaimBody(_)));
@@ -451,7 +452,7 @@ fn an_empty_note_and_an_unknown_actor_are_refused() -> Result<()> {
             actor: EntityId::now(),
             text: "skips verification".to_owned(),
         },
-        &task_evidence(&vault, 61),
+        &task_evidence(&vault, actor, 61),
     )
     .expect_err("an unresolvable actor is refused");
     assert!(matches!(missing, Error::EntityNotFound));
@@ -485,7 +486,7 @@ fn a_row_citing_evidence_that_resolves_to_nothing_is_refused() -> Result<()> {
     assert!(matches!(unstamped, Error::InvalidClaimBody(_)));
 
     // One real receipt does not launder the fabricated one beside it.
-    let real = stamped_pack_receipt(&vault, "sk06.grounding")?;
+    let real = stamped_pack_receipt(&vault, "sk06.grounding", actor)?;
     let mixed = write_actor_claim(
         &vault,
         lesson("cites one real receipt and one invented"),
@@ -571,7 +572,7 @@ fn stored_rows_are_auto_evidence_carrying_and_lineage_stamped() -> Result<()> {
             actor,
             text: "from the task lane".to_owned(),
         },
-        &task_evidence(&vault, 90),
+        &task_evidence(&vault, actor, 90),
     )?;
     write_actor_claim(
         &vault,
@@ -696,7 +697,7 @@ fn the_lineage_meet_is_the_taint_the_trust_lattice_reads() -> Result<()> {
             actor,
             text: "departs from the loaded pack".to_owned(),
         },
-        &task_evidence(&vault, 92),
+        &task_evidence(&vault, actor, 92),
     )?;
     let (active, _) = rows(&vault, &actor, PREDICATE_ACTOR_FAILURE_MODE)?;
     let [row] = active.as_slice() else {
@@ -721,7 +722,7 @@ fn a_lapse_judgment_projects_one_failure_mode_row_and_no_lesson() -> Result<()> 
     let (_tmp, vault) = temp_vault();
     let actor = put_actor(&vault)?;
     let skill = put_skill(&vault, "sk06.lapse")?;
-    let receipt = stamped_pack_receipt(&vault, "sk06.lapse")?;
+    let receipt = stamped_pack_receipt(&vault, "sk06.lapse", actor)?;
 
     record_attribution_evidence(
         &vault,
@@ -1013,7 +1014,7 @@ fn archived_actor_history_is_typed_but_not_live_or_a_projector_prior() -> Result
     let (_target_dir, target) = temp_vault();
     let actor = put_actor(&source)?;
     let skill = put_skill(&source, "archive.actor.fit")?;
-    let evidence = task_evidence(&source, 50);
+    let evidence = task_evidence(&source, actor, 50);
     let mut ids = Vec::new();
     for row in [
         ActorClaimRow::Lesson {
@@ -1097,7 +1098,7 @@ fn archived_actor_history_is_typed_but_not_live_or_a_projector_prior() -> Result
             skill,
             fit: 0.25,
         },
-        &task_evidence(&target, 80),
+        &task_evidence(&target, actor, 80),
     )?;
     assert!(!ids.contains(&fresh));
     assert_eq!(skill_fit_for(&target, &actor, &skill)?, Some(0.25));

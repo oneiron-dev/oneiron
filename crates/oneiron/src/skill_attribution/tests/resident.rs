@@ -225,6 +225,31 @@ fn shared_and_skillless_receipts_cannot_cross_or_skip_resident_ownership() -> Re
     let (_dir, vault) = open_test_vault_with(embedding_test_config());
     let a = put_actor(&vault, EntityId::now())?;
     let b = put_actor(&vault, EntityId::now())?;
+    // First use, before either actor has a fork or a bound attempt: a real
+    // unbound receipt cannot be assigned to either resident by assertion.
+    let (_, first_unbound) = scoped_receipt(&vault, None, None, true)?;
+    assert!(crate::receipt::attempt_pack_receipt(&vault, &first_unbound)?.is_some());
+    for actor in [a, b] {
+        assert!(
+            record_attribution_evidence(
+                &vault,
+                &OutcomeEvidence::new(&first_unbound, actor, AttemptOutcome::Failed, 35)
+                    .with_routing_facts(false, true)
+            )
+            .is_err()
+        );
+        assert!(
+            crate::actor_claims::write_actor_claim(
+                &vault,
+                crate::actor_claims::ActorClaimRow::Lesson {
+                    actor,
+                    text: "first use".into()
+                },
+                &crate::actor_claims::ActorClaimEvidence::task(vec![first_unbound.clone()], 35)?,
+            )
+            .is_err()
+        );
+    }
     let shared = EntityId::now();
     let record = SkillRecord::new(
         "resident.shared",

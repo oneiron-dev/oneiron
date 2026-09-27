@@ -111,41 +111,21 @@ pub(crate) fn validate_owner_put_in_txn(
 ) -> Result<()> {
     check_owner_marker_in_txn(store, txn, skill, record)?;
     if let Some(resident) = resident_of(record)? {
-        let deferred = replicated && record.lifecycle_status == super::SkillLifecycle::Candidate;
-        if require_resident_in_txn(store, txn, &resident, deferred)? {
-            register_resident_in_txn(store, txn, &resident)?;
+        // Sync carries the CURRENT blob, not necessarily a Candidate first.
+        // Keep an Active owner-first dependency on the replay marker rather
+        // than terminal-quarantining a lawful out-of-order skill.
+        if replicated
+            && record.lifecycle_status == super::SkillLifecycle::Active
+            && store.entities.get(txn, resident.as_bytes())?.is_none()
+        {
+            return Err(Error::Artifact(
+                ArtifactError::ResidentOwnerDependencyPending,
+            ));
         }
+        let deferred = replicated && record.lifecycle_status == super::SkillLifecycle::Candidate;
+        require_resident_in_txn(store, txn, &resident, deferred)?;
     }
     Ok(())
-}
-
-const REGISTERED_PREFIX: &[u8] = b"skill:resident_registered:v1:";
-
-fn registration_key(resident: &EntityId) -> Vec<u8> {
-    let mut key = REGISTERED_PREFIX.to_vec();
-    key.extend_from_slice(resident.as_bytes());
-    key
-}
-
-pub(crate) fn register_resident_in_txn(
-    store: &Store,
-    txn: &mut heed::RwTxn<'_>,
-    resident: &EntityId,
-) -> Result<()> {
-    store
-        .vault_meta
-        .put(txn, &registration_key(resident), &[1])?;
-    Ok(())
-}
-
-pub(crate) fn is_registered(vault: &crate::Vault, resident: &EntityId) -> Result<bool> {
-    let txn = vault.store.env.read_txn()?;
-    Ok(vault
-        .store
-        .vault_meta
-        .get(&txn, &registration_key(resident))?
-        .as_deref()
-        == Some(&[1][..]))
 }
 
 /// One attempt has one resident stamp. The scoped pack doors write this in the
@@ -166,7 +146,6 @@ pub(crate) fn bind_receipt_in_txn(
     resident: &EntityId,
 ) -> Result<()> {
     require_resident_in_txn(&vault.store, txn, resident, false)?;
-    register_resident_in_txn(&vault.store, txn, resident)?;
     let key = receipt_key(receipt);
     if let Some(held) = vault.store.vault_meta.get(txn, &key)? {
         if held.as_ref() != resident.as_bytes() {

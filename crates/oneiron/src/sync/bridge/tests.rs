@@ -4012,3 +4012,5 @@ fn edge_hydration_rolls_back_late_project_rejection_but_commits_valid_sibling() 
     assert_eq!(rejected.len(), 1);
     assert_eq!(rejected[0].1.reason_code, "InvalidProjectBody");
 }
+
+mod resident;
