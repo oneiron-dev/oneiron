@@ -487,5 +487,31 @@ class TestModes(CodemapCase):
         self.assertFalse((self.fx.root / "docs").exists())
 
 
+class TestMainOnlyWriter(CodemapCase):
+    """Owner ruling 2026-09-27: only main writes the map; PRs and PR CI never touch it."""
+
+    def test_overview_names_the_main_writer(self):
+        self.assertEqual(self.fx.run()[0], 0)
+        overview = (self.fx.root / "docs/CODEMAP.md").read_text()
+        self.assertIn("Regenerated on main by `.github/workflows/codemap.yml`; PRs never touch it", overview)
+
+    def test_only_the_main_writer_workflow_runs_the_codemap_scripts(self):
+        workflows = ROOT / ".github/workflows"
+        for path in sorted(workflows.glob("*.yml")):
+            if path.name != "codemap.yml":
+                self.assertNotIn("scripts/codemap/", path.read_text(), path.name)
+        writer = (workflows / "codemap.yml").read_text()
+        self.assertNotIn("pull_request", writer)
+        for line in (
+            "    branches: [main]",
+            "  contents: write",
+            "  group: codemap",
+            "  cancel-in-progress: false",
+            "            python3 scripts/codemap/codemap.py",
+            '            git commit -q -m "codemap: regenerate"',
+        ):
+            self.assertIn(line, writer)
+
+
 if __name__ == "__main__":
     unittest.main()

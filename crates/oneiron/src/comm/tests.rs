@@ -332,6 +332,46 @@ fn projector_replay_preserves_active_and_total_counts() -> CommResult<()> {
 }
 
 #[test]
+fn provider_stop_uses_one_recipient_class_for_projection_and_clear() -> CommResult<()> {
+    for channel in ["email_resend", "email_ses", "email_postmark"] {
+        let (_dir, vault) = open_vault();
+        let party = format!("party-{channel}");
+        record_comm_inbound_stop(&vault, &party, channel, 10)?;
+        run_comm_projector(&vault)?;
+        let party_ref = resolve_or_create_comm_party(&vault, &party)?;
+        let heads = {
+            let rtxn = vault.store.env.read_txn()?;
+            standing_opt_out_heads_in_txn(&vault, &rtxn, party_ref)?
+        };
+        assert_eq!(heads.len(), 1, "{channel}");
+        assert_eq!(
+            heads[0].channel_class.as_deref(),
+            Some("email"),
+            "{channel}"
+        );
+        assert!(heads[0].matches_channel(channel), "{channel}");
+        assert_eq!(
+            request_opt_out_clear(&vault, &party, channel, 11)?,
+            CommClearOptOutOutcome::PendingHumanRuling,
+            "{channel}"
+        );
+        approve_pending_opt_out_clear(
+            &vault,
+            &party,
+            channel,
+            WriteActor::new(party_ref, EdgeActorClass::Human),
+            13,
+        )?;
+        assert_eq!(
+            count_active_comm_claims(&vault, PREDICATE_COMM_OPT_OUT, &party, "email")?,
+            0,
+            "{channel}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
 fn consent_refusal_and_one_shot_human_approval_preserve_exact_counts() -> CommResult<()> {
     let (_dir, vault) = open_vault();
     record_comm_inbound_stop(&vault, "party-a", "email", 10)?;
@@ -3718,7 +3758,10 @@ fn durable_receipt_replay_survives_party_deletion_and_remint() -> CommResult<()>
     delivered_connector_receipt(&vault, 0x89, "email", "send", "shared-inbox", Some(party))?;
     run_comm_projector(&vault)?;
     let original = resolve_party(&vault, party)?.ok_or(CommError::InvalidRecord)?;
-    assert!(vault.delete_entity(&original)?);
+    assert!(vault.delete_entity_with_options(
+        &original,
+        crate::deletion::DeleteEntityOptions { purge: true },
+    )?);
     record_comm_inbound_stop(&vault, "independent-stop", "email", 41)?;
     run_comm_projector(&vault)?;
     assert_eq!(
