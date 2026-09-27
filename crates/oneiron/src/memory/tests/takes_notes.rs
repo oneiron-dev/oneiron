@@ -1214,6 +1214,8 @@ fn cross_resident_diary_coreference_requires_both_exact_grants_on_every_read() {
         (note_b, note_a)
     };
     let outsider = put_person(&vault, 0x43);
+    let wrong_kind = put_person(&vault, 0x44);
+    let absent = EntityId::from_bytes([0xe1; 16]).unwrap();
     assert!(
         facade_for(&vault, outsider)
             .link_diary_coreference(note_a, note_b)
@@ -1221,6 +1223,21 @@ fn cross_resident_diary_coreference_requires_both_exact_grants_on_every_read() {
     );
     assert!(author_a.link_diary_coreference(note_a, note_a).is_err());
     assert!(!vault.edge_exists(&left, EdgeKind::SameAs, &right).unwrap());
+    // Resident-facing submissions must not answer whether a guessed foreign
+    // diary exists, has the right kind, or is already linked.
+    assert!(author_a.link_diary_coreference(note_a, absent).is_ok());
+    assert!(author_a.link_diary_coreference(note_a, wrong_kind).is_ok());
+    let (missing_left, missing_right) = if note_a < absent {
+        (note_a, absent)
+    } else {
+        (absent, note_a)
+    };
+    assert!(
+        !vault
+            .edge_exists(&missing_left, EdgeKind::SameAs, &missing_right)
+            .unwrap()
+    );
+    assert!(author_a.link_diary_coreference(note_a, note_b).is_ok());
     assert!(author_a.link_diary_coreference(note_a, note_b).is_ok());
     assert!(vault.edge_exists(&left, EdgeKind::SameAs, &right).unwrap());
     let actor = crate::WriteActor::new(a, EdgeActorClass::Human);
@@ -1261,7 +1278,6 @@ fn cross_resident_diary_coreference_requires_both_exact_grants_on_every_read() {
             .create_access_grant(&EntityId::now(), &forged)
             .is_err()
     );
-    assert_ne!(note_a, note_b);
     assert_eq!(note_body_of(&vault, &note_a).author_ref, a);
     assert_eq!(note_body_of(&vault, &note_b).author_ref, b);
     let issuer = crate::authority::HostSlipIssuer::from_secret(b"diary coreference read").unwrap();
@@ -1274,7 +1290,7 @@ fn cross_resident_diary_coreference_requires_both_exact_grants_on_every_read() {
         let slip = vault.mint_capability_slip(&issuer, claims).unwrap();
         let sig = issuer.binding_proof(&slip, b"diary-coref").unwrap();
         let proof = vault
-            .verify_capability_slip(&issuer, &slip, b"diary-coref", &sig)
+            .verify_capability_slip(&issuer.public_key(), &slip, b"diary-coref", &sig)
             .unwrap();
         ScopedReadActorKey::from_verified_slip(&proof).unwrap()
     };
@@ -1314,6 +1330,18 @@ fn cross_resident_diary_coreference_requires_both_exact_grants_on_every_read() {
         pack
     };
     let absent_id = EntityId::from_bytes([0x99; 16]).unwrap();
+    let probe_record = |id| crate::deletion::MemoryTimelineRecord {
+        id,
+        state: crate::deletion::MemoryTimelineRecordState::Live,
+        entity_type: None,
+        occurred_start: None,
+        occurred_end: None,
+        learned_at: None,
+        body_bytes: None,
+        deletion: None,
+        supersedes: Vec::new(),
+        superseded_by: Vec::new(),
+    };
     let assert_opaque = |hidden: EntityId| {
         let absent = read_a.get(&absent_id).unwrap();
         let denied = read_a.get(&hidden).unwrap();
@@ -1348,6 +1376,15 @@ fn cross_resident_diary_coreference_requires_both_exact_grants_on_every_read() {
             timeline.receipt,
             read_a.memory_timeline(&absent_id).unwrap().receipt
         );
+        let absent_parts = read_a
+            .memory_timeline_parts_with_receipt(&[probe_record(absent_id)], None)
+            .unwrap();
+        let hidden_parts = read_a
+            .memory_timeline_parts_with_receipt(&[probe_record(hidden)], None)
+            .unwrap();
+        assert_eq!(hidden_parts.value, vec![None]);
+        assert_eq!(hidden_parts.receipt, absent_parts.receipt);
+        assert_eq!(hidden_parts.receipt.suppressed_count, 0);
         let scored = read_a
             .filter_scored_entities(vec![crate::ScoredEntity {
                 id: hidden,
@@ -1374,6 +1411,11 @@ fn cross_resident_diary_coreference_requires_both_exact_grants_on_every_read() {
         .unwrap();
     assert!(ordinary_denial.value.is_none());
     assert_eq!(ordinary_denial.receipt.suppressed_count, 1);
+    let ordinary_timeline = read_a
+        .memory_timeline_parts_with_receipt(&[probe_record(a)], None)
+        .unwrap();
+    assert_eq!(ordinary_timeline.value, vec![None]);
+    assert_eq!(ordinary_timeline.receipt.suppressed_count, 1);
 
     let check = |shared: bool| {
         for (read, own, foreign, query) in [
@@ -1424,6 +1466,23 @@ fn cross_resident_diary_coreference_requires_both_exact_grants_on_every_read() {
     check(false); // Empty scope: no resident learns the other endpoint or link.
     assert_opaque(note_b);
     assert_hidden_short();
+    let absent_grant = author_a.grant_diary_coreference(note_a, absent).unwrap();
+    let wrong_kind_grant = author_a
+        .grant_diary_coreference(note_a, wrong_kind)
+        .unwrap();
+    let reciprocal_absent = author_b.grant_diary_coreference(note_b, absent).unwrap();
+    for id in [absent_grant, wrong_kind_grant, reciprocal_absent] {
+        assert_opaque(id);
+    }
+    author_a
+        .revoke_diary_coreference_grant(absent_grant)
+        .unwrap();
+    author_a
+        .revoke_diary_coreference_grant(wrong_kind_grant)
+        .unwrap();
+    author_b
+        .revoke_diary_coreference_grant(reciprocal_absent)
+        .unwrap();
     let grant_a = author_a.grant_diary_coreference(note_a, note_b).unwrap();
     let persisted = vault.get_access_grant(&grant_a).unwrap().unwrap();
     assert_eq!(persisted.principal_ref, a);

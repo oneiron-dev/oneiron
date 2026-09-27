@@ -116,7 +116,7 @@ impl ScopedRead<'_> {
                 continue;
             }
             if !self.timeline_record_allowed_in(&txn, &policy, &filter, record)? {
-                suppressed += usize::from(self.entity_record_in(&txn, &record.id)?.is_some());
+                suppressed += usize::from(self.countable_suppression_in(&txn, &record.id)?);
                 value.push(None);
                 continue;
             }

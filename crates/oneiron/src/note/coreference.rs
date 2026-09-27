@@ -149,23 +149,31 @@ pub(crate) fn readable_through_link(
 }
 
 impl Memory<'_> {
-    /// Assert coreference between two resident-private diary NOTE entities.
-    /// This writes only a non-traversing, zero-weight link, never a merge.
+    /// Submit a diary coreference from the bound resident's own NOTE.
+    /// Before the other resident consents, a valid foreign NOTE, an absent id,
+    /// and a wrong-kind foreign row all return the same success response. Only
+    /// a validated pair writes the local zero-weight link; no merge occurs.
     pub fn link_diary_coreference(&self, a: EntityId, b: EntityId) -> MemoryResult<()> {
         let (left, right) = pair(a, b);
         self.with_verified_actor_write_txn(|txn| {
-            let left_owner = author_in(self.vault(), txn, left)?;
-            let right_owner = author_in(self.vault(), txn, right)?;
-            if left == right
-                || left_owner == right_owner
-                || (self.actor() != left_owner && self.actor() != right_owner)
-            {
+            let left_owner = author_in(self.vault(), txn, left).ok();
+            let right_owner = author_in(self.vault(), txn, right).ok();
+            let owns_left = left_owner == Some(self.actor());
+            let owns_right = right_owner == Some(self.actor());
+            if left == right || owns_left == owns_right {
                 return Err(Error::InvalidClaimBody(
-                    "cross-diary link needs distinct resident authors",
+                    "cross-diary link needs exactly one resident-owned NOTE",
                 )
                 .into());
             }
-            if linked_in(self.vault(), txn, left, right)? {
+            // Do not let the write result answer a forbidden read question.
+            // The foreign row is checked for persistence, never for admission
+            // to the caller's view; missing/invalid and valid-unlinked pairs
+            // are indistinguishable until both residents grant this exact pair.
+            if left_owner.is_none()
+                || right_owner.is_none()
+                || linked_in(self.vault(), txn, left, right)?
+            {
                 return Ok(());
             }
             apply_ops(
@@ -190,20 +198,22 @@ impl Memory<'_> {
         })
     }
 
-    /// Grant the exact link from this resident's diary. Only when the other
-    /// author grants the same pair does either scoped reader see the link.
+    /// Grant an exact pair from this resident's own diary. A grant request is
+    /// opaque about the foreign endpoint and link: it is stored even when the
+    /// candidate id is missing or invalid, but never authorizes a read until
+    /// both live authors consent and a valid same_as link exists.
     pub fn grant_diary_coreference(&self, a: EntityId, b: EntityId) -> MemoryResult<EntityId> {
         let (left, right) = pair(a, b);
         self.with_verified_actor_write_txn(|txn| {
-            let left_owner = author_in(self.vault(), txn, left)?;
-            let right_owner = author_in(self.vault(), txn, right)?;
-            if left_owner == right_owner
-                || (self.actor() != left_owner && self.actor() != right_owner)
-                || !linked_in(self.vault(), txn, left, right)?
-            {
-                return Err(
-                    Error::InvalidClaimBody("resident cannot grant this diary link").into(),
-                );
+            let owns_left =
+                author_in(self.vault(), txn, left).is_ok_and(|owner| owner == self.actor());
+            let owns_right =
+                author_in(self.vault(), txn, right).is_ok_and(|owner| owner == self.actor());
+            if left == right || owns_left == owns_right {
+                return Err(Error::InvalidClaimBody(
+                    "resident must own exactly one diary endpoint",
+                )
+                .into());
             }
             let id = self.vault().store.clock.entity_id()?;
             let created_at = self.vault().store.clock.now_recorded_at();
@@ -248,10 +258,11 @@ impl Memory<'_> {
             else {
                 return Err(Error::InvalidClaimBody("not a diary coreference grant").into());
             };
-            if grant.principal_ref != self.actor()
-                || (author_in(self.vault(), txn, left_ref)? != self.actor()
-                    && author_in(self.vault(), txn, right_ref)? != self.actor())
-            {
+            let owns_left =
+                author_in(self.vault(), txn, left_ref).is_ok_and(|owner| owner == self.actor());
+            let owns_right =
+                author_in(self.vault(), txn, right_ref).is_ok_and(|owner| owner == self.actor());
+            if grant.principal_ref != self.actor() || !(owns_left || owns_right) {
                 return Err(Error::InvalidClaimBody("resident does not own this grant").into());
             }
             let now = self
