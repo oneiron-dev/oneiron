@@ -12987,6 +12987,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/dreamer_consolidation/executor/merge_resolution.rs",
+     "purpose": "JSON merge outcome decoding for the scoped consolidation judge",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/dreamer_consolidation/executor/retry.rs",
      "purpose": "Fresh source reads for scheduled selection retries, within the original partition",
      "surface": {
@@ -13001,6 +13011,17 @@
      "purpose": "Explicit PERSON outputs from the production extraction response",
      "surface": {
       "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/dreamer_consolidation/failure_rules.rs",
+     "purpose": "Resident-owned v1 failure rules for the two Dreamer consolidation call sites",
+     "surface": {
+      "crate-vis": 10,
+      "fn": 1
      }
     },
     {
@@ -13037,7 +13058,7 @@
      "path": "src/dreamer_consolidation/mod.rs",
      "purpose": "Dreamer consolidation algorithm + reflection gap scan (ONE-1289, DREAM-002; DESIGN-PIN-20260710 Part A)",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 4,
       "mod": 2,
       "re-export": 9
      }
@@ -13240,6 +13261,14 @@
      "bucket": "m",
      "kind": "test",
      "notable": [],
+     "path": "src/dreamer_consolidation/tests/failure_rules.rs",
+     "purpose": "A resident-authored policy changes what the real executor can publish on fatal fallback",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
      "path": "src/dreamer_consolidation/tests/late_budget.rs",
      "purpose": "Real wake-driver accounting across late step checkpoint and resume",
      "surface": {}
@@ -13266,7 +13295,9 @@
      "notable": [],
      "path": "src/dreamer_consolidation/tests/prior_heads.rs",
      "purpose": "Real executor -> sealed sink -> durable evidence/provenance fixture",
-     "surface": {}
+     "surface": {
+      "crate-vis": 1
+     }
     },
     {
      "bucket": "L",
@@ -22456,7 +22487,7 @@
      "path": "src/off_record/lifecycle/executor.rs",
      "purpose": "Second OffRecordSession block: executor witness doors, routed shells and executor traps",
      "surface": {
-      "crate-vis": 8
+      "crate-vis": 9
      }
     },
     {
@@ -35249,7 +35280,7 @@
      "purpose": "—"
     },
     "dreamer_consolidation": {
-     "files": 35,
+     "files": 38,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -36091,8 +36122,8 @@
    },
    "over_bar": 11,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2132,
-   "test_files": 725
+   "source_files": 2134,
+   "test_files": 726
   },
   "oneiron-android": {
    "files": [
