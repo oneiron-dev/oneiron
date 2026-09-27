@@ -50,6 +50,14 @@ struct SnapshotInputs<'a> {
     overrides: HydeAttemptOverrides<'a>,
 }
 
+/// One snapshot's actor-bound NOTE admission and the gates that share it.
+struct ScopedChannelAdmission {
+    private_note_ids: Option<std::sync::Arc<crate::claim::ScopedDiaryCandidates>>,
+    accumulator: ChannelAccumulator,
+    claim_gate: ClaimStatusGateCache,
+    widening_probe: ClaimStatusGateCache,
+}
+
 impl PipelineBuilder<'_> {
     // Requested operations, not the legacy signal list: time filters and
     // recency blending do not constitute a Temporal search. Empty inputs still
@@ -125,19 +133,16 @@ impl PipelineBuilder<'_> {
             telemetry_signals.push(RetrievalSignal::Temporal);
         }
         {
-            let mut acc = ChannelAccumulator::new(
-                capture_retrieval_trace,
-                trace_candidate_limit,
-                authority_filter.include_stale,
-            );
+            let ScopedChannelAdmission {
+                private_note_ids,
+                accumulator: mut acc,
+                mut claim_gate,
+                widening_probe: mut claim_gate_widening_probe,
+            } = self.scoped_channel_admission(rtxn, authority_filter)?;
             let mut fused_trace_scores = None;
             let mut vector_channel_index = None;
             let blend_weights = retrieval_blend_weights_for_scoring(&self.vault.store, rtxn)?;
             let mut metadata_cache = EntityMetadataCache::default();
-            let mut claim_gate = ClaimStatusGateCache {
-                include_stale: authority_filter.include_stale,
-                ..ClaimStatusGateCache::default()
-            };
             let mut deferred_ppr_cache_writes = Vec::new();
             let mut community_diversity = None;
             let mut community_trace_identity = None;
@@ -164,10 +169,6 @@ impl PipelineBuilder<'_> {
                 .map(|resolved| &resolved.active_set);
             // Ordinary text uses D19 widening; candidate-filtered text instead
             // applies D19 during bounded scoring and needs no corpus-sized probe.
-            let mut claim_gate_widening_probe = ClaimStatusGateCache {
-                include_stale: authority_filter.include_stale,
-                ..ClaimStatusGateCache::default()
-            };
             let claim_gate_text_widening_active = self.claim_gate_text_widening_probe(
                 rtxn,
                 bm25_config,
@@ -248,6 +249,7 @@ impl PipelineBuilder<'_> {
                     filter_config,
                     authority_filter,
                     text_scope_widening_active,
+                    private_note_ids: private_note_ids.as_deref(),
                     claim_gate_widening_probe,
                 },
                 &mut acc,
@@ -370,7 +372,8 @@ impl PipelineBuilder<'_> {
                     capabilities: Vec::new(),
                     pending_vectors: Vec::new(),
                     claim_gate: ClaimStatusGateCache::default(),
-                    read_suppressed: metadata_cache.read_suppressed.len(),
+                    read_suppressed: metadata_cache
+                        .countable_suppressed(&self.vault.store, rtxn)?,
                     deferred_ppr_cache_writes: Vec::new(),
                     cosine_ghosts_dampened: 0,
                     total_in_scope: 0,
@@ -665,7 +668,7 @@ impl PipelineBuilder<'_> {
                 capabilities,
                 pending_vectors,
                 claim_gate,
-                read_suppressed: metadata_cache.read_suppressed.len(),
+                read_suppressed: metadata_cache.countable_suppressed(&self.vault.store, rtxn)?,
                 deferred_ppr_cache_writes,
                 cosine_ghosts_dampened,
                 total_in_scope,
@@ -680,6 +683,42 @@ impl PipelineBuilder<'_> {
                 early_empty_no_telemetry: false,
             })
         }
+    }
+
+    fn scoped_channel_admission(
+        &self,
+        rtxn: &heed::RoTxn<'_>,
+        filter: &crate::gate::ResolvedRetrievalFilter,
+    ) -> Result<ScopedChannelAdmission> {
+        let private_note_ids = self
+            .scoped_note_reader
+            .as_ref()
+            .map(|key| {
+                self.vault
+                    .scoped_read(key.clone())
+                    .diary_candidates_in(rtxn, filter)
+                    .map(std::sync::Arc::new)
+            })
+            .transpose()?;
+        let mut accumulator = ChannelAccumulator::new(
+            self.capture_retrieval_trace,
+            self.result_limit,
+            filter.include_stale,
+        );
+        accumulator.trace_claim_gate.private_note_ids = private_note_ids.clone();
+        let new_gate = || ClaimStatusGateCache {
+            include_stale: filter.include_stale,
+            private_note_ids: private_note_ids.clone(),
+            ..ClaimStatusGateCache::default()
+        };
+        let claim_gate = new_gate();
+        let widening_probe = new_gate();
+        Ok(ScopedChannelAdmission {
+            private_note_ids,
+            accumulator,
+            claim_gate,
+            widening_probe,
+        })
     }
 
     fn prepare_pack_candidates(
