@@ -206,6 +206,7 @@ pub(super) fn run(ctx: &RematCtx<'_>, ledger: &mut RematLedger) -> Result<()> {
                     | crate::registry::ENTITY_TYPE_IDENTITY_TOPOLOGY_EVENT
                     | crate::registry::ENTITY_TYPE_DIAGNOSTIC
                     | ENTITY_TYPE_AUTHORITY_LOG
+                    | crate::registry::ENTITY_TYPE_RECEIPT_RECORD
             );
             if !byte_compare_in_door {
                 if let Some(latest) = materialized_blobs.get(&id) {
@@ -344,7 +345,18 @@ pub(super) fn run(ctx: &RematCtx<'_>, ledger: &mut RematLedger) -> Result<()> {
             // engine-authored bands while still running full structural
             // validation (unknown type bytes, ungrammatical predicates, and
             // malformed CLAIM bodies all still fail typed).
-            let result = if header.entity_type == crate::registry::ENTITY_TYPE_DIAGNOSTIC {
+            let result = if header.entity_type == crate::registry::ENTITY_TYPE_RECEIPT_RECORD {
+                vault.with_write_txn(|wtxn| {
+                    crate::sync::receipt_ingest::ingest_in_txn(
+                        vault,
+                        wtxn,
+                        tombstones_map,
+                        window_key.as_str(),
+                        &id,
+                        blob,
+                    )
+                })
+            } else if header.entity_type == crate::registry::ENTITY_TYPE_DIAGNOSTIC {
                 // Replay may not revive a remote detector's local observations.
                 Ok(false)
             } else if header.entity_type == crate::registry::ENTITY_TYPE_REDACTION_AUDIT {

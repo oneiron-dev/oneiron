@@ -3,6 +3,7 @@ use crate::connector_key::EffectorBudgetCharge;
 use crate::gate::GateOutcome;
 use crate::outbound::dispatch_types::{OutboundDispatchOutcome, OutboundExecutionOutcome};
 use crate::outbound_intent_ledger::IntentState;
+use crate::receipt::ReceiptRecord;
 
 pub(in crate::outbound) struct DispatchVerdict {
     pub(in crate::outbound) gate_decision_ref: Option<String>,
@@ -13,4 +14,5 @@ pub(in crate::outbound) struct DispatchVerdict {
     pub(in crate::outbound) effect_state: Option<IntentState>,
     pub(in crate::outbound) outcome: OutboundDispatchOutcome,
     pub(in crate::outbound) execution: Option<OutboundExecutionOutcome>,
+    pub(in crate::outbound) suppression_receipt: Option<ReceiptRecord>,
 }

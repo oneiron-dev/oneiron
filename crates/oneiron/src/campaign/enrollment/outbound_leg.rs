@@ -103,6 +103,8 @@ pub(super) fn run_enrollment_outbound_leg<T: OutboundTransport>(
         budget_class: BudgetClass::Send,
         authorization: PreparedAuthorization::None,
         verified_actor: None,
+        dedupe_key: None,
+        suppression_receipt: None,
     };
     let result = execute_outbound_effect(
         vault,

@@ -366,6 +366,16 @@ pub(super) fn materialize_entity_blob_in_txn(
     {
         return Ok(false);
     }
+    if header.entity_type == crate::registry::ENTITY_TYPE_RECEIPT_RECORD {
+        return crate::sync::receipt_ingest::ingest_in_txn(
+            vault,
+            wtxn,
+            tombstones_map,
+            window_key,
+            &id,
+            blob,
+        );
+    }
     let delete_protected = crate::registry::is_delete_protected_engine_record(header.entity_type);
 
     // Tombstone gate — fires BEFORE the put, never heals after (ARCH-0023b:

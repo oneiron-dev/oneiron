@@ -28,8 +28,8 @@ use self::dispatch::recover_outbound_intents;
 pub(crate) use self::dispatch::{IntentRecoveryEntry, intent_recovery_entries};
 pub(crate) use self::store::{
     abandon_record, begin_definite_non_delivery_retry, complete_record, force_sync,
-    hash_frozen_payload, insert_pending_in_txn, read_intent_for_attempt_in_txn,
-    read_intent_record_in_txn, record_definite_non_delivery,
+    hash_frozen_payload, insert_pending_in_txn, insert_suppressed_in_txn,
+    read_intent_for_attempt_in_txn, read_intent_record_in_txn, record_definite_non_delivery,
 };
 #[cfg(test)]
 pub(crate) use self::store::{read_intent_record, replace_intent_record_for_test};
