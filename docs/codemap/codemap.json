@@ -1960,13 +1960,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/authority/readonly_fold.rs",
      "purpose": "One read-snapshot authority evaluator shared by Vault and the batch write door",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 8
      }
     },
     {
@@ -2110,7 +2110,7 @@
      "path": "src/authority/stale_roster.rs",
      "purpose": "Clock-free expiry of approvals resting on a subsequently revoked roster",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 2
      }
     },
     {
@@ -2266,12 +2266,14 @@
      "surface": {}
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "test",
      "notable": [],
      "path": "src/authority/tests/readonly_fold.rs",
      "purpose": "Readonly fold against full fold under clock skew and sidecars",
-     "surface": {}
+     "surface": {
+      "crate-vis": 1
+     }
     },
     {
      "bucket": "s",
@@ -2334,13 +2336,13 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "src",
      "notable": [],
      "path": "src/authority/vault_api.rs",
      "purpose": "`impl Vault` — the AUTHORITY_LOG read/write door",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 3,
       "fn": 4
      }
     },
@@ -11350,7 +11352,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "test",
      "notable": [],
      "path": "src/context_pack/capability_tests.rs",
@@ -19996,12 +19998,39 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [
+      "DecisionInput",
+      "DecisionRule",
+      "DecisionSeat",
+      "LabelClassifier",
+      "LocalDecisionSeat",
+      "RuleExpression"
+     ],
+     "path": "src/llm/decision/local.rs",
+     "purpose": "Fixed-label local decision seat; runtime/model loading stays with the host",
+     "surface": {
+      "enum": 1,
+      "struct": 3,
+      "trait": 2
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "src/llm/decision/local/tests.rs",
+     "purpose": "—",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [],
      "path": "src/llm/decision/mod.rs",
      "purpose": "Typed question records and shared outcome projection",
      "surface": {
       "mod": 1,
-      "re-export": 4
+      "re-export": 5
      }
     },
     {
@@ -23838,7 +23867,7 @@
      "path": "src/pipeline/capabilities.rs",
      "purpose": "Capability candidates have a separate turn budget, never the memory budget",
      "surface": {
-      "crate-vis": 8
+      "crate-vis": 9
      }
     },
     {
@@ -29186,7 +29215,7 @@
      "path": "src/skill_reliability/mod.rs",
      "purpose": "ARCH-0053 §5 skill reliability (SK-05, ONE-1738): the Beta(α, β) posterior that decides which skills load…",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 3,
       "re-export": 6
      }
     },
@@ -29226,6 +29255,7 @@
      "path": "src/skill_reliability/provenance.rs",
      "purpose": "Classifying a stored skill for the prior table: the scan-clearance and hub-vouch reads behind the…",
      "surface": {
+      "crate-vis": 1,
       "fn": 2
      }
     },
@@ -29236,7 +29266,7 @@
      "path": "src/skill_reliability/read.rs",
      "purpose": "Reading reliability truth back: the resolved posterior, the selection score, and the confidence-cache rebuild",
      "surface": {
-      "crate-vis": 4,
+      "crate-vis": 6,
       "fn": 3
      }
     },
@@ -35044,7 +35074,7 @@
      "purpose": "Deterministic LinkedIn entity resolution and explicit runtime-path corpus preload"
     },
     "llm": {
-     "files": 71,
+     "files": 73,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -35599,8 +35629,8 @@
    },
    "over_bar": 10,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2101,
-   "test_files": 719
+   "source_files": 2102,
+   "test_files": 720
   },
   "oneiron-android": {
    "files": [
