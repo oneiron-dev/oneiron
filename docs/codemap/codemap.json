@@ -13441,7 +13441,7 @@
      "purpose": "Home-node gate, atomic admission, and the private wake-budget ledger",
      "surface": {
       "crate-vis": 2,
-      "fn": 13
+      "fn": 14
      }
     },
     {
@@ -30764,7 +30764,7 @@
      "purpose": "WebSocket connection manager with debounced sync and reconnection",
      "surface": {
       "fn": 2,
-      "re-export": 1,
+      "re-export": 2,
       "struct": 2
      }
     },
@@ -30789,12 +30789,26 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "test",
      "notable": [],
      "path": "src/sync/connection/tests.rs",
      "purpose": "—",
      "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "HomeNodeTopology"
+     ],
+     "path": "src/sync/connection/topology.rs",
+     "purpose": "Host-authorized home-node candidate updates, independent of socket liveness",
+     "surface": {
+      "crate-vis": 2,
+      "fn": 2,
+      "struct": 1
+     }
     },
     {
      "bucket": "m",
@@ -35719,7 +35733,7 @@
      "purpose": "ARCH-0038 historical-carrier sweep executor — ONE-1087 / ONE-1091 phase 1 (manual trigger via…"
     },
     "sync": {
-     "files": 100,
+     "files": 101,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -35854,7 +35868,7 @@
    },
    "over_bar": 11,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2116,
+   "source_files": 2117,
    "test_files": 721
   },
   "oneiron-android": {
