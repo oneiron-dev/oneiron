@@ -457,7 +457,7 @@ impl Memory<'_> {
                 return Ok(None);
             };
             if !crate::claim::claim_generic_readable(&body)
-                || !crate::claim::has_live_support_in_txn(&self.vault.store, &txn, &body)?
+                || !crate::claim::has_live_support_in_txn(&self.vault.store, txn, &body)?
             {
                 return Ok(None);
             }
