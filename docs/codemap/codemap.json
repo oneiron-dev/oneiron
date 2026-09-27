@@ -25255,7 +25255,7 @@
      "path": "src/receipt/record.rs",
      "purpose": "First-class, replicated immutable terminal outbound receipt record",
      "surface": {
-      "crate-vis": 8
+      "crate-vis": 9
      }
     },
     {

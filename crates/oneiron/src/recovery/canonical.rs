@@ -281,6 +281,56 @@ pub fn capture_canonical_window(
             });
         }
     }
+    // A tombstone quarantined by the receipt ingest door has NO delete
+    // authority in a canonical artifact. Resolve that decision against the
+    // locally validated record and its family index before projecting hard
+    // or soft deletion. A header alone is never enough to protect a forged
+    // carrier. If the CRDT row is missing but the validated local event exists,
+    // restore it into the snapshot so a fresh vault can rebuild its index.
+    let mut protected_receipts = std::collections::BTreeSet::new();
+    let mut restored_receipts = Vec::new();
+    for row in &snapshot.entity_blobs {
+        let Some(header) = crate::batch::EntityMetadataHeader::parse(&row.blob) else {
+            continue;
+        };
+        if header.entity_type == crate::registry::ENTITY_TYPE_RECEIPT_RECORD {
+            let receipt_id = id(row.id)?;
+            crate::receipt::validated_local_record_for_canonical(
+                &vault.store,
+                &txn,
+                &receipt_id,
+                Some(&row.blob),
+            )?;
+            protected_receipts.insert(row.id);
+        }
+    }
+    for tombstone in &snapshot.tombstones {
+        if protected_receipts.contains(&tombstone.id) {
+            continue;
+        }
+        let receipt_id = id(tombstone.id)?;
+        if let Some(raw) = crate::receipt::validated_local_record_for_canonical(
+            &vault.store,
+            &txn,
+            &receipt_id,
+            None,
+        )? {
+            let header = crate::batch::EntityMetadataHeader::parse(&raw)
+                .ok_or(Error::CorruptedIndex("canonical receipt record header"))?;
+            if crate::deletion::window_label_from_timestamp(header.learned_at) == window {
+                protected_receipts.insert(tombstone.id);
+                restored_receipts.push(CanonicalEntity {
+                    id: tombstone.id,
+                    blob: raw,
+                });
+            }
+        }
+    }
+    snapshot.entity_blobs.extend(restored_receipts);
+    snapshot
+        .tombstones
+        .retain(|row| !protected_receipts.contains(&row.id));
+
     // Hard deletion removes the payload and graph. Soft deletion retains only
     // the exact header and surviving Layer-1 edges, never an old body. The live
     // map may have removed that header already, so recover it from the store.

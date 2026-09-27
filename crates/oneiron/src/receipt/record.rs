@@ -74,6 +74,52 @@ fn decode(id: EntityId, body: &[u8]) -> Result<ReceiptRecordEnvelope> {
     Ok(asset)
 }
 
+/// Canonical capture may not let a CRDT tombstone erase a locally validated
+/// audit event. Resolve under its one read snapshot; absence is ordinary, but
+/// a missing index or a mismatch with the CRDT carrier is local corruption.
+pub(crate) fn validated_local_record_for_canonical(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    id: &EntityId,
+    expected: Option<&[u8]>,
+) -> Result<Option<Vec<u8>>> {
+    let Some(raw) = store.entities.get(txn, id.as_bytes())? else {
+        if expected.is_some() {
+            return Err(Error::CorruptedIndex(
+                "canonical receipt record not materialized",
+            ));
+        }
+        return Ok(None);
+    };
+    let header = EntityMetadataHeader::parse(&raw)
+        .ok_or(Error::CorruptedIndex("canonical receipt record header"))?;
+    if header.entity_type != ENTITY_TYPE_RECEIPT_RECORD {
+        if expected.is_some() {
+            return Err(Error::CorruptedIndex(
+                "canonical receipt record type mismatch",
+            ));
+        }
+        return Ok(None);
+    }
+    if expected.is_some_and(|candidate| candidate != raw.as_ref()) {
+        return Err(Error::CorruptedIndex(
+            "canonical receipt record carrier diverged",
+        ));
+    }
+    let decoded = decode(*id, &raw[ENTITY_METADATA_HEADER_LEN..])?;
+    if header.occurred_start != header.occurred_end
+        || header.occurred_start != header.learned_at
+        || header.occurred_start != decoded.receipt.occurred_at
+        || store.vault_meta.get(txn, &index_key(id))?.as_deref()
+            != Some(decoded.intent_id.as_slice())
+    {
+        return Err(Error::CorruptedIndex(
+            "canonical receipt record/index binding",
+        ));
+    }
+    Ok(Some(raw.into_owned()))
+}
+
 /// Incoming bytes have no store dependency. Relabel ONLY this untrusted
 /// decode failure as a remote rejection; the same decoder reading an already
 /// stored row still reports local `CorruptedIndex` and fails closed.
