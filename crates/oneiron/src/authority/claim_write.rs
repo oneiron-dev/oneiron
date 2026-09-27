@@ -21,9 +21,9 @@ impl Vault {
             return Ok(None);
         }
         let body = crate::claim::decode_claim_body(&raw[ENTITY_METADATA_HEADER_LEN..], true)?;
-        let fold = self.authority_fold_readonly_in_txn(&txn)?;
+        let view = self.authority_view_readonly_in_txn(&txn)?;
         Ok(Some(
-            if claim_causal_admitted(&self.store, &txn, &fold, &body)? {
+            if claim_causal_admitted(&self.store, &txn, &view, &body)? {
                 CausalWriteDisposition::Admitted
             } else {
                 CausalWriteDisposition::Quarantined
@@ -109,7 +109,7 @@ pub(crate) fn check_materialized_claim_causality(
     if claims.is_empty() {
         return Ok(());
     }
-    let fold = authority_fold_readonly_for_store_in_txn(store, posture, txn)?;
+    let fold = authority_view_readonly_for_store_in_txn(store, posture, txn)?;
     // Replay may see a machine's signed claim before its enrollment or
     // binding. Origin verification happens at admission; machine authority is
     // evaluated at read/fold time, not used to reject an out-of-order replay.
@@ -133,10 +133,6 @@ pub(crate) fn row_causal_admitted(
         return Ok(true);
     }
     let body = crate::claim::decode_claim_body(&raw[ENTITY_METADATA_HEADER_LEN..], true)?;
-    claim_causal_admitted(
-        &vault.store,
-        txn,
-        &vault.authority_fold_readonly_in_txn(txn)?,
-        &body,
-    )
+    let view = vault.authority_view_readonly_in_txn(txn)?;
+    claim_causal_admitted(&vault.store, txn, &view, &body)
 }

@@ -106,8 +106,12 @@ pub(crate) use claim_write::{
     check_materialized_claim_causality, claim_causal_admitted, row_causal_admitted,
 };
 pub(crate) use first_seen_clock::*;
-pub(crate) use readonly_fold::authority_fold_readonly_for_store_in_txn;
 use readonly_fold::authority_log_rows_in_txn;
+pub(crate) use readonly_fold::{
+    AuthorityCachedFold, advance_authority_cache_generation,
+    authority_fold_readonly_for_store_in_txn,
+};
+use readonly_fold::{AuthorityView, authority_view_readonly_for_store_in_txn};
 pub(crate) use sequence_observation::record_authority_sequence_observation_in_txn;
 
 // Module-internal only: nothing here leaves `authority`.
@@ -117,7 +121,7 @@ pub(crate) use machine_write::{machine_claim_read_admitted, verify_machine_claim
 use observation_policy::authority_observation_policy_in_txn;
 use op_apply::*;
 use sequence_observation::{AuthorityLocalObservations, authority_local_observations_in_txn};
-use stale_roster::apply_stale_roster_window;
+use stale_roster::{apply_stale_roster_window, next_stale_roster_deadline};
 use tier_floor::*;
 use wire_decode::*;
 use wire_encode::*;
