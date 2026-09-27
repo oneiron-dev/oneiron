@@ -675,27 +675,6 @@ pub(crate) fn approve_once_authorization_in_txn(
     }
 }
 
-/// Read-only retry proof: only a marker already spent by the original
-/// admitted effect can authorize reuse of that exact frozen native-mail send.
-pub(crate) fn approve_once_is_spent_in_txn(
-    store: &crate::store::Store,
-    txn: &heed::RoTxn<'_>,
-    digest: &EffectDigest,
-) -> Result<bool> {
-    let Some(raw) = store
-        .vault_meta
-        .get(txn, &consent_approve_once_key(digest))?
-    else {
-        return Ok(false);
-    };
-    let (state, _) = decode_approve_once_marker(&raw)?;
-    match state {
-        CONSENT_APPROVE_ONCE_SPENT => Ok(true),
-        CONSENT_APPROVE_ONCE_AVAILABLE => Ok(false),
-        _ => Err(Error::CorruptedIndex("consent approve-once marker state")),
-    }
-}
-
 /// Changes one store-attested approve-once marker to spent in `wtxn`.
 ///
 /// The caller performs this only when the enclosing authorization is `Auto`.

@@ -6999,7 +6999,7 @@
      "path": "src/channel_identity_provider/native_mail.rs",
      "purpose": "Native mail fulfillment adapter",
      "surface": {
-      "crate-vis": 5,
+      "crate-vis": 13,
       "enum": 1,
       "fn": 7,
       "struct": 1,
@@ -7007,7 +7007,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "test",
      "notable": [],
      "path": "src/channel_identity_provider/native_mail/tests.rs",
@@ -10373,7 +10373,7 @@
      "path": "src/consent/doors.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 9,
+      "crate-vis": 8,
       "fn": 16,
       "struct": 2
      }
@@ -10394,7 +10394,7 @@
      "purpose": "—",
      "surface": {
       "const": 3,
-      "crate-vis": 3,
+      "crate-vis": 4,
       "enum": 4,
       "fn": 22,
       "struct": 3
@@ -16813,7 +16813,7 @@
      "path": "src/gate/effect/mod.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 12
+      "crate-vis": 14
      }
     },
     {
@@ -23283,9 +23283,9 @@
      "kind": "src",
      "notable": [],
      "path": "src/outbound/dispatch_pipeline/govern.rs",
-     "purpose": "The governance-only parked lane: one durable gate transaction, no budget debit",
+     "purpose": "Gate input assembled from the canonical outbound request",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 1
      }
     },
     {
@@ -23676,7 +23676,7 @@
      "path": "src/outbound_chokepoint/replay.rs",
      "purpose": "Replay/send path: ledger-state dispatch, recovery governance, live-retry gate, transport outcomes",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 7
      }
     },
     {
@@ -23951,7 +23951,7 @@
      "purpose": "Pinned key sets, content digest, and MessagePack encode/decode",
      "surface": {
       "const": 1,
-      "crate-vis": 28
+      "crate-vis": 29
      }
     },
     {
@@ -23972,7 +23972,7 @@
      "path": "src/outbound_intent_ledger/mod.rs",
      "purpose": "Device-local durable intent ledger for effectful outbound calls",
      "surface": {
-      "crate-vis": 5,
+      "crate-vis": 6,
       "re-export": 3
      }
     },
@@ -24024,7 +24024,7 @@
      "purpose": "Version consts, domain types, record impls, and listing/escalation/report types",
      "surface": {
       "const": 2,
-      "crate-vis": 14,
+      "crate-vis": 18,
       "enum": 8,
       "fn": 20,
       "struct": 13,

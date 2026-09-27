@@ -385,8 +385,15 @@ pub(super) fn coalescing_effect_record(
     effect: &ExternalEffectGateInput,
     policy: &PolicyManifestResolution,
 ) -> Result<GateDecisionRecord> {
-    let governance =
-        evaluate_external_effect_policy(store, wtxn, effect, policy, None, None, None)?;
+    let governance = evaluate_external_effect_policy(
+        store,
+        wtxn,
+        effect,
+        policy,
+        None,
+        None,
+        ApprovalContext::FirstAdmission,
+    )?;
     let (decision_id, decision) = record_external_effect_policy(store, wtxn, governance)?;
     let record = store
         .gate_decision_in_txn(&*wtxn, decision_id)?

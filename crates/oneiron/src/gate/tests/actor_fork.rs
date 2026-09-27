@@ -890,7 +890,7 @@ fn approve_once_not_atomic_is_closed_for_production_and_public_evaluation() -> R
             &policy,
             None,
             None,
-            None,
+            ApprovalContext::FirstAdmission,
         )?;
         assert_eq!(governance.outcome(), GateOutcome::Allow);
         vault.store.vault_meta.put(wtxn, EFFECT_RAN_KEY, b"once")?;
@@ -906,7 +906,7 @@ fn approve_once_not_atomic_is_closed_for_production_and_public_evaluation() -> R
                 &policy,
                 None,
                 None,
-                None,
+                ApprovalContext::FirstAdmission,
             )
             .map(|_| ())
         })

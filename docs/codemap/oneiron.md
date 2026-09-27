@@ -580,8 +580,8 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/channel_identity_provider/mail_placement.rs` | src | s | 2 enum · 2 fn | MailPlacement, PlacementPolicy | Provider-neutral mailbox placement and read policy |
 | `src/channel_identity_provider/mailbox_cursor.rs` | src | s | 2 struct · 5 fn · 2 crate-vis | MailboxCursor, MailboxPageToken | Node-local Gmail mailbox progress, keyed by delegated identity |
 | `src/channel_identity_provider/mod.rs` | src | s | 4 mod · 5 re-export | — | Provider-adapter seam for ChannelIdentity fulfillment (OF-347 CID-3) |
-| `src/channel_identity_provider/native_mail.rs` | src | m | 1 struct · 1 enum · 1 trait · 7 fn · 5 crate-vis | NativeMailAdapter, NativeMailHost, NativeMailRunMode | Native mail fulfillment adapter |
-| `src/channel_identity_provider/native_mail/tests.rs` | test | m | — | — | Native-mail adapter and send-autonomy integration tests |
+| `src/channel_identity_provider/native_mail.rs` | src | m | 1 struct · 1 enum · 1 trait · 7 fn · 13 crate-vis | NativeMailAdapter, NativeMailHost, NativeMailRunMode | Native mail fulfillment adapter |
+| `src/channel_identity_provider/native_mail/tests.rs` | test | L | — | — | Native-mail adapter and send-autonomy integration tests |
 | `src/channel_identity_provider/shared_validate.rs` | src | m | 9 const · 37 crate-vis | — | Cross-channel provision guards, email/LINE normalizers, and blank/bytes primitives |
 | `src/channel_identity_provider/slack_adapter.rs` | src | m | 5 struct · 20 fn | SlackOutboundMessage, SlackPersonaAttribution, SlackPersonaOutbound, SlackSharedPresenceAdapter, SlackSharedPresenceAdapterConfig | Slack shared-presence adapter: config, persona/outbound types, impls, and inbound normalizer |
 | `src/channel_identity_provider/slack_validate.rs` | src | s | 12 crate-vis | — | Slack key, workspace, and field normalizers shared by the Slack adapter paths |
@@ -836,8 +836,8 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/consent/ask_holders.rs` | src | s | 1 crate-vis | — | Scope ask recipients resolved from live, owner-stamped action grants |
 | `src/consent/bound.rs` | src | m | 7 struct · 4 enum · 33 fn · 3 const · 6 crate-vis | ActionClass, ActionEnvelope, ActorBound, AudienceBound, BoundClass, BoundEnvelope, BoundSubject, ConsentDomain +3 | — |
 | `src/consent/codec.rs` | src | m | 2 fn · 2 const · 13 crate-vis | — | — |
-| `src/consent/doors.rs` | src | m | 2 struct · 16 fn · 9 crate-vis | AuthenticatedOwner, ConsentEvaluation | — |
-| `src/consent/effect.rs` | src | m | 3 struct · 4 enum · 22 fn · 3 const · 3 crate-vis | CatastropheClass, ComposedEffect, ConsentDecision, EffectDigest, EffectFacts, ReversibilityClass, UndoFidelity | — |
+| `src/consent/doors.rs` | src | m | 2 struct · 16 fn · 8 crate-vis | AuthenticatedOwner, ConsentEvaluation | — |
+| `src/consent/effect.rs` | src | m | 3 struct · 4 enum · 22 fn · 3 const · 4 crate-vis | CatastropheClass, ComposedEffect, ConsentDecision, EffectDigest, EffectFacts, ReversibilityClass, UndoFidelity | — |
 | `src/consent/grant.rs` | src | m | 5 struct · 4 enum · 1 trait · 16 fn · 6 const | ActionGrant, ConsentGrant, ConsentGrantRow, ConsentGrantStatus, ConsentGuard, ConsentOwnerStamp, ConsentProposal, ConsentReceipt +2 | — |
 | `src/consent/mod.rs` | src | s | 1 mod · 7 re-export · 3 crate-vis | — | DEC-0006 unified consent-mode — bounded standing grants |
 | `src/consent/registry.rs` | src | s | 4 struct · 1 fn · 1 const · 1 crate-vis | ConsentRegistry, ConsentRegistryQuery, ConsentRegistryRow, ConsentRevokeAction | — |
@@ -1343,7 +1343,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/gate/effect/effect_consent.rs` | src | s | 4 crate-vis | — | Pure DEC-0006 consent constructors over gate input |
 | `src/gate/effect/effect_contacts.rs` | src | s | 1 crate-vis | — | Counterparty hydration plus send-override and do-not-contact fold |
 | `src/gate/effect/effect_grants.rs` | src | s | 3 crate-vis | — | Standing-grant resolution plus scoped-MCP channel check and grant touch |
-| `src/gate/effect/mod.rs` | src | m | 12 crate-vis | — | — |
+| `src/gate/effect/mod.rs` | src | m | 14 crate-vis | — | — |
 | `src/gate/foreign_agent.rs` | src | m | 3 fn · 1 crate-vis | — | Owner-bound foreign introductions |
 | `src/gate/grants.rs` | src | m | 8 crate-vis | — | — |
 | `src/gate/input.rs` | src | m | 15 crate-vis | — | — |
@@ -1863,7 +1863,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/outbound/dispatch_pipeline/admission.rs` | src | s | 3 crate-vis | — | Pure execute-time admission: one decision consumed by freeze and gate paths |
 | `src/outbound/dispatch_pipeline/effect.rs` | src | s | 2 crate-vis | — | Admitted effect: only this lane enters the replay-first chokepoint |
 | `src/outbound/dispatch_pipeline/frozen_payload.rs` | src | s | 1 crate-vis | — | Frozen retry-contract payload: the intent bytes a connector reads and the ledger hashes |
-| `src/outbound/dispatch_pipeline/govern.rs` | src | s | 2 crate-vis | — | The governance-only parked lane: one durable gate transaction, no budget debit |
+| `src/outbound/dispatch_pipeline/govern.rs` | src | s | 1 crate-vis | — | Gate input assembled from the canonical outbound request |
 | `src/outbound/dispatch_pipeline/mod.rs` | src | s | 1 re-export · 8 crate-vis | — | O2 resolve-gate-window-execute dispatch pipeline: replay-first ledger contract, gate decision… |
 | `src/outbound/dispatch_pipeline/pipeline.rs` | src | m | 1 struct · 1 fn · 1 crate-vis | OutboundDispatchPipeline | O2 resolve-gate-window-execute dispatch pipeline: dispatch, verified-actor dispatch, and the dispatch_inner… |
 | `src/outbound/dispatch_pipeline/policy_risk.rs` | src | s | 2 crate-vis | — | Pending gate-outcome name and gate-vs-manifest policy-risk resolution |
@@ -1901,7 +1901,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/outbound_chokepoint/fanout/history.rs` | src | s | 3 crate-vis | — | Admission against the live consult graph, without charging its old edges again |
 | `src/outbound_chokepoint/fanout/tests.rs` | test | L | — | — | Fan-out admission tests |
 | `src/outbound_chokepoint/mod.rs` | src | s | 1 re-export · 5 crate-vis | — | Replay-first outbound effect execution |
-| `src/outbound_chokepoint/replay.rs` | src | m | 6 crate-vis | — | Replay/send path: ledger-state dispatch, recovery governance, live-retry gate, transport outcomes |
+| `src/outbound_chokepoint/replay.rs` | src | m | 7 crate-vis | — | Replay/send path: ledger-state dispatch, recovery governance, live-retry gate, transport outcomes |
 | `src/outbound_chokepoint/tests.rs` | test | m | — | — | Recovery-side governance tests (ONE-1885) |
 | `src/outbound_chokepoint/types.rs` | src | s | 10 crate-vis | — | Frozen admission model: error alias, result/command/auth/prepared types, transport trait, hygiene helper… |
 | `src/outbound_consent/authority.rs` | src | m | 3 struct · 1 enum · 5 fn · 8 crate-vis | FrozenMcpPayload, OutboundBindingAuthority, OutboundBindingValidation, ScopedMcpAuthorization | Frozen payload, keyed binding authority, and grant-scope digest |
@@ -1923,12 +1923,12 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/outbound_grant/scope.rs` | src | s | 2 struct · 1 enum · 4 fn · 11 crate-vis | BookingPageInviteGrantMintIntent, ScopedMcpGrantMintIntent, StandingOutboundGrantScope | Scope dials, scope vocabularies, mint intents, and scope validation |
 | `src/outbound_grant/tests.rs` | test | L | — | — | — |
 | `src/outbound_grant/tests/header_classes.rs` | test | s | — | — | — |
-| `src/outbound_intent_ledger/codec.rs` | src | m | 1 const · 28 crate-vis | — | Pinned key sets, content digest, and MessagePack encode/decode |
+| `src/outbound_intent_ledger/codec.rs` | src | m | 1 const · 29 crate-vis | — | Pinned key sets, content digest, and MessagePack encode/decode |
 | `src/outbound_intent_ledger/dispatch.rs` | src | m | 2 fn · 5 crate-vis | — | Recovery walk, canonical-JSON intent identity, and test-only execute/recover/replay |
-| `src/outbound_intent_ledger/mod.rs` | src | s | 3 re-export · 5 crate-vis | — | Device-local durable intent ledger for effectful outbound calls |
+| `src/outbound_intent_ledger/mod.rs` | src | s | 3 re-export · 6 crate-vis | — | Device-local durable intent ledger for effectful outbound calls |
 | `src/outbound_intent_ledger/store.rs` | src | m | 19 crate-vis | — | Storage-transaction reads, inserts, transitions, and the admission-gate validator |
 | `src/outbound_intent_ledger/tests.rs` | test | XL | — | — | — |
-| `src/outbound_intent_ledger/types.rs` | src | m | 13 struct · 8 enum · 20 fn · 2 type · 2 const · 14 crate-vis | BudgetChargeMarker, BudgetClass, FrozenOutboundCall, IntentDispatchResult, IntentEscalation, IntentEscalationReason, IntentLedgerCorruptRow, IntentLedgerError +13 | Version consts, domain types, record impls, and listing/escalation/report types |
+| `src/outbound_intent_ledger/types.rs` | src | m | 13 struct · 8 enum · 20 fn · 2 type · 2 const · 18 crate-vis | BudgetChargeMarker, BudgetClass, FrozenOutboundCall, IntentDispatchResult, IntentEscalation, IntentEscalationReason, IntentLedgerCorruptRow, IntentLedgerError +13 | Version consts, domain types, record impls, and listing/escalation/report types |
 | `src/overlay_db/accessors.rs` | src | m | 27 crate-vis | — | ComposedOverlay snapshot holder plus OverlayDb/OverlayStrDb canonical-vs-composed read/write accessors |
 | `src/overlay_db/iters.rs` | src | s | 8 crate-vis | — | Public base-vs-merged iterator enums returned by the accessors (iter/rev/range/prefix/dup/str) |
 | `src/overlay_db/merge.rs` | src | m | 15 crate-vis | — | Base/overlay merge engine: MergedRows state machine, prefix/prefetch/str adapters, ordering and… |

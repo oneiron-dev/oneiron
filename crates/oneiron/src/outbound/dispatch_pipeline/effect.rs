@@ -25,6 +25,7 @@ pub(super) struct EffectInput<'a, S> {
     pub(super) attempt_id: AttemptId,
     pub(super) idempotency_supported: bool,
     pub(super) verified_actor: Option<(EntityId, EdgeActorClass)>,
+    pub(super) parked: Option<OutboundDispatchOutcome>,
     pub(super) suppression_receipt: Option<ReceiptRecord>,
 }
 
@@ -41,6 +42,7 @@ pub(super) fn execute_admitted<S: OutboundExecutionSink>(
         attempt_id,
         idempotency_supported,
         verified_actor,
+        parked,
         suppression_receipt,
     } = input;
     let prepared = crate::outbound_chokepoint::PreparedEffect {
@@ -63,7 +65,10 @@ pub(super) fn execute_admitted<S: OutboundExecutionSink>(
     let effect_result = crate::outbound_chokepoint::execute_outbound_effect(
         vault,
         &authority,
-        crate::outbound_chokepoint::OutboundEffectCommand::New(prepared),
+        match parked {
+            Some(_) => crate::outbound_chokepoint::OutboundEffectCommand::Park(prepared),
+            None => crate::outbound_chokepoint::OutboundEffectCommand::New(prepared),
+        },
         request.occurred_at,
         &mut transport,
     )
@@ -94,7 +99,9 @@ pub(super) fn execute_admitted<S: OutboundExecutionSink>(
             match effect_result.dispatch.state {
                 Some(IntentState::Done) => OutboundDispatchOutcome::DeliveredToChannel,
                 Some(IntentState::Pending) => {
-                    if transport.execution.as_ref().is_some_and(|execution| {
+                    if let Some(parked) = parked {
+                        parked
+                    } else if transport.execution.as_ref().is_some_and(|execution| {
                         execution.kind == OutboundExecutionOutcomeKind::Failed
                     }) {
                         OutboundDispatchOutcome::Failed
@@ -104,6 +111,9 @@ pub(super) fn execute_admitted<S: OutboundExecutionSink>(
                 }
                 Some(IntentState::Abandoned) => OutboundDispatchOutcome::Failed,
                 None if gate_outcome_kind == GateOutcome::Pending => OutboundDispatchOutcome::Held,
+                None if gate_outcome_kind == GateOutcome::Allow && parked.is_some() => {
+                    parked.expect("matched Some")
+                }
                 None => OutboundDispatchOutcome::Suppressed,
             }
         };

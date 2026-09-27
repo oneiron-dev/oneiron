@@ -75,6 +75,7 @@ fn persist_pending(
         idempotency_key: call.idempotency_key.expect("idempotency key"),
         idempotency_supported,
         authorization_binding: Some(authorization_binding),
+        admitted_approval: None,
         binding_version: OUTBOUND_BINDING_VERSION,
         resolved_endpoint: None,
         capability_provenance: None,
@@ -1525,11 +1526,11 @@ fn content_digest_is_hash_of_msgpack_minus_digest_key() {
         panic!("the stored content digest must be binary");
     };
     assert_eq!(stored_digest.len(), 32);
-    assert_eq!(entries.len(), 19);
+    assert_eq!(entries.len(), 20);
 
     let preimage = encode_entries(entries);
-    // A 19-entry map is `map16`: the map header itself is inside the preimage.
-    assert_eq!(preimage[..3], [0xde, 0x00, 0x13]);
+    // A 20-entry map is `map16`: the map header itself is inside the preimage.
+    assert_eq!(preimage[..3], [0xde, 0x00, 0x14]);
     let width = payload.len();
     assert!(
         preimage.windows(width).any(|window| window == payload),
@@ -1551,7 +1552,7 @@ fn content_digest_is_hash_of_msgpack_minus_digest_key() {
 /// encoder: producer and expectation must be able to disagree, or a co-drifting
 /// change would rewrite both sides at once. Pre-launch, a deliberate ABI change
 /// re-pins them with a stated rationale.
-const GOLDEN_ROW_KEYS: [&str; 20] = [
+const GOLDEN_ROW_KEYS: [&str; 21] = [
     "schema_version",
     "id",
     "attempt_id",
@@ -1571,6 +1572,7 @@ const GOLDEN_ROW_KEYS: [&str; 20] = [
     "state",
     "created_ms",
     "updated_ms",
+    "admitted_approval",
     "content_digest",
 ];
 const GOLDEN_ATTEMPT_BYTE: u8 = 0x2B;
@@ -1581,9 +1583,9 @@ const GOLDEN_NOW_MS: u64 = 1_700_000_000_000;
 /// hash derive, in lowercase hex.
 const GOLDEN_INTENT_ID_HEX: &str =
     "311135d83a39aeef442248566c71583daf41968a7e78ca7688da8119259086d3";
-/// BLAKE3 of the 19-entry MessagePack body of that row at schema version 3.
+/// BLAKE3 of the 20-entry MessagePack body of that row at schema version 3.
 const GOLDEN_CONTENT_DIGEST_HEX: &str =
-    "770b0b4308af5fa80600143e4620adb0d5e5360c345905b404f38343bb0084c0";
+    "519b4bd25e976760c57d185ad0648a0790b9abac08cd877b0dcb5d5800950625";
 
 #[test]
 fn storage_abi_golden_fixture() {
@@ -1700,10 +1702,38 @@ fn every_body_field_is_digest_bound() {
     let capability = capability_fixture();
     let scoped = capability_record(capability.clone());
     let other_grant = EntityId::from_bytes([0x5E; 16]).expect("other grant id");
+    let mail_base = mutated(&base, |record| {
+        record.server = "email".into();
+        record.tool = "send".into();
+        record.payload = serde_json::to_vec(&serde_json::json!({
+            "native_mail_recipient": true,
+            "native_mail_logical_ref": "intent:golden-mail",
+            "channel": "email", "verb": "send",
+            "actor_ref": "11111111111111111111111111111111",
+            "actor_entity_ref": "11111111111111111111111111111111",
+            "channel_identity_ref": "22222222222222222222222222222222",
+            "target": "new@example.test", "counterparty_ref": "new@example.test",
+            "content_ref": "draft:golden", "job_ref": "brief:golden",
+        }))
+        .expect("canonical frozen mail payload");
+    });
 
     // Fields coupled by validation move together; the case names the body keys
     // it moves so the table can prove it covers every one of them.
     let cases: Vec<(&str, Vec<&str>, IntentLedgerRecord, IntentLedgerRecord)> = vec![
+        (
+            "typed admitted approval",
+            vec![KEY_ADMITTED_APPROVAL],
+            mail_base.clone(),
+            mutated(&mail_base, |record| {
+                record.admitted_approval = Some(AdmittedApproval::from_gate(
+                    record.id,
+                    crate::channel_identity_provider::native_mail::approval_digest_from_frozen_payload(
+                        record.payload(),
+                    ).expect("canonical mail digest"),
+                ));
+            }),
+        ),
         (
             "attempt_id",
             vec![KEY_ID, KEY_ATTEMPT_ID, KEY_IDEMPOTENCY_KEY],
@@ -1822,7 +1852,7 @@ fn every_body_field_is_digest_bound() {
     for (label, keys, case_base, case_mutated) in cases {
         for key in keys {
             assert!(
-                INTENT_LEDGER_VALUE_KEYS[..19].contains(&key),
+                INTENT_LEDGER_VALUE_KEYS[..20].contains(&key),
                 "{label} names a key outside the digest preimage"
             );
             covered.insert(key);
@@ -1870,13 +1900,13 @@ fn every_body_field_is_digest_bound() {
         );
     }
 
-    let expected: HashSet<&str> = INTENT_LEDGER_VALUE_KEYS[..19]
+    let expected: HashSet<&str> = INTENT_LEDGER_VALUE_KEYS[..20]
         .iter()
         .copied()
         .filter(|key| *key != KEY_SCHEMA_VERSION && *key != KEY_BINDING_VERSION)
         .collect();
     assert_eq!(covered, expected, "every body key needs a mutation case");
-    assert_eq!(covered.len(), 17, "19 body keys minus 2 structural ones");
+    assert_eq!(covered.len(), 18, "20 body keys minus 2 structural ones");
 }
 
 /// The FORMER canonical-JSON content digest, reconstructed locally. Production

@@ -433,6 +433,19 @@ fn mail_09_native_send_and_cid5_offer_require_real_identity_and_health() -> Resu
     assert!(adapter.dispatch_send(&vault, forged, &mut sink).is_err());
     assert_eq!(sink.0.len(), 2);
     vault.transition_channel_identity(&id, ChannelIdentityState::Released, None, 30, None)?;
+    let mut completed_replay = completed_replay;
+    completed_replay.window_decision = OutboundDeliveryWindowDecision::Hold {
+        reason: "quiet_window".into(),
+        retry_at: Some(60),
+    };
+    let generic_replay = vault
+        .dispatch_outbound_intent(completed_replay.clone(), &mut sink)
+        .expect("generic terminal replay precedes today's window");
+    assert_eq!(
+        generic_replay.outcome,
+        OutboundDispatchOutcome::DeliveredToChannel
+    );
+    assert_eq!(sink.0.len(), 2);
     let replayed = adapter
         .dispatch_send(&vault, completed_replay, &mut sink)
         .expect("adapter completed replay must validate from frozen admission");
@@ -471,7 +484,7 @@ fn mail_09_owner_approve_once_releases_only_one_cold_send() -> Result<()> {
         }
     }
     let dir = tempfile::tempdir()?;
-    let vault = Vault::open(dir.path(), crate::VaultConfig::default())?;
+    let vault = std::rc::Rc::new(Vault::open(dir.path(), crate::VaultConfig::default())?);
     let actor = EntityId::now();
     let owner_id = EntityId::now();
     for id in [actor, owner_id] {
@@ -490,13 +503,13 @@ fn mail_09_owner_approve_once_releases_only_one_cold_send() -> Result<()> {
         crate::store::GateDecisionId::now(),
     )?;
     let identity = EntityId::now();
-    let adapter = NativeMailAdapter::new(
+    let adapter = std::rc::Rc::new(NativeMailAdapter::new(
         "side.example.test",
         NativeMailRunMode::SelfRun,
         Host {
             inbound: EmailProviderInbound::new("event", "unused", "unused", 1),
         },
-    )?;
+    )?);
     let requested = adapter.requested_identity(identity, actor, 1);
     vault.create_channel_identity(&identity, &requested)?;
     vault.transition_channel_identity(
@@ -594,10 +607,14 @@ fn mail_09_owner_approve_once_releases_only_one_cold_send() -> Result<()> {
     let sent = adapter
         .dispatch_send(&vault, request.clone(), &mut sink)
         .expect("owner one-shot releases this send");
-    assert_eq!(sent.outcome, OutboundDispatchOutcome::DeliveredToChannel);
+    assert_eq!(
+        sent.outcome,
+        OutboundDispatchOutcome::DeliveredToChannel,
+        "{sent:?}"
+    );
     assert_eq!(sink.calls, 1);
     assert!(adapter.approve_send_once(&vault, &owner, &request).is_err());
-    let mut other = request;
+    let mut other = request.clone();
     other.receipt_id = "mail-09:other-receipt".into();
     other.intent_ref = "mail-09:other-intent".into();
     let held = adapter
@@ -612,18 +629,200 @@ fn mail_09_owner_approve_once_releases_only_one_cold_send() -> Result<()> {
         .expect("definite non-delivery retains the admitted one-send approval");
     assert_eq!(failed.outcome, OutboundDispatchOutcome::Failed);
     assert_eq!(sink.calls, 2);
+    // The typed admission belongs to this exact frozen operation; a retry
+    // cannot swap its content, recipient, actor or sending identity.
+    let mut changed_content = other.clone();
+    changed_content.intent.content_ref = Some("draft:replacement".into());
+    let mut changed_recipient = other.clone();
+    changed_recipient.intent.target = "other@example.test".into();
+    let mut changed_actor = other.clone();
+    changed_actor.actor = OutboundDispatchActor::agent(EntityId::now());
+    let mut changed_sender = other.clone();
+    changed_sender.channel_identity_ref = Some(EntityId::now());
+    for changed in [
+        changed_content,
+        changed_recipient,
+        changed_actor,
+        changed_sender,
+    ] {
+        assert!(adapter.dispatch_send(&vault, changed, &mut sink).is_err());
+        assert_eq!(sink.calls, 2);
+    }
+    let mut parked_retry = other.clone();
+    parked_retry.window_decision = OutboundDeliveryWindowDecision::Hold {
+        reason: "quiet_window".into(),
+        retry_at: Some(60),
+    };
+    let parked = adapter
+        .dispatch_send(&vault, parked_retry, &mut sink)
+        .expect("pending admitted retry retains authority through a window hold");
+    assert_eq!(parked.outcome, OutboundDispatchOutcome::Held);
+    assert_eq!(sink.calls, 2);
     let retried = adapter
         .dispatch_send(&vault, other.clone(), &mut sink)
         .expect("same frozen send retries under its spent approval");
     assert_eq!(retried.outcome, OutboundDispatchOutcome::DeliveredToChannel);
     assert_eq!(sink.calls, 3);
+    let mut terminal_hold = other.clone();
+    terminal_hold.window_decision = OutboundDeliveryWindowDecision::Hold {
+        reason: "quiet_window".into(),
+        retry_at: Some(90),
+    };
+    let terminal = adapter
+        .dispatch_send(&vault, terminal_hold, &mut sink)
+        .expect("terminal replay precedes today's window");
+    assert_eq!(
+        terminal.outcome,
+        OutboundDispatchOutcome::DeliveredToChannel
+    );
+    assert_eq!(sink.calls, 3);
     let mut third = other;
     third.intent_ref = "mail-09:third-intent".into();
     third.receipt_id = "mail-09:third-receipt".into();
     let held = adapter
-        .dispatch_send(&vault, third, &mut sink)
+        .dispatch_send(&vault, third.clone(), &mut sink)
         .expect("third send has no approval");
     assert_eq!(held.outcome, OutboundDispatchOutcome::Held);
     assert_eq!(sink.calls, 3);
+    let key_id = EntityId::now();
+    vault.register_connector_key(
+        &key_id,
+        crate::connector_key::ConnectorKeyRecord::active(
+            "email",
+            None,
+            vec![crate::connector_key::EffectorBudget::sends(
+                4,
+                crate::connector_key::EffectorBudgetWindow::Calendar {
+                    period: crate::connector_key::CalendarPeriod::Day,
+                    tz: None,
+                },
+                crate::connector_key::EffectorBudgetOnExhaust::Suspend,
+            )],
+            1,
+        ),
+    )?;
+    // The owner taps only AFTER dispatch has prepared its stable bytes, via
+    // the existing pre-admission seam. The Gate selects and consumes the tap
+    // under its writer lock; the Pending row must carry THAT proof.
+    let mut concurrent = request.clone();
+    concurrent.intent_ref = "mail-09:tap-between-prep-and-admission".into();
+    concurrent.receipt_id = "mail-09:tap-between-prep-and-admission-receipt".into();
+    let hook_vault = std::rc::Rc::clone(&vault);
+    let hook_adapter = std::rc::Rc::clone(&adapter);
+    let hook_owner = owner.clone();
+    let hook_request = concurrent.clone();
+    crate::outbound_chokepoint::BEFORE_NEW_ADMISSION.with(|slot| {
+        *slot.borrow_mut() = Some(Box::new(move || {
+            hook_adapter
+                .approve_send_once(&hook_vault, &hook_owner, &hook_request)
+                .expect("owner tap commits before the admission writer lock");
+        }));
+    });
+    sink.fail_next = true;
+    let failed = adapter
+        .dispatch_send(&vault, concurrent.clone(), &mut sink)
+        .expect("admission must record the just-selected tap");
+    assert_eq!(failed.outcome, OutboundDispatchOutcome::Failed);
+    assert_eq!(sink.calls, 4);
+    let before_retry = vault
+        .effector_budget_read("email", Some(&actor))?
+        .expect("governing budget read");
+    assert_eq!(before_retry.rows[0].used, 1);
+    let retried = adapter
+        .dispatch_send(&vault, concurrent, &mut sink)
+        .expect("typed admitted proof permits the exact retry");
+    assert_eq!(retried.outcome, OutboundDispatchOutcome::DeliveredToChannel);
+    assert_eq!(sink.calls, 5);
+    assert_eq!(
+        vault
+            .effector_budget_read("email", Some(&actor))?
+            .expect("retry budget read")
+            .rows[0]
+            .used,
+        1
+    );
+    adapter.approve_send_once(&vault, &owner, &third)?;
+    let delivered = adapter
+        .dispatch_send(&vault, third, &mut sink)
+        .expect("another approved send still has budget");
+    assert_eq!(
+        delivered.outcome,
+        OutboundDispatchOutcome::DeliveredToChannel
+    );
+    assert_eq!(sink.calls, 6);
+    assert_eq!(
+        vault
+            .effector_budget_read("email", Some(&actor))?
+            .expect("second admission budget read")
+            .rows[0]
+            .used,
+        2
+    );
+    let mut refused = request.clone();
+    refused.intent_ref = "mail-09:refused-before-admission".into();
+    refused.receipt_id = "mail-09:refused-before-admission-receipt".into();
+    adapter.approve_send_once(&vault, &owner, &refused)?;
+    vault.suspend_connector_key(&key_id, "owner", 11)?;
+    let blocked = adapter
+        .dispatch_send(&vault, refused.clone(), &mut sink)
+        .expect("suspended key refuses first admission");
+    assert_ne!(blocked.outcome, OutboundDispatchOutcome::DeliveredToChannel);
+    assert_eq!(sink.calls, 6);
+    assert_eq!(
+        vault
+            .effector_budget_read("email", Some(&actor))?
+            .expect("blocked budget read")
+            .rows[0]
+            .used,
+        2
+    );
+    vault.resume_connector_key(&key_id, 12)?;
+    let delivered = adapter
+        .dispatch_send(&vault, refused, &mut sink)
+        .expect("refused admission did not consume the owner tap");
+    assert_eq!(
+        delivered.outcome,
+        OutboundDispatchOutcome::DeliveredToChannel
+    );
+    assert_eq!(sink.calls, 7);
+    assert_eq!(
+        vault
+            .effector_budget_read("email", Some(&actor))?
+            .expect("third admission budget read")
+            .rows[0]
+            .used,
+        3
+    );
+
+    let mut pending = request;
+    pending.intent_ref = "mail-09:pending-policy-recheck".into();
+    pending.receipt_id = "mail-09:pending-policy-recheck-receipt".into();
+    adapter.approve_send_once(&vault, &owner, &pending)?;
+    sink.fail_next = true;
+    let failed = adapter
+        .dispatch_send(&vault, pending.clone(), &mut sink)
+        .expect("pending one-shot retains its admission");
+    assert_eq!(failed.outcome, OutboundDispatchOutcome::Failed);
+    assert_eq!(sink.calls, 8);
+    let contact = crate::counterparty_contact::CounterpartyContactRecord::public(
+        identity,
+        "new@example.test",
+        15,
+    )?;
+    let contact_id = EntityId::now();
+    vault.create_counterparty_contact(&contact_id, &contact)?;
+    vault.opt_out_counterparty_contact(
+        &contact_id,
+        crate::counterparty_contact::CounterpartyOptOutReason::Unsubscribe,
+        16,
+    )?;
+    let blocked = adapter
+        .dispatch_send(&vault, pending.clone(), &mut sink)
+        .expect("live opt-out stops an admitted retry");
+    assert_ne!(blocked.outcome, OutboundDispatchOutcome::DeliveredToChannel);
+    assert_eq!(sink.calls, 8);
+    vault.transition_channel_identity(&identity, ChannelIdentityState::Released, None, 30, None)?;
+    assert!(adapter.dispatch_send(&vault, pending, &mut sink).is_err());
+    assert_eq!(sink.calls, 8);
     Ok(())
 }

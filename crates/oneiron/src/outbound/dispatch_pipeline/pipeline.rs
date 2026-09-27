@@ -140,14 +140,9 @@ impl OutboundDispatchPipeline {
             window_decision,
         );
         let effect = super::govern::gate_input(&request, verb_contract, policy_risk);
-        let mail_approval =
-            frozen_mail_approval(vault, &effect, native_mail_recipient, replay.as_ref())?;
-        // Only executable sends (or replays needing binding validation) freeze bytes.
-        let payload = if matches!(
-            admission.decision,
-            super::admission::DispatchAdmission::Execute
-        ) || replay.is_some()
-        {
+        // One stable operation body for New, Park and Replay. Approval proof
+        // is ledger metadata, never part of these request/transport bytes.
+        let payload = {
             let mut hygiene_headers = BTreeMap::new();
             inject_campaign_email_hygiene_headers(
                 &normalize_key(&request.intent.channel),
@@ -165,7 +160,8 @@ impl OutboundDispatchPipeline {
                 channel_identity_ref: request.channel_identity_ref.map(|id| id.to_hex()),
                 counterparty_ref: request.counterparty_ref.as_deref(),
                 native_mail_recipient: native_mail_recipient.then_some(true),
-                native_mail_approve_once: mail_approval,
+                native_mail_logical_ref: native_mail_recipient
+                    .then_some(request.intent_ref.as_str()),
                 has_opted_in: request.gate.has_opted_in,
                 has_permission: request.gate.has_permission,
                 requested_policy_risk: request.gate.policy_risk.to_gate().as_str(),
@@ -201,42 +197,47 @@ impl OutboundDispatchPipeline {
                     }
                 }
             }
-            Some(payload)
-        } else {
-            None
+            payload
         };
 
-        let verdict = match admission.decision {
-            super::admission::DispatchAdmission::Execute => {
-                super::effect::execute_admitted(super::effect::EffectInput {
-                    vault,
-                    request: &request,
-                    sink,
-                    verb_contract,
-                    effect,
-                    payload: payload.ok_or(Error::InvariantViolation(
-                        "admitted dispatch has no frozen payload",
-                    ))?,
-                    attempt_id,
-                    idempotency_supported,
-                    verified_actor,
-                    suppression_receipt:
-                        crate::outbound::receipt_fields::suppression_receipt_for_dispatch(
-                            &request,
-                            &admission.window_decision,
-                            &admission.window_resolution,
-                        ),
-                })?
+        let parked = match admission.decision {
+            super::admission::DispatchAdmission::Park { outcome }
+                if !replay.as_ref().is_some_and(|record| {
+                    matches!(
+                        record.state,
+                        crate::outbound_intent_ledger::IntentState::Done
+                            | crate::outbound_intent_ledger::IntentState::Abandoned
+                    )
+                }) =>
+            {
+                Some(outcome)
             }
-            super::admission::DispatchAdmission::Park { outcome } => super::govern::govern_parked(
-                vault,
-                &request,
-                &effect,
-                verified_actor,
-                space_posting.as_ref(),
-                outcome,
-            )?,
+            _ => None,
         };
+        if parked.is_none()
+            && replay.as_ref().is_some_and(|record| {
+                record.state == crate::outbound_intent_ledger::IntentState::Pending
+            })
+        {
+            require_native_mail_retry_sender(vault, &request, native_mail_recipient)?;
+        }
+        let verdict = super::effect::execute_admitted(super::effect::EffectInput {
+            vault,
+            request: &request,
+            sink,
+            verb_contract,
+            effect,
+            payload,
+            attempt_id,
+            idempotency_supported,
+            verified_actor,
+            parked,
+            suppression_receipt: crate::outbound::receipt_fields::suppression_receipt_for_dispatch(
+                &request,
+                &admission.window_decision,
+                &admission.window_resolution,
+            ),
+        })?;
         Ok(crate::outbound::receipt_fields::dispatch_result_receipt(
             &request,
             verb_contract,
@@ -248,35 +249,27 @@ impl OutboundDispatchPipeline {
     }
 }
 
-/// Freeze the engine-observed available tap with the first admission. A
-/// replay retains that exact field; it never recomputes availability after
-/// the first admission has spent the marker.
-fn frozen_mail_approval(
+/// Only an executable Pending retry needs the native sender live today.
+/// Parked Pending and terminal records remain readable without transport.
+fn require_native_mail_retry_sender(
     vault: &Vault,
-    effect: &crate::gate::ExternalEffectGateInput,
+    request: &OutboundDispatchRequest,
     native_mail: bool,
-    replay: Option<&crate::outbound_intent_ledger::IntentLedgerRecord>,
-) -> std::result::Result<Option<String>, OutboundDispatchError> {
-    if !native_mail {
-        return Ok(None);
+) -> std::result::Result<(), OutboundDispatchError> {
+    if native_mail {
+        let sender = request
+            .channel_identity_ref
+            .ok_or(Error::InvalidConfig("missing native-mail sender".into()))?;
+        let txn = vault.store.env.read_txn().map_err(Error::from)?;
+        if !crate::channel_identity_provider::native_mail::is_native_mail_sender_in_txn(
+            &vault.store,
+            &txn,
+            sender,
+        )? {
+            return Err(Error::InvalidConfig("inactive native-mail sender".into()).into());
+        }
     }
-    if let Some(record) = replay {
-        let frozen: serde_json::Value =
-            serde_json::from_slice(record.payload()).map_err(|_| invalid_replay())?;
-        return match frozen.get("native_mail_approve_once") {
-            Some(serde_json::Value::String(digest)) => Ok(Some(digest.clone())),
-            None => Ok(None),
-            _ => Err(invalid_replay()),
-        };
-    }
-    let Some(digest) = crate::gate::native_mail_cold_approval_digest(effect) else {
-        return Ok(None);
-    };
-    let txn = vault.store.env.read_txn().map_err(Error::from)?;
-    Ok(
-        crate::consent::approve_once_authorization_in_txn(&vault.store, &txn, &digest)?
-            .map(|_| digest.to_hex()),
-    )
+    Ok(())
 }
 
 /// Bind one canonical native-mail recipient to gate, ledger and transport.
@@ -305,41 +298,31 @@ fn bind_native_mail_recipient(
         }
     } else {
         let txn = vault.store.env.read_txn().map_err(Error::from)?;
-        crate::channel_identity_provider::native_mail::is_native_mail_sender_in_txn(
-            &vault.store,
-            &txn,
-            identity,
-        )?
+        let structural =
+            crate::channel_identity_provider::native_mail::is_native_mail_identity_in_txn(
+                &vault.store,
+                &txn,
+                identity,
+            )?;
+        if structural
+            && !crate::channel_identity_provider::native_mail::is_native_mail_sender_in_txn(
+                &vault.store,
+                &txn,
+                identity,
+            )?
+        {
+            return Err(Error::InvalidConfig("inactive native-mail sender".into()).into());
+        }
+        structural
     };
     if !native {
         return Ok(false);
     }
-    // A completed send must validate the ORIGINAL frozen request even when
-    // its sender has since been released. A Pending replay might call transport
-    // again; it still requires a live sending identity today.
-    if replay.is_some_and(|record| record.state != crate::outbound_intent_ledger::IntentState::Done)
-    {
-        let txn = vault.store.env.read_txn().map_err(Error::from)?;
-        if !crate::channel_identity_provider::native_mail::is_native_mail_sender_in_txn(
-            &vault.store,
-            &txn,
-            identity,
-        )? {
-            return Err(Error::InvalidConfig("inactive native-mail sender".into()).into());
-        }
-    }
-    let recipient =
-        crate::channel_identity_provider::native_mail::canonical_recipient(&request.intent.target)?;
-    if let Some(contact) = request.counterparty_ref.as_deref()
-        && crate::channel_identity_provider::native_mail::canonical_recipient(contact)? != recipient
-    {
-        return Err(
-            Error::InvalidConfig("native-mail target and counterparty differ".into()).into(),
-        );
-    }
+    let canonical =
+        crate::channel_identity_provider::native_mail::CanonicalMailSend::from_request(request)?;
     request.intent.channel = "email".to_owned();
-    request.intent.target = recipient.clone();
-    request.counterparty_ref = Some(recipient);
+    request.intent.target = canonical.recipient.clone();
+    request.counterparty_ref = Some(canonical.recipient);
     Ok(true)
 }
 

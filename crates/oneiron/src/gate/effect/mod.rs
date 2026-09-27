@@ -35,6 +35,14 @@ pub(crate) struct ExternalEffectBudgetTarget {
     pub(crate) governing_connector: String,
 }
 
+/// Phase of one external-effect authorization at the ledger boundary.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum ApprovalContext {
+    Observe,
+    FirstAdmission,
+    Retry(crate::outbound_intent_ledger::AdmittedApproval),
+}
+
 /// Uneffected external-policy decision. The chokepoint may debit the returned
 /// target and adjust an exhaustion denial before this decision is recorded.
 pub(crate) struct ExternalEffectGovernance {
@@ -45,6 +53,7 @@ pub(crate) struct ExternalEffectGovernance {
     binding: GateConsentBinding,
     grant_ref: Option<String>,
     approve_once: Option<crate::consent::ApproveOnceAuthorization>,
+    approval_context: ApprovalContext,
     matched_grant: Option<(EntityId, StandingOutboundGrant)>,
     budget_target: Option<ExternalEffectBudgetTarget>,
     scoped_capability: Option<connector_key::ScopedCapabilityProvenance>,
@@ -64,6 +73,23 @@ impl ExternalEffectGovernance {
         &self,
     ) -> Option<&connector_key::ScopedCapabilityProvenance> {
         self.scoped_capability.as_ref()
+    }
+
+    /// The actual one-send tap selected under the admission writer lock.
+    /// Its proof is persisted only if this Gate decision and Pending insertion
+    /// commit together; a preflight lookup never authors admission authority.
+    pub(crate) fn admitted_mail_approval(
+        &self,
+        intent_id: crate::outbound_intent_ledger::IntentId,
+    ) -> Option<crate::outbound_intent_ledger::AdmittedApproval> {
+        if self.approval_context != ApprovalContext::FirstAdmission
+            || !self.input.external_effect.as_ref()?.mail_approve_once
+        {
+            return None;
+        }
+        self.approve_once.as_ref().map(|tap| {
+            crate::outbound_intent_ledger::AdmittedApproval::from_gate(intent_id, tap.digest())
+        })
     }
 
     #[must_use]
@@ -108,11 +134,32 @@ pub(crate) fn evaluate_external_effect_policy(
     policy: &PolicyManifestResolution,
     required_grant_id: Option<EntityId>,
     prepared: Option<&crate::outbound_consent::tool_call::PreparedToolCall>,
-    admitted_mail_retry: Option<crate::consent::EffectDigest>,
+    approval_context: ApprovalContext,
 ) -> Result<ExternalEffectGovernance> {
     let mutation_recorded_at = crate::ports::recorded_at_in_txn(store, wtxn)?;
     let (mut hydrated_effect, counterparty_send_override) =
         hydrate_external_effect_contact(store, &*wtxn, effect)?;
+    // Send eligibility is checked with the Gate's writer snapshot. A sender
+    // released after dispatch preparation cannot authorize even a known
+    // contact through an ordinary policy grant. Terminal replay never enters
+    // this evaluation lane.
+    if hydrated_effect.channel == "email"
+        && hydrated_effect.verb == "send"
+        && let Some(identity) = hydrated_effect.channel_identity_ref
+        && crate::channel_identity_provider::native_mail::is_native_mail_identity_in_txn(
+            store, &*wtxn, identity,
+        )?
+        && !crate::channel_identity_provider::native_mail::native_mail_actor_may_send_in_txn(
+            store,
+            &*wtxn,
+            identity,
+            hydrated_effect.provenance.actor_entity_ref,
+        )?
+    {
+        return Err(crate::error::Error::InvalidConfig(
+            "inactive native-mail sender".into(),
+        ));
+    }
     hydrated_effect.standing_grant_ref = None;
     let mut scoped_mcp_grant_authorized = false;
     let matched_grant = standing_outbound_grant_for_effect(
@@ -161,16 +208,12 @@ pub(crate) fn evaluate_external_effect_policy(
     )?;
     let provisional = hydrated_effect.gate_input(agent_definition_ceiling, None);
     let requirement = external_effect_action_requirement(&hydrated_effect);
-    let mail_retry_authorized = if mail_cold
-        && let (Some(expected), Some(composed)) = (
-            admitted_mail_retry,
-            native_mail_cold_composed_effect(&hydrated_effect),
-        )
-        && expected == composed.digest()
-    {
-        crate::consent::approve_once_is_spent_in_txn(store, &*wtxn, &expected)?
-    } else {
-        false
+    let mail_retry_authorized = match approval_context {
+        ApprovalContext::Retry(proof) if mail_cold => {
+            native_mail_cold_composed_effect(&hydrated_effect)
+                .is_some_and(|effect| effect.digest() == proof.effect_digest())
+        }
+        _ => false,
     };
     if mail_retry_authorized
         && let Some(bound) = requirement.as_ref()
@@ -458,6 +501,7 @@ pub(crate) fn evaluate_external_effect_policy(
         binding,
         grant_ref,
         approve_once,
+        approval_context,
         matched_grant,
         budget_target,
         scoped_capability: scoped_mcp_capability,
@@ -477,11 +521,17 @@ pub(crate) fn record_external_effect_policy(
         binding,
         grant_ref,
         approve_once,
+        approval_context,
         matched_grant,
         budget_target: _,
         scoped_capability: _,
     } = governance;
     if decision.outcome() == GateOutcome::Allow
+        && (approval_context != ApprovalContext::Observe
+            || !input
+                .external_effect
+                .as_ref()
+                .is_some_and(|effect| effect.mail_approve_once))
         && let Some(authorization) = approve_once.as_ref()
     {
         crate::consent::spend_approve_once_in_txn(store, wtxn, authorization)?;
@@ -549,8 +599,13 @@ pub(crate) fn check_external_effect_policy(
     policy: &PolicyManifestResolution,
     admit_for_execution: bool,
 ) -> Result<(GateDecisionId, GateDecision, Option<EffectorBudgetCharge>)> {
+    let context = if admit_for_execution {
+        ApprovalContext::FirstAdmission
+    } else {
+        ApprovalContext::Observe
+    };
     let mut governance =
-        evaluate_external_effect_policy(store, wtxn, effect, policy, None, None, None)?;
+        evaluate_external_effect_policy(store, wtxn, effect, policy, None, None, context)?;
     let mut effector_charge = None;
     if admit_for_execution && governance.outcome() == GateOutcome::Allow {
         let (charge, exhausted) = charge_admitted_external_effect(
@@ -563,17 +618,6 @@ pub(crate) fn check_external_effect_policy(
             governance.deny_budget_exhausted();
         }
         effector_charge = charge;
-    }
-    // A parked native-mail send is a governance observation, not an admitted
-    // effect. Keep its one-send owner tap available for the later window wake.
-    if !admit_for_execution
-        && governance
-            .input
-            .external_effect
-            .as_ref()
-            .is_some_and(|effect| effect.mail_approve_once)
-    {
-        governance.approve_once = None;
     }
     let (decision_id, decision) = record_external_effect_policy(store, wtxn, governance)?;
     Ok((decision_id, decision, effector_charge))

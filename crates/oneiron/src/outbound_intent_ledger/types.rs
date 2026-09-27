@@ -448,6 +448,33 @@ pub(crate) trait OutboundSender {
     fn send(&mut self, call: &FrozenOutboundCall) -> OutboundSendOutcome;
 }
 
+/// Gate-attested one-send owner approval, minted only while the Gate spends
+/// that tap and the Pending row is inserted on the same write transaction.
+/// It is admission metadata, never a caller-supplied transport payload field.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct AdmittedApproval {
+    intent_id: IntentId,
+    effect_digest: crate::consent::EffectDigest,
+}
+
+impl AdmittedApproval {
+    pub(crate) const fn from_gate(
+        intent_id: IntentId,
+        effect_digest: crate::consent::EffectDigest,
+    ) -> Self {
+        Self {
+            intent_id,
+            effect_digest,
+        }
+    }
+    pub(crate) const fn intent_id(self) -> IntentId {
+        self.intent_id
+    }
+    pub(crate) const fn effect_digest(self) -> crate::consent::EffectDigest {
+        self.effect_digest
+    }
+}
+
 /// Device-local durable record and audit receipt for one effectful call.
 #[derive(Clone, PartialEq, Eq)]
 pub struct IntentLedgerRecord {
@@ -461,6 +488,7 @@ pub struct IntentLedgerRecord {
     pub idempotency_key: String,
     pub idempotency_supported: bool,
     pub authorization_binding: Option<OutboundAuthorizationBinding>,
+    pub(crate) admitted_approval: Option<AdmittedApproval>,
     pub binding_version: u64,
     pub resolved_endpoint: Option<String>,
     /// Typed per-grant capability identity, or `None` for every ordinary
@@ -513,6 +541,7 @@ impl IntentLedgerRecord {
             idempotency_key: bytes_to_hex_lower(&id),
             idempotency_supported,
             authorization_binding: request.authorization_binding,
+            admitted_approval: None,
             binding_version: OUTBOUND_BINDING_VERSION,
             resolved_endpoint: request.resolved_endpoint,
             capability_provenance: request.capability_provenance,

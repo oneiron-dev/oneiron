@@ -1,7 +1,9 @@
 //! New-effect admission path: actor/booking/calendar checks, gate eval, one-shot budget debit, Pending insert.
 
 use super::dedupe;
-use super::replay::{gate_rejection, replay_record, send_pending, suppression_result};
+use super::replay::{
+    effect_result, gate_rejection, replay_record, send_pending, suppression_result,
+};
 #[cfg(test)]
 use super::types::BEFORE_NEW_ADMISSION;
 use super::types::{
@@ -33,7 +35,9 @@ pub(crate) fn execute_outbound_effect<T: OutboundTransport>(
     transport: &mut T,
 ) -> Result<OutboundEffectResult, OutboundEffectError> {
     let intent_id = match &command {
-        OutboundEffectCommand::New(prepared) => prepared.intent_id()?,
+        OutboundEffectCommand::New(prepared) | OutboundEffectCommand::Park(prepared) => {
+            prepared.intent_id()?
+        }
         OutboundEffectCommand::Resume(intent_id) => *intent_id,
     };
 
@@ -46,7 +50,7 @@ pub(crate) fn execute_outbound_effect<T: OutboundTransport>(
         });
     }
     let mut wtxn = vault.store.env.write_txn().map_err(Error::from)?;
-    if let OutboundEffectCommand::New(prepared) = &command {
+    if let OutboundEffectCommand::New(prepared) | OutboundEffectCommand::Park(prepared) = &command {
         if let Some((actor, actor_class)) = prepared.verified_actor {
             let entity_type = vault
                 .get_entity_type_in_txn(&wtxn, &actor)?
@@ -64,28 +68,57 @@ pub(crate) fn execute_outbound_effect<T: OutboundTransport>(
     // Payload-derived ids alone are not unique logical calls. Resolve the
     // attempt under the SAME writer lock as the gate, debit, and Pending insert.
     let record = match &command {
-        OutboundEffectCommand::New(prepared) => {
+        OutboundEffectCommand::New(prepared) | OutboundEffectCommand::Park(prepared) => {
             read_intent_for_attempt_in_txn(vault, &wtxn, prepared.attempt_id, prepared.call_seq)?
         }
         OutboundEffectCommand::Resume(_) => read_intent_record_in_txn(vault, &wtxn, &intent_id)?,
     };
     if let Some(record) = record {
-        if let OutboundEffectCommand::New(prepared) = &command {
+        if let OutboundEffectCommand::New(prepared) | OutboundEffectCommand::Park(prepared) =
+            &command
+        {
             validate_new_replay(&record, prepared)?;
         }
         drop(wtxn);
         force_sync(vault)?;
+        if matches!(&command, OutboundEffectCommand::Park(_))
+            && record.state == IntentState::Pending
+        {
+            // Today's window parks this already-admitted operation. Its
+            // paid admission and typed approval remain on the same ledger row.
+            return Ok(effect_result(&record, None, true, None));
+        }
         let prepared = match &command {
-            OutboundEffectCommand::New(prepared) => Some(prepared),
+            OutboundEffectCommand::New(prepared) | OutboundEffectCommand::Park(prepared) => {
+                Some(prepared)
+            }
             OutboundEffectCommand::Resume(_) => None,
         };
         return replay_record(vault, authority, record, prepared, now_ms, transport);
     }
 
-    let OutboundEffectCommand::New(prepared) = command else {
-        return Err(IntentLedgerError::InvalidRecord(
-            "outbound resume target is missing",
-        ));
+    let prepared = match command {
+        OutboundEffectCommand::New(prepared) => prepared,
+        OutboundEffectCommand::Park(prepared) => {
+            let effect =
+                vault.space_posting_gate_in_txn(&wtxn, &prepared.payload, &prepared.gate)?;
+            let policy = gate::resolve_policy_manifest(&vault.store, &wtxn)?;
+            let (decision_id, decision, _) = gate::check_external_effect_policy(
+                &vault.store,
+                &mut wtxn,
+                &effect,
+                &policy,
+                false,
+            )?;
+            wtxn.commit().map_err(Error::from)?;
+            vault.store.notify_attempt_observers();
+            return Ok(gate_rejection(intent_id, decision_id, decision));
+        }
+        OutboundEffectCommand::Resume(_) => {
+            return Err(IntentLedgerError::InvalidRecord(
+                "outbound resume target is missing",
+            ));
+        }
     };
 
     // CAL-04 (ONE-1786) verb wall. `calendar.invite` is the one verb whose
@@ -125,7 +158,7 @@ pub(crate) fn execute_outbound_effect<T: OutboundTransport>(
             PreparedAuthorization::ScopedMcp { prepared, .. } => Some(prepared),
             PreparedAuthorization::None => None,
         },
-        None,
+        gate::ApprovalContext::FirstAdmission,
     )?;
     if governance.outcome() != GateOutcome::Allow {
         let (decision_id, decision) =
@@ -274,11 +307,15 @@ pub(crate) fn execute_outbound_effect<T: OutboundTransport>(
     if let Some(capability) = capability_provenance {
         request = request.with_capability_provenance(capability);
     }
-    let pending = crate::outbound_intent_ledger::IntentLedgerRecord::pending(
+    let mut pending = crate::outbound_intent_ledger::IntentLedgerRecord::pending(
         request,
         prepared.idempotency_supported,
         budget_accounting,
     )?;
+    // The proof is the Gate's ACTUAL selected tap under this writer lock,
+    // not an availability observation from dispatch preparation. Spend,
+    // decision, typed proof, budget marker and Pending insert commit together.
+    pending.admitted_approval = governance.admitted_mail_approval(pending.id);
     if pending.id != intent_id {
         return Err(IntentLedgerError::InvalidRecord(
             "prepared outbound identity changed",

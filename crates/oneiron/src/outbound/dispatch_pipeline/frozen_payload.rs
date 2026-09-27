@@ -40,10 +40,10 @@ pub(super) struct FrozenOutboundPayload<'a> {
     /// today's sender lifecycle when reconstructing this frozen binding.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(super) native_mail_recipient: Option<bool>,
-    /// Exact digest of an available owner tap at first admission. Only a
-    /// committed Pending row can carry this into a definite-failure retry.
+    /// Stable logical send ref, paired with the canonical native-mail intent.
+    /// The typed admission proof is separate ledger metadata, not payload.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub(super) native_mail_approve_once: Option<String>,
+    pub(super) native_mail_logical_ref: Option<&'a str>,
     pub(super) has_opted_in: bool,
     pub(super) has_permission: bool,
     // Preserve the caller's dial too: a manifest can map both values to the

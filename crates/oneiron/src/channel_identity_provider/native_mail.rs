@@ -94,9 +94,6 @@ impl<H: NativeMailHost> NativeMailAdapter<H> {
         {
             return Err(invalid().into());
         }
-        if !identity.may_send() && !completed_mail_replay(vault, &request)? {
-            return Err(invalid().into());
-        }
         // The common dispatch door canonicalizes and binds the recipient
         // before freezing the intent. This adapter cannot authorize a second
         // delivery path or normalize only the Gate's counterparty copy.
@@ -130,12 +127,7 @@ impl<H: NativeMailHost> NativeMailAdapter<H> {
         {
             return Err(invalid());
         }
-        let recipient = canonical_recipient(&request.intent.target)?;
-        if let Some(contact) = request.counterparty_ref.as_deref()
-            && canonical_recipient(contact)? != recipient
-        {
-            return Err(invalid());
-        }
+        let canonical = CanonicalMailSend::from_request(request)?;
         let effect = ExternalEffectGateInput {
             actor: GateActor {
                 actor_class: request.actor.actor_class.clone(),
@@ -150,8 +142,8 @@ impl<H: NativeMailHost> NativeMailAdapter<H> {
             verb: "send".into(),
             channel: "email".into(),
             channel_identity_ref: Some(identity_ref),
-            counterparty: Some(recipient),
-            brief_ref: request.intent.job_ref.clone(),
+            counterparty: Some(canonical.recipient),
+            brief_ref: canonical.brief_ref,
             send_ref: Some(request.intent_ref.clone()),
             standing_grant_ref: None,
             scoped_mcp_call: None,
@@ -298,45 +290,178 @@ impl<H: NativeMailHost> ChannelIdentityProviderAdapter for NativeMailAdapter<H> 
     }
 }
 
-/// Only a terminal, frozen native-mail send may bypass today's sender
-/// lifecycle on the adapter facade. The dispatcher still compares the full
-/// caller request to its admitted payload before returning the recorded result.
-fn completed_mail_replay(vault: &Vault, request: &OutboundDispatchRequest) -> Result<bool> {
-    use crate::outbound_intent_ledger::{
-        IntentState, RecordedOutboundOutcome, read_intent_for_attempt_in_txn,
-    };
-    let logical_ref = request
-        .ledger_identity_ref
-        .as_deref()
-        .unwrap_or(&request.intent_ref);
-    let attempt = crate::outbound::outbound_dispatch_attempt_id(logical_ref)
-        .map_err(|_| Error::InvalidConfig("invalid native-mail replay reference".into()))?;
-    let txn = vault.store.env.read_txn()?;
-    let record = read_intent_for_attempt_in_txn(vault, &txn, attempt, 0)
-        .map_err(|_| Error::InvalidConfig("invalid native-mail replay record".into()))?;
-    let Some(record) = record else {
-        return Ok(false);
-    };
-    if record.state != IntentState::Done
-        || record.recorded_outcome != Some(RecordedOutboundOutcome::Acked)
-        || record.server != "email"
-        || record.tool != "send"
-    {
-        return Ok(false);
+/// One stable logical mail send, independent of approval availability and
+/// current sender lifecycle. Both owner tap and Gate compose their digest from
+/// this operation; the dispatcher freezes its canonical recipient into the
+/// ordinary intent that the sink receives and the ledger compares.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct CanonicalMailSend {
+    pub(crate) actor: EntityId,
+    pub(crate) identity: EntityId,
+    pub(crate) recipient: String,
+    pub(crate) logical_ref: String,
+    pub(crate) content_ref: Option<String>,
+    pub(crate) brief_ref: Option<String>,
+}
+
+impl CanonicalMailSend {
+    pub(crate) fn from_request(request: &OutboundDispatchRequest) -> Result<Self> {
+        if !request.intent.channel.trim().eq_ignore_ascii_case("email")
+            || !request.intent.verb.trim().eq_ignore_ascii_case("send")
+        {
+            return Err(Error::InvalidConfig("invalid native-mail operation".into()));
+        }
+        let identity = request
+            .channel_identity_ref
+            .ok_or_else(|| Error::InvalidConfig("missing native-mail sender".into()))?;
+        let actor = request
+            .actor
+            .actor_entity_ref
+            .ok_or_else(|| Error::InvalidConfig("missing native-mail actor".into()))?;
+        let recipient = canonical_recipient(&request.intent.target)?;
+        if let Some(contact) = request.counterparty_ref.as_deref()
+            && canonical_recipient(contact)? != recipient
+        {
+            return Err(Error::InvalidConfig(
+                "native-mail target and counterparty differ".into(),
+            ));
+        }
+        if request.intent_ref.trim().is_empty() {
+            return Err(Error::InvalidConfig("missing native-mail send ref".into()));
+        }
+        Ok(Self {
+            actor,
+            identity,
+            recipient,
+            logical_ref: request.intent_ref.clone(),
+            content_ref: request.intent.content_ref.clone(),
+            brief_ref: request.intent.job_ref.clone(),
+        })
     }
-    let frozen: serde_json::Value = serde_json::from_slice(record.payload())
-        .map_err(|_| Error::CorruptedIndex("native-mail replay payload"))?;
-    Ok(frozen
-        .get("native_mail_recipient")
-        .and_then(serde_json::Value::as_bool)
-        == Some(true)
-        && frozen
-            .get("channel_identity_ref")
-            .and_then(serde_json::Value::as_str)
-            == request
-                .channel_identity_ref
-                .map(|id| id.to_hex())
-                .as_deref())
+
+    pub(crate) fn from_effect(effect: &ExternalEffectGateInput) -> Option<Self> {
+        let actor = effect.provenance.actor_entity_ref?;
+        if effect.channel != "email"
+            || effect.verb != "send"
+            || effect.actor.actor_ref.as_deref() != Some(actor.to_hex().as_str())
+        {
+            return None;
+        }
+        Some(Self {
+            actor,
+            identity: effect.channel_identity_ref?,
+            recipient: canonical_recipient(effect.counterparty.as_deref()?).ok()?,
+            logical_ref: effect.send_ref.as_ref()?.clone(),
+            content_ref: effect.provenance.mail_content_ref.clone(),
+            brief_ref: effect.brief_ref.clone(),
+        })
+    }
+
+    fn optional_string(value: &serde_json::Value, key: &str) -> Option<Option<String>> {
+        match value.get(key) {
+            None | Some(serde_json::Value::Null) => Some(None),
+            Some(serde_json::Value::String(text)) => Some(Some(text.clone())),
+            _ => None,
+        }
+    }
+    /// Decode only canonical axes needed to verify a typed admission proof.
+    pub(crate) fn from_frozen_payload(bytes: &[u8]) -> Option<Self> {
+        let value: serde_json::Value = serde_json::from_slice(bytes).ok()?;
+        if !value.get("native_mail_recipient")?.as_bool()?
+            || value.get("channel")?.as_str()? != "email"
+            || !value
+                .get("verb")?
+                .as_str()?
+                .trim()
+                .eq_ignore_ascii_case("send")
+        {
+            return None;
+        }
+        let identity = EntityId::from_hex(value.get("channel_identity_ref")?.as_str()?).ok()?;
+        let actor = EntityId::from_hex(value.get("actor_entity_ref")?.as_str()?).ok()?;
+        if value.get("actor_ref")?.as_str()? != actor.to_hex() {
+            return None;
+        }
+        let recipient = canonical_recipient(value.get("target")?.as_str()?).ok()?;
+        if value.get("target")?.as_str()? != recipient
+            || value.get("counterparty_ref")?.as_str()? != recipient
+        {
+            return None;
+        }
+        let logical_ref = value.get("native_mail_logical_ref")?.as_str()?.to_owned();
+        if logical_ref.trim().is_empty() {
+            return None;
+        }
+        Some(Self {
+            actor,
+            identity,
+            recipient,
+            logical_ref,
+            content_ref: Self::optional_string(&value, "content_ref")?,
+            brief_ref: Self::optional_string(&value, "job_ref")?,
+        })
+    }
+
+    pub(crate) fn approval_kind(&self) -> String {
+        let mut hasher = blake3::Hasher::new();
+        hasher.update(b"oneiron.native_mail.cold_send.approve_once.v1");
+        let identity_hex = self.identity.to_hex();
+        for part in [
+            identity_hex.as_str(),
+            self.recipient.as_str(),
+            self.logical_ref.as_str(),
+        ] {
+            hasher.update(&(part.len() as u64).to_le_bytes());
+            hasher.update(part.as_bytes());
+        }
+        match self.content_ref.as_deref() {
+            Some(content) => {
+                hasher.update(&[1]);
+                hasher.update(&(content.len() as u64).to_le_bytes());
+                hasher.update(content.as_bytes());
+            }
+            None => {
+                hasher.update(&[0]);
+            }
+        }
+        format!("external:email:send:once:{}", hasher.finalize().to_hex())
+    }
+}
+
+/// Recompose the immutable operation, not a caller-supplied proof string.
+/// Ledger validation checks its digest before accepting a replayable row.
+pub(crate) fn approval_digest_from_frozen_payload(
+    payload: &[u8],
+) -> Option<crate::consent::EffectDigest> {
+    let operation = CanonicalMailSend::from_frozen_payload(payload)?;
+    let actor_ref = operation.actor.to_hex();
+    let effect = ExternalEffectGateInput {
+        actor: GateActor {
+            actor_class: "agent".into(),
+            actor_ref: Some(actor_ref),
+            delegation_grant_ref: None,
+        },
+        provenance: GateProvenanceHandles {
+            actor_entity_ref: Some(operation.actor),
+            mail_content_ref: operation.content_ref,
+            ..GateProvenanceHandles::default()
+        },
+        verb: "send".into(),
+        channel: "email".into(),
+        channel_identity_ref: Some(operation.identity),
+        counterparty: Some(operation.recipient),
+        brief_ref: operation.brief_ref,
+        send_ref: Some(operation.logical_ref),
+        standing_grant_ref: None,
+        scoped_mcp_call: None,
+        counterparty_first_touch: None,
+        counterparty_opted_out: false,
+        counterparty_opt_out_receipt_reason: None,
+        has_opted_in: true,
+        has_permission: true,
+        policy_risk: ExternalEffectPolicyRisk::HoldToProposal,
+    };
+    crate::gate::native_mail_cold_approval_digest(&effect)
 }
 
 /// Canonical recipient used by both the Gate and the frozen transport intent.
@@ -351,6 +476,29 @@ pub(crate) fn canonical_recipient(address: &str) -> Result<String> {
 /// native-mail dispatch cannot evade this test because its send door requires
 /// the same active, identity-shaped sender.
 pub(crate) fn is_native_mail_sender_in_txn(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    identity_ref: EntityId,
+) -> Result<bool> {
+    Ok(native_mail_identity_in_txn(store, txn, identity_ref)?
+        .is_some_and(|identity| identity.may_send()))
+}
+
+/// The Gate requires a live identity belonging to its authenticated actor,
+/// not just an active mailbox named in a caller's explicit sender slot.
+pub(crate) fn native_mail_actor_may_send_in_txn(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    identity_ref: EntityId,
+    actor: Option<EntityId>,
+) -> Result<bool> {
+    Ok(native_mail_identity_in_txn(store, txn, identity_ref)?
+        .is_some_and(|identity| identity.may_send() && identity.binding.actor_ref() == actor))
+}
+
+/// Structural sender binding survives Released/Quarantine for terminal replay,
+/// but never permits another effect without a fresh may_send check.
+pub(crate) fn is_native_mail_identity_in_txn(
     store: &Store,
     txn: &heed::RoTxn<'_>,
     identity_ref: EntityId,
@@ -376,7 +524,6 @@ fn native_mail_identity_in_txn(
     }
     let identity = decode_channel_identity_body(&raw[ENTITY_METADATA_HEADER_LEN..])?;
     if identity.channel != "email"
-        || !identity.may_send()
         || !identity
             .address_or_handle
             .starts_with(&format!("mail-{}@", identity_ref.to_hex()))
@@ -420,7 +567,7 @@ pub(crate) fn native_mail_cold_send_in_txn(
     let Some(identity) = native_mail_identity_in_txn(store, txn, identity_ref)? else {
         return Ok(false);
     };
-    if identity.binding.actor_ref() != Some(actor) {
+    if identity.binding.actor_ref() != Some(actor) || !identity.may_send() {
         return Ok(false);
     }
     Ok(true)
