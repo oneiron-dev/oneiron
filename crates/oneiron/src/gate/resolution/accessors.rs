@@ -67,6 +67,15 @@ impl PolicyManifestResolution {
             .then(|| self.ask_policy.clone().unwrap_or_default())
     }
 
+    /// Resolve the required vault ceiling and every matching actor/scope row.
+    pub(crate) fn retry_budget_for(
+        &self,
+        actor: crate::EntityId,
+        scope: Option<&crate::llm::Scope>,
+    ) -> crate::Result<crate::gate::retry_source_policy::ResolvedRetryBudget> {
+        crate::gate::retry_source_policy::resolve(&self.retry_source_policy, actor, scope)
+    }
+
     #[must_use]
     pub(crate) fn proposal_check_threshold(&self) -> u64 {
         self.proposal_check_threshold
