@@ -25487,8 +25487,8 @@
      "path": "src/prompt.rs",
      "purpose": "—",
      "surface": {
-      "const": 4,
-      "fn": 6,
+      "const": 3,
+      "fn": 5,
       "struct": 5
      }
     },
@@ -34303,7 +34303,7 @@
      "surface": {}
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "test",
      "notable": [],
      "path": "tests/it/receipt_context.rs",
