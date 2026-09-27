@@ -86,6 +86,39 @@ fn every_adapter_declares_a_real_retry_and_permission_contract() {
         );
         assert!(outbound_verb_contract(channel, "not_a_verb").is_err());
     }
+    for manifest in outbound_capability_manifests() {
+        for kind in &manifest.message_verbs {
+            assert!(
+                manifest.verbs.iter().any(|verb| &verb.kind == kind),
+                "{}.{} projects without a declared operation",
+                manifest.connector,
+                kind
+            );
+        }
+    }
+    let discord = outbound_capability_manifest("discord").expect("Discord manifest");
+    assert!(discord.message_verbs.contains(&"cold_dm".to_owned()));
+    assert_eq!(
+        serde_json::to_value(discord).unwrap()["message_verbs"],
+        serde_json::json!(["send", "cold_dm"])
+    );
+    let cold_dm = outbound_verb_contract("discord", "cold_dm").expect("declared cold DM");
+    assert_eq!(
+        cold_dm.interruption_class,
+        OutboundInterruptionClass::Ambient
+    );
+    assert!(cold_dm.capability_vs_permission.policy_risk);
+    // The generic window door reads the resolved interruption_class. This
+    // connector-specific operation is not a raw-name ambient exception.
+    assert!(!outbound_delivery_window_is_chat_like_ambient(
+        &OutboundIntent::from_trigger(
+            OutboundIntentDraft::new("agent", "cold_dm", "discord", "owner"),
+            OutboundIntentTrigger::agent_immediate("manifest-row"),
+        ),
+        cold_dm,
+        None
+    ));
+
     for channel in ["slack", "discord"] {
         let manifest = outbound_capability_manifest(channel).unwrap();
         assert_eq!(manifest.connector_family, "workspace_bot");
@@ -800,5 +833,115 @@ fn discord_cold_dm_is_ambient_after_risk_grant_but_not_before()
             "{minute:?}: no hold/retry row"
         );
     }
+    Ok(())
+}
+
+#[test]
+fn scheduled_cold_dm_projects_one_counterparty_touch_after_owner_grant()
+-> Result<(), Box<dyn std::error::Error>> {
+    use crate::attempt_queue::AttemptQueue;
+    use crate::edge::EdgeActorClass;
+    use crate::memory::OutboundDraftInput;
+
+    let (_tmp, vault) = temp_vault();
+    let actor = entity(0x8a);
+    put_connector_task_actor(&vault, actor, 100)?;
+    put_policy_manifest_bytes(
+        &vault,
+        entity(0x8b),
+        &risk_scoped_manifest(&actor.to_hex(), "discord", "cold_dm", "normal"),
+    )?;
+    let party = "party:owner-cold-dm";
+    let draft = OutboundDraftInput {
+        verb: "cold_dm".to_owned(),
+        channel: "discord".to_owned(),
+        target: "transport:owner-dm".to_owned(),
+        on_behalf_of: None,
+        content_ref: Some("content:cold-dm".to_owned()),
+        idempotency_key: Some("cold-dm:one-effect".to_owned()),
+        dedupe_key: None,
+        trigger: "agent_immediate".to_owned(),
+        trigger_ref: "session:cold-dm".to_owned(),
+        job_ref: None,
+        occurred_at: Some(100),
+    };
+    vault
+        .memory(actor, EdgeActorClass::Agent)
+        .schedule_outbound_for_counterparty(&draft, party)?;
+    let mut sink = RecordingExecutor::default();
+    assert_eq!(vault.run_connector_task_executor(&mut sink, 101)?, 0);
+    assert!(sink.calls.is_empty(), "normal grant cannot send a cold DM");
+    assert_eq!(
+        crate::comm::count_active_comm_claims(
+            &vault,
+            crate::comm::PREDICATE_COMM_LAST_TOUCH,
+            party,
+            "discord"
+        )?,
+        0
+    );
+
+    put_policy_manifest_bytes(
+        &vault,
+        entity(0x8c),
+        &risk_scoped_manifest(&actor.to_hex(), "discord", "cold_dm", "hold_to_proposal"),
+    )?;
+    assert_eq!(vault.run_connector_task_executor(&mut sink, 200)?, 1);
+    assert_eq!(sink.calls.len(), 1);
+    let tasks = vault.connector_send_tasks()?;
+    assert_eq!(tasks.len(), 1);
+    assert_eq!(tasks[0].outcome, Some(ConnectorSendTaskOutcome::Delivered));
+    let receipts = vault.receipts(
+        crate::receipt::ReceiptQuery::new(10).with_kind(crate::receipt::ReceiptKind::Outbound),
+    )?;
+    assert!(
+        receipts
+            .iter()
+            .any(|receipt| receipt.outcome == "delivered_to_channel"
+                && receipt.fields.get("counterparty_ref").map(String::as_str) == Some(party))
+    );
+    assert_eq!(
+        crate::comm::count_active_comm_claims(
+            &vault,
+            crate::comm::PREDICATE_COMM_LAST_TOUCH,
+            party,
+            "discord"
+        )?,
+        0
+    );
+    crate::comm::run_comm_projector(&vault)?;
+    assert_eq!(
+        crate::comm::count_active_comm_claims(
+            &vault,
+            crate::comm::PREDICATE_COMM_LAST_TOUCH,
+            party,
+            "discord"
+        )?,
+        1
+    );
+    assert_eq!(
+        crate::comm::count_total_comm_claim_rows(
+            &vault,
+            crate::comm::PREDICATE_COMM_LAST_TOUCH,
+            party,
+            "discord"
+        )?,
+        1
+    );
+    crate::comm::run_comm_projector(&vault)?;
+    assert_eq!(
+        crate::comm::count_total_comm_claim_rows(
+            &vault,
+            crate::comm::PREDICATE_COMM_LAST_TOUCH,
+            party,
+            "discord"
+        )?,
+        1
+    );
+    assert_eq!(sink.calls.len(), 1);
+    assert!(
+        !AttemptQueue::new(&vault).list()?.is_empty(),
+        "scheduled execution remains auditable"
+    );
     Ok(())
 }

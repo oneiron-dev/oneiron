@@ -41,7 +41,7 @@ pub(super) fn build_outbound_capability_manifests() -> Vec<OutboundCapabilityMan
                 "Explicit action grant; durable delivery enqueue is distinct from delivery health.",
             )).collect(),
         ),
-        manifest(
+        message_manifest(manifest(
             "line",
             "chat",
             "LINE Messaging API outbound schema; adapter may require channel review for narrowcast.",
@@ -142,8 +142,8 @@ pub(super) fn build_outbound_capability_manifests() -> Vec<OutboundCapabilityMan
                     "LINE narrowcast is a connector-specific capability and can require plan/review constraints.",
                 ),
             ],
-        ),
-        manifest(
+        ), &["send", "reply", "push", "send_media"]),
+        message_manifest(manifest(
             "telegram",
             "chat",
             "Telegram Bot API outbound schema; permissions depend on bot membership and chat policies.",
@@ -197,8 +197,8 @@ pub(super) fn build_outbound_capability_manifests() -> Vec<OutboundCapabilityMan
                     "Edits are supported for editable bot-originated messages.",
                 ),
             ],
-        ),
-        manifest(
+        ), &["send", "send_media"]),
+        message_manifest(manifest(
             "slack",
             "workspace_bot",
             "Slack Web API outbound schema; OAuth scopes and workspace policies are distinct from capability.",
@@ -252,8 +252,8 @@ pub(super) fn build_outbound_capability_manifests() -> Vec<OutboundCapabilityMan
                     "Deletes require permission over the target message.",
                 ),
             ],
-        ),
-        manifest(
+        ), &["send"]),
+        message_manifest(manifest(
             "discord",
             "workspace_bot",
             "Discord Bot API outbound schema; guild/channel permissions control usable capability.",
@@ -274,7 +274,7 @@ pub(super) fn build_outbound_capability_manifests() -> Vec<OutboundCapabilityMan
                     "cold_dm",
                     "create_message",
                     json!({"channel_id": "private channel snowflake", "content": "string", "nonce": "frozen ledger idempotency key", "enforce_nonce": true}),
-                    OutboundInterruptionClass::Interrupt,
+                    OutboundInterruptionClass::Ambient,
                     OutboundDeliverySemanticsKind::FireAndForget,
                     None,
                     OutboundRetryClass::IdempotentNative,
@@ -319,7 +319,7 @@ pub(super) fn build_outbound_capability_manifests() -> Vec<OutboundCapabilityMan
                     "Deletes depend on channel moderation permissions or authorship.",
                 ),
             ],
-        ),
+        ), &["send", "cold_dm"]),
         manifest(
             "apns",
             "push",
@@ -338,7 +338,7 @@ pub(super) fn build_outbound_capability_manifests() -> Vec<OutboundCapabilityMan
             )],
         ),
         in_app_reaction_manifest(),
-        manifest(
+        message_manifest(manifest(
             "imessage_mfb",
             "apple_messages_for_business",
             "Apple Messages for Business schema; capability is distinct from brand approval and conversation state.",
@@ -368,8 +368,8 @@ pub(super) fn build_outbound_capability_manifests() -> Vec<OutboundCapabilityMan
                     "Invite is connector-specific and gated by Apple approval and recipient eligibility.",
                 ),
             ],
-        ),
-        manifest(
+        ), &["send"]),
+        message_manifest(manifest(
             "imessage_bridge",
             "local_bridge",
             "Local iMessage bridge schema; capability is local and should be treated as permission-sensitive.",
@@ -416,8 +416,8 @@ pub(super) fn build_outbound_capability_manifests() -> Vec<OutboundCapabilityMan
                     "Only a host bridge with tapback support may execute this verb; the target message must be visible to the bridge account.",
                 ),
             ],
-        ),
-        manifest(
+        ), &["send", "send_media"]),
+        message_manifest(manifest(
             "linkedin",
             "professional_network",
             "LinkedIn session content is foreign platform content; normalize inbound text through the LinkedIn connector before claims are proposed.",
@@ -459,8 +459,8 @@ pub(super) fn build_outbound_capability_manifests() -> Vec<OutboundCapabilityMan
                     "Wraps stickerdaniel/linkedin-mcp-server connect_with_person with optional note; cold outreach and account-risk walls remain permission gates.",
                 ),
             ],
-        ),
-        manifest(
+        ), &["send_dm"]),
+        message_manifest(manifest(
             "email",
             "email",
             "SMTP/provider email schema; deliverability and recipient consent are permissions, not raw capability.",
@@ -490,7 +490,7 @@ pub(super) fn build_outbound_capability_manifests() -> Vec<OutboundCapabilityMan
                     "Email cannot edit in place; replace means sending a superseding message.",
                 ),
             ],
-        ),
+        ), &["send", "replace"]),
         manifest(
             "calendar",
             "calendar",
@@ -558,29 +558,32 @@ fn email_provider_manifest(
     native_key: Option<&'static str>,
     channel_call: &'static str,
 ) -> OutboundCapabilityManifest {
-    manifest(
-        provider,
-        "email",
-        "Verified sender, recipient consent and account limits are separate from send capability.",
-        vec![verb(
-            "send",
-            channel_call,
-            json!({
-                "to": ["addr@example.com"], "subject": "string", "body": "string",
-                "provider_idempotency_header": native_key,
-            }),
-            OutboundInterruptionClass::Interrupt,
-            OutboundDeliverySemanticsKind::FireAndForget,
-            None,
-            if native_key.is_some() {
-                OutboundRetryClass::IdempotentNative
-            } else {
-                OutboundRetryClass::IdempotentEmulated
-            },
-            OutboundPermissionState::Conditional,
-            true,
-            "Verified sender and recipient consent required; queue dedupe cannot make an ambiguous send safe to retry.",
-        )],
+    message_manifest(
+        manifest(
+            provider,
+            "email",
+            "Verified sender, recipient consent and account limits are separate from send capability.",
+            vec![verb(
+                "send",
+                channel_call,
+                json!({
+                    "to": ["addr@example.com"], "subject": "string", "body": "string",
+                    "provider_idempotency_header": native_key,
+                }),
+                OutboundInterruptionClass::Interrupt,
+                OutboundDeliverySemanticsKind::FireAndForget,
+                None,
+                if native_key.is_some() {
+                    OutboundRetryClass::IdempotentNative
+                } else {
+                    OutboundRetryClass::IdempotentEmulated
+                },
+                OutboundPermissionState::Conditional,
+                true,
+                "Verified sender and recipient consent required; queue dedupe cannot make an ambiguous send safe to retry.",
+            )],
+        ),
+        &["send"],
     )
 }
 
@@ -598,8 +601,17 @@ fn manifest(
         verified_at: "2026-07-06",
         schema_on_demand: format!("/v1/core/outbound/capabilities/{connector}"),
         foreign_content_posture,
+        message_verbs: Vec::new(),
         verbs,
     }
+}
+
+fn message_manifest(
+    mut manifest: OutboundCapabilityManifest,
+    kinds: &[&str],
+) -> OutboundCapabilityManifest {
+    manifest.message_verbs = kinds.iter().map(|kind| (*kind).to_owned()).collect();
+    manifest
 }
 
 #[allow(clippy::too_many_arguments)]

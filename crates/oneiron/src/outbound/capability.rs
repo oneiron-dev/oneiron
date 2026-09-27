@@ -135,6 +135,10 @@ pub struct OutboundCapabilityManifest {
     pub verified_at: &'static str,
     pub schema_on_demand: String,
     pub foreign_content_posture: &'static str,
+    /// Message operations that project a delivered receipt to comm.last_touch.
+    /// Connector-owned data, not an engine union of raw verb names.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub message_verbs: Vec<String>,
     pub verbs: Vec<OutboundVerbContract>,
 }
 

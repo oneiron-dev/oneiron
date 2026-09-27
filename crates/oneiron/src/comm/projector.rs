@@ -205,19 +205,12 @@ fn import_delivered_send_receipts(vault: &Vault) -> CommResult<()> {
     Ok(())
 }
 
-/// Exact existing outbound message operations. Edits, reactions, calendar
-/// actions, and presence are not new contact touches merely because delivered.
+/// A message operation projects one delivered receipt into comm history.
+/// The connector manifest declares the eligible verbs; edits, reactions,
+/// invitations and presence never become touches just because they delivered.
 fn is_delivered_message(channel: &str, verb: &str) -> bool {
-    verb == "send"
-        || matches!(
-            (channel, verb),
-            ("line", "reply" | "push" | "send_media")
-                | ("telegram" | "imessage_bridge", "send_media")
-                | ("linkedin", "send_dm")
-                // Email replace delivers a new correction message, unlike an
-                // in-place edit on a chat transport.
-                | ("email", "replace")
-        )
+    crate::outbound::outbound_capability_manifest(channel)
+        .is_some_and(|manifest| manifest.message_verbs.iter().any(|kind| kind == verb))
 }
 
 /// Records a successful send receipt without directly writing standing-state claims.
