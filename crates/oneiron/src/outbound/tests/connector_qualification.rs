@@ -49,6 +49,18 @@ const RAILS: &[(&str, &str, OutboundRetryClass, bool)] = &[
         true,
     ),
     (
+        "email_ses",
+        "send",
+        OutboundRetryClass::IdempotentEmulated,
+        true,
+    ),
+    (
+        "email_postmark",
+        "send",
+        OutboundRetryClass::IdempotentEmulated,
+        true,
+    ),
+    (
         "voice",
         "call",
         OutboundRetryClass::IdempotentEmulated,
@@ -99,7 +111,7 @@ fn every_adapter_declares_a_real_retry_and_permission_contract() {
         outbound_verb_contract("imessage_mfb", "send")
             .unwrap()
             .params["message_uuid"],
-        "frozen ledger idempotency key"
+        "stable provider-valid UUID derived from frozen ledger idempotency key"
     );
     for channel in ["email_ses", "email_postmark", "apns", "telegram", "slack"] {
         assert_eq!(
@@ -206,7 +218,12 @@ fn adapter_qualification_replay_timeout_scope_and_degrade() -> Result<(), Box<dy
         assert_eq!(sink.calls.len(), 1);
 
         // A real but ungranted connector must not borrow this rail's grant.
-        let denied = qualification_request("email_ses", "send", actor, &format!("denied:{index}"));
+        let escape = if channel == "email_ses" {
+            "email_postmark"
+        } else {
+            "email_ses"
+        };
+        let denied = qualification_request(escape, "send", actor, &format!("denied:{index}"));
         let denied_result = vault.dispatch_outbound_intent(denied, &mut sink)?;
         assert_eq!(
             denied_result.outcome,
@@ -350,6 +367,255 @@ fn adapter_capability_is_not_permission_and_an_owner_grant_can_enable_risk()
                 "{channel}"
             );
         }
+    }
+    Ok(())
+}
+
+// Isolate this fixture's policy pack from the vault bootstrap pack. The gate
+// test suite uses the same test-only deindex door for control-claim fixtures;
+// the provider's exact-channel send grant remains in the pack below.
+fn clear_bootstrap_policy(vault: &Vault) -> crate::Result<()> {
+    let id = crate::gate::default_policy_manifest_id()?;
+    vault.with_write_txn(|wtxn| crate::batch::deindex_entity_for_test(&vault.store, wtxn, &id))
+}
+
+// The test author writes comm control claims through the ordinary gate too.
+// Grant those fixture writes without widening the outbound agent's exact
+// provider/channel send grant.
+fn provider_email_policy_manifest(actor: &str, channel: &str) -> Vec<u8> {
+    let bytes = policy_manifest(actor, channel, &["send"]);
+    let mut value =
+        rmpv::decode::read_value(&mut std::io::Cursor::new(bytes)).expect("decode policy fixture");
+    let Value::Map(entries) = &mut value else {
+        panic!("policy map")
+    };
+    let Value::Array(rules) = &mut entries
+        .iter_mut()
+        .find(|(key, _)| key.as_str() == Some("rules"))
+        .expect("rules")
+        .1
+    else {
+        panic!("rules array")
+    };
+    rules.push(Value::Map(vec![
+        (Value::from("prefix"), Value::from("comm.")),
+        (
+            Value::from("axes"),
+            Value::Map(vec![
+                (Value::from("criticality"), Value::from("normal")),
+                (Value::from("sensitivity"), Value::from("normal")),
+            ]),
+        ),
+    ]));
+    let Value::Array(ceilings) = &mut entries
+        .iter_mut()
+        .find(|(key, _)| key.as_str() == Some("actor_ceilings"))
+        .expect("ceilings")
+        .1
+    else {
+        panic!("ceilings array")
+    };
+    ceilings.push(Value::Map(vec![
+        (Value::from("actor_class"), Value::from("first_party")),
+        (Value::from("ceiling"), Value::from("auto")),
+    ]));
+    let mut out = Vec::new();
+    rmpv::encode::write_value(&mut out, &value).expect("encode policy fixture");
+    out
+}
+
+/// A provider name remains an authorization key, but its recipient protections
+/// and frozen email headers are shared with the email channel class.
+#[test]
+fn provider_email_opt_out_override_and_frozen_unsubscribe_headers()
+-> Result<(), Box<dyn std::error::Error>> {
+    use crate::campaign::send_hygiene::ListUnsubscribeTarget;
+    use crate::comm::SendOverrideScope;
+    use crate::edge::EdgeActorClass;
+    use crate::receipt::ReceiptQuery;
+
+    #[derive(Default)]
+    struct EmailSink {
+        headers: Vec<std::collections::BTreeMap<String, String>>,
+    }
+    impl OutboundExecutionSink for EmailSink {
+        fn execute(&mut self, request: &OutboundExecutionRequest<'_>) -> OutboundExecutionOutcome {
+            self.headers.push(request.hygiene_headers.clone());
+            OutboundExecutionOutcome::delivered_to_channel("provider:accepted")
+        }
+    }
+
+    for (index, channel) in ["email_resend", "email_ses", "email_postmark"]
+        .iter()
+        .enumerate()
+    {
+        let (_tmp, vault) = temp_vault();
+        clear_bootstrap_policy(&vault)?;
+        let actor = entity(0x76);
+        vault.put_entity(
+            &actor,
+            crate::registry::ENTITY_TYPE_PERSON,
+            crate::temporal::TimeRange { start: 1, end: 1 },
+            1,
+            b"agent",
+        )?;
+        put_policy_manifest_bytes(
+            &vault,
+            entity(0x77),
+            &provider_email_policy_manifest(&actor.to_hex(), channel),
+        )?;
+        let contact_id = entity(0x78);
+        let identity_ref = entity(0x79);
+        let contact =
+            CounterpartyContactRecord::user_introduction(identity_ref, "kenji@example.com", 10)?;
+        vault
+            .create_counterparty_contact(&contact_id, &contact)
+            .expect("seed opted-out contact");
+        vault
+            .opt_out_counterparty_contact(&contact_id, CounterpartyOptOutReason::Unsubscribe, 20)
+            .expect("record email opt-out");
+        let tag = format!("provider-email:{index}");
+        let mut request = qualification_request(channel, "send", actor, &tag)
+            .channel_identity_ref(identity_ref)
+            .counterparty_ref("kenji@example.com")
+            .campaign_unsubscribe(ListUnsubscribeTarget {
+                mailto_uri: Some("mailto:leave@example.com".to_owned()),
+                https_one_click_uri: "https://example.com/unsubscribe".to_owned(),
+            });
+        request.intent.target = "kenji@example.com".to_owned();
+        let mut sink = EmailSink::default();
+        let held = vault.dispatch_outbound_intent(request.clone(), &mut sink)?;
+        assert_eq!(held.outcome, OutboundDispatchOutcome::Held, "{channel}");
+        assert_eq!(held.gate_outcome, "pending", "{channel}");
+        assert_eq!(
+            held.receipt.fields.get("hold_reason").map(String::as_str),
+            Some("gate.pending.counterparty_opt_out"),
+            "{channel}"
+        );
+        assert!(
+            sink.headers.is_empty(),
+            "{channel}: opted-out send crossed wire"
+        );
+
+        // Override validity uses the vault's trusted clock, not occurred_at.
+        vault.clock.set(40);
+        // Only a human may mint this receipted override. It is scoped to email,
+        // not to an authorization alias for all email provider connectors.
+        let owner = entity(0x7a);
+        vault.put_entity(
+            &owner,
+            crate::registry::ENTITY_TYPE_PERSON,
+            crate::temporal::TimeRange { start: 1, end: 1 },
+            1,
+            b"owner",
+        )?;
+        crate::comm::mint_send_override(
+            &vault,
+            "kenji@example.com",
+            Some("email"),
+            SendOverrideScope::Standing,
+            None,
+            crate::WriteActor::new(owner, EdgeActorClass::Human),
+            30,
+            None,
+        )
+        .expect("owner mints receipted email send override");
+        request.receipt_id = format!("outbound:intent:overridden:{index}");
+        let sent = vault.dispatch_outbound_intent(request, &mut sink)?;
+        assert_eq!(
+            sent.outcome,
+            OutboundDispatchOutcome::DeliveredToChannel,
+            "{channel}: gate={:?}, receipt={:?}",
+            sent.gate_reason_codes,
+            sent.receipt.fields
+        );
+        assert_eq!(sink.headers.len(), 1, "{channel}");
+        assert!(
+            sink.headers[0].contains_key("List-Unsubscribe"),
+            "{channel}"
+        );
+        assert_eq!(
+            sink.headers[0]
+                .get("List-Unsubscribe-Post")
+                .map(String::as_str),
+            Some("List-Unsubscribe=One-Click"),
+            "{channel}"
+        );
+        assert!(
+            sent.receipt
+                .fields
+                .get("gate_receipt_reasons")
+                .is_some_and(|reasons| reasons.contains("comm_send_override_standing")),
+            "{channel}"
+        );
+        assert!(
+            vault
+                .get_counterparty_contact(&contact_id)?
+                .unwrap()
+                .is_opted_out()
+        );
+        assert!(!vault.receipts(ReceiptQuery::new(10))?.is_empty());
+    }
+    Ok(())
+}
+
+#[test]
+fn provider_email_honors_email_do_not_contact_head() -> Result<(), Box<dyn std::error::Error>> {
+    for (index, channel) in ["email_resend", "email_ses", "email_postmark"]
+        .iter()
+        .enumerate()
+    {
+        let (_tmp, vault) = temp_vault();
+        clear_bootstrap_policy(&vault)?;
+        let actor = entity(0x7b);
+        vault.put_entity(
+            &actor,
+            crate::registry::ENTITY_TYPE_PERSON,
+            crate::temporal::TimeRange { start: 1, end: 1 },
+            1,
+            b"agent",
+        )?;
+        put_policy_manifest_bytes(
+            &vault,
+            entity(0x7c),
+            &provider_email_policy_manifest(&actor.to_hex(), channel),
+        )?;
+        let address = format!("restricted-{index}@example.com");
+        let party = crate::comm::resolve_or_create_comm_party(&vault, &address)?;
+        let mut dnc = ClaimBody::new(
+            crate::campaign::claims::PREDICATE_COMM_DO_NOT_CONTACT,
+            ClaimSubject::Entity(party),
+            Value::Map(vec![
+                (Value::from("channel"), Value::from("email")),
+                (Value::from("scope"), Value::from("send")),
+            ]),
+            1.0,
+            ClaimApprovalStatus::Approved,
+            ClaimLifecycleStatus::Active,
+        );
+        dnc.valid_from = Some(1);
+        vault
+            .put_claim(
+                &entity(0x7d),
+                &dnc,
+                crate::temporal::TimeRange { start: 1, end: 1 },
+                1,
+            )
+            .expect("seed do-not-contact head");
+        let mut request = qualification_request(channel, "send", actor, &format!("dnc:{index}"))
+            .counterparty_ref(&address);
+        request.intent.target = address;
+        let mut sink = RecordingExecutor::default();
+        let held = vault.dispatch_outbound_intent(request, &mut sink)?;
+        assert_eq!(held.outcome, OutboundDispatchOutcome::Held, "{channel}");
+        assert!(
+            held.receipt
+                .fields
+                .get("gate_receipt_reasons")
+                .is_some_and(|reasons| reasons.contains("counterparty_opt_out_do_not_contact")),
+            "{channel}"
+        );
+        assert!(sink.calls.is_empty(), "{channel}: DNC reached transport");
     }
     Ok(())
 }

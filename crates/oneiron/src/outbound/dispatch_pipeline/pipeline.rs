@@ -4,12 +4,13 @@ use super::frozen_payload::FrozenOutboundPayload;
 use super::policy_risk::outbound_dispatch_policy_risk;
 use crate::Vault;
 use crate::campaign::send_hygiene::inject_campaign_email_hygiene_headers;
+use crate::counterparty_contact::normalize_channel_class;
 use crate::edge::EdgeActorClass;
 use crate::entity_id::EntityId;
 use crate::error::{Error, OffRecordError};
 use crate::gate::ExternalEffectPolicyRisk;
 use crate::linkedin_connector::{LINKEDIN_CHANNEL, LINKEDIN_CONNECT_REQUEST_VERB};
-use crate::outbound::capability::{OutboundRetryClass, normalize_key, outbound_verb_contract};
+use crate::outbound::capability::{OutboundRetryClass, outbound_verb_contract};
 use crate::outbound::dispatch_attempt_id::outbound_dispatch_attempt_id;
 use crate::outbound::dispatch_types::{
     OutboundDispatchError, OutboundDispatchRequest, OutboundDispatchResult, OutboundExecutionSink,
@@ -148,7 +149,7 @@ impl OutboundDispatchPipeline {
         {
             let mut hygiene_headers = BTreeMap::new();
             inject_campaign_email_hygiene_headers(
-                &normalize_key(&request.intent.channel),
+                &normalize_channel_class(&request.intent.channel),
                 &mut hygiene_headers,
                 request.campaign_unsubscribe.as_ref(),
             )?;

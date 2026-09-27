@@ -346,7 +346,7 @@ pub(super) fn build_outbound_capability_manifests() -> Vec<OutboundCapabilityMan
                 verb(
                     "send",
                     "messages_for_business_send",
-                    json!({"conversation_id": "string", "text": "string", "message_uuid": "frozen ledger idempotency key", "rich_link": "optional object"}),
+                    json!({"conversation_id": "string", "text": "string", "message_uuid": "stable provider-valid UUID derived from frozen ledger idempotency key", "rich_link": "optional object"}),
                     OutboundInterruptionClass::Interrupt,
                     OutboundDeliverySemanticsKind::FireAndForget,
                     None,
@@ -512,10 +512,10 @@ pub(super) fn build_outbound_capability_manifests() -> Vec<OutboundCapabilityMan
                 // is exactly the email `replace` shape.
                 OutboundDeliverySemanticsKind::Replaceable,
                 None,
-                // Replaying the same (UID, SEQUENCE, METHOD) is a no-op in every
-                // conforming client, so a retry may replay frozen bytes. This is
-                // what keeps the OF-327 classifier's idempotency hint honest.
-                OutboundRetryClass::IdempotentEmulated,
+                // Replaying the frozen (UID, SEQUENCE, METHOD) is a semantic
+                // replacement/no-op in a conforming client. It is replay-safe,
+                // unlike queue-emulated sends with no provider guarantee.
+                OutboundRetryClass::ReplaceIdempotent,
                 OutboundPermissionState::Conditional,
                 false,
                 "iMIP invites require a prior thread or a confirmed booking standing grant, and must leave from the primary calendar domain — never from sequencer-class infrastructure.",
