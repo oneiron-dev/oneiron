@@ -3,7 +3,7 @@
 use der::Decode;
 use x509_tsp::{TspVersion, TstInfo};
 
-use crate::api::Sha256Digest;
+use crate::api::{Sha256Digest, VerifyCheckStatus};
 use crate::error::{FatalCode, SealError, SealStage};
 
 use super::cms::{self, DerReader, OID_ATTR_MESSAGE_DIGEST, OID_ATTR_SIGNING_CERT_V2, OID_SHA256};
@@ -294,8 +294,15 @@ fn validate_tsa_chain(
     Ok(())
 }
 
+/// An integrity-validated timestamp whose trust is reported separately.
+pub(crate) struct VerifiedToken {
+    pub gen_time_unix: u64,
+    pub tsa_chain_ders: Vec<Vec<u8>>,
+    pub trust: VerifyCheckStatus,
+}
+
 /// Verify-time token validation (§7.7): imprint match, token signature,
-/// signer-cert binding, TSA path, critical-and-sole timestamping EKU. The
+/// signer-cert binding, then a SEPARATE TSA path result. The
 /// request nonce/policy checks are seal-time only. Returns the token's
 /// genTime as unix seconds for applicable-time path validation plus the
 /// validated TSA chain DERs so the DSS binding can require the profile
@@ -304,7 +311,7 @@ pub(crate) fn validate_token_for_verify(
     token_der: &[u8],
     expected_imprint: &Sha256Digest,
     anchors: &[pkix_chain::TrustAnchor],
-) -> Result<(u64, Vec<Vec<u8>>), SealError> {
+) -> Result<VerifiedToken, SealError> {
     let parsed = cms::parse_cms(token_der)?;
     if parsed.econtent_oid != OID_TST_INFO {
         return Err(ts_err());
@@ -352,8 +359,26 @@ pub(crate) fn validate_token_for_verify(
         )
         .collect();
     let gen_time_unix = generalized_time_unix(&tst);
-    validate_tsa_chain(&chain_ders, anchors, gen_time_unix)?;
-    Ok((gen_time_unix, chain_ders))
+    let trust = match parse_certs(&chain_ders) {
+        Ok(chain) => match pkix_chain::verify_time_stamper(
+            &chain,
+            anchors,
+            &SealProfile,
+            gen_time_unix,
+            &pkix_chain::DefaultVerifier,
+            &pkix_chain::NoRevocation,
+            &pkix_chain::NoAiaFetcher,
+        ) {
+            Ok(_) => VerifyCheckStatus::Pass,
+            Err(error) => super::verify::pkix_path_status(&error),
+        },
+        Err(_) => VerifyCheckStatus::Fail,
+    };
+    Ok(VerifiedToken {
+        gen_time_unix,
+        tsa_chain_ders: chain_ders,
+        trust,
+    })
 }
 
 #[cfg(test)]
