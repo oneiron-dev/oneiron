@@ -354,7 +354,7 @@ pub(super) fn scan_durable_send_receipts(vault: &Vault) -> Result<ReceiptScan> {
     durable_send_receipts(vault).map(ReceiptScan::from_complete_records)
 }
 
-pub(super) fn durable_send_receipts(vault: &Vault) -> Result<Vec<ReceiptRecord>> {
+pub(crate) fn durable_send_receipts(vault: &Vault) -> Result<Vec<ReceiptRecord>> {
     vault
         .store
         .send_receipt_rows()?
