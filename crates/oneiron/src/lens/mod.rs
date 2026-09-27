@@ -18,6 +18,9 @@ mod atom;
 mod guest;
 mod instrument;
 mod intent;
+pub use crate::claim::{
+    WeaveItem, WeaveReader, WeaveReport, WeaveSection, WeaveSectionKind, WeaveSectionSpec,
+};
 pub use guest::LensExecutionRuntime;
 pub use instrument::{InstrumentAtoms, InstrumentView, render_instrument};
 pub use intent::{LENS_INTENT_MAX_BYTES, LensIntentRecord};

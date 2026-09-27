@@ -1,3 +1,5 @@
+#[path = "builder_capture.rs"]
+mod capture;
 #[path = "builder_effort.rs"]
 mod effort;
 
@@ -81,6 +83,8 @@ pub struct PipelineBuilder<'a> {
     pub(super) capture_retrieval_trace: bool,
     pub(super) retrieval_state: Option<crate::store::RetrievalState>,
     pub(super) retrieval_turn: Option<crate::store::RetrievalTurn>,
+    pub(super) corpus_snapshot_ref: Option<String>,
+    pub(super) replay_query_ref: Option<String>,
     pub(super) deadline: Option<&'a crate::retrieval_depth::RetrievalDeadline>,
     pub(super) rerank: Option<(&'a dyn Reranker, RerankOptions)>,
     pub(super) hyde: Option<(&'a dyn HydeExpander, GroundingContext, HydeOptions)>,
@@ -138,6 +142,8 @@ impl<'a> PipelineBuilder<'a> {
             capture_retrieval_trace: false,
             retrieval_state: None,
             retrieval_turn: None,
+            corpus_snapshot_ref: None,
+            replay_query_ref: None,
             deadline: None,
             rerank: None,
             hyde: None,
@@ -186,11 +192,6 @@ impl<'a> PipelineBuilder<'a> {
         self
     }
 
-    pub(crate) fn telemetry_action(mut self, action: RetrievalAction) -> Self {
-        self.telemetry_action = action;
-        self
-    }
-
     /// Installs only gate-resolved authority. Public callers use scoped search.
     pub(crate) fn authority_filter(mut self, filter: crate::gate::ResolvedRetrievalFilter) -> Self {
         self.authority_filter = Some(filter);
@@ -205,27 +206,6 @@ impl<'a> PipelineBuilder<'a> {
 
     pub(crate) fn result_limit(&self) -> usize {
         self.result_limit
-    }
-
-    pub(crate) fn context_pack_budget(mut self, budget: ContextPackRetrievalBudget) -> Self {
-        self.context_pack_budget = Some(budget);
-        self
-    }
-
-    /// Enables opt-in per-stage retrieval trace capture for this run.
-    /// Supplies the pre-decision bus for iterative or offline replay callers.
-    pub fn retrieval_state(mut self, state: crate::store::RetrievalState) -> Self {
-        self.retrieval_state = Some(state);
-        self
-    }
-    pub fn retrieval_turn(mut self, turn: crate::store::RetrievalTurn) -> Self {
-        self.retrieval_turn = Some(turn);
-        self
-    }
-
-    pub fn capture_retrieval_trace(mut self, enabled: bool) -> Self {
-        self.capture_retrieval_trace = enabled;
-        self
     }
 
     /// Attaches a host-injected top-N reranker for this run (RET-010,
