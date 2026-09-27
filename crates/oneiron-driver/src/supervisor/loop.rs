@@ -1,5 +1,4 @@
 //! Biased-select supervisor loop with panic containment and backoff.
-use std::collections::BTreeMap;
 use std::future::Future;
 use std::panic::AssertUnwindSafe;
 use std::pin::Pin;
@@ -8,8 +7,8 @@ use std::task::{Context, Poll};
 use std::time::Duration;
 
 use crate::WaveHost;
-use oneiron::task_verb::WaveDispatchGeneration;
-use oneiron::{AttemptQueue, EntityId, Vault, WakeCancellation, WakePassReport, WakePassStop};
+use crate::wave_dispatch::{WaveDispatchLimits, WaveDispatchPump};
+use oneiron::{AttemptQueue, Vault, WakeCancellation, WakePassReport, WakePassStop};
 use tokio::sync::{Semaphore, watch};
 
 use super::budget_ids::{
@@ -72,6 +71,7 @@ pub struct WakeSupervisor<'v, T, F> {
     shutdown: ShutdownListener,
     pass_gate: Arc<Semaphore>,
     now_secs: NowSeconds,
+    wave_limits: WaveDispatchLimits,
 }
 
 impl<'v, T, F> WakeSupervisor<'v, T, F>
@@ -101,6 +101,7 @@ where
             },
             pass_gate: Arc::new(Semaphore::new(1)),
             now_secs: Arc::new(system_now_secs),
+            wave_limits: WaveDispatchLimits::default(),
         }
     }
 
@@ -125,6 +126,13 @@ where
         self
     }
 
+    /// Injects resolved operational page/retry ceilings for the wave pump.
+    #[must_use]
+    pub fn with_wave_dispatch_limits(mut self, limits: WaveDispatchLimits) -> Self {
+        self.wave_limits = limits;
+        self
+    }
+
     /// Runs the supervisor loop until shutdown or tick-source exhaustion.
     pub async fn run(self) -> WakeSupervisorReport {
         let Self {
@@ -136,6 +144,7 @@ where
             mut shutdown,
             pass_gate,
             now_secs,
+            wave_limits,
         } = self;
         // Keep the supervisor's own handle alive so a host-less run idles
         // on "not requested" instead of erroring the watch channel.
@@ -146,7 +155,7 @@ where
         // runner store's validation: the startup scan reads those errors as
         // "occupied" and admission fails every pass, redelivering due work
         // forever. No pass can ever succeed, so stop before ticking.
-        if let Err(error) = config.validate() {
+        if let Err(error) = config.validate().and_then(|()| wave_limits.validate()) {
             tracing::error!(?error, "wake supervisor config invalid; refusing to run");
             return report;
         }
@@ -167,147 +176,92 @@ where
         // disappear between snapshot and receiver nor need a polling timer.
         let mut wave_events = AttemptQueue::new(vault).subscribe();
         let wave_planner = factory.wave_planner();
-        let mut wave_plan_pending = wave_planner.is_some();
-        let mut wave_scan_pending = wave_planner.is_some();
-        let mut scan_after: Option<EntityId> = None;
-        // The last successfully handed-off attempt generation per TASK. A
-        // retry moves its dedupe index to a NEW id; lease reclaim requeues the
-        // SAME id at a higher generation. Either must reach the dispatcher.
-        // External assignees have no local attempt: their TASK id is the key.
-        let mut delivered = BTreeMap::<EntityId, WaveDispatchGeneration>::new();
-        let mut next_wave_due: Option<u64> = None;
-        let mut dispatch_backoff = RestartBackoff::new(config.backoff);
+        let mut wave = WaveDispatchPump::new(wave_limits);
+        let mut prefer_tick = false;
+        let mut ticks_exhausted = false;
 
         loop {
-            if wave_plan_pending {
-                wave_plan_pending = false;
-                if let (Some(planner), Some(actor)) = (wave_planner.as_ref(), factory.actor()) {
-                    let host = WaveHost::new(
-                        vault,
-                        Arc::clone(planner),
-                        actor.entity_ref(),
-                        actor.actor_class(),
-                    );
-                    match host.run_plan_once(&config.lease_owner, now_secs()) {
-                        Ok(Some(_receipt)) => {
-                            // Scan the durable TASK plane, not just the new
-                            // receipt: a crash after plan commit still has work.
-                            scan_after = None;
-                            next_wave_due = None;
-                            wave_scan_pending = true;
-                            wave_plan_pending = true;
-                        }
-                        Ok(None) => {}
-                        Err(error) => tracing::error!(%error, "wave plan attempt failed"),
-                    }
-                }
-                if shutdown.requested() {
-                    break;
-                }
-                // The planner/queue calls above are synchronous. Yield even
-                // when a new signal is already ready, so shutdown and timer
-                // futures cannot starve behind a self-sustaining wake burst.
-                tokio::task::yield_now().await;
-                continue;
+            // A single arbiter for plans, bounded pages, retries, ordinary
+            // passes, notifications and shutdown. Alternate ready wave work
+            // and ready ticks; a hot notification stream cannot pin either.
+            let wave_ready = wave_planner.is_some() && wave.ready();
+            let delay = if wave_planner.is_some() {
+                wave.next_delay(now_secs())
+            } else {
+                None
+            };
+            enum Wake {
+                Wave,
+                Notify,
+                Due,
+                Tick(Option<Tick>),
             }
-            if wave_scan_pending {
-                let result = vault.wave_dispatch_page(scan_after, 256).and_then(|page| {
-                    let planner = wave_planner.as_ref().ok_or_else(|| {
-                        oneiron::Error::InvalidConfig("wave planner not registered".into())
-                    })?;
-                    let actor = factory.actor().ok_or_else(|| {
-                        oneiron::Error::InvalidConfig("wave dispatch actor not registered".into())
-                    })?;
-                    let host = WaveHost::new(
-                        vault,
-                        Arc::clone(planner),
-                        actor.entity_ref(),
-                        actor.actor_class(),
-                    );
-                    let ready = host
-                        .ready_to_dispatch(&page.task_refs)
-                        .map_err(|error| oneiron::Error::InvalidConfig(error.to_string()))?;
-                    for task in ready {
-                        match vault.wave_dispatch_generation(task, now_secs())? {
-                            None => {} // Already leased/settled; no second handoff.
-                            Some(WaveDispatchGeneration::DueAt(due)) => {
-                                next_wave_due = Some(next_wave_due.map_or(due, |old| old.min(due)));
-                            }
-                            Some(generation) => {
-                                if delivered.get(&task) == Some(&generation) {
-                                    continue;
-                                }
-                                // One TASK per callback: a partial batch success
-                                // cannot be lost when a later callback fails.
-                                factory.dispatch_wave_ready(vault, &[task])?;
-                                delivered.insert(task, generation);
-                            }
-                        }
-                    }
-                    Ok(page)
-                });
-                match result {
-                    Ok(page) => {
-                        dispatch_backoff.reset();
-                        scan_after = page.next_after;
-                        wave_scan_pending = !page.exhausted;
-                        if !wave_scan_pending {
-                            scan_after = None;
-                        }
-                    }
-                    Err(error) => {
-                        tracing::error!(
-                            ?error,
-                            "wave ready-set dispatch failed; retrying durable page"
-                        );
-                        if !wait_backoff(&mut shutdown, dispatch_backoff.advance()).await {
-                            break;
-                        }
-                        // Keep the RAW page cursor: failed handoffs cannot
-                        // advance past this page or disappear on restart.
-                    }
+            let wake = if prefer_tick {
+                tokio::select! {
+                    biased;
+                    () = shutdown.triggered() => break,
+                    tick = async {
+                        if let Some(tick) = redrive_tick { Some(tick) }
+                        else { ticks.next_tick().await }
+                    }, if !ticks_exhausted => Wake::Tick(tick),
+                    () = std::future::ready(()), if wave_ready => Wake::Wave,
+                    _ = wave_events.recv(), if wave_planner.is_some() => Wake::Notify,
+                    () = async {
+                        if let Some(delay) = delay { tokio::time::sleep(delay).await; }
+                        else { std::future::pending::<()>().await; }
+                    }, if delay.is_some() => Wake::Due,
                 }
-                if shutdown.requested() {
-                    break;
-                }
-                tokio::task::yield_now().await;
-                continue;
-            }
-            // ONE biased select: shutdown always beats a ready tick.
-            // A re-drive reuses the last tick without waiting on the source
-            // (and without blocking shutdown — checked after backoff).
-            let tick = if let Some(tick) = redrive_tick.take() {
-                tick
             } else {
                 tokio::select! {
                     biased;
                     () = shutdown.triggered() => break,
-                    _ = wave_events.recv(), if wave_planner.is_some() => {
-                        wave_plan_pending = true;
-                        wave_scan_pending = true;
-                        scan_after = None;
-                        next_wave_due = None;
-                        tokio::task::yield_now().await;
-                        continue;
-                    }
+                    () = std::future::ready(()), if wave_ready => Wake::Wave,
+                    tick = async {
+                        if let Some(tick) = redrive_tick { Some(tick) }
+                        else { ticks.next_tick().await }
+                    }, if !ticks_exhausted => Wake::Tick(tick),
+                    _ = wave_events.recv(), if wave_planner.is_some() => Wake::Notify,
                     () = async {
-                        if let Some(due) = next_wave_due {
-                            tokio::time::sleep(Duration::from_secs(due.saturating_sub(now_secs()))).await;
-                        } else {
-                            std::future::pending::<()>().await;
-                        }
-                    }, if wave_planner.is_some() => {
-                        wave_scan_pending = true;
-                        scan_after = None;
-                        next_wave_due = None;
-                        tokio::task::yield_now().await;
-                        continue;
+                        if let Some(delay) = delay { tokio::time::sleep(delay).await; }
+                        else { std::future::pending::<()>().await; }
+                    }, if delay.is_some() => Wake::Due,
+                }
+            };
+            let tick = match wake {
+                Wake::Wave => {
+                    prefer_tick = true;
+                    if let (Some(planner), Some(actor)) = (wave_planner.as_ref(), factory.actor()) {
+                        wave.work_one(
+                            vault,
+                            &mut factory,
+                            planner,
+                            actor,
+                            &config.lease_owner,
+                            now_secs(),
+                        );
                     }
-                    tick = ticks.next_tick() => match tick {
-                        Some(tick) => tick,
-                        // Source exhausted: nothing can ever wake us again.
-                        None => break,
-                    },
+                    tokio::task::yield_now().await;
+                    continue;
+                }
+                Wake::Notify => {
+                    wave.notify();
+                    continue;
+                }
+                Wake::Due => {
+                    wave.on_timer(now_secs());
+                    continue;
+                }
+                Wake::Tick(None) => {
+                    ticks_exhausted = true;
+                    if wave_planner.is_none() {
+                        break;
+                    }
+                    continue;
+                }
+                Wake::Tick(Some(tick)) => {
+                    redrive_tick = None;
+                    prefer_tick = false;
+                    tick
                 }
             };
 

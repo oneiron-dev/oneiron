@@ -494,7 +494,7 @@ impl oneiron::WavePlanner for HostCutPlanner {
 
 #[tokio::test]
 async fn running_supervisor_claims_plan_and_dispatches_only_live_ready_tasks() {
-    use oneiron::attempt_queue::{AttemptQueue, AttemptState, ClaimAttempt, ClaimOutcome};
+    use oneiron::attempt_queue::{AttemptQueue, AttemptState};
     use oneiron::task_verb::{
         TaskAssignee, TaskCreateSpec, TaskResultInput, TaskTerminalDisposition,
     };
@@ -526,30 +526,26 @@ async fn running_supervisor_claims_plan_and_dispatches_only_live_ready_tasks() {
             Arc::new(HostCutPlanner {
                 calls: Arc::clone(&calls),
             }),
-            Box::new(move |vault, ready| {
-                for &task in ready {
-                    let ClaimOutcome::Claimed(row) = AttemptQueue::new(vault).claim_kind(
-                        "tasks.realize",
-                        ClaimAttempt {
-                            lease_owner: "executor".into(),
-                            now: u64::MAX,
-                        },
-                    )?
-                    else {
-                        return Err(oneiron::Error::InvalidConfig(
-                            "ready TASK had no claimable attempt".into(),
-                        ));
-                    };
-                    if row.task_ref.as_deref() != Some(task.to_hex().as_str()) {
-                        return Err(oneiron::Error::InvalidConfig(
-                            "dispatch claimed a different TASK".into(),
-                        ));
-                    }
-                    sent.send(task).map_err(|_| {
-                        oneiron::Error::InvalidConfig("dispatch observer closed".into())
-                    })?;
-                }
-                Ok(())
+            Box::new(move |vault, candidate| {
+                let WaveDispatchRoute::Attempt { id, generation } = candidate.route else {
+                    unreachable!()
+                };
+                let Some(_row) = vault.claim_wave_dispatch_attempt(
+                    candidate.task,
+                    id,
+                    generation,
+                    "executor",
+                    u64::MAX,
+                )?
+                else {
+                    return Ok(WaveHandoffOutcome::NoLongerCurrent);
+                };
+                sent.send(candidate.task).map_err(|_| {
+                    oneiron::Error::InvalidConfig("dispatch observer closed".into())
+                })?;
+                Ok(WaveHandoffOutcome::Accepted(WaveHandoffReceipt::Local {
+                    lease_owner: "executor".into(),
+                }))
             }),
         );
     let (push, wake, hint) = PushTick::channel(crate::DEFAULT_SESSION_IDLE_FLOOR_SECS * 1_000);
@@ -650,7 +646,7 @@ async fn running_supervisor_claims_plan_and_dispatches_only_live_ready_tasks() {
 
 #[tokio::test]
 async fn supervisor_recovers_committed_wave_and_retries_failed_handoff() {
-    use oneiron::attempt_queue::{AttemptQueue, ClaimAttempt, ClaimOutcome};
+    use oneiron::attempt_queue::AttemptQueue;
     use oneiron::task_verb::{
         TaskAssignee, TaskCreateSpec, TaskResultInput, TaskTerminalDisposition,
     };
@@ -693,30 +689,30 @@ async fn supervisor_recovers_committed_wave_and_retries_failed_handoff() {
             Arc::new(HostCutPlanner {
                 calls: Arc::clone(&plans),
             }),
-            Box::new(move |vault, ready| {
+            Box::new(move |vault, candidate| {
                 if attempts.fetch_add(1, std::sync::atomic::Ordering::SeqCst) == 0 {
                     return Err(oneiron::Error::InvalidConfig(
                         "one transient handoff failure".into(),
                     ));
                 }
-                for &task in ready {
-                    let ClaimOutcome::Claimed(row) = AttemptQueue::new(vault).claim_kind(
-                        "tasks.realize",
-                        ClaimAttempt {
-                            lease_owner: "executor".into(),
-                            now: u64::MAX,
-                        },
-                    )?
-                    else {
-                        return Err(oneiron::Error::InvalidConfig("missing task claim".into()));
-                    };
-                    if row.task_ref.as_deref() != Some(task.to_hex().as_str()) {
-                        return Err(oneiron::Error::InvalidConfig("wrong task claim".into()));
-                    }
-                    sent.send(task)
-                        .map_err(|_| oneiron::Error::InvalidConfig("observer closed".into()))?;
-                }
-                Ok(())
+                let WaveDispatchRoute::Attempt { id, generation } = candidate.route else {
+                    unreachable!()
+                };
+                let Some(_row) = vault.claim_wave_dispatch_attempt(
+                    candidate.task,
+                    id,
+                    generation,
+                    "executor",
+                    u64::MAX,
+                )?
+                else {
+                    return Ok(WaveHandoffOutcome::NoLongerCurrent);
+                };
+                sent.send(candidate.task)
+                    .map_err(|_| oneiron::Error::InvalidConfig("observer closed".into()))?;
+                Ok(WaveHandoffOutcome::Accepted(WaveHandoffReceipt::Local {
+                    lease_owner: "executor".into(),
+                }))
             }),
         );
     let (push, wake, hint) = PushTick::channel(crate::DEFAULT_SESSION_IDLE_FLOOR_SECS * 1_000);
@@ -779,9 +775,7 @@ async fn supervisor_recovers_committed_wave_and_retries_failed_handoff() {
 
 #[tokio::test]
 async fn successful_wave_handoff_reopens_on_retry_and_reclaimed_lease() {
-    use oneiron::attempt_queue::{
-        AttemptQueue, ClaimAttempt, ClaimOutcome, CleanupAttemptLeases, RetryAttempt, RetryOutcome,
-    };
+    use oneiron::attempt_queue::{AttemptQueue, CleanupAttemptLeases, RetryAttempt, RetryOutcome};
     use oneiron::task_verb::{TaskAssignee, TaskCreateSpec};
 
     let (_dir, vault) = open_vault();
@@ -804,27 +798,25 @@ async fn successful_wave_handoff_reopens_on_retry_and_reclaimed_lease() {
             Arc::new(HostCutPlanner {
                 calls: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
             }),
-            Box::new(move |vault, ready| {
-                for task in ready {
-                    let ClaimOutcome::Claimed(row) = AttemptQueue::new(vault).claim_kind(
-                        "tasks.realize",
-                        ClaimAttempt {
-                            lease_owner: "executor".into(),
-                            now: u64::MAX,
-                        },
-                    )?
-                    else {
-                        return Err(oneiron::Error::InvalidConfig(
-                            "missing ready attempt".into(),
-                        ));
-                    };
-                    if row.task_ref.as_deref() != Some(task.to_hex().as_str()) {
-                        return Err(oneiron::Error::InvalidConfig("wrong TASK attempt".into()));
-                    }
-                    sent.send(row)
-                        .map_err(|_| oneiron::Error::InvalidConfig("observer closed".into()))?;
-                }
-                Ok(())
+            Box::new(move |vault, candidate| {
+                let WaveDispatchRoute::Attempt { id, generation } = candidate.route else {
+                    unreachable!()
+                };
+                let Some(row) = vault.claim_wave_dispatch_attempt(
+                    candidate.task,
+                    id,
+                    generation,
+                    "executor",
+                    u64::MAX,
+                )?
+                else {
+                    return Ok(WaveHandoffOutcome::NoLongerCurrent);
+                };
+                sent.send(row)
+                    .map_err(|_| oneiron::Error::InvalidConfig("observer closed".into()))?;
+                Ok(WaveHandoffOutcome::Accepted(WaveHandoffReceipt::Local {
+                    lease_owner: "executor".into(),
+                }))
             }),
         );
     let (push, wake, hint) = PushTick::channel(crate::DEFAULT_SESSION_IDLE_FLOOR_SECS * 1_000);

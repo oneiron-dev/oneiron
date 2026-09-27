@@ -1,13 +1,14 @@
 //! Per-pass attempt-executor factory trait and default implementation.
 use std::sync::Arc;
 
+use crate::wave_dispatch::{WaveDispatchCandidate, WaveHandoffOutcome};
 use oneiron::edge::EdgeActorClass;
 use oneiron::{
     BudgetGuard, CommitmentWakeExecutor, CommitmentWakeProposalPlanner, ConsolidationExecutor,
     ConsolidationSink, DreamerAttemptExecutor, DreamerClaimAuthoringStrategy, LlmBackend, ModelId,
     Result, WriteActor,
 };
-use oneiron::{EntityId, Vault, WavePlanner};
+use oneiron::{Vault, WavePlanner};
 use oneiron_llm_local::{LocalLlmBackend, LocalLlmRuntime};
 #[cfg(all(unix, feature = "voice"))]
 use oneiron_server::{
@@ -16,7 +17,8 @@ use oneiron_server::{
 };
 
 /// Host-supplied consumer of the live ready TASK subset.
-pub type WaveReadyDispatcher = Box<dyn FnMut(&Vault, &[EntityId]) -> Result<()> + Send>;
+pub type WaveReadyDispatcher =
+    Box<dyn FnMut(&Vault, WaveDispatchCandidate) -> Result<WaveHandoffOutcome> + Send>;
 
 /// Builds the per-pass attempt executor. Generic-associated so executors may
 /// borrow factory-owned state (the backend constructed at startup, the
@@ -45,7 +47,11 @@ pub trait PassExecutorFactory {
 
     /// The existing host TASK dispatch path receives only the live ready set.
     /// A factory that registers a planner must also supply this consumer.
-    fn dispatch_wave_ready(&mut self, _vault: &Vault, _ready: &[EntityId]) -> Result<()> {
+    fn dispatch_wave_candidate(
+        &mut self,
+        _vault: &Vault,
+        _candidate: WaveDispatchCandidate,
+    ) -> Result<WaveHandoffOutcome> {
         Err(oneiron::Error::InvalidConfig(
             "wave dispatcher not registered".into(),
         ))
@@ -228,11 +234,15 @@ impl PassExecutorFactory for ConsolidationExecutorFactory {
         self.wave_planner.clone()
     }
 
-    fn dispatch_wave_ready(&mut self, vault: &Vault, ready: &[EntityId]) -> Result<()> {
+    fn dispatch_wave_candidate(
+        &mut self,
+        vault: &Vault,
+        candidate: WaveDispatchCandidate,
+    ) -> Result<WaveHandoffOutcome> {
         self.wave_dispatch
             .as_mut()
             .ok_or_else(|| oneiron::Error::InvalidConfig("wave dispatcher not registered".into()))?(
-            vault, ready,
+            vault, candidate,
         )
     }
 

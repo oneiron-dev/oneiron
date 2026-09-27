@@ -32,6 +32,7 @@ mod session;
 mod supervisor;
 mod tick;
 mod wave;
+mod wave_dispatch;
 
 pub use session::{
     DEFAULT_SESSION_ACTIVITY_ROLLUP_GAP_MS, DEFAULT_SESSION_IDLE_FLOOR_SECS, SessionHint,
@@ -49,3 +50,8 @@ pub use tick::{
 };
 
 pub use wave::WaveHost;
+
+pub use wave_dispatch::{
+    WaveDispatchCandidate, WaveDispatchLimits, WaveDispatchRoute, WaveHandoffOutcome,
+    WaveHandoffReceipt,
+};

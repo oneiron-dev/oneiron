@@ -11,7 +11,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 
 | path | kind | bucket | pub surface | notable types | purpose |
 |---|---|---|---|---|---|
-| `src/lib.rs` | src | s | 4 re-export | — | oneiron-driver — the in-process starter motor (ONE-1683 / ONE-1684, M8 agent runtime RT-01/RT-02) |
+| `src/lib.rs` | src | s | 5 re-export | — | oneiron-driver — the in-process starter motor (ONE-1683 / ONE-1684, M8 agent runtime RT-01/RT-02) |
 | `src/session.rs` | src | m | 3 struct · 2 enum · 10 fn · 2 const · 1 crate-vis | SessionHint, SessionHintEffect, SessionLifecycleConfig, SessionLifecycleDriver, SessionTicks | RT-03 (ONE-1685): the driver owns the SESSION lifecycle; apps send hints |
 | `src/session/tests.rs` | test | XL | — | — | — |
 | `src/supervisor/budget_ids.rs` | src | s | 4 crate-vis | — | Durable per-pass budget-id derivation and occupied-row index scan |
@@ -19,7 +19,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/supervisor/config.rs` | src | s | 2 struct · 2 fn · 1 type · 1 const · 8 crate-vis | RestartBackoffConfig, WakeSupervisorConfig | Static config, restart backoff, and budget-id length ceilings |
 | `src/supervisor/factory.rs` | src | s | 1 struct · 1 trait · 5 fn · 1 type | ConsolidationExecutorFactory, PassExecutorFactory | Per-pass attempt-executor factory trait and default implementation |
 | `src/supervisor/factory_tests.rs` | test | L | — | — | Factory, planner-routing, and attempt-fixture tests |
-| `src/supervisor/loop.rs` | src | m | 2 struct · 5 fn · 2 crate-vis | WakeSupervisor, WakeSupervisorReport | Biased-select supervisor loop with panic containment and backoff |
+| `src/supervisor/loop.rs` | src | m | 2 struct · 6 fn · 2 crate-vis | WakeSupervisor, WakeSupervisorReport | Biased-select supervisor loop with panic containment and backoff |
 | `src/supervisor/loop_tests.rs` | test | m | — | — | Loop, panic-containment, shutdown, and redrive acceptance tests |
 | `src/supervisor/mod.rs` | src | s | 4 re-export | — | The wake-pass supervisor (ONE-1683): a plain `tokio::select!` loop that pumps… |
 | `src/supervisor/pass.rs` | src | s | 4 crate-vis | — | Single wake-pass assembly and engine delegation |
@@ -38,3 +38,4 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/tick/timer.rs` | src | m | 3 struct · 6 fn · 3 crate-vis | AttemptQueueDeadlines, CommitmentDueDeadlines, TimerTick | Timer lane: attempt-queue deadline reads, commitment reconcile and fire, deadline timer, and due sleep |
 | `src/wave.rs` | src | s | 1 struct · 3 fn | WaveHost | Host-side consumption of a queued planning attempt and live TASK dispatch |
 | `src/wave/tests.rs` | test | s | — | — | — |
+| `src/wave_dispatch.rs` | src | m | 2 struct · 3 enum · 1 fn · 7 crate-vis | WaveDispatchCandidate, WaveDispatchLimits, WaveDispatchRoute, WaveHandoffOutcome, WaveHandoffReceipt | Bounded, per-item delivery of durable wave TASKs to a host dispatcher |

@@ -1,7 +1,7 @@
 //! Vault-backed, atomic wave plan application through the ordinary TASK doors.
 use super::create_validation::ValidatedTaskCreate;
 use super::{TaskAssignee, TaskKind};
-use crate::attempt_queue::{AttemptQueue, CompleteAttempt};
+use crate::attempt_queue::{AttemptQueue, ClaimAttempt, ClaimOutcome, CompleteAttempt};
 use crate::edge::EdgeActorClass;
 use crate::error::Error;
 use crate::gate::PolicyApprovalCeiling;
@@ -327,6 +327,12 @@ impl Vault {
         now: u64,
     ) -> crate::Result<Option<WaveDispatchGeneration>> {
         let body = super::wire_decode::task_verb_body(self, task)?.ok_or(Error::EntityNotFound)?;
+        if body.provenance != facade_provenance(WAVE_PLAN_ATTEMPT_KIND)
+            || body.terminal().is_some()
+            || body.settled_ladder_disposition().is_some()
+        {
+            return Ok(None);
+        }
         let route_key = super::create_validation::task_route_dedupe_key(task);
         let route = match body.assignee {
             None | Some(TaskAssignee::Dreamer) => Some(("tasks.realize", route_key)),
@@ -366,6 +372,65 @@ impl Vault {
             }
             _ => Ok(None),
         }
+    }
+
+    /// Atomically claim ONLY this TASK's expected attempt generation. A stale
+    /// candidate never consumes another TASK's ready queue row. The ordinary
+    /// point-claim still checks readiness, placement, blockers and symbols.
+    pub fn claim_wave_dispatch_attempt(
+        &self,
+        task: EntityId,
+        id: crate::attempt_queue::AttemptId,
+        generation: u32,
+        lease_owner: &str,
+        now: u64,
+    ) -> crate::Result<Option<crate::attempt_queue::AttemptRecord>> {
+        let queue = AttemptQueue::new(self);
+        let mut txn = self.store.env.write_txn()?;
+        let Some(body) = super::wire_decode::task_verb_body_in(self, &txn, task)? else {
+            return Ok(None);
+        };
+        if body.provenance != facade_provenance(WAVE_PLAN_ATTEMPT_KIND)
+            || body.terminal().is_some()
+            || body.settled_ladder_disposition().is_some()
+        {
+            return Ok(None);
+        }
+        let expected_kind = match body.assignee {
+            None | Some(TaskAssignee::Dreamer) => "tasks.realize",
+            Some(TaskAssignee::AgentDef { .. }) => {
+                crate::dreamer_runner::DREAMER_RUNNER_ATTEMPT_KIND
+            }
+            _ => return Ok(None),
+        };
+        let Some(row) = queue.get_in_write_txn(&txn, id)? else {
+            return Ok(None);
+        };
+        if row.task_ref.as_deref() != Some(task.to_hex().as_str())
+            || row.kind != expected_kind
+            || row.attempt_count != generation
+            || !matches!(
+                row.state,
+                crate::attempt_queue::AttemptState::Queued
+                    | crate::attempt_queue::AttemptState::Scheduled
+            )
+        {
+            return Ok(None);
+        }
+        let claimed = queue.claim_id_in_txn(
+            &mut txn,
+            id,
+            ClaimAttempt {
+                lease_owner: lease_owner.to_owned(),
+                now,
+            },
+        )?;
+        let ClaimOutcome::Claimed(row) = claimed else {
+            return Ok(None);
+        };
+        txn.commit()?;
+        self.store.notify_attempt_observers();
+        Ok(Some(row))
     }
 
     /// Queue a planning attempt. Planning itself remains host/agent code.

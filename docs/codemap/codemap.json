@@ -32709,7 +32709,7 @@
      "purpose": "Vault-backed, atomic wave plan application through the ordinary TASK doors",
      "surface": {
       "enum": 1,
-      "fn": 5,
+      "fn": 6,
       "struct": 2
      }
     },
@@ -37560,7 +37560,7 @@
      "path": "src/lib.rs",
      "purpose": "oneiron-driver — the in-process starter motor (ONE-1683 / ONE-1684, M8 agent runtime RT-01/RT-02)",
      "surface": {
-      "re-export": 4
+      "re-export": 5
      }
     },
     {
@@ -37661,7 +37661,7 @@
      "purpose": "Biased-select supervisor loop with panic containment and backoff",
      "surface": {
       "crate-vis": 2,
-      "fn": 5,
+      "fn": 6,
       "struct": 2
      }
     },
@@ -37871,6 +37871,25 @@
      "path": "src/wave/tests.rs",
      "purpose": "—",
      "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "WaveDispatchCandidate",
+      "WaveDispatchLimits",
+      "WaveDispatchRoute",
+      "WaveHandoffOutcome",
+      "WaveHandoffReceipt"
+     ],
+     "path": "src/wave_dispatch.rs",
+     "purpose": "Bounded, per-item delivery of durable wave TASKs to a host dispatcher",
+     "surface": {
+      "crate-vis": 7,
+      "enum": 3,
+      "fn": 1,
+      "struct": 2
+     }
     }
    ],
    "modules": {
@@ -37901,11 +37920,18 @@
      "largest_src_bucket": "s",
      "layout": "file+dir",
      "purpose": "Host-side consumption of a queued planning attempt and live TASK dispatch"
+    },
+    "wave_dispatch": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "m",
+     "layout": "file",
+     "purpose": "Bounded, per-item delivery of durable wave TASKs to a host dispatcher"
     }
    },
    "over_bar": 0,
    "purpose": "oneiron-driver — the in-process starter motor (ONE-1683 / ONE-1684, M8 agent runtime RT-01/RT-02)",
-   "source_files": 16,
+   "source_files": 17,
    "test_files": 11
   },
   "oneiron-ffi": {
