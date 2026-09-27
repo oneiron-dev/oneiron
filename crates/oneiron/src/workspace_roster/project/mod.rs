@@ -9,6 +9,8 @@ pub(crate) use projection::{
     reconcile_project_rooms, validate_project_body, validate_project_depth_change,
     validate_room_body,
 };
+#[cfg(test)]
+pub(crate) use tests::set_project_depth_signed_for_test;
 
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::error::{Error, Result};
@@ -26,6 +28,42 @@ const ROOT: &[u8] = b"project.root.v1";
 pub(super) const ROOM_PROJECT: &[u8] = b"project.room_owner.v1/";
 const CHANGES: &[u8] = b"project.room_changes.v1/";
 const DEPTH_EDIT: &[u8] = b"project.depth_edit.v1/";
+const DEPTH_HISTORY: &[u8] = b"project.depth_history.v1/";
+
+fn depth_history_key(id: EntityId) -> Vec<u8> {
+    [DEPTH_HISTORY, id.as_bytes()].concat()
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+struct ProjectDepthHistory {
+    depth: u8,
+    revision: u64,
+}
+
+fn depth_history_decode(bytes: &[u8]) -> Result<ProjectDepthHistory> {
+    let [depth, revision @ ..] = bytes else {
+        return Err(invalid());
+    };
+    let revision: [u8; 8] = revision.try_into().map_err(|_| invalid())?;
+    Ok(ProjectDepthHistory {
+        depth: *depth,
+        revision: u64::from_be_bytes(revision),
+    })
+}
+
+fn depth_history_encode(history: ProjectDepthHistory) -> [u8; 9] {
+    let mut bytes = [0; 9];
+    bytes[0] = history.depth;
+    bytes[1..].copy_from_slice(&history.revision.to_be_bytes());
+    bytes
+}
+
+fn depth_history_of(body: &ProjectRecord) -> ProjectDepthHistory {
+    ProjectDepthHistory {
+        depth: body.depth,
+        revision: body.depth_proof.as_ref().map_or(0, |proof| proof.revision),
+    }
+}
 
 fn depth_edit_key(id: EntityId) -> Vec<u8> {
     [DEPTH_EDIT, id.as_bytes()].concat()
@@ -39,11 +77,42 @@ fn depth_edit_digest(old: &[u8], new: &[u8]) -> [u8; 32] {
     *hash.finalize().as_bytes()
 }
 
+/// Signed owner act that travels with the project body. The signature binds
+/// the project, vault, actor, revision and depth; mutable member refs stay
+/// ordinary project data. A receiver verifies this against its authority log.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ProjectDepthProof {
+    pub schema_version: u8,
+    pub project_id: String,
+    pub actor_ref: String,
+    pub vault_id: [u8; 32],
+    pub revision: u64,
+    pub depth: u8,
+    pub suite: String,
+    pub public_key: Vec<u8>,
+    pub signature: Vec<u8>,
+}
+
+fn depth_transcript(proof: &ProjectDepthProof) -> Result<Vec<u8>> {
+    let mut bytes = b"oneiron.project.depth.v1\0".to_vec();
+    bytes.extend_from_slice(&encode(&(
+        proof.schema_version,
+        &proof.project_id,
+        &proof.actor_ref,
+        proof.vault_id,
+        proof.revision,
+        proof.depth,
+    ))?);
+    Ok(bytes)
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ProjectRecord {
     pub schema_version: u8,
     pub depth: u8,
+    pub depth_proof: Option<ProjectDepthProof>,
     pub parent: Option<String>,
     pub claims_scope_ref: String,
     pub leader: String,
@@ -68,6 +137,7 @@ impl ProjectRecord {
         Self {
             schema_version: 1,
             depth: DEFAULT_PROJECT_DEPTH,
+            depth_proof: None,
             parent: parent.map(|p| p.to_hex()),
             claims_scope_ref: claims_scope_ref.to_hex(),
             leader: leader.to_hex(),
@@ -173,14 +243,21 @@ impl Vault {
         )
     }
     /// Changes a project's spawn ceiling through the existing owner write authority.
-    /// A host translates a person's request into a typed depth; this is not a prompt parser.
-    pub fn set_project_depth(
+    /// The host signs the exact depth revision with an authority key actively
+    /// bound to the human writer; replicas verify that same signed revision.
+    /// A host translates a person's request into a typed depth, not prompt text.
+    pub fn set_project_depth<S>(
         &self,
         id: EntityId,
         depth: u8,
         authenticated_owner: &crate::write_envelope::WriteActor,
         now: u64,
-    ) -> Result<()> {
+        signer_key: crate::authority::AuthorityKey,
+        signer: S,
+    ) -> Result<()>
+    where
+        S: FnOnce(&[u8]) -> Result<Vec<u8>>,
+    {
         if usize::from(depth) > crate::context_projection::CONTEXT_PROJECTION_MAX_ANCESTORS {
             return Err(crate::error::RecordError::InvalidProjectBody(
                 "depth exceeds projection bound",
@@ -191,22 +268,43 @@ impl Vault {
             self.verify_owner_write_actor_in_txn(txn, authenticated_owner)?;
             let mut body: ProjectRecord = record(&self.store, txn, id, self.project_type_byte()?)?
                 .ok_or(Error::EntityNotFound)?;
-            let previous_depth = body.depth;
+            if body.depth == depth {
+                return Ok(());
+            }
+            let fold = self.authority_fold_readonly_in_txn(txn)?;
+            let (suite, public_key) = match &signer_key {
+                crate::authority::AuthorityKey::Ed25519(bytes) => ("ed25519", bytes.to_vec()),
+                crate::authority::AuthorityKey::P256(bytes) => ("p256", bytes.clone()),
+            };
+            let mut proof = ProjectDepthProof {
+                schema_version: 1,
+                project_id: id.to_hex(),
+                actor_ref: authenticated_owner.entity_ref().to_hex(),
+                vault_id: fold.vault_id.ok_or_else(invalid)?,
+                revision: body.depth_proof.as_ref().map_or(Ok(1), |proof| {
+                    proof.revision.checked_add(1).ok_or_else(invalid)
+                })?,
+                depth,
+                suite: suite.into(),
+                public_key,
+                signature: Vec::new(),
+            };
+            proof.signature = signer(&depth_transcript(&proof)?)?;
             body.depth = depth;
+            body.depth_proof = Some(proof);
             let bytes = encode(&body)?;
             let proof_key = depth_edit_key(id);
-            if previous_depth != depth {
-                if self.store.vault_meta.get(txn, &proof_key)?.is_some() {
-                    return Err(invalid());
-                }
-                let old = self
-                    .store
-                    .entities
-                    .get(txn, id.as_bytes())?
-                    .ok_or(Error::EntityNotFound)?;
-                let digest = depth_edit_digest(&old, &bytes);
-                self.store.vault_meta.put(txn, &proof_key, &digest)?;
+            if self.store.vault_meta.get(txn, &proof_key)?.is_some() {
+                return Err(invalid());
             }
+            let old = self
+                .store
+                .entities
+                .get(txn, id.as_bytes())?
+                .ok_or(Error::EntityNotFound)?;
+            self.store
+                .vault_meta
+                .put(txn, &proof_key, &depth_edit_digest(&old, &bytes))?;
             self.batch_in()
                 .put(
                     &id,

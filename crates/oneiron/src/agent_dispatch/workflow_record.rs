@@ -130,19 +130,28 @@ impl super::AgentDispatcher<'_> {
         &self,
         parent: Option<AttemptId>,
     ) -> Result<Option<AttemptId>> {
+        let txn = self.vault.store.env.read_txn()?;
+        self.workflow_authority_parent_in_txn(&txn, parent)
+    }
+
+    /// Same registered-wrapper crossing within a caller's admission snapshot.
+    pub(super) fn workflow_authority_parent_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        parent: Option<AttemptId>,
+    ) -> Result<Option<AttemptId>> {
         let Some(id) = parent else { return Ok(None) };
         let queue = crate::attempt_queue::AttemptQueue::new(self.vault);
-        let Some(row) = queue.get(id)? else {
-            return Err(invalid("workflow authority parent is missing"));
-        };
+        let row = queue
+            .get_in_txn(txn, id)?
+            .ok_or_else(|| invalid("workflow authority parent is missing"))?;
         if !is_wrapper(&row) {
             return Ok(parent);
         }
-        let txn = self.vault.store.env.read_txn()?;
-        let record = self.read_workflow(&txn, &row)?;
+        let record = self.read_workflow(txn, &row)?;
         if let Some(real_parent) = record.intent.parent {
             let row = queue
-                .get_in_txn(&txn, real_parent)?
+                .get_in_txn(txn, real_parent)?
                 .ok_or_else(|| invalid("workflow real parent is missing"))?;
             super::codec::record_dispatch_input(&row)
                 .ok_or_else(|| invalid("workflow real parent has no agent lineage"))?;

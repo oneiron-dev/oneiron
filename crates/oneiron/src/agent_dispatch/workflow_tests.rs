@@ -578,7 +578,7 @@ fn workflow_child_project_transition_and_later_release_recheck_live_ancestor() -
         Some(parent.attempt.id),
     );
     let spawn = AgentSpawnContext::default().with_project(child);
-    vault.set_project_depth(root, 0, &writer, 3)?;
+    crate::workspace_roster::set_project_depth_signed_for_test(&vault, root, 0, &writer, 3, 0xA8)?;
     assert_eq!(
         dispatcher
             .dispatch_with_context(input.clone(), spawn.clone())
@@ -586,7 +586,7 @@ fn workflow_child_project_transition_and_later_release_recheck_live_ancestor() -
             .kind(),
         crate::error::ErrorKind::InvalidAgentDispatchInput
     );
-    vault.set_project_depth(root, 2, &writer, 4)?;
+    crate::workspace_roster::set_project_depth_signed_for_test(&vault, root, 2, &writer, 4, 0xA8)?;
     let status = workflow(dispatcher.dispatch_with_context(input.clone(), spawn.clone())?);
     let first = AttemptQueue::new(&vault).get(status.active_step)?.unwrap();
     assert_eq!(
@@ -596,7 +596,7 @@ fn workflow_child_project_transition_and_later_release_recheck_live_ancestor() -
         Some(1)
     );
     let queued = AttemptQueue::new(&vault).list()?.len();
-    vault.set_project_depth(root, 0, &writer, 5)?;
+    crate::workspace_roster::set_project_depth_signed_for_test(&vault, root, 0, &writer, 5, 0xA8)?;
     assert_eq!(
         workflow(dispatcher.dispatch_with_context(input, spawn)?)
             .attempt
@@ -615,5 +615,92 @@ fn workflow_child_project_transition_and_later_release_recheck_live_ancestor() -
         crate::error::ErrorKind::InvalidAgentDispatchInput
     );
     assert_eq!(AttemptQueue::new(&vault).list()?.len(), queued);
+    Ok(())
+}
+
+#[test]
+fn real_workflow_leaves_can_spawn_and_wrapper_costs_no_depth() -> Result<()> {
+    let (_dir, vault) = crate::test_util::open_test_vault_with(VaultConfig::default());
+    let agent = fixture(&vault, AgentCeiling::Proposed, "positive-depth-leaf")?;
+    let id = EntityId::now();
+    vault.save_workflow(&id, &WorkflowDefinition::new("spawn", vec![agent])?, 1)?;
+    let dispatcher = AgentDispatcher::new(&vault);
+    let root = workflow(dispatcher.dispatch(request(AgentDispatchTarget::Workflow(id), None))?);
+    assert_eq!(dispatcher.child_depth_remaining(root.active_step)?, 9);
+    let child = dispatcher.dispatch(DispatchAgent {
+        target: AgentDispatchTarget::Custom(agent),
+        parent_attempt: Some(root.active_step),
+        dedupe_key: None,
+        run_id: Some("workflow-headless".into()),
+        now: 11,
+    })?;
+    let AgentDispatchOutcome::Dispatched(child) = child else {
+        panic!("root workflow leaf spawned")
+    };
+    assert_eq!(child.input.depth_remaining, Some(9));
+    assert!(
+        dispatcher
+            .dispatch(DispatchAgent {
+                target: AgentDispatchTarget::Custom(agent),
+                parent_attempt: Some(root.attempt.id),
+                dedupe_key: None,
+                run_id: None,
+                now: 11,
+            })
+            .is_err(),
+        "wrapper is never a direct spawner"
+    );
+
+    let parent = dispatcher.dispatch(DispatchAgent {
+        target: AgentDispatchTarget::Custom(agent),
+        parent_attempt: None,
+        dedupe_key: None,
+        run_id: Some("parented-run".into()),
+        now: 12,
+    })?;
+    let AgentDispatchOutcome::Dispatched(parent) = parent else {
+        panic!("parent")
+    };
+    let mut req = request(AgentDispatchTarget::Workflow(id), Some(parent.attempt.id));
+    req.dedupe_key = Some("parented-workflow".into());
+    req.run_id = Some("parented-run".into());
+    let parented = workflow(dispatcher.dispatch(req)?);
+    assert_eq!(dispatcher.child_depth_remaining(parented.active_step)?, 8);
+    let branch = dispatcher.dispatch(DispatchAgent {
+        target: AgentDispatchTarget::Custom(agent),
+        parent_attempt: Some(parented.active_step),
+        dedupe_key: None,
+        run_id: Some("parented-run".into()),
+        now: 13,
+    })?;
+    let AgentDispatchOutcome::Dispatched(branch) = branch else {
+        panic!("parented workflow leaf spawned")
+    };
+    assert_eq!(branch.input.depth_remaining, Some(8));
+
+    let person = EntityId::now();
+    vault.put_entity(
+        &person,
+        crate::registry::ENTITY_TYPE_PERSON,
+        TimeRange { start: 1, end: 1 },
+        1,
+        b"owner",
+    )?;
+    let owner = crate::write_envelope::WriteActor::new(person, EdgeActorClass::Human);
+    crate::subject_model::tests::authorization::root_owner(&vault, owner, 0xAA)?;
+    crate::workspace_roster::set_project_depth_signed_for_test(
+        &vault,
+        vault.root_project()?,
+        0,
+        &owner,
+        14,
+        0xAA,
+    )?;
+    assert!(dispatcher.child_depth_remaining(root.active_step).is_err());
+    assert!(
+        dispatcher
+            .child_depth_remaining(parented.active_step)
+            .is_err()
+    );
     Ok(())
 }

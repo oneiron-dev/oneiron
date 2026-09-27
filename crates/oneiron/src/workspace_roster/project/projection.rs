@@ -80,41 +80,131 @@ pub(crate) fn validate_project_body(id: EntityId, bytes: &[u8]) -> Result<Vec<En
     Ok(ids)
 }
 
-/// Every project put, including raw batches and sync replay, reaches this
-/// snapshot-bound check. Only the owner edit door can mint the one-use proof
-/// for the exact old entity row and new body in this SAME write transaction.
+/// A signed depth revision travels with the project body. Both local edits
+/// and replicated materialization verify it against the stored authority log.
+fn verify_depth_proof(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    posture: crate::HostingPrivacyPosture,
+    id: EntityId,
+    body: &ProjectRecord,
+) -> Result<()> {
+    let proof = body.depth_proof.as_ref().ok_or_else(invalid)?;
+    if proof.schema_version != 1
+        || proof.project_id != id.to_hex()
+        || proof.depth != body.depth
+        || proof.revision == 0
+        || proof.signature.len() != 64
+    {
+        return Err(invalid());
+    }
+    let actor = EntityId::from_hex(&proof.actor_ref).map_err(|_| invalid())?;
+    let key = match proof.suite.as_str() {
+        "ed25519" => crate::authority::AuthorityKey::Ed25519(
+            proof
+                .public_key
+                .as_slice()
+                .try_into()
+                .map_err(|_| invalid())?,
+        ),
+        "p256" => crate::authority::AuthorityKey::P256(proof.public_key.clone()),
+        _ => return Err(invalid()),
+    };
+    let signature = crate::authority::AuthoritySignature {
+        suite: key.suite(),
+        public_key: key.clone(),
+        signature: proof.signature.clone(),
+    };
+    if !crate::authority::verify_authority_signature(&signature, &depth_transcript(proof)?) {
+        return Err(invalid());
+    }
+    let fold = crate::authority::authority_fold_readonly_for_store_in_txn(store, posture, txn)?;
+    if fold.vault_id != Some(proof.vault_id)
+        || fold.vault_root_is_conflicted()
+        || fold.actor_bindings.get(&key).is_none_or(|binding| {
+            binding.actor_ref != actor
+                || binding.actor_class != "human"
+                || binding.status != crate::authority::ActorBindingStatus::Active
+        })
+    {
+        return Err(invalid());
+    }
+    Ok(())
+}
+
 pub(crate) fn validate_project_depth_change(
     store: &Store,
     txn: &mut heed::RwTxn<'_>,
+    posture: crate::HostingPrivacyPosture,
     id: EntityId,
     kind: u8,
     bytes: &[u8],
 ) -> Result<()> {
     let body: ProjectRecord = rmp_serde::from_slice(bytes).map_err(|_| invalid())?;
-    let Some(raw) = store.entities.get(txn, id.as_bytes())? else {
-        // A newly minted project has no prior owner edit. Edits arrive later
-        // through the typed door, not by choosing a wider birth value.
-        return if body.depth == DEFAULT_PROJECT_DEPTH {
-            Ok(())
+    if body
+        .depth_proof
+        .as_ref()
+        .is_some_and(|proof| proof.revision == 0)
+    {
+        return Err(invalid());
+    }
+    let next = depth_history_of(&body);
+    let history_key = depth_history_key(id);
+    let history = store
+        .vault_meta
+        .get(txn, &history_key)?
+        .map(|raw| depth_history_decode(&raw))
+        .transpose()?;
+    let previous = store.entities.get(txn, id.as_bytes())?;
+    if let Some(raw) = previous.as_ref() {
+        let header = EntityMetadataHeader::parse(raw).ok_or_else(invalid)?;
+        if header.entity_type != kind || raw.len() == ENTITY_METADATA_HEADER_LEN {
+            return Err(invalid());
+        }
+        let old: ProjectRecord =
+            rmp_serde::from_slice(&raw[ENTITY_METADATA_HEADER_LEN..]).map_err(|_| invalid())?;
+        let prior = depth_history_of(&old);
+        if history.is_some_and(|history| history != prior) {
+            return Err(invalid());
+        }
+        if next == prior {
+            if body.depth_proof != old.depth_proof {
+                return Err(invalid());
+            }
         } else {
-            Err(invalid())
-        };
-    };
-    let header = EntityMetadataHeader::parse(&raw).ok_or_else(invalid)?;
-    if header.entity_type != kind || raw.len() == ENTITY_METADATA_HEADER_LEN {
-        return Err(invalid());
+            if next.revision <= prior.revision {
+                return Err(invalid());
+            }
+            verify_depth_proof(store, txn, posture, id, &body)?;
+            let marker = depth_edit_key(id);
+            if let Some(staged) = store.vault_meta.get(txn, &marker)? {
+                if staged.as_ref() != depth_edit_digest(raw, bytes) {
+                    return Err(invalid());
+                }
+                store.vault_meta.delete(txn, &marker)?;
+            }
+        }
+    } else if let Some(history) = history {
+        // The id was deleted. A same-id re-put cannot escape its last depth
+        // or revision. A trusted edit needs a LIVE project, never a new birth.
+        if next != history {
+            return Err(invalid());
+        }
+        if next.revision > 0 {
+            verify_depth_proof(store, txn, posture, id, &body)?;
+        }
+    } else if next
+        != (ProjectDepthHistory {
+            depth: DEFAULT_PROJECT_DEPTH,
+            revision: 0,
+        })
+    {
+        // First materialization after a signed owner edit may skip intermediates.
+        verify_depth_proof(store, txn, posture, id, &body)?;
     }
-    let old: ProjectRecord =
-        rmp_serde::from_slice(&raw[ENTITY_METADATA_HEADER_LEN..]).map_err(|_| invalid())?;
-    if old.depth == body.depth {
-        return Ok(());
-    }
-    let key = depth_edit_key(id);
-    let expected = depth_edit_digest(&raw, bytes);
-    if store.vault_meta.get(txn, &key)?.as_deref() != Some(expected.as_slice()) {
-        return Err(invalid());
-    }
-    store.vault_meta.delete(txn, &key)?;
+    store
+        .vault_meta
+        .put(txn, &history_key, &depth_history_encode(next))?;
     Ok(())
 }
 

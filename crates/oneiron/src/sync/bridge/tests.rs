@@ -4027,7 +4027,7 @@ fn observer_b_quarantines_in_range_project_depth_edit_without_owner_proof() -> c
     )?;
     let writer = crate::write_envelope::WriteActor::new(person, EdgeActorClass::Human);
     let revoke = crate::subject_model::tests::authorization::root_owner(&vault, writer, 0xB1)?;
-    vault.set_project_depth(root, 0, &writer, 2)?;
+    crate::workspace_roster::set_project_depth_signed_for_test(&vault, root, 0, &writer, 2, 0xB1)?;
     vault.put_authority_log_entry(
         &revoke,
         TimeRange {
@@ -4055,6 +4055,89 @@ fn observer_b_quarantines_in_range_project_depth_edit_without_owner_proof() -> c
     assert_eq!(vault.project(root)?.unwrap().depth, 0);
     assert!(
         crate::sync::quarantine::quarantined_records(&vault)?
+            .iter()
+            .any(|(_, record)| record.reason_code == "InvalidProjectBody")
+    );
+    Ok(())
+}
+
+#[test]
+fn observer_b_replays_signed_owner_project_depth_and_rejects_tampering() -> crate::Result<()> {
+    let a = test_vault();
+    let root_a = a.root_project()?;
+    let leader = EntityId::from_hex(&a.project(root_a)?.unwrap().leader)?;
+    let project = EntityId::now();
+    a.put_project(
+        project,
+        &crate::workspace_roster::ProjectRecord::new(project, Some(root_a), root_a, leader),
+        1,
+    )?;
+    let owner_id = EntityId::now();
+    a.put_entity(
+        &owner_id,
+        crate::registry::ENTITY_TYPE_PERSON,
+        TimeRange { start: 1, end: 1 },
+        1,
+        b"owner",
+    )?;
+    let owner = crate::write_envelope::WriteActor::new(owner_id, EdgeActorClass::Human);
+    crate::subject_model::tests::authorization::root_owner(&a, owner, 0xB7)?;
+    crate::workspace_roster::set_project_depth_signed_for_test(&a, project, 2, &owner, 2, 0xB7)?;
+    let signed = a.project(project)?.unwrap();
+
+    let b = test_vault();
+    let root_b = b.root_project()?;
+    let lead_b = EntityId::from_hex(&b.project(root_b)?.unwrap().leader)?;
+    b.put_project(
+        root_a,
+        &crate::workspace_roster::ProjectRecord::new(root_a, Some(root_b), root_b, lead_b),
+        1,
+    )?;
+    b.put_project(
+        project,
+        &crate::workspace_roster::ProjectRecord::new(project, Some(root_a), root_a, lead_b),
+        1,
+    )?;
+    b.put_entity(
+        &owner_id,
+        crate::registry::ENTITY_TYPE_PERSON,
+        TimeRange { start: 1, end: 1 },
+        1,
+        b"owner",
+    )?;
+    b.import_signed_authority_history(&a.export_signed_authority_history()?)?;
+    let doc = LoroDoc::new();
+    let materializer = Arc::new(Materializer::new());
+    let _subscription = register_observer_b(&doc, &b, &materializer, "2026-03");
+    map_insert_bytes(
+        &doc.get_map("entities"),
+        &project.to_hex(),
+        &entity_blob(
+            b.project_type_byte()?,
+            TimeRange { start: 2, end: 2 },
+            2,
+            &rmp_serde::to_vec_named(&signed).expect("signed project body"),
+        ),
+    )?;
+    doc.commit();
+    assert_eq!(b.project(project)?.unwrap().depth, 2);
+
+    let mut forged = signed;
+    forged.depth = 12; // The owner signed depth 2, not 12.
+    map_insert_bytes(
+        &doc.get_map("entities"),
+        &project.to_hex(),
+        &entity_blob(
+            b.project_type_byte()?,
+            TimeRange { start: 3, end: 3 },
+            3,
+            &rmp_serde::to_vec_named(&forged).expect("forged project body"),
+        ),
+    )?;
+    doc.commit();
+    assert_eq!(b.project(project)?.unwrap().depth, 2);
+    assert!(
+        crate::sync::quarantine::quarantined_records(&b)?
             .iter()
             .any(|(_, record)| record.reason_code == "InvalidProjectBody")
     );

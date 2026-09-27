@@ -3140,7 +3140,14 @@ fn spawn_reads_live_project_depth_and_never_widens_a_frozen_parent() -> Result<(
             .kind(),
         crate::error::ErrorKind::InvalidAgentDispatchInput,
     );
-    vault.set_project_depth(child_project, 2, &owner, 3)?;
+    crate::workspace_roster::set_project_depth_signed_for_test(
+        &vault,
+        child_project,
+        2,
+        &owner,
+        3,
+        0xA4,
+    )?;
     let spawn = |parent: AttemptId, now: u64, project: Option<EntityId>| {
         dispatcher.dispatch_with_context(
             DispatchAgent {
@@ -3166,7 +3173,14 @@ fn spawn_reads_live_project_depth_and_never_widens_a_frozen_parent() -> Result<(
             .kind(),
         crate::error::ErrorKind::InvalidAgentDispatchInput,
     );
-    vault.set_project_depth(child_project, 0, &owner, 6)?;
+    crate::workspace_roster::set_project_depth_signed_for_test(
+        &vault,
+        child_project,
+        0,
+        &owner,
+        6,
+        0xA4,
+    )?;
     let before = AttemptQueue::new(&vault).list()?.len();
     assert_eq!(
         spawn(descendant.attempt.id, 7, None).unwrap_err().kind(),
@@ -3193,7 +3207,14 @@ fn spawn_reads_live_project_depth_and_never_widens_a_frozen_parent() -> Result<(
         crate::error::ErrorKind::InvalidAgentDispatchInput,
     );
     assert_eq!(AttemptQueue::new(&vault).list()?.len(), before);
-    vault.set_project_depth(child_project, 12, &owner, 8)?;
+    crate::workspace_roster::set_project_depth_signed_for_test(
+        &vault,
+        child_project,
+        12,
+        &owner,
+        8,
+        0xA4,
+    )?;
     let narrow = dispatched(spawn(descendant.attempt.id, 9, None)?);
     assert_eq!(narrow.input.depth_remaining, Some(0));
     Ok(())
@@ -3241,18 +3262,18 @@ fn child_project_transition_obeys_live_parent_and_all_ancestor_depth_rows() -> R
             AgentSpawnContext::default().with_project(child_project),
         )
     };
-    vault.set_project_depth(root, 0, &owner, 3)?;
+    crate::workspace_roster::set_project_depth_signed_for_test(&vault, root, 0, &owner, 3, 0xA6)?;
     let count = AttemptQueue::new(&vault).list()?.len();
     assert_eq!(
         spawn(root_attempt.attempt.id, 4).unwrap_err().kind(),
         ErrorKind::InvalidAgentDispatchInput
     );
     assert_eq!(AttemptQueue::new(&vault).list()?.len(), count);
-    vault.set_project_depth(root, 2, &owner, 5)?;
+    crate::workspace_roster::set_project_depth_signed_for_test(&vault, root, 2, &owner, 5, 0xA6)?;
     let child = dispatched(spawn(root_attempt.attempt.id, 6)?);
     assert_eq!(child.input.depth_remaining, Some(1));
     // A root reduction applies through the already-dispatched child project.
-    vault.set_project_depth(root, 0, &owner, 7)?;
+    crate::workspace_roster::set_project_depth_signed_for_test(&vault, root, 0, &owner, 7, 0xA6)?;
     assert_eq!(
         dispatcher
             .dispatch(DispatchAgent {
@@ -3266,7 +3287,7 @@ fn child_project_transition_obeys_live_parent_and_all_ancestor_depth_rows() -> R
             .kind(),
         ErrorKind::InvalidAgentDispatchInput
     );
-    vault.set_project_depth(root, 1, &owner, 9)?;
+    crate::workspace_roster::set_project_depth_signed_for_test(&vault, root, 1, &owner, 9, 0xA6)?;
     assert_eq!(
         dispatched(spawn(root_attempt.attempt.id, 10)?)
             .input
@@ -3316,7 +3337,9 @@ fn depth_edits_do_not_change_identical_dedupe_intent() -> Result<()> {
     assert_eq!(child.input.depth_remaining, Some(9));
     let count = AttemptQueue::new(&vault).list()?.len();
     for (depth, at) in [(2, 3), (12, 5), (0, 7)] {
-        vault.set_project_depth(root, depth, &owner, at)?;
+        crate::workspace_roster::set_project_depth_signed_for_test(
+            &vault, root, depth, &owner, at, 0xA7,
+        )?;
         let mut retry = request.clone();
         retry.now = at + 1;
         let AgentDispatchOutcome::Existing(existing) = dispatcher.dispatch(retry.clone())? else {

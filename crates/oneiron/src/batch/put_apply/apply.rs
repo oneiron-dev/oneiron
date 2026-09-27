@@ -59,6 +59,7 @@ pub(in crate::batch) fn apply_put(
     preflight_gate_decision_id: Option<crate::store::GateDecisionId>,
     companion_retired_histories: Option<&CompanionRetiredHistoryOverlay>,
     origin: BaseWriteOrigin<'_>,
+    posture: crate::HostingPrivacyPosture,
 ) -> Result<AppliedPut> {
     super::super::person_substrate::validate_scope_identity(id)?;
     // Normalize before body comparison, short-id hashing and scope stamping so
@@ -70,7 +71,15 @@ pub(in crate::batch) fn apply_put(
         None
     };
     let data = normalized_policy.as_deref().unwrap_or(data);
-    super::put_staging::validate_scope_carriers(store, wtxn, id, entity_type, data, origin)?;
+    super::put_staging::validate_scope_carriers(
+        store,
+        wtxn,
+        id,
+        entity_type,
+        data,
+        origin,
+        posture,
+    )?;
     guard_storage_owned_body(store, wtxn, &id, entity_type, occurred, data, replicated)?;
     super::put_staging::validate_domain_carriers(store, wtxn, id, entity_type, data, replicated)?;
     let mutation_recorded_at = crate::ports::recorded_at_in_txn(store, wtxn)?;

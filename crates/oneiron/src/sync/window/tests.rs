@@ -3732,7 +3732,7 @@ fn forward_rematerialization_quarantines_in_range_project_depth_edit() -> Result
     )?;
     let writer = crate::write_envelope::WriteActor::new(person, EdgeActorClass::Human);
     let revoke = crate::subject_model::tests::authorization::root_owner(&vault, writer, 0xB2)?;
-    vault.set_project_depth(root, 0, &writer, 2)?;
+    crate::workspace_roster::set_project_depth_signed_for_test(&vault, root, 0, &writer, 2, 0xB2)?;
     vault.put_authority_log_entry(
         &revoke,
         TimeRange {
@@ -3767,6 +3767,115 @@ fn forward_rematerialization_quarantines_in_range_project_depth_edit() -> Result
         quarantine::quarantined_records(&vault)?
             .iter()
             .any(|(_, record)| record.reason_code == "InvalidProjectBody")
+    );
+    Ok(())
+}
+
+#[test]
+fn signed_owner_project_depth_replays_to_existing_and_new_replicas() -> Result<()> {
+    let (_a_dir, a) = test_vault();
+    let root_a = a.root_project()?;
+    let lead = EntityId::from_hex(&a.project(root_a)?.unwrap().leader)?;
+    let project = EntityId::now();
+    a.put_project(
+        project,
+        &crate::workspace_roster::ProjectRecord::new(project, Some(root_a), root_a, lead),
+        1,
+    )?;
+    let owner_id = EntityId::now();
+    a.put_entity(
+        &owner_id,
+        crate::registry::ENTITY_TYPE_PERSON,
+        TimeRange { start: 1, end: 1 },
+        1,
+        b"person",
+    )?;
+    let owner = crate::write_envelope::WriteActor::new(owner_id, EdgeActorClass::Human);
+    crate::subject_model::tests::authorization::root_owner(&a, owner, 0xB6)?;
+    let history = a.export_signed_authority_history()?;
+    crate::workspace_roster::set_project_depth_signed_for_test(&a, project, 2, &owner, 2, 0xB6)?;
+    let signed = a.project(project)?.unwrap();
+    assert_eq!(signed.depth_proof.as_ref().unwrap().revision, 1);
+    let key = WindowKey::new("2026-03");
+    let stamp = key.start_timestamp().expect("window timestamp") + 60;
+    let blob = make_entity_blob(
+        a.project_type_byte()?,
+        stamp,
+        &rmp_serde::to_vec_named(&signed).expect("project body"),
+    );
+
+    let prepare = |b: &Vault, existing: bool| -> Result<()> {
+        let root_b = b.root_project()?;
+        let leader = EntityId::from_hex(&b.project(root_b)?.unwrap().leader)?;
+        b.put_project(
+            root_a,
+            &crate::workspace_roster::ProjectRecord::new(root_a, Some(root_b), root_b, leader),
+            1,
+        )?;
+        if existing {
+            b.put_project(
+                project,
+                &crate::workspace_roster::ProjectRecord::new(project, Some(root_a), root_a, leader),
+                1,
+            )?;
+        }
+        b.put_entity(
+            &owner_id,
+            crate::registry::ENTITY_TYPE_PERSON,
+            TimeRange { start: 1, end: 1 },
+            1,
+            b"person",
+        )?;
+        b.import_signed_authority_history(&history)?;
+        Ok(())
+    };
+    for existing in [true, false] {
+        let (dir, b) = test_vault();
+        prepare(&b, existing)?;
+        let doc = create_window_doc("owner-edit", &key);
+        doc.get_map("entities")
+            .insert(project.to_hex().as_str(), blob.as_slice())
+            .expect("replicated project edit");
+        doc.commit();
+        assert_eq!(
+            forward_rematerialize(&b, &doc, &Materializer::new(), &key)?,
+            1
+        );
+        assert_eq!(b.project(project)?.unwrap().depth, 2);
+        drop(b);
+        let reopened = Vault::open(dir.path(), VaultConfig::device())?;
+        assert_eq!(reopened.project(project)?.unwrap().depth, 2);
+        // A retry of the same signed owner fact is idempotent on rematerialization.
+        forward_rematerialize(&reopened, &doc, &Materializer::new(), &key)?;
+        assert_eq!(reopened.project(project)?.unwrap().depth, 2);
+    }
+    let (_forged_dir, forged_vault) = test_vault();
+    prepare(&forged_vault, false)?;
+    let mut tampered = signed;
+    tampered.depth_proof.as_mut().unwrap().signature[0] ^= 1;
+    let tampered_doc = create_window_doc("tampered-owner-edit", &key);
+    tampered_doc
+        .get_map("entities")
+        .insert(
+            project.to_hex().as_str(),
+            make_entity_blob(
+                a.project_type_byte()?,
+                stamp + 1,
+                &rmp_serde::to_vec_named(&tampered).expect("tampered proof"),
+            )
+            .as_slice(),
+        )
+        .expect("insert tampered proof");
+    tampered_doc.commit();
+    assert_eq!(
+        forward_rematerialize(&forged_vault, &tampered_doc, &Materializer::new(), &key)?,
+        0
+    );
+    assert!(forged_vault.project(project)?.is_none());
+    assert!(
+        quarantine::quarantined_records(&forged_vault)?
+            .iter()
+            .any(|(_, row)| row.reason_code == "InvalidProjectBody")
     );
     Ok(())
 }

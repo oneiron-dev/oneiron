@@ -193,7 +193,14 @@ fn resident_revisits_identical_inbox_event_after_project_depth_edit() -> Result<
     let before = AttemptQueue::new(&vault).list()?.len();
     let writer = crate::write_envelope::WriteActor::new(owner, crate::edge::EdgeActorClass::Human);
     crate::subject_model::tests::authorization::root_owner(&vault, writer, 0xB3)?;
-    vault.set_project_depth(vault.root_project()?, 0, &writer, 6)?;
+    crate::workspace_roster::set_project_depth_signed_for_test(
+        &vault,
+        vault.root_project()?,
+        0,
+        &writer,
+        6,
+        0xB3,
+    )?;
     assert!(dispatcher.dispatch_resident_inbox(agent, 16, 7)?.is_empty());
     assert_eq!(AttemptQueue::new(&vault).list()?.len(), before);
     Ok(())

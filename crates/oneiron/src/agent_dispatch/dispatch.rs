@@ -446,8 +446,17 @@ impl<'a> AgentDispatcher<'a> {
                 )));
             }
             let row = AttemptQueue::new(self.vault).get_in_txn(txn, attempt)?;
-            if let Some(row) = &row {
-                super::workflow_record::reject_wrapper_parent(row)?;
+            if let Some(row) = &row
+                && super::workflow_record::is_wrapper(row)
+            {
+                if distance == 0 {
+                    super::workflow_record::reject_wrapper_parent(row)?;
+                }
+                // The wrapper is inert bookkeeping, not a spawned authority
+                // level. Verify its registered workflow and cross to its real
+                // parent without spending another unit of project depth.
+                cursor = self.workflow_authority_parent_in_txn(txn, Some(attempt))?;
+                continue;
             }
             let input = row.as_ref().and_then(record_dispatch_input);
             if distance == 0 {

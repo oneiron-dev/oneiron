@@ -251,6 +251,7 @@ pub(super) fn apply_ops_with_origin(
                     preflight_decision_id,
                     Some(&companion_retired_histories),
                     origin,
+                    config.privacy.posture,
                 )?;
                 if let Some((source_id, source_bytes)) = applied.portable_agent_source {
                     apply_ops_with_origin(
@@ -380,6 +381,7 @@ pub(super) fn apply_ops_with_origin(
                 };
                 let applied = apply_claim_candidate(
                     store,
+                    config.privacy.posture,
                     wtxn,
                     id,
                     *candidate,

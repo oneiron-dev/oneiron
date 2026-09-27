@@ -1,4 +1,6 @@
+mod support;
 use super::*;
+pub(crate) use support::signed_depth as set_project_depth_signed_for_test;
 #[test]
 fn project_root_child_members_and_home_room_are_atomic() -> Result<()> {
     let dir = tempfile::tempdir()?;
@@ -263,15 +265,33 @@ fn project_depth_is_person_editable_and_round_trips_with_member_refs() -> Result
     let writer = crate::write_envelope::WriteActor::new(person, crate::edge::EdgeActorClass::Human);
     let revoke = crate::subject_model::tests::authorization::root_owner(&vault, writer, 0xA3)?;
     let agent = crate::write_envelope::WriteActor::new(leader, crate::edge::EdgeActorClass::Agent);
-    assert!(vault.set_project_depth(child, 2, &agent, 2).is_err());
+    assert!(
+        crate::workspace_roster::set_project_depth_signed_for_test(
+            &vault, child, 2, &agent, 2, 0xA3
+        )
+        .is_err()
+    );
     assert_eq!(vault.project(child)?, Some(body.clone()));
-    vault.set_project_depth(child, 2, &writer, 2)?;
-    body.depth = 2;
-    assert_eq!(vault.project(child)?, Some(body.clone()));
-    vault.set_project_depth(child, 12, &writer, 3)?;
-    body.depth = 12;
-    assert_eq!(vault.project(child)?, Some(body.clone()));
-    assert!(vault.set_project_depth(child, 17, &writer, 4).is_err());
+    crate::workspace_roster::set_project_depth_signed_for_test(&vault, child, 2, &writer, 2, 0xA3)?;
+    let edited = vault.project(child)?.unwrap();
+    assert_eq!(edited.depth, 2);
+    assert_eq!(edited.sessions, body.sessions);
+    assert_eq!(edited.depth_proof.as_ref().unwrap().revision, 1);
+    body = edited;
+    crate::workspace_roster::set_project_depth_signed_for_test(
+        &vault, child, 12, &writer, 3, 0xA3,
+    )?;
+    let edited = vault.project(child)?.unwrap();
+    assert_eq!(edited.depth, 12);
+    assert_eq!(edited.sessions, body.sessions);
+    assert_eq!(edited.depth_proof.as_ref().unwrap().revision, 2);
+    body = edited;
+    assert!(
+        crate::workspace_roster::set_project_depth_signed_for_test(
+            &vault, child, 17, &writer, 4, 0xA3
+        )
+        .is_err()
+    );
     assert_eq!(vault.project(child)?, Some(body.clone()));
     vault.put_authority_log_entry(
         &revoke,
@@ -282,10 +302,11 @@ fn project_depth_is_person_editable_and_round_trips_with_member_refs() -> Result
         102,
     )?;
     assert_eq!(
-        vault
-            .set_project_depth(child, 1, &writer, 5)
-            .unwrap_err()
-            .kind(),
+        crate::workspace_roster::set_project_depth_signed_for_test(
+            &vault, child, 1, &writer, 5, 0xA3
+        )
+        .unwrap_err()
+        .kind(),
         crate::error::ErrorKind::WriteConcurrentWithRevocation
     );
     assert_eq!(vault.project(child)?, Some(body.clone()));
@@ -372,7 +393,7 @@ fn in_range_depth_cannot_be_changed_through_generic_or_replicated_puts() -> Resu
     )?;
     let owner = crate::write_envelope::WriteActor::new(person, crate::edge::EdgeActorClass::Human);
     let revoke = crate::subject_model::tests::authorization::root_owner(&vault, owner, 0xA5)?;
-    vault.set_project_depth(root, 0, &owner, 10)?;
+    crate::workspace_roster::set_project_depth_signed_for_test(&vault, root, 0, &owner, 10, 0xA5)?;
     assert_eq!(vault.project(root)?.unwrap().depth, 0);
     vault.put_authority_log_entry(
         &revoke,
@@ -386,10 +407,11 @@ fn in_range_depth_cannot_be_changed_through_generic_or_replicated_puts() -> Resu
     #[cfg(feature = "sync")]
     let bytes = encode(&forged)?;
     assert_eq!(
-        vault
-            .set_project_depth(root, 12, &owner, 11)
-            .unwrap_err()
-            .kind(),
+        crate::workspace_roster::set_project_depth_signed_for_test(
+            &vault, root, 12, &owner, 11, 0xA5
+        )
+        .unwrap_err()
+        .kind(),
         crate::error::ErrorKind::WriteConcurrentWithRevocation
     );
     assert_eq!(
@@ -410,5 +432,90 @@ fn in_range_depth_cannot_be_changed_through_generic_or_replicated_puts() -> Resu
         crate::error::ErrorKind::InvalidProjectBody
     );
     assert_eq!(vault.project(root)?.unwrap().depth, 0);
+    Ok(())
+}
+
+#[test]
+fn delete_recreate_cannot_reset_owner_depth_for_existing_attempt() -> Result<()> {
+    let dir = tempfile::tempdir()?;
+    let vault = Vault::open(dir.path(), crate::VaultConfig::default())?;
+    let root = vault.root_project()?;
+    let leader = EntityId::from_hex(&vault.project(root)?.unwrap().leader)?;
+    let id = EntityId::now();
+    let born = ProjectRecord::new(id, Some(root), root, leader);
+    vault.put_project(id, &born, 1)?;
+    let (agent, _) = vault
+        .get_seeded_agent_definition_by_logical_id("sys.default")?
+        .unwrap();
+    let dispatcher = crate::agent_dispatch::AgentDispatcher::new(&vault);
+    let root_attempt = dispatcher.dispatch(crate::agent_dispatch::DispatchAgent {
+        target: crate::agent_dispatch::AgentDispatchTarget::Custom(agent),
+        parent_attempt: None,
+        dedupe_key: None,
+        run_id: None,
+        now: 2,
+    })?;
+    let crate::agent_dispatch::AgentDispatchOutcome::Dispatched(root_attempt) = root_attempt else {
+        panic!("root")
+    };
+    let child = dispatcher.dispatch_with_context(
+        crate::agent_dispatch::DispatchAgent {
+            target: crate::agent_dispatch::AgentDispatchTarget::Custom(agent),
+            parent_attempt: Some(root_attempt.attempt.id),
+            dedupe_key: None,
+            run_id: None,
+            now: 3,
+        },
+        crate::agent_dispatch::AgentSpawnContext::default().with_project(id),
+    )?;
+    let crate::agent_dispatch::AgentDispatchOutcome::Dispatched(child) = child else {
+        panic!("child")
+    };
+    assert!(child.input.depth_remaining.unwrap() > 0);
+    let person = EntityId::now();
+    vault.put_entity(
+        &person,
+        crate::registry::ENTITY_TYPE_PERSON,
+        TimeRange { start: 1, end: 1 },
+        1,
+        b"owner",
+    )?;
+    let writer = crate::write_envelope::WriteActor::new(person, crate::edge::EdgeActorClass::Human);
+    crate::subject_model::tests::authorization::root_owner(&vault, writer, 0xB4)?;
+    crate::workspace_roster::set_project_depth_signed_for_test(&vault, id, 0, &writer, 4, 0xB4)?;
+    let stopped = vault.project(id)?.unwrap();
+    let try_spawn = || {
+        dispatcher.dispatch(crate::agent_dispatch::DispatchAgent {
+            target: crate::agent_dispatch::AgentDispatchTarget::Custom(agent),
+            parent_attempt: Some(child.attempt.id),
+            dedupe_key: None,
+            run_id: None,
+            now: 5,
+        })
+    };
+    assert!(try_spawn().is_err());
+    let kind = vault.project_type_byte()?;
+    let range = TimeRange { start: 6, end: 6 };
+    let err = vault
+        .batch()
+        .delete(&id)
+        .put(&id, kind, range, 6, &encode(&born)?)
+        .commit()
+        .unwrap_err();
+    assert_eq!(err.kind(), crate::error::ErrorKind::InvalidProjectBody);
+    assert_eq!(vault.project(id)?, Some(stopped.clone()));
+    vault.batch().delete(&id).commit()?;
+    assert!(vault.project(id)?.is_none());
+    assert_eq!(
+        vault.put_project(id, &born, 7).unwrap_err().kind(),
+        crate::error::ErrorKind::InvalidProjectBody
+    );
+    assert!(vault.project(id)?.is_none());
+    vault.put_project(id, &stopped, 8)?;
+    assert_eq!(vault.project(id)?, Some(stopped));
+    assert!(try_spawn().is_err());
+    drop(vault);
+    let reopened = Vault::open(dir.path(), crate::VaultConfig::default())?;
+    assert_eq!(reopened.project(id)?.unwrap().depth, 0);
     Ok(())
 }

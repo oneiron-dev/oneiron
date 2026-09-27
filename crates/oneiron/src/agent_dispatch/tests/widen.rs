@@ -739,8 +739,9 @@ fn parked_widen_replay_obeys_live_project_depth_before_dispatch() -> Result<()> 
         request(),
     )?);
     let writer = crate::write_envelope::WriteActor::new(approver.actor(), EdgeActorClass::Human);
+    crate::subject_model::tests::authorization::root_owner(&vault, writer, 0xB5)?;
     let root = vault.root_project()?;
-    vault.set_project_depth(root, 0, &writer, 4)?;
+    crate::workspace_roster::set_project_depth_signed_for_test(&vault, root, 0, &writer, 4, 0xB5)?;
     let before = AttemptQueue::new(&vault).list()?.len();
     assert_eq!(
         dispatcher
@@ -750,7 +751,7 @@ fn parked_widen_replay_obeys_live_project_depth_before_dispatch() -> Result<()> 
         ErrorKind::InvalidAgentDispatchInput
     );
     assert_eq!(AttemptQueue::new(&vault).list()?.len(), before);
-    vault.set_project_depth(root, 10, &writer, 6)?;
+    crate::workspace_roster::set_project_depth_signed_for_test(&vault, root, 10, &writer, 6, 0xB5)?;
     let landed = dispatched(dispatcher.approve_context_widen(&approver, &proposal, 7)?);
     assert_eq!(
         landed.input.depth_remaining,
