@@ -22661,7 +22661,7 @@
      "purpose": "Attributed NOTE records with built-in, plugin and registered PACK kinds",
      "surface": {
       "const": 1,
-      "crate-vis": 21,
+      "crate-vis": 22,
       "enum": 3,
       "fn": 4,
       "re-export": 7,
@@ -22743,7 +22743,7 @@
      "path": "src/note/document.rs",
      "purpose": "NOTE entity-document operations, stable cursors and citation provenance",
      "surface": {
-      "crate-vis": 15,
+      "crate-vis": 18,
       "enum": 2,
       "fn": 1,
       "struct": 3
@@ -22756,8 +22756,8 @@
      "path": "src/note/document_store.rs",
      "purpose": "Actor-bound NOTE editor verbs and atomic entity-document persistence",
      "surface": {
-      "crate-vis": 5,
-      "fn": 7
+      "crate-vis": 7,
+      "fn": 8
      }
     },
     {
@@ -22898,7 +22898,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "test",
      "notable": [],
      "path": "src/note/program_tests.rs",
@@ -22968,6 +22968,16 @@
      "path": "src/note/tests.rs",
      "purpose": "NOTE body ABI: the pinned four keys, the closed kind, and the negative set the decoder must fail closed on",
      "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/note/title_index.rs",
+     "purpose": "Atomic title-reservation replacement for authoritative NOTE document sets",
+     "surface": {
+      "crate-vis": 4
+     }
     },
     {
      "bucket": "m",
@@ -26885,7 +26895,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "CanonicalDocument",
@@ -36390,7 +36400,7 @@
      "purpose": "Durable batched speculation over real detached worktrees"
     },
     "note": {
-     "files": 28,
+     "files": 29,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "file+dir",
@@ -36910,7 +36920,7 @@
    },
    "over_bar": 2,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2190,
+   "source_files": 2191,
    "test_files": 742
   },
   "oneiron-android": {
@@ -43020,7 +43030,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "test",
      "notable": [],
      "path": "src/handler/note_socket_tests.rs",
