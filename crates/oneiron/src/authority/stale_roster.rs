@@ -11,16 +11,15 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use super::*;
 
-fn expired_stale_roster_approvals(
+/// Earliest second at which each currently valid approval becomes stale.
+/// A checked deadline at the u64 ceiling never arrives, just as the original
+/// saturating-subtraction predicate could never exceed its window there.
+fn stale_roster_approval_deadlines(
     entries: &[AuthorityLogEntry],
     fold: &AuthorityFold,
     first_seen: &BTreeMap<AuthorityEntryHash, u64>,
-    now_secs: Option<u64>,
     window_secs: u64,
-) -> BTreeSet<AuthorityEntryHash> {
-    let Some(now) = now_secs else {
-        return BTreeSet::new();
-    };
+) -> BTreeMap<AuthorityEntryHash, u64> {
     let mut revoked_at = BTreeMap::<AuthorityKey, u64>::new();
     for entry in entries {
         let Ok(hash) = authority_entry_hash(entry) else {
@@ -73,16 +72,47 @@ fn expired_stale_roster_approvals(
                 return None;
             }
             let seen = first_seen.get(&hash)?;
-            // A newly replayed stale-roster approval cannot restart the grace
-            // window after a locally observed revocation. Start no later than
-            // that revocation, and earlier if this approval was already observed.
-            std::iter::once(&entry.signer)
+            // A replayed approval cannot restart the grace window. The strict
+            // `now - start > window` predicate first changes at start+window+1.
+            let deadline = std::iter::once(&entry.signer)
                 .chain(&entry.cosigns)
                 .filter_map(|signature| revoked_at.get(&signature.public_key))
-                .any(|revoked| now.saturating_sub((*seen).min(*revoked)) > window_secs)
-                .then_some(hash)
+                .filter_map(|revoked| seen.min(revoked).checked_add(window_secs)?.checked_add(1))
+                .min()?;
+            Some((hash, deadline))
         })
         .collect()
+}
+
+fn expired_stale_roster_approvals(
+    entries: &[AuthorityLogEntry],
+    fold: &AuthorityFold,
+    first_seen: &BTreeMap<AuthorityEntryHash, u64>,
+    now_secs: Option<u64>,
+    window_secs: u64,
+) -> BTreeSet<AuthorityEntryHash> {
+    let Some(now) = now_secs else {
+        return BTreeSet::new();
+    };
+    stale_roster_approval_deadlines(entries, fold, first_seen, window_secs)
+        .into_iter()
+        .filter_map(|(hash, deadline)| (deadline <= now).then_some(hash))
+        .collect()
+}
+
+/// First still-future stale-roster change after an exact fold. Called only on
+/// a cache miss, so hot checks do not rescan the authority log.
+pub(super) fn next_stale_roster_deadline(
+    entries: &[AuthorityLogEntry],
+    fold: &AuthorityFold,
+    first_seen: &BTreeMap<AuthorityEntryHash, u64>,
+    now_secs: u64,
+    window_secs: u64,
+) -> Option<u64> {
+    stale_roster_approval_deadlines(entries, fold, first_seen, window_secs)
+        .into_values()
+        .filter(|deadline| *deadline > now_secs)
+        .min()
 }
 
 /// Project after the structural DAG fold has reached its fixed point. All

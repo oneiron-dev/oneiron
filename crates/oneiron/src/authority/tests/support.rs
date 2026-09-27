@@ -441,6 +441,7 @@ impl LocalFoldContext {
             first_seen_at_secs: &self.first_seen_at_secs,
             sequence_floors: None,
             now_secs: None,
+            deadline_observer: None,
             enforce_seen_time_delay: false,
             vetoed_widens: &self.vetoed_widens,
             authority_forks: &self.authority_forks,

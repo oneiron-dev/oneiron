@@ -88,3 +88,60 @@ fn managed_host_genesis_passes_consent_and_self_host_refuses_it() {
         assert!(fold.roster.is_empty());
     }
 }
+
+#[test]
+fn cached_snapshot_rechecks_posture_for_host_root() {
+    let dir = tempfile::tempdir().unwrap();
+    let vault = crate::Vault::open(dir.path(), crate::VaultConfig::device()).unwrap();
+    let signer = ed_key(244);
+    let key = authority_key_from_ed(&signer);
+    let genesis = sign_ed(
+        unsigned_entry(
+            None,
+            0,
+            vec![],
+            AuthorityOp::Genesis {
+                device: device(
+                    key.clone(),
+                    ROLE_OWNER | ROLE_ADMIN | ROLE_CLOUD,
+                    AuthorityTier::CloudCustodial,
+                ),
+                genesis_nonce: [244; 32],
+                tier_floor: AuthorityTier::Software,
+                pending_widen_delay_secs: DEFAULT_PENDING_WIDEN_DELAY_SECS,
+                recovery: crate::authority::GenesisRecoveryStep::Saved([1; 32]),
+            },
+            key.clone(),
+            1,
+        ),
+        &signer,
+    );
+    vault
+        .put_authority_log_entry(&genesis, TimeRange { start: 1, end: 1 }, 1)
+        .unwrap();
+    let txn = vault.store.env.read_txn().unwrap();
+    let local = crate::authority::authority_fold_readonly_for_store_in_txn(
+        &vault.store,
+        crate::HostingPrivacyPosture::SelfHostLocal,
+        &txn,
+    )
+    .unwrap();
+    let hosted = crate::authority::authority_fold_readonly_for_store_in_txn(
+        &vault.store,
+        crate::HostingPrivacyPosture::Hosted,
+        &txn,
+    )
+    .unwrap();
+    assert!(local.roster.is_empty());
+    assert!(hosted.roster.contains_key(&key));
+    assert!(
+        crate::authority::authority_fold_readonly_for_store_in_txn(
+            &vault.store,
+            crate::HostingPrivacyPosture::SelfHostLocal,
+            &txn,
+        )
+        .unwrap()
+        .roster
+        .is_empty()
+    );
+}
