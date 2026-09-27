@@ -560,6 +560,7 @@ fn fold_authority_log_once(
     let revoke_facts =
         super::revoke_proof::derive_revoke_facts(&by_hash, &entry_ancestors, context);
     let mut states = BTreeMap::<AuthorityEntryHash, FoldState>::new();
+    let mut rejected_permissive = BTreeSet::new();
     let mut pending: BTreeSet<AuthorityEntryHash> = by_hash.keys().copied().collect();
     let mut progressed = true;
     while progressed {
@@ -597,6 +598,17 @@ fn fold_authority_log_once(
                     progressed = true;
                 }
                 EntryFold::Invalid(issue) => {
+                    // Only the retired client-key door may be crossed as a
+                    // valid folded revoke. Other rejected grants keep the
+                    // separate, restriction-only proof path: their children
+                    // do not become ordinary valid entries.
+                    if matches!(entry.op, AuthorityOp::EnrollDevice { .. })
+                        && context
+                            .pre_handoff_entries
+                            .is_some_and(|allowed| !allowed.contains(&hash))
+                    {
+                        rejected_permissive.insert(hash);
+                    }
                     issues.push(issue);
                     pending.remove(&hash);
                     progressed = true;
@@ -613,7 +625,6 @@ fn fold_authority_log_once(
             for hash in stalled {
                 let entry = &by_hash[&hash];
                 let fold_context = context;
-                let empty_rejected = BTreeSet::new();
                 if let EntryFold::Ready(state) = super::ancestry_evaluator::evaluate_entry(
                     entry,
                     hash,
@@ -621,7 +632,7 @@ fn fold_authority_log_once(
                     &states,
                     &pending,
                     fold_context,
-                    super::ancestry_evaluator::EvaluationPhase::Stalled(&empty_rejected),
+                    super::ancestry_evaluator::EvaluationPhase::Stalled(&rejected_permissive),
                 ) {
                     states.insert(hash, state);
                     pending.remove(&hash);

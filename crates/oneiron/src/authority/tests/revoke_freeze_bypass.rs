@@ -632,7 +632,7 @@ fn revoke_floor_survives_frozen_grant_later_becoming_invalid() {
     first_seen.insert(invalid_hash, freeze.now_secs);
     first_seen.insert(revoke_hash, freeze.now_secs);
 
-    let frozen = fold_authority_log_with_seen_times(&entries, &first_seen, freeze.now_secs);
+    let frozen = fold_legacy_authority_log_with_seen_times(&entries, &first_seen, freeze.now_secs);
     assert!(frozen.valid_entries.contains(&revoke_hash));
     assert!(!frozen.valid_entries.contains(&invalid_hash));
     assert_eq!(
@@ -640,7 +640,7 @@ fn revoke_floor_survives_frozen_grant_later_becoming_invalid() {
         Some(ActorBindingStatus::Revoked)
     );
 
-    let matured = fold_authority_log_with_seen_times(
+    let matured = fold_legacy_authority_log_with_seen_times(
         &entries,
         &first_seen,
         freeze.now_secs + DEFAULT_PENDING_WIDEN_DELAY_SECS + 1,
@@ -670,7 +670,7 @@ fn revoke_floor_survives_frozen_grant_later_becoming_invalid() {
     let mut bad_revoke = revoke;
     bad_revoke.cosigns[0].signature[0] ^= 1;
     entries[5] = bad_revoke;
-    let bad = fold_authority_log_with_seen_times(
+    let bad = fold_legacy_authority_log_with_seen_times(
         &entries,
         &first_seen,
         freeze.now_secs + DEFAULT_PENDING_WIDEN_DELAY_SECS + 1,
@@ -728,7 +728,12 @@ fn rejected_client_enrollment_does_not_strand_independent_actor_revocation() {
         let fold =
             fold_authority_log_with_seen_times(&ordered, &BTreeMap::from([(enroll_hash, 1)]), 1);
         assert!(!fold.valid_entries.contains(&enroll_hash));
-        assert!(fold.valid_entries.contains(&revoke_hash));
+        assert!(
+            fold.valid_entries.contains(&revoke_hash),
+            "issues: {:?}; status: {:?}",
+            fold.issues,
+            folded_status(&fold, &owner_key)
+        );
         assert!(!actor_binding_is_active(&fold, &actor, "human"));
         assert_eq!(
             folded_status(&fold, &owner_key),
@@ -826,7 +831,7 @@ fn verified_revoke_survives_one_of_two_frozen_branches_becoming_invalid() {
     ] {
         first_seen.insert(hash, freeze.now_secs);
     }
-    let before = fold_authority_log_with_seen_times(&entries, &first_seen, freeze.now_secs);
+    let before = fold_legacy_authority_log_with_seen_times(&entries, &first_seen, freeze.now_secs);
     assert!(before.pending_widens.contains_key(&freeze.widen_hash));
     assert!(before.pending_widens.contains_key(&second_widen_hash));
     assert!(before.valid_entries.contains(&revoke_hash));
@@ -839,7 +844,7 @@ fn verified_revoke_survives_one_of_two_frozen_branches_becoming_invalid() {
         CausalWriteDisposition::Quarantined,
     );
     let later = freeze.now_secs + 11;
-    let after = fold_authority_log_with_seen_times(&entries, &first_seen, later);
+    let after = fold_legacy_authority_log_with_seen_times(&entries, &first_seen, later);
     assert!(!after.pending_widens.contains_key(&freeze.widen_hash));
     assert!(after.pending_widens.contains_key(&second_widen_hash));
     assert_eq!(
@@ -861,7 +866,7 @@ fn verified_revoke_survives_one_of_two_frozen_branches_becoming_invalid() {
     bad_primary[8].signer.signature[0] ^= 1;
     assert_eq!(
         folded_status(
-            &fold_authority_log_with_seen_times(&bad_primary, &first_seen, later),
+            &fold_legacy_authority_log_with_seen_times(&bad_primary, &first_seen, later),
             &key
         ),
         Some(ActorBindingStatus::Active)
@@ -870,14 +875,14 @@ fn verified_revoke_survives_one_of_two_frozen_branches_becoming_invalid() {
     bad_cosign[8].cosigns[0].signature[0] ^= 1;
     assert_eq!(
         folded_status(
-            &fold_authority_log_with_seen_times(&bad_cosign, &first_seen, later),
+            &fold_legacy_authority_log_with_seen_times(&bad_cosign, &first_seen, later),
             &key
         ),
         Some(ActorBindingStatus::Active)
     );
     entries.reverse();
     assert_eq!(
-        fold_authority_log_with_seen_times(&entries, &first_seen, later),
+        fold_legacy_authority_log_with_seen_times(&entries, &first_seen, later),
         after
     );
 }
