@@ -1083,7 +1083,7 @@
       "AnnotationConversationNode"
      ],
      "path": "src/anchored_annotation/conversation.rs",
-     "purpose": "Composition with existing conversation MESSAGE nodes",
+     "purpose": "Composition with existing conversation DAG TURN nodes",
      "surface": {
       "enum": 1,
       "fn": 3,
@@ -13656,7 +13656,7 @@
      "surface": {}
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "test",
      "notable": [],
      "path": "src/dreamer_runner/maintenance/tests.rs",
@@ -19951,12 +19951,50 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [
+      "DecisionLadder",
+      "DecisionModel",
+      "DecisionProvider",
+      "HumanDecisionQueue",
+      "HumanDecisionRequest",
+      "ModelDecisionProvider",
+      "ProviderDecision",
+      "RuleDecisionProvider"
+     ],
+     "path": "src/llm/decision/ladder.rs",
+     "purpose": "Host-injected, one-step decision ladder",
+     "surface": {
+      "fn": 4,
+      "struct": 5,
+      "trait": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [],
      "path": "src/llm/decision/mod.rs",
      "purpose": "Typed question records and shared outcome projection",
      "surface": {
       "mod": 1,
-      "re-export": 1
+      "re-export": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "BandMode",
+      "DecisionBandPolicy",
+      "LearnedBand",
+      "Reversibility"
+     ],
+     "path": "src/llm/decision/policy.rs",
+     "purpose": "Question- and reversibility-scoped escalation bands; learning starts in shadow",
+     "surface": {
+      "enum": 2,
+      "fn": 3,
+      "struct": 2
      }
     },
     {
@@ -20033,6 +20071,14 @@
      "surface": {
       "crate-vis": 3
      }
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "src/llm/decision/tests.rs",
+     "purpose": "—",
+     "surface": {}
     },
     {
      "bucket": "s",
@@ -20251,7 +20297,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "test",
      "notable": [],
      "path": "src/llm/registry/tests.rs",
@@ -20300,9 +20346,37 @@
      "path": "src/llm/score_scraper.rs",
      "purpose": "Config-driven benchmark scraping",
      "surface": {
-      "fn": 4,
+      "fn": 5,
+      "re-export": 2,
       "struct": 3,
       "trait": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "HttpScoreFetch"
+     ],
+     "path": "src/llm/score_scraper/http.rs",
+     "purpose": "Bounded HTTPS JSON transport for configured score sources",
+     "surface": {
+      "fn": 1,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "ScoreScraperWorker"
+     ],
+     "path": "src/llm/score_scraper/worker.rs",
+     "purpose": "Lifecycle-owned background score refresh: one immediate attempt, then the configured cadence",
+     "surface": {
+      "crate-vis": 1,
+      "fn": 1,
+      "struct": 1
      }
     },
     {
@@ -20534,7 +20608,7 @@
      "kind": "src",
      "notable": [],
      "path": "src/m8_forward_oracle/r1689_threads.rs",
-     "purpose": "ONE-1689 RT-08: annotation-thread/DAG-wiring and per-thread state-machine oracles plus arming seams",
+     "purpose": "ONE-1689 RT-08: admitted per-thread replies and anchored room-DAG wiring",
      "surface": {}
     },
     {
@@ -20607,16 +20681,6 @@
      "surface": {
       "crate-vis": 1,
       "re-export": 1
-     }
-    },
-    {
-     "bucket": "m",
-     "kind": "src",
-     "notable": [],
-     "path": "src/maintain/short_ids.rs",
-     "purpose": "Short-id hash refresh, orphan reap, and alias-backing guards",
-     "surface": {
-      "crate-vis": 1
      }
     },
     {
@@ -22729,6 +22793,26 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/outbound/dispatch_pipeline/admission.rs",
+     "purpose": "Pure execute-time admission: one decision consumed by freeze and gate paths",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/outbound/dispatch_pipeline/effect.rs",
+     "purpose": "Admitted effect: only this lane enters the replay-first chokepoint",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/outbound/dispatch_pipeline/frozen_payload.rs",
      "purpose": "Frozen retry-contract payload: the intent bytes a connector reads and the ledger hashes",
      "surface": {
@@ -22739,15 +22823,25 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/outbound/dispatch_pipeline/govern.rs",
+     "purpose": "The governance-only parked lane: one durable gate transaction, no budget debit",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/outbound/dispatch_pipeline/mod.rs",
      "purpose": "O2 resolve-gate-window-execute dispatch pipeline: replay-first ledger contract, gate decision…",
      "surface": {
-      "crate-vis": 4,
+      "crate-vis": 8,
       "re-export": 1
      }
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "src",
      "notable": [
       "OutboundDispatchPipeline"
@@ -22784,6 +22878,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/outbound/dispatch_pipeline/seat_policy.rs",
+     "purpose": "Connector-neutral seat wall and its host-supplied LinkedIn policy adapter",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/outbound/dispatch_pipeline/sender_identity.rs",
      "purpose": "—",
      "surface": {
@@ -22809,6 +22913,16 @@
      "surface": {
       "crate-vis": 1,
       "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/outbound/dispatch_pipeline/verdict.rs",
+     "purpose": "Typed verdict from either the effect lane or the govern-only parked lane",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -22891,13 +23005,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/outbound/receipt_fields.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 7
      }
     },
     {
@@ -23031,7 +23145,7 @@
      "path": "src/outbound/window_door.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 7
      }
     },
     {
@@ -24545,7 +24659,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/ports/lmdb_index.rs",
@@ -24597,6 +24711,16 @@
      }
     },
     {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/ports/lmdb_short_id_maintenance.rs",
+     "purpose": "LMDB adapter for short-id hash refresh, orphan reap, and alias-backing guards",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
      "bucket": "s",
      "kind": "src",
      "notable": [],
@@ -24621,7 +24745,7 @@
      "path": "src/ports/maintenance.rs",
      "purpose": "Narrow operational writes of the entity and edge ports",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 5
      }
     },
     {
@@ -24782,7 +24906,7 @@
      "surface": {}
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "test",
      "notable": [],
      "path": "src/ports/tests/step22_conformance.rs",
@@ -27545,12 +27669,22 @@
     },
     {
      "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/session_overlay/hygiene_tests.rs",
+     "purpose": "Allocation-boundary teardown observer for session-owned buffers",
+     "surface": {
+      "crate-vis": 7
+     }
+    },
+    {
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/session_overlay/journal.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 11
+      "crate-vis": 12
      }
     },
     {
@@ -27570,7 +27704,7 @@
      "path": "src/session_overlay/mod.rs",
      "purpose": "In-memory session write-overlay substrate (ARCH-0052, D1)",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 6
      }
     },
     {
@@ -34774,7 +34908,7 @@
      "purpose": "Deterministic LinkedIn entity resolution and explicit runtime-path corpus preload"
     },
     "llm": {
-     "files": 64,
+     "files": 69,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -34788,7 +34922,7 @@
      "purpose": "M8 forward test oracle — authored by the path opener (ONE-1685) for the M8-A / M8-B remainder tickets"
     },
     "maintain": {
-     "files": 7,
+     "files": 6,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -34830,7 +34964,7 @@
      "purpose": "Vault-as-origin serving plane (ARCH-0068 Phase A)"
     },
     "outbound": {
-     "files": 33,
+     "files": 38,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -34893,7 +35027,7 @@
      "purpose": "Policy classification over two planes"
     },
     "ports": {
-     "files": 32,
+     "files": 33,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -35082,7 +35216,7 @@
      "purpose": "RT-03 (ONE-1685) SESSION lifecycle substrate — the durable mechanism the in-process driver's session policy…"
     },
     "session_overlay": {
-     "files": 12,
+     "files": 13,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -35329,8 +35463,8 @@
    },
    "over_bar": 9,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2084,
-   "test_files": 716
+   "source_files": 2093,
+   "test_files": 718
   },
   "oneiron-android": {
    "files": [
@@ -35663,6 +35797,16 @@
      "purpose": "Shared measured answerer scaffold",
      "surface": {
       "crate-vis": 12
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/beam/model_scaffold/offline.rs",
+     "purpose": "Stage-aware offline accounting for the measured scaffold",
+     "surface": {
+      "crate-vis": 4
      }
     },
     {
@@ -36476,7 +36620,7 @@
    ],
    "modules": {
     "beam": {
-     "files": 40,
+     "files": 41,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -36541,7 +36685,7 @@
    },
    "over_bar": 0,
    "purpose": "oneiron-bench — benchmark harness skeleton",
-   "source_files": 97,
+   "source_files": 98,
    "test_files": 18
   },
   "oneiron-driver": {
