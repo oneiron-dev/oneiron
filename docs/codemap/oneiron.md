@@ -1826,20 +1826,25 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/outbound/capability.rs` | src | m | 5 struct · 4 enum · 10 fn · 3 const · 1 crate-vis | OutboundCapabilityManifest, OutboundCapabilityPermission, OutboundDeliverySemantics, OutboundDeliverySemanticsKind, OutboundInterruptionClass, OutboundPermissionState, OutboundRetryClass, OutboundVerbContract +1 | — |
 | `src/outbound/connector_task.rs` | src | m | 1 struct · 1 enum · 4 fn · 1 const · 17 crate-vis | ConnectorSendTask, ConnectorSendTaskOutcome | — |
 | `src/outbound/dispatch_attempt_id.rs` | src | s | 1 crate-vis | — | — |
+| `src/outbound/dispatch_pipeline/admission.rs` | src | s | 3 crate-vis | — | Pure execute-time admission: one decision consumed by freeze and gate paths |
+| `src/outbound/dispatch_pipeline/effect.rs` | src | s | 2 crate-vis | — | Admitted effect: only this lane enters the replay-first chokepoint |
 | `src/outbound/dispatch_pipeline/frozen_payload.rs` | src | s | 1 crate-vis | — | Frozen retry-contract payload: the intent bytes a connector reads and the ledger hashes |
-| `src/outbound/dispatch_pipeline/mod.rs` | src | s | 1 re-export · 4 crate-vis | — | O2 resolve-gate-window-execute dispatch pipeline: replay-first ledger contract, gate decision… |
-| `src/outbound/dispatch_pipeline/pipeline.rs` | src | m | 1 struct · 1 fn · 1 crate-vis | OutboundDispatchPipeline | O2 resolve-gate-window-execute dispatch pipeline: dispatch, verified-actor dispatch, and the dispatch_inner… |
+| `src/outbound/dispatch_pipeline/govern.rs` | src | s | 2 crate-vis | — | The governance-only parked lane: one durable gate transaction, no budget debit |
+| `src/outbound/dispatch_pipeline/mod.rs` | src | s | 1 re-export · 8 crate-vis | — | O2 resolve-gate-window-execute dispatch pipeline: replay-first ledger contract, gate decision… |
+| `src/outbound/dispatch_pipeline/pipeline.rs` | src | s | 1 struct · 1 fn · 1 crate-vis | OutboundDispatchPipeline | O2 resolve-gate-window-execute dispatch pipeline: dispatch, verified-actor dispatch, and the dispatch_inner… |
 | `src/outbound/dispatch_pipeline/policy_risk.rs` | src | s | 2 crate-vis | — | Pending gate-outcome name and gate-vs-manifest policy-risk resolution |
 | `src/outbound/dispatch_pipeline/retry_after.rs` | src | s | 3 crate-vis | — | Provider cool-down receipt/execution field names and whole-seconds parser |
+| `src/outbound/dispatch_pipeline/seat_policy.rs` | src | s | 3 crate-vis | — | Connector-neutral seat wall and its host-supplied LinkedIn policy adapter |
 | `src/outbound/dispatch_pipeline/sender_identity.rs` | src | s | 2 crate-vis | — | — |
 | `src/outbound/dispatch_pipeline/transport.rs` | src | s | 2 crate-vis | — | Chokepoint OutboundTransport adapter: frozen-call guard, header/invite rehydration, sink execute |
 | `src/outbound/dispatch_pipeline/vault.rs` | src | s | 1 fn · 1 crate-vis | — | Vault facade seams for dispatching outbound intents |
+| `src/outbound/dispatch_pipeline/verdict.rs` | src | s | 1 crate-vis | — | Typed verdict from either the effect lane or the govern-only parked lane |
 | `src/outbound/dispatch_types.rs` | src | m | 6 struct · 4 enum · 1 trait · 27 fn · 3 crate-vis | OutboundDispatchActor, OutboundDispatchError, OutboundDispatchGate, OutboundDispatchOutcome, OutboundDispatchPolicyRisk, OutboundDispatchRequest, OutboundDispatchResult, OutboundExecutionOutcome +3 | — |
 | `src/outbound/executor.rs` | src | m | 1 enum · 2 fn · 1 crate-vis | ConnectorTaskExecutorError | — |
 | `src/outbound/intent.rs` | src | s | 3 struct · 1 enum · 12 fn · 1 const | OutboundIntent, OutboundIntentDraft, OutboundIntentSource, OutboundIntentTrigger | — |
 | `src/outbound/manifests.rs` | src | m | 1 crate-vis | — | — |
 | `src/outbound/mod.rs` | src | s | 7 re-export · 3 crate-vis | — | Outbound action capability manifests and dispatch spine for OF-327 |
-| `src/outbound/receipt_fields.rs` | src | s | 6 crate-vis | — | — |
+| `src/outbound/receipt_fields.rs` | src | m | 7 crate-vis | — | — |
 | `src/outbound/retry_audit.rs` | src | s | 1 crate-vis | — | Atomic persistence of a failed send receipt and its retry |
 | `src/outbound/tests/connector_schedule.rs` | test | L | 1 crate-vis | — | Connector send-task scheduling, executor idempotency, idempotency keys and schedule gates |
 | `src/outbound/tests/dispatch_budget.rs` | test | m | — | — | Dispatch budget debit, exhaustion/suspend/resume, ladders, wrap window and charter drift |
@@ -1855,7 +1860,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/outbound/tests/sender_selection/facet_selection.rs` | test | s | — | — | — |
 | `src/outbound/tests/sender_selection/replay.rs` | test | m | — | — | — |
 | `src/outbound/tests/space_posting.rs` | test | s | — | — | Owner presentation must ride the ordinary gate, frozen payload and recovery |
-| `src/outbound/window_door.rs` | src | s | 6 crate-vis | — | — |
+| `src/outbound/window_door.rs` | src | s | 7 crate-vis | — | — |
 | `src/outbound_chokepoint/admission.rs` | src | m | 2 crate-vis | — | New-effect admission path: actor/booking/calendar checks, gate eval, one-shot budget debit, Pending insert |
 | `src/outbound_chokepoint/fanout.rs` | src | m | 1 enum · 24 crate-vis | FanoutApprovalMode | Pre-execution fan-out admission |
 | `src/outbound_chokepoint/fanout/history.rs` | src | s | 3 crate-vis | — | Admission against the live consult graph, without charging its old edges again |

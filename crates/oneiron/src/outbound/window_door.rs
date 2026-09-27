@@ -5,9 +5,9 @@ use super::intent::OutboundIntent;
 use crate::Vault;
 use crate::claim::{ClaimBody, ClaimSubject};
 use crate::delivery_window::{
-    DeliveryWindowEvaluationContext, DeliveryWindowEvaluator, DeliveryWindowMatch,
-    DeliveryWindowPolicyClaim, DeliveryWindowResolution, DeliveryWindowResolvedLevel,
-    DeliveryWindowVerbClass, is_delivery_window_claim_predicate,
+    DeliveryWindowApnsInterruptionLevel, DeliveryWindowEvaluationContext, DeliveryWindowEvaluator,
+    DeliveryWindowMatch, DeliveryWindowPolicyClaim, DeliveryWindowResolution,
+    DeliveryWindowResolvedLevel, DeliveryWindowVerbClass, is_delivery_window_claim_predicate,
 };
 use crate::entity_id::EntityId;
 
@@ -261,5 +261,20 @@ fn delivery_window_decision_rank(decision: &OutboundDeliveryWindowDecision) -> u
         OutboundDeliveryWindowDecision::Degrade { .. } => 2,
         OutboundDeliveryWindowDecision::Hold { .. } => 3,
         OutboundDeliveryWindowDecision::LetGo { .. } => 4,
+    }
+}
+
+pub(super) fn apply_apns_window_cap(
+    request: &mut OutboundDispatchRequest,
+    decision: &OutboundDeliveryWindowDecision,
+) {
+    if let OutboundDeliveryWindowDecision::DeliverNowWithApnsCap { to, .. } = decision {
+        request.delivery_window_apns_interruption_level = match to.as_str() {
+            "push:passive" => Some(DeliveryWindowApnsInterruptionLevel::Passive),
+            "push:active" => Some(DeliveryWindowApnsInterruptionLevel::Active),
+            "push:time_sensitive" => Some(DeliveryWindowApnsInterruptionLevel::TimeSensitive),
+            "push:critical" => Some(DeliveryWindowApnsInterruptionLevel::Critical),
+            _ => request.delivery_window_apns_interruption_level,
+        };
     }
 }
