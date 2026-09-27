@@ -49,6 +49,10 @@ fn micro_meso_and_skill_optimization_share_actor_and_receipt_ledger() -> Result<
             vault.dreamer_actor_for_attempt(status.attempt.id)?,
             authority
         );
+        assert_eq!(
+            stamp.facet,
+            dreamer_facet_for_job_type(&status.payload.attempt_type).unwrap()
+        );
         let envelope = vault.dreamer_proposal_envelope(&stamp.facet, status.attempt.id)?;
         assert_eq!(envelope.actor(), authority);
         assert_eq!(envelope.approval(), ClaimApprovalStatus::Proposed);
@@ -365,4 +369,91 @@ fn actor_mutations_cannot_disable_a_vault_or_queued_attempt() -> Result<()> {
     assert_eq!(reopened.dreamer_authority()?, actor);
     assert_eq!(reopened.get_raw(&id)?.as_deref(), Some(original.as_slice()));
     Ok(())
+}
+
+#[test]
+fn shared_facet_does_not_dedupe_distinct_job_types() -> Result<()> {
+    use crate::dreamer_runner::EnqueueDreamerAttempt;
+
+    let (_dir, vault) = open_test_vault_with(embedding_test_config());
+    let runner = DreamerRunnerStore::new(&vault);
+    let input = |attempt_type: &str| EnqueueDreamerAttempt {
+        attempt_type: attempt_type.into(),
+        input: rmpv::Value::Nil,
+        parent_attempt: None,
+        dedupe_key: Some("same-key".into()),
+        run_id: None,
+        now: 10,
+    };
+    let first = runner.enqueue(input("micro"))?;
+    assert!(matches!(first, EnqueueDreamerAttemptOutcome::Enqueued(_)));
+    assert!(matches!(
+        runner.enqueue(input("meso")),
+        Err(Error::InvalidConfig(_))
+    ));
+    let replay = runner.enqueue(input("micro"))?;
+    assert!(matches!(replay, EnqueueDreamerAttemptOutcome::Existing(_)));
+    Ok(())
+}
+
+#[test]
+fn job_types_share_facets_without_minting_new_agents() {
+    use super::{DreamerAgentBoundary, dreamer_facet_for_job_type, warrants_new_agent};
+    use crate::agent_def::AgentCeiling;
+    use crate::llm::ModelLocality;
+
+    for (job, facet) in [
+        ("micro", "dreamer.consolidation"),
+        ("meso", "dreamer.consolidation"),
+        ("macro", "dreamer.consolidation"),
+        ("dreamer.reflection.gap_scan", "dreamer.consolidation"),
+        (
+            "dreamer.edit_distance.substitution_mine",
+            "dreamer.consolidation",
+        ),
+        ("dreamer.skill_optimize", "dreamer.skill_optimize"),
+        ("dreamer.vault_cleanup", "dreamer.vault_cleanup"),
+        ("dreamer.weave_recipe", "dreamer.weave_recipe"),
+        ("dreamer.curator", "dreamer.curator"),
+        ("dreamer.harness_maintenance", "dreamer.harness_maintenance"),
+        ("dreamer.representation", "dreamer.representation"),
+        ("dreamer.plugin_suggest", "dreamer.plugin_suggest"),
+        ("connector_event", "connector_event"),
+    ] {
+        assert_eq!(dreamer_facet_for_job_type(job), Some(facet));
+    }
+    assert_eq!(
+        dreamer_facet_for_job_type(crate::consult_ladder::DREAMER_MAGISTRATE_ATTEMPT_TYPE),
+        Some("dreamer.magistrate")
+    );
+    assert_eq!(dreamer_facet_for_job_type("agent_dispatch"), None);
+    assert_eq!(dreamer_facet_for_job_type("unknown"), None);
+
+    let original = DreamerAgentBoundary {
+        soul: "same principal",
+        access_ceiling: AgentCeiling::Proposed,
+        locality: ModelLocality::OnDevice,
+    };
+    assert!(!warrants_new_agent(original, original));
+    assert!(warrants_new_agent(
+        original,
+        DreamerAgentBoundary {
+            soul: "another principal",
+            ..original
+        }
+    ));
+    assert!(warrants_new_agent(
+        original,
+        DreamerAgentBoundary {
+            access_ceiling: AgentCeiling::Auto,
+            ..original
+        }
+    ));
+    assert!(warrants_new_agent(
+        original,
+        DreamerAgentBoundary {
+            locality: ModelLocality::OwnServer,
+            ..original
+        }
+    ));
 }

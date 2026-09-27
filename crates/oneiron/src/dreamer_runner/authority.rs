@@ -7,6 +7,8 @@ use crate::{
     WriteActor, WriteEnvelope, WriteProvenance,
 };
 use serde::{Deserialize, Serialize};
+mod policy;
+pub use policy::{DreamerAgentBoundary, dreamer_facet_for_job_type, warrants_new_agent};
 const ACTOR_KEY: &[u8] = b"dreamer:authority:v1:actor";
 const ATTEMPT_PREFIX: &[u8] = b"dreamer:authority:v1:attempt:";
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -202,7 +204,7 @@ impl Vault {
             .transpose()
     }
 }
-pub(super) fn stamp_attempt(
+pub(crate) fn stamp_attempt(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
     record: &AttemptRecord,
@@ -216,7 +218,15 @@ pub(super) fn stamp_attempt(
     {
         return Ok(());
     }
+    // The queue dedupes by kind and key, not by payload. Do not let two
+    // different job types sharing a facet replay each other's queue row.
+    if super::decode_dreamer_attempt_payload(&record.payload)?.attempt_type != facet {
+        return Err(Error::InvalidConfig(
+            "Dreamer dedupe key refers to another job type".into(),
+        ));
+    }
     let actor = vault.dreamer_authority_in_txn(txn, record.created_at)?;
+    let facet = dreamer_facet_for_job_type(facet).unwrap_or(facet);
     let key = [ATTEMPT_PREFIX, record.id.as_bytes()].concat();
     if let Some(raw) = vault.store.vault_meta.get(&*txn, &key)? {
         let stamp: DreamerAuthorityStamp = serde_json::from_slice(&raw).map_err(|_| invalid())?;

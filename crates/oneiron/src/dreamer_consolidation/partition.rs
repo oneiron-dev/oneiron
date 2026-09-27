@@ -15,12 +15,14 @@ use super::watermark::{
     read_turn_facts_in_txn,
 };
 use crate::Vault;
+use crate::attempt_queue::{AttemptQueue, EnqueueAttempt, EnqueueOutcome};
 use crate::dreamer_prefilter::{
     prefilter_partition_input, prefilter_partition_input_in_txn, write_prefilter_receipts_in_txn,
 };
 use crate::dreamer_runner::{
     DreamerAttemptPayload, DreamerConsolidationScope, DreamerRunnerStore,
     EnqueueDreamerAttemptOutcome, EnqueueDreamerConsolidationAttempt,
+    encode_dreamer_attempt_payload,
 };
 use crate::entity_id::{EntityId, bytes_to_hex_lower};
 use crate::error::Result;
@@ -457,20 +459,32 @@ pub(crate) fn register_substitution_mine_in_txn(
     session: &EntityId,
     now: u64,
 ) -> Result<()> {
-    DreamerRunnerStore::new(vault).enqueue_kind_in_txn(
+    let payload = encode_dreamer_attempt_payload(&DreamerAttemptPayload {
+        attempt_type: DREAMER_SUBSTITUTION_MINE_ATTEMPT_TYPE.to_owned(),
+        input: crate::edit_distance::miner::miner_attempt_input(session),
+        parent_attempt: None,
+    })?;
+    let outcome = AttemptQueue::new(vault).enqueue_in_txn(
         wtxn,
-        DreamerConsolidationScope::Meso.attempt_kind(),
-        DreamerAttemptPayload {
-            attempt_type: DREAMER_SUBSTITUTION_MINE_ATTEMPT_TYPE.to_owned(),
-            input: crate::edit_distance::miner::miner_attempt_input(session),
-            parent_attempt: None,
+        EnqueueAttempt {
+            kind: DreamerConsolidationScope::Meso.attempt_kind().to_owned(),
+            payload,
+            dedupe_key: Some(format!(
+                "{DREAMER_SUBSTITUTION_MINE_ATTEMPT_TYPE}:{}",
+                session.to_hex()
+            )),
+            run_id: None,
+            now,
         },
-        Some(format!(
-            "{DREAMER_SUBSTITUTION_MINE_ATTEMPT_TYPE}:{}",
-            session.to_hex()
-        )),
-        None,
-        now,
+    )?;
+    let record = match outcome {
+        EnqueueOutcome::Enqueued(record) | EnqueueOutcome::Existing(record) => record,
+    };
+    crate::dreamer_runner::authority::stamp_attempt(
+        vault,
+        wtxn,
+        &record,
+        DREAMER_SUBSTITUTION_MINE_ATTEMPT_TYPE,
     )?;
     Ok(())
 }

@@ -396,6 +396,25 @@ impl HeldOutReplayScorer for StubScorer {
             self.after
         })
     }
+    fn structural_audit(&self, _task: &str, _instructions: &str) -> Result<f32> {
+        Ok(0.5)
+    }
+    fn blind_preference(&self, _task: &str, _receipts: &[String]) -> Result<Vec<BlindPreference>> {
+        Ok(vec![BlindPreference {
+            pair_ref: "fixture-pair".to_owned(),
+            preferred: PreferredResponse::First,
+        }])
+    }
+    fn contrastive_audit(
+        &self,
+        _case: &HeldOutReplayCase<'_>,
+        _blind: &[BlindPreference],
+    ) -> Result<f32> {
+        Ok(0.5)
+    }
+    fn predict_task_success(&self, case: &HeldOutReplayCase<'_>) -> Result<Vec<f32>> {
+        Ok(vec![0.5; case.held_out_receipts.len()])
+    }
 }
 
 /// A scorer that must never be reached.
@@ -404,6 +423,25 @@ struct UnreachableScorer;
 impl HeldOutReplayScorer for UnreachableScorer {
     fn score(&self, _case: &HeldOutReplayCase<'_>) -> Result<f32> {
         panic!("a refused proposal must not reach the replay tier");
+    }
+    fn structural_audit(&self, _task: &str, _instructions: &str) -> Result<f32> {
+        Ok(0.5)
+    }
+    fn blind_preference(&self, _task: &str, _receipts: &[String]) -> Result<Vec<BlindPreference>> {
+        Ok(vec![BlindPreference {
+            pair_ref: "fixture-pair".to_owned(),
+            preferred: PreferredResponse::First,
+        }])
+    }
+    fn contrastive_audit(
+        &self,
+        _case: &HeldOutReplayCase<'_>,
+        _blind: &[BlindPreference],
+    ) -> Result<f32> {
+        Ok(0.5)
+    }
+    fn predict_task_success(&self, case: &HeldOutReplayCase<'_>) -> Result<Vec<f32>> {
+        Ok(vec![0.5; case.held_out_receipts.len()])
     }
 }
 
@@ -1919,6 +1957,25 @@ impl HeldOutReplayScorer for RacingScorer<'_> {
             0.75
         })
     }
+    fn structural_audit(&self, _task: &str, _instructions: &str) -> Result<f32> {
+        Ok(0.5)
+    }
+    fn blind_preference(&self, _task: &str, _receipts: &[String]) -> Result<Vec<BlindPreference>> {
+        Ok(vec![BlindPreference {
+            pair_ref: "fixture-pair".to_owned(),
+            preferred: PreferredResponse::First,
+        }])
+    }
+    fn contrastive_audit(
+        &self,
+        _case: &HeldOutReplayCase<'_>,
+        _blind: &[BlindPreference],
+    ) -> Result<f32> {
+        Ok(0.5)
+    }
+    fn predict_task_success(&self, case: &HeldOutReplayCase<'_>) -> Result<Vec<f32>> {
+        Ok(vec![0.5; case.held_out_receipts.len()])
+    }
 }
 
 /// A judge that DELIVERS THE SAME GATE CALL AGAIN while it is thinking.
@@ -1951,6 +2008,25 @@ impl HeldOutReplayScorer for DuplicatingScorer<'_> {
             0.75
         })
     }
+    fn structural_audit(&self, _task: &str, _instructions: &str) -> Result<f32> {
+        Ok(0.5)
+    }
+    fn blind_preference(&self, _task: &str, _receipts: &[String]) -> Result<Vec<BlindPreference>> {
+        Ok(vec![BlindPreference {
+            pair_ref: "fixture-pair".to_owned(),
+            preferred: PreferredResponse::First,
+        }])
+    }
+    fn contrastive_audit(
+        &self,
+        _case: &HeldOutReplayCase<'_>,
+        _blind: &[BlindPreference],
+    ) -> Result<f32> {
+        Ok(0.5)
+    }
+    fn predict_task_success(&self, case: &HeldOutReplayCase<'_>) -> Result<Vec<f32>> {
+        Ok(vec![0.5; case.held_out_receipts.len()])
+    }
 }
 
 /// The host's judge, registered process-globally: no interior state, because a
@@ -1964,6 +2040,25 @@ impl HeldOutReplayScorer for HostScorer {
         } else {
             0.80
         })
+    }
+    fn structural_audit(&self, _task: &str, _instructions: &str) -> Result<f32> {
+        Ok(0.5)
+    }
+    fn blind_preference(&self, _task: &str, _receipts: &[String]) -> Result<Vec<BlindPreference>> {
+        Ok(vec![BlindPreference {
+            pair_ref: "fixture-pair".to_owned(),
+            preferred: PreferredResponse::First,
+        }])
+    }
+    fn contrastive_audit(
+        &self,
+        _case: &HeldOutReplayCase<'_>,
+        _blind: &[BlindPreference],
+    ) -> Result<f32> {
+        Ok(0.5)
+    }
+    fn predict_task_success(&self, case: &HeldOutReplayCase<'_>) -> Result<Vec<f32>> {
+        Ok(vec![0.5; case.held_out_receipts.len()])
     }
 }
 
@@ -3371,7 +3466,7 @@ fn set_row_field(entries: &mut [(Value, Value)], key: &str, value: &Value) {
 }
 
 #[test]
-fn a_verdict_row_is_schema_v3_and_every_older_row_fails_closed() -> Result<()> {
+fn a_verdict_row_is_schema_v4_and_every_older_row_fails_closed() -> Result<()> {
     let (_tmp, vault) = temp_vault();
     let (_, proposal) = losing_skill_with_proposal(&vault, "oneiron.skill.losing");
     let scorer = StubScorer::improving();
@@ -3385,7 +3480,7 @@ fn a_verdict_row_is_schema_v3_and_every_older_row_fails_closed() -> Result<()> {
     assert_eq!(
         skill_edit_verdict(&vault, &proposal)?.expect("a standing verdict"),
         accepted,
-        "a v3 row round-trips, bound proposal tier included"
+        "a v4 row round-trips with measurements and bound proposal tier"
     );
     assert_eq!(accepted.proposal_tier, Some(SkillGovernanceTier::Standard));
 
@@ -3402,9 +3497,20 @@ fn a_verdict_row_is_schema_v3_and_every_older_row_fails_closed() -> Result<()> {
         ErrorKind::CorruptedIndex
     );
 
-    // …and so is the retired disposition, whatever schema claims to carry it.
+    // A v3 row has no judge measurements and cannot claim this schema.
     rewrite_verdict_row(&vault, |entries: &mut [(Value, Value)]| {
         set_row_field(entries, "v", &Value::from(3u64));
+    });
+    assert_eq!(
+        skill_edit_verdicts(&vault)
+            .expect_err("v3 is missing measurements")
+            .kind(),
+        ErrorKind::CorruptedIndex
+    );
+
+    // …and so is the retired disposition, whatever schema claims to carry it.
+    rewrite_verdict_row(&vault, |entries: &mut [(Value, Value)]| {
+        set_row_field(entries, "v", &Value::from(4u64));
         set_row_field(
             entries,
             "disposition",
@@ -3417,6 +3523,21 @@ fn a_verdict_row_is_schema_v3_and_every_older_row_fails_closed() -> Result<()> {
             .kind(),
         ErrorKind::CorruptedIndex
     );
+    rewrite_verdict_row(&vault, |entries: &mut [(Value, Value)]| {
+        set_row_field(entries, "disposition", &Value::from("accepted"));
+    });
+    // A judged v4 verdict cannot carry an absent or nil audit pair.
+    rewrite_verdict_row(&vault, |entries: &mut [(Value, Value)]| {
+        set_row_field(entries, "v", &Value::from(4u64));
+        set_row_field(entries, "measurements", &Value::Nil);
+    });
+    assert_eq!(
+        skill_edit_verdicts(&vault)
+            .expect_err("judged row lost its audits")
+            .kind(),
+        ErrorKind::CorruptedIndex
+    );
+
     Ok(())
 }
 
@@ -3573,6 +3694,25 @@ impl HeldOutReplayScorer for ProposalEditingScorer<'_> {
         } else {
             0.75
         })
+    }
+    fn structural_audit(&self, _task: &str, _instructions: &str) -> Result<f32> {
+        Ok(0.5)
+    }
+    fn blind_preference(&self, _task: &str, _receipts: &[String]) -> Result<Vec<BlindPreference>> {
+        Ok(vec![BlindPreference {
+            pair_ref: "fixture-pair".to_owned(),
+            preferred: PreferredResponse::First,
+        }])
+    }
+    fn contrastive_audit(
+        &self,
+        _case: &HeldOutReplayCase<'_>,
+        _blind: &[BlindPreference],
+    ) -> Result<f32> {
+        Ok(0.5)
+    }
+    fn predict_task_success(&self, case: &HeldOutReplayCase<'_>) -> Result<Vec<f32>> {
+        Ok(vec![0.5; case.held_out_receipts.len()])
     }
 }
 
@@ -3959,5 +4099,316 @@ fn the_longest_queue_accepted_run_id_still_names_a_cycle() -> Result<()> {
         score_gate_skill_edit_in_cycle(&vault, &proposal, &StubScorer::improving(), attempt, 900)?;
     assert_eq!(verdict.cycle, cycle.as_str());
     assert_eq!(verdict.disposition, SkillEditDisposition::Accepted);
+    Ok(())
+}
+
+// OF-214: audit measurements do not vote on scalar admission. World labels,
+// unlike rubric scores, come from the outcome ledger and are scored per axis.
+struct MeasuredScorer {
+    phases: RefCell<Vec<&'static str>>,
+}
+
+impl HeldOutReplayScorer for MeasuredScorer {
+    fn score(&self, case: &HeldOutReplayCase<'_>) -> Result<f32> {
+        self.phases.borrow_mut().push("score");
+        Ok(if case.instructions == TARGET_DESC {
+            0.40
+        } else {
+            0.75
+        })
+    }
+
+    fn structural_audit(&self, _task: &str, instructions: &str) -> Result<f32> {
+        self.phases.borrow_mut().push("structural");
+        Ok(if instructions == TARGET_DESC {
+            0.9
+        } else {
+            0.1
+        })
+    }
+
+    fn blind_preference(&self, _task: &str, _receipts: &[String]) -> Result<Vec<BlindPreference>> {
+        self.phases.borrow_mut().push("blind");
+        Ok(vec![BlindPreference {
+            pair_ref: "fixture-pair".to_owned(),
+            preferred: PreferredResponse::First,
+        }])
+    }
+    fn contrastive_audit(
+        &self,
+        case: &HeldOutReplayCase<'_>,
+        blind: &[BlindPreference],
+    ) -> Result<f32> {
+        assert_eq!(blind[0].preferred, PreferredResponse::First);
+        self.phases.borrow_mut().push("contrastive");
+        Ok(if case.instructions == TARGET_DESC {
+            0.8
+        } else {
+            0.2
+        })
+    }
+
+    fn predict_task_success(&self, case: &HeldOutReplayCase<'_>) -> Result<Vec<f32>> {
+        self.phases.borrow_mut().push("predict");
+        let prediction = if case.instructions == TARGET_DESC {
+            0.1
+        } else {
+            0.9
+        };
+        Ok(vec![prediction; case.held_out_receipts.len()])
+    }
+}
+
+#[test]
+fn decoevo_audits_are_receipted_measurements_and_world_scores_follow_labels() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    let (skill, proposal) = losing_skill_with_proposal(&vault, "oneiron.skill.measured");
+    let reserved = held_out_receipts(&vault, &skill)?;
+    let rtxn = vault.store.env.read_txn()?;
+    let outcomes = crate::skill_reliability::attributed_outcome_results(&vault, &rtxn, &skill)?;
+    let truth: Vec<bool> = outcomes
+        .into_iter()
+        .filter(|(receipt, _)| reserved.contains(receipt))
+        .map(|(_, won)| won)
+        .collect();
+    drop(rtxn);
+    assert!(!truth.is_empty());
+    let scorer = MeasuredScorer {
+        phases: RefCell::new(Vec::new()),
+    };
+    let verdict = score_gate_skill_edit_in_cycle(
+        &vault,
+        &proposal,
+        &scorer,
+        wake(&vault, "measurement", 10),
+        900,
+    )?;
+    assert_eq!(verdict.disposition, SkillEditDisposition::Accepted);
+    assert_eq!(
+        scorer.phases.borrow().as_slice(),
+        [
+            "blind",
+            "structural",
+            "structural",
+            "contrastive",
+            "contrastive",
+            "predict",
+            "predict",
+            "score",
+            "score"
+        ]
+    );
+    let measurement = verdict
+        .measurements
+        .as_ref()
+        .expect("judged verdict has measurements");
+    assert_eq!(
+        measurement.structural,
+        AuditPair {
+            before: 0.9,
+            after: 0.1
+        }
+    );
+    assert_eq!(
+        measurement.contrastive,
+        AuditPair {
+            before: 0.8,
+            after: 0.2
+        }
+    );
+    assert_eq!(measurement.blind_preferences.len(), 1);
+    assert_eq!(measurement.blind_preferences[0].pair_ref, "fixture-pair");
+    let axis = &measurement.world_axes["task_success"];
+    assert_eq!(axis.labelled_receipts, truth.len() as u64);
+    let wins = truth.iter().filter(|won| **won).count() as f32;
+    let expected_before = (wins * 0.1 + (truth.len() as f32 - wins) * 0.9) / truth.len() as f32;
+    let expected_after = (wins * 0.9 + (truth.len() as f32 - wins) * 0.1) / truth.len() as f32;
+    assert!((axis.before - expected_before).abs() < 0.000_001);
+    assert!((axis.after - expected_after).abs() < 0.000_001);
+    let stored = skill_edit_verdict(&vault, &proposal)?.expect("durable verdict");
+    assert_eq!(stored.measurements, verdict.measurements);
+    let receipt = verdict_receipt(&vault, &verdict);
+    let projected: JudgeMeasurements =
+        serde_json::from_str(&receipt.fields["skill_edit_measurements"])
+            .expect("receipt carries typed measurement JSON");
+    assert_eq!(projected, *measurement);
+    Ok(())
+}
+
+#[test]
+fn a_missing_auditor_does_not_write_a_judged_verdict() -> Result<()> {
+    struct ScalarOnly;
+    impl HeldOutReplayScorer for ScalarOnly {
+        fn score(&self, _: &HeldOutReplayCase<'_>) -> Result<f32> {
+            Ok(0.75)
+        }
+    }
+    let (_tmp, vault) = temp_vault();
+    let (_, proposal) = losing_skill_with_proposal(&vault, "oneiron.skill.no_auditor");
+    let result = score_gate_skill_edit_in_cycle(
+        &vault,
+        &proposal,
+        &ScalarOnly,
+        wake(&vault, "no-auditor", 10),
+        900,
+    );
+    assert_eq!(
+        result.expect_err("auditor required").kind(),
+        ErrorKind::InvalidSkillBody
+    );
+    assert!(skill_edit_verdicts_for_proposal(&vault, &proposal)?.is_empty());
+    Ok(())
+}
+
+#[test]
+fn a_contrastive_audit_without_frozen_preference_cannot_write_a_verdict() -> Result<()> {
+    struct NoPairs;
+    impl HeldOutReplayScorer for NoPairs {
+        fn score(&self, _: &HeldOutReplayCase<'_>) -> Result<f32> {
+            panic!("rubric-aware scoring must not run before a blind preference")
+        }
+        fn blind_preference(&self, _: &str, _: &[String]) -> Result<Vec<BlindPreference>> {
+            Ok(Vec::new())
+        }
+    }
+    let (_tmp, vault) = temp_vault();
+    let (_, proposal) = losing_skill_with_proposal(&vault, "oneiron.skill.no_pairs");
+    let result = score_gate_skill_edit_in_cycle(
+        &vault,
+        &proposal,
+        &NoPairs,
+        wake(&vault, "no-pairs", 10),
+        900,
+    );
+    assert_eq!(
+        result.expect_err("blind sample required").kind(),
+        ErrorKind::InvalidSkillBody
+    );
+    assert!(skill_edit_verdicts_for_proposal(&vault, &proposal)?.is_empty());
+    Ok(())
+}
+
+#[test]
+fn judged_verdict_rejects_unsupported_world_axes_and_unbound_counts() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    let (_, proposal) = losing_skill_with_proposal(&vault, "oneiron.skill.corrupt_axes");
+    let verdict = score_gate_skill_edit_in_cycle(
+        &vault,
+        &proposal,
+        &StubScorer::improving(),
+        wake(&vault, "axes", 10),
+        900,
+    )?;
+    let original = serde_json::to_value(verdict.measurements.expect("judged row"))
+        .expect("serialize measurements");
+    // Every case leaves the body and evidence digests intact. Decoding must
+    // still reject a receipt that names an unsupported axis or invents labels.
+    for alteration in 0..3 {
+        let mut changed = original.clone();
+        let axes = changed["world_axes"].as_object_mut().expect("axis map");
+        match alteration {
+            0 => {
+                let score = axes.remove("task_success").expect("supported axis");
+                axes.insert(String::new(), score);
+            }
+            1 => {
+                axes.insert("not_a_world_axis".to_owned(),
+                    serde_json::json!({"before": 0.5, "after": 0.5, "labelled_receipts": verdict.held_out_count}));
+            }
+            _ => {
+                axes.get_mut("task_success").expect("supported axis")["labelled_receipts"] =
+                    serde_json::json!(verdict.held_out_count + 1);
+            }
+        }
+        let json = serde_json::to_string(&changed).expect("measurement JSON");
+        rewrite_verdict_row(&vault, |entries| {
+            set_row_field(entries, "measurements", &Value::from(json.as_str()));
+        });
+        assert_eq!(
+            skill_edit_verdicts(&vault)
+                .expect_err("invalid world axis is corrupt")
+                .kind(),
+            ErrorKind::CorruptedIndex,
+        );
+        assert_eq!(
+            vault
+                .receipts(crate::receipt::ReceiptQuery::default())
+                .expect_err("receipt projection must not repeat the false measurement")
+                .kind(),
+            ErrorKind::CorruptedIndex,
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn a_large_outcome_history_keeps_world_labels_aligned_at_all_gate_doors() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    let (skill, proposal) = losing_skill_with_proposal(&vault, "oneiron.skill.long_history");
+    // Seed a large, valid local outcome ledger in one transaction; making
+    // thousands of attempt/receipt queue entries would measure that unrelated
+    // fixture machinery instead of the gate's outcome join. The real gate and
+    // admission doors must still read these rows through the production codec.
+    let mut encoded = Vec::new();
+    rmpv::encode::write_value(
+        &mut encoded,
+        &Value::Map(vec![
+            (Value::from("schema_version"), Value::from(1u64)),
+            (Value::from("win"), Value::Boolean(true)),
+            (Value::from("at"), Value::from(500u64)),
+        ]),
+    )
+    .expect("encode outcome row");
+    vault.with_write_txn(|wtxn| {
+        for index in 0..8_000u32 {
+            // Select a distinct id in the requested partition instead of
+            // hoping 1,600 random draws reserve enough evidence. The count is
+            // fixed for every skill id and on every test host.
+            let want_reserved = index % 5 == 0;
+            let receipt = (0..=u64::MAX)
+                .map(|nonce| format!("load:{index:05}:{nonce}"))
+                .find(|id| receipt_is_held_out(&skill, id) == want_reserved)
+                .expect("each partition has a fixture id");
+            let mut key = b"skill_reliability:outcome:v1:".to_vec();
+            key.extend_from_slice(skill.as_bytes());
+            key.extend_from_slice(receipt.as_bytes());
+            vault.store.vault_meta.put(wtxn, &key, &encoded)?;
+        }
+        Ok(())
+    })?;
+    let reserved = held_out_receipts(&vault, &skill)?;
+    assert!(reserved.len() >= 1_600);
+    assert!(reserved.iter().all(|id| receipt_is_held_out(&skill, id)));
+    let verdict = score_gate_skill_edit_in_cycle(
+        &vault,
+        &proposal,
+        &StubScorer::improving(),
+        wake(&vault, "long-history", 10),
+        900,
+    )?;
+    assert_eq!(verdict.held_out_count, reserved.len() as u64);
+    let measured = verdict.measurements.as_ref().expect("judged measurements");
+    assert_eq!(
+        measured.world_axes["task_success"].labelled_receipts,
+        verdict.held_out_count
+    );
+    assert_eq!(verdict.disposition, SkillEditDisposition::Accepted);
+    // The standing verdict and the admission door each recompute the same
+    // complete labelled basis in ledger order, with no new ruling on replay.
+    assert_eq!(
+        score_gate_skill_edit_in_cycle(
+            &vault,
+            &proposal,
+            &UnreachableScorer,
+            wake(&vault, "long-history-retry", 20),
+            901
+        )?,
+        verdict,
+    );
+    admit_optimized_skill_revision(&vault, &proposal, t(400), 401)?;
+    assert_eq!(
+        stored(&vault, &proposal).lifecycle_status,
+        SkillLifecycle::Active
+    );
     Ok(())
 }
