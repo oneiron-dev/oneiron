@@ -121,13 +121,30 @@ fn sources_in_txn(
         hasher.update(id.as_bytes());
         hasher.update(&(raw.len() as u64).to_be_bytes());
         hasher.update(&raw);
-        if header.entity_type == crate::registry::ENTITY_TYPE_NOTE {
+        #[cfg(feature = "sync")]
+        let entity_doc = crate::entity_doc::source_frontier_in_txn(&vault.store, txn, id)?;
+        #[cfg(not(feature = "sync"))]
+        let entity_doc: Option<Vec<u8>> = None;
+        if header.entity_type == crate::registry::ENTITY_TYPE_NOTE && entity_doc.is_none() {
             let frontier = crate::note::live_frontier_in_txn(vault, txn, *id)?;
+            hasher.update(&(frontier.len() as u64).to_be_bytes());
+            hasher.update(&frontier);
+        }
+        if let Some(frontier) = entity_doc {
+            hasher.update(b"entity-document");
             hasher.update(&(frontier.len() as u64).to_be_bytes());
             hasher.update(&frontier);
         }
         let scope = crate::federation::record_scope::scope_for_blob(&vault.store, txn, *id, &raw)?
             .ok_or(Error::EntityNotFound)?;
+        // The shared scoped reader checks NOTE authorship, but its NOTE branch
+        // returns before the non-claim record-position grant. Conjoin both.
+        if header.entity_type == crate::registry::ENTITY_TYPE_NOTE
+            && (!crate::gate::scoped_read_record_allowed(&policy, &reader, &scope)
+                || !crate::gate::scoped_read_record_allowed(&policy, &holder, &scope))
+        {
+            return Err(Error::EntityNotFound);
+        }
         let position = (
             singleton(&scope.facets)?,
             singleton(&scope.audience)?,
@@ -296,6 +313,7 @@ pub fn backfill_standing_answer(
                     principal,
                     providers: input.providers,
                     band: record.definition.dial.band,
+                    band_version: 0,
                 },
                 human_ask: None,
             },
@@ -369,10 +387,10 @@ fn constrain_sources(
     let mut world = None;
     let mut rel = None;
     let mut scope: Vec<(Value, Value)> = Vec::new();
-    let mut sensitivity = 2_u8;
+    let mut sensitivity = 0_u8;
     let principal_hex = principal.to_hex();
     for source in sources {
-        sensitivity = sensitivity.min(source.sensitivity);
+        sensitivity = sensitivity.max(source.sensitivity);
         for (slot, id) in [
             (&mut facet, source.position.0),
             (&mut project, source.position.1),
@@ -430,7 +448,7 @@ fn constrain_sources(
             }
         }
     }
-    if sensitivity < 2 {
+    if sensitivity != 2 {
         scope.push((Value::from("sensitivity"), Value::from(sensitivity)));
     }
     if let Some(id) = facet {

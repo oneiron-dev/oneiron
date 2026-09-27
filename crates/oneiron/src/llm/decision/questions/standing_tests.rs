@@ -75,12 +75,30 @@ fn grant(vault: &Vault, owner: EntityId) -> crate::Result<()> {
 }
 
 fn grant_with_bands(vault: &Vault, owner: EntityId, bands: Option<u8>) -> crate::Result<()> {
+    grant_for(vault, owner, bands, None, None)
+}
+
+fn grant_for(
+    vault: &Vault,
+    owner: EntityId,
+    bands: Option<u8>,
+    project: Option<EntityId>,
+    ceiling: Option<crate::federation::Sensitivity>,
+) -> crate::Result<()> {
     let bytes = crate::gate::default_policy_manifest();
     let mut manifest: serde_json::Value =
         rmp_serde::from_slice(&bytes).map_err(|_| Error::CorruptedIndex("fixture policy"))?;
     let mut scope = crate::federation::scope_codec::read_preset();
     if let Some(band) = bands {
         scope.bands = crate::federation::ScopeAxis::Some(std::collections::BTreeSet::from([band]));
+    }
+    if let Some(project) = project {
+        scope.audience = crate::federation::ScopeAxis::Some(std::collections::BTreeSet::from([
+            crate::federation::ScopeId(project),
+        ]));
+    }
+    if let Some(ceiling) = ceiling {
+        scope.sensitivity = crate::federation::SensitivityCeiling::AtMost(ceiling);
     }
     manifest["scoped_grants"] = serde_json::json!([{
         "actor_ref": owner.to_hex(),
@@ -583,5 +601,206 @@ fn supplemental_claim_evidence_taint_scope_and_revisions_are_preserved() -> Test
     assert!(refs.contains(&unit.to_hex()) && refs.contains(&evidence.to_hex()));
     vault.put_claim(&evidence, &imported, TimeRange { start: 2, end: 2 }, 2)?;
     assert!(backfill_standing_answer(&vault, owner, id, 1, actor, answer, 12).is_err());
+    Ok(())
+}
+
+#[test]
+fn note_unit_and_evidence_require_record_project_and_sensitivity_grants() -> TestResult {
+    use crate::claim::{
+        ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSource, ClaimSubject,
+    };
+    use crate::federation::Sensitivity;
+    let dir = tempfile::tempdir()?;
+    let vault = Vault::open(dir.path(), VaultConfig::default())?;
+    let owner = EntityId::now();
+    person(&vault, owner)?;
+    let actor = WriteActor::new(owner, EdgeActorClass::Human);
+    let note = vault.create_note("opinion/take", "document source", actor)?;
+    grant(&vault, owner)?;
+    let note_question = create_question(&vault, owner, definition(note, "Note?"), 1)?
+        .definition
+        .question
+        .id;
+    assert!(
+        standing_source_frontier(&vault, owner, note_question, 1, actor, note, &[note]).is_ok()
+    );
+    let other_project = EntityId::now();
+    let claim = EntityId::now();
+    let mut body = ClaimBody::new(
+        "review.source",
+        ClaimSubject::Entity(owner),
+        rmpv::Value::from("fact"),
+        1.0,
+        ClaimApprovalStatus::Approved,
+        ClaimLifecycleStatus::Active,
+    );
+    body.source = Some(ClaimSource::UserStated);
+    body.scope_project = other_project;
+    vault.put_claim(&claim, &body, TimeRange { start: 1, end: 1 }, 1)?;
+    grant_for(&vault, owner, None, Some(other_project), None)?;
+    assert!(
+        standing_source_frontier(&vault, owner, note_question, 1, actor, note, &[note]).is_err()
+    );
+    assert!(
+        backfill_standing_answer(&vault, owner, note_question, 1, actor, input(note), 2).is_err()
+    );
+    let claim_question = create_question(&vault, owner, definition(claim, "Claim?"), 1)?
+        .definition
+        .question
+        .id;
+    assert!(
+        standing_source_frontier(&vault, owner, claim_question, 1, actor, claim, &[claim]).is_ok()
+    );
+    assert!(
+        standing_source_frontier(&vault, owner, claim_question, 1, actor, claim, &[note]).is_err()
+    );
+    grant_for(&vault, owner, None, None, Some(Sensitivity::Public))?;
+    assert!(
+        standing_source_frontier(&vault, owner, note_question, 1, actor, note, &[note]).is_err()
+    );
+    assert!(
+        backfill_standing_answer(&vault, owner, note_question, 1, actor, input(note), 3).is_err()
+    );
+    Ok(())
+}
+
+#[test]
+fn mixed_source_sensitivity_never_downgrades_a_kept_answer() -> TestResult {
+    use crate::claim::{
+        ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSource, ClaimSubject,
+        ScopedReadActorKey,
+    };
+    use crate::federation::Sensitivity;
+    for (unit_band, evidence_band, expected, narrowed) in [
+        ("public", Some("sensitive"), 2, Sensitivity::Private),
+        ("private", Some("restricted"), 3, Sensitivity::Sensitive),
+        ("restricted", None, 3, Sensitivity::Sensitive),
+    ] {
+        let dir = tempfile::tempdir()?;
+        let vault = Vault::open(dir.path(), VaultConfig::default())?;
+        let owner = EntityId::now();
+        person(&vault, owner)?;
+        grant(&vault, owner)?;
+        let actor = WriteActor::new(owner, EdgeActorClass::Human);
+        let make = |band: &str| {
+            let mut claim = ClaimBody::new(
+                "review.source",
+                ClaimSubject::Entity(owner),
+                rmpv::Value::from("fact"),
+                1.0,
+                ClaimApprovalStatus::Approved,
+                ClaimLifecycleStatus::Active,
+            );
+            claim.source = Some(ClaimSource::UserStated);
+            claim.scope = Some(rmpv::Value::Map(vec![(
+                rmpv::Value::from("sensitivity"),
+                rmpv::Value::from(band),
+            )]));
+            claim
+        };
+        let unit = EntityId::now();
+        vault.put_claim(&unit, &make(unit_band), TimeRange { start: 1, end: 1 }, 1)?;
+        let q = create_question(&vault, owner, definition(unit, "Sensitive?"), 10)?
+            .definition
+            .question
+            .id;
+        let mut answer = input(unit);
+        if let Some(band) = evidence_band {
+            let evidence = EntityId::now();
+            vault.put_claim(&evidence, &make(band), TimeRange { start: 1, end: 1 }, 1)?;
+            answer.evidence.push(evidence);
+        }
+        answer.source_frontier =
+            standing_source_frontier(&vault, owner, q, 1, actor, unit, &answer.evidence)?;
+        let saved = backfill_standing_answer(&vault, owner, q, 1, actor, answer, 11)?;
+        let mut landed = vault.get_claim(&saved.claim)?.expect("landed");
+        assert_eq!(
+            crate::claim::claim_sensitivity_band(&landed),
+            Some(expected)
+        );
+        landed.approval = ClaimApprovalStatus::Approved;
+        vault.put_claim(&saved.claim, &landed, TimeRange { start: 11, end: 11 }, 12)?;
+        grant_for(&vault, owner, None, None, Some(narrowed))?;
+        let reader = ScopedReadActorKey::with_actor_class(owner.to_hex(), "human").expect("actor");
+        assert!(
+            vault
+                .scoped_read(reader)
+                .get_entity_parts_with_receipt(&saved.claim, None)?
+                .value
+                .is_none()
+        );
+    }
+    Ok(())
+}
+
+#[cfg(feature = "sync")]
+#[test]
+fn migrated_non_note_document_edits_invalidate_pre_provider_pins() -> TestResult {
+    use crate::entity_doc::{AnchoredEdit, DocAuthorization, EditVerb, TextField};
+    let dir = tempfile::tempdir()?;
+    let vault = Vault::open(dir.path(), VaultConfig::default())?;
+    let owner = EntityId::now();
+    let unit = EntityId::now();
+    person(&vault, owner)?;
+    vault.put_entity(
+        &unit,
+        crate::registry::ENTITY_TYPE_PERSON,
+        TimeRange { start: 1, end: 1 },
+        1,
+        b"unfinished",
+    )?;
+    grant(&vault, owner)?;
+    let actor = WriteActor::new(owner, EdgeActorClass::Human);
+    let authority = vault.authenticate_owner(
+        owner,
+        &owner.to_hex(),
+        true,
+        crate::store::GateDecisionId::now(),
+    )?;
+    vault.migrate_entity_text(
+        &unit,
+        &TextField::Utf8Body,
+        actor,
+        &DocAuthorization::Owner(&authority),
+    )?;
+    let question = create_question(&vault, owner, definition(unit, "Done?"), 10)?
+        .definition
+        .question
+        .id;
+    let mut old = prepared(&vault, owner, question, 1, actor, unit)?;
+    old.answer = DecisionAnswer::Noul(false);
+    let first = backfill_standing_answer(&vault, owner, question, 1, actor, old.clone(), 11)?;
+    let raw = vault.get_raw(&unit)?.expect("pointer row");
+    let size = vault.entity_text(&unit)?.chars().count();
+    let anchor = vault.entity_text_anchor(&unit, size, size)?;
+    vault.edit_entity_text(
+        &unit,
+        &[AnchoredEdit {
+            actor: Some(actor),
+            verb: EditVerb::AppendToSection {
+                section: anchor,
+                text: " completed".into(),
+            },
+        }],
+        &DocAuthorization::Owner(&authority),
+        12,
+    )?;
+    assert_eq!(vault.get_raw(&unit)?.expect("pointer row"), raw);
+    assert_eq!(vault.entity_text(&unit)?, "unfinished completed");
+    assert!(matches!(
+        backfill_standing_answer(&vault, owner, question, 1, actor, old, 13),
+        Err(Error::ConcurrentWrite(_))
+    ));
+    let fresh = backfill_standing_answer(
+        &vault,
+        owner,
+        question,
+        1,
+        actor,
+        prepared(&vault, owner, question, 1, actor, unit)?,
+        14,
+    )?;
+    assert_ne!(first.claim, fresh.claim);
+    assert_ne!(first.frontier, fresh.frontier);
     Ok(())
 }
