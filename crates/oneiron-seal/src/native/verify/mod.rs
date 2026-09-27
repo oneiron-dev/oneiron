@@ -11,7 +11,6 @@ mod verify_chain_gates;
 mod verify_dss_core;
 mod verify_modifications;
 mod verify_report;
-mod verify_revision_tokens;
 mod verify_revocation;
 mod verify_sig_pipeline;
 #[cfg(test)]

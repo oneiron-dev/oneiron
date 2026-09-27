@@ -667,6 +667,120 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn structural_facts_share_one_inventory_across_pdf_separators() {
+        let signer = test_ca("all-separators-signer");
+        let engine = verify_engine(vec![signer.cert_der.clone()], VERIFY_SECS);
+        for separator in [
+            b" ".as_slice(),
+            b"\r",
+            b"\n",
+            b"\r\n",
+            b"\t",
+            b"\x0c",
+            b"\0",
+            b"%inline comment\n",
+            b"%inline comment\r",
+            b"%inline comment\r\n",
+        ] {
+            let mut input = base_input();
+            let xref = input
+                .windows(b"xref\n".len())
+                .position(|w| w == b"xref\n")
+                .unwrap();
+            let extra = [
+                b"1".as_slice(),
+                separator,
+                b"0",
+                separator,
+                b"obj << /Type /Catalog /Pages 2 0 R >> endobj\n",
+            ]
+            .concat();
+            input.splice(xref..xref, extra.iter().copied());
+            let marker = b"startxref\n186\n";
+            let at = input
+                .windows(marker.len())
+                .position(|w| w == marker)
+                .unwrap();
+            input.splice(
+                at..at + marker.len(),
+                format!("startxref\n{}\n", xref + extra.len()).bytes(),
+            );
+            let signed = append_sig_revision(&input, &signer, "separator", None, AT_UNIX);
+            let report = engine.verify_sealed_pdf(&signed).unwrap();
+            assert!(
+                report
+                    .anomalies
+                    .contains(&crate::api::VerifyAnomaly::DuplicateObjectNumber),
+                "separator {separator:?}: {report:?}"
+            );
+            assert_eq!(report.verdict(), crate::api::VerifyVerdict::Passed);
+        }
+    }
+
+    #[test]
+    fn public_verifier_refuses_comment_delimited_definition_in_dss_renewal() {
+        let signer = test_ca("comment-definition-signer");
+        let tsa = tsa_ca();
+        let engine = verify_engine(
+            vec![signer.cert_der.clone(), tsa.cert_der.clone()],
+            VERIFY_SECS,
+        );
+        let signed =
+            append_sig_revision(&base_input(), &signer, "comment-dss", Some(&tsa), AT_UNIX);
+        let crl = build_crl(
+            &signer,
+            AT_UNIX - 60,
+            Some(VERIFY_SECS + 3600),
+            None,
+            vec![],
+        );
+        let dss = append_dss_revision(&signed, vec![signer.cert_der, tsa.cert_der], vec![crl]);
+        assert_eq!(
+            engine.verify_sealed_pdf(&dss).unwrap().verdict(),
+            crate::api::VerifyVerdict::Passed
+        );
+        for header in [
+            b"1 0 obj%legal comment\n".as_slice(),
+            b"1 %legal comment\n0 obj ",
+            b"1 0 obj%legal comment\r\n",
+            b"1 %legal comment\r0 obj ",
+        ] {
+            let mut altered = dss.clone();
+            let xref = altered
+                .windows(b"\nxref\n".len())
+                .rposition(|w| w == b"\nxref\n")
+                .unwrap()
+                + 1;
+            let extra = [
+                b"\n".as_slice(),
+                header,
+                b" << /Type /Catalog /Pages 2 0 R >>\nendobj\n",
+            ]
+            .concat();
+            altered.splice(xref - 1..xref, extra.iter().copied());
+            let at = altered
+                .windows(b"startxref\n".len())
+                .rposition(|w| w == b"startxref\n")
+                .unwrap()
+                + b"startxref\n".len();
+            let end = at + altered[at..].iter().position(|b| *b == b'\n').unwrap();
+            altered.splice(at..end, (xref - 1 + extra.len()).to_string().bytes());
+            let report = engine.verify_sealed_pdf(&altered).unwrap();
+            assert_eq!(
+                report.modifications,
+                crate::api::ModificationStatus::Suspicious,
+                "{header:?}: {report:?}"
+            );
+            assert!(
+                report
+                    .anomalies
+                    .contains(&crate::api::VerifyAnomaly::DuplicateObjectNumber)
+            );
+            assert_eq!(report.verdict(), crate::api::VerifyVerdict::Failed);
+        }
+    }
+
+    #[test]
     fn public_verifier_catches_same_line_catalog_definitions_and_dss_bypass() {
         let signer = test_ca("same-line-signer");
         let tsa = tsa_ca();

@@ -4,9 +4,7 @@
 //! after a signer. Unknown objects, redefinitions and ambiguous revisions
 //! default to suspicious; structural indicators are not verdicts on their own.
 
-use super::verify_revision_tokens::{
-    revision_headers, scan_headers, stream_delimiter, stream_payloads,
-};
+use super::super::pdf::{self, RevisionFacts};
 use super::verify_sig_pipeline::{check_byte_range, collect_signatures};
 use crate::api::{ModificationLevel, ModificationStatus, SealResourceLimits, VerifyAnomaly};
 use lopdf::{Dictionary, Document, LoadOptions, Object, ObjectId};
@@ -115,64 +113,9 @@ fn ref_obj(obj: &Object) -> Option<ObjectId> {
 /// The writer changes only /Prev and /Size in a table trailer. Xref
 /// streams also replace their framing keys; document identity and metadata
 /// pointers must remain byte-for-byte equal across each renewal.
-fn trailer_allowed(
-    before: &Document,
-    after: &Document,
-    prior_bytes: &[u8],
-    next_bytes: &[u8],
-) -> bool {
-    if std::mem::discriminant(&before.reference_table.cross_reference_type)
-        != std::mem::discriminant(&after.reference_table.cross_reference_type)
-    {
-        return false;
-    }
-    let Ok(previous_xref) = super::super::pdf::last_startxref(prior_bytes) else {
-        return false;
-    };
-    // lopdf merges /Prev links into one Document and does not retain /Prev
-    // in Document.trailer. Read the current xref framing, not arbitrary page
-    // content, and prove its one /Prev points to the previous revision.
-    let Ok(current_xref) = super::super::pdf::last_startxref(next_bytes) else {
-        return false;
-    };
-    let Ok(offset) = usize::try_from(current_xref) else {
-        return false;
-    };
-    let Some(xref) = next_bytes.get(offset..) else {
-        return false;
-    };
-    let end = if matches!(
-        after.reference_table.cross_reference_type,
-        lopdf::xref::XrefType::CrossReferenceStream
-    ) {
-        xref.windows(b"stream\n".len())
-            .position(|w| w == b"stream\n")
-    } else {
-        xref.windows(b"startxref".len())
-            .rposition(|w| w == b"startxref")
-    };
-    let Some(header) = end.and_then(|i| xref.get(..i)) else {
-        return false;
-    };
-    let prev: Vec<_> = header
-        .windows(b"/Prev".len())
-        .enumerate()
-        .filter_map(|(i, w)| (w == b"/Prev").then_some(i + b"/Prev".len()))
-        .collect();
-    if prev.len() != 1 {
-        return false;
-    }
-    let digits = header[prev[0]..]
-        .iter()
-        .copied()
-        .skip_while(|b| *b == b' ')
-        .take_while(u8::is_ascii_digit)
-        .collect::<Vec<_>>();
-    if digits.is_empty()
-        || std::str::from_utf8(&digits)
-            .ok()
-            .and_then(|s| s.parse::<u64>().ok())
-            != Some(previous_xref)
+fn trailer_allowed(before: &pdf::RevisionFact, after: &pdf::RevisionFact) -> bool {
+    if std::mem::discriminant(&before.xref_style) != std::mem::discriminant(&after.xref_style)
+        || after.prev_xref != Some(before.xref_offset)
     {
         return false;
     }
@@ -200,18 +143,6 @@ fn trailer_allowed(
         new.remove(key);
     }
     old == new
-}
-
-/// Return the actual final EOF marker end, allowing at most four CR/LF bytes.
-pub(super) fn eof_tail(bytes: &[u8]) -> Option<usize> {
-    let mut end = bytes.len();
-    while end > 0 && matches!(bytes[end - 1], b'\r' | b'\n') {
-        end -= 1;
-        if bytes.len() - end > 4 {
-            return None;
-        }
-    }
-    bytes[..end].ends_with(b"%%EOF").then_some(end)
 }
 
 fn dss_delta(
@@ -389,151 +320,22 @@ fn doc_timestamp_delta(
     only_xref_extra(after, &mut changed, before, bytes) && changed.is_empty()
 }
 
-/// Locate the revision footer whose `startxref` points to `at`. A raw
-/// `%%EOF` inside a stream is not a revision boundary. Work stays bounded by
-/// the validated input size and MAX_REVISIONS in the caller.
-fn revision_footer(bytes: &[u8], at: usize, upper: usize) -> Option<(usize, usize)> {
-    let section = bytes.get(at..upper)?;
-    for (i, window) in section.windows(b"startxref".len()).enumerate().rev() {
-        if window != b"startxref" {
-            continue;
-        }
-        let mut cursor = at + i + b"startxref".len();
-        while matches!(bytes.get(cursor), Some(b' ' | b'\r' | b'\n')) {
-            cursor += 1;
-        }
-        let first = cursor;
-        while bytes.get(cursor).is_some_and(u8::is_ascii_digit) {
-            cursor += 1;
-        }
-        if first == cursor
-            || bytes
-                .get(first..cursor)?
-                .iter()
-                .try_fold(0usize, |value, b| {
-                    value.checked_mul(10)?.checked_add(usize::from(*b - b'0'))
-                })
-                != Some(at)
-        {
-            continue;
-        }
-        while matches!(bytes.get(cursor), Some(b' ' | b'\r' | b'\n')) {
-            cursor += 1;
-        }
-        if bytes.get(cursor..cursor + 5) == Some(b"%%EOF") && cursor + 5 <= upper {
-            return Some((at + i, cursor + 5));
-        }
-    }
-    None
-}
-
-/// The previous xref is read only from the current xref/trailer header.
-/// lopdf's merged trailer deliberately drops /Prev.
-fn xref_previous(bytes: &[u8], at: usize, footer_start: usize) -> Option<Option<usize>> {
-    let section = bytes.get(at..footer_start)?;
-    let header = if section.starts_with(b"xref") {
-        section
-    } else {
-        let (stream_at, _) = stream_delimiter(section)?;
-        &section[..stream_at]
-    };
-    let mut found = None;
-    for (i, w) in header.windows(b"/Prev".len()).enumerate() {
-        if w != b"/Prev" {
-            continue;
-        }
-        if found.is_some() {
-            return None;
-        }
-        let mut cursor = i + b"/Prev".len();
-        while header.get(cursor) == Some(&b' ') {
-            cursor += 1;
-        }
-        let first = cursor;
-        while header.get(cursor).is_some_and(u8::is_ascii_digit) {
-            cursor += 1;
-        }
-        if first == cursor {
-            return None;
-        }
-        found = Some(header[first..cursor].iter().try_fold(0usize, |value, b| {
-            value.checked_mul(10)?.checked_add(usize::from(*b - b'0'))
-        })?);
-    }
-    Some(found)
-}
-
-/// Follow the validated xref `/Prev` chain and its matching startxref/EOF
-/// footers. Never infer revisions from raw `%%EOF` occurrences in streams.
-pub(super) fn revision_boundaries(bytes: &[u8]) -> Vec<usize> {
-    let Some(mut upper) = eof_tail(bytes) else {
-        return Vec::new();
-    };
-    let Ok(start) = super::super::pdf::last_startxref(bytes) else {
-        return Vec::new();
-    };
-    let Ok(mut at) = usize::try_from(start) else {
-        return Vec::new();
-    };
-    let mut ends = Vec::new();
-    for _ in 0..=MAX_REVISIONS {
-        if at >= upper {
-            return Vec::new();
-        }
-        let Some((footer, end)) = revision_footer(bytes, at, upper) else {
-            return Vec::new();
-        };
-        if ends.is_empty() && end != upper {
-            return Vec::new();
-        }
-        ends.push(end);
-        let Some(prev) = xref_previous(bytes, at, footer) else {
-            return Vec::new();
-        };
-        let Some(prev) = prev else {
-            ends.reverse();
-            return ends;
-        };
-        if prev >= at {
-            return Vec::new();
-        }
-        upper = at;
-        at = prev;
-    }
-    ends.reverse(); // MAX_REVISIONS + 1 is the fail-closed sentinel.
-    ends
-}
-
 /// Structural indicators are deliberately separate from the modification
 /// decision and from the cryptographic verdict.
 pub(super) fn structural_anomalies(
     bytes: &[u8],
-    boundaries: &[usize],
+    facts: &RevisionFacts,
     limits: &SealResourceLimits,
 ) -> Vec<VerifyAnomaly> {
     let mut out = Vec::new();
-    if boundaries.len() > MAX_REVISIONS {
-        return out;
+    if facts.has_duplicates() {
+        out.push(VerifyAnomaly::DuplicateObjectNumber);
     }
-    let mut previous = None;
-    let mut prior_end = 0;
-    for &end in boundaries {
-        let Some(current) = parsed(&bytes[..end], limits) else {
-            prior_end = end;
+    let mut previous: Option<Document> = None;
+    for revision in &facts.revisions {
+        let Some(current) = parsed(&bytes[..revision.byte_end], limits) else {
             continue;
         };
-        let spans = stream_payloads(&current, &bytes[..end], limits.max_pdf_objects);
-        if scan_headers(
-            &bytes[prior_end..end],
-            prior_end,
-            limits.max_pdf_objects,
-            &spans,
-        )
-        .is_some_and(|scan| scan.duplicate)
-            && !out.contains(&VerifyAnomaly::DuplicateObjectNumber)
-        {
-            out.push(VerifyAnomaly::DuplicateObjectNumber);
-        }
         if let Some(prior) = &previous
             && let Some(changed) = changed_ids(prior, &current)
         {
@@ -552,49 +354,8 @@ pub(super) fn structural_anomalies(
             }
         }
         previous = Some(current);
-        prior_end = end;
     }
     out
-}
-
-fn accounted_headers(
-    bytes: &[u8],
-    before_end: usize,
-    next_end: usize,
-    changed: &BTreeSet<ObjectId>,
-    next: &Document,
-    limits: &SealResourceLimits,
-) -> bool {
-    let spans = stream_payloads(next, &bytes[..next_end], limits.max_pdf_objects);
-    let Some(scan) = scan_headers(
-        &bytes[before_end..next_end],
-        before_end,
-        limits.max_pdf_objects,
-        &spans,
-    ) else {
-        return false;
-    };
-    if scan.duplicate {
-        return false;
-    }
-    let mut headers = scan.ids;
-    // lopdf may keep the xref stream in the xref table without exposing it
-    // in Document.objects. Its real startxref target is the only exception.
-    if matches!(
-        next.reference_table.cross_reference_type,
-        lopdf::xref::XrefType::CrossReferenceStream
-    ) && let Ok(offset) = super::super::pdf::last_startxref(&bytes[..next_end])
-        && let Ok(at) = usize::try_from(offset)
-        && let Some(header) = bytes
-            .get(at..)
-            .and_then(|b| b.split(|c| *c == b'\n').next())
-        && let Some(xref_id) =
-            revision_headers(&[header, b"\n"].concat(), 1).and_then(|ids| ids.into_iter().next())
-        && !changed.contains(&xref_id)
-    {
-        headers.remove(&xref_id);
-    }
-    headers == *changed
 }
 
 /// The same default-deny revision core checks unsigned input before signing
@@ -603,15 +364,16 @@ pub(crate) fn analyze_modifications(
     bytes: &[u8],
     signer_end: Option<u64>,
     limits: &SealResourceLimits,
+    facts: &RevisionFacts,
 ) -> ModificationStatus {
-    let mut ends = revision_boundaries(bytes);
+    let ends = facts.ends();
     if ends.is_empty() || ends.len() > MAX_REVISIONS {
         return ModificationStatus::Suspicious;
     }
     let Some(final_end) = ends.last().copied() else {
         return ModificationStatus::Suspicious;
     };
-    if eof_tail(bytes) != Some(final_end) {
+    if pdf::eof_tail(bytes) != Some(final_end) {
         return ModificationStatus::Suspicious;
     }
     let first = match signer_end {
@@ -634,11 +396,10 @@ pub(crate) fn analyze_modifications(
     if first == ends.len() - 1 {
         return ModificationStatus::Clean(ModificationLevel::None);
     }
-    let mut previous_end = ends[first];
-    let Some(mut prev) = parsed(&bytes[..previous_end], limits) else {
+    let Some(mut prev) = parsed(&bytes[..ends[first]], limits) else {
         return ModificationStatus::Suspicious;
     };
-    for next_end in ends.drain(first + 1..) {
+    for (index, &next_end) in ends.iter().enumerate().skip(first + 1) {
         let Some(next) = parsed(&bytes[..next_end], limits) else {
             return ModificationStatus::Suspicious;
         };
@@ -646,15 +407,14 @@ pub(crate) fn analyze_modifications(
             return ModificationStatus::Suspicious;
         };
         let allowed = signer_end.is_some()
-            && trailer_allowed(&prev, &next, &bytes[..previous_end], &bytes[..next_end])
-            && accounted_headers(bytes, previous_end, next_end, &changed, &next, limits)
+            && trailer_allowed(&facts.revisions[index - 1], &facts.revisions[index])
+            && facts.accounts_for(index, &changed)
             && (dss_delta(&prev, &next, &bytes[..next_end], changed.clone())
                 || doc_timestamp_delta(&prev, &next, &bytes[..next_end], changed));
         if !allowed {
             return ModificationStatus::Suspicious;
         }
         prev = next;
-        previous_end = next_end;
     }
     ModificationStatus::Clean(ModificationLevel::LtaUpdates)
 }
@@ -665,13 +425,26 @@ mod tests {
 
     #[test]
     fn raw_revision_scan_counts_unreferenced_objects_and_rejects_duplicates() {
-        let body = b"\n12 0 obj\n<<>>\nendobj\n13 0 obj\n<<>>\nendobj\n";
-        assert_eq!(
-            revision_headers(body, 5),
-            Some(BTreeSet::from([(12, 0), (13, 0)]))
+        let bytes = std::fs::read(format!(
+            "{}/tests/fixtures/pdf-input/classic_1page.pdf",
+            env!("CARGO_MANIFEST_DIR")
+        ))
+        .unwrap();
+        let facts = pdf::analyze_revision_facts(&bytes, &SealResourceLimits::default()).unwrap();
+        let ids: BTreeSet<_> = facts.revisions[0]
+            .definitions
+            .iter()
+            .map(|d| d.id)
+            .collect();
+        assert_eq!(ids, BTreeSet::from([(1, 0), (2, 0), (3, 0)]));
+        assert!(!facts.has_duplicates());
+        assert!(
+            pdf::analyze_revision_facts(
+                b"%PDF-1.4\n12 0 obj\n12 0 obj\n%%EOF",
+                &SealResourceLimits::default()
+            )
+            .is_err()
         );
-        assert_eq!(revision_headers(b"\n12 0 obj\n12 0 obj\n", 5), None);
-        assert_eq!(revision_headers(body, 1), None);
     }
 
     #[test]
@@ -698,11 +471,9 @@ mod tests {
             .unwrap()
             .bytes;
         }
-        assert_eq!(revision_boundaries(&bytes).len(), MAX_REVISIONS + 1);
-        assert_eq!(
-            analyze_modifications(&bytes, None, &SealResourceLimits::default()),
-            ModificationStatus::Suspicious
+        assert!(pdf::analyze_revision_facts(&bytes, &SealResourceLimits::default()).is_err());
+        assert!(
+            pdf::analyze_revision_facts(b"%%EOF%%EOF", &SealResourceLimits::default()).is_err()
         );
-        assert!(revision_boundaries(b"%%EOF%%EOF").is_empty());
     }
 }

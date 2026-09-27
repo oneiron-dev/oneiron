@@ -8,11 +8,9 @@ use crate::api::{
 };
 use crate::error::{InputInvalidCode, SealError};
 
-use super::super::cms;
+use super::super::{cms, pdf};
 use super::verify_dss_core::{EmbeddedCert, dss_revision_end, verify_dss};
-use super::verify_modifications::{
-    analyze_modifications, eof_tail, revision_boundaries, structural_anomalies,
-};
+use super::verify_modifications::{analyze_modifications, structural_anomalies};
 use super::verify_report::signature_entry;
 use super::verify_sig_pipeline::{
     Checks, DocTimestampOutcome, collect_signatures, verify_cades_sig, verify_doc_ts,
@@ -195,7 +193,7 @@ pub(crate) fn verify_document(
     }
     let mut checks = Checks::new();
     // The same bounded EOF-tail rule governs revision admission and coverage.
-    let eof_ok = eof_tail(bytes).is_some();
+    let eof_ok = pdf::eof_tail(bytes).is_some();
     checks.record(
         VerifyCheckKind::PdfRevision,
         eof_ok,
@@ -312,7 +310,12 @@ pub(crate) fn verify_document(
         .filter(|e| !e.is_doc_ts)
         .filter_map(|e| e.byte_range[2].checked_add(e.byte_range[3]))
         .min();
-    let modifications = analyze_modifications(bytes, first_signer_end, limits);
+    let facts = pdf::analyze_revision_facts(bytes, limits).ok();
+    let modifications = facts
+        .as_ref()
+        .map_or(ModificationStatus::Suspicious, |facts| {
+            analyze_modifications(bytes, first_signer_end, limits, facts)
+        });
     checks.record(
         VerifyCheckKind::Modification,
         modifications != ModificationStatus::Suspicious,
@@ -350,7 +353,9 @@ pub(crate) fn verify_document(
             sig.achieved_profile = classify(&combined, sig_ok, covering_dts_valid);
         }
     }
-    let boundaries = revision_boundaries(bytes);
+    let boundaries = facts
+        .as_ref()
+        .map_or_else(Vec::new, pdf::RevisionFacts::ends);
     let revisions = boundaries
         .iter()
         .enumerate()
@@ -373,7 +378,9 @@ pub(crate) fn verify_document(
             }
         })
         .collect();
-    let anomalies = structural_anomalies(bytes, &boundaries, limits);
+    let anomalies = facts
+        .as_ref()
+        .map_or_else(Vec::new, |facts| structural_anomalies(bytes, facts, limits));
     Ok(VerifyReport {
         artifact_sha256: evidence_sha256,
         revisions,
