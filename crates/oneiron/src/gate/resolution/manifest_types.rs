@@ -7,6 +7,7 @@ use crate::gate::ceiling::{
     PolicySignature, SourceTrustCeiling,
 };
 use crate::gate::grants::PolicyScopedGrant;
+use crate::gate::hosted_tts_policy::HostedTtsPolicy;
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub(crate) struct PolicyManifestDiagnostics {
@@ -79,6 +80,7 @@ pub(crate) struct PolicyManifestResolution {
     pub(crate) proposal_check_threshold: Option<u64>,
     pub(crate) voice_ref_defaults: Option<crate::voice_identity::ref_limits::VoiceRefLimitPolicy>,
     pub(crate) voice_ref_limits: crate::voice_identity::ref_limits::VoiceRefLimitPolicy,
+    pub(crate) weave_correction_policy: Option<crate::gate::WeaveCorrectionPolicy>,
     pub(super) packs: Vec<PolicyPack>,
     pub(super) actor_ceilings: Vec<ActorCeiling>,
     pub(crate) delegation_fold: DelegationFoldCache,
@@ -101,4 +103,5 @@ pub(crate) struct PolicyManifestResolution {
     /// from a resolved manifest.
     pub(super) auto_checker: Option<String>,
     pub(super) budget_policy: BudgetPolicyTable,
+    pub(super) hosted_tts: HostedTtsPolicy,
 }

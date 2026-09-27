@@ -14,6 +14,7 @@ const OWNER_PREFIX: &[u8] = b"voice:owner_ref_owner:v1:";
 const PACK_PREFIX: &[u8] = b"voice:owner_ref:v1:";
 const IDENTITY_PREFIX: &[u8] = b"voice:ref_identity:v1:";
 const TARGET_PREFIX: &[u8] = b"voice:ref_target:v1:";
+const REVISION_PREFIX: &[u8] = b"voice:owner_ref_revision:v1:";
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
@@ -195,6 +196,10 @@ pub(super) fn delete_owner_refs(
         if store.vault_meta.delete(txn, &key)? {
             deleted += 1;
         }
+        if let Some(pack_id) = key.strip_prefix(PACK_PREFIX) {
+            let revision_key = [REVISION_PREFIX, pack_id].concat();
+            store.vault_meta.delete(txn, &revision_key)?;
+        }
         store.vault_meta.delete(txn, &index)?;
     }
     Ok(deleted)
@@ -232,6 +237,13 @@ impl Vault {
         }
         identity.pack_ids.push(pack.id.clone());
         self.store.vault_meta.put(&mut txn, &pack_key, &bytes)?;
+        // A withdrawn and later recreated pack gets a new incarnation even
+        // when its ID and audio are byte-identical. Hosted work binds to this.
+        self.store.vault_meta.put(
+            &mut txn,
+            &key(REVISION_PREFIX, &pack.id)?,
+            uuid::Uuid::new_v4().as_bytes(),
+        )?;
         self.store
             .vault_meta
             .put(&mut txn, &identity_key, &encode(&identity)?)?;
@@ -348,6 +360,41 @@ impl Vault {
             return Ok(None);
         }
         Ok(Some(record))
+    }
+
+    /// Vault-scoped pack incarnation; withdrawal removes it with the pack.
+    pub(crate) fn owner_voice_ref_revision(&self, id: &str) -> Result<Option<[u8; 16]>> {
+        let pack_key = key(PACK_PREFIX, id)?;
+        let revision_key = key(REVISION_PREFIX, id)?;
+        let txn = self.store.env.read_txn()?;
+        let Some(revision) = self.store.vault_meta.get(&txn, &revision_key)? else {
+            return Ok(None);
+        };
+        if self.store.vault_meta.get(&txn, &pack_key)?.is_none() {
+            return Err(invalid("orphaned voice reference revision"));
+        }
+        Ok(Some(revision.as_ref().try_into().map_err(|_| {
+            invalid("corrupt voice reference revision")
+        })?))
+    }
+
+    /// Serialize queue admission against withdrawal in the vault write txn.
+    pub(crate) fn with_live_voice_ref<R>(
+        &self,
+        id: &str,
+        revision: [u8; 16],
+        admit: impl FnOnce(&heed::RoTxn<'_>) -> Result<R>,
+    ) -> Result<Option<R>> {
+        let pack_key = key(PACK_PREFIX, id)?;
+        let revision_key = key(REVISION_PREFIX, id)?;
+        let txn = self.store.env.write_txn()?;
+        if self.store.vault_meta.get(&txn, &pack_key)?.is_none()
+            || self.store.vault_meta.get(&txn, &revision_key)?
+                .is_none_or(|current| current.as_ref() != revision.as_slice())
+        {
+            return Ok(None);
+        }
+        Ok(Some(admit(&txn)?))
     }
 
     pub fn evict_voice_target(&self, voice_id: &str, target: &str) -> Result<()> {

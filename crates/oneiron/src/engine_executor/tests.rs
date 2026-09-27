@@ -18,6 +18,7 @@ use crate::{
 
 use super::*;
 
+mod output_decay;
 mod speech_identity_regressions;
 
 fn block_on_ready<F: Future>(future: F) -> F::Output {
