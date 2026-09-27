@@ -280,6 +280,9 @@ fn fold_authority_log_once(
         ..context
     };
 
+    // Restrictive facts are proved independently of the surviving roster.
+    let revoke_facts =
+        super::revoke_proof::derive_revoke_facts(&by_hash, &entry_ancestors, context);
     let mut states = BTreeMap::<AuthorityEntryHash, FoldState>::new();
     let mut pending: BTreeSet<AuthorityEntryHash> = by_hash.keys().copied().collect();
     let mut progressed = true;
@@ -303,7 +306,15 @@ fn fold_authority_log_once(
             }
             let entry = &by_hash[&hash];
             let fold_context = context;
-            match fold_entry_state(entry, hash, &states, fold_context) {
+            match super::ancestry_evaluator::evaluate_entry(
+                entry,
+                hash,
+                &by_hash,
+                &states,
+                &pending,
+                fold_context,
+                super::ancestry_evaluator::EvaluationPhase::Normal,
+            ) {
                 EntryFold::Ready(state) => {
                     states.insert(hash, state);
                     pending.remove(&hash);
@@ -326,17 +337,16 @@ fn fold_authority_log_once(
             for hash in stalled {
                 let entry = &by_hash[&hash];
                 let fold_context = context;
-                let Some(bypass_states) =
-                    revocation_bypass_states(entry, &by_hash, &states, &pending, fold_context)
-                else {
-                    continue;
-                };
-                // Ready only. A revocation the bypass cannot justify stays
-                // pending and is reported as `InvalidAncestry` below, exactly as
-                // before — the bypass may rescue a revocation, never admit one.
-                if let EntryFold::Ready(state) =
-                    fold_entry_state(entry, hash, &bypass_states, fold_context)
-                {
+                let empty_rejected = BTreeSet::new();
+                if let EntryFold::Ready(state) = super::ancestry_evaluator::evaluate_entry(
+                    entry,
+                    hash,
+                    &by_hash,
+                    &states,
+                    &pending,
+                    fold_context,
+                    super::ancestry_evaluator::EvaluationPhase::Stalled(&empty_rejected),
+                ) {
                     states.insert(hash, state);
                     pending.remove(&hash);
                     progressed = true;
@@ -410,6 +420,9 @@ fn fold_authority_log_once(
                     },
                 ),
         );
+    }
+    if let Some(state) = &mut merged {
+        revoke_facts.apply_to(state);
     }
     let actor_bindings = merged.as_ref().map_or_else(BTreeMap::new, |state| {
         folded_actor_bindings(state, context.consent_arm)
