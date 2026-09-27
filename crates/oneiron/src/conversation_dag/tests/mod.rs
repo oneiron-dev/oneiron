@@ -116,6 +116,8 @@ fn forks_rewrite_canonical_and_preserve_old_branch_and_pages() {
         [root, trunk, thread].into()
     );
     vault.move_head(&conv, &thread).unwrap();
+    // A selected fork is a canonical child, never a thread root.
+    assert!(vault.thread_roots(root).unwrap().is_empty());
     assert_eq!(
         vault
             .resolve_dag_scope(&scope(conv, ScopePath::Canonical, false))
