@@ -126,6 +126,8 @@ fn one_1689_annotation_thread_anchors_to_a_conversation_dag_node() {
         conversation: room,
         parent,
         reply_to: None,
+        address: crate::conversation_dag::AddressMode::Broadcast,
+        recipients: vec![],
         advance,
         kind: ENTITY_TYPE_TURN,
         occurred: t(150),
