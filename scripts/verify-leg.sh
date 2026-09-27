@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # One distributed verify leg. Select with LEG:
-#   LEG=fmt-clippy   code-map pin + fmt (check-mode) + workspace clippy
+#   LEG=fmt-clippy   fmt (check-mode) + workspace clippy; CODEMAP_CHECK=1 adds
+#                    the code-map pin first (main regenerates the map)
 #   LEG=tests:1/2    nextest full tier, partition hash:1/2, + doctests
 #   LEG=tests:2/2    nextest full tier, partition hash:2/2
 #
@@ -34,7 +35,9 @@ run_test_partition() {
 
 case "$LEG" in
   fmt-clippy)
-    run_stage codemap scripts/codemap/check.sh
+    if [ "${CODEMAP_CHECK-}" = 1 ]; then
+      run_stage codemap scripts/codemap/check.sh
+    fi
     # Honor the workspace's heed exclusion; --all also follows local path dependencies.
     run_stage fmt    cargo fmt --check
     run_stage clippy cargo clippy --locked --workspace --all-targets --all-features -- -D warnings

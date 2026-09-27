@@ -48,6 +48,8 @@ impl Vault {
     ) -> Result<bool> {
         if crate::note::citation_delete_scope_exists(&self.store, txn, id)?
             || crate::skill_hub::source_custody_exists_in_txn(&self.store, txn, id)?
+            || crate::skill_hub::claim_refinement_scope_exists_in_txn(&self.store, txn, id)?
+            || crate::skill_hub::refinement_custody_exists_in_txn(&self.store, txn, id)?
             || crate::agent_def::birth_custody_exists_in_txn(&self.store, txn, id)?
             || crate::receipt::receipt_archive_custody_exists(&self.store, txn, id)?
             || self.store.entities.get(txn, id.as_bytes())?.is_some()
