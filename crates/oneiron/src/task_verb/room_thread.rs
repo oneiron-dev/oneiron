@@ -21,16 +21,11 @@ pub(crate) fn thread_tasks(
     let vault = memory.vault();
     let txn = vault.store.env.read_txn().map_err(Error::from)?;
     let mut candidates = Vec::new();
-    let mut examined = 0;
     for row in vault
         .store
         .port_entity_ids_by_type(&txn, crate::registry::ENTITY_TYPE_TASK, None)?
     {
         let id = row?;
-        examined += 1;
-        if examined > 100_000 {
-            return Err(Error::IndexOverflow("room thread TASK scan").into());
-        }
         let Some(body) = task_verb_body_in(vault, &txn, id)? else {
             continue;
         };
@@ -56,6 +51,13 @@ pub(crate) fn thread_tasks(
         if !members.contains(&authority.owner_ref.to_hex()) {
             continue;
         }
+        // Exhaust the shared TASK index for an exact room-local census.
+        // No persisted thread→TASK index is added: this issue forbids new
+        // stored state. The guard applies to relevant rows, not unrelated
+        // TASKs belonging to other rooms in the vault.
+        if candidates.len() == 100_000 {
+            return Err(Error::IndexOverflow("room thread TASK matches").into());
+        }
         candidates.push((id, thread, body, authority.cancelled));
     }
     drop(txn);
@@ -64,9 +66,9 @@ pub(crate) fn thread_tasks(
         // `Memory::get_entity` opens a reader of its own: finish the index
         // snapshot first or LMDB refuses recursive reuse of its reader slot.
         // Room membership alone never grants TASK visibility.
-        if memory.get_entity(&id.to_hex())?.is_none() {
+        let Some(view) = memory.get_entity(&id.to_hex())? else {
             continue;
-        }
+        };
         let terminal = body.terminal();
         let open =
             terminal.is_none() && !cancelled && body.ttl.is_none_or(|ttl| ttl.deadline_at > now);
@@ -75,6 +77,8 @@ pub(crate) fn thread_tasks(
                 Some(TaskAssignee::Human { actor_ref }) => {
                     let cursor = crate::human_task::human_followup_record(vault, id)?;
                     Some(crate::workspace_roster::RoomThreadWait {
+                        task: id,
+                        kind: crate::workspace_roster::RoomWaitKind::HumanTask,
                         who: actor_ref,
                         since: body.created_at,
                         next_nudge: cursor.and_then(|row| row.next_due_at),
@@ -88,8 +92,24 @@ pub(crate) fn thread_tasks(
                         ) =>
                 {
                     Some(crate::workspace_roster::RoomThreadWait {
+                        task: id,
+                        kind: if matches!(
+                            body.state,
+                            Some(super::TaskExecutionState::Interrupted { .. })
+                        ) {
+                            crate::workspace_roster::RoomWaitKind::Hold
+                        } else {
+                            crate::workspace_roster::RoomWaitKind::Ask
+                        },
                         who: actor_ref,
-                        since: body.created_at,
+                        since: if matches!(
+                            body.state,
+                            Some(super::TaskExecutionState::Interrupted { .. })
+                        ) {
+                            view.occurred_start
+                        } else {
+                            body.created_at
+                        },
                         // A peer has no native-human reminder cursor. Do not
                         // claim its TTL deadline is a scheduled nudge.
                         next_nudge: None,

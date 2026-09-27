@@ -185,6 +185,12 @@ fn room_history_is_bounded_paged_and_removed_with_its_project() -> Result<()> {
             .is_err()
     );
     assert!(memory.rooms_messages_page(room, None, 257).is_err());
+    // A cursor in another room is not a valid room-thread page boundary.
+    assert!(
+        memory
+            .rooms_find_threads(room, Some(foreign_turn), 1)
+            .is_err()
+    );
     assert_eq!(
         memory.room_head(room).unwrap().unwrap().turn_id,
         turns[256].to_hex()
@@ -409,6 +415,7 @@ fn consult_question_turn_projects_an_open_wait_without_a_room_state_row() -> Res
     assert!(projection.active.rows.is_empty());
     assert_eq!(projection.waiting.rows.len(), 1);
     assert_eq!(projection.waiting.rows[0].waits[0].who, peer);
+    assert_eq!(projection.waiting.rows[0].waits[0].kind, RoomWaitKind::Ask);
     assert_eq!(projection.waiting.rows[0].waits[0].since, 4);
     assert_eq!(projection.waiting.rows[0].waits[0].next_nudge, None);
     Ok(())

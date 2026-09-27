@@ -9,8 +9,9 @@ use crate::error::{Error, Result};
 use crate::memory::{Memory, MemoryError, MemoryResult, WitnessReceipt, WitnessTurn};
 use crate::{EntityId, Vault};
 pub(super) use history::delete_room_metadata;
+pub(crate) use liveness::RoomThreadTask;
 pub use liveness::{
-    RoomThread, RoomThreadList, RoomThreadPolicy, RoomThreadTask, RoomThreadWait, RoomThreads,
+    RoomThread, RoomThreadList, RoomThreadPolicy, RoomThreadWait, RoomThreads, RoomWaitKind,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;

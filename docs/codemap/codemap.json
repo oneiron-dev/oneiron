@@ -33543,7 +33543,7 @@
      "path": "src/workspace_roster/mod.rs",
      "purpose": "Workspace roster preset + member onboarding (ONEIRON-ARCH-0065)",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 3,
       "re-export": 4
      }
     },
@@ -33623,22 +33623,23 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "RoomThread",
       "RoomThreadList",
       "RoomThreadPolicy",
-      "RoomThreadTask",
       "RoomThreadWait",
-      "RoomThreads"
+      "RoomThreads",
+      "RoomWaitKind"
      ],
      "path": "src/workspace_roster/rooms/liveness.rs",
      "purpose": "Read-time room thread liveness; the room history and TASK rows remain truth",
      "surface": {
-      "crate-vis": 1,
-      "fn": 2,
-      "struct": 6
+      "crate-vis": 3,
+      "enum": 1,
+      "fn": 3,
+      "struct": 5
      }
     },
     {
@@ -33661,7 +33662,7 @@
      "path": "src/workspace_roster/rooms/mod.rs",
      "purpose": "Room participation and addressed turn claims",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 3,
       "enum": 1,
       "fn": 4,
       "re-export": 1,

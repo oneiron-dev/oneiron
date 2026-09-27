@@ -26,6 +26,8 @@ fn forty_threads_fold_under_three_exact_budgeted_lists_and_relist_on_reply() {
             thread: id(n),
             open: true,
             wait: (n > 10).then_some(RoomThreadWait {
+                task: id(n + 100),
+                kind: RoomWaitKind::HumanTask,
                 who: id(251),
                 since: 10,
                 next_nudge: Some(30),
@@ -122,4 +124,84 @@ fn malformed_or_foreign_task_and_reply_links_fail_closed() {
         turn(3, None, Some(id(88)), 3),
     ];
     assert!(project(&bad, &[], RoomThreadPolicy::default()).is_err());
+}
+
+#[test]
+fn ordinary_trunk_reply_is_not_a_thread_and_reply_before_wait_does_not_wake_it() {
+    let trunk = id(240);
+    let root = id(1);
+    let turns = vec![
+        turn(240, None, None, 1),
+        turn(1, Some(trunk), None, 2),
+        turn(2, None, Some(trunk), 3), // valid room response on the trunk
+        turn(3, None, Some(root), 4),
+    ];
+    let wait = RoomThreadWait {
+        task: id(100),
+        kind: RoomWaitKind::Ask,
+        who: id(251),
+        since: 10,
+        next_nudge: None,
+    };
+    let task = RoomThreadTask {
+        task: id(100),
+        thread: root,
+        open: true,
+        wait: Some(wait),
+        delivered: None,
+    };
+    let policy = RoomThreadPolicy {
+        now: 12,
+        fresh_for: 86_400,
+        rows_per_list: 4,
+        tokens_per_list: 512,
+    };
+    let folded = project(&turns, std::slice::from_ref(&task), policy).unwrap();
+    assert!(folded.active.rows.is_empty());
+    assert_eq!(folded.waiting.rows[0].handle, root);
+    assert!(folded.waiting.rows[0].line("waiting").contains("kind=ask"));
+    let mut turns = turns;
+    turns.push(turn(4, None, Some(id(3)), 13));
+    assert_eq!(
+        project(&turns, &[task], policy).unwrap().active.rows[0].handle,
+        root
+    );
+}
+
+#[test]
+fn reply_ancestry_is_memoized_and_multiple_waits_have_distinct_handles() {
+    let mut turns = vec![turn(240, None, None, 1), turn(1, Some(id(240)), None, 2)];
+    for n in 2..200u8 {
+        turns.push(turn(n, None, Some(id(n - 1)), u64::from(n)));
+    }
+    let waits = [10, 11].map(|n| RoomThreadTask {
+        task: id(n + 200),
+        thread: id(1),
+        open: true,
+        wait: Some(RoomThreadWait {
+            task: id(n + 200),
+            kind: RoomWaitKind::HumanTask,
+            who: id(n),
+            since: 200,
+            next_nudge: Some(250),
+        }),
+        delivered: None,
+    });
+    let projection = project(
+        &turns,
+        &waits,
+        RoomThreadPolicy {
+            now: 1_000,
+            fresh_for: 1,
+            rows_per_list: 8,
+            tokens_per_list: 512,
+        },
+    )
+    .unwrap();
+    let row = &projection.waiting.rows[0];
+    assert_eq!(row.last_message_at, 199);
+    assert_eq!(row.waits.len(), 2);
+    let line = row.line("waiting");
+    assert!(line.contains(&id(210).to_hex()));
+    assert!(line.contains(&id(211).to_hex()));
 }

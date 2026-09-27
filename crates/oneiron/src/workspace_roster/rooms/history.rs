@@ -232,6 +232,9 @@ impl Memory<'_> {
             .map(|turn| EntityId::from_hex(&turn.turn_id))
             .collect::<Result<Vec<_>>>()?;
         roots.sort();
+        if after.is_some_and(|cursor| !roots.contains(&cursor)) {
+            return Err(MemoryError::from(invalid()));
+        }
         Ok(roots
             .into_iter()
             .filter(|id| after.is_none_or(|cursor| *id > cursor))
@@ -262,21 +265,10 @@ impl Memory<'_> {
             .into_iter()
             .collect();
         let now = crate::unix_seconds_now();
-        let tasks = crate::task_verb::room_thread_tasks(self, &roots, &members, now)?;
-        let lists = super::liveness::project(
-            &turns,
-            &tasks,
-            super::RoomThreadPolicy {
-                rows_per_list: usize::MAX,
-                ..Default::default()
-            },
-        )?;
-        Ok(lists
-            .active
-            .rows
-            .into_iter()
-            .chain(lists.waiting.rows)
-            .chain(lists.quiet.rows)
-            .find(|row| row.handle == handle))
+        let selected = std::collections::BTreeSet::from([handle]);
+        let tasks = crate::task_verb::room_thread_tasks(self, &selected, &members, now)?;
+        Ok(super::liveness::project_target(
+            &turns, &tasks, handle, now,
+        )?)
     }
 }

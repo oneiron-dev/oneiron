@@ -5,15 +5,32 @@ use std::collections::{BTreeMap, BTreeSet};
 
 /// A TASK fact already bound to a room turn. Never persisted as a liveness row.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct RoomThreadTask {
-    pub task: EntityId,
-    pub thread: EntityId,
-    pub open: bool,
-    pub wait: Option<RoomThreadWait>,
-    pub delivered: Option<(EntityId, u64)>,
+pub(crate) struct RoomThreadTask {
+    pub(crate) task: EntityId,
+    pub(crate) thread: EntityId,
+    pub(crate) open: bool,
+    pub(crate) wait: Option<RoomThreadWait>,
+    pub(crate) delivered: Option<(EntityId, u64)>,
+}
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RoomWaitKind {
+    Ask,
+    Hold,
+    HumanTask,
+}
+impl RoomWaitKind {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Ask => "ask",
+            Self::Hold => "hold",
+            Self::HumanTask => "human-task",
+        }
+    }
 }
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RoomThreadWait {
+    pub task: EntityId,
+    pub kind: RoomWaitKind,
     pub who: EntityId,
     pub since: u64,
     pub next_nudge: Option<u64>,
@@ -65,13 +82,23 @@ impl RoomThread {
             self.last_message_at,
             self.open_tasks
         );
-        if let Some(wait) = self.waits.first() {
+        // Keep one structural row bounded even when the thread has many
+        // waits. The typed get returns the complete wait set.
+        for wait in self.waits.iter().take(8) {
             row.push_str(&format!(
-                " who={} since={} next={}",
+                " wait={} kind={} who={} since={} next={}",
+                wait.task.to_hex(),
+                wait.kind.as_str(),
                 wait.who.to_hex(),
                 wait.since,
                 wait.next_nudge
                     .map_or_else(|| "none".to_owned(), |at| at.to_string())
+            ));
+        }
+        if self.waits.len() > 8 {
+            row.push_str(&format!(
+                " waits:+{} get=rooms_get_thread",
+                self.waits.len() - 8
             ));
         }
         if let Some(header) = self.result_header {
@@ -114,6 +141,41 @@ pub(super) fn project(
     tasks: &[RoomThreadTask],
     policy: RoomThreadPolicy,
 ) -> Result<RoomThreads> {
+    project_inner(turns, tasks, policy, None)
+}
+
+/// Direct-by-handle fold: no render cap and no unrelated thread rows built.
+pub(super) fn project_target(
+    turns: &[RoomTurn],
+    tasks: &[RoomThreadTask],
+    handle: EntityId,
+    now: u64,
+) -> Result<Option<RoomThread>> {
+    let projection = project_inner(
+        turns,
+        tasks,
+        RoomThreadPolicy {
+            now,
+            rows_per_list: usize::MAX,
+            ..Default::default()
+        },
+        Some(handle),
+    )?;
+    Ok(projection
+        .active
+        .rows
+        .into_iter()
+        .chain(projection.waiting.rows)
+        .chain(projection.quiet.rows)
+        .next())
+}
+
+fn project_inner(
+    turns: &[RoomTurn],
+    tasks: &[RoomThreadTask],
+    policy: RoomThreadPolicy,
+    target: Option<EntityId>,
+) -> Result<RoomThreads> {
     const MAX_ROWS: usize = 100_000;
     if turns.len() > MAX_ROWS
         || tasks.len() > MAX_ROWS
@@ -133,6 +195,9 @@ pub(super) fn project(
     for turn in turns {
         if let Some(trunk) = &turn.thread_of {
             let id = EntityId::from_hex(&turn.turn_id)?;
+            if target.is_some_and(|handle| handle != id) {
+                continue;
+            }
             let trunk = EntityId::from_hex(trunk)?;
             if !by_id.contains_key(&trunk) || trunk == id {
                 return Err(invalid());
@@ -150,37 +215,50 @@ pub(super) fn project(
             );
         }
     }
+    // Memoize ancestry. A normal trunk reply has no thread root and is
+    // ignored; only malformed missing parents and cycles refuse the read.
+    let mut resolved: BTreeMap<EntityId, Option<EntityId>> = BTreeMap::new();
     let mut last_reply = BTreeMap::new();
     for turn in turns {
         let id = EntityId::from_hex(&turn.turn_id)?;
-        if roots.contains_key(&id) {
+        if turn.thread_of.is_some() || turn.reply_to.is_none() {
             continue;
         }
-        let mut parent = turn
-            .reply_to
-            .as_deref()
-            .map(EntityId::from_hex)
-            .transpose()?;
-        let mut seen = BTreeSet::from([id]);
-        while let Some(target) = parent {
+        let mut target = id;
+        let mut path = Vec::new();
+        let mut seen = BTreeSet::new();
+        let found = loop {
             if !seen.insert(target) {
                 return Err(invalid());
             }
-            if let Some(root) = roots.get_mut(&target) {
-                root.last_message_at = root.last_message_at.max(turn.at);
-                last_reply
-                    .entry(target)
-                    .and_modify(|at: &mut u64| *at = (*at).max(turn.at))
-                    .or_insert(turn.at);
-                break;
+            if roots.contains_key(&target) {
+                break Some(target);
             }
-            parent = by_id
-                .get(&target)
-                .ok_or_else(invalid)?
+            if let Some(prior) = resolved.get(&target) {
+                break *prior;
+            }
+            path.push(target);
+            let parent = by_id.get(&target).ok_or_else(invalid)?;
+            match parent
                 .reply_to
                 .as_deref()
                 .map(EntityId::from_hex)
-                .transpose()?;
+                .transpose()?
+            {
+                Some(next) => target = next,
+                None => break None,
+            }
+        };
+        for node in path {
+            resolved.insert(node, found);
+        }
+        if let Some(root_id) = found {
+            let root = roots.get_mut(&root_id).ok_or_else(invalid)?;
+            root.last_message_at = root.last_message_at.max(turn.at);
+            last_reply
+                .entry(root_id)
+                .and_modify(|at: &mut u64| *at = (*at).max(turn.at))
+                .or_insert(turn.at);
         }
     }
     let mut delivered = BTreeMap::new();
@@ -215,11 +293,14 @@ pub(super) fn project(
     let mut quiet = Vec::new();
     for (id, mut row) in roots {
         row.waits
-            .sort_by_key(|wait| (wait.next_nudge.unwrap_or(u64::MAX), wait.since, wait.who));
+            .sort_by_key(|wait| (wait.next_nudge.unwrap_or(u64::MAX), wait.since, wait.task));
         if let Some((result, at, _)) = delivered.get(&id).copied() {
             row.result_header = Some(result);
             // A later reply relists a delivered, formerly folded thread.
-            if last_reply.get(&id).is_none_or(|reply| *reply <= at) && row.open_tasks == 0 {
+            if last_reply.get(&id).is_none_or(|reply| *reply <= at)
+                && row.open_tasks == 0
+                && row.waits.is_empty()
+            {
                 quiet.push(row);
                 continue;
             }
@@ -227,9 +308,10 @@ pub(super) fn project(
         if row.open_tasks > row.waits.len()
             || (row.last_message_at.saturating_add(policy.fresh_for) >= policy.now
                 && (row.waits.is_empty()
-                    || last_reply
-                        .get(&id)
-                        .is_some_and(|reply| *reply > delivered.get(&id).map_or(0, |v| v.1))))
+                    || last_reply.get(&id).is_some_and(|reply| {
+                        let since = row.waits.iter().map(|wait| wait.since).max().unwrap_or(0);
+                        *reply > since.max(delivered.get(&id).map_or(0, |v| v.1))
+                    })))
         {
             active.push(row);
         } else if !row.waits.is_empty() {
