@@ -250,6 +250,9 @@ const CLOCK_NOW_UNIX_MS_IMPORT: SandboxLinkedImport =
 const RANDOM_BYTES_IMPORT: SandboxLinkedImport =
     SandboxLinkedImport::new("oneiron.random.bytes", SandboxImportClass::Determinism);
 
+const SELF_JSON_VALIDATE_IMPORT: SandboxLinkedImport =
+    SandboxLinkedImport::new("self.json.validate", SandboxImportClass::ReadOnly);
+
 const SELF_MEMORY_SEARCH_IMPORT: SandboxLinkedImport =
     SandboxLinkedImport::new("self.memory.search", SandboxImportClass::ReadOnly);
 
@@ -289,6 +292,7 @@ const FIRST_PARTY_IMPORTS: &[SandboxLinkedImport] = &[
     CREDENTIAL_CALL_IMPORT,
     CLOCK_NOW_UNIX_MS_IMPORT,
     RANDOM_BYTES_IMPORT,
+    SELF_JSON_VALIDATE_IMPORT,
     SELF_MEMORY_SEARCH_IMPORT,
     SELF_MEMORY_PUT_CLAIM_IMPORT,
     SELF_MEMORY_SUPERSEDE_CLAIM_IMPORT,

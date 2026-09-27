@@ -58,6 +58,13 @@ pub(super) fn self_call_request_value(call: &SelfCall) -> Result<Value> {
             ("tgt", entity_id_value(call.tgt)),
             ("weight", Value::F32(call.weight)),
         ]),
+        SelfCall::WakePolicyWrite(call) => request_map(vec![(
+            "policy",
+            Value::from(
+                serde_json::to_string(&call.policy)
+                    .map_err(|_| invalid_code_run_replay("wake policy does not encode"))?,
+            ),
+        )]),
         SelfCall::ReportBlocked(call) => request_map(vec![
             ("category", Value::from(call.category.as_str())),
             ("detail", Value::from(call.detail.as_str())),
@@ -205,6 +212,17 @@ pub(super) fn self_dispatch_outcome_value(outcome: &SelfDispatchOutcome) -> Resu
                 context_spec_json(&result.spec).map_or(Value::Nil, Value::from),
             ),
         ]),
+        SelfDispatchOutcome::WakePolicyWritten(policy) => {
+            request_map(vec![
+                ("kind", Value::from("wake_policy_written")),
+                (
+                    "policy",
+                    Value::from(serde_json::to_string(policy).map_err(|_| {
+                        invalid_code_run_replay("wake policy result does not encode")
+                    })?),
+                ),
+            ])
+        }
         SelfDispatchOutcome::ReportBlocked { receipt } => request_map(vec![
             ("kind", Value::from("report_blocked")),
             ("receipt", entity_id_value(*receipt)),
@@ -223,6 +241,12 @@ pub(super) fn decode_self_dispatch_outcome(value: &Value) -> Result<SelfDispatch
     let entries = expect_map(value, "dispatch outcome must be a map")?;
     let kind = str_value(map_get(entries, "kind")?)?;
     match kind {
+        "wake_policy_written" => {
+            let policy: crate::dreamer_wake::DreamerWakePolicy =
+                serde_json::from_str(str_value(map_get(entries, "policy")?)?)
+                    .map_err(|_| invalid_code_run_replay("wake policy result does not decode"))?;
+            Ok(SelfDispatchOutcome::WakePolicyWritten(policy.validate()?))
+        }
         "report_blocked" => Ok(SelfDispatchOutcome::ReportBlocked {
             receipt: entity_value(map_get(entries, "receipt")?)?,
         }),
@@ -373,6 +397,7 @@ pub(super) fn self_effect_from_str(value: &str) -> Result<SelfEffect> {
         "self.think" => Ok(SelfEffect::Think),
         "self.express" => Ok(SelfEffect::Express),
         "self.report_blocked" => Ok(SelfEffect::ReportBlocked),
+        "dreamer.wake_policy.set" => Ok(SelfEffect::WakePolicyWrite),
         _ => Err(invalid_code_run_replay("unknown self effect")),
     }
 }

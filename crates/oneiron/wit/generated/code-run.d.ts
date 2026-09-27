@@ -35,6 +35,9 @@ declare namespace oneiron {
   }
 }
 declare namespace self {
+  namespace json {
+    function validate(schema: unknown, value: unknown): Promise<boolean>;
+  }
   namespace memory {
     function search(input: OneironCodeRun.SearchInput): Promise<OneironCodeRun.SearchOutput>;
     function put_claim(input: OneironCodeRun.ClaimInput): Promise<OneironCodeRun.ClaimOutput>;

@@ -162,6 +162,8 @@ pub(in crate::batch) fn stage_edge_rows(
     tgt: &EntityId,
     value: &[u8],
 ) -> Result<()> {
+    let weight = crate::edge::decode_edge_value_for_kind(kind, value)?.weight;
+    crate::workspace_roster::validate_project_edge_put(store, wtxn, *src, kind, *tgt, weight)?;
     let key_out = Store::encode_edge_key(src, kind, tgt);
     let key_in = Store::encode_edge_key(tgt, kind, src);
     store.edges_out().put(wtxn, &key_out, value)?;
@@ -263,6 +265,20 @@ pub(super) fn validate_put_carriers(
         data,
         context.replicated,
     )
+}
+
+/// Validate producer-owned source carriers before any body or index is
+/// staged. Preserve their existing write-door order on the same snapshot.
+pub(super) fn validate_source_carriers(
+    store: &Store,
+    txn: &RwTxn<'_>,
+    row: (EntityId, u8, &[u8], TimeRange, u64),
+) -> Result<()> {
+    let (id, entity_type, data, occurred, learned_at) = row;
+    crate::skill_hub::pack_catalog::validate_pack_source_put(store, txn, &id, entity_type, data)?;
+    crate::skill_hub::validate_hub_source_carrier_put(store, txn, &id, entity_type, data)?;
+    crate::agent_def::validate_birth_source_put(store, txn, &id, entity_type, data)?;
+    crate::receipt::validate_put(store, txn, (&id, entity_type, data), (occurred, learned_at))
 }
 
 /// Validate typed storage carriers before any put effect is staged.
