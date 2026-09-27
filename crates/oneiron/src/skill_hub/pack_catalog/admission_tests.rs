@@ -1758,3 +1758,229 @@ fn missing_resolved_install_policy_holds_with_a_card_reason() -> Result<()> {
     assert!(vault.installed_pack("alice.tools")?.is_none());
     Ok(())
 }
+
+fn connector_script_source(script: &str) -> Result<PackSource> {
+    let mut files = source(true)?.files().to_vec();
+    files.push(HubFile::new(
+        "scripts/runner.py",
+        script.as_bytes().to_vec(),
+    ));
+    PackSource::from_files(files)
+}
+fn assert_no_pack_consent(vault: &Vault, ask: &PackInstallAsk) -> Result<()> {
+    let txn = vault.store.env.read_txn()?;
+    assert!(
+        crate::consent::approve_once_authorization_in_txn(
+            &vault.store,
+            &txn,
+            &ask.effect_digest()
+        )?
+        .is_none()
+    );
+    Ok(())
+}
+#[test]
+fn default_policy_denies_supported_but_unlisted_call_aliasing_a_builtin() -> Result<()> {
+    let pack = connector_script_source(
+        "from math import log as print
+value = print(1)
+",
+    )?;
+    let (_dir, vault, owner, reference, publisher) = fixture(SkillHubTrustTier::Verified, &pack)?;
+    let id = vault.stage_pack_source(&pack, TimeRange { start: 3, end: 3 }, 3)?;
+    let ask = vault.prepare_pack_install(
+        id,
+        &reference,
+        &publisher,
+        &Qualification {
+            runtime: true,
+            passed: true,
+        },
+    )?;
+    let reason = ask
+        .blocked_reason()
+        .expect("shipped call row must refuse log");
+    assert!(reason.contains("outside the sandbox"), "{reason}");
+    assert!(matches!(
+        vault.approve_pack_install(&ask, &owner),
+        Err(crate::error::Error::Registry(
+            crate::error::RegistryError::PackInstallRuleBlocked { .. }
+        ))
+    ));
+    assert_eq!(
+        vault.install_pack(&ask)?,
+        PackInstallDisposition::Blocked {
+            reason: reason.into()
+        }
+    );
+    assert_no_pack_consent(&vault, &ask)?;
+    assert!(vault.installed_pack("alice.tools")?.is_none());
+    Ok(())
+}
+#[test]
+fn owner_narrowing_rechecks_actual_alias_targets_at_approval_and_install() -> Result<()> {
+    for builtin in ["print", "len"] {
+        let pack = connector_script_source(&format!(
+            "from math import sqrt as {builtin}
+value = {builtin}(4)
+"
+        ))?;
+        let (_dir, vault, owner, reference, publisher) =
+            fixture(SkillHubTrustTier::Verified, &pack)?;
+        let id = vault.stage_pack_source(&pack, TimeRange { start: 3, end: 3 }, 3)?;
+        let ask = vault.prepare_pack_install(
+            id,
+            &reference,
+            &publisher,
+            &Qualification {
+                runtime: true,
+                passed: true,
+            },
+        )?;
+        assert_eq!(ask.blocked_reason(), None); // shipped row permits math.sqrt, regardless of alias
+        vault.set_pack_install_policy_override(
+            &owner,
+            PackInstallPolicyOverride {
+                allowed_python_calls: Some(vec!["print".into(), "len".into()]),
+                ..PackInstallPolicyOverride::default()
+            },
+        )?;
+        let current = vault.prepare_pack_install(
+            id,
+            &reference,
+            &publisher,
+            &Qualification {
+                runtime: true,
+                passed: true,
+            },
+        )?;
+        let reason = current
+            .blocked_reason()
+            .expect("actual target denied after narrowing");
+        assert!(reason.contains("outside the sandbox"), "{reason}");
+        assert!(matches!(
+            vault.approve_pack_install(&ask, &owner),
+            Err(crate::error::Error::Registry(
+                crate::error::RegistryError::PackInstallRuleBlocked { .. }
+            ))
+        ));
+        assert_eq!(
+            vault.install_pack(&ask)?,
+            PackInstallDisposition::Blocked {
+                reason: reason.into()
+            }
+        );
+        assert_no_pack_consent(&vault, &ask)?;
+        assert!(vault.installed_pack("alice.tools")?.is_none());
+        vault.set_pack_install_policy_override(&owner, PackInstallPolicyOverride::default())?;
+        assert_eq!(
+            vault.install_pack(&ask)?,
+            PackInstallDisposition::PendingConsent
+        );
+        vault.approve_pack_install(&ask, &owner)?;
+        assert!(matches!(
+            vault.install_pack(&ask)?,
+            PackInstallDisposition::Installed(_)
+        ));
+    }
+    Ok(())
+}
+#[test]
+fn function_global_lookup_cannot_launder_a_shadowed_builtin() -> Result<()> {
+    for builtin in ["print", "len"] {
+        let pack = connector_script_source(&format!(
+            "from math import sqrt as {builtin}
+def local():
+    return {builtin}(4)
+value = local()
+"
+        ))?;
+        let (_dir, vault, owner, reference, publisher) =
+            fixture(SkillHubTrustTier::Verified, &pack)?;
+        let id = vault.stage_pack_source(&pack, TimeRange { start: 3, end: 3 }, 3)?;
+        vault.set_pack_install_policy_override(
+            &owner,
+            PackInstallPolicyOverride {
+                allowed_python_calls: Some(vec!["print".into(), "len".into()]),
+                ..PackInstallPolicyOverride::default()
+            },
+        )?;
+        let ask = vault.prepare_pack_install(
+            id,
+            &reference,
+            &publisher,
+            &Qualification {
+                runtime: true,
+                passed: true,
+            },
+        )?;
+        let reason = ask
+            .blocked_reason()
+            .expect("function cannot presume builtin");
+        assert!(reason.contains("outside the sandbox"), "{reason}");
+        assert!(matches!(
+            vault.approve_pack_install(&ask, &owner),
+            Err(crate::error::Error::Registry(
+                crate::error::RegistryError::PackInstallRuleBlocked { .. }
+            ))
+        ));
+        assert_eq!(
+            vault.install_pack(&ask)?,
+            PackInstallDisposition::Blocked {
+                reason: reason.into()
+            }
+        );
+        assert_no_pack_consent(&vault, &ask)?;
+        assert!(vault.installed_pack("alice.tools")?.is_none());
+    }
+    Ok(())
+}
+#[test]
+fn holder_narrowing_rechecks_shadowed_alias_without_widening_other_holders() -> Result<()> {
+    let pack = connector_script_source(
+        "from math import sqrt as print
+value = print(4)
+",
+    )?;
+    let (_dir, vault, owner, reference, holder) = fixture(SkillHubTrustTier::Verified, &pack)?;
+    let second = vault.admit_skill_publisher(&owner, "publisher:other", reference.hub_id)?;
+    let id = vault.stage_pack_source(&pack, TimeRange { start: 3, end: 3 }, 3)?;
+    let qualification = Qualification {
+        runtime: true,
+        passed: true,
+    };
+    let old = vault.prepare_pack_install(id, &reference, &holder, &qualification)?;
+    assert_eq!(old.blocked_reason(), None);
+    vault.set_pack_install_policy_override(
+        &owner,
+        PackInstallPolicyOverride {
+            holder_ref: Some(holder.identity().to_owned()),
+            allowed_python_calls: Some(vec!["print".into(), "len".into()]),
+            ..PackInstallPolicyOverride::default()
+        },
+    )?;
+    let held = vault.prepare_pack_install(id, &reference, &holder, &qualification)?;
+    let reason = held.blocked_reason().expect("holder restriction");
+    assert!(reason.contains("outside the sandbox"), "{reason}");
+    assert_eq!(
+        vault
+            .prepare_pack_install(id, &reference, &second, &qualification)?
+            .blocked_reason(),
+        None
+    );
+    assert!(matches!(
+        vault.approve_pack_install(&old, &owner),
+        Err(crate::error::Error::Registry(
+            crate::error::RegistryError::PackInstallRuleBlocked { .. }
+        ))
+    ));
+    assert_eq!(
+        vault.install_pack(&old)?,
+        PackInstallDisposition::Blocked {
+            reason: reason.into()
+        }
+    );
+    assert_no_pack_consent(&vault, &old)?;
+    assert!(vault.installed_pack("alice.tools")?.is_none());
+    Ok(())
+}

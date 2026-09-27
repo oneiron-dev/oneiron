@@ -41,6 +41,7 @@ struct Analyzer<'a> {
     effects: Vec<ScriptEffect>,
     remaining: usize,
     allowed_calls: &'a BTreeSet<String>,
+    module_bindings: BTreeSet<String>,
 }
 
 pub(super) fn screen_script(
@@ -74,7 +75,9 @@ impl AnalyzedScript {
             effects: Vec::new(),
             remaining: MAX_AST_NODES,
             allowed_calls,
+            module_bindings: BTreeSet::new(),
         };
+        analyzer.module_bindings = analyzer.collect_module_bindings(tree.root_node())?;
         analyzer.statement(tree.root_node(), 0)?;
         Ok(Self {
             _effects: analyzer.effects,
@@ -163,6 +166,34 @@ impl Analyzer<'_> {
             .transpose()?
             .unwrap_or_else(|| name.clone());
         Ok((name, binding))
+    }
+    // Python function bodies look up globals at CALL time, not definition
+    // time. A module binding of `print` or `len` anywhere in this accepted
+    // program makes a builtin fallback inside a function unverifiable.
+    fn collect_module_bindings(&self, module: Node<'_>) -> Result<BTreeSet<String>, String> {
+        let mut bindings = BTreeSet::new();
+        for statement in Self::named(module) {
+            match statement.kind() {
+                "import_statement" | "import_from_statement" => {
+                    let mut cursor = statement.walk();
+                    for entry in statement.children_by_field_name("name", &mut cursor) {
+                        bindings.insert(self.import_name(entry)?.1);
+                    }
+                }
+                "function_definition" => {
+                    bindings.insert(self.name(Self::child(statement, "name")?)?);
+                }
+                "expression_statement" => {
+                    for expression in Self::named(statement) {
+                        if expression.kind() == "assignment" {
+                            bindings.insert(self.name(Self::child(expression, "left")?)?);
+                        }
+                    }
+                }
+                _ => {} // unsupported statements fail during the full visitor
+            }
+        }
+        Ok(bindings)
     }
     fn imports(&mut self, node: Node<'_>) -> Result<(), String> {
         match node.kind() {
@@ -265,6 +296,7 @@ impl Analyzer<'_> {
             effects: Vec::new(),
             remaining: self.remaining,
             allowed_calls: self.allowed_calls,
+            module_bindings: self.module_bindings.clone(),
         };
         for param in Self::named(parameters) {
             let name = local.name(param)?;
@@ -297,21 +329,26 @@ impl Analyzer<'_> {
                 let name = self.name(node)?;
                 match self.bindings.get(&name) {
                     Some(Binding::LocalFunction) => Ok(CallTarget::Local),
-                    Some(Binding::LibraryCall(module, function))
-                        if self.allowed_function(module, function) =>
-                    {
-                        Ok(CallTarget::Library)
+                    Some(Binding::LibraryCall(module, function)) => {
+                        if self.allowed_function(module, function) {
+                            Ok(CallTarget::Library)
+                        } else {
+                            Err("call outside the sandbox: policy denies library call".into())
+                        }
                     }
                     Some(Binding::Data | Binding::Library(_)) => {
                         Err("unsupported Python callable flow".into())
                     }
-                    _ if name == "print" && self.allowed_calls.contains("print") => {
+                    None if self.module_bindings.contains(&name) => {
+                        Err("call outside the sandbox: shadowed builtin".into())
+                    }
+                    None if name == "print" && self.allowed_calls.contains("print") => {
                         Ok(CallTarget::Print)
                     }
-                    _ if name == "len" && self.allowed_calls.contains("len") => {
+                    None if name == "len" && self.allowed_calls.contains("len") => {
                         Ok(CallTarget::Length)
                     }
-                    _ => Err("call outside the sandbox".into()),
+                    None => Err("call outside the sandbox".into()),
                 }
             }
             "attribute" => {
