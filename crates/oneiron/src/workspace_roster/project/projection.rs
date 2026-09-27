@@ -133,7 +133,7 @@ pub(crate) fn reconcile_project_rooms(
         for row in crate::ports::EdgeStoreRead::port_edges(
             store,
             txn,
-            &id,
+            id,
             crate::ports::EdgeDirection::Out,
             Some(crate::edge::EdgeKind::BelongsTo),
             None,

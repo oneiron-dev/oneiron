@@ -487,7 +487,7 @@ pub(super) fn gate_edge(
     // its own low budget; lowering only the stored weight would cancel under
     // same-kind normalization when the hub has one or many members.
     if kind == EdgeKind::BelongsTo
-        && (crate::workspace_roster::is_project_entity(store, txn, current)?
+        && (crate::workspace_roster::is_project_entity(store, txn, *current)?
             || crate::workspace_roster::is_project_entity(store, txn, neighbor)?)
     {
         lambda = crate::workspace_roster::HUB_BELONGS_TO_LAMBDA;

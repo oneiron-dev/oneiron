@@ -210,7 +210,7 @@ impl Vault {
             if !is_project_entity(&self.store, txn, project)? {
                 return Err(invalid());
             }
-            let raw = crate::ports::EntityStoreRead::port_entity_raw(&self.store, txn, asset)?
+            let raw = crate::ports::EntityStoreRead::port_entity_raw(&self.store, txn, &asset)?
                 .ok_or_else(invalid)?;
             let header = EntityMetadataHeader::parse(&raw).ok_or_else(invalid)?;
             if !matches!(
