@@ -13,6 +13,14 @@ use super::lifecycle::ChannelIdentityState;
 use super::record::ChannelIdentity;
 
 const PREFIX: &[u8] = b"cid_assign:v1:";
+/// Deletion evidence for a retained header-only shell, staged with slot removal.
+const ERASED_PREFIX: &[u8] = b"cid_assign_erased:v1:";
+
+fn erased_key(id: &EntityId) -> Vec<u8> {
+    let mut key = ERASED_PREFIX.to_vec();
+    key.extend_from_slice(id.as_bytes());
+    key
+}
 
 /// The only two rows allowed to influence a mailbox route. A predecessor is
 /// a retiring delegated row; it never occupies the mailbox for re-consent.
@@ -192,7 +200,10 @@ pub(crate) fn maintain_assignment_put(
             "retired delegated identity must have occupied this assignment",
         )));
     }
-    write_slot(store, txn, &key, slot)
+    write_slot(store, txn, &key, slot)?;
+    // A newly admitted row at a formerly erased id is live again.
+    store.vault_meta.delete(txn, &erased_key(id))?;
+    Ok(())
 }
 
 /// Clears every reference to a deleted ChannelIdentity before its body is
@@ -236,6 +247,10 @@ pub(crate) fn clear_assignment_for_delete(
             store.vault_meta.put(txn, &key, &slot)?;
         }
     }
+    // Soft erase retains the type-index row and a metadata-only shell. This
+    // marker proves that empty body was deleted rather than live corruption.
+    // Hard delete has no shell; its marker is harmless and is retired on put.
+    store.vault_meta.put(txn, &erased_key(id), &[1])?;
     Ok(())
 }
 
@@ -264,12 +279,18 @@ pub(super) fn rebuild(store: &Store, txn: &mut heed::RwTxn<'_>) -> Result<()> {
         if header.entity_type != ENTITY_TYPE_CHANNEL_IDENTITY {
             return Err(Error::CorruptedIndex("channel identity type index kind"));
         }
-        // Canonical UserDelete soft erasure keeps a header-only shell in the
-        // type index. It has no assignment and cannot be decoded as a body.
-        // Only the exact empty-body shell is skipped; malformed live rows
-        // remain a recovery error rather than silently disappearing.
+        // A canonical soft deletion retains a header-only shell and a marker
+        // staged in the SAME deletion transaction. Header-only corruption of a
+        // live row has no marker and remains a recovery error.
         if raw.len() == ENTITY_METADATA_HEADER_LEN {
-            continue;
+            match store.vault_meta.get(txn, &erased_key(&id))? {
+                Some(value) if value.as_ref() == [1] => continue,
+                _ => {
+                    return Err(Error::CorruptedIndex(
+                        "channel identity shell without deletion",
+                    ));
+                }
+            }
         }
         let row = decode_channel_identity_body(&raw[ENTITY_METADATA_HEADER_LEN..])?;
         rows.push((header.learned_at, id, row));

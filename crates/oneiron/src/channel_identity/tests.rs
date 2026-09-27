@@ -846,6 +846,42 @@ fn rebuild_skips_soft_deleted_identity_and_keeps_survivor() -> Result<()> {
 }
 
 #[test]
+fn rebuild_refuses_unmarked_header_only_live_row() -> Result<()> {
+    let (_dir, vault) = test_vault();
+    let id = entity(0xEB);
+    vault.create_channel_identity(
+        &id,
+        &ChannelIdentity::requested(
+            EMAIL_CHANNEL,
+            "corrupt-live@example.test",
+            SelfHeldShape::DedicatedAddress,
+            ChannelIdentityBinding::agent(entity(0x51)),
+            1_800_000_000,
+        ),
+    )?;
+    // An on-disk corruption is not a deletion. It lacks the marker written
+    // by the erase door, so recovery must not quietly forget this identity.
+    vault.with_write_txn(|txn| {
+        let header = vault
+            .store
+            .entities
+            .get(&*txn, id.as_bytes())?
+            .expect("live identity")[..crate::batch::ENTITY_METADATA_HEADER_LEN]
+            .to_vec();
+        vault.store.entities.put(txn, id.as_bytes(), &header)?;
+        Ok(())
+    })?;
+    assert_eq!(
+        vault
+            .rebuild_channel_identity_assignment_index()
+            .expect_err("unmarked shell is corrupt, not deleted")
+            .kind(),
+        ErrorKind::CorruptedIndex,
+    );
+    Ok(())
+}
+
+#[test]
 fn nul_containing_assignment_tuples_have_distinct_index_slots() -> Result<()> {
     let (_dir, vault) = test_vault();
     let first = entity(0xE5);

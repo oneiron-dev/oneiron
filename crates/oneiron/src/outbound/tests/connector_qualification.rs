@@ -452,6 +452,20 @@ fn provider_email_policy_manifest(actor: &str, channel: &str) -> Vec<u8> {
         (Value::from("actor_class"), Value::from("first_party")),
         (Value::from("ceiling"), Value::from("auto")),
     ]));
+    // This fixture removes the seeded manifest. Spell the self-held sender
+    // posture in its own vault-resident row rather than borrowing an engine
+    // class default from the identity record.
+    entries.push((
+        Value::from("act_policy"),
+        Value::Array(vec![Value::Map(vec![
+            (
+                Value::from("act_class"),
+                Value::from("channel_identity.outbound_send"),
+            ),
+            (Value::from("subject_class"), Value::from("self_held")),
+            (Value::from("posture"), Value::from("require_capability")),
+        ])]),
+    ));
     let mut out = Vec::new();
     rmpv::encode::write_value(&mut out, &value).expect("encode policy fixture");
     out
