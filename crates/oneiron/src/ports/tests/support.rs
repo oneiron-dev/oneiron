@@ -20,6 +20,13 @@ pub(super) trait Backend:
     fn read(&self) -> Result<Self::Read<'_>>;
     fn write(&self) -> Result<Self::Write<'_>>;
     fn commit(&self, txn: Self::Write<'_>) -> Result<()>;
+    /// Fixture-only declaration state, installed before the claim transaction.
+    fn set_symbol_lease(
+        &self,
+        task: EntityId,
+        lease: Option<&crate::task_verb::SymbolLease>,
+    ) -> Result<()>;
+    fn symbol_lease(&self, task: EntityId) -> Result<Option<crate::task_verb::SymbolLease>>;
     // Fixture-only membership law: production writes this at the witness door.
     fn record_turn_session(
         &self,
@@ -37,6 +44,38 @@ impl Backend for Vault {
     }
     fn commit(&self, txn: heed::RwTxn<'_>) -> Result<()> {
         Ok(txn.commit()?)
+    }
+    fn set_symbol_lease(
+        &self,
+        task: EntityId,
+        lease: Option<&crate::task_verb::SymbolLease>,
+    ) -> Result<()> {
+        let key = [b"tasks.symbol_lease.v1/".as_slice(), task.as_bytes()].concat();
+        self.with_write_txn(|txn| {
+            if let Some(lease) = lease {
+                self.store.vault_meta.put(
+                    txn,
+                    &key,
+                    &serde_json::to_vec(lease)
+                        .map_err(|_| crate::Error::InvariantViolation("symbol fixture encoding"))?,
+                )?;
+            } else {
+                self.store.vault_meta.delete(txn, &key)?;
+            }
+            Ok(())
+        })
+    }
+    fn symbol_lease(&self, task: EntityId) -> Result<Option<crate::task_verb::SymbolLease>> {
+        let key = [b"tasks.symbol_lease.v1/".as_slice(), task.as_bytes()].concat();
+        let txn = self.store.env.read_txn()?;
+        self.store
+            .vault_meta
+            .get(&txn, &key)?
+            .map(|raw| {
+                serde_json::from_slice(&raw)
+                    .map_err(|_| crate::Error::CorruptedIndex("symbol fixture"))
+            })
+            .transpose()
     }
     fn record_turn_session(
         &self,
@@ -63,6 +102,23 @@ impl Backend for Memory {
     fn commit(&self, txn: MemoryWrite) -> Result<()> {
         Memory::commit(self, txn);
         Ok(())
+    }
+    fn set_symbol_lease(
+        &self,
+        task: EntityId,
+        lease: Option<&crate::task_verb::SymbolLease>,
+    ) -> Result<()> {
+        let mut txn = self.write();
+        if let Some(lease) = lease {
+            Memory::seed_symbol_lease(&mut txn, task, lease.clone());
+        } else {
+            Memory::remove_symbol_lease(&mut txn, task);
+        }
+        self.commit(txn);
+        Ok(())
+    }
+    fn symbol_lease(&self, task: EntityId) -> Result<Option<crate::task_verb::SymbolLease>> {
+        Ok(self.symbol_lease_for_test(task))
     }
     fn record_turn_session(
         &self,
