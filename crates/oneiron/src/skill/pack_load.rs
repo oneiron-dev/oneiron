@@ -79,6 +79,10 @@ impl Vault {
 
     /// Loads a resident fork only for its named owner. The check and manifest
     /// stamp share a transaction; an unscoped load cannot use a bound fork.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "the load door binds the resident, skill, lease generation, executor revision and timestamp atomically"
+    )]
     pub fn load_resident_skill_pack(
         &self,
         attempt: AttemptId,
@@ -100,6 +104,10 @@ impl Vault {
         )
     }
 
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "the load door binds the resident, skill, lease generation, executor revision and timestamp atomically"
+    )]
     fn load_skill_pack_bound(
         &self,
         attempt: AttemptId,
@@ -163,6 +171,10 @@ impl Vault {
     /// exactly that entity's manifest/evidence binding in one pack-load call.
     /// A winner that is no longer active refuses at the load door rather than
     /// silently loading a runner-up under an out-of-date candidate ranking.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "the load door binds the resident, skill, lease generation, executor revision and timestamp atomically"
+    )]
     pub fn select_and_load_resident_skill_pack(
         &self,
         attempt: AttemptId,
