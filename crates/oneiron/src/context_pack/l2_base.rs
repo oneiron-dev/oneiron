@@ -108,10 +108,7 @@ pub(super) fn default_l2_subjects(
         None => Some(owner),
     };
     let principal = if let Some(id) = person_id {
-        vault
-            .store
-            .entities
-            .get(&txn, id.as_bytes())?
+        crate::ports::EntityStoreRead::port_entity_raw(&vault.store, &txn, id)?
             .as_deref()
             .and_then(crate::batch::EntityMetadataHeader::parse)
             .filter(|header| header.entity_type == crate::registry::ENTITY_TYPE_PERSON)
@@ -120,7 +117,7 @@ pub(super) fn default_l2_subjects(
         None
     };
     let mut subjects = BTreeSet::new();
-    if vault.store.entities.get(&txn, owner.as_bytes())?.is_some() {
+    if crate::ports::EntityStoreRead::port_entity_raw(&vault.store, &txn, &owner)?.is_some() {
         subjects.insert(owner);
     }
     if let Some(person) = principal {

@@ -170,11 +170,7 @@ pub(crate) fn seed_bootstrap_skills(vault: &Vault) -> Result<()> {
         // could rewrite the holder or make Vault::open fail on immutable fields.
         let deletion =
             crate::ports::TombstoneStoreRead::port_deletion_state(&vault.store, &wtxn, &seed_id)?;
-        if vault
-            .store
-            .entities
-            .get(&wtxn, seed_id.as_bytes())?
-            .is_some()
+        if crate::ports::EntityStoreRead::port_entity_raw(&vault.store, &wtxn, &seed_id)?.is_some()
             || deletion.deleted
             || deletion.stale
         {
