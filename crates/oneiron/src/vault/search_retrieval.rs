@@ -209,6 +209,7 @@ impl Vault {
                     rank: &config,
                     filter_all: false,
                     matches_scope: &mut |_| Ok(true),
+                    private_note_ids: None,
                 },
             )?
         };

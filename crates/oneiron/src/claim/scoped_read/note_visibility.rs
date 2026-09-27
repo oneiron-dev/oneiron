@@ -97,3 +97,44 @@ impl ScopedRead<'_> {
         Ok(true)
     }
 }
+
+impl ScopedRead<'_> {
+    /// Private diary candidates admitted under this query's snapshot. The
+    /// pipeline keeps the set only for this run and still performs its final
+    /// current + indexed-frontier authority checks on every resulting hit.
+    pub(crate) fn diary_candidates_in(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        requested: &crate::gate::ResolvedRetrievalFilter,
+    ) -> Result<HashSet<EntityId>> {
+        let (_, policy) = self.resolve_retrieval_filter_in(txn, None)?;
+        let mut admitted = HashSet::new();
+        for row in self
+            .vault
+            .store
+            .type_index
+            .prefix_iter(txn, &[crate::registry::ENTITY_TYPE_NOTE])?
+        {
+            let (key, _) = row?;
+            let id = crate::vault::entity_id_from_type_index_key(&key)?;
+            let Some(raw) = self.entity_record_in(txn, &id)? else {
+                continue;
+            };
+            if raw.entity_type != crate::registry::ENTITY_TYPE_NOTE {
+                continue;
+            }
+            #[cfg(feature = "sync")]
+            let body =
+                crate::entity_doc::resolve_record_body(&self.vault.store, txn, &id, &raw.body)?;
+            #[cfg(not(feature = "sync"))]
+            let body = std::borrow::Cow::Borrowed(raw.body.as_slice());
+            if crate::note::decode_note_body_in_txn(&self.vault.store, txn, &body)
+                .is_ok_and(|note| note.kind == crate::note::NoteKind::Diary)
+                && self.is_entity_retrievable_with_policy_in(txn, &policy, requested, &id)?
+            {
+                admitted.insert(id);
+            }
+        }
+        Ok(admitted)
+    }
+}

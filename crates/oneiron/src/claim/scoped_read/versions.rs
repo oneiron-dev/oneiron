@@ -10,6 +10,42 @@ pub(crate) struct RevisionedHits {
 }
 
 impl ScopedRead<'_> {
+    /// Searches within this actor's resolved read authority. Unset means the floor.
+    pub fn search(
+        &self,
+        query: &str,
+        vector: &[f32],
+        limit: usize,
+        requested: Option<&RetrievalFilter>,
+    ) -> Result<ScopedReadResult<Vec<ScoredEntity>>> {
+        let (filter, policy) = self.resolve_retrieval_filter(requested)?;
+        if filter.deny_all {
+            return Ok(ScopedReadResult {
+                value: Vec::new(),
+                receipt: self.receipt_for(requested, &policy, &filter, 0),
+            });
+        }
+        let fetch_limit = self
+            .vault
+            .scoped_read_search_candidate_limit(limit, true, true)?;
+        let results = self
+            .vault
+            .query()
+            .authority_filter(filter.clone())
+            .scoped_note_reader(self.actor_key.clone())
+            .search(query, vector, None, fetch_limit)
+            .run_for_pack()?;
+        self.filter_search_results(
+            results.scores,
+            limit,
+            requested,
+            &filter,
+            &policy,
+            results.read_suppressed,
+            &results.revisions,
+        )
+    }
+
     pub(crate) fn search_vector_revisioned(
         &self,
         query: &[f32],
@@ -31,6 +67,7 @@ impl ScopedRead<'_> {
             .vault
             .query()
             .authority_filter(filter.clone())
+            .scoped_note_reader(self.actor_key.clone())
             .search_vector(query, fetch_limit)
             .limit(fetch_limit)
             .run_for_pack()?;
@@ -74,16 +111,12 @@ impl ScopedRead<'_> {
             .vault
             .query()
             .authority_filter(filter.clone())
+            .scoped_note_reader(self.actor_key.clone())
             .search_text(query, fetch_limit)
             .limit(fetch_limit)
             .run_for_pack()?;
-        let mut candidates = results.scores;
-        candidates.extend(self.private_text_candidates(query, fetch_limit, requested)?);
-        candidates.sort_by(|a, b| b.score.total_cmp(&a.score));
-        let mut seen = HashSet::new();
-        candidates.retain(|row| seen.insert(row.id));
         let filtered = self.filter_search_results(
-            candidates,
+            results.scores,
             limit,
             requested,
             &filter,
@@ -169,34 +202,5 @@ impl ScopedRead<'_> {
             return Ok(false);
         };
         crate::context_pack::context_entity_matches_read_snapshot(self.vault, txn, entity, &raw)
-    }
-}
-
-impl ScopedRead<'_> {
-    /// The ordinary query excludes private NOTEs before its scoring cap. Add
-    /// index candidates only on this actor-scoped lane; the final read gate
-    /// checks each candidate under both original and fresh authority.
-    pub(super) fn private_text_candidates(
-        &self,
-        query: &str,
-        limit: usize,
-        requested: Option<&RetrievalFilter>,
-    ) -> Result<Vec<ScoredEntity>> {
-        if limit == 0 {
-            return Ok(Vec::new());
-        }
-        self.vault.ensure_text_index_trusted()?;
-        let txn = self.vault.store.env.read_txn()?;
-        let (filter, policy) = self.resolve_retrieval_filter_in(&txn, requested)?;
-        let config = crate::config::Bm25RankProfile::default().to_bm25_config()?;
-        crate::bm25::search_text_private_candidates(
-            &self.vault.store,
-            &txn,
-            &self.vault.analyzer,
-            &config,
-            query,
-            limit,
-            |id| self.is_entity_retrievable_with_policy_in(&txn, &policy, &filter, id),
-        )
     }
 }

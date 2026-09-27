@@ -414,6 +414,20 @@ impl Vault {
         min_weight: Option<f32>,
         limit: usize,
     ) -> Result<Vec<EdgeInfo>> {
+        let rtxn = self.store.env.read_txn()?;
+        self.neighbor_edges_bounded_in_txn(&rtxn, center, outbound, kind, min_weight, limit)
+    }
+
+    /// The bounded neighborhood in the caller's authority snapshot.
+    pub(crate) fn neighbor_edges_bounded_in_txn(
+        &self,
+        rtxn: &heed::RoTxn<'_>,
+        center: &EntityId,
+        outbound: bool,
+        kind: Option<EdgeKind>,
+        min_weight: Option<f32>,
+        limit: usize,
+    ) -> Result<Vec<EdgeInfo>> {
         if limit == 0 {
             return Ok(Vec::new());
         }
@@ -422,12 +436,8 @@ impl Vault {
         } else {
             EdgeDirection::In
         };
-        let rtxn = self.store.env.read_txn()?;
         let mut edges = Vec::new();
-        for entry in self
-            .store
-            .port_edges(&rtxn, center, direction, kind, None)?
-        {
+        for entry in self.store.port_edges(rtxn, center, direction, kind, None)? {
             let edge = entry?;
             if min_weight.is_some_and(|min| edge.weight < min) {
                 continue;

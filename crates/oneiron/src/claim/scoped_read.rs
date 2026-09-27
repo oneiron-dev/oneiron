@@ -178,46 +178,6 @@ impl<'a> ScopedRead<'a> {
         &self.actor_key
     }
 
-    /// Searches within this actor's resolved read authority. Unset means the floor.
-    pub fn search(
-        &self,
-        query: &str,
-        vector: &[f32],
-        limit: usize,
-        requested: Option<&RetrievalFilter>,
-    ) -> Result<ScopedReadResult<Vec<ScoredEntity>>> {
-        let (filter, policy) = self.resolve_retrieval_filter(requested)?;
-        if filter.deny_all {
-            return Ok(ScopedReadResult {
-                value: Vec::new(),
-                receipt: self.receipt_for(requested, &policy, &filter, 0),
-            });
-        }
-        let fetch_limit = self
-            .vault
-            .scoped_read_search_candidate_limit(limit, true, true)?;
-        let results = self
-            .vault
-            .query()
-            .authority_filter(filter.clone())
-            .search(query, vector, None, fetch_limit)
-            .run_for_pack()?;
-        let mut candidates = results.scores;
-        candidates.extend(self.private_text_candidates(query, fetch_limit, requested)?);
-        candidates.sort_by(|a, b| b.score.total_cmp(&a.score));
-        let mut seen = HashSet::new();
-        candidates.retain(|row| seen.insert(row.id));
-        self.filter_search_results(
-            candidates,
-            limit,
-            requested,
-            &filter,
-            &policy,
-            results.read_suppressed,
-            &results.revisions,
-        )
-    }
-
     pub fn search_text(
         &self,
         query: &str,

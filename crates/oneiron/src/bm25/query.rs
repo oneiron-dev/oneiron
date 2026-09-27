@@ -1,6 +1,6 @@
 //! Query-side: term collection, prefix expansion, search entry points, hint collapse.
 use std::collections::hash_map::Entry;
-use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::str;
 
 use heed::RoTxn;
@@ -30,6 +30,8 @@ where
 {
     pub(crate) recency: Option<Bm25RecencyConfig>,
     pub(crate) exact_posting_matches_scope: &'a mut F,
+    /// The scoped query's transaction-local, authenticated diary NOTE ids.
+    pub(crate) private_note_ids: Option<&'a HashSet<EntityId>>,
 }
 
 #[derive(Debug, Clone, Copy, Default)]
@@ -411,6 +413,7 @@ pub(super) fn search_text_with_recency(
         Bm25SearchOptions {
             recency,
             exact_posting_matches_scope: &mut exact_posting_matches_scope,
+            private_note_ids: None,
         },
     )
 }
@@ -449,49 +452,9 @@ where
     let mut ranked =
         scoring::score_query_terms(store, rtxn, config, &query_terms, options.recency, |id| {
             Ok(!crate::vault_cleanup::is_archived_in_txn(store, rtxn, id)?
-                && crate::note::ordinary_entity_visible(store, rtxn, id)?)
+                && (options.private_note_ids.is_some_and(|ids| ids.contains(id))
+                    || crate::note::ordinary_entity_visible(store, rtxn, id)?))
         })?;
-    ranked.sort_by(|a, b| {
-        b.1.total_cmp(&a.1)
-            .then_with(|| a.0.as_bytes().cmp(b.0.as_bytes()))
-    });
-    ranked.truncate(limit);
-    Ok(scoring::scored_entities(ranked))
-}
-
-/// Candidate-only search for actor-scoped reads. The caller MUST recheck all
-/// results through the final scoped read gate before exposing any ids.
-pub(crate) fn search_text_private_candidates(
-    store: &impl ManifestDbs,
-    rtxn: &RoTxn<'_>,
-    analyzer: &MultilingualAnalyzer,
-    config: &Bm25Config,
-    query: &str,
-    limit: usize,
-    mut admits: impl FnMut(&EntityId) -> Result<bool>,
-) -> Result<Vec<ScoredEntity>> {
-    if limit == 0 {
-        return Ok(Vec::new());
-    }
-    let mut tokens = Vec::new();
-    analyzer.analyze(query, &AnalyzerContext::for_query(), &mut tokens);
-    if tokens.is_empty() {
-        return Ok(Vec::new());
-    }
-    let mut all = |_id: &EntityId| Ok(true);
-    let terms = collect_query_terms(store, rtxn, config, query, &tokens, &mut all)?;
-    let mut ranked = scoring::score_query_terms(store, rtxn, config, &terms, None, |id| {
-        if crate::vault_cleanup::is_archived_in_txn(store, rtxn, id)?
-            || store
-                .entities()
-                .get(rtxn, id.as_bytes())?
-                .and_then(|raw| EntityMetadataHeader::parse(&raw))
-                .is_none_or(|header| header.entity_type != crate::registry::ENTITY_TYPE_NOTE)
-        {
-            return Ok(false);
-        }
-        admits(id)
-    })?;
     ranked.sort_by(|a, b| {
         b.1.total_cmp(&a.1)
             .then_with(|| a.0.as_bytes().cmp(b.0.as_bytes()))

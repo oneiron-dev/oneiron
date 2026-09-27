@@ -217,6 +217,8 @@ pub(super) struct EntityMetadataCache {
 #[derive(Default)]
 pub(super) struct ClaimStatusGateCache {
     pub(super) include_stale: bool,
+    /// Authenticated, transaction-local diary admission for this retrieval run.
+    pub(super) private_note_ids: Option<std::sync::Arc<std::collections::HashSet<EntityId>>>,
     pub(super) decisions: HashMap<EntityId, Option<ClaimBody>>,
     #[cfg(test)]
     pub(super) body_loads: usize,

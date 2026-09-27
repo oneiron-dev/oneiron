@@ -1158,7 +1158,9 @@ fn cross_resident_diary_coreference_requires_both_exact_grants_on_every_read() {
     use crate::context_pack::ContextEntity;
     use crate::note::{NoteScope, NoteWriteEnvelope};
 
-    let (_dir, vault) = open_vault();
+    let dir = tempfile::tempdir().expect("tempdir");
+    let vault = crate::Vault::open(dir.path(), crate::test_util::embedding_test_config())
+        .expect("vault with vectors and default policy");
     let a = put_person(&vault, 0x41);
     let b = put_person(&vault, 0x42);
     let author_a = facade_for(&vault, a);
@@ -1337,6 +1339,153 @@ fn cross_resident_diary_coreference_requires_both_exact_grants_on_every_read() {
     check(false); // One signature is insufficient.
     assert!(author_b.grant_diary_coreference(note_a, note_b).is_ok());
     check(true); // Both authors now share exactly this pair.
+    let query = "diarycounterpart";
+    let indexed = vault
+        .indexed_revision(&note_b)
+        .unwrap()
+        .expect("birth frontier");
+    let depth = || {
+        read_a
+            .search_with_effort(&crate::retrieval_depth::DepthSearchRequest {
+                probe: crate::retrieval_depth::SearchProbe::Text {
+                    query: query.into(),
+                },
+                effort: Effort::Light,
+                limit: 10,
+                session_scope: None,
+                lease: None,
+                backend: None,
+                token_budget: None,
+                deadline: None,
+            })
+            .unwrap()
+    };
+    let first = depth();
+    assert!(first.hits.iter().any(|hit| hit.id == note_b));
+    assert_eq!(first.revisions.get(&note_b), Some(&indexed));
+    author_b
+        .edit_note(
+            &note_b.to_hex(),
+            &crate::note::NoteProgramEdit::WholeText {
+                text: "diarycounterpart edited in the live document".into(),
+                timeout_ms: 100,
+                base: None,
+            },
+        )
+        .unwrap();
+    assert_eq!(vault.indexed_revision(&note_b).unwrap(), Some(indexed));
+    let during_debounce = depth();
+    assert!(during_debounce.hits.iter().any(|hit| hit.id == note_b));
+    assert_eq!(during_debounce.revisions.get(&note_b), Some(&indexed));
+
+    // Text and vector channels use one blend for public and shared-private
+    // NOTEs; a public-only query retains ordinary result ids and scores.
+    let public = author_a
+        .author_take(TakeTarget::Subject(a), "diarycounterpart public note")
+        .unwrap();
+    let public_id = EntityId::from_hex(&public.id_hex).unwrap();
+    let public_1 = author_a
+        .author_take(TakeTarget::Subject(a), "publiconlyneedle first")
+        .unwrap();
+    let public_2 = author_b
+        .author_take(TakeTarget::Subject(b), "publiconlyneedle second")
+        .unwrap();
+    let public_1_id = EntityId::from_hex(&public_1.id_hex).unwrap();
+    let public_2_id = EntityId::from_hex(&public_2.id_hex).unwrap();
+    vault
+        .batch()
+        .text(&public_id, &[("body", "diarycounterpart public note")])
+        .text(&public_1_id, &[("body", "publiconlyneedle first")])
+        .text(&public_2_id, &[("body", "publiconlyneedle second")])
+        .commit()
+        .unwrap();
+    let txn = vault.store.env.read_txn().unwrap();
+    let policy = crate::gate::resolve_policy_manifest(&vault.store, &txn).unwrap();
+    let filter = crate::gate::narrow_retrieval_filter(
+        &policy.retrieval_floor_for_actor(Some(read_a.actor_key())),
+        None,
+    )
+    .unwrap();
+    drop(txn);
+    let ordinary = vault
+        .query()
+        .authority_filter(filter)
+        .search_text("publiconlyneedle", 10)
+        .limit(10)
+        .run_for_pack()
+        .unwrap()
+        .scores;
+    let scoped = read_a.search_text("publiconlyneedle", 10, None).unwrap();
+    assert_eq!(
+        scoped.value, ordinary,
+        "public-only ranking must not change"
+    );
+    let mixed = read_a.search_text(query, 10, None).unwrap();
+    assert!(mixed.value.iter().any(|hit| hit.id == note_b));
+    assert!(mixed.value.iter().any(|hit| hit.id == public_id));
+    let mut vector = vec![0.0; vault.config.dimensions];
+    vector[0] = 1.0;
+    vault.put_vector(&public_id, &vector).unwrap();
+    vault.put_vector(&note_b, &vector).unwrap();
+    let hybrid = read_a.search(query, &vector, 10, None).unwrap();
+    assert!(hybrid.value.iter().any(|hit| hit.id == note_b));
+    assert!(hybrid.value.iter().any(|hit| hit.id == public_id));
+
+    // A second NOTE by A is a DIFFERENT pair. Seeing B through a1-b must
+    // never make the ungranted a2-b edge visible to either resident.
+    let note_a2 = make_diary(&author_a, a, "other private thought");
+    author_b.link_diary_coreference(note_a2, note_b).unwrap();
+    let links = NeighborOpts {
+        edge_kind: Some("same_as".into()),
+        limit: 10,
+        ..Default::default()
+    };
+    assert!(
+        author_a
+            .neighbors(&note_a2.to_hex(), &links)
+            .unwrap()
+            .is_empty()
+    );
+    assert_eq!(
+        author_a.neighbors(&note_a.to_hex(), &links).unwrap().len(),
+        1
+    );
+    assert_eq!(
+        author_b.neighbors(&note_b.to_hex(), &links).unwrap().len(),
+        1
+    );
+    let grant_a2 = author_a.grant_diary_coreference(note_a2, note_b).unwrap();
+    assert!(
+        author_a
+            .neighbors(&note_a2.to_hex(), &links)
+            .unwrap()
+            .is_empty()
+    );
+    let _grant_b2 = author_b.grant_diary_coreference(note_a2, note_b).unwrap();
+    assert_eq!(
+        author_a.neighbors(&note_a2.to_hex(), &links).unwrap().len(),
+        1
+    );
+    assert_eq!(
+        author_b.neighbors(&note_b.to_hex(), &links).unwrap().len(),
+        2
+    );
+    author_a.revoke_diary_coreference_grant(grant_a2).unwrap();
+    assert!(
+        author_a
+            .neighbors(&note_a2.to_hex(), &links)
+            .unwrap()
+            .is_empty()
+    );
+    assert_eq!(
+        author_b.neighbors(&note_b.to_hex(), &links).unwrap().len(),
+        1
+    );
+    assert_eq!(
+        author_a.neighbors(&note_a.to_hex(), &links).unwrap().len(),
+        1
+    );
+
     author_a.revoke_diary_coreference_grant(grant_a).unwrap();
     check(false); // Revocation takes effect at read time.
 }

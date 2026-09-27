@@ -50,7 +50,7 @@ pub(crate) use self::index::{deindex_text, index_text};
 pub(crate) use self::query::{
     Bm25SearchOptions, PrefixExpansionPostingDecision, final_token_exact_posting_matches,
     final_token_prefix_expansion_has_scoped_and_rejected_postings, search_text,
-    search_text_private_candidates, search_text_scoped_with_recency,
+    search_text_scoped_with_recency,
 };
 use self::query::{
     QueryTerm, apply_recency_blend, collapse_lexical_query_hint_scores, collect_query_terms,

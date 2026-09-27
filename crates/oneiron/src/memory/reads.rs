@@ -17,7 +17,7 @@ fn companion_value_to_json(value: &rmpv::Value) -> serde_json::Value {
 use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;
 use crate::error::Error;
-use crate::registry::ENTITY_TYPE_CLAIM;
+use crate::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_NOTE};
 
 const SNIPPET_MAX_CHARS: usize = 160;
 
@@ -342,7 +342,11 @@ impl Memory<'_> {
             None => None,
         };
         let id = self.resolve_ref(entity_ref)?;
-        if self.entity_view(&id)?.is_none() {
+        let txn = self.vault.store.env.read_txn().map_err(Error::from)?;
+        if self
+            .entity_view_with_mode_in_txn(&txn, &id, crate::vault::ReadMode::Live)?
+            .is_none()
+        {
             return Ok(Vec::new());
         }
         let mut hits = Vec::new();
@@ -355,7 +359,8 @@ impl Memory<'_> {
             if remaining == 0 {
                 break;
             }
-            let edges = self.vault.neighbor_edges_bounded(
+            let edges = self.vault.neighbor_edges_bounded_in_txn(
+                &txn,
                 &id,
                 outbound,
                 kind_filter,
@@ -363,15 +368,31 @@ impl Memory<'_> {
                 remaining,
             )?;
             for edge in edges {
-                if self.entity_view(&edge.target)?.is_none() {
+                // Endpoint admission is not consent to a DIFFERENT link. In
+                // the same snapshot as both endpoint reads, require the exact
+                // pair's mutual grant before returning a diary same_as edge.
+                if edge.kind == EdgeKind::SameAs
+                    && (self.vault.get_entity_type_in_txn(&txn, &id)? == Some(ENTITY_TYPE_NOTE)
+                        || self.vault.get_entity_type_in_txn(&txn, &edge.target)?
+                            == Some(ENTITY_TYPE_NOTE))
+                    && !crate::note::diary_coreference_shared_in(self.vault, &txn, id, edge.target)?
+                {
+                    continue;
+                }
+                if self
+                    .entity_view_with_mode_in_txn(&txn, &edge.target, crate::vault::ReadMode::Live)?
+                    .is_none()
+                {
                     continue;
                 }
                 let kind = self
                     .vault
-                    .get_entity_type(&edge.target)?
+                    .get_entity_type_in_txn(&txn, &edge.target)?
                     .map_or_else(|| "UNKNOWN".to_owned(), kind_string_for_type);
                 hits.push(NeighborHit {
-                    short_id: self.short_ref_or_hex(&edge.target)?,
+                    short_id: self
+                        .short_ref_of_in_txn(&txn, &edge.target)?
+                        .unwrap_or_else(|| edge.target.to_hex()),
                     kind,
                     edge_kind: edge_kind_name(edge.kind).to_owned(),
                     weight: edge.weight,
@@ -392,8 +413,17 @@ impl Memory<'_> {
         mode: crate::vault::ReadMode,
     ) -> MemoryResult<Option<EntityView>> {
         let txn = self.vault.store.env.read_txn().map_err(Error::from)?;
+        self.entity_view_with_mode_in_txn(&txn, id, mode)
+    }
+
+    fn entity_view_with_mode_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        id: &EntityId,
+        mode: crate::vault::ReadMode,
+    ) -> MemoryResult<Option<EntityView>> {
         let Some(raw) =
-            crate::vault::entity_revision::read_entity_revision_in_txn(self.vault, &txn, id, mode)?
+            crate::vault::entity_revision::read_entity_revision_in_txn(self.vault, txn, id, mode)?
         else {
             return Ok(None);
         };
@@ -427,26 +457,26 @@ impl Memory<'_> {
             return Ok(None);
         }
         if header.entity_type == crate::registry::ENTITY_TYPE_NOTE {
-            verify_actor_binding_in_txn(self.vault, &txn, self.actor, self.actor_class)?;
+            verify_actor_binding_in_txn(self.vault, txn, self.actor, self.actor_class)?;
             if !crate::note::note_body_readable(
                 &self.vault.store,
-                &txn,
+                txn,
                 &raw[crate::batch::ENTITY_METADATA_HEADER_LEN..],
                 Some(&self.actor),
-            )? && !crate::note::readable_through_link(self.vault, &txn, *id, self.actor)?
+            )? && !crate::note::readable_through_link(self.vault, txn, *id, self.actor)?
             {
                 return Ok(None);
             }
         }
         let projected = crate::note::live_body_in_txn(
             &self.vault.store,
-            &txn,
+            txn,
             id,
             header.entity_type,
             &raw[crate::batch::ENTITY_METADATA_HEADER_LEN..],
         )?;
         let body = decode_body_json(&projected);
-        let short_ref = self.short_ref_of_in_txn(&txn, id)?.map(|reference| {
+        let short_ref = self.short_ref_of_in_txn(txn, id)?.map(|reference| {
             let short = reference.split(':').next().unwrap_or(&reference);
             let hash =
                 (xxhash_rust::xxh32::xxh32(&raw[crate::batch::ENTITY_METADATA_HEADER_LEN..], 0)

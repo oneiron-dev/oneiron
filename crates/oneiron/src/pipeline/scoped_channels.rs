@@ -136,6 +136,7 @@ impl PipelineBuilder<'_> {
         // suppression stats. Import only the candidates that enter fusion.
         let mut probe_gate = ClaimStatusGateCache {
             include_stale: filters.authority_filter.include_stale,
+            private_note_ids: claim_gate.private_note_ids.clone(),
             ..ClaimStatusGateCache::default()
         };
         // Reuse known decisions from earlier channels in this read transaction,
