@@ -65,7 +65,7 @@
      "path": "src/access_grant/context.rs",
      "purpose": "Relationship read authority built from live grants and stored membership evidence",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 2,
       "fn": 3,
       "struct": 3
      }
@@ -2009,17 +2009,18 @@
      "kind": "src",
      "notable": [
       "CapabilitySlip",
+      "SignedCaveat",
       "SlipCaveat",
       "SlipClaims",
       "SlipMintAction",
       "VerifiedSlip"
      ],
      "path": "src/authority/slip.rs",
-     "purpose": "Host-signed, log-backed capability slips with MAC-checked offline narrowing and holder proof",
+     "purpose": "Host-signed capability slips with holder-signed offline narrowing and proof",
      "surface": {
       "crate-vis": 7,
-      "fn": 12,
-      "struct": 5
+      "fn": 13,
+      "struct": 6
      }
     },
     {
@@ -2089,7 +2090,7 @@
      "purpose": "Host-root bootstrap and atomic authority-log capability issuance",
      "surface": {
       "crate-vis": 8,
-      "fn": 17,
+      "fn": 21,
       "struct": 1
      }
     },
@@ -6729,7 +6730,7 @@
      "path": "src/channel_identity_autonomy/autonomy.rs",
      "purpose": "Scoped-read authorization, the atomic autonomy apply, action-grant mint, verify, mode set/resolve…",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 4,
       "fn": 6
      }
     },
@@ -7583,7 +7584,7 @@
      "surface": {
       "crate-vis": 5,
       "fn": 14,
-      "re-export": 2,
+      "re-export": 3,
       "struct": 1
      }
     },
@@ -7594,7 +7595,7 @@
      "path": "src/claim/scoped_read/access_gate.rs",
      "purpose": "Relationship access checks share the row read transaction with grant resolution",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 4
      }
     },
     {
@@ -7606,7 +7607,7 @@
      "path": "src/claim/scoped_read/actor_key.rs",
      "purpose": "Authenticated identity carried by a scoped read",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 2,
       "fn": 6,
       "struct": 1
      }
@@ -7704,6 +7705,33 @@
      "surface": {
       "crate-vis": 6
      }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "WeaveItem",
+      "WeaveReader",
+      "WeaveReport",
+      "WeaveSection",
+      "WeaveSectionKind",
+      "WeaveSectionSpec"
+     ],
+     "path": "src/claim/scoped_read/weave_report.rs",
+     "purpose": "Live weave data for a reader, not a saved digest or a rendered section recipe",
+     "surface": {
+      "enum": 3,
+      "fn": 1,
+      "struct": 3
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "src/claim/scoped_read/weave_report/tests.rs",
+     "purpose": "—",
+     "surface": {}
     },
     {
      "bucket": "m",
@@ -11403,7 +11431,7 @@
      "path": "src/context_pack/builder/scoped.rs",
      "purpose": "Candidate narrowing passthrough to the existing retrieval pipeline",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 2
      }
     },
     {
@@ -11451,7 +11479,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "L2BaseSummary"
@@ -11459,13 +11487,13 @@
      "path": "src/context_pack/l2_base.rs",
      "purpose": "Content-addressed persona/user evidence prefix",
      "surface": {
-      "crate-vis": 5,
+      "crate-vis": 6,
       "fn": 1,
       "struct": 1
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "test",
      "notable": [],
      "path": "src/context_pack/l2_base/tests.rs",
@@ -11819,7 +11847,7 @@
      "path": "src/conversation/body.rs",
      "purpose": "Forward-compatible room body codec and the all-writer membership guard",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 3,
       "enum": 1,
       "fn": 8,
       "struct": 1
@@ -17225,7 +17253,7 @@
      "purpose": "OF-336 generated-UI component contract",
      "surface": {
       "crate-vis": 1,
-      "re-export": 6
+      "re-export": 7
      }
     },
     {
@@ -17306,6 +17334,19 @@
      "path": "src/genui/tests/project_proposal.rs",
      "purpose": "—",
      "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "VoiceGrantOffer"
+     ],
+     "path": "src/genui/voice_offer.rs",
+     "purpose": "Voice-only disclosure widening is an offer, not an authorization",
+     "surface": {
+      "fn": 3,
+      "struct": 1
+     }
     },
     {
      "bucket": "s",
@@ -17666,7 +17707,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "test",
      "notable": [],
      "path": "src/graph_fs/tests.rs",
@@ -18348,7 +18389,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "test",
      "notable": [],
      "path": "src/ingest/docs_tests.rs",
@@ -18776,13 +18817,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
+      "DocsExpansion",
+      "DocsExpansionLevel",
       "DocsSummaryHit"
      ],
      "path": "src/ingest/summary_ladder.rs",
-     "purpose": "Summary-first rank fusion",
+     "purpose": "Read-only knowledge ladder",
      "surface": {
-      "fn": 2,
-      "struct": 1
+      "enum": 1,
+      "fn": 4,
+      "struct": 2
      }
     },
     {
@@ -19218,6 +19262,20 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [
+      "LensQuoteHandle",
+      "LensQuoteRange"
+     ],
+     "path": "src/lens/mediation/mediation_quote.rs",
+     "purpose": "Revision-pinned quote pointers derived from engine-issued span selections",
+     "surface": {
+      "fn": 6,
+      "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [],
      "path": "src/lens/mediation/mediation_scope.rs",
      "purpose": "Ordinary world-id and repository membership clamps on every frame-bound read",
@@ -19232,7 +19290,7 @@
      "path": "src/lens/mediation/mod.rs",
      "purpose": "Host mediation — the lens security chokepoint",
      "surface": {
-      "re-export": 4
+      "re-export": 5
      }
     },
     {
@@ -19252,7 +19310,7 @@
      "path": "src/lens/mod.rs",
      "purpose": "Closed generated-lens atom vocabulary",
      "surface": {
-      "re-export": 9
+      "re-export": 10
      }
     },
     {
@@ -19388,6 +19446,14 @@
      "notable": [],
      "path": "src/lens/tests/versioning.rs",
      "purpose": "Envelope-versioning and behavior-fingerprint tests: version stamps, canonical fingerprints, and diffs",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/lens/tests/weave_report.rs",
+     "purpose": "A host-authored section recipe can lower the live report into the lens kit",
      "surface": {}
     },
     {
@@ -21332,7 +21398,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [
       "Effort",
@@ -21351,6 +21417,16 @@
       "enum": 1,
       "fn": 10,
       "struct": 6
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/memory/recall/authority.rs",
+     "purpose": "Actor-bound recall authority: store-truth identity, owner lane and scoped floor",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -21594,11 +21670,19 @@
      "surface": {}
     },
     {
-     "bucket": "L",
+     "bucket": "XL",
      "kind": "src",
      "notable": [],
      "path": "src/memory/tests_regressions/recall.rs",
      "purpose": "BRIDGE-02 retrieval surface regressions: BM25, neighbors, recall packs, scope honesty, limits",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/memory/tests_regressions/recall_l2.rs",
+     "purpose": "Typed recall retains a ranked owner claim even when L2 also caches it",
      "surface": {}
     },
     {
@@ -22231,6 +22315,25 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "AnonymousChatBlockReason",
+      "AnonymousChatResponder",
+      "AnonymousChatSession",
+      "AnonymousChatTarget",
+      "AnonymousChatTurn"
+     ],
+     "path": "src/off_record/anonymous_chat.rs",
+     "purpose": "Stateless, memory-free chat beside (not inside) agent chat and off-record promote",
+     "surface": {
+      "enum": 3,
+      "fn": 3,
+      "struct": 1,
+      "trait": 1
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
@@ -22334,6 +22437,7 @@
      "purpose": "Off-record sessions — ARCH-0052 branch store, ONE-1725..ONE-1732",
      "surface": {
       "crate-vis": 5,
+      "mod": 1,
       "re-export": 2
      }
     },
@@ -24409,13 +24513,23 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/policy_model/classifier_lease.rs",
+     "purpose": "Cancellation-safe ownership of a stateless classifier's private reservation",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/policy_model/classify.rs",
      "purpose": "Vault-egress classification, which is the owner plane and nothing else",
      "surface": {
-      "crate-vis": 9,
+      "crate-vis": 11,
       "fn": 8
      }
     },
@@ -24487,6 +24601,7 @@
      "path": "src/policy_model/mod.rs",
      "purpose": "Policy classification over two planes",
      "surface": {
+      "crate-vis": 1,
       "re-export": 10
      }
     },
@@ -24668,6 +24783,14 @@
       "fn": 9,
       "struct": 3
      }
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "src/policy_model/tests/anonymous_chat.rs",
+     "purpose": "Stateless chat is not Memory::chat, agent chat, or an off-record room read",
+     "surface": {}
     },
     {
      "bucket": "L",
@@ -25135,7 +25258,7 @@
      "path": "src/ports/time.rs",
      "purpose": "Per-store clock and id source",
      "surface": {
-      "crate-vis": 6,
+      "crate-vis": 8,
       "fn": 6,
       "struct": 1,
       "trait": 2
@@ -27751,7 +27874,7 @@
      "path": "src/serialize/mod.rs",
      "purpose": "Context-pack serialization",
      "surface": {
-      "crate-vis": 5,
+      "crate-vis": 7,
       "re-export": 4
      }
     },
@@ -27800,7 +27923,7 @@
      "path": "src/serialize/provider_codecs.rs",
      "purpose": "Provider read formats share prepared rows and always null credential-bearing fields",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 3
      }
     },
     {
@@ -29973,7 +30096,7 @@
      "path": "src/store/root_directory.rs",
      "purpose": "Descriptor-bound directory identity shared by store opens and writer leases",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 6
      }
     },
     {
@@ -32746,7 +32869,7 @@
      "path": "src/vault/read_fixture.rs",
      "purpose": "Explicit actor-bound read policy and foreign Grants for cross-crate integration fixtures",
      "surface": {
-      "fn": 2
+      "fn": 3
      }
     },
     {
@@ -33376,7 +33499,7 @@
      "path": "src/voice_identity/vault.rs",
      "purpose": "Vault surface for consent, enrollment, segment matching, roster reads, withdrawal, and pruning",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 3,
       "fn": 7
      }
     },
@@ -33682,7 +33805,7 @@
      "surface": {}
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "test",
      "notable": [],
      "path": "src/workspace_roster/tests/authorization.rs",
@@ -34653,7 +34776,7 @@
      "purpose": "—"
     },
     "claim": {
-     "files": 37,
+     "files": 39,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -35087,8 +35210,8 @@
      "purpose": "DEC-0005 Gate policy manifest resolver"
     },
     "genui": {
-     "files": 11,
-     "impl_vault": false,
+     "files": 12,
+     "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
      "purpose": "OF-336 generated-UI component contract"
@@ -35178,7 +35301,7 @@
      "purpose": "Interlocutor resolution substrate (OF-365 ILD-1)"
     },
     "lens": {
-     "files": 41,
+     "files": 43,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -35234,9 +35357,9 @@
      "purpose": "—"
     },
     "memory": {
-     "files": 75,
+     "files": 77,
      "impl_vault": true,
-     "largest_src_bucket": "L",
+     "largest_src_bucket": "XL",
      "layout": "dir",
      "purpose": "BRIDGE-01 (ONE-1454): transport-agnostic memory facade"
     },
@@ -35255,7 +35378,7 @@
      "purpose": "Attributed NOTE records with built-in, plugin and registered PACK kinds"
     },
     "off_record": {
-     "files": 11,
+     "files": 12,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -35325,7 +35448,7 @@
      "purpose": "—"
     },
     "policy_model": {
-     "files": 32,
+     "files": 34,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -35766,10 +35889,10 @@
      "purpose": "Write-path stamping: `WriteActor`/`WriteProvenance`/`WriteEnvelope`/`ClaimCandidate` + evidence stamping"
     }
    },
-   "over_bar": 10,
+   "over_bar": 11,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2110,
-   "test_files": 722
+   "source_files": 2117,
+   "test_files": 725
   },
   "oneiron-android": {
    "files": [
@@ -36397,7 +36520,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/fleet/workload.rs",
@@ -36951,7 +37074,7 @@
     "fleet": {
      "files": 8,
      "impl_vault": false,
-     "largest_src_bucket": "s",
+     "largest_src_bucket": "m",
      "layout": "dir",
      "purpose": "Fleet load, real held sockets, paired PPR optimization, and measured JSON receipts"
     },
