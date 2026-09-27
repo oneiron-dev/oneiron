@@ -952,7 +952,8 @@ Request body (every block is optional; `{}` returns the prefix beside the caller
 - `retrieval` optional: a Context Pack request body (see above). When present, retrieval runs and its pack rides the response.
 - `memories` optional: `enabled` (default `true`) and `slots` per-slot row caps (`claims`, `turns`, `summaries`, `facets`, `companions`, `other`).
 - `session` optional: `session_id` that carries the cursor across calls; defaults to the caller identity.
-- `companion` optional: `person_ref`, `persona_ref`, and `expression` (`professional`, `warm`, or `unrestricted`).
+- `companion` optional: `person_ref` identifies the PERSON, `persona_ref` supplies the other relationship endpoint, and `expression` selects `professional`, `warm`, or `unrestricted`.
+  Only an active relationship record can select a non-neutral companion scope.
 
 Response fields:
 

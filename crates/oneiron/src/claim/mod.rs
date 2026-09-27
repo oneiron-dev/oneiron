@@ -24,7 +24,7 @@
 //! full structural validation. Well-formed UNKNOWN predicates are accepted — the crate is
 //! predicate-agnostic for semantics (ARCH-0003 §G.1). Crate-owned
 //! well-known predicates are listed in [`CLAIM_PREDICATE_REGISTRY`] and carry
-//! the first-segment layer prefix `core`, `companion`, `eiri`, or `commitment`; that is a
+//! the first-segment layer prefix `core`, `companion`, `persona`, or `commitment`; that is a
 //! schema/code-review convention, not a package split, plugin runtime,
 //! consent matrix, or semantic dispatch registry.
 //!

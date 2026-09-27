@@ -2810,7 +2810,7 @@
      "purpose": "Companion-layer export filtering",
      "surface": {
       "const": 1,
-      "fn": 10,
+      "fn": 9,
       "struct": 2
      }
     },
@@ -3137,7 +3137,7 @@
      "path": "src/batch/put_apply/put_staging.rs",
      "purpose": "Body/index/edge row staging helpers shared by the put and update paths",
      "surface": {
-      "crate-vis": 11
+      "crate-vis": 12
      }
     },
     {
@@ -9836,7 +9836,7 @@
      "surface": {
       "crate-vis": 4,
       "enum": 5,
-      "fn": 35,
+      "fn": 34,
       "struct": 4
      }
     },
@@ -9852,6 +9852,7 @@
      "purpose": "PERSON identity baselines and deterministic replay of recorded changes",
      "surface": {
       "const": 1,
+      "crate-vis": 2,
       "fn": 4,
       "struct": 3
      }
@@ -9906,7 +9907,7 @@
      "purpose": "In-memory companion registers with scope and expression resolution",
      "surface": {
       "enum": 1,
-      "fn": 20,
+      "fn": 19,
       "struct": 3
      }
     },
@@ -21435,9 +21436,9 @@
      "kind": "src",
      "notable": [],
      "path": "src/memory/structural/affiliated.rs",
-     "purpose": "Attributed takes, companion records, and imported-claim admission verbs",
+     "purpose": "Attributed takes and imported-claim admission verbs",
      "surface": {
-      "fn": 4
+      "fn": 3
      }
     },
     {
@@ -21465,7 +21466,7 @@
      "kind": "src",
      "notable": [],
      "path": "src/memory/structural/mod.rs",
-     "purpose": "Structural puts (habit checkins, companion records, imported-claim admission, blob artifacts) and…",
+     "purpose": "Structural puts (habit checkins, imported-claim admission, blob artifacts) and `author_take`",
      "surface": {
       "crate-vis": 1,
       "re-export": 1
@@ -21488,7 +21489,6 @@
       "AdmitImportedClaimInput",
       "BlobArtifactInput",
       "BlobVersionView",
-      "CompanionRecordInput",
       "EntityRefReceipt",
       "EntityView",
       "HabitCheckinInput",
@@ -21499,7 +21499,7 @@
      "path": "src/memory/structural/types.rs",
      "purpose": "Read-facing views and per-verb inputs for structural puts",
      "surface": {
-      "struct": 10
+      "struct": 9
      }
     },
     {
@@ -21540,7 +21540,7 @@
      "surface": {}
     },
     {
-     "bucket": "XL",
+     "bucket": "L",
      "kind": "test",
      "notable": [],
      "path": "src/memory/tests/commit_claims.rs",
@@ -23048,7 +23048,7 @@
      "purpose": "—",
      "surface": {
       "const": 1,
-      "crate-vis": 17,
+      "crate-vis": 18,
       "enum": 1,
       "fn": 4,
       "struct": 1
@@ -23286,7 +23286,7 @@
      "path": "src/outbound/receipt_fields.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 7
+      "crate-vis": 8
      }
     },
     {
@@ -23296,7 +23296,7 @@
      "path": "src/outbound/retry_audit.rs",
      "purpose": "Atomic persistence of a failed send receipt and its retry",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 2
      }
     },
     {
@@ -23350,7 +23350,7 @@
      "surface": {}
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "test",
      "notable": [],
      "path": "src/outbound/tests/pipeline_contract.rs",
@@ -23366,7 +23366,7 @@
      "surface": {}
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "test",
      "notable": [],
      "path": "src/outbound/tests/retry_audit.rs",
@@ -23434,6 +23434,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/outbound_chokepoint/dedupe.rs",
+     "purpose": "OF-327 mechanical semantic cooldown under the effect admission writer lock",
+     "surface": {
+      "crate-vis": 6
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [
@@ -23471,7 +23481,7 @@
      "path": "src/outbound_chokepoint/mod.rs",
      "purpose": "Replay-first outbound effect execution",
      "surface": {
-      "crate-vis": 4,
+      "crate-vis": 5,
       "re-export": 1
      }
     },
@@ -23482,7 +23492,7 @@
      "path": "src/outbound_chokepoint/replay.rs",
      "purpose": "Replay/send path: ledger-state dispatch, recovery governance, live-retry gate, transport outcomes",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 6
      }
     },
     {
@@ -23789,7 +23799,7 @@
      "path": "src/outbound_intent_ledger/store.rs",
      "purpose": "Storage-transaction reads, inserts, transitions, and the admission-gate validator",
      "surface": {
-      "crate-vis": 18
+      "crate-vis": 19
      }
     },
     {
@@ -25477,8 +25487,8 @@
      "path": "src/prompt.rs",
      "purpose": "—",
      "surface": {
-      "const": 4,
-      "fn": 6,
+      "const": 3,
+      "fn": 5,
       "struct": 5
      }
     },
@@ -25983,7 +25993,7 @@
      "path": "src/receipt/mod.rs",
      "purpose": "Unified receipt-family query surface over existing receipt emitters",
      "surface": {
-      "crate-vis": 10,
+      "crate-vis": 13,
       "re-export": 8
      }
     },
@@ -26006,13 +26016,23 @@
      }
     },
     {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/receipt/record.rs",
+     "purpose": "First-class, replicated immutable terminal outbound receipt record",
+     "surface": {
+      "crate-vis": 10
+     }
+    },
+    {
      "bucket": "s",
      "kind": "src",
      "notable": [],
      "path": "src/receipt/send_receipt_txn.rs",
      "purpose": "Send receipt persistence inside a caller-owned transaction",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 2
      }
     },
     {
@@ -26421,7 +26441,7 @@
      "path": "src/registry/type_bytes.rs",
      "purpose": "Entity type bytes: every statically allocated `ENTITY_TYPE_*` constant",
      "surface": {
-      "const": 46
+      "const": 47
      }
     },
     {
@@ -31054,7 +31074,7 @@
      "path": "src/sync/mod.rs",
      "purpose": "CRDT sync layer for Oneiron",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 4,
       "mod": 18,
       "re-export": 14
      }
@@ -31302,6 +31322,16 @@
      "path": "src/sync/quota/tests.rs",
      "purpose": "—",
      "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/sync/receipt_ingest.rs",
+     "purpose": "ONE-1881: one validated, writer-locked receive path for terminal receipts",
+     "surface": {
+      "crate-vis": 3
+     }
     },
     {
      "bucket": "s",
@@ -33840,7 +33870,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "test",
      "notable": [],
      "path": "src/workspace_roster/tests/onboarding_replay.rs",
@@ -34274,7 +34304,7 @@
      "surface": {}
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "test",
      "notable": [],
      "path": "tests/it/receipt_context.rs",
@@ -35408,7 +35438,7 @@
      "purpose": "Outbound action capability manifests and dispatch spine for OF-327"
     },
     "outbound_chokepoint": {
-     "files": 8,
+     "files": 9,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -35527,7 +35557,7 @@
      "purpose": "Host-injected HyDE query-expansion seam"
     },
     "receipt": {
-     "files": 17,
+     "files": 18,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -35765,7 +35795,7 @@
      "purpose": "ARCH-0038 historical-carrier sweep executor — ONE-1087 / ONE-1091 phase 1 (manual trigger via…"
     },
     "sync": {
-     "files": 101,
+     "files": 102,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -35900,7 +35930,7 @@
    },
    "over_bar": 11,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2118,
+   "source_files": 2121,
    "test_files": 722
   },
   "oneiron-android": {
@@ -38553,7 +38583,6 @@
       "NapiClaimListFilter",
       "NapiClaimView",
       "NapiCommitReceipt",
-      "NapiCompanionRecordInput",
       "NapiConsolidationJobInput",
       "NapiDeleteReceipt",
       "NapiDreamerJobRef",
@@ -38585,7 +38614,7 @@
      "path": "src/facade/dtos.rs",
      "purpose": "All napi(object) DTO structs for the actor-scoped surface",
      "surface": {
-      "struct": 41
+      "struct": 40
      }
     },
     {
@@ -38644,7 +38673,7 @@
      "path": "src/facade/verbs_services.rs",
      "purpose": "Structural/blob/retrieval/outbound/calendar verbs of the actor surface",
      "surface": {
-      "fn": 18
+      "fn": 17
      }
     },
     {
@@ -43133,7 +43162,6 @@
       "ClaimListFilter",
       "ClaimView",
       "CommitReceipt",
-      "CompanionRecordInput",
       "ConsolidationJobInput",
       "DeleteReceipt",
       "DreamerJobRef",
@@ -43171,7 +43199,7 @@
      "purpose": "The complete DTO inventory for the WIRE head contract",
      "surface": {
       "enum": 3,
-      "struct": 37
+      "struct": 36
      }
     },
     {
