@@ -50,7 +50,7 @@ pub(crate) fn surface_event_dedupe_key(key: SurfaceEventKey<'_>) -> String {
 pub struct SurfaceEventAttemptPayload {
     pub event: SurfaceEvent,
     pub route: SurfaceEventDispatchRoute,
-    /// Downstream idempotency key. Exactly the public correlation id.
+    /// Downstream idempotency key derived from the event's typed identity tuple.
     pub dispatch_idempotency_key: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub thread_ref: Option<String>,
@@ -375,7 +375,7 @@ pub(super) fn admit_surface_event_once_in_txn(
         } else {
             event.dispatch_route()
         },
-        dispatch_idempotency_key: event.correlation_id.clone(),
+        dispatch_idempotency_key: dedupe_key.clone(),
         thread_ref: thread_ref.map(str::to_owned),
     })?;
 

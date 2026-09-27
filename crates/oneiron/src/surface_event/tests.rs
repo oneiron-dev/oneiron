@@ -7,6 +7,7 @@ use crate::config::VaultConfig;
 use crate::test_util::open_test_vault_with;
 
 use crate::test_util::entity;
+use std::collections::HashSet;
 
 fn test_vault() -> (tempfile::TempDir, Vault) {
     test_vault_with_clock(crate::ports::StoreClock::default())
@@ -524,13 +525,36 @@ impl SurfaceEventDispatcher for FakeDispatcher {
             request.agent_ref.to_owned(),
             request.route,
         ));
-        assert_eq!(
-            request.idempotency_key, request.correlation_id,
-            "downstream idempotency key is exactly the correlation id"
-        );
+        let expected_idempotency_key = surface_event_dedupe_key(SurfaceEventKey {
+            channel: &request.event.channel,
+            receiving: &request.event.receiving_identity_ref,
+            correlation_id: request.correlation_id,
+        });
+        assert_eq!(request.idempotency_key, expected_idempotency_key);
         self.disposition
             .clone()
             .expect("fake dispatcher was scripted")
+    }
+}
+
+/// Test dispatcher that models a downstream service which accepts each
+/// idempotency key only once.
+#[derive(Default)]
+struct IdempotentDispatcher {
+    seen_keys: RefCell<HashSet<String>>,
+    delivered_keys: RefCell<Vec<String>>,
+}
+
+impl SurfaceEventDispatcher for IdempotentDispatcher {
+    fn dispatch(
+        &self,
+        request: SurfaceEventDispatchRequest<'_>,
+    ) -> SurfaceEventDispatchDisposition {
+        let key = request.idempotency_key.to_owned();
+        if self.seen_keys.borrow_mut().insert(key.clone()) {
+            self.delivered_keys.borrow_mut().push(key);
+        }
+        SurfaceEventDispatchDisposition::Complete
     }
 }
 
@@ -793,6 +817,62 @@ fn reused_correlation_id_on_another_receiving_identity_is_admitted() -> Result<(
         vault.surface_event_handoff_status(correlation_id),
         Err(Error::CorruptedIndex("surface event correlation run"))
     ));
+    Ok(())
+}
+
+#[test]
+fn reused_correlation_id_delivers_once_per_receiving_identity() -> Result<()> {
+    let (_dir, vault, _) = admitting_vault("first@example.com", 0x86, 0x87);
+    let second_identity_ref = entity(0x88);
+    vault.create_channel_identity(
+        &second_identity_ref,
+        &identity(
+            "second@example.com",
+            entity(0x89),
+            ChannelIdentityState::Active,
+        ),
+    )?;
+
+    let correlation_id = "provider-shared-id";
+    let first = accepted(
+        vault.enqueue_inbound_surface_event(
+            input(
+                "first@example.com",
+                SurfaceCounterpartyStamp::unknown("email:sender@example.com"),
+            )
+            .with_correlation_id(correlation_id),
+            1_800_001_600,
+        )?,
+    );
+    let second = accepted(
+        vault.enqueue_inbound_surface_event(
+            input(
+                "second@example.com",
+                SurfaceCounterpartyStamp::unknown("email:sender@example.com"),
+            )
+            .with_correlation_id(correlation_id),
+            1_800_001_601,
+        )?,
+    );
+    assert!(!first.replayed);
+    assert!(!second.replayed);
+    assert_ne!(first.attempt_ref, second.attempt_ref);
+
+    let dispatcher = IdempotentDispatcher::default();
+    for _ in 0..2 {
+        assert!(matches!(
+            vault.dispatch_next_surface_event("test-worker", 1_800_001_700, &dispatcher)?,
+            SurfaceEventWorkerOutcome::Completed(_)
+        ));
+    }
+
+    // The simulated downstream deduplicates by key. Both receiving identities
+    // must therefore carry distinct keys or one accepted event is suppressed.
+    let delivered_keys = dispatcher.delivered_keys.borrow();
+    assert_eq!(delivered_keys.len(), 2);
+    assert_ne!(delivered_keys[0], delivered_keys[1]);
+
+    assert_eq!(surface_event_attempt_rows(&vault), 2);
     Ok(())
 }
 
