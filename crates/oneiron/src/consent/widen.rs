@@ -376,13 +376,17 @@ impl Vault {
                 .ok_or_else(invalid_row)?;
             let mut row = decode_row(&raw, reference)?;
             let proposal = &row.proposal;
+            if proposal.owner_ref != owner.principal_ref() {
+                return Err(Error::Gate(GateError::ConsentOwnerNotAuthenticated(
+                    "widen proposal belongs to another holder",
+                )));
+            }
             if row.resolved
                 || proposal.expires_at <= self.store.clock.now_recorded_at()
-                || proposal.owner_ref != owner.principal_ref()
                 || proposal.canonical_delta != expected_delta
             {
-                return Err(Error::Gate(GateError::ConsentOwnerNotAuthenticated(
-                    "widen proposal is stale, changed, resolved, or bound to another owner",
+                return Err(Error::Gate(GateError::InvalidConsentBound(
+                    "widen proposal is stale, changed, or resolved",
                 )));
             }
             let bound = decode_delta(&proposal.canonical_delta)?;

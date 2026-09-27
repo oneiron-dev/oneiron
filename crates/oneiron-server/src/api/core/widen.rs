@@ -9,7 +9,7 @@ use axum::{
     Json,
     extract::{State, rejection::JsonRejection},
 };
-use oneiron::store::GateDecisionId;
+use oneiron::{ErrorKind, store::GateDecisionId};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use utoipa::ToSchema;
@@ -43,9 +43,10 @@ pub(crate) async fn core_accept_widen(
     // Neither an OAuth login, a bare host secret, nor a claimed actor id is a
     // human holder's signed action. Both stdio/keychain and HTTP slips cross
     // the same verification door before this route can be reached.
-    if auth.verified_slip().is_none() || auth.actor_class() != Some("human") {
-        return Err(ApiError::forbidden_scope("consent:widen:holder").into());
-    }
+    let credential = auth
+        .verified_slip()
+        .filter(|_| auth.actor_class() == Some("human"))
+        .ok_or_else(|| ApiError::forbidden_scope("consent:widen:holder"))?;
     let principal = auth
         .principal_ref()
         .ok_or_else(|| ApiError::forbidden_scope("consent:widen:holder"))?;
@@ -74,13 +75,16 @@ pub(crate) async fn core_accept_widen(
         .map_err(|_| ApiError::forbidden_scope("consent:widen:holder"))?;
     let receipt = server
         .vault()
-        .accept_credential_widen(
-            &owner,
-            auth.verified_slip().expect("holder checked above"),
-            &req.proposal_ref,
-            &delta,
-        )
-        .map_err(|_| ApiError::invalid_state(Some("consent_widen_proposal")))?;
+        .accept_credential_widen(&owner, credential, &req.proposal_ref, &delta)
+        .map_err(|error| match error.kind() {
+            ErrorKind::ConsentOwnerNotAuthenticated => {
+                ApiError::forbidden_scope("consent:widen:holder")
+            }
+            ErrorKind::InvalidConsentGrantRow | ErrorKind::InvalidConsentBound => {
+                ApiError::invalid_state(Some("consent_widen_proposal"))
+            }
+            _ => ApiError::internal_server_error("widen approval failed"),
+        })?;
     Ok(Json(CoreAcceptWidenResponse {
         decision_id: receipt.decision_id().to_hex(),
         grant_ref: receipt

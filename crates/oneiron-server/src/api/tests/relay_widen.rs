@@ -81,6 +81,34 @@ async fn remote_proposal_cannot_land_widen_but_host_bound_holder_can_once() {
     )
     .await;
     assert_eq!(status, StatusCode::FORBIDDEN);
+    // A different human can hold core:auth, but cannot land this owner's
+    // exact proposal or mint its grant.
+    let other = oneiron::EntityId::now();
+    vault
+        .put_entity(
+            &other,
+            ENTITY_TYPE_PERSON,
+            oneiron::TimeRange { start: 1, end: 1 },
+            1,
+            b"other",
+        )
+        .unwrap();
+    let other_recipe = format!(
+        "scope=core:auth;principal_ref={};actor_class=human",
+        other.to_hex()
+    );
+    let (status, _) = route_json(
+        server.clone(),
+        core_request_with_authz("POST", path, test_bearer(&other_recipe), Some(&payload)),
+    )
+    .await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+    assert!(
+        vault
+            .consent_grant(&bound.digest().to_hex())
+            .unwrap()
+            .is_none()
+    );
     // Both local stdio/keychain and remote HTTP carry the same logged,
     // holder-bound instrument. The transport gives no extra authority.
     let holder_recipe = format!(
@@ -109,26 +137,5 @@ async fn remote_proposal_cannot_land_widen_but_host_bound_holder_can_once() {
         .headers_mut()
         .insert("idempotency-key", "widen-once".parse().unwrap());
     let (status, _) = route_json(server.clone(), replay).await;
-    assert_eq!(status, StatusCode::CONFLICT);
-    // An unrelated human credential cannot replay a different holder's proposal.
-    let other = oneiron::EntityId::now();
-    vault
-        .put_entity(
-            &other,
-            ENTITY_TYPE_PERSON,
-            oneiron::TimeRange { start: 1, end: 1 },
-            1,
-            b"other",
-        )
-        .unwrap();
-    let other_recipe = format!(
-        "scope=core:auth;principal_ref={};actor_class=human",
-        other.to_hex()
-    );
-    let (status, _) = route_json(
-        server,
-        core_request_with_authz("POST", path, test_bearer(&other_recipe), Some(&payload)),
-    )
-    .await;
     assert_eq!(status, StatusCode::CONFLICT);
 }
