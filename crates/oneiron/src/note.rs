@@ -376,6 +376,8 @@ mod brief_view;
 mod document;
 mod document_store;
 pub(crate) use birth::document_birth_in_txn;
+#[cfg(feature = "sync")]
+pub(crate) use document_store::{release_title_reservation, title_reservation_key};
 mod operations;
 pub use operations::{NoteAuthorship, NoteChange, NoteOperation, NoteOperationReceipt};
 #[cfg(feature = "sync")]

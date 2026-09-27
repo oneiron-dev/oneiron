@@ -10,6 +10,55 @@ use crate::memory::{EntityRefReceipt, Memory, MemoryError, MemoryResult};
 use crate::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_NOTE};
 use crate::{EdgeActorClass, EdgeKind, EntityId, TimeRange, Vault, WriteActor};
 
+/// The authoritative per-author normalized title key. Recovery uses the same
+/// key as socket admission when it validates a replacement set as one unit.
+pub(crate) fn title_reservation_key(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    id: EntityId,
+    title: Option<&str>,
+) -> Result<Option<String>> {
+    title
+        .map(|title| {
+            super::document::validate_title(title)?;
+            let normalized = title
+                .split_whitespace()
+                .collect::<Vec<_>>()
+                .join(" ")
+                .to_lowercase();
+            let (_, core) = super::verbs::note_core(vault, txn, id)?;
+            Ok(format!(
+                "note.title/v1/author/{}:{}",
+                core.author_ref.to_hex(),
+                blake3::hash(normalized.as_bytes()).to_hex()
+            ))
+        })
+        .transpose()
+}
+
+/// Remove the old reservation only for this NOTE, under the recovery writer.
+#[cfg(feature = "sync")]
+pub(crate) fn release_title_reservation(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    id: EntityId,
+) -> Result<()> {
+    let reverse = format!("note.title/v1/id/{}", id.to_hex());
+    if let Some(key) = vault
+        .store
+        .vault_meta
+        .get(txn, reverse.as_bytes())?
+        .map(|key| key.to_vec())
+    {
+        if vault.store.vault_meta.get(txn, &key)?.as_deref() != Some(id.as_bytes()) {
+            return Err(invalid("NOTE title reservation mismatch"));
+        }
+        vault.store.vault_meta.delete(txn, &key)?;
+        vault.store.vault_meta.delete(txn, reverse.as_bytes())?;
+    }
+    Ok(())
+}
+
 pub(super) fn key(id: EntityId) -> String {
     format!("d:e:{}", id.to_hex())
 }
@@ -70,22 +119,7 @@ pub(super) fn persist(vault: &Vault, txn: &mut heed::RwTxn<'_>, doc: &NoteDocume
     let next = if replica {
         None
     } else {
-        doc.title()?
-            .map(|title| {
-                let normalized = title
-                    .split_whitespace()
-                    .collect::<Vec<_>>()
-                    .join(" ")
-                    .to_lowercase();
-                let (_, core) = super::verbs::note_core(vault, txn, doc.id)?;
-                let digest = blake3::hash(normalized.as_bytes());
-                Ok::<_, crate::Error>(format!(
-                    "note.title/v1/author/{}:{}",
-                    core.author_ref.to_hex(),
-                    digest.to_hex()
-                ))
-            })
-            .transpose()?
+        title_reservation_key(vault, txn, doc.id, doc.title()?.as_deref())?
     };
     if let Some(ref key) = next
         && let Some(owner) = vault.store.vault_meta.get(txn, key.as_bytes())?

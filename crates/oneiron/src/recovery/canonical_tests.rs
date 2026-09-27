@@ -256,6 +256,64 @@ fn redaction_preserves_unrelated_canonical_bytes_and_refuses_unresolved_copies()
     Ok(())
 }
 
+#[cfg(feature = "sync")]
+#[test]
+fn redaction_refuses_title_copy_until_scrubbed_and_restores_safe_title() -> Result<()> {
+    let fixture = fixture()?;
+    let head = EntityId::from_bytes(fixture.snapshot.document_heads[0].head)?;
+    let quote = *blake3::hash("🦀 secret".as_bytes()).as_bytes();
+    let mut copied = fixture.snapshot.clone();
+    let live = copied
+        .doc_snapshots
+        .iter_mut()
+        .find(|row| row.entity_id == *fixture.note.as_bytes() && row.head == *head.as_bytes())
+        .unwrap();
+    live.title = Some("🦀 secret".into());
+    assert!(copied.validate().is_ok());
+    assert!(
+        copied
+            .excluding_document_span(fixture.note, head, 7, 15, quote)
+            .is_err()
+    );
+    copied
+        .doc_snapshots
+        .iter_mut()
+        .find(|row| row.entity_id == *fixture.note.as_bytes() && row.head == *head.as_bytes())
+        .unwrap()
+        .title = Some("Safe title".into());
+    let redacted = copied.excluding_document_span(fixture.note, head, 7, 15, quote)?;
+    let encoded = redacted.encode()?;
+    assert!(
+        !encoded
+            .windows("🦀 secret".len())
+            .any(|part| part == "🦀 secret".as_bytes())
+    );
+    let decoded = CanonicalSnapshot::decode(&encoded)?;
+    assert_eq!(
+        decoded
+            .doc_snapshots
+            .iter()
+            .find(|row| row.head == *head.as_bytes())
+            .unwrap()
+            .title
+            .as_deref(),
+        Some("Safe title")
+    );
+    let target_dir = tempfile::tempdir()?;
+    let target = Vault::open(target_dir.path(), VaultConfig::default())?;
+    recover_vault_window(
+        &target,
+        &crate::sync::bridge::Materializer::new(),
+        target_dir.path().join("manifest"),
+        &decoded,
+        RecoveryBudget::default(),
+    )?;
+    let view = target.note_document(fixture.note)?;
+    assert_eq!(view.markdown, "before  after");
+    assert_eq!(view.title.as_deref(), Some("Safe title"));
+    Ok(())
+}
+
 #[test]
 fn malformed_head_binding_and_soft_payload_are_rejected_before_rebuild() -> Result<()> {
     let fixture = fixture()?;
@@ -367,6 +425,119 @@ fn standard_forward_rebuild_restores_documents_shells_graph_and_indexes() -> Res
         target.get_raw(&fixture.note)?,
         fixture.vault.get_raw(&fixture.note)?
     );
+    Ok(())
+}
+
+#[cfg(feature = "sync")]
+#[test]
+fn existing_vault_recovers_title_swap_in_both_orders_and_refuses_external_collision() -> Result<()>
+{
+    for reverse in [false, true] {
+        let source_dir = tempfile::tempdir()?;
+        let source = Vault::open(source_dir.path(), VaultConfig::default())?;
+        let owner = source.ensure_embedded_owner_actor().expect("fixture owner");
+        let actor = WriteActor::new(owner, EdgeActorClass::Human);
+        let a = source
+            .create_note("research", "body A", actor)
+            .expect("note A");
+        let b = source
+            .create_note("research", "body B", actor)
+            .expect("note B");
+        let (alpha, beta) = if reverse { (b, a) } else { (a, b) };
+        let set = |id, title| {
+            source
+                .memory(owner, EdgeActorClass::Human)
+                .set_note_title(id, title)
+                .expect("valid title")
+        };
+        let capture = || -> Result<CanonicalSnapshot> {
+            let window = LoroDoc::new();
+            for id in [owner, a, b] {
+                canonical::insert(
+                    &window,
+                    "entities",
+                    &id.to_hex(),
+                    &source.get_raw(&id)?.unwrap(),
+                )?;
+            }
+            let txn = source.store.env.read_txn()?;
+            for id in [a, b] {
+                for row in source.store.edges_out.prefix_iter(&txn, id.as_bytes())? {
+                    let (key, value) = row?;
+                    let target = EntityId::from_bytes(key[17..].try_into().unwrap())?;
+                    canonical::insert(
+                        &window,
+                        "edges",
+                        &format!("{}:{:02}:{}", id.to_hex(), key[16], target.to_hex()),
+                        &value,
+                    )?;
+                }
+            }
+            drop(txn); // Capture opens its own LMDB reader on this thread.
+            capture_canonical_window(&source, "2026-09", &window)
+        };
+        set(alpha, "alpha");
+        set(beta, "beta");
+        let initial = capture()?;
+        let target_dir = tempfile::tempdir()?;
+        let target = Vault::open(target_dir.path(), VaultConfig::default())?;
+        let path = target_dir.path().join("manifest");
+        let materializer = crate::sync::bridge::Materializer::new();
+        recover_vault_window(
+            &target,
+            &materializer,
+            &path,
+            &initial,
+            RecoveryBudget::default(),
+        )?;
+        set(alpha, "temporary");
+        set(beta, "alpha");
+        set(alpha, "beta");
+        let swapped = capture()?;
+        recover_vault_window(
+            &target,
+            &materializer,
+            &path,
+            &swapped,
+            RecoveryBudget::default(),
+        )?;
+        assert_eq!(target.note_document(alpha)?.title.as_deref(), Some("beta"));
+        assert_eq!(target.note_document(beta)?.title.as_deref(), Some("alpha"));
+        recover_vault_window(
+            &target,
+            &materializer,
+            &path,
+            &swapped,
+            RecoveryBudget::default(),
+        )?;
+        let outside = target
+            .create_note("research", "outside body", actor)
+            .expect("outside note");
+        target
+            .memory(owner, EdgeActorClass::Human)
+            .set_note_title(outside, "outside")
+            .expect("outside title");
+        set(alpha, "temporary");
+        set(beta, "beta");
+        set(alpha, "outside");
+        let conflict = capture()?;
+        assert!(
+            recover_vault_window(
+                &target,
+                &materializer,
+                &path,
+                &conflict,
+                RecoveryBudget::default()
+            )
+            .is_err()
+        );
+        assert_eq!(target.note_document(alpha)?.title.as_deref(), Some("beta"));
+        assert_eq!(target.note_document(beta)?.title.as_deref(), Some("alpha"));
+        assert_eq!(
+            target.note_document(outside)?.title.as_deref(),
+            Some("outside")
+        );
+    }
     Ok(())
 }
 

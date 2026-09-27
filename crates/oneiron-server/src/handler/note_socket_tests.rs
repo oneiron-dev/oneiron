@@ -766,6 +766,19 @@ async fn owner_document_lane_refuses_a_principal_that_is_not_the_owner() {
 
 #[tokio::test]
 async fn selector_note_frames_gate_size_schema_and_titles_before_commit() {
+    note_frames_gate(false).await;
+}
+
+/// Run alone with `cargo nextest run -p oneiron-server --all-features
+/// --run-ignored -E 'test(note_socket_stage1_p99_under_100ms)'` on an idle host.
+/// The regular socket test above keeps all functional checks on every run.
+#[tokio::test]
+#[ignore = "isolated latency acceptance lane; see note_socket_stage1_p99_under_100ms"]
+async fn note_socket_stage1_p99_under_100ms() {
+    note_frames_gate(true).await;
+}
+
+async fn note_frames_gate(check_latency: bool) {
     use super::{conn_state::ConnState, documents::handle_document};
     use std::time::Instant;
     let dir = tempfile::tempdir().unwrap();
@@ -867,19 +880,20 @@ async fn selector_note_frames_gate_size_schema_and_titles_before_commit() {
     let oversize = command(&vault, second, 0, 0, &"x".repeat(1024 * 1024 + 1));
     assert!(send_op(second, &oversize, &mut state).is_err());
     assert_eq!(vault.note_document(second).unwrap(), before);
-    let mut times = Vec::new();
-    for _ in 0..100 {
-        let operation = title("work plan other");
-        let start = Instant::now();
-        send_op(second, &operation, &mut state).unwrap();
-        times.push(start.elapsed());
+    if check_latency {
+        let mut times = Vec::new();
+        for _ in 0..100 {
+            let operation = title("work plan other");
+            let start = Instant::now();
+            send_op(second, &operation, &mut state).unwrap();
+            times.push(start.elapsed());
+        }
+        times.sort();
+        eprintln!("NOTE socket handler p99: {:?}", times[98]);
+        assert!(times[98] < Duration::from_millis(100));
+    } else {
+        send_op(second, &title("work plan other"), &mut state).unwrap();
     }
-    times.sort();
-    assert!(
-        times[98] < Duration::from_millis(100),
-        "p99: {:?}",
-        times[98]
-    );
     assert_eq!(
         vault.note_document(second).unwrap().title.as_deref(),
         Some("work plan other")
