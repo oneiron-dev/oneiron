@@ -7,6 +7,7 @@ use super::*;
 mod keys;
 mod ledger;
 mod lookup;
+mod orcb;
 mod sidecar;
 mod types;
 mod vet;
@@ -20,6 +21,7 @@ pub(in crate::store) use self::keys::{
     GATE_DECISION_CLAIM_INDEX_BACKFILL_COMPLETE_VALUE, GATE_DECISION_KEY_PREFIX, gate_decision_key,
     gate_decision_upper_bound,
 };
+#[cfg(test)]
 pub(in crate::store) use self::ledger::decode_gate_decision;
 pub(in crate::store) use self::types::GATE_DIFF_HANDLE_MAX_LEN;
 pub(crate) use self::types::{

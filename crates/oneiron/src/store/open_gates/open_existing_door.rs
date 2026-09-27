@@ -134,6 +134,7 @@ impl Store {
         }
         let shared_env: Env = (*env).clone();
         let core = Arc::new(StoreCore {
+            vault_root: registered_path.path.clone(),
             env: shared_env,
             raw,
             kind_registry,

@@ -28845,7 +28845,7 @@
      "path": "src/store/gate_decision/ledger.rs",
      "purpose": "Gate-decision ledger Store methods plus the row append and record codec",
      "surface": {
-      "crate-vis": 19,
+      "crate-vis": 20,
       "fn": 1
      }
     },
@@ -28868,6 +28868,16 @@
      "surface": {
       "crate-vis": 10,
       "re-export": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/store/gate_decision/orcb.rs",
+     "purpose": "ORCB v1: schema-only dictionary, per-claim hot-value AEAD and exterior key custody",
+     "surface": {
+      "crate-vis": 3
      }
     },
     {
@@ -34861,7 +34871,7 @@
      "purpose": "EMB-5 speculative retrieval over ASR partials (ONE-EMBED E7)"
     },
     "store": {
-     "files": 48,
+     "files": 49,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -35024,7 +35034,7 @@
    },
    "over_bar": 9,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2068,
+   "source_files": 2069,
    "test_files": 710
   },
   "oneiron-android": {

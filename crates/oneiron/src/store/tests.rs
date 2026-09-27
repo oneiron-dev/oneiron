@@ -2016,6 +2016,135 @@ fn invalid_fast_dims_fails_closed_at_open() -> Result<()> {
     Ok(())
 }
 
+#[test]
+fn orcb_claim_hot_values_are_ciphertext_with_exterior_first_append_key() -> Result<()> {
+    let (dir, vault) = open_test_vault();
+    let claim = [0x37; 16];
+    let mut first = claim_bound_gate_decision(synthetic_gate_decision_id(0x91, 1), 1, &claim);
+    first.actor_ref = Some("private-canary-claim-value".to_owned());
+    let second = claim_bound_gate_decision(synthetic_gate_decision_id(0x92, 2), 2, &claim);
+    let unbound = gate_decision(synthetic_gate_decision_id(0x93, 3), 3, None);
+    append_gate_decisions(&vault, &[first.clone(), second.clone(), unbound.clone()])?;
+
+    let rtxn = vault.store.env.read_txn()?;
+    let raw = vault
+        .store
+        .vault_meta
+        .get(&rtxn, &gate_decision_key(first.decision_id))?
+        .expect("first value")
+        .into_owned();
+    let raw_second = vault
+        .store
+        .vault_meta
+        .get(&rtxn, &gate_decision_key(second.decision_id))?
+        .expect("second value")
+        .into_owned();
+    let raw_unbound = vault
+        .store
+        .vault_meta
+        .get(&rtxn, &gate_decision_key(unbound.decision_id))?
+        .expect("unbound value")
+        .into_owned();
+    assert!(raw.starts_with(b"ORCB"));
+    assert!(raw_second.starts_with(b"ORCB"));
+    assert!(
+        !raw.windows(26)
+            .any(|bytes| bytes == b"private-canary-claim-value")
+    );
+    assert_eq!(
+        raw_unbound,
+        encode_gate_decision(&unbound)?,
+        "only erasure-target rows encrypt"
+    );
+    assert_eq!(
+        vault.store.gate_decision_in_txn(&rtxn, first.decision_id)?,
+        Some(first.clone())
+    );
+    assert_eq!(
+        vault
+            .store
+            .find_gate_decision_id_in_txn(&rtxn, |row| row == &first)?,
+        Some(first.decision_id)
+    );
+    assert_eq!(
+        vault
+            .store
+            .gate_decisions_page_in_txn(&rtxn, None, 3)?
+            .len(),
+        3
+    );
+    drop(rtxn);
+
+    let key_dir = vault.store.core.vault_root.with_file_name(format!(
+        ".{}.gate-decision-keys",
+        vault
+            .store
+            .core
+            .vault_root
+            .file_name()
+            .unwrap()
+            .to_string_lossy()
+    ));
+    assert!(
+        !key_dir.starts_with(dir.path()),
+        "keys cannot enter the vault image"
+    );
+    let keys: Vec<_> = std::fs::read_dir(&key_dir)?.collect::<std::io::Result<_>>()?;
+    assert_eq!(
+        keys.len(),
+        1,
+        "a claim shares its first-append key across rows"
+    );
+    assert_eq!(std::fs::read(keys[0].path())?.len(), 32);
+    drop(vault);
+    let reopened = Vault::open(dir.path(), VaultConfig::device())?;
+    assert_eq!(
+        gate_decision_primary(&reopened, first.decision_id)?,
+        Some(first.clone())
+    );
+    std::fs::remove_dir_all(key_dir)?;
+    assert!(
+        gate_decision_primary(&reopened, first.decision_id).is_err(),
+        "an old LMDB image cannot decrypt after its exterior key is destroyed"
+    );
+    drop(reopened);
+    Ok(())
+}
+
+#[test]
+fn orcb_ciphertext_requires_key_and_authenticated_header() -> Result<()> {
+    let (_dir, vault) = open_test_vault();
+    let first = claim_bound_gate_decision(synthetic_gate_decision_id(0x94, 1), 1, &[0x39; 16]);
+    append_gate_decisions(&vault, std::slice::from_ref(&first))?;
+    let mut wtxn = vault.store.env.write_txn()?;
+    let mut raw = vault
+        .store
+        .vault_meta
+        .get(&wtxn, &gate_decision_key(first.decision_id))?
+        .expect("encrypted value")
+        .into_owned();
+    raw[6] ^= 1; // Claim-id AAD: cannot retarget the value to another claim.
+    vault
+        .store
+        .vault_meta
+        .put(&mut wtxn, &gate_decision_key(first.decision_id), &raw)?;
+    wtxn.commit()?;
+    let rtxn = vault.store.env.read_txn()?;
+    assert!(
+        vault
+            .store
+            .gate_decision_in_txn(&rtxn, first.decision_id)
+            .is_err()
+    );
+    assert!(
+        vault
+            .store
+            .for_each_gate_decision_in_txn(&rtxn, |_| Ok(()))
+            .is_err()
+    );
+    Ok(())
+}
+
 // ---- ERASE-A (ONE-1637) claim index ----------------------------------------
 
 fn claim_bound_gate_decision(

@@ -106,6 +106,9 @@ pub struct RawDatabases {
 /// owner's always-on drop assertion enforces this at runtime; the session
 /// lifecycle drains leases before releasing its owner-bound handle.
 pub struct StoreCore {
+    /// Canonical vault root. Claim-key custody is derived beside, never inside,
+    /// this restorable LMDB directory (including for leased environments).
+    pub(in crate::store) vault_root: std::path::PathBuf,
     /// Shared environment handle used to open transactions. The close-on-
     /// last-clone semantics live in the owner's [`OwnedEnv`] (ONE-1142).
     pub(crate) env: Env,
@@ -400,6 +403,7 @@ macro_rules! manifest_dbs {
             /// writing, and the write target is the only handle it holds.
             fn diagnostics(&self) -> &Diagnostics;
             fn clock(&self) -> &crate::ports::StoreClock;
+            fn gate_key_root(&self) -> &std::path::Path;
         }
 
         impl ManifestDbs for Store {
@@ -407,6 +411,7 @@ macro_rules! manifest_dbs {
 
             fn diagnostics(&self) -> &Diagnostics { &self.core.diagnostics }
             fn clock(&self) -> &crate::ports::StoreClock { &self.core.clock }
+            fn gate_key_root(&self) -> &std::path::Path { &self.core.vault_root }
         }
 
         impl ManifestDbs for SessionStoreView<'_> {
@@ -414,6 +419,7 @@ macro_rules! manifest_dbs {
 
             fn diagnostics(&self) -> &Diagnostics { &self.core.diagnostics }
             fn clock(&self) -> &crate::ports::StoreClock { &self.core.clock }
+            fn gate_key_root(&self) -> &std::path::Path { &self.core.vault_root }
         }
     };
 }
