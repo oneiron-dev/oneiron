@@ -179,6 +179,19 @@ fn replies_precede_text_and_only_original_author_resolves() {
         comment_patch(&second.new_bytes, &[resolve.clone()]).unwrap_err(),
         PptxError::NotAuthor
     );
+    resolve.author = PptxAuthor {
+        guid: add.author.guid.clone(),
+        name: "Different Author".into(),
+    };
+    assert_eq!(
+        comment_patch(&second.new_bytes, std::slice::from_ref(&resolve)).unwrap_err(),
+        PptxError::AuthorConflict
+    );
+    resolve.author.name.clear();
+    assert_eq!(
+        comment_patch(&second.new_bytes, std::slice::from_ref(&resolve)).unwrap_err(),
+        PptxError::InvalidPatch
+    );
     resolve.author = add.author;
     let third = comment_patch(&second.new_bytes, &[resolve.clone()]).unwrap();
     let resolved = unpack(&third.new_bytes);

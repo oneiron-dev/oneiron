@@ -59,6 +59,7 @@ impl PptxReanchor {
                         s.creation_id == Some(*creation_id)
                             && s.sld_id == old.sld_id
                             && s.part == old.part
+                            && s.fingerprint == old.fingerprint
                             && s.shapes == old.shapes
                     })
                     .count()

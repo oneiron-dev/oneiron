@@ -203,21 +203,22 @@ pub(super) fn decode_settlement_record(bytes: &[u8]) -> Result<SettlementRecord>
         content_hash: field_opt_hash(&entries, KEY_CONTENT_HASH)?,
         manifest_ref: field_opt_hash(&entries, KEY_MANIFEST_REF)?,
         manifest_ops: field_u64(&entries, KEY_MANIFEST_OPS)?,
-        pptx_slide_creation_id_mints: decode_mints(field(&entries, KEY_PPTX_MINTS))?,
-        pptx_review_identities: decode_review_identities(field(
-            &entries,
-            KEY_PPTX_REVIEW_IDENTITIES,
-        ))?,
-        pptx_judgments: decode_judgments(field(&entries, KEY_PPTX_JUDGMENTS))?,
+        pptx_slide_creation_id_mints: decode_mints(
+            field(&entries, KEY_PPTX_MINTS).ok_or_else(corrupt)?,
+        )?,
+        pptx_review_identities: decode_review_identities(
+            field(&entries, KEY_PPTX_REVIEW_IDENTITIES).ok_or_else(corrupt)?,
+        )?,
+        pptx_judgments: decode_judgments(field(&entries, KEY_PPTX_JUDGMENTS).ok_or_else(corrupt)?)?,
         anchors,
         reason: field_opt_str(&entries, KEY_REASON)?,
     })
 }
 
 fn decode_judgments(
-    value: Option<&Value>,
+    value: &Value,
 ) -> Result<Vec<crate::edit_roundtrip::slides_review::SlideJudgment>> {
-    let Some(Value::Array(items)) = value else {
+    let Value::Array(items) = value else {
         return Err(corrupt());
     };
     if items.len() > 4096 {
@@ -234,10 +235,7 @@ fn decode_judgments(
         .collect()
 }
 
-fn decode_mints(value: Option<&Value>) -> Result<Vec<(u64, u32)>> {
-    let Some(value) = value else {
-        return Ok(Vec::new());
-    };
+fn decode_mints(value: &Value) -> Result<Vec<(u64, u32)>> {
     let Value::Array(items) = value else {
         return Err(corrupt());
     };
@@ -264,10 +262,7 @@ fn decode_mints(value: Option<&Value>) -> Result<Vec<(u64, u32)>> {
         .collect()
 }
 
-fn decode_review_identities(value: Option<&Value>) -> Result<Vec<PptxReviewIdentity>> {
-    let Some(value) = value else {
-        return Ok(Vec::new());
-    };
+fn decode_review_identities(value: &Value) -> Result<Vec<PptxReviewIdentity>> {
     let Value::Array(rows) = value else {
         return Err(corrupt());
     };

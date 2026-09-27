@@ -311,10 +311,67 @@ impl<'a> Xml<'a> {
         }
     }
     pub(super) fn fingerprint(&self, node: usize) -> [u8; 32] {
-        fn visit(xml: &Xml<'_>, node: usize, hash: &mut blake3::Hasher) {
-            fn field(h: &mut blake3::Hasher, s: &str) {
-                h.update(&(s.len() as u64).to_le_bytes());
-                h.update(s.as_bytes());
+        self.fingerprint_with(node, &|_, _| false)
+    }
+
+    /// Slide content excludes only the two Office extensions written by the
+    /// review route: the slide creationId and its modern-comment relation.
+    /// Unknown extensions, backgrounds, and other slide content still drift.
+    pub(super) fn slide_content_fingerprint(&self, root: usize) -> [u8; 32] {
+        self.fingerprint_with(root, &|xml, node| xml.is_review_metadata(node))
+    }
+
+    fn is_review_metadata(&self, node: usize) -> bool {
+        use super::package::{COMMENT_EXT, P, SLIDE_ID_EXT};
+        let n = &self.nodes[node];
+        if n.is(P, "ext") {
+            let Some(list) = n.parent else {
+                return false;
+            };
+            let Some(owner) = self.nodes[list].parent else {
+                return false;
+            };
+            if !self.nodes[list].is(P, "extLst") {
+                return false;
+            }
+            return (self.nodes[owner].is(P, "sld") && n.attr("uri") == Some(COMMENT_EXT))
+                || (self.nodes[owner].is(P, "cSld") && n.attr("uri") == Some(SLIDE_ID_EXT));
+        }
+        let Some(owner) = n.parent else {
+            return false;
+        };
+        // The writer may create extLst solely for review metadata. An empty
+        // wrapper must not change the normalized content fingerprint.
+        if !n.is(P, "extLst")
+            || !n.attrs.is_empty()
+            || !(self.nodes[owner].is(P, "sld") || self.nodes[owner].is(P, "cSld"))
+        {
+            return false;
+        }
+        let mut at = n.open_end;
+        for &child in &n.children {
+            let item = &self.nodes[child];
+            if !self.text[at..item.start].trim().is_empty() || !self.is_review_metadata(child) {
+                return false;
+            }
+            at = item.end;
+        }
+        n.empty || self.text[at..n.close_start].trim().is_empty()
+    }
+
+    fn fingerprint_with(&self, node: usize, skip: &impl Fn(&Xml<'_>, usize) -> bool) -> [u8; 32] {
+        fn field(hash: &mut blake3::Hasher, text: &str) {
+            hash.update(&(text.len() as u64).to_le_bytes());
+            hash.update(text.as_bytes());
+        }
+        fn visit(
+            xml: &Xml<'_>,
+            node: usize,
+            hash: &mut blake3::Hasher,
+            skip: &impl Fn(&Xml<'_>, usize) -> bool,
+        ) {
+            if skip(xml, node) {
+                return;
             }
             let n = &xml.nodes[node];
             field(hash, &n.ns);
@@ -334,7 +391,7 @@ impl<'a> Xml<'a> {
                 if !text.trim().is_empty() {
                     field(hash, text);
                 }
-                visit(xml, i, hash);
+                visit(xml, i, hash, skip);
                 at = child.end;
             }
             if !n.empty {
@@ -346,9 +403,10 @@ impl<'a> Xml<'a> {
             hash.update(&[1]);
         }
         let mut hash = blake3::Hasher::new();
-        visit(self, node, &mut hash);
+        visit(self, node, &mut hash, skip);
         *hash.finalize().as_bytes()
     }
+
     pub(super) fn set_attr(&self, node: usize, name: &str, value: &str) -> PatchResult<String> {
         let n = &self.nodes[node];
         let value = escape(value)?;

@@ -671,6 +671,19 @@ fn settlement_record_round_trips_through_msgpack() -> Result<()> {
     };
     let bytes = encode_settlement_record(&selected)?;
     assert_eq!(decode_settlement_record(&bytes)?, selected);
+    for absent in ["pptx_slide_creation_id_mints", "pptx_review_identities"] {
+        let mut value = rmpv::decode::read_value(&mut std::io::Cursor::new(&bytes)).unwrap();
+        let rmpv::Value::Map(entries) = &mut value else {
+            unreachable!()
+        };
+        entries.retain(|(key, _)| key.as_str() != Some(absent));
+        let mut incomplete = Vec::new();
+        rmpv::encode::write_value(&mut incomplete, &value).unwrap();
+        assert!(
+            decode_settlement_record(&incomplete).is_err(),
+            "missing {absent}"
+        );
+    }
 
     let discarded = SettlementRecord {
         proposal_ref: "run:codec-d".to_owned(),

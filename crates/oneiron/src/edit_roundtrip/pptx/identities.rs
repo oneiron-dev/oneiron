@@ -102,6 +102,7 @@ pub(super) fn inspect_parts(parts: &BTreeMap<String, Vec<u8>>) -> PatchResult<Pp
             part,
             sld_id,
             creation_id,
+            fingerprint: xml.slide_content_fingerprint(slide_root),
             shapes,
         });
     }
@@ -280,7 +281,13 @@ pub fn rebind_locator(
     let [new] = found.as_slice() else {
         return ReanchorOutcome::Drifted;
     };
+    if old.sld_id != new.sld_id {
+        return ReanchorOutcome::Drifted;
+    }
     if shape_id == "slide" {
+        if old.fingerprint != new.fingerprint {
+            return ReanchorOutcome::Drifted;
+        }
         return ReanchorOutcome::Mapped(Locator::Pptx {
             slide: new.slide,
             shape_id: shape_id.clone(),
