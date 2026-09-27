@@ -136,6 +136,9 @@ impl Replay {
 }
 struct NoReplay;
 impl HeldOutReplayScorer for NoReplay {
+    fn judge_revision(&self) -> &str {
+        "fixture-judge@1"
+    }
     fn score(&self, _: &HeldOutReplayCase<'_>) -> Result<f32> {
         panic!("replay must not run before consent or usefulness");
     }
@@ -160,6 +163,9 @@ impl HeldOutReplayScorer for NoReplay {
     }
 }
 impl HeldOutReplayScorer for Replay {
+    fn judge_revision(&self) -> &str {
+        "fixture-judge@1"
+    }
     fn score(&self, case: &HeldOutReplayCase<'_>) -> Result<f32> {
         assert!(!case.held_out_receipts.is_empty());
         Ok(
@@ -228,6 +234,7 @@ fn every_hub_tier_requires_human_consent_before_replay_and_activation() -> Resul
             panic!("consented");
         };
         assert!(receipt.accepted);
+        assert_eq!(receipt.judge_revision, "fixture-judge@1");
         assert_eq!(receipt.publisher, publisher.identity());
         assert_eq!(receipt.hub_id, source.hub_id.to_hex());
         assert_eq!(receipt.consent_digest, ask.effect_digest().to_hex());
@@ -420,6 +427,9 @@ struct MoveBaseline<'a> {
     moved: Cell<bool>,
 }
 impl HeldOutReplayScorer for MoveBaseline<'_> {
+    fn judge_revision(&self) -> &str {
+        "fixture-judge@1"
+    }
     fn score(&self, _: &HeldOutReplayCase<'_>) -> Result<f32> {
         if !self.moved.replace(true) {
             let mut record = self
@@ -624,6 +634,7 @@ fn federation_and_company_merge_only_submitted_bytes_with_useful_and_replay_line
             panic!("consented");
         };
         assert!(receipt.accepted);
+        assert_eq!(receipt.judge_revision.as_deref(), Some("fixture-judge@1"));
         assert!(receipt.useful_upstream);
         assert_eq!(receipt.resident, company.resident.to_hex());
         assert_eq!(
@@ -1619,7 +1630,7 @@ fn admitted_pack_load_returns_actual_files_and_stamps_once() -> Result<()> {
     assert!(
         fixture
             .vault
-            .load_attempt_skill_pack(attempt.id, &id, 25)
+            .load_attempt_skill_pack(attempt.id, &id, "worker", 1, "fixture/model@1", 25)
             .is_err()
     );
     assert!(queue.get(attempt.id)?.unwrap().manifest.is_empty());
@@ -1638,7 +1649,22 @@ fn admitted_pack_load_returns_actual_files_and_stamps_once() -> Result<()> {
         panic!("consented")
     };
     assert!(receipt.accepted);
-    let loaded = fixture.vault.load_attempt_skill_pack(attempt.id, &id, 32)?;
+    let crate::attempt_queue::ClaimOutcome::Claimed(leased) =
+        queue.claim(crate::attempt_queue::ClaimAttempt {
+            lease_owner: "worker".to_owned(),
+            now: 32,
+        })?
+    else {
+        panic!("claim")
+    };
+    let loaded = fixture.vault.load_attempt_skill_pack(
+        attempt.id,
+        &id,
+        "worker",
+        leased.attempt_count,
+        "fixture/model@1",
+        32,
+    )?;
     assert_eq!(
         loaded.source_files,
         Some(package("fixture.new", "1", "check result").files)
@@ -1801,6 +1827,210 @@ fn native_source_metadata_needs_the_same_human_and_held_out_admission() -> Resul
             .expect("active native source")
             .lifecycle_status,
         SkillLifecycle::Active
+    );
+    Ok(())
+}
+
+#[test]
+fn marketplace_and_shared_merge_keep_scores_but_mark_displaced_judge() -> Result<()> {
+    let fixture = Fixture::new();
+    let (source, publisher) = fixture.hub(SkillHubTrustTier::Verified);
+    let id = fixture.import(&source);
+    let ask =
+        fixture
+            .vault
+            .prepare_marketplace_activation(id, &source, &publisher, fixture.baseline)?;
+    fixture
+        .vault
+        .approve_marketplace_activation(&ask, &fixture.owner)?;
+    let HubAdmissionDisposition::Ruled(admission) =
+        fixture
+            .vault
+            .admit_marketplace_skill(&ask, &Replay::new(true), at(31), 31)?
+    else {
+        panic!("admission")
+    };
+    assert_eq!(admission.judge_revision, "fixture-judge@1");
+    assert!(admission.displaced_by_revision.is_none());
+
+    let submitted = encode_hub_package(&package("fixture.base", "2", "check result"))?;
+    let merged = fixture.vault.submit_shared_skill_delta(
+        &fixture.baseline,
+        &submitted,
+        SharedSkillLane::CompanyPullRequest,
+        "member:fixture",
+        &EntityId::now(),
+        at(40),
+        40,
+    )?;
+    let merge_ask = fixture.vault.prepare_shared_skill_merge(
+        merged,
+        fixture.resident,
+        useful_question(merged),
+    )?;
+    fixture
+        .vault
+        .approve_shared_skill_merge(&merge_ask, &fixture.owner)?;
+    let SharedSkillMergeDisposition::Ruled(merge_receipt) = fixture
+        .vault
+        .merge_shared_skill_delta(&merge_ask, &Useful(true), &Replay::new(true), at(41), 41)?
+    else {
+        panic!("merged")
+    };
+    assert_eq!(
+        merge_receipt.judge_revision.as_deref(),
+        Some("fixture-judge@1")
+    );
+    let before = (admission.before, admission.after);
+    let merge_scores = (merge_receipt.before, merge_receipt.after);
+    // No optimizer verdict is needed to establish this vault-wide fence.
+    crate::skill_optimize::supersede_skill_edit_judge(
+        &fixture.vault,
+        "fixture-judge@1",
+        "fixture-judge@2",
+    )?;
+    let old = fixture.vault.hub_admission_receipt(&id)?.unwrap();
+    let old_merge = fixture.vault.shared_skill_merge_receipt(&merged)?.unwrap();
+    assert_eq!((old.before, old.after), before);
+    assert_eq!((old_merge.before, old_merge.after), merge_scores);
+    assert_eq!(
+        old.displaced_by_revision.as_deref(),
+        Some("fixture-judge@2")
+    );
+    assert_eq!(
+        old_merge.displaced_by_revision.as_deref(),
+        Some("fixture-judge@2")
+    );
+    // Outward JSON and MessagePack views carry the derived mark; the stored
+    // receipt remains the immutable score pair written before displacement.
+    let marketplace_json = serde_json::to_value(&old)
+        .map_err(|_| crate::Error::InvariantViolation("marketplace fixture JSON"))?;
+    let merge_json = serde_json::to_value(&old_merge)
+        .map_err(|_| crate::Error::InvariantViolation("merge fixture JSON"))?;
+    assert_eq!(marketplace_json["displaced_by_revision"], "fixture-judge@2");
+    assert_eq!(merge_json["displaced_by_revision"], "fixture-judge@2");
+    assert_eq!(
+        serde_json::from_value::<HubAdmissionReceipt>(marketplace_json)
+            .map_err(|_| crate::Error::InvariantViolation("marketplace JSON read"))?,
+        old
+    );
+    assert_eq!(
+        serde_json::from_value::<SharedSkillMergeReceipt>(merge_json)
+            .map_err(|_| crate::Error::InvariantViolation("merge JSON read"))?,
+        old_merge
+    );
+    let bytes = rmp_serde::to_vec_named(&old)
+        .map_err(|_| crate::Error::InvariantViolation("marketplace msgpack"))?;
+    assert_eq!(
+        rmp_serde::from_slice::<HubAdmissionReceipt>(&bytes)
+            .map_err(|_| crate::Error::InvariantViolation("marketplace msgpack read"))?,
+        old
+    );
+    let bytes = rmp_serde::to_vec_named(&old_merge)
+        .map_err(|_| crate::Error::InvariantViolation("merge msgpack"))?;
+    assert_eq!(
+        rmp_serde::from_slice::<SharedSkillMergeReceipt>(&bytes)
+            .map_err(|_| crate::Error::InvariantViolation("merge msgpack read"))?,
+        old_merge
+    );
+    Ok(())
+}
+
+#[test]
+fn judge_replaced_mid_marketplace_or_merge_scoring_cannot_write_a_ruling() -> Result<()> {
+    struct Replacing<'a> {
+        vault: &'a Vault,
+        changed: std::cell::Cell<bool>,
+    }
+    impl HeldOutReplayScorer for Replacing<'_> {
+        fn judge_revision(&self) -> &str {
+            "old-hub@1"
+        }
+        fn score(&self, case: &HeldOutReplayCase<'_>) -> Result<f32> {
+            if !self.changed.replace(true) {
+                crate::skill_optimize::supersede_skill_edit_judge(
+                    self.vault,
+                    "old-hub@1",
+                    "new-hub@2",
+                )?;
+            }
+            Ok(if case.instructions.contains("check result") {
+                0.9
+            } else {
+                0.2
+            })
+        }
+    }
+    let fixture = Fixture::new();
+    let (source, publisher) = fixture.hub(SkillHubTrustTier::Verified);
+    let id = fixture.import(&source);
+    let ask =
+        fixture
+            .vault
+            .prepare_marketplace_activation(id, &source, &publisher, fixture.baseline)?;
+    fixture
+        .vault
+        .approve_marketplace_activation(&ask, &fixture.owner)?;
+    let scorer = Replacing {
+        vault: &fixture.vault,
+        changed: std::cell::Cell::new(false),
+    };
+    assert!(
+        fixture
+            .vault
+            .admit_marketplace_skill(&ask, &scorer, at(31), 31)
+            .is_err()
+    );
+    assert!(fixture.vault.hub_admission_receipt(&id)?.is_none());
+    assert_eq!(
+        fixture
+            .vault
+            .get_skill_record(&id)?
+            .unwrap()
+            .lifecycle_status,
+        SkillLifecycle::Candidate
+    );
+
+    let other = Fixture::new();
+    let submitted = encode_hub_package(&package("fixture.base", "2", "check result"))?;
+    let candidate = other.vault.submit_shared_skill_delta(
+        &other.baseline,
+        &submitted,
+        SharedSkillLane::CompanyPullRequest,
+        "member:fixture",
+        &EntityId::now(),
+        at(40),
+        40,
+    )?;
+    let ask = other.vault.prepare_shared_skill_merge(
+        candidate,
+        other.resident,
+        useful_question(candidate),
+    )?;
+    other.vault.approve_shared_skill_merge(&ask, &other.owner)?;
+    let scorer = Replacing {
+        vault: &other.vault,
+        changed: std::cell::Cell::new(false),
+    };
+    assert!(
+        other
+            .vault
+            .merge_shared_skill_delta(&ask, &Useful(true), &scorer, at(41), 41)
+            .is_err()
+    );
+    assert!(
+        other
+            .vault
+            .shared_skill_merge_receipt(&candidate)?
+            .is_none()
+    );
+    assert_eq!(
+        other
+            .vault
+            .get_skill_record(&candidate)?
+            .unwrap()
+            .lifecycle_status,
+        SkillLifecycle::Candidate
     );
     Ok(())
 }

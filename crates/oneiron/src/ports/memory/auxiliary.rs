@@ -424,6 +424,7 @@ impl JobQueue for Memory {
             updated_at: now,
             events: Vec::new(),
             manifest: Vec::new(),
+            executor_model: None,
             cancel_state: Default::default(),
             result_ref: None,
             signals: Vec::new(),
