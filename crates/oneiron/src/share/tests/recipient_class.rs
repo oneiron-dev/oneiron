@@ -320,6 +320,9 @@ fn class_scoped_reads_refuse_missing_invalid_or_unverifiable_identity() -> Resul
             &bytes,
         );
         vault.store.entities.put(txn, binding_id.as_bytes(), &raw)?;
+        // This fixture bypasses the authority writer; stamp the cache generation
+        // so the read fold sees the forged persisted row, not the earlier binding.
+        crate::authority::advance_authority_cache_generation(&vault.store, txn)?;
         Ok(())
     })?;
     assert!(
