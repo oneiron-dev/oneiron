@@ -326,6 +326,6 @@ fn exact_room_footer_budget_refuses_floor_and_honors_row_boundary() {
             .filter(|line| line.starts_with("threads quiet:"))
             .map(|line| crate::tokenizer::count_context_pack_tokens(line))
             .sum::<usize>();
-        assert!(spent <= exact - 1);
+        assert!(spent < exact);
     }
 }
