@@ -1,6 +1,8 @@
 use std::str;
 use std::sync::Arc;
 
+use zeroize::Zeroizing;
+
 use xxhash_rust::xxh32::xxh32;
 
 use crate::entity_id::EntityId;
@@ -64,17 +66,28 @@ impl SessionOverlay {
         if let SnapshotLookup::Present(existing) =
             snapshot.lookup_single(OverlayKeyspace::ShortIdsReverse, id.as_bytes())
         {
+            let existing = Zeroizing::new(existing);
             let (short_id, old_content_hash) = parse_session_short_id_value(&existing)?;
-            let short_id = short_id.to_owned();
+            let mut short_id = Zeroizing::new(short_id.to_owned());
+            #[cfg(test)]
+            crate::session_overlay::hygiene_tests::register_short_id_buffer(
+                crate::session_overlay::hygiene_tests::ShortIdScratch::Alias,
+                short_id.as_bytes(),
+            );
             if old_content_hash != content_hash {
-                self.delete_with_base_backing(
-                    OverlayKeyspace::ShortIds,
-                    &encode_session_short_id_forward_key(&short_id, old_content_hash),
-                    false,
-                )?;
+                let stale_key = Zeroizing::new(encode_session_short_id_forward_key(
+                    &short_id,
+                    old_content_hash,
+                ));
+                #[cfg(test)]
+                crate::session_overlay::hygiene_tests::register_short_id_buffer(
+                    crate::session_overlay::hygiene_tests::ShortIdScratch::StaleForwardKey,
+                    &stale_key,
+                );
+                self.delete_with_base_backing(OverlayKeyspace::ShortIds, &stale_key, false)?;
             }
             self.put_session_short_id_rows(id, &short_id, content_hash)?;
-            return Ok((short_id, content_hash));
+            return Ok((std::mem::take(&mut *short_id), content_hash));
         }
 
         // The room counter is the live alias count, read from the same
@@ -85,9 +98,14 @@ impl SessionOverlay {
             .live_row_count(OverlayKeyspace::ShortIdsReverse, |_| true)
             .checked_add(1)
             .ok_or(Error::ArithmeticOverflow("session short id counter"))?;
-        let short_id = format!("{SESSION_SHORT_ID_SIGIL}{next}");
+        let mut short_id = Zeroizing::new(format!("{SESSION_SHORT_ID_SIGIL}{next}"));
+        #[cfg(test)]
+        crate::session_overlay::hygiene_tests::register_short_id_buffer(
+            crate::session_overlay::hygiene_tests::ShortIdScratch::Alias,
+            short_id.as_bytes(),
+        );
         self.put_session_short_id_rows(id, &short_id, content_hash)?;
-        Ok((short_id, content_hash))
+        Ok((std::mem::take(&mut *short_id), content_hash))
     }
 
     /// Stages both session short-id rows, mirroring the base pair: forward
@@ -99,7 +117,13 @@ impl SessionOverlay {
         short_id: &str,
         content_hash: u8,
     ) -> Result<()> {
-        let forward_key = encode_session_short_id_forward_key(short_id, content_hash);
+        let forward_key =
+            Zeroizing::new(encode_session_short_id_forward_key(short_id, content_hash));
+        #[cfg(test)]
+        crate::session_overlay::hygiene_tests::register_short_id_buffer(
+            crate::session_overlay::hygiene_tests::ShortIdScratch::NewForwardKey,
+            &forward_key,
+        );
         self.put(OverlayKeyspace::ShortIds, &forward_key, id.as_bytes())?;
         self.put(
             OverlayKeyspace::ShortIdsReverse,
