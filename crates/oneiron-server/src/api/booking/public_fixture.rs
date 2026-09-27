@@ -25,11 +25,6 @@ pub(super) use serde_json::{Value, json};
 pub(super) use std::num::NonZeroU32;
 pub(super) use tower::ServiceExt;
 
-use oneiron::authority::{
-    AUTHORITY_LOG_SCHEMA_VERSION, AuthorityLogEntry, AuthorityOp, AuthoritySignature,
-    HostSlipIssuer, actor_binding_is_active, authority_entry_hash, authority_transcript,
-};
-
 pub(super) struct Fixture {
     _dir: tempfile::TempDir,
     pub(super) server: Arc<SyncServer>,
@@ -90,7 +85,11 @@ impl Fixture {
         // owner verbs need an explicit host-signed owner binding for the
         // fixture owner. Without it every publication write fails closed
         // with OWNER_BINDING_REQUIRED.
-        bind_fixture_owner(&fixture.server.vault, "owner-fixture-secret", id(0x77));
+        crate::test_credentials::bind_owner(
+            &fixture.server.vault,
+            "owner-fixture-secret",
+            id(0x77),
+        );
         fixture
     }
 
@@ -405,87 +404,4 @@ pub(super) async fn bytes(response: Response) -> Vec<u8> {
         .await
         .expect("body")
         .to_vec()
-}
-
-/// Binds `actor` as a human owner under the host key derived from `secret`.
-///
-/// The host signing key is re-derived from the same secret
-/// `SyncServer::new` used to bootstrap the genesis; the re-derivation is
-/// pinned against `HostSlipIssuer::binding_key` so a core KDF move fails
-/// loudly here instead of minting a signature the fold would reject.
-fn bind_fixture_owner(vault: &Vault, secret: &str, actor: EntityId) {
-    use ed25519_dalek::Signer;
-    use std::collections::BTreeSet;
-
-    let issuer = HostSlipIssuer::from_secret(secret.as_bytes()).expect("host issuer");
-    let host_key = issuer.public_key();
-    let seed = blake3::derive_key("oneiron/host-authority-signing/v2", secret.as_bytes());
-    let signing = ed25519_dalek::SigningKey::from_bytes(&seed);
-    assert_eq!(
-        signing.verifying_key().to_bytes(),
-        issuer.binding_key(),
-        "fixture host-key re-derivation must match the issuer"
-    );
-    let fold = vault.authority_fold().expect("authority fold");
-    let vault_id = fold.vault_id.expect("host root bootstrapped");
-    let mut heads: BTreeSet<[u8; 32]> = fold.valid_entries.clone();
-    let mut seq = 0u64;
-    let rows = vault
-        .entities_by_type(oneiron::registry::ENTITY_TYPE_AUTHORITY_LOG)
-        .expect("authority rows");
-    for row in rows {
-        let entry = vault
-            .get_authority_log_entry(&row)
-            .expect("authority read")
-            .expect("authority row decodes");
-        let hash = authority_entry_hash(&entry).expect("entry hash");
-        if !fold.valid_entries.contains(&hash) {
-            continue;
-        }
-        for parent in &entry.parent_hashes {
-            heads.remove(parent);
-        }
-        if entry.signer.public_key == host_key {
-            seq = seq.max(entry.seq.saturating_add(1));
-        }
-    }
-    assert!(!heads.is_empty(), "a rooted log always has a head");
-    let now = now_secs().expect("clock");
-    let mut bind = AuthorityLogEntry {
-        schema_version: AUTHORITY_LOG_SCHEMA_VERSION,
-        vault_id: Some(vault_id),
-        seq,
-        parent_hashes: heads.into_iter().collect(),
-        op: AuthorityOp::BindActor {
-            authority_key: host_key.clone(),
-            actor_ref: actor,
-            actor_class: "human".to_owned(),
-            epoch: 1,
-        },
-        signer: AuthoritySignature {
-            suite: host_key.suite(),
-            public_key: host_key,
-            signature: vec![0; 64],
-        },
-        cosigns: Vec::new(),
-        ts: now,
-    };
-    bind.signer.signature = signing
-        .sign(&authority_transcript(&bind).expect("bind transcript"))
-        .to_bytes()
-        .to_vec();
-    vault
-        .put_authority_log_entry(
-            &bind,
-            TimeRange {
-                start: now,
-                end: now,
-            },
-            now,
-        )
-        .expect("owner binding lands");
-    assert!(
-        actor_binding_is_active(&vault.authority_fold().expect("refold"), &actor, "human"),
-        "fixture owner binding must fold active"
-    );
 }

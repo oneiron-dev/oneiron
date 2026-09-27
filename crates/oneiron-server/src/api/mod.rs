@@ -157,7 +157,8 @@ use self::params::{
 };
 pub(crate) use self::reactive::*;
 pub(crate) use self::run_tree::*;
-use self::scoped_auth::{check_api_auth, scoped_read_for_core_auth, scoped_read_for_legacy_api};
+pub(crate) use self::scoped_auth::scoped_read_for_core_auth;
+use self::scoped_auth::{check_api_auth, scoped_read_for_legacy_api};
 pub(crate) use self::search::*;
 pub(crate) use self::surface_events::*;
 pub(crate) use self::vad::*;
@@ -243,6 +244,12 @@ pub(crate) fn api_routes(server: Arc<SyncServer>) -> Router {
         .route("/run-tree/observe", get(core_run_tree_observe))
         .route("/run-tree/intervene", post(core_run_tree_intervene))
         .route("/memory/{id}/timeline", get(core_memory_timeline))
+        .route(
+            "/memory/{id}/watch",
+            get(memory::core_memory_watch_read)
+                .put(memory::core_memory_watch_enable)
+                .delete(memory::core_memory_watch_disable),
+        )
         .route(
             "/outbound/capabilities",
             get(list_core_outbound_capabilities),

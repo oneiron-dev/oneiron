@@ -280,6 +280,7 @@ impl Vault {
         Self::require_active_claim(&new_body)?;
         Self::require_source_trust_supersession_rights(&new_body, &old_body)?;
 
+        let revisions = super::supersession_diff::capture_in_txn(self, &wtxn, *old_id, *new_id)?;
         old_body.lifecycle = ClaimLifecycleStatus::Superseded;
         old_body.valid_to = Some(now);
         let data = encode_claim_body(&old_body)?;
@@ -317,6 +318,7 @@ impl Vault {
                 .load(std::sync::atomic::Ordering::Acquire),
             ApplyOpsGateMode::new(false, false),
         )?;
+        super::supersession_diff::store_in_txn(self, &mut wtxn, *old_id, *new_id, revisions)?;
         wtxn.commit()?;
         Ok(())
     }

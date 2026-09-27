@@ -7460,7 +7460,7 @@
      "path": "src/claim/mod.rs",
      "purpose": "CLAIM body ABI + typed Claim API (ARCH-0003, pinned decisions D11/D17/D18)",
      "surface": {
-      "crate-vis": 6,
+      "crate-vis": 7,
       "re-export": 9
      }
     },
@@ -7612,13 +7612,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/claim/scoped_read/graph_reads.rs",
      "purpose": "Receipted graph and timeline reads under the resolved actor floor",
      "surface": {
-      "fn": 2
+      "fn": 4
      }
     },
     {
@@ -7733,6 +7733,16 @@
       "crate-vis": 4,
       "enum": 3,
       "fn": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/claim/supersession_diff.rs",
+     "purpose": "Immutable before/after revision bindings for accepted supersession edges",
+     "surface": {
+      "crate-vis": 4
      }
     },
     {
@@ -26969,11 +26979,25 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [
+      "MemoryWatch"
+     ],
+     "path": "src/saved_query/memory_watch.rs",
+     "purpose": "Owner-bound per-claim watches stored as SAVED_QUERY definitions",
+     "surface": {
+      "crate-vis": 1,
+      "fn": 3,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [],
      "path": "src/saved_query/mod.rs",
      "purpose": "SAVED_QUERY — durable standing queries with staged evaluation (CA-02)",
      "surface": {
-      "re-export": 7
+      "re-export": 8
      }
     },
     {
@@ -34617,7 +34641,7 @@
      "purpose": "—"
     },
     "claim": {
-     "files": 36,
+     "files": 37,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -35415,7 +35439,7 @@
      "purpose": "Run tree projection and control adapter over generic AttemptQueue rows"
     },
     "saved_query": {
-     "files": 11,
+     "files": 12,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -35732,7 +35756,7 @@
    },
    "over_bar": 10,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2107,
+   "source_files": 2109,
    "test_files": 722
   },
   "oneiron-android": {
@@ -39962,7 +39986,7 @@
      "path": "src/api/facade.rs",
      "purpose": "ONE-1441 WIRE-P1: the bounded HTTP projection of the engine memory surface",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 2
      }
     },
     {
@@ -40256,13 +40280,13 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [],
      "path": "src/api/memory.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 15
+      "crate-vis": 20
      }
     },
     {
@@ -40326,7 +40350,7 @@
      "path": "src/api/mod.rs",
      "purpose": "HTTP query routes for web dashboard access",
      "surface": {
-      "crate-vis": 26
+      "crate-vis": 27
      }
     },
     {
@@ -41622,13 +41646,13 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [],
      "path": "src/livequery/subscriptions.rs",
      "purpose": "Coarse derivation, retained rings and cumulative cursor acknowledgements",
      "surface": {
-      "crate-vis": 19
+      "crate-vis": 20
      }
     },
     {
@@ -42448,7 +42472,7 @@
      "path": "src/test_credentials.rs",
      "purpose": "Request fixtures mint real logged slips before crossing the production router",
      "surface": {
-      "crate-vis": 8
+      "crate-vis": 9
      }
     },
     {
@@ -42850,7 +42874,7 @@
     "livequery": {
      "files": 17,
      "impl_vault": false,
-     "largest_src_bucket": "m",
+     "largest_src_bucket": "L",
      "layout": "file+dir",
      "purpose": "App-tier framing and coarse live-query state, separate from WindowSync"
     },
@@ -42939,7 +42963,7 @@
      "purpose": "RC42 observation-only wire counters"
     }
    },
-   "over_bar": 1,
+   "over_bar": 3,
    "purpose": "Oneiron CRDT sync server library",
    "source_files": 231,
    "test_files": 97

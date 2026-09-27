@@ -19,7 +19,7 @@ pub(super) fn check_api_auth(headers: &HeaderMap, server: &SyncServer) -> Result
 
 const LEGACY_SCOPED_READ_ACTOR_REF: &str = "legacy-shared-secret";
 
-pub(super) fn scoped_read_for_core_auth<'a>(
+pub(crate) fn scoped_read_for_core_auth<'a>(
     vault: &'a oneiron::Vault,
     auth: &CoreAuth,
 ) -> Result<oneiron::claim::ScopedRead<'a>, ApiError> {

@@ -58,6 +58,8 @@ pub(crate) fn supersede_family_owned_claim_in_txn(
             "family-owned supersession target is not active",
         ));
     }
+    let revisions =
+        crate::claim::supersession_diff::capture_in_txn(vault, &*wtxn, *old_id, *new_id)?;
     body.lifecycle = ClaimLifecycleStatus::Superseded;
     body.valid_to = Some(now);
     let data = crate::claim::encode_claim_body(&body)?;
@@ -95,7 +97,8 @@ pub(crate) fn supersede_family_owned_claim_in_txn(
             .load(std::sync::atomic::Ordering::Acquire),
         false,
         true,
-    )
+    )?;
+    crate::claim::supersession_diff::store_in_txn(vault, wtxn, *old_id, *new_id, revisions)
 }
 
 /// Re-derives the type-132 cache row for `contact_id` from claims, inside the
