@@ -59,6 +59,9 @@ pub struct EditManifest {
     pub touched_parts: BTreeSet<String>,
     pub mutation_mode: MutationMode,
     pub warnings: Vec<EditWarning>,
+    /// Typed slide judgments bound to exported modern comments, when present.
+    #[serde(default)]
+    pub slide_judgments: Vec<super::slides_review::SlideJudgment>,
 }
 
 impl EditManifest {

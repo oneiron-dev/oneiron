@@ -102,6 +102,7 @@ impl Vault {
                     manifest_ops,
                     pptx_slide_creation_id_mints: Vec::new(),
                     pptx_review_identities: Vec::new(),
+                    pptx_judgments: proposal.manifest.slide_judgments.clone(),
                     anchors: Vec::new(),
                     reason: Some("stale_base".to_owned()),
                 };
@@ -222,6 +223,7 @@ impl Vault {
                         })
                     })
                     .collect(),
+                pptx_judgments: proposal.manifest.slide_judgments.clone(),
                 anchors: settled_anchors_from_summary(&reanchor),
                 reason: None,
             };
@@ -256,6 +258,7 @@ impl Vault {
         learned_at: u64,
     ) -> Result<SettleDiscardOutcome> {
         validate_settle_proposal_ref(&proposal.run_ref)?;
+        crate::edit_roundtrip::slides_review::verify_judgments(proposal)?;
         self.authorize_settle(consent, actor)?;
         let proposal_ref = proposal.run_ref.as_str();
         let key = settlement_key(artifact_id, proposal_ref);
@@ -274,6 +277,7 @@ impl Vault {
             manifest_ops: 0,
             pptx_slide_creation_id_mints: Vec::new(),
             pptx_review_identities: Vec::new(),
+            pptx_judgments: proposal.manifest.slide_judgments.clone(),
             anchors: Vec::new(),
             reason: (!reason.is_empty()).then(|| reason.to_owned()),
         };
@@ -427,6 +431,7 @@ impl Vault {
 
     fn ensure_selectable(&self, proposal: &EditProposal) -> Result<()> {
         validate_settle_proposal_ref(&proposal.run_ref)?;
+        crate::edit_roundtrip::slides_review::verify_judgments(proposal)?;
         // An EditProposal only exists on a passed corruption gate, but a select
         // commits its bytes into the version chain — re-check fail-closed.
         if !proposal.validation.ok {

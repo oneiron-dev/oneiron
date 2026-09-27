@@ -7,7 +7,7 @@ use super::keys::{
     BLOB_ARTIFACT_SETTLEMENT_KEY_PREFIX, FIELD_ANCHOR_DRIFTS, FIELD_ANCHOR_MOVES,
     FIELD_ARTIFACT_REF, FIELD_BEFORE_VERSION, FIELD_BRIEF_REF, FIELD_CONTENT_HASH,
     FIELD_MANIFEST_OPS, FIELD_MANIFEST_REF, FIELD_PROPOSAL_REF, FIELD_REASON, FIELD_RUN_REF,
-    FIELD_VERSION,
+    FIELD_SLIDE_JUDGMENTS, FIELD_VERSION,
 };
 use super::records::{SettleOutcomeKind, SettledAnchor, SettlementRecord};
 use crate::Vault;
@@ -65,6 +65,16 @@ pub(super) fn settlement_receipt_record(
         fields.insert(FIELD_BRIEF_REF.to_owned(), brief_ref.clone());
     }
 
+    if !record.pptx_judgments.is_empty() {
+        fields.insert(
+            FIELD_SLIDE_JUDGMENTS.to_owned(),
+            serde_json::to_string(&record.pptx_judgments).map_err(|_| {
+                Error::Artifact(ArtifactError::InvalidEditManifest(
+                    "slide judgment receipt cannot encode",
+                ))
+            })?,
+        );
+    }
     let trigger_ref = match record.outcome {
         SettleOutcomeKind::Selected | SettleOutcomeKind::Proposed => {
             // Fail closed: a Selected ledger row MUST carry its version and the

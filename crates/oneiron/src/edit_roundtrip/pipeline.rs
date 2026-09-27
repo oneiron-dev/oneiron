@@ -66,7 +66,7 @@ impl EditProposal {
 /// bytes forward.
 #[derive(Debug, Clone)]
 pub enum EditOutcome {
-    Proposed(EditProposal),
+    Proposed(Box<EditProposal>),
     Rejected {
         inspection: StructureSummary,
         report: ValidationReport,
@@ -172,6 +172,7 @@ pub fn run_edit_roundtrip<S: EditSession>(
         touched_parts: diff_parts(&before, &after),
         mutation_mode,
         warnings,
+        slide_judgments: Vec::new(),
     };
 
     let report = validate(&before, &after, format);
@@ -189,7 +190,7 @@ pub fn run_edit_roundtrip<S: EditSession>(
         None
     };
 
-    Ok(EditOutcome::Proposed(EditProposal {
+    Ok(EditOutcome::Proposed(Box::new(EditProposal {
         calc_engine,
         run_ref: run_ref.to_owned(),
         format,
@@ -202,7 +203,7 @@ pub fn run_edit_roundtrip<S: EditSession>(
         // input bytes it edited. `propose_blob_artifact_edit` fills base_version.
         base_version: None,
         base_content_hash: *blake3::hash(input_bytes).as_bytes(),
-    }))
+    })))
 }
 
 impl crate::Vault {

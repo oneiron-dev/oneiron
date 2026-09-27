@@ -7,9 +7,9 @@ use rmpv::Value;
 use super::keys::{
     BLOB_ARTIFACT_SETTLEMENT_KEY_PREFIX, KEY_ACTOR_REF, KEY_ANCHOR_DRIFTED, KEY_ANCHOR_LOCATOR,
     KEY_ANCHOR_THREAD_ID, KEY_ANCHORS, KEY_BEFORE_VERSION, KEY_BRIEF_REF, KEY_CONTENT_HASH,
-    KEY_MANIFEST_OPS, KEY_MANIFEST_REF, KEY_OUTCOME, KEY_PPTX_MINTS, KEY_PPTX_REVIEW_IDENTITIES,
-    KEY_PROPOSAL_REF, KEY_REASON, KEY_SCHEMA_VERSION, KEY_SETTLED_AT, KEY_VERSION,
-    SETTLE_VERB_CLASS, SETTLEMENT_RECORD_KEYS, SETTLEMENT_SCHEMA_VERSION,
+    KEY_MANIFEST_OPS, KEY_MANIFEST_REF, KEY_OUTCOME, KEY_PPTX_JUDGMENTS, KEY_PPTX_MINTS,
+    KEY_PPTX_REVIEW_IDENTITIES, KEY_PROPOSAL_REF, KEY_REASON, KEY_SCHEMA_VERSION, KEY_SETTLED_AT,
+    KEY_VERSION, SETTLE_VERB_CLASS, SETTLEMENT_RECORD_KEYS, SETTLEMENT_SCHEMA_VERSION,
 };
 use super::records::{PptxReviewIdentity, SettleOutcomeKind, SettledAnchor, SettlementRecord};
 use crate::anchored_annotation::{decode_locator, encode_locator};
@@ -130,6 +130,20 @@ pub(super) fn encode_settlement_record(record: &SettlementRecord) -> Result<Vec<
             ),
         ),
         (
+            Value::from(KEY_PPTX_JUDGMENTS),
+            Value::Array(
+                record
+                    .pptx_judgments
+                    .iter()
+                    .map(|judgment| {
+                        rmp_serde::to_vec_named(judgment)
+                            .map(Value::Binary)
+                            .map_err(|_| Error::InvariantViolation("slide judgment encode failed"))
+                    })
+                    .collect::<Result<Vec<_>>>()?,
+            ),
+        ),
+        (
             Value::from(KEY_REASON),
             option_str_value(record.reason.as_deref()),
         ),
@@ -194,9 +208,30 @@ pub(super) fn decode_settlement_record(bytes: &[u8]) -> Result<SettlementRecord>
             &entries,
             KEY_PPTX_REVIEW_IDENTITIES,
         ))?,
+        pptx_judgments: decode_judgments(field(&entries, KEY_PPTX_JUDGMENTS))?,
         anchors,
         reason: field_opt_str(&entries, KEY_REASON)?,
     })
+}
+
+fn decode_judgments(
+    value: Option<&Value>,
+) -> Result<Vec<crate::edit_roundtrip::slides_review::SlideJudgment>> {
+    let Some(Value::Array(items)) = value else {
+        return Err(corrupt());
+    };
+    if items.len() > 4096 {
+        return Err(corrupt());
+    }
+    items
+        .iter()
+        .map(|item| {
+            let Value::Binary(bytes) = item else {
+                return Err(corrupt());
+            };
+            rmp_serde::from_slice(bytes).map_err(|_| corrupt())
+        })
+        .collect()
 }
 
 fn decode_mints(value: Option<&Value>) -> Result<Vec<(u64, u32)>> {

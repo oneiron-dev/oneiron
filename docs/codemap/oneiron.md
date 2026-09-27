@@ -1205,7 +1205,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/edit_roundtrip/formula.rs` | src | m | 2 crate-vis | — | Serialize post-2007 spreadsheet functions with Excel's OOXML prefix |
 | `src/edit_roundtrip/inspect.rs` | src | s | 3 struct · 5 crate-vis | CrossSheetDep, SheetSummary, StructureSummary | Workbook inspect scanners |
 | `src/edit_roundtrip/manifest.rs` | src | s | 2 struct · 2 enum · 5 fn · 1 const | EditManifest, EditWarning, MutationMode, WarningCode | Edit manifest and warnings |
-| `src/edit_roundtrip/mod.rs` | src | s | 1 mod · 6 re-export | — | ARTL-3 (OF-368 D5): agent edit round-trip — code-session pipeline |
+| `src/edit_roundtrip/mod.rs` | src | s | 2 mod · 6 re-export | — | ARTL-3 (OF-368 D5): agent edit round-trip — code-session pipeline |
 | `src/edit_roundtrip/opc.rs` | src | m | 13 crate-vis | — | Minimal Open Packaging Conventions (OPC) reader/writer for the ARTL-3 edit round-trip pipeline |
 | `src/edit_roundtrip/opc/tests.rs` | test | m | — | — | — |
 | `src/edit_roundtrip/ops.rs` | src | m | 2 struct · 3 enum · 5 fn | AnchorEffect, CellValue, CellWrite, EditOp, StructuralShift | Edit operation vocabulary and anchor effects |
@@ -1221,10 +1221,12 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/edit_roundtrip/pptx/tests/support.rs` | test | s | 7 crate-vis | — | Small OPC fixtures, not PowerPoint application-oracle evidence |
 | `src/edit_roundtrip/pptx/xml.rs` | src | m | 17 crate-vis | — | Namespace-aware XML spans for surgical edits |
 | `src/edit_roundtrip/session_validate.rs` | src | m | 5 struct · 1 trait · 2 fn · 6 crate-vis | AppliedEdit, EditPlan, EditSession, OfficeDoc, ValidationCheck, ValidationReport | Edit session seam and validation |
+| `src/edit_roundtrip/slides_review.rs` | src | m | 5 struct · 1 enum · 1 trait · 2 fn · 1 crate-vis | SlideJudgment, SlideReviewError, SlideReviewLabels, SlideReviewProvider, SlideReviewRequest, SlideReviewRun, SlideReviewUnit | Bounded typed review of slide/shape units into one retained comment proposal |
+| `src/edit_roundtrip/slides_review/tests.rs` | test | m | — | — | — |
 | `src/edit_roundtrip/tests.rs` | test | L | — | — | ARTL-3 pipeline tests |
 | `src/edit_roundtrip/xml.rs` | src | s | 7 crate-vis | — | Namespace-aware OPC and worksheet XML reads for the edit gate |
 | `src/edit_settle/codec.rs` | src | m | 6 crate-vis | — | Row and anchor codec |
-| `src/edit_settle/keys.rs` | src | s | 4 const · 34 crate-vis | — | Pinned ledger keys and receipt fields |
+| `src/edit_settle/keys.rs` | src | s | 4 const · 36 crate-vis | — | Pinned ledger keys and receipt fields |
 | `src/edit_settle/mod.rs` | src | s | 3 re-export · 1 crate-vis | — | ARTL-4 (OF-368 D5/D6/D7): retained-output settle + receipts |
 | `src/edit_settle/receipts.rs` | src | s | 5 crate-vis | — | Receipt projection for the family |
 | `src/edit_settle/records.rs` | src | s | 6 struct · 2 enum · 2 fn · 1 crate-vis | PptxReviewIdentity, SettleConsent, SettleDiscardOutcome, SettleOutcomeKind, SettleReceiptDoor, SettleSelectOutcome, SettledAnchor, SettlementRecord | Consent, outcome and settlement records |

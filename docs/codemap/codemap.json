@@ -15037,7 +15037,7 @@
      "path": "src/edit_roundtrip/mod.rs",
      "purpose": "ARTL-3 (OF-368 D5): agent edit round-trip — code-session pipeline",
      "surface": {
-      "mod": 1,
+      "mod": 2,
       "re-export": 6
      }
     },
@@ -15232,6 +15232,36 @@
      }
     },
     {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "SlideJudgment",
+      "SlideReviewError",
+      "SlideReviewLabels",
+      "SlideReviewProvider",
+      "SlideReviewRequest",
+      "SlideReviewRun",
+      "SlideReviewUnit"
+     ],
+     "path": "src/edit_roundtrip/slides_review.rs",
+     "purpose": "Bounded typed review of slide/shape units into one retained comment proposal",
+     "surface": {
+      "crate-vis": 1,
+      "enum": 1,
+      "fn": 2,
+      "struct": 5,
+      "trait": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "src/edit_roundtrip/slides_review/tests.rs",
+     "purpose": "—",
+     "surface": {}
+    },
+    {
      "bucket": "L",
      "kind": "test",
      "notable": [],
@@ -15267,7 +15297,7 @@
      "purpose": "Pinned ledger keys and receipt fields",
      "surface": {
       "const": 4,
-      "crate-vis": 34
+      "crate-vis": 36
      }
     },
     {
@@ -35430,8 +35460,8 @@
      "purpose": "ED-00 (ARCH-0056 §2–3): the proposal-artifact substrate the edit-distance feedback loop replays, plus the…"
     },
     "edit_roundtrip": {
-     "files": 22,
-     "impl_vault": false,
+     "files": 24,
+     "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
      "purpose": "ARTL-3 (OF-368 D5): agent edit round-trip — code-session pipeline"
@@ -36209,8 +36239,8 @@
    },
    "over_bar": 11,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2139,
-   "test_files": 728
+   "source_files": 2140,
+   "test_files": 729
   },
   "oneiron-android": {
    "files": [
