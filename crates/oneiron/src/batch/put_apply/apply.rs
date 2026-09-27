@@ -37,6 +37,7 @@ use crate::write_envelope::WriteEnvelope;
 )]
 pub(in crate::batch) fn apply_put(
     store: &Store,
+    config: &crate::config::VaultConfig,
     wtxn: &mut RwTxn<'_>,
     id: EntityId,
     entity_type: u8,
@@ -97,6 +98,16 @@ pub(in crate::batch) fn apply_put(
             replicated,
         },
     )?;
+    if let Some(body) = &incoming_claim_body {
+        crate::authority::verify_machine_claim_in_txn(
+            store,
+            wtxn,
+            config.privacy.posture,
+            &id,
+            body,
+            replicated,
+        )?;
+    }
     // ARCH-0052 D2: this is the shared entity materialization choke point for
     // public/typed puts, claim candidates, and replicated replay. A base row
     // at a live overlay member's id would publish the room into base, so it

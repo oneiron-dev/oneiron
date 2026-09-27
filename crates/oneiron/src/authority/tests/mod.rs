@@ -40,5 +40,6 @@ mod widen_veto;
 mod causal_claim;
 mod checkpoint;
 mod history_transfer;
+mod machine_write;
 mod recovery_ceremony;
 mod retired_ceiling;

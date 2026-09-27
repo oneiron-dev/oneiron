@@ -1138,12 +1138,18 @@ fn agent_retracts_parked_proposal_without_dismissing_unrelated_stale_consent() {
 
 #[test]
 fn same_id_replacement_cannot_be_retracted_by_the_prior_agent() {
+    use crate::authority::{
+        AuthorityAttestation, AuthorityKey, AuthorityLogEntry, AuthorityOp, AuthoritySignature,
+        AuthorityTier, DeviceAuthority, ROLE_AGENT, authority_entry_hash, authority_transcript,
+    };
+    use ed25519_dalek::Signer;
+
     let (_dir, vault) = open_vault();
     let first_agent = put_person(&vault, 0x19);
     let replacement_agent = put_machine(&vault, 0x1A);
+    let machine_key = ed25519_dalek::SigningKey::from_bytes(&[0x2A; 32]);
     let subject = put_person(&vault, 0x1B);
     let first_facade = vault.memory(first_agent, EdgeActorClass::Agent);
-    let replacement_facade = vault.memory(replacement_agent, EdgeActorClass::System);
     let claim_id = EntityId::from_bytes([0x1C; 16]).expect("claim id");
     let owner = put_person(&vault, 0x1D);
     root_vault_binding(&vault, 0x1E, owner, "human");
@@ -1163,6 +1169,92 @@ fn same_id_replacement_cannot_be_retracted_by_the_prior_agent() {
             claim_id,
         )
         .expect("exact delegated edit slice");
+
+    // Owner-enrolled software MACHINE key. The binding needs the new key's
+    // proof of possession once enrollment makes this a two-key roster.
+    let owner_key = ed25519_dalek::SigningKey::from_bytes(&[0x1E; 32]);
+    let owner_pk = AuthorityKey::Ed25519(owner_key.verifying_key().to_bytes());
+    let machine_pk = AuthorityKey::Ed25519(machine_key.verifying_key().to_bytes());
+    let fold = vault.authority_fold().expect("owner fold");
+    let vault_id = fold.vault_id.expect("rooted vault");
+    let owner_bind = vault
+        .entities_by_type(crate::registry::ENTITY_TYPE_AUTHORITY_LOG)
+        .unwrap()
+        .into_iter()
+        .filter_map(|id| vault.get_authority_log_entry(&id).unwrap())
+        .find(|entry| entry.seq == 1)
+        .expect("owner bind entry");
+    let enroll = sign_authority(
+        AuthorityLogEntry {
+            schema_version: crate::authority::AUTHORITY_LOG_SCHEMA_VERSION,
+            vault_id: Some(vault_id),
+            seq: 2,
+            parent_hashes: vec![authority_entry_hash(&owner_bind).unwrap()],
+            op: AuthorityOp::EnrollDevice {
+                device: DeviceAuthority {
+                    key: machine_pk.clone(),
+                    transport_key_binding: machine_key.verifying_key().to_bytes(),
+                    attestation: AuthorityAttestation {
+                        kind: "SoftwareArgon2id".into(),
+                        evidence: Vec::new(),
+                    },
+                    tier: AuthorityTier::Software,
+                    roles: ROLE_AGENT,
+                },
+            },
+            signer: AuthoritySignature {
+                suite: owner_pk.suite(),
+                public_key: owner_pk.clone(),
+                signature: vec![0; 64],
+            },
+            cosigns: Vec::new(),
+            ts: 102,
+        },
+        &owner_key,
+    );
+    let mut bind = AuthorityLogEntry {
+        schema_version: crate::authority::AUTHORITY_LOG_SCHEMA_VERSION,
+        vault_id: Some(vault_id),
+        seq: 3,
+        parent_hashes: vec![authority_entry_hash(&enroll).unwrap()],
+        op: AuthorityOp::BindActor {
+            authority_key: machine_pk.clone(),
+            actor_ref: replacement_agent,
+            actor_class: "system".into(),
+            epoch: 1,
+        },
+        signer: AuthoritySignature {
+            suite: owner_pk.suite(),
+            public_key: owner_pk,
+            signature: vec![0; 64],
+        },
+        cosigns: vec![AuthoritySignature {
+            suite: machine_pk.suite(),
+            public_key: machine_pk.clone(),
+            signature: vec![0; 64],
+        }],
+        ts: 103,
+    };
+    bind.cosigns[0].signature = machine_key
+        .sign(&authority_transcript(&bind).unwrap())
+        .to_bytes()
+        .to_vec();
+    let bind = sign_authority(bind, &owner_key);
+    vault
+        .put_authority_log_entries(&[(enroll, test_time(102), 102), (bind, test_time(103), 103)])
+        .unwrap();
+    let matured = vault.now_recorded_at() + crate::authority::DEFAULT_PENDING_WIDEN_DELAY_SECS + 1;
+    crate::authority::authority_observation_secs(&vault.store, matured, 0);
+    assert_eq!(
+        vault.authority_fold().unwrap().actor_bindings[&machine_pk].status,
+        crate::authority::ActorBindingStatus::Active
+    );
+    let machine_sign = |transcript: &[u8]| Ok(machine_key.sign(transcript).to_bytes());
+    let replacement_facade = vault.memory_signed_machine(
+        replacement_agent,
+        machine_key.verifying_key().to_bytes(),
+        &machine_sign,
+    );
 
     let mut first = claim_input(
         "profile.mood",

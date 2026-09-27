@@ -392,7 +392,12 @@ pub struct Memory<'v> {
     pub(super) vault: &'v Vault,
     pub(super) actor: EntityId,
     pub(super) actor_class: EdgeActorClass,
+    /// Private signer stays with the machine host; only the transcript crosses
+    /// this callback, and each commit re-signs after its final approval choice.
+    pub(super) machine_signer: Option<([u8; 32], &'v MachineSignFn<'v>)>,
 }
+
+type MachineSignFn<'a> = dyn Fn(&[u8]) -> crate::Result<[u8; 64]> + Send + Sync + 'a;
 
 impl Vault {
     /// Binds this vault's [`Memory`] surface to an actor. The actor entity
@@ -409,6 +414,25 @@ impl Vault {
             vault: self,
             actor,
             actor_class,
+            machine_signer: None,
+        }
+    }
+
+    /// Binds a MACHINE's claim writes to its enrolled software signing key.
+    /// Transport authentication alone cannot supply this proof. Other memory
+    /// verbs remain subject to their own authorization and write doors.
+    #[must_use]
+    pub fn memory_signed_machine<'a>(
+        &'a self,
+        machine: EntityId,
+        public_key: [u8; 32],
+        sign: &'a (dyn Fn(&[u8]) -> crate::Result<[u8; 64]> + Send + Sync),
+    ) -> Memory<'a> {
+        Memory {
+            vault: self,
+            actor: machine,
+            actor_class: EdgeActorClass::System,
+            machine_signer: Some((public_key, sign)),
         }
     }
 }

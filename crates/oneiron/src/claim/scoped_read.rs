@@ -657,9 +657,11 @@ impl<'a> ScopedRead<'a> {
             return Ok(false);
         }
         if !crate::authority::claim_causal_admitted(
+            &self.vault.store,
+            rtxn,
             &self.vault.authority_fold_readonly_in_txn(rtxn)?,
             body,
-        ) {
+        )? {
             return Ok(false);
         }
         let admitted = crate::pipeline::retrieval_claim_allowed(filter, body);

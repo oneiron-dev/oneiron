@@ -1900,6 +1900,17 @@
     {
      "bucket": "m",
      "kind": "src",
+     "notable": [],
+     "path": "src/authority/machine_write.rs",
+     "purpose": "MACHINE software-key enrollment and origin signatures for claim writes",
+     "surface": {
+      "crate-vis": 2,
+      "fn": 3
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
      "notable": [
       "MeshMachineAddress",
       "MeshMachineAddressEnvelope"
@@ -1919,8 +1930,8 @@
      "path": "src/authority/mod.rs",
      "purpose": "AUTHORITY_LOG record substrate",
      "surface": {
-      "crate-vis": 4,
-      "re-export": 21
+      "crate-vis": 5,
+      "re-export": 22
      }
     },
     {
@@ -2077,7 +2088,7 @@
      "path": "src/authority/slip_vault.rs",
      "purpose": "Host-root bootstrap and atomic authority-log capability issuance",
      "surface": {
-      "crate-vis": 8,
+      "crate-vis": 9,
       "fn": 17,
       "struct": 1
      }
@@ -2228,6 +2239,14 @@
      "notable": [],
      "path": "src/authority/tests/hosted_consent.rs",
      "purpose": "Managed host-root consent is explicit, never inferred in self-host mode",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "src/authority/tests/machine_write.rs",
+     "purpose": "Signed MACHINE claims bind an enrolled software key to exact bytes and vault",
      "surface": {}
     },
     {
@@ -21025,6 +21044,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/memory/machine_write.rs",
+     "purpose": "Machine-author claim stamping after the facade resolves its final approval",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/memory/mod.rs",
      "purpose": "BRIDGE-01 (ONE-1454): transport-agnostic memory facade",
      "surface": {
@@ -21292,7 +21321,7 @@
      "purpose": "Shared facade plumbing: [`Memory`] itself, actor/scope verification, JSON<->MessagePack wire encoding, and…",
      "surface": {
       "crate-vis": 23,
-      "fn": 6,
+      "fn": 7,
       "struct": 1
      }
     },
@@ -33429,6 +33458,7 @@
      "kind": "src",
      "notable": [
       "ClaimCandidate",
+      "MachineWriteSignature",
       "SourceLineage",
       "WriteActor",
       "WriteEnvelope",
@@ -33438,8 +33468,8 @@
      "purpose": "Write-path stamping: `WriteActor`/`WriteProvenance`/`WriteEnvelope`/`ClaimCandidate` + evidence stamping",
      "surface": {
       "crate-vis": 16,
-      "fn": 28,
-      "struct": 5
+      "fn": 29,
+      "struct": 6
      }
     },
     {
@@ -34236,7 +34266,7 @@
      "purpose": "Generic LMDB-backed background attempt queue"
     },
     "authority": {
-     "files": 68,
+     "files": 70,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -34943,7 +34973,7 @@
      "purpose": "—"
     },
     "memory": {
-     "files": 75,
+     "files": 76,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -35477,8 +35507,8 @@
    },
    "over_bar": 10,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2094,
-   "test_files": 718
+   "source_files": 2096,
+   "test_files": 719
   },
   "oneiron-android": {
    "files": [

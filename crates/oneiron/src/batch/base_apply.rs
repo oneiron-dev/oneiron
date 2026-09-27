@@ -296,6 +296,7 @@ pub(super) fn apply_ops_with_origin(
                 };
                 let applied = apply_put(
                     store,
+                    config,
                     wtxn,
                     id,
                     entity_type,
@@ -455,6 +456,7 @@ pub(super) fn apply_ops_with_origin(
                 };
                 let applied = apply_claim_candidate(
                     store,
+                    config,
                     wtxn,
                     id,
                     *candidate,

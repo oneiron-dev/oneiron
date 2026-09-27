@@ -22,15 +22,27 @@ impl Vault {
         }
         let body = crate::claim::decode_claim_body(&raw[ENTITY_METADATA_HEADER_LEN..], true)?;
         let fold = self.authority_fold_readonly_in_txn(&txn)?;
-        Ok(Some(if claim_causal_admitted(&fold, &body) {
-            CausalWriteDisposition::Admitted
-        } else {
-            CausalWriteDisposition::Quarantined
-        }))
+        Ok(Some(
+            if claim_causal_admitted(&self.store, &txn, &fold, &body)? {
+                CausalWriteDisposition::Admitted
+            } else {
+                CausalWriteDisposition::Quarantined
+            },
+        ))
     }
 }
 
-pub(crate) fn claim_causal_admitted(fold: &AuthorityFold, body: &ClaimBody) -> bool {
+pub(crate) fn claim_causal_admitted(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    fold: &AuthorityFold,
+    body: &ClaimBody,
+) -> Result<bool> {
+    Ok(super::machine_claim_read_admitted(store, txn, fold, body)?
+        && claim_revocation_causal_admitted(fold, body))
+}
+
+fn claim_revocation_causal_admitted(fold: &AuthorityFold, body: &ClaimBody) -> bool {
     if fold.vault_root_is_conflicted() {
         return false;
     }
@@ -98,9 +110,12 @@ pub(crate) fn check_materialized_claim_causality(
         return Ok(());
     }
     let fold = authority_fold_readonly_for_store_in_txn(store, posture, txn)?;
+    // Replay may see a machine's signed claim before its enrollment or
+    // binding. Origin verification happens at admission; machine authority is
+    // evaluated at read/fold time, not used to reject an out-of-order replay.
     if claims
         .iter()
-        .any(|body| !claim_causal_admitted(&fold, body))
+        .any(|body| !claim_revocation_causal_admitted(&fold, body))
     {
         return Err(Error::Claim(ClaimError::WriteConcurrentWithRevocation));
     }
@@ -118,8 +133,10 @@ pub(crate) fn row_causal_admitted(
         return Ok(true);
     }
     let body = crate::claim::decode_claim_body(&raw[ENTITY_METADATA_HEADER_LEN..], true)?;
-    Ok(claim_causal_admitted(
+    claim_causal_admitted(
+        &vault.store,
+        txn,
         &vault.authority_fold_readonly_in_txn(txn)?,
         &body,
-    ))
+    )
 }

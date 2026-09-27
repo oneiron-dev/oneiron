@@ -77,12 +77,17 @@ impl HostSlipIssuer {
             cosigns: Vec::new(),
             ts: now,
         };
+        self.resign_entry(&mut entry)?;
+        Ok(entry)
+    }
+
+    pub(super) fn resign_entry(&self, entry: &mut AuthorityLogEntry) -> Result<()> {
         entry.signer.signature = self
             .signing
-            .sign(&authority_transcript(&entry)?)
+            .sign(&authority_transcript(entry)?)
             .to_bytes()
             .to_vec();
-        Ok(entry)
+        Ok(())
     }
 }
 

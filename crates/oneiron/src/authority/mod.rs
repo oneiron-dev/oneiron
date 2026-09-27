@@ -45,6 +45,7 @@ mod fork_resolution;
 mod history_transfer;
 mod ingest_observation;
 mod log_entry_op;
+mod machine_write;
 mod mesh_machine;
 mod observation_policy;
 mod op_apply;
@@ -86,6 +87,7 @@ pub use fold_state::*;
 pub use history_transfer::{VaultRecoveryRequest, recover_vaults_independently};
 pub use ingest_observation::*;
 pub use log_entry_op::*;
+pub use machine_write::machine_claim_transcript;
 pub use mesh_machine::{MeshMachineAddress, MeshMachineAddressEnvelope};
 pub use observation_policy::*;
 pub use recovery_ceremony::*;
@@ -111,6 +113,7 @@ pub(crate) use sequence_observation::record_authority_sequence_observation_in_tx
 // Module-internal only: nothing here leaves `authority`.
 use entry_transition::*;
 use fork_resolution::*;
+pub(crate) use machine_write::{machine_claim_read_admitted, verify_machine_claim_in_txn};
 use observation_policy::authority_observation_policy_in_txn;
 use op_apply::*;
 use sequence_observation::{AuthorityLocalObservations, authority_local_observations_in_txn};

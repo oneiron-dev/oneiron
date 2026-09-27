@@ -682,6 +682,7 @@ impl Memory<'_> {
                         );
                     }
                 }
+                self.sign_machine_claim_in_txn(wtxn, id, &candidate, &mut envelope)?;
                 let closure_envelope = envelope.clone();
                 apply_ops_with_gate_mode(
                     &self.vault.store,
