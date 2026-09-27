@@ -208,6 +208,8 @@ side_tables! {
     /// Per-generation stream receipt keyed by its receipt ref. Key: hex32 ":" hex32.
     MESSAGE_STREAM_RECEIPT_BY_REF: VaultMeta b"stream:v1:" Named;
     /// Node-local ask origin entity id. Key: ().
+    /// Owner/question-class ask band and consumed receipt markers. Key: id16 + u16be + class [+ ':' id16].
+    TASK_ASK_BAND: VaultMeta b"tasks.ask.band.v1:" Raw;
     TASK_ASK_ORIGIN: VaultMeta b"tasks.ask.origin.v1" Raw;
     /// By-owner index backfill marker. Key: ().
     TASK_BY_OWNER_BACKFILLED: VaultMeta b"tasks.by_owner.backfilled.v1" Raw;

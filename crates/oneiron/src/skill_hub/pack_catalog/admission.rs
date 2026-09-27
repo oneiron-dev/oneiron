@@ -105,7 +105,7 @@ impl Vault {
                 PACK_PREDICATE.put(&self.store, txn, predicate, &source.manifest.name)?;
             }
             let at = crate::unix_seconds_now();
-            let candidates = self.import_pack_skills_in_txn(txn, &source, at)?;
+            let candidates = self.import_pack_skills_in_txn(txn, &source, &ask.hub, at)?;
             let receipt = PackInstallReceipt {
                 source_id: ask.source_id.to_hex(),
                 pack_name: source.manifest.name.clone(),
@@ -143,6 +143,35 @@ impl Vault {
             return Err(invalid("pack predicate catalog disagrees"));
         }
         Ok(Some(installed))
+    }
+    /// A lens treats a deleted source as an absent installation. Parse the
+    /// receipt first so a malformed catalog still fails closed, and use one
+    /// snapshot for both this deletion check and normal source validation.
+    pub(crate) fn mounted_pack_in_txn(
+        &self,
+        txn: &RoTxn<'_>,
+        name: &str,
+    ) -> Result<Option<PackInstallReceipt>> {
+        let Some(receipt) = PACK_INSTALL
+            .get(&self.store, txn, &name.to_owned())
+            .map_err(|error| {
+                if error.kind() == crate::error::ErrorKind::SideTableRow {
+                    invalid("pack install catalog corrupt")
+                } else {
+                    error
+                }
+            })?
+        else {
+            return Ok(None);
+        };
+        if receipt.pack_name != name {
+            return Err(invalid("pack install name mismatch"));
+        }
+        let source_id = EntityId::from_hex(&receipt.source_id)?;
+        if !crate::vault::live_entity_row_in_txn(&self.store, txn, &source_id)?.is_live() {
+            return Ok(None);
+        }
+        self.installed_pack_in_txn(txn, name)
     }
     fn installed_pack_in_txn(
         &self,

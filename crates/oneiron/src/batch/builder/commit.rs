@@ -57,13 +57,13 @@ impl BatchBuilder<'_> {
     }
 
     fn commit_inner(
-        self,
+        mut self,
         checker: Option<&BoundedAutoChecker>,
         target_guard: impl FnOnce(&heed::RoTxn<'_>) -> Result<()>,
         after_apply: impl FnOnce(&mut RwTxn<'_>) -> Result<()>,
     ) -> Result<()> {
         CommitCheck::run_all(&self.commit_checks, self.vault, &self.ops)?;
-        if let Some(err) = self.validation_error {
+        if let Some(err) = self.validation_error.take() {
             return Err(err);
         }
         let vault = self.vault;
@@ -78,9 +78,9 @@ impl BatchBuilder<'_> {
         let mut wtxn = vault.store.env.write_txn()?;
         target_guard(&wtxn)?;
         #[cfg(feature = "sync")]
-        let mut ops = self.ops;
+        let mut ops = std::mem::take(&mut self.ops);
         #[cfg(not(feature = "sync"))]
-        let ops = self.ops;
+        let ops = std::mem::take(&mut self.ops);
         #[cfg(feature = "sync")]
         super::apply::admit_federated_puts(vault, &mut wtxn, &mut ops, &self.federated_puts)?;
         let mut staged_gate_decisions = Vec::new();

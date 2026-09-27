@@ -196,6 +196,12 @@ side_tables! {
     PROJECT_ROOM_OWNER: VaultMeta b"project.room_owner.v1/" Raw;
     /// The root project's entity id, seeded once at first boot. Key: ().
     PROJECT_ROOT: VaultMeta b"project.root.v1" Raw;
+    /// Number and first threshold-crossing for one actor. Key: id16.
+    PROPOSAL_ACTOR_COUNT: VaultMeta b"proposal:actor_count:v1:" Named;
+    /// Immutable receipt for one actor and monotonically increasing submission count. Key: id16 ":" u64be.
+    PROPOSAL_RECEIPT_HISTORY: VaultMeta b"proposal:receipt:v1:" Named;
+    /// Latest receipt keyed by actor id16 ":" proposal identity string.
+    PROPOSAL_SUBMISSION: VaultMeta b"proposal:submission:v1:" Named;
     /// Disposable cache: which PERSON actor currently represents one provider key. Key: bytes32
     /// (sha256 of provider key).
     PROVIDER_ACTOR_INDEX: VaultMeta b"provider_confidence/actor/v1\0" Raw;

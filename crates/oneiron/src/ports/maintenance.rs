@@ -146,4 +146,35 @@ pub(crate) trait EdgeStoreReadiness: Transactions {
 
 pub(crate) trait RetrievalIndexMaintenance: Transactions {
     fn port_retrieval_validate_rebuild(&self, txn: &Self::Read<'_>) -> Result<()>;
+    /// Remove the text projection before entity-revision cleanup.
+    fn port_retrieval_clear_text_for_soft_erase(
+        &self,
+        txn: &mut Self::Write<'_>,
+        id: &EntityId,
+    ) -> Result<()>;
+    /// Remove phonetic postings after entity-revision cleanup.
+    fn port_retrieval_clear_phonetic_for_soft_erase(
+        &self,
+        txn: &mut Self::Write<'_>,
+        id: &EntityId,
+    ) -> Result<()>;
+    /// Remove vector and HNSW projections after domain-specific deletion cleanup.
+    /// Returns whether a vector was present (the caller owns the version bump).
+    fn port_retrieval_clear_vector_for_soft_erase(
+        &self,
+        txn: &mut Self::Write<'_>,
+        id: &EntityId,
+    ) -> Result<bool>;
+    /// Probe index residue without requiring a live entity row.
+    fn port_retrieval_delete_scope_exists(
+        &self,
+        txn: &Self::Read<'_>,
+        id: &EntityId,
+    ) -> Result<bool>;
+}
+
+/// Transactional repair of the backend's short-id forward/reverse projections.
+pub(crate) trait ShortIdStoreMaintenance: Transactions {
+    fn port_short_id_recompute_hashes(&self, txn: &mut Self::Write<'_>) -> Result<(u64, u64)>;
+    fn port_short_id_mapping_exists(&self, txn: &Self::Read<'_>, id: &EntityId) -> Result<bool>;
 }

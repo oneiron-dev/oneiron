@@ -33,17 +33,21 @@ impl BatchBuilder<'_> {
         self.apply_with_gate_mode(wtxn, ApplyOpsGateMode::new(true, true))
     }
 
-    fn apply_with_gate_mode(self, wtxn: &mut RwTxn<'_>, gate_mode: ApplyOpsGateMode) -> Result<()> {
+    fn apply_with_gate_mode(
+        mut self,
+        wtxn: &mut RwTxn<'_>,
+        gate_mode: ApplyOpsGateMode,
+    ) -> Result<()> {
         // The commit-only checks stay behind: this terminal's puts meet the
         // same gates inside `wtxn` (see `CommitCheck`).
-        if let Some(error) = self.validation_error {
+        if let Some(error) = self.validation_error.take() {
             return Err(error);
         }
         let vault = self.vault;
         #[cfg(feature = "sync")]
-        let mut ops = self.ops;
+        let mut ops = std::mem::take(&mut self.ops);
         #[cfg(not(feature = "sync"))]
-        let ops = self.ops;
+        let ops = std::mem::take(&mut self.ops);
         #[cfg(feature = "sync")]
         admit_federated_puts(vault, wtxn, &mut ops, &self.federated_puts)?;
         let text_index_trusted = if contains_text_op(&ops) {

@@ -49,6 +49,18 @@ pub struct BatchBuilder<'a> {
     federated_puts: Vec<usize>,
 }
 
+// Promotion owns a private journal clone until the applying transaction takes
+// its ops. Scrub abandonment and preflight refusals in the folded builder.
+impl Drop for BatchBuilder<'_> {
+    fn drop(&mut self) {
+        if matches!(self.origin, BaseWriteOrigin::PromoteReplay(_)) {
+            for op in &mut self.ops {
+                crate::session_overlay::zeroize_batch_op_payload(op);
+            }
+        }
+    }
+}
+
 impl<'a> BatchBuilder<'a> {
     pub(crate) fn new(vault: &'a Vault) -> Self {
         Self::with_origin(vault, Vec::new(), BaseWriteOrigin::Ordinary)
@@ -73,6 +85,8 @@ impl<'a> BatchBuilder<'a> {
         ops: Vec<BatchOp>,
         grant: &'a PromoteReplayGrant,
     ) -> Self {
+        #[cfg(test)]
+        crate::session_overlay::hygiene_tests::register_replay_copy(&ops);
         Self::with_origin(vault, ops, BaseWriteOrigin::PromoteReplay(grant))
     }
 
