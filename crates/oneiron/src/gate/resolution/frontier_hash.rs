@@ -55,6 +55,21 @@ pub(super) fn hash_policy_frontier_v0(
         hash_u64(hasher, threshold);
     }
 
+    // Residence operation limits are resolved restrictive caps. Hash the
+    // effective vault/holder intersection, not raw manifest representation:
+    // absent holder maps inherit vault limits, and equivalent nested policies
+    // must produce the same read frontier.
+    let residence = resolution.residence_operation_budgets;
+    hash_str(hasher, "residence_operation_budgets");
+    hash_u64(hasher, residence.rpc_timeout_ms);
+    hash_len(hasher, residence.index_page_limit);
+    hash_len(hasher, residence.max_index_pages);
+    hash_len(hasher, residence.current_window_count);
+    hash_len(hasher, residence.title_max_chars);
+    hash_len(hasher, residence.search_limit);
+    hash_u64(hasher, residence.ack_timeout_ms);
+    hash_len(hasher, residence.index_cache_bytes);
+
     hash_len(hasher, resolution.packs.len());
     for pack in &resolution.packs {
         hash_str(hasher, &pack._pack_id);

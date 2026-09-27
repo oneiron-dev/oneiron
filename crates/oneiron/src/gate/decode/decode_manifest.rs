@@ -19,7 +19,7 @@ use crate::gate::constants::{
     POLICY_SIGNATURE_KEY, POLICY_SIGNATURES_KEY, POLICY_SOURCE_TRUST_KEY,
 };
 use crate::gate::grants::PolicyScopedGrant;
-use crate::gate::resolution::CommOptOutPosture;
+use crate::gate::resolution::{CommOptOutPosture, ResidenceOperationBudgetRow};
 use crate::llm::{BudgetExhaustionPolicy, BudgetPolicyTable};
 
 use super::decode_map_util::{
@@ -34,6 +34,7 @@ use super::decode_trust_budget::{
     parse_budget_exhaustion_policy, parse_budget_policy, parse_comm_opt_out_posture,
     parse_source_trust,
 };
+use super::parse_residence_operation_budgets;
 
 pub(in crate::gate) struct DecodedPolicyManifest {
     pub(in crate::gate) pack: PolicyPack,
@@ -57,6 +58,7 @@ pub(in crate::gate) struct DecodedPolicyManifest {
     pub(in crate::gate) auto_checker: Option<String>,
     pub(in crate::gate) budget_policy: BudgetPolicyTable,
     pub(in crate::gate) diagnostic_bounds: Option<crate::self_heal::tripwires::TripwireBounds>,
+    pub(in crate::gate) residence_operation_budgets: Option<ResidenceOperationBudgetRow>,
     pub(in crate::gate) proposal_check_threshold: Option<u64>,
     pub(in crate::gate) unsupported_schema: bool,
     pub(in crate::gate) engine_version_floor: bool,
@@ -103,6 +105,7 @@ pub(in crate::gate) fn decode_policy_manifest(data: &[u8]) -> Option<DecodedPoli
                 | POLICY_BUDGET_POLICY_KEY
                 | "diagnostic_bounds"
                 | "proposal_check_threshold"
+                | super::POLICY_RESIDENCE_OPERATION_BUDGETS_KEY
         ) {
             return None;
         }
@@ -232,6 +235,13 @@ pub(in crate::gate) fn decode_policy_manifest(data: &[u8]) -> Option<DecodedPoli
         }
     };
 
+    let residence_operation_budgets =
+        match single_map_value(&entries, super::POLICY_RESIDENCE_OPERATION_BUDGETS_KEY) {
+            MapValue::Missing => None,
+            MapValue::Duplicate => return None,
+            MapValue::Present(value) => Some(parse_residence_operation_budgets(value)?),
+        };
+
     let proposal_check_threshold = match single_map_value(&entries, "proposal_check_threshold") {
         MapValue::Missing => None,
         MapValue::Duplicate => return None,
@@ -267,6 +277,7 @@ pub(in crate::gate) fn decode_policy_manifest(data: &[u8]) -> Option<DecodedPoli
         auto_checker,
         budget_policy,
         diagnostic_bounds,
+        residence_operation_budgets,
         proposal_check_threshold,
         unsupported_schema,
         engine_version_floor,

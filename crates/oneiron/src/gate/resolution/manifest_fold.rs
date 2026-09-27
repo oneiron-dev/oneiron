@@ -62,6 +62,16 @@ pub(crate) fn resolve_policy_manifest(
                     untrusted_source_rows.push(decoded.source_trust);
                     continue;
                 }
+                if let Some(row) = decoded.residence_operation_budgets {
+                    match row.precedence {
+                        crate::gate::ResidenceOperationBudgetPrecedence::NestedNarrowing => {
+                            resolution.residence_operation_budgets.restrict(row.vault);
+                            if let Some(holder) = row.holder {
+                                resolution.residence_operation_budgets.restrict(holder);
+                            }
+                        }
+                    }
+                }
                 // Only trusted packs can authorize the no-LLM lane. Each must agree.
                 if resolution.packs.is_empty() {
                     resolution.single_valued_predicates = decoded.single_valued_predicates;

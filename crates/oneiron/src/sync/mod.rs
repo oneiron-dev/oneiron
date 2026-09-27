@@ -47,6 +47,7 @@ pub mod quota;
 pub(crate) mod receipt_ingest;
 pub mod replay;
 pub mod residence;
+pub mod residence_operation_budgets;
 pub mod schema;
 pub mod selector;
 pub mod server_state;

@@ -8,6 +8,7 @@ use crate::llm::{BudgetExhaustionPolicy, BudgetPolicyTable};
 use super::frontier_hash::hash_policy_frontier_v0;
 use super::manifest_types::{
     CommOptOutPosture, PolicyManifestDiagnostics, PolicyManifestResolution,
+    ResidenceOperationBudgetLimits,
 };
 use crate::gate::ceiling::{
     PolicyAxes, PolicyCriticality, PolicyOwnerPatternRow, PolicyOwnerPolicyRow, PolicySensitivity,
@@ -36,6 +37,18 @@ impl PolicyManifestResolution {
         // A completely absent manifest preserves the existing bootstrap
         // behavior; any loaded malformed/unsupported manifest fails closed.
         self.diagnostics.manifest_count > 0 || self.diagnostics.loaded_manifest_forces_fail_closed()
+    }
+
+    /// The effective residence-operation caps, absent when loaded policy is
+    /// malformed or otherwise forces fail-closed. Holder narrowing has already
+    /// been capped by the vault-level values during the trusted manifest fold.
+    #[must_use]
+    pub(crate) fn residence_operation_budgets(&self) -> Option<ResidenceOperationBudgetLimits> {
+        if self.diagnostics.loaded_manifest_forces_fail_closed() {
+            None
+        } else {
+            Some(self.residence_operation_budgets)
+        }
     }
 
     #[must_use]
