@@ -32,6 +32,13 @@ pub(crate) mod branch_scope;
 mod conflict;
 mod executor;
 mod extracted_people;
+mod failure_rules;
+#[cfg(test)]
+pub(crate) use failure_rules::PREDICATE as DREAMER_FAILURE_RULES_PREDICATE;
+pub(crate) use failure_rules::{
+    KEY as DREAMER_FAILURE_RULES_KEY, admitted_authored_claim, prepare_authored_claim,
+    resident_record,
+};
 mod gap;
 mod judge_context;
 mod open_conflict;
@@ -41,6 +48,7 @@ mod provenance;
 pub(crate) mod resources;
 pub mod routing;
 pub mod selection;
+mod step_charge;
 mod support;
 mod watermark;
 

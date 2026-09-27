@@ -225,6 +225,7 @@ pub enum ErrorKind {
     SecretBindingDenied,
     ManifestWidensFloor,
     SecretTierDenied,
+    SecretDoorPolicyRefused,
     SecretRefNotFound,
     SecretLeaseNotFound,
     SecretLeaseNotActive,
@@ -295,6 +296,9 @@ pub enum ErrorKind {
     PackKindNameCollision,
     PackKindNotInstalled,
     InvalidPackByteMap,
+    InvalidSuppressionReceiptBody,
+    SuppressionReceiptDivergence,
+    PackPredicateNameCollision,
 }
 
 /// Crate error type.

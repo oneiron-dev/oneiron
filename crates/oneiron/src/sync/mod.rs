@@ -44,6 +44,7 @@ pub(crate) mod pack_sync;
 pub mod quarantine;
 pub mod queue;
 pub mod quota;
+pub(crate) mod receipt_ingest;
 pub mod replay;
 pub mod residence;
 pub mod schema;
@@ -57,7 +58,7 @@ pub use client::{
     EphemeralChangeOrigin, ResidenceHit, ResidenceSearch, SearchSource, SyncClient,
     SyncClientConfig, SyncEvent, SyncResidenceMode, SyncStatus, ThinItem,
 };
-pub use connection::{ConnectionConfig, LocalUpdate, SyncConnection};
+pub use connection::{ConnectionConfig, HomeNodeTopology, LocalUpdate, SyncConnection};
 pub use lease::{
     LEASE_DURATION_SECS, LEASE_KEY_PREFIX, LEASE_POP_DOMAIN, LEASE_RECORD_LEN,
     LEASE_RECORD_VERSION, LeaseRecord, LeaseStatus, ROOT_LEASES_MAP, client_id_hex,

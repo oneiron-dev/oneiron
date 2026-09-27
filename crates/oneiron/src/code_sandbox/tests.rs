@@ -169,12 +169,13 @@ fn code_sandbox_foreign_and_untrusted_link_zero_write_imports() {
             "sandbox.credential.call",
             "oneiron.clock.now_unix_ms",
             "oneiron.random.bytes",
+            "self.json.validate",
             "self.memory.search",
             "self.memory.put_claim",
             "self.memory.supersede_claim",
             "self.memory.put_edge",
-            "self.ask_human",
-            "self.askHuman",
+            "self.report_blocked",
+            "ask",
             "self.speak",
             "self.think",
             "self.express",
@@ -192,6 +193,7 @@ fn code_sandbox_foreign_and_untrusted_link_zero_write_imports() {
             "self.memory.put_claim",
             "self.memory.supersede_claim",
             "self.memory.put_edge",
+            "self.report_blocked",
         ]
     );
     let write_effects = first_party
@@ -205,6 +207,7 @@ fn code_sandbox_foreign_and_untrusted_link_zero_write_imports() {
             SelfEffect::MemoryPutClaim,
             SelfEffect::MemorySupersedeClaim,
             SelfEffect::MemoryPutEdge,
+            SelfEffect::ReportBlocked,
         ]
     );
     assert_eq!(
@@ -228,10 +231,7 @@ fn code_sandbox_foreign_and_untrusted_link_zero_write_imports() {
         .filter(|import| import.class() == SandboxImportClass::DurableWait)
         .map(|import| import.name())
         .collect::<Vec<_>>();
-    assert_eq!(
-        durable_wait_imports,
-        vec!["self.ask_human", "self.askHuman"]
-    );
+    assert_eq!(durable_wait_imports, vec!["ask"]);
     // ONE-1686: the speech family links as its OWN class. It must never be
     // counted as a write trap (that set is pinned closed by OF-060 P3) and
     // never as a durable wait (speech does not park a run).
@@ -285,8 +285,16 @@ fn code_sandbox_plain_js_prompt_surface_is_docs_only_and_host_bound() {
     assert!(dts.contains("function put_claim"));
     assert!(dts.contains("function supersede_claim"));
     assert!(dts.contains("function put_edge"));
-    assert!(dts.contains("function askHuman"));
-    assert!(dts.contains("function ask_human"));
+    assert!(dts.contains("function report_blocked"));
+    assert!(dts.contains("declare function ask"));
+    assert!(
+        contract
+            .runtime()
+            .advertised_prompt_verbs()
+            .contains(&"ask".to_owned())
+    );
+    assert!(!dts.contains("ask_human"));
+    assert!(!dts.contains("askHuman"));
     assert!(dts.contains("namespace clock"));
     assert!(dts.contains("function now_unix_ms"));
     assert!(!dts.contains("function nowUnixMs"));

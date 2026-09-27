@@ -15,6 +15,16 @@ exclude = ["crates/heed", "crates/heed/vendor/heed-0.20.5", "crates/paste", "cra
 [profile.dev]
 debug = 1
 
+# Optimize non-workspace dependencies in dev/test builds while leaving workspace
+# members at the dev default. See docs/ops/build-performance.md for timings.
+[profile.dev.package."*"]
+opt-level = 2
+
+# Match build-dependency optimization to normal dependencies. A package used in
+# both roles otherwise gets different profiles; see the cold-build comparison.
+[profile.dev.build-override]
+opt-level = 2
+
 # Warm non-incremental core builds benefit from more LLVM codegen units.
 # This matches the ordinary incremental default count, not a measured edit-loop
 # speedup. Only oneiron dev/test units change; release and other packages do not.

@@ -353,7 +353,7 @@ pub fn replay_pending_mirrors(vault: &Vault, doc: &LoroDoc, window_key: &WindowK
 
         if !claim_sync_allowed(&raw)
             || is_unsyncable_secret_custody(&raw)
-            || skip_companion_register_sync_mirror(&raw)?
+            || skip_companion_register_sync_mirror(&raw)
         {
             let wrote_doc = remove_entity_crdt_carriers(&entities_map, &edges_map, id)?;
             if wrote_doc {

@@ -55,8 +55,6 @@ use crate::error::{Error, SyncProtocolValidation, SyncSelectorValidation as Sele
 #[cfg(test)]
 use crate::federation::SelectorRange;
 #[cfg(test)]
-use crate::federation::Sensitivity;
-#[cfg(test)]
 use crate::registry::{ENTITY_TYPE_AUTHORITY_LOG, ENTITY_TYPE_CLAIM, ENTITY_TYPE_FEDERATION_GRANT};
 #[cfg(test)]
 use crate::sync::bridge::parse_edge_key;

@@ -1,18 +1,23 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 mod extraction;
+mod merge_resolution;
 mod retry;
+
+use merge_resolution::{MergeResolution, decode_merge_resolution};
 
 use super::resources::BranchResources;
 use super::value_projection::{json_to_rmpv, rmpv_to_json};
 use rmpv::Value;
 
 use super::conflict::{ConflictIdentity, ConflictSet, candidate_facts, deterministic_claim_id};
+use super::failure_rules::{self, FailureRules, Stage};
 use super::gap::{ReflectionGap, ReflectionGapKind, scan_reflection_gaps, upsert_gap_queue};
 use super::partition::{ConsolidationPartitionKey, decode_partition_payload};
 use super::provenance::{
     ConsolidationProvenanceHop, ConsolidationSink, PromotionCandidate, source_meet,
 };
+use super::step_charge::StepChargeTally;
 use super::support::{
     DREAMER_GAP_SCAN_ATTEMPT_TYPE, DREAMER_SUBSTITUTION_MINE_ATTEMPT_TYPE, TURN_BODY_FACET_REF_KEY,
     invalid_consolidation,
@@ -67,12 +72,12 @@ pub struct ConsolidationExecutor<'a> {
 enum PartitionRun {
     Completed {
         candidates: Vec<PromotionCandidate>,
-        spent: u64,
     },
     Trapped,
+    /// The response was charged but the run must stop before publishing it.
+    Checkpoint,
     Held {
         candidates: Vec<PromotionCandidate>,
-        spent: u64,
         retry_at_ms: u64,
     },
 }
@@ -85,6 +90,7 @@ impl ConsolidationExecutor<'_> {
         ctx: &WakeAttemptContext<'_>,
         attempt_id: crate::attempt_queue::AttemptId,
         run_id: Option<String>,
+        charges: &mut StepChargeTally,
     ) -> DurableStepResult<PartitionRun> {
         let run_id_ref = run_id.as_ref();
         let (partition, turn_ids, _watermark) = decode_partition_payload(payload_input)?;
@@ -102,69 +108,85 @@ impl ConsolidationExecutor<'_> {
             deadline: Some(ctx.deadline),
             now_ms: ctx.now_ms,
         };
+        let rules = failure_rules::load(ctx.vault)?;
         let mut request = self.extraction_request(&partition, &transcript, resources.scope());
         ctx.vault.bind_model_role(
             crate::llm::manifest::ModelRole::ExtractionTeacher,
             &mut request,
         )?;
-        let outcome = call_as_step(&step_ctx, self.backend, self.guard, request).await?;
-        let (response, spent) = match outcome {
-            StepOutcome::Finished { response, .. } => {
-                let spent = response
-                    .usage
-                    .input
-                    .total
-                    .saturating_add(response.usage.output.total);
-                (response, spent)
+        if let Some(rules) = &rules {
+            rules.bind(Stage::Extraction, &mut request);
+        }
+        let step_hash = request.canonical_hash()?;
+        let outcome = call_as_step(&step_ctx, self.backend, self.guard, request).await;
+        let response = match outcome {
+            Ok(StepOutcome::Finished { response, .. }) => {
+                charges.record_terminal(ctx.vault, attempt_id, step_hash, &response.usage)?;
+                response
             }
-            // The extraction step suspended: the attempt is parked. Surface the
-            // trap so `execute` parks it for resume instead of completing an
-            // empty extraction (#485-1).
-            StepOutcome::Trapped(_) => return Ok(PartitionRun::Trapped),
+            Ok(StepOutcome::Trapped(_)) => return Ok(PartitionRun::Trapped),
+            Err(crate::llm::DurableStepError::SpentFinalizeRefused { usage }) => {
+                charges.record_usage(&usage);
+                return Ok(PartitionRun::Checkpoint);
+            }
+            Err(crate::llm::DurableStepError::SpentSchemaValidation { usage, .. })
+                if ctx.deadline.expired() =>
+            {
+                charges.record_usage(&usage);
+                return Ok(PartitionRun::Checkpoint);
+            }
+            Err(error) => return Err(error),
         };
-        let candidates = self.decode_candidates(
-            &partition,
-            &response,
-            resources.scope(),
-            attempt_id,
-            ctx.now_ms,
-        )?;
+        if ctx.deadline.expired() {
+            return Ok(PartitionRun::Checkpoint);
+        }
+        let accepted = rules
+            .as_ref()
+            .is_none_or(|rules| rules.accepts(Stage::Extraction, &response));
+        let candidates = if accepted {
+            self.decode_candidates(
+                &partition,
+                &response,
+                resources.scope(),
+                attempt_id,
+                ctx.now_ms,
+            )?
+        } else {
+            Vec::new()
+        };
         resources.validate_candidates(resources.scope(), &candidates)?;
         resources.require_output(resources.scope())?;
-        super::extracted_people::mint_extracted_people(
-            ctx.vault,
-            &response,
-            &turn_ids,
-            resources.scope(),
-            ctx.now_ms,
-        )?;
-        match self
-            .resolve_conflicts(
-                candidates,
-                resources,
-                ctx,
-                attempt_id_for_steps(attempt_id, run_id_ref),
-            )
-            .await?
-        {
-            PartitionRun::Completed {
-                candidates,
-                spent: merge_spent,
-            } => Ok(PartitionRun::Completed {
-                candidates,
-                spent: spent.saturating_add(merge_spent),
-            }),
-            PartitionRun::Trapped => Ok(PartitionRun::Trapped),
-            PartitionRun::Held {
-                candidates,
-                spent: merge_spent,
-                retry_at_ms,
-            } => Ok(PartitionRun::Held {
-                candidates,
-                spent: spent.saturating_add(merge_spent),
-                retry_at_ms,
-            }),
+        if ctx.deadline.expired() {
+            return Ok(PartitionRun::Checkpoint);
         }
+        let mint = if accepted {
+            super::extracted_people::mint_extracted_people(
+                ctx.vault,
+                &response,
+                &turn_ids,
+                resources.scope(),
+                ctx.now_ms,
+                Some(ctx.deadline),
+            )
+            .map(|_| ())
+        } else {
+            Ok(())
+        };
+        if let Err(error) = mint {
+            if ctx.deadline.expired() {
+                return Ok(PartitionRun::Checkpoint);
+            }
+            return Err(error.into());
+        }
+        self.resolve_conflicts(
+            candidates,
+            resources,
+            ctx,
+            attempt_id_for_steps(attempt_id, run_id_ref),
+            rules.as_ref(),
+            charges,
+        )
+        .await
     }
 
     /// Scoped LLM merge over conflicting sets — ONLY conflicting sets. One
@@ -179,6 +201,8 @@ impl ConsolidationExecutor<'_> {
         resources: &BranchResources<'_>,
         ctx: &WakeAttemptContext<'_>,
         step_identity: (crate::attempt_queue::AttemptId, Option<String>),
+        rules: Option<&FailureRules>,
+        charges: &mut StepChargeTally,
     ) -> DurableStepResult<PartitionRun> {
         let assembled = super::assembly::assemble(ctx.vault, resources, candidates, ctx.now_ms)?;
         let candidates = assembled.candidates;
@@ -191,21 +215,16 @@ impl ConsolidationExecutor<'_> {
             return Ok(if assembled.held {
                 PartitionRun::Held {
                     candidates,
-                    spent: 0,
                     retry_at_ms: assembled.retry_at_ms,
                 }
             } else {
-                PartitionRun::Completed {
-                    candidates,
-                    spent: 0,
-                }
+                PartitionRun::Completed { candidates }
             });
         }
 
         let mut dropped: BTreeSet<usize> = BTreeSet::new();
         let mut merged: Vec<PromotionCandidate> = Vec::new();
         let mut escalated: Vec<ReflectionGap> = Vec::new();
-        let mut spent = 0_u64;
 
         for conflict in &conflicts {
             let members: Vec<&PromotionCandidate> = conflict
@@ -248,16 +267,19 @@ impl ConsolidationExecutor<'_> {
                 deadline: Some(ctx.deadline),
                 now_ms: ctx.now_ms,
             };
+            if let Some(rules) = rules {
+                rules.bind(Stage::Conflict, &mut request);
+            }
+            let step_hash = request.canonical_hash()?;
             let outcome = call_as_step(&step_ctx, self.backend, self.guard, request).await;
             let response = match outcome {
                 Ok(StepOutcome::Finished { response, .. }) => {
-                    spent = spent.saturating_add(
-                        response
-                            .usage
-                            .input
-                            .total
-                            .saturating_add(response.usage.output.total),
-                    );
+                    charges.record_terminal(
+                        ctx.vault,
+                        step_identity.0,
+                        step_hash,
+                        &response.usage,
+                    )?;
                     response
                 }
                 Ok(StepOutcome::Trapped(_)) => {
@@ -268,6 +290,16 @@ impl ConsolidationExecutor<'_> {
                     // the rest as done. On resume the memoized steps replay and
                     // this merge re-runs to a real resolution.
                     return Ok(PartitionRun::Trapped);
+                }
+                Err(crate::llm::DurableStepError::SpentFinalizeRefused { usage }) => {
+                    charges.record_usage(&usage);
+                    return Ok(PartitionRun::Checkpoint);
+                }
+                Err(crate::llm::DurableStepError::SpentSchemaValidation { usage, .. })
+                    if ctx.deadline.expired() =>
+                {
+                    charges.record_usage(&usage);
+                    return Ok(PartitionRun::Checkpoint);
                 }
                 Err(error) => {
                     // Park the attempt, with a durable Proposed marker. The
@@ -286,7 +318,16 @@ impl ConsolidationExecutor<'_> {
                 }
             };
 
-            match decode_merge_resolution(&response).unwrap_or(MergeResolution::Escalate) {
+            if ctx.deadline.expired() {
+                return Ok(PartitionRun::Checkpoint);
+            }
+            let resolution =
+                if rules.is_some_and(|rules| !rules.accepts(Stage::Conflict, &response)) {
+                    MergeResolution::Escalate
+                } else {
+                    decode_merge_resolution(&response).unwrap_or(MergeResolution::Escalate)
+                };
+            match resolution {
                 MergeResolution::Accumulate => {} // keep every member
                 MergeResolution::Merge {
                     value,
@@ -351,6 +392,9 @@ impl ConsolidationExecutor<'_> {
             }
         }
 
+        if ctx.deadline.expired() {
+            return Ok(PartitionRun::Checkpoint);
+        }
         if !escalated.is_empty() {
             resources.upsert_gaps(resources.scope(), escalated, ctx.now_ms)?;
         }
@@ -364,13 +408,11 @@ impl ConsolidationExecutor<'_> {
         Ok(if assembled.held {
             PartitionRun::Held {
                 candidates: surviving,
-                spent,
                 retry_at_ms: assembled.retry_at_ms,
             }
         } else {
             PartitionRun::Completed {
                 candidates: surviving,
-                spent,
             }
         })
     }
@@ -450,48 +492,6 @@ impl ConsolidationExecutor<'_> {
             params: BTreeMap::new(),
             provider_options: BTreeMap::new(),
         })
-    }
-}
-
-enum MergeResolution {
-    Merge {
-        value: Value,
-        candidate_ref: Option<EntityId>,
-    },
-    Accumulate,
-    Escalate,
-}
-
-fn decode_merge_resolution(response: &LlmResponse) -> Result<MergeResolution> {
-    let text: String = response
-        .message
-        .content
-        .iter()
-        .filter_map(|part| match part {
-            ContentPart::Text { text } => Some(text.as_str()),
-            _ => None,
-        })
-        .collect();
-    let parsed: serde_json::Value = serde_json::from_str(text.trim())
-        .map_err(|_| invalid_consolidation("merge response must be JSON"))?;
-    match parsed.get("resolution").and_then(|value| value.as_str()) {
-        // With no prior head in scope, supersede degrades to merge (D7: at
-        // most one prior head; the promotion writer owns the supersession).
-        Some("merge" | "supersede") => Ok(MergeResolution::Merge {
-            candidate_ref: parsed
-                .get("candidate_ref")
-                .map(|value| {
-                    value
-                        .as_str()
-                        .and_then(|id| EntityId::from_hex(id).ok())
-                        .ok_or_else(|| invalid_consolidation("invalid merge candidate identity"))
-                })
-                .transpose()?,
-            value: json_to_rmpv(parsed.get("value").unwrap_or(&serde_json::Value::Null)),
-        }),
-        Some("accumulate") => Ok(MergeResolution::Accumulate),
-        Some("escalate") => Ok(MergeResolution::Escalate),
-        _ => Err(invalid_consolidation("unknown merge resolution")),
     }
 }
 
@@ -713,24 +713,37 @@ impl DreamerAttemptExecutor for ConsolidationExecutor<'_> {
             branch_scope.as_ref(),
         )?;
         let run_id = attempt.status.attempt.run_id.clone();
+        let mut charges = StepChargeTally::default();
         match self
-            .run_partition_attempt(&payload, &resources, ctx, attempt.status.attempt.id, run_id)
+            .run_partition_attempt(
+                &payload,
+                &resources,
+                ctx,
+                attempt.status.attempt.id,
+                run_id,
+                &mut charges,
+            )
             .await
         {
-            Ok(PartitionRun::Completed { candidates, spent }) => {
+            Ok(PartitionRun::Completed { .. } | PartitionRun::Held { .. })
+                if ctx.deadline.expired() =>
+            {
+                Ok(charges.checkpoint())
+            }
+            Ok(PartitionRun::Checkpoint) => Ok(charges.checkpoint()),
+            Ok(PartitionRun::Completed { candidates }) => {
                 resources.accept(resources.scope(), self.sink, candidates)?;
                 Ok(DreamerAttemptExecution::Completed {
-                    completed_units: spent,
+                    completed_units: charges.units,
                 })
             }
             Ok(PartitionRun::Held {
                 candidates,
-                spent,
                 retry_at_ms,
             }) => {
                 resources.accept(resources.scope(), self.sink, candidates)?;
                 Ok(DreamerAttemptExecution::Deferred {
-                    completed_units: spent,
+                    completed_units: charges.units,
                     retry_at: retry_at_ms.div_ceil(1_000),
                 })
             }

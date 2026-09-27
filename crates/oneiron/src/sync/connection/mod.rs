@@ -34,6 +34,7 @@ mod converge;
 mod handshake;
 mod session;
 mod steady;
+mod topology;
 
 use std::sync::Arc;
 
@@ -42,6 +43,7 @@ use crate::sync::manager::WindowManager;
 use crate::sync::queue::SyncQueue;
 pub use crate::sync::types::LocalUpdate;
 use crate::sync::types::parse_window_key_str;
+pub use topology::HomeNodeTopology;
 
 /// Configuration for the connection manager.
 #[derive(Debug, Clone)]

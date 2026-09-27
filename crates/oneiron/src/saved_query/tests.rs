@@ -599,3 +599,88 @@ fn watermark_verdict_rejects_stale_epochs_without_calling_them_applied() {
     );
     assert_eq!(watermark_verdict(Some((2, None)), 3, &content), None);
 }
+
+#[test]
+fn memory_watch_is_durable_owner_bound_and_reversible() {
+    use crate::campaign::register_crm_pack;
+    use crate::registry::TypeByteFamily;
+    use crate::{TimeRange, VaultConfig};
+    let dir = tempfile::tempdir().expect("vault dir");
+    let vault = crate::Vault::open_unseeded_for_test(dir.path(), VaultConfig::device())
+        .expect("open vault");
+    register_crm_pack(&vault, 107, 108, TypeByteFamily::Productivity).expect("pack");
+    let owner = id(0xB1);
+    let other = id(0xB2);
+    let anchor = id(0xB3);
+    let subject = id(0xB4);
+    vault
+        .put_entity(
+            &owner,
+            crate::registry::ENTITY_TYPE_PERSON,
+            TimeRange { start: 1, end: 1 },
+            1,
+            b"owner",
+        )
+        .expect("owner");
+    vault
+        .put_entity(
+            &subject,
+            crate::registry::ENTITY_TYPE_PERSON,
+            TimeRange { start: 1, end: 1 },
+            1,
+            b"subject",
+        )
+        .expect("subject");
+    let body = ClaimBody::new(
+        "profile.city",
+        ClaimSubject::Entity(subject),
+        rmpv::Value::from("Osaka"),
+        1.0,
+        ClaimApprovalStatus::Approved,
+        ClaimLifecycleStatus::Active,
+    );
+    vault
+        .put_claim(&anchor, &body, TimeRange { start: 1, end: 1 }, 1)
+        .expect("claim");
+    let watch = memory_watch::set_memory_watch(&vault, owner, anchor, true, 10)
+        .expect("enable")
+        .expect("watch");
+    assert_eq!(
+        memory_watch::set_memory_watch(&vault, owner, anchor, true, 11).expect("idempotent"),
+        Some(watch.clone())
+    );
+    assert_eq!(
+        memory_watch::memory_watches(&vault, owner).expect("list"),
+        vec![watch.clone()]
+    );
+    assert!(
+        memory_watch::memory_watches(&vault, other)
+            .expect("other list")
+            .is_empty()
+    );
+    assert!(
+        memory_watch::memory_watch(&vault, other, anchor)
+            .expect("other read")
+            .is_none()
+    );
+    drop(vault);
+    let reopened =
+        crate::Vault::open_unseeded_for_test(dir.path(), VaultConfig::device()).expect("reopen");
+    assert_eq!(
+        memory_watch::memory_watch(&reopened, owner, anchor).expect("persisted"),
+        Some(watch.clone())
+    );
+    assert_eq!(
+        memory_watch::set_memory_watch(&reopened, owner, anchor, false, 12).expect("disable"),
+        None
+    );
+    assert!(
+        memory_watch::memory_watches(&reopened, owner)
+            .expect("disabled list")
+            .is_empty()
+    );
+    assert_eq!(
+        memory_watch::set_memory_watch(&reopened, owner, anchor, true, 13).expect("reenable"),
+        Some(watch)
+    );
+}

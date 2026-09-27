@@ -103,7 +103,62 @@ fn idle_curator_grades_own_consolidation_and_only_proposes_minimum_force() -> Re
     let value: serde_json::Value =
         serde_json::from_str(proposed.1.value.as_str().unwrap()).unwrap();
     assert_eq!(value["action"]["kind"], "claim_of_weight");
+    assert_eq!(value["grade"]["authorship"], "verified_dreamer_generated");
+    assert_eq!(value["grade"]["freshness"]["learned_at"], 1);
+    assert_eq!(
+        value["grade"]["least_force"]["prior_rung"],
+        serde_json::Value::Null
+    );
+    assert_eq!(
+        value["grade"]["least_force"]["proposed_action"],
+        "claim_of_weight"
+    );
+    assert!(
+        value["rubric"]["questions"]["freshness"]
+            .as_str()
+            .is_some_and(|question| !question.is_empty())
+    );
     assert!(vault.get(&target)?.is_some());
+
+    let owner_id = entity(0x52);
+    vault.put_entity(
+        &owner_id,
+        crate::registry::ENTITY_TYPE_PERSON,
+        TimeRange { start: 1, end: 1 },
+        1,
+        b"owner",
+    )?;
+    let owner = vault.authenticate_owner(
+        owner_id,
+        &owner_id.to_hex(),
+        true,
+        crate::store::GateDecisionId::now(),
+    )?;
+    let digest = vault.proactivity_digest(&owner, 100_000, None)?.unwrap();
+    assert!(
+        digest
+            .groups
+            .values()
+            .flatten()
+            .any(|item| item.claim_ref == proposed.0)
+    );
+
+    // A new nightly attempt and a later retry see the same source revision.
+    // Neither creates a new proposal ID or resurfaces it in the digest.
+    for (trigger, now) in [
+        (CuratorTrigger::Nightly, 186_400),
+        (CuratorTrigger::Idle, 272_800),
+    ] {
+        vault.schedule_curator(trigger, now)?;
+        drive(&vault, now)?;
+        let proposals: Vec<_> = claims(&vault, &target)?
+            .into_iter()
+            .filter(|(_, body)| body.predicate == "dreamer.curator.proposal")
+            .collect();
+        assert_eq!(proposals.len(), 1);
+        assert_eq!(proposals[0].0, proposed.0);
+        assert!(vault.proactivity_digest(&owner, now, None)?.is_none());
+    }
     Ok(())
 }
 #[test]
@@ -154,8 +209,8 @@ fn config_artifact_version_and_backbone_change_emits_retune_proposal() -> Result
         )?;
         drive(&vault, time)?;
     }
-    let claims = claims(&vault, &artifact)?;
-    let proposals: Vec<_> = claims
+    let artifact_claims = claims(&vault, &artifact)?;
+    let proposals: Vec<_> = artifact_claims
         .iter()
         .filter(|(_, body)| body.predicate == "dreamer.harness.retune_proposal")
         .collect();
@@ -165,6 +220,177 @@ fn config_artifact_version_and_backbone_change_emits_retune_proposal() -> Result
         serde_json::from_str(proposals[0].1.value.as_str().unwrap()).unwrap();
     assert_eq!(value["backbone_changed"], true);
     assert_eq!(value["targets"].as_array().unwrap().len(), 3);
+    // Only the prompt changed in the next immutable config version. A real
+    // regression must flag the changed surface, not every tuning knob.
+    let config = DreamerTuningConfig {
+        backbone: "backbone-b".into(),
+        prompts: vec!["prompt/version-2".into()],
+        weights: std::collections::BTreeMap::from([("type_prior".into(), 0.7)]),
+        manifest_thresholds: std::collections::BTreeMap::from([("auto".into(), 0.8)]),
+    };
+    let version = vault.append_blob_artifact_version(
+        &artifact,
+        &serde_json::to_vec(&config).unwrap(),
+        &crate::blob_artifact::BlobVersionProvenance::UserUpload,
+        actor,
+        TimeRange { start: 30, end: 30 },
+        30,
+    )?;
+    vault.schedule_harness_evaluation(
+        &HarnessEvaluation {
+            artifact,
+            version: version.version,
+            score: 0.6,
+        },
+        30,
+    )?;
+    drive(&vault, 30)?;
+    let proposals: Vec<_> = claims(&vault, &artifact)?
+        .into_iter()
+        .filter(|(_, body)| body.predicate == "dreamer.harness.retune_proposal")
+        .collect();
+    assert_eq!(proposals.len(), 2);
+    let values: Vec<serde_json::Value> = proposals
+        .iter()
+        .map(|(_, body)| serde_json::from_str(body.value.as_str().unwrap()).unwrap())
+        .collect();
+    let value = values
+        .iter()
+        .find(|value| value["version"] == version.version)
+        .unwrap();
+    assert_eq!(value["score_regressed"], true);
+    assert_eq!(value["backbone_changed"], false);
+    assert_eq!(value["targets"], serde_json::json!(["prompts"]));
+    for (time, score, weight, threshold, target) in [
+        (40, 0.4, 0.6, 0.8, "weights"),
+        (50, 0.2, 0.6, 0.7, "manifest_thresholds"),
+    ] {
+        let config = DreamerTuningConfig {
+            backbone: "backbone-b".into(),
+            prompts: vec!["prompt/version-2".into()],
+            weights: std::collections::BTreeMap::from([("type_prior".into(), weight)]),
+            manifest_thresholds: std::collections::BTreeMap::from([("auto".into(), threshold)]),
+        };
+        let version = vault.append_blob_artifact_version(
+            &artifact,
+            &serde_json::to_vec(&config).unwrap(),
+            &crate::blob_artifact::BlobVersionProvenance::UserUpload,
+            actor,
+            TimeRange {
+                start: time,
+                end: time,
+            },
+            time,
+        )?;
+        vault.schedule_harness_evaluation(
+            &HarnessEvaluation {
+                artifact,
+                version: version.version,
+                score,
+            },
+            time,
+        )?;
+        drive(&vault, time)?;
+        let proposals = claims(&vault, &artifact)?;
+        let value: serde_json::Value = proposals
+            .iter()
+            .filter(|(_, body)| body.predicate == "dreamer.harness.retune_proposal")
+            .map(|(_, body)| serde_json::from_str(body.value.as_str().unwrap()).unwrap())
+            .find(|value: &serde_json::Value| value["version"] == version.version)
+            .unwrap();
+        assert_eq!(value["targets"], serde_json::json!([target]));
+    }
+    Ok(())
+}
+
+#[test]
+fn score_regression_flags_only_targets_past_their_v1_cutoffs() -> Result<()> {
+    let (_dir, vault) = open_test_vault_with(embedding_test_config());
+    let owner = entity(0x63);
+    let artifact = entity(0x64);
+    vault.put_entity(
+        &owner,
+        crate::registry::ENTITY_TYPE_PERSON,
+        TimeRange { start: 1, end: 1 },
+        1,
+        b"owner",
+    )?;
+    vault.put_blob_artifact(
+        &artifact,
+        &crate::blob_artifact::BlobArtifactBody::new("dreamer-config.json", "application/json"),
+        TimeRange { start: 1, end: 1 },
+        1,
+    )?;
+    let config = DreamerTuningConfig {
+        backbone: "backbone-a".into(),
+        prompts: vec!["prompt/version-1".into()],
+        weights: std::collections::BTreeMap::from([("type_prior".into(), 0.7)]),
+        manifest_thresholds: std::collections::BTreeMap::from([("auto".into(), 0.8)]),
+    };
+    let bytes = serde_json::to_vec(&config).unwrap();
+    let actor = WriteActor::new(owner, EdgeActorClass::Human);
+    // Each improvement resets the observed baseline. A config-version bump with
+    // the same backbone must not turn a small score drift into an all-target flag.
+    let mut expected_count = 0;
+    for (time, score, expected) in [
+        (10, 0.90, None),
+        (20, 0.86, None),
+        (30, 0.90, None),
+        (40, 0.84, Some(vec!["prompts"])),
+        (50, 0.90, None),
+        (60, 0.81, Some(vec!["prompts", "weights"])),
+        (70, 0.90, None),
+        (
+            80,
+            0.79,
+            Some(vec!["prompts", "weights", "manifest_thresholds"]),
+        ),
+    ] {
+        let version = vault.append_blob_artifact_version(
+            &artifact,
+            &bytes,
+            &crate::blob_artifact::BlobVersionProvenance::UserUpload,
+            actor,
+            TimeRange {
+                start: time,
+                end: time,
+            },
+            time,
+        )?;
+        vault.schedule_harness_evaluation(
+            &HarnessEvaluation {
+                artifact,
+                version: version.version,
+                score,
+            },
+            time,
+        )?;
+        drive(&vault, time)?;
+        let proposals: Vec<_> = claims(&vault, &artifact)?
+            .into_iter()
+            .filter(|(_, body)| body.predicate == "dreamer.harness.retune_proposal")
+            .collect();
+        if let Some(expected) = expected {
+            expected_count += 1;
+            let (body, value) = proposals
+                .iter()
+                .find_map(|(_, body)| {
+                    let value: serde_json::Value =
+                        serde_json::from_str(body.value.as_str().unwrap()).unwrap();
+                    (value["version"] == version.version).then_some((body, value))
+                })
+                .expect("proposal for the evaluated artifact version");
+            assert_eq!(value["backbone_changed"], false);
+            assert_eq!(value["targets"], serde_json::json!(expected));
+            assert_eq!(body.approval, ClaimApprovalStatus::Proposed);
+        }
+        assert_eq!(
+            proposals.len(),
+            expected_count,
+            "at version {}",
+            version.version
+        );
+    }
     Ok(())
 }
 
@@ -194,7 +420,9 @@ fn maintenance_revalidates_owner_in_target_vault() -> Result<()> {
     let rubric: CuratorRubric =
         serde_json::from_str(include_str!("curator_defaults.json")).unwrap();
     let thresholds = RetuneThresholds {
-        score_regression: 0.1,
+        prompts_score_regression: 0.1,
+        weights_score_regression: 0.1,
+        manifest_thresholds_score_regression: 0.1,
     };
     let refuse = |target: &Vault| -> Result<()> {
         for result in [
@@ -212,6 +440,15 @@ fn maintenance_revalidates_owner_in_target_vault() -> Result<()> {
     };
     refuse(&vault)?;
     other.set_proactivity_cadence(&proof, &cadence)?;
+    let mut invalid_rubric = rubric.clone();
+    invalid_rubric.questions.freshness.clear();
+    assert_eq!(
+        other
+            .set_curator_rubric(&proof, &invalid_rubric)
+            .unwrap_err()
+            .kind(),
+        crate::ErrorKind::InvalidConfig
+    );
     other.set_curator_rubric(&proof, &rubric)?;
     other.set_retune_thresholds(&proof, &thresholds)?;
     other.with_write_txn(|txn| {

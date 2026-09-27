@@ -22,7 +22,7 @@ doctest = true
 oneiron-seal = { version = "0.1.0", path = "../oneiron-seal" }
 lopdf = { version = "=0.44.0", default-features = false }
 qrcode = { version = "=0.14.1", default-features = false }
-wasmtime = { version = "=48.0.2", optional = true, default-features = false, features = ["component-model", "cranelift", "runtime", "std", "wat"] }
+wasmtime = { version = "=48.0.2", default-features = false, features = ["component-model", "cranelift", "runtime", "std", "wat"] }
 heed = { workspace = true }
 half = "2"
 uuid = { workspace = true }
@@ -30,6 +30,8 @@ uuid = { workspace = true }
 # paths, including the non-sync build (ONE-1140, OD-1/OD-2).
 ed25519-dalek = { workspace = true }
 rand_core = { workspace = true }
+rand = "0.8"
+rand_distr = "0.4"
 thiserror = { workspace = true }
 rmp-serde = { workspace = true }
 rmpv = { workspace = true, features = ["with-serde"] }
@@ -38,13 +40,14 @@ serde = { workspace = true }
 schemars = "=0.8.22"
 serde_json = { workspace = true }
 serde_path_to_error = "0.1"
-jsonschema = { version = "0.33", default-features = false }
 postcard = { workspace = true, optional = true }
 blake3 = { workspace = true }
 # SECRET-02 (ONE-1920): lease materialization returns the value wrapped in
 # `zeroize::Zeroizing` so the caller's copy is scrubbed on drop. No other
 # deps are added by that ticket.
 zeroize = "1"
+# Per-claim hot-value AEAD for erasure-target gate decisions.
+aes-gcm = "0.10"
 p256 = { workspace = true }
 regex = { workspace = true }
 futures-core = { workspace = true }
@@ -54,6 +57,8 @@ arc-swap = { workspace = true }
 # independently of the session. rust_backend (miniz_oxide) keeps it pure Rust,
 # and both crates were already resolved transitively, so this adds no new deps.
 flate2 = "1"
+# OPC workbook/link and formula validation must parse XML namespaces and entities.
+quick-xml = "=0.42.0"
 gix = { version = "0.85.0", default-features = false, features = ["revision", "sha1"] }
 tiktoken-rs = "0.12.0"
 sha2 = "0.10"
@@ -73,7 +78,7 @@ tokio = { version = "1", features = ["net", "sync", "time", "rt", "macros"], opt
 tokio-tungstenite = { version = "0.26", optional = true }
 base64 = { version = "0.22", optional = true }
 futures-util = { version = "0.3", optional = true }
-zstd = { version = "0.13", optional = true }
+zstd = "0.13"
 tracing = { version = "0.1" }
 whichlang = "0.1.1"
 rust-stemmers = "1.2.0"
@@ -170,9 +175,8 @@ libc = "0.2"
 windows-sys = { version = "0.61", features = ["Win32_Storage_FileSystem"] }
 
 [features]
-code-sandbox-wasmtime = ["dep:wasmtime"]
+code-sandbox-wasmtime = []
 image-station-ocr = ["dep:ocrs", "dep:rten"]
-artifact-publish-verb = []
 # CODE-01 (ONE-1429): the isolating microVM backend for foreign/ingested guest
 # code. Linux-only (Firecracker is a KVM VMM), off by default, and even with
 # the feature on `FirecrackerBackend::detect` returns None unless the host
@@ -189,7 +193,6 @@ sync = [
     "dep:tokio-tungstenite",
     "dep:base64",
     "dep:futures-util",
-    "dep:zstd",
     "dep:postcard",
 ]
 # Compiles in cross-crate test-only fault-injection seams (e.g. the lease
@@ -213,7 +216,6 @@ p256 = { workspace = true, features = ["pkcs8"] }
 # nextest / CI / verify.sh flag-free — no --features needed.
 oneiron = { path = ".", features = ["test-support"] }
 tempfile = "3"
-rand = "0.8"
 proptest = "1"
 # ONE-1572 (B11-2b): compile-fail proof that the sealed relay-attestation
 # witness cannot be constructed outside the boundary. Dev-only; no runtime

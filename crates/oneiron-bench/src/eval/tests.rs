@@ -9,6 +9,8 @@ use std::path::Path;
 /// column is non-degenerate and the tuner sees blend-signal components.
 const HALF_LIFE_DAYS: f32 = 90.0;
 const HALF_LIFE_SECS: u64 = 90 * 86_400;
+const FIXTURE_TURN_ID: [u8; 16] = [7; 16];
+const FIXTURE_MEMORY_ID: [u8; 16] = [0x41; 16];
 const PROVENANCE: &[(&str, &str)] = &[("evaluator", "judge.v1"), ("source", "beam.eval")];
 
 fn unix_now_secs() -> u64 {
@@ -18,7 +20,8 @@ fn unix_now_secs() -> u64 {
         .as_secs()
 }
 
-fn open_vault_with(path: &Path, config: VaultConfig) -> Vault {
+fn open_vault_with(path: &Path, mut config: VaultConfig) -> Vault {
+    config.retrieval_telemetry_capture = true;
     Vault::open(path, config).expect("vault opens")
 }
 
@@ -127,8 +130,7 @@ fn run_existing_eval(argv: &[String]) -> bool {
     supported
 }
 
-fn put_text(vault: &Vault, text: &str, learned_at: u64) {
-    let id = EntityId::now();
+fn put_text(vault: &Vault, id: EntityId, text: &str, learned_at: u64) {
     vault
         .batch()
         .put(
@@ -147,8 +149,18 @@ fn put_text(vault: &Vault, text: &str, learned_at: u64) {
 /// score components, and returns their run ids.
 fn seed_retrieval_runs(vault: &Vault, count: usize) -> Vec<RetrievalRunId> {
     let now = unix_now_secs();
-    put_text(vault, "eval fixture alpha", now);
-    put_text(vault, "eval fixture beta", now - HALF_LIFE_SECS);
+    put_text(
+        vault,
+        EntityId::from_bytes(FIXTURE_MEMORY_ID).expect("fixture memory id"),
+        "eval fixture alpha",
+        now,
+    );
+    put_text(
+        vault,
+        EntityId::from_bytes([0x42; 16]).expect("fixture second id"),
+        "eval fixture beta",
+        now - HALF_LIFE_SECS,
+    );
 
     let mut run_ids = Vec::with_capacity(count);
     for _ in 0..count {
@@ -157,29 +169,52 @@ fn seed_retrieval_runs(vault: &Vault, count: usize) -> Vec<RetrievalRunId> {
             .search_text("eval fixture", 10)
             .boost_recency(HALF_LIFE_DAYS)
             .with_temporal_now(now)
+            .retrieval_turn(oneiron::store::RetrievalTurn {
+                turn_id: FIXTURE_TURN_ID,
+                episode_id: [8; 16],
+                turn_idx: 0,
+            })
             .run_with_telemetry()
             .expect("fixture retrieval");
         assert_eq!(results.value.len(), 2);
+        assert!(
+            results
+                .value
+                .iter()
+                .any(|hit| hit.id.as_bytes() == &FIXTURE_MEMORY_ID)
+        );
         run_ids.push(results.run_id.expect("telemetry run id"));
     }
     run_ids
 }
 
-fn reward_row(run_id: RetrievalRunId, metadata: &[(&str, &str)]) -> RewardRow {
+fn hex_id(bytes: [u8; 16]) -> String {
+    bytes
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect::<Vec<_>>()
+        .join("")
+}
+
+fn end_outcome_row(run_id: RetrievalRunId, metadata: &[(&str, &str)]) -> EndOutcomeRow {
     let mut fields = BTreeMap::new();
     for (key, value) in metadata {
         fields.insert((*key).to_owned(), (*value).to_owned());
     }
-    RewardRow {
+    EndOutcomeRow {
         run_id: run_id.to_hex(),
-        reward: 0.75,
-        accepted: true,
+        turn_id: hex_id(FIXTURE_TURN_ID),
+        activated_memory_id: hex_id(FIXTURE_MEMORY_ID),
+        gate_score: 0.75,
+        confirmed_fact_hit: true,
+        latency_scale_us: 1,
+        cost_weight: 0.0,
         key: None,
         metadata: fields,
     }
 }
 
-fn jsonl(rows: &[RewardRow]) -> String {
+fn jsonl(rows: &[EndOutcomeRow]) -> String {
     let mut lines = Vec::with_capacity(rows.len());
     for row in rows {
         lines.push(serde_json::to_string(row).expect("row json"));
@@ -212,9 +247,8 @@ fn eval_outcome_ingest_applies_evaluator_reward_with_provenance_metadata() {
     let vault = open_vault(tempdir.path());
     let run_id = seed_retrieval_runs(&vault, 1)[0];
     let mut metadata = PROVENANCE.to_vec();
-    metadata.push(("turn_id", "turn-7"));
     metadata.push(("session_id", "session-3"));
-    let rows = jsonl(&[reward_row(run_id, &metadata)]);
+    let rows = jsonl(&[end_outcome_row(run_id, &metadata)]);
 
     let ingested = ingest(&vault, &rows, Some("beam.reward")).expect("ingest");
 
@@ -227,7 +261,13 @@ fn eval_outcome_ingest_applies_evaluator_reward_with_provenance_metadata() {
     assert_eq!(outcome.accepted, Some(true));
     assert_eq!(metadata_of(outcome, "evaluator"), Some("judge.v1"));
     assert_eq!(metadata_of(outcome, "source"), Some("beam.eval"));
-    assert_eq!(metadata_of(outcome, "turn_id"), Some("turn-7"));
+    let evidence = outcome
+        .reward_evidence
+        .as_ref()
+        .expect("gated terminal evidence");
+    assert_eq!(evidence.turn_id, FIXTURE_TURN_ID);
+    assert_eq!(evidence.activated_memory_id, FIXTURE_MEMORY_ID);
+    assert_eq!(evidence.gate_score, 0.75);
     assert_eq!(metadata_of(outcome, "session_id"), Some("session-3"));
 }
 
@@ -242,7 +282,7 @@ fn eval_outcome_ingest_refuses_rows_without_provenance_before_any_vault_write() 
         vec![("evaluator", "judge.v1")],
         vec![("evaluator", " "), ("source", "beam.eval")],
     ] {
-        let rows = jsonl(&[reward_row(run_id, &metadata)]);
+        let rows = jsonl(&[end_outcome_row(run_id, &metadata)]);
         let result = ingest(&vault, &rows, Some("beam.reward"));
         let (row, applied, reason) = rejected_row(result.expect_err("refused"));
         assert_eq!(row, 1);
@@ -255,22 +295,77 @@ fn eval_outcome_ingest_refuses_rows_without_provenance_before_any_vault_write() 
 }
 
 #[test]
-fn eval_outcome_ingest_refuses_a_non_finite_reward_before_any_vault_write() {
+fn eval_outcome_ingest_refuses_a_non_finite_gate_before_any_vault_write() {
     let tempdir = tempfile::tempdir().expect("tempdir");
     let vault = open_vault(tempdir.path());
     let run_id = seed_retrieval_runs(&vault, 1)[0];
-    let hex = run_id.to_hex();
-    let metadata = r#""metadata":{"evaluator":"judge.v1","source":"beam.eval"}"#;
-    let rows = format!(r#"{{"run_id":"{hex}","reward":1e40,"accepted":true,{metadata}}}"#);
+    let rows = format!(
+        r#"{{"run_id":"{}","turn_id":"{}","activated_memory_id":"{}","gate_score":1e40,"confirmed_fact_hit":true,"latency_scale_us":1,"cost_weight":0.0,"metadata":{{"evaluator":"judge.v1","source":"beam.eval"}}}}"#,
+        run_id.to_hex(),
+        hex_id(FIXTURE_TURN_ID),
+        hex_id(FIXTURE_MEMORY_ID),
+    );
 
     let result = ingest(&vault, &rows, Some("beam.reward"));
 
     let (row, applied, reason) = rejected_row(result.expect_err("refused"));
     assert_eq!(row, 1);
     assert_eq!(applied, 0);
-    assert!(reason.contains("finite"), "{reason}");
+    assert!(reason.contains("out of range"), "{reason}");
     let outcomes = vault.retrieval_outcomes(run_id).expect("outcomes");
     assert!(outcomes.is_empty());
+}
+
+#[test]
+fn eval_outcome_ingest_requires_a_real_terminal_gate_not_a_raw_reward() {
+    let tempdir = tempfile::tempdir().expect("tempdir");
+    let vault = open_vault(tempdir.path());
+    let run_id = seed_retrieval_runs(&vault, 1)[0];
+    let raw = format!(
+        r#"{{"run_id":"{}","reward":1.0,"accepted":true,"metadata":{{"evaluator":"judge.v1","source":"beam.eval"}}}}"#,
+        run_id.to_hex(),
+    );
+    let (row, applied, reason) = rejected_row(
+        ingest(&vault, &raw, Some("beam.reward")).expect_err("raw reward cannot imply a gate"),
+    );
+    assert_eq!((row, applied), (1, 0));
+    assert!(reason.contains("terminal outcome"), "{reason}");
+    assert!(
+        vault
+            .retrieval_outcomes(run_id)
+            .expect("outcomes")
+            .is_empty()
+    );
+    assert!(
+        vault
+            .tune_retrieval_blend_weights(RetrievalBlendTuningConfig::default())
+            .is_err()
+    );
+
+    let mut terminal = end_outcome_row(run_id, PROVENANCE);
+    terminal.gate_score = 0.5;
+    terminal.cost_weight = 0.001;
+    terminal.latency_scale_us = 1;
+    assert_eq!(
+        ingest(&vault, &jsonl(&[terminal]), Some("beam.reward")).expect("terminal"),
+        1
+    );
+    let run = vault.retrieval_runs(1).expect("runs").pop().expect("run");
+    let outcome = vault
+        .retrieval_outcomes(run_id)
+        .expect("outcomes")
+        .pop()
+        .expect("outcome");
+    let expected = 0.5 - 0.001 * (run.elapsed_us as f32 + f32::from(run.state.hops));
+    assert!((outcome.reward.expect("reward") - expected).abs() < 1e-4);
+    assert_eq!(
+        vault
+            .tune_retrieval_blend_weights(RetrievalBlendTuningConfig::default())
+            .expect("terminal label trains")
+            .data_window
+            .outcome_count,
+        1,
+    );
 }
 
 #[test]
@@ -278,7 +373,7 @@ fn eval_outcome_ingest_needs_a_key_source_and_lets_the_row_override_it() {
     let tempdir = tempfile::tempdir().expect("tempdir");
     let vault = open_vault(tempdir.path());
     let run_id = seed_retrieval_runs(&vault, 1)[0];
-    let rows = jsonl(&[reward_row(run_id, PROVENANCE)]);
+    let rows = jsonl(&[end_outcome_row(run_id, PROVENANCE)]);
 
     let result = ingest(&vault, &rows, None);
 
@@ -287,7 +382,7 @@ fn eval_outcome_ingest_needs_a_key_source_and_lets_the_row_override_it() {
     assert_eq!(applied, 0);
     assert!(reason.contains("no outcome key"), "{reason}");
 
-    let mut overriding = reward_row(run_id, PROVENANCE);
+    let mut overriding = end_outcome_row(run_id, PROVENANCE);
     overriding.key = Some("row.reward".to_owned());
     let rows = jsonl(&[overriding]);
     let ingested = ingest(&vault, &rows, Some("flag.reward")).expect("ingest");
@@ -303,9 +398,9 @@ fn eval_outcome_ingest_stops_at_the_first_rejected_row_and_keeps_earlier_rows() 
     let vault = open_vault(tempdir.path());
     let run_id = seed_retrieval_runs(&vault, 1)[0];
     let rows = jsonl(&[
-        reward_row(run_id, PROVENANCE),
-        reward_row(RetrievalRunId::now(), PROVENANCE),
-        reward_row(run_id, PROVENANCE),
+        end_outcome_row(run_id, PROVENANCE),
+        end_outcome_row(RetrievalRunId::now(), PROVENANCE),
+        end_outcome_row(run_id, PROVENANCE),
     ]);
 
     let result = ingest(&vault, &rows, Some("beam.reward"));
@@ -329,7 +424,7 @@ fn eval_outcome_ingest_applies_a_jsonl_file_against_the_named_vault() {
     let run_id = seed_retrieval_runs(&vault, 1)[0];
     drop(vault);
     let rewards_path = tempdir.path().join("rewards.jsonl");
-    let rows = jsonl(&[reward_row(run_id, PROVENANCE)]);
+    let rows = jsonl(&[end_outcome_row(run_id, PROVENANCE)]);
     std::fs::write(&rewards_path, rows).expect("rewards file");
 
     let applied = run_existing_eval(&eval_argv(
@@ -415,7 +510,7 @@ fn eval_tune_persists_and_prints_the_bounded_weight_table_entry() {
     let tempdir = tempfile::tempdir().expect("tempdir");
     let vault = open_vault(tempdir.path());
     let run_id = seed_retrieval_runs(&vault, 1)[0];
-    let rows = jsonl(&[reward_row(run_id, PROVENANCE)]);
+    let rows = jsonl(&[end_outcome_row(run_id, PROVENANCE)]);
     let ingested = ingest(&vault, &rows, Some("beam.reward")).expect("ingest");
     assert_eq!(ingested, 1);
     let before = vault.retrieval_blend_weight_table().expect("table");
@@ -459,7 +554,7 @@ fn eval_tune_honors_the_max_runs_bound() {
     let run_ids = seed_retrieval_runs(&vault, 2);
     let mut rows = Vec::with_capacity(run_ids.len());
     for run_id in &run_ids {
-        rows.push(reward_row(*run_id, PROVENANCE));
+        rows.push(end_outcome_row(*run_id, PROVENANCE));
     }
     let ingested = ingest(&vault, &jsonl(&rows), Some("beam.reward")).expect("ingest");
     assert_eq!(ingested, 2);
@@ -612,7 +707,7 @@ fn eval_outcome_ingest_opens_a_non_device_vault_through_the_explicit_config() {
     // below is doing the work rather than coinciding with a default.
     assert!(Vault::open(tempdir.path(), VaultConfig::device()).is_err());
     let rewards_path = tempdir.path().join("rewards.jsonl");
-    let rows = jsonl(&[reward_row(run_id, PROVENANCE)]);
+    let rows = jsonl(&[end_outcome_row(run_id, PROVENANCE)]);
     std::fs::write(&rewards_path, rows).expect("rewards file");
 
     let applied = run_existing_eval(&eval_argv(
@@ -652,7 +747,7 @@ fn eval_tune_opens_a_non_device_vault_through_the_explicit_config() {
     let run_id = seed_non_device_vault(tempdir.path(), 1)[0];
     assert!(Vault::open(tempdir.path(), VaultConfig::device()).is_err());
     let vault = open_vault_with(tempdir.path(), non_device_vault_config());
-    let rows = jsonl(&[reward_row(run_id, PROVENANCE)]);
+    let rows = jsonl(&[end_outcome_row(run_id, PROVENANCE)]);
     assert_eq!(
         ingest(&vault, &rows, Some("beam.reward")).expect("ingest"),
         1
@@ -692,7 +787,7 @@ fn eval_outcome_ingest_refuses_an_incomplete_or_disagreeing_vault_config() {
     let tempdir = tempfile::tempdir().expect("tempdir");
     let run_id = seed_non_device_vault(tempdir.path(), 1)[0];
     let rewards_path = tempdir.path().join("rewards.jsonl");
-    let rows = jsonl(&[reward_row(run_id, PROVENANCE)]);
+    let rows = jsonl(&[end_outcome_row(run_id, PROVENANCE)]);
     std::fs::write(&rewards_path, rows).expect("rewards file");
     let reward_flags = vec![
         "--rewards".to_owned(),
@@ -720,7 +815,7 @@ fn eval_tune_refuses_an_incomplete_or_disagreeing_vault_config() {
     let tempdir = tempfile::tempdir().expect("tempdir");
     let run_id = seed_non_device_vault(tempdir.path(), 1)[0];
     let vault = open_vault_with(tempdir.path(), non_device_vault_config());
-    let rows = jsonl(&[reward_row(run_id, PROVENANCE)]);
+    let rows = jsonl(&[end_outcome_row(run_id, PROVENANCE)]);
     assert_eq!(
         ingest(&vault, &rows, Some("beam.reward")).expect("ingest"),
         1
@@ -859,7 +954,7 @@ fn eval_outcome_ingest_refuses_model_none_against_a_stamped_vault() {
     assert!(tolerated.is_ok(), "the storage gate tolerates this open");
     drop(tolerated);
     let rewards_path = tempdir.path().join("rewards.jsonl");
-    let rows = jsonl(&[reward_row(run_id, PROVENANCE)]);
+    let rows = jsonl(&[end_outcome_row(run_id, PROVENANCE)]);
     std::fs::write(&rewards_path, rows).expect("rewards file");
 
     let exit = run(&eval_argv(
@@ -927,7 +1022,7 @@ fn eval_reopens_a_custom_dictionary_vault_for_outcome_ingest_and_tune() {
     let without_dicts = Vault::open(&vault_path, non_device_vault_config());
     assert!(without_dicts.is_err());
     let rewards_path = tempdir.path().join("rewards.jsonl");
-    let rows = jsonl(&[reward_row(run_id, PROVENANCE)]);
+    let rows = jsonl(&[end_outcome_row(run_id, PROVENANCE)]);
     std::fs::write(&rewards_path, rows).expect("rewards file");
     let reward_flags = vec![
         "--rewards".to_owned(),
@@ -1042,7 +1137,7 @@ fn eval_outcome_ingest_refuses_a_supplied_model_against_an_unstamped_vault() {
     let run_id = seed_retrieval_runs(&vault, 1)[0];
     drop(vault);
     let rewards_path = tempdir.path().join("rewards.jsonl");
-    let rows = jsonl(&[reward_row(run_id, PROVENANCE)]);
+    let rows = jsonl(&[end_outcome_row(run_id, PROVENANCE)]);
     std::fs::write(&rewards_path, rows).expect("rewards file");
     let mut supplied = vectorless.clone();
     supplied.embedding_model = Some("oneiron/eval-fixture@v1".to_owned());
