@@ -322,8 +322,10 @@ pub(crate) mod test_support {
 
     pub(super) fn open_calendar_vault_with_machine_identity() -> (tempfile::TempDir, Vault) {
         let clock = crate::ports::ManualClock::new(1_800_000_000);
-        let mut config = VaultConfig::default();
-        config.store_clock = clock.bundle();
+        let config = VaultConfig {
+            store_clock: clock.bundle(),
+            ..VaultConfig::default()
+        };
         let (dir, vault) = crate::test_util::open_test_vault_with(config);
         provision_test_calendar_importer(&vault, &clock);
         (dir, vault)
