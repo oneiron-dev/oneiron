@@ -194,39 +194,22 @@ pub(crate) fn is_sub_session_record(
     let Some(session) = session else {
         return Ok(false);
     };
-    let body = require_type(store, txn, &session, crate::registry::ENTITY_TYPE_SESSION)?;
-    let spawned = super::redacted::spawned_by(store, txn, &session)?
-        .into_iter()
-        .collect::<Vec<_>>();
-    // A synchronized session's source anchor prevents a missing/late SpawnedBy
-    // edge from temporarily reclassifying its worker records as trunk records.
-    if let Ok(rmpv::Value::Map(fields)) = rmpv::decode::read_value(&mut body.as_slice()) {
-        let anchors: Vec<_> = fields
-            .iter()
-            .filter(|(k, _)| k.as_str() == Some("dag_spawning_turn"))
-            .collect();
-        if let Some((_, value)) = anchors.first() {
-            let anchor = value
-                .as_str()
-                .and_then(|value| EntityId::from_hex(value).ok())
-                .ok_or(invalid("invalid sub-session anchor"))?;
-            if anchors.len() != 1 || spawned != [anchor] {
-                return Err(invalid("sub-session anchor has not been reconciled"));
-            }
+    let conversation = conversation_of(store, txn, record)?;
+    match super::topology::classify_session(store, txn, session, conversation)? {
+        super::topology::Fact::Known(super::topology::SessionPlacement::Ordinary { .. }) => {
+            Ok(false)
         }
+        super::topology::Fact::Known(
+            placement @ super::topology::SessionPlacement::Spawned { .. },
+        ) => {
+            super::membership::validate_topology(store, txn, conversation, *record, placement)?;
+            Ok(true)
+        }
+        super::topology::Fact::Wait(_) => {
+            Err(invalid("sub-session anchor has not been reconciled"))
+        }
+        super::topology::Fact::Reject(reason) => Err(reason.into_error()),
     }
-    if spawned.len() > 1 {
-        return Err(invalid("session has multiple SpawnedBy edges"));
-    }
-    if !spawned.is_empty() {
-        super::membership::validate_topology(
-            store,
-            txn,
-            conversation_of(store, txn, record)?,
-            *record,
-        )?;
-    }
-    Ok(!spawned.is_empty())
 }
 
 pub(super) fn is_thread_record(store: &Store, txn: &RoTxn<'_>, record: &EntityId) -> Result<bool> {
@@ -234,7 +217,7 @@ pub(super) fn is_thread_record(store: &Store, txn: &RoTxn<'_>, record: &EntityId
         LiveEntityRow::Live {
             entity_type: ENTITY_TYPE_TURN,
             body,
-        } => Ok(super::admission::record_kind(&body)? == Some("thread")),
+        } => Ok(super::topology::record_kind(&body)? == Some(super::topology::RecordKind::Thread)),
         LiveEntityRow::DeletedShell | LiveEntityRow::Absent => {
             Ok(super::redacted::read(store, txn, record)?
                 .ok_or(Error::EntityNotFound)?

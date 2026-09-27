@@ -126,6 +126,7 @@ pub(super) fn apply_set_edge_weight(
     weight: f32,
 ) -> Result<()> {
     validate_edge_weight(weight)?;
+    crate::workspace_roster::validate_project_edge_put(store, wtxn, src, kind, tgt, weight)?;
     let key_out = Store::encode_edge_key(&src, kind, &tgt);
     let key_in = Store::encode_edge_key(&tgt, kind, &src);
     let mut value = read_edge_value_for_setter(store, wtxn, &key_out)?;
@@ -229,6 +230,7 @@ pub(super) fn apply_delete_edge(
     if kind == EdgeKind::Blocks {
         return Err(Error::Registry(RegistryError::ReservedEdgeKind("blocks")));
     }
+    crate::workspace_roster::validate_project_edge_delete(store, wtxn, src, kind, tgt)?;
     crate::conversation_dag::guard_room_membership_delete(store, wtxn, &src, kind, &tgt)?;
     if matches!(
         kind,

@@ -153,6 +153,7 @@ pub(super) fn deindex_entity_without_lexical_query_hint_cascade(
     neighbors.extend(related_neighbors);
 
     delete_short_id_rows_for_id(store, wtxn, id)?;
+    crate::federation::record_scope::retire_stamp(store, wtxn, *id)?;
 
     let Some(entity_record) = store.entities.get(wtxn, id.as_bytes())? else {
         let cleanup = crate::affect::delete_vad_annotation_metadata_in_txn(store, wtxn, id)?;

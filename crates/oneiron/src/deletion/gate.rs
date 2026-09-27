@@ -1,4 +1,5 @@
 use sha2::{Digest, Sha256};
+use std::cell::Cell;
 
 use crate::edge::EdgeActorClass;
 use crate::entity_id::EntityId;
@@ -44,9 +45,13 @@ pub(crate) struct DeletionGateContext {
 /// transaction is still pre-publication. See
 /// [`reverify_deletion_authority_before_publication`] and
 /// [`reverify_deletion_authority_when_unpublished`].
+type DeletionCheck<'a> = &'a dyn Fn(&heed::RoTxn<'_>) -> Result<()>;
+
 pub(crate) struct GatedDeletion<'a> {
     pub(super) context: DeletionGateContext,
-    reverify: &'a dyn Fn(&heed::RoTxn<'_>) -> Result<()>,
+    reverify: DeletionCheck<'a>,
+    pre_scrub_check: Option<DeletionCheck<'a>>,
+    soft_scrub_committed: Cell<bool>,
 }
 
 impl<'a> GatedDeletion<'a> {
@@ -58,11 +63,32 @@ impl<'a> GatedDeletion<'a> {
         Some((self.context.room?, self.context.room_role?))
     }
 
-    pub(crate) fn new(
+    pub(crate) fn new(context: DeletionGateContext, reverify: DeletionCheck<'a>) -> Self {
+        Self {
+            context,
+            reverify,
+            pre_scrub_check: None,
+            soft_scrub_committed: Cell::new(false),
+        }
+    }
+
+    /// A preview check stays active through reservation and local scrub, but
+    /// not publication after that scrub has deliberately changed the body.
+    pub(crate) fn with_pre_scrub_check(
         context: DeletionGateContext,
-        reverify: &'a dyn Fn(&heed::RoTxn<'_>) -> Result<()>,
+        reverify: DeletionCheck<'a>,
+        check: DeletionCheck<'a>,
     ) -> Self {
-        Self { context, reverify }
+        Self {
+            context,
+            reverify,
+            pre_scrub_check: Some(check),
+            soft_scrub_committed: Cell::new(false),
+        }
+    }
+
+    pub(super) fn note_soft_scrub_committed(&self) {
+        self.soft_scrub_committed.set(true);
     }
 }
 
@@ -86,10 +112,15 @@ pub(super) fn reverify_deletion_authority_before_publication(
     gate: Option<&GatedDeletion<'_>>,
     txn: &heed::RoTxn<'_>,
 ) -> Result<()> {
-    match gate {
-        Some(gate) => (gate.reverify)(txn),
-        None => Ok(()),
+    if let Some(gate) = gate {
+        (gate.reverify)(txn)?;
+        if !gate.soft_scrub_committed.get()
+            && let Some(check) = gate.pre_scrub_check
+        {
+            check(txn)?;
+        }
     }
+    Ok(())
 }
 
 /// Re-runs the authority check IF AND ONLY IF this delete published nothing —

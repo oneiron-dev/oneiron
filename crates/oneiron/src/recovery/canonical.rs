@@ -281,6 +281,48 @@ pub fn capture_canonical_window(
             });
         }
     }
+    // Audit identity is the validated LOCAL receipt index, not the peer's
+    // entity header or tombstone inventory. A rejected type-change (e.g. an
+    // ASSET at this ID) must not become a canonical replacement, and removal
+    // of the CRDT map key must not hide a committed event from a fresh vault.
+    let mut protected_receipts = std::collections::BTreeSet::new();
+    let mut restored_receipts = Vec::new();
+    for (receipt_id, local_blob) in
+        crate::receipt::canonical_records_in_window(&vault.store, &txn, window)?
+    {
+        let bytes = *receipt_id.as_bytes();
+        if let Some(candidate) = snapshot.entity_blobs.iter().find(|row| row.id == bytes) {
+            if candidate.blob != local_blob {
+                return Err(Error::CorruptedIndex(
+                    "canonical receipt record carrier diverged",
+                ));
+            }
+        } else {
+            restored_receipts.push(CanonicalEntity {
+                id: bytes,
+                blob: local_blob,
+            });
+        }
+        protected_receipts.insert(bytes);
+    }
+    // A receipt-shaped CRDT row that never passed local audit admission is
+    // not a source of deletion immunity or an exportable receipt. Refuse the
+    // snapshot rather than shipping an artifact whose rebuild will discard it.
+    for row in &snapshot.entity_blobs {
+        if crate::batch::EntityMetadataHeader::parse(&row.blob)
+            .is_some_and(|header| header.entity_type == crate::registry::ENTITY_TYPE_RECEIPT_RECORD)
+            && !protected_receipts.contains(&row.id)
+        {
+            return Err(Error::CorruptedIndex(
+                "canonical receipt record not materialized",
+            ));
+        }
+    }
+    snapshot.entity_blobs.extend(restored_receipts);
+    snapshot
+        .tombstones
+        .retain(|row| !protected_receipts.contains(&row.id));
+
     // Hard deletion removes the payload and graph. Soft deletion retains only
     // the exact header and surviving Layer-1 edges, never an old body. The live
     // map may have removed that header already, so recover it from the store.
