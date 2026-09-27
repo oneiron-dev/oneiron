@@ -220,8 +220,12 @@ pub struct ConnectorKeyRecord {
     pub slate_ref: Option<EntityId>,
     /// Pinned negotiated revision; any change sends the key back to Pending.
     pub protocol_revision: Option<String>,
-    /// Slate revision accepted at the last qualification (or held for re-consent).
+    /// Slate revision accepted at the last qualification.
     pub slate_revision: Option<u64>,
+    /// Monotonic admission generation, invalidating probes on every revision change.
+    pub admission_epoch: u64,
+    /// Whether this admission requires a new owner decision on expanded rows.
+    pub consent_required: bool,
 }
 
 impl ConnectorKeyRecord {
@@ -250,6 +254,8 @@ impl ConnectorKeyRecord {
             slate_ref: None,
             protocol_revision: None,
             slate_revision: None,
+            admission_epoch: 0,
+            consent_required: false,
         }
     }
 
@@ -313,7 +319,9 @@ impl ConnectorKeyRecord {
         if self.catalog.is_none()
             && (self.slate_ref.is_some()
                 || self.protocol_revision.is_some()
-                || self.slate_revision.is_some())
+                || self.slate_revision.is_some()
+                || self.admission_epoch != 0
+                || self.consent_required)
         {
             return Err(invalid_body("qualification fields require a catalog"));
         }
@@ -323,7 +331,8 @@ impl ConnectorKeyRecord {
             && self.status == ConnectorKeyStatus::Active
             && (self.slate_ref.is_none()
                 || self.protocol_revision.is_none()
-                || self.slate_revision.is_none())
+                || self.slate_revision.is_none()
+                || self.consent_required)
         {
             return Err(invalid_body("active catalog key lacks qualification"));
         }

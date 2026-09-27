@@ -101,8 +101,9 @@ pub struct QualificationCase {
 #[derive(Debug, Clone)]
 pub struct QualificationPlan {
     pub reads: Vec<QualificationCase>,
-    pub write: QualificationCase,
-    pub timeout_retry: QualificationCase,
+    /// Required for write-capable tool lists; absent for entirely read-only connectors.
+    pub write: Option<QualificationCase>,
+    pub timeout_retry: Option<QualificationCase>,
     pub handled_result_types: BTreeSet<String>,
     pub limits: QualificationLimits,
 }
@@ -178,7 +179,18 @@ pub fn qualify_connector(
         }
         exercised.insert(a.result_type);
     }
-    for (case, allow_timeout) in [(&plan.write, false), (&plan.timeout_retry, true)] {
+    let writes_declared = tools.iter().any(|tool| tool.writes);
+    if writes_declared != (plan.write.is_some() && plan.timeout_retry.is_some())
+        || plan.write.is_some() != plan.timeout_retry.is_some()
+    {
+        return Err(QualificationFailure::IncompletePlan);
+    }
+    for (case, allow_timeout) in plan
+        .write
+        .iter()
+        .map(|case| (case, false))
+        .chain(plan.timeout_retry.iter().map(|case| (case, true)))
+    {
         let tool = tools
             .iter()
             .find(|tool| tool.name == case.call.name)
@@ -205,7 +217,7 @@ pub fn qualify_connector(
         let original_state = connector.effect_state()?;
         let initial = probe(&mut *first, case, &tools, &plan.limits, oracle)?;
         calls += 1;
-        if initial.disposition == ProbeDisposition::Timeout && !allow_timeout {
+        if !allow_timeout && initial.disposition != ProbeDisposition::Answer {
             return Err(QualificationFailure::Replay);
         }
         if allow_timeout && initial.disposition != ProbeDisposition::Timeout {
@@ -216,7 +228,7 @@ pub fn qualify_connector(
         retry.call.id = format!("{}-retry", case.call.id);
         let replay = probe(&mut *second, &retry, &tools, &plan.limits, oracle)?;
         calls += 1;
-        if replay.disposition == ProbeDisposition::Timeout {
+        if replay.disposition != ProbeDisposition::Answer {
             return Err(QualificationFailure::Replay);
         }
         let after = connector.effect_state()?;
@@ -233,7 +245,7 @@ pub fn qualify_connector(
         calls += 1;
         if connector.effect_state()? != after
             || settled.result != replay.result
-            || settled.disposition != replay.disposition
+            || settled.disposition != ProbeDisposition::Answer
         {
             return Err(QualificationFailure::Replay);
         }
@@ -241,9 +253,18 @@ pub fn qualify_connector(
         // must admit a distinct effect, with all other arguments unchanged.
         retry.call.id.push_str("-distinct");
         retry.call.arguments["idempotency_key"] = Value::String(format!("{key}-distinct"));
-        probe(&mut *first, &retry, &tools, &plan.limits, oracle)?;
+        let distinct = probe(&mut *first, &retry, &tools, &plan.limits, oracle)?;
+        if distinct.disposition != ProbeDisposition::Answer
+            && !(allow_timeout && distinct.disposition == ProbeDisposition::Timeout)
+        {
+            return Err(QualificationFailure::Replay);
+        }
         retry.call.id.push_str("-retry");
-        probe(&mut *second, &retry, &tools, &plan.limits, oracle)?;
+        if probe(&mut *second, &retry, &tools, &plan.limits, oracle)?.disposition
+            != ProbeDisposition::Answer
+        {
+            return Err(QualificationFailure::Replay);
+        }
         calls += 2;
         if connector.effect_state()? == after {
             return Err(QualificationFailure::Replay);
@@ -348,6 +369,9 @@ fn validate_grounding(
             ))
     {
         return Err(QualificationFailure::Scope);
+    }
+    if reply.disposition == ProbeDisposition::Refused && !reply.writes.is_empty() {
+        return Err(QualificationFailure::Replay);
     }
     if reply.disposition == ProbeDisposition::NoRecord
         && (!reply.result.is_null()

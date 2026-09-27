@@ -23,7 +23,7 @@ pub const CONNECTOR_KEY_SCHEMA_VERSION: u64 = 3;
 /// APPEND-ONLY and position-addressed by the `KEY_*` consts below: an existing
 /// index must never move, or every stored body silently re-reads as a
 /// different field.
-pub const CONNECTOR_KEY_BODY_KEYS: [&str; 17] = [
+pub const CONNECTOR_KEY_BODY_KEYS: [&str; 19] = [
     "schema_version",
     "connector",
     "actor_entity_ref",
@@ -41,6 +41,8 @@ pub const CONNECTOR_KEY_BODY_KEYS: [&str; 17] = [
     "slate_ref",
     "protocol_revision",
     "slate_revision",
+    "admission_epoch",
+    "consent_required",
 ];
 
 const KEY_SCHEMA_VERSION: &str = CONNECTOR_KEY_BODY_KEYS[0];
@@ -60,7 +62,9 @@ const KEY_CATALOG: &str = CONNECTOR_KEY_BODY_KEYS[13];
 const KEY_SLATE_REF: &str = CONNECTOR_KEY_BODY_KEYS[14];
 const KEY_PROTOCOL_REVISION: &str = CONNECTOR_KEY_BODY_KEYS[15];
 const KEY_SLATE_REVISION: &str = CONNECTOR_KEY_BODY_KEYS[16];
-const OPTIONAL_CONNECTOR_KEY_BODY_KEYS: [&str; 7] = [
+const KEY_ADMISSION_EPOCH: &str = CONNECTOR_KEY_BODY_KEYS[17];
+const KEY_CONSENT_REQUIRED: &str = CONNECTOR_KEY_BODY_KEYS[18];
+const OPTIONAL_CONNECTOR_KEY_BODY_KEYS: [&str; 9] = [
     KEY_SUGGESTED_BUDGETS,
     KEY_SECRET_REF,
     KEY_KEY_GENERATION,
@@ -68,6 +72,8 @@ const OPTIONAL_CONNECTOR_KEY_BODY_KEYS: [&str; 7] = [
     KEY_SLATE_REF,
     KEY_PROTOCOL_REVISION,
     KEY_SLATE_REVISION,
+    KEY_ADMISSION_EPOCH,
+    KEY_CONSENT_REQUIRED,
 ];
 
 const CATALOG_ENTRY_KEYS: [&str; 6] = [
@@ -202,6 +208,14 @@ pub fn encode_connector_key_body(record: &ConnectorKeyRecord) -> Result<Vec<u8>>
         (
             Value::from(KEY_SLATE_REVISION),
             record.slate_revision.map_or(Value::Nil, Value::from),
+        ),
+        (
+            Value::from(KEY_ADMISSION_EPOCH),
+            Value::from(record.admission_epoch),
+        ),
+        (
+            Value::from(KEY_CONSENT_REQUIRED),
+            Value::from(record.consent_required),
         ),
     ]);
 
@@ -452,6 +466,10 @@ fn decode_connector_key_value(value: &Value) -> Result<ConnectorKeyRecord> {
             .map_or_else(|| Ok(None), decode_optional_string)?,
         slate_revision: optional_value(entries, KEY_SLATE_REVISION)
             .map_or_else(|| Ok(None), decode_optional_u64)?,
+        admission_epoch: optional_value(entries, KEY_ADMISSION_EPOCH)
+            .map_or(Ok(0), |v| v.as_u64().ok_or_else(malformed))?,
+        consent_required: optional_value(entries, KEY_CONSENT_REQUIRED)
+            .map_or(Ok(false), |v| v.as_bool().ok_or_else(malformed))?,
     };
     record.validate()?;
     Ok(record)

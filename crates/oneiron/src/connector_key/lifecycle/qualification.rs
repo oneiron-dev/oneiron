@@ -8,7 +8,9 @@ use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 
 use super::super::record::{ConnectorKeyRecord, ConnectorKeyStatus, invalid_body};
-use super::super::slate::read_connector_slate_in_txn;
+use super::super::slate::{
+    bind_connector_slate_in_txn, read_connector_slate_in_txn, slate_expands,
+};
 use super::super::txn::{
     append_connector_key_op_record, read_connector_key_in_txn, rewrite_connector_key_in_txn,
 };
@@ -28,6 +30,7 @@ impl Vault {
         &self,
         id: &EntityId,
         revision: &str,
+        next_slate_ref: EntityId,
         at: u64,
     ) -> Result<ConnectorKeyRecord> {
         let mut wtxn = self.store.env.write_txn()?;
@@ -39,19 +42,31 @@ impl Vault {
         {
             return Err(invalid_body("invalid connector protocol change"));
         }
-        let consent_floor = if let Some(slate_id) = record.slate_ref {
-            read_connector_slate_in_txn(self, &wtxn, slate_id)?
-                .map_or(record.slate_revision.unwrap_or(0), |slate| slate.revision())
-                .max(record.slate_revision.unwrap_or(0))
-        } else {
-            record.slate_revision.unwrap_or(0)
-        };
+        let old_slate_id = record
+            .slate_ref
+            .ok_or_else(|| invalid_body("connector slate missing"))?;
+        let old_slate = read_connector_slate_in_txn(self, &wtxn, old_slate_id)?
+            .ok_or_else(|| invalid_body("connector slate missing"))?;
+        let next_slate = read_connector_slate_in_txn(self, &wtxn, next_slate_ref)?
+            .ok_or_else(|| invalid_body("connector replacement slate missing"))?;
+        // A pending, not-yet-consented expansion cannot be washed away by
+        // another revision that makes no further expansion.
+        let expanded = record.consent_required || slate_expands(&old_slate, &next_slate);
+        if next_slate_ref != old_slate_id {
+            bind_connector_slate_in_txn(self, &mut wtxn, next_slate_ref, id)?;
+        }
+        let admission_epoch = record
+            .admission_epoch
+            .checked_add(1)
+            .ok_or(Error::ArithmeticOverflow("connector admission epoch"))?;
         let pending = ConnectorKeyRecord {
             status: ConnectorKeyStatus::Pending,
             status_changed_at: Some(at),
             suspended_reason: None,
             protocol_revision: Some(revision.to_owned()),
-            slate_revision: Some(consent_floor),
+            slate_ref: Some(next_slate_ref),
+            admission_epoch,
+            consent_required: expanded,
             ..record
         };
         pending.validate()?;
@@ -85,7 +100,7 @@ impl Vault {
     {
         // A probe may make sandbox writes. Never start it without a bound,
         // freshly owner-stamped slate for this exact admission revision.
-        let (expected_slate_id, stamped_revision, manifest_hash) = {
+        let (expected_slate_id, stamped_revision, manifest_hash, admission_epoch) = {
             let txn = self.store.env.read_txn().map_err(Error::from)?;
             let record =
                 read_connector_key_in_txn(&self.store, &txn, id)?.ok_or(Error::EntityNotFound)?;
@@ -99,12 +114,15 @@ impl Vault {
                 .ok_or_else(|| invalid_body("connector slate required"))?;
             let slate = read_connector_slate_in_txn(self, &txn, slate_id)?
                 .ok_or_else(|| invalid_body("connector slate missing"))?;
-            if slate.owner_actor().is_none()
-                || slate.revision() <= record.slate_revision.unwrap_or(0)
-            {
+            if record.consent_required && (slate.owner_actor().is_none() || slate.revision() == 0) {
                 return Err(invalid_body("connector slate not consented for qualification").into());
             }
-            (slate_id, slate.revision(), slate.manifest_hash())
+            (
+                slate_id,
+                slate.revision(),
+                slate.manifest_hash(),
+                record.admission_epoch,
+            )
         };
         let report = qualify_connector(connector, plan, oracle)?;
         let mut wtxn = self.store.env.write_txn().map_err(Error::from)?;
@@ -115,12 +133,13 @@ impl Vault {
         {
             return Err(invalid_body("connector changed during qualification").into());
         }
-        if record.slate_ref != Some(expected_slate_id) {
+        if record.slate_ref != Some(expected_slate_id) || record.admission_epoch != admission_epoch
+        {
             return Err(invalid_body("connector slate changed during qualification").into());
         }
         let slate = read_connector_slate_in_txn(self, &wtxn, expected_slate_id)?
             .ok_or_else(|| invalid_body("connector slate missing"))?;
-        if slate.owner_actor().is_none()
+        if record.consent_required && (slate.owner_actor().is_none() || slate.revision() == 0)
             || slate.revision() != stamped_revision
             || slate.manifest_hash() != manifest_hash
             || slate.tool_names() != report.tools.iter().map(|tool| tool.name.as_str()).collect()
@@ -131,6 +150,7 @@ impl Vault {
             status: ConnectorKeyStatus::Active,
             status_changed_at: Some(at),
             slate_revision: Some(slate.revision()),
+            consent_required: false,
             ..record
         };
         active.validate()?;

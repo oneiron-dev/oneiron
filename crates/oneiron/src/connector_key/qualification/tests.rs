@@ -20,6 +20,8 @@ enum Fault {
     Replay,
     Tokens,
     Budget,
+    ReadOnly,
+    RefusedCommitted,
 }
 struct Stub {
     fault: Fault,
@@ -63,7 +65,7 @@ impl QualificationConnection for Connection {
             } else {
                 "record".into()
             }]),
-            writes: self.fault != Fault::HiddenWrite,
+            writes: self.fault != Fault::HiddenWrite && self.fault != Fault::ReadOnly,
         }])
     }
     fn call(&mut self, request: &ProbeRequest) -> Result<ProbeReply, QualificationFailure> {
@@ -80,6 +82,12 @@ impl QualificationConnection for Connection {
         } else {
             ProbeDisposition::Answer
         };
+        if self.fault == Fault::RefusedCommitted
+            && request.arguments["write"] == true
+            && request.arguments["timeout_once"] != true
+        {
+            disposition = ProbeDisposition::Refused;
+        }
         let mut writes = Vec::new();
         if request.arguments["write"] == true {
             let key = request.arguments["idempotency_key"].as_str().unwrap();
@@ -207,11 +215,14 @@ fn plan() -> QualificationPlan {
     outside.in_scope = false;
     QualificationPlan {
         reads: vec![case("read", json!({"idempotency_key":"read-key"})), outside],
-        write: case("write", json!({"write":true,"idempotency_key":"write-key"})),
-        timeout_retry: case(
+        write: Some(case(
+            "write",
+            json!({"write":true,"idempotency_key":"write-key"}),
+        )),
+        timeout_retry: Some(case(
             "timeout",
             json!({"write":true,"timeout_once":true,"idempotency_key":"timeout-key"}),
-        ),
+        )),
         handled_result_types: BTreeSet::from(["record".into()]),
         limits: QualificationLimits {
             tokens: 10,
@@ -244,10 +255,7 @@ fn probes_refuse_each_broken_connector_contract() {
         (Fault::Headers, QualificationFailure::HeaderMismatch),
         (Fault::ResultType, QualificationFailure::ResultType),
         (Fault::Key, QualificationFailure::IdempotencyArgument),
-        (
-            Fault::HiddenWrite,
-            QualificationFailure::IdempotencyArgument,
-        ),
+        (Fault::HiddenWrite, QualificationFailure::IncompletePlan),
         (Fault::MissingWriteTrace, QualificationFailure::Trace),
         (Fault::DuplicateWriteTrace, QualificationFailure::Trace),
         (Fault::ConstantEffect, QualificationFailure::Replay),
@@ -292,6 +300,8 @@ fn probes_refuse_each_broken_connector_contract() {
     let mut invalid = plan();
     invalid
         .write
+        .as_mut()
+        .unwrap()
         .call
         .arguments
         .as_object_mut()
@@ -313,9 +323,9 @@ fn write_probes_refuse_request_ids_as_idempotency_keys() {
         };
         let mut invalid = plan();
         let call = if timeout_retry {
-            &mut invalid.timeout_retry.call
+            &mut invalid.timeout_retry.as_mut().unwrap().call
         } else {
-            &mut invalid.write.call
+            &mut invalid.write.as_mut().unwrap().call
         };
         call.arguments["idempotency_key"] = Value::String(call.id.clone());
         assert_eq!(
@@ -323,6 +333,30 @@ fn write_probes_refuse_request_ids_as_idempotency_keys() {
             Err(QualificationFailure::IdempotencyArgument)
         );
     }
+}
+
+#[test]
+fn read_only_suite_has_no_write_probe_and_refused_effect_fails() {
+    let stub = Stub {
+        fault: Fault::ReadOnly,
+        connections: Cell::new(0),
+        effects: Rc::default(),
+    };
+    let mut read_plan = plan();
+    read_plan.write = None;
+    read_plan.timeout_retry = None;
+    let report = qualify_connector(&stub, &read_plan, &Oracle).expect("read-only connector");
+    assert_eq!(report.calls, read_plan.reads.len() * 2);
+    assert_eq!(stub.effect_state().unwrap(), b"{}".to_vec());
+    let refusing = Stub {
+        fault: Fault::RefusedCommitted,
+        connections: Cell::new(0),
+        effects: Rc::default(),
+    };
+    assert_eq!(
+        qualify_connector(&refusing, &plan(), &Oracle),
+        Err(QualificationFailure::Replay)
+    );
 }
 
 #[test]
@@ -392,6 +426,11 @@ fn pending_slate_key_only_activates_after_full_probes_and_owner_stamp() -> crate
         ConnectorKeyStatus::Pending
     );
     assert!(vault.route_connector_call("memory")?.is_none());
+    // A revision before first approval cannot launder the missing stamp.
+    let revised = vault.revise_connector_protocol(&key_id, "2026-09-02", slate_id, 100)?;
+    assert!(revised.consent_required);
+    let revised = vault.revise_connector_protocol(&key_id, "2026-09-01", slate_id, 100)?;
+    assert!(revised.consent_required);
     let good = || Stub {
         fault: Fault::None,
         connections: Cell::new(0),
@@ -436,6 +475,22 @@ fn pending_slate_key_only_activates_after_full_probes_and_owner_stamp() -> crate
         ))
     ));
     assert!(vault.route_connector_call("memory")?.is_none());
+    let refusing = Stub {
+        fault: Fault::RefusedCommitted,
+        connections: Cell::new(0),
+        effects: Rc::default(),
+    };
+    assert!(matches!(
+        vault.qualify_connector_key(&key_id, "2026-09-01", &refusing, &plan(), &Oracle, 102),
+        Err(crate::connector_key::ConnectorQualificationError::Probe(
+            QualificationFailure::Replay
+        ))
+    ));
+    assert_eq!(
+        vault.get_connector_key(&key_id)?.unwrap().status,
+        ConnectorKeyStatus::Pending
+    );
+    assert!(vault.route_connector_call("memory")?.is_none());
     let (active, report) = vault
         .qualify_connector_key(&key_id, "2026-09-01", &good(), &plan(), &Oracle, 103)
         .unwrap();
@@ -444,7 +499,7 @@ fn pending_slate_key_only_activates_after_full_probes_and_owner_stamp() -> crate
     assert_eq!(vault.get_connector_key(&key_id)?.unwrap(), active);
     assert!(vault.route_connector_call("memory")?.is_some());
 
-    let pending = vault.revise_connector_protocol(&key_id, "2026-09-02", 104)?;
+    let pending = vault.revise_connector_protocol(&key_id, "2026-09-02", slate_id, 104)?;
     assert_eq!(pending.status, ConnectorKeyStatus::Pending);
     assert_eq!(pending.protocol_revision.as_deref(), Some("2026-09-02"));
     assert!(vault.route_connector_call("memory")?.is_none());
@@ -453,20 +508,258 @@ fn pending_slate_key_only_activates_after_full_probes_and_owner_stamp() -> crate
             .qualify_connector_key(&key_id, "2026-09-01", &good(), &plan(), &Oracle, 105)
             .is_err()
     );
-    assert!(
-        vault
-            .qualify_connector_key(&key_id, "2026-09-02", &good(), &plan(), &Oracle, 105)
-            .is_err()
-    );
-    assert_eq!(
-        vault.get_connector_key(&key_id)?.unwrap().status,
-        ConnectorKeyStatus::Pending
-    );
-    vault.override_connector_slate(&auth, slate_id, 1, &BTreeMap::new())?;
     let (requalified, _) = vault
         .qualify_connector_key(&key_id, "2026-09-02", &good(), &plan(), &Oracle, 106)
         .unwrap();
     assert_eq!(requalified.status, ConnectorKeyStatus::Active);
-    assert_eq!(requalified.slate_revision, Some(2));
+    assert_eq!(requalified.slate_revision, Some(1));
+    Ok(())
+}
+
+#[test]
+fn read_only_key_qualifies_and_revision_expansion_needs_graded_consent() -> crate::error::Result<()>
+{
+    use crate::connector_key::{
+        ConnectorCallClass, ConnectorCatalogEntry, ConnectorKeySpec, ConnectorKeyStatus,
+        SlateDataClass, SlateToolManifest, draft_connector_slate,
+    };
+    use crate::{EntityId, Vault, VaultConfig};
+    let tmp = tempfile::tempdir()?;
+    let vault = Vault::open(tmp.path(), VaultConfig::default())?;
+    let read_tool = SlateToolManifest {
+        name: "memory".into(),
+        data_class: SlateDataClass::Personal,
+        header_parameters: vec![],
+        destroys: false,
+        spends: false,
+        sends_outward: false,
+        legacy_ask: false,
+    };
+    let make_slate = |manifest: &[SlateToolManifest]| -> crate::error::Result<EntityId> {
+        vault.store_connector_slate(
+            manifest,
+            &serde_json::to_string(&draft_connector_slate(manifest))
+                .map_err(|_| crate::error::Error::InvariantViolation("test slate encode"))?,
+        )
+    };
+    let slate = make_slate(std::slice::from_ref(&read_tool))?;
+    let (id, pending) = vault.register_connector(
+        ConnectorCatalogEntry {
+            name: "readable_feed".into(),
+            connector: "readable".into(),
+            summary: "Readable connector".into(),
+            verbs: vec!["read".into()],
+            call_class: ConnectorCallClass::CounterpartyComm,
+            registered_at: 0,
+        },
+        ConnectorKeySpec {
+            slate_ref: Some(slate),
+            protocol_revision: Some("A".into()),
+            ..ConnectorKeySpec::new("readable")
+        },
+        100,
+    )?;
+    assert_eq!(pending.status, ConnectorKeyStatus::Pending);
+    let owner = EntityId::now();
+    vault.put_entity(
+        &owner,
+        crate::registry::ENTITY_TYPE_PERSON,
+        crate::TimeRange { start: 1, end: 1 },
+        1,
+        b"owner",
+    )?;
+    let auth = vault.authenticate_owner(
+        owner,
+        &owner.to_hex(),
+        true,
+        crate::store::GateDecisionId::from_bytes(*EntityId::now().as_bytes()),
+    )?;
+    vault.override_connector_slate(&auth, slate, 0, &BTreeMap::new())?;
+    let read_only = || Stub {
+        fault: Fault::ReadOnly,
+        connections: Cell::new(0),
+        effects: Rc::default(),
+    };
+    let mut read_plan = plan();
+    read_plan.write = None;
+    read_plan.timeout_retry = None;
+    assert_eq!(
+        vault
+            .qualify_connector_key(&id, "A", &read_only(), &read_plan, &Oracle, 101)
+            .unwrap()
+            .0
+            .status,
+        ConnectorKeyStatus::Active
+    );
+    assert_eq!(vault.search_connector_catalog("readable-feed")?.len(), 1);
+    assert_eq!(vault.search_connector_catalog("connector")?.len(), 1);
+    assert_eq!(vault.search_connector_catalog("")?.len(), 1);
+    let route = vault
+        .route_connector_call("readable_feed")?
+        .expect("qualified route");
+    assert!(route.budgeted_as_sends);
+    assert_eq!(route.call_class, ConnectorCallClass::CounterpartyComm);
+    assert_eq!(route.verbs, vec!["read".to_owned()]);
+
+    // A narrowed declaration carries the prior owner's consent without a tap.
+    let mut narrower = draft_connector_slate(std::slice::from_ref(&read_tool));
+    narrower[0].disposition = crate::connector_key::SlateDisposition::ConfirmFirst;
+    let narrow_slate = vault.store_connector_slate(
+        std::slice::from_ref(&read_tool),
+        &serde_json::to_string(&narrower).unwrap(),
+    )?;
+    vault.revise_connector_protocol(&id, "B", narrow_slate, 102)?;
+    assert!(vault.route_connector_call("readable_feed")?.is_none());
+    vault
+        .qualify_connector_key(&id, "B", &read_only(), &read_plan, &Oracle, 103)
+        .unwrap();
+
+    let mut expanded = read_tool.clone();
+    expanded.sends_outward = true;
+    let expanded_slate = make_slate(&[expanded])?;
+    let pending = vault.revise_connector_protocol(&id, "C", expanded_slate, 104)?;
+    assert!(pending.consent_required);
+    let pending = vault.revise_connector_protocol(&id, "C2", expanded_slate, 104)?;
+    assert!(
+        pending.consent_required,
+        "unapproved expansion survives later drift"
+    );
+    let pending = vault.revise_connector_protocol(&id, "C", expanded_slate, 104)?;
+    assert!(pending.consent_required);
+    let stub = read_only();
+    assert!(
+        vault
+            .qualify_connector_key(&id, "C", &stub, &read_plan, &Oracle, 105)
+            .is_err()
+    );
+    assert_eq!(stub.connections.get(), 0);
+    assert!(vault.route_connector_call("readable_feed")?.is_none());
+    vault.override_connector_slate(&auth, expanded_slate, 0, &BTreeMap::new())?;
+    assert_eq!(
+        vault
+            .qualify_connector_key(&id, "C", &read_only(), &read_plan, &Oracle, 106)
+            .unwrap()
+            .0
+            .status,
+        ConnectorKeyStatus::Active
+    );
+    // Removing declared send authority is a narrowing, not another approval.
+    let mut narrowed_rows = draft_connector_slate(std::slice::from_ref(&read_tool));
+    narrowed_rows[0].disposition = crate::connector_key::SlateDisposition::ConfirmFirst;
+    let narrower_declaration = vault.store_connector_slate(
+        &[read_tool],
+        &serde_json::to_string(&narrowed_rows).unwrap(),
+    )?;
+    let pending = vault.revise_connector_protocol(&id, "D", narrower_declaration, 107)?;
+    assert!(!pending.consent_required);
+    assert_eq!(
+        vault
+            .qualify_connector_key(&id, "D", &read_only(), &read_plan, &Oracle, 108)
+            .unwrap()
+            .0
+            .status,
+        ConnectorKeyStatus::Active
+    );
+    Ok(())
+}
+
+#[test]
+fn mid_probe_revision_round_trip_cannot_activate_stale_attempt() -> crate::error::Result<()> {
+    use crate::connector_key::{
+        ConnectorCallClass, ConnectorCatalogEntry, ConnectorKeySpec, ConnectorKeyStatus,
+        SlateDataClass, SlateToolManifest, draft_connector_slate,
+    };
+    use crate::{EntityId, Vault, VaultConfig};
+    struct Drift<'a> {
+        vault: &'a Vault,
+        id: EntityId,
+        slate: EntityId,
+        triggered: Cell<bool>,
+        inner: Stub,
+    }
+    impl QualificationConnector for Drift<'_> {
+        fn connect(&self) -> Result<Box<dyn QualificationConnection + '_>, QualificationFailure> {
+            self.inner.connect()
+        }
+        fn effect_state(&self) -> Result<Vec<u8>, QualificationFailure> {
+            if !self.triggered.replace(true) {
+                self.vault
+                    .revise_connector_protocol(&self.id, "B", self.slate, 102)
+                    .expect("leave A during probes");
+                self.vault
+                    .revise_connector_protocol(&self.id, "A", self.slate, 103)
+                    .expect("return to A during probes");
+            }
+            self.inner.effect_state()
+        }
+    }
+    let tmp = tempfile::tempdir()?;
+    let vault = Vault::open(tmp.path(), VaultConfig::default())?;
+    let tool = SlateToolManifest {
+        name: "memory".into(),
+        data_class: SlateDataClass::Personal,
+        header_parameters: vec![],
+        destroys: false,
+        spends: false,
+        sends_outward: false,
+        legacy_ask: false,
+    };
+    let slate = vault.store_connector_slate(
+        std::slice::from_ref(&tool),
+        &serde_json::to_string(&draft_connector_slate(std::slice::from_ref(&tool))).unwrap(),
+    )?;
+    let (id, _) = vault.register_connector(
+        ConnectorCatalogEntry {
+            name: "memory".into(),
+            connector: "memory".into(),
+            summary: "Memory".into(),
+            verbs: vec!["read".into()],
+            call_class: ConnectorCallClass::ScopedMcp,
+            registered_at: 0,
+        },
+        ConnectorKeySpec {
+            slate_ref: Some(slate),
+            protocol_revision: Some("A".into()),
+            ..ConnectorKeySpec::new("memory")
+        },
+        100,
+    )?;
+    let owner = EntityId::now();
+    vault.put_entity(
+        &owner,
+        crate::registry::ENTITY_TYPE_PERSON,
+        crate::TimeRange { start: 1, end: 1 },
+        1,
+        b"owner",
+    )?;
+    let auth = vault.authenticate_owner(
+        owner,
+        &owner.to_hex(),
+        true,
+        crate::store::GateDecisionId::from_bytes(*EntityId::now().as_bytes()),
+    )?;
+    vault.override_connector_slate(&auth, slate, 0, &BTreeMap::new())?;
+    let drifting = Drift {
+        vault: &vault,
+        id,
+        slate,
+        triggered: Cell::new(false),
+        inner: Stub {
+            fault: Fault::None,
+            connections: Cell::new(0),
+            effects: Rc::default(),
+        },
+    };
+    assert!(
+        vault
+            .qualify_connector_key(&id, "A", &drifting, &plan(), &Oracle, 104)
+            .is_err()
+    );
+    assert!(drifting.triggered.get());
+    assert_eq!(
+        vault.get_connector_key(&id)?.unwrap().status,
+        ConnectorKeyStatus::Pending
+    );
+    assert!(vault.route_connector_call("memory")?.is_none());
     Ok(())
 }

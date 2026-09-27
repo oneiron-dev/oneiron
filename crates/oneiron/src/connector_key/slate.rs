@@ -179,6 +179,46 @@ fn validate(manifest: &[SlateToolManifest], rows: &[SlateDraftRow]) -> Result<()
     Ok(())
 }
 
+/// Compare the fully typed grant declaration and the effective owner-approved
+/// dispositions. Unchanged or reduced authority carries its earlier consent;
+/// new tools, richer declarations and any enabled/auto expansion need a tap.
+pub(in crate::connector_key) fn slate_expands(
+    old: &ConnectorGrantSlate,
+    next: &ConnectorGrantSlate,
+) -> bool {
+    let class_rank = |class| match class {
+        SlateDataClass::Public => 0_u8,
+        SlateDataClass::Personal => 1,
+        SlateDataClass::Secret => 2,
+        SlateDataClass::Header => 3,
+    };
+    next.manifest.iter().zip(&next.rows).any(|(tool, row)| {
+        if !row.enabled() {
+            return false;
+        }
+        let Some((old_tool, old_row)) = old
+            .manifest
+            .iter()
+            .zip(&old.rows)
+            .find(|(candidate, _)| candidate.name == tool.name)
+        else {
+            return true;
+        };
+        !old_row.enabled()
+            || class_rank(tool.data_class) > class_rank(old_tool.data_class)
+            || tool
+                .header_parameters
+                .iter()
+                .any(|param| !old_tool.header_parameters.contains(param))
+            || tool.destroys && !old_tool.destroys
+            || tool.spends && !old_tool.spends
+            || tool.sends_outward && !old_tool.sends_outward
+            || tool.legacy_ask && !old_tool.legacy_ask
+            || row.effective_disposition() == SlateDisposition::Auto
+                && old_row.effective_disposition() == SlateDisposition::ConfirmFirst
+    })
+}
+
 /// A stamped slate is an admission for one connector, not a reusable grant.
 /// Reserve its identity in the same transaction as the key registration.
 pub(in crate::connector_key) fn bind_connector_slate_in_txn(

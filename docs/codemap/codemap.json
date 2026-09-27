@@ -10281,7 +10281,7 @@
      "path": "src/connector_key/slate.rs",
      "purpose": "ARCH-0072 typed per-tool grant slates",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 3,
       "enum": 2,
       "fn": 11,
       "struct": 5

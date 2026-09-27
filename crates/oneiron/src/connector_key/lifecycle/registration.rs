@@ -91,9 +91,15 @@ impl Vault {
         normalize_budget_channel_classes(&mut record.budgets);
         record.secret_ref = key_spec.secret_ref;
         record.status = ConnectorKeyStatus::Pending;
+        record.consent_required = true;
         record.slate_ref = key_spec.slate_ref;
         record.protocol_revision = key_spec.protocol_revision;
         record.catalog = Some(entry);
+        if record.slate_ref.is_none() || record.protocol_revision.is_none() {
+            return Err(invalid_body(
+                "catalog registration requires slate and protocol revision",
+            ));
+        }
         // `validate` binds the entry to the key: a catalog naming a different
         // connector than the key governs is rejected here, pre-write.
         record.validate()?;
@@ -126,6 +132,13 @@ impl Vault {
             }
         {
             return Err(invalid_body("invalid registration status"));
+        }
+        if record.catalog.is_some()
+            && (record.slate_ref.is_none() || record.protocol_revision.is_none())
+        {
+            return Err(invalid_body(
+                "catalog registration requires slate and protocol revision",
+            ));
         }
         if record.charter.is_some() || record.pending_charter.is_some() {
             return Err(invalid_body("registration must not carry a charter"));
