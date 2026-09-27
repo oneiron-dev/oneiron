@@ -3,7 +3,10 @@
 //! offer nonce is engine-issued, vault-local, short-lived, and spent atomically
 //! with the standing grant and its receipt.
 
-use crate::consent::{AuthenticatedOwner, BoundSubject, ConsentDomain, ConsentReceipt, GrantBound};
+use crate::consent::{
+    AuthenticatedOwner, BoundSubject, ConsentDomain, ConsentReceipt, GrantBound,
+    MAX_CONSENT_REF_LEN,
+};
 use crate::entity_id::{EntityId, bytes_to_hex_lower};
 use crate::error::GateError;
 use crate::genui::ConsentSurface;
@@ -67,6 +70,8 @@ impl Vault {
         bound: &GrantBound,
     ) -> Result<VoiceGrantOffer> {
         if principal_ref.trim().is_empty()
+            || principal_ref.trim() != principal_ref
+            || principal_ref.len() > MAX_CONSENT_REF_LEN
             || voice_session_ref.trim().is_empty()
             || segment_id.trim().is_empty()
             || bound.domain() != ConsentDomain::Disclosure
@@ -299,6 +304,18 @@ mod tests {
         let (_dir, vault) = crate::test_util::open_test_vault_with(config);
         let actor = person(&vault, 0xC3)?;
         let bound = disclosure()?;
+        assert!(
+            vault
+                .offer_voice_disclosure_grant(
+                    actor,
+                    &"x".repeat(MAX_CONSENT_REF_LEN + 1),
+                    "room",
+                    "oversized",
+                    &bound,
+                )
+                .is_err()
+        );
+        assert_eq!(pending_count(&vault)?, 0);
         let first = vault.offer_voice_disclosure_grant(actor, "owner", "room", "one", &bound)?;
         let second = vault.offer_voice_disclosure_grant(actor, "owner", "room", "two", &bound)?;
         assert_eq!(pending_count(&vault)?, 2);
