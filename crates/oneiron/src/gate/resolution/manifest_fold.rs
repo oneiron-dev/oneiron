@@ -146,6 +146,15 @@ pub(crate) fn resolve_policy_manifest(
                         Some(_) => resolution.diagnostics.malformed_manifest_seen = true,
                     }
                 }
+                // Advisory threshold composition is deterministic and never
+                // authorizes or refuses a write. The earliest question wins.
+                if let Some(threshold) = decoded.proposal_check_threshold {
+                    resolution.proposal_check_threshold = Some(
+                        resolution
+                            .proposal_check_threshold
+                            .map_or(threshold, |old| old.min(threshold)),
+                    );
+                }
                 resolution.packs.push(decoded.pack);
             }
             None => {

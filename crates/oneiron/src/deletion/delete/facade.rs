@@ -170,6 +170,7 @@ impl Vault {
         // header read, forcing the headerful leg every run. No-op in
         // production.
         signal_after_delete_probe(self);
+        signal_delete_rendezvous(self, DeleteRendezvous::BeforeFirstDeletionTxn, id, None);
         // ONE-1132: ONE deletion request UUID correlates the CRDT tombstone's
         // `request_id` with the REDACTION_AUDIT receipt's `request_id`.
         // ONE-1149: minted only AFTER the header read proves there is
