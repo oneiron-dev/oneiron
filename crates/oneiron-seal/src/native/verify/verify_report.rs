@@ -1,6 +1,7 @@
 //! Per-envelope report facts, separate from PDF trust and modification policy.
 
 use super::super::pdf;
+use super::verify_modifications::eof_tail;
 use super::verify_sig_pipeline::{Checks, SigEntry, check_byte_range, check_byte_range_shape};
 use crate::api::{
     ByteRangeEvidence, DigestAlgorithm, PadesProfile, Sha256Digest, SignatureCoverage,
@@ -47,31 +48,27 @@ pub(super) fn signature_entry(
         let Ok(n) = usize::try_from(n) else {
             return false;
         };
-        n <= bytes.len()
-            && bytes[n..].len() <= 4
-            && bytes[n..].iter().all(|b| *b == b'\r' || *b == b'\n')
+        eof_tail(bytes).is_some_and(|eof_end| n >= eof_end && n <= bytes.len())
     }) {
         SignatureCoverage::EntireFile
     } else if end
         .and_then(|n| usize::try_from(n).ok())
         .and_then(|n| bytes.get(..n))
-        .is_some_and(|prefix| {
-            prefix.ends_with(b"%%EOF")
-                || (1..=4).any(|count| {
-                    prefix.len() >= count
-                        && prefix[..prefix.len() - count].ends_with(b"%%EOF")
-                        && prefix[prefix.len() - count..]
-                            .iter()
-                            .all(|b| *b == b'\r' || *b == b'\n')
-                })
-        })
+        .is_some_and(|prefix| eof_tail(prefix).is_some())
     {
         SignatureCoverage::EntireRevision
     } else {
         SignatureCoverage::ContiguousFromStart
     };
     let integrity = if e.is_doc_ts {
-        axis(&checks, &[VerifyCheckKind::DocumentTimestamp])
+        axis(
+            &checks,
+            &[
+                VerifyCheckKind::ByteRange,
+                VerifyCheckKind::UnsignedGap,
+                VerifyCheckKind::DocumentTimestamp,
+            ],
+        )
     } else {
         axis(
             &checks,
@@ -83,13 +80,20 @@ pub(super) fn signature_entry(
                 VerifyCheckKind::ContentDigest,
                 VerifyCheckKind::SignatureValue,
                 VerifyCheckKind::SigningCertificateBinding,
+                VerifyCheckKind::SignatureTimestamp,
             ],
         )
     };
     let trust = if e.is_doc_ts {
-        axis(&checks, &[VerifyCheckKind::DocumentTimestamp])
+        axis(&checks, &[VerifyCheckKind::DocumentTimestampTrust])
     } else {
-        axis(&checks, &[VerifyCheckKind::CertificatePath])
+        axis(
+            &checks,
+            &[
+                VerifyCheckKind::CertificatePath,
+                VerifyCheckKind::SignatureTimestampTrust,
+            ],
+        )
     };
     SignatureVerification {
         id: format!("{}:{index}", e.field_name.as_deref().unwrap_or("signature")),

@@ -91,6 +91,31 @@ async fn seal_output_exceeding_verify_cap_is_refused_at_seal_time() {
 }
 
 #[tokio::test]
+async fn literal_eof_in_content_stream_is_not_an_incremental_revision() {
+    let mut input = fixture_pdf("content_1page.pdf");
+    let old = b"(oneiron)";
+    let at = input.windows(old.len()).position(|w| w == old).unwrap();
+    input[at..at + old.len()].copy_from_slice(b"(%%EOF)  ");
+    let identity = p256_identity(false);
+    let anchors = vec![identity.cert_der.clone()];
+    let (engine, _) = engine_with(
+        identity,
+        Arc::new(OfflineFetcher),
+        config_for(anchors, false),
+    );
+    let sealed = engine
+        .seal_pdf(&input, &request(PadesProfile::BaselineB))
+        .await
+        .unwrap();
+    assert!(sealed.self_verify_report.passes_self_verify());
+    assert_eq!(
+        sealed.self_verify_report.revisions.len(),
+        2,
+        "the stream marker must not become a third revision"
+    );
+}
+
+#[tokio::test]
 async fn seal_baseline_b_both_suites_and_fixtures() {
     for (mk, name) in [
         (p256_identity as fn(bool) -> TestIdentity, "p256"),
@@ -130,6 +155,78 @@ async fn seal_baseline_b_both_suites_and_fixtures() {
             assert!(report.verdict() == oneiron_seal::VerifyVerdict::Passed);
             assert_eq!(report.achieved_profile(), Some(PadesProfile::BaselineB));
             assert_eq!(report.artifact_sha256, out.evidence_sha256);
+        }
+    }
+}
+
+#[tokio::test]
+async fn native_trust_matrix_keeps_intact_bytes_indeterminate_without_relevant_roots() {
+    for target in [
+        PadesProfile::BaselineB,
+        PadesProfile::BaselineT,
+        PadesProfile::BaselineLta,
+    ] {
+        let signer = p256_identity(false);
+        let tsa = p256_identity(true);
+        let signer_root = signer.cert_der.clone();
+        let tsa_root = tsa.cert_der.clone();
+        let fetcher = Arc::new(FixtureFetcher::with_tsa(tsa));
+        let (sealer, _) = engine_with(
+            signer,
+            fetcher,
+            config_for(vec![signer_root.clone(), tsa_root.clone()], true),
+        );
+        let sealed = sealer
+            .seal_pdf(&fixture_pdf("classic_1page.pdf"), &request(target))
+            .await
+            .unwrap();
+        assert_eq!(sealed.achieved_profile, target);
+        let unrelated = p256_identity(false).cert_der;
+        for (roots, expect_pass) in [
+            (vec![signer_root.clone(), tsa_root.clone()], true),
+            (vec![], false),
+            (vec![unrelated], false),
+            (vec![signer_root.clone()], target == PadesProfile::BaselineB),
+        ] {
+            let (reader, _) = engine_with(
+                p256_identity(false),
+                Arc::new(OfflineFetcher),
+                config_for(roots, false),
+            );
+            let report = reader.verify_sealed_pdf(&sealed.bytes).unwrap();
+            assert_eq!(
+                report.verdict(),
+                if expect_pass {
+                    oneiron_seal::VerifyVerdict::Passed
+                } else {
+                    oneiron_seal::VerifyVerdict::Indeterminate
+                },
+                "{target:?} {report:?}"
+            );
+            assert!(
+                report
+                    .signatures
+                    .iter()
+                    .all(|s| s.integrity == oneiron_seal::VerifyVerdict::Passed),
+                "intact signed ranges must not become broken under missing roots: {report:?}"
+            );
+            if !expect_pass {
+                assert!(
+                    report
+                        .reasons()
+                        .contains(&oneiron_seal::VerifyFindingCode::TrustRootUnavailable)
+                );
+                assert_eq!(
+                    report.modifications,
+                    oneiron_seal::ModificationStatus::Clean(
+                        if target == PadesProfile::BaselineLta {
+                            oneiron_seal::ModificationLevel::LtaUpdates
+                        } else {
+                            oneiron_seal::ModificationLevel::None
+                        }
+                    )
+                );
+            }
         }
     }
 }

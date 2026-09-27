@@ -38425,7 +38425,7 @@
      "path": "src/native/tsp.rs",
      "purpose": "RFC 3161 timestamp requests and token validation (§7.4, §7.6)",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 9
      }
     },
     {
@@ -38445,7 +38445,7 @@
      "path": "src/native/verify/verify_chain_gates.rs",
      "purpose": "Trust entry: VerifyCtx, the KeyUsage turnstile, chain validation, anchor loading, verify_document and…",
      "surface": {
-      "crate-vis": 9
+      "crate-vis": 10
      }
     },
     {
@@ -38465,7 +38465,7 @@
      "path": "src/native/verify/verify_modifications.rs",
      "purpose": "Conservative, shared pre-sign and post-sign incremental-revision analysis",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 4
      }
     },
     {
@@ -38495,7 +38495,7 @@
      "path": "src/native/verify/verify_sig_pipeline.rs",
      "purpose": "Signature discovery and evaluation: AcroForm collection plus CAdES signer, signature-timestamp and…",
      "surface": {
-      "crate-vis": 14
+      "crate-vis": 15
      }
     },
     {
@@ -38537,7 +38537,7 @@
      "surface": {}
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [],
      "path": "src/native/verify/verify_tests_time_lta_a.rs",
@@ -38615,12 +38615,12 @@
     "native": {
      "files": 33,
      "impl_vault": false,
-     "largest_src_bucket": "m",
+     "largest_src_bucket": "L",
      "layout": "dir",
      "purpose": "Native implementation modules (feature `native`)"
     }
    },
-   "over_bar": 0,
+   "over_bar": 1,
    "purpose": "Native Rust PAdES seal and verification engine (ONE-1837)",
    "source_files": 33,
    "test_files": 9

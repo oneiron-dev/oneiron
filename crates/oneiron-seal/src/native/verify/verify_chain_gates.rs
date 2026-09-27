@@ -11,10 +11,12 @@ use crate::error::{InputInvalidCode, SealError};
 use super::super::cms;
 use super::verify_dss_core::{EmbeddedCert, dss_revision_end, verify_dss};
 use super::verify_modifications::{
-    analyze_modifications, revision_boundaries, structural_anomalies,
+    analyze_modifications, eof_tail, revision_boundaries, structural_anomalies,
 };
 use super::verify_report::signature_entry;
-use super::verify_sig_pipeline::{Checks, collect_signatures, verify_cades_sig, verify_doc_ts};
+use super::verify_sig_pipeline::{
+    Checks, DocTimestampOutcome, collect_signatures, verify_cades_sig, verify_doc_ts,
+};
 
 pub(crate) struct VerifyCtx<'a> {
     pub config: &'a SealConfig,
@@ -138,6 +140,24 @@ pub(super) fn anchors(config: &SealConfig) -> Vec<pkix_chain::TrustAnchor> {
         .collect()
 }
 
+/// A candidate chain that validates against its own embedded certification
+/// material but not the configured roots lacks a relevant trust root. This
+/// provisional run is classification only, never an acceptance path.
+pub(super) fn signer_root_unavailable(chain_ders: &[Vec<u8>], at_unix: u64) -> bool {
+    use der::Decode;
+    chain_ders.iter().any(|der| {
+        let Ok(cert) = x509_cert::Certificate::from_der(der) else {
+            return false;
+        };
+        validate_chain(
+            chain_ders,
+            &[pkix_chain::TrustAnchor::from_cert(cert)],
+            at_unix,
+        )
+        .is_ok()
+    })
+}
+
 /// Full document verification and profile classification (§7.7).
 pub(crate) fn verify_document(
     bytes: &[u8],
@@ -174,13 +194,8 @@ pub(crate) fn verify_document(
         });
     }
     let mut checks = Checks::new();
-    // Legal revision chain and final EOF: the strict parse plus an EOF tail
-    // (an optional single trailing EOL is tolerated for interoperability).
-    let eof_ok = bytes
-        .strip_suffix(b"\n")
-        .or_else(|| bytes.strip_suffix(b"\r\n"))
-        .unwrap_or(bytes)
-        .ends_with(b"%%EOF");
+    // The same bounded EOF-tail rule governs revision admission and coverage.
+    let eof_ok = eof_tail(bytes).is_some();
     checks.record(
         VerifyCheckKind::PdfRevision,
         eof_ok,
@@ -214,10 +229,11 @@ pub(crate) fn verify_document(
     // /DSS keeps its DocumentTimestamp check for the report but confers no
     // archival profile.
     let mut covering_dts_valid = false;
+    let mut untrusted_archival_time = None;
     for (i, e) in sigs.iter().enumerate() {
         let mut signature_checks = Checks::new();
         if e.is_doc_ts {
-            if let Some(gen_time) = verify_doc_ts(
+            let outcome = verify_doc_ts(
                 bytes,
                 e,
                 &anchors,
@@ -225,11 +241,18 @@ pub(crate) fn verify_document(
                 i == last_idx,
                 &mut covered,
                 ctx.clock_ms,
-            ) {
-                let br_end = e.byte_range[2].saturating_add(e.byte_range[3]);
-                if dss_end.is_some_and(|end| br_end >= end) {
-                    archival_time = Some(gen_time);
-                    covering_dts_valid = true;
+            );
+            let br_end = e.byte_range[2].saturating_add(e.byte_range[3]);
+            if dss_end.is_some_and(|end| br_end >= end) {
+                match outcome {
+                    DocTimestampOutcome::Trusted(gen_time) => {
+                        archival_time = Some(gen_time);
+                        covering_dts_valid = true;
+                    }
+                    DocTimestampOutcome::Untrusted(gen_time) => {
+                        untrusted_archival_time = Some(gen_time);
+                    }
+                    DocTimestampOutcome::Invalid => {}
                 }
             }
         } else {
@@ -245,6 +268,45 @@ pub(crate) fn verify_document(
         limits.max_input_bytes,
         &mut checks,
     );
+    // A missing relevant root can make otherwise valid DSS coverage look
+    // incomplete (anchors are exempt from revocation evidence). Retry the
+    // classification with embedded crypto-valid chains as provisional roots.
+    // This NEVER grants trust or a profile; it only separates root absence
+    // from independently malformed evidence.
+    let trust_unresolved = signatures
+        .iter()
+        .flat_map(|sig| sig.checks.iter())
+        .any(|check| {
+            check.status == VerifyCheckStatus::NotRun
+                && check.finding == Some(VerifyFindingCode::TrustRootUnavailable)
+        });
+    if trust_unresolved
+        && checks.list.iter().any(|check| {
+            check.kind == VerifyCheckKind::ValidationMaterial
+                && check.status == VerifyCheckStatus::Fail
+        })
+    {
+        let mut provisional = Checks::new();
+        verify_dss(
+            &doc,
+            &covered,
+            &covered,
+            archival_time
+                .or(untrusted_archival_time)
+                .unwrap_or(ctx.clock_ms / 1000),
+            limits.max_input_bytes,
+            &mut provisional,
+        );
+        if provisional.passed(VerifyCheckKind::ValidationMaterial)
+            && let Some(check) = checks
+                .list
+                .iter_mut()
+                .find(|c| c.kind == VerifyCheckKind::ValidationMaterial)
+        {
+            check.status = VerifyCheckStatus::NotRun;
+            check.finding = Some(VerifyFindingCode::TrustRootUnavailable);
+        }
+    }
     let first_signer_end = sigs
         .iter()
         .filter(|e| !e.is_doc_ts)

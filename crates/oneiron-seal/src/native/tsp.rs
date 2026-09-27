@@ -272,7 +272,7 @@ fn find_bound_cert(certs: &[Vec<u8>], signer: &cms::ParsedSignerInfo) -> Result<
 
 /// Token signature against the TSA cert, then path validation with the
 /// critical-and-sole timestamping EKU rule (pkix-chain verify_time_stamper).
-fn validate_tsa_chain(
+pub(crate) fn validate_tsa_chain(
     chain_ders: &[Vec<u8>],
     anchors: &[pkix_chain::TrustAnchor],
     at_unix: u64,
@@ -300,10 +300,9 @@ fn validate_tsa_chain(
 /// genTime as unix seconds for applicable-time path validation plus the
 /// validated TSA chain DERs so the DSS binding can require the profile
 /// material to speak about this chain (§7.5 step 3).
-pub(crate) fn validate_token_for_verify(
+pub(crate) fn validate_token_crypto_for_verify(
     token_der: &[u8],
     expected_imprint: &Sha256Digest,
-    anchors: &[pkix_chain::TrustAnchor],
 ) -> Result<(u64, Vec<Vec<u8>>), SealError> {
     let parsed = cms::parse_cms(token_der)?;
     if parsed.econtent_oid != OID_TST_INFO {
@@ -352,8 +351,36 @@ pub(crate) fn validate_token_for_verify(
         )
         .collect();
     let gen_time_unix = generalized_time_unix(&tst);
-    validate_tsa_chain(&chain_ders, anchors, gen_time_unix)?;
     Ok((gen_time_unix, chain_ders))
+}
+
+/// A cryptographically valid token with no usable configured root is
+/// unresolved, not a proven-broken timestamp. Try embedded certificates
+/// as provisional anchors ONLY to classify the reason; never grant trust.
+pub(crate) fn tsa_root_unavailable(chain_ders: &[Vec<u8>], at_unix: u64) -> bool {
+    use der::Decode;
+    chain_ders.iter().any(|der| {
+        let Ok(cert) = x509_cert::Certificate::from_der(der) else {
+            return false;
+        };
+        validate_tsa_chain(
+            chain_ders,
+            &[pkix_chain::TrustAnchor::from_cert(cert)],
+            at_unix,
+        )
+        .is_ok()
+    })
+}
+
+#[cfg(test)]
+pub(crate) fn validate_token_for_verify(
+    token_der: &[u8],
+    expected_imprint: &Sha256Digest,
+    anchors: &[pkix_chain::TrustAnchor],
+) -> Result<(u64, Vec<Vec<u8>>), SealError> {
+    let (at, chain) = validate_token_crypto_for_verify(token_der, expected_imprint)?;
+    validate_tsa_chain(&chain, anchors, at)?;
+    Ok((at, chain))
 }
 
 #[cfg(test)]

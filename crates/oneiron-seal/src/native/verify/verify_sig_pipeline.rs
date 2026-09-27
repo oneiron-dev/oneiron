@@ -8,7 +8,9 @@ use crate::api::{
 use crate::error::SealError;
 
 use super::super::{cms, pdf, tsp};
-use super::verify_chain_gates::{VerifyCtx, malformed_input, validate_chain};
+use super::verify_chain_gates::{
+    VerifyCtx, malformed_input, signer_root_unavailable, validate_chain,
+};
 use super::verify_dss_core::EmbeddedCert;
 use super::verify_revocation::gen_time_beyond_skew;
 
@@ -414,6 +416,7 @@ pub(super) fn verify_cades_sig(
             VerifyFindingCode::CertificatePathInvalid,
         );
         checks.absent(VerifyCheckKind::SignatureTimestamp);
+        checks.absent(VerifyCheckKind::SignatureTimestampTrust);
         return;
     };
     covered.extend(
@@ -477,6 +480,7 @@ fn verify_signer(
             VerifyFindingCode::CertificatePathInvalid,
         );
         checks.absent(VerifyCheckKind::SignatureTimestamp);
+        checks.absent(VerifyCheckKind::SignatureTimestampTrust);
         return;
     };
     let cert_der = &parsed.certificates[idx];
@@ -511,7 +515,13 @@ fn verify_signer(
                 .map(|(_, c)| c.clone()),
         )
         .collect();
-    if anchors.is_empty() {
+    if validate_chain(&chain_ders, anchors, at_unix).is_ok() {
+        checks.record(
+            VerifyCheckKind::CertificatePath,
+            true,
+            VerifyFindingCode::CertificatePathInvalid,
+        );
+    } else if anchors.is_empty() || signer_root_unavailable(&chain_ders, at_unix) {
         checks.not_run(
             VerifyCheckKind::CertificatePath,
             VerifyFindingCode::TrustRootUnavailable,
@@ -519,7 +529,7 @@ fn verify_signer(
     } else {
         checks.record(
             VerifyCheckKind::CertificatePath,
-            validate_chain(&chain_ders, anchors, at_unix).is_ok(),
+            false,
             VerifyFindingCode::CertificatePathInvalid,
         );
     }
@@ -562,40 +572,65 @@ fn verify_ts_token(
     }
     let Some(token) = token_der else {
         checks.absent(VerifyCheckKind::SignatureTimestamp);
+        checks.absent(VerifyCheckKind::SignatureTimestampTrust);
         return None;
     };
     let imprint = cms::sha256(&signer.signature);
-    match tsp::validate_token_for_verify(&token, &imprint, anchors) {
-        Ok((gen_time, tsa_chain_ders)) => {
-            if gen_time_beyond_skew(gen_time, clock_ms) {
-                checks.record(
-                    VerifyCheckKind::SignatureTimestamp,
-                    false,
-                    VerifyFindingCode::TimestampInvalid,
-                );
-                return None;
-            }
-            checks.record(
-                VerifyCheckKind::SignatureTimestamp,
-                true,
-                VerifyFindingCode::TimestampInvalid,
+    let Ok((gen_time, tsa_chain_ders)) = tsp::validate_token_crypto_for_verify(&token, &imprint)
+    else {
+        checks.record(
+            VerifyCheckKind::SignatureTimestamp,
+            false,
+            VerifyFindingCode::TimestampInvalid,
+        );
+        checks.absent(VerifyCheckKind::SignatureTimestampTrust);
+        return None;
+    };
+    if gen_time_beyond_skew(gen_time, clock_ms) {
+        checks.record(
+            VerifyCheckKind::SignatureTimestamp,
+            false,
+            VerifyFindingCode::TimestampInvalid,
+        );
+        checks.absent(VerifyCheckKind::SignatureTimestampTrust);
+        return None;
+    }
+    checks.record(
+        VerifyCheckKind::SignatureTimestamp,
+        true,
+        VerifyFindingCode::TimestampInvalid,
+    );
+    if tsp::validate_tsa_chain(&tsa_chain_ders, anchors, gen_time).is_err() {
+        if anchors.is_empty() || tsp::tsa_root_unavailable(&tsa_chain_ders, gen_time) {
+            checks.not_run(
+                VerifyCheckKind::SignatureTimestampTrust,
+                VerifyFindingCode::TrustRootUnavailable,
             );
             covered.extend(
                 tsa_chain_ders
                     .iter()
                     .filter_map(|d| EmbeddedCert::from_der(d)),
             );
-            Some(gen_time)
-        }
-        Err(_) => {
+        } else {
             checks.record(
-                VerifyCheckKind::SignatureTimestamp,
+                VerifyCheckKind::SignatureTimestampTrust,
                 false,
-                VerifyFindingCode::TimestampInvalid,
+                VerifyFindingCode::CertificatePathInvalid,
             );
-            None
         }
+        return None;
     }
+    checks.record(
+        VerifyCheckKind::SignatureTimestampTrust,
+        true,
+        VerifyFindingCode::CertificatePathInvalid,
+    );
+    covered.extend(
+        tsa_chain_ders
+            .iter()
+            .filter_map(|d| EmbeddedCert::from_der(d)),
+    );
+    Some(gen_time)
 }
 
 /// Verify one DocTimeStamp dictionary (§7.6/§7.7): ByteRange coverage and
@@ -607,6 +642,12 @@ fn verify_ts_token(
 /// /DSS revision (`dss_revision_end`). The genTime is bounded against the
 /// verify clock (`clock_ms`): a future-dated token past the documented skew
 /// is rejected, never clamped.
+pub(super) enum DocTimestampOutcome {
+    Trusted(u64),
+    Untrusted(u64),
+    Invalid,
+}
+
 pub(super) fn verify_doc_ts(
     bytes: &[u8],
     e: &SigEntry,
@@ -615,7 +656,7 @@ pub(super) fn verify_doc_ts(
     is_last: bool,
     covered: &mut Vec<EmbeddedCert>,
     clock_ms: u64,
-) -> Option<u64> {
+) -> DocTimestampOutcome {
     let br_shape_ok = check_byte_range_shape(bytes, e);
     let gap_ok = check_unsigned_gap(bytes, e);
     let br_ok = br_shape_ok && gap_ok;
@@ -643,25 +684,54 @@ pub(super) fn verify_doc_ts(
             });
     let token = unpadded_cms(&e.contents).and_then(|der| {
         let imprint = pdf::hash_byte_range(bytes, e.byte_range).ok()?;
-        tsp::validate_token_for_verify(der, &imprint, anchors).ok()
+        tsp::validate_token_crypto_for_verify(der, &imprint).ok()
     });
-    let future_dated = token
-        .as_ref()
-        .is_some_and(|(gen_time, _)| gen_time_beyond_skew(*gen_time, clock_ms));
-    let ok = br_ok && covers_end && token.is_some() && !future_dated;
+    let crypto_ok = br_ok
+        && covers_end
+        && token
+            .as_ref()
+            .is_some_and(|(gen_time, _)| !gen_time_beyond_skew(*gen_time, clock_ms));
     checks.record(
         VerifyCheckKind::DocumentTimestamp,
-        ok,
+        crypto_ok,
         VerifyFindingCode::DocumentTimestampInvalid,
     );
-    if !ok {
-        return None;
+    if !crypto_ok {
+        checks.absent(VerifyCheckKind::DocumentTimestampTrust);
+        return DocTimestampOutcome::Invalid;
     }
-    let (gen_time, tsa_chain_ders) = token?;
+    let Some((gen_time, tsa_chain_ders)) = token else {
+        return DocTimestampOutcome::Invalid;
+    };
+    if tsp::validate_tsa_chain(&tsa_chain_ders, anchors, gen_time).is_err() {
+        if anchors.is_empty() || tsp::tsa_root_unavailable(&tsa_chain_ders, gen_time) {
+            checks.not_run(
+                VerifyCheckKind::DocumentTimestampTrust,
+                VerifyFindingCode::TrustRootUnavailable,
+            );
+            covered.extend(
+                tsa_chain_ders
+                    .iter()
+                    .filter_map(|d| EmbeddedCert::from_der(d)),
+            );
+        } else {
+            checks.record(
+                VerifyCheckKind::DocumentTimestampTrust,
+                false,
+                VerifyFindingCode::CertificatePathInvalid,
+            );
+        }
+        return DocTimestampOutcome::Untrusted(gen_time);
+    }
+    checks.record(
+        VerifyCheckKind::DocumentTimestampTrust,
+        true,
+        VerifyFindingCode::CertificatePathInvalid,
+    );
     covered.extend(
         tsa_chain_ders
             .iter()
             .filter_map(|d| EmbeddedCert::from_der(d)),
     );
-    Some(gen_time)
+    DocTimestampOutcome::Trusted(gen_time)
 }

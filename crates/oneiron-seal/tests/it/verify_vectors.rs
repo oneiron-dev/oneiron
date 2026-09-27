@@ -207,10 +207,10 @@ fn unparsable_verify_input_is_input_invalid() {
 }
 
 #[test]
-fn wrong_anchor_fails_certificate_path() {
+fn unrelated_anchor_leaves_trust_unresolved_without_breaking_integrity() {
     let (_engine, bytes) = sealed_b();
-    // A second engine anchored on an unrelated certificate must reject the
-    // first engine's seal at the path check.
+    // An unrelated root cannot vouch for this signer. The signed bytes
+    // remain intact and trust is unresolved, not cryptographically failed.
     let other: TestIdentity = p256_identity(false);
     let engine2 = NativeSealEngine::new(
         SealConfig {
@@ -225,11 +225,21 @@ fn wrong_anchor_fails_certificate_path() {
     )
     .unwrap();
     let report = engine2.verify_sealed_pdf(&bytes).unwrap();
-    assert!(report.verdict() != oneiron_seal::VerifyVerdict::Passed);
+    assert_eq!(report.verdict(), oneiron_seal::VerifyVerdict::Indeterminate);
     assert_eq!(
-        finding(&report, VerifyCheckKind::CertificatePath),
-        Some(VerifyFindingCode::CertificatePathInvalid)
+        report.signatures[0].integrity,
+        oneiron_seal::VerifyVerdict::Passed
     );
+    assert_eq!(
+        report.signatures[0].trust,
+        oneiron_seal::VerifyVerdict::Indeterminate
+    );
+    assert!(
+        report
+            .reasons()
+            .contains(&VerifyFindingCode::TrustRootUnavailable)
+    );
+    assert_eq!(finding(&report, VerifyCheckKind::CertificatePath), None);
 }
 
 #[test]

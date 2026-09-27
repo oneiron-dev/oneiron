@@ -109,6 +109,108 @@ fn ref_obj(obj: &Object) -> Option<ObjectId> {
         _ => None,
     }
 }
+/// The writer changes only /Prev and /Size in a table trailer. Xref
+/// streams also replace their framing keys; document identity and metadata
+/// pointers must remain byte-for-byte equal across each renewal.
+fn trailer_allowed(
+    before: &Document,
+    after: &Document,
+    prior_bytes: &[u8],
+    next_bytes: &[u8],
+) -> bool {
+    if std::mem::discriminant(&before.reference_table.cross_reference_type)
+        != std::mem::discriminant(&after.reference_table.cross_reference_type)
+    {
+        return false;
+    }
+    let Ok(previous_xref) = super::super::pdf::last_startxref(prior_bytes) else {
+        return false;
+    };
+    // lopdf merges /Prev links into one Document and does not retain /Prev
+    // in Document.trailer. Read the current xref framing, not arbitrary page
+    // content, and prove its one /Prev points to the previous revision.
+    let Ok(current_xref) = super::super::pdf::last_startxref(next_bytes) else {
+        return false;
+    };
+    let Ok(offset) = usize::try_from(current_xref) else {
+        return false;
+    };
+    let Some(xref) = next_bytes.get(offset..) else {
+        return false;
+    };
+    let end = if matches!(
+        after.reference_table.cross_reference_type,
+        lopdf::xref::XrefType::CrossReferenceStream
+    ) {
+        xref.windows(b"stream\n".len())
+            .position(|w| w == b"stream\n")
+    } else {
+        xref.windows(b"startxref".len())
+            .rposition(|w| w == b"startxref")
+    };
+    let Some(header) = end.and_then(|i| xref.get(..i)) else {
+        return false;
+    };
+    let prev: Vec<_> = header
+        .windows(b"/Prev".len())
+        .enumerate()
+        .filter_map(|(i, w)| (w == b"/Prev").then_some(i + b"/Prev".len()))
+        .collect();
+    if prev.len() != 1 {
+        return false;
+    }
+    let digits = header[prev[0]..]
+        .iter()
+        .copied()
+        .skip_while(|b| *b == b' ')
+        .take_while(u8::is_ascii_digit)
+        .collect::<Vec<_>>();
+    if digits.is_empty()
+        || std::str::from_utf8(&digits)
+            .ok()
+            .and_then(|s| s.parse::<u64>().ok())
+            != Some(previous_xref)
+    {
+        return false;
+    }
+    let (Ok(Object::Integer(old_size)), Ok(Object::Integer(new_size))) =
+        (before.trailer.get(b"Size"), after.trailer.get(b"Size"))
+    else {
+        return false;
+    };
+    if *new_size <= *old_size {
+        return false;
+    }
+    let mut old = before.trailer.clone();
+    let mut new = after.trailer.clone();
+    for key in [
+        b"Prev".as_slice(),
+        b"Size",
+        b"Type",
+        b"W",
+        b"Index",
+        b"Length",
+        b"Filter",
+        b"DecodeParms",
+    ] {
+        old.remove(key);
+        new.remove(key);
+    }
+    old == new
+}
+
+/// Return the actual final EOF marker end, allowing at most four CR/LF bytes.
+pub(super) fn eof_tail(bytes: &[u8]) -> Option<usize> {
+    let mut end = bytes.len();
+    while end > 0 && matches!(bytes[end - 1], b'\r' | b'\n') {
+        end -= 1;
+        if bytes.len() - end > 4 {
+            return None;
+        }
+    }
+    bytes[..end].ends_with(b"%%EOF").then_some(end)
+}
+
 fn dss_delta(
     before: &Document,
     after: &Document,
@@ -284,15 +386,121 @@ fn doc_timestamp_delta(
     only_xref_extra(after, &mut changed, before, bytes) && changed.is_empty()
 }
 
-/// Candidate EOF ends are bounded; a fake marker within a content stream
-/// makes the analysis fail closed if its prefix does not parse as a revision.
+/// Locate the revision footer whose `startxref` points to `at`. A raw
+/// `%%EOF` inside a stream is not a revision boundary. Work stays bounded by
+/// the validated input size and MAX_REVISIONS in the caller.
+fn revision_footer(bytes: &[u8], at: usize, upper: usize) -> Option<(usize, usize)> {
+    let section = bytes.get(at..upper)?;
+    for (i, window) in section.windows(b"startxref".len()).enumerate().rev() {
+        if window != b"startxref" {
+            continue;
+        }
+        let mut cursor = at + i + b"startxref".len();
+        while matches!(bytes.get(cursor), Some(b' ' | b'\r' | b'\n')) {
+            cursor += 1;
+        }
+        let first = cursor;
+        while bytes.get(cursor).is_some_and(u8::is_ascii_digit) {
+            cursor += 1;
+        }
+        if first == cursor
+            || bytes
+                .get(first..cursor)?
+                .iter()
+                .try_fold(0usize, |value, b| {
+                    value.checked_mul(10)?.checked_add(usize::from(*b - b'0'))
+                })
+                != Some(at)
+        {
+            continue;
+        }
+        while matches!(bytes.get(cursor), Some(b' ' | b'\r' | b'\n')) {
+            cursor += 1;
+        }
+        if bytes.get(cursor..cursor + 5) == Some(b"%%EOF") && cursor + 5 <= upper {
+            return Some((at + i, cursor + 5));
+        }
+    }
+    None
+}
+
+/// The previous xref is read only from the current xref/trailer header.
+/// lopdf's merged trailer deliberately drops /Prev.
+fn xref_previous(bytes: &[u8], at: usize, footer_start: usize) -> Option<Option<usize>> {
+    let section = bytes.get(at..footer_start)?;
+    let header = if section.starts_with(b"xref") {
+        section
+    } else {
+        let stream_at = section
+            .windows(b"stream\n".len())
+            .position(|w| w == b"stream\n")?;
+        &section[..stream_at]
+    };
+    let mut found = None;
+    for (i, w) in header.windows(b"/Prev".len()).enumerate() {
+        if w != b"/Prev" {
+            continue;
+        }
+        if found.is_some() {
+            return None;
+        }
+        let mut cursor = i + b"/Prev".len();
+        while header.get(cursor) == Some(&b' ') {
+            cursor += 1;
+        }
+        let first = cursor;
+        while header.get(cursor).is_some_and(u8::is_ascii_digit) {
+            cursor += 1;
+        }
+        if first == cursor {
+            return None;
+        }
+        found = Some(header[first..cursor].iter().try_fold(0usize, |value, b| {
+            value.checked_mul(10)?.checked_add(usize::from(*b - b'0'))
+        })?);
+    }
+    Some(found)
+}
+
+/// Follow the validated xref `/Prev` chain and its matching startxref/EOF
+/// footers. Never infer revisions from raw `%%EOF` occurrences in streams.
 pub(super) fn revision_boundaries(bytes: &[u8]) -> Vec<usize> {
-    bytes
-        .windows(5)
-        .enumerate()
-        .filter_map(|(i, w)| (w == b"%%EOF").then_some(i + 5))
-        .take(MAX_REVISIONS + 1) // sentinel: fail closed before allocating unbounded rows
-        .collect()
+    let Some(mut upper) = eof_tail(bytes) else {
+        return Vec::new();
+    };
+    let Ok(start) = super::super::pdf::last_startxref(bytes) else {
+        return Vec::new();
+    };
+    let Ok(mut at) = usize::try_from(start) else {
+        return Vec::new();
+    };
+    let mut ends = Vec::new();
+    for _ in 0..=MAX_REVISIONS {
+        if at >= upper {
+            return Vec::new();
+        }
+        let Some((footer, end)) = revision_footer(bytes, at, upper) else {
+            return Vec::new();
+        };
+        if ends.is_empty() && end != upper {
+            return Vec::new();
+        }
+        ends.push(end);
+        let Some(prev) = xref_previous(bytes, at, footer) else {
+            return Vec::new();
+        };
+        let Some(prev) = prev else {
+            ends.reverse();
+            return ends;
+        };
+        if prev >= at {
+            return Vec::new();
+        }
+        upper = at;
+        at = prev;
+    }
+    ends.reverse(); // MAX_REVISIONS + 1 is the fail-closed sentinel.
+    ends
 }
 
 /// Structural indicators are deliberately separate from the modification
@@ -307,10 +515,24 @@ pub(super) fn structural_anomalies(
         return out;
     }
     let mut previous = None;
+    let mut prior_end = 0;
     for &end in boundaries {
         let Some(current) = parsed(&bytes[..end], limits) else {
+            prior_end = end;
             continue;
         };
+        let spans = stream_payloads(&current, &bytes[..end], limits.max_pdf_objects);
+        if scan_headers(
+            &bytes[prior_end..end],
+            prior_end,
+            limits.max_pdf_objects,
+            &spans,
+        )
+        .is_some_and(|scan| scan.duplicate)
+            && !out.contains(&VerifyAnomaly::DuplicateObjectNumber)
+        {
+            out.push(VerifyAnomaly::DuplicateObjectNumber);
+        }
         if let Some(prior) = &previous
             && let Some(changed) = changed_ids(prior, &current)
         {
@@ -329,17 +551,71 @@ pub(super) fn structural_anomalies(
             }
         }
         previous = Some(current);
+        prior_end = end;
     }
     out
 }
 
-/// Count object headers in the new byte segment, not only objects retained
-/// by lopdf's merged xref. An unreferenced extra object must not ride along
-/// with an otherwise permitted evidence update. False positives in a stream
-/// fail closed; this whitelist accepts the native writer's exact line shape.
-fn revision_headers(segment: &[u8], max_objects: usize) -> Option<BTreeSet<ObjectId>> {
-    let mut ids = BTreeSet::new();
-    for line in segment.split(|b| *b == b'\n') {
+/// Keep object-header recognition out of length-delimited stream payloads.
+/// The effective xref gives the stream's raw header offset; lopdf retains
+/// its encoded content length even when a decoded view is also available.
+fn stream_payloads(doc: &Document, bytes: &[u8], limit: usize) -> Vec<(usize, usize)> {
+    let mut spans = Vec::new();
+    for (id, obj) in doc.objects.iter().take(limit.min(10_000)) {
+        let Object::Stream(stream) = obj else {
+            continue;
+        };
+        let Some(lopdf::xref::XrefEntry::Normal { offset, .. }) = doc.reference_table.get(id.0)
+        else {
+            continue;
+        };
+        let at = *offset as usize;
+        let Some(header) = bytes.get(at..bytes.len().min(at.saturating_add(4096))) else {
+            continue;
+        };
+        let Some(pos) = header
+            .windows(b"stream\n".len())
+            .position(|w| w == b"stream\n")
+        else {
+            continue;
+        };
+        let begin = at + pos + b"stream\n".len();
+        let Some(end) = begin.checked_add(stream.content.len()) else {
+            continue;
+        };
+        if bytes.get(begin..end) == Some(stream.content.as_slice()) {
+            spans.push((begin, end));
+        }
+    }
+    spans
+}
+
+struct HeaderScan {
+    ids: BTreeSet<ObjectId>,
+    duplicate: bool,
+}
+
+fn scan_headers(
+    segment: &[u8],
+    base: usize,
+    max_objects: usize,
+    spans: &[(usize, usize)],
+) -> Option<HeaderScan> {
+    let mut scan = HeaderScan {
+        ids: BTreeSet::new(),
+        duplicate: false,
+    };
+    let mut offset = base;
+    for line in segment.split_inclusive(|b| *b == b'\n') {
+        let current = offset;
+        offset += line.len();
+        if spans
+            .iter()
+            .any(|&(start, end)| current >= start && current < end)
+        {
+            continue;
+        }
+        let line = line.strip_suffix(b"\n").unwrap_or(line);
         let Some(prefix) = line.strip_suffix(b" obj") else {
             continue;
         };
@@ -349,11 +625,20 @@ fn revision_headers(segment: &[u8], max_objects: usize) -> Option<BTreeSet<Objec
         };
         let num = std::str::from_utf8(num).ok()?.parse::<u32>().ok()?;
         let generation = std::str::from_utf8(generation).ok()?.parse::<u16>().ok()?;
-        if !ids.insert((num, generation)) || ids.len() > max_objects.min(10_000) {
+        if !scan.ids.insert((num, generation)) {
+            scan.duplicate = true;
+        }
+        if scan.ids.len() > max_objects.min(10_000) {
             return None;
         }
     }
-    Some(ids)
+    Some(scan)
+}
+
+/// Scan a raw segment without stream metadata (also used for xref headers).
+fn revision_headers(segment: &[u8], max_objects: usize) -> Option<BTreeSet<ObjectId>> {
+    let scan = scan_headers(segment, 0, max_objects, &[])?;
+    (!scan.duplicate).then_some(scan.ids)
 }
 
 fn accounted_headers(
@@ -364,10 +649,19 @@ fn accounted_headers(
     next: &Document,
     limits: &SealResourceLimits,
 ) -> bool {
-    let Some(mut headers) = revision_headers(&bytes[before_end..next_end], limits.max_pdf_objects)
-    else {
+    let spans = stream_payloads(next, &bytes[..next_end], limits.max_pdf_objects);
+    let Some(scan) = scan_headers(
+        &bytes[before_end..next_end],
+        before_end,
+        limits.max_pdf_objects,
+        &spans,
+    ) else {
         return false;
     };
+    if scan.duplicate {
+        return false;
+    }
+    let mut headers = scan.ids;
     // lopdf may keep the xref stream in the xref table without exposing it
     // in Document.objects. Its real startxref target is the only exception.
     if matches!(
@@ -401,11 +695,7 @@ pub(crate) fn analyze_modifications(
     let Some(final_end) = ends.last().copied() else {
         return ModificationStatus::Suspicious;
     };
-    if !bytes[final_end..]
-        .iter()
-        .all(|b| *b == b'\r' || *b == b'\n')
-        || bytes.len() - final_end > 4
-    {
+    if eof_tail(bytes) != Some(final_end) {
         return ModificationStatus::Suspicious;
     }
     let first = match signer_end {
@@ -440,6 +730,7 @@ pub(crate) fn analyze_modifications(
             return ModificationStatus::Suspicious;
         };
         let allowed = signer_end.is_some()
+            && trailer_allowed(&prev, &next, &bytes[..previous_end], &bytes[..next_end])
             && accounted_headers(bytes, previous_end, next_end, &changed, &next, limits)
             && (dss_delta(&prev, &next, &bytes[..next_end], changed.clone())
                 || doc_timestamp_delta(&prev, &next, &bytes[..next_end], changed));
@@ -469,11 +760,33 @@ mod tests {
 
     #[test]
     fn revision_markers_are_bounded_before_any_prefix_parsing_or_report_allocation() {
-        let bytes = b"%%EOF".repeat(1000);
+        let mut bytes = std::fs::read(format!(
+            "{}/tests/fixtures/pdf-input/classic_1page.pdf",
+            env!("CARGO_MANIFEST_DIR")
+        ))
+        .unwrap();
+        for _ in 0..=MAX_REVISIONS {
+            let state =
+                super::super::super::pdf::reparse_revision(&bytes, &SealResourceLimits::default())
+                    .unwrap();
+            let id = state.max_obj + 1;
+            bytes = super::super::super::pdf::append_revision(
+                &bytes,
+                &state,
+                &super::super::super::pdf::RevisionKind::Dss {
+                    material_objects: vec![(id, b"<< /Type /DSS >>".to_vec())],
+                    dss_obj: id,
+                },
+                0,
+            )
+            .unwrap()
+            .bytes;
+        }
         assert_eq!(revision_boundaries(&bytes).len(), MAX_REVISIONS + 1);
         assert_eq!(
             analyze_modifications(&bytes, None, &SealResourceLimits::default()),
             ModificationStatus::Suspicious
         );
+        assert!(revision_boundaries(b"%%EOF%%EOF").is_empty());
     }
 }

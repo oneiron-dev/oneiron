@@ -161,8 +161,10 @@ pub enum VerifyCheckKind {
     SigningCertificateBinding,
     CertificatePath,
     SignatureTimestamp,
+    SignatureTimestampTrust,
     ValidationMaterial,
     DocumentTimestamp,
+    DocumentTimestampTrust,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

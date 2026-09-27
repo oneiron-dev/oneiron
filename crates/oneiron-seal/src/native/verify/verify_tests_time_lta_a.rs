@@ -9,7 +9,7 @@ pub(crate) mod tests {
 
     use super::super::super::{cms, engine, pdf, profile, tsp};
     use super::super::verify_revocation::TS_GEN_TIME_MAX_SKEW_SECS;
-    use super::super::verify_sig_pipeline::{Checks, SigEntry, verify_doc_ts};
+    use super::super::verify_sig_pipeline::{Checks, DocTimestampOutcome, SigEntry, verify_doc_ts};
     use super::super::verify_tests_dss_b::tests::*;
     use super::super::verify_tests_fixtures_dss_a::tests::*;
     use super::super::verify_tests_lta_probes::tests::*;
@@ -220,7 +220,10 @@ pub(crate) mod tests {
             &mut covered,
             AT_UNIX * 1000,
         );
-        assert!(got.is_none(), "bad ByteRange rejects the DocTimeStamp");
+        assert!(
+            matches!(got, DocTimestampOutcome::Invalid),
+            "bad ByteRange rejects the DocTimeStamp"
+        );
         assert!(
             covered.is_empty(),
             "a rejected DocTimeStamp leaves its TSA chain out of the binding set"
@@ -545,6 +548,158 @@ pub(crate) mod tests {
             anchors: vec![signer.cert_der.clone(), signer2.cert_der, tsa.cert_der],
             signer_cert: signer.cert_der,
             stale_later_crl: crl,
+        }
+    }
+
+    #[test]
+    fn public_verifier_reports_duplicate_object_numbers_before_and_after_signing() {
+        let signer = test_ca("duplicate-signer");
+        let engine = verify_engine(vec![signer.cert_der.clone()], VERIFY_SECS);
+        let mut input = base_input();
+        let xref = input
+            .windows(b"xref\n".len())
+            .position(|w| w == b"xref\n")
+            .unwrap();
+        let duplicate = b"1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n";
+        input.splice(xref..xref, duplicate.iter().copied());
+        let old_offset = b"startxref\n186\n";
+        let at = input
+            .windows(old_offset.len())
+            .position(|w| w == old_offset)
+            .unwrap();
+        input.splice(
+            at..at + old_offset.len(),
+            format!("startxref\n{}\n", xref + duplicate.len()).bytes(),
+        );
+        let signed = append_sig_revision(&input, &signer, "duplicate-before", None, AT_UNIX);
+        let first = engine.verify_sealed_pdf(&signed).unwrap();
+        assert!(
+            first
+                .anomalies
+                .contains(&crate::api::VerifyAnomaly::DuplicateObjectNumber)
+        );
+        assert_eq!(
+            first.verdict(),
+            crate::api::VerifyVerdict::Passed,
+            "an anomaly indicator must not independently change the verdict"
+        );
+        // An unindexed earlier definition of a new object in an appended
+        // revision must be visible even though the merged object map keeps
+        // only the definition named by xref.
+        let state = pdf::reparse_revision(&signed, &SealResourceLimits::default()).unwrap();
+        let id = state.max_obj + 1;
+        let mut later = signed;
+        later.extend_from_slice(format!("\n{id} 0 obj\n<< /Probe /Orphan >>\nendobj\n").as_bytes());
+        let active = later.len();
+        later.extend_from_slice(format!("{id} 0 obj\n<< /Probe /Active >>\nendobj\n").as_bytes());
+        let xref_offset = later.len();
+        later.extend_from_slice(format!("xref\n{id} 1\n{active:010} 00000 n\r\ntrailer\n<< /Size {} /Prev {} /Root {} {} R >>\nstartxref\n{xref_offset}\n%%EOF",
+            id + 1, state.prev_startxref, state.root.0, state.root.1).as_bytes());
+        let second = engine.verify_sealed_pdf(&later).unwrap();
+        assert!(
+            second
+                .anomalies
+                .contains(&crate::api::VerifyAnomaly::DuplicateObjectNumber)
+        );
+        assert_eq!(
+            second.modifications,
+            crate::api::ModificationStatus::Suspicious
+        );
+    }
+
+    #[test]
+    fn public_verifier_refuses_dss_trailer_id_and_info_changes() {
+        let signer = test_ca("trailer-signer");
+        let tsa = tsa_ca();
+        let mut input = base_input();
+        let marker = b"/Root 1 0 R >>";
+        let i = input
+            .windows(marker.len())
+            .rposition(|w| w == marker)
+            .unwrap()
+            + b"/Root 1 0 R ".len();
+        input.splice(
+            i..i,
+            b"/ID [<0011223344556677> <0011223344556677>] "
+                .iter()
+                .copied(),
+        );
+        let signed = append_sig_revision(&input, &signer, "trailer", Some(&tsa), AT_UNIX);
+        let crl = build_crl(
+            &signer,
+            AT_UNIX - 60,
+            Some(VERIFY_SECS + 3600),
+            None,
+            vec![],
+        );
+        let dss = append_dss_revision(
+            &signed,
+            vec![signer.cert_der.clone(), tsa.cert_der.clone()],
+            vec![crl],
+        );
+        let engine = verify_engine(vec![signer.cert_der, tsa.cert_der], VERIFY_SECS);
+        assert_eq!(
+            engine.verify_sealed_pdf(&dss).unwrap().modifications,
+            crate::api::ModificationStatus::Clean(crate::api::ModificationLevel::LtaUpdates)
+        );
+        let mut changed_id = dss.clone();
+        let last_trailer = changed_id
+            .windows(b"trailer\n".len())
+            .rposition(|w| w == b"trailer\n")
+            .unwrap();
+        let relative_id = changed_id[last_trailer..]
+            .windows(b"<0011223344556677>".len())
+            .position(|w| w == b"<0011223344556677>")
+            .unwrap();
+        changed_id[last_trailer + relative_id + 1] = b'1';
+        let mut changed_info = dss;
+        let last_end = changed_info
+            .windows(b">>\nstartxref\n".len())
+            .rposition(|w| w == b">>\nstartxref\n")
+            .unwrap();
+        changed_info.splice(last_end..last_end, b" /Info 1 0 R".iter().copied());
+        for altered in [changed_id, changed_info] {
+            let report = engine.verify_sealed_pdf(&altered).unwrap();
+            assert_eq!(
+                report.modifications,
+                crate::api::ModificationStatus::Suspicious
+            );
+            assert_eq!(report.verdict(), crate::api::VerifyVerdict::Failed);
+            assert_eq!(
+                report.signatures[0].integrity,
+                crate::api::VerifyVerdict::Passed
+            );
+        }
+    }
+
+    #[test]
+    fn public_verifier_uses_four_byte_eol_tolerance_consistently() {
+        let signer = test_ca("eol-signer");
+        let signed = append_sig_revision(&base_input(), &signer, "eol", None, AT_UNIX);
+        let engine = verify_engine(vec![signer.cert_der], VERIFY_SECS);
+        for tail in [b"".as_slice(), b"\n", b"\r\n", b"\n\r\n", b"\r\n\r\n"] {
+            let mut bytes = signed.clone();
+            bytes.extend_from_slice(tail);
+            let report = engine.verify_sealed_pdf(&bytes).unwrap();
+            assert_eq!(
+                report.verdict(),
+                crate::api::VerifyVerdict::Passed,
+                "tail {tail:?}: {report:?}"
+            );
+            assert_eq!(
+                report.signatures[0].coverage,
+                crate::api::SignatureCoverage::EntireFile
+            );
+            assert_eq!(
+                report.modifications,
+                crate::api::ModificationStatus::Clean(crate::api::ModificationLevel::None)
+            );
+        }
+        for tail in [b"\n\r\n\r\n".as_slice(), b"\nx"] {
+            let mut bytes = signed.clone();
+            bytes.extend_from_slice(tail);
+            let report = engine.verify_sealed_pdf(&bytes).unwrap();
+            assert_eq!(report.verdict(), crate::api::VerifyVerdict::Failed);
         }
     }
 
