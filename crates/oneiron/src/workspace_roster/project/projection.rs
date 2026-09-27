@@ -188,6 +188,12 @@ pub(crate) fn reconcile_project_rooms(
             return Err(invalid());
         }
         if previous.as_ref() == Some(&room) {
+            // A batch can submit the exact derived room beside its PROJECT.
+            // Even when no room rewrite is needed, its owner marker must land.
+            let marker = [ROOM_PROJECT, room_id.as_bytes()].concat();
+            if store.vault_meta.get(txn, &marker)?.as_deref() != Some(id.as_bytes()) {
+                store.vault_meta.put(txn, &marker, id.as_bytes())?;
+            }
             continue;
         }
         let change = ProjectRoomChange {

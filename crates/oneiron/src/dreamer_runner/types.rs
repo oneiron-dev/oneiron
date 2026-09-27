@@ -246,9 +246,10 @@ impl DreamerHomeNodeCandidate {
     }
 
     pub(super) fn designation_class(self) -> Option<DreamerHomeNodeClass> {
-        if self.cloud && self.attached {
-            Some(DreamerHomeNodeClass::CloudAttached)
-        } else if self.always_on_local {
+        if self.cloud {
+            return self.attached.then_some(DreamerHomeNodeClass::CloudAttached);
+        }
+        if self.always_on_local {
             Some(DreamerHomeNodeClass::AlwaysOnLocal)
         } else if self.primary_device {
             Some(DreamerHomeNodeClass::PrimaryDevice)
