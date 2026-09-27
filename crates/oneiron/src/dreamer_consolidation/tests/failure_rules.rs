@@ -37,7 +37,9 @@ fn rows(subject: EntityId, turn: EntityId, eligible: bool) -> Vec<u8> {
 
 #[test]
 fn resident_failure_rules_route_fatal_extraction_and_clamp_promotion() -> Result<()> {
-    for eligible in [false, true] {
+    for (eligible, on_record_session) in
+        [(false, false), (true, false), (false, true), (true, true)]
+    {
         let (_dir, vault) = open_vault();
         super::prior_heads::policy(&vault, vault.dreamer_authority()?.entity_ref(), true)?;
         let store = DreamerRunnerStore::new(&vault);
@@ -50,7 +52,34 @@ fn resident_failure_rules_route_fatal_extraction_and_clamp_promotion() -> Result
         let subject = EntityId::from_bytes([0x65; 16])?;
         vault.put_entity(&subject, ENTITY_TYPE_PERSON, occurred(1), 1, b"person")?;
         let resident = EntityId::from_bytes([0x69; 16])?;
-        vault.put_entity(&resident, ENTITY_TYPE_PERSON, occurred(1), 1, b"resident")?;
+        let definition = crate::agent_def::AgentDefinition::new(
+            "oneiron.agent.resident",
+            "Resident rule author",
+            "1",
+            None,
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            None,
+            crate::agent_def::AgentScope::All,
+            crate::agent_def::AgentCeiling::Auto,
+            None,
+            ClaimApprovalStatus::Approved,
+            crate::ClaimLifecycleStatus::Active,
+            ClaimSource::UserStated,
+            1.0,
+            false,
+            true,
+            Value::Map(vec![("definedVia".into(), "test".into())]),
+            None,
+            true,
+            None,
+        );
+        vault.put_agent_definition(&resident, &definition, occurred(1), 1)?;
+        assert_eq!(
+            vault.get_entity_type(&resident)?,
+            Some(crate::registry::ENTITY_TYPE_AGENT_DEF)
+        );
         let author = WriteActor::new(resident, EdgeActorClass::Agent);
         let authored: serde_json::Value =
             serde_json::from_slice(&rows(subject, turns[0], eligible))
@@ -62,19 +91,28 @@ fn resident_failure_rules_route_fatal_extraction_and_clamp_promotion() -> Result
         )
         .expect("authored rows accepted before dispatch");
         let claim_id = EntityId::from_bytes([0x6a; 16])?;
-        let outcome = HostSelfDispatcher::new(&vault, author, "resident-chat-rule")?.dispatch(
-            SelfCall::MemoryPutClaim(SelfMemoryPutClaimCall::new(
-                claim_id,
-                ClaimCandidate::new(
-                    crate::dreamer_consolidation::DREAMER_FAILURE_RULES_PREDICATE,
-                    ClaimSubject::Entity(resident),
-                    value,
-                    1.0,
-                ),
-                occurred(21),
-                21,
-            )),
-        )?;
+        let call = SelfCall::MemoryPutClaim(SelfMemoryPutClaimCall::new(
+            claim_id,
+            ClaimCandidate::new(
+                crate::dreamer_consolidation::DREAMER_FAILURE_RULES_PREDICATE,
+                ClaimSubject::Entity(resident),
+                value,
+                1.0,
+            ),
+            occurred(21),
+            21,
+        ));
+        let outcome = if on_record_session {
+            let session = vault.off_record_session_vault().enter(
+                "resident-rule-session",
+                crate::off_record::OffRecordBackendClass::Local,
+            )?;
+            session.flip_on_record()?;
+            HostSelfDispatcher::for_off_record_session(&session, author, "resident-chat-rule")?
+                .dispatch(call)?
+        } else {
+            HostSelfDispatcher::new(&vault, author, "resident-chat-rule")?.dispatch(call)?
+        };
         assert!(matches!(
             outcome,
             crate::code_run::SelfDispatchOutcome::MemoryWrite(_)

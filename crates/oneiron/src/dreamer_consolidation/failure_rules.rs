@@ -156,12 +156,24 @@ pub(crate) fn prepare_authored_claim(predicate: &str, value: &Value) -> Result<O
 /// A policy is a host-bound action, not an assertion to use as corroboration:
 /// a Proposed claim can carry it only when its gate decision was `allow`.
 /// Pending and denied writes remain inert despite their durable claim rows.
+fn valid_resident_actor(vault: &Vault, actor: WriteActor) -> Result<bool> {
+    if actor.actor_class() != EdgeActorClass::Agent || actor == vault.dreamer_authority()? {
+        return Ok(false);
+    }
+    let Some(raw) = vault.get_raw(&actor.entity_ref())? else {
+        return Ok(false);
+    };
+    let header = crate::batch::EntityMetadataHeader::parse(&raw)
+        .ok_or(Error::CorruptedIndex("resident actor entity header"))?;
+    Ok(crate::provenance::validate_actor_class(header.entity_type, actor.actor_class()).is_ok())
+}
+
 pub(crate) fn admitted_authored_claim(
     vault: &Vault,
     id: &EntityId,
     actor: WriteActor,
 ) -> Result<bool> {
-    if actor.actor_class() != EdgeActorClass::Agent || actor == vault.dreamer_authority()? {
+    if !valid_resident_actor(vault, actor)? {
         return Ok(false);
     }
     let Some(body) = vault.get_claim(id)? else {
@@ -217,11 +229,7 @@ impl Vault {
     /// `self.memory.put_claim` trap, with the resident actor bound by its host.
     pub fn set_dreamer_failure_rules(&self, actor: WriteActor, json: &[u8]) -> Result<()> {
         let bytes = resident_record(actor, json)?;
-        if actor == self.dreamer_authority()?
-            || self
-                .read_entity_header(&actor.entity_ref())?
-                .is_none_or(|row| row.entity_type != crate::registry::ENTITY_TYPE_PERSON)
-        {
+        if !valid_resident_actor(self, actor)? {
             return Err(invalid());
         }
         let mut txn = self.store.env.write_txn()?;
