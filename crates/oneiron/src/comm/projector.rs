@@ -23,7 +23,7 @@ use crate::Vault;
 use crate::counterparty_contact::normalize_channel_class;
 use crate::entity_id::EntityId;
 use crate::error::Error;
-use crate::ports::EntityStoreRead;
+use crate::ports::{EntityStoreRead, TombstoneStore};
 use crate::receipt::FIELD_TASK_REF;
 use crate::registry::ENTITY_TYPE_COMM_RECORD;
 
@@ -156,8 +156,13 @@ fn import_delivered_send_receipts(vault: &Vault) -> CommResult<()> {
                         occurred_at,
                         ..
                     } if resident_channel == *channel && occurred_at == receipt.occurred_at => {
-                        if let Some(original) =
-                            vault.store.port_entity_record(&*txn, &original_party)?
+                        // A soft delete keeps a headerful PERSON shell with
+                        // scrubbed body bytes. It is not a live party to
+                        // compare against the frozen receipt; the already
+                        // imported event must remain replay-idempotent.
+                        if !vault.port_tombstone_is_deleted(&*txn, &original_party)?
+                            && let Some(original) =
+                                vault.store.port_entity_record(&*txn, &original_party)?
                         {
                             if original.entity_type != crate::registry::ENTITY_TYPE_PERSON {
                                 return Err(CommError::InvalidRecord);
