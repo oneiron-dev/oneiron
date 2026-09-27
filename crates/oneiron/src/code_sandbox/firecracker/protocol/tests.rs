@@ -177,7 +177,7 @@ fn oversized_frame_and_expired_deadline_fail_closed() {
 }
 
 #[cfg(target_os = "linux")]
-fn full_boundary_source() -> Result<crate::skill_hub::pack_catalog::PackSource> {
+fn full_boundary_source(target: usize) -> Result<crate::skill_hub::pack_catalog::PackSource> {
     use crate::skill_hub::{HubFile, pack_catalog::PackSource};
     const SCRIPT: &str = r#"
         const head = '{"inbound":[],"verbs":[],"events":[{"event_id":"e","connector":"email","event_kind":"arrived","predicate":"email.message","payload":"';
@@ -199,7 +199,6 @@ fn full_boundary_source() -> Result<crate::skill_hub::pack_catalog::PackSource> 
             include_bytes!("../../../../tests/fixtures/echo_pack/scripts/input.json").to_vec(),
         ),
     ];
-    let target = oneiron_sandbox_contract::MAX_WORKSPACE_BYTES - 64 * 1024;
     let mut left = target - files.iter().map(|f| f.content.len()).sum::<usize>();
     let mut index = 0;
     while left > 0 {
@@ -221,17 +220,17 @@ fn full_boundary_source() -> Result<crate::skill_hub::pack_catalog::PackSource> 
 // bounded JSON payload instead of interpreting JavaScript.
 #[cfg(target_os = "linux")]
 fn boundary_component(output_len: usize) -> Vec<u8> {
-    let empty = r#"{"inbound":[],"verbs":[],"events":[{"event_kind":"arrived","pad":""}]}"#;
+    let empty = r#"{"inbound":[],"verbs":[],"events":[{"event_id":"e","connector":"email","event_kind":"arrived","predicate":"email.message","payload":{"pad":""}}]}"#;
     assert!(output_len >= empty.len());
     let json = format!(
-        r#"{{"inbound":[],"verbs":[],"events":[{{"event_kind":"arrived","pad":"{}"}}]}}"#,
+        r#"{{"inbound":[],"verbs":[],"events":[{{"event_id":"e","connector":"email","event_kind":"arrived","predicate":"email.message","payload":{{"pad":"{}"}}}}]}}"#,
         "x".repeat(output_len - empty.len())
     );
     assert_eq!(json.len(), output_len);
     let wat_bytes = json.replace('"', "\\22");
     let wat = include_str!("../../../../../oneiron-guest/src/conformance.wat")
         .replace("(data (i32.const 4192) \"typed-component-conformance\\0a\")",
-            &format!("(data (i32.const 1000000) \"{wat_bytes}\")"))
+            &format!("(data (i32.const 1500000) \"{wat_bytes}\")"))
         .replace("(data (i32.const 4128) \"/mnt/workspace/result.txt\")",
             "(data (i32.const 4128) \"/mnt/workspace/adapter-output.json\")")
         .replace("(i32.store (i32.const 2060) (i32.const 25))",
@@ -243,7 +242,7 @@ fn boundary_component(output_len: usize) -> Vec<u8> {
         (else
           (i32.store (i32.const 2064) (i32.const 4192))
           (i32.store (i32.const 2068) (i32.const 28))))"#,
-            &format!("      (i32.store (i32.const 2064) (i32.const 1000000))\n      (i32.store (i32.const 2068) (i32.const {output_len}))"))
+            &format!("      (i32.store (i32.const 2064) (i32.const 1500000))\n      (i32.store (i32.const 2068) (i32.const {output_len}))"))
         .replace(r#"      (call $credential
         (i32.const 4256) (i32.const 8) (i32.const 4288) (i32.const 18)
         (i32.const 4320) (i32.const 43) (i32.const 1536))
@@ -258,7 +257,7 @@ fn boundary_component(output_len: usize) -> Vec<u8> {
 fn qualified_max_workspace_round_trips_full_reserved_output_and_refuses_one_extra_byte()
 -> Result<()> {
     use crate::skill_hub::pack_catalog::{PackAdapter, PackRuntimeRecipe, ScriptExecutionPlan};
-    let source = full_boundary_source()?;
+    let source = full_boundary_source(oneiron_sandbox_contract::MAX_WORKSPACE_BYTES - 64 * 1024)?;
     let recipe = PackRuntimeRecipe {
         adapter: PackAdapter::Script("scripts/adapter.js".into()),
         runtime_id: crate::code_sandbox::SANDBOX_JS_COMPONENT_NAME.into(),
@@ -272,17 +271,12 @@ fn qualified_max_workspace_round_trips_full_reserved_output_and_refuses_one_extr
         "email".into(),
         json!({"handle":"pack-demo", "scheme":"https", "host":"api.example.com"}),
     );
-    let mut oversized_files = source.files().to_vec();
-    let adapter = oversized_files
-        .iter_mut()
-        .find(|file| file.path == "scripts/adapter.js")
-        .expect("adapter exists");
-    adapter.content = String::from_utf8(adapter.content.clone())
-        .expect("ASCII fixture")
-        .replace("Array(65536).fill(120)", "Array(65537).fill(120)")
-        .into_bytes();
-    let oversized_source = crate::skill_hub::pack_catalog::PackSource::from_files(oversized_files)?;
-    let oversized_plan = ScriptExecutionPlan::from_source(&oversized_source, &recipe)?;
+    // Give the one-byte-over result actual workspace headroom. The guest and
+    // host transport must accept the edit; the PACK output contract must then
+    // refuse it before any durable admission.
+    let spare_source =
+        full_boundary_source(oneiron_sandbox_contract::MAX_WORKSPACE_BYTES - 64 * 1024 - 1)?;
+    let oversized_plan = ScriptExecutionPlan::from_source(&spare_source, &recipe)?;
     for overshoot in [false, true] {
         let active = if overshoot { &oversized_plan } else { &plan };
         let dir = tempfile::tempdir().expect("fixture root");
@@ -329,13 +323,16 @@ fn qualified_max_workspace_round_trips_full_reserved_output_and_refuses_one_extr
         );
         let guest_outcome = worker.join().expect("guest worker");
         if overshoot {
+            let (exit, writes) = outcome?;
+            assert_eq!(exit.status, 0, "spare workspace admits the guest edit");
             assert!(
-                outcome.is_err(),
-                "one output byte beyond reservation must refuse"
+                guest_outcome.is_ok(),
+                "guest accepts the merged tree: {guest_outcome:?}"
             );
+            assert_eq!(writes.len(), 1);
             assert!(
-                guest_outcome.is_err(),
-                "guest refuses merged workspace before writing"
+                active.output_bytes(&writes[0]).is_err(),
+                "the pack output contract must refuse 64 KiB + 1 before intake"
             );
         } else {
             assert!(
@@ -351,15 +348,166 @@ fn qualified_max_workspace_round_trips_full_reserved_output_and_refuses_one_extr
             assert_eq!(writes.len(), 1);
             let bytes = active.output_bytes(&writes[0])?;
             assert_eq!(bytes.len(), 64 * 1024);
-            assert_eq!(
-                serde_json::from_slice::<Value>(&bytes).expect("typed JSON")["events"][0]["event_kind"],
-                "arrived"
-            );
+            let typed = crate::skill_hub::pack_catalog::ScriptOutput::decode(&bytes)?;
+            assert_eq!(typed.events[0].event_kind, "arrived");
+            assert_eq!(typed.events[0].connector, "email");
         }
         assert!(
             !base.join("adapter-output.json").exists(),
             "guest proposals cannot mutate source"
         );
     }
+    Ok(())
+}
+
+#[cfg(target_os = "linux")]
+fn guest_snapshot_result(files: &[crate::skill_hub::HubFile], program: &str) -> bool {
+    use std::{
+        io::{Cursor, Read, Write},
+        sync::{Arc, Mutex},
+    };
+    struct Channel {
+        input: Cursor<Vec<u8>>,
+        output: Arc<Mutex<Vec<u8>>>,
+    }
+    impl Read for Channel {
+        fn read(&mut self, bytes: &mut [u8]) -> std::io::Result<usize> {
+            self.input.read(bytes)
+        }
+    }
+    impl Write for Channel {
+        fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+            self.output
+                .lock()
+                .expect("fixture output")
+                .extend_from_slice(bytes);
+            Ok(bytes.len())
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+    fn send(frames: &mut Vec<u8>, value: Value) {
+        let bytes = serde_json::to_vec(&value).expect("fixture frame");
+        frames.extend_from_slice(&(bytes.len() as u32).to_be_bytes());
+        frames.extend_from_slice(&bytes);
+    }
+    let component = boundary_component(256);
+    let mut frames = Vec::new();
+    send(
+        &mut frames,
+        json!({"type":"start","version":1,"vm_id":"shape-matrix",
+        "tier":"foreign","pids":2,"component_bytes":component.len(),"source":program}),
+    );
+    for (index, bytes) in component.chunks(256 * 1024).enumerate() {
+        send(
+            &mut frames,
+            json!({"type":"component","offset":index * 256 * 1024,"bytes":bytes}),
+        );
+    }
+    for file in files {
+        send(
+            &mut frames,
+            json!({"type":"file","path":format!("/mnt/workspace/{}", file.path),
+            "bytes":file.content}),
+        );
+    }
+    send(&mut frames, json!({"type":"ready"}));
+    send(&mut frames, json!({"type":"receipt","accepted":true}));
+    let channel = Channel {
+        input: Cursor::new(frames),
+        output: Arc::new(Mutex::new(Vec::new())),
+    };
+    let root = tempfile::tempdir().expect("guest workspace");
+    oneiron_guest::serve_localtest(channel, &root.path().canonicalize().unwrap()).is_ok()
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn qualification_and_guest_agree_on_path_file_and_program_boundaries() -> Result<()> {
+    use crate::skill_hub::{
+        HubFile,
+        pack_catalog::{PackAdapter, PackRuntimeRecipe, PackSource, ScriptExecutionPlan},
+    };
+    let base = full_boundary_source(1024 * 1024)?;
+    let recipe = PackRuntimeRecipe {
+        adapter: PackAdapter::Script("scripts/adapter.js".into()),
+        runtime_id: crate::code_sandbox::SANDBOX_JS_COMPONENT_NAME.into(),
+        runtime_hash: blake3::hash(&boundary_component(256)).to_hex().to_string(),
+    };
+    let base_plan = ScriptExecutionPlan::from_source(&base, &recipe)?;
+    let mut grants = BTreeMap::new();
+    grants.insert(
+        "email".into(),
+        json!({"handle":"pack-demo","scheme":"https","host":"api.example.com"}),
+    );
+    let program = base_plan.assemble_program(&grants)?;
+    for (relative, len, accepted) in [
+        (format!("knowledge/{}x", "a/".repeat(62)), 1, true), // 64 components
+        (format!("knowledge/{}x", "a/".repeat(63)), 1, false), // 65 components
+        (format!("knowledge/{}", "x".repeat(255)), 1, true),
+        (format!("knowledge/{}", "x".repeat(256)), 1, false),
+        (format!("knowledge/{}a", "é".repeat(127)), 1, true),
+        (format!("knowledge/{}", "é".repeat(128)), 1, false),
+        ("knowledge/size.txt".into(), 1024 * 1024, true),
+        ("knowledge/size.txt".into(), 1024 * 1024 + 1, false),
+    ] {
+        let mut files = base.files().to_vec();
+        files.push(HubFile::new(relative, vec![b'x'; len]));
+        let candidate = PackSource::from_files(files)?;
+        let qualified = ScriptExecutionPlan::from_source(&candidate, &recipe).is_ok();
+        assert_eq!(qualified, accepted, "qualifier shape mismatch");
+        assert_eq!(
+            guest_snapshot_result(candidate.files(), &program),
+            accepted,
+            "guest disagrees with qualifier for {len}-byte file"
+        );
+    }
+    // Program boundary: the same accepted source plus a host-authored prelude
+    // reaches exactly 1 MiB, while one extra byte fails both plan and guest.
+    let mut files = vec![
+        HubFile::new(
+            "PACK.md",
+            include_bytes!("../../../../tests/fixtures/echo_pack/PACK.md").to_vec(),
+        ),
+        HubFile::new(
+            "scripts/adapter.js",
+            include_bytes!("../../../../tests/fixtures/echo_pack/scripts/adapter.js").to_vec(),
+        ),
+    ];
+    let script = files
+        .iter_mut()
+        .find(|file| file.path == "scripts/adapter.js")
+        .unwrap();
+    script.content.resize(
+        oneiron_sandbox_contract::MAX_PROGRAM_BYTES - 128 * 1024,
+        b' ',
+    );
+    let script_len = script.content.len();
+    let candidate = PackSource::from_files(files)?;
+    let plan = ScriptExecutionPlan::from_source(&candidate, &recipe)?;
+    let base_program = plan.assemble_program(&grants)?;
+    let current_prelude = base_program.len() - script_len;
+    let remaining = 128 * 1024 - current_prelude;
+    // The added JSON key consumes a small fixed overhead; grow its string
+    // until the actual encoded prelude reaches the exact reservation.
+    grants.insert("padding".into(), Value::String(String::new()));
+    let added_overhead = plan.assemble_program(&grants)?.len() - base_program.len();
+    grants.insert(
+        "padding".into(),
+        Value::String("x".repeat(remaining - added_overhead)),
+    );
+    let exact = plan.assemble_program(&grants)?;
+    assert_eq!(exact.len(), oneiron_sandbox_contract::MAX_PROGRAM_BYTES);
+    assert!(guest_snapshot_result(candidate.files(), &exact));
+    grants.insert(
+        "padding".into(),
+        Value::String("x".repeat(remaining - added_overhead + 1)),
+    );
+    assert!(plan.assemble_program(&grants).is_err());
+    assert!(!guest_snapshot_result(
+        candidate.files(),
+        &format!("{exact}x")
+    ));
     Ok(())
 }

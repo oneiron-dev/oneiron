@@ -65,13 +65,24 @@ pub struct PackScriptOutcome {
 #[cfg(any(test, feature = "microvm-firecracker"))]
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
-struct ScriptOutput {
+pub(crate) struct ScriptOutput {
     #[serde(default)]
     inbound: Vec<InboundSurfaceEventInput>,
     #[serde(default)]
     verbs: Vec<ScriptVerb>,
     #[serde(default)]
-    events: Vec<ConnectorEvent>,
+    pub(crate) events: Vec<ConnectorEvent>,
+}
+#[cfg(any(test, feature = "microvm-firecracker"))]
+impl ScriptOutput {
+    pub(crate) fn decode(bytes: &[u8]) -> Result<Self> {
+        let output: Self = serde_json::from_slice(bytes)
+            .map_err(|_| invalid("invalid typed pack script output"))?;
+        if output.inbound.len() > 16 || output.verbs.len() > 16 || output.events.len() > 16 {
+            return Err(invalid("pack script output count exceeded"));
+        }
+        Ok(output)
+    }
 }
 #[cfg(any(test, feature = "microvm-firecracker"))]
 #[derive(Deserialize)]
@@ -287,11 +298,7 @@ impl Vault {
             return Err(invalid("pack script must emit one typed output"));
         }
         let bytes = plan.output_bytes(deltas[0].write())?;
-        let output: ScriptOutput = serde_json::from_slice(&bytes)
-            .map_err(|_| invalid("invalid typed pack script output"))?;
-        if output.inbound.len() > 16 || output.verbs.len() > 16 || output.events.len() > 16 {
-            return Err(invalid("pack script output count exceeded"));
-        }
+        let output = ScriptOutput::decode(&bytes)?;
         let permitted: BTreeSet<&str> = grants
             .iter()
             .map(|grant| grant.requested.as_str())

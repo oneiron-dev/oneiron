@@ -28062,7 +28062,7 @@
      "path": "src/skill_hub/pack_catalog/mod.rs",
      "purpose": "Exact, inert PACK.md source catalogs",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 4,
       "re-export": 5
      }
     },
@@ -28097,6 +28097,7 @@
      "path": "src/skill_hub/pack_catalog/script_runtime.rs",
      "purpose": "Foreign pack scripts run only through the existing propose-only code-mode VM",
      "surface": {
+      "crate-vis": 2,
       "fn": 2,
       "struct": 3
      }
