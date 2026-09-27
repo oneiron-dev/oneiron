@@ -1030,7 +1030,7 @@ fn retained_preview_refuses_wrong_type_owner_cycle_and_canonical_mark() {
 
 #[test]
 fn retained_preview_refuses_unresolved_spawn_but_not_live_empty_legacy_turn() {
-    let (_dir, vault, conversation, actor) = fixture();
+    let (_dir, vault, conversation, _actor) = fixture();
     let legacy = EntityId::now();
     vault
         .batch()
@@ -1045,6 +1045,9 @@ fn retained_preview_refuses_unresolved_spawn_but_not_live_empty_legacy_turn() {
             .unwrap(),
         None
     );
+    // A separate room keeps the valid zero-byte legacy row from being
+    // adopted as the next DAG append's selected HEAD.
+    let (_dir, vault, conversation, actor) = fixture();
     let session = match vault.mint_session(100).unwrap() {
         crate::session_lifecycle::SessionMintOutcome::Minted(id) => id,
         other => panic!("expected ordinary session, got {other:?}"),
