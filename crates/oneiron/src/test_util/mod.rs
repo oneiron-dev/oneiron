@@ -161,8 +161,9 @@ pub(crate) fn pin_model_manifest(
     manifest: &crate::llm::manifest::ModelManifest,
 ) -> crate::Result<()> {
     let policy = vault.teacher_probe_policy(None)?;
-    let approval =
-        crate::llm::manifest::TeacherProbeApproval::for_scored_checkpoint(manifest, &policy, 1_000_000)?;
+    let approval = crate::llm::manifest::TeacherProbeApproval::for_scored_checkpoint(
+        manifest, &policy, 1_000_000,
+    )?;
     vault.set_model_manifest_with_teacher_approval(manifest, &approval)
 }
 
