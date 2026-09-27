@@ -79,7 +79,7 @@ pub struct GoalRecord {
 
 impl GoalRecord {
     /// Reject incomplete interview drafts before they enter the write gate.
-    pub fn validate(&self) -> Result<()> {
+    fn validate(&self) -> Result<()> {
         if self.goal.trim().is_empty()
             || self.why.trim().is_empty()
             || self.goal.len() > 4096

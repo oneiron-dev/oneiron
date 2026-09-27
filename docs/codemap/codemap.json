@@ -33193,7 +33193,7 @@
      "purpose": "Human-authenticated project goal intake; proposals never write this record",
      "surface": {
       "crate-vis": 4,
-      "fn": 2,
+      "fn": 1,
       "re-export": 1,
       "struct": 4
      }

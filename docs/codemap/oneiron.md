@@ -2713,7 +2713,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/workspace_roster/intent.rs` | src | s | 5 struct · 3 crate-vis | CompanionBirthIntent, DelegatedMailboxOnboarding, MemberGrantBundle, MemberOnboardingIntent, WorkspaceRosterPreset | Onboarding request shapes and their structural validation |
 | `src/workspace_roster/mod.rs` | src | s | 4 re-export · 2 crate-vis | — | Workspace roster preset + member onboarding (ONEIRON-ARCH-0065) |
 | `src/workspace_roster/project/deletion.rs` | src | s | 1 crate-vis | — | Delete the derived home room at the common entity deindex door |
-| `src/workspace_roster/project/goal.rs` | src | s | 4 struct · 2 fn · 1 re-export · 4 crate-vis | GoalAxis, GoalExplorationBudget, GoalPreference, GoalRecord | Human-authenticated project goal intake; proposals never write this record |
+| `src/workspace_roster/project/goal.rs` | src | s | 4 struct · 1 fn · 1 re-export · 4 crate-vis | GoalAxis, GoalExplorationBudget, GoalPreference, GoalRecord | Human-authenticated project goal intake; proposals never write this record |
 | `src/workspace_roster/project/goal/admission.rs` | src | s | 9 crate-vis | — | Vault-private, exact-byte admission for goal claims and project goal pointers |
 | `src/workspace_roster/project/goal/interview.rs` | src | s | 1 struct · 1 fn | GoalInterviewTurns | Room-backed completion of a loaded goal-intake skill interview |
 | `src/workspace_roster/project/goal/interview/tests.rs` | test | m | — | — | — |
