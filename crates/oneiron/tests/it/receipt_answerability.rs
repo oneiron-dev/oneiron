@@ -594,7 +594,7 @@ fn receipt(fixture: ReceiptFixture<'_>) -> ReceiptRecord {
             .or_insert_with(|| "neutral".to_owned());
         fields
             .entry("care_register".to_owned())
-            .or_insert_with(|| "eirispec_care_register".to_owned());
+            .or_insert_with(|| "care_register".to_owned());
         fields
             .entry("audit_register".to_owned())
             .or_insert_with(|| "dashboard_atom_kit_audit".to_owned());
@@ -604,7 +604,7 @@ fn receipt(fixture: ReceiptFixture<'_>) -> ReceiptRecord {
         receipt_id: fixture.receipt_id.to_owned(),
         receipt_kind: fixture.receipt_kind,
         occurred_at: fixture.occurred_at,
-        actor: Some("eiri".to_owned()),
+        actor: Some("persona".to_owned()),
         on_behalf_of: Some("owner".to_owned()),
         outcome: fixture.outcome.to_owned(),
         job_ref: fixture.job_ref.map(str::to_owned),
