@@ -87,6 +87,98 @@ async fn public_path_signing_bypasses_hosted_lease_but_not_capability_admission(
     }
 }
 
+#[tokio::test]
+async fn signing_routes_keep_matched_wire_receipts_and_threshold_questions() {
+    use oneiron_server::wire_telemetry::{WireTelemetry, WireThresholds};
+
+    let dir = tempfile::tempdir().unwrap();
+    let vault = Arc::new(oneiron::Vault::open(dir.path(), oneiron::VaultConfig::device()).unwrap());
+    let observer = WireTelemetry::new(vault.clone());
+    let window_secs = 604_800;
+    observer
+        .set_thresholds(&WireThresholds {
+            window_secs,
+            per_verb: 1,
+            per_actor: u64::MAX,
+        })
+        .unwrap();
+    drop(observer);
+    let server = Arc::new(
+        SyncServer::new(
+            vault.clone(),
+            SyncServerConfig {
+                lease_vault_id: 1,
+                ..Default::default()
+            },
+        )
+        .unwrap(),
+    );
+    let app = build_app(server.clone());
+    let token = "ab".repeat(32);
+    for _ in 0..2 {
+        let page = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri(format!("/sign/{token}"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(page.status(), StatusCode::OK);
+        let action = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/sign/action")
+                    .extension(axum::extract::ConnectInfo(
+                        "127.0.0.1:12345".parse::<std::net::SocketAddr>().unwrap(),
+                    ))
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(
+                        serde_json::json!({"token":token,"action":{"action":"load"}}).to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(action.status(), StatusCode::FORBIDDEN);
+    }
+    let denied = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/api/entity/00112233445566778899aabbccddeeff")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(denied.status(), StatusCode::UNAUTHORIZED);
+    drop(app);
+    drop(server); // flush the active receipt through the real owner of that counter
+
+    let observer = WireTelemetry::new(vault);
+    let now = oneiron_vault_contract::now_ts();
+    let start = now / window_secs * window_secs;
+    let receipt = observer
+        .receipt(start, start + window_secs)
+        .unwrap()
+        .unwrap();
+    assert_eq!(receipt.by_verb["GET /sign/{token}"], 2);
+    assert_eq!(receipt.by_verb["POST /sign/action"], 2);
+    assert_eq!(receipt.by_verb["GET /api/entity/{id}"], 1);
+    assert_eq!(receipt.by_actor["unauthenticated"], 5);
+    assert!(receipt.by_verb.keys().all(|key| !key.contains(&token)));
+    let question = observer
+        .question(start, start + window_secs)
+        .unwrap()
+        .unwrap();
+    assert_eq!(question.evidence.by_verb["GET /sign/{token}"], 2);
+}
+
 /// Seed a real sent request through the owner-authored send gate, not by
 /// inventing a viewed/sent claim or bypassing the capability store.
 fn sent_request() -> (
