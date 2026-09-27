@@ -12,7 +12,7 @@ use super::record::{
 use super::store::{
     checkpoint_label, fallback_speech_marker, implicit_speak_output_path, load_utf8_output,
     observation_output_path, output_was_compacted, record_output, record_text_output,
-    script_output_path, validate_runtime_outputs,
+    recoverable_output_path, script_output_path, validate_runtime_outputs,
 };
 use super::types::{
     ENGINE_EXECUTOR_FALLBACK_NAME, ENGINE_EXECUTOR_PURPOSE_NAME, EngineExecutorConfig,
@@ -117,7 +117,8 @@ impl EngineNativeExecutor<'_> {
                 bridge_start as u64,
                 config.determinism,
                 self.legibility,
-            );
+            )
+            .with_recoverable_outputs(&self.storage, &record)?;
             let step = JsCodeModeStep {
                 run_id: config.run_id,
                 seq: completed_steps,
@@ -584,6 +585,37 @@ impl EngineNativeExecutor<'_> {
         Err(Error::CorruptedIndex("missing recoverable executor observation").into())
     }
 
+    /// Sync every durably completed observation before either a model request
+    /// or a compaction mint. No uncommitted runtime output enters context.
+    pub(super) fn sync_output_context(
+        &mut self,
+        record: &CodeRunReplayRecord,
+    ) -> EngineExecutorResult<HashMap<OutputRef, String>> {
+        let completed_steps = completed_step_count(record)?;
+        // Reconstruct references from the routed durable replay record. No
+        // observation is copied into the base vault for off-record sessions.
+        if self.output_run != Some(record.run_id) {
+            self.output_context = OutputWorkingContext::default();
+            self.output_run = Some(record.run_id);
+        }
+        let mut raw = HashMap::new();
+        for seq in 0..completed_steps {
+            let observation =
+                load_utf8_output(&self.storage, record, &observation_output_path(seq))?;
+            let source = OutputRef::from_bytes(observation.as_bytes());
+            if seq >= self.output_context.len() as u64 {
+                let overview: String = observation.chars().take(128).collect();
+                self.output_context
+                    .record_referenced(seq, source, overview)?;
+                if output_was_compacted(&self.storage, record.run_id, seq)? {
+                    self.output_context.compact_span(seq, seq);
+                }
+            }
+            raw.insert(source, observation);
+        }
+        Ok(raw)
+    }
+
     fn build_llm_request(
         &mut self,
         config: &EngineExecutorConfig,
@@ -610,27 +642,7 @@ impl EngineNativeExecutor<'_> {
             }],
         });
 
-        // Reconstruct references from the routed durable replay record. No
-        // observation is copied into the base vault for off-record sessions.
-        if self.output_run != Some(record.run_id) {
-            self.output_context = OutputWorkingContext::default();
-            self.output_run = Some(record.run_id);
-        }
-        let mut raw = HashMap::new();
-        for seq in 0..completed_steps {
-            let observation =
-                load_utf8_output(&self.storage, record, &observation_output_path(seq))?;
-            let source = OutputRef::from_bytes(observation.as_bytes());
-            if seq >= self.output_context.len() as u64 {
-                let overview: String = observation.chars().take(128).collect();
-                self.output_context
-                    .record_referenced(seq, source, overview)?;
-                if output_was_compacted(&self.storage, record.run_id, seq)? {
-                    self.output_context.compact_span(seq, seq);
-                }
-            }
-            raw.insert(source, observation);
-        }
+        let raw = self.sync_output_context(record)?;
         let views =
             self.output_context
                 .assemble_with(completed_steps, self.output_decay, |source| {
@@ -644,7 +656,9 @@ impl EngineNativeExecutor<'_> {
             let console = match view.tier {
                 OutputTier::Full | OutputTier::Overview => String::from_utf8(view.bytes)
                     .map_err(|_| Error::CorruptedIndex("executor observation encoding"))?,
-                OutputTier::Stub => serde_json::to_string(&view.affordances)?,
+                OutputTier::Stub => serde_json::to_string(&json!({
+                    "sandbox.fs.read_file": recoverable_output_path(seq as u64, view.source),
+                }))?,
             };
             let turn = CodeRunHistoryTurn {
                 code: load_utf8_output(&self.storage, record, &script_output_path(seq as u64))?,

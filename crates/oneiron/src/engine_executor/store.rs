@@ -2,9 +2,9 @@
 
 use super::record::REPLAY_METADATA_SCHEMA_VERSION;
 use super::types::{EngineExecutorResult, JsCodeModeStepOutcome};
-use crate::Error;
 use crate::code_run::{CodeRunRawOutput, CodeRunReplayRecord, ExecutorStorage};
 use crate::entity_id::EntityId;
+use crate::{Error, Result};
 use serde_json::json;
 use std::collections::BTreeSet;
 
@@ -75,16 +75,18 @@ fn text_output_bytes(path: &str, text: &str) -> Vec<u8> {
     raw
 }
 
-fn decode_text_output(path: &str, raw: Vec<u8>) -> EngineExecutorResult<String> {
+pub(super) fn decode_text_output(path: &str, raw: Vec<u8>) -> Result<String> {
     let Some(rest) = raw.strip_prefix(TEXT_OUTPUT_PREFIX) else {
-        return Err(Error::CorruptedIndex("executor replay text output envelope").into());
+        return Err(Error::CorruptedIndex(
+            "executor replay text output envelope",
+        ));
     };
     let path_header = format!("{path}\n");
     let Some(text) = rest.strip_prefix(path_header.as_bytes()) else {
-        return Err(Error::CorruptedIndex("executor replay text output path").into());
+        return Err(Error::CorruptedIndex("executor replay text output path"));
     };
     String::from_utf8(text.to_vec())
-        .map_err(|_| Error::InvalidClaimBody("executor replay output is not utf8").into())
+        .map_err(|_| Error::InvalidClaimBody("executor replay output is not utf8"))
 }
 
 pub(super) fn load_utf8_output(
@@ -100,7 +102,7 @@ pub(super) fn load_utf8_output(
     let raw = storage
         .get_code_run_raw_output(output)?
         .ok_or(Error::CorruptedIndex("executor replay output bytes"))?;
-    decode_text_output(path, raw)
+    Ok(decode_text_output(path, raw)?)
 }
 
 /// The durable "this step already spoke its last word" marker (ONE-1686).
@@ -136,23 +138,13 @@ fn fallback_speech_marker_path(seq: u64) -> String {
 /// run and sequence are in the BYTES as well as the path: the routed raw
 /// store indexes by content hash, not path, so one constant body for every
 /// step would falsely mark all steps after the first.
-fn compacted_output_marker(
+pub(super) fn compacted_output_marker(
     run_id: EntityId,
     seq: u64,
 ) -> crate::Result<(CodeRunRawOutput, Vec<u8>)> {
     let path = format!("{SCRIPT_OUTPUT_DIR}/compacted/{}/{seq}", run_id.to_hex());
     let bytes = format!("oneiron-executor-compacted-output-v1\n{path}\n").into_bytes();
     Ok((CodeRunRawOutput::from_bytes(path, &bytes)?, bytes))
-}
-
-pub(super) fn store_compacted_output_marker(
-    storage: &ExecutorStorage<'_>,
-    run_id: EntityId,
-    seq: u64,
-) -> EngineExecutorResult<()> {
-    let (marker, bytes) = compacted_output_marker(run_id, seq)?;
-    storage.put_code_run_raw_output(&marker, &bytes)?;
-    Ok(())
 }
 
 pub(super) fn output_was_compacted(
@@ -162,6 +154,20 @@ pub(super) fn output_was_compacted(
 ) -> EngineExecutorResult<bool> {
     let (marker, _) = compacted_output_marker(run_id, seq)?;
     Ok(storage.get_code_run_raw_output(&marker)?.is_some())
+}
+
+/// A model-facing, typed read-file affordance in the guest's existing output
+/// mount. Neither the path nor its digest grants access without a matching
+/// committed observation in the current run's routed replay store.
+pub(super) fn recoverable_output_path(
+    seq: u64,
+    source: crate::compaction::output::OutputRef,
+) -> String {
+    format!(
+        "/mnt/outputs/.oneiron-context-ref/{seq}/{}:{}",
+        crate::entity_id::bytes_to_hex_lower(&source.hash),
+        source.byte_len,
+    )
 }
 
 pub(super) fn script_output_path(seq: u64) -> String {

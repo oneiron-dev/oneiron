@@ -735,3 +735,94 @@ fn working_outputs_decay_and_compaction_restores_exact_bytes() -> Result<()> {
     assert_eq!(restored.assemble(&vault, 8, policy)?, compacted);
     Ok(())
 }
+
+#[test]
+fn marker_failure_rolls_back_summary_and_leaves_request_retryable() -> Result<()> {
+    use crate::code_run::CodeRunRawOutput;
+    use crate::compaction::output::{OutputDecayPolicy, OutputTier, OutputWorkingContext};
+
+    let (_dir, vault) = open_vault();
+    let session = mint_session(&vault, 10);
+    let actor = loom_actor(&vault, 0x68);
+    let mut driver = engine_driver(1000);
+    let mut outputs = OutputWorkingContext::default();
+    outputs.record(&vault, 1, b"first exact", "first short")?;
+    outputs.record(&vault, 2, b"second exact", "second short")?;
+    let policy = OutputDecayPolicy {
+        overview_after_turns: 3,
+        stub_after_turns: 6,
+    };
+    driver.evaluate_now(&vault, u64::MAX)?;
+    let request = driver.request_for(&vault, &session, host_window(&vault, 0xB1, 1, 2))?;
+    let product = driver.backend().compact(&request)?;
+    let first = CodeRunRawOutput::from_bytes("executor/compacted/1", b"first marker")?;
+    let second = CodeRunRawOutput::from_bytes("executor/compacted/2", b"second marker")?;
+    let before = summary_row_count(&vault);
+    driver
+        .integrate_with_output_markers(
+            &vault,
+            actor,
+            &request,
+            product.clone(),
+            &[],
+            &mut outputs,
+            &[(first.clone(), b"first marker".to_vec())],
+        )
+        .expect_err("a partial coverage list cannot commit a summary");
+    driver
+        .integrate_with_output_markers(
+            &vault,
+            actor,
+            &request,
+            product.clone(),
+            &[],
+            &mut outputs,
+            &[
+                (first.clone(), b"first marker".to_vec()),
+                (second.clone(), b"wrong".to_vec()),
+            ],
+        )
+        .expect_err("second marker refusal rolls back first marker AND summary");
+    assert_eq!(summary_row_count(&vault), before);
+    assert!(driver.is_compacting());
+    assert_eq!(
+        outputs
+            .assemble(&vault, 2, policy)?
+            .iter()
+            .map(|v| v.tier)
+            .collect::<Vec<_>>(),
+        vec![OutputTier::Full, OutputTier::Full]
+    );
+    assert!(vault.get_code_run_raw_output(&first)?.is_none());
+    assert!(vault.get_code_run_raw_output(&second)?.is_none());
+    driver.integrate_with_output_markers(
+        &vault,
+        actor,
+        &request,
+        product,
+        &[],
+        &mut outputs,
+        &[
+            (first.clone(), b"first marker".to_vec()),
+            (second.clone(), b"second marker".to_vec()),
+        ],
+    )?;
+    assert_eq!(summary_row_count(&vault), before + 1);
+    assert_eq!(
+        outputs
+            .assemble(&vault, 2, policy)?
+            .iter()
+            .map(|v| v.tier)
+            .collect::<Vec<_>>(),
+        vec![OutputTier::Stub, OutputTier::Stub]
+    );
+    assert_eq!(
+        vault.get_code_run_raw_output(&first)?,
+        Some(b"first marker".to_vec())
+    );
+    assert_eq!(
+        vault.get_code_run_raw_output(&second)?,
+        Some(b"second marker".to_vec())
+    );
+    Ok(())
+}

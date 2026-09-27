@@ -12,7 +12,7 @@ use crate::vault::Vault;
 use crate::write_envelope::WriteActor;
 
 use super::epoch::{
-    mint_epoch_summary, prior_epoch_in_txn, validate_epoch_boundary, validate_window_span,
+    mint_epoch_summary_with, prior_epoch_in_txn, validate_epoch_boundary, validate_window_span,
 };
 
 /// Registered class of a compaction backend.
@@ -653,7 +653,7 @@ impl CompactionDriver {
         request: &CompactionRequest,
         product: CompactionProduct,
         accumulated: &[CompactionWindowMessage],
-        outputs: &mut super::output::OutputWorkingContext,
+        outputs: &mut crate::compaction::output::OutputWorkingContext,
     ) -> Result<SwapPlan> {
         let plan = self.integrate(
             vault,
@@ -672,6 +672,57 @@ impl CompactionDriver {
         Ok(plan)
     }
 
+    /// Commit the epoch summary and every executor coverage marker in ONE
+    /// transaction. The live views move only after that transaction commits.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "sealed compaction input and atomic output markers"
+    )]
+    pub(crate) fn integrate_with_output_markers(
+        &mut self,
+        vault: &Vault,
+        byline: WriteActor,
+        request: &CompactionRequest,
+        product: CompactionProduct,
+        accumulated: &[CompactionWindowMessage],
+        outputs: &mut crate::compaction::output::OutputWorkingContext,
+        markers: &[(crate::code_run::CodeRunRawOutput, Vec<u8>)],
+    ) -> Result<SwapPlan> {
+        let (_, last) = validate_window_span(&request.window)?;
+        let covered = last
+            .checked_sub(request.turn_start)
+            .and_then(|span| span.checked_add(1))
+            .ok_or(Error::InvariantViolation(
+                "compaction output span is invalid",
+            ))?;
+        if markers.len() as u64 != covered {
+            return Err(Error::InvariantViolation(
+                "compaction output markers must cover the span",
+            ));
+        }
+        let plan = self.integrate_inner(
+            vault,
+            &request.session_ref,
+            byline,
+            request,
+            product,
+            accumulated,
+            |txn| {
+                for (marker, raw) in markers {
+                    vault.put_code_run_raw_output_in_txn(txn, marker, raw)?;
+                }
+                Ok(())
+            },
+        )?;
+        let last = request
+            .window
+            .last()
+            .expect("integrated window is nonempty")
+            .turn;
+        outputs.compact_span(request.turn_start, last);
+        Ok(plan)
+    }
+
     /// Backend-failure exit.
     ///
     /// Legal only in `Compacting`; returns to `Idle` WITHOUT minting, so the
@@ -680,7 +731,6 @@ impl CompactionDriver {
     pub fn abandon(&mut self) {
         self.state = CompactionState::Idle;
     }
-
     /// Integrates a finished compaction: mints the epoch summary and returns
     /// the swap plan.
     ///
@@ -703,6 +753,31 @@ impl CompactionDriver {
         product: CompactionProduct,
         accumulated: &[CompactionWindowMessage],
     ) -> Result<SwapPlan> {
+        self.integrate_inner(
+            vault,
+            session_ref,
+            byline,
+            request,
+            product,
+            accumulated,
+            |_| Ok(()),
+        )
+    }
+
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "sealed compaction input and atomic extra write"
+    )]
+    fn integrate_inner(
+        &mut self,
+        vault: &Vault,
+        session_ref: &EntityId,
+        byline: WriteActor,
+        request: &CompactionRequest,
+        product: CompactionProduct,
+        accumulated: &[CompactionWindowMessage],
+        extra: impl FnOnce(&mut heed::RwTxn<'_>) -> Result<()>,
+    ) -> Result<SwapPlan> {
         let CompactionState::Compacting {
             request: active, ..
         } = &self.state
@@ -720,7 +795,7 @@ impl CompactionDriver {
             ));
         }
         let (epoch, summary_id) =
-            mint_epoch_summary(vault, session_ref, byline, request, &product)?;
+            mint_epoch_summary_with(vault, session_ref, byline, request, &product, extra)?;
         self.margin.observe_latency(product.latency);
         self.completed_watermark = Some(request.watermark);
         self.state = CompactionState::Idle;

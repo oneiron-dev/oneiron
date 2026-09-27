@@ -97,6 +97,20 @@ pub(super) fn dispatch(state: &mut Bridge<'_>, name: &str, input: &str) -> Resul
     match name {
         "sandbox.fs.read_file" => {
             let args: File = parse(input)?;
+            let path = SandboxVirtualPath::try_new(&args.path)?;
+            if path
+                .as_str()
+                .starts_with("/mnt/outputs/.oneiron-context-ref/")
+            {
+                let bytes = state
+                    .host
+                    .read_recoverable_output(path.as_str())?
+                    .ok_or(failure("recoverable output unavailable"))?;
+                if bytes.len() > state.message_bytes {
+                    return Err(failure("recoverable output exceeds guest message budget"));
+                }
+                return Ok(json!({"path": path.as_str(), "bytes": bytes}).to_string());
+            }
             let service = state
                 .adapter
                 .as_mut()

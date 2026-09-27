@@ -14,7 +14,9 @@ fn console(request: &LlmRequest, seq: usize) -> String {
     text_message(&request.messages[3 + seq * 2])
 }
 
-fn reexpand_action(request: &LlmRequest) -> OutputAffordance {
+fn reexpand_action(request: &LlmRequest, original: &[u8]) -> OutputAffordance {
+    use crate::compaction::output::OutputRef;
+    let source = OutputRef::from_bytes(original);
     let console = console(request, 0);
     let json = console
         .split("<console>\n")
@@ -23,8 +25,16 @@ fn reexpand_action(request: &LlmRequest) -> OutputAffordance {
         .split("\n</console>")
         .next()
         .expect("console body");
-    let affordances: [OutputAffordance; 2] = serde_json::from_str(json).expect("typed actions");
-    affordances[0].clone()
+    let stub: serde_json::Value = serde_json::from_str(json).expect("typed read-file action");
+    assert_eq!(
+        stub["sandbox.fs.read_file"],
+        super::super::store::recoverable_output_path(0, source)
+    );
+    assert!(
+        stub.get("Summarize").is_none(),
+        "do not advertise an unlinked action"
+    );
+    OutputAffordance::Reexpand(source)
 }
 
 #[test]
@@ -61,7 +71,7 @@ fn durable_executor_requests_decay_and_reexpand_original_observation() {
     assert!(!overview.contains("exact tail"));
     let stub = console(&requests[4], 0);
     assert!(!stub.contains(&raw));
-    let action = reexpand_action(&requests[4]);
+    let action = reexpand_action(&requests[4], raw.as_bytes());
     assert_eq!(
         executor
             .reexpand_observation(&outcome.replay_record, action)
@@ -173,7 +183,7 @@ fn successful_native_compaction_changes_the_next_real_executor_request() {
         "{}",
         console(next, 1)
     );
-    let action = reexpand_action(next);
+    let action = reexpand_action(next, b"covered original");
     assert_eq!(
         executor
             .reexpand_observation(&resumed.replay_record, action)
@@ -206,7 +216,7 @@ fn successful_native_compaction_changes_the_next_real_executor_request() {
         restarted
             .reexpand_observation(
                 &after_restart.replay_record,
-                reexpand_action(&restarted_requests[0]),
+                reexpand_action(&restarted_requests[0], b"covered original"),
             )
             .unwrap(),
         b"covered original"
@@ -250,4 +260,167 @@ fn terminal_replay_still_reexpands_exact_original() {
             )
             .is_err()
     );
+}
+
+#[test]
+fn one_step_yield_compacts_latest_committed_output_and_keeps_next_tail() {
+    let (_dir, vault) = open_test_vault();
+    let session = match vault.mint_session(10).expect("mint") {
+        SessionMintOutcome::Minted(id) => id,
+        other => panic!("unexpected session: {other:?}"),
+    };
+    let turn = entity(0xB6);
+    vault
+        .put_entity(&turn, ENTITY_TYPE_TURN, range(10), 10, b"covered turn")
+        .unwrap();
+    let mut registry = CompactionBackendRegistry::new();
+    registry.register(Arc::new(Cheap)).unwrap();
+    let profile = MemoryProfile::new(
+        1000,
+        ModelTierRef("executor-output-test".into()),
+        CompactionOwnership::Engine,
+    );
+    let mut driver = CompactionDriver::for_profile(&profile, &registry)
+        .unwrap()
+        .unwrap();
+    let backend = FixtureBackend::new(["const first = 1;", "const second = 2;"]);
+    let lease = BudgetLease::for_test("latest-compact");
+    let mut runtime = FixtureRuntime::new([
+        JsCodeModeStepOutcome::pending("latest covered output"),
+        JsCodeModeStepOutcome::pending("uncovered next tail"),
+    ]);
+    let gated = gated_actor_write(&vault, "run-latest-compact");
+    let config = executor_config(
+        entity(0xB7),
+        EngineExecutorLimits {
+            soft_steps: 1,
+            hard_steps: 4,
+        },
+    );
+    let mut executor = EngineNativeExecutor::new(&vault, &backend, &lease, &mut runtime, &gated);
+    let first = block_on_ready(executor.run(&config)).unwrap();
+    assert_eq!(
+        first.status,
+        EngineExecutorStatus::Yielded { next_step_seq: 1 }
+    );
+    assert!(
+        executor.output_context.is_empty(),
+        "no next request assembled yet"
+    );
+    driver.evaluate_now(&vault, u64::MAX).unwrap();
+    let request = driver
+        .request_for(
+            &vault,
+            &session,
+            vec![CompactionWindowMessage {
+                message_id: entity(0xB8),
+                turn_id: turn,
+                content: "latest covered output".into(),
+                turn: 0,
+                tokens: 1,
+            }],
+        )
+        .unwrap();
+    let product = driver.backend().compact(&request).unwrap();
+    executor
+        .integrate_compaction(
+            &mut driver,
+            WriteActor::new(entity(0xA0), EdgeActorClass::Agent),
+            &request,
+            product,
+            &[],
+        )
+        .unwrap();
+    let second = block_on_ready(executor.run(&config)).unwrap();
+    let requests = backend.requests.lock().unwrap();
+    assert_eq!(requests.len(), 2);
+    assert!(!console(&requests[1], 0).contains("latest covered output"));
+    assert_eq!(
+        executor
+            .reexpand_observation(
+                &second.replay_record,
+                reexpand_action(&requests[1], b"latest covered output"),
+            )
+            .unwrap(),
+        b"latest covered output"
+    );
+    drop(requests);
+    drop(executor);
+    let restart_backend = FixtureBackend::new(["const third = 3;"]);
+    let mut restart_runtime = FixtureRuntime::new([JsCodeModeStepOutcome::pending("later")]);
+    let mut restarted = EngineNativeExecutor::new(
+        &vault,
+        &restart_backend,
+        &lease,
+        &mut restart_runtime,
+        &gated,
+    );
+    block_on_ready(restarted.run(&config)).unwrap();
+    let requests = restart_backend.requests.lock().unwrap();
+    assert!(!console(&requests[0], 0).contains("latest covered output"));
+    assert!(console(&requests[0], 1).contains("uncovered next tail"));
+}
+
+#[cfg(feature = "code-sandbox-wasmtime")]
+#[test]
+fn real_quickjs_guest_uses_stub_read_file_and_receives_exact_original() {
+    use crate::code_sandbox::quickjs::QuickJsRuntimeFactory;
+    use crate::code_sandbox::wasmtime_runtime::ComponentBudget;
+    use sha2::{Digest, Sha256};
+
+    let (_dir, vault) = open_test_vault();
+    let backend = FixtureBackend::new(["console.log('first');"]);
+    let lease = BudgetLease::for_test("guest-output-restore");
+    let original = "recoverable exact original";
+    let mut first_runtime = FixtureRuntime::new([JsCodeModeStepOutcome::pending(original)]);
+    let gated = gated_actor_write(&vault, "run-guest-output-restore");
+    let config = executor_config(
+        entity(0xC0),
+        EngineExecutorLimits {
+            soft_steps: 1,
+            hard_steps: 3,
+        },
+    );
+    let mut first = EngineNativeExecutor::new(&vault, &backend, &lease, &mut first_runtime, &gated);
+    block_on_ready(first.run(&config)).expect("durable first observation");
+    drop(first);
+
+    let directory = std::env::var_os("ONEIRON_QUICKJS_ARTIFACT_DIR").map_or_else(
+        || {
+            std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                .join("../../components/code-run-quickjs/artifacts")
+        },
+        std::path::PathBuf::from,
+    );
+    let bytes = std::fs::read(directory.join("quickjs-first-party.wasm")).expect("pinned QuickJS");
+    let pin: [u8; 32] = Sha256::digest(&bytes).into();
+    let factory = QuickJsRuntimeFactory::from_component(&bytes, pin, ComponentBudget::default())
+        .expect("first-party component");
+    let mut runtime = factory.runtime().expect("real guest runtime");
+    let path = super::super::store::recoverable_output_path(
+        0,
+        crate::compaction::output::OutputRef::from_bytes(original.as_bytes()),
+    );
+    let script = format!(
+        "const raw = await sandbox.fs.read_file({}); finish(String.fromCharCode(...raw));",
+        serde_json::to_string(&path).unwrap()
+    );
+    let second_backend = FixtureBackend::new([script]);
+    let mut second =
+        EngineNativeExecutor::new(&vault, &second_backend, &lease, &mut runtime, &gated)
+            .with_output_decay(OutputDecayPolicy {
+                overview_after_turns: 0,
+                stub_after_turns: 1,
+            });
+    let outcome = block_on_ready(second.run(&config)).expect("guest action succeeds");
+    assert_eq!(outcome.status, EngineExecutorStatus::Complete);
+    let requests = second_backend.requests.lock().unwrap();
+    reexpand_action(&requests[0], original.as_bytes());
+    let restored = load_utf8_output(
+        &ExecutorStorage::Canonical(&vault),
+        &outcome.replay_record,
+        &observation_output_path(1),
+    )
+    .expect("stored guest observation");
+    assert_eq!(restored, original);
 }

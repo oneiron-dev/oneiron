@@ -396,12 +396,15 @@ pub(super) fn prior_epoch_in_txn(
 ///
 /// The row is BYTE-STABLE from this moment: this module exposes no update
 /// path, which is what lets CB-A cache the rendered prefix.
-pub(super) fn mint_epoch_summary(
+/// The extra write shares the summary mint transaction. Failure of EITHER
+/// operation rolls back both, leaving the driver request retryable.
+pub(super) fn mint_epoch_summary_with(
     vault: &Vault,
     session_ref: &EntityId,
     byline: WriteActor,
     request: &CompactionRequest,
     product: &CompactionProduct,
+    extra: impl FnOnce(&mut heed::RwTxn<'_>) -> Result<()>,
 ) -> Result<(u64, EntityId)> {
     if request.session_ref != *session_ref {
         return Err(Error::InvariantViolation(
@@ -492,6 +495,7 @@ pub(super) fn mint_epoch_summary(
         vault
             .store
             .mark_pending_embedding(wtxn, &summary_id, &body)?;
+        extra(wtxn)?;
         Ok(epoch)
     })?;
     Ok((epoch, summary_id))

@@ -8312,7 +8312,7 @@
      "path": "src/code_run/storage/records.rs",
      "purpose": "The code-run vault_meta row families: replay records, raw output, taint refs and heal counts",
      "surface": {
-      "crate-vis": 8,
+      "crate-vis": 9,
       "fn": 9,
       "struct": 1
      }
@@ -9648,7 +9648,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [
       "CompactionBackend",
@@ -9668,6 +9668,7 @@
      "purpose": "RT-05 in-engine compaction backend, margin law, and single-flight driver",
      "surface": {
       "const": 2,
+      "crate-vis": 1,
       "enum": 3,
       "fn": 24,
       "struct": 8,
@@ -9727,7 +9728,7 @@
      "surface": {}
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "test",
      "notable": [],
      "path": "src/compaction/tests/driver_regressions.rs",
@@ -15164,7 +15165,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "EngineNativeExecutor"
@@ -15178,13 +15179,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/engine_executor/host.rs",
      "purpose": "JS host bridge: recording dispatcher, sandbox contract, and prompt sites",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 7
      }
     },
     {
@@ -15214,6 +15215,7 @@
      "path": "src/engine_executor/repl.rs",
      "purpose": "Durable REPL loop: run(), persistence helpers, and LLM request building",
      "surface": {
+      "crate-vis": 1,
       "fn": 2
      }
     },
@@ -15224,7 +15226,7 @@
      "path": "src/engine_executor/store.rs",
      "purpose": "Output envelope and path helpers for the routed raw-output store",
      "surface": {
-      "crate-vis": 14
+      "crate-vis": 16
      }
     },
     {
@@ -15236,7 +15238,7 @@
      "surface": {}
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "test",
      "notable": [],
      "path": "src/engine_executor/tests/output_decay.rs",
@@ -34413,7 +34415,7 @@
     "compaction": {
      "files": 8,
      "impl_vault": false,
-     "largest_src_bucket": "m",
+     "largest_src_bucket": "L",
      "layout": "file+dir",
      "purpose": "DREAM-008 (ONE-1250) compaction handoff validation — the fail-closed door a forked-compaction packet must…"
     },
@@ -35405,7 +35407,7 @@
      "purpose": "Write-path stamping: `WriteActor`/`WriteProvenance`/`WriteEnvelope`/`ClaimCandidate` + evidence stamping"
     }
    },
-   "over_bar": 9,
+   "over_bar": 10,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
    "source_files": 2088,
    "test_files": 718
