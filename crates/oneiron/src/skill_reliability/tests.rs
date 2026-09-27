@@ -1755,3 +1755,57 @@ fn displacement_between_batch_read_and_writer_cannot_restore_loss() -> crate::er
     );
     Ok(())
 }
+
+#[test]
+fn displaced_attribution_judge_cannot_commit_a_new_inflight_verdict() -> crate::error::Result<()> {
+    use crate::skill_attribution::{
+        AttributionJudge, RuleAttributionJudge, run_attribution_projector_with_judge,
+    };
+    struct SlowOld<'a> {
+        vault: &'a Vault,
+        displaced: std::cell::Cell<bool>,
+    }
+    impl AttributionJudge for SlowOld<'_> {
+        fn judge_revision(&self) -> Option<&str> {
+            Some("old-attribution@1")
+        }
+        fn judge(
+            &self,
+            evidence: &OutcomeEvidence,
+        ) -> crate::error::Result<Option<AttributionVerdict>> {
+            if !self.displaced.replace(true) {
+                crate::skill_attribution::supersede_displaced_judge_receipts(
+                    self.vault,
+                    "old-attribution@1",
+                    "new-attribution@2",
+                    30,
+                )?;
+            }
+            RuleAttributionJudge.judge(evidence)
+        }
+    }
+    let (_tmp, vault) = temp_vault();
+    let skill = EntityId::now();
+    let actor = EntityId::now();
+    put_active_import(&vault, &skill, "sk05.inflight-judge");
+    put_actor(&vault, &actor);
+    let receipt =
+        stamped_receipt_for_model(&vault, "sk05.inflight-judge", "1.0.0", Some("model@1"));
+    record_attribution_evidence(
+        &vault,
+        &OutcomeEvidence::new(&receipt, actor, AttemptOutcome::Failed, 29)
+            .with_skill(skill)
+            .with_routing_facts(true, true),
+    )?;
+    let old = SlowOld {
+        vault: &vault,
+        displaced: std::cell::Cell::new(false),
+    };
+    assert!(run_attribution_projector_with_judge(&vault, 0, &old).is_err());
+    assert!(crate::skill_attribution::attribution_judgments(&vault)?.is_empty());
+    assert!(
+        project_skill_reliability_for_executor(&vault, &skill, "model@1", 31)?.observations()
+            == skill_reliability_prior(&vault, &skill)?.observations()
+    );
+    Ok(())
+}

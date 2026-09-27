@@ -96,6 +96,11 @@ pub fn run_attribution_projector_with_judge(
 
     vault.with_write_txn(|wtxn| {
         for judgment in &judgments {
+            if let Some(revision) = judge.judge_revision() {
+                super::judge_supersession::ensure_current_attribution_judge_in_txn(
+                    vault, &*wtxn, revision,
+                )?;
+            }
             let judgment_key = sequenced_key(JUDGMENT_PREFIX, judgment.sequence);
             if let Some(existing) = vault.store.vault_meta.get(wtxn, &judgment_key)? {
                 if decode_judgment(&existing)? != *judgment {

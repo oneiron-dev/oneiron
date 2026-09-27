@@ -5088,3 +5088,60 @@ fn goal_axes_refuse_another_skills_evidence_before_any_measurement() {
     assert!(judge.events.borrow().is_empty());
     assert!(bandit.events.borrow().is_empty());
 }
+
+#[test]
+fn displaced_candidate_judge_cannot_commit_a_score_started_before_replacement() -> Result<()> {
+    struct SlowOld<'a> {
+        vault: &'a Vault,
+        displaced: std::cell::Cell<bool>,
+    }
+    impl HeldOutReplayScorer for SlowOld<'_> {
+        fn judge_revision(&self) -> &str {
+            "old-candidate@1"
+        }
+        fn score(&self, case: &HeldOutReplayCase<'_>) -> Result<f32> {
+            if !self.displaced.replace(true) {
+                // The scorer runs outside the write txn. Replacement commits
+                // before this callback hands its stale answer back.
+                supersede_skill_edit_judge(self.vault, "old-candidate@1", "new-candidate@2")?;
+            }
+            Ok(if case.instructions == TARGET_DESC {
+                0.4
+            } else {
+                0.8
+            })
+        }
+        fn structural_audit(&self, _: &str, _: &str) -> Result<f32> {
+            Ok(0.5)
+        }
+        fn blind_preference(&self, _: &str, _: &[String]) -> Result<Vec<BlindPreference>> {
+            Ok(vec![BlindPreference {
+                pair_ref: "race".into(),
+                preferred: PreferredResponse::First,
+            }])
+        }
+        fn contrastive_audit(
+            &self,
+            _: &HeldOutReplayCase<'_>,
+            _: &[BlindPreference],
+        ) -> Result<f32> {
+            Ok(0.5)
+        }
+        fn predict_task_success(&self, case: &HeldOutReplayCase<'_>) -> Result<Vec<f32>> {
+            Ok(vec![0.5; case.held_out_receipts.len()])
+        }
+    }
+    let (_tmp, vault) = temp_vault();
+    let (_skill, proposal) = losing_skill_with_proposal(&vault, "judge.inflight");
+    let old = SlowOld {
+        vault: &vault,
+        displaced: std::cell::Cell::new(false),
+    };
+    assert!(score_gate_skill_edit_with_scorer(&vault, &proposal, &old).is_err());
+    assert!(skill_edit_verdict(&vault, &proposal)?.is_none());
+    assert!(admit_optimized_skill_revision(&vault, &proposal, t(900), 900).is_err());
+    assert!(score_gate_skill_edit_with_scorer(&vault, &proposal, &old).is_err());
+    let new = StubScorer::improving().with_revision("new-candidate@2");
+    assert!(score_gate_skill_edit_with_scorer(&vault, &proposal, &new)?.accepted);
+    Ok(())
+}

@@ -558,6 +558,53 @@ fn skill_edit_verdict_receipt(verdict: &HeldOutVerdict) -> ReceiptRecord {
 }
 
 const DISPLACED_VERDICT_PREFIX: &[u8] = b"skill_optimize:displaced_judge:v1:";
+const DISPLACED_REVISION_PREFIX: &[u8] = b"skill_optimize:displaced_revision:v1:";
+fn displaced_revision_key(revision: &str) -> Vec<u8> {
+    let mut key = DISPLACED_REVISION_PREFIX.to_vec();
+    key.extend_from_slice(revision.as_bytes());
+    key
+}
+
+pub(crate) fn validate_judge_revision(revision: &str) -> Result<()> {
+    if revision.is_empty() || revision.len() > 256 || revision.chars().any(char::is_control) {
+        return Err(invalid("invalid candidate judge revision"));
+    }
+    Ok(())
+}
+
+pub(crate) fn ensure_current_judge_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    revision: &str,
+) -> Result<()> {
+    validate_judge_revision(revision)?;
+    if vault
+        .store
+        .vault_meta
+        .get(txn, &displaced_revision_key(revision))?
+        .is_some()
+    {
+        return Err(invalid("candidate judge revision was displaced"));
+    }
+    Ok(())
+}
+
+pub(crate) fn displaced_judge_revision_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    revision: &str,
+) -> Result<Option<String>> {
+    vault
+        .store
+        .vault_meta
+        .get(txn, &displaced_revision_key(revision))?
+        .map(|bytes| {
+            String::from_utf8(bytes.to_vec())
+                .map_err(|_| Error::CorruptedIndex("candidate judge displacement"))
+        })
+        .transpose()
+}
+
 fn displaced_verdict_key(id: &EntityId) -> Vec<u8> {
     let mut key = DISPLACED_VERDICT_PREFIX.to_vec();
     key.extend_from_slice(id.as_bytes());
@@ -583,6 +630,19 @@ pub fn supersede_skill_edit_judge(
         return Err(invalid("invalid candidate judge replacement"));
     }
     vault.with_write_txn(|txn| {
+        let revision_key = displaced_revision_key(displaced);
+        if let Some(held) = vault.store.vault_meta.get(txn, &revision_key)? {
+            if held.as_ref() != replacement.as_bytes() {
+                return Err(invalid(
+                    "candidate judge revision already displaced by another judge",
+                ));
+            }
+        } else {
+            vault
+                .store
+                .vault_meta
+                .put(txn, &revision_key, replacement.as_bytes())?;
+        }
         let mut ids = Vec::new();
         for verdict in verdict_rows_in_txn(vault, txn)? {
             if verdict.judge_revision.as_deref() != Some(displaced) {

@@ -7,6 +7,29 @@ use crate::error::{Error, Result};
 
 const JUDGE_PREFIX: &[u8] = b"skill_attribution:judge_revision:v1:";
 const DISPLACED_PREFIX: &[u8] = b"skill_attribution:displaced_judge:v1:";
+const REVISION_FENCE_PREFIX: &[u8] = b"skill_attribution:displaced_revision:v1:";
+fn revision_key(revision: &str) -> Vec<u8> {
+    let mut key = REVISION_FENCE_PREFIX.to_vec();
+    key.extend_from_slice(revision.as_bytes());
+    key
+}
+pub(crate) fn ensure_current_attribution_judge_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    revision: &str,
+) -> Result<()> {
+    if vault
+        .store
+        .vault_meta
+        .get(txn, &revision_key(revision))?
+        .is_some()
+    {
+        return Err(Error::InvalidClaimBody(
+            "attribution judge revision was displaced",
+        ));
+    }
+    Ok(())
+}
 
 fn key(prefix: &[u8], sequence: u64) -> Vec<u8> {
     let mut key = prefix.to_vec();
@@ -145,6 +168,19 @@ pub fn supersede_displaced_judge_receipts(
         })
         .collect::<Result<Vec<_>>>()?;
     vault.with_write_txn(|txn| {
+        let fence = revision_key(displaced);
+        if let Some(held) = vault.store.vault_meta.get(txn, &fence)? {
+            if held.as_ref() != replacement.as_bytes() {
+                return Err(Error::InvalidClaimBody(
+                    "attribution judge already displaced by another revision",
+                ));
+            }
+        } else {
+            vault
+                .store
+                .vault_meta
+                .put(txn, &fence, replacement.as_bytes())?;
+        }
         for (judgment, executor) in &prepared {
             let origin = vault
                 .store

@@ -133,14 +133,7 @@ fn rule_on_proposal(
     at: u64,
 ) -> Result<HeldOutVerdict> {
     let judge_revision = scorer.judge_revision();
-    if judge_revision.is_empty()
-        || judge_revision.len() > 256
-        || judge_revision.chars().any(char::is_control)
-    {
-        return Err(invalid(
-            "candidate judge revision must be a stable nonempty identifier",
-        ));
-    }
+    validate_judge_revision(judge_revision)?;
     // The lock-free pre-read. Sequential, never nested: LMDB allows one read
     // transaction per thread, so a snapshot opened around a call that opens its
     // own is a `BadRslot`, not a consistency win. Nothing here decides
@@ -155,6 +148,7 @@ fn rule_on_proposal(
     race_hook();
 
     let prepared = vault.with_write_txn(|wtxn| {
+        ensure_current_judge_in_txn(vault, &*wtxn, judge_revision)?;
         let staged = vault.read_skill_record_in_txn(&*wtxn, proposal)?;
         require_open_optimizer_proposal(&staged)?;
         let target = target_of(&staged)?;
@@ -268,6 +262,7 @@ fn rule_on_proposal(
         // Re-read at the write door, exactly as ONE-1448's draft path does: the
         // scorer ran outside this transaction, so the target may have been
         // superseded and either tier may have been re-marked while it thought.
+        ensure_current_judge_in_txn(vault, &*wtxn, judge_revision)?;
         let staged = vault.read_skill_record_in_txn(&*wtxn, proposal)?;
         let current = readable_target(vault.read_skill_record_in_txn(&*wtxn, &target).map(Some))?;
         // The concurrent duplicate: two deliveries that both got past the read

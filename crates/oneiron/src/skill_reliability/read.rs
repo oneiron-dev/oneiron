@@ -37,7 +37,7 @@ pub fn skill_reliability_posterior_for_executor(
     resolved_reliability_posterior_in_txn(vault, &txn, skill, Some(executor))
 }
 
-pub(super) fn validate_executor(executor: &str) -> Result<()> {
+pub(crate) fn validate_executor(executor: &str) -> Result<()> {
     if executor.len() > 256
         || executor.chars().any(char::is_control)
         || !executor
@@ -180,7 +180,7 @@ fn skill_selection_score_in_txn(
     total_pulls: u32,
 ) -> Result<f32> {
     Ok(skill_selection_score_from_posterior(
-        selection_posterior_in_txn(vault, rtxn, skill)?,
+        selection_posterior_in_txn(vault, rtxn, skill, None)?,
         total_pulls,
     ))
 }
@@ -198,8 +198,9 @@ pub(crate) fn selection_posterior_in_txn(
     vault: &Vault,
     rtxn: &heed::RoTxn<'_>,
     skill: &EntityId,
+    executor: Option<&str>,
 ) -> Result<SkillReliabilityPosterior> {
-    match resolved_reliability_posterior_in_txn(vault, rtxn, skill, None)? {
+    match resolved_reliability_posterior_in_txn(vault, rtxn, skill, executor)? {
         Some(posterior) => Ok(posterior),
         None => skill_reliability_prior_in_txn(vault, rtxn, skill),
     }

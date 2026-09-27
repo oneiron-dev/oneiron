@@ -169,6 +169,11 @@ pub(crate) async fn run_context_pack(
         .max_neighbors(max_neighbors)
         .include_vectors(include_vectors)
         .field_profile(projection.profile);
+    if let Some(model) = req.executor_model.as_deref() {
+        builder = builder
+            .skill_executor(model)
+            .map_err(|error| core_engine_error("invalid context-pack executor model", error))?;
+    }
     if let Some(query) = query {
         builder = builder.search_text(query, candidate_limit);
     }

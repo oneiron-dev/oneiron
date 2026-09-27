@@ -33,6 +33,30 @@ impl AttemptQueue<'_> {
         Ok(record)
     }
 
+    /// The load door may only append bytes while this lease is live, even if
+    /// the same model has already been stamped on the attempt.
+    pub(crate) fn require_skill_load_lease_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        id: AttemptId,
+        lease_owner: &str,
+        attempt_count: u32,
+    ) -> Result<()> {
+        let raw = self
+            .store
+            .attempt_records
+            .get(txn, id.as_bytes())?
+            .ok_or(Error::InvalidConfig("unknown attempt".to_owned()))?;
+        let record = decode_record(&raw, id)?;
+        if !matches!(record.state, AttemptState::Leased | AttemptState::Landing) {
+            return Err(Error::InvalidConfig(
+                "skill load requires a live execution lease".to_owned(),
+            ));
+        }
+        validate_lease_owner(lease_owner)?;
+        validate_transition_lease(&record, lease_owner, attempt_count, "load_attempt_skill")
+    }
+
     pub(crate) fn set_executor_model_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,
@@ -58,9 +82,7 @@ impl AttemptQueue<'_> {
             .ok_or(Error::InvalidConfig("unknown attempt".to_owned()))?;
         let mut record = decode_record(&raw, id)?;
         if record.executor_model.as_deref() == Some(model) {
-            // An idempotent retry after terminal is read-only. During a live
-            // run a stale worker must not reuse the stamp to load another skill.
-            if record.state == AttemptState::Leased {
+            if matches!(record.state, AttemptState::Leased | AttemptState::Landing) {
                 validate_lease_owner(lease_owner)?;
                 validate_transition_lease(
                     &record,

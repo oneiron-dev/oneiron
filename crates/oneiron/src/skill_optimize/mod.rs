@@ -175,8 +175,9 @@ pub use gate::{
     skill_edit_verdicts_for_proposal, supersede_skill_edit_judge,
 };
 pub(crate) use gate::{
-    check_optimizer_admission_in_txn, optimizer_birth_marker_for_create_in_txn,
-    skill_edit_verdict_receipts, with_optimized_skill_admission,
+    check_optimizer_admission_in_txn, displaced_judge_revision_in_txn, ensure_current_judge_in_txn,
+    optimizer_birth_marker_for_create_in_txn, skill_edit_verdict_receipts, validate_judge_revision,
+    with_optimized_skill_admission,
 };
 
 pub(crate) use self::job::{SKILL_EDIT_CYCLE_RUN_PREFIX, proven_cycle};

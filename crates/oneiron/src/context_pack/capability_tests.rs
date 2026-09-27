@@ -312,6 +312,101 @@ fn skill_discovery_blends_relevance_with_posterior_and_explores() -> Result<()> 
     Ok(())
 }
 
+#[test]
+fn executor_pair_controls_production_pack_skill_ranking() -> Result<()> {
+    use crate::claim::{ClaimBody, ClaimSubject};
+    use crate::skill_reliability::PREDICATE_SKILL_RELIABILITY;
+    let (_dir, vault) =
+        crate::test_util::open_test_vault_with(crate::test_util::embedding_test_config());
+    let mut ids = Vec::new();
+    for index in 1..=2 {
+        let id = crate::test_util::entity(index);
+        let mut skill = SkillRecord::new(
+            format!("skill.pair.{index}"),
+            "pair ranking",
+            "v1",
+            ClaimApprovalStatus::Approved,
+            SkillLifecycle::Candidate,
+            ClaimSource::UserStated,
+            0.01,
+            false,
+            true,
+            vec![],
+            rmpv::Value::Map(vec![(
+                rmpv::Value::from("source"),
+                rmpv::Value::from("fixture"),
+            )]),
+        );
+        vault
+            .batch()
+            .put(
+                &id,
+                ENTITY_TYPE_SKILL,
+                TimeRange { start: 1, end: 1 },
+                1,
+                &encode_skill_record(&skill)?,
+            )
+            .text(&id, &[("body", "channel")])
+            .commit()?;
+        skill.lifecycle_status = SkillLifecycle::Active;
+        vault.update_skill_record(&id, &skill, TimeRange { start: 2, end: 2 }, 2)?;
+        vault.batch().text(&id, &[("body", "channel")]).commit()?;
+        ids.push(id);
+    }
+    for (n, model, alpha, beta) in [
+        (0, "old@1", 90.0, 10.0),
+        (1, "old@1", 10.0, 90.0),
+        (2, "new@2", 10.0, 90.0),
+        (3, "new@2", 90.0, 10.0),
+    ] {
+        let id = ids[n % 2];
+        let mut body = ClaimBody::new(
+            PREDICATE_SKILL_RELIABILITY,
+            ClaimSubject::Entity(id),
+            rmpv::Value::Map(vec![
+                (rmpv::Value::from("alpha"), rmpv::Value::F32(alpha)),
+                (rmpv::Value::from("beta"), rmpv::Value::F32(beta)),
+                (rmpv::Value::from("executor"), rmpv::Value::from(model)),
+            ]),
+            1.0,
+            ClaimApprovalStatus::Auto,
+            ClaimLifecycleStatus::Active,
+        );
+        body.source = Some(ClaimSource::Observed);
+        vault.with_write_txn(|txn| {
+            vault.put_reserved_claim_in_txn(
+                txn,
+                &crate::test_util::entity(u8::try_from(n + 100).expect("small fixture")),
+                &body,
+                TimeRange { start: 3, end: 3 },
+                3,
+            )
+        })?;
+    }
+    let rank = |model: &str| -> Result<Vec<crate::EntityId>> {
+        Ok(vault
+            .context_pack()
+            .skill_executor(model)?
+            .search_text("channel", 20)
+            .run()?
+            .capabilities
+            .iter()
+            .map(|hit| hit.id)
+            .collect())
+    };
+    assert_eq!(rank("old@1")?, ids);
+    assert_eq!(rank("new@2")?, vec![ids[1], ids[0]]);
+    assert!(
+        vault
+            .context_pack()
+            .skill_executor("missing-revision")
+            .is_err()
+    );
+    let unmeasured = rank("new@3")?;
+    assert_eq!(unmeasured.len(), 2);
+    Ok(())
+}
+
 /// Equal reliability cannot discard the strongest text match just because its
 /// entity ID sorts after the other five skills in the semantic shortlist.
 #[test]

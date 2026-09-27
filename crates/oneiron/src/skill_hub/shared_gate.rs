@@ -50,6 +50,9 @@ pub struct SharedSkillMergeReceipt {
     pub after: Option<f32>,
     pub held_out_digest: String,
     pub accepted: bool,
+    pub judge_revision: Option<String>,
+    #[serde(skip)]
+    pub displaced_by_revision: Option<String>,
     pub at: u64,
 }
 #[derive(Debug, Clone, PartialEq)]
@@ -115,11 +118,24 @@ impl Vault {
         };
         let useful_upstream =
             useful.useful_upstream(&snapshot.base, &snapshot.package, &snapshot.delta)?;
+        let judge_revision = if useful_upstream {
+            let revision = scorer.judge_revision().to_owned();
+            crate::skill_optimize::validate_judge_revision(&revision)?;
+            Some(revision)
+        } else {
+            None
+        };
         let (before, after) = if useful_upstream {
             replay(scorer, &snapshot)?
         } else {
             (None, None)
         };
+        if judge_revision
+            .as_deref()
+            .is_some_and(|revision| scorer.judge_revision() != revision)
+        {
+            return Err(invalid("shared-merge judge revision moved during scoring"));
+        }
         let accepted = matches!((before, after), (Some(before), Some(after)) if after > before);
         let receipt = SharedSkillMergeReceipt {
             receipt_id: EntityId::now().to_hex(),
@@ -131,9 +147,14 @@ impl Vault {
             after,
             held_out_digest: crate::skill_optimize::held_out_receipt_set_digest(&snapshot.evidence),
             accepted,
+            judge_revision: judge_revision.clone(),
+            displaced_by_revision: None,
             at: learned_at,
         };
         self.with_write_txn(|txn| {
+            if let Some(revision) = &judge_revision {
+                crate::skill_optimize::ensure_current_judge_in_txn(self, txn, revision)?;
+            }
             self.check_merge_ask(txn, ask)?;
             let authorization =
                 crate::consent::approve_once_authorization_in_txn(&self.store, txn, &ask.effect)?
@@ -182,7 +203,17 @@ impl Vault {
         self.store
             .vault_meta
             .get(&txn, &merge_receipt_key(candidate))?
-            .map(|raw| serde_json::from_slice(&raw).map_err(|_| invalid("invalid merge receipt")))
+            .map(|raw| {
+                let mut receipt: SharedSkillMergeReceipt =
+                    serde_json::from_slice(&raw).map_err(|_| invalid("invalid merge receipt"))?;
+                if let Some(revision) = &receipt.judge_revision {
+                    receipt.displaced_by_revision =
+                        crate::skill_optimize::displaced_judge_revision_in_txn(
+                            self, &txn, revision,
+                        )?;
+                }
+                Ok(receipt)
+            })
             .transpose()
     }
     fn check_merge_ask(

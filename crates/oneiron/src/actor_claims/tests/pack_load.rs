@@ -188,3 +188,134 @@ fn real_skill_load_credits_only_the_executor_that_ran_each_slice_and_rerun() -> 
     );
     Ok(())
 }
+
+#[test]
+fn reclaimed_or_landing_attempt_requires_current_lease_even_with_matching_model() -> Result<()> {
+    use crate::attempt_queue::{
+        AcceptAttemptLanding, CleanupAttemptLeases, LandingOutcome, LandingTrigger,
+    };
+    let (_tmp, vault) = temp_vault();
+    let skill = put_skill(&vault, "pack.fence")?;
+    let queue = AttemptQueue::new(&vault);
+    let crate::attempt_queue::EnqueueOutcome::Enqueued(first) =
+        queue.enqueue(crate::attempt_queue::EnqueueAttempt {
+            kind: "pack.fence".into(),
+            payload: vec![],
+            dedupe_key: None,
+            run_id: None,
+            now: 50,
+        })?
+    else {
+        panic!("fresh")
+    };
+    let ClaimOutcome::Claimed(leased) = queue.claim_kind(
+        "pack.fence",
+        ClaimAttempt {
+            lease_owner: "worker-a".into(),
+            now: 51,
+        },
+    )?
+    else {
+        panic!("leased")
+    };
+    vault.load_attempt_skill_pack(
+        first.id,
+        &skill,
+        "worker-a",
+        leased.attempt_count,
+        "model@1",
+        52,
+    )?;
+    let before = queue.get(first.id)?.unwrap().manifest;
+    let cleanup_at = leased.updated_at + 90;
+    queue.cleanup_leases(CleanupAttemptLeases {
+        now: cleanup_at,
+        lease_timeout_secs: 10,
+    })?;
+    assert!(
+        vault
+            .load_attempt_skill_pack(
+                first.id,
+                &skill,
+                "worker-a",
+                leased.attempt_count,
+                "model@1",
+                91
+            )
+            .is_err()
+    );
+    assert_eq!(queue.get(first.id)?.unwrap().manifest, before);
+    let ClaimOutcome::Claimed(reclaimed) = queue.claim_kind(
+        "pack.fence",
+        ClaimAttempt {
+            lease_owner: "worker-b".into(),
+            now: cleanup_at + 1,
+        },
+    )?
+    else {
+        panic!("reclaimed")
+    };
+    assert!(
+        vault
+            .load_attempt_skill_pack(
+                first.id,
+                &skill,
+                "worker-a",
+                leased.attempt_count,
+                "model@1",
+                93
+            )
+            .is_err()
+    );
+    let LandingOutcome::Landing(landing) = queue.accept_landing(AcceptAttemptLanding {
+        id: first.id,
+        lease_owner: "worker-b".into(),
+        attempt_count: reclaimed.attempt_count,
+        trigger: LandingTrigger::BudgetWarning,
+        status: None,
+        resume_point: None,
+        request_sequence: None,
+        now: 94,
+    })?
+    else {
+        panic!("landing")
+    };
+    assert!(
+        vault
+            .load_attempt_skill_pack(
+                first.id,
+                &skill,
+                "worker-a",
+                landing.attempt_count,
+                "model@1",
+                95
+            )
+            .is_err()
+    );
+    assert!(
+        vault
+            .load_attempt_skill_pack(
+                first.id,
+                &skill,
+                "worker-b",
+                leased.attempt_count,
+                "model@1",
+                95
+            )
+            .is_err()
+    );
+    assert_eq!(queue.get(first.id)?.unwrap().manifest, before);
+    vault.load_attempt_skill_pack(
+        first.id,
+        &skill,
+        "worker-b",
+        landing.attempt_count,
+        "model@1",
+        95,
+    )?;
+    assert_eq!(
+        queue.get(first.id)?.unwrap().manifest.len(),
+        before.len() + 1
+    );
+    Ok(())
+}

@@ -14,6 +14,9 @@ use super::types::default_limit;
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct CoreContextPackRequest {
+    /// Executor model@revision for pair-specific skill reliability ranking.
+    #[serde(default, alias = "executorModel")]
+    pub executor_model: Option<String>,
     /// Optional BM25 text seed.
     #[serde(default)]
     pub query: Option<String>,

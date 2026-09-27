@@ -359,6 +359,7 @@ fn query_request() -> CoreQueryRequest {
 
 fn context_pack_request() -> CoreContextPackRequest {
     CoreContextPackRequest {
+        executor_model: None,
         query: None,
         query_vector: Some(SEED_VECTOR.to_vec()),
         limit: 5,
@@ -886,6 +887,7 @@ fn serialization_round_trip() {
     let query = query_request();
     assert_eq!(round_trip(&query), query);
     let pack_request = CoreContextPackRequest {
+        executor_model: None,
         query: Some("blue hallway".to_owned()),
         query_vector: Some(vec![0.25, 0.75]),
         limit: 3,

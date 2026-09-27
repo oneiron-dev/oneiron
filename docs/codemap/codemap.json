@@ -236,7 +236,7 @@
      "surface": {}
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "test",
      "notable": [],
      "path": "src/actor_claims/tests/pack_load.rs",
@@ -1394,7 +1394,7 @@
      "path": "src/attempt_queue/executor.rs",
      "purpose": "Write-once executor identity for a skill-bearing attempt's terminal receipt",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 2,
       "fn": 1
      }
     },
@@ -11404,7 +11404,7 @@
      "purpose": "The fluent ContextPackBuilder surface: search, filter, boost, hydration, budget and format configuration",
      "surface": {
       "crate-vis": 2,
-      "fn": 55,
+      "fn": 56,
       "struct": 1
      }
     },
@@ -24015,7 +24015,7 @@
      "purpose": "—",
      "surface": {
       "crate-vis": 10,
-      "fn": 46,
+      "fn": 47,
       "struct": 1
      }
     },
@@ -28358,7 +28358,7 @@
      "path": "src/skill_attribution/judge_supersession.rs",
      "purpose": "Judge-revision provenance for routed receipts, and non-destructive displacement",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 4,
       "fn": 2,
       "struct": 1
      }
@@ -29239,7 +29239,7 @@
      "path": "src/skill_optimize/gate/ledger.rs",
      "purpose": "The verdict ledger, and the `Gate` receipts projected from it",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 6,
       "fn": 5
      }
     },

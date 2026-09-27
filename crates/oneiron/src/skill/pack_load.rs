@@ -65,6 +65,7 @@ impl Vault {
                 .runtime_skill_package_in_txn(txn, skill, &record)?
                 .map(|package| package.files);
             let queue = AttemptQueue::new(self);
+            queue.require_skill_load_lease_in_txn(txn, attempt, lease_owner, attempt_count)?;
             queue.set_executor_model_in_txn(
                 txn,
                 attempt,

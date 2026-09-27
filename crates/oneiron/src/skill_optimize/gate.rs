@@ -163,7 +163,10 @@ pub(crate) use admission::{
     check_optimizer_admission_in_txn, optimizer_birth_marker_for_create_in_txn,
     with_optimized_skill_admission,
 };
-pub(crate) use ledger::skill_edit_verdict_receipts;
+pub(crate) use ledger::{
+    displaced_judge_revision_in_txn, ensure_current_judge_in_txn, skill_edit_verdict_receipts,
+    validate_judge_revision,
+};
 
 #[cfg(test)]
 pub(super) use admission::optimizer_origin_marker_key;

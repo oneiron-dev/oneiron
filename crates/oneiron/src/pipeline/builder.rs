@@ -69,6 +69,7 @@ pub struct PipelineBuilder<'a> {
     /// Captured only from a host-bound execution capability, never from a
     /// selection's caller-supplied agent id. Bare `Vault::query` has none.
     pub(super) execution_actor: Option<crate::write_envelope::WriteActor>,
+    pub(super) skill_executor: Option<String>,
     pub(super) corpus_scope: CorpusScope,
     pub(super) made_by: crate::provenance::made_by::MadeByPredicate,
     pub(super) context_pack_budget: Option<ContextPackRetrievalBudget>,
@@ -125,6 +126,7 @@ impl<'a> PipelineBuilder<'a> {
             world_scope: WorldScope::All,
             active_world_selection: None,
             execution_actor: None,
+            skill_executor: None,
             corpus_scope: CorpusScope::All,
             made_by: crate::provenance::made_by::MadeByPredicate::All,
             context_pack_budget: None,
@@ -142,6 +144,15 @@ impl<'a> PipelineBuilder<'a> {
             skip_vector_rescore: false,
             session: None,
         }
+    }
+
+    /// Selects the exact executor model@revision for skill reliability ranking.
+    /// Unspecified queries rank the unknown-executor arm, not another model's evidence.
+    pub fn skill_executor(mut self, model: impl Into<String>) -> Result<Self> {
+        let model = model.into();
+        crate::skill_reliability::validate_executor(&model)?;
+        self.skill_executor = Some(model);
+        Ok(self)
     }
 
     /// Resolve the same type gate for graph neighbors that the retrieval run
