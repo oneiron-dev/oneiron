@@ -175,10 +175,10 @@ async fn signing_routes_keep_matched_wire_receipts_and_threshold_questions() {
     assert_eq!(question.evidence.by_verb["GET /sign/{token}"], 2);
 }
 
-fn seed_live_signing(vault: &oneiron::Vault) -> (oneiron::EntityId, String) {
+fn seed_live_signing(vault: &oneiron::Vault) -> (oneiron::EntityId, String, String) {
     use oneiron::blob_artifact::esign::{
-        DocumentKind, EsignAuditActor, EsignDocument, EsignItem, EsignOutboundCommand,
-        EsignOutboundVerb, EsignRecipient, RecipientRole,
+        DocumentKind, EsignAuditActor, EsignDocument, EsignField, EsignItem, EsignOutboundCommand,
+        EsignOutboundVerb, EsignRecipient, FieldGeometry, FieldMeta, RecipientRole,
     };
     use oneiron::blob_artifact::{BlobArtifactBody, BlobVersionProvenance};
     use oneiron::outbound::{
@@ -226,6 +226,7 @@ fn seed_live_signing(vault: &oneiron::Vault) -> (oneiron::EntityId, String) {
         )
         .expect("seed live signing fixture");
     let recipient = EntityId::now().to_hex();
+    let field = EntityId::now().to_hex();
     let document = EsignDocument {
         schema_version: 1,
         kind: DocumentKind::Document,
@@ -237,7 +238,7 @@ fn seed_live_signing(vault: &oneiron::Vault) -> (oneiron::EntityId, String) {
             original_version: 1,
         }],
         recipients: vec![EsignRecipient {
-            id: recipient,
+            id: recipient.clone(),
             email: "signer@example.test".into(),
             name: "Signer".into(),
             role: RecipientRole::Signer,
@@ -246,7 +247,20 @@ fn seed_live_signing(vault: &oneiron::Vault) -> (oneiron::EntityId, String) {
             principal_ref: None,
             automated: false,
         }],
-        fields: vec![],
+        fields: vec![EsignField {
+            id: field.clone(),
+            item: 0,
+            recipient,
+            required: true,
+            geometry: FieldGeometry {
+                page: 1,
+                x_percent: 10.0,
+                y_percent: 10.0,
+                width_percent: 50.0,
+                height_percent: 20.0,
+            },
+            meta: FieldMeta::Text { max_bytes: 50 },
+        }],
         full_trail_appendix: false,
     };
     vault
@@ -340,7 +354,7 @@ fn seed_live_signing(vault: &oneiron::Vault) -> (oneiron::EntityId, String) {
         OutboundDispatchOutcome::DeliveredToChannel,
         "{sent:?}"
     );
-    (id, capability.expose_for_delivery().to_owned())
+    (id, capability.expose_for_delivery().to_owned(), field)
 }
 
 async fn http_over_unix(path: &std::path::Path, request: &str) -> String {
@@ -380,7 +394,7 @@ async fn managed_unix_listener_serves_a_live_signing_capability_without_a_forged
     let vault = Arc::new(
         oneiron::Vault::open(dir.path().join("vault"), oneiron::VaultConfig::device()).unwrap(),
     );
-    let (id, token) = seed_live_signing(&vault);
+    let (id, token, _) = seed_live_signing(&vault);
     let server = Arc::new(
         SyncServer::new(
             vault.clone(),
@@ -448,4 +462,103 @@ async fn managed_unix_listener_serves_a_live_signing_capability_without_a_forged
     ) && row.actor.ip.is_none()));
     shutdown.trigger();
     task.await.unwrap().unwrap();
+}
+
+#[tokio::test]
+async fn hosted_burst_keeps_a_live_ceremony_writable_and_raises_a_typed_check() {
+    let dir = tempfile::tempdir().expect("burst vault directory");
+    let vault = Arc::new(
+        oneiron::Vault::open(dir.path(), oneiron::VaultConfig::device()).expect("open burst vault"),
+    );
+    let (id, token, field) = seed_live_signing(&vault);
+    let server = Arc::new(
+        SyncServer::new(
+            vault.clone(),
+            SyncServerConfig {
+                lease_vault_id: 1,
+                ..Default::default()
+            },
+        )
+        .expect("hosted burst server"),
+    );
+    let app = build_app(server);
+    let page = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(format!("/sign/{token}"))
+                .body(Body::empty())
+                .expect("page request"),
+        )
+        .await
+        .expect("page response");
+    assert_eq!(page.status(), StatusCode::OK);
+
+    let post = |action: serde_json::Value| {
+        let app = app.clone();
+        let token = token.clone();
+        async move {
+            let response = app
+                .oneshot(
+                    Request::builder()
+                        .method("POST")
+                        .uri("/sign/action")
+                        .extension(axum::extract::ConnectInfo(
+                            "127.0.0.1:12345"
+                                .parse::<std::net::SocketAddr>()
+                                .expect("loopback peer"),
+                        ))
+                        .header(header::CONTENT_TYPE, "application/json")
+                        .body(Body::from(
+                            serde_json::json!({"token":token,"action":action}).to_string(),
+                        ))
+                        .expect("signing action request"),
+                )
+                .await
+                .expect("signing action response");
+            let status = response.status();
+            let body = to_bytes(response.into_body(), 16 * 1024)
+                .await
+                .expect("signing action body");
+            let body: serde_json::Value =
+                serde_json::from_slice(&body).expect("typed signing outcome");
+            (status, body)
+        }
+    };
+    // More than two full former 120/minute windows, so even a minute boundary
+    // cannot hide the crossing. None of these legitimate refreshes may drop.
+    for _ in 0..300 {
+        let (status, body) = post(serde_json::json!({"action":"load"})).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body["outcome"], "page");
+    }
+    let (status, saved) = post(serde_json::json!({
+        "action":"save_field", "field":field,
+        "value":{"kind":"text", "value":"approved"}
+    }))
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(saved["outcome"], "page");
+    assert_eq!(
+        saved["data"]["values"][&field]["value"]["value"],
+        "approved"
+    );
+    let (status, completed) = post(serde_json::json!({
+        "action":"complete", "consent":true, "next":null
+    }))
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(completed["outcome"], "awaiting_seal");
+    let recipient = &vault
+        .esign_document(id)
+        .expect("signing state")
+        .document
+        .recipients[0]
+        .id;
+    let checks = vault.esign_rate_checks(id).expect("local typed checks");
+    assert!(checks.iter().any(|check| {
+        check.receipt.recipient.as_deref() == Some(recipient.as_str())
+            && check.receipt.count == 121
+            && check.threshold == 120
+    }));
 }
