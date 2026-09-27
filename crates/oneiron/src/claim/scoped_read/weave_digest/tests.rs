@@ -407,8 +407,13 @@ fn owner_inactivation_between_projection_and_commit_preserves_due_row() -> Resul
     assert!(
         scoped
             .render_due_weave_digest_with(WeaveReader::Owner(&owner), 3, || {
-                vault.delete_entity(&owner_id)?;
-                Ok(())
+                // Mutate only the fixture's owner row to force the exact
+                // projection-to-commit inactivation point, independent of
+                // the public delete door's owner-protection semantics.
+                vault.with_write_txn(|txn| {
+                    vault.store.entities.delete(txn, owner_id.as_bytes())?;
+                    Ok(())
+                })
             })
             .is_err()
     );
