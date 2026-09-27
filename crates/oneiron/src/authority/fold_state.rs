@@ -1,7 +1,7 @@
 //! Folded-state data model and the two-state merge.
 //!
 //! This is the module's shared type surface: the fold-internal `FoldState`,
-//! every derived roster / fork / pact / actor-binding shape, and
+//! every derived roster / pact / actor-binding shape, and
 //! [`merge_states`], which must be edited in lockstep with the `FoldState`
 //! field list because it folds every field 1:1.
 
@@ -66,24 +66,6 @@ pub enum AuthorityFoldIssue {
     MissingAuthorityConsent(AuthorityEntryHash),
     /// Entry requires a distinct active co-signer quorum.
     MissingQuorum(AuthorityEntryHash),
-    /// One key signed divergent content at the same sequence number.
-    EquivocationDetected {
-        /// Equivocating authority key.
-        signer: AuthorityKey,
-        /// Conflicting signer sequence number.
-        seq: u64,
-    },
-    /// Entry lost deterministic selection to the winner of its equivocation group.
-    EquivocationLoser {
-        /// Losing entry hash.
-        entry: AuthorityEntryHash,
-        /// Equivocating authority key.
-        signer: AuthorityKey,
-        /// Conflicting signer sequence number.
-        seq: u64,
-        /// Deterministically selected entry hash.
-        winner: AuthorityEntryHash,
-    },
     /// Federation lifecycle entry rejected by the pact state machine.
     FederationLifecycleRejected {
         /// Rejected entry hash.
@@ -120,52 +102,6 @@ pub enum ActorBindingRejection {
     OwnerCapabilityRequired,
 }
 
-/// Fold-visible AUTH-5 state for one detected signer fork.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum AuthorityForkStatus {
-    /// Transient same-pass edge where the fold observes divergent entries and raises the alarm.
-    ///
-    /// Stable fold output records the immediately following `Quarantined` state.
-    Forked,
-    /// Forked key is quarantined until a valid quorum revoke folds in.
-    Quarantined,
-    /// A valid quorum revoke for the forked key has folded in.
-    Resolved,
-}
-
-/// Queryable fold row for one signer fork.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct AuthorityFork {
-    /// Equivocating authority key.
-    pub signer: AuthorityKey,
-    /// Conflicting signer sequence number.
-    pub seq: u64,
-    /// First conflicting entry hash, sorted lexicographically.
-    pub first_hash: AuthorityEntryHash,
-    /// Second conflicting entry hash, sorted lexicographically.
-    pub second_hash: AuthorityEntryHash,
-    /// Current deterministic fork state.
-    pub status: AuthorityForkStatus,
-}
-
-/// Typed owner-facing alarm row for one authority fork.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct AuthorityForkAlarm {
-    /// Equivocating authority key.
-    pub signer: AuthorityKey,
-    /// Conflicting signer sequence number.
-    pub seq: u64,
-    /// First conflicting entry hash, sorted lexicographically.
-    pub first_hash: AuthorityEntryHash,
-    /// Second conflicting entry hash, sorted lexicographically.
-    pub second_hash: AuthorityEntryHash,
-}
-
-impl AuthorityForkAlarm {
-    /// Stable alarm discriminator for owner-facing surfaces.
-    pub const KIND: &'static str = AUTHORITY_FORK_ALARM_KIND;
-}
-
 /// Deterministic authority fold output.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AuthorityFold {
@@ -193,10 +129,6 @@ pub struct AuthorityFold {
     pub pending_widens: BTreeMap<AuthorityEntryHash, AuthorityPendingWiden>,
     /// Pending widen hashes killed by a valid owner veto.
     pub vetoed_widens: BTreeSet<AuthorityEntryHash>,
-    /// AUTH-5 signer-fork state rows.
-    pub authority_forks: Vec<AuthorityFork>,
-    /// Owner-facing AUTHORITY FORK alarms, one per detected fork.
-    pub fork_alarms: Vec<AuthorityForkAlarm>,
     /// Fold-derived federation pact states keyed by pact id.
     pub federation_pacts: BTreeMap<[u8; 32], FederationPactState>,
     /// Consumed federation confirmation ids and nonces, bound to signed entries.
@@ -326,12 +258,6 @@ pub(super) struct FoldState {
     /// concurrent with, or older than, the delayed rotation that revoked them.
     pub(super) delayed_rotation_veto_revocations:
         BTreeMap<AuthorityKey, BTreeSet<AuthorityEntryHash>>,
-    /// Keys revoked by operations allowed to resolve authority forks.
-    ///
-    /// Rotation revocations are deliberately excluded: a forked signer cannot
-    /// clear its own alarm by making a self-rotation the equivocation winner.
-    pub(super) fork_resolution_revocations: BTreeSet<AuthorityKey>,
-    pub(super) authority_forks: BTreeMap<(AuthorityKey, u64), AuthorityFork>,
     pub(super) federation_pacts: BTreeMap<[u8; 32], FederationPactState>,
     pub(super) federation_confirms: BTreeMap<AuthorityEntryHash, AuthorityConfirmAction>,
     pub(super) critical_write_confirms: BTreeMap<[u8; 32], CriticalWriteConfirmState>,
@@ -406,27 +332,16 @@ impl FoldState {
 ///   demote the tier) that admitted a `"human"` bind on a divergent branch. A
 ///   binding whose key can no longer give owner consent must not keep backing
 ///   the owner class.
-/// * AUTH-5 equivocation quarantines the key itself. A key that signed
-///   divergent content at one sequence is exactly the key an attacker holds;
-///   letting it keep speaking for a human owner is the fail-open the quarantine
-///   exists to prevent. Quarantine is a live-fork property, so it is read from
-///   the reported forks rather than from roster state.
 pub(super) fn folded_actor_bindings(
     state: &FoldState,
-    authority_forks: &[AuthorityFork],
     consent_arm: fn(&FoldedDevice) -> bool,
 ) -> BTreeMap<AuthorityKey, FoldedActorBinding> {
     state
         .actor_bindings
         .iter()
         .map(|(key, binding)| {
-            let status = if folded_binding_key_still_qualifies(
-                state,
-                authority_forks,
-                key,
-                binding,
-                consent_arm,
-            ) && state.live_actor_binding(key).is_some()
+            let status = if folded_binding_key_still_qualifies(state, key, binding, consent_arm)
+                && state.live_actor_binding(key).is_some()
             {
                 ActorBindingStatus::Active
             } else {
@@ -449,21 +364,13 @@ pub(super) fn folded_actor_bindings(
 ///
 /// Mirrors `apply_actor_binding` exactly — live roster row for every class,
 /// plus owner-consent capability for `"human"` — so a role/tier restriction
-/// that would have REJECTED the bind also kills it retroactively. Any key with
-/// a still-quarantined fork fails outright, whatever its roles.
+/// that would have REJECTED the bind also kills it retroactively.
 fn folded_binding_key_still_qualifies(
     state: &FoldState,
-    authority_forks: &[AuthorityFork],
     key: &AuthorityKey,
     binding: &ActorBindingState,
     consent_arm: fn(&FoldedDevice) -> bool,
 ) -> bool {
-    if authority_forks
-        .iter()
-        .any(|fork| fork.signer == *key && fork.status == AuthorityForkStatus::Quarantined)
-    {
-        return false;
-    }
     let Some(device) = state.roster.get(key).filter(|device| !device.revoked) else {
         return false;
     };
@@ -543,20 +450,6 @@ pub(super) fn merge_states(left: &FoldState, right: &FoldState) -> FoldState {
             .entry(key.clone())
             .or_default()
             .extend(revocations.iter().copied());
-    }
-    merged
-        .fork_resolution_revocations
-        .extend(right.fork_resolution_revocations.iter().cloned());
-    for (key, fork) in &right.authority_forks {
-        merged
-            .authority_forks
-            .entry(key.clone())
-            .and_modify(|existing| {
-                if fork.status == AuthorityForkStatus::Resolved {
-                    existing.status = AuthorityForkStatus::Resolved;
-                }
-            })
-            .or_insert_with(|| fork.clone());
     }
     for vetoed in &merged.vetoed_widens {
         merged.pending_widens.remove(vetoed);
