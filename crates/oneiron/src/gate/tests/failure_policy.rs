@@ -37,6 +37,7 @@ fn resident_failure_classes_route_and_restrict_both_downstream_uses() -> Result<
     assert_eq!(fatal.route, DreamerFailureRoute::Fallback);
     assert!(fatal.consolidation_eligible);
     assert!(!fatal.effector_eligible);
+    assert!(fatal.manifest_restricts);
     assert_eq!(
         resolved
             .dreamer_failure_decision(DreamerFailureClass::Retryable)
@@ -67,6 +68,10 @@ fn missing_and_malformed_failure_rules_cannot_authorize_failed_output() -> Resul
     put_policy_manifest_bytes(&vault, test_id(0x30), &encode_policy_manifest(vec![]))?;
     let absent = resolve(&vault)?.dreamer_failure_decision(DreamerFailureClass::Fatal);
     assert!(!absent.consolidation_eligible && !absent.effector_eligible);
+    assert!(
+        !absent.manifest_restricts,
+        "no row cannot veto a separate authored stage rule"
+    );
     for bad in [
         vec![row("unknown", "fallback", true, true)],
         vec![row("fatal", "retry", true, true)],

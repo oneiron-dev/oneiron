@@ -330,6 +330,11 @@ fn step_derived_effect_rechecks_resident_eligibility_and_still_uses_gate()
     let mut pending_request = other_intent.clone();
     pending_request.receipt_id = "receipt:step-effect:pending".into();
     pending_request.intent_ref = "intent:step-effect:pending".into();
+    // ONE-1881 semantic dedupe: this is a different logical send, not a
+    // duplicate of the delivered one whose terminal replay we proved above.
+    pending_request.intent.target = "counterparty:second".into();
+    pending_request.intent.idempotency_key = Some("idem:step-effect:second".into());
+    pending_request.intent.dedupe_key = Some("dedupe:step-effect:second".into());
     let denied = vault.dispatch_outbound_intent_from_step(
         attempt_id,
         &step_request,
