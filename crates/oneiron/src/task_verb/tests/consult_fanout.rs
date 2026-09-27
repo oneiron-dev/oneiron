@@ -239,7 +239,7 @@ fn fanout_rulings_use_the_vault_id_source_and_replay_the_same_receipt() {
         .resume_fan_out_consults(
             paused.correlation_ref,
             paused.meter.plan_digest,
-            ConsultFanOutChoice::ApproveOnce,
+            ConsultFanOutChoice::ApproveAndRemember,
             &human,
         )
         .expect("approval ruling");
@@ -271,11 +271,81 @@ fn fanout_rulings_use_the_vault_id_source_and_replay_the_same_receipt() {
             .iter()
             .any(|row| row.decision_id.as_bytes() == *approved_id.as_bytes())
     );
+    // The same operation writes two escalation rulings and a remembered cap.
+    // They are public Gate receipts and must follow this vault's ID source too.
+    let standing = standing_policy_for(&vault, &scope(actor, &input), EscalationTrigger::Budget)
+        .expect("standing policy read")
+        .expect("remembered cap");
+    assert_eq!(standing.row_ref.as_bytes()[0], 0x71);
+    let projected = vault
+        .receipts(ReceiptQuery::new(100).with_kind(ReceiptKind::Gate))
+        .expect("projected receipts");
+    let escalation_receipts: Vec<_> = projected
+        .iter()
+        .filter(|row| {
+            crate::edit_distance::escalation::is_escalation_receipt(row)
+                && row.fields.get(crate::receipt::FIELD_TASK_REF)
+                    == Some(&paused.correlation_ref.to_hex())
+        })
+        .collect();
+    assert_eq!(escalation_receipts.len(), 2);
+    let escalation_ids: Vec<_> = escalation_receipts
+        .iter()
+        .map(|row| {
+            EntityId::from_hex(
+                row.receipt_id
+                    .strip_prefix("escalation:")
+                    .expect("escalation ref"),
+            )
+            .expect("valid escalation ID")
+        })
+        .collect();
+    assert!(escalation_ids.iter().all(|id| id.as_bytes()[0] == 0x71));
+    assert_ne!(escalation_ids[0], escalation_ids[1]);
+    assert!(escalation_receipts.iter().any(|row| row.outcome == "deny"));
+    assert!(
+        escalation_receipts
+            .iter()
+            .any(|row| row.outcome == "approve")
+    );
+    let cited = standing.cited_receipts.clone();
+    assert_eq!(cited.len(), 1);
+    assert!(
+        escalation_receipts
+            .iter()
+            .any(|row| row.receipt_id == cited[0])
+    );
+    let standing_receipts: Vec<_> = projected
+        .iter()
+        .filter(|row| {
+            crate::edit_distance::escalation::is_standing_policy_receipt(row)
+                && row
+                    .receipt_id
+                    .starts_with(&format!("escalation_policy:{}.", standing.row_ref.to_hex()))
+        })
+        .collect();
+    assert_eq!(standing_receipts.len(), 2); // proposal and acceptance
+    assert!(
+        standing_receipts
+            .iter()
+            .all(|row| row.fields[crate::receipt::FIELD_ESCALATION_CITED_RECEIPTS] == cited[0])
+    );
+    let floor = {
+        let txn = vault.store.env.read_txn().expect("floor snapshot");
+        let bytes = vault
+            .store
+            .vault_meta
+            .get(&txn, crate::ports::ID_FLOOR)
+            .expect("floor read")
+            .expect("persisted ID floor");
+        u128::from_be_bytes(bytes.as_ref().try_into().expect("floor bytes"))
+    };
+    assert!(floor >= u128::from_be_bytes(*standing.row_ref.as_bytes()));
     let repeated = facade
         .resume_fan_out_consults(
             paused.correlation_ref,
             paused.meter.plan_digest,
-            ConsultFanOutChoice::ApproveOnce,
+            ConsultFanOutChoice::ApproveAndRemember,
             &human,
         )
         .expect("idempotent replay");
@@ -289,6 +359,32 @@ fn fanout_rulings_use_the_vault_id_source_and_replay_the_same_receipt() {
             .filter(|row| row.content_kind == "consult_fanout")
             .count(),
         2
+    );
+    let after = vault
+        .receipts(ReceiptQuery::new(100).with_kind(ReceiptKind::Gate))
+        .expect("replayed receipt projection");
+    assert_eq!(
+        after
+            .iter()
+            .filter(|row| escalation_receipts
+                .iter()
+                .any(|prior| prior.receipt_id == row.receipt_id))
+            .count(),
+        2
+    );
+    assert_eq!(
+        after
+            .iter()
+            .filter(|row| standing_receipts
+                .iter()
+                .any(|prior| prior.receipt_id == row.receipt_id))
+            .count(),
+        2
+    );
+    assert_eq!(
+        standing_policy_for(&vault, &scope(actor, &input), EscalationTrigger::Budget)
+            .expect("replayed policy"),
+        Some(standing)
     );
 }
 
