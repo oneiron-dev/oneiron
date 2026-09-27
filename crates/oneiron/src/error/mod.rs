@@ -300,6 +300,7 @@ pub enum ErrorKind {
     SuppressionReceiptDivergence,
     PackPredicateNameCollision,
     DreamerActorImmutable,
+    ResidentOwnerDependencyPending,
 }
 
 /// Crate error type.

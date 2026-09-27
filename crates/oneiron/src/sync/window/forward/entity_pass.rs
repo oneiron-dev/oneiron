@@ -539,7 +539,11 @@ pub(super) fn run(ctx: &RematCtx<'_>, ledger: &mut RematLedger) -> Result<()> {
                 Err(err) if quarantine::remote_rejection_reason(&err).is_some() => {
                     let dependency_pending =
                         crate::subject_model::subject_model_dependency_pending(&err)
-                            || err.kind() == crate::error::ErrorKind::ProjectDependencyPending;
+                            || matches!(
+                                err.kind(),
+                                crate::error::ErrorKind::ProjectDependencyPending
+                                    | crate::error::ErrorKind::ResidentOwnerDependencyPending
+                            );
                     if dependency_pending {
                         pending_entity_dependencies.insert(id);
                     }
