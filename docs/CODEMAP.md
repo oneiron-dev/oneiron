@@ -13,7 +13,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 
 | crate | purpose | source files | test files | over 800-line bar |
 |---|---|---|---|---|
-| [oneiron](codemap/oneiron.md) | Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces | 2182 | 736 | 2 |
+| [oneiron](codemap/oneiron.md) | Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces | 2186 | 740 | 2 |
 | [oneiron-android](codemap/oneiron-android.md) | Minimal JNI/Kotlin ownership adapter | 1 | 0 | 0 |
 | [oneiron-bench](codemap/oneiron-bench.md) | oneiron-bench — benchmark harness skeleton | 99 | 18 | 0 |
 | [oneiron-driver](codemap/oneiron-driver.md) | oneiron-driver — the in-process starter motor (ONE-1683 / ONE-1684, M8 agent runtime RT-01/RT-02) | 15 | 10 | 0 |
@@ -53,7 +53,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `anchored_annotation` | dir | 7 | m | yes | ARTL-2 (OF-368 D2/D3/D4): anchored-comment threads over versioned blob artifacts, plus thread → task-brief… |
 | `artifact_hosting` | file+dir | 3 | m | yes | Local artifact hosting over pinned code snapshots and blob exports |
 | `attempt_queue` | dir | 36 | m | — | Generic LMDB-backed background attempt queue |
-| `authority` | dir | 61 | m | yes | AUTHORITY_LOG record substrate |
+| `authority` | dir | 64 | m | yes | AUTHORITY_LOG record substrate |
 | `autoreason_campaign` | file+dir | 9 | m | — | Engine-side AR-3 autoreason campaign configuration and report join |
 | `batch` | dir | 90 | m | yes | — |
 | `blob_artifact` | dir | 42 | m | yes | ARTL-1 (OF-368 D1): versioned blob artifact store for foreign binary (office) files |
@@ -92,7 +92,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `companion` | dir | 10 | m | yes | Companion task queue and PERSON/FACET persona compilation |
 | `config` | file+dir | 5 | m | — | Caller-facing runtime configuration: `VaultConfig` + `HnswConfig` + `TextAnalyzerConfig` +… |
 | `connector_key` | dir | 22 | m | yes | Connector-key registry records with effector budgets for OF-277 GOV-01 |
-| `consent` | dir | 13 | m | yes | DEC-0006 unified consent-mode — bounded standing grants |
+| `consent` | dir | 17 | m | yes | DEC-0006 unified consent-mode — bounded standing grants |
 | `consent_graduation` | dir | 8 | m | yes | DEC-0006 consent-graduation ramp (ARCH-0055 r7 / ONE-1748, MS-06): the per-scope outcome statistics that… |
 | `consult_ladder` | dir | 5 | m | — | Pure cross-actor consult ladder: state machine, typed verdicts, the OF-399 novelty guard, the Dreamer… |
 | `context_board` | dir | 49 | m | yes | Typed Context Board render projections |
