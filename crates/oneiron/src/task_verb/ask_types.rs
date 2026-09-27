@@ -688,14 +688,27 @@ pub struct TaskAskResult {
 }
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum TaskAskStatus {
-    Pending { hold: Option<TaskAskHoldReason> },
+    Pending {
+        hold: Option<TaskAskHoldReason>,
+    },
+    /// Nonterminal link void; this is a notification, never an answer.
+    Changed {
+        voided: Vec<EntityId>,
+        generation: u64,
+    },
     Settled(Box<TaskAskResult>),
 }
 
 /// This is a signal contract, not a blocking read or a polling loop.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum TaskAskWait {
-    Pending { trap_ref: String },
+    Pending {
+        trap_ref: String,
+    },
+    Changed {
+        voided: Vec<EntityId>,
+        generation: u64,
+    },
     Ready(Box<TaskAskResult>),
     Park(crate::code_run::SelfDurableWait),
 }

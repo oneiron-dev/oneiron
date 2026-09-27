@@ -2845,3 +2845,83 @@ fn schema_compartment_evaluation_has_its_own_fuel_ceiling() {
     );
     assert!(super::validate_json_schema(&schema, &value).is_ok());
 }
+
+#[test]
+fn option_link_void_wakes_a_parked_code_mode_peer_wait_without_settling_ask()
+-> std::result::Result<(), Box<dyn std::error::Error>> {
+    use crate::task_verb::{
+        ConsultPayloadRef, TaskAskOptionId, TaskAskQuestion, TaskAskSpec, TaskAskStatus,
+        TaskAskTarget, TaskAskWait,
+    };
+    let dir = tempfile::tempdir()?;
+    let vault = Vault::open(dir.path(), VaultConfig::default())?;
+    let owner = vault.ensure_embedded_owner_actor()?;
+    let friend = EntityId::now();
+    vault.put_entity(&friend, ENTITY_TYPE_PERSON, occurred(1), 1, b"friend")?;
+    let question = EntityId::now();
+    let question_body =
+        rmp_serde::to_vec_named(&std::collections::BTreeMap::from([("role", "question")]))?;
+    vault.put_entity(
+        &question,
+        crate::registry::ENTITY_TYPE_TURN,
+        occurred(1),
+        1,
+        &question_body,
+    )?;
+    let mut what = TaskAskQuestion::new(ConsultPayloadRef::Turn(question));
+    what.options
+        .insert(TaskAskOptionId::new("yes").unwrap(), "Yes".into());
+    let memory = vault.memory(owner, EdgeActorClass::Human);
+    let spec = |key: &str, what: TaskAskQuestion| {
+        let mut spec = TaskAskSpec::shorthand(
+            Some(TaskAskTarget::People([friend].into())),
+            what,
+            Some(u64::MAX),
+            Default::default(),
+        );
+        spec.intent_key = key.into();
+        spec
+    };
+    let first = memory
+        .tasks_ask(&spec("void-after-park", what.clone()))?
+        .handle;
+    let link = memory.tasks_ask_option_link(first, friend)?;
+    assert!(matches!(
+        memory.tasks_wait(first, None)?,
+        TaskAskWait::Park(_)
+    ));
+    let fixture = step_fixture(&vault, 10)?;
+    let step_hash = request_fixture().canonical_hash().expect("hash");
+    let trap = open_peer_wait(&vault, &fixture, first.group_ref, step_hash)?;
+    assert_eq!(
+        trap_head(&vault, &trap.trap_claim_id)?.1.state,
+        DreamerTrapState::Waiting
+    );
+    vault.void_ask_option_link(&link.token)?;
+    assert_eq!(
+        trap_head(&vault, &trap.trap_claim_id)?.1.state,
+        DreamerTrapState::Sent
+    );
+    assert_eq!(resume_peer_result_steps(&vault, DELEGATE_NOW + 10)?, 1);
+    assert_eq!(
+        DreamerRunnerStore::new(&vault).parked_attempt(fixture.attempt_id)?,
+        None
+    );
+    assert!(
+        matches!(memory.tasks_wait(first, None)?, TaskAskWait::Changed { voided, .. } if voided == vec![friend])
+    );
+    assert!(matches!(
+        memory.tasks_ask_status(first)?,
+        TaskAskStatus::Pending { .. }
+    ));
+
+    // If the void commits before the engine opens a wait, the next call
+    // observes it directly rather than parking behind a terminal-only signal.
+    let second = memory.tasks_ask(&spec("void-before-park", what))?.handle;
+    let second_link = memory.tasks_ask_option_link(second, friend)?;
+    vault.void_ask_option_link(&second_link.token)?;
+    assert!(
+        matches!(memory.tasks_wait(second, None)?, TaskAskWait::Changed { voided, .. } if voided == vec![friend])
+    );
+    Ok(())
+}

@@ -3,6 +3,7 @@
 //! Only token digests are stored. The bearer can read its own disclosed options,
 //! answer once, or void itself; it does not authenticate a general actor session.
 
+use super::ConsultPayloadRef;
 use super::ask_record;
 use super::{TaskAskAnswer, TaskAskHandle, TaskAskOptionId, TaskAskWord};
 use crate::Vault;
@@ -10,11 +11,66 @@ use crate::entity_id::EntityId;
 use crate::memory::{Memory, MemoryError, MemoryResult};
 use rand_core::{OsRng, RngCore};
 use serde::{Deserialize, Serialize};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 const TOKEN_PREFIX: &[u8] = b"tasks.ask.option_link.v1:";
 const SEAT_PREFIX: &[u8] = b"tasks.ask.option_seat.v1:";
 const VOID_PREFIX: &[u8] = b"tasks.ask.option_void.v1:";
+const VOID_GENERATION_PREFIX: &[u8] = b"tasks.ask.option_void_generation.v1:";
+const VOID_ACK_PREFIX: &[u8] = b"tasks.ask.option_void_ack.v1:";
+
+fn counter_key(prefix: &[u8], group: EntityId) -> Vec<u8> {
+    [prefix, group.as_bytes()].concat()
+}
+
+fn counter_in(vault: &Vault, txn: &heed::RoTxn<'_>, key: &[u8]) -> crate::Result<u64> {
+    match vault.store.vault_meta.get(txn, key)? {
+        Some(raw) => Ok(u64::from_be_bytes(
+            raw.as_ref().try_into().map_err(|_| ask_record::invalid())?,
+        )),
+        None => Ok(0),
+    }
+}
+
+/// A local, monotone change generation. It is not an answer or settlement.
+pub(super) fn option_void_generation_in(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    group: EntityId,
+) -> crate::Result<u64> {
+    counter_in(vault, txn, &counter_key(VOID_GENERATION_PREFIX, group))
+}
+
+pub(crate) fn has_option_link_void(vault: &Vault, group: EntityId) -> crate::Result<bool> {
+    let txn = vault.store.env.read_txn()?;
+    Ok(
+        counter_in(vault, &txn, &counter_key(VOID_GENERATION_PREFIX, group))?
+            > counter_in(vault, &txn, &counter_key(VOID_ACK_PREFIX, group))?,
+    )
+}
+
+/// Only a prior DURABLE code-run bridge receipt can acknowledge a generation.
+/// A crashed or unrecorded Changed result never advances this cursor.
+pub(crate) fn ack_option_void_generation(
+    vault: &Vault,
+    group: EntityId,
+    observed: u64,
+) -> crate::Result<()> {
+    let mut txn = vault.store.env.write_txn()?;
+    let generation = counter_in(vault, &txn, &counter_key(VOID_GENERATION_PREFIX, group))?;
+    if observed > generation {
+        return Err(ask_record::invalid());
+    }
+    let key = counter_key(VOID_ACK_PREFIX, group);
+    if observed > counter_in(vault, &txn, &key)? {
+        vault
+            .store
+            .vault_meta
+            .put(&mut txn, &key, &observed.to_be_bytes())?;
+    }
+    txn.commit()?;
+    Ok(())
+}
 
 /// A bearer secret; deliver only to the intended person. The host builds the URL.
 pub struct TaskAskOptionLink {
@@ -30,6 +86,8 @@ pub struct TaskAskOptionLinkView {
     pub revision: u64,
     pub label: Option<String>,
     pub options: BTreeMap<TaskAskOptionId, String>,
+    /// Sources the intended recipient may select as provenance for a tap.
+    pub disclosed_sources: BTreeSet<ConsultPayloadRef>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -103,6 +161,7 @@ fn live_group(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
     row: &LinkRow,
+    require_open_ask: bool,
 ) -> MemoryResult<ask_record::AskGroup> {
     let group = ask_record::read_group(vault, txn, row.group)?
         .ok_or_else(|| MemoryError::bad_request("unknown ask"))?;
@@ -118,10 +177,31 @@ fn live_group(
         ));
     }
     super::ask_settlement::settle_in(vault, txn, row.group, vault.store.clock.now_recorded_at())?;
-    if super::ask_settlement::read_result(vault, txn, row.group)?.is_some() {
+    if require_open_ask && super::ask_settlement::read_result(vault, txn, row.group)?.is_some() {
         return Err(MemoryError::bad_request("ask is already settled"));
     }
     Ok(group)
+}
+
+pub(super) fn voided_friends_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    group_ref: EntityId,
+    group: &ask_record::AskGroup,
+) -> MemoryResult<Vec<EntityId>> {
+    let mut voided = Vec::new();
+    for member in &group.members {
+        let friend = ask_record::entity(&member.actor)?;
+        if vault
+            .store
+            .vault_meta
+            .get(txn, &void_key(group_ref, friend))?
+            .is_some()
+        {
+            voided.push(friend);
+        }
+    }
+    Ok(voided)
 }
 
 impl Memory<'_> {
@@ -149,7 +229,7 @@ impl Memory<'_> {
                 revision: group.effective.what.revision,
                 state: LinkState::Open,
             };
-            live_group(self.vault(), txn, &row)?;
+            live_group(self.vault(), txn, &row, true)?;
             let mut secret = [0_u8; 32];
             OsRng.fill_bytes(&mut secret);
             let token: String = secret.iter().map(|byte| format!("{byte:02x}")).collect();
@@ -192,20 +272,7 @@ impl Memory<'_> {
                 "only the asking actor may read link voids",
             ));
         }
-        let mut voided = Vec::new();
-        for member in &group.members {
-            let friend = ask_record::entity(&member.actor)?;
-            if self
-                .vault()
-                .store
-                .vault_meta
-                .get(&txn, &void_key(ask.group_ref, friend))?
-                .is_some()
-            {
-                voided.push(friend);
-            }
-        }
-        Ok(voided)
+        voided_friends_in_txn(self.vault(), &txn, ask.group_ref, &group)
     }
 }
 
@@ -229,11 +296,6 @@ impl Vault {
                 .iter()
                 .any(|member| member.actor == row.friend.to_hex())
             || super::ask_settlement::is_stale(self, &txn, &group)?
-            || super::ask_settlement::read_result(self, &txn, row.group)?.is_some()
-            || group
-                .effective
-                .until
-                .is_some_and(|until| self.store.clock.now_recorded_at() >= until)
         {
             return Err(MemoryError::bad_request(
                 "ask option link is no longer open",
@@ -247,6 +309,9 @@ impl Vault {
             revision: row.revision,
             label: group.effective.what.label.clone(),
             options: group.effective.what.options,
+            disclosed_sources: std::iter::once(group.effective.what.reference)
+                .chain(group.effective.what.context_refs)
+                .collect(),
         })
     }
 
@@ -256,6 +321,17 @@ impl Vault {
         token: &str,
         option: &TaskAskOptionId,
     ) -> MemoryResult<TaskAskAnswer> {
+        self.answer_ask_option_link_with_sources(token, option, &BTreeSet::new())
+    }
+
+    /// The bearer explicitly selects source refs disclosed on its page; an
+    /// answer cannot silently claim to have cited a required source.
+    pub fn answer_ask_option_link_with_sources(
+        &self,
+        token: &str,
+        option: &TaskAskOptionId,
+        source_refs: &BTreeSet<ConsultPayloadRef>,
+    ) -> MemoryResult<TaskAskAnswer> {
         let key = token_key(token)?;
         let mut txn = self.store.env.write_txn().map_err(crate::Error::from)?;
         let mut row = read_row(self, &txn, &key)?;
@@ -264,25 +340,46 @@ impl Vault {
                 "ask option link is no longer open",
             ));
         }
-        let group = live_group(self, &mut txn, &row)?;
+        let group = live_group(self, &mut txn, &row, false)?;
         if !group.effective.what.options.contains_key(option) {
             return Err(MemoryError::bad_request("unknown ask option id"));
         }
+        let disclosed: BTreeSet<_> = std::iter::once(group.effective.what.reference)
+            .chain(group.effective.what.context_refs.iter().copied())
+            .collect();
+        if !source_refs.is_subset(&disclosed)
+            || group
+                .effective
+                .class
+                .as_ref()
+                .is_some_and(|class| !class.required_sources.is_subset(source_refs))
+        {
+            return Err(MemoryError::bad_request(
+                "ask answer needs disclosed source refs",
+            ));
+        }
         let now = self.store.clock.now_recorded_at();
+        let word = TaskAskWord {
+            result_ref: row.friend,
+            option: Some(option.clone()),
+            inform_for: None,
+            provenance_refs: source_refs.clone(),
+        };
         let answer = ask_record::admit_link_word(
             self,
             &mut txn,
             row.group,
             &group,
-            row.friend,
-            &TaskAskWord {
-                result_ref: row.friend,
-                option: Some(option.clone()),
-                inform_for: None,
-                provenance_refs: Default::default(),
-            },
+            (
+                row.friend,
+                key[TOKEN_PREFIX.len()..]
+                    .try_into()
+                    .map_err(|_| MemoryError::bad_request("invalid ask option link digest"))?,
+            ),
+            &word,
             now,
         )?;
+        super::lifecycle_facade::complete_ask_member_in_txn(self, &mut txn, answer, &word, now)?;
         row.state = LinkState::Answered {
             option: option.clone(),
             answer,
@@ -302,6 +399,13 @@ impl Vault {
         if !matches!(row.state, LinkState::Voided) {
             row.state = LinkState::Voided;
             put_row(self, &mut txn, &key, &row)?;
+            let count_key = counter_key(VOID_GENERATION_PREFIX, row.group);
+            let next = counter_in(self, &txn, &count_key)?
+                .checked_add(1)
+                .ok_or_else(|| MemoryError::bad_request("ask void generation exhausted"))?;
+            self.store
+                .vault_meta
+                .put(&mut txn, &count_key, &next.to_be_bytes())?;
         }
         let group = row.group;
         self.store
@@ -314,6 +418,9 @@ impl Vault {
             self.store.clock.now_recorded_at().saturating_mul(1000),
         )?;
         txn.commit().map_err(crate::Error::from)?;
+        // The marker committed first. A crash here is recovered by the peer
+        // wait binding's ordinary reconcile pass, including void-before-wait.
+        crate::llm::send_peer_result_signal(self, group, self.store.clock.now_recorded_at())?;
         Ok(())
     }
 }

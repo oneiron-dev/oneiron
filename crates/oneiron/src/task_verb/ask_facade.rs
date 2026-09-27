@@ -142,6 +142,7 @@ impl Memory<'_> {
                 effective,
                 context_class,
                 question_digest,
+                link_verify_key: ask_record::mint_link_key(self.vault(), txn, group_ref)?,
                 members,
                 no_live_route,
                 created_at: now,
@@ -468,6 +469,17 @@ impl Memory<'_> {
         handle: TaskAskHandle,
         step_key: Option<&str>,
     ) -> MemoryResult<TaskAskWait> {
+        self.tasks_wait_observing(handle, step_key, 0)
+    }
+
+    /// Code mode supplies only a generation proved by its durable bridge
+    /// replay. An unrecorded Changed result cannot suppress a future wake.
+    pub(crate) fn tasks_wait_observing(
+        &self,
+        handle: TaskAskHandle,
+        step_key: Option<&str>,
+        observed_generation: u64,
+    ) -> MemoryResult<TaskAskWait> {
         if step_key.is_some_and(|key| key.is_empty() || key.len() > 256) {
             return Err(MemoryError::bad_request("invalid wait step key"));
         }
@@ -487,11 +499,29 @@ impl Memory<'_> {
             let Some(step_key) = step_key else {
                 return Ok(match status {
                     TaskAskStatus::Pending { .. } => {
-                        let mut wait = peer_result_wait(handle.group_ref);
-                        wait.effect = crate::code_run::SelfEffect::TasksWait;
-                        TaskAskWait::Park(wait)
+                        let voided = super::ask_option_link::voided_friends_in_txn(
+                            self.vault(),
+                            txn,
+                            handle.group_ref,
+                            &group,
+                        )?;
+                        let generation = super::ask_option_link::option_void_generation_in(
+                            self.vault(),
+                            txn,
+                            handle.group_ref,
+                        )?;
+                        if generation > observed_generation && !voided.is_empty() {
+                            TaskAskWait::Changed { voided, generation }
+                        } else {
+                            let mut wait = peer_result_wait(handle.group_ref);
+                            wait.effect = crate::code_run::SelfEffect::TasksWait;
+                            TaskAskWait::Park(wait)
+                        }
                     }
                     TaskAskStatus::Settled(result) => TaskAskWait::Ready(result),
+                    TaskAskStatus::Changed { voided, generation } => {
+                        TaskAskWait::Changed { voided, generation }
+                    }
                 });
             };
             self.bind_external_wait(txn, handle, step_key, status)
@@ -684,6 +714,9 @@ impl Memory<'_> {
                     .ok_or_else(|| MemoryError::bad_request("pending wait has no trap"))?
                     .to_hex(),
             },
+            TaskAskStatus::Changed { voided, generation } => {
+                TaskAskWait::Changed { voided, generation }
+            }
             TaskAskStatus::Settled(result) => {
                 if let Some(trap_claim_id) = row.trap_ref
                     && !row.consumed

@@ -28,16 +28,16 @@ pub(in crate::task_verb) fn admit_link_word(
     txn: &mut heed::RwTxn<'_>,
     id: EntityId,
     group: &AskGroup,
-    friend: EntityId,
+    link: (EntityId, [u8; 32]),
     word: &TaskAskWord,
     now: u64,
 ) -> Result<TaskAskAnswer> {
-    admit_word_with_source(vault, txn, id, group, WordWriter::Link(friend), word, now)
+    admit_word_with_source(vault, txn, id, group, WordWriter::Link(link), word, now)
 }
 
 enum WordWriter {
     Authenticated(crate::WriteActor),
-    Link(EntityId),
+    Link((EntityId, [u8; 32])),
 }
 
 fn admit_word_with_source(
@@ -49,15 +49,15 @@ fn admit_word_with_source(
     word: &TaskAskWord,
     now: u64,
 ) -> Result<TaskAskAnswer> {
-    let (writer, foreign) = match source {
-        WordWriter::Authenticated(writer) => (writer, false),
-        WordWriter::Link(friend) => (
+    let (writer, token_digest) = match source {
+        WordWriter::Authenticated(writer) => (writer, None),
+        WordWriter::Link((friend, digest)) => (
             crate::WriteActor::new(friend, crate::EdgeActorClass::Human),
-            true,
+            Some(digest),
         ),
     };
     validate_word(group, word)?;
-    if foreign && word.inform_for.is_some() {
+    if token_digest.is_some() && word.inform_for.is_some() {
         return Err(invalid());
     }
     for reference in &word.provenance_refs {
@@ -74,7 +74,7 @@ fn admit_word_with_source(
             return Err(invalid());
         }
         TaskAskSource::Inform
-    } else if foreign {
+    } else if token_digest.is_some() {
         TaskAskSource::ForeignStated
     } else if writer.actor_class() == crate::EdgeActorClass::Human {
         TaskAskSource::Human
@@ -142,22 +142,22 @@ fn admit_word_with_source(
         .unwrap_or(0)
         .checked_add(1)
         .ok_or_else(invalid)?;
-    put(
-        vault,
-        txn,
-        word_ref,
-        ANSWER,
-        &AskAnswerFact {
-            group: id,
-            task,
-            actor,
-            source,
-            word: word.clone(),
-            order,
-            at: now,
-        },
-        now,
-    )?;
+    let mut fact = AskAnswerFact {
+        group: id,
+        task,
+        actor,
+        source,
+        word: word.clone(),
+        link_proof: None,
+        order,
+        at: now,
+    };
+    if let Some(digest) = token_digest {
+        fact.link_proof = Some(super::link_proof::sign_link_word(
+            vault, txn, id, group, word_ref, &fact, digest,
+        )?);
+    }
+    put(vault, txn, word_ref, ANSWER, &fact, now)?;
     vault
         .batch_in()
         .edge(&word_ref, crate::EdgeKind::About, &id, 1.0)

@@ -82,7 +82,9 @@ pub fn send_peer_result_signal(
     now: u64,
 ) -> Result<Option<EntityId>> {
     crate::task_verb::settle_ask_if_due(vault, task_ref)?;
-    if !crate::task_verb::task_is_terminal(vault, task_ref)? {
+    if !crate::task_verb::task_is_terminal(vault, task_ref)?
+        && !crate::task_verb::has_option_link_void(vault, task_ref)?
+    {
         return Ok(None);
     }
     let mut first = None;
@@ -356,7 +358,8 @@ pub(crate) fn resume_peer_result_steps(vault: &Vault, now_ms: u64) -> Result<usi
     for binding in peer_wait_bindings(vault)? {
         let (_, head) = trap_head(vault, &binding.trap_claim_id)?;
         if head.state != DreamerTrapState::Sent
-            || !crate::task_verb::task_is_terminal(vault, binding.task_ref)?
+            || (!crate::task_verb::task_is_terminal(vault, binding.task_ref)?
+                && !crate::task_verb::has_option_link_void(vault, binding.task_ref)?)
         {
             continue;
         }

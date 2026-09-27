@@ -306,25 +306,7 @@ impl Memory<'_> {
                 now,
             )?;
             if word.inform_for.is_none() {
-                let mut body = consult_body_in_txn(self.vault(), txn, answer.task_ref)?;
-                if body.terminal().is_none() && body.settled_ladder_disposition().is_none() {
-                    body.state = Some(TaskExecutionState::Terminal(TaskTerminalRecord {
-                        disposition: TaskTerminalDisposition::Completed,
-                        result_ref: Some(word.result_ref),
-                        summary: Some(super::ConsultResultSummary::Answer {
-                            evidence_refs: word.provenance_refs.iter().copied().collect(),
-                        }),
-                        finished_at: now,
-                        ladder: None,
-                        counter_task_ref: None,
-                    }));
-                    self.put_task_body_in_txn(
-                        txn,
-                        answer.task_ref,
-                        &encode_task_verb_body(body),
-                        now,
-                    )?;
-                }
+                complete_ask_member_in_txn(self.vault(), txn, answer, word, now)?;
             }
             super::ask_settlement::settle_in(self.vault(), txn, handle.group_ref, now)?;
             Ok(answer)
@@ -336,4 +318,42 @@ impl Memory<'_> {
         )?;
         Ok(answer)
     }
+}
+
+/// Complete only the addressed member, not the whole ask. Both authenticated
+/// `tasks_answer` and a validated bearer word use this one lifecycle door.
+pub(super) fn complete_ask_member_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    answer: super::TaskAskAnswer,
+    word: &super::TaskAskWord,
+    now: u64,
+) -> MemoryResult<()> {
+    let mut body = consult_body_in_txn(vault, txn, answer.task_ref)?;
+    if body.terminal().is_none() && body.settled_ladder_disposition().is_none() {
+        body.state = Some(TaskExecutionState::Terminal(TaskTerminalRecord {
+            disposition: TaskTerminalDisposition::Completed,
+            result_ref: Some(word.result_ref),
+            summary: Some(super::ConsultResultSummary::Answer {
+                evidence_refs: word.provenance_refs.iter().copied().collect(),
+            }),
+            finished_at: now,
+            ladder: None,
+            counter_task_ref: None,
+        }));
+        vault
+            .batch_in()
+            .put_internal(
+                &answer.task_ref,
+                crate::registry::ENTITY_TYPE_TASK,
+                crate::TimeRange {
+                    start: now,
+                    end: now,
+                },
+                now,
+                &encode_task_verb_body(body),
+            )
+            .apply(txn)?;
+    }
+    Ok(())
 }

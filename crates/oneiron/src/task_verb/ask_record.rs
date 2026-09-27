@@ -12,7 +12,9 @@ use crate::{EntityId, Vault};
 use rmpv::Value;
 use serde::{Deserialize, Serialize};
 
+mod link_proof;
 mod word_admission;
+pub(super) use link_proof::mint_key as mint_link_key;
 pub(super) use word_admission::{admit_link_word, admit_word};
 
 const GROUP: &str = "tasks.ask_group";
@@ -36,6 +38,7 @@ pub(super) struct AskGroup {
     pub effective: super::TaskAskSpec,
     pub context_class: Option<super::TaskAskClass>,
     pub question_digest: [u8; 32],
+    pub link_verify_key: [u8; 32],
     pub members: Vec<AskMember>,
     pub no_live_route: bool,
     pub created_at: u64,
@@ -49,6 +52,8 @@ struct AskAnswerFact {
     actor: EntityId,
     source: TaskAskSource,
     word: TaskAskWord,
+    #[serde(default)]
+    link_proof: Option<link_proof::LinkProof>,
     order: u64,
     at: u64,
 }
@@ -352,6 +357,7 @@ pub(super) fn evidence_in(
             return Err(invalid());
         }
         validate_word(group, &fact.word).map_err(|_| Error::CorruptedIndex("tasks.ask.word"))?;
+        link_proof::validate_source(&vault.store, txn, word_ref, group, &fact)?;
         evidence.push(TaskAskEvidence {
             answer: TaskAskAnswer {
                 task_ref: fact.task,
@@ -645,6 +651,26 @@ pub(crate) fn guard_ask_fact_put(
                 || (fact.source == TaskAskSource::Inform) != fact.word.inform_for.is_some()
                 || answer_id(fact.group, fact.task, fact.actor, fact.source, &fact.word)? != id
             {
+                return Err(invalid());
+            }
+            if fact.source == TaskAskSource::ForeignStated {
+                let raw_group = store
+                    .entities
+                    .get(txn, fact.group.as_bytes())?
+                    .ok_or_else(invalid)?;
+                let header = EntityMetadataHeader::parse(&raw_group).ok_or_else(invalid)?;
+                if header.entity_type != ENTITY_TYPE_TASK {
+                    return Err(invalid());
+                }
+                let group: AskGroup = decode(
+                    raw_group
+                        .get(ENTITY_METADATA_HEADER_LEN..)
+                        .ok_or_else(invalid)?,
+                    GROUP,
+                )?
+                .ok_or_else(invalid)?;
+                link_proof::validate_source(store, txn, id, &group, &fact)?;
+            } else if fact.link_proof.is_some() {
                 return Err(invalid());
             }
         }

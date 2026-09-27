@@ -32396,7 +32396,7 @@
      "path": "src/task_verb/ask_facade.rs",
      "purpose": "Async scope-authority asks over existing consult TASKs",
      "surface": {
-      "crate-vis": 5,
+      "crate-vis": 6,
       "fn": 7
      }
     },
@@ -32410,7 +32410,8 @@
      "path": "src/task_verb/ask_option_link.rs",
      "purpose": "Per-revision, per-person bearer ingress for generic ask options (no page UI)",
      "surface": {
-      "fn": 5,
+      "crate-vis": 4,
+      "fn": 6,
       "struct": 2
      }
     },
@@ -32447,11 +32448,21 @@
      "path": "src/task_verb/ask_record.rs",
      "purpose": "Protected replicated ask facts",
      "surface": {
-      "crate-vis": 21
+      "crate-vis": 22
      }
     },
     {
      "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/task_verb/ask_record/link_proof.rs",
+     "purpose": "Replicable admission proof for a locally checked option-link bearer",
+     "surface": {
+      "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "m",
      "kind": "test",
      "notable": [],
      "path": "src/task_verb/ask_record/tests.rs",
@@ -32735,6 +32746,7 @@
      "path": "src/task_verb/lifecycle_facade.rs",
      "purpose": "—",
      "surface": {
+      "crate-vis": 1,
       "fn": 5
      }
     },
@@ -32759,7 +32771,7 @@
      "path": "src/task_verb/mod.rs",
      "purpose": "Typed, actor-bound verbs over the Context Board TASKS section",
      "surface": {
-      "crate-vis": 11,
+      "crate-vis": 12,
       "mod": 1,
       "re-export": 17
      }
@@ -35143,6 +35155,14 @@
      "bucket": "s",
      "kind": "test",
      "notable": [],
+     "path": "tests/it_sync/ask_option_link_replication.rs",
+     "purpose": "A real Loro exchange preserves issuer-verified foreign-stated ask evidence",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
      "path": "tests/it_sync/main.rs",
      "purpose": "Consolidated integration-test binary for the `sync`-feature cluster",
      "surface": {}
@@ -36605,7 +36625,7 @@
      "purpose": "Replicated TASK authority: owner proof, cancellation, and acknowledgement as immutable companion TASK entities"
     },
     "task_verb": {
-     "files": 63,
+     "files": 64,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -36726,8 +36746,8 @@
    },
    "over_bar": 2,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2179,
-   "test_files": 736
+   "source_files": 2180,
+   "test_files": 737
   },
   "oneiron-android": {
    "files": [
