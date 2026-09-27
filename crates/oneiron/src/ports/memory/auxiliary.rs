@@ -437,38 +437,46 @@ impl JobQueue for Memory {
         kind: Option<&str>,
         input: ClaimAttempt,
     ) -> Result<ClaimOutcome> {
-        if input.lease_owner.is_empty() {
-            return Err(Error::Artifact(ArtifactError::InvalidAttemptQueueRecord(
-                "lease owner must not be empty",
-            )));
-        }
+        crate::attempt_queue::validate_lease_owner(&input.lease_owner)?;
         let now = self.clock.now_recorded_at();
         let cutoff = input.now.min(now);
-        let candidate = txn
+        let mut candidates: Vec<_> = txn
             .jobs
             .iter()
-            .filter(|(_, r)| {
-                kind.is_none_or(|kind| r.kind == kind)
-                    && matches!(r.state, AttemptState::Queued | AttemptState::Scheduled)
-                    && r.scheduled_at.or(r.backoff_until).unwrap_or(0) <= cutoff
+            .filter(|(_, row)| {
+                kind.is_none_or(|kind| row.kind == kind)
+                    && matches!(row.state, AttemptState::Queued | AttemptState::Scheduled)
+                    && row.scheduled_at.or(row.backoff_until).unwrap_or(0) <= cutoff
+                    && row
+                        .placement
+                        .as_ref()
+                        .and_then(|p| p.worker.as_deref())
+                        .is_none_or(|worker| worker == input.lease_owner)
             })
-            .min_by_key(|(id, r)| (r.scheduled_at.or(r.backoff_until).unwrap_or(0), **id))
-            .map(|(id, _)| *id);
-        let Some(id) = candidate else {
-            return Ok(ClaimOutcome::Empty);
-        };
-        let record = txn.jobs.get_mut(&id).ok_or(Error::EntityNotFound)?;
-        record.state = AttemptState::Leased;
-        record.scheduled_at = None;
-        record.backoff_until = None;
-        record.lease_owner = Some(input.lease_owner);
-        record.attempt_count = record
-            .attempt_count
-            .checked_add(1)
-            .ok_or(Error::ArithmeticOverflow("attempt count"))?;
-        record.claimed_at = Some(now);
-        record.updated_at = now;
-        Ok(ClaimOutcome::Claimed(record.clone()))
+            .map(|(id, row)| (row.scheduled_at.or(row.backoff_until).unwrap_or(0), *id))
+            .collect();
+        candidates.sort();
+        for (_, id) in candidates {
+            let task_ref = txn.jobs.get(&id).and_then(|row| row.task_ref.clone());
+            if !task_ready(txn, task_ref.as_deref(), now)? {
+                continue;
+            }
+            let count = txn.jobs[&id]
+                .attempt_count
+                .checked_add(1)
+                .ok_or(Error::ArithmeticOverflow("attempt count"))?;
+            acquire_task_symbols(txn, task_ref.as_deref(), now)?;
+            let record = txn.jobs.get_mut(&id).ok_or(Error::EntityNotFound)?;
+            record.state = AttemptState::Leased;
+            record.scheduled_at = None;
+            record.backoff_until = None;
+            record.lease_owner = Some(input.lease_owner);
+            record.attempt_count = count;
+            record.claimed_at = Some(now);
+            record.updated_at = now;
+            return Ok(ClaimOutcome::Claimed(record.clone()));
+        }
+        Ok(ClaimOutcome::Empty)
     }
     fn port_job_claim_id(
         &self,
@@ -476,15 +484,11 @@ impl JobQueue for Memory {
         id: AttemptId,
         input: ClaimAttempt,
     ) -> Result<ClaimOutcome> {
-        if input.lease_owner.is_empty() {
-            return Err(Error::Artifact(ArtifactError::InvalidAttemptQueueRecord(
-                "lease owner must not be empty",
-            )));
-        }
+        crate::attempt_queue::validate_lease_owner(&input.lease_owner)?;
         let now = self.clock.now_recorded_at();
         let record = txn
             .jobs
-            .get_mut(id.as_bytes())
+            .get(id.as_bytes())
             .ok_or_else(|| transition("claim_id", "missing"))?;
         if !matches!(record.state, AttemptState::Queued | AttemptState::Scheduled) {
             return Err(transition("claim_id", "not_ready"));
@@ -493,19 +497,27 @@ impl JobQueue for Memory {
             || record
                 .placement
                 .as_ref()
-                .and_then(|placement| placement.worker.as_deref())
+                .and_then(|p| p.worker.as_deref())
                 .is_some_and(|worker| worker != input.lease_owner)
+            || !task_ready(txn, record.task_ref.as_deref(), now)?
         {
             return Ok(ClaimOutcome::Empty);
         }
+        let task_ref = record.task_ref.clone();
+        let count = record
+            .attempt_count
+            .checked_add(1)
+            .ok_or(Error::ArithmeticOverflow("attempt count"))?;
+        acquire_task_symbols(txn, task_ref.as_deref(), now)?;
+        let record = txn
+            .jobs
+            .get_mut(id.as_bytes())
+            .ok_or(Error::EntityNotFound)?;
         record.state = AttemptState::Leased;
         record.scheduled_at = None;
         record.backoff_until = None;
         record.lease_owner = Some(input.lease_owner);
-        record.attempt_count = record
-            .attempt_count
-            .checked_add(1)
-            .ok_or(Error::ArithmeticOverflow("attempt count"))?;
+        record.attempt_count = count;
         record.claimed_at = Some(now);
         record.updated_at = now;
         Ok(ClaimOutcome::Claimed(record.clone()))
@@ -552,6 +564,57 @@ impl JobQueue for Memory {
         Ok(FailOutcome::Failed(record.clone()))
     }
 }
+/// Match the LMDB TASK readiness door against the same in-memory transaction.
+fn task_ready(txn: &Snapshot, task_ref: Option<&str>, now: u64) -> Result<bool> {
+    let Some(task) = task_ref.and_then(|reference| EntityId::from_hex(reference).ok()) else {
+        return Ok(true);
+    };
+    for (source, kind, blocker) in txn.edges.keys() {
+        if *source != task || *kind != crate::EdgeKind::BlockedBy as u8 {
+            continue;
+        }
+        let completed = txn
+            .entities
+            .get(blocker)
+            .map(|row| crate::task_verb::terminal_success_from_body(row.entity_type, &row.body))
+            .transpose()?
+            .unwrap_or(false);
+        if !completed {
+            return Ok(false);
+        }
+    }
+    Ok(txn
+        .symbol_leases
+        .get(&task)
+        .is_none_or(|lease| !symbol_blocked(txn, task, &lease.symbols, now)))
+}
+
+fn symbol_blocked(
+    txn: &Snapshot,
+    task: EntityId,
+    wanted: &std::collections::BTreeSet<String>,
+    now: u64,
+) -> bool {
+    txn.symbol_leases.iter().any(|(other, lease)| {
+        *other != task && lease.held && lease.expires_at > now && !lease.symbols.is_disjoint(wanted)
+    })
+}
+
+fn acquire_task_symbols(txn: &mut MemoryWrite, task_ref: Option<&str>, now: u64) -> Result<()> {
+    let Some(task) = task_ref.and_then(|reference| EntityId::from_hex(reference).ok()) else {
+        return Ok(());
+    };
+    if let Some(lease) = txn.symbol_leases.get(&task)
+        && symbol_blocked(txn, task, &lease.symbols, now)
+    {
+        return Err(Error::ConcurrentWrite("overlapping symbol lease"));
+    }
+    if let Some(lease) = txn.symbol_leases.get_mut(&task) {
+        lease.reacquire_at(now)?;
+    }
+    Ok(())
+}
+
 fn transition(action: &'static str, state: &'static str) -> Error {
     Error::Artifact(ArtifactError::InvalidAttemptQueueTransition { action, state })
 }

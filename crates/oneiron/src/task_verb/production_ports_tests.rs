@@ -121,6 +121,70 @@ fn wave_plan_attempt_lands_idempotent_tasks_and_dispatch_reads_live_blockers() -
     Ok(())
 }
 
+#[test]
+fn wave_task_counts_follow_injected_window_and_rollover() -> WaveResult<()> {
+    let clock = crate::ports::ManualClock::new(100);
+    let config = VaultConfig {
+        store_clock: clock.bundle(),
+        ..VaultConfig::default()
+    };
+    let dir = tempfile::tempdir().map_err(crate::Error::from)?;
+    let vault = Vault::open(dir.path(), config)?;
+    let owner = EntityId::from_bytes([0x42; 16])?;
+    vault.put_entity(
+        &owner,
+        crate::registry::ENTITY_TYPE_PERSON,
+        TimeRange { start: 1, end: 1 },
+        1,
+        b"owner",
+    )?;
+    let facade = vault.memory(owner, EdgeActorClass::Human);
+    let epic = facade
+        .tasks_create(
+            &TaskCreateSpec::new(Value::from("epic"), None, None, Some(100))
+                .with_assignee(TaskAssignee::Peer { actor_ref: owner }),
+        )
+        .expect("epic")
+        .task_ref
+        .expect("task");
+    assert_eq!(vault.task_create_count(owner, 60)?, 1);
+    vault.enqueue_wave_plan(epic, "cut", serde_json::Value::Null, 100)?;
+    let ClaimOutcome::Claimed(attempt) = AttemptQueue::new(&vault).claim_kind(
+        WAVE_PLAN_ATTEMPT_KIND,
+        ClaimAttempt {
+            lease_owner: "planner".into(),
+            now: 100,
+        },
+    )?
+    else {
+        panic!("planning attempt")
+    };
+    let plan = WavePlan {
+        schema_version: 1,
+        plan_ref: "injected-window".into(),
+        epic_task_ref: epic,
+        tasks: vec![PlannedTask {
+            local_key: "first".into(),
+            label: "work".into(),
+            spec: serde_json::json!({"work": 1}),
+            assignee_ref: None,
+            blocked_by: vec![],
+        }],
+    };
+    vault.apply_wave_plan_attempt(owner, EdgeActorClass::Human, &attempt, plan, 100)?;
+    assert_eq!(vault.task_create_count(owner, 60)?, 2);
+    clock.set(160);
+    assert_eq!(vault.task_create_count(owner, 60)?, 0);
+    facade
+        .tasks_create(
+            &TaskCreateSpec::new(Value::from("next"), None, None, Some(160))
+                .with_assignee(TaskAssignee::Peer { actor_ref: owner }),
+        )
+        .expect("next task");
+    assert_eq!(vault.task_create_count(owner, 60)?, 1);
+    Ok(())
+}
+
 #[derive(Clone)]
 struct Tracker {
     changes: Rc<RefCell<Vec<LinearIssueChange>>>,

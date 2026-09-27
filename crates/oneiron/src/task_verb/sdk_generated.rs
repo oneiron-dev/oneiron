@@ -439,7 +439,7 @@ pub fn tasks_create(
         crate::companion_value_from_json(&input.spec)?,
         input.label,
         Some(memory.actor()),
-        Some(crate::unix_seconds_now()),
+        Some(memory.vault().now_recorded_at()),
     ))
 }
 pub fn tasks_update(

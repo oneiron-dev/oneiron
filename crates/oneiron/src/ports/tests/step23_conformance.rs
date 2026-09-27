@@ -4,7 +4,7 @@ use crate::attempt_queue::*;
 use crate::deletion::DeleteReason;
 use crate::error::{ArtifactError, Error, Result};
 use crate::registry::ENTITY_TYPE_PERSON;
-use crate::{TimeRange, Vault};
+use crate::{EntityId, TimeRange, Vault};
 
 fn audit_and_blobs<P: Backend>(ports: &P) -> Result<()> {
     let a = id(51);
@@ -226,6 +226,268 @@ fn point_claim_does_not_steal_other_job_lmdb_and_memory() -> Result<()> {
     let (_temp, vault, memory, _clock) = fixtures();
     point_claim(&vault)?;
     point_claim(&memory)
+}
+fn blocked_task_claim<P: Backend>(
+    ports: &P,
+    task: EntityId,
+    blocker: EntityId,
+) -> Result<AttemptId> {
+    let mut txn = ports.write()?;
+    ports.port_edge_upsert(&mut txn, &task, crate::EdgeKind::BlockedBy, &blocker, 1.0)?;
+    let EnqueueOutcome::Enqueued(job) = ports.port_job_enqueue_scoped(
+        &mut txn,
+        EnqueueAttempt {
+            kind: "ports.point.task".into(),
+            payload: vec![],
+            dedupe_key: None,
+            run_id: None,
+            now: 100,
+        },
+        JobScope {
+            task_ref: Some(task.to_hex()),
+            dedupe_actor_ref: None,
+        },
+    )?
+    else {
+        panic!("fresh task job")
+    };
+    let owner = ClaimAttempt {
+        lease_owner: "worker".into(),
+        now: 100,
+    };
+    assert!(matches!(
+        ports.port_job_claim_id(&mut txn, job.id, owner.clone())?,
+        ClaimOutcome::Empty
+    ));
+    assert!(matches!(
+        ports.port_job_claim(&mut txn, Some("ports.point.task"), owner)?,
+        ClaimOutcome::Empty
+    ));
+    ports.commit(txn)?;
+    Ok(job.id)
+}
+fn unblocked_task_claim<P: Backend>(ports: &P, job: AttemptId) -> Result<()> {
+    let mut txn = ports.write()?;
+    let ClaimOutcome::Claimed(row) = ports.port_job_claim_id(
+        &mut txn,
+        job,
+        ClaimAttempt {
+            lease_owner: "worker".into(),
+            now: 100,
+        },
+    )?
+    else {
+        panic!("completed blocker releases task")
+    };
+    assert_eq!(row.attempt_count, 1);
+    ports.commit(txn)
+}
+fn conflicting_symbols_claim<P: Backend>(
+    ports: &P,
+    task: EntityId,
+    holder: EntityId,
+    held: &crate::task_verb::SymbolLease,
+    waiting: &crate::task_verb::SymbolLease,
+) -> Result<()> {
+    ports.set_symbol_lease(holder, Some(held))?;
+    ports.set_symbol_lease(task, Some(waiting))?;
+    let mut txn = ports.write()?;
+    let EnqueueOutcome::Enqueued(job) = ports.port_job_enqueue_scoped(
+        &mut txn,
+        EnqueueAttempt {
+            kind: "ports.point.symbol".into(),
+            payload: vec![],
+            dedupe_key: None,
+            run_id: None,
+            now: 100,
+        },
+        JobScope {
+            task_ref: Some(task.to_hex()),
+            dedupe_actor_ref: None,
+        },
+    )?
+    else {
+        panic!("fresh symbol job")
+    };
+    assert!(matches!(
+        ports.port_job_claim_id(
+            &mut txn,
+            job.id,
+            ClaimAttempt {
+                lease_owner: "worker".into(),
+                now: 100
+            }
+        )?,
+        ClaimOutcome::Empty
+    ));
+    assert!(matches!(
+        ports.port_job_claim(
+            &mut txn,
+            Some("ports.point.symbol"),
+            ClaimAttempt {
+                lease_owner: "worker".into(),
+                now: 100
+            }
+        )?,
+        ClaimOutcome::Empty
+    ));
+    ports.commit(txn)?;
+    assert!(!ports.symbol_lease(task)?.expect("waiting declaration").held);
+    ports.set_symbol_lease(holder, None)?;
+    let mut txn = ports.write()?;
+    let ClaimOutcome::Claimed(row) = ports.port_job_claim_id(
+        &mut txn,
+        job.id,
+        ClaimAttempt {
+            lease_owner: "worker".into(),
+            now: 100,
+        },
+    )?
+    else {
+        panic!("release permits point claim")
+    };
+    assert_eq!(row.attempt_count, 1);
+    ports.commit(txn)?;
+    assert!(
+        ports
+            .symbol_lease(task)?
+            .expect("acquired declaration")
+            .held
+    );
+    Ok(())
+}
+#[test]
+fn task_and_symbol_point_claim_lmdb_and_memory() -> Result<()> {
+    use crate::edge::EdgeActorClass;
+    use crate::task_verb::{
+        TaskAssignee, TaskCreateSpec, TaskResultInput, TaskTerminalDisposition,
+    };
+    let clock = ManualClock::new(100);
+    let config = crate::VaultConfig {
+        store_clock: clock.bundle(),
+        ..crate::VaultConfig::default()
+    };
+    let dir = tempfile::tempdir()?;
+    let vault = Vault::open(dir.path(), config)?;
+    let memory = super::super::memory::Memory::new(ManualClock::new(100).bundle());
+    let holder = id(0x42);
+    vault.put_entity(
+        &holder,
+        ENTITY_TYPE_PERSON,
+        TimeRange { start: 1, end: 1 },
+        1,
+        b"holder",
+    )?;
+    let facade = vault.memory(holder, EdgeActorClass::Human);
+    let task = |name: &str| -> EntityId {
+        facade
+            .tasks_create(
+                &TaskCreateSpec::new(rmpv::Value::from(name), None, None, Some(100))
+                    .with_assignee(TaskAssignee::Peer { actor_ref: holder }),
+            )
+            .expect("task fixture")
+            .task_ref
+            .expect("task ref")
+    };
+    let blocker = task("blocker");
+    let dependent = task("dependent");
+    let pending = {
+        let txn = vault.store.env.read_txn()?;
+        (
+            vault.port_entity_get(&txn, &blocker)?.expect("blocker row"),
+            vault
+                .port_entity_get(&txn, &dependent)?
+                .expect("dependent row"),
+        )
+    };
+    let mut txn = memory.write();
+    memory.port_entity_put(&mut txn, &holder, &row(ENTITY_TYPE_PERSON, b"holder"))?;
+    memory.port_entity_put(&mut txn, &blocker, &pending.0)?;
+    memory.port_entity_put(&mut txn, &dependent, &pending.1)?;
+    memory.commit(txn);
+    let vault_job = blocked_task_claim(&vault, dependent, blocker)?;
+    let memory_job = blocked_task_claim(&memory, dependent, blocker)?;
+    facade
+        .land_task_result(
+            blocker,
+            &TaskResultInput {
+                result_ref: holder,
+                disposition: TaskTerminalDisposition::Completed,
+                finished_at: 102,
+            },
+        )
+        .expect("completed blocker");
+    let completed = {
+        let txn = vault.store.env.read_txn()?;
+        vault
+            .port_entity_get(&txn, &blocker)?
+            .expect("completed row")
+    };
+    let mut txn = memory.write();
+    memory.port_entity_put(&mut txn, &blocker, &completed)?;
+    memory.commit(txn);
+    unblocked_task_claim(&vault, vault_job)?;
+    unblocked_task_claim(&memory, memory_job)?;
+    let held: crate::task_verb::SymbolLease = serde_json::from_value(serde_json::json!({
+        "task_ref": blocker.to_hex(), "holder_ref": holder.to_hex(), "symbols": ["same"],
+        "expires_at": 110, "held": true, "ttl_seconds": 10,
+    }))
+    .expect("held declaration");
+    let waiting: crate::task_verb::SymbolLease = serde_json::from_value(serde_json::json!({
+        "task_ref": dependent.to_hex(), "holder_ref": holder.to_hex(), "symbols": ["same"],
+        "expires_at": 110, "held": false, "ttl_seconds": 10,
+    }))
+    .expect("waiting declaration");
+    conflicting_symbols_claim(&vault, dependent, blocker, &held, &waiting)?;
+    conflicting_symbols_claim(&memory, dependent, blocker, &held, &waiting)
+}
+fn point_claim_owner_bounds<P: Backend>(ports: &P) -> Result<()> {
+    let mut txn = ports.write()?;
+    let EnqueueOutcome::Enqueued(row) = ports.port_job_enqueue(
+        &mut txn,
+        EnqueueAttempt {
+            kind: "ports.point.owner".into(),
+            payload: vec![],
+            dedupe_key: None,
+            run_id: None,
+            now: 100,
+        },
+    )?
+    else {
+        panic!("fresh owner job")
+    };
+    for owner in [String::new(), "a".repeat(129)] {
+        assert!(matches!(
+            ports.port_job_claim_id(
+                &mut txn,
+                row.id,
+                ClaimAttempt {
+                    lease_owner: owner,
+                    now: 100,
+                }
+            ),
+            Err(Error::Artifact(ArtifactError::InvalidAttemptQueueRecord(_)))
+        ));
+    }
+    let ClaimOutcome::Claimed(claimed) = ports.port_job_claim_id(
+        &mut txn,
+        row.id,
+        ClaimAttempt {
+            lease_owner: "a".repeat(128),
+            now: 100,
+        },
+    )?
+    else {
+        panic!("128-byte owner")
+    };
+    assert_eq!(claimed.attempt_count, 1);
+    ports.commit(txn)
+}
+#[test]
+fn point_claim_owner_byte_bounds_lmdb_and_memory() -> Result<()> {
+    let (_dir, vault, memory, _clock) = fixtures();
+    point_claim_owner_bounds(&vault)?;
+    point_claim_owner_bounds(&memory)
 }
 #[test]
 fn audit_and_reference_counted_blobs_lmdb_and_memory() -> Result<()> {
