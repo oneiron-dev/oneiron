@@ -73,6 +73,13 @@ fn owner_drills_from_group_to_own_traces_and_receipts_without_consent_while_non_
         leased.id,
         ManifestEntry::new(ManifestKind::Skill, "skill.trace", "1", 11),
     )?;
+    // A Skill entry is receipt-bearing only with its executor (#1132).
+    AttemptQueue::new(&vault).set_executor_model(
+        leased.id,
+        LEASE_OWNER,
+        leased.attempt_count,
+        "fixture/model@1",
+    )?;
     let FailureLadderOutcome::Human(surface) = FailureLadder::new(&vault).handle_attempt_failure(
         failure_input(&leased, indeterminate(), 20),
         policy_with(agent, 3, FailureEscalationMode::Human),
@@ -257,6 +264,13 @@ fn deleted_agent_definition_keeps_retained_failure_member_drillable() -> Result<
         leased.id,
         ManifestEntry::new(ManifestKind::Skill, "skill.historical", "1", 11),
     )?;
+    // A Skill entry is receipt-bearing only with its executor (#1132).
+    AttemptQueue::new(&vault).set_executor_model(
+        leased.id,
+        LEASE_OWNER,
+        leased.attempt_count,
+        "fixture/model@1",
+    )?;
     FailureLadder::new(&vault).handle_attempt_failure(
         failure_input(&leased, indeterminate(), 20),
         policy_with(agent, 3, FailureEscalationMode::Human),
@@ -284,6 +298,13 @@ fn manifest_bearing_retry_source_stays_drillable_with_its_terminal_receipt() -> 
     AttemptQueue::new(&vault).append_manifest_entry(
         leased.id,
         ManifestEntry::new(ManifestKind::Skill, "skill.retry", "1", 11),
+    )?;
+    // A Skill entry is receipt-bearing only with its executor (#1132).
+    AttemptQueue::new(&vault).set_executor_model(
+        leased.id,
+        LEASE_OWNER,
+        leased.attempt_count,
+        "fixture/model@1",
     )?;
     let FailureLadderOutcome::Retried {
         source_attempt_id, ..
@@ -317,7 +338,9 @@ fn manifest_bearing_queued_cancellation_stays_drillable_with_its_receipt() -> Re
     let queue = AttemptQueue::new(&vault);
     queue.append_manifest_entry(
         queued.id,
-        ManifestEntry::new(ManifestKind::Skill, "skill.cancel", "1", 11),
+        // Queued attempts carry only the dispatcher stamp; a Skill entry needs
+        // a live lease and an executor (#1132).
+        ManifestEntry::new(ManifestKind::SkillIndex, "skill.cancel", "1", 11),
     )?;
     let cancelled = queue.intervene(InterveneAttempt {
         id: queued.id,
