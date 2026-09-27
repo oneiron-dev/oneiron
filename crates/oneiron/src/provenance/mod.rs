@@ -135,6 +135,7 @@ mod actor_substrate;
 mod archive;
 pub(crate) use archive::archived_provenance_body;
 mod codec;
+mod derived_attachment;
 mod edge_ref;
 mod entity_ref_wire;
 mod imported;

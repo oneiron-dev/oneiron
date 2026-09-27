@@ -269,6 +269,7 @@ fn drive(vault: &Vault, now: u64) {
             budget_total_units: 1000,
             reserve_units: 10,
             now,
+            host_scope: None,
         },
         &mut executor,
         &cancel,

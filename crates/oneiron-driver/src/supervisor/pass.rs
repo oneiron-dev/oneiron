@@ -98,6 +98,7 @@ pub(super) async fn run_one_pass<F: PassExecutorFactory>(
         budget_total_units: config.budget_total_units,
         reserve_units: config.reserve_units,
         now: (*now_secs)(),
+        host_scope: None,
     };
     // The scheduled display projection runs on its own cadence even when
     // there is no consolidation attempt to admit. Only timer deadlines on
