@@ -93,6 +93,8 @@ pub(crate) use self::input::{
     ConsentGateContext, ExternalEffectGateInput, ExternalEffectPolicyRisk, GateActor,
     GateProvenanceHandles, consent_gate_reason_codes,
 };
+#[cfg(test)]
+pub(crate) use self::operational_policy::default_manifest_with_linear_sync_pages_for_test;
 pub use self::operational_policy::{LinearMirrorPolicy, LinearSyncBudget, WaveHandoffPolicy};
 pub(crate) use self::repair::{evaluate_repair_consent, repair_criticality};
 pub(crate) use self::resolution::{PolicyManifestResolution, resolve_policy_manifest};

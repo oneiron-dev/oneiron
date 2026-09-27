@@ -265,3 +265,108 @@ fn malformed_values_and_precedence_fail_closed() -> Result<()> {
     assert_ne!(first, resolve(&vault)?.read_frontier_hash()?);
     Ok(())
 }
+
+#[test]
+fn default_manifest_page_fixture_changes_live_vault_policy() -> Result<()> {
+    let tmp = tempfile::tempdir()?;
+    let vault = crate::Vault::open(tmp.path(), crate::config::VaultConfig::default())?;
+    let default_id = default_policy_manifest_id()?;
+    let before = vault.linear_sync_budget()?;
+    assert_eq!(before.max_pull_pages_per_pass, 64);
+    crate::test_util::put_policy_manifest_bytes(
+        &vault,
+        default_id,
+        &crate::gate::default_manifest_with_linear_sync_pages_for_test(2),
+    )?;
+    let changed = vault.linear_sync_budget()?;
+    assert_eq!(changed.max_pull_pages_per_pass, 2);
+    assert_ne!(before.policy_frontier, changed.policy_frontier);
+    Ok(())
+}
+
+#[test]
+fn changed_manifest_budget_changes_real_linear_pull_pass() -> Result<()> {
+    use crate::linear_sync::{
+        LinearChangePage, LinearChangeSource, LinearEgress, LinearIssueChange, LinearIssueRef,
+        LinearSyncAdapter, LinearSyncResult, MirroredTaskFields, VaultLinearTaskStore,
+    };
+    use std::{cell::RefCell, collections::BTreeMap, rc::Rc};
+
+    #[derive(Clone, Default)]
+    struct PagedSource(Rc<RefCell<Vec<Option<String>>>>);
+    impl LinearChangeSource for PagedSource {
+        fn changes_since(&mut self, cursor: Option<&str>) -> LinearSyncResult<LinearChangePage> {
+            self.0.borrow_mut().push(cursor.map(str::to_owned));
+            Ok(LinearChangePage {
+                changes: Vec::new(),
+                next_cursor: match cursor {
+                    None => Some("p1".into()),
+                    Some("p1") => Some("p2".into()),
+                    Some("p2") => None,
+                    _ => panic!("unexpected cursor"),
+                },
+            })
+        }
+    }
+    struct NoOutbound;
+    impl LinearEgress for NoOutbound {
+        fn create_issue(
+            &mut self,
+            _: [u8; 32],
+            _: EntityId,
+            _: &MirroredTaskFields,
+        ) -> LinearSyncResult<LinearIssueChange> {
+            panic!("no task is dirty")
+        }
+        fn update_issue(
+            &mut self,
+            _: [u8; 32],
+            _: &LinearIssueRef,
+            _: &BTreeMap<String, [u8; 32]>,
+            _: &MirroredTaskFields,
+        ) -> LinearSyncResult<LinearIssueChange> {
+            panic!("no task is dirty")
+        }
+    }
+
+    let tmp = tempfile::tempdir()?;
+    let vault = crate::Vault::open(tmp.path(), crate::config::VaultConfig::default())?;
+    let source = PagedSource::default();
+    let mut adapter = LinearSyncAdapter::new(
+        VaultLinearTaskStore::new(&vault),
+        source.clone(),
+        NoOutbound,
+    );
+    let manifest_id = default_policy_manifest_id()?;
+    crate::test_util::put_policy_manifest_bytes(
+        &vault,
+        manifest_id,
+        &crate::gate::default_manifest_with_linear_sync_pages_for_test(2),
+    )?;
+    let limited = vault.linear_sync_budget()?;
+    assert_eq!(limited.max_pull_pages_per_pass, 2);
+    assert!(
+        adapter
+            .synchronize(100, limited.max_pull_pages_per_pass)
+            .is_err()
+    );
+    assert_eq!(*source.0.borrow(), vec![None, Some("p1".into())]);
+
+    crate::test_util::put_policy_manifest_bytes(
+        &vault,
+        manifest_id,
+        &crate::gate::default_manifest_with_linear_sync_pages_for_test(3),
+    )?;
+    let widened_by_owner = vault.linear_sync_budget()?;
+    assert_eq!(widened_by_owner.max_pull_pages_per_pass, 3);
+    assert_ne!(limited.policy_frontier, widened_by_owner.policy_frontier);
+    let (_, pulled) = adapter
+        .synchronize(101, widened_by_owner.max_pull_pages_per_pass)
+        .expect("new policy admits the remaining page");
+    assert_eq!(pulled.new_cursor.as_deref(), Some("p2"));
+    assert_eq!(
+        *source.0.borrow(),
+        vec![None, Some("p1".into()), Some("p2".into())]
+    );
+    Ok(())
+}

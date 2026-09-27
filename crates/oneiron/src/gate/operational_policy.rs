@@ -273,3 +273,27 @@ fn operational_resolution(store: &Store) -> Result<super::resolution::PolicyMani
     }
     Ok(policy)
 }
+
+/// Test fixture for cross-module Linear sync integration tests. Starts from
+/// the shipped, signed default manifest; only the page allowance changes.
+#[cfg(test)]
+pub(crate) fn default_manifest_with_linear_sync_pages_for_test(pages: u64) -> Vec<u8> {
+    let data = super::default_policy_manifest();
+    let mut cursor = std::io::Cursor::new(data);
+    let Value::Map(mut entries) =
+        rmpv::decode::read_value(&mut cursor).expect("default manifest map")
+    else {
+        unreachable!("default manifest map")
+    };
+    let (_, budget) = entries
+        .iter_mut()
+        .find(|(key, _)| key.as_str() == Some(LINEAR_SYNC_KEY))
+        .expect("default linear sync budget row");
+    *budget = Value::Map(vec![(
+        Value::from("max_pull_pages_per_pass"),
+        Value::from(pages),
+    )]);
+    let mut data = Vec::new();
+    rmpv::encode::write_value(&mut data, &Value::Map(entries)).expect("encode test policy");
+    data
+}
