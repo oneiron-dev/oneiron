@@ -24,7 +24,9 @@ use oneiron::{
 
 fn open_vault() -> (tempfile::TempDir, Vault) {
     let dir = tempfile::tempdir().expect("temp dir");
-    let vault = Vault::open(dir.path(), VaultConfig::default()).expect("open vault");
+    let mut config = VaultConfig::default();
+    config.retrieval_telemetry_capture = true;
+    let vault = Vault::open(dir.path(), config).expect("open vault");
     (dir, vault)
 }
 

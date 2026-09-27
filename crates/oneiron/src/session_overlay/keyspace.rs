@@ -1,6 +1,8 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
+use zeroize::Zeroize;
+
 use crate::error::{Error, Result};
 
 use super::journal::JournalEntry;
@@ -110,6 +112,62 @@ pub(super) enum KeyspaceState {
     },
 }
 
+// Values scrub at displacement, not only when their parent COW map dies.
+impl Drop for OverlayValue {
+    fn drop(&mut self) {
+        if let Self::Present(bytes) = self {
+            bytes.zeroize();
+        }
+    }
+}
+
+impl Drop for DupDelta {
+    fn drop(&mut self) {
+        for (mut identity, mut value) in std::mem::take(&mut self.present) {
+            identity.zeroize();
+            value.zeroize();
+        }
+        for mut value in std::mem::take(&mut self.deleted) {
+            value.zeroize();
+        }
+    }
+}
+
+fn remove_owned_row<V>(rows: &mut BTreeMap<Vec<u8>, V>, key: &[u8]) {
+    if let Some((mut key, value)) = rows.remove_entry(key) {
+        key.zeroize();
+        drop(value);
+    }
+}
+
+fn dup_delta<'a>(rows: &'a mut BTreeMap<Vec<u8>, DupDelta>, key: &[u8]) -> &'a mut DupDelta {
+    if !rows.contains_key(key) {
+        rows.insert(key.to_vec(), DupDelta::default());
+    }
+    rows.get_mut(key).expect("inserted duplicate delta")
+}
+
+// A COW keyspace scrubs keys at its last Arc drop. Displaced values and
+// deleted keys are scrubbed at their own earlier drop by the mutation arms.
+impl Drop for KeyspaceState {
+    fn drop(&mut self) {
+        match self {
+            Self::Single { rows, .. } => {
+                for (mut key, value) in std::mem::take(rows) {
+                    key.zeroize();
+                    drop(value);
+                }
+            }
+            Self::DupSort { rows, .. } => {
+                for (mut key, delta) in std::mem::take(rows) {
+                    key.zeroize();
+                    drop(delta);
+                }
+            }
+        }
+    }
+}
+
 impl KeyspaceState {
     fn empty(keyspace: OverlayKeyspace) -> Self {
         if keyspace.is_dupsort() {
@@ -126,15 +184,16 @@ impl KeyspaceState {
     }
 
     fn cleared(keyspace: OverlayKeyspace) -> Self {
-        match Self::empty(keyspace) {
-            Self::Single { rows, .. } => Self::Single {
+        if keyspace.is_dupsort() {
+            Self::DupSort {
                 clear_base: true,
-                rows,
-            },
-            Self::DupSort { rows, .. } => Self::DupSort {
+                rows: BTreeMap::new(),
+            }
+        } else {
+            Self::Single {
                 clear_base: true,
-                rows,
-            },
+                rows: BTreeMap::new(),
+            }
         }
     }
 
@@ -214,6 +273,21 @@ pub(super) enum OverlayMutation {
     },
 }
 
+// Segment mutations (including failed preflights and aborts) have their own
+// allocations. Wipe those independently of the published COW keyspaces.
+impl Drop for OverlayMutation {
+    fn drop(&mut self) {
+        match self {
+            Self::Put { key, value, .. } | Self::DeleteDuplicate { key, value, .. } => {
+                key.zeroize();
+                value.zeroize();
+            }
+            Self::Delete { key, .. } => key.zeroize(),
+            Self::Clear { .. } => {}
+        }
+    }
+}
+
 /// Removes one PRESENT overlay row outright, leaving no base mask.
 ///
 /// The presence check is the whole point: [`apply_mutation`]'s delete arm
@@ -226,7 +300,7 @@ pub(super) fn drop_overlay_row(state: &mut OverlayState, keyspace: OverlayKeyspa
     if let KeyspaceState::Single { rows, .. } = Arc::make_mut(&mut state.keyspaces[keyspace.slot()])
         && matches!(rows.get(key), Some(OverlayValue::Present(_)))
     {
-        rows.remove(key);
+        remove_owned_row(rows, key);
     }
 }
 
@@ -255,7 +329,11 @@ fn apply_mutation(state: &mut OverlayState, mutation: &OverlayMutation) -> Resul
     let keyspace_state = Arc::make_mut(&mut state.keyspaces[slot]);
     match (keyspace_state, mutation) {
         (KeyspaceState::Single { rows, .. }, OverlayMutation::Put { key, value, .. }) => {
-            rows.insert(key.clone(), OverlayValue::Present(value.clone()));
+            if let Some(old) = rows.get_mut(key) {
+                *old = OverlayValue::Present(value.clone()); // old body scrubs on drop
+            } else {
+                rows.insert(key.clone(), OverlayValue::Present(value.clone()));
+            }
         }
         (
             KeyspaceState::Single { clear_base, rows },
@@ -265,25 +343,30 @@ fn apply_mutation(state: &mut OverlayState, mutation: &OverlayMutation) -> Resul
         ) => {
             let effective_base_backed = *base_backed && !*clear_base;
             if !effective_base_backed && matches!(rows.get(key), Some(OverlayValue::Present(_))) {
-                rows.remove(key);
+                remove_owned_row(rows, key);
+            } else if let Some(old) = rows.get_mut(key) {
+                *old = OverlayValue::Tombstone;
             } else {
                 rows.insert(key.clone(), OverlayValue::Tombstone);
             }
         }
         (KeyspaceState::DupSort { rows, .. }, OverlayMutation::Put { key, value, .. }) => {
-            let identity = duplicate_identity(value);
-            let delta = rows.entry(key.clone()).or_default();
-            delta.deleted.remove(value);
-            delta.present.insert(identity, value.clone());
+            let mut identity = duplicate_identity(value);
+            let delta = dup_delta(rows, key);
+            if let Some(mut deleted) = delta.deleted.take(value) {
+                deleted.zeroize();
+            }
+            if let Some(old) = delta.present.get_mut(&identity) {
+                old.zeroize();
+                *old = value.clone();
+                identity.zeroize();
+            } else {
+                delta.present.insert(identity, value.clone());
+            }
         }
         (KeyspaceState::DupSort { rows, .. }, OverlayMutation::Delete { key, .. }) => {
-            rows.insert(
-                key.clone(),
-                DupDelta {
-                    delete_base: true,
-                    ..DupDelta::default()
-                },
-            );
+            *dup_delta(rows, key) = DupDelta::default();
+            dup_delta(rows, key).delete_base = true;
         }
         (
             KeyspaceState::DupSort { clear_base, rows },
@@ -294,21 +377,24 @@ fn apply_mutation(state: &mut OverlayState, mutation: &OverlayMutation) -> Resul
                 ..
             },
         ) => {
-            let identity = duplicate_identity(value);
-            let delta = rows.entry(key.clone()).or_default();
+            let mut identity = duplicate_identity(value);
+            let delta = dup_delta(rows, key);
             let effective_base_backed = *base_backed && !*clear_base && !delta.delete_base;
-            if delta.present.get(&identity) == Some(value) {
-                delta.present.remove(&identity);
+            if delta.present.get(&identity) == Some(value)
+                && let Some((mut owned_identity, mut owned_value)) =
+                    delta.present.remove_entry(&identity)
+            {
+                owned_identity.zeroize();
+                owned_value.zeroize();
             }
-            if effective_base_backed {
+            identity.zeroize();
+            if effective_base_backed && !delta.deleted.contains(value) {
                 delta.deleted.insert(value.clone());
             }
-            // An overlay-only delete can empty the delta; a bare row still charges
-            // key.len() toward the budget, so drop it (matches the Single path).
             let delta_is_empty =
                 delta.present.is_empty() && delta.deleted.is_empty() && !delta.delete_base;
             if delta_is_empty {
-                rows.remove(key);
+                remove_owned_row(rows, key);
             }
         }
         (KeyspaceState::Single { .. }, OverlayMutation::DeleteDuplicate { .. }) => {
@@ -323,4 +409,105 @@ fn apply_mutation(state: &mut OverlayState, mutation: &OverlayMutation) -> Resul
 
 pub(super) fn duplicate_identity(value: &[u8]) -> Vec<u8> {
     value.get(..16).unwrap_or(value).to_vec()
+}
+
+#[cfg(test)]
+mod hygiene_tests {
+    use super::*;
+
+    use super::super::hygiene_tests::{allocation, observe_drop};
+
+    fn seeded(space: OverlayKeyspace) -> OverlayState {
+        let mutation = OverlayMutation::Put {
+            keyspace: space,
+            key: b"private-index-key".to_vec(),
+            value: b"private-overlay-value".to_vec(),
+        };
+        project_mutation(&OverlayState::empty(), &mutation).expect("seed overlay")
+    }
+
+    fn owned_body(state: &OverlayState, space: OverlayKeyspace) -> &[u8] {
+        match state.keyspaces[space.slot()].as_ref() {
+            KeyspaceState::Single { rows, .. } => match rows.get(b"private-index-key".as_slice()) {
+                Some(OverlayValue::Present(value)) => value,
+                _ => panic!("missing single row"),
+            },
+            KeyspaceState::DupSort { rows, .. } => rows
+                .get(b"private-index-key".as_slice())
+                .expect("duplicate row")
+                .present
+                .values()
+                .next()
+                .expect("duplicate body"),
+        }
+    }
+
+    #[test]
+    fn cow_overwrite_and_remove_scrub_displaced_values_before_state_drop() {
+        let original = seeded(OverlayKeyspace::Entities);
+        let mut copy = original.clone();
+        Arc::make_mut(&mut copy.keyspaces[OverlayKeyspace::Entities.slot()]);
+        let ptr = allocation(owned_body(&copy, OverlayKeyspace::Entities));
+        observe_drop(ptr, true, || {
+            apply_mutation(
+                &mut copy,
+                &OverlayMutation::Put {
+                    keyspace: OverlayKeyspace::Entities,
+                    key: b"private-index-key".to_vec(),
+                    value: b"replacement".to_vec(),
+                },
+            )
+            .expect("overwrite");
+        });
+        assert_eq!(
+            owned_body(&original, OverlayKeyspace::Entities),
+            b"private-overlay-value"
+        );
+        let ptr = allocation(owned_body(&copy, OverlayKeyspace::Entities));
+        observe_drop(ptr, true, || {
+            apply_mutation(
+                &mut copy,
+                &OverlayMutation::Delete {
+                    keyspace: OverlayKeyspace::Entities,
+                    key: b"private-index-key".to_vec(),
+                    base_backed: false,
+                },
+            )
+            .expect("remove");
+        });
+        let ptr = allocation(owned_body(&original, OverlayKeyspace::Entities));
+        observe_drop(ptr, true, || drop(original));
+    }
+
+    #[test]
+    fn duplicate_remove_and_retirement_scrub_values_and_identity() {
+        let original = seeded(OverlayKeyspace::TextPostings);
+        let mut copy = original.clone();
+        Arc::make_mut(&mut copy.keyspaces[OverlayKeyspace::TextPostings.slot()]);
+        let ptr = allocation(owned_body(&copy, OverlayKeyspace::TextPostings));
+        observe_drop(ptr, true, || {
+            apply_mutation(
+                &mut copy,
+                &OverlayMutation::DeleteDuplicate {
+                    keyspace: OverlayKeyspace::TextPostings,
+                    key: b"private-index-key".to_vec(),
+                    value: b"private-overlay-value".to_vec(),
+                    base_backed: false,
+                },
+            )
+            .expect("remove duplicate");
+        });
+        let ptr = allocation(owned_body(&original, OverlayKeyspace::TextPostings));
+        observe_drop(ptr, true, || drop(original));
+
+        let mut retiring = seeded(OverlayKeyspace::Entities);
+        let ptr = allocation(owned_body(&retiring, OverlayKeyspace::Entities));
+        observe_drop(ptr, true, || {
+            drop_overlay_row(
+                &mut retiring,
+                OverlayKeyspace::Entities,
+                b"private-index-key",
+            );
+        });
+    }
 }
