@@ -780,6 +780,13 @@ fn missing_received_session_skips_one_room_and_migrates_later_legacy_room() {
     .unwrap();
     assert!(peer.get(&worker).unwrap().is_some());
     assert!(peer.get(&session).unwrap().is_none());
+    assert_eq!(
+        peer.conversation_last_message_snippet(&delayed)
+            .unwrap_err()
+            .kind(),
+        ErrorKind::InvalidConversationDag,
+        "missing received SESSION must not grant ChildOf preview fallback"
+    );
     let root = EntityId::now();
     peer.batch()
         .put(
@@ -2540,6 +2547,13 @@ fn pending_parent_blocks_adoption_until_root_arrives() {
     let materializer = std::sync::Arc::new(crate::sync::bridge::Materializer::new());
     crate::sync::window::forward_rematerialize(&peer, &doc, &materializer, &key).unwrap();
     assert!(peer.get(&child).unwrap().is_some());
+    assert_eq!(
+        peer.conversation_last_message_snippet(&room)
+            .unwrap_err()
+            .kind(),
+        ErrorKind::InvalidConversationDag,
+        "pending received Parent must not grant ChildOf preview fallback"
+    );
     assert!(
         crate::sync::pending_remat_windows(&peer)
             .unwrap()
