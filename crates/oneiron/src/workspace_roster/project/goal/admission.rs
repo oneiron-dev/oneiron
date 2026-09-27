@@ -15,7 +15,7 @@ const CLAIM_KEY: &[u8] = b"project.goal_intake.admission/";
 const POINTER_KEY: &[u8] = b"project.goal_intake.pointer_write/";
 
 fn invalid() -> Error {
-    super::super::invalid()
+    crate::error::RecordError::InvalidProjectBody("goal intake admission missing or invalid").into()
 }
 fn key(prefix: &[u8], id: EntityId) -> Vec<u8> {
     [prefix, id.as_bytes()].concat()

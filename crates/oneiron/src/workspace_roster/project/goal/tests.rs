@@ -603,3 +603,56 @@ fn replayed_goal_tombstone_retains_no_dangling_pointer() -> Result<()> {
     }
     Ok(())
 }
+
+#[cfg(feature = "sync")]
+#[test]
+fn receiving_vault_keeps_unverified_goal_out_of_authority() -> Result<()> {
+    let origin_dir = tempfile::tempdir()?;
+    let origin = Vault::open(origin_dir.path(), crate::VaultConfig::default())?;
+    let project = origin.root_project()?;
+    let human = EntityId::now();
+    origin.put_entity(
+        &human,
+        ENTITY_TYPE_PERSON,
+        TimeRange { start: 1, end: 1 },
+        1,
+        b"human",
+    )?;
+    let owner = origin.authenticate_owner(
+        human,
+        &human.to_hex(),
+        true,
+        crate::store::GateDecisionId::now(),
+    )?;
+    let goal = origin.write_project_goal_from_intake(&owner, project, &transcript_record(), 2)?;
+    let body = origin.get_raw(&goal)?.ok_or_else(invalid)?;
+    let receiver_dir = tempfile::tempdir()?;
+    let receiver = Vault::open(receiver_dir.path(), crate::VaultConfig::default())?;
+    let err = receiver
+        .batch()
+        .put_replicated(
+            &goal,
+            crate::registry::ENTITY_TYPE_CLAIM,
+            TimeRange { start: 2, end: 2 },
+            2,
+            &body[crate::batch::ENTITY_METADATA_HEADER_LEN..],
+        )
+        .commit()
+        .expect_err("origin's local intake marker does not travel as owner proof");
+    assert_eq!(err.kind(), crate::error::ErrorKind::InvalidProjectBody);
+    assert!(
+        crate::sync::quarantine::remote_rejection_reason(&err).is_some(),
+        "Observer B retains the received op in its quarantine ledger instead of promoting it"
+    );
+    assert!(receiver.get_claim(&goal)?.is_none());
+    assert!(
+        receiver
+            .project_goal_record(receiver.root_project()?)?
+            .is_none()
+    );
+    assert_eq!(
+        origin.project_goal_record(project)?,
+        Some(transcript_record())
+    );
+    Ok(())
+}
