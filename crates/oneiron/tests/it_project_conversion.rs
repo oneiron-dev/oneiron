@@ -12,7 +12,7 @@ fn speak(
     turn: EntityId,
     message: EntityId,
     parent: Option<EntityId>,
-) -> Result<()> {
+) {
     vault
         .memory(host, EdgeActorClass::Human)
         .rooms_speak(&WitnessTurn {
@@ -33,7 +33,6 @@ fn speak(
             occurred_at: 2,
         })
         .expect("room speech");
-    Ok(())
 }
 
 #[test]
@@ -63,9 +62,9 @@ fn conversion_moves_open_task_and_projects_thread_origin_without_copy() -> Resul
     let room = EntityId::from_hex(&source.home_room)?;
     let trunk = EntityId::now();
     let message = EntityId::now();
-    speak(&vault, host, room, trunk, message, None)?;
+    speak(&vault, host, room, trunk, message, None);
     let thread = EntityId::now();
-    speak(&vault, host, room, thread, EntityId::now(), Some(trunk))?;
+    speak(&vault, host, room, thread, EntityId::now(), Some(trunk));
     let run = vault.spawn_dag_sub_session(&trunk, WriteActor::new(host, EdgeActorClass::Human))?;
     let task = vault
         .memory(holder, EdgeActorClass::Agent)
@@ -185,8 +184,8 @@ fn conversion_without_open_task_uses_room_host_and_rejects_wrong_origin() -> Res
     let trunk = EntityId::now();
     let message = EntityId::now();
     let thread = EntityId::now();
-    speak(&vault, host, room, trunk, message, None)?;
-    speak(&vault, host, room, thread, EntityId::now(), Some(trunk))?;
+    speak(&vault, host, room, trunk, message, None);
+    speak(&vault, host, room, thread, EntityId::now(), Some(trunk));
     let id = EntityId::now();
     assert!(
         vault
