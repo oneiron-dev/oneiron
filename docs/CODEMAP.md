@@ -14,7 +14,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 
 | crate | purpose | source files | test files | over 800-line bar |
 |---|---|---|---|---|
-| [oneiron](codemap/oneiron.md) | Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces | 2186 | 742 | 2 |
+| [oneiron](codemap/oneiron.md) | Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces | 2194 | 748 | 2 |
 | [oneiron-android](codemap/oneiron-android.md) | Minimal JNI/Kotlin ownership adapter | 1 | 0 | 0 |
 | [oneiron-bench](codemap/oneiron-bench.md) | oneiron-bench — benchmark harness skeleton | 99 | 18 | 0 |
 | [oneiron-driver](codemap/oneiron-driver.md) | oneiron-driver — the in-process starter motor (ONE-1683 / ONE-1684, M8 agent runtime RT-01/RT-02) | 15 | 10 | 0 |
@@ -133,9 +133,9 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `federation` | dir | 22 | m | yes | Federation grant record substrate |
 | `feedback` | dir | 9 | m | yes | Engine feedback channel: bundle wire contract, consent, dispatch, export |
 | `fusion` | file+dir | 2 | m | — | — |
-| `gate` | dir | 75 | m | yes | DEC-0005 Gate policy manifest resolver |
+| `gate` | dir | 77 | m | yes | DEC-0005 Gate policy manifest resolver |
 | `genui` | dir | 12 | m | yes | OF-336 generated-UI component contract |
-| `git_wire` | dir | 22 | m | — | Engine-owned typed git subprocess boundary (ONE-1903, RC6/ARCH-0068) |
+| `git_wire` | dir | 25 | m | — | Engine-owned typed git subprocess boundary (ONE-1903, RC6/ARCH-0068) |
 | `graph_fs` | dir | 7 | m | — | Graph-FS read projection over the vault graph |
 | `habit` | file | 1 | m | yes | Productivity-pack task-role vocabulary + task/habit checkin validators, plus the derived Habit streak… |
 | `hnsw` | dir | 14 | m | — | HNSW graph index over the persisted neighbor graph |
@@ -157,10 +157,10 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `maintain` | dir | 6 | m | — | — |
 | `memory` | dir | 91 | m | yes | BRIDGE-01 (ONE-1454): transport-agnostic memory facade |
 | `merge_queue` | dir | 8 | m | — | Durable batched speculation over real detached worktrees |
-| `note` | file+dir | 28 | m | yes | Attributed NOTE records with built-in, plugin and registered PACK kinds |
+| `note` | file+dir | 29 | m | yes | Attributed NOTE records with built-in, plugin and registered PACK kinds |
 | `off_record` | dir | 12 | m | yes | Off-record sessions — ARCH-0052 branch store, ONE-1725..ONE-1732 |
 | `origin` | dir | 47 | m | yes | Vault-as-origin serving plane (ARCH-0068 Phase A) |
-| `outbound` | dir | 39 | m | yes | Outbound action capability manifests and dispatch spine for OF-327 |
+| `outbound` | dir | 40 | m | yes | Outbound action capability manifests and dispatch spine for OF-327 |
 | `outbound_chokepoint` | dir | 9 | m | — | Replay-first outbound effect execution |
 | `outbound_consent` | dir | 10 | m | — | Payload-aware consent and transport boundary for scoped outbound tools |
 | `outbound_grant` | dir | 9 | m | yes | Standing outbound-grant records for OF-367 RS6.2/RS6.5 |
@@ -224,7 +224,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `tokenizer` | file | 1 | s | — | — |
 | `vault` | dir | 20 | m | yes | Top-level `Vault` API: the crate's main entry point for all LMDB-backed entity / vector / edge / text /… |
 | `vault_cleanup` | dir | 17 | m | yes | ARCH-0073 vault auto-cleanup: the Dreamer ARCHIVE cron (ONE-1931) |
-| `voice_cascade` | file+dir | 24 | L | — | ONE-1807: the engine half of a transport-neutral text-brain voice cascade |
+| `voice_cascade` | file+dir | 28 | L | yes | ONE-1807: the engine half of a transport-neutral text-brain voice cascade |
 | `voice_identity` | dir | 9 | m | yes | VOX-02 voice identity substrate: consent log, enrollment, local matching |
 | `voice_segment` | file | 1 | s | — | `voice.segment` claim family — the metadata of one committed capture segment: its span, channel count… |
 | `wave_orchestration` | file+dir | 2 | m | — | Durable code-mode wave orchestration over TASK entities and the C9 run tree (ONE-1905, CSTDY-05) |
