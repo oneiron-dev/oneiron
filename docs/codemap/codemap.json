@@ -21758,6 +21758,7 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
+      "AnonymousChatBlockReason",
       "AnonymousChatResponder",
       "AnonymousChatSession",
       "AnonymousChatTarget",
@@ -21766,7 +21767,7 @@
      "path": "src/off_record/anonymous_chat.rs",
      "purpose": "Stateless, memory-free chat beside (not inside) agent chat and off-record promote",
      "surface": {
-      "enum": 2,
+      "enum": 3,
       "fn": 3,
       "struct": 1,
       "trait": 1
@@ -23900,7 +23901,7 @@
      "path": "src/policy_model/classify.rs",
      "purpose": "Vault-egress classification, which is the owner plane and nothing else",
      "surface": {
-      "crate-vis": 10,
+      "crate-vis": 11,
       "fn": 8
      }
     },
@@ -24156,7 +24157,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "test",
      "notable": [],
      "path": "src/policy_model/tests/anonymous_chat.rs",

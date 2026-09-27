@@ -1,9 +1,10 @@
 //! Stateless chat is not Memory::chat, agent chat, or an off-record room read.
 
 use super::*;
+use crate::llm::{BudgetExhaustionPolicy, BudgetGuard};
 use crate::off_record::OffRecordBackendClass;
 use crate::off_record::anonymous_chat::{
-    AnonymousChatResponder, AnonymousChatTarget, AnonymousChatTurn,
+    AnonymousChatBlockReason, AnonymousChatResponder, AnonymousChatTarget, AnonymousChatTurn,
 };
 use crate::registry::ENTITY_TYPE_TURN;
 use crate::temporal::TimeRange;
@@ -102,7 +103,7 @@ fn open_chat_close_has_no_vault_diff_and_no_memory_in_model_input() -> Result<()
     let session = vault.open_anonymous_chat("stateless", OffRecordBackendClass::Local)?;
     let responder = Responder::new("model answer");
     let backend = CountingPolicyBackend::clean();
-    let lease = BudgetLease::for_test("anon");
+    let budget = BudgetGuard::with_reserve_units("anon", 100, 10, BudgetExhaustionPolicy::Suspend);
     for target in [
         AnonymousChatTarget::HouseMind,
         AnonymousChatTarget::PlainModel,
@@ -112,7 +113,7 @@ fn open_chat_close_has_no_vault_diff_and_no_memory_in_model_input() -> Result<()
             target,
             &responder,
             &backend,
-            &lease,
+            &budget,
             &PolicyModelConfig::default(),
         ))?;
         assert!(
@@ -157,19 +158,21 @@ fn policy_blocks_input_and_output_visibly_without_receipts() -> Result<()> {
     let before = base_rows(&vault)?;
     let session = vault.open_anonymous_chat("policy-stateless", OffRecordBackendClass::Local)?;
     let backend = CountingPolicyBackend::clean();
-    let lease = BudgetLease::for_test("anon-policy");
+    let budget =
+        BudgetGuard::with_reserve_units("anon-policy", 100, 10, BudgetExhaustionPolicy::Suspend);
     let responder = Responder::new("spoiler in model output");
     let input = block_on(session.chat(
         "spoiler in input",
         AnonymousChatTarget::HouseMind,
         &responder,
         &backend,
-        &lease,
+        &budget,
         &PolicyModelConfig::default(),
     ))?;
     let AnonymousChatTurn::Blocked {
         input: true,
         notice,
+        ..
     } = input
     else {
         panic!("input must block")
@@ -191,12 +194,13 @@ fn policy_blocks_input_and_output_visibly_without_receipts() -> Result<()> {
         AnonymousChatTarget::PlainModel,
         &responder,
         &backend,
-        &lease,
+        &budget,
         &PolicyModelConfig::default(),
     ))?;
     let AnonymousChatTurn::Blocked {
         input: false,
         notice: output_notice,
+        ..
     } = output
     else {
         panic!("output must block")
@@ -240,7 +244,7 @@ fn documented_company_policy_classifies_each_nonblocking_turn() -> Result<()> {
         AnonymousChatTarget::HouseMind,
         &responder,
         &backend,
-        &BudgetLease::for_test("classify"),
+        &BudgetGuard::with_reserve_units("classify", 100, 10, BudgetExhaustionPolicy::Suspend),
         &PolicyModelConfig::default(),
     ))?;
     assert!(matches!(result, AnonymousChatTurn::Reply { .. }));
@@ -249,6 +253,231 @@ fn documented_company_policy_classifies_each_nonblocking_turn() -> Result<()> {
         2,
         "classify incoming text and outgoing model text"
     );
+    session.close()?;
+    assert_eq!(base_rows(&vault)?, before);
+    Ok(())
+}
+
+struct SettlingPolicyBackend {
+    budget: BudgetGuard,
+    leases: Mutex<Vec<String>>,
+}
+
+impl LlmBackend for SettlingPolicyBackend {
+    fn generate<'a>(
+        &'a self,
+        _request: LlmRequest,
+        lease: &'a BudgetLease,
+    ) -> LlmGenerateFuture<'a> {
+        let mut response = text_response(r#"{"violation":0,"policy_category":null}"#.to_owned());
+        response.usage.input.total = 3;
+        response.usage.output.total = 3;
+        self.leases
+            .lock()
+            .expect("leases mutex")
+            .push(lease.id().to_owned());
+        self.budget
+            .settle_per_call(lease, &response.usage)
+            .expect("each lease settles");
+        Box::pin(async move { Ok(response) })
+    }
+
+    fn stream<'a>(&'a self, _request: LlmRequest, _lease: &'a BudgetLease) -> LlmStreamResult<'a> {
+        Err(FatalLlmError::InvalidRequest.into())
+    }
+}
+
+#[test]
+fn each_paid_classifier_pass_gets_separate_admission_and_exhaustion_stops_new_calls() -> Result<()>
+{
+    let (_tmp, vault) = temp_vault();
+    put_policy_manifest_bytes(
+        &vault,
+        crate::entity_id::EntityId::now(),
+        &documented_owner_manifest(
+            vec![owner_row_with_action(
+                "owner:spoilers",
+                "Avoid spoilers",
+                "block",
+            )],
+            Vec::new(),
+        ),
+    )?;
+    let before = base_rows(&vault)?;
+    let budget =
+        BudgetGuard::with_reserve_units("anon-metered", 12, 6, BudgetExhaustionPolicy::Suspend);
+    let backend = SettlingPolicyBackend {
+        budget: budget.clone(),
+        leases: Mutex::new(Vec::new()),
+    };
+    let responder = Responder::new("clean answer");
+    let session = vault.open_anonymous_chat("metered", OffRecordBackendClass::Local)?;
+    let config = PolicyModelConfig::default();
+    assert!(matches!(
+        block_on(session.chat(
+            "first question",
+            AnonymousChatTarget::PlainModel,
+            &responder,
+            &backend,
+            &budget,
+            &config
+        ))?,
+        AnonymousChatTurn::Reply { .. }
+    ));
+    let lease_ids = backend.leases.lock().expect("leases mutex").clone();
+    assert_eq!(lease_ids.len(), 2, "both sides called the classifier");
+    assert_ne!(
+        lease_ids[0], lease_ids[1],
+        "one settled lease cannot pay for two calls"
+    );
+    assert_eq!(budget.read().used_units, 12);
+    assert_eq!(budget.read().reserved_units, 0);
+    assert!(matches!(
+        block_on(session.chat(
+            "another question",
+            AnonymousChatTarget::HouseMind,
+            &responder,
+            &backend,
+            &budget,
+            &config
+        ))?,
+        AnonymousChatTurn::Reply { .. }
+    ));
+    assert_eq!(
+        backend.leases.lock().expect("leases mutex").len(),
+        2,
+        "an exhausted owner plane fails open without starting an unadmitted model call"
+    );
+    session.close()?;
+    assert_eq!(base_rows(&vault)?, before);
+    Ok(())
+}
+
+#[test]
+fn input_warning_survives_an_output_block_without_a_vault_write() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    put_policy_manifest_bytes(
+        &vault,
+        crate::entity_id::EntityId::now(),
+        &patterned_owner_manifest(
+            vec![
+                owner_row_with_action("owner:warning", "Flag this", "warn"),
+                owner_row_with_action("owner:spoilers", "Withhold this", "block"),
+            ],
+            vec![
+                owner_pattern("warn.pattern", "warning", "owner:warning", Some("decide")),
+                owner_pattern("block.pattern", "spoiler", "owner:spoilers", Some("decide")),
+            ],
+        ),
+    )?;
+    let before = base_rows(&vault)?;
+    let budget =
+        BudgetGuard::with_reserve_units("anon-warn", 10, 5, BudgetExhaustionPolicy::Suspend);
+    let backend = CountingPolicyBackend::clean();
+    let responder = Responder::new("spoiler in output");
+    let session = vault.open_anonymous_chat("warn-block", OffRecordBackendClass::Local)?;
+    let config = PolicyModelConfig {
+        owner_classifier_mode: RelayClassifierMode::PatternGated,
+        ..PolicyModelConfig::default()
+    };
+    let result = block_on(session.chat(
+        "warning in input",
+        AnonymousChatTarget::PlainModel,
+        &responder,
+        &backend,
+        &budget,
+        &config,
+    ))?;
+    let AnonymousChatTurn::Blocked {
+        input: false,
+        notice,
+        preceding_notices,
+        reason,
+    } = result
+    else {
+        panic!("output must block")
+    };
+    assert_eq!(reason, AnonymousChatBlockReason::Policy);
+    assert_eq!(preceding_notices.len(), 1);
+    assert_eq!(preceding_notices[0].notice_type, "policy_warn");
+    assert_eq!(preceding_notices[0].audience, "user_and_model");
+    assert_eq!(
+        preceding_notices[0].row_ref.as_deref(),
+        Some("owner:warning")
+    );
+    assert_eq!(notice.notice_type, "policy_block");
+    assert_eq!(notice.row_ref.as_deref(), Some("owner:spoilers"));
+    assert_eq!(
+        backend.calls(),
+        0,
+        "hard-rule passes reserve no model budget"
+    );
+    assert_eq!(budget.read().used_units, 0);
+    assert_eq!(budget.read().reserved_units, 0);
+    session.close()?;
+    assert_eq!(base_rows(&vault)?, before);
+    Ok(())
+}
+
+#[test]
+fn anonymous_human_hold_refuses_without_promising_a_queue() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    let mut row = owner_row_with_action("owner:human", "Review this", "warn");
+    let Value::Map(ref mut fields) = row else {
+        unreachable!()
+    };
+    fields.push((Value::from("human"), Value::from("moderator:offline")));
+    put_policy_manifest_bytes(
+        &vault,
+        crate::entity_id::EntityId::now(),
+        &patterned_owner_manifest(
+            vec![row],
+            vec![owner_pattern(
+                "human.pattern",
+                "review-needed",
+                "owner:human",
+                Some("decide"),
+            )],
+        ),
+    )?;
+    let before = base_rows(&vault)?;
+    let session = vault.open_anonymous_chat("human-hold", OffRecordBackendClass::Local)?;
+    let responder = Responder::new("never sent");
+    let backend = CountingPolicyBackend::clean();
+    let budget =
+        BudgetGuard::with_reserve_units("anon-hold", 10, 5, BudgetExhaustionPolicy::Suspend);
+    let config = PolicyModelConfig {
+        owner_hold_notice: Some("Review is queued".to_owned()),
+        ..PolicyModelConfig::default()
+    };
+    let result = block_on(session.chat(
+        "review-needed",
+        AnonymousChatTarget::HouseMind,
+        &responder,
+        &backend,
+        &budget,
+        &config,
+    ))?;
+    let AnonymousChatTurn::Blocked {
+        input: true,
+        notice,
+        preceding_notices,
+        reason,
+    } = result
+    else {
+        panic!("human row must refuse")
+    };
+    assert_eq!(reason, AnonymousChatBlockReason::HumanReviewUnavailable);
+    assert!(preceding_notices.is_empty());
+    assert_eq!(notice.notice_type, "policy_block");
+    assert_eq!(notice.audience, "user_and_model");
+    assert_eq!(notice.row_ref.as_deref(), Some("owner:human"));
+    assert!(
+        !notice.body.contains("queued"),
+        "no phantom human review may be promised"
+    );
+    assert!(responder.calls.lock().expect("calls mutex").is_empty());
+    assert!(vault.policy_holds(5)?.is_empty());
     session.close()?;
     assert_eq!(base_rows(&vault)?, before);
     Ok(())

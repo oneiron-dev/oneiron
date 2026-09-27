@@ -10,7 +10,7 @@ use std::pin::Pin;
 
 use crate::Vault;
 use crate::error::{Error, Result};
-use crate::llm::{BudgetLease, LlmBackend};
+use crate::llm::{BudgetGuard, LlmBackend};
 use crate::policy_model::{PolicyClassifyDecision, PolicyModelConfig};
 use crate::store::GateSystemNoticeRecord;
 
@@ -37,6 +37,13 @@ pub trait AnonymousChatResponder: Send + Sync {
 /// A shared system notice has `audience = user_and_model`. The host must
 /// display the SAME notice to the person and pass it to the model's notice
 /// channel, without inserting either copy into the chat or vault transcript.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AnonymousChatBlockReason {
+    Policy,
+    /// Human review would require a durable queue, which this route cannot create.
+    HumanReviewUnavailable,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AnonymousChatTurn {
     Reply {
@@ -48,6 +55,9 @@ pub enum AnonymousChatTurn {
         /// `true` when the incoming turn was withheld before the model ran.
         input: bool,
         notice: Box<GateSystemNoticeRecord>,
+        /// Reader-facing notices from earlier checks in the same turn.
+        preceding_notices: Vec<GateSystemNoticeRecord>,
+        reason: AnonymousChatBlockReason,
     },
 }
 
@@ -83,7 +93,7 @@ impl AnonymousChatSession<'_> {
         target: AnonymousChatTarget,
         responder: &dyn AnonymousChatResponder,
         policy_backend: &dyn LlmBackend,
-        policy_lease: &BudgetLease,
+        policy_budget: &BudgetGuard,
         policy_config: &PolicyModelConfig,
     ) -> Result<AnonymousChatTurn> {
         let route = self.session.write_route()?;
@@ -94,7 +104,7 @@ impl AnonymousChatSession<'_> {
             text,
             policy_config,
             policy_backend,
-            policy_lease,
+            policy_budget,
         )
         .await?;
         route.revalidate()?;
@@ -105,6 +115,8 @@ impl AnonymousChatSession<'_> {
             return Ok(AnonymousChatTurn::Blocked {
                 input: true,
                 notice: Box::new(notice),
+                preceding_notices: Vec::new(),
+                reason: block_reason(decision),
             });
         }
 
@@ -115,7 +127,7 @@ impl AnonymousChatSession<'_> {
             &content,
             policy_config,
             policy_backend,
-            policy_lease,
+            policy_budget,
         )
         .await?;
         route.revalidate()?;
@@ -129,6 +141,8 @@ impl AnonymousChatSession<'_> {
             return Ok(AnonymousChatTurn::Blocked {
                 input: false,
                 notice: Box::new(notice),
+                preceding_notices: notices,
+                reason: block_reason(decision),
             });
         }
         notices.append(&mut output_notices);
@@ -148,4 +162,12 @@ const fn halts(decision: PolicyClassifyDecision) -> bool {
             | PolicyClassifyDecision::RouteToHelp
             | PolicyClassifyDecision::Hold
     )
+}
+
+const fn block_reason(decision: PolicyClassifyDecision) -> AnonymousChatBlockReason {
+    if matches!(decision, PolicyClassifyDecision::Hold) {
+        AnonymousChatBlockReason::HumanReviewUnavailable
+    } else {
+        AnonymousChatBlockReason::Policy
+    }
 }
