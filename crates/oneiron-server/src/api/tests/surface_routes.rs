@@ -54,6 +54,10 @@ async fn context_board_hides_fresh_default_policy_manifest() {
                 Value::from(4)
             ),
             (
+                oneiron::registry::ENTITY_TYPE_SKILL_HUB.to_string(),
+                Value::from(1)
+            ),
+            (
                 oneiron::registry::ENTITY_TYPE_AGENT_DEF.to_string(),
                 Value::from(7)
             ),
