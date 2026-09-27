@@ -2365,7 +2365,7 @@
      "surface": {
       "const": 4,
       "enum": 1,
-      "mod": 2,
+      "mod": 3,
       "re-export": 4,
       "type": 1
      }
@@ -2408,9 +2408,43 @@
      "surface": {
       "crate-vis": 2,
       "enum": 4,
-      "fn": 5,
+      "fn": 6,
       "struct": 8
      }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "BudgetLease",
+      "CampaignConfig",
+      "CampaignKnobs",
+      "DecideRules",
+      "Decision",
+      "Measurement",
+      "MergeCrossover",
+      "MetricAxis",
+      "MetricDirection",
+      "MetricRole",
+      "MetricSet",
+      "SearchAxis",
+      "Verdict"
+     ],
+     "path": "src/autoreason_campaign/general.rs",
+     "purpose": "Config-only contract for skill-driven campaigns",
+     "surface": {
+      "enum": 4,
+      "fn": 5,
+      "struct": 9
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/autoreason_campaign/general/tests.rs",
+     "purpose": "—",
+     "surface": {}
     },
     {
      "bucket": "s",
@@ -19346,7 +19380,7 @@
      "surface": {
       "crate-vis": 29,
       "mod": 168,
-      "re-export": 71
+      "re-export": 72
      }
     },
     {
@@ -34081,7 +34115,7 @@
      "purpose": "AUTHORITY_LOG record substrate"
     },
     "autoreason_campaign": {
-     "files": 9,
+     "files": 11,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "file+dir",
@@ -35315,8 +35349,8 @@
    },
    "over_bar": 9,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2084,
-   "test_files": 716
+   "source_files": 2085,
+   "test_files": 717
   },
   "oneiron-android": {
    "files": [
