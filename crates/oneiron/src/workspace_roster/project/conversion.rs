@@ -2,7 +2,7 @@
 use super::*;
 use crate::edge::EdgeKind;
 use crate::gate::{LeaderFallback, RosterSelection};
-use crate::registry::{ENTITY_TYPE_MESSAGE, ENTITY_TYPE_TASK};
+use crate::registry::{ENTITY_TYPE_AGENT_DEF, ENTITY_TYPE_MESSAGE, ENTITY_TYPE_TASK};
 use crate::workspace_roster::rooms;
 
 /// Renderer-neutral origin and surrounding hangs of one source message.
@@ -200,6 +200,12 @@ impl Vault {
             let source_project_id = EntityId::from_hex(&source.project_id)?;
             let source_project: ProjectRecord =
                 record(&self.store, txn, source_project_id, kind)?.ok_or_else(invalid)?;
+            // The card's confirmed leader, else the caller's explicit one, is
+            // final. Only an unchosen leader falls back to the task holder,
+            // then the room host.
+            let confirmed = card
+                .map(|(intent, _)| EntityId::from_hex(&intent.leader_agent_def_ref))
+                .transpose()?;
             let mut holder = None;
             let mut tasks = Vec::new();
             for raw in &row.task_ids {
@@ -207,7 +213,7 @@ impl Vault {
                 if self.get_entity_type_in_txn(txn, &id)? != Some(ENTITY_TYPE_TASK) {
                     return Err(invalid());
                 }
-                if holder.is_none() {
+                if confirmed.is_none() && holder.is_none() {
                     holder = crate::task_verb::open_thread_task_holder_in(
                         self,
                         txn,
@@ -217,16 +223,24 @@ impl Vault {
                 }
                 tasks.push(raw.clone());
             }
-            let default_holder = match policy.leader_fallback {
+            let fallback = match policy.leader_fallback {
                 LeaderFallback::TaskHolderThenSourceLeader => holder,
                 LeaderFallback::SourceLeaderOnly => None,
             };
-            let leader = leader
-                .or(default_holder)
-                .unwrap_or(EntityId::from_hex(&source_project.leader)?);
-            if self.get_entity_type_in_txn(txn, &leader)?.is_none()
-                || !policy.allows_leader_override(leader, &source_project.roster, holder)
-            {
+            let leader = match confirmed.or(leader).or(fallback) {
+                Some(leader) => leader,
+                None => EntityId::from_hex(&source_project.leader)?,
+            };
+            // The row checks that final leader once, before anything is written.
+            let in_roster = source_project.roster.contains(&leader.to_hex());
+            let allowed = if confirmed.is_some() {
+                self.get_entity_type_in_txn(txn, &leader)? == Some(ENTITY_TYPE_AGENT_DEF)
+                    && (policy.allow_holder_override || in_roster)
+            } else {
+                self.get_entity_type_in_txn(txn, &leader)?.is_some()
+                    && policy.allows_leader_override(leader, &source_project.roster, holder)
+            };
+            if !allowed {
                 return Err(invalid());
             }
             let mut project = ProjectRecord::new(
@@ -249,10 +263,6 @@ impl Vault {
             project.origin_at = Some(row.at);
             if let Some((intent, _)) = card {
                 self.apply_card_terms_in_txn(txn, intent, project_id, now, &mut project)?;
-                let chosen = EntityId::from_hex(&project.leader)?;
-                if !policy.allow_holder_override && !source.member_ids.contains(&chosen.to_hex()) {
-                    return Err(invalid());
-                }
                 if policy.roster_selection == RosterSelection::LeaderOnly
                     && project.board.iter().any(|id| id != &project.leader)
                 {
@@ -290,12 +300,7 @@ impl Vault {
         now: u64,
         project: &mut ProjectRecord,
     ) -> Result<()> {
-        use crate::registry::{ENTITY_TYPE_AGENT_DEF, ENTITY_TYPE_PERSON, ENTITY_TYPE_SKILL};
-        let leader = EntityId::from_hex(&intent.leader_agent_def_ref)?;
-        if self.get_entity_type_in_txn(txn, &leader)? != Some(ENTITY_TYPE_AGENT_DEF) {
-            return Err(invalid());
-        }
-        project.leader = leader.to_hex();
+        use crate::registry::{ENTITY_TYPE_PERSON, ENTITY_TYPE_SKILL};
         project.board.clear();
         for value in &intent.board_human_refs {
             let id = EntityId::from_hex(value)?;
@@ -306,9 +311,6 @@ impl Vault {
             if !project.roster.contains(&id.to_hex()) {
                 project.roster.push(id.to_hex());
             }
-        }
-        if !project.roster.contains(&leader.to_hex()) {
-            project.roster.push(leader.to_hex());
         }
         project.why = Some(intent.goal.why.clone());
         project.goal_record = Some(ProjectGoalRecord {

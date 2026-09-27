@@ -123,6 +123,7 @@ pub(crate) fn reconcile_project_rooms(
         return Ok(());
     };
     let mut room_ops = Vec::new();
+    let mut origins = Vec::new();
     for id in touched {
         let Some(raw) = store.entities.get(txn, id.as_bytes())? else {
             continue;
@@ -176,15 +177,7 @@ pub(crate) fn reconcile_project_rooms(
             )?;
             pending.extend(parent_body.parents);
         }
-        let policy: crate::gate::ProjectConversionPolicy =
-            crate::gate::resolve_policy_manifest(store, txn)?
-                .project_conversion_policy()
-                .ok_or_else(invalid)?;
-        if body.tasks.len() > policy.max_tasks {
-            return Err(invalid());
-        }
-        origin::validate_binding(store, txn, &body)?;
-        origin::index_origin(store, txn, *id, &body)?;
+        origins.push((*id, body.clone()));
         // The body is the authority for the project DAG. Materialize its
         // `belongs_to` links in the same batch as the home room, so PPR and
         // graph readers see both parents (or neither on a rejected write).
@@ -318,6 +311,12 @@ pub(crate) fn reconcile_project_rooms(
         {
             return Err(invalid_room());
         }
+    }
+    // Origins are proved against the batch's final state: every derived room
+    // above has landed, so a source roster edit in the same batch is seen.
+    for (id, body) in &origins {
+        origin::validate_binding(store, txn, body)?;
+        origin::index_origin(store, txn, *id, body)?;
     }
     Ok(())
 }

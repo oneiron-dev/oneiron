@@ -247,3 +247,193 @@ fn replicated_project_body_indexes_origin_and_blocks_later_local_conversion() ->
     );
     Ok(())
 }
+
+/// Installs one locally authored conversion row that narrows only its task cap.
+fn narrow_conversion_task_cap(vault: &Vault, max_tasks: u64) -> Result<()> {
+    let manifest = rmpv::Value::Map(vec![
+        (
+            rmpv::Value::from("schema_version"),
+            rmpv::Value::from("1.2"),
+        ),
+        (
+            rmpv::Value::from("pack_id"),
+            rmpv::Value::from("project-conversion-cap-test"),
+        ),
+        (rmpv::Value::from("pack_version"), rmpv::Value::from("v1")),
+        (
+            rmpv::Value::from("min_engine_version"),
+            rmpv::Value::from(env!("CARGO_PKG_VERSION")),
+        ),
+        (rmpv::Value::from("defaults"), rmpv::Value::Map(vec![])),
+        (rmpv::Value::from("rules"), rmpv::Value::Array(vec![])),
+        (
+            rmpv::Value::from("actor_ceilings"),
+            rmpv::Value::Array(vec![]),
+        ),
+        (
+            rmpv::Value::from("project_conversion"),
+            rmpv::Value::Map(vec![
+                (
+                    rmpv::Value::from("precedence"),
+                    rmpv::Value::from("nested_narrowing_holder_override_capped_vault"),
+                ),
+                (
+                    rmpv::Value::from("leader_fallback"),
+                    rmpv::Value::from("task_holder_then_source_leader"),
+                ),
+                (
+                    rmpv::Value::from("roster_selection"),
+                    rmpv::Value::from("inherit_source"),
+                ),
+                (rmpv::Value::from("max_tasks"), rmpv::Value::from(max_tasks)),
+                (
+                    rmpv::Value::from("task_holder_fallback"),
+                    rmpv::Value::from("assignee_then_owner"),
+                ),
+                (
+                    rmpv::Value::from("allow_holder_override"),
+                    rmpv::Value::Boolean(true),
+                ),
+            ]),
+        ),
+    ]);
+    let mut bytes = Vec::new();
+    rmpv::encode::write_value(&mut bytes, &manifest).expect("policy encode");
+    crate::test_util::put_policy_manifest_bytes(vault, EntityId::now(), &bytes)
+}
+
+#[test]
+fn same_batch_source_roster_and_child_edit_commit_in_both_orders() -> Result<()> {
+    let (_dir, vault, room, thread, message, _host, source_id) = room_fixture()?;
+    let child_id = EntityId::now();
+    vault.convert_thread_to_project(room, thread, message, child_id, None, 3)?;
+    let kind = vault.project_type_byte()?;
+    for (at, source_first) in [(4_u64, true), (5, false)] {
+        let member = EntityId::now();
+        vault.put_entity(
+            &member,
+            ENTITY_TYPE_PERSON,
+            TimeRange { start: 1, end: 1 },
+            1,
+            b"member",
+        )?;
+        let mut source = vault.project(source_id)?.expect("source project");
+        source.roster.push(member.to_hex());
+        let mut child = vault.project(child_id)?.expect("converted child");
+        child.roster.push(member.to_hex());
+        let (source_bytes, child_bytes) = (encode(&source)?, encode(&child)?);
+        let when = TimeRange { start: at, end: at };
+        let batch = vault.batch();
+        let batch = if source_first {
+            batch.put(&source_id, kind, when, at, &source_bytes).put(
+                &child_id,
+                kind,
+                when,
+                at,
+                &child_bytes,
+            )
+        } else {
+            batch.put(&child_id, kind, when, at, &child_bytes).put(
+                &source_id,
+                kind,
+                when,
+                at,
+                &source_bytes,
+            )
+        };
+        batch.commit()?;
+        assert_eq!(vault.project(source_id)?, Some(source));
+        assert_eq!(vault.project(child_id)?, Some(child));
+    }
+    assert_eq!(vault.thread_project(room, thread)?, Some(child_id));
+    Ok(())
+}
+
+#[test]
+fn conversion_task_cap_does_not_limit_ordinary_project_edit_or_replay() -> Result<()> {
+    let (_dir, vault, room, thread, message, host, source_id) = room_fixture()?;
+    let worker = EntityId::from_bytes([0xE1; 16])?;
+    vault.put_entity(
+        &worker,
+        ENTITY_TYPE_PERSON,
+        TimeRange { start: 1, end: 1 },
+        1,
+        b"worker",
+    )?;
+    let task = |n: u64| {
+        vault
+            .memory(worker, EdgeActorClass::Agent)
+            .tasks_create(&TaskCreateSpec::new(
+                rmpv::Value::from("work"),
+                Some(format!("task {n}")),
+                None,
+                Some(n),
+            ))
+            .expect("task")
+            .task_ref
+            .expect("effected")
+    };
+    let source = vault.project(source_id)?.expect("source project");
+    let ordinary_id = EntityId::now();
+    let mut ordinary = ProjectRecord::new(
+        ordinary_id,
+        Some(source_id),
+        EntityId::from_hex(&source.claims_scope_ref)?,
+        host,
+    );
+    ordinary.tasks = vec![task(2).to_hex(), task(3).to_hex()];
+    vault.put_project(ordinary_id, &ordinary, 3)?;
+    vault.bind_room_thread_task(room, thread, task(4))?;
+    vault.bind_room_thread_task(room, thread, task(5))?;
+    narrow_conversion_task_cap(&vault, 1)?;
+
+    // An ordinary roster and goal edit is not a conversion.
+    let member = EntityId::now();
+    vault.put_entity(
+        &member,
+        ENTITY_TYPE_PERSON,
+        TimeRange { start: 1, end: 1 },
+        1,
+        b"member",
+    )?;
+    ordinary.roster.push(member.to_hex());
+    ordinary.why = Some("Keep shipping".into());
+    ordinary.goal_record = Some(ProjectGoalRecord {
+        project_id: ordinary_id.to_hex(),
+        goal: "Ship the release".into(),
+        why: "Keep shipping".into(),
+        axes: vec!["pace".into()],
+    });
+    vault.put_project(ordinary_id, &ordinary, 4)?;
+    assert_eq!(vault.project(ordinary_id)?, Some(ordinary.clone()));
+
+    // Nor is a body replayed from another device.
+    ordinary
+        .goal_record
+        .as_mut()
+        .expect("goal record")
+        .axes
+        .push("quality".into());
+    vault
+        .batch()
+        .put_replicated(
+            &ordinary_id,
+            vault.project_type_byte()?,
+            TimeRange { start: 5, end: 5 },
+            5,
+            &encode(&ordinary)?,
+        )
+        .commit()?;
+    assert_eq!(vault.project(ordinary_id)?, Some(ordinary));
+
+    // Converting the two-task thread under the same row still rejects.
+    let refused = EntityId::now();
+    assert!(
+        vault
+            .convert_thread_to_project(room, thread, message, refused, None, 6)
+            .is_err()
+    );
+    assert!(vault.project(refused)?.is_none());
+    assert!(vault.thread_project(room, thread)?.is_none());
+    Ok(())
+}

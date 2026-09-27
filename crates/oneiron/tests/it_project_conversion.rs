@@ -5,7 +5,7 @@ use oneiron::genui::{
     PROJECT_PROPOSAL_MINT_ACTION_ID, ProjectGoalDraft, ProjectProposalCard, ProjectProposalPicks,
 };
 use oneiron::memory::{WitnessAuthor, WitnessMessage, WitnessTurn};
-use oneiron::registry::ENTITY_TYPE_PERSON;
+use oneiron::registry::{ENTITY_TYPE_PERSON, ENTITY_TYPE_POLICY_MANIFEST, ENTITY_TYPE_SKILL};
 use oneiron::skill::{SkillLifecycle, SkillRecord};
 use oneiron::store::GateDecisionId;
 use oneiron::task_verb::TaskCreateSpec;
@@ -485,5 +485,293 @@ fn generic_project_write_proves_origin_and_prevents_duplicate_conversion() -> Re
     // Common delete cleans the mapping; a new typed conversion can use the origin.
     assert!(vault.delete_entity(&id)?);
     assert_eq!(vault.thread_project(room, thread)?, None);
+    Ok(())
+}
+
+/// Forbid the task-holder override in this fixture's shipped conversion row.
+/// Only the closed fixture store is edited; no policy door is added.
+fn forbid_holder_override(vault: Vault, path: &std::path::Path) -> Vault {
+    use rmpv::Value;
+    let config = oneiron::VaultConfig::default();
+    let manifests = vault
+        .entities_by_type(ENTITY_TYPE_POLICY_MANIFEST)
+        .expect("policy ids");
+    assert_eq!(manifests.len(), 1, "one seeded default policy");
+    let id = manifests[0];
+    let body = vault.get(&id).expect("policy body").expect("policy");
+    let mut raw = vault.get_raw(&id).expect("policy record").expect("record");
+    let mut manifest = rmpv::decode::read_value(&mut body.as_slice()).expect("decode policy");
+    let Value::Map(entries) = &mut manifest else {
+        panic!("policy is a map");
+    };
+    let Some(Value::Map(row)) = entries
+        .iter_mut()
+        .find_map(|(key, value)| (key.as_str() == Some("project_conversion")).then_some(value))
+    else {
+        panic!("shipped conversion row");
+    };
+    for (key, value) in row.iter_mut() {
+        if key.as_str() == Some("allow_holder_override") {
+            *value = Value::Boolean(false);
+        }
+    }
+    let mut encoded = Vec::new();
+    rmpv::encode::write_value(&mut encoded, &manifest).expect("encode policy");
+    raw.truncate(raw.len() - body.len());
+    raw.extend_from_slice(&encoded);
+    drop(vault);
+    // SAFETY: the only Vault handle is dropped. This TempDir store is opened by
+    // no other thread, and this Env closes before the Vault reopens.
+    let env = unsafe {
+        heed::EnvOpenOptions::new()
+            .map_size(config.map_size)
+            .max_readers(config.max_readers)
+            .max_dbs(oneiron::store::MAX_DBS)
+            .open(path)
+            .expect("open the closed fixture store")
+    };
+    let mut wtxn = env.write_txn().expect("policy transaction");
+    let entities: heed::Database<heed::types::Bytes, heed::types::Bytes> = env
+        .open_database(&wtxn, Some("entities"))
+        .expect("open entities")
+        .expect("entities exist");
+    entities
+        .put(&mut wtxn, id.as_bytes(), &raw)
+        .expect("store policy");
+    // The fixture authored these bytes locally, so they keep the trusted stamp.
+    let sync_state: heed::Database<heed::types::Str, heed::types::Bytes> = env
+        .open_database(&wtxn, Some("sync_state"))
+        .expect("open sync state")
+        .expect("sync state exists");
+    sync_state
+        .put(
+            &mut wtxn,
+            &format!("manifest:trusted:{}", id.to_hex()),
+            blake3::hash(&encoded).as_bytes(),
+        )
+        .expect("stamp policy");
+    wtxn.commit().expect("commit policy");
+    let _closing = env.prepare_for_closing();
+    Vault::open(path, config).expect("reopen the fixture vault")
+}
+
+struct HeldThread {
+    dir: tempfile::TempDir,
+    vault: Vault,
+    owner: EntityId,
+    source_id: EntityId,
+    source: ProjectRecord,
+    room: EntityId,
+    thread: EntityId,
+    message: EntityId,
+    task: EntityId,
+    leader: EntityId,
+}
+
+/// A thread whose bound open task is held by an actor outside the source
+/// roster, under a row that forbids that holder as leader.
+fn held_thread(leader_in_roster: bool) -> Result<HeldThread> {
+    let dir = tempfile::tempdir()?;
+    let vault = Vault::open(dir.path(), oneiron::VaultConfig::default())?;
+    let host = EntityId::now();
+    let owner = EntityId::now();
+    // The first-party connector actor may create tasks under the shipped policy.
+    let holder = EntityId::from_bytes([0xE1; 16])?;
+    for id in [host, owner, holder] {
+        vault.put_entity(
+            &id,
+            ENTITY_TYPE_PERSON,
+            TimeRange { start: 1, end: 1 },
+            1,
+            b"person",
+        )?;
+    }
+    let root = vault.root_project()?;
+    let leader = EntityId::from_hex(&vault.project(root)?.expect("root").leader)?;
+    let source_id = EntityId::now();
+    let mut source = ProjectRecord::new(source_id, Some(root), root, host);
+    source.roster.push(owner.to_hex());
+    if leader_in_roster {
+        source.roster.push(leader.to_hex());
+    }
+    vault.put_project(source_id, &source, 1)?;
+    let room = EntityId::from_hex(&source.home_room)?;
+    let trunk = EntityId::now();
+    speak(&vault, host, room, trunk, EntityId::now(), None);
+    let thread = EntityId::now();
+    let message = EntityId::now();
+    speak(&vault, host, room, thread, message, Some(trunk));
+    let task = vault
+        .memory(holder, EdgeActorClass::Agent)
+        .tasks_create(&TaskCreateSpec::new(
+            rmpv::Value::from("work"),
+            Some("task".into()),
+            None,
+            Some(3),
+        ))
+        .expect("task created")
+        .task_ref
+        .expect("open task effects");
+    vault.bind_room_thread_task(room, thread, task)?;
+    let vault = forbid_holder_override(vault, dir.path());
+    Ok(HeldThread {
+        dir,
+        vault,
+        owner,
+        source_id,
+        source,
+        room,
+        thread,
+        message,
+        task,
+        leader,
+    })
+}
+
+fn mint_card(
+    message: EntityId,
+    leader: EntityId,
+    owner: EntityId,
+    skills: Vec<String>,
+) -> Result<ProjectProposalCard> {
+    ProjectProposalCard::new(
+        "proposal-1",
+        "principal:owner",
+        message.to_hex(),
+        ProjectGoalDraft {
+            goal: "Build index".into(),
+            why: "Find evidence".into(),
+            axes: vec!["coverage".into()],
+        },
+        ProjectProposalPicks {
+            leader_agent_def_ref: leader.to_hex(),
+            board_human_refs: vec![owner.to_hex()],
+            budget_share_bps: 1250,
+            starting_skill_refs: skills,
+        },
+    )
+}
+
+fn mint_request() -> Result<ConsentActionRequest> {
+    ConsentActionRequest::new(
+        "proposal-1",
+        PROJECT_PROPOSAL_MINT_ACTION_ID,
+        ConsentActionKind::ProjectMint,
+        ConsentActorIdentity::SurfaceActor {
+            actor_ref: "principal:owner".into(),
+        },
+        ConsentSurface::CompanionConversation,
+        4,
+    )
+}
+
+#[test]
+fn card_confirmed_leader_skips_task_holder_fallback() -> Result<()> {
+    let HeldThread {
+        dir: _dir,
+        vault,
+        owner,
+        room,
+        thread,
+        message,
+        task,
+        leader,
+        ..
+    } = held_thread(true)?;
+    // The row is in force: the unchosen fallback, the outside holder, is refused.
+    assert!(
+        vault
+            .convert_thread_to_project(room, thread, message, EntityId::now(), None, 4)
+            .is_err()
+    );
+    let proof = vault.authenticate_owner(owner, "principal:owner", true, GateDecisionId::now())?;
+    let id = EntityId::now();
+    let project = mint_card(message, leader, owner, vec![])?
+        .on_thread(room, thread)?
+        .convert_thread(&vault, &mint_request()?, &proof, id, 4)?;
+    assert_eq!(project.leader, leader.to_hex());
+    assert_eq!(project.tasks, vec![task.to_hex()]);
+    assert_eq!(vault.project(id)?, Some(project));
+    assert_eq!(vault.thread_project(room, thread)?, Some(id));
+    Ok(())
+}
+
+#[test]
+fn disallowed_final_leader_rejects_with_no_writes() -> Result<()> {
+    let HeldThread {
+        dir: _dir,
+        vault,
+        owner,
+        source_id,
+        mut source,
+        room,
+        thread,
+        message,
+        task,
+        leader,
+    } = held_thread(false)?;
+    let skill = EntityId::now();
+    vault.put_skill_record(
+        &skill,
+        &SkillRecord::new(
+            "project.seed.skill",
+            "source skill",
+            "1",
+            ClaimApprovalStatus::Approved,
+            SkillLifecycle::Candidate,
+            ClaimSource::UserStated,
+            1.0,
+            false,
+            true,
+            vec![],
+            rmpv::Value::Map(vec![(
+                rmpv::Value::from("source"),
+                rmpv::Value::from("owner"),
+            )]),
+        ),
+        TimeRange { start: 1, end: 1 },
+        1,
+    )?;
+    let skills = vault.entities_by_type(ENTITY_TYPE_SKILL)?.len();
+    let proof = vault.authenticate_owner(owner, "principal:owner", true, GateDecisionId::now())?;
+    let card = mint_card(message, leader, owner, vec![skill.to_hex()])?.on_thread(room, thread)?;
+    let request = mint_request()?;
+
+    // The confirmed leader is outside the source roster and is not the holder.
+    let rejected = EntityId::now();
+    assert!(
+        card.convert_thread(&vault, &request, &proof, rejected, 4)
+            .is_err()
+    );
+    assert!(vault.project(rejected)?.is_none(), "no PROJECT");
+    let home_room = ProjectRecord::new(rejected, None, source_id, leader).home_room;
+    assert!(
+        vault.get(&EntityId::from_hex(&home_room)?)?.is_none(),
+        "no home room"
+    );
+    let row = vault
+        .memory(owner, EdgeActorClass::Human)
+        .rooms_messages(room)
+        .expect("source room")
+        .into_iter()
+        .find(|turn_row| turn_row.turn_id == thread.to_hex())
+        .expect("source thread");
+    assert!(row.converted_project.is_none(), "no fold marker");
+    assert_eq!(row.task_ids, vec![task.to_hex()], "no task move");
+    assert_eq!(
+        vault.entities_by_type(ENTITY_TYPE_SKILL)?.len(),
+        skills,
+        "no skill fork"
+    );
+    assert!(vault.thread_project(room, thread)?.is_none());
+
+    // Once the source roster admits that leader, the untouched thread converts.
+    source.roster.push(leader.to_hex());
+    vault.put_project(source_id, &source, 5)?;
+    let id = EntityId::now();
+    let project = card.convert_thread(&vault, &request, &proof, id, 6)?;
+    assert_eq!(project.leader, leader.to_hex());
+    assert_eq!(project.tasks, vec![task.to_hex()]);
+    assert_eq!(project.skill_forks.len(), 1);
     Ok(())
 }
