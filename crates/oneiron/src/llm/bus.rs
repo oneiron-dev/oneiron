@@ -139,6 +139,69 @@ impl LlmEventBus {
         }
         Ok(())
     }
+    /// Drive the raw producer and session-local subscriber stages together. The
+    /// host supplies a clock and a timer stream (including ticks during silence).
+    /// Raw listeners still receive exact events; only a committed Done reaches
+    /// stages. On source/stage failure subscribers close without a fake terminal.
+    pub async fn drive_with<T, E>(
+        &mut self,
+        mut stream: LlmStream<'_>,
+        mut ticks: T,
+        mut now_ms: impl FnMut() -> u64,
+        mut on_input: impl FnMut(Option<&LlmStreamEvent>, u64) -> Result<(), E>,
+    ) -> Result<(), E>
+    where
+        T: Stream<Item = u64> + Unpin,
+        E: From<super::LlmError>,
+    {
+        let mut ticks_open = true;
+        loop {
+            let item = std::future::poll_fn(|cx| {
+                match Pin::new(&mut stream).poll_next(cx) {
+                    Poll::Ready(Some(event)) => return Poll::Ready(Some(Err(event))),
+                    Poll::Ready(None) => return Poll::Ready(None),
+                    Poll::Pending => {}
+                }
+                if ticks_open {
+                    match Pin::new(&mut ticks).poll_next(cx) {
+                        Poll::Ready(Some(tick)) => return Poll::Ready(Some(Ok(tick))),
+                        Poll::Ready(None) => ticks_open = false,
+                        Poll::Pending => {}
+                    }
+                }
+                Poll::Pending
+            })
+            .await;
+            match item {
+                Some(Ok(tick)) => {
+                    if let Err(error) = on_input(None, tick) {
+                        self.close_without_terminal();
+                        return Err(error);
+                    }
+                }
+                Some(Err(Ok(event))) => {
+                    let terminal = matches!(event, LlmStreamEvent::Done { .. });
+                    if let Err(error) = self.publish(event.clone()) {
+                        self.close_without_terminal();
+                        return Err(error.into());
+                    }
+                    if let Err(error) = on_input(Some(&event), now_ms()) {
+                        self.close_without_terminal();
+                        return Err(error);
+                    }
+                    if terminal {
+                        return Ok(());
+                    }
+                }
+                Some(Err(Err(error))) => {
+                    self.close_without_terminal();
+                    return Err(error.into());
+                }
+                None => return Ok(()),
+            }
+        }
+    }
+
     fn close_without_terminal(&mut self) {
         self.closed = true;
         for weak in &self.subscribers {
