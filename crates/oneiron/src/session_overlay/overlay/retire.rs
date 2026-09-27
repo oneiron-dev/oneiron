@@ -1,6 +1,8 @@
 //! Promoted-closure retirement reusing Store key builders.
 use std::sync::Arc;
 
+use zeroize::Zeroizing;
+
 use crate::batch::{BatchOp, LONG_INTERVAL_THRESHOLD_SECS};
 use crate::error::{Error, Result};
 use crate::store::Store;
@@ -109,7 +111,7 @@ impl SessionOverlay {
             let forward_key = match next.keyspaces[OverlayKeyspace::ShortIdsReverse.slot()].as_ref()
             {
                 KeyspaceState::Single { rows, .. } => match rows.get(id.as_bytes().as_slice()) {
-                    Some(OverlayValue::Present(value)) => Some(value.clone()),
+                    Some(OverlayValue::Present(value)) => Some(Zeroizing::new(value.clone())),
                     Some(OverlayValue::Tombstone) | None => None,
                 },
                 KeyspaceState::DupSort { .. } => None,

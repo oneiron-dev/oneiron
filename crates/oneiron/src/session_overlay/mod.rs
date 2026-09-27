@@ -13,9 +13,13 @@ mod short_id;
 mod snapshot;
 
 #[cfg(test)]
+pub(crate) mod hygiene_tests;
+#[cfg(test)]
 mod tests;
 
-pub(crate) use self::journal::{JournalEntry, JournalRole, JournalScope, PromotePlan};
+pub(crate) use self::journal::{
+    JournalEntry, JournalRole, JournalScope, PromotePlan, zeroize_batch_op_payload,
+};
 pub(crate) use self::keyspace::OverlayKeyspace;
 pub(crate) use self::overlay::{SessionOverlay, TxnSegmentGuard};
 pub(crate) use self::route::{RouteTarget, SessionWriteRoute};

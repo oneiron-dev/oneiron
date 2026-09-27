@@ -764,7 +764,14 @@ fn session_short_ids_are_unique_and_outside_the_base_namespace() -> Result<()> {
     let mut seen = BTreeSet::new();
     for index in 0_u8..5 {
         let id = EntityId::now();
-        let (short_id, content_hash) = overlay.alloc_session_short_id(&id, &[index])?;
+        let (short_id, content_hash) = if index == 0 {
+            super::hygiene_tests::observe_short_id_scratch(
+                super::hygiene_tests::ShortIdScratch::NewForwardKey,
+                || overlay.alloc_session_short_id(&id, &[index]),
+            )?
+        } else {
+            overlay.alloc_session_short_id(&id, &[index])?
+        };
 
         assert!(
             !parses_as_base_short_id(&short_id),
@@ -807,7 +814,10 @@ fn reallocating_keeps_the_alias_and_retires_the_stale_forward_row() -> Result<()
 
     let id = EntityId::now();
     let (first, first_hash) = overlay.alloc_session_short_id(&id, b"body-one")?;
-    let (second, second_hash) = overlay.alloc_session_short_id(&id, b"body-two")?;
+    let (second, second_hash) = super::hygiene_tests::observe_short_id_scratch(
+        super::hygiene_tests::ShortIdScratch::StaleForwardKey,
+        || overlay.alloc_session_short_id(&id, b"body-two"),
+    )?;
 
     assert_eq!(first, second, "the room alias must be stable for an entity");
     assert_ne!(
@@ -841,6 +851,101 @@ fn reallocating_keeps_the_alias_and_retires_the_stale_forward_row() -> Result<()
         "the refreshed forward row is missing"
     );
 
-    drop(segment);
+    drop(snapshot);
+    segment.commit()?;
+    assert_ne!(second_hash, session_short_id_content_hash(b"body-three"));
+    // No txn segment: the stale-key delete fails before staging. Both the
+    // encoded key and the borrowed alias must scrub on this error exit.
+    let failure = super::hygiene_tests::observe_short_id_scratch(
+        super::hygiene_tests::ShortIdScratch::StaleForwardKey,
+        || overlay.alloc_session_short_id(&id, b"body-three"),
+    );
+    assert!(matches!(failure, Err(Error::InvariantViolation(_))));
+    let failure = super::hygiene_tests::observe_short_id_scratch(
+        super::hygiene_tests::ShortIdScratch::Alias,
+        || overlay.alloc_session_short_id(&id, b"body-three"),
+    );
+    assert!(matches!(failure, Err(Error::InvariantViolation(_))));
+    Ok(())
+}
+
+#[test]
+fn closed_overlay_retains_taint_until_registry_release_without_wiping_live_state() -> Result<()> {
+    let overlay = SessionOverlay::new(4096);
+    let id = EntityId::now();
+    let segment = overlay.install_txn_segment()?;
+    overlay.put(OverlayKeyspace::Entities, id.as_bytes(), b"private-row")?;
+    segment.commit()?;
+    // Closing does not scrub an Arc also held by the registry taint guard.
+    assert!(overlay.contains_entity(&id)?);
+    overlay.close()?;
+    assert!(overlay.contains_entity(&id)?);
+    assert!(matches!(
+        overlay.snapshot(),
+        Err(Error::OffRecord(
+            OffRecordError::OffRecordOverlayLeaseClosed { .. }
+        ))
+    ));
+    Ok(())
+}
+
+#[test]
+fn journal_refuses_payloads_outside_its_scrubbed_vocabulary() -> Result<()> {
+    let overlay = SessionOverlay::new(4096);
+    let segment = overlay.install_txn_segment()?;
+    let scope = JournalScope::new(EntityId::now(), EntityId::now());
+    let result = overlay.stage_journal_entry(journal_entry(
+        scope,
+        JournalRole::TurnOwnedArtifact,
+        BatchOp::ReconcileLexicalQueryHints {
+            source: EntityId::now(),
+            keep: Vec::new(),
+        },
+    ));
+    assert!(matches!(result, Err(Error::InvariantViolation(_))));
+    segment.commit()?;
+    assert!(overlay.snapshot()?.journal_ops(scope).is_empty());
+    Ok(())
+}
+
+#[test]
+fn live_snapshot_defers_old_body_scrub_until_its_final_release() -> Result<()> {
+    use super::hygiene_tests::{allocation, observe_drop};
+    use super::keyspace::{KeyspaceState, OverlayValue};
+
+    let overlay = SessionOverlay::new(4096);
+    let id = EntityId::now();
+    let segment = overlay.install_txn_segment()?;
+    overlay.put(
+        OverlayKeyspace::Entities,
+        id.as_bytes(),
+        b"snapshot-private-body",
+    )?;
+    segment.commit()?;
+    let snapshot = overlay.snapshot()?;
+    let KeyspaceState::Single { rows, .. } =
+        snapshot.state.keyspaces[OverlayKeyspace::Entities.slot()].as_ref()
+    else {
+        panic!("entities are single valued");
+    };
+    let Some(OverlayValue::Present(bytes)) = rows.get(id.as_bytes().as_slice()) else {
+        panic!("snapshot owns old body");
+    };
+    let watched = allocation(bytes);
+    let segment = overlay.install_txn_segment()?;
+    observe_drop(watched, false, || {
+        overlay
+            .put(
+                OverlayKeyspace::Entities,
+                id.as_bytes(),
+                b"replacement-body",
+            )
+            .unwrap();
+        segment.commit().unwrap();
+    });
+    assert!(
+        matches!(snapshot.lookup_single(OverlayKeyspace::Entities, id.as_bytes()), SnapshotLookup::Present(ref value) if value == b"snapshot-private-body")
+    );
+    observe_drop(watched, true, || drop(snapshot));
     Ok(())
 }
