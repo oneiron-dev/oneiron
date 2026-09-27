@@ -67,6 +67,14 @@ fn register(vault: &Vault, name: &str, locality: ModelLocality, facet: &str) -> 
     })?;
     Ok(id)
 }
+/// Keeps the seeded policy manifest: pinning a manifest needs its
+/// teacher-probe row, which the legacy test opener deletes.
+fn policy_vault() -> (tempfile::TempDir, Vault) {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let vault = Vault::open(dir.path(), crate::VaultConfig::device()).expect("open vault");
+    (dir, vault)
+}
+
 fn task() -> SeatTask {
     SeatTask {
         kind: SeatKind::Attempt,
@@ -117,7 +125,7 @@ impl SeatJudge for Judge {
 }
 #[test]
 fn task_judgment_uses_descriptions_not_static_role_and_reuses_eligible_warm_seat() -> Result<()> {
-    let (_dir, vault) = crate::test_util::open_test_vault_with(crate::VaultConfig::device());
+    let (_dir, vault) = policy_vault();
     crate::test_util::pin_model_manifest(&vault, &manifest())?;
     let a = register(
         &vault,
@@ -155,7 +163,7 @@ fn task_judgment_uses_descriptions_not_static_role_and_reuses_eligible_warm_seat
 }
 #[test]
 fn fold_changes_model_only_by_new_seat_and_old_pin_survives() -> Result<()> {
-    let (_dir, vault) = crate::test_util::open_test_vault_with(crate::VaultConfig::device());
+    let (_dir, vault) = policy_vault();
     let mut config = manifest();
     let mut policy = SeatPolicy::bundled()?;
     policy.precedence = SeatPrecedence::SeatOverride;
@@ -197,7 +205,7 @@ fn fold_changes_model_only_by_new_seat_and_old_pin_survives() -> Result<()> {
 }
 #[test]
 fn route_facet_override_and_ineligible_judgment_fail_closed() -> Result<()> {
-    let (_dir, vault) = crate::test_util::open_test_vault_with(crate::VaultConfig::device());
+    let (_dir, vault) = policy_vault();
     crate::test_util::pin_model_manifest(&vault, &manifest())?;
     let remote = register(
         &vault,
@@ -305,7 +313,7 @@ fn failed_fold_keeps_old_prefix_and_seat_binding_controls_request() -> Result<()
     use crate::llm::{
         CallClass, CallEnvelope, CallPurpose, LlmRequest, ResponseFormat, TierPrecedence,
     };
-    let (_dir, vault) = crate::test_util::open_test_vault_with(crate::VaultConfig::device());
+    let (_dir, vault) = policy_vault();
     crate::test_util::pin_model_manifest(&vault, &manifest())?;
     let a = register(
         &vault,
@@ -355,7 +363,7 @@ fn failed_fold_keeps_old_prefix_and_seat_binding_controls_request() -> Result<()
 
 #[test]
 fn stale_fold_cannot_reactivate_a_retired_seat() -> Result<()> {
-    let (_dir, vault) = crate::test_util::open_test_vault_with(crate::VaultConfig::device());
+    let (_dir, vault) = policy_vault();
     crate::test_util::pin_model_manifest(&vault, &manifest())?;
     let a = register(
         &vault,
@@ -449,7 +457,7 @@ fn run_seat_receipt_is_persisted_before_calls_and_reused_after_reopen() -> Resul
 #[test]
 fn manifest_and_description_policy_rows_drive_defaults_and_cap_holder_widening() -> Result<()> {
     use crate::llm::routing::{DescriptionPolicy, ModelDescription as PolicyModel, OwnerModelLine};
-    let (_dir, vault) = crate::test_util::open_test_vault_with(crate::VaultConfig::device());
+    let (_dir, vault) = policy_vault();
     let mut config = manifest();
     let mut policy = SeatPolicy::bundled()?;
     policy.vault_ceiling = ReasoningEffort::High;
@@ -545,7 +553,7 @@ fn manifest_and_description_policy_rows_drive_defaults_and_cap_holder_widening()
 
 #[test]
 fn default_nested_narrowing_and_manifest_description_budgets() -> Result<()> {
-    let (_dir, vault) = crate::test_util::open_test_vault_with(crate::VaultConfig::device());
+    let (_dir, vault) = policy_vault();
     let mut config = manifest();
     crate::test_util::pin_model_manifest(&vault, &config)?;
     let model = register(
