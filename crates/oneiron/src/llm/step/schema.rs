@@ -3,6 +3,7 @@ use super::super::{
     BudgetGuard, BudgetLease, ContentPart, LlmBackend, LlmCapability, LlmMessage, LlmMessageRole,
     LlmRequest, LlmResponse, LlmUsage, ResponseFormat,
 };
+use super::schema_runtime::{self, SchemaValidationOutcome, SchemaValidationRequest};
 use super::{DurableStepError, DurableStepResult};
 use crate::dreamer_wake::WakePassDeadline;
 
@@ -11,21 +12,15 @@ pub fn validate_json_schema(
     schema: &serde_json::Value,
     value: &serde_json::Value,
 ) -> Result<(), String> {
-    super::schema_guard::check(schema, value)?;
-    let validator = jsonschema::validator_for(schema).map_err(|error| error.to_string())?;
-    let errors = validation_errors(&validator, value);
-    if errors.is_empty() {
-        Ok(())
-    } else {
-        Err(errors.join("; "))
+    match schema_runtime::validate(SchemaValidationRequest::Validate { schema, value }) {
+        Ok(SchemaValidationOutcome::Valid) => Ok(()),
+        Ok(
+            SchemaValidationOutcome::InvalidSchema(errors)
+            | SchemaValidationOutcome::InvalidValue(errors),
+        ) => Err(errors.join("; ")),
+        Ok(SchemaValidationOutcome::LimitExceeded) => Err("schema validator resource limit".into()),
+        Err(error) => Err(error.into()),
     }
-}
-
-fn validation_errors(validator: &jsonschema::Validator, value: &serde_json::Value) -> Vec<String> {
-    validator
-        .iter_errors(value)
-        .map(|error| error.to_string())
-        .collect()
 }
 
 pub(super) fn validate_fallback(
@@ -63,18 +58,31 @@ pub(super) async fn generate(
     let ResponseFormat::Json { schema } = &request.envelope.response_format else {
         return Ok(super::execute::generate_with_retry(backend, request, lease).await?);
     };
-    // Validate the schema itself before contacting the backend. Remote refs are disabled.
-    super::schema_guard::check(schema, &serde_json::Value::Null).map_err(|error| {
-        DurableStepError::SchemaValidation {
-            attempts: 0,
-            errors: vec![error],
+    // Compile in the same bounded compartment before contacting the backend.
+    match schema_runtime::validate(SchemaValidationRequest::CheckSchema(schema)) {
+        Ok(SchemaValidationOutcome::Valid) => {}
+        Ok(
+            SchemaValidationOutcome::InvalidSchema(errors)
+            | SchemaValidationOutcome::InvalidValue(errors),
+        ) => {
+            return Err(DurableStepError::SchemaValidation {
+                attempts: 0,
+                errors,
+            });
         }
-    })?;
-    let validator =
-        jsonschema::validator_for(schema).map_err(|error| DurableStepError::SchemaValidation {
-            attempts: 0,
-            errors: vec![error.to_string()],
-        })?;
+        Ok(SchemaValidationOutcome::LimitExceeded) => {
+            return Err(DurableStepError::SchemaValidation {
+                attempts: 0,
+                errors: vec!["schema validator resource limit".into()],
+            });
+        }
+        Err(error) => {
+            return Err(DurableStepError::SchemaValidation {
+                attempts: 0,
+                errors: vec![error.into()],
+            });
+        }
+    }
     let mut wire = request.clone();
     let native = backend.supports(&request.model, LlmCapability::JsonResponse);
     if !native {
@@ -142,9 +150,29 @@ pub(super) async fn generate(
             })
             .collect();
         let errors = match serde_json::from_str::<serde_json::Value>(&text) {
-            Ok(value) => match super::schema_guard::check(schema, &value) {
-                Ok(()) => validation_errors(&validator, &value),
-                Err(error) => vec![error],
+            Ok(value) => match schema_runtime::validate(SchemaValidationRequest::Validate {
+                schema,
+                value: &value,
+            }) {
+                Ok(SchemaValidationOutcome::Valid) => Vec::new(),
+                Ok(
+                    SchemaValidationOutcome::InvalidSchema(errors)
+                    | SchemaValidationOutcome::InvalidValue(errors),
+                ) => errors,
+                Ok(SchemaValidationOutcome::LimitExceeded) => {
+                    return Err(DurableStepError::SpentSchemaValidation {
+                        attempts: attempt,
+                        errors: vec!["schema validator resource limit".into()],
+                        usage: Box::new(usage),
+                    });
+                }
+                Err(error) => {
+                    return Err(DurableStepError::SpentSchemaValidation {
+                        attempts: attempt,
+                        errors: vec![error.into()],
+                        usage: Box::new(usage),
+                    });
+                }
             },
             Err(error) => vec![error.to_string()],
         };

@@ -13,6 +13,7 @@ mod codec;
 mod execute;
 mod schema;
 mod schema_guard;
+mod schema_runtime;
 pub use schema::validate_json_schema;
 mod peer_wait;
 mod step_claim;

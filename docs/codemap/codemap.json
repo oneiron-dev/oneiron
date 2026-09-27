@@ -20634,9 +20634,19 @@
      "kind": "src",
      "notable": [],
      "path": "src/llm/step/schema_guard.rs",
-     "purpose": "Bounded preflight for schemas evaluated on the host side of the sandbox",
+     "purpose": "Structural input bounds before serialization into the validator compartment",
      "surface": {
       "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/llm/step/schema_runtime.rs",
+     "purpose": "Import-free, hash-pinned schema validator compartment (base mode)",
+     "surface": {
+      "crate-vis": 5
      }
     },
     {
@@ -35211,7 +35221,7 @@
      "purpose": "Deterministic LinkedIn entity resolution and explicit runtime-path corpus preload"
     },
     "llm": {
-     "files": 78,
+     "files": 79,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -35766,7 +35776,7 @@
    },
    "over_bar": 10,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2110,
+   "source_files": 2111,
    "test_files": 722
   },
   "oneiron-android": {

@@ -182,6 +182,11 @@ fn quickjs_json_validate_recursive_schemas_are_bounded() {
              const tuple = {$schema:'http://json-schema.org/draft-07/schema#', \
                 items:[{type:'integer'}]}; \
              const emptyKey = {$defs:{'':{type:'integer'}},$ref:'#/$defs/'}; \
+             const pct = {$defs:{a:{type:'integer'}},$ref:'#/$defs/%61'}; \
+             const pctCycle = {$defs:{a:{allOf:[{$ref:'#/$defs/%61'}]},'%61':{}}, \
+                $ref:'#/$defs/a'}; \
+             const draft4Cycle = {$schema:'http://json-schema.org/draft-04/schema#', \
+                properties:{a:{id:'urn:oneiron:test:a',allOf:[{$ref:'#'}]}}}; \
              finish(JSON.stringify({loop:await self.json.validate(bad,null), \
                 valid:await self.json.validate(recursive,{next:{next:{}}}), \
                 invalid:await self.json.validate(recursive,{next:5}), \
@@ -189,7 +194,11 @@ fn quickjs_json_validate_recursive_schemas_are_bounded() {
                 tupleValid:await self.json.validate(tuple,[3]), \
                 tupleInvalid:await self.json.validate(tuple,['bad']), \
                 emptyValid:await self.json.validate(emptyKey,3), \
-                emptyInvalid:await self.json.validate(emptyKey,'bad')}));",
+                emptyInvalid:await self.json.validate(emptyKey,'bad'), \
+                pctValid:await self.json.validate(pct,3), \
+                pctInvalid:await self.json.validate(pct,'bad'), \
+                pctCycle:await self.json.validate(pctCycle,null), \
+                draft4Cycle:await self.json.validate(draft4Cycle,{a:null})}));",
             &mut Host::default(),
         )
         .expect("sandbox returns without aborting the host");
@@ -197,7 +206,8 @@ fn quickjs_json_validate_recursive_schemas_are_bounded() {
             serde_json::from_str::<Value>(&result.observation).unwrap(),
             serde_json::json!({"loop":false,"valid":true,"invalid":false,
                 "tupleLoop":false,"tupleValid":true,"tupleInvalid":false,
-                "emptyValid":true,"emptyInvalid":false})
+                "emptyValid":true,"emptyInvalid":false,
+                "pctValid":true,"pctInvalid":false,"pctCycle":false,"draft4Cycle":false})
         );
         return;
     }

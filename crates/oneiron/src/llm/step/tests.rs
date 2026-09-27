@@ -2660,7 +2660,7 @@ fn schema_guard_rejects_non_progressing_reference_cycles_and_keeps_recursive_obj
 }
 
 #[test]
-fn schema_guard_bounds_large_host_side_validation_before_native_execution() {
+fn schema_guard_bounds_input_and_defers_dialect_semantics_to_compartment() {
     use serde_json::json;
     let value = (0..2100).map(|n| n.to_string()).collect::<Vec<_>>();
     assert!(super::validate_json_schema(&json!({}), &json!(value)).is_err());
@@ -2668,7 +2668,7 @@ fn schema_guard_bounds_large_host_side_validation_before_native_execution() {
         "next":{"allOf":[{"$ref":"#"},{"$ref":"#"}]}}});
     assert!(super::validate_json_schema(&exponential, &json!(null)).is_err());
     let schema = json!({"$dynamicRef":"#"});
-    assert!(super::validate_json_schema(&schema, &json!(null)).is_err());
+    assert!(super::validate_json_schema(&schema, &json!(null)).is_ok());
 }
 
 #[test]
@@ -2679,7 +2679,11 @@ fn schema_guard_checks_tuple_items_and_preserves_empty_pointer_segments() {
     assert!(super::validate_json_schema(&tuple_cycle, &json!([null])).is_err());
     let tuple = json!({"$schema":"http://json-schema.org/draft-07/schema#",
         "items":[{"type":"integer"}]});
-    assert!(super::validate_json_schema(&tuple, &json!([3])).is_ok());
+    assert!(
+        super::validate_json_schema(&tuple, &json!([3])).is_ok(),
+        "{:?}",
+        super::validate_json_schema(&tuple, &json!([3]))
+    );
     assert!(super::validate_json_schema(&tuple, &json!(["bad"])).is_err());
 
     let empty_name = json!({"$defs":{"":{"type":"integer"}},"$ref":"#/$defs/"});
@@ -2688,4 +2692,156 @@ fn schema_guard_checks_tuple_items_and_preserves_empty_pointer_segments() {
     let empty_property = json!({"properties":{"":{"type":"integer"}},
         "$ref":"#/properties/"});
     assert!(super::validate_json_schema(&empty_property, &json!(3)).is_ok());
+}
+
+#[test]
+fn shared_schema_shim_contains_encoded_and_draft4_reference_traps() {
+    use serde_json::json;
+    for (schema, output) in [
+        (
+            json!({"$defs":{"a":{"allOf":[{"$ref":"#/$defs/%61"}]},"%61":{}},
+            "$ref":"#/$defs/a"}),
+            "null",
+        ),
+        (
+            json!({"$schema":"http://json-schema.org/draft-04/schema#",
+            "properties":{"a":{"id":"urn:oneiron:test:a","allOf":[{"$ref":"#"}]}}}),
+            "{\"a\":null}",
+        ),
+    ] {
+        let mut request = request_fixture();
+        request.envelope.response_format = ResponseFormat::Json { schema };
+        assert!(matches!(
+            super::schema::validate_fallback(&request, &response_fixture(output)),
+            Err(DurableStepError::SchemaValidation { attempts: 1, .. })
+        ));
+    }
+    let schema = json!({"$defs":{"a":{"type":"integer"}},"$ref":"#/$defs/%61"});
+    let mut request = request_fixture();
+    request.envelope.response_format = ResponseFormat::Json { schema };
+    assert!(super::schema::validate_fallback(&request, &response_fixture("3")).is_ok());
+    assert!(matches!(
+        super::schema::validate_fallback(&request, &response_fixture("\"bad\"")),
+        Err(DurableStepError::SchemaValidation { attempts: 1, .. })
+    ));
+    assert!(super::validate_json_schema(&json!({"type":"integer"}), &json!(3)).is_ok());
+}
+
+#[test]
+fn schema_compartment_limits_do_not_poison_a_subsequent_validation() {
+    use super::schema_runtime::{
+        self, SchemaValidationBudget, SchemaValidationOutcome as Outcome,
+        SchemaValidationRequest as Request,
+    };
+    use serde_json::json;
+    let schema = json!({"type":"integer"});
+    let value = json!(3);
+    let low_fuel = SchemaValidationBudget {
+        fuel: 1,
+        memory_bytes: 32 * 1024 * 1024,
+        output_bytes: 4096,
+    };
+    assert_eq!(
+        schema_runtime::validate_with_budget(Request::CheckSchema(&schema), low_fuel).unwrap(),
+        Outcome::LimitExceeded
+    );
+    assert_eq!(
+        schema_runtime::validate_with_budget(
+            Request::Validate {
+                schema: &schema,
+                value: &value
+            },
+            low_fuel
+        )
+        .unwrap(),
+        Outcome::LimitExceeded
+    );
+    let small_output = SchemaValidationBudget {
+        fuel: 50_000_000,
+        memory_bytes: 32 * 1024 * 1024,
+        output_bytes: 8,
+    };
+    assert_eq!(
+        schema_runtime::validate_with_budget(
+            Request::Validate {
+                schema: &schema,
+                value: &json!("bad")
+            },
+            small_output
+        )
+        .unwrap(),
+        Outcome::LimitExceeded
+    );
+    assert!(super::validate_json_schema(&schema, &value).is_ok());
+}
+
+#[test]
+fn schema_compartment_bounds_error_diagnostics() {
+    use super::schema_runtime::{
+        self, SchemaValidationOutcome as Outcome, SchemaValidationRequest as Request,
+    };
+    use serde_json::json;
+    let schema = json!({"type":"integer"});
+    let value = json!("x".repeat(8000));
+    let Outcome::InvalidValue(errors) = schema_runtime::validate(Request::Validate {
+        schema: &schema,
+        value: &value,
+    })
+    .unwrap() else {
+        panic!("expected bounded diagnostic")
+    };
+    assert!(!errors.is_empty());
+    assert!(errors.len() <= 8);
+    assert!(errors.iter().all(|error| error.chars().count() <= 256));
+}
+
+#[test]
+fn schema_compartment_evaluation_has_its_own_fuel_ceiling() {
+    use super::schema_runtime::{
+        self, SchemaValidationBudget, SchemaValidationOutcome as Outcome,
+        SchemaValidationRequest as Request,
+    };
+    use serde_json::json;
+    let schema = json!({"type":"array","items":{"type":"integer"}});
+    let value = json!(vec![3; 800]);
+    let mut lower = 0u64;
+    let mut upper = 500_000_000u64;
+    // Find the exact fuel threshold for compilation on this pinned artifact.
+    // Validation does extra work on the instance and must be bounded separately.
+    while upper - lower > 1 {
+        let fuel = lower + (upper - lower) / 2;
+        let budget = SchemaValidationBudget {
+            fuel,
+            memory_bytes: 64 * 1024 * 1024,
+            output_bytes: 4096,
+        };
+        if schema_runtime::validate_with_budget(Request::CheckSchema(&schema), budget).unwrap()
+            == Outcome::Valid
+        {
+            upper = fuel;
+        } else {
+            lower = fuel;
+        }
+    }
+    let budget = SchemaValidationBudget {
+        fuel: upper,
+        memory_bytes: 64 * 1024 * 1024,
+        output_bytes: 4096,
+    };
+    assert_eq!(
+        schema_runtime::validate_with_budget(Request::CheckSchema(&schema), budget).unwrap(),
+        Outcome::Valid
+    );
+    assert_eq!(
+        schema_runtime::validate_with_budget(
+            Request::Validate {
+                schema: &schema,
+                value: &value
+            },
+            budget
+        )
+        .unwrap(),
+        Outcome::LimitExceeded
+    );
+    assert!(super::validate_json_schema(&schema, &value).is_ok());
 }
