@@ -47,6 +47,8 @@ blake3 = { workspace = true }
 # `zeroize::Zeroizing` so the caller's copy is scrubbed on drop. No other
 # deps are added by that ticket.
 zeroize = "1"
+# Per-claim hot-value AEAD for erasure-target gate decisions.
+aes-gcm = "0.10"
 p256 = { workspace = true }
 regex = { workspace = true }
 futures-core = { workspace = true }
@@ -76,7 +78,7 @@ loro = "1.10"
 tokio = { version = "1", features = ["net", "sync", "time", "rt", "macros"], optional = true }
 tokio-tungstenite = { version = "0.26", optional = true }
 futures-util = { version = "0.3", optional = true }
-zstd = { version = "0.13", optional = true }
+zstd = "0.13"
 tracing = { version = "0.1" }
 whichlang = "0.1.1"
 rust-stemmers = "1.2.0"
@@ -175,7 +177,6 @@ windows-sys = { version = "0.61", features = ["Win32_Storage_FileSystem"] }
 [features]
 code-sandbox-wasmtime = []
 image-station-ocr = ["dep:ocrs", "dep:rten"]
-artifact-publish-verb = []
 # CODE-01 (ONE-1429): the isolating microVM backend for foreign/ingested guest
 # code. Linux-only (Firecracker is a KVM VMM), off by default, and even with
 # the feature on `FirecrackerBackend::detect` returns None unless the host
@@ -191,7 +192,6 @@ sync = [
     "dep:tokio",
     "dep:tokio-tungstenite",
     "dep:futures-util",
-    "dep:zstd",
     "dep:postcard",
 ]
 # Compiles in cross-crate test-only fault-injection seams (e.g. the lease
