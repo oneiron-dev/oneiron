@@ -42,7 +42,10 @@ Rules (see README.md for the full list):
     against the split's base like any other child.
   - Declarations: a child is declared when any file of its directory level
     (mod.rs or a child) carries a `mod x;` or `#[path = "x.rs"] mod y;` that
-    resolves to it.
+    resolves to it. Alternatively, a top-level literal `include!("x.rs");`
+    in mod.rs mounts a sibling file in the SAME scope (for preserving test
+    names). Only a single bare filename, with no path traversal, is allowed;
+    it must exist and cannot also be declared as a module or included twice.
   - Mod records are compared 1:1: a base `mod X` at scope S needs a bodied
     `mod X` at S or a `mod X;` decl in a file of scope S (FAIL missing /
     duplicate); its cfg tuple must match (FAIL); a visibility change is INFO;
@@ -85,7 +88,7 @@ import textwrap
 import traceback
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from rustlex import Doc, canon, enumerate_items, item_text, normalized_fragment, rustfmt, strip_item_vis  # noqa: E402
+from rustlex import Doc, canon, enumerate_items, item_text, mask, normalized_fragment, rustfmt, strip_item_vis  # noqa: E402
 from rustlex import _CHAR, _RAW_OPEN, _STR_OPEN, _is_ident  # noqa: E402  (string-literal lexing rules, shared with mask())
 
 DIFF_CAP = 60
@@ -906,9 +909,28 @@ def _skip_tests_info(where, scope):
     return "INFO skipped %s (base mod %s had no inline `mod tests`)" % (where, scope)
 
 
+_INCLUDE_LINE = re.compile(r'include!\("([A-Za-z_][A-Za-z0-9_]*\.rs)"\);$')
+
+
+def _same_scope_includes(src):
+    """(line number, sibling basename) for bare, top-level literal includes.
+
+    Inspect the masked source as well as the source text: a line of a raw
+    string or comment that looks like an include is not a Rust macro call.
+    Non-literal/path-changing macros are left intact and fail as residue.
+    """
+    found, depth = [], 0
+    for number, (line, masked) in enumerate(zip(src.splitlines(), mask(src).splitlines())):
+        match = _INCLUDE_LINE.fullmatch(line)
+        if depth == 0 and match and masked.startswith("include!("):
+            found.append((number, match.group(1)))
+        depth += masked.count("{") - masked.count("}")
+    return found
+
+
 class Walker:
     """New-side traversal: reads files, applies the pre-existing rule,
-    resolves `mod` declarations, collects into `new`."""
+    resolves `mod` declarations and same-scope includes, collects into `new`."""
 
     def __init__(self, root, base_rev, base, new, problems, infos):
         self.root = root
@@ -917,6 +939,7 @@ class Walker:
         self.new = new
         self.problems = problems
         self.infos = infos
+        self.include_lines = {}  # declaring mod.rs -> lines replaced by sibling contents
 
     def file(self, rel, scope, skip_info=None):
         """Read + rustfmt one new-side file. Pre-existing at base_rev and
@@ -926,7 +949,14 @@ class Walker:
         a tests file with no base counterpart. Returns (doc, pre_existing)."""
         with open(os.path.join(self.root, rel), encoding="utf-8") as f:
             src = f.read()
-        doc = _fmt_doc(src, "rustfmt on %s" % rel)
+        if rel in self.include_lines:
+            lines = src.splitlines(keepends=True)
+            for number, _target in self.include_lines[rel]:
+                lines[number] = "\n" if lines[number].endswith("\n") else ""
+            src_without_includes = "".join(lines)
+        else:
+            src_without_includes = src
+        doc = _fmt_doc(src_without_includes, "rustfmt on %s" % rel)
         base_src = _git_show_or_none(self.root, self.base_rev, rel)
         if base_src is None:
             if skip_info:
@@ -967,7 +997,21 @@ class Walker:
         base_mods_here = self.base.mods_in(scope)
         declared = set(inherited)
         scope_of, pre = {}, {}
+        included = set()
+        if "mod.rs" in files:
+            rel = "%s/mod.rs" % dir_rel
+            with open(os.path.join(dir_abs, "mod.rs"), encoding="utf-8") as f:
+                self.include_lines[rel] = _same_scope_includes(f.read())
+            for _line, name in self.include_lines[rel]:
+                if name == "mod.rs" or name in included:
+                    self.problems.append("FAIL duplicate or self-include %s in %s" % (name, rel))
+                elif name not in files:
+                    self.problems.append("FAIL missing include target %s in %s" % (name, rel))
+                else:
+                    included.add(name)
         for fname in files:
+            if fname in included:
+                continue  # collected below with mod.rs's SAME scope, not a child module
             rel = "%s/%s" % (dir_rel, fname)
             stem = fname[:-3]
             skip = None
@@ -993,8 +1037,13 @@ class Walker:
                     self.new.mods.append(ModRec(fscope, it["name"], it["cfgs"], it["vis"], _mod_lead(doc, it), rel,
                                                 bodied=False, target=kind,
                                                 file_lead=_file_lead(target) if target else None))
+        for fname in sorted(included):
+            target = os.path.join(dir_abs, fname)
+            if target in declared:
+                self.problems.append("FAIL %s is both included and declared as a module" % (target,))
+            self.file("%s/%s" % (dir_rel, fname), scope)
         for fname in files:
-            if fname != "mod.rs" and not pre[fname] and os.path.join(dir_abs, fname) not in declared:
+            if fname != "mod.rs" and fname not in included and not pre[fname] and os.path.join(dir_abs, fname) not in declared:
                 self.problems.append("FAIL %s does not declare `mod %s;`" % (decl_owner, fname[:-3]))
         for d in subdirs:
             sub_rel = "%s/%s" % (dir_rel, d)
