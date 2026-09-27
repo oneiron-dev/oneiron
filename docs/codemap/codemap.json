@@ -12207,7 +12207,7 @@
      "path": "src/conversation_dag/retained_path.rs",
      "purpose": "Read-only selected topology over retained TURN and SESSION headers",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 6
      }
     },
     {

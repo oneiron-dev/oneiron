@@ -2,7 +2,7 @@
 //! Topology, lifetime and text are read through one vault snapshot.
 
 use crate::conversation_dag::retained_path::{
-    RetainedRow, RetainedTurn, SelectedPathSnapshot, retained_row,
+    PreviewTopology, RetainedRow, RetainedTurn, SelectedPathSnapshot, retained_row,
 };
 use crate::edge::EdgeKind;
 use crate::error::Result;
@@ -20,13 +20,16 @@ impl Vault {
         conversation: &EntityId,
     ) -> Result<Option<String>> {
         let txn = self.store.env.read_txn()?;
-        if let Some(path) = SelectedPathSnapshot::read(&self.store, &txn, conversation)? {
-            for turn in path.turns.iter().rev() {
-                if let Some(text) = self.visible_turn_text(&txn, turn)? {
-                    return Ok(Some(snippet(&text)));
+        match SelectedPathSnapshot::read(self, &txn, conversation)? {
+            PreviewTopology::Selected(path) => {
+                for turn in path.turns.iter().rev() {
+                    if let Some(text) = self.visible_turn_text(&txn, turn)? {
+                        return Ok(Some(snippet(&text)));
+                    }
                 }
+                return Ok(None);
             }
-            return Ok(None);
+            PreviewTopology::ChildOfOnly => {}
         }
         let mut latest: Option<(u64, EntityId, String)> = None;
         for edge in self.store.port_edges(

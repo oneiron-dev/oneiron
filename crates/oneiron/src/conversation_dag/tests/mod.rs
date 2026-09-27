@@ -1086,3 +1086,31 @@ fn retained_preview_refuses_unresolved_spawn_but_not_live_empty_legacy_turn() {
         ErrorKind::InvalidConversationDag
     );
 }
+
+#[test]
+fn headless_adopted_room_refuses_childof_preview_even_with_newer_thread() {
+    let (_dir, vault, conversation, actor) = fixture();
+    let root = vault
+        .append_dag_record(&input(conversation, None, false, actor))
+        .unwrap()
+        .id;
+    assert_eq!(
+        vault
+            .conversation_last_message_snippet(&conversation)
+            .unwrap_err()
+            .kind(),
+        ErrorKind::InvalidConversationDag
+    );
+    let thread = vault
+        .reply_in_thread(root, &input(conversation, Some(root), false, actor))
+        .unwrap();
+    assert!(thread.head.is_none());
+    assert_eq!(
+        vault
+            .conversation_last_message_snippet(&conversation)
+            .unwrap_err()
+            .kind(),
+        ErrorKind::InvalidConversationDag,
+        "an off-line thread must not become an unselected room's preview"
+    );
+}

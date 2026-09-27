@@ -3,15 +3,15 @@
 //! A selected path proves branch membership; it does not re-run append or
 //! receive admission. Deleted shells remain structural, never renderable.
 
-use super::graph::{self, CANONICAL, HEAD};
-use crate::EntityId;
+use super::graph::{self, CANONICAL, HEAD, MIGRATED};
 use crate::edge::EdgeKind;
 use crate::error::{Error, RegistryError, Result};
 use crate::limits::MAX_ANCESTOR_DEPTH;
-use crate::ports::EntityStoreRead;
+use crate::ports::{EdgeDirection, EdgeStoreRead, EntityStoreRead};
 use crate::registry::{ENTITY_TYPE_CONVERSATION, ENTITY_TYPE_SESSION, ENTITY_TYPE_TURN};
 use crate::store::Store;
 use crate::vault::{LiveEntityRow, live_entity_row_in_txn};
+use crate::{EntityId, Vault};
 use heed::RoTxn;
 use std::collections::HashSet;
 
@@ -53,6 +53,12 @@ pub(crate) struct RetainedTurn {
 
 pub(crate) struct SelectedPathSnapshot {
     pub(crate) turns: Vec<RetainedTurn>, // root to selected HEAD
+}
+
+/// An absent local HEAD is not evidence of a ChildOf-only room by itself.
+pub(crate) enum PreviewTopology {
+    Selected(SelectedPathSnapshot),
+    ChildOfOnly,
 }
 
 enum SessionReadEvidence {
@@ -116,21 +122,80 @@ fn session_evidence(
     }
 }
 
+fn prove_childof_only(vault: &Vault, txn: &RoTxn<'_>, conversation: &EntityId) -> Result<()> {
+    let store = &vault.store;
+    if store
+        .vault_meta
+        .get(txn, &graph::key(MIGRATED, conversation))?
+        .is_some()
+    {
+        return Err(graph::invalid("DAG has no selected HEAD"));
+    }
+    for entry in store.port_edges(
+        txn,
+        conversation,
+        EdgeDirection::In,
+        Some(EdgeKind::ChildOf),
+        None,
+    )? {
+        let id = entry?.target;
+        let Some(raw) = store.port_entity_record(txn, &id)? else {
+            return Err(Error::CorruptedIndex("conversation ChildOf row"));
+        };
+        if raw.entity_type != ENTITY_TYPE_TURN {
+            continue;
+        }
+        if !graph::edge_ids(store, txn, &id, EdgeKind::Parent, false, 2)?.is_empty()
+            || graph::read_id(store, txn, CANONICAL, &id)?.is_some()
+        {
+            return Err(graph::invalid("unselected conversation DAG"));
+        }
+        #[cfg(feature = "sync")]
+        if crate::sync::bridge::has_unresolved_parent_for_source_in_txn(vault, txn, &id)? {
+            return Err(graph::invalid("received DAG Parent dependency pending"));
+        }
+        match retained_row(store, txn, &id, ENTITY_TYPE_TURN)? {
+            RetainedRow::Live { body, .. } => {
+                if super::topology::record_kind(&body)?.is_some() {
+                    return Err(graph::invalid("unselected DAG record"));
+                }
+            }
+            RetainedRow::SoftDeleted => {}
+            RetainedRow::Absent => return Err(Error::CorruptedIndex("conversation ChildOf row")),
+        }
+        if let Some(session) = crate::compaction::turn_session_membership_in_txn(store, txn, &id)? {
+            match session_evidence(store, txn, &session)? {
+                SessionReadEvidence::Ordinary => {}
+                SessionReadEvidence::Spawned => {
+                    return Err(graph::invalid("unselected spawned session"));
+                }
+                SessionReadEvidence::Unresolved => {
+                    return Err(graph::invalid("unresolved received session"));
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
 impl SelectedPathSnapshot {
     pub(crate) fn read(
-        store: &Store,
+        vault: &Vault,
         txn: &RoTxn<'_>,
         conversation: &EntityId,
-    ) -> Result<Option<Self>> {
-        let Some(head) = graph::read_id(store, txn, HEAD, conversation)? else {
-            return Ok(None); // only these rooms use the current ChildOf writer
-        };
+    ) -> Result<PreviewTopology> {
+        let store = &vault.store;
+        let head = graph::read_id(store, txn, HEAD, conversation)?;
         if !matches!(
             retained_row(store, txn, conversation, ENTITY_TYPE_CONVERSATION)?,
             RetainedRow::Live { .. }
         ) {
             return Err(graph::invalid("selected conversation is not live"));
         }
+        let Some(head) = head else {
+            prove_childof_only(vault, txn, conversation)?;
+            return Ok(PreviewTopology::ChildOfOnly);
+        };
         let mut seen = HashSet::new();
         let mut reversed = Vec::new();
         let mut cursor = Some(head);
@@ -185,6 +250,6 @@ impl SelectedPathSnapshot {
                 return Err(Error::CorruptedIndex("conversation canonical mark"));
             }
         }
-        Ok(Some(Self { turns: reversed }))
+        Ok(PreviewTopology::Selected(Self { turns: reversed }))
     }
 }
