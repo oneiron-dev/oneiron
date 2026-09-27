@@ -58,11 +58,20 @@ pub(crate) fn thread_tasks(
         if candidates.len() == 100_000 {
             return Err(Error::IndexOverflow("room thread TASK matches").into());
         }
-        candidates.push((id, thread, body, authority.cancelled));
+        // Ask-group ladders live on the existing group row. A peer consult
+        // without a group has no promised nudge; a governed ask supplies its
+        // next notice or its absolute cutoff without a duplicate cursor.
+        let ask_due = if body.task_kind() == super::TaskKind::Consult {
+            super::ask_record::ask_notice_at_in(vault, &txn, id, 0)?
+                .map(|(notice, cutoff)| notice.map_or(cutoff, |at| at.min(cutoff)))
+        } else {
+            None
+        };
+        candidates.push((id, thread, body, authority.cancelled, ask_due));
     }
     drop(txn);
     let mut result = Vec::new();
-    for (id, thread, body, cancelled) in candidates {
+    for (id, thread, body, cancelled, ask_due) in candidates {
         // `Memory::get_entity` opens a reader of its own: finish the index
         // snapshot first or LMDB refuses recursive reuse of its reader slot.
         // Room membership alone never grants TASK visibility.
@@ -110,9 +119,9 @@ pub(crate) fn thread_tasks(
                         } else {
                             body.created_at
                         },
-                        // A peer has no native-human reminder cursor. Do not
-                        // claim its TTL deadline is a scheduled nudge.
-                        next_nudge: None,
+                        // Peer consults use the ask group's existing ladder;
+                        // a bare consult has no follow-up promise.
+                        next_nudge: ask_due,
                     })
                 }
                 _ => None,
@@ -129,6 +138,14 @@ pub(crate) fn thread_tasks(
                 )
                 .flatten()
         });
+        // A visible TASK does not grant a read of its result. The room row
+        // and trunk header must not disclose a foreign result ref.
+        let delivered = match delivered {
+            Some((result, at)) if memory.get_entity(&result.to_hex())?.is_some() => {
+                Some((result, at))
+            }
+            _ => None,
+        };
         result.push(RoomThreadTask {
             task: id,
             thread,

@@ -122,7 +122,7 @@ mod rooms;
 pub(crate) use rooms::admit_witness as admit_room_witness;
 pub use rooms::{
     RoomClaimOutcome, RoomClaimReceipt, RoomPage, RoomThread, RoomThreadList, RoomThreadPolicy,
-    RoomThreadWait, RoomThreads, RoomTurn, RoomWaitKind,
+    RoomThreadWait, RoomThreads, RoomTrunk, RoomTrunkHeader, RoomTurn, RoomWaitKind,
 };
 
 pub(crate) use rooms::RoomThreadTask;

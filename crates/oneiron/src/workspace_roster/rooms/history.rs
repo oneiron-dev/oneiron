@@ -215,6 +215,46 @@ impl Memory<'_> {
         Ok(self.rooms_threads(room, policy)?.render_rows())
     }
 
+    /// Read one trunk turn with the completed TASK result headers that hang
+    /// under it. The only write is the existing TASK terminal register: every
+    /// read joins that fact to the room's thread anchors, including after
+    /// replay, without duplicating a result into a synthetic message or a
+    /// local liveness cache. Task and result visibility use scoped reads.
+    pub fn rooms_trunk(&self, room: EntityId, trunk: EntityId) -> MemoryResult<super::RoomTrunk> {
+        let txn = self.vault().store.env.read_txn().map_err(Error::from)?;
+        let members = require_member(self.vault(), &txn, room, self.actor())?
+            .member_ids
+            .into_iter()
+            .collect();
+        let turn = turn_in(self.vault(), &txn, trunk)?;
+        if turn.room_id != room.to_hex() || turn.thread_of.is_some() {
+            return Err(MemoryError::from(invalid()));
+        }
+        drop(txn);
+        let turns = self.room_turn_snapshot(room)?;
+        let trunk_hex = trunk.to_hex();
+        let roots = turns
+            .iter()
+            .filter(|turn| turn.thread_of.as_deref() == Some(trunk_hex.as_str()))
+            .map(|turn| EntityId::from_hex(&turn.turn_id))
+            .collect::<Result<std::collections::BTreeSet<_>>>()?;
+        let tasks =
+            crate::task_verb::room_thread_tasks(self, &roots, &members, crate::unix_seconds_now())?;
+        let mut headers = tasks
+            .into_iter()
+            .filter_map(|task| {
+                task.delivered
+                    .map(|(result_ref, _)| super::RoomTrunkHeader {
+                        thread: task.thread,
+                        task: task.task,
+                        result_ref,
+                    })
+            })
+            .collect::<Vec<_>>();
+        headers.sort_by_key(|header| (header.thread, header.task));
+        Ok(super::RoomTrunk { turn, headers })
+    }
+
     /// Scoped find handle; the full set is paged even when the render is folded.
     pub fn rooms_find_threads(
         &self,

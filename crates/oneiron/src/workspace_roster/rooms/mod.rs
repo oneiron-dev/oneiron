@@ -82,6 +82,22 @@ pub struct RoomTurn {
     pub thread_of: Option<String>,
     pub at: u64,
 }
+/// A delivered TASK's durable result, attached to its trunk on a room read.
+/// The TASK terminal register holds the fact; no second row is stored.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RoomTrunkHeader {
+    pub thread: EntityId,
+    pub task: EntityId,
+    pub result_ref: EntityId,
+}
+
+/// A trunk turn with the delivered task headers under its thread anchors.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RoomTrunk {
+    pub turn: RoomTurn,
+    pub headers: Vec<RoomTrunkHeader>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct RoomPage {

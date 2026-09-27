@@ -34140,14 +34140,14 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/workspace_roster/rooms/history.rs",
      "purpose": "Bounded room-local history and transactional auxiliary-row cleanup",
      "surface": {
       "crate-vis": 3,
-      "fn": 7
+      "fn": 8
      }
     },
     {
@@ -34185,6 +34185,8 @@
       "RoomClaimOutcome",
       "RoomClaimReceipt",
       "RoomPage",
+      "RoomTrunk",
+      "RoomTrunkHeader",
       "RoomTurn"
      ],
      "path": "src/workspace_roster/rooms/mod.rs",
@@ -34194,7 +34196,7 @@
       "enum": 1,
       "fn": 5,
       "re-export": 1,
-      "struct": 3
+      "struct": 5
      }
     },
     {
@@ -36331,8 +36333,8 @@
    },
    "over_bar": 11,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2142,
-   "test_files": 730
+   "source_files": 2144,
+   "test_files": 731
   },
   "oneiron-android": {
    "files": [

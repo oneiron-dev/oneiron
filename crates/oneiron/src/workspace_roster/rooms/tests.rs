@@ -188,6 +188,7 @@ fn room_history_is_bounded_paged_and_removed_with_its_project() -> Result<()> {
             .is_err()
     );
     assert!(memory.rooms_messages_page(room, None, 257).is_err());
+    assert!(memory.rooms_trunk(room, foreign_turn).is_err());
     // A cursor in another room is not a valid room-thread page boundary.
     assert!(
         memory
@@ -290,6 +291,7 @@ fn room_projection_reads_task_register_and_reply_without_stored_liveness() -> Re
         tokens_per_list: 512,
     };
     let live = human.rooms_threads(room, policy).unwrap();
+    assert!(human.rooms_trunk(room, trunk).unwrap().headers.is_empty());
     assert_eq!(live.active.rows[0].handle, root);
     assert_eq!(live.active.rows[0].open_tasks, 1);
     assert!(
@@ -312,6 +314,20 @@ fn room_projection_reads_task_register_and_reply_without_stored_liveness() -> Re
         )
         .unwrap();
     let folded = human.rooms_threads(room, policy).unwrap();
+    let trunk_view = human.rooms_trunk(room, trunk).unwrap();
+    assert_eq!(trunk_view.turn.turn_id, trunk.to_hex());
+    assert_eq!(
+        human.room_head(room).unwrap().unwrap().turn_id,
+        trunk.to_hex()
+    );
+    assert_eq!(
+        trunk_view.headers,
+        vec![RoomTrunkHeader {
+            thread: root,
+            task,
+            result_ref: result,
+        }]
+    );
     assert_eq!(folded.quiet.rows[0].result_header, Some(result));
     assert_eq!(folded.quiet.rows[0].trunk, trunk);
     assert_eq!(
@@ -338,6 +354,11 @@ fn room_projection_reads_task_register_and_reply_without_stored_liveness() -> Re
     let active = human.rooms_threads(room, policy).unwrap();
     assert_eq!(active.active.rows[0].handle, root);
     assert_eq!(active.active.rows[0].result_header, Some(result));
+    // A reply changes liveness, not the durable terminal header on the trunk.
+    assert_eq!(
+        human.rooms_trunk(room, trunk).unwrap().headers,
+        trunk_view.headers
+    );
     Ok(())
 }
 
@@ -421,6 +442,84 @@ fn consult_question_turn_projects_an_open_wait_without_a_room_state_row() -> Res
     assert_eq!(projection.waiting.rows[0].waits[0].kind, RoomWaitKind::Ask);
     assert_eq!(projection.waiting.rows[0].waits[0].since, 4);
     assert_eq!(projection.waiting.rows[0].waits[0].next_nudge, None);
+    Ok(())
+}
+
+#[test]
+fn peer_ask_wait_projects_its_existing_followup_ladder() -> Result<()> {
+    use crate::task_verb::{
+        ConsultPayloadRef, TaskAskDefault, TaskAskQuestion, TaskAskSpec, TaskAskTarget,
+        TaskAssignee,
+    };
+    let dir = tempfile::tempdir()?;
+    let vault = Vault::open(dir.path(), crate::VaultConfig::default())?;
+    let owner = vault.ensure_embedded_owner_actor().unwrap();
+    let peer = EntityId::from_bytes([0xE2; 16])?;
+    vault.put_entity(
+        &peer,
+        crate::registry::ENTITY_TYPE_PERSON,
+        TimeRange { start: 1, end: 1 },
+        1,
+        b"room peer",
+    )?;
+    let project = EntityId::now();
+    let mut record = ProjectRecord::new(
+        project,
+        Some(vault.root_project()?),
+        vault.root_project()?,
+        owner,
+    );
+    record.roster.push(peer.to_hex());
+    vault.put_project(project, &record, 1)?;
+    let room = EntityId::from_hex(&record.home_room)?;
+    let memory = vault.memory(owner, EdgeActorClass::Human);
+    let trunk = EntityId::now();
+    let root = EntityId::now();
+    memory
+        .rooms_speak(&turn(
+            room,
+            trunk,
+            WitnessAuthor::User,
+            serde_json::json!({}),
+            2,
+        ))
+        .unwrap();
+    memory
+        .rooms_speak(&turn(
+            room,
+            root,
+            WitnessAuthor::User,
+            serde_json::json!({"room_thread_of": trunk.to_hex()}),
+            3,
+        ))
+        .unwrap();
+    let before = crate::unix_seconds_now();
+    let mut ask = TaskAskSpec::shorthand(
+        Some(TaskAskTarget::Responder(TaskAssignee::Peer {
+            actor_ref: peer,
+        })),
+        TaskAskQuestion::new(ConsultPayloadRef::Turn(root)),
+        Some(before + 300),
+        TaskAskDefault::AskMe,
+    );
+    ask.remind = Some(vec![30, 60]);
+    let receipt = memory.tasks_ask(&ask).unwrap();
+    assert_eq!(receipt.task_refs.len(), 1);
+    let projection = memory
+        .rooms_threads(
+            room,
+            RoomThreadPolicy {
+                now: before + 100,
+                fresh_for: 1,
+                rows_per_list: 8,
+                tokens_per_list: 512,
+            },
+        )
+        .unwrap();
+    assert_eq!(projection.waiting.rows.len(), 1);
+    assert_eq!(projection.waiting.rows[0].waits[0].kind, RoomWaitKind::Ask);
+    let due = projection.waiting.rows[0].waits[0].next_nudge.unwrap();
+    assert!(due >= before + 30 && due <= crate::unix_seconds_now() + 30);
     Ok(())
 }
 
