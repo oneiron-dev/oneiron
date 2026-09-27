@@ -8,7 +8,7 @@ use super::keys::{
     COMPANION_TASK_PAYLOAD_SCHEMA_VERSION, ERR_INVALID_COMPANION_TASK_PAYLOAD, KEY_TASK,
     KEY_TASK_SCHEMA_VERSION, KEY_TASK_SCOPE, KEY_TASK_SUBJECT,
 };
-use super::model::{CompanionRecord, CompanionRecordKey, CompanionScope, CompanionSubject};
+use super::model::{CompanionRecordKey, CompanionScope, CompanionSubject};
 use crate::Vault;
 use crate::attempt_queue::{
     AttemptId, AttemptQueue, AttemptRecord, ClaimAttempt, ClaimOutcome, CompleteAttempt,
@@ -56,22 +56,6 @@ impl CompanionTaskKind {
             _ => None,
         }
     }
-}
-
-/// Inputs controlling relationship-ending teardown.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct EndCompanionRelationship {
-    pub ended_at: u64,
-    pub ended_badly: bool,
-    pub run_id: Option<String>,
-}
-
-/// Result of relationship-ending teardown.
-#[derive(Debug, Clone, PartialEq)]
-pub struct EndCompanionRelationshipOutcome {
-    pub record: CompanionRecord,
-    pub goodbye_artifact: Option<EnqueueCompanionTaskOutcome>,
-    pub already_ended: bool,
 }
 
 /// Typed payload stored on durable companion task attempt rows.
