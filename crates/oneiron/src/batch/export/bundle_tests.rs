@@ -709,9 +709,21 @@ fn install_native_agent_pack(
         "agents/fixture.agent",
         HubPin::ContentHash(source.content_hash().to_hex()),
     )?;
-    let PackInstallDisposition::Installed(receipt) =
-        vault.install_pack_from_adapter(&adapter, &reference, &publisher, &Fit, time(), 133)?
-    else {
+    // Install screening reads the seeded pack-install policy and fails closed
+    // without it (ONE-2019). Restore the shipped manifest this legacy fixture
+    // cleared for the install only; the reimport keeps its manifest-free Gate.
+    let policy_id = crate::gate::default_policy_manifest_id()?;
+    crate::test_util::put_policy_manifest_bytes(
+        vault,
+        policy_id,
+        &crate::gate::default_policy_manifest(),
+    )?;
+    let installed =
+        vault.install_pack_from_adapter(&adapter, &reference, &publisher, &Fit, time(), 133);
+    vault.with_write_txn(|txn| {
+        crate::batch::deindex_entity_for_test(&vault.store, txn, &policy_id)
+    })?;
+    let PackInstallDisposition::Installed(receipt) = installed? else {
         panic!("native pack install");
     };
     assert_eq!(receipt.content_hash, source.content_hash().to_hex());
