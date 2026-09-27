@@ -19,6 +19,7 @@ categories.workspace = true
 doctest = true
 
 [dependencies]
+oneiron-sandbox-contract = { path = "../oneiron-sandbox-contract" }
 oneiron-seal = { version = "0.1.0", path = "../oneiron-seal" }
 lopdf = { version = "=0.44.0", default-features = false }
 qrcode = { version = "=0.14.1", default-features = false }
@@ -74,7 +75,7 @@ icu_properties = { version = "2.2", default-features = false, features = ["compi
 unicode-script = "0.5"
 unicode-segmentation = "1"
 loro = "1.10"
-tokio = { version = "1", features = ["net", "sync", "time", "rt", "macros"], optional = true }
+tokio = { version = "1", features = ["sync"] }
 tokio-tungstenite = { version = "0.26", optional = true }
 base64 = { version = "0.22", optional = true }
 futures-util = { version = "0.3", optional = true }
@@ -189,7 +190,10 @@ microvm-firecracker = []
 # ever hand it to a release build when this feature is explicitly on.
 microvm-dev = []
 sync = [
-    "dep:tokio",
+    "tokio/net",
+    "tokio/time",
+    "tokio/rt",
+    "tokio/macros",
     "dep:tokio-tungstenite",
     "dep:base64",
     "dep:futures-util",
@@ -208,6 +212,8 @@ test-hooks = []
 test-support = []
 
 [dev-dependencies]
+wat = "1"
+oneiron-guest = { path = "../oneiron-guest" }
 async-trait = "0.1"
 rcgen = "0.14"
 p256 = { workspace = true, features = ["pkcs8"] }
