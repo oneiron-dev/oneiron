@@ -1,6 +1,7 @@
 //! Manifest-authored notification rules and recipient-owned delivery preferences.
 use rmpv::Value;
 use serde::{Deserialize, Serialize};
+use std::collections::{BTreeMap, BTreeSet};
 use std::io::Cursor;
 
 use super::{
@@ -15,7 +16,11 @@ use crate::{EntityId, Vault};
 
 const RULE_KEY: &str = crate::gate::POLICY_OWNER_POLICY_NOTIFY_KEY;
 const PREF: &[u8] = b"owner_policy:notification:preference:v1:";
-const QUEUED: &[u8] = b"owner_policy:notification:queued:v1:";
+pub(super) const QUEUED: &[u8] = b"owner_policy:notification:queued:v1:";
+const QUEUE_CURSOR: &[u8] = b"owner_policy:notification:cursor:v1";
+const QUEUE_FAILURE: &[u8] = b"owner_policy:notification:failure:v1:";
+const DIGEST_WINDOW: &[u8] = b"owner_policy:notification:digest_window:v1:";
+const MAX_DIGEST_INTERVAL: u64 = 31_536_000;
 const RULE_RECEIPT: &[u8] = b"owner_policy:notification:rule_receipt:v1:";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -40,6 +45,29 @@ impl PolicyNotificationRule {
     }
 }
 
+/// The manifest rule being edited; no fabricated world/project scope is used
+/// for an all-overrides rule.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PolicyNotificationTarget {
+    VaultDefault,
+    AllOverrides,
+}
+impl PolicyNotificationTarget {
+    const fn row_scope(self) -> &'static str {
+        match self {
+            Self::VaultDefault => "vault",
+            Self::AllOverrides => "override",
+        }
+    }
+    const fn grant_target(self) -> &'static str {
+        match self {
+            Self::VaultDefault => "policy-notification:vault-default",
+            Self::AllOverrides => "policy-notification:all-overrides",
+        }
+    }
+}
+
 /// Recipient-owned delivery override. Absence inherits the manifest rule.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -58,6 +86,27 @@ pub struct PolicyQueuedNotification {
     pub author: String,
     pub mode: PolicyNotificationMode,
     pub followup_task: Option<String>,
+    /// Digest window shared by all pending changes for this recipient.
+    #[serde(default)]
+    pub digest_due_at: Option<u64>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PolicyNotificationFailure {
+    pub receipt_id: String,
+    pub recipient: String,
+    pub attempts: u64,
+    pub last_attempt_at: u64,
+    pub next_retry_at: u64,
+    pub last_error_kind: String,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct NotificationPreference {
+    mode: PolicyNotificationMode,
+    digest_interval_seconds: Option<u64>,
 }
 
 fn invalid() -> Error {
@@ -65,6 +114,9 @@ fn invalid() -> Error {
 }
 fn key(prefix: &[u8], suffix: &[u8]) -> Vec<u8> {
     [prefix, suffix].concat()
+}
+fn failure_key(queue_key: &[u8]) -> Vec<u8> {
+    key(QUEUE_FAILURE, &queue_key[QUEUED.len()..])
 }
 fn encode<T: Serialize>(value: &T) -> Result<Vec<u8>> {
     rmp_serde::to_vec_named(value)
@@ -104,11 +156,11 @@ fn manifest_in(vault: &Vault, txn: &heed::RoTxn<'_>) -> Result<(EntityId, Vec<u8
     }
     Ok((id, bytes.to_vec(), value))
 }
-fn read_rule_in(
+pub(super) fn read_rule_in(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     vault_scope: bool,
-) -> Result<PolicyNotificationRule> {
+) -> Result<(PolicyNotificationRule, u64)> {
     let (_, _, value) = manifest_in(vault, txn)?;
     let Value::Map(entries) = value else {
         return Err(invalid());
@@ -124,9 +176,13 @@ fn read_rule_in(
         };
         let name = field(fields, "scope")?.as_str().ok_or_else(invalid)?;
         let value = field(fields, "delivery")?.as_str().ok_or_else(invalid)?;
+        let interval = field(fields, "digest_interval_seconds")?
+            .as_u64()
+            .filter(|seconds| (1..=MAX_DIGEST_INTERVAL).contains(seconds))
+            .ok_or_else(invalid)?;
         if name == scope
             && found
-                .replace(PolicyNotificationRule::parse(value)?)
+                .replace((PolicyNotificationRule::parse(value)?, interval))
                 .is_some()
         {
             return Err(invalid());
@@ -138,14 +194,19 @@ fn preference_in(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     recipient: EntityId,
-) -> Result<PolicyNotificationMode> {
+) -> Result<NotificationPreference> {
     vault
         .store
         .vault_meta
         .get(txn, &key(PREF, recipient.as_bytes()))?
         .map(|raw| decode(&raw))
         .transpose()
-        .map(|v| v.unwrap_or(PolicyNotificationMode::Inherit))
+        .map(|v| {
+            v.unwrap_or(NotificationPreference {
+                mode: PolicyNotificationMode::Inherit,
+                digest_interval_seconds: None,
+            })
+        })
 }
 
 pub(super) fn enqueue_change_in_txn(
@@ -153,16 +214,16 @@ pub(super) fn enqueue_change_in_txn(
     txn: &mut heed::RwTxn<'_>,
     receipt: &PolicyRowReceipt,
     holders: &[EntityId],
-    _now: u64,
+    now: u64,
 ) -> Result<()> {
     let vault_scope = matches!(receipt.change.scope(), PolicyRowScope::Vault);
-    let rule = read_rule_in(vault, txn, vault_scope)?;
+    let (rule, manifest_interval) = read_rule_in(vault, txn, vault_scope)?;
     for recipient in holders.iter().copied() {
         if recipient.to_hex() == receipt.author {
             continue;
         }
         let preference = preference_in(vault, txn, recipient)?;
-        let mode = match preference {
+        let mode = match preference.mode {
             PolicyNotificationMode::Inherit => match rule {
                 PolicyNotificationRule::PushOtherHolders => PolicyNotificationMode::PushAll,
                 PolicyNotificationRule::LogOnly => PolicyNotificationMode::LogOnly,
@@ -175,13 +236,33 @@ pub(super) fn enqueue_change_in_txn(
         // Queue atomically with the policy change. Delivery is a separate
         // fallible pass: an offline holder or absent contact route must never
         // veto a holder's policy edit.
-        let followup_task = None;
+        let digest_due_at = if mode == PolicyNotificationMode::Digest {
+            let window_key = key(DIGEST_WINDOW, recipient.as_bytes());
+            if let Some(raw) = vault.store.vault_meta.get(txn, &window_key)? {
+                Some(u64::from_be_bytes(raw.as_ref().try_into().map_err(
+                    |_| Error::CorruptedIndex("policy digest window"),
+                )?))
+            } else {
+                let interval = preference
+                    .digest_interval_seconds
+                    .unwrap_or(manifest_interval);
+                let due = now.saturating_add(interval);
+                vault
+                    .store
+                    .vault_meta
+                    .put(txn, &window_key, &due.to_be_bytes())?;
+                Some(due)
+            }
+        } else {
+            None
+        };
         let entry = PolicyQueuedNotification {
             receipt_id: receipt.receipt_id.clone(),
             recipient: recipient.to_hex(),
             author: receipt.author.clone(),
             mode,
-            followup_task,
+            followup_task: None,
+            digest_due_at,
         };
         let storage_key = key(
             QUEUED,
@@ -204,10 +285,35 @@ impl Vault {
     ) -> Result<()> {
         let mut txn = self.store.env.write_txn()?;
         actor.revalidate_in_txn(self, &txn)?;
+        let mut preference = preference_in(self, &txn, actor.actor())?;
+        preference.mode = mode;
         self.store.vault_meta.put(
             &mut txn,
             &key(PREF, actor.actor().as_bytes()),
-            &encode(&mode)?,
+            &encode(&preference)?,
+        )?;
+        txn.commit()?;
+        Ok(())
+    }
+
+    /// Recipient-owned cadence override; absent uses the selected manifest row.
+    /// An open digest window keeps its original due time when this dial changes.
+    pub fn set_policy_notification_digest_interval(
+        &self,
+        actor: &AuthenticatedOwner,
+        interval_seconds: Option<u64>,
+    ) -> Result<()> {
+        if interval_seconds.is_some_and(|n| !(1..=MAX_DIGEST_INTERVAL).contains(&n)) {
+            return Err(invalid());
+        }
+        let mut txn = self.store.env.write_txn()?;
+        actor.revalidate_in_txn(self, &txn)?;
+        let mut preference = preference_in(self, &txn, actor.actor())?;
+        preference.digest_interval_seconds = interval_seconds;
+        self.store.vault_meta.put(
+            &mut txn,
+            &key(PREF, actor.actor().as_bytes()),
+            &encode(&preference)?,
         )?;
         txn.commit()?;
         Ok(())
@@ -224,71 +330,235 @@ impl Vault {
         Ok(rows)
     }
 
-    /// Connect queued pushes to the existing TASK human follow-up ladder.
-    /// Unreachable holders remain queued and can be retried after contact setup.
+    /// Durable retry records, including rows with no current contact route.
+    pub fn policy_notification_failures(&self) -> Result<Vec<PolicyNotificationFailure>> {
+        let txn = self.store.env.read_txn()?;
+        let mut failures = Vec::new();
+        for entry in self.store.vault_meta.prefix_iter(&txn, QUEUE_FAILURE)? {
+            let (_, raw) = entry?;
+            failures.push(decode(&raw)?);
+        }
+        Ok(failures)
+    }
+
+    /// Inspect at most `limit` queue positions, not just `limit` successes.
+    /// The persisted round-robin cursor advances on every inspected position,
+    /// so old unreachable holders cannot starve later entries after a restart.
+    /// Each TASK and its queue links commit together; one bad author rolls back
+    /// only that TASK attempt and persists a separate retry receipt.
     pub fn drive_policy_notification_queue(&self, now: u64, limit: usize) -> Result<usize> {
         if limit == 0 {
             return Ok(0);
         }
-        let mut txn = self.store.env.write_txn()?;
-        let mut ready = Vec::new();
-        for entry in self.store.vault_meta.prefix_iter(&txn, QUEUED)? {
-            let (key, value) = entry?;
-            let row: PolicyQueuedNotification = decode(&value)?;
-            if matches!(
-                row.mode,
-                PolicyNotificationMode::PushAll | PolicyNotificationMode::Digest
-            ) && row.followup_task.is_none()
-            {
-                ready.push((key.to_vec(), row));
+        let (selected, failure_retry) = {
+            let txn = self.store.env.read_txn()?;
+            let cursor = self
+                .store
+                .vault_meta
+                .get(&txn, QUEUE_CURSOR)?
+                .map(|raw| raw.to_vec());
+            let mut keys = Vec::new();
+            for entry in self.store.vault_meta.prefix_iter(&txn, QUEUED)? {
+                let (key, _) = entry?;
+                keys.push(key.to_vec());
             }
-            if ready.len() >= limit {
-                break;
+            let start = cursor
+                .as_ref()
+                .and_then(|last| keys.iter().position(|key| key > last))
+                .unwrap_or(0);
+            let selected = (0..limit.min(keys.len()))
+                .map(|offset| keys[(start + offset) % keys.len()].clone())
+                .collect::<Vec<_>>();
+            let mut failure_retry = BTreeMap::new();
+            for key in &selected {
+                if let Some(raw) = self.store.vault_meta.get(&txn, &failure_key(key))? {
+                    if let Ok(state) = decode::<PolicyNotificationFailure>(&raw) {
+                        failure_retry.insert(key.clone(), state.next_retry_at);
+                    }
+                }
+            }
+            (selected, failure_retry)
+        };
+        let mut linked = 0;
+        let mut processed_digests = BTreeSet::new();
+        for key in selected {
+            // Cursor advancement is independent of the TASK transaction.
+            self.with_write_txn(|txn| {
+                self.store
+                    .vault_meta
+                    .put(txn, QUEUE_CURSOR, &key)
+                    .map_err(Into::into)
+            })?;
+            if failure_retry.get(&key).is_some_and(|retry| *retry > now) {
+                continue;
+            }
+            let row = {
+                let txn = self.store.env.read_txn()?;
+                self.store
+                    .vault_meta
+                    .get(&txn, &key)?
+                    .map(|raw| decode::<PolicyQueuedNotification>(&raw))
+                    .transpose()
+            };
+            let row = match row {
+                Ok(Some(row)) => row,
+                Ok(None) => continue,
+                Err(error) => {
+                    self.record_notification_failure(&key, None, now, &error)?;
+                    continue;
+                }
+            };
+            if row.followup_task.is_some() || row.mode == PolicyNotificationMode::LogOnly {
+                continue;
+            }
+            if row.mode == PolicyNotificationMode::Digest {
+                if !processed_digests.insert(row.recipient.clone())
+                    || row.digest_due_at.is_none_or(|due| due > now)
+                {
+                    continue;
+                }
+            }
+            match self.link_notification_in_txn(&key, &row, now) {
+                Ok(count) => linked += count,
+                Err(error) => self.record_notification_failure(&key, Some(&row), now, &error)?,
             }
         }
-        let mut linked = 0;
+        Ok(linked)
+    }
+
+    fn record_notification_failure(
+        &self,
+        key: &[u8],
+        row: Option<&PolicyQueuedNotification>,
+        now: u64,
+        error: &Error,
+    ) -> Result<()> {
+        self.with_write_txn(|txn| {
+            let failure_key = failure_key(key);
+            let prior: Option<PolicyNotificationFailure> = self
+                .store
+                .vault_meta
+                .get(txn, &failure_key)?
+                .and_then(|raw| decode(&raw).ok());
+            let failure = PolicyNotificationFailure {
+                receipt_id: row
+                    .map_or_else(|| String::from("undecodable"), |row| row.receipt_id.clone()),
+                recipient: row
+                    .map_or_else(|| String::from("undecodable"), |row| row.recipient.clone()),
+                attempts: prior.map_or(1, |old| old.attempts.saturating_add(1)),
+                last_attempt_at: now,
+                next_retry_at: now.saturating_add(60),
+                last_error_kind: format!("{:?}", error.kind()),
+            };
+            self.store
+                .vault_meta
+                .put(txn, &failure_key, &encode(&failure)?)?;
+            Ok(())
+        })
+    }
+
+    fn link_notification_in_txn(
+        &self,
+        queue_key: &[u8],
+        row: &PolicyQueuedNotification,
+        now: u64,
+    ) -> Result<usize> {
+        let mut txn = self.store.env.write_txn()?;
+        let recipient = EntityId::from_hex(&row.recipient)?;
         let live_holders = authority::holders_in_txn(self, &txn, now)?;
-        for (key, mut row) in ready {
-            let recipient = EntityId::from_hex(&row.recipient)?;
-            // Never deliver a policy change to a revoked former holder.
-            if !live_holders.contains(&recipient) {
-                continue;
+        if !live_holders.contains(&recipient) {
+            return Err(invalid());
+        }
+        crate::human_task::resolve_native_human_route_in(self, &txn, recipient)
+            .map_err(|_| Error::InvalidConfig("policy notification route unavailable".into()))?;
+        let count = if row.mode == PolicyNotificationMode::Digest {
+            let mut group = Vec::new();
+            for entry in self.store.vault_meta.prefix_iter(&txn, QUEUED)? {
+                let (key, raw) = entry?;
+                // A different damaged entry has its own retry state; it
+                // cannot poison this recipient's otherwise valid digest.
+                let Ok(candidate) = decode::<PolicyQueuedNotification>(&raw) else {
+                    continue;
+                };
+                if candidate.recipient == row.recipient
+                    && candidate.mode == PolicyNotificationMode::Digest
+                    && candidate.followup_task.is_none()
+                    && candidate.digest_due_at.is_some_and(|due| due <= now)
+                {
+                    group.push((key.to_vec(), candidate));
+                }
             }
-            // No route today is not an authorization to cancel the pending push.
-            if crate::human_task::resolve_native_human_route_in(self, &txn, recipient).is_err() {
-                continue;
+            if group.is_empty() {
+                return Ok(0);
+            }
+            let sender = group
+                .iter()
+                .filter_map(|(_, item)| EntityId::from_hex(&item.author).ok())
+                .find(|author| live_holders.contains(author) && *author != recipient)
+                .ok_or_else(invalid)?;
+            let receipts = group
+                .iter()
+                .map(|(_, item)| item.receipt_id.clone())
+                .collect::<Vec<_>>();
+            let task = crate::task_verb::enqueue_policy_change_digest_followup_in_txn(
+                self, &mut txn, sender, recipient, &receipts, now,
+            )?;
+            for (key, mut item) in group {
+                item.followup_task = Some(task.to_hex());
+                self.store.vault_meta.put(&mut txn, &key, &encode(&item)?)?;
+                self.store.vault_meta.delete(&mut txn, &failure_key(&key))?;
+            }
+            self.store
+                .vault_meta
+                .delete(&mut txn, &key(DIGEST_WINDOW, recipient.as_bytes()))?;
+            receipts.len()
+        } else {
+            let sender = EntityId::from_hex(&row.author)?;
+            if !live_holders.contains(&sender) {
+                return Err(invalid());
             }
             let task = crate::task_verb::enqueue_policy_change_followup_in_txn(
                 self,
                 &mut txn,
-                EntityId::from_hex(&row.author)?,
+                sender,
                 recipient,
                 &row.receipt_id,
                 now,
             )?;
-            row.followup_task = Some(task.to_hex());
-            self.store.vault_meta.put(&mut txn, &key, &encode(&row)?)?;
-            linked += 1;
-        }
+            let mut linked = row.clone();
+            linked.followup_task = Some(task.to_hex());
+            self.store
+                .vault_meta
+                .put(&mut txn, queue_key, &encode(&linked)?)?;
+            self.store
+                .vault_meta
+                .delete(&mut txn, &failure_key(queue_key))?;
+            1
+        };
         txn.commit()?;
-        Ok(linked)
+        Ok(count)
     }
 
     /// Holder changes a manifest-resident delivery rule; the next change reads it.
     pub fn change_policy_notification_rule(
         &self,
         holder: &AuthenticatedOwner,
-        scope: PolicyRowScope,
+        target: PolicyNotificationTarget,
         rule: PolicyNotificationRule,
         now: u64,
     ) -> Result<String> {
-        let vault_scope = match scope {
-            PolicyRowScope::Vault => true,
-            PolicyRowScope::World(_) | PolicyRowScope::Project(_) => false,
-        };
+        let vault_scope = target == PolicyNotificationTarget::VaultDefault;
         let mut txn = self.store.env.write_txn()?;
         holder.revalidate_in_txn(self, &txn)?;
-        if !authority::holders_in_txn(self, &txn, now)?.contains(&holder.actor()) {
+        if !authority::holders_for_in_txn(
+            self,
+            &txn,
+            now,
+            &PolicyRowScope::Vault,
+            target.grant_target(),
+        )?
+        .contains(&holder.actor())
+        {
             return Err(super::denied());
         }
         let (id, _, mut value) = manifest_in(self, &txn)?;
@@ -303,13 +573,13 @@ impl Vault {
         else {
             return Err(invalid());
         };
-        let target = if vault_scope { "vault" } else { "override" };
+        let scope_name = target.row_scope();
         let mut replaced = false;
         for row in rows.iter_mut() {
             let Value::Map(fields) = row else {
                 return Err(invalid());
             };
-            if field(fields, "scope")?.as_str() == Some(target) {
+            if field(fields, "scope")?.as_str() == Some(scope_name) {
                 let entry = fields
                     .iter_mut()
                     .find(|(key, _)| key.as_str() == Some("delivery"))
@@ -329,7 +599,8 @@ impl Vault {
             kind: "policy.changed".to_owned(),
             receipt_id: receipt_id.clone(),
             author: holder.actor().to_hex(),
-            scope,
+            scope: None,
+            target: Some(target),
             at: now,
         };
         let receipt_key = key(RULE_RECEIPT, receipt_id.as_bytes());
