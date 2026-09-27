@@ -65,6 +65,7 @@ pub fn run_docx_revision(
         inspection,
         validation: report,
         recalc: RecalcStatus::NotNeeded,
+        calc_engine: None,
         base_version: None,
         base_content_hash: *blake3::hash(input_bytes).as_bytes(),
     }))
@@ -97,6 +98,7 @@ impl crate::Vault {
         let mut outcome = run_docx_revision(&bytes, transaction_json, run_ref)?;
         if let EditOutcome::Proposed(proposal) = &mut outcome {
             proposal.base_version = Some(head.version);
+            proposal.calc_engine = head.calc_engine.map(Box::new);
         }
         Ok(outcome)
     }
