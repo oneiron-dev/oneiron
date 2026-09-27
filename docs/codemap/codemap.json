@@ -16848,7 +16848,7 @@
      "path": "src/gate/constants.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 77
+      "crate-vis": 78
      }
     },
     {
@@ -17121,8 +17121,18 @@
      "path": "src/gate/mod.rs",
      "purpose": "DEC-0005 Gate policy manifest resolver",
      "surface": {
-      "crate-vis": 26,
+      "crate-vis": 27,
       "re-export": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/gate/project_conversion.rs",
+     "purpose": "Typed project-conversion policy, parsed from a trusted policy manifest",
+     "surface": {
+      "crate-vis": 10
      }
     },
     {
@@ -17166,7 +17176,7 @@
      "path": "src/gate/resolution/accessors.rs",
      "purpose": "Read-only resolved-field accessors plus the frontier-hash entry",
      "surface": {
-      "crate-vis": 24
+      "crate-vis": 25
      }
     },
     {
@@ -17456,6 +17466,14 @@
      "surface": {}
     },
     {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/gate/tests/project_conversion.rs",
+     "purpose": "Project-conversion manifest policy: default, strict parse, narrowing and frontier",
+     "surface": {}
+    },
+    {
      "bucket": "L",
      "kind": "test",
      "notable": [],
@@ -17615,7 +17633,7 @@
      "surface": {
       "const": 1,
       "crate-vis": 2,
-      "fn": 6,
+      "fn": 7,
       "struct": 4
      }
     },
@@ -28988,7 +29006,7 @@
      "path": "src/skill/doors.rs",
      "purpose": "Typed Vault doors for SKILL records",
      "surface": {
-      "crate-vis": 7,
+      "crate-vis": 8,
       "fn": 5
      }
     },
@@ -32727,7 +32745,7 @@
      "path": "src/task_verb/mod.rs",
      "purpose": "Typed, actor-bound verbs over the Context Board TASKS section",
      "surface": {
-      "crate-vis": 11,
+      "crate-vis": 12,
       "mod": 1,
       "re-export": 16
      }
@@ -34456,7 +34474,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "MessageHangs"
@@ -34464,6 +34482,7 @@
      "path": "src/workspace_roster/project/conversion.rs",
      "purpose": "Atomic conversion of a room thread into a project and its origin card",
      "surface": {
+      "crate-vis": 1,
       "fn": 6,
       "struct": 1
      }
@@ -34492,6 +34511,7 @@
      "bucket": "m",
      "kind": "src",
      "notable": [
+      "ProjectGoalRecord",
       "ProjectRecord",
       "ProjectRole",
       "ProjectRoom",
@@ -34506,7 +34526,17 @@
       "enum": 1,
       "fn": 8,
       "re-export": 1,
-      "struct": 4
+      "struct": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/workspace_roster/project/origin.rs",
+     "purpose": "Durable origin proof and local secondary indexes for converted projects",
+     "surface": {
+      "crate-vis": 8
      }
     },
     {
@@ -34518,6 +34548,14 @@
      "surface": {
       "crate-vis": 3
      }
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/workspace_roster/project/review_tests.rs",
+     "purpose": "Acceptance regressions for indexed project origin and policy narrowing",
+     "surface": {}
     },
     {
      "bucket": "m",
@@ -34553,7 +34591,7 @@
      "path": "src/workspace_roster/rooms/history.rs",
      "purpose": "Bounded room-local history and transactional auxiliary-row cleanup",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 3,
       "fn": 4
      }
     },
@@ -35124,7 +35162,7 @@
      "surface": {}
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "test",
      "notable": [],
      "path": "tests/it_project_conversion.rs",
@@ -36030,7 +36068,7 @@
      "purpose": "—"
     },
     "gate": {
-     "files": 75,
+     "files": 77,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -36702,7 +36740,7 @@
      "purpose": "OF-444 web acquisition primitive: one HTTP(S) URL in, one fixed six-field [`FetchResult`] out, produced by a…"
     },
     "workspace_roster": {
-     "files": 21,
+     "files": 23,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -36718,8 +36756,8 @@
    },
    "over_bar": 2,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2178,
-   "test_files": 736
+   "source_files": 2180,
+   "test_files": 738
   },
   "oneiron-android": {
    "files": [

@@ -139,6 +139,9 @@ pub(crate) fn resolve_policy_manifest(
                 // order, then row order inside each manifest. Row indices in
                 // ladder events index this concatenation.
                 resolution.budget_policy.extend_rows(decoded.budget_policy);
+                if let Some(policy) = decoded.project_conversion {
+                    resolution.project_conversion = resolution.project_conversion.restrict(policy);
+                }
                 if let Some(bounds) = decoded.diagnostic_bounds {
                     match resolution.diagnostic_bounds {
                         None => resolution.diagnostic_bounds = Some(bounds),

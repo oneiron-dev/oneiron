@@ -135,65 +135,85 @@ impl Vault {
         occurred: TimeRange,
         learned_at: u64,
     ) -> Result<SkillRecord> {
-        self.with_write_txn(|wtxn| {
-            let parent = self.read_skill_record_in_txn(wtxn, parent_id)?;
-            if fork_id == parent_id || self.store.entities.get(wtxn, fork_id.as_bytes())?.is_some()
-            {
-                return Err(Error::Artifact(ArtifactError::InvalidSkillBody(
-                    "fork target entity already exists",
-                )));
-            }
-            if fork_skill_id == parent.skill_id {
-                return Err(Error::Artifact(ArtifactError::InvalidSkillBody(
-                    "fork must take its own skillId; the parent keeps the imported one",
-                )));
-            }
-            let mut fork = SkillRecord::new(
+        self.with_write_txn(|txn| {
+            self.fork_skill_record_in_txn(
+                txn,
+                parent_id,
+                fork_id,
                 fork_skill_id,
-                parent.desc.clone(),
-                "1",
-                ClaimApprovalStatus::Approved,
-                SkillLifecycle::Candidate,
-                ClaimSource::UserStated,
-                1.0,
-                false,
-                true,
-                parent.dependencies.clone(),
-                Value::Map(vec![
-                    (Value::from("forkOf"), Value::from(parent.skill_id.as_str())),
-                    (Value::from("forkOfEntity"), Value::from(parent_id.to_hex())),
-                    (
-                        Value::from("forkOfVersion"),
-                        Value::from(parent.version.as_str()),
-                    ),
-                ]),
-            );
-            fork.forked_from = Some(*parent_id);
-            fork.governance_tier = parent.governance_tier;
-            let package = self.fork_skill_package_in_txn(wtxn, parent_id, &parent, &mut fork)?;
-            if let Some(hash) = fork.content_hash
-                && self
-                    .skill_entity_for_content_hash_in_txn(wtxn, hash)?
-                    .is_some()
-            {
-                return Err(Error::Artifact(ArtifactError::InvalidSkillBody(
-                    "fork source content is already resident",
-                )));
-            }
-            self.put_skill_record_in_txn(wtxn, fork_id, &fork, occurred, learned_at)?;
-            if let Some(package) = package {
-                self.persist_hub_package_in_txn(wtxn, fork_id, &package)?;
-            }
-            self.batch_in()
-                .edge(
-                    fork_id,
-                    EdgeKind::DerivedFrom,
-                    parent_id,
-                    EdgeKind::DerivedFrom.default_weight().unwrap_or(0.2),
-                )
-                .apply(wtxn)?;
-            Ok(fork)
+                occurred,
+                learned_at,
+            )
         })
+    }
+
+    /// The same fork door inside a caller transaction, so a confirmed project
+    /// and all of its skill forks commit or roll back together.
+    pub(crate) fn fork_skill_record_in_txn(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+        parent_id: &EntityId,
+        fork_id: &EntityId,
+        fork_skill_id: &str,
+        occurred: TimeRange,
+        learned_at: u64,
+    ) -> Result<SkillRecord> {
+        let parent = self.read_skill_record_in_txn(wtxn, parent_id)?;
+        if fork_id == parent_id || self.store.entities.get(wtxn, fork_id.as_bytes())?.is_some() {
+            return Err(Error::Artifact(ArtifactError::InvalidSkillBody(
+                "fork target entity already exists",
+            )));
+        }
+        if fork_skill_id == parent.skill_id {
+            return Err(Error::Artifact(ArtifactError::InvalidSkillBody(
+                "fork must take its own skillId; the parent keeps the imported one",
+            )));
+        }
+        let mut fork = SkillRecord::new(
+            fork_skill_id,
+            parent.desc.clone(),
+            "1",
+            ClaimApprovalStatus::Approved,
+            SkillLifecycle::Candidate,
+            ClaimSource::UserStated,
+            1.0,
+            false,
+            true,
+            parent.dependencies.clone(),
+            Value::Map(vec![
+                (Value::from("forkOf"), Value::from(parent.skill_id.as_str())),
+                (Value::from("forkOfEntity"), Value::from(parent_id.to_hex())),
+                (
+                    Value::from("forkOfVersion"),
+                    Value::from(parent.version.as_str()),
+                ),
+            ]),
+        );
+        fork.forked_from = Some(*parent_id);
+        fork.governance_tier = parent.governance_tier;
+        let package = self.fork_skill_package_in_txn(wtxn, parent_id, &parent, &mut fork)?;
+        if let Some(hash) = fork.content_hash
+            && self
+                .skill_entity_for_content_hash_in_txn(wtxn, hash)?
+                .is_some()
+        {
+            return Err(Error::Artifact(ArtifactError::InvalidSkillBody(
+                "fork source content is already resident",
+            )));
+        }
+        self.put_skill_record_in_txn(wtxn, fork_id, &fork, occurred, learned_at)?;
+        if let Some(package) = package {
+            self.persist_hub_package_in_txn(wtxn, fork_id, &package)?;
+        }
+        self.batch_in()
+            .edge(
+                fork_id,
+                EdgeKind::DerivedFrom,
+                parent_id,
+                EdgeKind::DerivedFrom.default_weight().unwrap_or(0.2),
+            )
+            .apply(wtxn)?;
+        Ok(fork)
     }
 
     /// Marks an old revision superseded by an admitted new revision of the

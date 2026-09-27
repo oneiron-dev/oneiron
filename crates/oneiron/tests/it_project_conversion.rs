@@ -1,6 +1,13 @@
+use oneiron::claim::{ClaimApprovalStatus, ClaimSource};
 use oneiron::edge::EdgeActorClass;
+use oneiron::genui::{
+    ConsentActionKind, ConsentActionRequest, ConsentActorIdentity, ConsentSurface,
+    PROJECT_PROPOSAL_MINT_ACTION_ID, ProjectGoalDraft, ProjectProposalCard, ProjectProposalPicks,
+};
 use oneiron::memory::{WitnessAuthor, WitnessMessage, WitnessTurn};
 use oneiron::registry::ENTITY_TYPE_PERSON;
+use oneiron::skill::{SkillLifecycle, SkillRecord};
+use oneiron::store::GateDecisionId;
 use oneiron::task_verb::TaskCreateSpec;
 use oneiron::workspace_roster::{ProjectRecord, RoomOriginCard, RoomTrunkItem};
 use oneiron::{EntityId, Result, TimeRange, Vault, WriteActor};
@@ -62,10 +69,10 @@ fn conversion_moves_open_task_and_projects_thread_origin_without_copy() -> Resul
     let room = EntityId::from_hex(&source.home_room)?;
     let trunk = EntityId::now();
     let message = EntityId::now();
-    speak(&vault, host, room, trunk, message, None);
+    speak(&vault, host, room, trunk, EntityId::now(), None);
     let thread = EntityId::now();
-    speak(&vault, host, room, thread, EntityId::now(), Some(trunk));
-    let run = vault.spawn_dag_sub_session(&trunk, WriteActor::new(host, EdgeActorClass::Human))?;
+    speak(&vault, host, room, thread, message, Some(trunk));
+    let run = vault.spawn_dag_sub_session(&thread, WriteActor::new(host, EdgeActorClass::Human))?;
     let task = vault
         .memory(holder, EdgeActorClass::Agent)
         .tasks_create(&TaskCreateSpec::new(
@@ -184,8 +191,8 @@ fn conversion_without_open_task_uses_room_host_and_rejects_wrong_origin() -> Res
     let trunk = EntityId::now();
     let message = EntityId::now();
     let thread = EntityId::now();
-    speak(&vault, host, room, trunk, message, None);
-    speak(&vault, host, room, thread, EntityId::now(), Some(trunk));
+    speak(&vault, host, room, trunk, EntityId::now(), None);
+    speak(&vault, host, room, thread, message, Some(trunk));
     let id = EntityId::now();
     assert!(
         vault
@@ -196,5 +203,284 @@ fn conversion_without_open_task_uses_room_host_and_rejects_wrong_origin() -> Res
     let project = vault.convert_thread_to_project(room, thread, message, id, None, 3)?;
     assert_eq!(project.leader, host.to_hex());
     assert!(project.tasks.is_empty());
+    Ok(())
+}
+
+#[test]
+fn confirmed_card_in_thread_mints_exact_terms_and_rejects_sibling_and_retired_owner() -> Result<()>
+{
+    let dir = tempfile::tempdir()?;
+    let vault = Vault::open(dir.path(), oneiron::VaultConfig::default())?;
+    let host = EntityId::now();
+    let owner_id = EntityId::now();
+    for id in [host, owner_id] {
+        vault.put_entity(
+            &id,
+            ENTITY_TYPE_PERSON,
+            TimeRange { start: 1, end: 1 },
+            1,
+            b"person",
+        )?;
+    }
+    let proof =
+        vault.authenticate_owner(owner_id, "principal:owner", true, GateDecisionId::now())?;
+    let source_id = EntityId::now();
+    let mut source = ProjectRecord::new(
+        source_id,
+        Some(vault.root_project()?),
+        vault.root_project()?,
+        host,
+    );
+    source.roster.push(owner_id.to_hex());
+    vault.put_project(source_id, &source, 1)?;
+    let room = EntityId::from_hex(&source.home_room)?;
+    let trunk = EntityId::now();
+    speak(&vault, host, room, trunk, EntityId::now(), None);
+    let thread = EntityId::now();
+    let message = EntityId::now();
+    speak(&vault, host, room, thread, message, Some(trunk));
+    let second_message = EntityId::now();
+    vault
+        .memory(host, EdgeActorClass::Human)
+        .rooms_speak(&WitnessTurn {
+            conversation_ref: room.to_hex(),
+            turn_ref: Some(thread.to_hex()),
+            messages: vec![WitnessMessage {
+                id: Some(second_message.to_hex()),
+                author: WitnessAuthor::User,
+                message_type: "text".into(),
+                content: "another message".into(),
+                metadata: Some(serde_json::json!({"room_thread_of": trunk.to_hex()})),
+                is_visible: true,
+                order: 1,
+            }],
+            occurred_at: 2,
+        })
+        .expect("second message in thread turn");
+    let sibling = EntityId::now();
+    speak(&vault, host, room, sibling, EntityId::now(), Some(trunk));
+    let skill = EntityId::now();
+    vault.put_skill_record(
+        &skill,
+        &SkillRecord::new(
+            "project.seed.skill",
+            "source skill",
+            "1",
+            ClaimApprovalStatus::Approved,
+            SkillLifecycle::Candidate,
+            ClaimSource::UserStated,
+            1.0,
+            false,
+            true,
+            vec![],
+            rmpv::Value::Map(vec![(
+                rmpv::Value::from("source"),
+                rmpv::Value::from("owner"),
+            )]),
+        ),
+        TimeRange { start: 1, end: 1 },
+        1,
+    )?;
+    let selected_leader =
+        EntityId::from_hex(&vault.project(vault.root_project()?)?.expect("root").leader)?;
+    assert_ne!(selected_leader, host);
+    let card = ProjectProposalCard::new(
+        "proposal-1",
+        "principal:owner",
+        message.to_hex(),
+        ProjectGoalDraft {
+            goal: "Build index".into(),
+            why: "Find evidence".into(),
+            axes: vec!["coverage".into()],
+        },
+        ProjectProposalPicks {
+            leader_agent_def_ref: selected_leader.to_hex(),
+            board_human_refs: vec![owner_id.to_hex()],
+            budget_share_bps: 1250,
+            starting_skill_refs: vec![skill.to_hex()],
+        },
+    )?
+    .on_thread(room, thread)?;
+    let request = ConsentActionRequest::new(
+        "proposal-1",
+        PROJECT_PROPOSAL_MINT_ACTION_ID,
+        ConsentActionKind::ProjectMint,
+        ConsentActorIdentity::SurfaceActor {
+            actor_ref: "principal:owner".into(),
+        },
+        ConsentSurface::CompanionConversation,
+        4,
+    )?;
+    let wrong = EntityId::now();
+    assert!(
+        card.clone()
+            .on_thread(room, sibling)?
+            .convert_thread(&vault, &request, &proof, wrong, 4)
+            .is_err()
+    );
+    assert!(vault.project(wrong)?.is_none());
+    let id = EntityId::now();
+    let project = card.convert_thread(&vault, &request, &proof, id, 4)?;
+    assert_eq!(
+        project.born_from.as_deref(),
+        Some(message.to_hex().as_str())
+    );
+    assert_eq!(project.leader, selected_leader.to_hex());
+    assert_eq!(project.board, vec![owner_id.to_hex()]);
+    assert_eq!(
+        project.goal_record.as_ref().expect("confirmed goal").why,
+        "Find evidence"
+    );
+    assert_eq!(
+        project.goal_record.as_ref().expect("confirmed goal").axes,
+        vec!["coverage"]
+    );
+    assert_eq!(project.budget_share_bps, Some(1250));
+    assert_eq!(vault.message_hangs(message, room)?.projects, vec![id]);
+    assert!(
+        vault
+            .message_hangs(second_message, room)?
+            .projects
+            .is_empty(),
+        "only the card's message gets a project hang"
+    );
+    assert_eq!(project.skill_forks.len(), 1);
+    let fork = EntityId::from_hex(&project.skill_forks[0])?;
+    assert_eq!(
+        vault.get_skill_record(&fork)?.expect("fork").forked_from,
+        Some(skill)
+    );
+
+    // A fresh source thread with the same card terms, but a retired proof,
+    // cannot create even the derived room or source fold marker.
+    let fresh = EntityId::now();
+    let fresh_message = EntityId::now();
+    speak(&vault, host, room, fresh, fresh_message, Some(trunk));
+    let stale = ProjectProposalCard::new(
+        "proposal-1",
+        "principal:owner",
+        fresh_message.to_hex(),
+        card.goal.clone(),
+        ProjectProposalPicks {
+            leader_agent_def_ref: selected_leader.to_hex(),
+            board_human_refs: vec![owner_id.to_hex()],
+            budget_share_bps: 1250,
+            starting_skill_refs: vec![skill.to_hex()],
+        },
+    )?
+    .on_thread(room, fresh)?;
+    let survivor = EntityId::now();
+    vault.put_entity(
+        &survivor,
+        ENTITY_TYPE_PERSON,
+        TimeRange { start: 1, end: 1 },
+        1,
+        b"survivor",
+    )?;
+    vault.apply_identity_topology_op(
+        &oneiron::identity_topology::IdentityTopologyOp::Merge(
+            oneiron::identity_topology::MergeOp {
+                sources: vec![owner_id],
+                survivor,
+                evidence: oneiron::identity_topology::IdentityOpEvidence {
+                    refs: vec![],
+                    rationale: "retire owner proof".into(),
+                },
+                survivorship_plan: oneiron::identity_topology::SurvivorshipPlan::ReadThrough,
+            },
+        ),
+        &oneiron::identity_topology::IdentityOpWrite::auto(ClaimSource::Inferred)
+            .with_actor(WriteActor::new(host, EdgeActorClass::Human)),
+        5,
+    )?;
+    let rejected = EntityId::now();
+    assert!(
+        stale
+            .convert_thread(&vault, &request, &proof, rejected, 5)
+            .is_err()
+    );
+    assert!(vault.project(rejected)?.is_none());
+    assert!(vault.thread_project(room, fresh)?.is_none());
+    Ok(())
+}
+
+#[test]
+fn generic_project_write_proves_origin_and_prevents_duplicate_conversion() -> Result<()> {
+    let dir = tempfile::tempdir()?;
+    let vault = Vault::open(dir.path(), oneiron::VaultConfig::default())?;
+    let host = EntityId::now();
+    vault.put_entity(
+        &host,
+        ENTITY_TYPE_PERSON,
+        TimeRange { start: 1, end: 1 },
+        1,
+        b"host",
+    )?;
+    let source_id = EntityId::now();
+    let source = ProjectRecord::new(
+        source_id,
+        Some(vault.root_project()?),
+        vault.root_project()?,
+        host,
+    );
+    vault.put_project(source_id, &source, 1)?;
+    let room = EntityId::from_hex(&source.home_room)?;
+    let trunk = EntityId::now();
+    speak(&vault, host, room, trunk, EntityId::now(), None);
+    let thread = EntityId::now();
+    let message = EntityId::now();
+    speak(&vault, host, room, thread, message, Some(trunk));
+    let id = EntityId::now();
+    let mut record = ProjectRecord::new(
+        id,
+        Some(source_id),
+        EntityId::from_hex(&source.claims_scope_ref)?,
+        host,
+    );
+    record.born_from = Some(host.to_hex()); // wrong type: PERSON, not MESSAGE
+    record.origin_room = Some(room.to_hex());
+    record.origin_thread = Some(thread.to_hex());
+    record.origin_at = Some(2);
+    assert_eq!(
+        vault.put_project(id, &record, 3).unwrap_err().kind(),
+        oneiron::ErrorKind::InvalidProjectBody
+    );
+    assert!(vault.project(id)?.is_none());
+    record.born_from = Some(EntityId::now().to_hex()); // missing dependency stays pending for replay
+    assert_eq!(
+        vault.put_project(id, &record, 3).unwrap_err().kind(),
+        oneiron::ErrorKind::ProjectDependencyPending
+    );
+    assert!(
+        vault
+            .project_room(EntityId::from_hex(&record.home_room)?)?
+            .is_none()
+    );
+    record.born_from = Some(message.to_hex());
+    vault
+        .put_project(id, &record, 3)
+        .expect("valid generic origin");
+    assert_eq!(vault.thread_project(room, thread)?, Some(id));
+    let second = EntityId::now();
+    let mut duplicate = ProjectRecord::new(
+        second,
+        Some(source_id),
+        EntityId::from_hex(&source.claims_scope_ref)?,
+        host,
+    );
+    duplicate.born_from = record.born_from.clone();
+    duplicate.origin_room = record.origin_room.clone();
+    duplicate.origin_thread = record.origin_thread.clone();
+    duplicate.origin_at = record.origin_at;
+    assert!(vault.put_project(second, &duplicate, 3).is_err());
+    assert!(
+        vault
+            .convert_thread_to_project(room, thread, message, second, None, 3)
+            .is_err()
+    );
+    assert!(vault.project(second)?.is_none());
+    // Common delete cleans the mapping; a new typed conversion can use the origin.
+    assert!(vault.delete_entity(&id)?);
+    assert_eq!(vault.thread_project(room, thread)?, None);
     Ok(())
 }

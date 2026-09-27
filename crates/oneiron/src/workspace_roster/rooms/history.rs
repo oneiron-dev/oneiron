@@ -5,6 +5,7 @@ use std::ops::Bound;
 
 const HISTORY: &[u8] = b"rooms.history.v1/";
 const HEADS: &[u8] = b"rooms.heads.v1/";
+pub(in crate::workspace_roster) const THREAD_CHILDREN: &[u8] = b"rooms.thread_children.v1/";
 const RESPONSE: &[u8] = b"rooms.response.v1/";
 const PAGE_LIMIT: usize = 256;
 
@@ -23,12 +24,29 @@ pub(super) fn index_turn(store: &Store, txn: &mut heed::RwTxn<'_>, turn: &RoomTu
     store
         .vault_meta
         .put(txn, &ordered_key(HISTORY, room, turn.at, id), id.as_bytes())?;
-    if turn.thread_of.is_none() {
+    if let Some(parent) = &turn.thread_of {
+        let parent = EntityId::from_hex(parent)?;
+        let key = [
+            THREAD_CHILDREN,
+            room.as_bytes(),
+            parent.as_bytes(),
+            id.as_bytes(),
+        ]
+        .concat();
+        store.vault_meta.put(txn, &key, id.as_bytes())?;
+    } else {
         store
             .vault_meta
             .put(txn, &ordered_key(HEADS, room, turn.at, id), id.as_bytes())?;
     }
     Ok(())
+}
+fn turn_in_raw(store: &Store, txn: &heed::RoTxn<'_>, turn: EntityId) -> Result<RoomTurn> {
+    let raw = store
+        .vault_meta
+        .get(txn, &key(TURNS, turn))?
+        .ok_or(Error::CorruptedIndex("room turn"))?;
+    decode(&raw)
 }
 fn stored_id(raw: &[u8]) -> Result<EntityId> {
     EntityId::from_bytes(
@@ -54,6 +72,20 @@ pub(in crate::workspace_roster) fn delete_room_metadata(
         }
         for (row_key, raw) in page {
             let turn = stored_id(&raw)?;
+            let stored = turn_in_raw(store, txn, turn)?;
+            if let Some(parent) = stored.thread_of {
+                let parent = EntityId::from_hex(&parent)?;
+                store.vault_meta.delete(
+                    txn,
+                    &[
+                        THREAD_CHILDREN,
+                        room.as_bytes(),
+                        parent.as_bytes(),
+                        turn.as_bytes(),
+                    ]
+                    .concat(),
+                )?;
+            }
             for prefix in [TURNS, CLAIMS, RESPONSE] {
                 store.vault_meta.delete(txn, &key(prefix, turn))?;
             }

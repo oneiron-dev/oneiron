@@ -89,6 +89,17 @@ pub(crate) fn validate_project_body(id: EntityId, bytes: &[u8]) -> Result<Vec<En
         }
         ids.push(id);
     }
+    if body.budget_share_bps.is_some_and(|bps| bps > 10_000)
+        || body.goal_record.as_ref().is_some_and(|goal| {
+            goal.goal.trim().is_empty()
+                || goal.why.trim().is_empty()
+                || goal.axes.is_empty()
+                || goal.axes.len() > 128
+                || goal.axes.iter().any(|axis| axis.trim().is_empty())
+        })
+    {
+        return Err(invalid());
+    }
     if !body.roster.contains(&body.leader) {
         return Err(invalid());
     }
@@ -137,6 +148,15 @@ pub(crate) fn reconcile_project_rooms(
             )?;
             pending.extend(parent_body.parents);
         }
+        let policy: crate::gate::ProjectConversionPolicy =
+            crate::gate::resolve_policy_manifest(store, txn)?
+                .project_conversion_policy()
+                .ok_or_else(invalid)?;
+        if body.tasks.len() > policy.max_tasks {
+            return Err(invalid());
+        }
+        origin::validate_binding(store, txn, &body)?;
+        origin::index_origin(store, txn, *id, &body)?;
         // The body is the authority for the project DAG. Materialize its
         // `belongs_to` links in the same batch as the home room, so PPR and
         // graph readers see both parents (or neither on a rejected write).

@@ -10,11 +10,11 @@ use super::constants::{
     ACTOR_CEILING_KEY, ACTOR_CLASS_KEY, ACTOR_REF_KEY, AXIS_CRITICALITY_KEY, AXIS_SENSITIVITY_KEY,
     LOCAL_WRITE_ACTOR_CLASS, POLICY_ACTOR_CEILINGS_KEY, POLICY_DEFAULTS_KEY,
     POLICY_MIN_ENGINE_VERSION_KEY, POLICY_ON_BUDGET_EXHAUSTED_KEY, POLICY_OWNER_POLICY_ENABLED_KEY,
-    POLICY_OWNER_POLICY_ROWS_KEY, POLICY_PACK_ID_KEY, POLICY_PACK_VERSION_KEY, POLICY_RULES_KEY,
-    POLICY_SCHEMA_VERSION, POLICY_SCHEMA_VERSION_KEY, POLICY_SIGNATURES_KEY,
-    POLICY_SOURCE_TRUST_KEY, RULE_AXES_KEY, RULE_EXACT_KEY, RULE_PREFIX_KEY, SIGNATURE_ALG_KEY,
-    SIGNATURE_KEY_ID_KEY, SIGNATURE_SIG_KEY, SOURCE_TRUST_MAX_AUTO_SENSITIVITY_KEY,
-    SOURCE_TRUST_RECEIPTED_KEY, SOURCE_TRUST_WARNED_KEY,
+    POLICY_OWNER_POLICY_ROWS_KEY, POLICY_PACK_ID_KEY, POLICY_PACK_VERSION_KEY,
+    POLICY_PROJECT_CONVERSION_KEY, POLICY_RULES_KEY, POLICY_SCHEMA_VERSION,
+    POLICY_SCHEMA_VERSION_KEY, POLICY_SIGNATURES_KEY, POLICY_SOURCE_TRUST_KEY, RULE_AXES_KEY,
+    RULE_EXACT_KEY, RULE_PREFIX_KEY, SIGNATURE_ALG_KEY, SIGNATURE_KEY_ID_KEY, SIGNATURE_SIG_KEY,
+    SOURCE_TRUST_MAX_AUTO_SENSITIVITY_KEY, SOURCE_TRUST_RECEIPTED_KEY, SOURCE_TRUST_WARNED_KEY,
 };
 use super::definition_ceiling::first_party_connector_actor_ref;
 
@@ -355,6 +355,29 @@ pub(crate) fn default_policy_manifest() -> Vec<u8> {
                         (Value::from(SOURCE_TRUST_WARNED_KEY), Value::Boolean(true)),
                     ]),
                 ),
+            ]),
+        ),
+        (
+            Value::from(POLICY_PROJECT_CONVERSION_KEY),
+            Value::Map(vec![
+                (
+                    Value::from("precedence"),
+                    Value::from("nested_narrowing_holder_override_capped_vault"),
+                ),
+                (
+                    Value::from("leader_fallback"),
+                    Value::from("task_holder_then_source_leader"),
+                ),
+                (
+                    Value::from("roster_selection"),
+                    Value::from("inherit_source"),
+                ),
+                (
+                    Value::from("task_holder_fallback"),
+                    Value::from("assignee_then_owner"),
+                ),
+                (Value::from("max_tasks"), Value::from(4096_u64)),
+                (Value::from("allow_holder_override"), Value::Boolean(true)),
             ]),
         ),
         (

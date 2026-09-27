@@ -4,11 +4,14 @@ mod conversion;
 pub use conversion::MessageHangs;
 mod deletion;
 mod edges;
+mod origin;
 mod projection;
 pub(crate) use deletion::deindex_project_room;
 pub(crate) use edges::{
     validate_project_edge_delete, validate_project_edge_put, validate_project_graph,
 };
+#[cfg(test)]
+mod review_tests;
 #[cfg(test)]
 mod tests;
 pub(crate) use projection::{reconcile_project_rooms, validate_project_body, validate_room_body};
@@ -38,6 +41,15 @@ pub enum ProjectRole {
     Corpus,
 }
 
+/// Confirmed goal wording carried as project data, not a leader prompt.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ProjectGoalRecord {
+    pub goal: String,
+    pub why: String,
+    pub axes: Vec<String>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ProjectRecord {
@@ -58,6 +70,10 @@ pub struct ProjectRecord {
     pub budget: Option<String>,
     pub asks: Vec<String>,
     pub home_room: String,
+    #[serde(default)]
+    pub goal_record: Option<ProjectGoalRecord>,
+    #[serde(default)]
+    pub budget_share_bps: Option<u16>,
     #[serde(default)]
     pub born_from: Option<String>,
     #[serde(default)]
@@ -90,6 +106,8 @@ impl ProjectRecord {
             budget: None,
             asks: vec![],
             home_room: home_room_id(id).to_hex(),
+            goal_record: None,
+            budget_share_bps: None,
             born_from: None,
             origin_room: None,
             origin_thread: None,

@@ -45,6 +45,11 @@ pub struct ProjectProposalCard {
     pub principal_ref: String,
     /// Message on which this card was shown; the eventual writer binds born_from.
     pub source_message_ref: String,
+    /// Host-held placement; both must be present for a mutating tap.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_room_ref: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_thread_ref: Option<String>,
     pub goal: ProjectGoalDraft,
     pub leader_agent_def_ref: String,
     pub board_human_refs: Vec<String>,
@@ -60,6 +65,10 @@ struct ProjectProposalCardWire {
     card_id: String,
     principal_ref: String,
     source_message_ref: String,
+    #[serde(default)]
+    source_room_ref: Option<String>,
+    #[serde(default)]
+    source_thread_ref: Option<String>,
     goal: ProjectGoalDraft,
     leader_agent_def_ref: String,
     board_human_refs: Vec<String>,
@@ -75,6 +84,8 @@ impl TryFrom<ProjectProposalCardWire> for ProjectProposalCard {
             card_id: wire.card_id,
             principal_ref: wire.principal_ref,
             source_message_ref: wire.source_message_ref,
+            source_room_ref: wire.source_room_ref,
+            source_thread_ref: wire.source_thread_ref,
             goal: wire.goal,
             leader_agent_def_ref: wire.leader_agent_def_ref,
             board_human_refs: wire.board_human_refs,
@@ -94,6 +105,8 @@ pub struct ProjectMintIntent {
     pub origin_component_id: String,
     pub origin_action_id: String,
     pub source_message_ref: String,
+    pub source_room_ref: Option<String>,
+    pub source_thread_ref: Option<String>,
     pub goal: ProjectGoalDraft,
     pub leader_agent_def_ref: String,
     pub board_human_refs: Vec<String>,
@@ -113,6 +126,8 @@ impl ProjectProposalCard {
             card_id: card_id.into(),
             principal_ref: principal_ref.into(),
             source_message_ref: source_message_ref.into(),
+            source_room_ref: None,
+            source_thread_ref: None,
             goal,
             leader_agent_def_ref: picks.leader_agent_def_ref,
             board_human_refs: picks.board_human_refs,
@@ -121,6 +136,15 @@ impl ProjectProposalCard {
         };
         card.validate()?;
         Ok(card)
+    }
+
+    /// Bind a host-held card to the room thread containing its source message.
+    /// A client action cannot choose a different thread at tap time.
+    pub fn on_thread(mut self, room: EntityId, thread: EntityId) -> Result<Self> {
+        self.source_room_ref = Some(room.to_hex());
+        self.source_thread_ref = Some(thread.to_hex());
+        self.validate()?;
+        Ok(self)
     }
 
     /// Recheck before rendering or emitting an intent: public fields and decoded
@@ -145,6 +169,18 @@ impl ProjectProposalCard {
             ("leader_agent_def_ref", &self.leader_agent_def_ref),
         ] {
             ensure_canonical_ref(name, reference)?;
+        }
+        match (&self.source_room_ref, &self.source_thread_ref) {
+            (None, None) => {}
+            (Some(room), Some(thread)) => {
+                for reference in [room, thread] {
+                    let id = EntityId::from_hex(reference)?;
+                    if id.to_hex() != *reference {
+                        return Err(Error::InvalidConfig("noncanonical thread placement".into()));
+                    }
+                }
+            }
+            _ => return Err(Error::InvalidConfig("incomplete thread placement".into())),
         }
         if self.goal.axes.is_empty() || self.board_human_refs.is_empty() {
             return Err(Error::InvalidConfig(
@@ -220,6 +256,8 @@ impl ProjectProposalCard {
             origin_component_id: self.card_id.clone(),
             origin_action_id: request.action_id.clone(),
             source_message_ref: self.source_message_ref.clone(),
+            source_room_ref: self.source_room_ref.clone(),
+            source_thread_ref: self.source_thread_ref.clone(),
             goal: self.goal.clone(),
             leader_agent_def_ref: self.leader_agent_def_ref.clone(),
             board_human_refs: self.board_human_refs.clone(),
@@ -239,20 +277,11 @@ impl ProjectProposalCard {
         vault: &Vault,
         request: &ConsentActionRequest,
         owner: &AuthenticatedOwner,
-        room: EntityId,
-        thread: EntityId,
         project: EntityId,
         now: u64,
     ) -> Result<crate::workspace_roster::ProjectRecord> {
         let intent = self.evaluate_action(request, owner)?;
-        vault.convert_thread_to_project(
-            room,
-            thread,
-            EntityId::from_hex(&intent.source_message_ref)?,
-            project,
-            None,
-            now,
-        )
+        vault.convert_thread_with_card(&intent, owner, project, now)
     }
 
     #[must_use]

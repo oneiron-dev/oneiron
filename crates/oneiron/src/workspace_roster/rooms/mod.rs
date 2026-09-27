@@ -7,7 +7,7 @@ use super::ProjectRoom;
 use crate::error::{Error, Result};
 use crate::memory::{Memory, MemoryError, MemoryResult, WitnessReceipt, WitnessTurn};
 use crate::{EntityId, Vault};
-pub(super) use history::delete_room_metadata;
+pub(super) use history::{THREAD_CHILDREN, delete_room_metadata};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 pub(crate) use witness::admit_witness;
