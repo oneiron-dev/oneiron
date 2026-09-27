@@ -254,7 +254,14 @@ fn brief_pins_editor_proposals_purge_and_fresh_views() {
     assert!(
         matches!(reopened.resolve_note_pin(&pin_a).unwrap(), NoteSpanResolution::Mapped { quote, .. } if quote == "first quote")
     );
-    assert!(reopened.delete_entity(&source).unwrap());
+    assert!(
+        reopened
+            .delete_entity_with_options(
+                &source,
+                crate::deletion::DeleteEntityOptions { purge: true }
+            )
+            .unwrap()
+    );
     let read_key = ScopedReadActorKey::with_actor_class(author.to_hex(), "human").unwrap();
     let read = reopened.scoped_read(read_key);
     let erased = reopened

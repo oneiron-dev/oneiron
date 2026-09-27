@@ -424,6 +424,7 @@ impl Vault {
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .erase(id, self.store.env.info().last_txn_id);
         let mutation_recorded_at = crate::ports::recorded_at_in_txn(&self.store, wtxn)?;
+        crate::config::failure_signals::purge_tier2_for_source_in_txn(&self.store, wtxn, id)?;
         crate::ports::invalidate_source_in_txn(&self.store, wtxn, id)?;
         crate::calendar::origin::invalidate_dependents(self, wtxn, id)?;
         let (hint_had_vector, hint_had_graph_mutation, _hint_neighbors) =
@@ -495,6 +496,8 @@ impl Vault {
         crate::llm::deindex_dreamer_step_claim(&self.store, wtxn, id)?;
         self.store
             .port_entity_scrub(wtxn, id, ScrubbedRecord::Shell, mutation_recorded_at)?;
+        crate::federation::record_scope::retire_stamp(&self.store, wtxn, *id)?;
+
         Ok((true, had_vector))
     }
 

@@ -299,7 +299,6 @@ pub(super) fn birth_companion(
         companion.work_facet_ref,
         writer,
     )?;
-    ensure_persona_baseline(vault, intent, companion, writer)?;
     ensure_companion_profile_grant(vault, intent, companion, writer)
 }
 
@@ -539,20 +538,17 @@ pub(super) fn ensure_companion_person(
             if header.entity_type != ENTITY_TYPE_PERSON {
                 return Err(Error::InvalidEntityType(header.entity_type));
             }
-            // A prior attempt may have committed the PERSON baseline before its
-            // CompanionBorn journal write. Check the roster-owned identity
-            // fields, not the entire body: a matching baseline and unrelated
-            // PERSON identity fields must survive an interrupted retry.
-            let fields = decode_map(&raw[ENTITY_METADATA_HEADER_LEN..])?;
-            let mut keys = std::collections::BTreeSet::new();
-            let unique_keys = fields
-                .iter()
-                .all(|(key, _)| key.as_str().is_some_and(|name| keys.insert(name)));
-            if !unique_keys
-                || required(&fields, "schema_version")?.as_u64()
-                    != Some(WORKSPACE_ROSTER_SCHEMA_VERSION)
-                || required(&fields, "display_name")?.as_str()
-                    != Some(companion.display_name.as_str())
+            let stored = &raw[ENTITY_METADATA_HEADER_LEN..];
+            crate::companion::validated_persona_baseline(stored)?;
+            let fields = crate::companion::persona_body_fields(stored)?;
+            let field = |name: &str| {
+                fields
+                    .iter()
+                    .find(|(key, _)| key.as_str() == Some(name))
+                    .map(|(_, value)| value)
+            };
+            if field("schema_version") != Some(&Value::from(WORKSPACE_ROSTER_SCHEMA_VERSION))
+                || field("display_name") != Some(&Value::from(companion.display_name.as_str()))
             {
                 return Err(invalid(
                     "companion person_ref is already bound to a different person",
@@ -566,6 +562,12 @@ pub(super) fn ensure_companion_person(
             companion.person_ref,
             ENTITY_TYPE_PERSON,
             body,
+            at,
+        )?;
+        vault.put_persona_baseline_in_txn(
+            txn,
+            &companion.person_ref,
+            &serde_json::json!({"display_name": companion.display_name}),
             at,
         )
     })
@@ -612,26 +614,6 @@ pub(super) fn ensure_work_facet_edge(
             .batch_in()
             .edge(&person_ref, EdgeKind::HasFacet, &facet_ref, 1.0)
             .apply(txn)
-    })
-}
-
-/// Seeds persona identity on PERSON in the same authorized write transaction.
-pub(super) fn ensure_persona_baseline(
-    vault: &Vault,
-    intent: &MemberOnboardingIntent,
-    companion: &CompanionBirthIntent,
-    writer: &WriteActor,
-) -> Result<()> {
-    let baseline = serde_json::json!({
-        "display_name": companion.display_name,
-    });
-    with_workspace_authority(vault, intent.workspace.workspace_vault_id, writer, |txn| {
-        vault.ensure_persona_baseline_in_txn(
-            txn,
-            &companion.person_ref,
-            &baseline,
-            intent.occurred_at,
-        )
     })
 }
 

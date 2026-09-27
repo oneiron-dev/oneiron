@@ -189,7 +189,7 @@ fn from_value<T: serde::de::DeserializeOwned>(value: &Value) -> Result<T> {
         .map_err(|_| invalid_companion("invalid persona value"))
 }
 
-fn body_fields(data: &[u8]) -> Result<Vec<(Value, Value)>> {
+pub(crate) fn body_fields(data: &[u8]) -> Result<Vec<(Value, Value)>> {
     if data.is_empty() {
         return Ok(Vec::new());
     }
@@ -222,6 +222,18 @@ fn field<'a>(entries: &'a [(Value, Value)], name: &str) -> Result<&'a Value> {
         .ok_or_else(|| invalid_companion("persona record field is missing"))
 }
 
+/// The PERSON identity baseline accepted by both onboarding and scoped replay.
+/// Decodes the entire body (including duplicate/trailing-key checks), not just
+/// the presence of a `persona_definition` field.
+pub(crate) fn validated_persona_baseline(data: &[u8]) -> Result<JsonValue> {
+    let baseline: BaselineWire = from_value(field(&body_fields(data)?, BASELINE_KEY)?)?;
+    if baseline.schema_version != 1 {
+        return Err(invalid_companion("unsupported persona baseline version"));
+    }
+    object(&baseline.baseline)?;
+    Ok(baseline.baseline)
+}
+
 fn put_field(entries: &mut Vec<(Value, Value)>, name: &str, value: Value) {
     entries.retain(|(key, _)| key.as_str() != Some(name));
     entries.push((name.into(), value));
@@ -249,7 +261,7 @@ impl Vault {
         Ok(())
     }
 
-    /// Transaction-composable baseline write for an already-authorized caller.
+    /// Transactional baseline write for authorized composite operations.
     pub(crate) fn put_persona_baseline_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,
@@ -292,40 +304,6 @@ impl Vault {
             )
             .apply(txn)?;
         Ok(())
-    }
-
-    /// Seeds a PERSON baseline once without replacing a later identity edit.
-    pub(crate) fn ensure_persona_baseline_in_txn(
-        &self,
-        txn: &mut heed::RwTxn<'_>,
-        person: &EntityId,
-        baseline: &JsonValue,
-        at: u64,
-    ) -> Result<()> {
-        let raw = self
-            .store
-            .entities
-            .get(&*txn, person.as_bytes())?
-            .ok_or(Error::EntityNotFound)?;
-        let header = EntityMetadataHeader::parse(&raw)
-            .ok_or(Error::CorruptedIndex("persona PERSON header"))?;
-        if header.entity_type != ENTITY_TYPE_PERSON {
-            return Err(Error::InvalidEntityType(header.entity_type));
-        }
-        let fields = body_fields(&raw[ENTITY_METADATA_HEADER_LEN..])?;
-        if let Some((_, existing)) = fields
-            .iter()
-            .find(|(key, _)| key.as_str() == Some(BASELINE_KEY))
-        {
-            let existing: BaselineWire = from_value(existing)?;
-            if existing.schema_version != 1 || existing.baseline != *baseline {
-                return Err(invalid_companion(
-                    "PERSON baseline is already bound to a different identity",
-                ));
-            }
-            return Ok(());
-        }
-        self.put_persona_baseline_in_txn(txn, person, baseline, at)
     }
 
     /// Creates or updates an explicit scenario mask belonging to this PERSON.
@@ -434,12 +412,7 @@ impl ScopedRead<'_> {
         if kind != ENTITY_TYPE_PERSON {
             return Err(Error::InvalidEntityType(kind));
         }
-        let baseline: BaselineWire = from_value(field(&body_fields(&data)?, BASELINE_KEY)?)?;
-        if baseline.schema_version != 1 {
-            return Err(invalid_companion("unsupported persona baseline version"));
-        }
-        object(&baseline.baseline)?;
-        let mut value = baseline.baseline;
+        let mut value = validated_persona_baseline(&data)?;
         let mut changes = Vec::new();
         let claims: Vec<_> = self
             .vault()

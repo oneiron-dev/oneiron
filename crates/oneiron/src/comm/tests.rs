@@ -1377,7 +1377,10 @@ fn deleted_indexed_party_is_reminted_before_projector_reuse() -> CommResult<()> 
     run_comm_projector(&vault)?;
     let deleted_party = resolve_party(&vault, "party-reminted")?.ok_or(CommError::InvalidRecord)?;
 
-    assert!(vault.delete_entity(&deleted_party)?);
+    assert!(vault.delete_entity_with_options(
+        &deleted_party,
+        crate::deletion::DeleteEntityOptions { purge: true }
+    )?);
     assert_eq!(vault.get_entity_type(&deleted_party)?, None);
     // A cache hit naming a deleted row is stale, and synced truth holds no
     // replacement — absent, not the dangling id.

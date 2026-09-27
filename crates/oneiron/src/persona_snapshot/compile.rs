@@ -16,10 +16,10 @@ use crate::claim::{
     ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSubject, PointRead, ScopedRead,
     ScopedReadReceipt, claim_sensitivity_band, decode_claim_body,
 };
-use crate::companion::{CompanionRecordKind, CompanionScope};
+use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
-use crate::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_PERSON};
+use crate::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_PERSON, ENTITY_TYPE_RELATIONSHIP};
 
 /// Returns true when the OF-365 disclosure clamp bars this claim from ever
 /// entering a persona snapshot compile: restricted-band (Tier A) claims and
@@ -46,17 +46,40 @@ fn claim_value_text(value: &Value) -> String {
         .map_or_else(|| value.to_string(), str::to_owned)
 }
 
-fn relationship_role_label(value: &Value) -> Option<String> {
-    let Value::Map(entries) = value else {
+// Only an explicitly public RELATIONSHIP body may enter a portable card.
+// Malformed or ambiguous bodies are excluded, never treated as public.
+fn public_relationship_role(raw: &[u8]) -> Option<Option<String>> {
+    let mut reader = std::io::Cursor::new(raw);
+    let Value::Map(entries) = rmpv::decode::read_value(&mut reader).ok()? else {
         return None;
     };
-    entries.iter().find_map(|(key, value)| {
-        if key.as_str() == Some("role") {
-            value.as_str().map(str::to_owned)
-        } else {
-            None
+    if reader.position() != raw.len() as u64 {
+        return None;
+    }
+    let mut keys = BTreeSet::new();
+    for (key, _) in &entries {
+        if !keys.insert(key.as_str()?) {
+            return None;
         }
-    })
+    }
+    // No portable destination may inherit a relationship-local/shared scope.
+    if entries.iter().any(|(key, _)| key.as_str() == Some("scope")) {
+        return None;
+    }
+    let sensitivity = entries
+        .iter()
+        .find(|(key, _)| key.as_str() == Some("sensitivity"))?;
+    if sensitivity.1.as_str() != Some("public") {
+        return None;
+    }
+    Some(
+        entries
+            .iter()
+            .find_map(|(key, value)| {
+                (key.as_str() == Some("role")).then(|| value.as_str().map(str::to_owned))
+            })
+            .flatten(),
+    )
 }
 
 fn row_id(
@@ -328,42 +351,88 @@ impl crate::Vault {
             ),
         );
 
-        // A portable card has no shared-vault destination and discloses only
-        // Public relationships, independently of the audience's claim scope.
-        let register = self.companion_register()?;
+        // A public label is only a portable presentation clamp. The current
+        // digest-bound record position and the audience's scoped read still
+        // decide whether this RELATIONSHIP and each participating PERSON may
+        // enter the card. A replayed, unstamped relation cannot be exported.
         let mut related: BTreeMap<EntityId, (Option<String>, String)> = BTreeMap::new();
-        for (key, record) in register.iter() {
-            if record.kind() != CompanionRecordKind::Relationship
-                || record.sensitivity > crate::federation::Sensitivity::Public
-                || matches!(record.scope, CompanionScope::SharedVault { .. })
+        let visible_edges = if let Some(audience) = audience_read.as_ref() {
+            audience.edges_out(subject_ref)?.value.unwrap_or_default()
+        } else {
+            self.edges_out(subject_ref)?
+        };
+        for edge in visible_edges {
+            if edge.kind != EdgeKind::ParticipatesIn
+                || self.get_entity_type(&edge.target)? != Some(ENTITY_TYPE_RELATIONSHIP)
             {
                 continue;
             }
-            let crate::companion::CompanionSubject::Relationship {
-                source_ref,
-                target_ref,
-            } = &record.subject
-            else {
-                continue;
-            };
-            let (source_ref, target_ref) = (*source_ref, *target_ref);
-            let other = if source_ref == *subject_ref {
-                target_ref
-            } else if target_ref == *subject_ref {
-                source_ref
-            } else {
-                continue;
-            };
-            if other == *subject_ref {
+            let relation = edge.target;
+            if !matches!(
+                self.record_scope(&relation)?.map(|scope| scope.sensitivity),
+                Some(crate::federation::SensitivityCeiling::AtMost(
+                    crate::federation::Sensitivity::Public
+                ))
+            ) {
                 continue;
             }
-            let record_ref = self.companion_record_id_for_key(key)?.map_or_else(
-                || format!("companion:{}:{}", source_ref.to_hex(), target_ref.to_hex()),
-                |id| format!("companion:{}", id.to_hex()),
-            );
-            related
-                .entry(other)
-                .or_insert((relationship_role_label(&record.value), record_ref));
+            let body = if let Some(audience) = audience_read.as_ref() {
+                match audience
+                    .get_entity_parts_with_receipt(&relation, None)?
+                    .value
+                {
+                    Some((ENTITY_TYPE_RELATIONSHIP, _, data)) => data,
+                    _ => continue,
+                }
+            } else {
+                let Some(body) = self.get(&relation)? else {
+                    continue;
+                };
+                body
+            };
+            let Some(role) = public_relationship_role(&body) else {
+                continue;
+            };
+            let participants: BTreeSet<_> = self
+                .edges_in(&relation)?
+                .into_iter()
+                .filter(|edge| edge.kind == EdgeKind::ParticipatesIn)
+                .map(|edge| edge.target)
+                .collect();
+            if participants.len() < 2 || !participants.contains(subject_ref) {
+                continue;
+            }
+            // A group is disclosed as a whole or not at all: never leak a
+            // partial relationship when one member is hidden from the audience.
+            let participants_vec: Vec<_> = participants.iter().copied().collect();
+            if let Some(audience) = audience_read.as_ref() {
+                if audience
+                    .get_entities_parts_with_receipt(&participants_vec, None)?
+                    .value
+                    .iter()
+                    .any(|parts| !matches!(parts, Some((ENTITY_TYPE_PERSON, _, _))))
+                {
+                    continue;
+                }
+            } else {
+                let mut valid = true;
+                for id in &participants_vec {
+                    if self.get_entity_type(id)? != Some(ENTITY_TYPE_PERSON)
+                        || self.get(id)?.is_none()
+                    {
+                        valid = false;
+                        break;
+                    }
+                }
+                if !valid {
+                    continue;
+                }
+            }
+            for other in participants.into_iter().filter(|id| id != subject_ref) {
+                related.entry(other).or_insert_with(|| {
+                    (role.clone(), format!("relationship:{}", relation.to_hex()))
+                });
+            }
         }
 
         let mut third_party_rows = Vec::new();

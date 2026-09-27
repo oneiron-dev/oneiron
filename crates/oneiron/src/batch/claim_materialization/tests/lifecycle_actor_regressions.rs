@@ -241,7 +241,10 @@ fn failed_actor_retraction_emits_no_metrics(retype: bool) -> Result<()> {
             Ok(())
         })?;
     } else {
-        assert!(vault.delete_entity(&actor.entity_ref())?);
+        assert!(vault.delete_entity_with_options(
+            &actor.entity_ref(),
+            crate::deletion::DeleteEntityOptions { purge: true }
+        )?);
         assert!(vault.get_raw(&actor.entity_ref())?.is_none());
     }
     let raw = vault.get_raw(&id)?.expect("active claim remains");

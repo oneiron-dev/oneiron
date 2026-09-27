@@ -71,7 +71,7 @@ fn outbound_intent_job_ref_is_optional_for_legacy_intents() {
 }
 
 #[test]
-fn three_trigger_doors_converge_into_one_intent_shape() {
+fn four_trigger_doors_converge_into_one_intent_shape() {
     let commitment = dispatch_intent(OutboundIntentTrigger::commitment_timer_wake(
         "commitment:party-reminder",
     ));
@@ -81,6 +81,16 @@ fn three_trigger_doors_converge_into_one_intent_shape() {
     let gap = dispatch_intent(OutboundIntentTrigger::gap_queue("gap:unresolved-thread"));
     assert_eq!(gap.intent_source, "gap_queue");
     assert_eq!(gap.trigger_ref, "gap:unresolved-thread");
+
+    let transition = dispatch_intent(OutboundIntentTrigger::record_transition(
+        "esign:claim:terminal",
+    ));
+    assert_eq!(transition.intent_source, "record_transition");
+    assert_eq!(transition.trigger_ref, "esign:claim:terminal");
+    assert_eq!(
+        OutboundIntentSource::parse(&transition.intent_source),
+        Some(OutboundIntentSource::RecordTransition)
+    );
 
     let immediate = dispatch_intent(
         OutboundIntentTrigger::agent_immediate("session:reply-now").job_ref("brief:party"),

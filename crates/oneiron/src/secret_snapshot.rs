@@ -77,7 +77,7 @@ impl SnapshotExclusionSet {
 
 /// The repository root that anchors absolute custody declarations. Only local
 /// checkouts have one; hosted repo_refs name no path on this machine.
-fn snapshot_root(repo_ref: &RepoRef) -> Option<&str> {
+pub(crate) fn snapshot_root(repo_ref: &RepoRef) -> Option<&str> {
     match repo_ref {
         RepoRef::LocalFolder { path, .. } => Some(path.trim_end_matches('/')),
         RepoRef::GitHubAtCommit { .. } => None,

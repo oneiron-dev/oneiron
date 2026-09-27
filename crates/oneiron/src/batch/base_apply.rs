@@ -202,7 +202,6 @@ pub(super) fn apply_ops_with_origin(
     let mut pending_embedding_tokens_written = HashMap::<EntityId, Vec<u8>>::new();
     #[cfg(feature = "sync")]
     let mut pending_embedding_enqueue_priorities = HashMap::<EntityId, u8>::new();
-    let companion_retired_histories = companion_retired_histories_in_batch(&ops)?;
     let iter = ReplayIter {
         remaining: std::mem::take(&mut ops.ops).into_iter(),
         replay,

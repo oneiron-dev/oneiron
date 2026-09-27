@@ -2,19 +2,20 @@
 
 use std::collections::BTreeSet;
 
-use super::owned_body::guard_storage_owned_body;
+use super::put_staging::{PutCarrierContext, validate_put_carriers};
 use heed::RwTxn;
 
 use super::request::{PutContext, PutRequest, PutRow, Replication};
 use super::{
-    AppliedPut, AuthorityLogKeyOccupant, ENTITY_METADATA_HEADER_LEN, apply_short_id_plan,
-    authority_observation_secs_for_write, check_authority_log_store_key,
+    AppliedPut, AuthorityLogKeyOccupant, BaseWriteOrigin, ENTITY_METADATA_HEADER_LEN,
+    apply_short_id_plan, authority_observation_secs_for_write, check_authority_log_store_key,
     delete_short_id_rows_for_id, evict_authority_log_store_key_squatter, parse_entity_metadata,
     plan_short_id_update, reject_overlay_member_base_write, stage_claim_projection,
-    stage_entity_body_row, stage_entity_index_rows, stage_optional_side_row,
-    validate_companion_register_put, validate_local_agent_definition_create,
-    validate_local_skill_create, validate_replicated_authority_log_for_local_vault,
-    validate_skill_body_overwrite, validate_task_checkin_immutable,
+    stage_entity_body_row, stage_entity_index_rows, stage_optimizer_birth_marker_row,
+    stage_optional_side_row, validate_companion_register_put,
+    validate_local_agent_definition_create, validate_local_skill_create,
+    validate_replicated_authority_log_for_local_vault, validate_skill_body_overwrite,
+    validate_task_checkin_immutable,
 };
 use crate::claim::{ClaimApprovalStatus, ClaimBody};
 use crate::companion::ENTITY_TYPE_COMPANION_REGISTER;
@@ -73,9 +74,8 @@ pub(in crate::batch) fn apply_put(
     // and is diagnosed fail-closed by the policy resolver, never defaulted away.
     let normalized_policy = normalized_policy_scope(entity_type, data);
     let data = normalized_policy.as_deref().unwrap_or(data);
-    super::put_staging::validate_scope_carriers(store, wtxn, id, entity_type, data, origin)?;
-    guard_storage_owned_body(store, wtxn, &id, entity_type, occurred, data, replicated)?;
-    super::put_staging::validate_domain_carriers(store, wtxn, id, entity_type, data, replicated)?;
+    let carriers = PutCarrierContext::new(entity_type, occurred, learned_at, replicated, origin);
+    validate_put_carriers(store, wtxn, id, data, carriers)?;
     let mutation_recorded_at = crate::ports::recorded_at_in_txn(store, wtxn)?;
     super::put_staging::validate_source_carriers(
         store,
@@ -277,7 +277,9 @@ pub(in crate::batch) fn apply_put(
     } else if entity_type == crate::registry::ENTITY_TYPE_FACET
         && crate::companion::is_identity_facet_body(data)
     {
-        validate_companion_register_put(store, wtxn, &id, data, companion_retired_histories)?;
+        return Err(Error::InvalidClaimBody(
+            "retired companion-shaped FACET; use PERSON identity and scenario masks",
+        ));
     } else if entity_type == ENTITY_TYPE_TASK {
         // The role's TREE invariants are not judged here: `ChildOf` nesting
         // belongs to the batch's one final-state gate
@@ -575,6 +577,8 @@ pub(in crate::batch) fn apply_put(
         }
     }
 
+    crate::ingest::invalidate_docs_source_before_put(store, wtxn, &id, entity_type, data)?;
+
     // ONE-1449 MATERIAL-6 R1: staged in the SAME transaction as the body it
     // marks, so a rolled-back create leaves no marker and a committed one can
     // never be re-presented as an ordinary birth. Only a genuine optimizer-born
@@ -654,11 +658,6 @@ pub(in crate::batch) fn apply_put(
 
     stage_entity_index_rows(store, wtxn, &id, entity_type, occurred, learned_at)?;
     crate::federation::record_scope::stamp_put(store, wtxn, id, entity_type, data, replicated)?;
-    if entity_type == crate::registry::ENTITY_TYPE_FACET {
-        super::super::facet_identity::reconcile_identity_facet(
-            store, wtxn, id, data, occurred, learned_at,
-        )?;
-    }
     if entity_type == crate::registry::ENTITY_TYPE_PERSON {
         super::super::person_substrate::ensure_person_substrate(
             store, wtxn, id, occurred, learned_at,

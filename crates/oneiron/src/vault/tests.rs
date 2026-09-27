@@ -67,7 +67,7 @@ fn public_deletes_reject_fresh_default_policy_manifest() -> Result<()> {
     let id = crate::gate::default_policy_manifest_id()?;
 
     let err = vault
-        .delete_entity(&id)
+        .delete_entity_with_options(&id, crate::deletion::DeleteEntityOptions { purge: true })
         .expect_err("public hard delete must reject the default policy manifest");
     assert_matches!(
         err,

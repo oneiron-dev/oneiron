@@ -483,7 +483,11 @@ impl<'a> ScopedRead<'a> {
         self.is_entity_readable_in(&rtxn, id)
     }
 
-    fn is_entity_readable_in(&self, rtxn: &heed::RoTxn<'_>, id: &EntityId) -> Result<bool> {
+    pub(crate) fn is_entity_readable_in(
+        &self,
+        rtxn: &heed::RoTxn<'_>,
+        id: &EntityId,
+    ) -> Result<bool> {
         let policy = self.policy_manifest_in(rtxn)?;
         self.is_entity_readable_with_policy_in(rtxn, &policy, id)
     }

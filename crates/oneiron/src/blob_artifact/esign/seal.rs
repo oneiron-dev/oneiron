@@ -255,7 +255,7 @@ impl Vault {
                 items,
                 rejected: state.rejection.is_some(),
             };
-            append(
+            let terminal = append(
                 self,
                 txn,
                 document,
@@ -275,6 +275,29 @@ impl Vault {
             )?;
             CANONICAL.put(&self.store, txn, &document, &manifest)?;
             RESULT.put(&self.store, txn, attempt.id.as_bytes(), &manifest)?;
+            let recipients = terminal
+                .document
+                .recipients
+                .iter()
+                .map(|r| r.id.clone())
+                .collect::<Vec<_>>();
+            super::lifecycle::notify(
+                self,
+                txn,
+                document,
+                &terminal,
+                if manifest.rejected {
+                    "rejection"
+                } else {
+                    "completed"
+                },
+                &recipients,
+                super::lifecycle::NoticeTrigger {
+                    dispatch_ref: None,
+                    now,
+                },
+            )?;
+
             let queue = AttemptQueue::new(self);
             let owner = attempt
                 .lease_owner

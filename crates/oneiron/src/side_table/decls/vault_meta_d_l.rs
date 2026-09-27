@@ -196,6 +196,8 @@ side_tables! {
     /// Live vs indexed revision pointers. Key: id16.
     ENTITY_REVISION_STATE: VaultMeta b"entity_revision:state:" Named;
     /// Esign machine actor id. Key: ().
+    /// Advisory burst observation for one document/recipient/window. Key: hex32/string/u64be.
+    ESIGN_PUBLIC_CHECK: VaultMeta b"esign.public_check.v1/" Named;
     ESIGN_ARTIFACT_ACTOR: VaultMeta b"esign.artifact_actor.v1" Raw;
     /// Esign document audit event. Key: id16 + u64be.
     ESIGN_AUDIT: VaultMeta b"esign.audit.v1/" LegacyJson;
@@ -212,6 +214,8 @@ side_tables! {
     /// Public ceremony rate counter. Key: hex32 [/ string].
     ESIGN_PUBLIC_RATE: VaultMeta b"esign.public_rate.v1/" Raw;
     /// Recipient live capability index. Key: id16 + string.
+    /// Advisory rate count; key: document hex32/string, value window u64be + count u64be.
+    ESIGN_PUBLIC_RATE_V2: VaultMeta b"esign.public_rate.v2/" Raw;
     ESIGN_RECIPIENT_CAPABILITY_INDEX: VaultMeta b"esign.recipient_capability.v1/" Raw;
     /// Completed seal attempt result. Key: id16.
     ESIGN_SEAL_RESULT: VaultMeta b"esign.seal_result.v1/" LegacyJson;
