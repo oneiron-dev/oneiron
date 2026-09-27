@@ -28997,7 +28997,7 @@
      "path": "src/skill_hub/admission.rs",
      "purpose": "Consent-bound held-out admission, using the existing host scorer and lifecycle write door",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 5,
       "enum": 1,
       "fn": 3,
       "struct": 1
@@ -29048,13 +29048,14 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/skill_hub/bootstrap.rs",
      "purpose": "Build-embedded bootstrap skills; import and activation commit together on first open",
      "surface": {
-      "crate-vis": 7
+      "crate-vis": 9,
+      "fn": 1
      }
     },
     {
@@ -29073,7 +29074,7 @@
      "purpose": "First-party library source: offline seeding, immutable Git ref, explicit import",
      "surface": {
       "crate-vis": 1,
-      "fn": 4
+      "fn": 5
      }
     },
     {
@@ -29095,7 +29096,7 @@
      "purpose": "—",
      "surface": {
       "const": 1,
-      "crate-vis": 4,
+      "crate-vis": 5,
       "enum": 2,
       "fn": 8
      }
