@@ -75,7 +75,7 @@ icu_properties = { version = "2.2", default-features = false, features = ["compi
 unicode-script = "0.5"
 unicode-segmentation = "1"
 loro = "1.10"
-tokio = { version = "1", features = ["net", "sync", "time", "rt", "macros"], optional = true }
+tokio = { version = "1", features = ["sync"] }
 tokio-tungstenite = { version = "0.26", optional = true }
 futures-util = { version = "0.3", optional = true }
 zstd = "0.13"
@@ -189,7 +189,10 @@ microvm-firecracker = []
 # ever hand it to a release build when this feature is explicitly on.
 microvm-dev = []
 sync = [
-    "dep:tokio",
+    "tokio/net",
+    "tokio/time",
+    "tokio/rt",
+    "tokio/macros",
     "dep:tokio-tungstenite",
     "dep:futures-util",
     "dep:postcard",
