@@ -355,6 +355,8 @@ async fn factory_planner_routes_tagged_attempt_and_delegates_partition() {
         deadline: &deadline,
         budget_id: "wake",
         now_ms: 11_000,
+        prepared_wake: None,
+        prepared_attempt: None,
     };
     assert_eq!(
         executor.execute(&admitted, &mut ctx).await.expect("tagged"),
