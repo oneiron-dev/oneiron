@@ -31,22 +31,97 @@ pub(crate) struct GitWireProcessOutput {
 /// shell is ever spawned.
 pub(super) fn spawn_git(
     process_env: &GitWireProcessEnv,
+    command: &super::execution_context::GitCommandSpec<'_>,
+) -> Result<GitWireProcessOutput> {
+    let repo_root = command.context().root().canonicalize()?;
+    if !command.effect().needs_profile() {
+        return spawn_git_inner(
+            process_env,
+            &repo_root,
+            command.args(),
+            command.stdin(),
+            None,
+        );
+    }
+    let profile = super::repository_profile::AdmittedRepoProfile::admit(
+        process_env,
+        &repo_root,
+        command.prefix(),
+        command.effect().creates_worktree(),
+    )?;
+    let scope = super::execution_scope::PreparedGitExecution::prepare(
+        process_env,
+        profile,
+        command.effect().creates_worktree(),
+    )?;
+    if scope.source_changed()? {
+        return Err(super::failure::invalid(
+            "repository profile changed before git effect",
+        ));
+    }
+    #[cfg(test)]
+    if let Some((path, bytes)) = &process_env.after_attribute_snapshot {
+        use std::io::Write as _;
+        std::fs::OpenOptions::new()
+            .append(true)
+            .open(path)?
+            .write_all(bytes)?;
+    }
+    let output = spawn_git_inner(
+        process_env,
+        &repo_root,
+        command.args(),
+        command.stdin(),
+        Some(scope.common_dir()),
+    )?;
+    if let Some(target) = command.worktree_target() {
+        scope.rebind_created_worktree(target, output.success)?;
+        if output.success
+            && let Some(expected) = command.expected_commit()
+        {
+            let verify = [
+                OsString::from("rev-parse"),
+                OsString::from("--verify"),
+                OsString::from("HEAD"),
+            ];
+            let observed = spawn_git_inner(process_env, target, &verify, None, None)?;
+            if !observed.success || observed.stdout != format!("{}\n", expected.as_str()).as_bytes()
+            {
+                return Err(super::failure::invalid(
+                    "worktree HEAD does not match the requested commit",
+                ));
+            }
+        }
+    }
+    if scope.source_changed()? {
+        return Err(super::failure::invalid(
+            "repository profile changed during git effect",
+        ));
+    }
+    Ok(output)
+}
+
+pub(super) fn spawn_git_inner(
+    process_env: &GitWireProcessEnv,
     repo_root: &Path,
     args: &[OsString],
     stdin_payload: Option<&[u8]>,
+    attribute_common_dir: Option<&Path>,
 ) -> Result<GitWireProcessOutput> {
-    let repo_root = repo_root.canonicalize()?;
     // A removed repository must not fall back to an unrelated ancestor. Git
     // excludes the ceiling itself; the working directory is still inspected.
-    let ceiling = std::env::join_paths([repo_root.parent().unwrap_or(&repo_root)])
+    let ceiling = std::env::join_paths([repo_root.parent().unwrap_or(repo_root)])
         .map_err(|_| super::failure::invalid("git repository ceiling is not representable"))?;
     let mut command = Command::new(process_env.git_binary.as_os_str());
-    command.arg("-C").arg(&repo_root).args(args);
+    command.arg("-C").arg(repo_root).args(args);
     command.env_clear();
     for (key, value) in child_env(process_env) {
         command.env(key, value);
     }
     command.env("GIT_CEILING_DIRECTORIES", ceiling);
+    if let Some(common) = attribute_common_dir {
+        command.env("GIT_COMMON_DIR", common);
+    }
     if let Some(root) = &process_env.hub_root {
         super::hub_read::configure(&mut command, root)?;
     }
