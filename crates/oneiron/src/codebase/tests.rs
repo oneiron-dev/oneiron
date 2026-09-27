@@ -1436,6 +1436,97 @@ fn local_repo_ingest_reclaims_excluded_asset_from_older_commit() -> Result<()> {
     Ok(())
 }
 
+fn assert_historical_declared_asset_reclaimed(replacement: Option<&[u8]>) -> Result<()> {
+    let repo_dir = create_test_repo()?;
+    let old_body = b"pub fn old_declared_symbol() -> u8 { 9 }\n";
+    commit_test_file(repo_dir.path(), "src/legacy.rs", old_body, "add old source")?;
+    let (_dir, vault) = crate::test_util::open_test_vault_with(embedding_test_config());
+    let config = RepoIngestConfig::new(repo_dir.path(), ["src/lib.rs"])?;
+    let first = vault.ingest_local_repo_at_commit(
+        "project.alpha",
+        &config,
+        "HEAD",
+        TimeRange { start: 10, end: 10 },
+        11,
+    )?;
+    let old_asset = codebase_asset_entity_id(blake3::hash(old_body).as_bytes())?;
+    assert_eq!(vault.get_entity_type(&old_asset)?, Some(ENTITY_TYPE_ASSET));
+    vault.register_secret(SecretCustodyRecord {
+        schema_version: crate::secret_custody::SECRET_CUSTODY_SCHEMA_VERSION,
+        name: "historical-declaration".to_owned(),
+        class: CustodyClass::CustodyPortable,
+        device_only: false,
+        value_bytes: b"declared path fixture".to_vec(),
+        status: SecretCustodyStatus::Active,
+        registered_at: 1,
+        rotated_at: None,
+        rotation_generation: 0,
+        bindings: vec![],
+        manifest_ref: "secrets.toml".to_owned(),
+        declared_paths: vec!["src/legacy.rs".to_owned()],
+        policy_floor_snapshot: SecretCustodyFloor::default(),
+    })?;
+    if let Some(bytes) = replacement {
+        commit_test_file(
+            repo_dir.path(),
+            "src/legacy.rs",
+            bytes,
+            "replace old source",
+        )?;
+    } else {
+        run_git(repo_dir.path(), &["rm", "src/legacy.rs"])?;
+        run_git(repo_dir.path(), &["commit", "-m", "remove old source"])?;
+    }
+    let second = vault.ingest_local_repo_at_commit(
+        "project.alpha",
+        &config,
+        "HEAD",
+        TimeRange { start: 20, end: 20 },
+        21,
+    )?;
+    let report = vault
+        .get_codebase_snapshot_custody_report(&second.snapshot.fork_hash)?
+        .expect("filtered report");
+    assert_eq!(
+        report.excluded_secret_paths,
+        if replacement.is_some() {
+            vec!["src/legacy.rs"]
+        } else {
+            vec![]
+        }
+    );
+    assert!(
+        second
+            .snapshot
+            .files
+            .iter()
+            .all(|file| file.path != "src/legacy.rs")
+    );
+    assert_eq!(vault.get_entity_type(&old_asset)?, None);
+    assert_eq!(
+        vault
+            .mount_codebase_snapshot(&first.code_artifact_id)?
+            .expect("older snapshot")
+            .read_file("src/legacy.rs")
+            .expect_err("historical asset must be reclaimed")
+            .kind(),
+        ErrorKind::EntityNotFound,
+    );
+    Ok(())
+}
+
+#[test]
+fn local_repo_ingest_reclaims_changed_historical_declared_asset() -> Result<()> {
+    assert_historical_declared_asset_reclaimed(Some(
+        b"pub fn changed_declared_symbol() -> u8 { 8 }\n",
+    ))
+}
+
+#[test]
+fn local_repo_ingest_reclaims_removed_historical_declared_asset() -> Result<()> {
+    assert_historical_declared_asset_reclaimed(None)
+}
+
 #[test]
 fn local_repo_ingest_keeps_excluded_hash_used_by_another_snapshot() -> Result<()> {
     let repo_dir = create_test_repo()?;

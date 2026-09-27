@@ -6,6 +6,7 @@ use super::ingest::{
     scan_codebase_snapshot_metadata, validate_project_id,
 };
 use super::repo_ref::RepoRef;
+use super::residue::{CODEBASE_SNAPSHOT_KEY_PREFIX, reclaimable_asset_hashes};
 use super::snapshot::{
     CODEBASE_CONTENT_HASH_LEN, CodebaseFileEntry, CodebaseForkHash, CodebaseScopeKey,
     CodebaseSnapshot, CodebaseSnapshotMount, decode_codebase_snapshot, encode_codebase_snapshot,
@@ -23,8 +24,6 @@ use crate::secret_snapshot::{SnapshotCustodyReport, custody_key, encode_report};
 use crate::store::Store;
 use crate::temporal::TimeRange;
 use heed::{RoTxn, RwTxn};
-
-const CODEBASE_SNAPSHOT_KEY_PREFIX: &[u8] = b"codebase:snapshot:v1:";
 
 const CODEBASE_REPO_INDEX_KEY_PREFIX: &[u8] = b"codebase:repo:v1:";
 
@@ -292,12 +291,13 @@ impl Vault {
                 .filter(|blob| !retained_hashes.contains(&blob.content_hash))
                 .map(|blob| blob.content_hash)
                 .collect::<std::collections::BTreeSet<_>>();
-            let referenced_hashes = retained_asset_hashes_in_other_snapshots(
-                &self.store,
+            let reclaimable = reclaimable_asset_hashes(
+                self,
                 wtxn,
-                &excluded_hashes,
                 &snapshot,
                 &custody_report,
+                &retained_hashes,
+                &excluded_hashes,
             )?;
             let code_artifact_id = codebase_snapshot_entity_id(&filtered_snapshot)?;
             let code_body = CodeArtifactBody::new(
@@ -318,20 +318,18 @@ impl Vault {
                         learned_at,
                         &blob.data,
                     );
-                } else if !retained_hashes.contains(&blob.content_hash) {
-                    // An earlier unfiltered ingest may already have stored this
-                    // content-addressed asset. Reclaim it through the ordinary
-                    // batch delete/deindex door; never delete a hash still used
-                    // by a retained path in this ingest.
-                    let asset_id = codebase_asset_entity_id(&blob.content_hash)?;
-                    if self
-                        .store
-                        .port_entity_record(wtxn, &asset_id)?
-                        .is_some_and(|row| row.entity_type == ENTITY_TYPE_ASSET)
-                        && !referenced_hashes.contains(&blob.content_hash)
-                    {
-                        batch = batch.delete(&asset_id);
-                    }
+                }
+            }
+            for hash in reclaimable {
+                // The final writer view owns both cleanup and all derived puts.
+                // Never remove a hash retained by another path or repository.
+                let asset_id = codebase_asset_entity_id(&hash)?;
+                if self
+                    .store
+                    .port_entity_record(wtxn, &asset_id)?
+                    .is_some_and(|row| row.entity_type == ENTITY_TYPE_ASSET)
+                {
+                    batch = batch.delete(&asset_id);
                 }
             }
             batch
@@ -563,42 +561,6 @@ pub(crate) fn entity_id_from_hash_material(domain: &[u8], parts: &[&[u8]]) -> Re
     Err(Error::InvariantViolation(
         "codebase deterministic entity id exhausted salt space",
     ))
-}
-
-/// A content-addressed ASSET can serve more than one path or snapshot.
-/// Retire only residue whose remaining references are the now-excluded path
-/// in an older snapshot of this same repo and project.
-fn retained_asset_hashes_in_other_snapshots(
-    store: &Store,
-    wtxn: &RwTxn<'_>,
-    excluded_hashes: &std::collections::BTreeSet<[u8; CODEBASE_CONTENT_HASH_LEN]>,
-    current: &CodebaseSnapshot,
-    report: &SnapshotCustodyReport,
-) -> Result<std::collections::BTreeSet<[u8; CODEBASE_CONTENT_HASH_LEN]>> {
-    let mut referenced = std::collections::BTreeSet::new();
-    let excluded_paths = report
-        .excluded_secret_paths
-        .iter()
-        .chain(report.quarantined_paths.iter())
-        .map(String::as_str)
-        .collect::<std::collections::BTreeSet<_>>();
-    for row in store
-        .vault_meta
-        .prefix_iter(wtxn, CODEBASE_SNAPSHOT_KEY_PREFIX)?
-    {
-        let (_, raw) = row?;
-        let prior = decode_codebase_snapshot(&raw)?;
-        for file in &prior.files {
-            if excluded_hashes.contains(&file.content_hash)
-                && (prior.project_id != current.project_id
-                    || !prior.repo_ref.same_repository(&current.repo_ref)
-                    || !excluded_paths.contains(file.path.as_str()))
-            {
-                referenced.insert(file.content_hash);
-            }
-        }
-    }
-    Ok(referenced)
 }
 
 fn codebase_snapshot_key(id: &EntityId) -> Vec<u8> {
