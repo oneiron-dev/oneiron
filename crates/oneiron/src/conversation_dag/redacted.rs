@@ -192,6 +192,15 @@ pub(crate) fn capture_before_erase(
                 .delete(txn, &key(super::graph::HEAD, &pin.room))?;
         }
     }
+    // This record also loses its own outbound Parent. Keep the reverse
+    // witness so fork expansion can reach it from its ancestor after purge.
+    // The pin was captured while the edge still existed (or at soft erase).
+    if let Some(parent) = pin.parent {
+        super::graph::require_member(&vault.store, txn, &pin.room, &parent)?;
+        let mut child_key = key(CHILD, &parent);
+        child_key.extend_from_slice(id.as_bytes());
+        vault.store.vault_meta.put(txn, &child_key, &[1])?;
+    }
     // A live descendant loses its outbound Parent when this ancestor is
     // purged. Preserve that descendant's existing, verified topology first.
     let children: Vec<_> = vault

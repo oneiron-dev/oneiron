@@ -16,6 +16,7 @@ pub(super) fn reject_engine_authored_delete(
     id: &EntityId,
 ) -> Result<()> {
     crate::conversation_dag::guard_room_turn_delete(store, wtxn, id)?;
+    crate::conversation::guard_room_message_delete(store, wtxn, *id)?;
     crate::blob_artifact::esign::reject_event_delete(store, wtxn, id)?;
     crate::origin::lfs::reject_direct_lfs_chunk_delete(store, wtxn, id)?;
     let Some(raw) = store.entities.get(wtxn, id.as_bytes())? else {

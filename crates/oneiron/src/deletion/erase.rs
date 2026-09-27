@@ -592,6 +592,10 @@ impl Vault {
                 header.entity_type,
             )));
         }
+        // A receiving vault can hold MESSAGE content the host did not see.
+        // Tear matching local children before the TURN scrub/purge removes
+        // their PartOf witness; recursive MESSAGE replay is a no-op here.
+        crate::conversation::replay_room_message_tombstone(self, wtxn, *id, raw_value)?;
         // ARCH-0038 DELETE interplay: an `edge.provenance` Claim's subject
         // EdgeRef and sweep refs are only readable PRE-scrub.
         let captured = self.capture_provenance_delete_in_txn(wtxn, id)?;

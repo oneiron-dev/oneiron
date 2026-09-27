@@ -4,7 +4,9 @@ use crate::conversation_dag::{actor_in_txn, conversation_of};
 use crate::deletion::{DeleteEntityOutcome, DeleteReason, DeletionGateContext, GatedDeletion};
 use crate::edge::EdgeKind;
 use crate::ports::{EdgeDirection, EdgeStoreRead};
-use crate::registry::{ENTITY_TYPE_PERSON, ENTITY_TYPE_TURN};
+use crate::registry::{
+    ENTITY_TYPE_CONVERSATION, ENTITY_TYPE_MESSAGE, ENTITY_TYPE_PERSON, ENTITY_TYPE_TURN,
+};
 use rmpv::Value;
 
 /// A host-local erasure fence: a completed sweep cannot be followed by a new
@@ -55,6 +57,257 @@ fn author_in(vault: &Vault, txn: &heed::RoTxn<'_>, record: EntityId) -> Result<O
     }
 }
 
+const MESSAGE_OWNER: &[u8] = b"conversation:message_owner:v1:";
+
+fn message_owner_key(message: EntityId) -> Vec<u8> {
+    key(MESSAGE_OWNER, message)
+}
+
+/// Durable room membership for a MESSAGE, including after incident edges
+/// have been removed by the reason-aware purge of its TURN.
+pub(crate) fn room_message_owner_in(
+    store: &crate::store::Store,
+    txn: &heed::RoTxn<'_>,
+    message: EntityId,
+) -> Result<Option<EntityId>> {
+    let persisted = store
+        .vault_meta
+        .get(txn, &message_owner_key(message))?
+        .map(|bytes| {
+            EntityId::from_bytes(
+                bytes
+                    .as_ref()
+                    .try_into()
+                    .map_err(|_| Error::CorruptedIndex("room MESSAGE owner pin"))?,
+            )
+        })
+        .transpose()?;
+    if persisted.is_none()
+        && store
+            .entities
+            .get(txn, message.as_bytes())?
+            .is_none_or(|raw| raw.first() != Some(&ENTITY_TYPE_MESSAGE))
+    {
+        return Ok(None);
+    }
+    let owners =
+        crate::conversation_dag::edge_ids(store, txn, &message, EdgeKind::BelongsTo, false, 2)?;
+    if owners.len() > 1 {
+        return Err(Error::CorruptedIndex("multiple MESSAGE rooms"));
+    }
+    if let Some(owner) = owners.first()
+        && store
+            .entities
+            .get(txn, owner.as_bytes())?
+            .is_some_and(|raw| raw.first() == Some(&ENTITY_TYPE_CONVERSATION))
+    {
+        if persisted.is_some_and(|stored| stored != *owner) {
+            return Err(Error::CorruptedIndex("room MESSAGE owner pin mismatch"));
+        }
+        return Ok(Some(*owner));
+    }
+    Ok(persisted)
+}
+
+/// Called after each locally staged or replicated MESSAGE edge, in the same
+/// batch transaction. The room pin cannot be re-targeted, and an erased
+/// PERSON may not attach a fresh MESSAGE after the room erasure fence.
+pub(crate) fn pin_room_message_edge(
+    store: &crate::store::Store,
+    txn: &mut heed::RwTxn<'_>,
+    message: EntityId,
+    kind: EdgeKind,
+    target: EntityId,
+) -> Result<()> {
+    if store
+        .entities
+        .get(txn, message.as_bytes())?
+        .is_none_or(|raw| raw.first() != Some(&ENTITY_TYPE_MESSAGE))
+    {
+        return Ok(());
+    }
+    if kind == EdgeKind::BelongsTo
+        && store
+            .entities
+            .get(txn, target.as_bytes())?
+            .is_some_and(|raw| raw.first() == Some(&ENTITY_TYPE_CONVERSATION))
+    {
+        if room_message_owner_in(store, txn, message)?.is_some_and(|room| room != target) {
+            return Err(denied());
+        }
+        store
+            .vault_meta
+            .put(txn, &message_owner_key(message), target.as_bytes())?;
+    }
+    if matches!(kind, EdgeKind::BelongsTo | EdgeKind::AuthoredBy)
+        && let Some(room) = room_message_owner_in(store, txn, message)?
+    {
+        let authors = crate::conversation_dag::edge_ids(
+            store,
+            txn,
+            &message,
+            EdgeKind::AuthoredBy,
+            false,
+            2,
+        )?;
+        if authors.len() > 1 {
+            return Err(Error::CorruptedIndex("multiple MESSAGE authors"));
+        }
+        if let Some(person) = authors.first()
+            && store
+                .vault_meta
+                .get(txn, &erasure_key(room, *person))?
+                .is_some()
+        {
+            return Err(denied());
+        }
+    }
+    Ok(())
+}
+
+/// Refuse public batch delete and edge removal without actor/reason.
+pub(crate) fn guard_room_message_delete(
+    store: &crate::store::Store,
+    txn: &heed::RoTxn<'_>,
+    message: EntityId,
+) -> Result<()> {
+    if room_message_owner_in(store, txn, message)?.is_some() {
+        return Err(denied());
+    }
+    Ok(())
+}
+
+/// Resolve room MESSAGE custody from its structural bindings, not from the
+/// TURN byline: later actors can add their own messages to an earlier TURN.
+/// An absent author is allowed only for owner/admin policy deletion.
+fn message_room_author(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    message: EntityId,
+) -> Result<Option<(EntityId, Option<EntityId>)>> {
+    let Some(raw) = vault.store.entities.get(txn, message.as_bytes())? else {
+        return Ok(None);
+    };
+    if raw.first() != Some(&ENTITY_TYPE_MESSAGE) {
+        return Ok(None);
+    }
+    let one = |kind| -> Result<Option<EntityId>> {
+        let mut found = None;
+        for edge in vault
+            .store
+            .port_edges(txn, &message, EdgeDirection::Out, Some(kind), None)?
+        {
+            if found.replace(edge?.target).is_some() {
+                return Err(Error::CorruptedIndex("multiple room MESSAGE bindings"));
+            }
+        }
+        Ok(found)
+    };
+    let part = one(EdgeKind::PartOf)?;
+    let direct = one(EdgeKind::BelongsTo)?;
+    let pin = room_message_owner_in(&vault.store, txn, message)?;
+    let author = one(EdgeKind::AuthoredBy)?;
+    if let Some(author) = author {
+        require_kind(vault, txn, author, ENTITY_TYPE_PERSON)?;
+    }
+    let from_part = match part {
+        Some(turn) => match crate::vault::live_entity_row_in_txn(&vault.store, txn, &turn)? {
+            crate::vault::LiveEntityRow::Live {
+                entity_type: ENTITY_TYPE_CONVERSATION,
+                ..
+            } => Some(turn),
+            crate::vault::LiveEntityRow::Live {
+                entity_type: ENTITY_TYPE_TURN,
+                ..
+            }
+            | crate::vault::LiveEntityRow::DeletedShell
+            | crate::vault::LiveEntityRow::Absent => {
+                crate::conversation_dag::room_turn_owner(&vault.store, txn, &turn)?
+            }
+            _ => return Err(denied()),
+        },
+        None => None,
+    };
+    if direct.is_some_and(|room| from_part.is_some_and(|other| room != other)) {
+        return Err(denied());
+    }
+    let room = direct.or(from_part).or(pin);
+    if let Some(room) = room {
+        require_kind(vault, txn, room, ENTITY_TYPE_CONVERSATION)?;
+        if part.is_some() && from_part.is_none() {
+            return Err(denied());
+        }
+        Ok(Some((room, author)))
+    } else {
+        Ok(None)
+    }
+}
+
+fn messages_in_turn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    turn: EntityId,
+    after: Option<EntityId>,
+) -> Result<Vec<EntityId>> {
+    vault
+        .store
+        .port_edges(txn, &turn, EdgeDirection::In, Some(EdgeKind::PartOf), after)?
+        .take(ERASE_PAGE)
+        .map(|edge| edge.map(|info| info.target))
+        .collect()
+}
+
+/// A receiving vault may hold MESSAGE children the deleting host never saw.
+/// Replay erases those local payloads before their TURN loses PartOf edges;
+/// each message gets its own local hard marker and carrier-sweep obligation.
+pub(crate) fn replay_room_message_tombstone(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    turn: EntityId,
+    raw_value: &[u8],
+) -> Result<()> {
+    let Some(raw) = vault.store.entities.get(txn, turn.as_bytes())? else {
+        return Ok(());
+    };
+    if raw.first() != Some(&ENTITY_TYPE_TURN) {
+        return Ok(());
+    }
+    let Some(room) = crate::conversation_dag::room_turn_owner(&vault.store, txn, &turn)? else {
+        return Ok(());
+    };
+    let reason = crate::deletion::decode_tombstone_value(raw_value).reason;
+    let author = if reason == Some(crate::deletion::TombstoneReason::PolicyDelete) {
+        None
+    } else {
+        author_in(vault, txn, turn)?
+    };
+    let mut cursor = None;
+    loop {
+        let ids = messages_in_turn(vault, txn, turn, cursor)?;
+        let mut selected = Vec::new();
+        for id in &ids {
+            match message_room_author(vault, txn, *id)? {
+                Some((owner, _)) if owner != room => return Err(denied()),
+                Some((_, byline))
+                    if reason == Some(crate::deletion::TombstoneReason::PolicyDelete)
+                        || (author.is_some() && byline == author) =>
+                {
+                    selected.push(*id);
+                }
+                _ => {}
+            }
+        }
+        for message in selected {
+            vault.apply_replayed_tombstone_in_txn(txn, &message, raw_value)?;
+        }
+        if ids.len() < ERASE_PAGE {
+            break;
+        }
+        cursor = ids.last().copied();
+    }
+    Ok(())
+}
+
 fn check_delete(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -65,10 +318,17 @@ fn check_delete(
     subject: Option<EntityId>,
 ) -> Result<RoomRole> {
     actor_in_txn(&vault.store, txn, actor)?;
-    if conversation_of(&vault.store, txn, &record)? != room {
-        return Err(denied());
-    }
-    let author = author_in(vault, txn, record)?;
+    let author = if let Some((message_room, author)) = message_room_author(vault, txn, record)? {
+        if message_room != room {
+            return Err(denied());
+        }
+        author
+    } else {
+        if conversation_of(&vault.store, txn, &record)? != room {
+            return Err(denied());
+        }
+        author_in(vault, txn, record)?
+    };
     match reason {
         DeleteReason::UserDelete | DeleteReason::UserHardDelete
             if author == Some(actor.entity_ref()) =>
@@ -136,6 +396,39 @@ impl Vault {
             role,
         );
         drop(txn);
+        // Delete selected MESSAGE content before its TURN loses the PartOf
+        // edge. A personal operation never purges a different actor's row.
+        if self
+            .get_raw_unsealed(&record)?
+            .is_some_and(|raw| raw.first() == Some(&ENTITY_TYPE_TURN))
+        {
+            let mut cursor = None;
+            loop {
+                let txn = self.store.env.read_txn()?;
+                let ids = messages_in_turn(self, &txn, record, cursor)?;
+                let mut targets = Vec::new();
+                for id in &ids {
+                    match message_room_author(self, &txn, *id)? {
+                        Some((owner, _)) if owner != room => return Err(denied()),
+                        Some((_, author))
+                            if reason == DeleteReason::PolicyDelete
+                                || author == subject.or(Some(actor.entity_ref())) =>
+                        {
+                            targets.push(*id);
+                        }
+                        _ => {}
+                    }
+                }
+                drop(txn);
+                for message in targets {
+                    self.delete_room_record_as(room, message, actor, reason, subject)?;
+                }
+                if ids.len() < ERASE_PAGE {
+                    break;
+                }
+                cursor = ids.last().copied();
+            }
+        }
         let reverify = |txn: &heed::RoTxn<'_>| {
             reverify_record_delete(self, txn, room, record, actor, reason, subject)
         };
@@ -180,8 +473,51 @@ impl Vault {
                 .put(txn, &erasure_key(room, person), &[1])?;
             Ok(())
         })?;
-        let mut cursor = None;
         let mut outcomes = Vec::new();
+        // MESSAGE text is stored separately from its TURN. Scan the room's
+        // direct BelongsTo index first: messages authored by this PERSON may
+        // live inside another actor's TURN, or their TURN may already be gone.
+        let mut message_cursor = None;
+        loop {
+            let txn = self.store.env.read_txn()?;
+            authorize_room_erasure(self, &txn, room, person, actor)?;
+            let ids: Vec<_> = self
+                .store
+                .port_edges(
+                    &txn,
+                    &room,
+                    EdgeDirection::In,
+                    Some(EdgeKind::BelongsTo),
+                    message_cursor,
+                )?
+                .take(ERASE_PAGE)
+                .map(|edge| edge.map(|info| info.target))
+                .collect::<Result<_>>()?;
+            let mut targets = Vec::new();
+            for id in &ids {
+                if let Some((owner, Some(author))) = message_room_author(self, &txn, *id)?
+                    && owner == room
+                    && author == person
+                {
+                    targets.push(*id);
+                }
+            }
+            drop(txn);
+            for message in targets {
+                outcomes.push(self.delete_room_record_as(
+                    room,
+                    message,
+                    actor,
+                    DeleteReason::GdprDelete,
+                    Some(person),
+                )?);
+            }
+            if ids.len() < ERASE_PAGE {
+                break;
+            }
+            message_cursor = ids.last().copied();
+        }
+        let mut cursor = None;
         loop {
             let txn = self.store.env.read_txn()?;
             authorize_room_erasure(self, &txn, room, person, actor)?;

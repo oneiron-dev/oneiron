@@ -965,3 +965,289 @@ fn witnessed_person_turn_obeys_room_delete_and_erasure_fence_without_blocking_ot
     assert!(witness(alice, "forbidden return").is_err());
     assert!(witness(bob, "second person still permitted").is_ok());
 }
+
+#[test]
+fn witness_author_cannot_be_replaced_or_removed_by_raw_turn_reput() {
+    let (_dir, vault) = open_vault();
+    let alice = put_person(&vault, 0x52);
+    let bob = put_person(&vault, 0x53);
+    let owner = crate::WriteActor::new(alice, EdgeActorClass::Human);
+    crate::conversation_dag::fixtures::grant(&vault, owner, true);
+    let room = EntityId::now();
+    vault
+        .create_conversation(
+            room,
+            &crate::conversation::ConversationBody::default(),
+            owner,
+            1,
+        )
+        .expect("room");
+    vault
+        .join_member(
+            room,
+            bob,
+            owner,
+            2,
+            crate::conversation::HistoryChoice::Share,
+        )
+        .expect("member");
+    let receipt = vault
+        .memory(alice, EdgeActorClass::Human)
+        .witness(&WitnessTurn {
+            conversation_ref: room.to_hex(),
+            turn_ref: None,
+            messages: vec![witness_message(
+                0,
+                WitnessAuthor::User,
+                "keep original author",
+            )],
+            occurred_at: 10,
+        })
+        .expect("witness");
+    let turn =
+        EntityId::from_hex(&receipt.receipt_ref.replace("witness:", "")).expect("witness TURN ref");
+    let original = vault.get_raw_unsealed(&turn).unwrap().unwrap();
+    let h = EntityMetadataHeader::parse(&original).unwrap();
+    let body = &original[ENTITY_METADATA_HEADER_LEN..];
+    for replacement in [Some(bob), None] {
+        let mut input: &[u8] = body;
+        let rmpv::Value::Map(mut fields) = rmpv::decode::read_value(&mut input).unwrap() else {
+            panic!("TURN body must be map")
+        };
+        fields.retain(|(key, _)| key.as_str() != Some("actor"));
+        if let Some(id) = replacement {
+            fields.push((rmpv::Value::from("actor"), rmpv::Value::from(id.to_hex())));
+        }
+        let mut forged = Vec::new();
+        rmpv::encode::write_value(&mut forged, &rmpv::Value::Map(fields)).unwrap();
+        let occurred = TimeRange {
+            start: h.occurred_start,
+            end: h.occurred_end,
+        };
+        assert_eq!(
+            vault
+                .put_entity(&turn, ENTITY_TYPE_TURN, occurred, h.learned_at, &forged)
+                .unwrap_err()
+                .kind(),
+            ErrorKind::InvalidConversationDag
+        );
+        assert_eq!(
+            vault
+                .batch()
+                .put_replicated(&turn, ENTITY_TYPE_TURN, occurred, h.learned_at, &forged)
+                .commit()
+                .unwrap_err()
+                .kind(),
+            ErrorKind::InvalidConversationDag
+        );
+        assert_eq!(
+            vault.get_raw_unsealed(&turn).unwrap(),
+            Some(original.clone())
+        );
+    }
+    let other = crate::WriteActor::new(bob, EdgeActorClass::Human);
+    assert_eq!(
+        vault
+            .delete_room_record(room, turn, other, crate::DeleteReason::UserDelete)
+            .unwrap_err()
+            .kind(),
+        ErrorKind::ConversationDenied
+    );
+    let erased = vault
+        .erase_room_person(room, alice, owner)
+        .expect("original author's erasure");
+    assert!(erased.iter().any(|outcome| outcome.existed));
+    assert!(vault.get(&turn).unwrap().is_none());
+}
+
+fn mixed_room_messages() -> (
+    tempfile::TempDir,
+    crate::Vault,
+    EntityId,
+    EntityId,
+    EntityId,
+    EntityId,
+    EntityId,
+    EntityId,
+) {
+    let (dir, vault) = open_vault();
+    let alice = put_person(&vault, 0x52);
+    let bob = put_person(&vault, 0x53);
+    let owner = crate::WriteActor::new(alice, EdgeActorClass::Human);
+    crate::conversation_dag::fixtures::grant(&vault, owner, true);
+    let room = EntityId::now();
+    vault
+        .create_conversation(
+            room,
+            &crate::conversation::ConversationBody::default(),
+            owner,
+            1,
+        )
+        .expect("room");
+    vault
+        .join_member(
+            room,
+            bob,
+            owner,
+            2,
+            crate::conversation::HistoryChoice::Share,
+        )
+        .expect("join");
+    let first = vault
+        .memory(alice, EdgeActorClass::Human)
+        .witness(&WitnessTurn {
+            conversation_ref: room.to_hex(),
+            turn_ref: None,
+            messages: vec![witness_message(0, WitnessAuthor::User, "cedarwax")],
+            occurred_at: 10,
+        })
+        .expect("first witness");
+    let turn = EntityId::from_hex(first.receipt_ref.strip_prefix("witness:").unwrap()).unwrap();
+    let a_message = EntityId::from_hex(
+        &vault
+            .memory(alice, EdgeActorClass::Human)
+            .get_entity(&first.message_short_ids[0])
+            .unwrap()
+            .unwrap()
+            .id_hex,
+    )
+    .unwrap();
+    let second = vault
+        .memory(bob, EdgeActorClass::Human)
+        .witness(&WitnessTurn {
+            conversation_ref: room.to_hex(),
+            turn_ref: Some(turn.to_hex()),
+            messages: vec![witness_message(1, WitnessAuthor::User, "orchidwax")],
+            occurred_at: 11,
+        })
+        .expect("second actor appends to the first TURN");
+    let b_message = EntityId::from_hex(
+        &vault
+            .memory(bob, EdgeActorClass::Human)
+            .get_entity(&second.message_short_ids[0])
+            .unwrap()
+            .unwrap()
+            .id_hex,
+    )
+    .unwrap();
+    (dir, vault, alice, bob, room, turn, a_message, b_message)
+}
+
+#[test]
+fn per_person_room_erasure_sweeps_messages_inside_another_persons_turn() {
+    let (_dir, vault, alice, bob, room, turn, a_message, b_message) = mixed_room_messages();
+    assert!(vault.get(&a_message).unwrap().is_some());
+    assert!(vault.get(&b_message).unwrap().is_some());
+    assert_eq!(
+        vault
+            .batch()
+            .delete(&b_message)
+            .commit()
+            .unwrap_err()
+            .kind(),
+        ErrorKind::ConversationDenied
+    );
+    assert_eq!(
+        vault
+            .delete_entity_with_reason(&b_message, crate::DeleteReason::GdprDelete)
+            .unwrap_err()
+            .kind(),
+        ErrorKind::ConversationDenied
+    );
+    assert_eq!(
+        vault
+            .batch()
+            .delete_edge(&b_message, EdgeKind::AuthoredBy, &bob)
+            .commit()
+            .unwrap_err()
+            .kind(),
+        ErrorKind::InvalidConversationDag
+    );
+    let actor = crate::WriteActor::new(bob, EdgeActorClass::Human);
+    let outcomes = vault
+        .erase_room_person(room, bob, actor)
+        .expect("erase second author");
+    assert_eq!(outcomes.len(), 1);
+    assert!(outcomes[0].receipt_id.is_some());
+    assert!(vault.get(&b_message).unwrap().is_none());
+    assert!(
+        vault
+            .memory(bob, EdgeActorClass::Human)
+            .get_entity(&b_message.to_hex())
+            .unwrap()
+            .is_none()
+    );
+    assert!(
+        !vault
+            .search_text("orchidwax", 10)
+            .unwrap()
+            .iter()
+            .any(|hit| hit.id == b_message)
+    );
+    assert!(
+        vault.get(&turn).unwrap().is_some(),
+        "other author's TURN is retained"
+    );
+    assert!(
+        vault.get(&a_message).unwrap().is_some(),
+        "unrelated content is retained"
+    );
+    assert!(
+        vault
+            .search_text("cedarwax", 10)
+            .unwrap()
+            .iter()
+            .any(|hit| hit.id == a_message)
+    );
+    let owner = crate::WriteActor::new(alice, EdgeActorClass::Human);
+    vault
+        .delete_room_record(room, turn, owner, crate::DeleteReason::PolicyDelete)
+        .expect("policy-delete remaining TURN");
+    assert!(vault.get(&a_message).unwrap().is_none());
+}
+
+#[test]
+fn room_policy_delete_and_replayed_tombstone_scrub_mixed_message_bodies() {
+    for replay in [false, true] {
+        let (_dir, vault, alice, _bob, room, turn, a_message, b_message) = mixed_room_messages();
+        if replay {
+            vault
+                .apply_replayed_tombstone(
+                    &turn,
+                    &crate::deletion::TombstoneValueV2 {
+                        reason: crate::deletion::TombstoneReason::PolicyDelete,
+                        deleted_at: 12,
+                        request_id: *uuid::Uuid::now_v7().as_bytes(),
+                    }
+                    .encode(),
+                )
+                .expect("receive policy deletion");
+        } else {
+            vault
+                .delete_room_record(
+                    room,
+                    turn,
+                    crate::WriteActor::new(alice, EdgeActorClass::Human),
+                    crate::DeleteReason::PolicyDelete,
+                )
+                .expect("owner policy deletion");
+        }
+        for (id, text) in [(a_message, "cedarwax"), (b_message, "orchidwax")] {
+            assert!(vault.get(&id).unwrap().is_none());
+            assert!(
+                vault
+                    .memory(alice, EdgeActorClass::Human)
+                    .get_entity(&id.to_hex())
+                    .unwrap()
+                    .is_none()
+            );
+            assert!(
+                !vault
+                    .search_text(text, 10)
+                    .unwrap()
+                    .iter()
+                    .any(|hit| hit.id == id)
+            );
+        }
+    }
+}

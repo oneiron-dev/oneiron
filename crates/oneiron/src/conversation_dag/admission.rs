@@ -101,6 +101,20 @@ pub(crate) fn guard_record_put(
         guard_erased_author_body(store, txn, room, body)?;
     }
     let prior = store.port_entity_record(txn, id)?;
+    // A witnessed TURN can predate DAG adoption, so the DAG body pin does not
+    // yet protect it. Its PERSON byline is nonetheless an immutable admission
+    // fact: a raw local or replicated re-put may re-dirty the row, but cannot
+    // assign its earlier words to a new author (or remove that author).
+    if kind == ENTITY_TYPE_TURN
+        && room_turn_owner(store, txn, id)?.is_some()
+        && let Some(previous) = prior
+            .as_ref()
+            .filter(|row| row.entity_type == ENTITY_TYPE_TURN)
+        && !previous.body.is_empty()
+        && turn_person(&previous.body)? != turn_person(body)?
+    {
+        return Err(invalid("room TURN author is immutable"));
+    }
     let stored_pin = store.vault_meta.get(txn, &pin_key(id))?;
     let inferred_pin = if stored_pin.is_none() {
         if let Some(row) = prior

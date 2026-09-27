@@ -83,7 +83,9 @@ impl Vault {
             return Ok(());
         }
         // The owner pin survives removal of the ChildOf row and body scrub.
-        let room = crate::conversation_dag::room_turn_owner(&self.store, txn, id)?;
+        let room = crate::conversation_dag::room_turn_owner(&self.store, txn, id)?.or(
+            crate::conversation::room_message_owner_in(&self.store, txn, *id)?,
+        );
         let Some(raw) = self.store.entities.get(txn, id.as_bytes())? else {
             if room.is_none()
                 || (room.is_some()
@@ -96,7 +98,9 @@ impl Vault {
             }
             return Err(Error::Record(crate::error::RecordError::ConversationDenied));
         };
-        if raw.first() != Some(&crate::registry::ENTITY_TYPE_TURN) {
+        if raw.first() != Some(&crate::registry::ENTITY_TYPE_TURN)
+            && raw.first() != Some(&crate::registry::ENTITY_TYPE_MESSAGE)
+        {
             return Ok(());
         }
         let body = raw

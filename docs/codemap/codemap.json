@@ -11820,13 +11820,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/conversation/deletion.rs",
      "purpose": "Actor-bound room deletion and per-person erasure over the existing delete door",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 5,
       "fn": 2
      }
     },
