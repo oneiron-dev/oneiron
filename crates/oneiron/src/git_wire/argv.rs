@@ -1,7 +1,7 @@
 //! Frozen typed argv: one constructor per git verb plus the token validators.
 
 use std::ffi::OsString;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use super::config::{GIT_WIRE_MAX_ARG_BYTES, GIT_WIRE_MAX_REF_BYTES};
 use super::failure::invalid;
@@ -23,6 +23,7 @@ pub(super) struct FrozenGitArgv {
     operation: GitWireOperation,
     args: Vec<OsString>,
     stdin: Option<Vec<u8>>,
+    worktree: Option<(PathBuf, GitOid)>,
 }
 
 impl FrozenGitArgv {
@@ -31,6 +32,7 @@ impl FrozenGitArgv {
             operation,
             args: tail,
             stdin: None,
+            worktree: None,
         }
     }
 
@@ -185,7 +187,9 @@ impl FrozenGitArgv {
         let mut tail = os_args(&["worktree", "add", "--detach", "--"]);
         tail.push(path.as_os_str().to_owned());
         tail.push(OsString::from(commit.as_str()));
-        Ok(Self::frozen(GitWireOperation::WorktreeAdd, tail))
+        let mut argv = Self::frozen(GitWireOperation::WorktreeAdd, tail);
+        argv.worktree = Some((path.to_path_buf(), commit.clone()));
+        Ok(argv)
     }
 
     /// `worktree remove --force -- <path>`.
@@ -214,6 +218,12 @@ impl FrozenGitArgv {
 
     pub(super) fn stdin(&self) -> Option<&[u8]> {
         self.stdin.as_deref()
+    }
+
+    pub(super) fn worktree_target(&self) -> Option<(&Path, &GitOid)> {
+        self.worktree
+            .as_ref()
+            .map(|(path, commit)| (path.as_path(), commit))
     }
 }
 

@@ -421,6 +421,11 @@ pub struct VoiceWithdrawalRequest {
 pub struct VoiceWithdrawalReceipt {
     pub consent_event_ref: String,
     pub subject_ref: EntityId,
+    /// An identical recorded withdrawal was redelivered; no biometric rows
+    /// were touched, even if a newer grant has since enrolled a new print.
+    pub replayed: bool,
+    /// No biometric rows were deleted by this invocation. On replay this
+    /// does not assert that a later enrollment is absent.
     pub already_absent: bool,
     pub deleted_print: bool,
     pub deleted_sample_count: usize,

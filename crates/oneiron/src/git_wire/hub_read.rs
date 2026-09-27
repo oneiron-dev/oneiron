@@ -1,5 +1,6 @@
 //! Fixed network-read profile for a private disposable hub object store.
 //! No caller-controlled config pairs, checkout, hooks or inherited credentials.
+use super::execution_context::GitCommandSpec;
 use super::failure::{invalid, uncertain};
 use super::{GitWireProcessEnv, process::spawn_git};
 use crate::error::Result;
@@ -59,7 +60,8 @@ pub(crate) fn read_hub_git(root: &Path, args: &[&str], limit: usize) -> Result<V
     // Validation above guarantees a subcommand at args[1] outside init.
     let op = if args[0] == "init" { "init" } else { args[1] };
     let started = Instant::now();
-    let output = spawn_git(&env, root, &argv, None)
+    let command = GitCommandSpec::hub(root, &argv, op)?;
+    let output = spawn_git(&env, &command)
         .map_err(|error| refused(op, "spawn", started, &format!(" error={error}")))?;
     // `success` is already false when output was truncated, so the order of
     // these checks is what names the cause.

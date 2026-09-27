@@ -146,17 +146,49 @@ pub struct WavePlan {
 ///
 /// Not `Eq`: [`PlannedTask::spec`] is a `serde_json::Value`, which is
 /// `PartialEq` but never `Eq`.
+///
+/// A port can read the validated cut but cannot construct or amend it. The
+/// planner's unchecked [`WavePlan`] must go through [`WaveOrchestrator::validate`].
+///
+/// ```compile_fail
+/// use oneiron::ValidatedWavePlan;
+/// fn bypass_validation(plan: ValidatedWavePlan) {
+///     let _ = plan.tasks;
+/// }
+/// ```
 #[derive(Debug, Clone, PartialEq)]
 pub struct ValidatedWavePlan {
     /// Stable identity of the cut.
-    pub plan_ref: String,
+    plan_ref: String,
     /// The EPIC-level TASK the cut hangs under.
-    pub epic_task_ref: EntityId,
+    epic_task_ref: EntityId,
     /// Deterministic topological order: every blocker precedes its dependents,
     /// ties broken by local key so two runs of the same plan agree.
-    pub topological_order: Vec<String>,
+    topological_order: Vec<String>,
     /// The validated tasks, keyed by local key.
-    pub tasks: BTreeMap<String, PlannedTask>,
+    tasks: BTreeMap<String, PlannedTask>,
+}
+
+impl ValidatedWavePlan {
+    /// The stable identity of this validated cut.
+    pub fn plan_ref(&self) -> &str {
+        &self.plan_ref
+    }
+
+    /// The EPIC-level TASK this cut hangs under.
+    pub const fn epic_task_ref(&self) -> EntityId {
+        self.epic_task_ref
+    }
+
+    /// Blockers-first, deterministic order of the validated local task keys.
+    pub fn topological_order(&self) -> &[String] {
+        &self.topological_order
+    }
+
+    /// The validated tasks, keyed by their plan-local identities.
+    pub fn tasks(&self) -> &BTreeMap<String, PlannedTask> {
+        &self.tasks
+    }
 }
 
 /// Cuts an objective into a typed task plan.
@@ -244,15 +276,32 @@ pub struct WavePlanReceipt {
 /// Constructing this value is the ONLY way this module hands an edge to a
 /// port, so "verify both endpoints are TASK entities before writing" is a
 /// type-level obligation instead of a review note.
+///
+/// ```compile_fail
+/// use oneiron::{BlockedByEdgeWrite, EntityId};
+/// fn bypass_task_gate(dependent: EntityId, blocker: EntityId) -> BlockedByEdgeWrite {
+///     BlockedByEdgeWrite { dependent, blocker }
+/// }
+/// ```
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct BlockedByEdgeWrite {
     /// The blocked (dependent) TASK — the edge SOURCE.
-    pub dependent: EntityId,
+    dependent: EntityId,
     /// The blocking TASK — the edge TARGET.
-    pub blocker: EntityId,
+    blocker: EntityId,
 }
 
 impl BlockedByEdgeWrite {
+    /// The blocked TASK this validated edge starts from.
+    pub const fn dependent(self) -> EntityId {
+        self.dependent
+    }
+
+    /// The TASK whose completion blocks the dependent.
+    pub const fn blocker(self) -> EntityId {
+        self.blocker
+    }
+
     /// The edge kind this write lands: always
     /// [`crate::edge::EdgeKind::BlockedBy`] (byte [`BLOCKED_BY_EDGE_U8`]),
     /// structural layout, no PPR weight prior.

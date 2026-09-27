@@ -17771,7 +17771,7 @@
      "path": "src/git_wire/argv.rs",
      "purpose": "Frozen typed argv: one constructor per git verb plus the token validators",
      "surface": {
-      "crate-vis": 25
+      "crate-vis": 26
      }
     },
     {
@@ -17781,7 +17781,7 @@
      "path": "src/git_wire/bridge.rs",
      "purpose": "`repo_mutation` migration bridge: validated arbitrary-argv entry plus failure redaction",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 4
      }
     },
     {
@@ -17825,9 +17825,29 @@
      "path": "src/git_wire/env.rs",
      "purpose": "Pinned process baseline: executable resolution, bounds, and the test-only binary override",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 2,
       "fn": 5,
       "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/git_wire/execution_context.rs",
+     "purpose": "Typed Git invocation context: repository selector and operation policy travel together",
+     "surface": {
+      "crate-vis": 17
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/git_wire/execution_scope.rs",
+     "purpose": "Private Git execution view, derived only from an admitted repository profile",
+     "surface": {
+      "crate-vis": 5
      }
     },
     {
@@ -17936,13 +17956,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/git_wire/process.rs",
      "purpose": "The crate's single git child-process constructor plus its bounded IO and thread-pump helpers",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 5
      }
     },
     {
@@ -17977,6 +17997,16 @@
       "crate-vis": 4,
       "fn": 6,
       "struct": 2
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/git_wire/repository_profile.rs",
+     "purpose": "Admission of immutable Git layout and worktree semantics before an attribute-consuming effect",
+     "surface": {
+      "crate-vis": 13
      }
     },
     {
@@ -34505,7 +34535,7 @@
      "purpose": "Durable code-mode wave orchestration over TASK entities and the C9 run tree (ONE-1905, CSTDY-05)",
      "surface": {
       "const": 4,
-      "fn": 10,
+      "fn": 16,
       "re-export": 1,
       "struct": 8,
       "trait": 2
@@ -36196,7 +36226,7 @@
      "purpose": "OF-336 generated-UI component contract"
     },
     "git_wire": {
-     "files": 22,
+     "files": 25,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -36870,7 +36900,7 @@
    },
    "over_bar": 2,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2186,
+   "source_files": 2189,
    "test_files": 742
   },
   "oneiron-android": {

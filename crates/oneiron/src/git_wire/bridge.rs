@@ -5,6 +5,7 @@ use std::path::Path;
 
 use super::argv::validate_argv_token;
 use super::config::{GIT_WIRE_BRIDGED_CONFIG_KEYS, GIT_WIRE_MAX_ARGS};
+use super::execution_context::GitCommandSpec;
 use super::failure::{classify_diagnostics, invalid};
 use super::process::spawn_git;
 use super::record::hex_lower;
@@ -27,7 +28,8 @@ pub(crate) fn run_bridged_git_argv(
 ) -> Result<GitWireProcessOutput> {
     let process_env = GitWireProcessEnv::capture()?;
     let argv = bridged_argv(args)?;
-    spawn_git(&process_env, repo_root, &argv, None)
+    let command = GitCommandSpec::bridge(repo_root, args, &argv)?;
+    spawn_git(&process_env, &command)
 }
 
 /// The redacted description of a bridged git failure.
@@ -63,7 +65,7 @@ pub(super) fn bridged_argv(args: &[String]) -> Result<Vec<OsString>> {
     Ok(argv)
 }
 
-fn bridged_verb_index(args: &[String]) -> Result<usize> {
+pub(super) fn bridged_verb_index(args: &[String]) -> Result<usize> {
     let mut index = 0;
     while index < args.len() {
         let arg = args[index].as_str();

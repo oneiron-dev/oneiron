@@ -4,6 +4,7 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 use super::argv::FrozenGitArgv;
+use super::execution_context::GitCommandSpec;
 use super::failure::{classify_failure, invalid};
 use super::objects::parse_tree_entries;
 use super::process::spawn_git;
@@ -132,7 +133,8 @@ impl GitWire<'_> {
     }
 
     fn run_raw_at(&self, root: &Path, argv: &FrozenGitArgv) -> Result<GitWireProcessOutput> {
-        spawn_git(&self.process_env, root, argv.args(), argv.stdin())
+        let command = GitCommandSpec::wire(root, argv);
+        spawn_git(&self.process_env, &command)
     }
 
     fn validate_repo_binding(&self, repo: &GitWireRepo) -> Result<()> {
