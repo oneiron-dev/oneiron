@@ -770,8 +770,8 @@ fn read_only_recipient_cannot_own_unfillable_fields() -> Result<()> {
 }
 
 #[test]
-fn resumed_signature_preview_uses_the_ceremony_rate_budget() -> Result<()> {
-    let (_dir, vault, id, _doc, owner) = ceremony_setup()?;
+fn resumed_signature_preview_raises_a_check_without_refusing() -> Result<()> {
+    let (_dir, vault, id, doc, owner) = ceremony_setup()?;
     let tokens = vault.issue_esign_capabilities(&owner, id)?;
     let command = EsignOutboundCommand {
         document: id.to_hex(),
@@ -802,12 +802,38 @@ fn resumed_signature_preview_uses_the_ceremony_rate_budget() -> Result<()> {
             .esign_signature_image_for_capability(token, &image)?
             .is_empty()
     );
-    // Allow a minute boundary without depending on the private counter layout.
-    assert!((0..300).any(|_| {
-        vault
-            .esign_signature_image_for_capability(token, &image)
-            .is_err()
+    // Even across a minute boundary, 300 successful reads cross at least one
+    // recipient window. The PDF, preview and ceremony then remain usable.
+    for _ in 0..300 {
+        assert!(
+            !vault
+                .esign_signature_image_for_capability(token, &image)?
+                .is_empty()
+        );
+    }
+    assert_eq!(
+        vault.esign_pdf_for_capability(token, 0, None, None)?,
+        original_pdf()
+    );
+    assert!(matches!(
+        vault.esign_preview_for_capability(token, 0, None, None)?,
+        (SigningPage { .. }, _)
+    ));
+    assert!(matches!(
+        vault.execute_signing_action(token, &SigningAction::Load, None, None)?,
+        SigningOutcome::Page(_)
+    ));
+    let checks = vault.esign_rate_checks(id)?;
+    assert!(checks.iter().any(|check| {
+        check.receipt.recipient.as_deref() == Some(doc.recipients[0].id.as_str())
+            && check.receipt.count == 121
+            && check.threshold == 120
+            && EsignRateCheck::KIND == "esign_ceremony_burst"
     }));
+    let receipt = vault
+        .esign_rate_receipt(id, Some(&doc.recipients[0].id))?
+        .unwrap();
+    assert!(receipt.count > 0);
     Ok(())
 }
 
@@ -881,7 +907,12 @@ fn audit_chain_survives_document_deletion_and_reopen() -> Result<()> {
     let audit = vault.esign_audit(id)?;
     assert_eq!(audit.len(), 3);
 
-    assert!(vault.delete_entity(&id)?);
+    assert!(
+        vault.delete_entity_with_options(
+            &id,
+            crate::deletion::DeleteEntityOptions { purge: true }
+        )?
+    );
     assert!(vault.get_blob_artifact(&id)?.is_none());
     assert_eq!(vault.esign_audit(id)?, audit);
 
@@ -1036,7 +1067,12 @@ fn individual_events_cannot_be_deleted_or_retyped_but_subject_erasure_retains_au
     assert_eq!(vault.get_claim(&claim_id)?, Some(body));
     assert_eq!(vault.esign_document(id)?, state);
     assert_eq!(vault.esign_audit(id)?, audit);
-    assert!(vault.delete_entity(&id)?);
+    assert!(
+        vault.delete_entity_with_options(
+            &id,
+            crate::deletion::DeleteEntityOptions { purge: true }
+        )?
+    );
     assert_eq!(vault.esign_audit(id)?, audit);
     Ok(())
 }
@@ -1102,7 +1138,10 @@ fn deleted_documents_refuse_every_capability_door_but_retain_audit() -> Result<(
         let audit = vault.esign_audit(id)?;
         match deletion {
             "hard" => {
-                assert!(vault.delete_entity(&id)?);
+                assert!(vault.delete_entity_with_options(
+                    &id,
+                    crate::deletion::DeleteEntityOptions { purge: true }
+                )?);
             }
             "batch" => {
                 vault.batch().delete(&id).commit()?;

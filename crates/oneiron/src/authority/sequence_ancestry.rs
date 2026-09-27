@@ -13,7 +13,7 @@ pub(super) fn causal_sequence_floors(
         let before = floors.len();
         for (tip_hash, tip) in by_hash {
             let tip_floor = original.get(tip_hash).copied();
-            if tip_floor.is_some_and(|floor| tip.seq <= floor) {
+            if tip_floor.is_some_and(|floor| tip.seq < floor) {
                 continue;
             }
             let covered: Vec<_> = ancestors[tip_hash]
@@ -23,7 +23,7 @@ pub(super) fn causal_sequence_floors(
                         entry.signer_key() == tip.signer_key()
                             && entry.seq < tip.seq
                             && tip_floor.is_none_or(|floor| entry.seq > floor)
-                            && floors.get(*hash).is_some_and(|floor| entry.seq <= *floor)
+                            && floors.get(*hash).is_some_and(|floor| entry.seq < *floor)
                     })
                 })
                 .copied()

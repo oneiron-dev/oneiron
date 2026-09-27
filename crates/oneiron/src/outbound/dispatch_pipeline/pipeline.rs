@@ -117,6 +117,7 @@ impl OutboundDispatchPipeline {
             attempt_id,
             idempotency_supported,
             verified_actor,
+            suppression_receipt: None,
         })?;
         let result = crate::outbound::receipt_fields::dispatch_result_receipt(
             &request,
@@ -194,6 +195,12 @@ impl OutboundDispatchPipeline {
                     attempt_id,
                     idempotency_supported,
                     verified_actor,
+                    suppression_receipt:
+                        crate::outbound::receipt_fields::suppression_receipt_for_dispatch(
+                            &request,
+                            &admission.window_decision,
+                            &admission.window_resolution,
+                        ),
                 })?
             }
             super::admission::DispatchAdmission::Park { outcome } => super::govern::govern_parked(

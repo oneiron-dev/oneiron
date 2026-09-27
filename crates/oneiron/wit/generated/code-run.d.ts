@@ -35,6 +35,9 @@ declare namespace oneiron {
   }
 }
 declare namespace self {
+  namespace json {
+    function validate(schema: unknown, value: unknown): Promise<boolean>;
+  }
   namespace memory {
     function search(input: OneironCodeRun.SearchInput): Promise<OneironCodeRun.SearchOutput>;
     function put_claim(input: OneironCodeRun.ClaimInput): Promise<OneironCodeRun.ClaimOutput>;
@@ -42,9 +45,8 @@ declare namespace self {
     function put_edge(input: OneironCodeRun.EdgeInput): Promise<OneironCodeRun.EdgeOutput>;
   }
   function report_blocked(category: string, detail: string): Promise<OneironCodeRun.BlockedOutput>;
-  function ask_human(input: OneironCodeRun.PromptInput): Promise<OneironCodeRun.WaitOutput>;
-  function askHuman(input: OneironCodeRun.PromptInput): Promise<OneironCodeRun.WaitOutput>;
   function speak(input: OneironCodeRun.TextInput): Promise<OneironCodeRun.SpeechOutput>;
   function think(input: OneironCodeRun.TextInput): Promise<OneironCodeRun.SpeechOutput>;
   function express(input: OneironCodeRun.TextInput): Promise<OneironCodeRun.SpeechOutput>;
 }
+declare function ask(input: OneironCodeRun.PromptInput): Promise<OneironCodeRun.WaitOutput>;

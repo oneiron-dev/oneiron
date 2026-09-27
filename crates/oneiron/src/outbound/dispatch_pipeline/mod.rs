@@ -21,5 +21,4 @@ pub(super) use self::policy_risk::GATE_OUTCOME_PENDING;
 pub(crate) use self::request_binding::FrozenDispatchIdentity;
 pub(super) use self::retry_after::PROVIDER_RETRY_AFTER_FIELD;
 pub(super) use sender_identity::enrich_dispatch_channel_identity;
-#[cfg(test)]
-pub(super) use sender_identity::resolve_channel_identity_ref_for_connector;
+pub(crate) use sender_identity::resolve_channel_identity_ref_for_connector;

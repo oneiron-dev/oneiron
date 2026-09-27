@@ -743,3 +743,664 @@ fn manifests_emit_concrete_schema_on_demand_links() {
         "/v1/core/outbound/capabilities/slack"
     );
 }
+
+#[test]
+fn semantic_cooldown_collapses_distinct_intents_but_not_replay_or_expiry()
+-> std::result::Result<(), Box<dyn std::error::Error>> {
+    let (_tmp, vault) = temp_vault();
+    let agent = entity(0x69);
+    vault.put_entity(
+        &agent,
+        crate::registry::ENTITY_TYPE_PERSON,
+        crate::temporal::TimeRange { start: 1, end: 1 },
+        1,
+        b"actor",
+    )?;
+    put_policy_manifest_bytes(
+        &vault,
+        entity(0x6a),
+        &policy_manifest(&agent.to_hex(), "email", &["send"]),
+    )?;
+    let mut sink = RecordingExecutor::default();
+    let make = |name: &str, at: u64, dedupe: Option<&str>| {
+        let mut intent = dispatch_intent(OutboundIntentTrigger::agent_immediate(format!(
+            "session:{name}"
+        )));
+        intent.idempotency_key = Some(format!("idem:{name}"));
+        intent.dedupe_key = dedupe.map(str::to_owned);
+        OutboundDispatchRequest::new(
+            format!("receipt:{name}"),
+            format!("intent:{name}"),
+            intent,
+            OutboundDispatchActor::agent(agent),
+            OutboundDispatchGate::allow_when_policy_grants(),
+            at,
+            OutboundDeliveryWindowDecision::DeliverNow,
+        )
+    };
+    vault.clock.set(1_000);
+    let first = vault.dispatch_outbound_intent(make("first", 1_000, Some("one-nag")), &mut sink)?;
+    assert_eq!(first.outcome, OutboundDispatchOutcome::DeliveredToChannel);
+    vault.clock.set(1_001);
+    let duplicate =
+        vault.dispatch_outbound_intent(make("second", 1_001, Some("one-nag")), &mut sink)?;
+    assert_eq!(duplicate.outcome, OutboundDispatchOutcome::Suppressed);
+    assert_eq!(
+        duplicate
+            .receipt
+            .fields
+            .get("suppression")
+            .map(String::as_str),
+        Some("dedupe")
+    );
+    assert_eq!(duplicate.gate_outcome, "allow");
+    assert_eq!(duplicate.gate_reason_codes, vec!["gate.allow"]);
+    assert_eq!(sink.calls.len(), 1);
+    let future_dated =
+        vault.dispatch_outbound_intent(make("future", 99_999_999, Some("one-nag")), &mut sink)?;
+    assert_eq!(future_dated.outcome, OutboundDispatchOutcome::Suppressed);
+    let mut changed_target = make("other-target", 1_002, Some("one-nag"));
+    changed_target.intent.target = "another@example.com".to_owned();
+    let changed_target = vault.dispatch_outbound_intent(changed_target, &mut sink)?;
+    assert_eq!(changed_target.outcome, OutboundDispatchOutcome::Suppressed);
+    assert_eq!(sink.calls.len(), 1);
+    // Replaying the original attempt is not a new semantic intent.
+    vault.clock.set(1_002);
+    let replay =
+        vault.dispatch_outbound_intent(make("first", 1_002, Some("one-nag")), &mut sink)?;
+    assert_eq!(replay.outcome, OutboundDispatchOutcome::DeliveredToChannel);
+    assert_eq!(sink.calls.len(), 1);
+    vault.clock.set(1_003);
+    let independent = vault.dispatch_outbound_intent(make("third", 1_003, None), &mut sink)?;
+    assert_eq!(
+        independent.outcome,
+        OutboundDispatchOutcome::DeliveredToChannel
+    );
+    vault.clock.set(87_401);
+    let expired =
+        vault.dispatch_outbound_intent(make("fourth", 87_401, Some("one-nag")), &mut sink)?;
+    assert_eq!(expired.outcome, OutboundDispatchOutcome::DeliveredToChannel);
+    assert_eq!(sink.calls.len(), 3);
+    Ok(())
+}
+
+#[test]
+fn concurrent_distinct_attempts_with_one_semantic_key_only_send_once()
+-> std::result::Result<(), Box<dyn std::error::Error>> {
+    use crate::outbound_chokepoint::BEFORE_NEW_ADMISSION;
+    use std::sync::{Arc, Barrier};
+
+    let (_tmp, vault) = temp_vault();
+    let agent = entity(0x70);
+    vault.put_entity(
+        &agent,
+        crate::registry::ENTITY_TYPE_PERSON,
+        crate::temporal::TimeRange { start: 1, end: 1 },
+        1,
+        b"actor",
+    )?;
+    put_policy_manifest_bytes(
+        &vault,
+        entity(0x71),
+        &policy_manifest(&agent.to_hex(), "email", &["send"]),
+    )?;
+    vault.clock.set(1_000);
+    let barrier = Arc::new(Barrier::new(2));
+    let (first, second) = std::thread::scope(|scope| {
+        let vault = &vault;
+        let spawn = |name: &'static str, barrier: Arc<Barrier>| {
+            let mut intent = dispatch_intent(OutboundIntentTrigger::agent_immediate(format!(
+                "session:{name}"
+            )));
+            intent.idempotency_key = Some(format!("idem:{name}"));
+            let request = OutboundDispatchRequest::new(
+                format!("receipt:{name}"),
+                format!("intent:{name}"),
+                intent,
+                OutboundDispatchActor::agent(agent),
+                OutboundDispatchGate::allow_when_policy_grants(),
+                1_000,
+                OutboundDeliveryWindowDecision::DeliverNow,
+            );
+            scope.spawn(move || {
+                BEFORE_NEW_ADMISSION.with(|hook| {
+                    *hook.borrow_mut() = Some(Box::new(move || {
+                        barrier.wait();
+                    }));
+                });
+                let mut sink = RecordingExecutor::default();
+                let result = vault.dispatch_outbound_intent(request, &mut sink);
+                (result, sink.calls.len())
+            })
+        };
+        let a = spawn("one", Arc::clone(&barrier));
+        let b = spawn("two", Arc::clone(&barrier));
+        (
+            a.join().expect("first thread"),
+            b.join().expect("second thread"),
+        )
+    });
+    let outcomes = [first.0?.outcome, second.0?.outcome];
+    assert!(outcomes.contains(&OutboundDispatchOutcome::DeliveredToChannel));
+    assert!(outcomes.contains(&OutboundDispatchOutcome::Suppressed));
+    assert_eq!(first.1 + second.1, 1);
+    Ok(())
+}
+
+#[test]
+fn semantic_cooldown_survives_reopen() -> std::result::Result<(), Box<dyn std::error::Error>> {
+    let (tmp, vault) = temp_vault();
+    let actor_id = entity(0x72);
+    vault.put_entity(
+        &actor_id,
+        crate::registry::ENTITY_TYPE_PERSON,
+        crate::temporal::TimeRange { start: 1, end: 1 },
+        1,
+        b"actor",
+    )?;
+    put_policy_manifest_bytes(
+        &vault,
+        entity(0x73),
+        &policy_manifest(&actor_id.to_hex(), "email", &["send"]),
+    )?;
+    let request = |name: &str| {
+        let mut intent = dispatch_intent(OutboundIntentTrigger::agent_immediate(format!(
+            "session:{name}"
+        )));
+        intent.idempotency_key = Some(format!("idem:{name}"));
+        OutboundDispatchRequest::new(
+            format!("receipt:{name}"),
+            format!("intent:{name}"),
+            intent,
+            OutboundDispatchActor::agent(actor_id),
+            OutboundDispatchGate::allow_when_policy_grants(),
+            1_000,
+            OutboundDeliveryWindowDecision::DeliverNow,
+        )
+    };
+    vault.clock.set(1_000);
+    let mut first_sink = RecordingExecutor::default();
+    assert_eq!(
+        vault
+            .dispatch_outbound_intent(request("first"), &mut first_sink)?
+            .outcome,
+        OutboundDispatchOutcome::DeliveredToChannel
+    );
+    drop(vault);
+    let clock = crate::ports::ManualClock::new(1_001);
+    let reopened = Vault::open(
+        tmp.path(),
+        VaultConfig {
+            store_clock: clock.bundle(),
+            ..VaultConfig::default()
+        },
+    )?;
+    let mut second_sink = RecordingExecutor::default();
+    let result = reopened.dispatch_outbound_intent(request("second"), &mut second_sink)?;
+    assert_eq!(result.outcome, OutboundDispatchOutcome::Suppressed);
+    assert_eq!(
+        result.receipt.fields.get("suppression").map(String::as_str),
+        Some("dedupe")
+    );
+    assert!(second_sink.calls.is_empty());
+    let before = reopened.gate_decisions(100)?.len();
+    drop(reopened);
+    let reopened = Vault::open(
+        tmp.path(),
+        VaultConfig {
+            store_clock: crate::ports::ManualClock::new(1_002).bundle(),
+            ..VaultConfig::default()
+        },
+    )?;
+    let queried = reopened.receipts(
+        crate::receipt::ReceiptQuery::new(10).with_kind(crate::receipt::ReceiptKind::Outbound),
+    )?;
+    assert_eq!(
+        queried
+            .iter()
+            .filter(|row| row.receipt_id == result.receipt.receipt_id)
+            .count(),
+        1
+    );
+    let replay = reopened.dispatch_outbound_intent(request("second"), &mut second_sink)?;
+    assert_eq!(replay.outcome, OutboundDispatchOutcome::Suppressed);
+    assert_eq!(replay.receipt, result.receipt);
+    assert_eq!(reopened.gate_decisions(100)?.len(), before);
+    assert!(second_sink.calls.is_empty());
+    Ok(())
+}
+
+#[test]
+fn delivered_cooldown_starts_at_late_retry_not_first_admission()
+-> std::result::Result<(), Box<dyn std::error::Error>> {
+    let (_tmp, vault) = temp_vault();
+    let actor = entity(0x74);
+    vault.put_entity(
+        &actor,
+        crate::registry::ENTITY_TYPE_PERSON,
+        crate::temporal::TimeRange { start: 1, end: 1 },
+        1,
+        b"actor",
+    )?;
+    put_policy_manifest_bytes(
+        &vault,
+        entity(0x75),
+        &policy_manifest(&actor.to_hex(), "email", &["send"]),
+    )?;
+    let request = |name: &str, at: u64| {
+        let mut intent = dispatch_intent(OutboundIntentTrigger::agent_immediate(format!(
+            "session:{name}"
+        )));
+        intent.idempotency_key = Some(format!("idem:{name}"));
+        OutboundDispatchRequest::new(
+            format!("receipt:{name}"),
+            format!("intent:{name}"),
+            intent,
+            OutboundDispatchActor::agent(actor),
+            OutboundDispatchGate::allow_when_policy_grants(),
+            at,
+            OutboundDeliveryWindowDecision::DeliverNow,
+        )
+    };
+    vault.clock.set(1_000);
+    let mut failed = RecordingExecutor {
+        outcome: OutboundExecutionOutcome::failed("transport_not_started"),
+        ..Default::default()
+    };
+    assert_eq!(
+        vault
+            .dispatch_outbound_intent(request("first", 1_000), &mut failed)?
+            .outcome,
+        OutboundDispatchOutcome::Failed
+    );
+    vault.clock.set(90_000);
+    let mut delivered = RecordingExecutor::default();
+    assert_eq!(
+        vault
+            .dispatch_outbound_intent(request("first", 90_000), &mut delivered)?
+            .outcome,
+        OutboundDispatchOutcome::DeliveredToChannel
+    );
+    vault.clock.set(90_001);
+    let next = vault.dispatch_outbound_intent(request("second", 90_001), &mut delivered)?;
+    assert_eq!(next.outcome, OutboundDispatchOutcome::Suppressed);
+    assert_eq!(delivered.calls.len(), 1);
+    vault.clock.set(176_400);
+    assert_eq!(
+        vault
+            .dispatch_outbound_intent(request("third", 176_400), &mut delivered)?
+            .outcome,
+        OutboundDispatchOutcome::DeliveredToChannel
+    );
+    Ok(())
+}
+
+#[test]
+fn definitive_no_wire_expires_and_fences_the_old_retry()
+-> std::result::Result<(), Box<dyn std::error::Error>> {
+    let (_tmp, vault) = temp_vault();
+    let actor = entity(0x76);
+    vault.put_entity(
+        &actor,
+        crate::registry::ENTITY_TYPE_PERSON,
+        crate::temporal::TimeRange { start: 1, end: 1 },
+        1,
+        b"actor",
+    )?;
+    put_policy_manifest_bytes(
+        &vault,
+        entity(0x77),
+        &policy_manifest(&actor.to_hex(), "email", &["send"]),
+    )?;
+    let request = |name: &str, at: u64| {
+        let mut intent = dispatch_intent(OutboundIntentTrigger::agent_immediate(format!(
+            "session:{name}"
+        )));
+        intent.idempotency_key = Some(format!("idem:{name}"));
+        OutboundDispatchRequest::new(
+            format!("receipt:{name}"),
+            format!("intent:{name}"),
+            intent,
+            OutboundDispatchActor::agent(actor),
+            OutboundDispatchGate::allow_when_policy_grants(),
+            at,
+            OutboundDeliveryWindowDecision::DeliverNow,
+        )
+    };
+    vault.clock.set(1_000);
+    let mut failed = RecordingExecutor {
+        outcome: OutboundExecutionOutcome::failed("transport_not_started"),
+        ..Default::default()
+    };
+    assert_eq!(
+        vault
+            .dispatch_outbound_intent(request("first", 1_000), &mut failed)?
+            .outcome,
+        OutboundDispatchOutcome::Failed
+    );
+    vault.clock.set(1_001);
+    assert_eq!(
+        vault
+            .dispatch_outbound_intent(request("second", 1_001), &mut failed)?
+            .outcome,
+        OutboundDispatchOutcome::Suppressed
+    );
+    vault.clock.set(87_400);
+    let mut sent = RecordingExecutor::default();
+    assert_eq!(
+        vault
+            .dispatch_outbound_intent(request("third", 87_400), &mut sent)?
+            .outcome,
+        OutboundDispatchOutcome::DeliveredToChannel
+    );
+    let old = vault.dispatch_outbound_intent(request("first", 87_401), &mut sent)?;
+    assert_eq!(old.outcome, OutboundDispatchOutcome::Failed);
+    assert_eq!(sent.calls.len(), 1);
+    Ok(())
+}
+
+#[test]
+fn replicated_suppression_artifact_projects_on_another_vault()
+-> std::result::Result<(), Box<dyn std::error::Error>> {
+    use crate::batch::ENTITY_METADATA_HEADER_LEN;
+    use crate::receipt::{ReceiptKind, ReceiptQuery};
+    let (_tmp, source) = temp_vault();
+    let actor = entity(0x78);
+    source.put_entity(
+        &actor,
+        crate::registry::ENTITY_TYPE_PERSON,
+        crate::temporal::TimeRange { start: 1, end: 1 },
+        1,
+        b"actor",
+    )?;
+    put_policy_manifest_bytes(
+        &source,
+        entity(0x79),
+        &policy_manifest(&actor.to_hex(), "email", &["send"]),
+    )?;
+    source.clock.set(1_000);
+    let request = |name: &str| {
+        let mut intent = dispatch_intent(OutboundIntentTrigger::agent_immediate(format!(
+            "session:{name}"
+        )));
+        intent.idempotency_key = Some(format!("idem:{name}"));
+        OutboundDispatchRequest::new(
+            format!("receipt:{name}"),
+            format!("intent:{name}"),
+            intent,
+            OutboundDispatchActor::agent(actor),
+            OutboundDispatchGate::allow_when_policy_grants(),
+            1_000,
+            OutboundDeliveryWindowDecision::DeliverNow,
+        )
+    };
+    let mut sink = RecordingExecutor::default();
+    source.dispatch_outbound_intent(request("first"), &mut sink)?;
+    let suppressed = source.dispatch_outbound_intent(request("second"), &mut sink)?;
+    assert_eq!(suppressed.outcome, OutboundDispatchOutcome::Suppressed);
+    let (_peer_tmp, peer) = temp_vault();
+    // A replicated receipt uses its maintenance-kind batch door; an ordinary
+    // public put cannot mint the record or substitute an ASSET at its id.
+    let record = source
+        .entities_by_type(crate::registry::ENTITY_TYPE_RECEIPT_RECORD)?
+        .into_iter()
+        .next()
+        .expect("source receipt record");
+    let raw = source.get_raw(&record)?.expect("source record");
+    let at = crate::temporal::TimeRange {
+        start: 1_000,
+        end: 1_000,
+    };
+    assert!(
+        peer.put_entity(
+            &record,
+            crate::registry::ENTITY_TYPE_RECEIPT_RECORD,
+            at,
+            1_000,
+            &raw[ENTITY_METADATA_HEADER_LEN..]
+        )
+        .is_err()
+    );
+    let put_maintenance = |id: EntityId, body: &[u8]| -> crate::Result<()> {
+        peer.with_write_txn(|txn| {
+            crate::batch::apply_ops(
+                &peer.store,
+                &peer.config,
+                &peer.analyzer,
+                txn,
+                vec![crate::batch::BatchOp::Put {
+                    id,
+                    entity_type: crate::registry::ENTITY_TYPE_RECEIPT_RECORD,
+                    occurred: at,
+                    learned_at: 1_000,
+                    data: body.to_vec(),
+                    allow_maintenance: true,
+                    allow_reserved_predicate: false,
+                    hub_sync_imported: false,
+                }],
+                peer.text_index_trusted
+                    .load(std::sync::atomic::Ordering::Acquire),
+                false,
+                true,
+            )
+        })
+    };
+    put_maintenance(record, &raw[ENTITY_METADATA_HEADER_LEN..])?;
+    for (id, body) in [
+        (entity(0x85), &raw[ENTITY_METADATA_HEADER_LEN..]),
+        (record, &b"bad receipt"[..]),
+    ] {
+        assert!(put_maintenance(id, body).is_err());
+    }
+    assert!(
+        peer.put_entity(
+            &record,
+            crate::registry::ENTITY_TYPE_ASSET,
+            at,
+            1_000,
+            b"ordinary content"
+        )
+        .is_err()
+    );
+    assert!(peer.delete_entity(&record).is_err());
+    let projected = peer.receipts(ReceiptQuery::new(10).with_kind(ReceiptKind::Outbound))?;
+    assert_eq!(projected, vec![suppressed.receipt]);
+    let scan = peer.scan_receipts(ReceiptQuery::new(10).with_kind(ReceiptKind::Outbound))?;
+    assert_eq!(scan.records, projected);
+    Ok(())
+}
+
+#[test]
+fn suppressed_approve_once_replays_without_spending_the_unused_approval()
+-> std::result::Result<(), Box<dyn std::error::Error>> {
+    use crate::consent::{
+        ActionClass, ActionEnvelope, ActorBound, ComposedEffect, EffectFacts, GrantBound,
+        UndoFidelity,
+    };
+    let (_tmp, vault) = temp_vault();
+    let actor = entity(0x7c);
+    vault.put_entity(
+        &actor,
+        crate::registry::ENTITY_TYPE_PERSON,
+        crate::temporal::TimeRange { start: 1, end: 1 },
+        1,
+        b"actor",
+    )?;
+    put_policy_manifest_bytes(
+        &vault,
+        entity(0x7d),
+        &policy_manifest(&actor.to_hex(), "email", &["send"]),
+    )?;
+    let request = |name: &str, at: u64| {
+        let mut intent = dispatch_intent(OutboundIntentTrigger::agent_immediate(format!(
+            "session:{name}"
+        )));
+        intent.idempotency_key = Some(format!("idem:{name}"));
+        OutboundDispatchRequest::new(
+            format!("receipt:{name}"),
+            format!("intent:{name}"),
+            intent,
+            OutboundDispatchActor::agent(actor),
+            OutboundDispatchGate::allow_when_policy_grants(),
+            at,
+            OutboundDeliveryWindowDecision::DeliverNow,
+        )
+    };
+    vault.clock.set(1_000);
+    let mut sink = RecordingExecutor::default();
+    assert_eq!(
+        vault
+            .dispatch_outbound_intent(request("first", 1_000), &mut sink)?
+            .outcome,
+        OutboundDispatchOutcome::DeliveredToChannel
+    );
+    let owner_id = entity(0x7e);
+    vault.put_entity(
+        &owner_id,
+        crate::registry::ENTITY_TYPE_PERSON,
+        crate::temporal::TimeRange { start: 1, end: 1 },
+        1,
+        b"owner",
+    )?;
+    let owner = vault.authenticate_owner(
+        owner_id,
+        &owner_id.to_hex(),
+        true,
+        crate::store::GateDecisionId::now(),
+    )?;
+    let mut facts = EffectFacts::new("external:email:send")?;
+    facts.fires_hooks = true;
+    facts.triggers_publish = true;
+    facts.external_observers = true;
+    facts.undo_fidelity = UndoFidelity::None;
+    let bound = GrantBound::action(
+        ActorBound::new(actor.to_hex())?,
+        ActionClass::new("send")?,
+        ActionEnvelope::new(["verb:send".to_owned()])?.with_target("email")?,
+    )?;
+    let digest = ComposedEffect::new(facts)
+        .with_action_requirement(bound)?
+        .digest();
+    vault.approve_once(&owner, digest)?;
+    let second = request("second", 1_001);
+    let suppression = vault.dispatch_outbound_intent(second.clone(), &mut sink)?;
+    assert_eq!(suppression.outcome, OutboundDispatchOutcome::Suppressed);
+    assert_eq!(
+        vault.dispatch_outbound_intent(second, &mut sink)?.receipt,
+        suppression.receipt
+    );
+    vault.clock.set(87_401);
+    // If suppression spent the marker, Gate evaluation refuses this send
+    // with ConsentApproveOnceSpent before it can reach the connector.
+    assert_eq!(
+        vault
+            .dispatch_outbound_intent(request("third", 87_401), &mut sink)?
+            .outcome,
+        OutboundDispatchOutcome::DeliveredToChannel
+    );
+    assert_eq!(sink.calls.len(), 2);
+    Ok(())
+}
+
+#[test]
+fn an_earlier_ambiguous_send_is_not_erased_by_a_later_definite_failure()
+-> std::result::Result<(), Box<dyn std::error::Error>> {
+    let (_tmp, vault) = temp_vault();
+    let actor = entity(0x81);
+    vault.put_entity(
+        &actor,
+        crate::registry::ENTITY_TYPE_PERSON,
+        crate::temporal::TimeRange { start: 1, end: 1 },
+        1,
+        b"actor",
+    )?;
+    put_policy_manifest_bytes(
+        &vault,
+        entity(0x82),
+        &policy_manifest(&actor.to_hex(), "email", &["replace"]),
+    )?;
+    let request = |name: &str, at: u64| {
+        let mut intent = dispatch_intent(OutboundIntentTrigger::agent_immediate(format!(
+            "session:{name}"
+        )));
+        intent.verb = "replace".to_owned();
+        intent.idempotency_key = Some(format!("idem:{name}"));
+        OutboundDispatchRequest::new(
+            format!("receipt:{name}"),
+            format!("intent:{name}"),
+            intent,
+            OutboundDispatchActor::agent(actor),
+            OutboundDispatchGate::allow_when_policy_grants(),
+            at,
+            OutboundDeliveryWindowDecision::DeliverNow,
+        )
+    };
+    vault.clock.set(1_000);
+    let mut sink = RecordingExecutor {
+        outcome: OutboundExecutionOutcome::failed("ambiguous").with_possible_delivery(),
+        ..Default::default()
+    };
+    assert_eq!(
+        vault
+            .dispatch_outbound_intent(request("first", 1_000), &mut sink)?
+            .outcome,
+        OutboundDispatchOutcome::Failed
+    );
+    vault.clock.set(90_000);
+    sink.outcome = OutboundExecutionOutcome::failed("not_started");
+    assert_eq!(
+        vault
+            .dispatch_outbound_intent(request("first", 90_000), &mut sink)?
+            .outcome,
+        OutboundDispatchOutcome::Failed
+    );
+    vault.clock.set(90_001);
+    assert_eq!(
+        vault
+            .dispatch_outbound_intent(request("second", 90_001), &mut sink)?
+            .outcome,
+        OutboundDispatchOutcome::Suppressed
+    );
+    assert_eq!(sink.calls.len(), 2);
+    Ok(())
+}
+
+#[test]
+fn malformed_unrelated_suppression_asset_is_refused_before_it_can_poison_receipts()
+-> std::result::Result<(), Box<dyn std::error::Error>> {
+    use crate::receipt::{ReceiptKind, ReceiptQuery};
+    let (_tmp, vault) = temp_vault();
+    let at = crate::temporal::TimeRange { start: 1, end: 1 };
+    // Ordinary ASSETs remain opaque, including legacy-looking bytes. The
+    // registered audit kind is maintenance-only and rejects malformed input.
+    vault.put_entity(
+        &entity(0x86),
+        crate::registry::ENTITY_TYPE_ASSET,
+        at,
+        1,
+        b"oneiron:outbound-suppression:v1\0",
+    )?;
+    assert!(
+        vault
+            .put_entity(
+                &entity(0x87),
+                crate::registry::ENTITY_TYPE_RECEIPT_RECORD,
+                at,
+                1,
+                b"invalid"
+            )
+            .is_err()
+    );
+    assert!(
+        vault
+            .receipts(ReceiptQuery::new(1).with_kind(ReceiptKind::Outbound))?
+            .is_empty()
+    );
+    assert!(
+        vault
+            .scan_receipts(ReceiptQuery::new(1).with_kind(ReceiptKind::Outbound))?
+            .records
+            .is_empty()
+    );
+    Ok(())
+}
