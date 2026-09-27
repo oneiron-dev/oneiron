@@ -23,6 +23,53 @@ fn source(connector: bool) -> Result<PackSource> {
         HubFile::new("skills/format/SKILL.md", b"---\nname: alice.format\ndescription: format\nversion: 1\n---\nKeep facts exact.\n".to_vec()),
     ])
 }
+fn assert_bundled_source_line(
+    vault: &Vault,
+    pack_ref: &HubRef,
+    skill: &EntityId,
+    lifecycle: &str,
+    outcome: &str,
+) -> Result<()> {
+    let record = vault.get_skill_record(skill)?.expect("bundled skill");
+    let reference = super::pack_skill_hub_ref(
+        pack_ref,
+        "format",
+        record.content_hash.expect("bundled skill hash"),
+    )?;
+    let receipt = vault
+        .hub_import_receipt(skill, &reference)?
+        .expect("source receipt");
+    assert_eq!(receipt.installed_as.as_deref(), Some(lifecycle));
+    assert_eq!(receipt.outcome.as_deref(), Some(outcome));
+    assert_eq!(receipt.hub_id, pack_ref.hub_id.to_hex());
+    assert_eq!(receipt.ref_string, reference.ref_string);
+    crate::test_util::authorize_readers(vault, &["pack-reader"]);
+    let read = vault.scoped_read(crate::claim::ScopedReadActorKey::new("pack-reader").unwrap());
+    let changed = crate::context_board::SessionReadSet::default().refresh(&read, 16)?;
+    let rendered = crate::context_board::render_board_block(
+        &crate::context_board::BoardFrame {
+            header: &crate::context_board::BoardBlockHeader {
+                epoch: 1,
+                scope: "base".into(),
+            },
+            legend: &crate::context_board::BoardLegend::canonical(),
+            sections: &[],
+            changes: Some(&changed),
+        },
+        crate::context_board::BoardBudgetRequest {
+            harness_default_tok: 0,
+            caller_limit_tok: None,
+            explicit_override_tok: None,
+        },
+    )
+    .expect("board render");
+    assert!(rendered.text.contains("changed_install["));
+    assert!(rendered.text.contains(&receipt.hub_id));
+    assert!(rendered.text.contains(&reference.ref_string));
+    assert!(rendered.text.contains(&format!("{lifecycle}/{outcome}")));
+    Ok(())
+}
+
 struct Policy {
     rules_hit: bool,
     code_auto_install: bool,
@@ -262,6 +309,13 @@ fn code_free_pack_installs_active_without_qualification_or_consent() -> Result<(
             vault.get_skill_record(&skill)?.unwrap().lifecycle_status,
             crate::skill::SkillLifecycle::Active
         );
+        assert_bundled_source_line(
+            &vault,
+            &reference,
+            &skill,
+            "active",
+            "pack_bundled_installed",
+        )?;
         // The resident can load and attribute the pack's exact authored skill
         // through the ordinary attempt door, not only inspect Active metadata.
         let queue = crate::attempt_queue::AttemptQueue::new(&vault);
@@ -396,6 +450,17 @@ fn code_flag_and_rule_hits_keep_candidate_inert() -> Result<()> {
             vault.get_skill_record(&skill)?.unwrap().lifecycle_status,
             crate::skill::SkillLifecycle::Candidate
         );
+        assert_bundled_source_line(
+            &vault,
+            &reference,
+            &skill,
+            "candidate",
+            if rules_hit {
+                "pack_bundled_rules_hit"
+            } else {
+                "pack_bundled_code_auto_install_off"
+            },
+        )?;
         let resumed = vault.prepare_pack_install(id, &reference, &publisher, &policy())?;
         assert!(matches!(
             vault.install_pack(&resumed)?,

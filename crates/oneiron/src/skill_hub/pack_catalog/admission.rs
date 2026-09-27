@@ -61,8 +61,8 @@ impl Vault {
         self.with_write_txn(|txn| {
             let source = self.check_pack_install_ask(txn, ask)?;
             let at = crate::unix_seconds_now();
-            let skills = self.import_pack_skills_in_txn(
-                txn, &source, &ask.hub, &ask.publisher, at,
+            let (skills, skill_sources) = self.import_pack_skills_in_txn(
+                txn, &source, &ask.hub, at,
             )?;
             let mut candidate_reason = if ask.verdict.rules_hit {
                 Some(PackCandidateReason::RulesHit)
@@ -89,6 +89,22 @@ impl Vault {
                 if let Some(prior) = self.installed_pack_in_txn(txn, &source.manifest.name)? {
                     self.supersede_pack_skills_in_txn(txn, &prior, &skills, at)?;
                 }
+            }
+            // The source receipt is an install outcome, not the intermediate
+            // import step. Both its state and the pack verdict commit together.
+            for (skill_id, skill_ref, hash) in &skill_sources {
+                let skill = self.read_skill_record_in_txn(txn, skill_id)?;
+                let outcome = match (status, skill.lifecycle_status, candidate_reason) {
+                    (PackInstallStatus::Active, crate::skill::SkillLifecycle::Active, _) => "pack_bundled_installed",
+                    (PackInstallStatus::Candidate, crate::skill::SkillLifecycle::Candidate, Some(PackCandidateReason::RulesHit)) => "pack_bundled_rules_hit",
+                    (PackInstallStatus::Candidate, crate::skill::SkillLifecycle::Candidate, Some(PackCandidateReason::CodeAutoInstallOff)) => "pack_bundled_code_auto_install_off",
+                    (PackInstallStatus::Candidate, crate::skill::SkillLifecycle::Active, _) => "pack_bundled_already_active",
+                    _ => return Err(invalid("pack skill lifecycle differs from install verdict")),
+                };
+                self.write_hub_import_receipt_in_txn(
+                    txn, skill_id, *hash, skill_ref,
+                    Some((&ask.publisher, outcome, "")), at,
+                )?;
             }
             let receipt = PackInstallReceipt {
                 source_id: ask.source_id.to_hex(),

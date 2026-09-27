@@ -1202,6 +1202,11 @@ fn local_git_pack_installs_with_pinned_receipt_and_skill_remains_separate() -> R
         skill_receipt.content_hash,
         skill_record.content_hash.unwrap().to_hex()
     );
+    assert_eq!(skill_receipt.installed_as.as_deref(), Some("active"));
+    assert_eq!(
+        skill_receipt.outcome.as_deref(),
+        Some("pack_bundled_installed")
+    );
     let standalone = files("alice.plain", "1", "plain knowledge");
     for file in &standalone {
         let path = repository.path().join("skills/plain").join(&file.path);

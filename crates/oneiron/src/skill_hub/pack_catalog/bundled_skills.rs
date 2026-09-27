@@ -5,8 +5,8 @@ use crate::{
     claim::ClaimApprovalStatus,
     entity_id::EntityId,
     error::Result,
-    skill::SkillLifecycle,
-    skill_hub::{ForeignSkillPublisher, HubFile, HubPin, HubRef},
+    skill::{SkillContentHash, SkillLifecycle},
+    skill_hub::{HubFile, HubPin, HubRef},
     temporal::TimeRange,
 };
 use std::collections::BTreeMap;
@@ -16,9 +16,8 @@ impl Vault {
         txn: &mut heed::RwTxn<'_>,
         source: &PackSource,
         hub: &HubRef,
-        publisher: &ForeignSkillPublisher,
         at: u64,
-    ) -> Result<Vec<EntityId>> {
+    ) -> Result<(Vec<EntityId>, Vec<(EntityId, HubRef, SkillContentHash)>)> {
         let mut groups = BTreeMap::<String, Vec<HubFile>>::new();
         for file in &source.files {
             let Some(path) = file.path.strip_prefix("skills/") else {
@@ -33,6 +32,7 @@ impl Vault {
                 .push(HubFile::new(relative, file.content.clone()));
         }
         let mut ids = Vec::new();
+        let mut skill_sources = Vec::new();
         for (folder, files) in groups {
             let package = super::super::folder::package_from_files(files)?;
             let hash = package.content_hash()?;
@@ -49,14 +49,9 @@ impl Vault {
                 TimeRange { start: at, end: at },
                 at,
             )?;
-            self.write_hub_import_receipt_in_txn(
-                txn,
-                &id,
-                hash,
-                &skill_ref,
-                Some((publisher, "pack_bundled_candidate", "")),
-                at,
-            )?;
+            // The final install/Candidate decision follows later in this same
+            // transaction. Do not publish an intermediate Candidate receipt.
+            skill_sources.push((id, skill_ref.clone(), hash));
             self.store.vault_meta.put(
                 txn,
                 &pack_skill_alias_key(&id, &skill_ref)?,
@@ -64,7 +59,7 @@ impl Vault {
             )?;
             ids.push(id);
         }
-        Ok(ids)
+        Ok((ids, skill_sources))
     }
     /// Replace only this pack's admitted prior revisions. Other pack owners
     /// retain a shared content holder until their own installation moves.
