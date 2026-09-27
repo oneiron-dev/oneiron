@@ -69,6 +69,7 @@ pub(super) const POLICY_AUTO_CHECKER_KEY: &str = "auto_checker";
 pub(super) const POLICY_BUDGET_POLICY_KEY: &str = "budget_policy";
 /// Complete typed conversion policy map; an absent row keeps the default.
 pub(super) const POLICY_PROJECT_CONVERSION_KEY: &str = "project_conversion";
+pub(super) const POLICY_HOSTED_TTS_KEY: &str = "hosted_tts";
 pub(super) const BUDGET_POLICY_PURPOSE_KEY: &str = "purpose";
 pub(super) const BUDGET_POLICY_ACTOR_KEY: &str = "actor";
 pub(super) const BUDGET_POLICY_FLOOR_KEY: &str = "floor";

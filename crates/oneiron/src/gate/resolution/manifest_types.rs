@@ -7,6 +7,7 @@ use crate::gate::ceiling::{
     PolicySignature, SourceTrustCeiling,
 };
 use crate::gate::grants::PolicyScopedGrant;
+use crate::gate::hosted_tts_policy::HostedTtsPolicy;
 use crate::gate::project_conversion::ProjectConversionPolicy;
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -101,4 +102,5 @@ pub(crate) struct PolicyManifestResolution {
     pub(super) auto_checker: Option<String>,
     pub(super) budget_policy: BudgetPolicyTable,
     pub(super) project_conversion: ProjectConversionPolicy,
+    pub(super) hosted_tts: HostedTtsPolicy,
 }
