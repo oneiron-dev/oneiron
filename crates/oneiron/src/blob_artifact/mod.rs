@@ -40,7 +40,7 @@ pub use self::provenance::BlobVersionProvenance;
 pub(crate) use self::store_keys::require_entity_type;
 pub use self::store_keys::{BLOB_ARTIFACT_CONTENT_HASH_LEN, BLOB_ARTIFACT_RUN_REF_MAX_BYTES};
 pub(crate) use self::versions::read_blob_artifact_head_in_txn;
-pub use self::versions::{BLOB_ARTIFACT_VERSION_RECORD_KEYS, BlobArtifactVersion};
+pub use self::versions::{BLOB_ARTIFACT_VERSION_RECORD_KEYS, BlobArtifactVersion, CalcEngineStamp};
 
 #[cfg(test)]
 mod tests;

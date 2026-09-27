@@ -1,7 +1,10 @@
 //! Connector-neutral seat wall and its host-supplied LinkedIn policy adapter.
 use std::collections::BTreeMap;
 
-use crate::linkedin_connector::{LinkedInSeatPolicyAction, LinkedInSeatPolicyDecision};
+use crate::linkedin_connector::{
+    LINKEDIN_CHANNEL, LINKEDIN_CONNECT_REQUEST_VERB, LinkedInSeatPolicyAction,
+    LinkedInSeatPolicyDecision,
+};
 use crate::outbound::capability::OutboundVerbContract;
 use crate::outbound::dispatch_types::OutboundDispatchRequest;
 
@@ -39,13 +42,21 @@ pub(super) fn evaluate_seat_policy(
     verb_contract: &OutboundVerbContract,
 ) -> Option<SeatPolicyDecision> {
     request.linkedin_sandbox_policy.as_ref().map(|policy| {
-        policy
-            .evaluate_outbound(
-                &request.intent.channel,
-                &verb_contract.kind,
-                request.occurred_at,
-            )
-            .into()
+        let send_decision = policy.evaluate_outbound(
+            &request.intent.channel,
+            &verb_contract.kind,
+            request.occurred_at,
+        );
+        if request.intent.channel == LINKEDIN_CHANNEL
+            && verb_contract.kind == LINKEDIN_CONNECT_REQUEST_VERB
+            && matches!(send_decision.action, LinkedInSeatPolicyAction::Allow)
+        {
+            let read_decision = policy.evaluate_profile_read();
+            if !matches!(read_decision.action, LinkedInSeatPolicyAction::Allow) {
+                return read_decision.into();
+            }
+        }
+        send_decision.into()
     })
 }
 

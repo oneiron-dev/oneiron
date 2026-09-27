@@ -8,6 +8,7 @@ use crate::edge::EdgeActorClass;
 use crate::entity_id::EntityId;
 use crate::error::{Error, OffRecordError};
 use crate::gate::ExternalEffectPolicyRisk;
+use crate::linkedin_connector::{LINKEDIN_CHANNEL, LINKEDIN_CONNECT_REQUEST_VERB};
 use crate::outbound::capability::{OutboundRetryClass, normalize_key, outbound_verb_contract};
 use crate::outbound::dispatch_attempt_id::outbound_dispatch_attempt_id;
 use crate::outbound::dispatch_types::{
@@ -67,6 +68,16 @@ impl OutboundDispatchPipeline {
         }
 
         let verb_contract = outbound_verb_contract(&request.intent.channel, &request.intent.verb)?;
+        // Scheduled tasks cannot supply a seat snapshot today. Never let that
+        // optional request field turn a LinkedIn connect into an ungated send.
+        if request.intent.channel == LINKEDIN_CHANNEL
+            && verb_contract.kind == LINKEDIN_CONNECT_REQUEST_VERB
+            && request.linkedin_sandbox_policy.is_none()
+        {
+            return Err(OutboundDispatchError::Engine(Error::InvalidConfig(
+                "LinkedIn connect request requires current seat policy".to_owned(),
+            )));
+        }
         let idempotency_supported = !matches!(
             verb_contract.retry_class,
             OutboundRetryClass::NonIdempotentInterrupt
