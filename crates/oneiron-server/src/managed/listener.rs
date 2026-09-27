@@ -9,8 +9,6 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use axum::Router;
-use axum::extract::connect_info::Connected;
-use axum::serve::IncomingStream;
 use oneiron_vault_contract::{CtlRequest, CtlResponse, MAX_CTL_LINE, READY_BYTE};
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::net::{UnixListener, UnixStream};
@@ -112,31 +110,6 @@ pub enum BoundServeListener {
     },
 }
 
-/// Kernel-attested local peer, not an IP address. A failed peer-credential
-/// lookup cannot authorize a public signing action.
-#[derive(Clone, Copy, Debug)]
-pub(crate) struct UnixSigningPeer {
-    uid: Option<u32>,
-}
-
-impl UnixSigningPeer {
-    pub(crate) fn verified(self) -> bool {
-        self.uid.is_some()
-    }
-}
-
-impl Connected<IncomingStream<'_, UnixListener>> for UnixSigningPeer {
-    fn connect_info(stream: IncomingStream<'_, UnixListener>) -> Self {
-        Self {
-            uid: stream
-                .io()
-                .peer_cred()
-                .ok()
-                .map(|credentials| credentials.uid()),
-        }
-    }
-}
-
 impl BoundServeListener {
     /// The socket path this process is responsible for removing, if any.
     pub fn owned_path(&self) -> Option<&Path> {
@@ -159,7 +132,7 @@ impl BoundServeListener {
             Self::Unix { listener, .. } => {
                 axum::serve(
                     listener,
-                    app.into_make_service_with_connect_info::<UnixSigningPeer>(),
+                    app.into_make_service_with_connect_info::<super::UnixPeer>(),
                 )
                 .await
             }
@@ -185,7 +158,7 @@ impl BoundServeListener {
             Self::Unix { listener, .. } => {
                 axum::serve(
                     listener,
-                    app.into_make_service_with_connect_info::<UnixSigningPeer>(),
+                    app.into_make_service_with_connect_info::<super::UnixPeer>(),
                 )
                 .with_graceful_shutdown(shutdown)
                 .await

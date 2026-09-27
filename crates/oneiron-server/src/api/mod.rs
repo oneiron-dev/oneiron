@@ -372,6 +372,7 @@ pub(crate) fn api_routes(server: Arc<SyncServer>) -> Router {
         // BK-08's machine-readable booking surface. Every route addresses the
         // page by opaque token and dispatches into the one shared executor.
         .merge(self::booking::booking_routes())
+        .merge(self::esign::editor_routes())
         // ONE-1908: git smart-HTTP. Stock clients clone, fetch, and push here;
         // every route streams through one `git http-backend` child.
         .merge(self::git_http::git_http_routes())
@@ -397,9 +398,6 @@ pub(crate) fn api_routes(server: Arc<SyncServer>) -> Router {
         // Config-only CIMD documents must be public before OAuth/lease bootstrap.
         .route("/oauth/client/native.json", get(client_metadata::native))
         .route("/oauth/client/web.json", get(client_metadata::web))
-        // Signing is public but must still produce the same matched-route
-        // volume receipts as tenant traffic, without inheriting its lease.
-        .merge(self::esign::routes())
         .layer(middleware::from_fn_with_state(
             server.clone(),
             crate::wire_telemetry::observe_http,
@@ -408,6 +406,7 @@ pub(crate) fn api_routes(server: Arc<SyncServer>) -> Router {
         // Their closed router validates a live owner publication and scoped tokens;
         // keep it outside the tenant lease layer, never a generic path exemption.
         .merge(self::booking::public_booking_router())
+        .merge(self::esign::public_routes())
         .with_state(server.clone())
         .layer(middleware::from_fn_with_state(
             server,

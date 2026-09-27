@@ -1,10 +1,9 @@
-//! Public session-less signing lens. Entry links carry a capability in the path;
-//! the browser scrubs it before all ceremony POSTs, which carry it in the body.
-use crate::managed::UnixSigningPeer;
+//! Session-less signing ceremony. The public link carries the capability in its
+//! path; after loading, the client scrubs it and sends it only in POST bodies.
 use crate::server::SyncServer;
 mod editor_budget;
 mod presentation;
-use axum::extract::{DefaultBodyLimit, Path, State};
+use axum::extract::{DefaultBodyLimit, State};
 use axum::http::{HeaderMap, StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
@@ -18,40 +17,8 @@ struct SigningRequest {
     token: String,
     action: SigningAction,
 }
-type TcpPeer = Result<
-    axum::extract::ConnectInfo<std::net::SocketAddr>,
-    axum::extract::rejection::ExtensionRejection,
->;
-type UnixPeer = Result<
-    axum::extract::ConnectInfo<UnixSigningPeer>,
-    axum::extract::rejection::ExtensionRejection,
->;
-
-/// Source information comes only from the accepted connection. A local Unix
-/// peer proves an OS credential but has no IP address to record as one.
-pub(super) enum SigningPeer {
-    Network(String),
-    Local,
-}
-impl SigningPeer {
-    pub(super) fn audit_ip(self) -> Option<String> {
-        match self {
-            Self::Network(ip) => Some(ip),
-            Self::Local => None,
-        }
-    }
-}
-pub(super) fn signing_peer(tcp: TcpPeer, unix: UnixPeer) -> Option<SigningPeer> {
-    match (tcp, unix) {
-        (Ok(axum::extract::ConnectInfo(peer)), _) => {
-            Some(SigningPeer::Network(peer.ip().to_string()))
-        }
-        (_, Ok(axum::extract::ConnectInfo(peer))) if peer.verified() => Some(SigningPeer::Local),
-        _ => None,
-    }
-}
-pub(super) fn routes() -> Router<Arc<SyncServer>> {
-    let editor = Router::new()
+pub(super) fn editor_routes() -> Router<Arc<SyncServer>> {
+    Router::new()
         .route("/sign/layout", post(presentation::layout))
         .route(
             "/sign/geometry",
@@ -60,9 +27,18 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route_layer(axum::middleware::from_fn_with_state(
             editor_budget::EditorBudget::new(),
             editor_budget::admit,
-        ));
+        ))
+        .route("/sign/editor", get(presentation::editor))
+        .route("/sign/field-renderer.js", get(presentation::field_script))
+        .route("/sign/editor.js", get(presentation::editor_script))
+        .layer(DefaultBodyLimit::max(3 * 1024 * 1024))
+        .layer(axum::middleware::from_fn(private_response))
+}
+
+/// Only the signing ceremony bypasses the hosted device-lease gate. Every
+/// action and document read still checks the bearer capability in the vault.
+pub(super) fn public_routes() -> Router<Arc<SyncServer>> {
     Router::new()
-        .merge(editor)
         .route("/sign", get(page))
         .route("/sign/{token}", get(page_for_token))
         .route("/sign/action", post(action))
@@ -70,17 +46,14 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/sign/image", post(image))
         .route("/sign/preview", post(presentation::preview))
         .route("/sign/signature", post(presentation::signature))
-        .route("/sign/editor", get(presentation::editor))
-        .route("/sign/field-renderer.js", get(presentation::field_script))
-        .route("/sign/editor.js", get(presentation::editor_script))
         .layer(DefaultBodyLimit::max(3 * 1024 * 1024))
         .layer(axum::middleware::from_fn(private_response))
 }
 async fn action(
     State(server): State<Arc<SyncServer>>,
     headers: HeaderMap,
-    peer: TcpPeer,
-    unix_peer: UnixPeer,
+    peer: NetworkPeer,
+    local_peer: LocalPeer,
     Json(request): Json<SigningRequest>,
 ) -> Response {
     let token = match EsignCapability::parse(&request.token) {
@@ -94,10 +67,9 @@ async fn action(
         .and_then(|v| v.to_str().ok())
         .filter(|v| v.len() <= 1024)
         .map(str::to_owned);
-    let Some(peer) = signing_peer(peer, unix_peer) else {
+    let Ok(ip) = signing_peer_ip(peer, local_peer) else {
         return unavailable();
     };
-    let ip = peer.audit_ip();
     match server
         .vault
         .execute_signing_action(&token, &request.action, ip, ua)
@@ -114,6 +86,29 @@ async fn action(
         Err(_) => refused(),
     }
 }
+type NetworkPeer = Result<
+    axum::extract::ConnectInfo<std::net::SocketAddr>,
+    axum::extract::rejection::ExtensionRejection,
+>;
+type LocalPeer = Result<
+    axum::extract::ConnectInfo<crate::managed::UnixPeer>,
+    axum::extract::rejection::ExtensionRejection,
+>;
+
+fn signing_peer_ip(network: NetworkPeer, local: LocalPeer) -> Result<Option<String>, ()> {
+    if let Ok(axum::extract::ConnectInfo(peer)) = network {
+        return Ok(Some(peer.ip().to_string()));
+    }
+    if let Ok(axum::extract::ConnectInfo(peer)) = local
+        && peer.verified()
+    {
+        // A kernel-verified Unix peer is the local supervisor, not a signer
+        // address. Record no IP rather than inventing one or trusting XFF.
+        return Ok(None);
+    }
+    Err(())
+}
+
 fn refused() -> Response {
     (
         StatusCode::FORBIDDEN,
@@ -135,18 +130,17 @@ struct PdfRequest {
 async fn pdf(
     State(server): State<Arc<SyncServer>>,
     headers: HeaderMap,
-    peer: TcpPeer,
-    unix_peer: UnixPeer,
+    peer: NetworkPeer,
+    local_peer: LocalPeer,
     Json(request): Json<PdfRequest>,
 ) -> Response {
     let token = match EsignCapability::parse(&request.token) {
         Ok(t) => t,
         Err(_) => return refused(),
     };
-    let Some(peer) = signing_peer(peer, unix_peer) else {
+    let Ok(ip) = signing_peer_ip(peer, local_peer) else {
         return unavailable();
     };
-    let ip = peer.audit_ip();
     let ua = headers
         .get(header::USER_AGENT)
         .and_then(|v| v.to_str().ok())
@@ -220,9 +214,9 @@ async fn image(
         Err(_) => refused(),
     }
 }
-async fn page_for_token(Path(raw): Path<String>) -> Response {
-    if EsignCapability::parse(&raw).is_err() {
-        return refused();
+async fn page_for_token(axum::extract::Path(token): axum::extract::Path<String>) -> Response {
+    if EsignCapability::parse(&token).is_err() {
+        return (StatusCode::NOT_FOUND, "").into_response();
     }
     page().await
 }
@@ -295,7 +289,7 @@ mod tests {
             Arc::new(oneiron::Vault::open(dir.path(), oneiron::VaultConfig::device()).unwrap());
         let server =
             Arc::new(SyncServer::new(vault, crate::config::SyncServerConfig::default()).unwrap());
-        let app = routes().with_state(server);
+        let app = public_routes().with_state(server);
         let page = app
             .clone()
             .oneshot(Request::builder().uri("/sign").body(Body::empty()).unwrap())
@@ -354,7 +348,7 @@ mod tests {
             Arc::new(oneiron::Vault::open(dir.path(), oneiron::VaultConfig::device()).unwrap());
         let server =
             Arc::new(SyncServer::new(vault, crate::config::SyncServerConfig::default()).unwrap());
-        let app = routes().with_state(server);
+        let app = public_routes().with_state(server);
         for path in ["/sign/action", "/sign/pdf", "/sign/preview"] {
             let body = if path == "/sign/action" {
                 serde_json::json!({"token":"11".repeat(32), "action":{"action":"load"}})
@@ -395,7 +389,7 @@ mod tests {
             Arc::new(oneiron::Vault::open(dir.path(), oneiron::VaultConfig::device()).unwrap());
         let server =
             Arc::new(SyncServer::new(vault, crate::config::SyncServerConfig::default()).unwrap());
-        let app = routes().with_state(server);
+        let app = editor_routes().with_state(server);
         let mut pdf = b"%PDF-1.7\n".to_vec();
         let mut offsets = Vec::new();
         for (index, body) in [

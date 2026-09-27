@@ -38,17 +38,16 @@ pub(super) async fn layout(Json(request): Json<LayoutRequest>) -> Response {
 pub(super) async fn preview(
     State(server): State<Arc<SyncServer>>,
     headers: HeaderMap,
-    peer: super::TcpPeer,
-    unix_peer: super::UnixPeer,
+    peer: NetworkPeer,
+    local_peer: LocalPeer,
     Json(request): Json<PdfRequest>,
 ) -> Response {
     let Ok(token) = EsignCapability::parse(&request.token) else {
         return refused();
     };
-    let Some(peer) = super::signing_peer(peer, unix_peer) else {
+    let Ok(ip) = signing_peer_ip(peer, local_peer) else {
         return unavailable();
     };
-    let ip = peer.audit_ip();
     let ua = headers
         .get(header::USER_AGENT)
         .and_then(|v| v.to_str().ok())

@@ -35,13 +35,14 @@ mod host;
 mod isolation;
 mod ledger;
 mod listener;
+mod peer;
 mod shed;
+pub(crate) use self::peer::UnixPeer;
 mod state_serve;
 mod vault_gates;
 
 pub use self::args::{ManagedArgs, ManagedError};
 pub use self::ledger::{LEDGER_REV_KEY, WakeLedger};
-pub(crate) use self::listener::UnixSigningPeer;
 pub use self::listener::{
     BoundServeListener, HYPNOS_LISTEN_FD, ManagedCtl, ServeListener, adopt_listen_fd, signal_ready,
 };
