@@ -247,7 +247,10 @@ pub(in crate::store) fn valid_gate_receipt_reason(reason: &str) -> bool {
             || reason.starts_with("connector_key_")
             || reason.starts_with("effector_budget_")
             || reason.starts_with("comm_send_override_")
-            || reason == "connector_manifest_drift"
+            || matches!(
+                reason,
+                "connector_manifest_drift" | "connector_manifest_stale"
+            )
             || reason.starts_with("charter_")
             || reason.starts_with(GATE_RECEIPT_REASON_CHECKER_PREFIX))
         && reason

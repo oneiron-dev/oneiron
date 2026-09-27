@@ -13,8 +13,8 @@ use crate::error::RecordError;
 /// ConnectorKeyRecord lifecycle status.
 ///
 /// v1 reachable states: `Active ⇄ Suspended`, `→ Revoked` (terminal).
-/// `Pending` is accepted by decode for forward-compat with the ARCH-0028
-/// qualification suite but is never minted by v1 registration.
+/// Per-grant scoped keys mint `Pending` until the qualification suite and
+/// owner stamp pin a resolved manifest and negotiated revision.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum ConnectorKeyStatus {
     Pending,
@@ -223,6 +223,8 @@ pub struct ConnectorKeyRecord {
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct PendingConnectorManifest {
+    /// Unique per staging attempt; rendered to the owner and checked at approval.
+    pub candidate_id: [u8; 32],
     pub manifest: ResolvedConnectorManifest,
     pub protocol_revision: String,
     pub drift: ConnectorManifestDrift,
@@ -271,7 +273,7 @@ impl ConnectorKeyRecord {
             return true;
         }
         let Some(approved) = self.retained_manifest.as_ref() else {
-            return self.pending_manifest.is_some();
+            return self.pending_manifest.is_some() || self.status == ConnectorKeyStatus::Pending;
         };
         if !approved.tools().iter().any(|entry| entry.name == tool) {
             return true;
@@ -339,10 +341,15 @@ impl ConnectorKeyRecord {
         }
         if let Some(manifest) = &self.retained_manifest {
             manifest.validate_snapshot()?;
+            validate_manifest_json_size(manifest)?;
         }
         if let Some(pending) = &self.pending_manifest {
             validate_protocol_revision(&pending.protocol_revision)?;
             pending.manifest.validate_snapshot()?;
+            validate_manifest_json_size(pending)?;
+            if pending.candidate_id == [0; 32] {
+                return Err(invalid_body("manifest candidate id missing"));
+            }
             let expected = match (&self.retained_manifest, &self.negotiated_protocol_revision) {
                 (Some(old), Some(revision)) => ConnectorManifestDrift::between(
                     old,
@@ -516,6 +523,22 @@ pub(in crate::connector_key) fn validate_protocol_revision(value: &str) -> Resul
             .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'-' | b'_'))
     {
         return Err(invalid_body("invalid negotiated protocol revision"));
+    }
+    Ok(())
+}
+
+/// The same maximum applies to both serialized snapshot and pending wrapper.
+/// It is checked before write and before decode so a writer cannot persist an
+/// otherwise valid key that its own reader refuses.
+pub(in crate::connector_key) const MAX_CONNECTOR_MANIFEST_BYTES: usize = 4_194_304;
+
+fn validate_manifest_json_size(value: &impl serde::Serialize) -> Result<()> {
+    if serde_json::to_vec(value)
+        .map_err(|_| invalid_body("manifest serialization failed"))?
+        .len()
+        > MAX_CONNECTOR_MANIFEST_BYTES
+    {
+        return Err(invalid_body("resolved manifest exceeds aggregate bound"));
     }
     Ok(())
 }

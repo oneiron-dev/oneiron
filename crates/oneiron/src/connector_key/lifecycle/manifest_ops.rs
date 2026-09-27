@@ -33,9 +33,13 @@ impl Vault {
     ) -> Result<Option<ConnectorManifestDrift>> {
         manifest.validate_snapshot()?;
         validate_protocol_revision(revision)?;
-        let report_hash = suite.qualify(&manifest, revision)?;
-        if report_hash.len() != 64 || !report_hash.bytes().all(|b| b.is_ascii_hexdigit()) {
-            return Err(invalid_body("connector qualification report hash missing"));
+        let manifest_hash = manifest.hash()?;
+        if serde_json::to_vec(&manifest)
+            .map_err(|_| invalid_body("manifest serialization failed"))?
+            .len()
+            > super::super::record::MAX_CONNECTOR_MANIFEST_BYTES
+        {
+            return Err(invalid_body("resolved manifest exceeds aggregate bound"));
         }
         let mut txn = self.store.env.write_txn()?;
         let record =
@@ -54,11 +58,43 @@ impl Vault {
             _ => return Err(invalid_body("connector manifest pin incomplete")),
         };
         if !drift.needs_reconsent() {
+            if record.pending_manifest.is_some() {
+                let undo_revision_hold =
+                    record.suspended_reason.as_deref() == Some("protocol_revision_drift");
+                let reverted = ConnectorKeyRecord {
+                    pending_manifest: None,
+                    status: if undo_revision_hold {
+                        ConnectorKeyStatus::Active
+                    } else {
+                        record.status
+                    },
+                    status_changed_at: if undo_revision_hold {
+                        Some(at)
+                    } else {
+                        record.status_changed_at
+                    },
+                    suspended_reason: if undo_revision_hold {
+                        None
+                    } else {
+                        record.suspended_reason.clone()
+                    },
+                    ..record
+                };
+                rewrite_connector_key_in_txn(&self.store, &mut txn, id, &reverted)?;
+                let policy = crate::gate::resolve_policy_manifest(&self.store, &txn)?;
+                append_connector_key_op_record(
+                    &self.store,
+                    &mut txn,
+                    id,
+                    "gate.connector_key.manifest_revert",
+                    &reverted,
+                    policy.read_frontier_hash()?,
+                    at,
+                )?;
+                txn.commit()?;
+            }
             return Ok(None);
         }
-        // Do not replace a protocol-revision re-registration with an ordinary
-        // candidate. Its suspension must survive until that revision's
-        // qualification and owner approval, never become an unrelated hold.
         if record.status == ConnectorKeyStatus::Suspended
             && record.suspended_reason.as_deref() == Some("protocol_revision_drift")
             && !drift.requires_reregistration
@@ -72,19 +108,28 @@ impl Vault {
             && record
                 .pending_manifest
                 .as_ref()
-                .is_none_or(|pending| !pending.drift.requires_reregistration)
+                .is_none_or(|p| !p.drift.requires_reregistration)
         {
             return Err(invalid_body(
                 "resume an independently suspended key before revision update",
             ));
         }
+        // First commit the drift hold, before invoking the external suite.
+        // Failed probes or malformed reports leave this candidate non-approvable.
+        let mut candidate_hasher = blake3::Hasher::new();
+        candidate_hasher.update(b"connector-manifest-candidate-v1");
+        candidate_hasher.update(&self.store.clock.ulid()?);
+        candidate_hasher.update(&manifest_hash);
+        candidate_hasher.update(revision.as_bytes());
+        let candidate_id = *candidate_hasher.finalize().as_bytes();
         let first = record.retained_manifest.is_none();
-        let changed = ConnectorKeyRecord {
+        let staged = ConnectorKeyRecord {
             pending_manifest: Some(PendingConnectorManifest {
-                manifest,
+                candidate_id,
+                manifest: manifest.clone(),
                 protocol_revision: revision.to_owned(),
                 drift: drift.clone(),
-                qualification_report_hash: Some(report_hash),
+                qualification_report_hash: None,
             }),
             status: if drift.requires_reregistration {
                 ConnectorKeyStatus::Suspended
@@ -105,14 +150,42 @@ impl Vault {
             },
             ..record
         };
-        rewrite_connector_key_in_txn(&self.store, &mut txn, id, &changed)?;
+        rewrite_connector_key_in_txn(&self.store, &mut txn, id, &staged)?;
         let policy = crate::gate::resolve_policy_manifest(&self.store, &txn)?;
         append_connector_key_op_record(
             &self.store,
             &mut txn,
             id,
             "gate.connector_key.manifest_stage",
-            &changed,
+            &staged,
+            policy.read_frontier_hash()?,
+            at,
+        )?;
+        txn.commit()?;
+
+        let report_hash = suite.qualify(&manifest, revision)?;
+        if report_hash.len() != 64 || !report_hash.bytes().all(|b| b.is_ascii_hexdigit()) {
+            return Err(invalid_body("connector qualification report hash missing"));
+        }
+        let mut txn = self.store.env.write_txn()?;
+        let mut record =
+            read_connector_key_in_txn(&self.store, &txn, id)?.ok_or(Error::EntityNotFound)?;
+        let pending = record
+            .pending_manifest
+            .as_mut()
+            .ok_or(Error::ConcurrentWrite("connector manifest candidate"))?;
+        if pending.candidate_id != candidate_id {
+            return Err(Error::ConcurrentWrite("connector manifest candidate"));
+        }
+        pending.qualification_report_hash = Some(report_hash);
+        rewrite_connector_key_in_txn(&self.store, &mut txn, id, &record)?;
+        let policy = crate::gate::resolve_policy_manifest(&self.store, &txn)?;
+        append_connector_key_op_record(
+            &self.store,
+            &mut txn,
+            id,
+            "gate.connector_key.manifest_qualified",
+            &record,
             policy.read_frontier_hash()?,
             at,
         )?;
@@ -126,6 +199,7 @@ impl Vault {
         &self,
         owner: &AuthenticatedOwner,
         id: &EntityId,
+        expected_candidate_id: [u8; 32],
         expected_manifest_hash: [u8; 32],
         expected_report_hash: &str,
         at: u64,
@@ -147,6 +221,11 @@ impl Vault {
             .pending_manifest
             .as_ref()
             .ok_or_else(|| invalid_body("no pending manifest"))?;
+        if pending.candidate_id != expected_candidate_id {
+            return Err(invalid_body(
+                "connector manifest candidate changed since consent",
+            ));
+        }
         if pending.manifest.hash()? != expected_manifest_hash {
             return Err(invalid_body("connector manifest changed since consent"));
         }

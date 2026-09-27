@@ -3095,6 +3095,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/batch/put_apply/connector_key_guard.rs",
+     "purpose": "Sealed connector-key manifest authority at the generic batch/replay door",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/batch/put_apply/lexical_hint.rs",
      "purpose": "Validation of synthetic lexical query hint CLAIMs at the shared write door",
      "surface": {
@@ -10202,7 +10212,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/connector_key/lifecycle/registration.rs",
@@ -10308,7 +10318,7 @@
      "path": "src/connector_key/record/key_record.rs",
      "purpose": "Key and catalog registry shapes: status, call class, catalog entry, key spec/record with validate, charter…",
      "surface": {
-      "crate-vis": 8,
+      "crate-vis": 9,
       "enum": 2,
       "fn": 10,
       "struct": 7
@@ -17127,7 +17137,7 @@
      "surface": {}
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "test",
      "notable": [],
      "path": "src/gate/tests/charter_ceiling.rs",
@@ -17219,7 +17229,7 @@
      "surface": {}
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "test",
      "notable": [],
      "path": "src/gate/tests/external_effect_grants.rs",
@@ -23817,7 +23827,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "ScopedMcpDispatchResult"
@@ -23925,9 +23935,9 @@
      "path": "src/outbound_consent/tool_call.rs",
      "purpose": "Resolve header parameters once and freeze them with the consent-visible tool call",
      "surface": {
-      "crate-vis": 9,
+      "crate-vis": 12,
       "enum": 2,
-      "fn": 9,
+      "fn": 10,
       "struct": 3
      }
     },
@@ -24125,7 +24135,7 @@
      "purpose": "Version consts, domain types, record impls, and listing/escalation/report types",
      "surface": {
       "const": 2,
-      "crate-vis": 14,
+      "crate-vis": 15,
       "enum": 8,
       "fn": 20,
       "struct": 13,
@@ -35049,7 +35059,7 @@
      "purpose": "Engine-side AR-3 autoreason campaign configuration and report join"
     },
     "batch": {
-     "files": 84,
+     "files": 85,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -36276,7 +36286,7 @@
    },
    "over_bar": 11,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2142,
+   "source_files": 2143,
    "test_files": 729
   },
   "oneiron-android": {

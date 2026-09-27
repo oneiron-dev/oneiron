@@ -481,6 +481,12 @@ impl IntentLedgerRecord {
         &self.payload
     }
 
+    #[cfg(test)]
+    pub(crate) fn without_capability_provenance_for_test(mut self) -> Self {
+        self.capability_provenance = None;
+        self
+    }
+
     /// The durable typed capability identity, if this intent was admitted as a
     /// scoped per-grant capability call (ONE-1885).
     #[must_use]

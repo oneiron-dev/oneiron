@@ -57,6 +57,17 @@ pub struct ToolCallDescriptor<'a> {
     pub replay: OutboundToolDescriptor,
 }
 
+/// Frozen identity of the exact qualified connector manifest that rendered a
+/// tool call. Set only by the vault-bound preparation door; the gate and
+/// recovery compare it against the current key in their own snapshots.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct ConnectorManifestBinding {
+    pub(crate) key_ref: String,
+    pub(crate) manifest_hash: [u8; 32],
+    pub(crate) protocol_revision: String,
+}
+
 /// Engine-owned prepared request. This is the only input that can authorize a
 /// scoped outbound payload. Preparation does not grant permission to send.
 #[derive(Clone)]
@@ -65,6 +76,15 @@ pub struct PreparedToolCall {
     frozen: FrozenToolCall,
 }
 impl PreparedToolCall {
+    pub(crate) fn manifest_binding(&self) -> Option<&ConnectorManifestBinding> {
+        self.frozen.manifest_binding.as_ref()
+    }
+    fn with_manifest_binding(mut self, binding: ConnectorManifestBinding) -> Result<Self> {
+        self.frozen.manifest_binding = Some(binding);
+        self.payload =
+            FrozenMcpPayload::new(serde_json::to_vec(&self.frozen).map_err(|_| invalid_schema())?);
+        Ok(self)
+    }
     pub fn header_grants(&self) -> &[HeaderGrantRequirement] {
         &self.frozen.grant_requirements
     }
@@ -135,6 +155,7 @@ pub(super) struct FrozenToolCall {
     arguments: BTreeMap<String, Value>,
     headers: BTreeMap<String, String>,
     grant_requirements: Vec<HeaderGrantRequirement>,
+    manifest_binding: Option<ConnectorManifestBinding>,
     destructive_hint: bool,
     mutation: MutationIntent,
     read_only_hint: Option<bool>,
@@ -305,6 +326,7 @@ pub fn prepare_tool_call(
         arguments: body,
         headers,
         grant_requirements: requirements,
+        manifest_binding: None,
         destructive_hint,
         mutation,
         read_only_hint: replay.read_only_hint,
@@ -316,6 +338,47 @@ pub fn prepare_tool_call(
         frozen,
     })
 }
+/// Decode a durable payload before recovery uses its manifest identity.
+pub(crate) fn frozen_manifest_binding(bytes: &[u8]) -> Result<Option<ConnectorManifestBinding>> {
+    Ok(FrozenToolCall::decode(bytes)?.manifest_binding)
+}
+
+impl crate::Vault {
+    /// Prepare against the current approved schema. An unqualified key or a
+    /// descriptor not identical to the approved resolved schema cannot mint
+    /// a manifest-bound call. Gate admission rechecks this binding in-txn.
+    pub fn prepare_connector_tool_call(
+        &self,
+        key_ref: &crate::EntityId,
+        call: ScopedMcpCallContext,
+        descriptor: ToolCallDescriptor<'_>,
+        arguments: &Value,
+        mutation: MutationIntent,
+    ) -> Result<PreparedToolCall> {
+        let key = self
+            .get_connector_key(key_ref)?
+            .ok_or(crate::Error::EntityNotFound)?;
+        let manifest = key.retained_manifest.as_ref().ok_or_else(invalid_schema)?;
+        if key.status != crate::connector_key::ConnectorKeyStatus::Active
+            || key.tool_requires_confirmation(&call.tool)
+            || !manifest
+                .tools()
+                .iter()
+                .any(|tool| tool.name == call.tool && tool.input_schema == *descriptor.schema)
+        {
+            return Err(invalid_schema());
+        }
+        let binding = ConnectorManifestBinding {
+            key_ref: key_ref.to_hex(),
+            manifest_hash: manifest.hash()?,
+            protocol_revision: key
+                .negotiated_protocol_revision
+                .ok_or_else(invalid_schema)?,
+        };
+        prepare_tool_call(call, descriptor, arguments, mutation)?.with_manifest_binding(binding)
+    }
+}
+
 pub(super) fn invalid_schema() -> Error {
     Error::InvalidConfig("tool schema or resolved header parameters are invalid".into())
 }

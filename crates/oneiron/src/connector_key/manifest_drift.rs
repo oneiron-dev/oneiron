@@ -108,6 +108,7 @@ fn resolve_schema(
         return result;
     }
     let mut result = serde_json::Map::new();
+    let mut all_of = None;
     for (key, value) in obj {
         match key.as_str() {
             "$defs" | "definitions" => {}
@@ -122,19 +123,21 @@ fn resolve_schema(
             "items" | "additionalProperties" => {
                 result.insert(key.clone(), resolve_schema(value, root, stack, depth + 1)?);
             }
-            "allOf" | "anyOf" | "oneOf" => {
+            "allOf" => {
                 let variants = value
                     .as_array()
                     .filter(|a| !a.is_empty() && a.len() <= 64)
                     .ok_or_else(invalid)?;
-                let mut out = Vec::new();
+                let mut out = Vec::with_capacity(variants.len());
                 for variant in variants {
                     out.push(resolve_schema(variant, root, stack, depth + 1)?);
                 }
-                // Keep union alternatives explicit: collapsing them into one
-                // permissive object would erase a permission boundary.
-                result.insert(key.clone(), Value::Array(out));
+                all_of = Some(out);
             }
+            // The current call validator does not implement union validation.
+            // Keeping these keywords would make a resolved schema unusable;
+            // dropping them would broaden it, so refuse them at admission.
+            "anyOf" | "oneOf" => return Err(invalid()),
             "type" | "required" | "enum" | "const" | "title" | "description" | "default"
             | "examples" | "$schema" | "$id" | "deprecated" | "readOnly" | "writeOnly"
             | "x-mcp-header" => {
@@ -145,11 +148,233 @@ fn resolve_schema(
             _ => return Err(invalid()),
         }
     }
-    let bytes = serde_json::to_vec(&result).map_err(|_| invalid())?;
-    if bytes.len() > 65_536 {
+    let resolved = if let Some(variants) = all_of {
+        let mut conjuncts = Vec::with_capacity(variants.len() + 1);
+        conjuncts.push(Value::Object(result));
+        conjuncts.extend(variants);
+        merge_all_of(&conjuncts)?
+    } else {
+        Value::Object(result)
+    };
+    if serde_json::to_vec(&resolved).map_err(|_| invalid())?.len() > 65_536 {
         return Err(invalid());
     }
-    Ok(Value::Object(result))
+    Ok(resolved)
+}
+
+/// Compile a supported JSON Schema conjunction into the subset consumed by
+/// `prepare_tool_call`. `additionalProperties` is deliberately refused when
+/// multiple schemas are combined: its property-name scope is local to each
+/// conjunct, and merging property declarations can otherwise widen it.
+fn merge_all_of(schemas: &[Value]) -> Result<Value> {
+    let mut objects = Vec::new();
+    for schema in schemas {
+        match schema {
+            Value::Bool(false) => return Ok(Value::Bool(false)),
+            Value::Bool(true) => {}
+            Value::Object(object) => objects.push(object),
+            _ => return Err(invalid()),
+        }
+    }
+    objects.retain(|object| !object.is_empty());
+    if objects.is_empty() {
+        return Ok(Value::Object(serde_json::Map::new()));
+    }
+    if objects.len() == 1 {
+        return Ok(Value::Object((*objects[0]).clone()));
+    }
+    if objects
+        .iter()
+        .any(|object| object.contains_key("additionalProperties"))
+    {
+        return Err(invalid());
+    }
+
+    let mut keys = BTreeSet::new();
+    for object in &objects {
+        keys.extend(object.keys().cloned());
+    }
+    let mut merged = serde_json::Map::new();
+    for key in keys {
+        let values: Vec<&Value> = objects
+            .iter()
+            .filter_map(|object| object.get(&key))
+            .collect();
+        match key.as_str() {
+            "type" => match intersect_types(&values)? {
+                Some(kind) => {
+                    merged.insert(key, kind);
+                }
+                None => return Ok(Value::Bool(false)),
+            },
+            "required" => {
+                let mut required = BTreeSet::new();
+                for value in values {
+                    for name in value.as_array().ok_or_else(invalid)? {
+                        required.insert(name.as_str().ok_or_else(invalid)?.to_owned());
+                    }
+                }
+                merged.insert(
+                    key,
+                    Value::Array(required.into_iter().map(Value::String).collect()),
+                );
+            }
+            "properties" => {
+                let mut properties: BTreeMap<String, Vec<Value>> = BTreeMap::new();
+                for value in values {
+                    for (name, schema) in value.as_object().ok_or_else(invalid)? {
+                        properties
+                            .entry(name.clone())
+                            .or_default()
+                            .push(schema.clone());
+                    }
+                }
+                let mut result = serde_json::Map::new();
+                for (name, schemas) in properties {
+                    result.insert(name, merge_all_of(&schemas)?);
+                }
+                merged.insert(key, Value::Object(result));
+            }
+            "items" => {
+                let schemas: Vec<Value> = values.into_iter().cloned().collect();
+                merged.insert(key, merge_all_of(&schemas)?);
+            }
+            "enum" => match intersect_enums(&values)? {
+                Some(options) => {
+                    merged.insert(key, Value::Array(options));
+                }
+                None => return Ok(Value::Bool(false)),
+            },
+            "const" => {
+                let first = values[0];
+                if values.iter().any(|value| *value != first) {
+                    return Ok(Value::Bool(false));
+                }
+                merged.insert(key, first.clone());
+            }
+            "title" | "description" | "default" | "examples" | "$schema" | "$id" | "deprecated"
+            | "readOnly" | "writeOnly" | "x-mcp-header" => {
+                let first = values[0];
+                if values.iter().any(|value| *value != first) {
+                    // Annotations can affect defaults and header extraction at
+                    // consent time, so do not choose one branch arbitrarily.
+                    return Err(invalid());
+                }
+                merged.insert(key, first.clone());
+            }
+            // This also guards future keyword additions from silently being
+            // copied through a composition path with unknown semantics.
+            _ => return Err(invalid()),
+        }
+    }
+    if let (Some(options), Some(constant)) = (merged.get("enum"), merged.get("const"))
+        && !options.as_array().ok_or_else(invalid)?.contains(constant)
+    {
+        return Ok(Value::Bool(false));
+    }
+    Ok(Value::Object(merged))
+}
+
+/// JSON Schema's `integer` is a subset of `number`; model integer and
+/// non-integer numbers separately so conjunctions do not broaden constraints.
+fn intersect_types(values: &[&Value]) -> Result<Option<Value>> {
+    let mut accepted: Option<BTreeSet<&'static str>> = None;
+    for value in values {
+        let types: Vec<&str> = if let Some(kind) = value.as_str() {
+            vec![kind]
+        } else {
+            value
+                .as_array()
+                .filter(|kinds| !kinds.is_empty())
+                .ok_or_else(invalid)?
+                .iter()
+                .map(|kind| kind.as_str().ok_or_else(invalid))
+                .collect::<Result<_>>()?
+        };
+        let mut current = BTreeSet::new();
+        for kind in types {
+            match kind {
+                "null" => {
+                    current.insert("null");
+                }
+                "boolean" => {
+                    current.insert("boolean");
+                }
+                "string" => {
+                    current.insert("string");
+                }
+                "object" => {
+                    current.insert("object");
+                }
+                "array" => {
+                    current.insert("array");
+                }
+                "integer" => {
+                    current.insert("integer");
+                }
+                "number" => {
+                    current.insert("integer");
+                    current.insert("non_integer_number");
+                }
+                _ => return Err(invalid()),
+            }
+        }
+        accepted = Some(match accepted {
+            Some(previous) => previous.intersection(&current).copied().collect(),
+            None => current,
+        });
+    }
+    let accepted = accepted.ok_or_else(invalid)?;
+    if accepted.is_empty() {
+        return Ok(None);
+    }
+    let has_integer = accepted.contains("integer");
+    let has_non_integer = accepted.contains("non_integer_number");
+    if has_non_integer && !has_integer {
+        // No supported JSON Schema type denotes only non-integer numbers.
+        return Err(invalid());
+    }
+    let mut result = Vec::new();
+    for kind in ["array", "boolean", "null", "object", "string"] {
+        if accepted.contains(kind) {
+            result.push(kind.to_owned());
+        }
+    }
+    if has_integer && has_non_integer {
+        result.push("number".to_owned());
+    } else if has_integer {
+        result.push("integer".to_owned());
+    }
+    result.sort();
+    if result.len() == 1 {
+        Ok(Some(Value::String(result.remove(0))))
+    } else {
+        Ok(Some(Value::Array(
+            result.into_iter().map(Value::String).collect(),
+        )))
+    }
+}
+
+fn intersect_enums(values: &[&Value]) -> Result<Option<Vec<Value>>> {
+    let mut intersection: Option<Vec<Value>> = None;
+    for value in values {
+        let options = value
+            .as_array()
+            .filter(|options| !options.is_empty())
+            .ok_or_else(invalid)?;
+        let mut normalized = options.clone();
+        normalized.sort_by_key(std::string::ToString::to_string);
+        normalized.dedup();
+        intersection = Some(match intersection {
+            Some(mut previous) => {
+                previous.retain(|candidate| normalized.contains(candidate));
+                previous
+            }
+            None => normalized,
+        });
+    }
+    let intersection = intersection.ok_or_else(invalid)?;
+    Ok((!intersection.is_empty()).then_some(intersection))
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
@@ -298,5 +523,105 @@ mod tests {
         assert!(revision.requires_reregistration && revision.needs_reconsent());
         assert!(ResolvedConnectorManifest::resolve(vec![ConnectorToolSchema { name:"send".into(), permissions: BTreeSet::new(), triggers: BTreeSet::new(), input_schema:json!({"$ref":"#/$defs/loop","$defs":{"loop":{"$ref":"#/$defs/loop"}}}) }]).is_err());
         assert!(ResolvedConnectorManifest::resolve(vec![ConnectorToolSchema { name:"send".into(), permissions: BTreeSet::new(), triggers: BTreeSet::new(), input_schema:json!({"if":{"properties":{"secret":{"$ref":"#/$defs/power"}}}, "$defs":{"power":{"type":"string"}}}) }]).is_err());
+    }
+
+    fn prepare_resolved(
+        schema: &Value,
+        arguments: &Value,
+    ) -> crate::Result<crate::outbound_consent::tool_call::PreparedToolCall> {
+        use crate::outbound_consent::tool_call::{
+            MutationIntent, ToolCallDescriptor, prepare_tool_call,
+        };
+        prepare_tool_call(
+            crate::outbound_consent::ScopedMcpCallContext {
+                server: "connector".into(),
+                tool: "send".into(),
+                payload_data_class: crate::outbound_consent::DataClass::Personal,
+                resolved_endpoint: "https://connector.example".into(),
+            },
+            ToolCallDescriptor {
+                schema,
+                destructive_hint: false,
+                replay: crate::outbound_intent_ledger::OutboundToolDescriptor {
+                    read_only_hint: Some(true),
+                    idempotency_supported_hint: Some(true),
+                },
+            },
+            arguments,
+            MutationIntent::Preview,
+        )
+    }
+
+    #[test]
+    fn all_of_refs_resolve_to_a_schema_accepted_by_prepare_tool_call() {
+        let resolved = manifest(
+            json!({
+                "$defs": {"name": {"type":"string", "enum":["alpha", "beta"]}},
+                "type":"object",
+                "allOf":[
+                    {"properties":{"recipient":{"$ref":"#/$defs/name"}}},
+                    {"required":["recipient"], "properties":{"recipient":{"enum":["beta", "gamma"]}}}
+                ]
+            }),
+            "send",
+            "manual",
+        );
+        let schema = &resolved.tools()[0].input_schema;
+        assert!(schema.get("allOf").is_none());
+        assert_eq!(schema["type"], "object");
+        assert_eq!(schema["required"], json!(["recipient"]));
+        assert_eq!(schema["properties"]["recipient"]["type"], "string");
+        assert_eq!(schema["properties"]["recipient"]["enum"], json!(["beta"]));
+
+        let prepared = prepare_resolved(schema, &json!({"recipient":"beta"})).unwrap();
+        let frozen: Value = serde_json::from_slice(prepared.frozen_bytes()).unwrap();
+        assert_eq!(frozen["arguments"], json!({"recipient":"beta"}));
+        assert!(prepare_resolved(schema, &json!({"recipient":"alpha"})).is_err());
+        assert!(prepare_resolved(schema, &json!({})).is_err());
+    }
+
+    #[test]
+    fn all_of_ref_target_swap_is_visible_to_drift_classification() {
+        let schema = |default: &str| {
+            json!({
+                "$defs":{"argument":{"type":"string", "default":default}},
+                "type":"object",
+                "allOf":[
+                    {"properties":{"arg":{"$ref":"#/$defs/argument"}}},
+                    {"required":["arg"]}
+                ]
+            })
+        };
+        let old = manifest(schema("safe"), "send", "manual");
+        let swapped = manifest(schema("unsafe"), "send", "manual");
+        assert!(old.tools()[0].input_schema.get("allOf").is_none());
+        let drift = ConnectorManifestDrift::between(&old, &swapped, "r1", "r1");
+        assert!(drift.kinds.contains(&ConnectorDriftKind::ParameterDefault));
+        assert!(drift.kinds.contains(&ConnectorDriftKind::Schema));
+        assert!(drift.affected_tools.contains("send"));
+    }
+
+    #[test]
+    fn unsupported_union_or_unsafe_additional_properties_composition_is_rejected() {
+        for schema in [
+            json!({"type":"object", "properties":{"value":{"anyOf":[{"type":"string"},{"type":"integer"}]}}}),
+            json!({"oneOf":[{"type":"string"},{"type":"integer"}]}),
+            json!({
+                "type":"object",
+                "properties":{"known":{"type":"string"}},
+                "additionalProperties":false,
+                "allOf":[{"properties":{"other":{"type":"string"}}}]
+            }),
+        ] {
+            assert!(
+                ResolvedConnectorManifest::resolve(vec![ConnectorToolSchema {
+                    name: "send".into(),
+                    permissions: BTreeSet::new(),
+                    triggers: BTreeSet::new(),
+                    input_schema: schema,
+                }])
+                .is_err()
+            );
+        }
     }
 }

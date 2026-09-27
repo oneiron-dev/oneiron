@@ -44,6 +44,12 @@ impl Vault {
     ) -> Result<ConnectorKeyRecord> {
         let mut record = record;
         record.connector = normalize_connector_key(&record.connector);
+        if record.status == ConnectorKeyStatus::Active {
+            let txn = self.store.env.read_txn()?;
+            if scoped_grant_matches(&self.store, &txn, &record.connector)? {
+                record.status = ConnectorKeyStatus::Pending;
+            }
+        }
         normalize_budget_channel_classes(&mut record.budgets);
         normalize_budget_channel_classes(&mut record.suggested_budgets);
         // A catalog entry is MINTED BY registration, never carried into it:
@@ -91,6 +97,10 @@ impl Vault {
         normalize_budget_channel_classes(&mut record.budgets);
         record.secret_ref = key_spec.secret_ref;
         record.catalog = Some(entry);
+        let txn = self.store.env.read_txn()?;
+        if scoped_grant_matches(&self.store, &txn, &record.connector)? {
+            record.status = ConnectorKeyStatus::Pending;
+        }
         // `validate` binds the entry to the key: a catalog naming a different
         // connector than the key governs is rejected here, pre-write.
         record.validate()?;
@@ -115,8 +125,15 @@ impl Vault {
         record: &ConnectorKeyRecord,
     ) -> Result<()> {
         record.validate()?;
-        if record.status != ConnectorKeyStatus::Active {
-            return Err(invalid_body("registration requires status active"));
+        let required_status = if scoped_grant_matches(&self.store, &*wtxn, &record.connector)? {
+            ConnectorKeyStatus::Pending
+        } else {
+            ConnectorKeyStatus::Active
+        };
+        if record.status != required_status {
+            return Err(invalid_body(
+                "registration requires unqualified scoped keys pending, ordinary keys active",
+            ));
         }
         if record.retained_manifest.is_some()
             || record.pending_manifest.is_some()
@@ -265,4 +282,28 @@ impl Vault {
         self.store.vault_meta.put(wtxn, &new_index_key, &[])?;
         Ok(())
     }
+}
+
+/// A canonical-looking ordinary connector is not a scoped key. Only a live
+/// typed per-grant record makes its registration pending; the gate checks the
+/// grant again when a call arrives.
+fn scoped_grant_matches(
+    store: &crate::store::Store,
+    txn: &heed::RoTxn<'_>,
+    connector: &str,
+) -> Result<bool> {
+    let Some(capability) =
+        crate::connector_key::ScopedCapabilityProvenance::parse_owner_capability_key(connector)
+    else {
+        return Ok(false);
+    };
+    let Some(grant) =
+        crate::outbound_grant::standing_outbound_grant_in_txn(store, txn, &capability.grant_id())?
+    else {
+        return Ok(false);
+    };
+    Ok(grant
+        .scope
+        .scoped_mcp_grant()
+        .is_some_and(|scope| scope.server == capability.server()))
 }

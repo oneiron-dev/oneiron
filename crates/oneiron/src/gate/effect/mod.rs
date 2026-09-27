@@ -366,11 +366,41 @@ pub(crate) fn evaluate_external_effect_policy(
             .scoped_mcp_call
             .as_ref()
             .map_or(hydrated_effect.verb.as_str(), |call| call.tool.as_str());
-        if charter_wall.is_none() && key.tool_requires_confirmation(manifest_verb) {
+        if charter_wall.is_none()
+            && (key.tool_requires_confirmation(manifest_verb)
+                || uses_scoped_mcp_governing_connector
+                    && prepared.is_some()
+                    && key.retained_manifest.is_none())
+        {
             charter_wall = Some(
                 GateDecision::pending(vec![GateReasonCode::PendingConnectorManifestDrift])
                     .with_receipt_reasons(["connector_manifest_drift"]),
             );
+        }
+
+        // A rendered scoped call binds the approved snapshot and revision.
+        // A replaced manifest (even with an unchanged tool name) cannot
+        // release old prepared bytes through the ordinary drift wall.
+        if charter_wall.is_none()
+            && uses_scoped_mcp_governing_connector
+            && prepared.is_some()
+            && let Some(manifest) = key.retained_manifest.as_ref()
+        {
+            let current_hash = manifest.hash()?;
+            if prepared
+                .and_then(|call| call.manifest_binding())
+                .is_none_or(|binding| {
+                    binding.key_ref != _key_id.to_hex()
+                        || binding.manifest_hash != current_hash
+                        || Some(binding.protocol_revision.as_str())
+                            != key.negotiated_protocol_revision.as_deref()
+                })
+            {
+                charter_wall = Some(
+                    GateDecision::pending(vec![GateReasonCode::PendingConnectorManifestStale])
+                        .with_receipt_reasons(["connector_manifest_stale"]),
+                );
+            }
         }
 
         if key.status != ConnectorKeyStatus::Active {

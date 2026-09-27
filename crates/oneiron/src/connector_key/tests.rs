@@ -3579,6 +3579,7 @@ fn manifest_stage_retains_prior_and_revision_halts_until_owner() -> Result<()> {
     assert_eq!(initial.status, ConnectorKeyStatus::Pending);
     assert!(initial.retained_manifest.is_none());
     assert!(initial.pending_manifest.is_some());
+    let candidate_id = initial.pending_manifest.as_ref().unwrap().candidate_id;
     let mut staged = initial;
     staged.retained_manifest = Some(source());
     assert!(staged.validate().is_err());
@@ -3598,16 +3599,29 @@ fn manifest_stage_retains_prior_and_revision_halts_until_owner() -> Result<()> {
     )?;
     assert!(
         vault
-            .approve_connector_manifest(&auth, &id, source().hash()?, &"f".repeat(64), 102)
+            .approve_connector_manifest(
+                &auth,
+                &id,
+                candidate_id,
+                source().hash()?,
+                &"f".repeat(64),
+                102
+            )
             .is_err()
     );
     assert!(
         vault
-            .approve_connector_manifest(&auth, &id, [0; 32], &"a".repeat(64), 102)
+            .approve_connector_manifest(&auth, &id, candidate_id, [0; 32], &"a".repeat(64), 102)
             .is_err()
     );
-    let approved =
-        vault.approve_connector_manifest(&auth, &id, source().hash()?, &"a".repeat(64), 102)?;
+    let approved = vault.approve_connector_manifest(
+        &auth,
+        &id,
+        candidate_id,
+        source().hash()?,
+        &"a".repeat(64),
+        102,
+    )?;
     assert_eq!(approved.status, ConnectorKeyStatus::Active);
     assert_eq!(vault.get_connector_key(&id)?, Some(approved));
     assert!(!vault.connector_tool_requires_confirmation(&id, "read")?);
@@ -3637,5 +3651,231 @@ fn manifest_stage_retains_prior_and_revision_halts_until_owner() -> Result<()> {
         .unwrap();
     assert!(change.kinds.contains(&ConnectorDriftKind::ParameterDefault));
     assert!(change.requires_reregistration);
+    Ok(())
+}
+
+fn drift_fixture_manifest(permission: &str, schema_bytes: usize) -> ResolvedConnectorManifest {
+    use serde_json::json;
+    ResolvedConnectorManifest::resolve(vec![ConnectorToolSchema {
+        name: "send".into(), permissions: [permission.into()].into(),
+        triggers: ["manual".into()].into(),
+        input_schema: json!({"type":"object", "properties":{"value":{"type":"string", "description":"x".repeat(schema_bytes)}}}),
+    }]).unwrap()
+}
+
+#[test]
+fn failed_suite_retains_hold_revert_clears_candidate_and_revision_is_exact() -> Result<()> {
+    struct Suite(bool);
+    impl ConnectorManifestQualifier for Suite {
+        fn qualify(&self, _: &ResolvedConnectorManifest, _: &str) -> Result<String> {
+            if self.0 {
+                Ok("a".repeat(64))
+            } else {
+                Err(Error::InvalidConfig("qualification failed".into()))
+            }
+        }
+    }
+    let (_dir, vault) = temp_vault();
+    let id = test_id(0xC0);
+    vault.register_connector_key(
+        &id,
+        ConnectorKeyRecord::active("line", None, Vec::new(), 10),
+    )?;
+    let a = drift_fixture_manifest("read", 1);
+    let b = drift_fixture_manifest("write", 1);
+    vault.stage_connector_manifest(&id, a.clone(), "R1", &Suite(true), 11)?;
+    let owner = test_id(0xC1);
+    vault.put_entity(
+        &owner,
+        crate::registry::ENTITY_TYPE_PERSON,
+        crate::TimeRange { start: 1, end: 1 },
+        1,
+        b"owner",
+    )?;
+    let auth = vault.authenticate_owner(
+        owner,
+        &owner.to_hex(),
+        true,
+        crate::store::GateDecisionId::from_bytes(*test_id(0xC2).as_bytes()),
+    )?;
+    let pending = vault
+        .get_connector_key(&id)?
+        .unwrap()
+        .pending_manifest
+        .unwrap();
+    vault.approve_connector_manifest(
+        &auth,
+        &id,
+        pending.candidate_id,
+        a.hash()?,
+        &"a".repeat(64),
+        12,
+    )?;
+    assert!(
+        vault
+            .stage_connector_manifest(&id, b.clone(), "R1", &Suite(false), 13)
+            .is_err()
+    );
+    let failed = vault.get_connector_key(&id)?.unwrap();
+    assert_eq!(failed.retained_manifest.as_ref(), Some(&a));
+    assert!(
+        failed
+            .pending_manifest
+            .as_ref()
+            .unwrap()
+            .qualification_report_hash
+            .is_none()
+    );
+    assert!(failed.tool_requires_confirmation("send"));
+    let failed_id = failed.pending_manifest.unwrap().candidate_id;
+    assert!(
+        vault
+            .approve_connector_manifest(&auth, &id, failed_id, b.hash()?, &"a".repeat(64), 14)
+            .is_err()
+    );
+    vault.stage_connector_manifest(&id, b.clone(), "R1", &Suite(true), 15)?;
+    let b_id = vault
+        .get_connector_key(&id)?
+        .unwrap()
+        .pending_manifest
+        .unwrap()
+        .candidate_id;
+    assert_eq!(
+        vault.stage_connector_manifest(&id, a.clone(), "R1", &Suite(true), 16)?,
+        None
+    );
+    let reverted = vault.get_connector_key(&id)?.unwrap();
+    assert!(reverted.pending_manifest.is_none());
+    assert!(!reverted.tool_requires_confirmation("send"));
+    assert!(
+        vault
+            .approve_connector_manifest(&auth, &id, b_id, b.hash()?, &"a".repeat(64), 17)
+            .is_err()
+    );
+    vault.stage_connector_manifest(&id, a.clone(), "R2", &Suite(true), 18)?;
+    let r2 = vault
+        .get_connector_key(&id)?
+        .unwrap()
+        .pending_manifest
+        .unwrap()
+        .candidate_id;
+    vault.stage_connector_manifest(&id, a.clone(), "R3", &Suite(true), 19)?;
+    let r3_record = vault.get_connector_key(&id)?.unwrap();
+    let r3 = r3_record.pending_manifest.as_ref().unwrap().candidate_id;
+    assert_ne!(r2, r3);
+    assert_eq!(r3_record.status, ConnectorKeyStatus::Suspended);
+    assert!(
+        vault
+            .approve_connector_manifest(&auth, &id, r2, a.hash()?, &"a".repeat(64), 20)
+            .is_err()
+    );
+    let approved =
+        vault.approve_connector_manifest(&auth, &id, r3, a.hash()?, &"a".repeat(64), 20)?;
+    assert_eq!(approved.negotiated_protocol_revision.as_deref(), Some("R3"));
+    assert_eq!(approved.status, ConnectorKeyStatus::Active);
+    assert!(
+        vault
+            .stage_connector_manifest(&id, a, "R4", &Suite(false), 21)
+            .is_err()
+    );
+    let failed_revision = vault.get_connector_key(&id)?.unwrap();
+    assert_eq!(failed_revision.status, ConnectorKeyStatus::Suspended);
+    assert_eq!(
+        failed_revision.negotiated_protocol_revision.as_deref(),
+        Some("R3")
+    );
+    assert!(
+        failed_revision
+            .pending_manifest
+            .unwrap()
+            .qualification_report_hash
+            .is_none()
+    );
+    Ok(())
+}
+
+#[test]
+fn oversized_resolved_manifest_refuses_stage_before_touching_the_key() -> Result<()> {
+    struct Suite;
+    impl ConnectorManifestQualifier for Suite {
+        fn qualify(&self, _: &ResolvedConnectorManifest, _: &str) -> Result<String> {
+            Ok("a".repeat(64))
+        }
+    }
+    let (_dir, vault) = temp_vault();
+    let id = test_id(0xD0);
+    let key =
+        vault.register_connector_key(&id, ConnectorKeyRecord::active("line", None, vec![], 10))?;
+    let template = drift_fixture_manifest("read", 60_000).tools()[0].clone();
+    let tools: Vec<_> = (0..80)
+        .map(|n| ConnectorToolSchema {
+            name: format!("tool_{n:03}"),
+            ..template.clone()
+        })
+        .collect();
+    let oversized = ResolvedConnectorManifest::resolve(tools)?;
+    assert!(
+        vault
+            .stage_connector_manifest(&id, oversized, "R1", &Suite, 11)
+            .is_err()
+    );
+    assert_eq!(vault.get_connector_key(&id)?, Some(key));
+    let accepted = drift_fixture_manifest("read", 50_000);
+    vault.stage_connector_manifest(&id, accepted.clone(), "R1", &Suite, 12)?;
+    assert_eq!(
+        vault
+            .get_connector_key(&id)?
+            .unwrap()
+            .pending_manifest
+            .unwrap()
+            .manifest,
+        accepted
+    );
+    Ok(())
+}
+
+#[cfg(feature = "sync")]
+#[test]
+fn replicated_connector_key_replacement_and_manifest_clear_are_rejected() -> Result<()> {
+    let (_dir, vault) = temp_vault();
+    let id = test_id(0xD1);
+    vault.register_connector_key(&id, ConnectorKeyRecord::active("line", None, vec![], 10))?;
+    let approved = ConnectorKeyRecord {
+        retained_manifest: Some(drift_fixture_manifest("read", 0)),
+        negotiated_protocol_revision: Some("R1".into()),
+        ..vault.get_connector_key(&id)?.unwrap()
+    };
+    vault.with_write_txn(|txn| rewrite_connector_key_in_txn(&vault.store, txn, &id, &approved))?;
+    for attempted in [
+        ConnectorKeyRecord {
+            retained_manifest: Some(drift_fixture_manifest("write", 0)),
+            negotiated_protocol_revision: Some("R2".into()),
+            ..approved.clone()
+        },
+        ConnectorKeyRecord {
+            retained_manifest: None,
+            negotiated_protocol_revision: None,
+            ..approved.clone()
+        },
+    ] {
+        let bytes = encode_connector_key_body(&attempted)?;
+        let rejected = vault.with_write_txn(|txn| {
+            vault
+                .batch_in()
+                .put_replicated(
+                    &id,
+                    ENTITY_TYPE_CONNECTOR_KEY,
+                    crate::TimeRange { start: 10, end: 10 },
+                    10,
+                    &bytes,
+                )
+                .apply(txn)
+        });
+        assert!(matches!(
+            rejected,
+            Err(Error::Record(RecordError::InvalidConnectorKeyBody(_)))
+        ));
+        assert_eq!(vault.get_connector_key(&id)?, Some(approved.clone()));
+    }
     Ok(())
 }

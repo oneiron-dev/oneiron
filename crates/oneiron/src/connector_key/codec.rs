@@ -9,7 +9,8 @@ use super::record::{
     CalendarPeriod, CompiledConnectorPolicy, ConnectorCallClass, ConnectorCatalogEntry,
     ConnectorCharterBlock, ConnectorKeyRecord, ConnectorKeyStatus, EffectorBudget,
     EffectorBudgetDimension, EffectorBudgetOnExhaust, EffectorBudgetReservePolicy,
-    EffectorBudgetWindow, PendingConnectorCharter, PendingConnectorManifest, invalid_body,
+    EffectorBudgetWindow, MAX_CONNECTOR_MANIFEST_BYTES, PendingConnectorCharter,
+    PendingConnectorManifest, invalid_body,
 };
 
 /// Current ConnectorKeyRecord body schema version.
@@ -722,9 +723,11 @@ fn option_string_value(value: Option<&str>) -> Value {
 fn encode_json_option<T: serde::Serialize>(value: Option<&T>) -> Result<Value> {
     value
         .map(|item| {
-            serde_json::to_vec(item)
-                .map(Value::Binary)
-                .map_err(|_| malformed())
+            let bytes = serde_json::to_vec(item).map_err(|_| malformed())?;
+            if bytes.len() > MAX_CONNECTOR_MANIFEST_BYTES {
+                return Err(malformed());
+            }
+            Ok(Value::Binary(bytes))
         })
         .transpose()
         .map(|v| v.unwrap_or(Value::Nil))
@@ -736,7 +739,7 @@ fn decode_json_option<T: serde::de::DeserializeOwned>(value: &Value) -> Result<O
     let Value::Binary(bytes) = value else {
         return Err(malformed());
     };
-    if bytes.len() > 16_777_216 {
+    if bytes.len() > MAX_CONNECTOR_MANIFEST_BYTES {
         return Err(malformed());
     }
     serde_json::from_slice(bytes)

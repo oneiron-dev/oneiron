@@ -41,12 +41,24 @@ pub(super) fn person_actor(vault: &Vault, seed: u8, class: EdgeActorClass) -> Wr
 
 pub(super) struct OracleScopedFixture {
     pub(super) grant_id: EntityId,
+    pub(super) key_id: EntityId,
     pub(super) principal_ref: String,
     pub(super) call: ScopedMcpCallContext,
     pub(super) authority: OutboundBindingAuthority,
 }
 
 pub(super) fn install_oracle_scoped_fixture(vault: &Vault) -> OracleScopedFixture {
+    struct Suite;
+    impl crate::connector_key::ConnectorManifestQualifier for Suite {
+        fn qualify(
+            &self,
+            _: &crate::connector_key::ResolvedConnectorManifest,
+            _: &str,
+        ) -> crate::error::Result<String> {
+            Ok("a".repeat(64))
+        }
+    }
+
     let grant_id = EntityId::from_bytes([0x90; 16]).expect("grant id");
     let principal_ref = "principal:oracle".to_owned();
     vault
@@ -68,9 +80,10 @@ pub(super) fn install_oracle_scoped_fixture(vault: &Vault) -> OracleScopedFixtur
             10,
         )
         .expect("mint oracle scoped grant");
+    let key_id = EntityId::from_bytes([0x92; 16]).expect("connector key id");
     vault
         .register_connector_key(
-            &EntityId::from_bytes([0x92; 16]).expect("connector key id"),
+            &key_id,
             crate::connector_key::ConnectorKeyRecord::active(
                 crate::connector_key::ScopedCapabilityProvenance::mint("files", &grant_id)
                     .expect("safe canonical scoped server")
@@ -87,9 +100,51 @@ pub(super) fn install_oracle_scoped_fixture(vault: &Vault) -> OracleScopedFixtur
                 10,
             ),
         )
-        .expect("register active scoped connector key");
+        .expect("register pending scoped connector key");
+    let manifest = crate::connector_key::ResolvedConnectorManifest::resolve(vec![
+        crate::connector_key::ConnectorToolSchema {
+            name: "read_file".into(),
+            permissions: ["read".into()].into(),
+            triggers: Default::default(),
+            input_schema: serde_json::json!({"properties": {}}),
+        },
+    ])
+    .expect("resolved oracle schema");
+    vault
+        .stage_connector_manifest(&key_id, manifest.clone(), "R1", &Suite, 11)
+        .expect("qualify oracle");
+    let owner = EntityId::now();
+    vault
+        .put_entity(&owner, ENTITY_TYPE_PERSON, t(1), 1, b"owner")
+        .expect("owner person");
+    let auth = vault
+        .authenticate_owner(
+            owner,
+            &owner.to_hex(),
+            true,
+            crate::store::GateDecisionId::from_bytes(*EntityId::now().as_bytes()),
+        )
+        .expect("owner auth");
+    let candidate = vault
+        .get_connector_key(&key_id)
+        .unwrap()
+        .unwrap()
+        .pending_manifest
+        .unwrap()
+        .candidate_id;
+    vault
+        .approve_connector_manifest(
+            &auth,
+            &key_id,
+            candidate,
+            manifest.hash().unwrap(),
+            &"a".repeat(64),
+            12,
+        )
+        .expect("owner stamp");
     OracleScopedFixture {
         grant_id,
+        key_id,
         principal_ref,
         call: ScopedMcpCallContext {
             server: "files".to_owned(),
@@ -102,6 +157,7 @@ pub(super) fn install_oracle_scoped_fixture(vault: &Vault) -> OracleScopedFixtur
 }
 
 pub(super) fn oracle_prepared_effect(
+    vault: &Vault,
     fixture: &OracleScopedFixture,
     attempt_id: AttemptId,
     call_seq: u64,
@@ -109,20 +165,22 @@ pub(super) fn oracle_prepared_effect(
     idempotency_supported: bool,
 ) -> PreparedEffect {
     let call = fixture.call.clone();
-    let prepared = crate::outbound_consent::tool_call::prepare_tool_call(
-        call.clone(),
-        crate::outbound_consent::tool_call::ToolCallDescriptor {
-            schema: &serde_json::json!({"properties": {}}),
-            destructive_hint: false,
-            replay: crate::outbound_intent_ledger::OutboundToolDescriptor {
-                read_only_hint: Some(false),
-                idempotency_supported_hint: Some(idempotency_supported),
+    let prepared = vault
+        .prepare_connector_tool_call(
+            &fixture.key_id,
+            call.clone(),
+            crate::outbound_consent::tool_call::ToolCallDescriptor {
+                schema: &serde_json::json!({"properties": {}}),
+                destructive_hint: false,
+                replay: crate::outbound_intent_ledger::OutboundToolDescriptor {
+                    read_only_hint: Some(false),
+                    idempotency_supported_hint: Some(idempotency_supported),
+                },
             },
-        },
-        &serde_json::json!({"fixture_bytes": payload}),
-        crate::outbound_consent::tool_call::MutationIntent::default(),
-    )
-    .expect("prepare oracle tool call");
+            &serde_json::json!({"fixture_bytes": payload}),
+            crate::outbound_consent::tool_call::MutationIntent::default(),
+        )
+        .expect("prepare oracle tool call");
     PreparedEffect {
         attempt_id,
         call_seq,

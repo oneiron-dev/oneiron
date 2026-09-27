@@ -296,8 +296,32 @@ pub(super) fn recovery_governance(
         }
         ConnectorKeyStatus::Active => {}
     }
-    if key.tool_requires_confirmation(&record.tool) {
+    // A typed capability can never be charged to a different connector,
+    // regardless of whether that ordinary key has an approved manifest.
+    if record
+        .capability_provenance()
+        .is_some_and(|capability| capability.connector() != key.connector)
+    {
+        return Ok(RecoveryGovernance::Block("connector_key_unregistered"));
+    }
+    if key.tool_requires_confirmation(&record.tool)
+        || (record.capability_provenance().is_some() && key.retained_manifest.is_none())
+    {
         return Ok(RecoveryGovernance::Block("connector_manifest_drift"));
+    }
+    if record.capability_provenance().is_some()
+        && let Some(manifest) = key.retained_manifest.as_ref()
+    {
+        let frozen = crate::outbound_consent::tool_call::frozen_manifest_binding(record.payload())?;
+        let current_hash = manifest.hash()?;
+        if frozen.is_none_or(|binding| {
+            binding.key_ref != key_ref.to_hex()
+                || current_hash != binding.manifest_hash
+                || Some(binding.protocol_revision.as_str())
+                    != key.negotiated_protocol_revision.as_deref()
+        }) {
+            return Ok(RecoveryGovernance::Block("connector_manifest_stale"));
+        }
     }
     if let Some(charter) = key.charter.as_ref() {
         if connector_key::charter_block_drifted(charter)? {
