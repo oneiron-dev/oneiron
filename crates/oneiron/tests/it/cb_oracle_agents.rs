@@ -2669,7 +2669,7 @@ mod cb_x {
             .expect("subject entity");
         let wait = SelfDurableWait {
             wait_id: subject,
-            effect: SelfEffect::AskHuman,
+            effect: SelfEffect::Ask,
             reason: SelfDurableWaitReason::HumanInput,
             prompt: Some("decide".to_owned()),
         };

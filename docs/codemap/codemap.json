@@ -3138,7 +3138,7 @@
      "path": "src/batch/put_apply/put_staging.rs",
      "purpose": "Body/index/edge row staging helpers shared by the put and update paths",
      "surface": {
-      "crate-vis": 12
+      "crate-vis": 15
      }
     },
     {
@@ -8480,7 +8480,7 @@
      "notable": [
       "SelfAgentSpawnCall",
       "SelfAgentSpawnResult",
-      "SelfAskHumanCall",
+      "SelfAskCall",
       "SelfCall",
       "SelfContextCall",
       "SelfContextResult",
@@ -18052,13 +18052,13 @@
      "path": "src/human_task/followup.rs",
      "purpose": "Native-human routing, follow-up cursor lifecycle and the wake driver",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 4,
       "fn": 6,
       "struct": 1
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "test",
      "notable": [],
      "path": "src/human_task/followup_tests.rs",
@@ -20216,6 +20216,7 @@
      "path": "src/llm/bus.rs",
      "purpose": "Ephemeral one-producer fanout",
      "surface": {
+      "crate-vis": 2,
       "fn": 5,
       "struct": 2,
       "trait": 1
@@ -21048,13 +21049,14 @@
      "notable": [
       "ProgressSnapshot",
       "ProgressSubscriber",
+      "VoiceChunkPolicy",
       "VoiceChunker"
      ],
      "path": "src/llm/subscribers.rs",
      "purpose": "Pure clock-injected progress and voice stages",
      "surface": {
-      "fn": 3,
-      "struct": 3
+      "fn": 6,
+      "struct": 4
      }
     },
     {
@@ -21620,7 +21622,7 @@
      "purpose": "Schedule-only dispatch of connector sends through the OF-327 chokepoint",
      "surface": {
       "const": 1,
-      "crate-vis": 1,
+      "crate-vis": 2,
       "fn": 4
      }
     },
@@ -23556,7 +23558,7 @@
      "path": "src/outbound/mod.rs",
      "purpose": "Outbound action capability manifests and dispatch spine for OF-327",
      "surface": {
-      "crate-vis": 4,
+      "crate-vis": 5,
       "re-export": 7
      }
     },
@@ -31978,14 +31980,14 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [],
      "path": "src/task_verb/ask_facade.rs",
      "purpose": "Async scope-authority asks over existing consult TASKs",
      "surface": {
-      "crate-vis": 2,
-      "fn": 6
+      "crate-vis": 5,
+      "fn": 7
      }
     },
     {
@@ -31997,13 +31999,23 @@
      "surface": {}
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/task_verb/ask_preflight.rs",
+     "purpose": "Read-only ask preflight over the exact admission holder and route facts",
+     "surface": {
+      "fn": 1
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/task_verb/ask_record.rs",
      "purpose": "Protected replicated ask facts",
      "surface": {
-      "crate-vis": 20
+      "crate-vis": 21
      }
     },
     {
@@ -32055,6 +32067,10 @@
       "TaskAskLadderPrediction",
       "TaskAskNeed",
       "TaskAskOptionId",
+      "TaskAskPersonEvidence",
+      "TaskAskPersonKind",
+      "TaskAskPreflight",
+      "TaskAskPreflightRecipient",
       "TaskAskProvisional",
       "TaskAskQuestion",
       "TaskAskReceipt",
@@ -32073,9 +32089,9 @@
      "purpose": "Typed asks: response coverage, decision reducers, and policy-bound revisions",
      "surface": {
       "crate-vis": 2,
-      "enum": 15,
+      "enum": 16,
       "fn": 5,
-      "struct": 17
+      "struct": 20
      }
     },
     {
@@ -32438,6 +32454,7 @@
       "TaskAnswerRequest",
       "TaskAskRequest",
       "TaskAskShort",
+      "TaskCanAskRequest",
       "TaskCreateRequest",
       "TaskRequest",
       "TaskWaitRequest"
@@ -32446,7 +32463,7 @@
      "purpose": "Shared typed agent-verb inputs and generated transport dispatch",
      "surface": {
       "enum": 1,
-      "struct": 15
+      "struct": 16
      }
     },
     {
@@ -32456,7 +32473,7 @@
      "path": "src/task_verb/sdk_generated.rs",
      "purpose": "—",
      "surface": {
-      "fn": 30
+      "fn": 32
      }
     },
     {
@@ -33437,7 +33454,7 @@
      "purpose": "ONE-1807: the engine half of a transport-neutral text-brain voice cascade",
      "surface": {
       "mod": 3,
-      "re-export": 5
+      "re-export": 6
      }
     },
     {
@@ -33578,6 +33595,21 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "VoiceStreamConfig",
+      "VoiceStreamFailure"
+     ],
+     "path": "src/voice_cascade/stream.rs",
+     "purpose": "Live, ephemeral LLM-stream fanout to TTS",
+     "surface": {
+      "enum": 1,
+      "fn": 1,
+      "struct": 1
+     }
+    },
+    {
      "bucket": "m",
      "kind": "test",
      "notable": [],
@@ -33614,6 +33646,14 @@
      "kind": "test",
      "notable": [],
      "path": "src/voice_cascade/tests/session.rs",
+     "purpose": "—",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "src/voice_cascade/tests/stream.rs",
      "purpose": "—",
      "surface": {}
     },
@@ -36113,9 +36153,9 @@
      "purpose": "Replicated TASK authority: owner proof, cancellation, and acknowledgement as immutable companion TASK entities"
     },
     "task_verb": {
-     "files": 59,
+     "files": 60,
      "impl_vault": true,
-     "largest_src_bucket": "m",
+     "largest_src_bucket": "L",
      "layout": "dir",
      "purpose": "Typed, actor-bound verbs over the Context Board TASKS section"
     },
@@ -36183,7 +36223,7 @@
      "purpose": "ARCH-0073 vault auto-cleanup: the Dreamer ARCHIVE cron (ONE-1931)"
     },
     "voice_cascade": {
-     "files": 22,
+     "files": 24,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "file+dir",
@@ -36232,10 +36272,10 @@
      "purpose": "Write-path stamping: `WriteActor`/`WriteProvenance`/`WriteEnvelope`/`ClaimCandidate` + evidence stamping"
     }
    },
-   "over_bar": 10,
+   "over_bar": 11,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2141,
-   "test_files": 728
+   "source_files": 2143,
+   "test_files": 729
   },
   "oneiron-android": {
    "files": [
@@ -36418,7 +36458,7 @@
      "path": "src/beam/citations.rs",
      "purpose": "Evidence-backed per-number citations",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 4
      }
     },
     {
@@ -38879,7 +38919,7 @@
      "path": "src/facade/client/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 21
+      "fn": 23
      }
     },
     {
@@ -39162,7 +39202,7 @@
      "path": "src/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 22
+      "fn": 24
      }
     },
     {

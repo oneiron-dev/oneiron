@@ -75,10 +75,8 @@ world guest {
     import memory-put-edge: func(input: edge-input) -> result<edge-output, string>;
     // @js self.report_blocked
     import report-blocked: func(category: string, detail: string) -> result<blocked-output, string>;
-    // @js self.ask_human
-    import ask-human: func(input: prompt-input) -> result<wait-output, string>;
-    // @js self.askHuman
-    import ask-human-camel: func(input: prompt-input) -> result<wait-output, string>;
+    // @js ask
+    import ask: func(input: prompt-input) -> result<wait-output, string>;
     // @js self.speak
     import speak: func(input: text-input) -> result<speech-output, string>;
     // @js self.think
