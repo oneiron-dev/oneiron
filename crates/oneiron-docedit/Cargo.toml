@@ -10,9 +10,9 @@ repository.workspace = true
 [dependencies]
 stemma = { path = "vendor/stemma-engine", version = "0.6.0" }
 thiserror = { workspace = true }
+serde_json = { workspace = true }
 
 [dev-dependencies]
-serde_json = { workspace = true }
 zip = "0.6.6"
 
 [lints]

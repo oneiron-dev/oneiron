@@ -16,3 +16,19 @@ The [bounded Word mini receipt](word-mini-20260927.json) records a zero-dialog W
 Generate the two reproducible paragraph cases with `python3 scripts/docx-oracle/generate_join.py simple|table <output.docx>`; the table case reproduces the pinned stemma `spec_para_mark_join_blocked_target` synthetic shape. For both, compare the fork's `cargo run -p oneiron-docedit --example resolve_docx -j 8 -- accept|reject <input.docx> <output.docx>` to a Word accept/reject save. The **simple** mark deletion agrees: one `Alpha beta.` paragraph. The **inserted-table edge now agrees**: Word's first reject-all moves `Alpha` into the inserted cell and leaves one revision; rejecting that remaining insertion removes the cell and leaves `beta.`. The fork's corrected `RejectAll` yields `beta.` in both byte and typed paths, pinned by Word's actual saved DOCX under `vendor/stemma-engine/testdata/word-oracle/paragraph-join-rejected.docx`. The related multi-table case is also compared to Word's saved `Gamma` output; full and selective rejection agree. Re-running the fixed single-table output in Word on the mini opened/saved with zero sheets or repairs, zero remaining revisions and unchanged `beta.` paragraph text. The nested-table case was not modified: Word still exposed a revision after a second reject-all and did not yield a reliable final oracle. LibreOffice is absent on the mini (`/Applications/LibreOffice.app` and `soffice` not found), so no LibreOffice-vs-Word rate was measured; under the owner ruling this does not block PR #1078.
 
 `python3 -m unittest discover -s scripts/docx-oracle -p 'test_*.py' -v` exercises the fail-closed and logical-text paths offline. `cargo run -p oneiron-docedit --example emit_revision -j 8 -- <output.docx> [input.docx]` emits the tracked replacement for the built-in sample or a pinned fixture. Binary POI/docx4j fixtures and Word output stay outside this public repo; only receipt hashes and comparisons are committed.
+
+## DOCX archive workload policy (ONE-2522 review fix)
+
+The shipped trusted `POLICY_MANIFEST` carries a top-level `docx_archive_limits`
+row with a nested `vault` ceiling (`max_entries: 1000`, `max_part_bytes:
+209715200`, `max_total_bytes: 524288000`) and an empty `holders` array. Each
+trusted manifest may only **narrow** that upper default; trusted rows compose
+field-wise by minimum. An exact holder row has a canonical actor ref and one
+or more narrower dimensions; absent dimensions inherit its vault row. Holder
+rows cannot raise the vault ceiling. Bad, duplicate, zero or widening values
+fail that manifest closed. Unscoped raw document edits use the standalone
+fork's shipped upper default. Vault admission reads its effective policy and
+artifact in one snapshot; settlement resolves current policy and the settling
+actor again inside its write transaction. Both the independent DOCX archive
+reader and the outer OPC gate use the effective limits before the linker's
+XML reads. No limit is inferred from an output ZIP's compressed size.

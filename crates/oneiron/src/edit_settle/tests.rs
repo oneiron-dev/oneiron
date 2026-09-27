@@ -1004,3 +1004,195 @@ fn valid_word_bytes_cannot_settle_with_invalid_or_direct_manifest() -> Result<()
     }
     Ok(())
 }
+
+#[test]
+fn settlement_binds_word_output_to_tracked_transaction_and_exact_base() -> Result<()> {
+    use crate::edit_roundtrip::{EditOutcome, run_docx_revision};
+    let (_dir, vault) = crate::test_util::open_test_vault_with(embedding_test_config());
+    let actor = put_actor(&vault, 10);
+    let artifact = EntityId::now();
+    vault.put_blob_artifact(
+        &artifact,
+        &BlobArtifactBody::new(
+            "base.docx",
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        ),
+        test_time(10),
+        10,
+    )?;
+    vault.append_blob_artifact_version(
+        &artifact,
+        WORD_BASE,
+        &BlobVersionProvenance::UserUpload,
+        actor,
+        test_time(10),
+        10,
+    )?;
+    let tracked = word_revision_transaction();
+    let EditOutcome::Proposed(mut genuine) = run_docx_revision(WORD_BASE, &tracked, "run:genuine")?
+    else {
+        panic!("native writer must propose")
+    };
+    genuine.base_version = Some(1);
+    let mut direct_json: serde_json::Value = serde_json::from_str(&tracked).unwrap();
+    direct_json["materialization_mode"] = serde_json::Value::from("direct");
+    let direct = oneiron_docedit::parse_transaction(&direct_json.to_string())
+        .unwrap()
+        .into_edit_transaction()
+        .unwrap();
+    let direct_bytes = oneiron_docedit::Document::parse(WORD_BASE)
+        .unwrap()
+        .apply(&direct)
+        .unwrap()
+        .serialize(&oneiron_docedit::ExportOptions::default())
+        .unwrap();
+    assert!(oneiron_docedit::validate_blocking(&direct_bytes).is_ok());
+    // The kept manifest is valid and tracked. Only the public output field is
+    // changed, so grammar and structural checks alone would accept the forgery.
+    for (index, replacement) in [direct_bytes, WORD_BASE.to_vec()].into_iter().enumerate() {
+        assert!(oneiron_docedit::validate_blocking(&replacement).is_ok());
+        let mut forged = genuine.clone();
+        forged.run_ref = format!("run:substituted:{index}");
+        forged.new_bytes = replacement;
+        assert!(matches!(
+            vault.settle_select_edit_proposal(
+                &artifact,
+                &forged,
+                &owner(),
+                actor,
+                test_time(11),
+                11
+            ),
+            Err(Error::Artifact(ArtifactError::InvalidEditManifest(_)))
+                | Err(Error::Artifact(ArtifactError::EditRoundtripFailed(_)))
+        ));
+        assert_eq!(vault.blob_artifact_versions(&artifact)?.len(), 1);
+        assert!(
+            vault
+                .blob_artifact_settlement(&artifact, &forged.run_ref)?
+                .is_none()
+        );
+    }
+    // The authentic proposal remains selectable after both refusals.
+    let out = vault.settle_select_edit_proposal(
+        &artifact,
+        &genuine,
+        &owner(),
+        actor,
+        test_time(11),
+        11,
+    )?;
+    assert_eq!(out.version.version, 2);
+    Ok(())
+}
+
+fn put_test_docx_archive_policy(
+    vault: &Vault,
+    limits: oneiron_docedit::ArchiveLimits,
+) -> Result<()> {
+    let raw = crate::gate::default_policy_manifest();
+    let mut cursor = std::io::Cursor::new(raw.as_slice());
+    let mut value = rmpv::decode::read_value(&mut cursor).unwrap();
+    let rmpv::Value::Map(entries) = &mut value else {
+        panic!("default manifest is a map")
+    };
+    let budget = entries
+        .iter_mut()
+        .find(|(key, _)| key.as_str() == Some("docx_archive_limits"))
+        .expect("shipped policy has a docx archive budget");
+    budget.1 = rmpv::Value::Map(vec![
+        (
+            rmpv::Value::from("vault"),
+            rmpv::Value::Map(vec![
+                (
+                    rmpv::Value::from("max_entries"),
+                    rmpv::Value::from(limits.max_entries as u64),
+                ),
+                (
+                    rmpv::Value::from("max_part_bytes"),
+                    rmpv::Value::from(limits.max_part_bytes),
+                ),
+                (
+                    rmpv::Value::from("max_total_bytes"),
+                    rmpv::Value::from(limits.max_total_bytes),
+                ),
+            ]),
+        ),
+        (rmpv::Value::from("holders"), rmpv::Value::Array(vec![])),
+    ]);
+    let mut bytes = Vec::new();
+    rmpv::encode::write_value(&mut bytes, &value).unwrap();
+    crate::test_util::put_policy_manifest_bytes(vault, crate::test_util::entity(0xE8), &bytes)
+}
+
+#[test]
+fn settlement_refuses_small_policy_per_part_and_cumulative_archive_limits() -> Result<()> {
+    use crate::edit_roundtrip::{EditOutcome, run_docx_revision};
+    let txn = word_revision_transaction();
+    let EditOutcome::Proposed(mut proposal) = run_docx_revision(WORD_BASE, &txn, "run:budget")?
+    else {
+        panic!("tracked edit must propose")
+    };
+    proposal.base_version = Some(1);
+    let mut archive = zip::ZipArchive::new(std::io::Cursor::new(&proposal.new_bytes)).unwrap();
+    let sizes: Vec<u64> = (0..archive.len())
+        .map(|i| archive.by_index(i).unwrap().size())
+        .collect();
+    let max_part = *sizes.iter().max().unwrap();
+    let total: u64 = sizes.iter().sum();
+    assert!(total > max_part + 1);
+    for limits in [
+        oneiron_docedit::ArchiveLimits {
+            max_entries: oneiron_docedit::ArchiveLimits::DEFAULT.max_entries,
+            max_part_bytes: max_part - 1,
+            max_total_bytes: total,
+        },
+        oneiron_docedit::ArchiveLimits {
+            max_entries: oneiron_docedit::ArchiveLimits::DEFAULT.max_entries,
+            max_part_bytes: max_part,
+            max_total_bytes: total - 1,
+        },
+    ] {
+        assert!(limits.is_valid());
+        let (_dir, vault) = crate::test_util::open_test_vault_with(embedding_test_config());
+        let actor = put_actor(&vault, 10);
+        let artifact = EntityId::now();
+        vault.put_blob_artifact(
+            &artifact,
+            &BlobArtifactBody::new(
+                "budget.docx",
+                "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            ),
+            test_time(10),
+            10,
+        )?;
+        vault.append_blob_artifact_version(
+            &artifact,
+            WORD_BASE,
+            &BlobVersionProvenance::UserUpload,
+            actor,
+            test_time(10),
+            10,
+        )?;
+        put_test_docx_archive_policy(&vault, limits)?;
+        assert!(matches!(
+            vault.settle_select_edit_proposal(
+                &artifact,
+                &proposal,
+                &owner(),
+                actor,
+                test_time(11),
+                11
+            ),
+            Err(Error::Artifact(ArtifactError::EditRoundtripFailed(_)))
+                | Err(Error::Artifact(ArtifactError::InvalidEditManifest(_)))
+        ));
+        assert_eq!(vault.blob_artifact_versions(&artifact)?.len(), 1);
+        assert!(
+            vault
+                .blob_artifact_settlement(&artifact, &proposal.run_ref)?
+                .is_none()
+        );
+    }
+    Ok(())
+}

@@ -4,16 +4,46 @@ use zip::result::ZipError;
 use zip::write::FileOptions;
 use zip::{ZipArchive, ZipWriter};
 
-/// Maximum number of entries allowed in a DOCX zip archive.
-/// Real DOCX files typically have 20–50 entries.
-const MAX_ZIP_ENTRIES: usize = 1_000;
+/// Archive workload limits, supplied by the host policy on native edit and
+/// settlement doors. The standalone fork uses `DEFAULT` as its safe fallback;
+/// a vault can narrow these limits without changing the DOCX reader.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ArchiveLimits {
+    pub max_entries: usize,
+    pub max_part_bytes: u64,
+    pub max_total_bytes: u64,
+}
 
-/// Maximum cumulative decompressed size (500 MB).
-/// Prevents zip bombs from exhausting memory.
-const MAX_DECOMPRESSED_BYTES: u64 = 500 * 1024 * 1024;
+impl ArchiveLimits {
+    /// Standalone baseline. The Oneiron vault ships these same values in its
+    /// default policy manifest and composes narrower trusted/holder limits.
+    pub const DEFAULT: Self = Self {
+        max_entries: 1_000,
+        max_part_bytes: 200 * 1024 * 1024,
+        max_total_bytes: 500 * 1024 * 1024,
+    };
 
-/// Maximum decompressed size for a single file within the archive (200 MB).
-const MAX_FILE_BYTES: u64 = 200 * 1024 * 1024;
+    /// A holder may narrow a vault's workload ceiling, never widen it.
+    #[must_use]
+    pub fn narrow(self, other: Self) -> Self {
+        Self {
+            max_entries: self.max_entries.min(other.max_entries),
+            max_part_bytes: self.max_part_bytes.min(other.max_part_bytes),
+            max_total_bytes: self.max_total_bytes.min(other.max_total_bytes),
+        }
+    }
+
+    /// Deny invalid zero or nonsensical bounds before ZIP inflation.
+    #[must_use]
+    pub fn is_valid(self) -> bool {
+        self.max_entries > 0
+            && self.max_entries <= Self::DEFAULT.max_entries
+            && self.max_part_bytes > 0
+            && self.max_part_bytes <= Self::DEFAULT.max_part_bytes
+            && self.max_total_bytes <= Self::DEFAULT.max_total_bytes
+            && self.max_part_bytes <= self.max_total_bytes
+    }
+}
 
 #[derive(Debug)]
 pub enum DocxError {
@@ -54,14 +84,24 @@ impl DocxArchive {
     }
 
     pub fn read(docx_bytes: &[u8]) -> Result<Self, DocxError> {
+        Self::read_with_limits(docx_bytes, ArchiveLimits::DEFAULT)
+    }
+
+    /// Read under the caller's effective workload policy. Declared sizes are
+    /// checked before inflation, and actual bytes are bounded per entry and
+    /// cumulatively so a lying central directory cannot bypass the ceiling.
+    pub fn read_with_limits(docx_bytes: &[u8], limits: ArchiveLimits) -> Result<Self, DocxError> {
+        if !limits.is_valid() {
+            return Err(DocxError::ZipBomb("invalid archive limits".to_owned()));
+        }
         let cursor = Cursor::new(docx_bytes);
         let mut zip = ZipArchive::new(cursor).map_err(DocxError::ZipRead)?;
 
-        if zip.len() > MAX_ZIP_ENTRIES {
+        if zip.len() > limits.max_entries {
             return Err(DocxError::ZipBomb(format!(
                 "archive contains {} entries (max {})",
                 zip.len(),
-                MAX_ZIP_ENTRIES
+                limits.max_entries
             )));
         }
 
@@ -91,25 +131,28 @@ impl DocxArchive {
                 )));
             }
 
-            // Read with per-file and cumulative size limits.
+            // Reject a declared oversize before inflation; also cap actual
+            // bytes with take() because ZIP headers are caller-controlled.
+            let remaining = limits.max_total_bytes.saturating_sub(total_bytes);
+            if file.size() > limits.max_part_bytes || file.size() > remaining {
+                return Err(DocxError::ZipBomb(format!(
+                    "file {name:?} exceeds archive workload limits"
+                )));
+            }
             let mut data = Vec::new();
-            let mut limited = (&mut file).take(MAX_FILE_BYTES + 1);
-            limited.read_to_end(&mut data).map_err(DocxError::Io)?;
-
-            if data.len() as u64 > MAX_FILE_BYTES {
+            let cap = limits.max_part_bytes.min(remaining);
+            (&mut file)
+                .take(cap + 1)
+                .read_to_end(&mut data)
+                .map_err(DocxError::Io)?;
+            if data.len() as u64 > cap {
                 return Err(DocxError::ZipBomb(format!(
-                    "file {name:?} exceeds {} MB decompressed",
-                    MAX_FILE_BYTES / (1024 * 1024)
+                    "file {name:?} exceeds archive workload limits"
                 )));
             }
-
-            total_bytes += data.len() as u64;
-            if total_bytes > MAX_DECOMPRESSED_BYTES {
-                return Err(DocxError::ZipBomb(format!(
-                    "cumulative decompressed size exceeds {} MB",
-                    MAX_DECOMPRESSED_BYTES / (1024 * 1024)
-                )));
-            }
+            total_bytes = total_bytes
+                .checked_add(data.len() as u64)
+                .ok_or_else(|| DocxError::ZipBomb("cumulative archive size overflow".to_owned()))?;
 
             files.push(DocxFile { name, data });
         }

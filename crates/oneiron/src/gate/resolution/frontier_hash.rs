@@ -43,6 +43,32 @@ pub(super) fn hash_policy_frontier_v0(
     // manifest contributes no decoded rows at all and its malformed-ness is
     // already frontier-relevant through `hash_diagnostics`.
     hash_budget_policy_table(hasher, &resolution.budget_policy);
+    // Behavior-deciding archive policy moves the frontier when vault or exact
+    // holder bounds change. Hash declared rows, not only a selected caller.
+    if !resolution.docx_archive_limits.is_empty() {
+        hash_str(hasher, "docx_archive_limits");
+        hash_len(hasher, resolution.docx_archive_limits.len());
+        for policy in &resolution.docx_archive_limits {
+            for value in [
+                policy.vault.max_entries as u64,
+                policy.vault.max_part_bytes,
+                policy.vault.max_total_bytes,
+            ] {
+                hash_u64(hasher, value);
+            }
+            hash_len(hasher, policy.holders.len());
+            for (actor, limits) in &policy.holders {
+                hash_bytes(hasher, actor.as_bytes());
+                for value in [
+                    limits.max_entries as u64,
+                    limits.max_part_bytes,
+                    limits.max_total_bytes,
+                ] {
+                    hash_u64(hasher, value);
+                }
+            }
+        }
+    }
     if let Some(bounds) = resolution.diagnostic_bounds {
         hash_str(hasher, "diagnostic_bounds");
         hash_u64(hasher, bounds.window_secs);

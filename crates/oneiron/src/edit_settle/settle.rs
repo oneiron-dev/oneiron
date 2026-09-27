@@ -46,7 +46,7 @@ impl Vault {
         occurred: TimeRange,
         learned_at: u64,
     ) -> Result<SettleSelectOutcome> {
-        self.ensure_selectable(proposal)?;
+        self.ensure_selectable(proposal, actor)?;
         self.authorize_settle(consent, actor)?;
         let proposal_ref = proposal.run_ref.as_str();
         let key = settlement_key(artifact_id, proposal_ref);
@@ -81,6 +81,20 @@ impl Vault {
                     "proposal format does not match the target artifact media type",
                 )));
             }
+            // A policy revision under this write lock can only make the budget
+            // stricter than the preflight. Re-evaluate before any durable row.
+            let docx_limits = if proposal.format == OfficeFormat::Docx {
+                let limits = self.docx_archive_limits_in_txn(wtxn, Some(actor.entity_ref()))?;
+                oneiron_docedit::validate_blocking_with_limits(&proposal.new_bytes, limits)
+                    .map_err(|_| {
+                        Error::Artifact(ArtifactError::InvalidEditManifest(
+                            "docx output fails the current archive budget or linker",
+                        ))
+                    })?;
+                Some(limits)
+            } else {
+                None
+            };
             // Ledger acquisition BEFORE any side effect.
             if let Some(raw) = self.store.vault_meta.get(wtxn, &key)? {
                 return Err(already_settled(&decode_settlement_record(&raw)?));
@@ -88,6 +102,47 @@ impl Vault {
             // Base head read in-txn, consistent with the append below.
             let base = read_blob_artifact_head_in_txn(&self.store, wtxn, artifact_id)?
                 .ok_or(Error::EntityNotFound)?;
+            if let Some(limits) = docx_limits {
+                // A public proposal is not an engine certificate. Replay its
+                // *validated tracked* transaction against the exact version
+                // named by the proposal, then bind every decompressed output
+                // part to that result. This is separate from the independent
+                // package linker and unknown-part passthrough checks.
+                let source_version = proposal.base_version.unwrap_or(base.version);
+                let source = self
+                    .read_blob_artifact_version_in_txn(wtxn, artifact_id, source_version)?
+                    .ok_or(Error::EntityNotFound)?;
+                if *blake3::hash(&source).as_bytes() != proposal.base_content_hash {
+                    return Err(Error::Artifact(ArtifactError::InvalidEditManifest(
+                        "docx proposal base hash does not match its source version",
+                    )));
+                }
+                let [EditOp::DocxRevision { transaction }] = proposal.manifest.ops.as_slice()
+                else {
+                    return Err(Error::Artifact(ArtifactError::InvalidEditManifest(
+                        "docx proposal requires exactly one native tracked transaction",
+                    )));
+                };
+                let expected = oneiron_docedit::revise_with_limits(&source, transaction, limits)
+                    .map_err(|_| {
+                        Error::Artifact(ArtifactError::InvalidEditManifest(
+                            "docx transaction cannot replay against its pinned base",
+                        ))
+                    })?;
+                if !crate::edit_roundtrip::docx_parts_match_replay(
+                    &expected,
+                    &proposal.new_bytes,
+                    limits,
+                )? || !crate::edit_roundtrip::validate_docx_passthrough(
+                    &source,
+                    &proposal.new_bytes,
+                    limits,
+                )? {
+                    return Err(Error::Artifact(ArtifactError::InvalidEditManifest(
+                        "docx output does not implement its tracked transaction and base",
+                    )));
+                }
+            }
             // Retain stale output against this exact head. Consume the old ref
             // so a retry can never accidentally apply it after another head
             // change. Reconciliation is a new, explicitly reviewed proposal.
@@ -364,7 +419,7 @@ impl Vault {
         }
     }
 
-    fn ensure_selectable(&self, proposal: &EditProposal) -> Result<()> {
+    fn ensure_selectable(&self, proposal: &EditProposal, actor: WriteActor) -> Result<()> {
         validate_settle_proposal_ref(&proposal.run_ref)?;
         // An EditProposal only exists on a passed corruption gate, but a select
         // commits its bytes into the version chain — re-check fail-closed.
@@ -388,12 +443,13 @@ impl Vault {
         // Reject a cross-format manifest. The spreadsheet and native Word
         // writers have separate entry doors and cannot substitute one another's
         // operations at settlement.
-        if proposal.format == OfficeFormat::Docx
-            && oneiron_docedit::validate_blocking(&proposal.new_bytes).is_err()
-        {
-            return Err(Error::Artifact(ArtifactError::EditRoundtripFailed(
-                "native docx proposal fails the Word package linker",
-            )));
+        if proposal.format == OfficeFormat::Docx {
+            let rtxn = self.store.env.read_txn()?;
+            let limits = self.docx_archive_limits_in_txn(&rtxn, Some(actor.entity_ref()))?;
+            oneiron_docedit::validate_blocking_with_limits(&proposal.new_bytes, limits)
+                .map_err(|_| Error::Artifact(ArtifactError::EditRoundtripFailed(
+                    "native docx proposal exceeds archive limits or fails the Word package linker",
+                )))?;
         }
         if proposal.format != proposal.manifest.format
             || match proposal.format {

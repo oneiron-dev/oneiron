@@ -2,8 +2,10 @@
 
 use sha2::{Digest, Sha256};
 
+use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::llm::{BudgetExhaustionPolicy, BudgetPolicyTable};
+use oneiron_docedit::ArchiveLimits;
 
 use super::frontier_hash::hash_policy_frontier_v0;
 use super::manifest_types::{
@@ -80,6 +82,20 @@ impl PolicyManifestResolution {
         } else {
             Some(&self.budget_policy)
         }
+    }
+
+    /// Restrictive DOCX workload fold: shipped/default vault upper bound,
+    /// every trusted manifest's vault row, and the selected holder rows. A
+    /// malformed loaded manifest yields no usable budget (never a fallback).
+    pub(crate) fn docx_archive_limits(&self, holder: Option<EntityId>) -> Option<ArchiveLimits> {
+        if self.diagnostics.loaded_manifest_forces_fail_closed() {
+            return None;
+        }
+        let mut limits = ArchiveLimits::DEFAULT;
+        for policy in &self.docx_archive_limits {
+            limits = limits.narrow(policy.for_holder(holder));
+        }
+        Some(limits)
     }
 
     /// Rendering pins follow declared critical classes, not the fail-closed

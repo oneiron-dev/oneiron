@@ -15108,7 +15108,8 @@
      "path": "src/edit_roundtrip/docx.rs",
      "purpose": "Native DOCX edit entry",
      "surface": {
-      "fn": 2
+      "crate-vis": 4,
+      "fn": 3
      }
     },
     {
@@ -15169,6 +15170,7 @@
      "path": "src/edit_roundtrip/mod.rs",
      "purpose": "ARTL-3 (OF-368 D5): agent edit round-trip — code-session pipeline",
      "surface": {
+      "crate-vis": 1,
       "re-export": 7
      }
     },
@@ -15179,7 +15181,7 @@
      "path": "src/edit_roundtrip/opc.rs",
      "purpose": "Minimal Open Packaging Conventions (OPC) reader/writer for the ARTL-3 edit round-trip pipeline",
      "surface": {
-      "crate-vis": 13
+      "crate-vis": 14
      }
     },
     {
@@ -16699,7 +16701,7 @@
      "path": "src/gate/constants.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 77
+      "crate-vis": 78
      }
     },
     {
@@ -16796,6 +16798,16 @@
      "notable": [],
      "path": "src/gate/definition_ceiling.rs",
      "purpose": "—",
+     "surface": {
+      "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/gate/docx_budget.rs",
+     "purpose": "Native DOCX archive workload policy",
      "surface": {
       "crate-vis": 4
      }
@@ -17017,7 +17029,7 @@
      "path": "src/gate/resolution/accessors.rs",
      "purpose": "Read-only resolved-field accessors plus the frontier-hash entry",
      "surface": {
-      "crate-vis": 24
+      "crate-vis": 25
      }
     },
     {
@@ -17204,6 +17216,14 @@
      "notable": [],
      "path": "src/gate/tests/delegation.rs",
      "purpose": "Delegated grants: fold, revoke dominance, depth cap, and cross-manifest chains",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/gate/tests/docx_zip_budget.rs",
+     "purpose": "Archive budgets live in trusted policy, not in the DOCX organ's graph",
      "surface": {}
     },
     {
@@ -35644,7 +35664,7 @@
      "purpose": "—"
     },
     "gate": {
-     "files": 75,
+     "files": 77,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -36332,8 +36352,8 @@
    },
    "over_bar": 11,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2144,
-   "test_files": 733
+   "source_files": 2145,
+   "test_files": 734
   },
   "oneiron-android": {
    "files": [
@@ -37595,8 +37615,8 @@
      "purpose": "Native Word revisions over a pinned, Apache-2.0-selected stemma fork",
      "surface": {
       "enum": 1,
-      "fn": 3,
-      "re-export": 3
+      "fn": 7,
+      "re-export": 4
      }
     },
     {

@@ -217,6 +217,8 @@ p256 = { workspace = true, features = ["pkcs8"] }
 oneiron = { path = ".", features = ["test-support"] }
 tempfile = "3"
 proptest = "1"
+# Bounded DOCX fixture probes inspect central-directory sizes in unit tests.
+zip = "0.6.6"
 # ONE-1572 (B11-2b): compile-fail proof that the sealed relay-attestation
 # witness cannot be constructed outside the boundary. Dev-only; no runtime
 # dependency is added.

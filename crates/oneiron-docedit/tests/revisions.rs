@@ -1,7 +1,8 @@
 use std::io::Read;
 
 use oneiron_docedit::{
-    DoceditError, Document, revise, validate_blocking, validate_revision_transaction,
+    ArchiveLimits, DoceditError, Document, preflight_with_limits, revise, validate_blocking,
+    validate_blocking_with_limits, validate_revision_transaction,
 };
 
 const INPUT: &[u8] = include_bytes!("../vendor/stemma-engine/testdata/simple-text/before.docx");
@@ -124,4 +125,49 @@ fn direct_mode_is_refused_even_over_another_authors_pending_revision() {
             .to_text()
             .contains("This is a test")
     );
+}
+
+#[test]
+fn archive_preflight_refuses_entry_part_and_cumulative_inflation() {
+    use std::io::Write;
+    let mut zip = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
+    for name in ["word/document.xml", "word/styles.xml"] {
+        zip.start_file(name, zip::write::FileOptions::default())
+            .unwrap();
+        zip.write_all(&[b'x'; 64]).unwrap();
+    }
+    let bytes = zip.finish().unwrap().into_inner();
+    let generous = ArchiveLimits {
+        max_entries: 2,
+        max_part_bytes: 80,
+        max_total_bytes: 160,
+    };
+    assert!(preflight_with_limits(&bytes, generous).is_ok());
+    assert!(
+        preflight_with_limits(
+            &bytes,
+            ArchiveLimits {
+                max_entries: ArchiveLimits::DEFAULT.max_entries + 1,
+                ..ArchiveLimits::DEFAULT
+            }
+        )
+        .is_err()
+    );
+    for limits in [
+        ArchiveLimits {
+            max_entries: 1,
+            ..generous
+        },
+        ArchiveLimits {
+            max_part_bytes: 32,
+            ..generous
+        },
+        ArchiveLimits {
+            max_total_bytes: 100,
+            ..generous
+        },
+    ] {
+        assert!(preflight_with_limits(&bytes, limits).is_err());
+        assert!(validate_blocking_with_limits(&bytes, limits).is_err());
+    }
 }

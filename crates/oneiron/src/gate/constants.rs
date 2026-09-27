@@ -67,6 +67,9 @@ pub(super) const POLICY_AUTO_CHECKER_KEY: &str = "auto_checker";
 /// { actor: "<canonical-actor-ref>", floor: 50_000, cap: 150_000 }
 /// ```
 pub(super) const POLICY_BUDGET_POLICY_KEY: &str = "budget_policy";
+/// Trusted vault-level DOCX ZIP workload row. Every dimension only narrows
+/// the shipped upper default; per-call holders may narrow it again.
+pub(super) const POLICY_DOCX_ARCHIVE_LIMITS_KEY: &str = "docx_archive_limits";
 pub(super) const BUDGET_POLICY_PURPOSE_KEY: &str = "purpose";
 pub(super) const BUDGET_POLICY_ACTOR_KEY: &str = "actor";
 pub(super) const BUDGET_POLICY_FLOOR_KEY: &str = "floor";

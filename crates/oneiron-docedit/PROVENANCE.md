@@ -11,7 +11,11 @@ Changes from that commit: the first import copied upstream `src/`, tests,
 and fixtures unchanged. ONE-2522 later changed `vendor/stemma-engine/src/normalize.rs`,
 `src/tracked_model.rs`, and `src/resolution_rules.rs`: on Word-oracled rejection,
 a plain paragraph before an inserted-row table is absorbed into that row and
-removed with it, not rejoined past the table. The old synthetic assertions
+removed with it, not rejoined past the table. The second review fix changes
+`vendor/stemma-engine/src/docx.rs`: `read_with_limits` accepts data-only
+workload limits and bounds actual inflated bytes per part and in total before
+any XML linker sees caller-supplied output. The vault owns policy resolution;
+the fork has no dependency on Oneiron. The old synthetic assertions
 were corrected in the two paragraph-join suite files. Actual Word-for-Mac
 saved outputs were added under `testdata/word-oracle/` as reference fixtures;
 see `docs/docx-oracle/word-mini-20260927.json` for their digests and custody.

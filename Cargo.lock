@@ -7179,6 +7179,7 @@ dependencies = [
  "xxhash-rust",
  "yrs",
  "zeroize",
+ "zip 0.6.6",
  "zstd 0.13.3",
 ]
 
