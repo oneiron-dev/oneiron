@@ -22935,7 +22935,7 @@
      "purpose": "Vault facade seams for dispatching outbound intents",
      "surface": {
       "crate-vis": 1,
-      "fn": 1
+      "fn": 2
      }
     },
     {
@@ -25595,6 +25595,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/receipt/direct_dispatch.rs",
+     "purpose": "Ordinary outbound receipts for hosts that call dispatch directly",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [
@@ -25691,7 +25701,7 @@
      "path": "src/receipt/mod.rs",
      "purpose": "Unified receipt-family query surface over existing receipt emitters",
      "surface": {
-      "crate-vis": 10,
+      "crate-vis": 11,
       "re-export": 8
      }
     },
@@ -35152,7 +35162,7 @@
      "purpose": "Host-injected HyDE query-expansion seam"
     },
     "receipt": {
-     "files": 17,
+     "files": 18,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -35525,7 +35535,7 @@
    },
    "over_bar": 10,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2097,
+   "source_files": 2098,
    "test_files": 718
   },
   "oneiron-android": {
@@ -37442,7 +37452,7 @@
      "path": "src/dispatch.rs",
      "purpose": "Linear mutations through the vault's replay-first outbound dispatch door",
      "surface": {
-      "fn": 2,
+      "fn": 3,
       "struct": 1
      }
     },
@@ -37488,7 +37498,7 @@
      "path": "src/journal.rs",
      "purpose": "Host response custody beneath the engine outbound dispatch, not a second gate",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 7
      }
     },
     {

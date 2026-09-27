@@ -38,6 +38,77 @@ impl<T> LinearResponseJournal<T> {
         self.journal_dir.join(blake3::Hash::from(*id).to_hex())
     }
 
+    fn request_ref(id: &[u8; 32]) -> String {
+        format!("linear:request:v1:{}", blake3::Hash::from(*id).to_hex())
+    }
+
+    /// Freezes the exact GraphQL request in a host-private file before the
+    /// engine dispatch. The common receipt carries only this resolvable ref,
+    /// including on denial (when no transport or response journal runs).
+    pub(crate) fn stage_request(
+        &self,
+        id: &[u8; 32],
+        call: &GraphQlCall,
+    ) -> LinearSyncResult<String> {
+        let reference = Self::request_ref(id);
+        let path = self.path(id).with_extension("request");
+        let body = call.body();
+        let bytes =
+            serde_json::to_vec(&body).map_err(|_| invalid("Linear request cannot be encoded"))?;
+        if bytes.len() > 1_048_576 {
+            return Err(invalid("Linear request exceeds size limit"));
+        }
+        if path.exists() {
+            if self.read_request(&reference)?.as_ref() != Some(&body) {
+                return Err(invalid(
+                    "Linear operation ID was reused for another request",
+                ));
+            }
+            return Ok(reference);
+        }
+        let mut options = OpenOptions::new();
+        options.write(true).create_new(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            options.mode(0o600);
+        }
+        let mut file = options
+            .open(path)
+            .map_err(|_| invalid("Linear request could not be staged"))?;
+        file.write_all(&bytes)
+            .and_then(|()| file.sync_all())
+            .map_err(|_| invalid("Linear request could not be synced"))?;
+        self.sync_directory()
+            .map_err(oneiron::LinearSyncError::from)?;
+        Ok(reference)
+    }
+
+    pub(crate) fn read_request(&self, reference: &str) -> LinearSyncResult<Option<Value>> {
+        let Some(suffix) = reference.strip_prefix("linear:request:v1:") else {
+            return Ok(None);
+        };
+        if suffix.len() != 64 || !suffix.bytes().all(|ch| ch.is_ascii_hexdigit()) {
+            return Ok(None);
+        }
+        let path = self.journal_dir.join(format!("{suffix}.request"));
+        let file = match File::open(path) {
+            Ok(file) => file,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+            Err(_) => return Err(invalid("Linear request cannot be read")),
+        };
+        let mut bytes = Vec::new();
+        file.take(1_048_577)
+            .read_to_end(&mut bytes)
+            .map_err(|_| invalid("Linear request cannot be read"))?;
+        if bytes.len() > 1_048_576 {
+            return Err(invalid("Linear request exceeds size limit"));
+        }
+        serde_json::from_slice(&bytes)
+            .map(Some)
+            .map_err(|_| invalid("Linear request is corrupt"))
+    }
+
     fn digest(call: &GraphQlCall) -> Result<String, GraphQlTransportError> {
         Ok(blake3::hash(
             &serde_json::to_vec(&call.body()).map_err(|_| GraphQlTransportError::Uncertain)?,

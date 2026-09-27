@@ -4,6 +4,7 @@
 //! module does not mint a new receipt store and does not change emitter schema.
 
 mod brief_share;
+mod direct_dispatch;
 mod family;
 mod field_set;
 mod grant;
@@ -40,6 +41,7 @@ pub use self::projection::{
 };
 pub use self::session::{SessionLocalReceiptLog, SessionReceiptClose};
 
+pub(crate) use self::direct_dispatch::record as record_direct_dispatch_receipt;
 pub(crate) use self::family::gate_decision_receipt;
 pub(crate) use self::kernel::{
     FIELD_AMENDMENT_DELTA, FIELD_AMENDMENT_DELTA_UNCAPTURED, FIELD_DEMOTION_REASON,

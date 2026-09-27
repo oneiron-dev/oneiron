@@ -53,6 +53,15 @@ impl<'v, T> VaultLinearOutboundDoor<'v, T> {
     pub fn into_transport(self) -> T {
         self.journal.into_transport()
     }
+
+    /// Resolves a `content_ref` on an ordinary outbound receipt to the exact
+    /// host-private GraphQL request frozen before gate evaluation.
+    ///
+    /// # Errors
+    /// Returns an error if the host custody file cannot be read or decoded.
+    pub fn request_by_ref(&self, reference: &str) -> LinearSyncResult<Option<Value>> {
+        self.journal.read_request(reference)
+    }
 }
 
 struct LinearSink<'a, T> {
@@ -60,13 +69,14 @@ struct LinearSink<'a, T> {
     operation_id: [u8; 32],
     call: &'a GraphQlCall,
     intent_ref: &'a str,
+    content_ref: &'a str,
 }
 
 impl<T: GraphQlExecutor> OutboundExecutionSink for LinearSink<'_, T> {
     fn execute(&mut self, request: &OutboundExecutionRequest<'_>) -> OutboundExecutionOutcome {
         if request.intent_ref != self.intent_ref
             || request.intent.channel != "linear"
-            || request.intent.content_ref.as_deref() != Some(self.call.body().to_string().as_str())
+            || request.intent.content_ref.as_deref() != Some(self.content_ref)
             || request.intent.idempotency_key.as_deref()
                 != Some(blake3::Hash::from(self.operation_id).to_hex().as_str())
         {
@@ -114,9 +124,10 @@ impl<T: GraphQlExecutor> LinearOutboundDoor for VaultLinearOutboundDoor<'_, T> {
             .ok_or_else(|| invalid("Linear outbound actor has no reference"))?;
         let digest = blake3::Hash::from(operation_id).to_hex().to_string();
         let intent_ref = format!("linear:{digest}");
+        let content_ref = self.journal.stage_request(&operation_id, call)?;
         let intent = OutboundIntent::from_trigger(
             OutboundIntentDraft::new(actor_ref, verb, "linear", target)
-                .content_ref(call.body().to_string())
+                .content_ref(content_ref.clone())
                 .idempotency_key(digest),
             OutboundIntentTrigger::agent_immediate(intent_ref.clone()),
         );
@@ -135,10 +146,11 @@ impl<T: GraphQlExecutor> LinearOutboundDoor for VaultLinearOutboundDoor<'_, T> {
             operation_id,
             call,
             intent_ref: &intent_ref,
+            content_ref: &content_ref,
         };
         let result = self
             .vault
-            .dispatch_outbound_intent(request, &mut sink)
+            .dispatch_outbound_intent_recorded(request, &mut sink)
             .map_err(|_| invalid("Linear outbound dispatch failed"))?;
         if result.outcome != OutboundDispatchOutcome::DeliveredToChannel {
             return Err(invalid("Linear outbound dispatch did not deliver"));
