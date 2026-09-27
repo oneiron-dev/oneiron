@@ -230,6 +230,122 @@ mod tests {
                 code: crate::error::InputInvalidCode::MalformedXref
             }
         ));
+        // /Pr#65v decodes to /Prev. A different spelling cannot erase the
+        // unsigned revision from the shared structural analysis.
+        let mut escaped = appended.bytes.clone();
+        let marker = b"/Prev";
+        let at = escaped
+            .windows(marker.len())
+            .rposition(|w| w == marker)
+            .unwrap();
+        escaped.splice(at..at + marker.len(), b"/Pr#65v".iter().copied());
+        let err = engine
+            .seal_pdf(
+                &escaped,
+                &SealRequest {
+                    operation_id: "reject-escaped-prev".into(),
+                    target_profile: PadesProfile::BaselineB,
+                },
+            )
+            .await
+            .unwrap_err();
+        assert!(
+            matches!(
+                err,
+                SealError::InputInvalid {
+                    code: crate::error::InputInvalidCode::MalformedXref,
+                }
+            ),
+            "escaped linkage must not bypass admission: {err:?}"
+        );
+        let report = engine.verify_sealed_pdf(&escaped).unwrap();
+        assert_eq!(
+            report.revisions.len(),
+            2,
+            "escaped /Prev must retain both revisions"
+        );
+    }
+
+    #[tokio::test]
+    async fn bounded_revision_and_token_work_refuse_before_backend() {
+        let original = std::fs::read(format!(
+            "{}/tests/fixtures/pdf-input/classic_1page.pdf",
+            env!("CARGO_MANIFEST_DIR")
+        ))
+        .unwrap();
+        let limits = SealResourceLimits::default();
+        let mut many = original.clone();
+        for _ in 0..=32 {
+            let state = pdf::reparse_revision(&many, &limits).unwrap();
+            let id = state.max_obj + 1;
+            many = pdf::append_revision(
+                &many,
+                &state,
+                &pdf::RevisionKind::Dss {
+                    material_objects: vec![(id, b"<< /Type /DSS >>".to_vec())],
+                    dss_obj: id,
+                },
+                0,
+            )
+            .unwrap()
+            .bytes;
+        }
+        let base_config = test_config(FetchPolicy::default());
+        let backend: Arc<dyn SealBackend> = Arc::new(NoopBackend);
+        let engine = NativeSealEngine::new(
+            base_config.clone(),
+            backend.clone(),
+            Arc::new(crate::api::OfflineFetcher),
+            Arc::new(Clock),
+        )
+        .unwrap();
+        let request = SealRequest {
+            operation_id: "work-limit".into(),
+            target_profile: PadesProfile::BaselineB,
+        };
+        assert!(matches!(
+            engine.seal_pdf(&many, &request).await.unwrap_err(),
+            SealError::InputInvalid {
+                code: crate::error::InputInvalidCode::MalformedXref
+            }
+        ));
+
+        // Same well-formed object array is accepted with default resources,
+        // but a deliberately tight object/work budget refuses it before
+        // consulting the signing backend.
+        let xref = original
+            .windows(b"\nxref\n".len())
+            .position(|w| w == b"\nxref\n")
+            .unwrap()
+            + 1;
+        let mut tokens = original[..xref].to_vec();
+        let offset = tokens.len();
+        tokens.extend_from_slice(b"4 0 obj\n[");
+        for _ in 0..3_000 {
+            tokens.extend_from_slice(b"0 ");
+        }
+        tokens.extend_from_slice(b"]\nendobj\n");
+        let xref = tokens.len();
+        tokens.extend_from_slice(format!("xref\n0 5\n0000000000 65535 f \n0000000009 00000 n \n0000000058 00000 n \n0000000115 00000 n \n{offset:010} 00000 n \ntrailer\n<< /Size 5 /Root 1 0 R >>\nstartxref\n{xref}\n%%EOF").as_bytes());
+        assert!(matches!(
+            engine.seal_pdf(&tokens, &request).await.unwrap_err(),
+            SealError::BackendUnavailable { .. }
+        ));
+        let mut tight = base_config;
+        tight.resource_limits.max_pdf_objects = 16;
+        let engine = NativeSealEngine::new(
+            tight,
+            backend,
+            Arc::new(crate::api::OfflineFetcher),
+            Arc::new(Clock),
+        )
+        .unwrap();
+        assert!(matches!(
+            engine.seal_pdf(&tokens, &request).await.unwrap_err(),
+            SealError::InputInvalid {
+                code: crate::error::InputInvalidCode::MalformedXref
+            }
+        ));
     }
 
     #[test]

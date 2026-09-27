@@ -13,9 +13,39 @@ use lopdf::{
     Document, LoadOptions, ObjectId,
     xref::{XrefEntry, XrefType},
 };
-use std::{collections::BTreeSet, ops::Range};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    ops::Range,
+};
 
 const MAX_REVISIONS: usize = 32;
+const MAX_STRUCTURAL_WORK: usize = 8_000_000;
+const MAX_PREFIX_WORK: usize = 2 * 1024 * 1024 * 1024;
+struct WorkBudget {
+    remaining: usize,
+}
+impl WorkBudget {
+    fn new(limits: &SealResourceLimits) -> Self {
+        // Caller object caps also bound allowable token work. The default
+        // 1M-object cap retains the fixed 8M-token ceiling; a deliberately
+        // tight object cap tightens the work budget rather than silently
+        // allowing a single enormous object to consume the whole host.
+        Self {
+            remaining: limits
+                .max_input_bytes
+                .min(MAX_STRUCTURAL_WORK)
+                .min(limits.max_pdf_objects.saturating_mul(128)),
+        }
+    }
+    fn charge(&mut self, count: usize) -> Result<(), RevisionAnalysisError> {
+        self.remaining = self
+            .remaining
+            .checked_sub(count)
+            .ok_or(RevisionAnalysisError::Limit)?;
+        Ok(())
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum RevisionAnalysisError {
     Framing,
@@ -214,9 +244,9 @@ fn definitions(
     doc: &Document,
     xref_offset: usize,
     limits: &SealResourceLimits,
+    budget: &mut WorkBudget,
 ) -> Result<Vec<ObjectDefinition>, RevisionAnalysisError> {
-    let max_work = limits.max_input_bytes.min(8_000_000);
-    let mut lexer = PdfLexer::new(bytes, start, max_work);
+    let mut lexer = PdfLexer::new(bytes, start, budget.remaining);
     let mut first: Option<Token<'_>> = None;
     let mut second: Option<Token<'_>> = None;
     let mut current: Option<(ObjectId, usize, Option<Range<usize>>)> = None;
@@ -290,6 +320,7 @@ fn definitions(
     if current.is_some() {
         return Err(RevisionAnalysisError::Framing);
     }
+    budget.charge(lexer.work())?;
     Ok(out)
 }
 
@@ -308,8 +339,16 @@ pub(crate) fn analyze(
         return Err(RevisionAnalysisError::Limit);
     }
     let mut previous_end = 0;
+    let mut prefix_work = 0usize;
+    let mut budget = WorkBudget::new(limits);
     let mut revisions: Vec<RevisionFact> = Vec::with_capacity(ends.len());
     for end in ends {
+        prefix_work = prefix_work
+            .checked_add(end)
+            .ok_or(RevisionAnalysisError::Limit)?;
+        if prefix_work > MAX_PREFIX_WORK {
+            return Err(RevisionAnalysisError::Limit);
+        }
         let doc = strict(&bytes[..end], limits)?;
         let xref_offset = usize::try_from(
             last_startxref(&bytes[..end]).map_err(|_| RevisionAnalysisError::Framing)?,
@@ -321,27 +360,36 @@ pub(crate) fn analyze(
         let prev_xref = revisions
             .last()
             .map(|prior: &RevisionFact| prior.xref_offset);
-        let definitions = definitions(&bytes[..end], previous_end, end, &doc, xref_offset, limits)?;
+        let definitions = definitions(
+            &bytes[..end],
+            previous_end,
+            end,
+            &doc,
+            xref_offset,
+            limits,
+            &mut budget,
+        )?;
         if definitions.iter().any(|d| {
             d.byte_span.start >= d.byte_span.end
                 || d.stream_span.as_ref().is_some_and(|s| s.start > s.end)
         }) {
             return Err(RevisionAnalysisError::Framing);
         }
-        // Every indexed definition introduced in this revision must have an
-        // exact matching raw header. Compressed object members are carried by
-        // their indexed container stream, not by fabricated object headers.
+        // Index exact raw identities and offsets ONCE. Preserve duplicate
+        // counts in the facts, then reconcile each normal xref entry in
+        // O(log N) rather than walking every definition for every entry.
+        let mut raw = BTreeMap::<(ObjectId, usize), usize>::new();
+        for definition in &definitions {
+            budget.charge(1)?;
+            *raw.entry((definition.id, definition.byte_span.start))
+                .or_default() += 1;
+        }
         for (&num, entry) in &doc.reference_table.entries {
+            budget.charge(1)?;
             if let XrefEntry::Normal { offset, generation } = entry {
                 let offset = *offset as usize;
                 if (previous_end..end).contains(&offset)
-                    && definitions
-                        .iter()
-                        .filter(|d| {
-                            d.id == (num, *generation) && d.byte_span.start == offset && d.indexed
-                        })
-                        .count()
-                        != 1
+                    && raw.get(&((num, *generation), offset)) != Some(&1)
                 {
                     return Err(RevisionAnalysisError::Framing);
                 }

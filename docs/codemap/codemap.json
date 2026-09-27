@@ -40477,7 +40477,7 @@
      "surface": {}
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "NativeSealEngine"
@@ -40526,13 +40526,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/native/pdf/lex.rs",
      "purpose": "Bounded PDF structural tokens",
      "surface": {
-      "crate-vis": 9
+      "crate-vis": 11
      }
     },
     {
@@ -40566,7 +40566,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "src",
      "notable": [],
      "path": "src/native/pdf/revision_chain.rs",

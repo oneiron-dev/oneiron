@@ -22,15 +22,15 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/native/cms/parse.rs` | src | s | 5 crate-vis | — | Strict CMS ContentInfo/SignerInfo parsing with version gating |
 | `src/native/cms/policy.rs` | src | s | 10 crate-vis | — | Attribute/ESS binding and frozen signature-suite verification gates |
 | `src/native/cms/tests.rs` | test | m | — | — | CMS assembly/parsing round-trip, canonicality, and version-gating tests |
-| `src/native/engine.rs` | src | s | 1 struct · 2 fn | NativeSealEngine | `NativeSealEngine`: composition of config, backend, fetcher, and clock |
+| `src/native/engine.rs` | src | m | 1 struct · 2 fn | NativeSealEngine | `NativeSealEngine`: composition of config, backend, fetcher, and clock |
 | `src/native/fetch.rs` | src | m | 1 struct · 1 fn · 1 re-export · 3 crate-vis | SsrfGuardedHttpFetcher | SSRF-guarded fetcher (§5) |
 | `src/native/mod.rs` | src | s | 2 re-export · 6 crate-vis | — | Native implementation modules (feature `native`) |
 | `src/native/pdf/incremental.rs` | src | s | 5 crate-vis | — | Byte-exact incremental append: xref table/stream emitters, EOF glue, ByteRange/Contents patch, hash and… |
-| `src/native/pdf/lex.rs` | src | s | 9 crate-vis | — | Bounded PDF structural tokens |
+| `src/native/pdf/lex.rs` | src | m | 11 crate-vis | — | Bounded PDF structural tokens |
 | `src/native/pdf/mod.rs` | src | s | 6 crate-vis | — | Read-only PDF parse plus byte-exact incremental-update writer (§7.1, §7.2) |
 | `src/native/pdf/objects.rs` | src | m | 6 crate-vis | — | Revision object graphs (§7.2): PDF value serializers, sig-dict placeholders, AcroForm/page updates, checked… |
 | `src/native/pdf/parse.rs` | src | m | 15 crate-vis | — | Prepared-input validation (§7.1): object/catalog scans, strict load, xref consistency, and RevisionState… |
-| `src/native/pdf/revision_chain.rs` | src | m | 6 crate-vis | — | Shared, bounded PDF revision discovery from the actual xref /Prev chain |
+| `src/native/pdf/revision_chain.rs` | src | s | 6 crate-vis | — | Shared, bounded PDF revision discovery from the actual xref /Prev chain |
 | `src/native/pdf/revision_facts.rs` | src | m | 8 crate-vis | — | One bounded structural account of PDF revisions, definitions and xref roles |
 | `src/native/pdf/tests.rs` | test | m | — | — | Inline test mod: fixture loaders, doc builders, validation and writer round-trip tests |
 | `src/native/profile/assembly.rs` | src | m | 6 crate-vis | — | B-B/B-T/B-LTA orchestration: backend signing, TSA failover, capacity ladder, DocTimeStamp, degrade warnings |
