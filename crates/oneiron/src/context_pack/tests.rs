@@ -4595,12 +4595,13 @@ fn non_default_pack_replay_config_matches_neighbors_vectors_and_serialized_bytes
         vault
             .context_pack()
             .search_text("replay-root-marker", 10)
+            .with_temporal_now(100)
             .edge_hop(2)
             .include_vectors(true)
             .field_profile(FieldProfile::Full)
             .format(PackFormat::Plaintext)
             .merge_neighbors(false)
-            .include_stats(true)
+            .include_stats(false)
             .token_budget(512)
             .max_field_chars(120)
             .source_ranking(source.clone())
@@ -4640,10 +4641,84 @@ fn non_default_pack_replay_config_matches_neighbors_vectors_and_serialized_bytes
     let row = vault
         .retrieval_run(serialized.run_id.expect("stored serialized run"))?
         .unwrap();
-    assert_eq!(
-        row.replay_inputs.unwrap().config["pack"]["terminal_kind"],
-        "serialized"
-    );
+    let recorded = row.replay_inputs.expect("recorded replay inputs");
+    assert_eq!(recorded.config["pack"]["terminal_kind"], "serialized");
     assert_eq!(row.pack_output.unwrap().bytes, serialized.value);
+
+    // The host resolves the authorized query and corpus refs. Rebuild the
+    // engine settings only from the recorded config, not from `build()`.
+    assert_eq!(
+        recorded.query_ref.as_deref(),
+        Some("eval://queries/pack-2182")
+    );
+    assert_eq!(
+        recorded.corpus_snapshot_ref.as_deref(),
+        Some("eval://corpus/pack-2182")
+    );
+    let stored = &recorded.config;
+    let assembly = &stored["pack"]["assembly"];
+    let projection = &stored["pack"]["projection"];
+    let profile = match projection["profile"].as_str() {
+        Some("Full") => FieldProfile::Full,
+        other => panic!("unrecognized replay profile: {other:?}"),
+    };
+    let format = match projection["format"].as_str() {
+        Some("Plaintext") => PackFormat::Plaintext,
+        other => panic!("unrecognized replay format: {other:?}"),
+    };
+    let allocation = &projection["allocation"];
+    let restored_allocation = TokenAllocation {
+        claims: allocation["claims"].as_f64().unwrap() as f32,
+        turns: allocation["turns"].as_f64().unwrap() as f32,
+        summaries: allocation["summaries"].as_f64().unwrap() as f32,
+        other: allocation["other"].as_f64().unwrap() as f32,
+    };
+    let restore = || {
+        vault
+            .context_pack()
+            .search_text(
+                "replay-root-marker",
+                stored["channels"]["text_limit"].as_u64().unwrap() as usize,
+            )
+            .with_temporal_now(stored["temporal_now"].as_u64().unwrap())
+            .read_mode(serde_json::from_value(assembly["read_mode"].clone()).unwrap())
+            .hydrate(assembly["hydrate"].as_bool().unwrap())
+            .include_edges(assembly["include_edges"].as_bool().unwrap())
+            .edge_hop(assembly["edge_hop"].as_u64().unwrap() as u32)
+            .selected_edge_budget(assembly["selected_edge_budget"].as_u64().unwrap() as usize)
+            .include_vectors(assembly["include_vectors"].as_bool().unwrap())
+            .source_ranking(serde_json::from_value(assembly["source_ranking"].clone()).unwrap())
+            .field_profile(profile)
+            .format(format)
+            .token_allocation(restored_allocation)
+            .merge_neighbors(projection["merge_neighbors"].as_bool().unwrap())
+            .include_stats(projection["include_stats"].as_bool().unwrap())
+            .token_budget(projection["token_budget"].as_u64().unwrap() as usize)
+            .max_field_chars(projection["max_field_chars"].as_u64().unwrap() as usize)
+            .max_item_tokens(projection["max_item_tokens"].as_u64().unwrap() as usize)
+            .replay_query_ref(recorded.query_ref.clone().unwrap())
+            .corpus_snapshot_ref(recorded.corpus_snapshot_ref.clone().unwrap())
+            .capture_retrieval_trace(true)
+    };
+    let replayed_raw = restore().run_with_telemetry()?;
+    assert_eq!(
+        replayed_raw
+            .value
+            .neighbors
+            .iter()
+            .map(|row| row.id)
+            .collect::<Vec<_>>(),
+        ids
+    );
+    assert_eq!(
+        replayed_raw.value.results[0].fields,
+        raw.value.results[0].fields
+    );
+    assert_eq!(
+        replayed_raw.value.results[0].vector,
+        raw.value.results[0].vector
+    );
+    let replayed_serialized = restore().run_serialized_with_telemetry()?;
+    assert_eq!(replayed_serialized.value, serialized.value);
     Ok(())
 }
