@@ -65,6 +65,44 @@ fn an_lfs_upload_spools_inside_the_vault_directory() {
     assert_eq!(error.kind(), ErrorKind::Io);
 }
 
+#[cfg(unix)]
+#[test]
+fn lfs_staging_symlink_never_spools_outside_the_vault() {
+    use std::os::unix::fs::symlink;
+    let (dir, vault) = open_test_vault_with(embedding_test_config());
+    let outside = tempfile::tempdir().unwrap();
+    symlink(outside.path(), dir.path().join("lfs-staging")).unwrap();
+    let bytes = b"staging symlink containment";
+    assert!(
+        vault
+            .put_lfs_object(LfsOid::digest(bytes), bytes, test_time(), LEARNED_AT)
+            .is_err()
+    );
+    assert_eq!(std::fs::read_dir(outside.path()).unwrap().count(), 0);
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn lfs_staging_follows_the_open_root_after_rename_not_its_old_path() {
+    let (dir, vault) = open_test_vault_with(embedding_test_config());
+    let original = dir.path().to_path_buf();
+    let moved = original.with_extension("moved-vault");
+    std::fs::rename(&original, &moved).unwrap();
+    std::fs::create_dir(&original).unwrap();
+    let bytes = b"root replacement containment";
+    let result = vault.put_lfs_object(LfsOid::digest(bytes), bytes, test_time(), LEARNED_AT);
+    let inside = moved.join("lfs-staging").is_dir();
+    let outside = original.join("lfs-staging").exists();
+    std::fs::remove_dir_all(&original).unwrap();
+    std::fs::rename(&moved, &original).unwrap();
+    assert!(
+        result.is_ok(),
+        "upload remains bound to opened root: {result:?}"
+    );
+    assert!(inside);
+    assert!(!outside);
+}
+
 #[test]
 fn an_lfs_upload_over_the_set_cap_writes_nothing() {
     let (_dir, vault) = open_test_vault_with(embedding_test_config());

@@ -4,8 +4,8 @@ mod membership;
 mod session;
 mod visibility;
 
-pub(crate) use body::validate_put_in_txn;
 pub use body::{ConversationBody, ConversationKind};
+pub(crate) use body::{fresh_id_in_txn, validate_put_in_txn};
 pub use membership::{HistoryChoice, MembershipAction, MembershipRow, MembershipWindow};
 pub use session::{SessionMode, SessionPresence};
 pub(crate) use visibility::AudienceCache;

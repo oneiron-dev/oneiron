@@ -1,6 +1,9 @@
 //! Closed-loop authenticated fleet traffic against one real loopback server and vault.
 use futures_util::{StreamExt, TryStreamExt, stream};
-use oneiron::{TimeRange, Vault};
+use oneiron::access_grant::{
+    AccessGrant, AccessGrantCapability, AccessGrantScope, AccessGrantStatus,
+};
+use oneiron::{EdgeActorClass, TimeRange, Vault, WriteActor};
 use oneiron_server::{config::SyncServerConfig, server::SyncServer};
 use serde_json::json;
 use std::collections::BTreeMap;
@@ -55,10 +58,38 @@ fn seed_actors(vault: &Vault, agents: usize) -> Result<()> {
     Ok(())
 }
 
+/// Match the authenticated fleet's actor floor and message-space grant before
+/// measuring traffic; a bearer slip alone is not a policy read permit.
+fn seed_read_authority(vault: &Vault, agents: usize) -> Result<()> {
+    let actors = (0..agents)
+        .map(|index| Ok(WriteActor::new(id(0x31, index)?, EdgeActorClass::Agent)))
+        .collect::<Result<Vec<_>>>()?;
+    vault.install_read_permits_for_test(&actors)?;
+    for index in 0..agents {
+        vault.create_access_grant(
+            &id(0x36, index)?,
+            &AccessGrant {
+                authority_scope: oneiron::federation::Scope::top(),
+                principal_ref: id(0x31, index)?,
+                scope: AccessGrantScope::Messages {
+                    space_ref: id(0x35, index)?,
+                },
+                capability: AccessGrantCapability::MessagesRead,
+                status: AccessGrantStatus::Active,
+                created_at: AT,
+                revoked_at: None,
+                expires_at: None,
+            },
+        )?;
+    }
+    Ok(())
+}
+
 pub(super) async fn measure(plan: &Plan) -> Result<Observation> {
     let directory = tempfile::tempdir_in(&plan.scratch)?;
     let vault = Arc::new(Vault::open(directory.path(), optimization::config(plan))?);
     seed_actors(&vault, plan.agents)?;
+    seed_read_authority(&vault, plan.agents)?;
     progress("seeded", plan.agents, plan.agents);
     let secret = oneiron::EntityId::now().to_hex();
     let server = Arc::new(SyncServer::new(
@@ -179,30 +210,47 @@ async fn write_phase(
     metrics: &mut BTreeMap<String, Metric>,
 ) -> Result<()> {
     let phase = Instant::now();
-    let samples = stream::iter(agents.iter_mut()).map(|agent| async move {
-        let start = Instant::now();
-        let message_id = id(0x33, agent.index * 100 + round)?.to_hex();
-        let body = json!({"conversation_ref":id(0x32, agent.index)?.to_hex(),
+    let samples = stream::iter(agents.iter_mut())
+        .map(|agent| async move {
+            let start = Instant::now();
+            let message_id = id(0x33, agent.index * 100 + round)?.to_hex();
+            let body = json!({"conversation_ref":id(0x32, agent.index)?.to_hex(),
             "turn_ref":id(0x34, agent.index * 100 + round)?.to_hex(),
             "occurred_at":AT + round as u64,
             "messages":[{"id":message_id,"author":"companion","message_type":"dialogue",
-                "content":needle(agent.index, round),"metadata":null,"is_visible":true,"order":0}]});
-        let binding = agent.binding()?.to_string();
-        let response = http.post(endpoint).bearer_auth(&agent.token)
-            .header("x-oneiron-binding", binding).json(&body).send().await?;
-        let status = response.status();
-        let bytes = response.bytes().await?;
-        if !status.is_success() {
-            return Err(format!("witness for agent {} returned {}: {}", agent.index,
-                status, String::from_utf8_lossy(&bytes)).into());
-        }
-        let receipt: oneiron::memory::WitnessReceipt = serde_json::from_slice(&bytes)?;
-        if receipt.message_short_ids.len() != 1 || !receipt.receipt_ref.starts_with("witness:") {
-            return Err("witness returned incomplete receipt".into());
-        }
-        agent.expected_message = receipt.message_short_ids[0].clone();
-        Ok::<_, super::Error>(start.elapsed().as_secs_f64() * 1000.0)
-    }).buffer_unordered(plan.concurrency).try_collect().await?;
+                "content":needle(agent.index, round),
+                "metadata":{"rel":id(0x35, agent.index)?.to_hex()},
+                "is_visible":true,"order":0}]});
+            let binding = agent.binding()?.to_string();
+            let response = http
+                .post(endpoint)
+                .bearer_auth(&agent.token)
+                .header("x-oneiron-binding", binding)
+                .json(&body)
+                .send()
+                .await?;
+            let status = response.status();
+            let bytes = response.bytes().await?;
+            if !status.is_success() {
+                return Err(format!(
+                    "witness for agent {} returned {}: {}",
+                    agent.index,
+                    status,
+                    String::from_utf8_lossy(&bytes)
+                )
+                .into());
+            }
+            let receipt: oneiron::memory::WitnessReceipt = serde_json::from_slice(&bytes)?;
+            if receipt.message_short_ids.len() != 1 || !receipt.receipt_ref.starts_with("witness:")
+            {
+                return Err("witness returned incomplete receipt".into());
+            }
+            agent.expected_message = receipt.message_short_ids[0].clone();
+            Ok::<_, super::Error>(start.elapsed().as_secs_f64() * 1000.0)
+        })
+        .buffer_unordered(plan.concurrency)
+        .try_collect()
+        .await?;
     metrics.insert(
         format!("write_{round}"),
         Metric::new(samples, phase.elapsed().as_secs_f64())?,

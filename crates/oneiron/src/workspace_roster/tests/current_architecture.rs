@@ -349,6 +349,24 @@ fn house_name_can_be_owner_edited_without_rewriting_the_seed_or_replay() -> Resu
 }
 
 #[test]
+fn mailbox_verification_clock_observation_does_not_invalidate_its_own_revision() -> Result<()> {
+    let (_dir, vault, intent, owner) = mailbox_fixture()?;
+    let requested = intent.delegated_mailbox.as_ref().expect("mailbox");
+    assert_mailbox_waiting(&vault, &intent, &owner)?;
+    activate_mailbox(&vault, requested.identity_ref)?;
+    vault.apply_channel_identity_autonomy(&requested.autonomy, &owner)?;
+    // Make the next authorization read advance time without any unrelated
+    // writer. Its own durable clock observation cannot invalidate the proof.
+    vault
+        .store
+        .clock
+        .observe_floor(vault.now_recorded_at().saturating_add(10))?;
+    let revision = verify_mailbox_revision(&vault, &intent, Some(&owner))?;
+    require_mailbox_revision(&vault, revision)?;
+    Ok(())
+}
+
+#[test]
 fn mailbox_crash_resume_reopens_after_provision_lifecycle_apply_and_journal() -> Result<()> {
     for checkpoint in 0..5 {
         let (dir, vault, intent, owner) = mailbox_fixture()?;

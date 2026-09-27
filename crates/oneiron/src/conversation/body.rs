@@ -129,6 +129,21 @@ pub(crate) fn validate_put_in_txn(
     }
     Ok(())
 }
+/// A fresh room id has neither a row nor durable/stale deletion history.
+/// Keep this test in the caller's write transaction so it also sees a deletion
+/// staged earlier in that transaction.
+pub(crate) fn fresh_id_in_txn(
+    store: &crate::store::Store,
+    txn: &heed::RoTxn<'_>,
+    id: EntityId,
+) -> Result<bool> {
+    if store.entities.get(txn, id.as_bytes())?.is_some() {
+        return Ok(false);
+    }
+    let state = crate::ports::TombstoneStoreRead::port_deletion_state(store, txn, &id)?;
+    Ok(!state.deleted && !state.stale)
+}
+
 impl Vault {
     pub fn conversation_body(&self, id: EntityId) -> Result<ConversationBody> {
         let txn = self.store.env.read_txn()?;
@@ -164,9 +179,7 @@ impl Vault {
         let at = occurred.start;
         self.with_write_txn(|txn| {
             authorize(self, txn, actor)?;
-            if crate::vault::live_entity_row_in_txn(&self.store, txn, &id)?
-                != crate::vault::LiveEntityRow::Absent
-            {
+            if !fresh_id_in_txn(&self.store, txn, id)? {
                 return Err(state("conversation already exists"));
             }
             for person in &body.member_ids {

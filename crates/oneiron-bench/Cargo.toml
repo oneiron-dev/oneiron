@@ -16,7 +16,9 @@ serde_bytes = "0.11"
 # ONE-331: `benches/materializer_mutex.rs` measures the Observer B
 # materialization path, and `oneiron::sync` is feature-gated
 # (`crates/oneiron/src/lib.rs`), so the harness has to ask for it.
-oneiron = { path = "../oneiron", features = ["sync"] }
+# Fleet traffic seeds explicit actor read permits through the bounded
+# test-support fixture door; the benchmark is not a shipped engine host.
+oneiron = { path = "../oneiron", features = ["sync", "test-support"] }
 oneiron-llm-openai = { path = "../oneiron-llm-openai" }
 blake3.workspace = true
 ed25519-dalek.workspace = true

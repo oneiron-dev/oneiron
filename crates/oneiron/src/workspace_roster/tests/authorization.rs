@@ -31,6 +31,14 @@ fn durable_rows(vault: &Vault) -> Result<Vec<RawRows>> {
     Ok(result)
 }
 
+/// A grant authorization may durably advance the clock floor even when the
+/// requested workspace mutation is refused. It must not change any other row.
+fn durable_rows_without_authorization_clock(vault: &Vault) -> Result<Vec<RawRows>> {
+    let mut rows = durable_rows(vault)?;
+    rows[1].retain(|(key, _)| key.as_slice() != crate::ports::CLOCK_FLOOR);
+    Ok(rows)
+}
+
 #[test]
 fn every_onboarding_mutation_rechecks_revoked_authority_after_preflight() -> Result<()> {
     let mutations: &[(&str, Mutation)] = &[
@@ -576,7 +584,7 @@ fn revoked_mailbox_proof_blocks_apply_resume_publication_and_completed_replay() 
                 }
                 _ => unreachable!(),
             }
-            let before = durable_rows(&vault)?;
+            let before = durable_rows_without_authorization_clock(&vault)?;
             assert!(
                 vault
                     .verify_channel_identity_autonomy(&requested.autonomy, &owner)
@@ -604,7 +612,7 @@ fn revoked_mailbox_proof_blocks_apply_resume_publication_and_completed_replay() 
                 .is_err()
             );
             assert_eq!(
-                durable_rows(&vault)?,
+                durable_rows_without_authorization_clock(&vault)?,
                 before,
                 "stage {stage}, revoke {revoke}"
             );

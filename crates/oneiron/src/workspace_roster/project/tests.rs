@@ -238,3 +238,24 @@ fn erased_parent_is_invalid_not_a_pending_dependency() -> Result<()> {
     }
     Ok(())
 }
+
+#[test]
+fn updating_project_cannot_recreate_its_soft_deleted_home_room() -> Result<()> {
+    let dir = tempfile::tempdir()?;
+    let vault = Vault::open(dir.path(), crate::VaultConfig::default())?;
+    let root = vault.root_project()?;
+    let leader = EntityId::from_hex(&vault.project(root)?.unwrap().leader)?;
+    let id = EntityId::now();
+    let project = ProjectRecord::new(id, Some(root), root, leader);
+    vault.put_project(id, &project, 1)?;
+    let room = EntityId::from_hex(&project.home_room)?;
+    let changes = vault.project_room_changes(id)?;
+    vault.delete_entity_with_reason(&room, crate::DeleteReason::UserDelete)?;
+    let mut updated = project.clone();
+    updated.roster.push(EntityId::now().to_hex());
+    assert!(vault.put_project(id, &updated, 2).is_err());
+    assert_eq!(vault.project(id)?, Some(project));
+    assert!(vault.project_room(room)?.is_none());
+    assert_eq!(vault.project_room_changes(id)?, changes);
+    Ok(())
+}
