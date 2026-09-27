@@ -29,13 +29,7 @@ run_stage() {
 
 run_test_partition() {
   local partition="$1"
-  local -a packages=(--workspace)
-  # Linux cannot link napi tests off a Node host. Keep the existing macOS
-  # coverage, unlike verify.sh's unconditional exclusion for its reference lane.
-  if [ "$(uname -s)" = Linux ]; then
-    packages+=(--exclude oneiron-napi)
-  fi
-  run_stage test cargo nextest run --locked "${packages[@]}" --all-features --profile full --partition "$partition"
+  run_stage test cargo nextest run --locked --workspace --all-features --profile full --partition "$partition"
 }
 
 case "$LEG" in

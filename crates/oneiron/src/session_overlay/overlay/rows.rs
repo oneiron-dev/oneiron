@@ -86,6 +86,21 @@ impl SessionOverlay {
     /// so promote can never fall back on inferring ownership from index keys
     /// or on restamping the room clock.
     pub(crate) fn stage_journal_entry(self: &Arc<Self>, entry: JournalEntry) -> Result<()> {
+        // Keep the stored vocabulary inside the payloads this journal can
+        // scrub and the session replay path can understand. The substrate
+        // oracle also stages a payload-free Delete to check journal atomicity.
+        if !matches!(
+            entry.op,
+            crate::batch::BatchOp::Put { .. }
+                | crate::batch::BatchOp::Edge { .. }
+                | crate::batch::BatchOp::Text { .. }
+                | crate::batch::BatchOp::Vector { .. }
+                | crate::batch::BatchOp::Delete { .. }
+        ) {
+            return Err(Error::InvariantViolation(
+                "session journal cannot stage an unsupported batch op",
+            ));
+        }
         let incoming_bytes = entry.byte_size();
         ACTIVE_SEGMENT.with(|slot| {
             let mut slot = slot.borrow_mut();
