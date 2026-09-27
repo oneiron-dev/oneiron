@@ -1,5 +1,6 @@
 mod ingest;
 mod repo_ref;
+mod residue;
 mod snapshot;
 mod store;
 
