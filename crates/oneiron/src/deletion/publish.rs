@@ -321,6 +321,14 @@ impl Vault {
             crate::blob_artifact::esign::reject_event_delete(&self.store, &wtxn, id)
                 .and_then(|()| reverify_deletion_authority_before_publication(gate, &wtxn))
                 .and_then(|()| crate::federation::reject_ruling_delete(&self.store, &wtxn, id))
+                .and_then(|()| {
+                    if value.reason.is_hard() {
+                        self.store
+                            .reject_held_gate_partition_in_txn(&wtxn, id.as_bytes())
+                    } else {
+                        Ok(())
+                    }
+                })
         {
             self.discard_staged_deletion_gate_recovery_in_txn(&mut wtxn, id, value, gate_decision)?;
             self.withdraw_own_pending_tombstone_in_txn(&mut wtxn, window_key.as_str(), id, value)?;

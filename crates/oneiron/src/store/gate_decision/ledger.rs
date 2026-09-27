@@ -185,7 +185,7 @@ impl Store {
     /// Both sidecar deletes are safe no-ops for a record without a `grant_ref`
     /// or `claim_id`. Takes a decoded record because the grant-ref and claim
     /// index keys are only reconstructible from the primary's bytes.
-    fn delete_gate_decision_record_in_txn(
+    pub(in crate::store) fn delete_gate_decision_record_in_txn(
         &self,
         wtxn: &mut RwTxn<'_>,
         record: &GateDecisionRecord,
@@ -512,7 +512,21 @@ fn append_gate_decision_row_in_txn(
     if store.vault_meta().get(wtxn, &key)?.is_some() {
         return Err(Error::InvariantViolation("gate decision id collision"));
     }
-    let value = if record.claim_id.is_some() {
+    let value = if let Some(claim) = record.claim_id {
+        // A committed age sweep may still be retiring this partition's
+        // exterior key. No new ciphertext may reuse it in that interval.
+        match store
+            .vault_meta()
+            .get(&*wtxn, &super::retention::pending_key(&claim))?
+        {
+            None => {}
+            Some(raw) if raw.as_ref() == [1] => {
+                return Err(Error::InvalidConfig(
+                    "gate decision partition is retiring".into(),
+                ));
+            }
+            Some(_) => return Err(Error::CorruptedIndex("gate decision retirement intent")),
+        }
         orcb::encode_hot(store.gate_key_root(), record)?
     } else {
         encode_gate_decision(record)?

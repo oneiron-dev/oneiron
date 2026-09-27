@@ -139,9 +139,33 @@ fn safe_open(path: &Path, write_new: bool, directory: bool) -> Result<File> {
     Ok(file)
 }
 
+fn retired_marker(dir: &Path, claim_id: &[u8; 16]) -> PathBuf {
+    dir.join(format!(
+        ".retired-{}",
+        crate::entity_id::bytes_to_hex_lower(claim_id)
+    ))
+}
+
+fn is_retired(dir: &Path, claim_id: &[u8; 16]) -> Result<bool> {
+    let path = retired_marker(dir, claim_id);
+    match fs::symlink_metadata(&path) {
+        Ok(_) => {
+            // Refuse symlinks (including dangling ones), foreign owners and
+            // hard-linked marker files instead of mistaking them for absence.
+            safe_open(&path, false, false)?;
+            Ok(true)
+        }
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(false),
+        Err(err) => Err(err.into()),
+    }
+}
+
 fn read_key(root: &Path, claim_id: &[u8; 16]) -> Result<Zeroizing<[u8; 32]>> {
     let dir = key_directory(root)?;
     let _ = safe_open(&dir, false, true)?;
+    if is_retired(&dir, claim_id)? {
+        return Err(corrupt());
+    }
     let mut file = safe_open(&claim_key_path(root, claim_id)?, false, false)?;
     let mut key = Zeroizing::new([0; 32]);
     file.read_exact(&mut *key).map_err(|_| corrupt())?;
@@ -193,6 +217,9 @@ fn first_append_key(root: &Path, claim_id: &[u8; 16]) -> Result<Zeroizing<[u8; 3
     let directory = safe_open(&dir, false, true)?;
     clean_pending(&dir, claim_id)?;
     directory.sync_all()?;
+    if is_retired(&dir, claim_id)? {
+        return Err(corrupt());
+    }
     let path = claim_key_path(root, claim_id)?;
     if path.exists() {
         return read_key(root, claim_id);
@@ -311,6 +338,33 @@ pub(crate) fn preflight_checkpoint_rows(rows: &[(Vec<u8>, Vec<u8>)]) -> Result<(
             decode_hot(root, gate_decision_id_from_key(key)?, value)?;
         }
     }
+    Ok(())
+}
+
+/// Irreversibly retires the exterior key unit after the retention sweep has
+/// established that no surviving row needs it. The marker prevents a later
+/// append from minting a new key for an old, restorable ciphertext partition.
+pub(super) fn retire_claim_key(root: &Path, claim_id: &[u8; 16]) -> Result<()> {
+    let dir = key_directory(root)?;
+    let directory = safe_open(&dir, false, true)?;
+    let marker = retired_marker(&dir, claim_id);
+    match safe_open(&marker, true, false) {
+        Ok(file) => file.sync_all()?,
+        Err(Error::Io(err)) if err.kind() == std::io::ErrorKind::AlreadyExists => {
+            if !is_retired(&dir, claim_id)? {
+                return Err(corrupt());
+            }
+        }
+        Err(err) => return Err(err),
+    }
+    directory.sync_all()?;
+    let path = claim_key_path(root, claim_id)?;
+    match fs::remove_file(path) {
+        Ok(()) => {}
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
+        Err(err) => return Err(err.into()),
+    }
+    directory.sync_all()?;
     Ok(())
 }
 

@@ -884,3 +884,29 @@ fn deleting_record_retires_scope_stamp_even_for_same_id_same_bytes() -> Result<(
     assert!(vault.record_scope(&id)?.is_none());
     Ok(())
 }
+
+#[test]
+fn held_key_partition_defers_hard_erase_without_a_tombstone() -> Result<()> {
+    let (_dir, vault) = open_test_vault();
+    let id = EntityId::now();
+    vault.put_entity(&id, 1, test_time_range(10, 10), 20, b"keep while held")?;
+    vault.set_gate_decision_partition_hold(Some(*id.as_bytes()), true)?;
+    assert!(
+        vault
+            .delete_entity_with_reason(&id, DeleteReason::UserHardDelete)
+            .is_err()
+    );
+    assert_eq!(
+        vault.get(&id)?.as_deref(),
+        Some(b"keep while held".as_slice())
+    );
+    assert!(redaction_audit_receipts(&vault)?.is_empty());
+    assert!(hard_erase_sweep_rows(&vault)?.is_empty());
+    vault.set_gate_decision_partition_hold(Some(*id.as_bytes()), false)?;
+    assert!(
+        vault
+            .delete_entity_with_reason(&id, DeleteReason::UserHardDelete)?
+            .existed
+    );
+    Ok(())
+}

@@ -5098,3 +5098,196 @@ fn retrieval_quality_named_telemetry_round_trip_keeps_version_zero() -> Result<(
     assert_eq!(wire["confidence_adjustment"], -0.15);
     Ok(())
 }
+
+// ---- ONE-1642: owner-opted gate-decision retention / key-unit holds -------
+
+#[test]
+fn gate_retention_is_inert_without_owner_horizon() -> Result<()> {
+    let dir = tempfile::tempdir()?;
+    let vault = Vault::open(dir.path().join("vault"), VaultConfig::device())?;
+    let claim = [0x61; 16];
+    let old = claim_bound_gate_decision(synthetic_gate_decision_id(0xa0, 1), 1, &claim);
+    append_gate_decisions(&vault, std::slice::from_ref(&old))?;
+    assert_eq!(vault.gate_decision_retention_secs()?, None);
+    assert_eq!(vault.sweep_gate_decision_retention()?, 0);
+    assert_eq!(gate_decision_primary(&vault, old.decision_id)?, Some(old));
+    assert!(
+        dir.path()
+            .join(".vault.gate-decision-keys")
+            .join(crate::entity_id::bytes_to_hex_lower(&claim))
+            .exists()
+    );
+    assert!(vault.set_gate_decision_retention_secs(Some(0)).is_err());
+    Ok(())
+}
+
+#[test]
+fn gate_retention_drops_only_old_rows_and_wholly_expired_keys() -> Result<()> {
+    let dir = tempfile::tempdir()?;
+    let vault = Vault::open(dir.path().join("vault"), VaultConfig::device())?;
+    let now = vault.store.clock.now_recorded_at();
+    let gone = [0x62; 16];
+    let mixed = [0x63; 16];
+    let old_gone = claim_bound_gate_decision(synthetic_gate_decision_id(0xa1, 1), 1, &gone);
+    let old_mixed = claim_bound_gate_decision(synthetic_gate_decision_id(0xa1, 2), 1, &mixed);
+    let recent = claim_bound_gate_decision(synthetic_gate_decision_id(0xa1, 3), now, &mixed);
+    let unlinked = gate_decision(synthetic_gate_decision_id(0xa1, 4), 1, None);
+    append_gate_decisions(
+        &vault,
+        &[
+            old_gone.clone(),
+            old_mixed.clone(),
+            recent.clone(),
+            unlinked.clone(),
+        ],
+    )?;
+    vault.set_gate_decision_retention_secs(Some(60))?;
+    assert_eq!(vault.sweep_gate_decision_retention()?, 3);
+    for id in [
+        old_gone.decision_id,
+        old_mixed.decision_id,
+        unlinked.decision_id,
+    ] {
+        assert!(gate_decision_primary(&vault, id)?.is_none());
+    }
+    assert_eq!(
+        gate_decision_primary(&vault, recent.decision_id)?,
+        Some(recent.clone())
+    );
+    assert!(claim_index_decision_ids(&vault, &gone)?.is_empty());
+    assert_eq!(
+        claim_index_decision_ids(&vault, &mixed)?,
+        vec![recent.decision_id]
+    );
+    let keys = dir.path().join(".vault.gate-decision-keys");
+    assert!(
+        !keys
+            .join(crate::entity_id::bytes_to_hex_lower(&gone))
+            .exists()
+    );
+    assert!(
+        keys.join(crate::entity_id::bytes_to_hex_lower(&mixed))
+            .exists()
+    );
+    assert!(
+        keys.join(format!(
+            ".retired-{}",
+            crate::entity_id::bytes_to_hex_lower(&gone)
+        ))
+        .exists()
+    );
+    assert_eq!(vault.sweep_gate_decision_retention()?, 0);
+    assert!(
+        append_gate_decisions(&vault, &[old_gone]).is_err(),
+        "retired key cannot be reminted"
+    );
+    Ok(())
+}
+
+#[test]
+fn gate_retention_hold_keeps_entire_key_partition_and_restamps_until() -> Result<()> {
+    let dir = tempfile::tempdir()?;
+    let vault = Vault::open(dir.path().join("vault"), VaultConfig::device())?;
+    let claim = [0x64; 16];
+    let old = claim_bound_gate_decision(synthetic_gate_decision_id(0xa2, 1), 1, &claim);
+    append_gate_decisions(&vault, std::slice::from_ref(&old))?;
+    vault.set_gate_decision_partition_hold(Some(claim), true)?;
+    vault.set_gate_decision_retention_secs(Some(60))?;
+    assert_eq!(vault.sweep_gate_decision_retention()?, 0);
+    let first = vault
+        .gate_decision_partition_retain_until(Some(claim))?
+        .expect("held stamp");
+    assert_eq!(
+        gate_decision_primary(&vault, old.decision_id)?,
+        Some(old.clone())
+    );
+    assert!(
+        dir.path()
+            .join(".vault.gate-decision-keys")
+            .join(crate::entity_id::bytes_to_hex_lower(&claim))
+            .exists()
+    );
+    vault.set_gate_decision_retention_secs(Some(120))?;
+    assert_eq!(vault.sweep_gate_decision_retention()?, 0);
+    assert!(
+        vault
+            .gate_decision_partition_retain_until(Some(claim))?
+            .unwrap()
+            > first
+    );
+    vault.set_gate_decision_partition_hold(Some(claim), false)?;
+    assert_eq!(vault.sweep_gate_decision_retention()?, 1);
+    assert!(gate_decision_primary(&vault, old.decision_id)?.is_none());
+    Ok(())
+}
+
+#[test]
+fn gate_retention_unlinked_partition_hold_is_not_a_claim_hold() -> Result<()> {
+    let (_dir, vault) = open_test_vault();
+    let claim = [0x65; 16];
+    let unlinked = gate_decision(synthetic_gate_decision_id(0xa3, 1), 1, None);
+    let linked = claim_bound_gate_decision(synthetic_gate_decision_id(0xa3, 2), 1, &claim);
+    append_gate_decisions(&vault, &[unlinked.clone(), linked.clone()])?;
+    vault.set_gate_decision_retention_secs(Some(60))?;
+    vault.set_gate_decision_partition_hold(None, true)?;
+    assert_eq!(vault.sweep_gate_decision_retention()?, 1);
+    assert_eq!(
+        gate_decision_primary(&vault, unlinked.decision_id)?,
+        Some(unlinked.clone())
+    );
+    assert!(gate_decision_primary(&vault, linked.decision_id)?.is_none());
+    assert!(vault.gate_decision_partition_retain_until(None)?.is_some());
+    vault.set_gate_decision_partition_hold(None, false)?;
+    assert_eq!(vault.sweep_gate_decision_retention()?, 1);
+    assert!(gate_decision_primary(&vault, unlinked.decision_id)?.is_none());
+    Ok(())
+}
+
+#[test]
+fn gate_retention_large_ledger_is_removed_in_bounded_passes() -> Result<()> {
+    let (_dir, vault) = open_test_vault();
+    let records: Vec<_> = (0..257)
+        .map(|n| gate_decision(synthetic_gate_decision_id(0xa4, n), 1, None))
+        .collect();
+    append_gate_decisions(&vault, &records)?;
+    vault.set_gate_decision_retention_secs(Some(60))?;
+    assert_eq!(vault.sweep_gate_decision_retention()?, 256);
+    assert_eq!(vault.gate_decisions(300)?.len(), 1);
+    assert_eq!(vault.sweep_gate_decision_retention()?, 1);
+    assert_eq!(vault.sweep_gate_decision_retention()?, 0);
+    Ok(())
+}
+
+#[test]
+fn gate_retention_resumes_committed_key_retirement_after_interruption() -> Result<()> {
+    let dir = tempfile::tempdir()?;
+    let vault = Vault::open(dir.path().join("vault"), VaultConfig::device())?;
+    let claim = [0x66; 16];
+    let old = claim_bound_gate_decision(synthetic_gate_decision_id(0xa5, 1), 1, &claim);
+    append_gate_decisions(&vault, std::slice::from_ref(&old))?;
+    let key_dir = dir.path().join(".vault.gate-decision-keys");
+    let key_path = key_dir.join(crate::entity_id::bytes_to_hex_lower(&claim));
+    let mut pending = b"gate_decision:partition_retire_pending:v1:".to_vec();
+    pending.extend_from_slice(&claim);
+    vault.with_write_txn(|txn| {
+        vault
+            .store
+            .delete_gate_decision_in_txn(txn, old.decision_id)?;
+        vault.store.vault_meta.put(txn, &pending, &[1])?;
+        Ok(())
+    })?;
+    assert!(
+        key_path.exists(),
+        "simulate a crash after LMDB commit, before key retirement"
+    );
+    assert!(
+        append_gate_decisions(&vault, &[old]).is_err(),
+        "pending retire excludes new writes"
+    );
+    assert_eq!(vault.gate_decision_retention_secs()?, None);
+    assert_eq!(vault.sweep_gate_decision_retention()?, 0);
+    assert!(!key_path.exists());
+    let txn = vault.store.env.read_txn()?;
+    assert!(vault.store.vault_meta.get(&txn, &pending)?.is_none());
+    Ok(())
+}

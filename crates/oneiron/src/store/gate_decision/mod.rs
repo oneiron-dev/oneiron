@@ -8,6 +8,7 @@ mod keys;
 mod ledger;
 mod lookup;
 mod orcb;
+mod retention;
 mod sidecar;
 mod types;
 mod vet;

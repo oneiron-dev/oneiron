@@ -131,6 +131,12 @@ impl Vault {
             crate::federation::reject_ruling_delete(&self.store, &txn, id)?;
             self.store.guard_pack_map_carrier_delete_in_txn(&txn, id)?;
         }
+        // Hold the entire key partition before a hard tombstone can publish.
+        if reason.active_store_hard_purge_v1() {
+            let txn = self.store.env.read_txn()?;
+            self.store
+                .reject_held_gate_partition_in_txn(&txn, id.as_bytes())?;
+        }
         let requested_at = self.store.clock.now_recorded_at();
         let Some(header) = self.read_entity_header(id)? else {
             return self.delete_entity_without_header(id, reason, requested_at, gate.as_ref());
@@ -332,6 +338,10 @@ impl Vault {
             // OWN view — the refusal is actionable (nothing is on the wire) and
             // true (nothing replays back).
             reverify_deletion_authority_when_unpublished(gate.as_ref(), authority_settled, &wtxn)?;
+            if !authority_settled {
+                self.store
+                    .reject_held_gate_partition_in_txn(&wtxn, id.as_bytes())?;
+            }
             let scrub_is_the_linearization_point = !authority_settled;
             crate::note::erase_citations_in_txn(self, &mut wtxn, id)?;
             let (existed, had_vector) = self.soft_erase_active_store_in_txn(&mut wtxn, id)?;
@@ -421,6 +431,10 @@ impl Vault {
         // FORBIDDEN to the caller with the tombstone already on the wire and
         // peers tearing.
         reverify_deletion_authority_when_unpublished(gate.as_ref(), authority_settled, &wtxn)?;
+        if !authority_settled {
+            self.store
+                .reject_held_gate_partition_in_txn(&wtxn, id.as_bytes())?;
+        }
         let marker_key = local_hard_delete_key(id);
         // ONE-1149 ownership claim: probe the FULL delete scope INSIDE the
         // erasing txn. LMDB's single writer makes this race-free — if the
