@@ -50,7 +50,16 @@ impl PdfSealEngine for RejectVerify<'_> {
     }
     fn verify_sealed_pdf(&self, bytes: &[u8]) -> std::result::Result<VerifyReport, SealError> {
         let mut report = self.0.verify_sealed_pdf(bytes)?;
-        report.valid = false;
+        let Some(check) = report
+            .signatures
+            .iter_mut()
+            .flat_map(|signature| signature.checks.iter_mut())
+            .find(|check| check.kind == VerifyCheckKind::ContentDigest)
+        else {
+            panic!("fixture must have a content-digest check");
+        };
+        check.status = VerifyCheckStatus::Fail;
+        check.finding = Some(VerifyFindingCode::DigestMismatch);
         Ok(report)
     }
 }
@@ -209,7 +218,7 @@ fn native_seal_verifies_before_atomic_terminal_and_retries_from_pristine_origina
     assert!(vault.sealed_esign_document(id)?.is_none());
     let sealed = run(vault.seal_esign_attempt(&attempt, &engine, PadesProfile::BaselineB, url))?;
     assert_eq!(vault.esign_document(id)?.status, DocumentStatus::Completed);
-    assert!(vault.verify_esign_item(id, 0, &engine)?.valid);
+    assert!(vault.verify_esign_item(id, 0, &engine)?.valid());
     let sealed_bytes = vault
         .read_blob_artifact_version(&EntityId::from_hex(&sealed.items[0].sealed_artifact)?, 1)?
         .unwrap();
@@ -265,7 +274,7 @@ fn native_seal_verifies_before_atomic_terminal_and_retries_from_pristine_origina
         resealed.items[0].sealed_artifact,
         sealed.items[0].sealed_artifact
     );
-    assert!(vault.verify_esign_item(id, 0, &engine)?.valid);
+    assert!(vault.verify_esign_item(id, 0, &engine)?.valid());
     assert_eq!(
         vault.read_blob_artifact_version(&id, 1)?.as_deref(),
         Some(original.as_slice())
