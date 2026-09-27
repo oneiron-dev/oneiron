@@ -9,6 +9,10 @@ use serde::{Deserialize, Serialize};
 use std::{collections::BTreeMap, path::Path};
 const MANIFEST_KEY: &[u8] = b"llm:manifest:v2";
 const ROUTES_KEY: &[u8] = b"llm:resident_routes:v1";
+const TEACHER_APPROVAL_KEY: &[u8] = b"llm:extraction_teacher_probe:v1";
+mod teacher_probe;
+pub(crate) use teacher_probe::valid_holder_ref as valid_teacher_probe_holder_ref;
+pub use teacher_probe::{TEACHER_PROBE_ID, TeacherProbeApproval, TeacherProbePolicy};
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ModelRole {
@@ -233,9 +237,49 @@ pub(crate) fn read_manifest(store: &Store, txn: &heed::RoTxn<'_>) -> Result<Opti
         .transpose()
 }
 impl Vault {
+    /// Update a manifest without changing its approved extraction-teacher binding.
+    /// Initial teacher pins, and any teacher change, require a passing probe receipt.
     pub fn set_model_manifest(&self, manifest: &ModelManifest) -> Result<()> {
+        self.write_model_manifest(manifest, None)
+    }
+
+    /// Publish the bench-approved teacher binding and its receipt in one vault transaction.
+    pub fn set_model_manifest_with_teacher_approval(
+        &self,
+        manifest: &ModelManifest,
+        approval: &TeacherProbeApproval,
+    ) -> Result<()> {
+        self.write_model_manifest(manifest, Some(approval))
+    }
+
+    fn write_model_manifest(
+        &self,
+        manifest: &ModelManifest,
+        new_approval: Option<&TeacherProbeApproval>,
+    ) -> Result<()> {
         manifest.validate()?;
         let mut txn = self.store.env.write_txn()?;
+        let saved_approval = self
+            .store
+            .vault_meta
+            .get(&txn, TEACHER_APPROVAL_KEY)?
+            .map(|bytes| {
+                serde_json::from_slice::<TeacherProbeApproval>(&bytes)
+                    .map_err(|e| invalid(&format!("invalid saved teacher approval: {e}")))
+            })
+            .transpose()?;
+        let approval = new_approval
+            .or(saved_approval.as_ref())
+            .ok_or_else(|| invalid("extraction_teacher pin requires a passing probe approval"))?;
+        let policy = self.teacher_probe_policy_in_txn(&txn, approval.holder_ref.as_deref())?;
+        approval.verify(manifest, &policy)?;
+        if let Some(approval) = new_approval {
+            let bytes = serde_json::to_vec(approval)
+                .map_err(|e| invalid(&format!("teacher approval serialization failed: {e}")))?;
+            self.store
+                .vault_meta
+                .put(&mut txn, TEACHER_APPROVAL_KEY, &bytes)?;
+        }
         // A tighter owner pin clears stale resident routes atomically.
         self.store.vault_meta.delete(&mut txn, ROUTES_KEY)?;
         let bytes =
@@ -254,12 +298,10 @@ impl Vault {
         if route_rank(route) > route_rank(manifest.routes[&slot]) {
             return Err(invalid("resident route cannot widen manifest pin"));
         }
-        for binding in manifest
-            .roles
-            .values()
-            .filter(|binding| binding.slot == slot)
-        {
-            model_for_route(binding, route, manifest.routes[&slot])?;
+        for (role, binding) in &manifest.roles {
+            if *role != ModelRole::ExtractionTeacher && binding.slot == slot {
+                model_for_route(binding, route, manifest.routes[&slot])?;
+            }
         }
         let mut routes = read_routes(&self.store, &txn)?;
         routes.insert(slot, route);
