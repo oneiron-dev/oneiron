@@ -355,3 +355,122 @@ async fn managed_host_account_holder_lands_once_but_host_root_and_other_account_
         StatusCode::CONFLICT
     );
 }
+
+/// A local stdio leg contributes a JSON line, not bearer identity. This test
+/// source represents a Keychain-held logged token and holder signing key;
+/// both reach the production holder verifier through the existing binder.
+async fn local_stdio_json(
+    server: Arc<SyncServer>,
+    keychain: &crate::test_credentials::TestKeychainCredentialSource,
+    frame: serde_json::Value,
+) -> (StatusCode, serde_json::Value) {
+    use std::io::BufRead;
+    let input = format!("{frame}\n");
+    let mut line = String::new();
+    std::io::BufReader::new(input.as_bytes())
+        .read_line(&mut line)
+        .unwrap();
+    let frame: serde_json::Value = serde_json::from_str(&line).unwrap();
+    let request = core_request_with_authz(
+        frame["method"].as_str().unwrap(),
+        frame["path"].as_str().unwrap(),
+        "Bearer untrusted-stdio-identity".into(),
+        frame.get("body"),
+    );
+    let request = keychain.bind(&server, request);
+    route_json(server, request).await
+}
+
+#[tokio::test]
+async fn local_stdio_keychain_source_obeys_remote_read_propose_and_holder_widen_rules() {
+    let (_dir, server) = auth_test_server();
+    let vault = server.vault();
+    let owner = oneiron::EntityId::now();
+    let agent = oneiron::EntityId::now();
+    for actor in [owner, agent] {
+        vault
+            .put_entity(
+                &actor,
+                ENTITY_TYPE_PERSON,
+                oneiron::TimeRange { start: 1, end: 1 },
+                1,
+                b"person",
+            )
+            .unwrap();
+    }
+    let agent_recipe = format!(
+        "scope=core:read,core:propose,propose_action_widen;principal_ref={};actor_class=agent",
+        agent.to_hex(),
+    );
+    let agent_keychain =
+        crate::test_credentials::TestKeychainCredentialSource::from_recipe(&server, &agent_recipe);
+    // The owner grants this principal its subject read. As with OAuth, login
+    // without this grant is not read/proposal authority.
+    vault
+        .install_foreign_grant_for_test(&agent.to_hex())
+        .unwrap();
+    let (status, _) = local_stdio_json(
+        server.clone(),
+        &agent_keychain,
+        json!({"method":"GET","path":"/v1/core/conversations"}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let (status, proposed) = local_stdio_json(
+        server.clone(),
+        &agent_keychain,
+        json!({"method":"POST","path":"/v1/core/propose","body":{
+            "subject":agent.to_hex(), "predicate":"profile.name", "value":"local"
+        }}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{proposed}");
+    let claim = vault
+        .get_claim(&oneiron::EntityId::from_hex(proposed["id"].as_str().unwrap()).unwrap())
+        .unwrap()
+        .unwrap();
+    assert_eq!(claim.approval, oneiron::ClaimApprovalStatus::Proposed);
+
+    let bound = GrantBound::action(
+        ActorBound::new(agent.to_hex()).unwrap(),
+        ActionClass::new("claim.put").unwrap(),
+        ActionEnvelope::new(["world:home".to_owned()]).unwrap(),
+    )
+    .unwrap();
+    let proposal = vault
+        .propose_action_widen(
+            &agent_keychain.verified_for_proposal(&server),
+            bound.clone(),
+            &owner.to_hex(),
+            vault.now_recorded_at() + 300,
+        )
+        .unwrap();
+    let delta = proposal
+        .canonical_delta
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect::<String>();
+    let frame = json!({"method":"POST","path":"/v1/core/consent/widen/accept", "body":{
+        "proposal_ref": proposal.proposal_ref, "expected_delta":delta
+    }});
+    let (status, _) = local_stdio_json(server.clone(), &agent_keychain, frame.clone()).await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+    assert!(
+        vault
+            .consent_grant(&bound.digest().to_hex())
+            .unwrap()
+            .is_none()
+    );
+    let holder_recipe = format!(
+        "scope=core:auth;principal_ref={};actor_class=human",
+        owner.to_hex()
+    );
+    let holder_keychain =
+        crate::test_credentials::TestKeychainCredentialSource::from_recipe(&server, &holder_recipe);
+    let (status, receipt) = local_stdio_json(server.clone(), &holder_keychain, frame.clone()).await;
+    assert_eq!(status, StatusCode::OK, "{receipt}");
+    assert_eq!(receipt["grant_ref"], bound.digest().to_hex());
+    assert_eq!(receipt["decision_id"].as_str().unwrap().len(), 32);
+    let (status, _) = local_stdio_json(server, &holder_keychain, frame).await;
+    assert_eq!(status, StatusCode::CONFLICT);
+}
