@@ -417,7 +417,6 @@ pub(crate) fn active_brief_shares_for(
     id: &EntityId,
     now: u64,
 ) -> Result<Vec<(EntityId, EntityId)>> {
-    let brief_ref = id.to_hex();
     let mut shares = Vec::new();
     for row in store
         .type_index
@@ -426,7 +425,7 @@ pub(crate) fn active_brief_shares_for(
         let (key, _) = row?;
         let share_id = crate::vault::entity_id_from_type_index_key(&key)?;
         if let Some((share, _)) = read_share_in_txn(store, txn, &share_id)?
-            && share.brief_ref == brief_ref
+            && EntityId::from_hex(&share.brief_ref).ok() == Some(*id)
             && share.grant().effective_status_at(now) == AccessGrantStatus::Active
         {
             shares.push((share_id, share.recipient_ref));

@@ -1004,3 +1004,159 @@ fn headerless_delete_reserves_identity_before_local_purge() -> Result<()> {
     );
     Ok(())
 }
+
+#[test]
+fn mixed_case_renderable_share_is_previewed_and_revoked_before_purge() -> Result<()> {
+    let (_dir, vault, issuer, mut share) = fixture()?;
+    let memory = vault.memory(issuer.entity_ref(), EdgeActorClass::Human);
+    memory.bless_brief_kind().expect("brief kind");
+    let brief = (0..16)
+        .find_map(|_| {
+            let id =
+                EntityId::from_hex(&memory.author_brief("shared body", &[]).ok()?.id_hex).ok()?;
+            id.to_hex()
+                .bytes()
+                .any(|byte| (b'a'..=b'f').contains(&byte))
+                .then_some(id)
+        })
+        .expect("authored brief id with hex letters");
+    let grant = entity(0xD1);
+    share.brief_ref = brief.to_hex().to_uppercase();
+    assert_ne!(share.brief_ref, brief.to_hex());
+    vault.create_share(&grant, &issuer, &share)?;
+    assert_eq!(EntityId::from_hex(&share.brief_ref)?, brief);
+    #[cfg(feature = "sync")]
+    {
+        let key = ScopedReadActorKey::new(share.recipient_ref.to_hex()).expect("viewer key");
+        let frame = crate::lens::LensRenderFrame::new(
+            crate::lens::LensRenderId::new("mixed-case-brief")?,
+            crate::lens::LensPrincipalBinding::human_view(
+                share.recipient_ref.to_hex(),
+                key.clone(),
+                vec![key.clone()],
+            )?,
+        );
+        assert!(
+            vault
+                .render_shared_brief(
+                    grant,
+                    share.recipient_ref,
+                    None,
+                    &frame,
+                    &vault.scoped_read(key)
+                )?
+                .is_some(),
+            "mixed-case handle renders the brief"
+        );
+    }
+    let preview = memory.preview_entity_delete(&brief).expect("preview");
+    assert_eq!(preview.shared_with(), &[(grant, share.recipient_ref)]);
+    assert!(
+        vault
+            .delete_entity_with_options(
+                &brief,
+                crate::deletion::DeleteEntityOptions { purge: true }
+            )
+            .is_err()
+    );
+    assert!(
+        memory
+            .confirm_entity_delete(
+                &preview,
+                crate::deletion::DeleteEntityOptions { purge: true }
+            )
+            .expect("confirmed purge")
+            .existed
+    );
+    assert_eq!(
+        vault.get_share(&grant)?.expect("revoked grant").status,
+        AccessGrantStatus::Revoked
+    );
+    assert!(
+        vault.create_share(&entity(0xD2), &issuer, &share).is_err(),
+        "case-insensitive identity fence refuses re-sharing after purge"
+    );
+    Ok(())
+}
+
+#[test]
+fn soft_deleted_note_shell_can_be_previewed_and_confirmed_for_purge() -> Result<()> {
+    let (_dir, vault, issuer, mut share) = fixture()?;
+    let memory = vault.memory(issuer.entity_ref(), EdgeActorClass::Human);
+    memory.bless_brief_kind().expect("brief kind");
+    let brief = EntityId::from_hex(&memory.author_brief("soft body", &[]).expect("brief").id_hex)?;
+    let grant = entity(0xD3);
+    share.brief_ref = brief.to_hex();
+    vault.create_share(&grant, &issuer, &share)?;
+    let preview = memory
+        .preview_entity_delete(&brief)
+        .expect("initial preview");
+    assert!(
+        memory
+            .confirm_entity_delete(&preview, crate::deletion::DeleteEntityOptions::default())
+            .expect("soft confirmation")
+            .existed
+    );
+    assert_eq!(vault.get(&brief)?.as_deref(), Some([].as_slice()));
+    let fresh = memory.preview_entity_delete(&brief).expect("shell preview");
+    assert!(fresh.shared_with().is_empty());
+    assert!(
+        memory
+            .confirm_entity_delete(&fresh, crate::deletion::DeleteEntityOptions { purge: true })
+            .expect("confirmed shell purge")
+            .existed
+    );
+    assert_eq!(vault.get(&brief)?, None);
+    Ok(())
+}
+
+#[cfg(feature = "sync")]
+#[test]
+fn failed_soft_publication_can_retry_from_shell_preview_to_purge() -> Result<()> {
+    use crate::sync::{WindowKey, WindowManager, bridge::Materializer};
+    use std::sync::Arc;
+    let (_dir, vault, issuer, mut share) = fixture()?;
+    let vault = Arc::new(vault);
+    let memory = vault.memory(issuer.entity_ref(), EdgeActorClass::Human);
+    memory.bless_brief_kind().expect("brief kind");
+    let brief = EntityId::from_hex(
+        &memory
+            .author_brief("retry body", &[])
+            .expect("brief")
+            .id_hex,
+    )?;
+    let grant = entity(0xD4);
+    share.brief_ref = brief.to_hex();
+    vault.create_share(&grant, &issuer, &share)?;
+    let raw = vault.get_raw(&brief)?.expect("brief");
+    let header = EntityMetadataHeader::parse(&raw).expect("header");
+    let manager = Arc::new(WindowManager::new(
+        Arc::clone(&vault),
+        Arc::new(Materializer::new()),
+        "soft-retry",
+    ));
+    let _window = manager.open_window(&WindowKey::from_timestamp(header.learned_at))?;
+    let preview = memory.preview_entity_delete(&brief).expect("preview");
+    crate::deletion::arm_fail_live_tombstone_persist();
+    assert!(
+        memory
+            .confirm_entity_delete(&preview, crate::deletion::DeleteEntityOptions::default())
+            .is_err()
+    );
+    assert_eq!(vault.get(&brief)?.as_deref(), Some([].as_slice()));
+    assert_eq!(
+        vault.get_share(&grant)?.expect("grant").status,
+        AccessGrantStatus::Revoked
+    );
+    let fresh = memory
+        .preview_entity_delete(&brief)
+        .expect("shell retry preview");
+    assert!(
+        memory
+            .confirm_entity_delete(&fresh, crate::deletion::DeleteEntityOptions { purge: true })
+            .expect("retry hard purge")
+            .existed
+    );
+    assert_eq!(vault.get(&brief)?, None);
+    Ok(())
+}

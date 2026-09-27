@@ -123,6 +123,14 @@ pub(crate) fn delete_preview_fingerprint(
     if header.entity_type != crate::registry::ENTITY_TYPE_NOTE {
         return Ok(None);
     }
+    // UserDelete intentionally retains the 25-byte envelope shell while
+    // erasing its entire text plane. A fresh preview of that valid shell is
+    // the entry to explicit purge or a retry after failed publication; it
+    // has no NOTE document to fingerprint. Nonempty NOTE bodies still load
+    // the canonical document and fail closed if that live state is invalid.
+    if raw.len() == crate::batch::ENTITY_METADATA_HEADER_LEN {
+        return Ok(None);
+    }
     let head = super::documents::head_in(&vault.store, txn, id)?.0;
     let doc = load_for_erasure(vault, txn, id)?;
     let mut hash = blake3::Hasher::new_derive_key("oneiron/delete-preview-note/v1");
