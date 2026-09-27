@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::Vault;
 use crate::agent_dispatch::{AGENT_DISPATCH_ATTEMPT_TYPE, decode_agent_dispatch_input};
-use crate::attempt_queue::{AttemptId, AttemptQueue, AttemptRecord, AttemptState};
+use crate::attempt_queue::{AttemptId, AttemptQueue, AttemptRecord};
 use crate::dreamer_runner::{DREAMER_RUNNER_ATTEMPT_KIND, decode_dreamer_attempt_payload};
 use crate::error::{Error, Result};
 use crate::registry::ENTITY_TYPE_AGENT_DEF;
@@ -63,11 +63,15 @@ fn key(id: AttemptId) -> Vec<u8> {
 }
 
 fn invalid() -> Error {
-    Error::InvalidConfig("custom-agent failure requires a failed custom-agent dispatch".into())
+    Error::InvalidConfig("custom-agent failure requires a terminal custom-agent dispatch".into())
 }
 
 fn custom_agent_ref(record: &AttemptRecord) -> Result<crate::entity_id::EntityId> {
-    if record.state != AttemptState::Failed || record.kind != DREAMER_RUNNER_ATTEMPT_KIND {
+    // Observability classifies outcomes, not the queue's execution result. A
+    // successful run may miss memory or break persona; an abandoned or
+    // cancelled run may still have produced a latency-abandon signal. Only
+    // terminal rows qualify, so an in-flight signal cannot be indexed early.
+    if !record.state.is_terminal() || record.kind != DREAMER_RUNNER_ATTEMPT_KIND {
         return Err(invalid());
     }
     let payload = decode_dreamer_attempt_payload(&record.payload).map_err(|_| invalid())?;
@@ -82,12 +86,13 @@ fn custom_agent_ref(record: &AttemptRecord) -> Result<crate::entity_id::EntityId
 }
 
 impl Vault {
-    /// Indexes one already-failed custom dispatch under its producer-supplied
-    /// taxonomy class. Same-class repeats are idempotent; conflicting reports
-    /// fail closed. This does not invent a taxonomy label from a retry verdict.
+    /// Indexes one terminal custom dispatch under its producer-supplied
+    /// taxonomy class, without changing its execution outcome. Same-class
+    /// repeats are idempotent; conflicting reports fail closed. This does not
+    /// invent a taxonomy label from a retry verdict.
     ///
     /// # Errors
-    /// Rejects absent/nonfailed/noncustom rows, conflicting classification,
+    /// Rejects absent/nonterminal/noncustom rows, conflicting classification,
     /// or a target that is not a live custom AGENT_DEF in this vault.
     pub fn record_custom_agent_failure(
         &self,
@@ -132,7 +137,7 @@ impl Vault {
     /// taxonomy order and attempt-id order. No off-vault/global scan occurs.
     ///
     /// # Errors
-    /// Fails closed on corrupt index values or dangling/nonfailed members.
+    /// Fails closed on corrupt index values or dangling/nonterminal members.
     pub fn custom_agent_failure_groups(&self) -> Result<Vec<CustomFailureGroup>> {
         let txn = self.store.env.read_txn()?;
         let queue = AttemptQueue::new(self);

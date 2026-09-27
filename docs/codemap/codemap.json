@@ -15937,7 +15937,7 @@
      "kind": "test",
      "notable": [],
      "path": "src/failure_ladder/tests/custom_review.rs",
-     "purpose": "Custom-agent retrospective grouping uses only committed failure rows",
+     "purpose": "Custom-agent retrospective grouping uses only committed terminal dispatches",
      "surface": {}
     },
     {
