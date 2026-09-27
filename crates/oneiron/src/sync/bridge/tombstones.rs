@@ -46,6 +46,13 @@ pub(super) fn materialize_tombstones_from_delta(
     _lease_vault_id: u64,
 ) -> bool {
     let entities_map = doc.get_map("entities");
+    let dreamer_id = match crate::dreamer_runner::authority::dreamer_actor_id() {
+        Ok(id) => id,
+        Err(err) => {
+            tracing::error!(error = %err, "Dreamer actor id unavailable for tombstone replay");
+            return false;
+        }
+    };
     // Staged BEFORE the batch transaction opens: the door gates below are
     // document reads plus their own committing quarantine writes (pre-batch
     // rejections that never enter the batch at all), and the batch must not
@@ -95,6 +102,20 @@ pub(super) fn materialize_tombstones_from_delta(
                 // LMDB yet, so inspect its envelope directly and quarantine
                 // the tombstone before the headerless hard-delete path can
                 // mint a permanent `dt:` marker.
+                if id == dreamer_id {
+                    let rejection = Error::Registry(RegistryError::DreamerActorImmutable);
+                    if let Err(quarantine_err) = quarantine_rejected_op(
+                        vault,
+                        window_key,
+                        QuarantineContainer::Tombstones,
+                        key.as_ref(),
+                        &rejection,
+                        raw_value,
+                    ) {
+                        tracing::error!(error = %quarantine_err, "Dreamer tombstone quarantine failed");
+                    }
+                    continue;
+                }
                 if matches!(vault.read_entity_header(&id), Ok(None))
                     && let Some(entity_blob) = map_get_bytes(&entities_map, &id.to_hex())
                     && let Some(header) = admitted_concurrent_delete_protected_header(&entity_blob)

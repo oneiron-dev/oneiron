@@ -328,7 +328,13 @@ fn check_claim_policy_for_write_with_record_inner(
                     .provenance
                     .actor_entity_ref
                     .map(|actor| {
-                        claim_burst_inputs(store, &*wtxn, &actor, crate::unix_seconds_now())
+                        claim_burst_inputs(
+                            store,
+                            &*wtxn,
+                            &actor,
+                            &input.actor.actor_class,
+                            crate::unix_seconds_now(),
+                        )
                     })
                     .transpose()?,
             };
@@ -412,7 +418,7 @@ fn check_claim_policy_for_write_with_record_inner(
             redacted_at: None,
         };
 
-        if input.actor.actor_class == "agent"
+        if matches!(input.actor.actor_class.as_str(), "agent" | "system")
             && policy.criticality_for_predicate(&body.predicate)
                 == crate::gate::PolicyCriticality::Normal
         {

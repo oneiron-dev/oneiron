@@ -150,8 +150,16 @@ pub(super) fn run(ctx: &RematCtx<'_>, ledger: &mut RematLedger) -> Result<()> {
                 }
             };
 
-            let delete_protected =
-                crate::registry::is_delete_protected_engine_record(header.entity_type);
+            let delete_protected = match crate::dreamer_runner::authority::dreamer_actor_id() {
+                Ok(dreamer) => {
+                    id == dreamer
+                        || crate::registry::is_delete_protected_engine_record(header.entity_type)
+                }
+                Err(err) => {
+                    entity_error = Some(err);
+                    return;
+                }
+            };
 
             // Tombstone gate (delete wins): a tombstoned id must never
             // re-materialize from a lingering entities-map body — without

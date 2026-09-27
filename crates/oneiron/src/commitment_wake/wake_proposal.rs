@@ -158,7 +158,7 @@ impl<'p, E> CommitmentWakeExecutor<'p, E> {
     /// # Errors
     ///
     /// [`Error::InvalidClaimBody`] when a planner is installed behind a
-    /// non-Agent actor. A planner-LESS wrapper never uses the actor and
+    /// actor outside the Agent/System classes. A planner-LESS wrapper never uses the actor and
     /// constructs for every legal existing host, including a System-class one —
     /// which is what keeps the default composition site infallible in practice.
     pub fn new(
@@ -166,9 +166,14 @@ impl<'p, E> CommitmentWakeExecutor<'p, E> {
         planner: Option<&'p mut dyn CommitmentWakeProposalPlanner>,
         agent_actor: WriteActor,
     ) -> Result<Self> {
-        if planner.is_some() && agent_actor.actor_class() != EdgeActorClass::Agent {
+        if planner.is_some()
+            && !matches!(
+                agent_actor.actor_class(),
+                EdgeActorClass::Agent | EdgeActorClass::System
+            )
+        {
             return Err(Error::InvalidClaimBody(
-                "commitment wake planner requires agent actor",
+                "commitment wake planner requires agent or Dreamer system actor",
             ));
         }
         Ok(Self {
@@ -231,6 +236,13 @@ impl<E> CommitmentWakeExecutor<'_, E> {
             ));
         };
         // Step 5: the planner supplies the delivery fields and nothing else.
+        if agent_actor.actor_class() == EdgeActorClass::System
+            && agent_actor != ctx.vault.dreamer_authority()?
+        {
+            return Err(Error::InvalidClaimBody(
+                "commitment wake planner system actor is not the vault Dreamer",
+            ));
+        }
         let draft = planner.plan(event, &record)?;
         draft.validate()?;
         write_commitment_wake_proposal(

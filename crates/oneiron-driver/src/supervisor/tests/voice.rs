@@ -132,12 +132,12 @@ fn branch_read_fixture_grants_only_the_named_actor_and_class() {
             .unwrap()
             .is_none()
     );
-    let wrong = WriteActor::new(actor.entity_ref(), oneiron::EdgeActorClass::System);
+    let wrong = WriteActor::new(actor.entity_ref(), oneiron::EdgeActorClass::Agent);
     assert!(vault.install_read_permit_for_test(wrong).is_err());
     vault.install_read_permit_for_test(actor).unwrap();
     assert!(
         vault
-            .scoped_read(reader("agent"))
+            .scoped_read(reader("system"))
             .get(&conversation)
             .unwrap()
             .is_some()

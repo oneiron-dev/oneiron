@@ -75,13 +75,19 @@ pub fn reverse_rematerialize(vault: &Vault, doc: &LoroDoc, window_key: &WindowKe
         let Some(header) = EntityMetadataHeader::parse(&raw) else {
             continue;
         };
-        if !crate::registry::is_delete_protected_engine_record(header.entity_type) {
+        if id != crate::dreamer_runner::authority::dreamer_actor_id()?
+            && !crate::registry::is_delete_protected_engine_record(header.entity_type)
+        {
             continue;
         }
 
-        let rejection = Error::Registry(RegistryError::MaintenanceKindNotWritable(
-            header.entity_type,
-        ));
+        let rejection = if id == crate::dreamer_runner::authority::dreamer_actor_id()? {
+            Error::Registry(RegistryError::DreamerActorImmutable)
+        } else {
+            Error::Registry(RegistryError::MaintenanceKindNotWritable(
+                header.entity_type,
+            ))
+        };
         quarantine::quarantine_rejected_op(
             vault,
             window_key.as_str(),
@@ -92,7 +98,12 @@ pub fn reverse_rematerialize(vault: &Vault, doc: &LoroDoc, window_key: &WindowKe
         )?;
         protected_tombstones.insert(id);
         let hex_id = id.to_hex();
-        if !map_contains_binary(&entities_map, &hex_id) {
+        if !map_contains_binary(&entities_map, &hex_id)
+            || (id == crate::dreamer_runner::authority::dreamer_actor_id()?
+                && map_get_bytes(&entities_map, &hex_id).as_deref() != Some(raw.as_slice()))
+        {
+            // A rejected peer overwrite is not a valid protected carrier.
+            // Restore the fixed Dreamer bytes, not merely a missing key.
             map_insert_bytes(&entities_map, &hex_id, &raw)?;
             wrote_any = true;
             count += 1;
@@ -177,7 +188,9 @@ pub fn reverse_rematerialize(vault: &Vault, doc: &LoroDoc, window_key: &WindowKe
             // `None`), so hoisting it past the short circuit is semantics-
             // preserving.
             let dominates = authority_row_dominates_map_carrier(&entities_map, id, &hex_id, &raw);
-            if !map_contains_binary(&entities_map, &hex_id) || dominates {
+            let fixed_actor_mismatch = *id == crate::dreamer_runner::authority::dreamer_actor_id()?
+                && map_get_bytes(&entities_map, &hex_id).as_deref() != Some(raw.as_slice());
+            if !map_contains_binary(&entities_map, &hex_id) || dominates || fixed_actor_mismatch {
                 // Pack rows mirror the canonical wire header/body (origin
                 // handle/generation, exact identity/payload), not the
                 // receiver-local materialization. A corrupt local pack row
@@ -320,7 +333,9 @@ pub(super) fn quarantine_outbound_protected_tombstones(
     let Some(header) = EntityMetadataHeader::parse(raw) else {
         return Ok(false);
     };
-    if !crate::registry::is_delete_protected_engine_record(header.entity_type) {
+    if *id != crate::dreamer_runner::authority::dreamer_actor_id()?
+        && !crate::registry::is_delete_protected_engine_record(header.entity_type)
+    {
         return Ok(false);
     }
 
@@ -329,9 +344,13 @@ pub(super) fn quarantine_outbound_protected_tombstones(
         return Ok(false);
     }
 
-    let rejection = Error::Registry(RegistryError::MaintenanceKindNotWritable(
-        header.entity_type,
-    ));
+    let rejection = if *id == crate::dreamer_runner::authority::dreamer_actor_id()? {
+        Error::Registry(RegistryError::DreamerActorImmutable)
+    } else {
+        Error::Registry(RegistryError::MaintenanceKindNotWritable(
+            header.entity_type,
+        ))
+    };
     for tombstone in &tombstones {
         quarantine::quarantine_rejected_op(
             vault,

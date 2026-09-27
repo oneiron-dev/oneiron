@@ -18,6 +18,40 @@ pub struct DreamerAuthorityStamp {
     pub facet: String,
     pub receipt_id: [u8; 16],
 }
+pub(crate) fn dreamer_actor_id() -> Result<EntityId> {
+    crate::codebase::entity_id_from_hash_material(b"oneiron.dreamer.authority.v1", &[])
+}
+
+pub(crate) fn guard_actor_put(
+    id: EntityId,
+    entity_type: u8,
+    data: &[u8],
+    occurred: TimeRange,
+    learned_at: u64,
+) -> Result<()> {
+    if id == dreamer_actor_id()?
+        && (entity_type != crate::registry::ENTITY_TYPE_MACHINE
+            || data != b"Dreamer authority"
+            || occurred.start != 0
+            || occurred.end != 0
+            || learned_at != 0)
+    {
+        return Err(Error::Registry(
+            crate::error::RegistryError::DreamerActorImmutable,
+        ));
+    }
+    Ok(())
+}
+
+pub(crate) fn guard_actor_delete(id: &EntityId) -> Result<()> {
+    if *id == dreamer_actor_id()? {
+        return Err(Error::Registry(
+            crate::error::RegistryError::DreamerActorImmutable,
+        ));
+    }
+    Ok(())
+}
+
 fn invalid() -> Error {
     Error::InvalidConfig("invalid Dreamer authority binding".into())
 }
@@ -30,12 +64,11 @@ impl Vault {
     pub(crate) fn dreamer_authority_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,
-        now: u64,
+        _now: u64,
     ) -> Result<WriteActor> {
         // The id is shared across replicas of one vault, but the local binding
         // cannot be redirected to another MACHINE or a deleted shell.
-        let actor =
-            crate::codebase::entity_id_from_hash_material(b"oneiron.dreamer.authority.v1", &[])?;
+        let actor = dreamer_actor_id()?;
         if let Some(raw) = self.store.vault_meta.get(&*txn, ACTOR_KEY)? {
             let raw_id: &[u8] = &raw;
             let id = EntityId::from_bytes(raw_id.try_into().map_err(|_| invalid())?)?;
@@ -77,11 +110,8 @@ impl Vault {
             vec![BatchOp::Put {
                 id: actor,
                 entity_type: crate::registry::ENTITY_TYPE_MACHINE,
-                occurred: TimeRange {
-                    start: now,
-                    end: now,
-                },
-                learned_at: now,
+                occurred: TimeRange { start: 0, end: 0 },
+                learned_at: 0,
                 data: b"Dreamer authority".to_vec(),
                 allow_maintenance: false,
                 allow_reserved_predicate: false,

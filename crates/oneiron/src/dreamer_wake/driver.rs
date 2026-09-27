@@ -334,6 +334,20 @@ impl<'a> DreamerWakeDriver<'a> {
             };
             let priority = match priority {
                 DreamerAdmissionOutcome::Empty => {
+                    self.store.admit_next_weave_recipe(AdmitDreamerAttempt {
+                        lease_owner: input.lease_owner.clone(),
+                        now: input.now,
+                        budget_id: self.budget_id.clone(),
+                        budget_total_units: input.budget_total_units,
+                        reserve_units: input.reserve_units,
+                        started_milestone: self
+                            .milestone_claim(DreamerMilestoneKind::Started, input.now)?,
+                    })?
+                }
+                outcome => outcome,
+            };
+            let priority = match priority {
+                DreamerAdmissionOutcome::Empty => {
                     self.store.admit_next_connector_event(AdmitDreamerAttempt {
                         lease_owner: input.lease_owner.clone(),
                         now: input.now,

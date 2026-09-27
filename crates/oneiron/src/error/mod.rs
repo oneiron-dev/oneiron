@@ -296,6 +296,7 @@ pub enum ErrorKind {
     PackKindNotInstalled,
     InvalidPackByteMap,
     PackPredicateNameCollision,
+    DreamerActorImmutable,
 }
 
 /// Crate error type.

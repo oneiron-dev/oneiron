@@ -238,7 +238,7 @@ fn run_skill_optimize_bound(
             ),
             (
                 Value::from("actor_class"),
-                Value::from(crate::EdgeActorClass::Agent as u8),
+                Value::from(authority.actor_class() as u8),
             ),
             (
                 Value::from("facet"),

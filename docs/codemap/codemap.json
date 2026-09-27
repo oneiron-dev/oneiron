@@ -13293,7 +13293,7 @@
      "purpose": "Home-node gate, atomic admission, and the private wake-budget ledger",
      "surface": {
       "crate-vis": 2,
-      "fn": 13
+      "fn": 14
      }
     },
     {
@@ -13315,13 +13315,13 @@
      "path": "src/dreamer_runner/authority.rs",
      "purpose": "One vault-owned Dreamer principal; job kinds are facets, not new authorities",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 6,
       "fn": 3,
       "struct": 1
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "test",
      "notable": [],
      "path": "src/dreamer_runner/authority/tests.rs",
@@ -13386,7 +13386,7 @@
      "path": "src/dreamer_runner/constants.rs",
      "purpose": "Pinned wire vocabulary for the private Dreamer runner rows",
      "surface": {
-      "const": 16,
+      "const": 17,
       "crate-vis": 43
      }
     },
@@ -13571,7 +13571,7 @@
      "purpose": "Private Dreamer runner store plus atomic admission",
      "surface": {
       "mod": 3,
-      "re-export": 8
+      "re-export": 9
      }
     },
     {
@@ -13592,6 +13592,20 @@
       "enum": 1,
       "fn": 12,
       "struct": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "WeaveRecipePin"
+     ],
+     "path": "src/dreamer_runner/recipe.rs",
+     "purpose": "Per-vault, owner-admitted workflow skill binding for the Dreamer weave",
+     "surface": {
+      "crate-vis": 1,
+      "fn": 1,
+      "struct": 1
      }
     },
     {
@@ -13803,7 +13817,22 @@
      "purpose": "Dreamer wake-pass driver (ONE-1288, DREAM-001 residual)",
      "surface": {
       "crate-vis": 1,
-      "re-export": 5
+      "re-export": 6
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "WeaveRecipeDraft",
+      "WeaveRecipeExecutor",
+      "WeaveRecipeRuntime"
+     ],
+     "path": "src/dreamer_wake/recipe.rs",
+     "purpose": "Host-interpreted workflow skill at the Dreamer wake boundary",
+     "surface": {
+      "struct": 2,
+      "trait": 1
      }
     },
     {
@@ -16661,7 +16690,7 @@
      "surface": {}
     },
     {
-     "bucket": "L",
+     "bucket": "XL",
      "kind": "test",
      "notable": [],
      "path": "src/gate/tests/auto_checker.rs",
@@ -34091,7 +34120,7 @@
      "purpose": "Dreamer promotion write path (ONE-1290, WP-011) — the ONE promotion door for consolidated beliefs (design D7)"
     },
     "dreamer_runner": {
-     "files": 26,
+     "files": 27,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -34105,7 +34134,7 @@
      "purpose": "OF-366 tournament claim-authoring runner primitives"
     },
     "dreamer_wake": {
-     "files": 9,
+     "files": 10,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -34898,7 +34927,7 @@
    },
    "over_bar": 9,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2062,
+   "source_files": 2064,
    "test_files": 705
   },
   "oneiron-android": {
@@ -36198,7 +36227,7 @@
      "path": "src/supervisor/factory.rs",
      "purpose": "Per-pass attempt-executor factory trait and default implementation",
      "surface": {
-      "fn": 4,
+      "fn": 5,
       "struct": 1,
       "trait": 1
      }

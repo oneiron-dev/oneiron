@@ -52,6 +52,17 @@ pub(super) fn run(ctx: &RematCtx<'_>, ledger: &mut RematLedger) -> TombstonePass
     let mut cleared: Vec<EntityId> = Vec::new();
     let mut receiver_scrub_candidates: Vec<EntityId> = Vec::new();
     let mut tombstone_error: Option<Error> = None;
+    let dreamer_id = match crate::dreamer_runner::authority::dreamer_actor_id() {
+        Ok(id) => id,
+        Err(err) => {
+            return TombstonePassOutcome {
+                purge_failures,
+                cleared,
+                receiver_scrub_candidates,
+                deferred_error: Some(err),
+            };
+        }
+    };
     map_for_each_tombstone_value(tombstones_map, |key, value| {
         if tombstone_error.is_some() {
             return;
@@ -77,6 +88,22 @@ pub(super) fn run(ctx: &RematCtx<'_>, ledger: &mut RematLedger) -> TombstonePass
         // concurrent protected record. Its CRDT envelope is still enough
         // to deny delete authority: quarantine the tombstone before the
         // headerless replay path can mint a permanent `dt:` marker.
+        if id == dreamer_id {
+            let rejection = Error::Registry(RegistryError::DreamerActorImmutable);
+            if let Err(err) = quarantine::quarantine_rejected_op(
+                vault,
+                window_key.as_str(),
+                QuarantineContainer::Tombstones,
+                key,
+                &rejection,
+                value,
+            ) {
+                tombstone_error = Some(err);
+            } else {
+                terminal_quarantines.push(id);
+            }
+            return;
+        }
         if matches!(vault.read_entity_header(&id), Ok(None))
             && let Some(entity_blob) = map_get_bytes(entities_map, &id.to_hex())
             && let Some(header) = bridge::admitted_concurrent_delete_protected_header(&entity_blob)

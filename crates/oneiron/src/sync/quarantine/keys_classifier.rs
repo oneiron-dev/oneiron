@@ -140,6 +140,7 @@ pub(crate) fn remote_rejection_reason(error: &Error) -> Option<String> {
         | ErrorKind::MaintenanceKindNotWritable
         | ErrorKind::ReservedPredicate
         | ErrorKind::EntityTypeImmutable
+        | ErrorKind::DreamerActorImmutable
         | ErrorKind::InvalidTimeRange
         | ErrorKind::InvalidClaimBody
         // Replicated rooms carry only body metadata, not the local ledger.

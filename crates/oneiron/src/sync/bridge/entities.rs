@@ -117,7 +117,8 @@ pub(super) fn materialize_entities_from_delta(
                     // downstream).
 
                     let delete_protected =
-                        crate::registry::is_delete_protected_engine_record(header.entity_type);
+                        id == crate::dreamer_runner::authority::dreamer_actor_id()?
+                            || crate::registry::is_delete_protected_engine_record(header.entity_type);
                     if !delete_protected && tombstone_map_contains_id(&tombstones_map, &id) {
                         tracing::debug!(
                             entity = %key,
@@ -366,7 +367,8 @@ pub(super) fn materialize_entity_blob_in_txn(
     {
         return Ok(false);
     }
-    let delete_protected = crate::registry::is_delete_protected_engine_record(header.entity_type);
+    let delete_protected = id == crate::dreamer_runner::authority::dreamer_actor_id()?
+        || crate::registry::is_delete_protected_engine_record(header.entity_type);
 
     // Tombstone gate — fires BEFORE the put, never heals after (ARCH-0023b:
     // "If tombstoned in CRDT → never resurrect"; contracts.ts

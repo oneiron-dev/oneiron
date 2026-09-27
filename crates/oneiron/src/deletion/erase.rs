@@ -371,6 +371,7 @@ impl Vault {
         wtxn: &mut heed::RwTxn<'_>,
         id: &EntityId,
     ) -> Result<bool> {
+        crate::dreamer_runner::authority::guard_actor_delete(id)?;
         crate::blob_artifact::esign::reject_event_delete(&self.store, wtxn, id)?;
         #[cfg(feature = "sync")]
         crate::entity_doc::erase_in_txn(&self.store, wtxn, id)?;
@@ -403,6 +404,7 @@ impl Vault {
         wtxn: &mut heed::RwTxn<'_>,
         id: &EntityId,
     ) -> Result<(bool, bool)> {
+        crate::dreamer_runner::authority::guard_actor_delete(id)?;
         crate::federation::reject_ruling_delete(&self.store, wtxn, id)?;
         crate::blob_artifact::esign::reject_event_delete(&self.store, wtxn, id)?;
         #[cfg(feature = "sync")]
@@ -571,6 +573,7 @@ impl Vault {
         id: &EntityId,
         raw_value: &[u8],
     ) -> Result<ReplayedTombstoneOutcome> {
+        crate::dreamer_runner::authority::guard_actor_delete(id)?;
         crate::federation::reject_ruling_delete(&self.store, wtxn, id)?;
         crate::blob_artifact::esign::reject_event_delete(&self.store, wtxn, id)?;
         crate::origin::lfs::reject_direct_lfs_chunk_delete(&self.store, wtxn, id)?;
@@ -793,7 +796,9 @@ impl Vault {
         id: &EntityId,
         entity_type: u8,
     ) -> Result<bool> {
-        if !crate::registry::is_delete_protected_engine_record(entity_type) {
+        if *id != crate::dreamer_runner::authority::dreamer_actor_id()?
+            && !crate::registry::is_delete_protected_engine_record(entity_type)
+        {
             return Err(Error::InvariantViolation(
                 "dt: poison neutralization requires a delete-protected engine record",
             ));

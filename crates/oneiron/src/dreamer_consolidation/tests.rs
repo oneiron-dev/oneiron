@@ -2735,3 +2735,82 @@ fn relationship_axis_separates_buckets_conflicts_and_ids() -> Result<()> {
     assert_eq!(id(None), id(None));
     Ok(())
 }
+
+#[test]
+fn queued_session_end_miner_executes_under_system_authority() -> Result<()> {
+    let (_dir, vault) = open_vault();
+    let session = minted(vault.mint_session(1)?);
+    vault.end_session_with_wake(
+        &session,
+        SessionClosePredicate::Explicit,
+        10,
+        &SessionEndWake::none(0),
+    )?;
+    let store = DreamerRunnerStore::new(&vault);
+    let queued_id = AttemptQueue::new(&vault)
+        .list()?
+        .into_iter()
+        .find(|row| {
+            row.kind == crate::DREAMER_CONSOLIDATION_MESO_ATTEMPT_KIND
+                && crate::dreamer_runner::decode_dreamer_attempt_payload(&row.payload).is_ok_and(
+                    |payload| payload.attempt_type == DREAMER_SUBSTITUTION_MINE_ATTEMPT_TYPE,
+                )
+        })
+        .expect("session close enqueues miner")
+        .id;
+    let DreamerConsolidationAdmissionOutcome::Admission(DreamerAdmissionOutcome::Admitted(
+        admitted,
+    )) = store.admit_next_consolidation(AdmitDreamerConsolidationAttempt {
+        scope: DreamerConsolidationScope::Meso,
+        local_node_id: crate::identity::load_or_mint_client_id(&vault)?,
+        claim_authoring_tier: DreamerClaimAuthoringBatchTier::batch(),
+        claim_authoring: DreamerClaimAuthoringAdmission::single_pass(),
+        admission: AdmitDreamerAttempt {
+            lease_owner: "miner-host".into(),
+            now: 11,
+            budget_id: "wake".into(),
+            budget_total_units: 1000,
+            reserve_units: 100,
+            started_milestone: None,
+        },
+    })?
+    else {
+        panic!("session-end miner must admit on the MESO lane");
+    };
+    assert_eq!(admitted.status.attempt.id, queued_id);
+    let actor = vault.dreamer_authority()?;
+    assert_eq!(actor.actor_class(), EdgeActorClass::System);
+    let backend = ScriptedBackend::new(Vec::new());
+    let guard =
+        crate::BudgetGuard::with_reserve_units("wake", 1000, 100, BudgetExhaustionPolicy::Suspend);
+    let deadline = WakePassDeadline::with_clock(180_000, std::sync::Arc::new(|| 0));
+    let mut sink = CapturingSink::default();
+    let mut executor = ConsolidationExecutor {
+        backend: &backend,
+        guard: &guard,
+        strategy: DreamerClaimAuthoringStrategy::SinglePass,
+        actor,
+        model: crate::ModelId::new("test/model@r1").expect("fixture model"),
+        sink: &mut sink,
+        scope: None,
+    };
+    let result = block_on_ready(executor.execute(
+        &admitted,
+        &mut WakeAttemptContext {
+            vault: &vault,
+            deadline: &deadline,
+            budget_id: "wake",
+            now_ms: 12_000,
+        },
+    ))?;
+    assert_eq!(
+        result,
+        DreamerAttemptExecution::Completed { completed_units: 0 }
+    );
+    assert!(
+        sink.accepted.is_empty(),
+        "no amendment evidence means no fabricated proposal"
+    );
+    assert_eq!(vault.dreamer_actor_for_attempt(queued_id)?, actor);
+    Ok(())
+}

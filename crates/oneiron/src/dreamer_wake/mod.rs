@@ -11,6 +11,7 @@
 mod deadline;
 mod driver;
 mod legibility;
+mod recipe;
 mod scheduling;
 mod settlement;
 mod types;
@@ -18,6 +19,7 @@ mod types;
 pub use self::deadline::*;
 pub use self::driver::*;
 pub use self::legibility::*;
+pub use self::recipe::*;
 pub use self::scheduling::*;
 pub use self::types::*;
 

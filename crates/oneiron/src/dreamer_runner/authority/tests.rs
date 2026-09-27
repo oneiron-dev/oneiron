@@ -103,123 +103,197 @@ fn vault_open_seeds_system_actor_without_claiming_resident_runs() -> Result<()> 
     Ok(())
 }
 
-/// A host can supply a per-vault, agent-authored recipe after the actor exists.
-/// The engine keeps the content as data; the host interprets it and the
-/// resulting write still crosses the ordinary Gate under the Dreamer stamp.
+struct UnreachableWeaveDelegate;
+
+impl crate::dreamer_wake::DreamerAttemptExecutor for UnreachableWeaveDelegate {
+    async fn execute(
+        &mut self,
+        _: &crate::dreamer_runner::DreamerAdmittedAttempt,
+        _: &mut crate::dreamer_wake::WakeAttemptContext<'_>,
+    ) -> Result<crate::dreamer_wake::DreamerAttemptExecution> {
+        panic!("a weave attempt must not enter the consolidation executor")
+    }
+}
+
+struct RecipeInterpreter;
+impl crate::dreamer_wake::WeaveRecipeRuntime for RecipeInterpreter {
+    fn draft(
+        &mut self,
+        markdown: &str,
+        evidence: &[u8],
+    ) -> Result<crate::dreamer_wake::WeaveRecipeDraft> {
+        let predicate = markdown
+            .lines()
+            .find_map(|line| line.strip_prefix("PREDICATE: "))
+            .ok_or(Error::InvalidClaimBody("recipe has no predicate"))?;
+        let instruction = markdown
+            .lines()
+            .find_map(|line| line.strip_prefix("VALUE_PREFIX: "))
+            .ok_or(Error::InvalidClaimBody("recipe has no instruction"))?;
+        let source = std::str::from_utf8(evidence)
+            .map_err(|_| Error::InvalidClaimBody("source is not text"))?;
+        Ok(crate::dreamer_wake::WeaveRecipeDraft {
+            predicate: predicate.to_owned(),
+            value: rmpv::Value::from(format!("{instruction}{source}")),
+            confidence: 0.8,
+        })
+    }
+}
+
 #[test]
 fn agent_authored_weave_recipe_executes_with_system_write_stamp() -> Result<()> {
+    use crate::attempt_queue::AttemptState;
+    use crate::dreamer_wake::{
+        DreamerWakeDriver, RunWakePass, WakeCancellation, WakePassDeadline, WakeTrigger,
+        WeaveRecipeExecutor,
+    };
     use crate::skill::{SkillGovernanceTier, SkillLifecycle, SkillRecord};
-    use crate::{ClaimCandidate, ClaimSubject};
+    use crate::skill_hub::HubFile;
     use rmpv::Value;
 
-    let (_dir, vault) = open_test_vault_with(embedding_test_config());
-    let actor = vault.dreamer_authority()?;
-    let skill_id = EntityId::now();
-    let recipe = SkillRecord::new(
+    let dir = tempfile::tempdir()?;
+    let vault = Vault::open(dir.path(), embedding_test_config())?;
+    let dreamer = vault.dreamer_authority()?;
+    let agent = EntityId::now();
+    let owner = EntityId::now();
+    let subject = EntityId::now();
+    let evidence = EntityId::now();
+    let at = TimeRange { start: 1, end: 1 };
+    for (id, body) in [
+        (agent, b"resident".as_slice()),
+        (owner, b"owner".as_slice()),
+        (subject, b"subject".as_slice()),
+        (evidence, b"retained evidence".as_slice()),
+    ] {
+        vault.put_entity(&id, crate::registry::ENTITY_TYPE_PERSON, at, 1, body)?;
+    }
+    let skill = EntityId::now();
+    let proposal = SkillRecord::new(
         "weave.recipe",
-        "Per-vault weave recipe supplied by the host agent",
+        "A vault-local owner-admitted workflow",
         "v1",
-        ClaimApprovalStatus::Approved,
+        ClaimApprovalStatus::Proposed,
         SkillLifecycle::Candidate,
         ClaimSource::Generated,
         0.5,
         true,
         false,
         Vec::new(),
-        Value::Map(vec![
-            (Value::from("author"), Value::from("resident-agent")),
-            (Value::from("predicate"), Value::from("profile.weave_note")),
-            (
-                Value::from("value"),
-                Value::from("derived from retained spans"),
-            ),
-        ]),
+        Value::Map(vec![("ask".into(), "write a v1 weave recipe".into())]),
     )
     .with_governance_tier(SkillGovernanceTier::Standard);
-    let at = TimeRange { start: 3, end: 3 };
-    vault.put_skill_record(&skill_id, &recipe, at, 3)?;
-    let mut admitted = recipe;
-    admitted.lifecycle_status = SkillLifecycle::Active;
-    vault.update_skill_record(&skill_id, &admitted, at, 4)?;
-
-    let outcome = DreamerRunnerStore::new(&vault).enqueue(EnqueueDreamerAttempt {
-        attempt_type: "weave.recipe".into(),
-        input: Value::from(skill_id.to_hex()),
-        parent_attempt: None,
-        dedupe_key: None,
-        run_id: None,
-        now: 5,
-    })?;
+    let markdown =
+        b"---\nname: weave.recipe\n---\nPREDICATE: profile.weave_note\nVALUE_PREFIX: Derived: \n";
+    let authored = vault
+        .memory(agent, EdgeActorClass::Agent)
+        .skill_save_with_source(
+            skill,
+            &proposal,
+            vec![HubFile::new("SKILL.md", markdown)],
+            None,
+            2,
+        )
+        .map_err(|err| Error::InvalidConfig(err.to_string()))?;
+    assert_eq!(authored.author, agent);
+    assert_eq!(
+        vault.get_skill_record(&skill)?.unwrap().lifecycle_status,
+        SkillLifecycle::Candidate
+    );
+    // A candidate cannot run and cannot inherit the actor's authority from its bytes.
+    assert!(
+        vault
+            .load_attempt_skill_pack(crate::attempt_queue::AttemptId::now(), &skill, 2)
+            .is_err()
+    );
+    let owner = vault.authenticate_owner(
+        owner,
+        "principal:recipe-owner",
+        true,
+        crate::store::GateDecisionId::now(),
+    )?;
+    let outcome = vault.admit_and_enqueue_weave_recipe(&owner, skill, subject, evidence, 3)?;
     let (EnqueueDreamerAttemptOutcome::Enqueued(status)
     | EnqueueDreamerAttemptOutcome::Existing(status)) = outcome;
-    let loaded = vault.get_skill_record(&skill_id)?.expect("admitted recipe");
-    assert_eq!(loaded.lifecycle_status, SkillLifecycle::Active);
-    let Value::Map(ref fields) = loaded.provenance else {
-        panic!("agent-authored recipe is a map");
+    let admission = vault
+        .store
+        .gate_decisions(100)?
+        .into_iter()
+        .find(|row| {
+            row.content_kind == "dreamer_recipe"
+                && row.actor_ref.as_deref() == Some(owner.actor().to_hex().as_str())
+        })
+        .expect("ruler admission is durable");
+    assert_eq!(admission.actor_class, "human");
+    assert_ne!(admission.read_frontier_hash, [0; 32]);
+
+    let mut worker = WeaveRecipeExecutor {
+        inner: UnreachableWeaveDelegate,
+        runtime: RecipeInterpreter,
     };
-    let field = |name| {
+    let mut driver = DreamerWakeDriver::new(&vault, "weave-budget", WakePassDeadline::new(180_000));
+    let report = crate::dreamer_wake::block_on_ready(driver.run_wake_pass(
+        RunWakePass {
+            trigger: WakeTrigger::Event,
+            scope: DreamerConsolidationScope::Micro,
+            local_node_id: 1,
+            lease_owner: "weave-host".into(),
+            budget_total_units: 10_000,
+            reserve_units: 100,
+            now: 4,
+        },
+        &mut worker,
+        &WakeCancellation::new(),
+    ))?;
+    assert_eq!(report.completed, 1);
+    let settled = DreamerRunnerStore::new(&vault)
+        .status(status.attempt.id)?
+        .unwrap();
+    assert_eq!(settled.attempt.state, AttemptState::Completed);
+    let claim = crate::codebase::entity_id_from_hash_material(
+        b"oneiron:dreamer:weave-recipe-claim:v1",
+        &[status.attempt.id.as_bytes()],
+    )?;
+    let body = vault
+        .get_claim(&claim)?
+        .expect("executing the recipe writes a proposal");
+    assert_eq!(body.predicate, "profile.weave_note");
+    assert_eq!(body.value.as_str(), Some("Derived: retained evidence"));
+    assert_eq!(body.approval, ClaimApprovalStatus::Proposed);
+    let Value::Map(fields) = body.evidence.as_ref().expect("stamped evidence") else {
+        panic!("evidence");
+    };
+    assert!(
         fields
             .iter()
-            .find_map(|(key, value)| (key.as_str() == Some(name)).then(|| value.as_str()))
-            .flatten()
-            .expect("recipe field")
-    };
-    let subject = EntityId::now();
-    vault.put_entity(
-        &subject,
-        crate::registry::ENTITY_TYPE_PERSON,
-        at,
-        3,
-        b"weave subject",
-    )?;
-    let claim = EntityId::now();
-    let envelope = vault.dreamer_proposal_envelope("weave.recipe", status.attempt.id)?;
-    assert_eq!(envelope.actor(), actor);
-    vault
-        .batch()
-        .claim_candidate(
-            &claim,
-            ClaimCandidate::new(
-                field("predicate"),
-                ClaimSubject::Entity(subject),
-                Value::from(field("value")),
-                0.8,
-            ),
-            &envelope,
-            at,
-            5,
-        )
-        .commit()?;
-    let body = vault.get_claim(&claim)?.expect("weave proposal landed");
-    assert_eq!(body.predicate, "profile.weave_note");
-    let Value::Map(evidence) = body.evidence.expect("envelope evidence") else {
-        panic!("envelope evidence must be a map");
-    };
-    assert!(evidence.iter().any(|(key, value)| {
-        key.as_str() == Some("actor_class")
-            && value.as_u64() == Some(u64::from(EdgeActorClass::System as u8))
-    }));
-    assert_eq!(body.approval, ClaimApprovalStatus::Proposed);
-    assert!(evidence.iter().any(|(key, value)| {
-        key.as_str() == Some("actor_entity_ref")
-            && value.as_slice() == Some(actor.entity_ref().as_bytes().as_slice())
-    }));
-    let stamp = vault
-        .dreamer_attempt_authority(status.attempt.id)?
-        .expect("the recipe attempt is bound to the Dreamer");
-    assert_eq!(stamp.actor, actor.entity_ref());
-    assert!(vault.store.gate_decisions(1_000)?.iter().any(|decision| {
-        decision.decision_id.as_bytes() == stamp.receipt_id
-            && decision.actor_class == "system"
-            && decision.actor_ref.as_deref() == Some(actor.entity_ref().to_hex().as_str())
-    }));
+            .any(|(key, value)| key.as_str() == Some("actor_class")
+                && value.as_u64() == Some(u64::from(EdgeActorClass::System as u8)))
+    );
+    assert!(
+        fields
+            .iter()
+            .any(|(key, value)| key.as_str() == Some("actor_entity_ref")
+                && value.as_slice() == Some(dreamer.entity_ref().as_bytes().as_slice()))
+    );
+    let decisions = vault.store.gate_decisions(10_000)?;
+    assert!(
+        decisions
+            .iter()
+            .any(|row| row.claim_id == Some(*claim.as_bytes()) && row.actor_class == "system"),
+        "recipe claim receipt: {:?}; receipt count={}",
+        decisions
+            .iter()
+            .find(|row| row.claim_id == Some(*claim.as_bytes())),
+        decisions.len()
+    );
     Ok(())
 }
 
 #[test]
-fn changed_system_actor_body_invalidates_queued_authority() -> Result<()> {
-    let (_dir, vault) = open_test_vault_with(embedding_test_config());
+fn actor_mutations_cannot_disable_a_vault_or_queued_attempt() -> Result<()> {
+    let (dir, vault) = open_test_vault_with(embedding_test_config());
     let actor = vault.dreamer_authority()?;
+    let id = actor.entity_ref();
+    let original = vault.get_raw(&id)?.expect("seeded actor");
     let outcome = DreamerRunnerStore::new(&vault).enqueue(EnqueueDreamerAttempt {
         attempt_type: "weave".into(),
         input: rmpv::Value::Nil,
@@ -230,15 +304,65 @@ fn changed_system_actor_body_invalidates_queued_authority() -> Result<()> {
     })?;
     let (EnqueueDreamerAttemptOutcome::Enqueued(status)
     | EnqueueDreamerAttemptOutcome::Existing(status)) = outcome;
+    let at = TimeRange { start: 2, end: 2 };
+    for (kind, data) in [
+        (
+            crate::registry::ENTITY_TYPE_MACHINE,
+            b"not the Dreamer".as_slice(),
+        ),
+        (
+            crate::registry::ENTITY_TYPE_PERSON,
+            b"Dreamer authority".as_slice(),
+        ),
+    ] {
+        let err = vault
+            .put_entity(&id, kind, at, 2, data)
+            .expect_err("immutable actor");
+        assert_eq!(err.kind(), crate::ErrorKind::DreamerActorImmutable);
+    }
+    let err = vault
+        .batch()
+        .put(&id, crate::registry::ENTITY_TYPE_MACHINE, at, 2, b"wrong")
+        .commit()
+        .expect_err("batch put refuses overwrite");
+    assert_eq!(err.kind(), crate::ErrorKind::DreamerActorImmutable);
+    let err = vault
+        .batch()
+        .delete(&id)
+        .commit()
+        .expect_err("batch delete refuses actor");
+    assert_eq!(err.kind(), crate::ErrorKind::DreamerActorImmutable);
+    for reason in [
+        crate::deletion::DeleteReason::UserDelete,
+        crate::deletion::DeleteReason::UserHardDelete,
+    ] {
+        let err = vault
+            .delete_entity_with_reason(&id, reason)
+            .expect_err("actor delete refused");
+        assert_eq!(err.kind(), crate::ErrorKind::DreamerActorImmutable);
+    }
+    // Ordinary MACHINE entities remain mutable and deletable.
+    let other = EntityId::now();
     vault.put_entity(
-        &actor.entity_ref(),
+        &other,
         crate::registry::ENTITY_TYPE_MACHINE,
-        TimeRange { start: 2, end: 2 },
+        at,
         2,
-        b"not the Dreamer",
+        b"device",
     )?;
-    assert!(vault.dreamer_authority().is_err());
-    assert!(vault.dreamer_attempt_authority(status.attempt.id).is_err());
-    assert!(vault.dreamer_actor_for_attempt(status.attempt.id).is_err());
+    vault.put_entity(
+        &other,
+        crate::registry::ENTITY_TYPE_MACHINE,
+        at,
+        3,
+        b"updated",
+    )?;
+    assert!(vault.delete_entity(&other)?);
+    assert_eq!(vault.get_raw(&id)?.as_deref(), Some(original.as_slice()));
+    assert_eq!(vault.dreamer_actor_for_attempt(status.attempt.id)?, actor);
+    drop(vault);
+    let reopened = Vault::open(dir.path(), embedding_test_config())?;
+    assert_eq!(reopened.dreamer_authority()?, actor);
+    assert_eq!(reopened.get_raw(&id)?.as_deref(), Some(original.as_slice()));
     Ok(())
 }
