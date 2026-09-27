@@ -48,6 +48,8 @@ const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// Total request timeout, sized for a 32 MiB blob round trip.
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(120);
+/// Full-vault exports can be much larger than one ordinary verb response.
+const EXPORT_TIMEOUT: Duration = Duration::from_secs(30 * 60);
 
 /// The server's error envelope, exactly as `api/facade.rs` serializes it.
 #[derive(serde::Deserialize)]
@@ -75,6 +77,9 @@ pub(crate) struct RemoteClient {
     authorization: HeaderValue,
     holder: Option<Box<(CapabilitySlip, SigningKey)>>,
     agent: Client,
+    // Export is a single large document. Keep an export-specific total timeout,
+    // not the ordinary verbs' response-byte ceiling or short timeout.
+    export_agent: Client,
     stream_agent: reqwest::Client,
 }
 
@@ -98,6 +103,7 @@ impl Clone for RemoteClient {
             authorization: self.authorization.clone(),
             holder: self.holder.clone(),
             agent: self.agent.clone(),
+            export_agent: self.export_agent.clone(),
             stream_agent: self.stream_agent.clone(),
         }
     }
@@ -117,6 +123,12 @@ impl RemoteClient {
         let base_url = normalize_origin(url)?;
         let authorization = bearer_header(bearer)?;
         let agent = blocking_agent()?;
+        let export_agent = Client::builder()
+            .redirect(reqwest::redirect::Policy::none())
+            .connect_timeout(CONNECT_TIMEOUT)
+            .timeout(EXPORT_TIMEOUT)
+            .build()
+            .map_err(|error| transport_error(format!("could not build export client: {error}")))?;
         let holder = match holder {
             Some(key) => {
                 let slip = CapabilitySlip::from_token(bearer).map_err(|_| {
@@ -143,6 +155,7 @@ impl RemoteClient {
             authorization,
             holder,
             agent,
+            export_agent,
         })
     }
 
@@ -176,38 +189,50 @@ impl RemoteClient {
         let url = self.verb_url(verb)?;
         let body = serialize_request(request)?;
         let credential = self.credential_headers()?;
-        let response = self
-            .agent
-            .post(url)
-            .headers(credential)
-            .header(ACCEPT, HeaderValue::from_static("application/json"))
-            .header(CONTENT_TYPE, HeaderValue::from_static("application/json"))
-            .body(body)
-            .send()
-            .map_err(|error| transport_error(describe_send_failure(&error)))?;
+        let response = (if verb == "export" {
+            &self.export_agent
+        } else {
+            &self.agent
+        })
+        .post(url)
+        .headers(credential)
+        .header(ACCEPT, HeaderValue::from_static("application/json"))
+        .header(CONTENT_TYPE, HeaderValue::from_static("application/json"))
+        .body(body)
+        .send()
+        .map_err(|error| transport_error(describe_send_failure(&error)))?;
 
         let status = response.status();
         if !status.is_success() {
             return Err(read_error_envelope(response, status));
         }
-        let bytes = read_capped(response, MAX_REMOTE_RESPONSE_BYTES).map_err(|failure| {
-            match failure {
-                ReadFailure::TooLarge => transport_error(format!(
-                    "the server's response exceeded the {MAX_REMOTE_RESPONSE_BYTES}-byte read ceiling"
-                )),
-                ReadFailure::Io(message) => {
-                    transport_error(format!("the server's response was truncated: {message}"))
+        // The ordinary facade has a strict success-body ceiling. Export alone
+        // streams JSON directly into its required result: there is no second
+        // whole-body buffer, and the response size is the archive's own size.
+        // The export-specific total timeout still refuses a stalled peer.
+        if verb == "export" {
+            serde_json::from_reader(response).map_err(|error| {
+                transport_error(format!(
+                    "the server answered {status} for {verb} with an incomplete or invalid export: {error}"
+                ))
+            })
+        } else {
+            let bytes = read_capped(response, MAX_REMOTE_RESPONSE_BYTES).map_err(|failure| {
+                match failure {
+                    ReadFailure::TooLarge => transport_error(format!(
+                        "the server's response exceeded the {MAX_REMOTE_RESPONSE_BYTES}-byte read ceiling"
+                    )),
+                    ReadFailure::Io(message) => {
+                        transport_error(format!("the server's response was truncated: {message}"))
+                    }
                 }
-            }
-        })?;
-        serde_json::from_slice(&bytes).map_err(|error| {
-            // A 2xx whose body is not the DTO is NOT a success. Saying so is
-            // the difference between a caller seeing a typed failure and a
-            // caller seeing a default-constructed result they will trust.
-            transport_error(format!(
-                "the server answered {status} for {verb} with a body this verb could not decode: {error}"
-            ))
-        })
+            })?;
+            serde_json::from_slice(&bytes).map_err(|error| {
+                transport_error(format!(
+                    "the server answered {status} for {verb} with a body this verb could not decode: {error}"
+                ))
+            })
+        }
     }
 
     pub(crate) async fn llm_post(
@@ -627,7 +652,7 @@ fn describe_send_failure(error: &reqwest::Error) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{RemoteClient, normalize_origin, parse_error_envelope};
+    use super::{MAX_REMOTE_RESPONSE_BYTES, RemoteClient, normalize_origin, parse_error_envelope};
     use ed25519_dalek::SigningKey;
     use oneiron::authority::{CapabilitySlip, HostSlipIssuer};
     use std::io::{BufRead, BufReader, Read, Write};
@@ -862,5 +887,69 @@ mod tests {
             joined.as_str(),
             "https://example.invalid/oneiron/v1/core/facade/recall"
         );
+    }
+
+    /// Both SDK projections use the remote route. Export, unlike ordinary
+    /// verbs, must consume a complete archive larger than the 64 MiB ceiling.
+    #[test]
+    fn connected_export_dispatches_generic_and_streams_large_typed_document() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let origin = format!("http://{}", listener.local_addr().unwrap());
+        let server = std::thread::spawn(move || {
+            for large in [false, true] {
+                let (mut stream, _) = listener.accept().unwrap();
+                let mut reader = BufReader::new(&mut stream);
+                let mut first = String::new();
+                reader.read_line(&mut first).unwrap();
+                assert!(first.starts_with("POST /v1/core/facade/export HTTP/1.1"));
+                let mut length = 0;
+                loop {
+                    let mut line = String::new();
+                    reader.read_line(&mut line).unwrap();
+                    if line == "\r\n" {
+                        break;
+                    }
+                    if let Some((name, value)) = line.split_once(':')
+                        && name.eq_ignore_ascii_case("content-length")
+                    {
+                        length = value.trim().parse().unwrap();
+                    }
+                }
+                let mut request = vec![0; length];
+                reader.read_exact(&mut request).unwrap();
+                assert_eq!(
+                    serde_json::from_slice::<serde_json::Value>(&request).unwrap()["format"],
+                    "json"
+                );
+                drop(reader);
+                let prefix = br#"{"format":"json","rendered":""#;
+                let suffix = b"\"}";
+                let count = if large {
+                    MAX_REMOTE_RESPONSE_BYTES + 1
+                } else {
+                    4
+                };
+                write!(stream, "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n", prefix.len() + count + suffix.len()).unwrap();
+                stream.write_all(prefix).unwrap();
+                let block = [b'x'; 64 * 1024];
+                let mut remaining = count;
+                while remaining > 0 {
+                    let n = remaining.min(block.len());
+                    stream.write_all(&block[..n]).unwrap();
+                    remaining -= n;
+                }
+                stream.write_all(suffix).unwrap();
+            }
+        });
+        let client = crate::OneironClient::connect(&origin, "local-secret").unwrap();
+        let generic = client
+            .agent_verb("export", serde_json::json!({"format":"json"}))
+            .unwrap();
+        assert_eq!(generic["rendered"], "xxxx");
+        let large = client.export(Some("json")).unwrap();
+        assert_eq!(large.format, "json");
+        assert_eq!(large.rendered.len(), MAX_REMOTE_RESPONSE_BYTES + 1);
+        assert!(large.rendered.bytes().all(|byte| byte == b'x'));
+        server.join().unwrap();
     }
 }

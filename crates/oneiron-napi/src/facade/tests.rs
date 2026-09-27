@@ -493,3 +493,28 @@ fn forget_drains_all_active_matches_beyond_one_page() {
 
     std::fs::remove_dir_all(&dir).ok();
 }
+
+#[test]
+fn native_client_export_projects_the_shared_five_format_verb() {
+    let dir = unique_vault_dir("export");
+    let client = super::client::NativeClient::open(Some(dir.to_string_lossy().into_owned()), None)
+        .expect("embedded native client");
+    for format in ["toon", "md", "json", "yaml", "txt"] {
+        let answer = client
+            .export(serde_json::json!({"format": format}))
+            .expect("N-API export");
+        assert_eq!(answer["format"], format);
+        assert!(
+            answer["rendered"]
+                .as_str()
+                .unwrap()
+                .contains("evidence_ledger")
+        );
+    }
+    let error = client
+        .export(serde_json::json!({"format":"gemini"}))
+        .expect_err("provider wire formats are not vault exports");
+    assert!(error.to_string().contains("BAD_REQUEST"));
+    drop(client);
+    std::fs::remove_dir_all(dir).expect("remove temp vault");
+}

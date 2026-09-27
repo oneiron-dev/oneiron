@@ -127,6 +127,9 @@ pub struct ExportLedger {
 #[serde(deny_unknown_fields)]
 pub struct ExportEntity {
     pub id: String,
+    /// Source-vault short ref for hydration. Absent when no live short ID exists.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub short_ref: Option<String>,
     pub entity_type: u8,
     pub occurred_start: u64,
     pub occurred_end: u64,

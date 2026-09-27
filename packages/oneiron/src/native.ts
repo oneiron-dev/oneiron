@@ -34,6 +34,7 @@ tasksUpdate(input: unknown): unknown
 witness(turn: WitnessTurn): WitnessReceipt
 claimUpsert(claim: ClaimInput): CommitReceipt
 recall(query: string, effort: string | undefined, scope: RecallScope | undefined, limit: number | undefined, format: string | undefined): MemoryPack
+export(input: unknown): unknown
 receipts(limit: number | undefined): FacadeReceipt[]
 keyValueGet(requestJson: string): string
 keyValuePut(requestJson: string): string

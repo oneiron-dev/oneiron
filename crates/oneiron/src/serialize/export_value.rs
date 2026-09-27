@@ -92,6 +92,15 @@ impl ExportBody {
             if entity_type == crate::registry::ENTITY_TYPE_FACET {
                 export_substrate_reference(&value, &mut exported);
             }
+            // The NOTE codec has one validated binary revision reference.
+            // Treating it as arbitrary opaque bytes would null it and make a live
+            // edited NOTE's JSON archive impossible to decode on import.
+            if entity_type == crate::registry::ENTITY_TYPE_NOTE
+                && let Ok(note) =
+                    crate::note::decode_note_body_using(bytes, crate::note::NoteKind::wire)
+            {
+                export_note_references(&note, &mut exported);
+            }
             return Self::MessagePack(exported);
         }
         match std::str::from_utf8(bytes) {
@@ -170,6 +179,22 @@ fn export_scope_references(body: &crate::claim::ClaimBody, exported: &mut Export
             _ => continue,
         };
         *value = ExportValue::EntityReference(id.as_bytes().to_vec());
+    }
+}
+
+// The NOTE codec proves this one top-level binary revision is a reference,
+// not arbitrary payload. The author ref is a hex STRING and stays one.
+fn export_note_references(body: &crate::note::NoteBody, exported: &mut ExportValue) {
+    if scan_file_content("", &body.source_revision_ref).is_some() {
+        return;
+    }
+    let ExportValue::Map(entries) = exported else {
+        return;
+    };
+    if let Some(value) = entries.iter_mut().find_map(|(key, value)| {
+        matches!(key, ExportValue::String(key) if key == "source_revision_ref").then_some(value)
+    }) {
+        *value = ExportValue::EntityReference(body.source_revision_ref.to_vec());
     }
 }
 
