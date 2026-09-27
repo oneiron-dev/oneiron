@@ -176,6 +176,10 @@ where
         // disappear between snapshot and receiver nor need a polling timer.
         let mut wave_events = AttemptQueue::new(vault).subscribe();
         let wave_planner = factory.wave_planner();
+        if wave_planner.is_some() && factory.actor().is_none() {
+            tracing::error!("wave planner requires an authenticated factory actor");
+            return report;
+        }
         let mut wave = WaveDispatchPump::new(wave_limits);
         let mut prefer_tick = false;
         let mut ticks_exhausted = false;
