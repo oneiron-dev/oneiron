@@ -170,6 +170,8 @@ impl<H: LabelClassifier> DecisionSeat for LocalDecisionSeat<H> {
                 providers,
                 band: dial.band,
                 band_version: 0,
+                evidence_versions: Vec::new(),
+                cost_per_thousand: None,
             },
         })
     }

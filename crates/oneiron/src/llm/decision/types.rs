@@ -187,6 +187,20 @@ pub struct DecisionReceipt {
     /// Zero denotes the seed band in shadow; learned bands pin their version.
     #[serde(default)]
     pub band_version: u32,
+    /// Exact source-body hashes used for this unit's inference.
+    #[serde(default)]
+    pub evidence_versions: Vec<EvidenceVersion>,
+    /// Provider-reported cost at the answered rung, when known.
+    #[serde(default)]
+    pub cost_per_thousand: Option<f64>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct EvidenceVersion {
+    #[serde(with = "super::codec::entity")]
+    pub id: EntityId,
+    pub body_hash: [u8; 32],
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

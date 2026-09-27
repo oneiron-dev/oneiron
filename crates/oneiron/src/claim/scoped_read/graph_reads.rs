@@ -9,10 +9,62 @@ use crate::vault::ReadMode;
 use crate::{EdgeInfo, EntityId, Error, Result};
 use std::collections::HashSet;
 
+type GraphAskNeighbors = Vec<(EntityId, u8, Vec<u8>)>;
 type TimelineEntityParts = (u8, u64, Vec<u8>);
 type SupersessionParts = (TimelineEntityParts, TimelineEntityParts);
 
 impl ScopedRead<'_> {
+    /// The graph-ask recipe reads at most `limit` usable outgoing neighbors.
+    /// Cap the raw scan too, so an invisible high-degree region cannot force
+    /// an unbounded authority walk. Unit and neighbors share one read snapshot.
+    pub(crate) fn graph_ask_neighbors(
+        &self,
+        unit: &EntityId,
+        limit: usize,
+        scan_limit: usize,
+        max_body_bytes: usize,
+    ) -> Result<Option<GraphAskNeighbors>> {
+        let txn = self.vault.store.env.read_txn()?;
+        let (filter, policy) = self.resolve_retrieval_filter_in(&txn, None)?;
+        if !self.is_entity_retrievable_with_policy_in(&txn, &policy, &filter, unit)? {
+            return Ok(None);
+        }
+        let mut kept = Vec::new();
+        let mut seen = HashSet::new();
+        seen.insert(*unit);
+        for entry in self.out_edges_in(&txn, unit, None)?.take(scan_limit) {
+            let edge = entry?;
+            if !seen.insert(edge.target) {
+                continue;
+            }
+            let Some(raw) = self.entity_raw_with_mode_in(
+                &txn,
+                &policy,
+                &filter,
+                &edge.target,
+                crate::vault::ReadMode::Live,
+            )?
+            else {
+                continue;
+            };
+            let header = EntityMetadataHeader::parse(&raw)
+                .ok_or(Error::CorruptedIndex("graph ask neighbor header"))?;
+            let body = &raw[ENTITY_METADATA_HEADER_LEN..];
+            if (header.entity_type != crate::registry::ENTITY_TYPE_CLAIM
+                && (64..100).contains(&header.entity_type))
+                || body.is_empty()
+                || body.len() > max_body_bytes
+            {
+                continue;
+            }
+            kept.push((edge.target, header.entity_type, body.to_vec()));
+            if kept.len() >= limit {
+                break;
+            }
+        }
+        Ok(Some(kept))
+    }
+
     /// Edges and both endpoints share one authority snapshot and a mandatory receipt.
     pub fn edges_out(&self, id: &EntityId) -> Result<ScopedReadResult<Option<Vec<EdgeInfo>>>> {
         let txn = self.grant_read_txn()?;
