@@ -32,10 +32,18 @@ mod bundled_skills;
 #[cfg(test)]
 pub(in crate::skill_hub) use bundled_skills::pack_skill_hub_ref;
 mod schema;
+mod script_plan;
+mod script_runtime;
 pub use admission_types::{
     BundledSkillPermissions, PackCandidateReason, PackFitPolicy, PackFitVerdict, PackInstallAsk,
     PackInstallDisposition, PackInstallReceipt, PackInstallStatus, PackPermissions,
+    PackQualification, PackQualifier, PackRuntimeRecipe,
 };
+#[cfg(all(test, feature = "microvm-firecracker", target_os = "linux"))]
+pub(crate) use script_plan::{ScriptExecutionPlan, script_output_bytes};
+#[cfg(all(test, feature = "microvm-firecracker", target_os = "linux"))]
+pub(crate) use script_runtime::ScriptOutput;
+pub use script_runtime::{PackScriptGrant, PackScriptOutcome, PackScriptRun};
 #[cfg(test)]
 mod admission_tests;
 
