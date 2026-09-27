@@ -85,6 +85,40 @@ fn custom_agent_ref(record: &AttemptRecord) -> Result<crate::entity_id::EntityId
     input.target.agent_definition_ref().map_err(|_| invalid())
 }
 
+/// Point-check a caller-selected member and class on the SAME snapshot used
+/// for owner validation. A stale group result cannot turn into a read of an
+/// unrelated attempt, including one whose definition was retired meanwhile.
+pub(super) fn member_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    attempt_id: AttemptId,
+    class: FailureSignalClass,
+) -> Result<AttemptRecord> {
+    let Some(indexed) = vault.store.vault_meta.get(txn, &key(attempt_id))? else {
+        return Err(Error::EntityNotFound);
+    };
+    if indexed.as_ref() != [VERSION, class as u8] {
+        return Err(Error::EntityNotFound);
+    }
+    let record = AttemptQueue::new(vault)
+        .get_in_txn(txn, attempt_id)?
+        .ok_or(Error::CorruptedIndex("custom-agent failure"))?;
+    let agent_ref =
+        custom_agent_ref(&record).map_err(|_| Error::CorruptedIndex("custom-agent failure"))?;
+    let live = crate::vault::live_entity_row_in_txn(&vault.store, txn, &agent_ref)?;
+    let crate::vault::LiveEntityRow::Live { entity_type, body } = live else {
+        return Err(Error::EntityNotFound);
+    };
+    if entity_type != ENTITY_TYPE_AGENT_DEF
+        || crate::agent_def::decode_agent_definition(&body)?
+            .logical_id
+            .is_some()
+    {
+        return Err(Error::EntityNotFound);
+    }
+    Ok(record)
+}
+
 impl Vault {
     /// Indexes one terminal custom dispatch under its producer-supplied
     /// taxonomy class, without changing its execution outcome. Same-class
