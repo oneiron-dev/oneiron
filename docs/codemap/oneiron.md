@@ -1383,7 +1383,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/genui/tests.rs` | test | L | — | — | — |
 | `src/genui/tests/failure_integrity.rs` | test | m | — | — | — |
 | `src/genui/tests/project_proposal.rs` | test | m | — | — | — |
-| `src/genui/voice_offer.rs` | src | s | 1 struct · 2 fn | VoiceGrantOffer | Voice-only disclosure widening is an offer, not an authorization |
+| `src/genui/voice_offer.rs` | src | m | 1 struct · 3 fn | VoiceGrantOffer | Voice-only disclosure widening is an offer, not an authorization |
 | `src/git_wire/argv.rs` | src | s | 25 crate-vis | — | Frozen typed argv: one constructor per git verb plus the token validators |
 | `src/git_wire/bridge.rs` | src | s | 3 crate-vis | — | `repo_mutation` migration bridge: validated arbitrary-argv entry plus failure redaction |
 | `src/git_wire/checkout.rs` | src | s | 2 fn | — | Checkout custody: owned handle directories plus the `CheckoutRepoOps` trait impl |

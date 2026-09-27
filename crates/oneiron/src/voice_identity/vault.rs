@@ -116,6 +116,7 @@ impl Vault {
                 sample_ids: sample_ids.clone(),
                 sample_languages: sample_languages.clone(),
                 calibration,
+                print_generation: self.store.clock.entity_id()?,
                 created_at: previous.map_or(request.requested_at, |prior| prior.created_at),
                 updated_at: request.requested_at,
                 delete_after: None,
@@ -187,6 +188,7 @@ impl Vault {
                             subject_ref: candidate.subject_ref,
                             score,
                             calibration: candidate.calibration,
+                            print_generation: candidate.print_generation,
                         },
                     });
                 }
@@ -313,8 +315,14 @@ impl Vault {
                 && segment.subject_ref == Some(owner_actor)
                 && matches!(
                     segment.evidence,
-                    VoiceAttributionEvidence::EnrolledPrint { subject_ref, score, .. }
-                        if subject_ref == owner_actor && score >= roster.known_threshold
+                    VoiceAttributionEvidence::EnrolledPrint {
+                        subject_ref,
+                        score,
+                        print_generation,
+                        ..
+                    } if subject_ref == owner_actor
+                        && print_generation == print.print_generation
+                        && score >= roster.known_threshold
                 )
         }))
     }

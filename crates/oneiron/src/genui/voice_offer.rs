@@ -13,6 +13,7 @@ use serde::{Deserialize, Serialize};
 
 const PREFIX: &[u8] = b"genui.voice_grant_offer.v1:";
 const OFFER_LIFETIME_SECONDS: u64 = 600;
+const MAX_PENDING_OFFERS: usize = 1024;
 
 /// A displayable offer. Neither the nonce nor the corroborating voice-print
 /// result is a credential; only `confirm_voice_grant_offer` can mint a grant.
@@ -93,7 +94,20 @@ impl Vault {
             expires_at,
         };
         let key = offer_key(&grant_offer_nonce)?;
+        // Prune in its own committed transaction: rejecting a new offer at
+        // capacity must not roll back reclamation of expired rows.
+        self.prune_expired_voice_grant_offers()?;
         self.with_write_txn(|txn| {
+            let mut pending = 0;
+            for entry in self.store.vault_meta.prefix_iter(&*txn, PREFIX)? {
+                entry?;
+                pending += 1;
+                if pending >= MAX_PENDING_OFFERS {
+                    return Err(Error::InvalidConfig(
+                        "voice grant offer capacity reached".to_owned(),
+                    ));
+                }
+            }
             if self.store.vault_meta.get(&*txn, &key)?.is_some() {
                 return Err(invalid_offer());
             }
@@ -110,6 +124,32 @@ impl Vault {
             principal_ref: principal_ref.to_owned(),
             bound_digest,
             expires_at,
+        })
+    }
+
+    /// Remove expired, unconfirmed voice offers from this vault. Safe to call
+    /// from maintenance; offer issuance also invokes it before checking the
+    /// bounded pending capacity. The transaction commits even when a later
+    /// confirmation or issuance is refused.
+    pub fn prune_expired_voice_grant_offers(&self) -> Result<usize> {
+        let now = self.now_recorded_at();
+        self.with_write_txn(|txn| {
+            let mut expired = Vec::new();
+            for entry in self.store.vault_meta.prefix_iter(&*txn, PREFIX)? {
+                let (key, bytes) = entry?;
+                let row: StoredVoiceOffer =
+                    serde_json::from_slice(&bytes).map_err(|_| invalid_offer())?;
+                if row.version != 1 {
+                    return Err(invalid_offer());
+                }
+                if row.expires_at <= now {
+                    expired.push(key.to_vec());
+                }
+            }
+            for key in &expired {
+                self.store.vault_meta.delete(txn, key)?;
+            }
+            Ok(expired.len())
         })
     }
 
@@ -146,9 +186,177 @@ impl Vault {
             {
                 return Err(invalid_offer());
             }
+            owner.revalidate_in_txn(self, &*txn)?;
             let receipt = self.create_standing_grant_in_txn(txn, owner, bound)?;
             self.store.vault_meta.delete(txn, &key)?;
             Ok(receipt)
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::consent::{AudienceBound, DisclosureClass, DisclosureEnvelope};
+    use crate::identity_topology::{
+        IdentityOpEvidence, IdentityOpOutcome, IdentityOpWrite, IdentityTopologyOp, MergeOp,
+        SurvivorshipPlan,
+    };
+    use crate::ports::ManualClock;
+    use crate::registry::ENTITY_TYPE_PERSON;
+    use crate::store::GateDecisionId;
+    use crate::temporal::TimeRange;
+
+    fn person(vault: &Vault, byte: u8) -> Result<EntityId> {
+        let id = crate::test_util::entity(byte);
+        vault.put_entity(
+            &id,
+            ENTITY_TYPE_PERSON,
+            TimeRange { start: 1, end: 1 },
+            1,
+            b"person",
+        )?;
+        Ok(id)
+    }
+
+    fn disclosure() -> Result<GrantBound> {
+        GrantBound::disclosure(
+            AudienceBound::singleton("contact:friend")?,
+            DisclosureClass::new("private")?,
+            DisclosureEnvelope::new(["named-set:friends".to_owned()])?,
+        )
+    }
+
+    fn pending_count(vault: &Vault) -> Result<usize> {
+        let rtxn = vault.store.env.read_txn()?;
+        let mut count = 0;
+        for row in vault.store.vault_meta.prefix_iter(&rtxn, PREFIX)? {
+            row?;
+            count += 1;
+        }
+        Ok(count)
+    }
+
+    #[test]
+    fn retired_owner_cannot_confirm_cached_offer_or_spend_nonce() -> Result<()> {
+        let (_dir, vault) = crate::test_util::open_test_vault_with(crate::VaultConfig::device());
+        let actor = person(&vault, 0xC1)?;
+        let survivor = person(&vault, 0xC2)?;
+        let owner = vault.authenticate_owner(actor, "owner", true, GateDecisionId::now())?;
+        let bound = disclosure()?;
+        let offer =
+            vault.offer_voice_disclosure_grant(actor, "owner", "room", "segment", &bound)?;
+        let op = IdentityTopologyOp::Merge(MergeOp {
+            sources: vec![actor],
+            survivor,
+            evidence: IdentityOpEvidence {
+                refs: Vec::new(),
+                rationale: "retire owner fixture".to_owned(),
+            },
+            survivorship_plan: SurvivorshipPlan::ReadThrough,
+        });
+        assert!(matches!(
+            vault.apply_identity_topology_op(
+                &op,
+                &IdentityOpWrite::auto(crate::claim::ClaimSource::Inferred),
+                200,
+            )?,
+            IdentityOpOutcome::Applied { .. }
+        ));
+        assert!(
+            vault
+                .authenticate_owner(actor, "owner", true, GateDecisionId::now())
+                .is_err()
+        );
+        let before_receipts = vault.store.gate_decisions(100)?.len();
+        let err = vault
+            .confirm_voice_grant_offer(
+                &owner,
+                &offer.grant_offer_nonce,
+                bound.clone(),
+                ConsentSurface::Dashboard,
+            )
+            .expect_err("retired owner handle must not mint");
+        assert_eq!(
+            err.kind(),
+            crate::error::ErrorKind::ConsentOwnerNotAuthenticated
+        );
+        assert!(vault.consent_grant(&bound.digest().to_hex())?.is_none());
+        assert_eq!(vault.store.gate_decisions(100)?.len(), before_receipts);
+        assert_eq!(
+            pending_count(&vault)?,
+            1,
+            "failed confirm must not spend nonce"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn expired_offers_are_reclaimed_and_live_offer_still_confirms_once() -> Result<()> {
+        let clock = ManualClock::new(1_000_000);
+        let mut config = crate::VaultConfig::device();
+        config.store_clock = clock.bundle();
+        let (_dir, vault) = crate::test_util::open_test_vault_with(config);
+        let actor = person(&vault, 0xC3)?;
+        let bound = disclosure()?;
+        let first = vault.offer_voice_disclosure_grant(actor, "owner", "room", "one", &bound)?;
+        let second = vault.offer_voice_disclosure_grant(actor, "owner", "room", "two", &bound)?;
+        assert_eq!(pending_count(&vault)?, 2);
+        clock.set(first.expires_at);
+        let owner = vault.authenticate_owner(actor, "owner", true, GateDecisionId::now())?;
+        assert!(
+            vault
+                .confirm_voice_grant_offer(
+                    &owner,
+                    &first.grant_offer_nonce,
+                    bound.clone(),
+                    ConsentSurface::Dashboard,
+                )
+                .is_err()
+        );
+        assert_eq!(
+            pending_count(&vault)?,
+            2,
+            "failed confirmation cannot commit deletion"
+        );
+        let live = vault.offer_voice_disclosure_grant(actor, "owner", "room", "new", &bound)?;
+        assert_eq!(
+            pending_count(&vault)?,
+            1,
+            "issuance prunes both expired offers"
+        );
+        assert_eq!(vault.prune_expired_voice_grant_offers()?, 0);
+        assert_ne!(first.grant_offer_nonce, live.grant_offer_nonce);
+        assert_ne!(second.grant_offer_nonce, live.grant_offer_nonce);
+        assert!(
+            vault
+                .confirm_voice_grant_offer(
+                    &owner,
+                    &first.grant_offer_nonce,
+                    bound.clone(),
+                    ConsentSurface::Dashboard,
+                )
+                .is_err()
+        );
+        let receipt = vault.confirm_voice_grant_offer(
+            &owner,
+            &live.grant_offer_nonce,
+            bound.clone(),
+            ConsentSurface::Dashboard,
+        )?;
+        let grant_ref = bound.digest().to_hex();
+        assert_eq!(receipt.grant_ref().as_deref(), Some(grant_ref.as_str()));
+        assert!(
+            vault
+                .confirm_voice_grant_offer(
+                    &owner,
+                    &live.grant_offer_nonce,
+                    bound,
+                    ConsentSurface::Dashboard,
+                )
+                .is_err()
+        );
+        assert_eq!(pending_count(&vault)?, 0);
+        Ok(())
     }
 }

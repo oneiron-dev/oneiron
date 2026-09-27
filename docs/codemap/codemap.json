@@ -17142,7 +17142,7 @@
      "surface": {}
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "VoiceGrantOffer"
@@ -17150,7 +17150,7 @@
      "path": "src/genui/voice_offer.rs",
      "purpose": "Voice-only disclosure widening is an offer, not an authorization",
      "surface": {
-      "fn": 2,
+      "fn": 3,
       "struct": 1
      }
     },

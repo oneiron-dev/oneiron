@@ -1546,6 +1546,7 @@ fn record_decoders_reject_unknown_duplicate_keys_and_bad_schema_versions() -> Re
         sample_ids: vec!["s-1".to_owned()],
         sample_languages: vec!["en".to_owned()],
         calibration: VoicePrintCalibration::Collecting,
+        print_generation: test_id(0xF0),
         created_at: 200,
         updated_at: 200,
         delete_after: None,
@@ -1827,6 +1828,93 @@ fn voice_offer_nonce_requires_exact_device_confirm_and_is_single_use() -> Result
             )
             .is_err(),
         "spent nonce cannot mint twice"
+    );
+    Ok(())
+}
+
+#[test]
+fn same_space_print_replacement_invalidates_old_voice_offer_evidence() -> Result<()> {
+    use crate::consent::{AudienceBound, DisclosureClass, DisclosureEnvelope, GrantBound};
+
+    let (_tmp, vault) = temp_vault();
+    let actor = test_id(0xB4);
+    vault.put_entity(
+        &actor,
+        crate::registry::ENTITY_TYPE_PERSON,
+        TimeRange { start: 1, end: 1 },
+        1,
+        b"owner",
+    )?;
+    let first = enroll_principal(
+        &vault,
+        actor,
+        actor,
+        "consent-initial",
+        [1.0, 0.0, 0.0, 0.0],
+    )?;
+    let space_id = space().space_id;
+    vault.resolve_voice_segments(&match_request(
+        "old-voice-session",
+        &space_id,
+        vec![segment("old-segment", 0, [1.0, 0.0, 0.0, 0.0], &space_id)],
+        Vec::new(),
+    ))?;
+    let bound = GrantBound::disclosure(
+        AudienceBound::singleton("contact:friend")?,
+        DisclosureClass::new("private")?,
+        DisclosureEnvelope::new(["named-set:friends".to_owned()])?,
+    )?;
+    assert!(
+        vault
+            .offer_voice_disclosure_grant(
+                actor,
+                "owner",
+                "old-voice-session",
+                "old-segment",
+                &bound,
+            )?
+            .owner_voice_print_verified
+    );
+
+    // Replacement within the SAME embedding space must not borrow the old
+    // roster's score, even when the caller reuses timestamps and sample IDs.
+    let second = enroll_principal(
+        &vault,
+        actor,
+        actor,
+        "consent-replacement",
+        [0.0, 1.0, 0.0, 0.0],
+    )?;
+    assert_eq!(first.space.space_id, second.space.space_id);
+    assert_ne!(first.print_generation, second.print_generation);
+    assert!(
+        !vault
+            .offer_voice_disclosure_grant(
+                actor,
+                "owner",
+                "old-voice-session",
+                "old-segment",
+                &bound,
+            )?
+            .owner_voice_print_verified
+    );
+
+    vault.resolve_voice_segments(&match_request(
+        "new-voice-session",
+        &space_id,
+        vec![segment("new-segment", 0, [0.0, 1.0, 0.0, 0.0], &space_id)],
+        Vec::new(),
+    ))?;
+    assert!(
+        vault
+            .offer_voice_disclosure_grant(
+                actor,
+                "owner",
+                "new-voice-session",
+                "new-segment",
+                &bound,
+            )?
+            .owner_voice_print_verified
     );
     Ok(())
 }
