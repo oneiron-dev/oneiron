@@ -151,14 +151,28 @@ impl<'a> ContextPackBuilder<'a> {
             Some(session) => ContextPackTelemetry::Session(session),
             None => ContextPackTelemetry::Base(&self.vault.store),
         };
-        let mut l2_base = super::super::l2_base::produce_l2_base(
+        let implicit_l2 = self.l2_summary_subjects.is_empty();
+        let l2_subjects = if implicit_l2 {
+            super::super::l2_base::default_l2_subjects(self.vault, self.l2_summary_reader)?
+        } else {
+            self.l2_summary_subjects.clone()
+        };
+        let mut l2_base = match super::super::l2_base::produce_l2_base(
             self.vault,
             &pipeline,
-            &self.l2_summary_subjects,
+            &l2_subjects,
             self.disclosure.as_ref(),
             self.l2_summary_reader,
             self.session.is_none(),
-        )?;
+        ) {
+            // Only bounded-summary limits may omit an implicit optional
+            // prefix. Corruption, disclosure and explicit-request errors stay
+            // fail-closed; the normal retrieval still runs its own gates.
+            Err(Error::IndexOverflow(
+                "L2 subject adjacency" | "L2 evidence bytes" | "L2 evidence claims",
+            )) if implicit_l2 => None,
+            other => other?,
+        };
         let l2_pipeline = l2_base.as_ref().map(|_| pipeline.clone());
         let neighbor_pipeline =
             (self.edge_hop > 0 && selected_edge_budget > 0).then(|| pipeline.clone());
@@ -425,17 +439,24 @@ impl<'a> ContextPackBuilder<'a> {
             if let Some(ctx) = clamp {
                 validate_pack_disclosure(&self.vault.store, &rtxn, ctx, &results, &neighbors)?;
             }
-            if let (Some(summary), Some(pipeline)) = (&l2_base, &l2_pipeline)
-                && !super::super::l2_base::revalidate_l2_base(
+            if let (Some(summary), Some(pipeline)) = (&l2_base, &l2_pipeline) {
+                let valid = match super::super::l2_base::revalidate_l2_base(
                     self.vault,
                     pipeline,
                     &rtxn,
                     summary,
                     clamp,
                     self.l2_summary_reader,
-                )?
-            {
-                l2_base = None;
+                ) {
+                    Ok(valid) => valid,
+                    Err(Error::IndexOverflow(
+                        "L2 subject adjacency" | "L2 evidence bytes" | "L2 evidence claims",
+                    )) if implicit_l2 => false,
+                    Err(error) => return Err(error),
+                };
+                if !valid {
+                    l2_base = None;
+                }
             }
             super::super::source_ranking::apply(
                 &mut results,
@@ -445,11 +466,6 @@ impl<'a> ContextPackBuilder<'a> {
             )?;
             resolve_edge_short_ids(&mut results, &mut neighbors);
 
-            if let Some(summary) = &l2_base {
-                let ids = summary.evidence_ids();
-                results.retain(|entity| ids.binary_search(&entity.id).is_err());
-                neighbors.retain(|entity| ids.binary_search(&entity.id).is_err());
-            }
             let memory_is_empty = results.is_empty() && neighbors.is_empty() && l2_base.is_none();
             let pack_is_empty = memory_is_empty && capabilities.is_empty();
             // Discoveries keep the whole pack nonempty, but never decide the
