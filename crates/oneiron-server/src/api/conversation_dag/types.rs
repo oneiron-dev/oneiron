@@ -49,10 +49,21 @@ impl DagActor {
 }
 
 #[derive(Debug, Deserialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum DagAddressMode {
+    Broadcast,
+    Direct,
+}
+
+#[derive(Debug, Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct DagAppendRequest {
     pub parent: Option<String>,
     pub reply_to: Option<String>,
+    /// Addressing is not access control. Omitted means broadcast.
+    pub addr: Option<DagAddressMode>,
+    /// PERSON ids named by direct addressing.
+    pub to: Option<Vec<String>>,
     pub advance: bool,
     pub body: Value,
     pub text: Option<Vec<CoreTextField>>,
