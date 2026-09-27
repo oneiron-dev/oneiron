@@ -64,6 +64,15 @@ impl PolicyManifestResolution {
             .map(|policy| policy.limit_for(holder))
     }
 
+    /// Resolve the required vault ceiling and every matching actor/scope row.
+    pub(crate) fn retry_budget_for(
+        &self,
+        actor: crate::EntityId,
+        scope: Option<&crate::llm::Scope>,
+    ) -> crate::Result<crate::gate::retry_source_policy::ResolvedRetryBudget> {
+        crate::gate::retry_source_policy::resolve(&self.retry_source_policy, actor, scope)
+    }
+
     #[must_use]
     pub(in crate::gate) fn policy_value_row(
         &self,
@@ -136,6 +145,20 @@ impl PolicyManifestResolution {
             deciding_row: resolved.deciding_row.map(|row| row.row_ref.clone()),
             precedence_row: precedence_row.map(str::to_owned),
             shipped_default_precedence: precedence_row.is_none(),
+        }
+    }
+
+    /// Trusted vault policy narrowed by the holder's own limits and shipped defaults.
+    pub(crate) fn voice_ref_limits(
+        &self,
+        owner: &crate::EntityId,
+    ) -> Option<crate::voice_identity::ref_limits::VoiceRefLimits> {
+        if self.diagnostics.loaded_manifest_forces_fail_closed() {
+            None
+        } else {
+            self.voice_ref_defaults
+                .as_ref()
+                .and_then(|defaults| self.voice_ref_limits.effective(defaults, owner))
         }
     }
 

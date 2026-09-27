@@ -26,6 +26,7 @@ use crate::gate::hosted_tts_policy::HostedTtsPolicy;
 use crate::gate::pack_install_policy::KEY as PACK_INSTALL_POLICY_KEY;
 use crate::gate::policy_values::{PolicyValueRow, parse_policy_values};
 use crate::llm::{BudgetExhaustionPolicy, BudgetPolicyTable};
+use crate::voice_identity::ref_limits::VoiceRefLimitPolicy;
 
 use super::decode_map_util::{
     MapValue, parse_signature_value, parse_signatures, required_string, required_value,
@@ -64,7 +65,10 @@ pub(in crate::gate) struct DecodedPolicyManifest {
     pub(in crate::gate) hosted_tts: HostedTtsPolicy,
 
     pub(in crate::gate) diagnostic_bounds: Option<crate::self_heal::tripwires::TripwireBounds>,
+    pub(in crate::gate) voice_ref_limits: Option<VoiceRefLimitPolicy>,
     pub(in crate::gate) weave_correction_policy: Option<crate::gate::WeaveCorrectionPolicy>,
+    pub(in crate::gate) retry_source_policy:
+        Vec<crate::gate::retry_source_policy::RetrySourcePolicyRow>,
     pub(in crate::gate) unsupported_schema: bool,
     pub(in crate::gate) engine_version_floor: bool,
     pub(in crate::gate) unknown_axis_seen: bool,
@@ -114,7 +118,9 @@ pub(in crate::gate) fn decode_policy_manifest(data: &[u8]) -> Option<DecodedPoli
 
                 | "diagnostic_bounds"
                 | "policy_values"
+                | "voice_ref_limits"
                 | POLICY_WEAVE_CORRECTION_POLICY_KEY
+                | "retry_source_policy"
         ) {
             return None;
         }
@@ -251,12 +257,26 @@ pub(in crate::gate) fn decode_policy_manifest(data: &[u8]) -> Option<DecodedPoli
         MapValue::Present(value) => parse_policy_values(value)?,
     };
 
+    let voice_ref_limits = match single_map_value(&entries, "voice_ref_limits") {
+        MapValue::Missing => None,
+        MapValue::Duplicate => return None,
+        MapValue::Present(value) => Some(VoiceRefLimitPolicy::decode(value)?),
+    };
     let weave_correction_policy =
         match single_map_value(&entries, POLICY_WEAVE_CORRECTION_POLICY_KEY) {
             MapValue::Missing => None,
             MapValue::Duplicate => return None,
             MapValue::Present(value) => Some(crate::gate::WeaveCorrectionPolicy::parse(value)?),
         };
+    let retry_source_policy = match single_map_value(&entries, "retry_source_policy") {
+        MapValue::Missing => Vec::new(),
+        MapValue::Duplicate => return None,
+        MapValue::Present(Value::Array(rows)) => rows
+            .iter()
+            .map(crate::gate::retry_source_policy::RetrySourcePolicyRow::parse)
+            .collect::<Option<Vec<_>>>()?,
+        MapValue::Present(_) => return None,
+    };
 
     let unknown_axis_seen =
         defaults.unknown_axis_seen || rules.iter().any(|rule| rule.axes.unknown_axis_seen);
@@ -290,7 +310,9 @@ pub(in crate::gate) fn decode_policy_manifest(data: &[u8]) -> Option<DecodedPoli
         hosted_tts,
 
         diagnostic_bounds,
+        voice_ref_limits,
         weave_correction_policy,
+        retry_source_policy,
         unsupported_schema,
         engine_version_floor,
         unknown_axis_seen,
