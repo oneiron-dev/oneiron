@@ -120,6 +120,16 @@ pub fn resolve_serve_config(args: &ServeArgs) -> anyhow::Result<ServeConfig> {
     resolve_serve_config_with_sources(args, EnvConfig::from_process()?, default_config_path())
 }
 
+/// The existing server configuration layers, from vault policy to holder.
+/// Their order is structural; the embedder policy row chooses which parent
+/// constrains the holder's automatic device candidates.
+#[derive(Clone, Copy, Eq, Ord, PartialEq, PartialOrd)]
+pub(super) enum ConfigLayer {
+    Vault,
+    Environment,
+    Holder,
+}
+
 pub fn resolve_serve_config_with_sources(
     args: &ServeArgs,
     env: EnvConfig,
@@ -143,17 +153,18 @@ pub fn resolve_serve_config_with_sources(
     let mut resolved = ServeConfig::default();
     let mut posture_source = None;
     let mut key_ref_source = None;
-    for (source, values) in [file_values, env.values, flag_values]
-        .into_iter()
-        .enumerate()
-    {
+    for (source, values) in [
+        (ConfigLayer::Vault, file_values),
+        (ConfigLayer::Environment, env.values),
+        (ConfigLayer::Holder, flag_values),
+    ] {
         if values.privacy_posture.is_some() {
             posture_source = Some(source);
         }
         if values.hosted_kms_key_ref.is_some() {
             key_ref_source = Some(source);
         }
-        values.apply_to(&mut resolved)?;
+        values.apply_to(&mut resolved, source)?;
     }
     // Only the final posture may discard inherited custody. An intermediate
     // self-host layer can still be overridden by a later hosted layer, which
@@ -523,7 +534,7 @@ impl fmt::Debug for PartialServeConfig {
 }
 
 impl PartialServeConfig {
-    fn apply_to(self, resolved: &mut ServeConfig) -> anyhow::Result<()> {
+    fn apply_to(self, resolved: &mut ServeConfig, source: ConfigLayer) -> anyhow::Result<()> {
         if let Some(value) = self.vault_path {
             resolved.vault_path = expand_home(value);
         }
@@ -621,7 +632,7 @@ impl PartialServeConfig {
             resolved
                 .embedder
                 .get_or_insert_with(EmbedderConfig::default)
-                .apply_override(value)?;
+                .apply_override(value, source)?;
         }
         if let Some(value) = self.failure_signal_export {
             resolved.failure_signal_export = value;

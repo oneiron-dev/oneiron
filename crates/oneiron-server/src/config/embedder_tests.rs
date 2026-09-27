@@ -235,6 +235,66 @@ auto_devices = ["cpu"]
 }
 
 #[test]
+fn shipped_policy_declares_nested_narrowing_precedence() {
+    let resolved = resolve("dimensions = 1024\n[embedder]\n").expect("local default");
+    assert_eq!(
+        resolved
+            .embedder
+            .expect("embedder")
+            .local
+            .auto_device_precedence,
+        super::embedder::AutoDevicePrecedence::NestedNarrowing,
+    );
+}
+
+#[test]
+fn vault_capped_holder_override_can_bypass_environment_but_not_vault() {
+    let (_dir, mut args) = config_file(
+        r#"dimensions = 1024
+[embedder]
+[embedder.policy]
+auto_devices = ["cuda", "cpu"]
+precedence = "vault-capped-holder-override"
+"#,
+    );
+    let env = EnvConfig::from_pairs([("ONEIRON_EMBEDDER_AUTO_DEVICES", "cpu")])
+        .expect("environment preference");
+    args.embedder.embedder_auto_devices = vec![EmbedderDevice::Cuda];
+    let resolved = resolve_serve_config_with_sources(&args, env.clone(), None)
+        .expect("the holder selects CUDA inside the vault cap");
+    assert_eq!(
+        resolved.embedder.expect("embedder").local.auto_devices,
+        [EmbedderDevice::Cuda],
+    );
+
+    args.embedder.embedder_auto_devices = vec![EmbedderDevice::Metal];
+    let error = resolve_serve_config_with_sources(&args, env, None)
+        .expect_err("the holder cannot add Metal outside the vault cap");
+    assert!(
+        error.to_string().contains("embedder.policy.auto_devices"),
+        "{error}"
+    );
+}
+
+#[test]
+fn only_the_vault_policy_can_select_device_precedence() {
+    let env = EnvConfig::from_pairs([
+        ("ONEIRON_DIMENSIONS", "1024"),
+        (
+            "ONEIRON_EMBEDDER_POLICY_PRECEDENCE",
+            "vault-capped-holder-override",
+        ),
+    ])
+    .expect("environment token parses");
+    let error = resolve_serve_config_with_sources(&ServeArgs::default(), env, None)
+        .expect_err("an environment cannot change vault precedence");
+    assert!(
+        error.to_string().contains("embedder.policy.precedence"),
+        "{error}"
+    );
+}
+
+#[test]
 fn the_auto_policy_cli_flag_parses_one_ordered_row() {
     #[derive(clap::Parser)]
     struct DeviceCli {

@@ -49,9 +49,12 @@ lease_ms = 30000                    # 120000 is a better fit on a CPU-only host
 # policy/embedder.toml says ["metal", "cuda", "cpu"]. File, environment
 # (ONEIRON_EMBEDDER_AUTO_DEVICES=cuda,cpu), and CLI
 # (--embedder-auto-devices cuda,cpu) use the normal precedence, but each
-# higher layer can only narrow/reorder the preceding candidate set.
+# higher layer can only narrow/reorder the preceding candidate set by default.
 # [embedder.policy]
 # auto_devices = ["cuda", "cpu"]
+# precedence = "nested-narrowing"    # shipped default
+# Alternative: "vault-capped-holder-override" lets the CLI holder override
+# an environment choice, but never add a candidate excluded by this vault file.
 ```
 
 `provider = "local"` runs the model in-process on candle. On first use it
