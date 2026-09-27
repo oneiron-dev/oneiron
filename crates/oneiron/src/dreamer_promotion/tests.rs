@@ -1503,13 +1503,13 @@ fn deferred_dreamer_grant_consults_checker_and_closes_only_on_allow() -> Result<
 fn verdict_bound_deferred_closure_keeps_prior_until_calibrated_auto_grant() -> Result<()> {
     use crate::llm::manifest::{
         CalibratedVerdict, ConfidenceBand, MODEL_ROLES, ModelBinding, ModelManifest, ModelSlot,
-        VerdictBasis, VerdictBinding, VerdictMode,
+        TeacherProbeApproval, VerdictBasis, VerdictBinding, VerdictMode,
     };
     use crate::llm::{ModelId, ModelLocality, ModelTierRef};
     for mode in [VerdictMode::Shadow, VerdictMode::Enforce] {
         let (_dir, vault) = open_auto_checker_vault();
         let model = ModelId::new("test/deferred-verdict@1").expect("model");
-        vault.set_model_manifest(&ModelManifest {
+        let manifest = ModelManifest {
             version: 2,
             roles: MODEL_ROLES
                 .into_iter()
@@ -1535,7 +1535,10 @@ fn verdict_bound_deferred_closure_keeps_prior_until_calibrated_auto_grant() -> R
                 floor: ConfidenceBand::High,
                 mode,
             }),
-        })?;
+        };
+        assert!(vault.set_model_manifest(&manifest).is_err());
+        let approval = TeacherProbeApproval::for_scored_checkpoint(&manifest, 1_000_000)?;
+        vault.set_model_manifest_with_teacher_approval(&manifest, &approval)?;
         let fx = fixture(&vault)?;
         let allow = CountingAutoChecker::new(AutoCheckOutcome::Verdict(CalibratedVerdict {
             model,
