@@ -19232,6 +19232,20 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [
+      "LensQuoteHandle",
+      "LensQuoteRange"
+     ],
+     "path": "src/lens/mediation/mediation_quote.rs",
+     "purpose": "Revision-pinned quote pointers derived from engine-issued span selections",
+     "surface": {
+      "fn": 6,
+      "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [],
      "path": "src/lens/mediation/mediation_scope.rs",
      "purpose": "Ordinary world-id and repository membership clamps on every frame-bound read",
@@ -19246,7 +19260,7 @@
      "path": "src/lens/mediation/mod.rs",
      "purpose": "Host mediation — the lens security chokepoint",
      "surface": {
-      "re-export": 4
+      "re-export": 5
      }
     },
     {
@@ -35188,7 +35202,7 @@
      "purpose": "Interlocutor resolution substrate (OF-365 ILD-1)"
     },
     "lens": {
-     "files": 41,
+     "files": 42,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -35778,7 +35792,7 @@
    },
    "over_bar": 10,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2111,
+   "source_files": 2112,
    "test_files": 722
   },
   "oneiron-android": {

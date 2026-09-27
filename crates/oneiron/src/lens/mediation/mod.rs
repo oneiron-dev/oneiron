@@ -9,6 +9,7 @@ mod mediation_backing;
 mod mediation_frame_read;
 mod mediation_frame_write;
 mod mediation_principal;
+mod mediation_quote;
 mod mediation_scope;
 mod surface_dispatch;
 
@@ -26,3 +27,4 @@ pub use self::mediation_principal::{
     GeneratedUiAgentCallback, GeneratedUiValidatedAction, LensActingPrincipalKind,
     LensPrincipalBinding,
 };
+pub use self::mediation_quote::{LensQuoteHandle, LensQuoteRange};

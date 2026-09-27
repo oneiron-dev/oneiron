@@ -61,8 +61,8 @@ pub use mediation::{
     GeneratedUiValidatedAction, LensActingPrincipalKind, LensApprovedAction, LensApprovedActionArg,
     LensAtomSelectionRequest, LensBackingRefToken, LensBackingTarget, LensBackingTargetKind,
     LensExecutionBoundary, LensGateWriteChokepoint, LensHostBackingRef, LensHostImport,
-    LensHostMediatedWrite, LensPrincipalBinding, LensReadHandle, LensReadReach, LensRenderFrame,
-    LensSpanCursor, LensSpanSelectionRequest,
+    LensHostMediatedWrite, LensPrincipalBinding, LensQuoteHandle, LensQuoteRange, LensReadHandle,
+    LensReadReach, LensRenderFrame, LensSpanCursor, LensSpanSelectionRequest,
 };
 pub use self_ui::{
     ButtonControl, SegmentedControl, SelectControl, SelfUiAction, SelfUiControl, SelfUiOption,
