@@ -1249,3 +1249,91 @@ async fn owner_watch_persists_and_timeline_renders_stored_before_after() {
     assert_eq!(on_again["query_ref"], enabled["query_ref"]);
     assert_eq!(on_again["watched"], true);
 }
+
+#[tokio::test]
+async fn contact_opt_out_family_supersession_retains_original_diff_after_edit() {
+    use oneiron::counterparty_contact::{
+        CounterpartyContactRecord, CounterpartyOptOutReason, PREDICATE_COUNTERPARTY_CONTACT_OPT_OUT,
+    };
+    let (_dir, server) = auth_test_server();
+    let contact = seeded_test_entity_id(0x1261_0a10);
+    let identity = seeded_test_entity_id(0x1261_0a11);
+    let record = CounterpartyContactRecord::user_introduction(identity, "contact@example.com", 10)
+        .expect("contact body");
+    server
+        .vault
+        .create_counterparty_contact(&contact, &record)
+        .expect("create contact");
+    let old = server
+        .vault
+        .claims_for_subject(&contact)
+        .expect("contact claims")
+        .into_iter()
+        .find(|id| {
+            server
+                .vault
+                .get_claim(id)
+                .unwrap()
+                .is_some_and(|body| body.predicate == PREDICATE_COUNTERPARTY_CONTACT_OPT_OUT)
+        })
+        .expect("old opt-out head");
+    server
+        .vault
+        .opt_out_counterparty_contact(&contact, CounterpartyOptOutReason::Unsubscribe, 20)
+        .expect("public opt-out door");
+    let new = server
+        .vault
+        .sources(&old, oneiron::EdgeKind::Supersedes, None)
+        .expect("successor edges")
+        .into_iter()
+        .next()
+        .expect("replacement head");
+    let path = format!("/v1/core/memory/{}/timeline?view=full", new.to_hex());
+    let (status, initial) = route_json_auth(
+        server.clone(),
+        Request::builder()
+            .uri(&path)
+            .body(Body::empty())
+            .expect("timeline request"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{initial:#}");
+    let pair = &initial["records"][1]["changes"][0];
+    assert_eq!(pair["before_id"], old.to_hex());
+    assert_eq!(pair["after_id"], new.to_hex());
+    let pinned_before = pair["before"].clone();
+    let pinned_after = pair["after"].clone();
+    assert_ne!(pinned_before, pinned_after);
+
+    // The family replacement's own value changes later. The first
+    // supersession must still render the exact original opt-out revision.
+    let changed = record
+        .opted_out(CounterpartyOptOutReason::Stop, 30)
+        .expect("later contact wording")
+        .claim_bodies(contact)
+        .into_iter()
+        .find(|body| body.predicate == PREDICATE_COUNTERPARTY_CONTACT_OPT_OUT)
+        .expect("replacement value");
+    let mut head = server
+        .vault
+        .get_claim(&new)
+        .expect("read head")
+        .expect("head");
+    head.value = changed.value;
+    server
+        .vault
+        .put_claim(&new, &head, oneiron::TimeRange { start: 20, end: 20 }, 20)
+        .expect("edit head");
+    let (status, later) = route_json_auth(
+        server,
+        Request::builder()
+            .uri(path)
+            .body(Body::empty())
+            .expect("timeline request"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{later:#}");
+    assert_ne!(later["records"][1]["item"], pinned_after);
+    assert_eq!(later["records"][1]["changes"][0]["before"], pinned_before);
+    assert_eq!(later["records"][1]["changes"][0]["after"], pinned_after);
+}

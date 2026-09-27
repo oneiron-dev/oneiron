@@ -806,8 +806,13 @@ async fn disjoint_entity_document_subscriptions_only_push_the_changed_view() {
     assert!(queries.pending(2).unwrap().is_empty());
 }
 
-#[tokio::test]
-async fn owner_feed_uses_persisted_watches_and_refuses_agent_subscribers() {
+fn owner_feed_fixture() -> (
+    tempfile::TempDir,
+    Arc<SyncServer>,
+    EntityId,
+    EntityId,
+    CoreAuth,
+) {
     let (_dir, server) = server();
     oneiron::campaign::register_crm_pack(
         server.vault(),
@@ -839,6 +844,12 @@ async fn owner_feed_uses_persisted_watches_and_refuses_agent_subscribers() {
     let owner_recipe = format!("principal_ref={ACTOR};actor_class=human;jti=watch-owner");
     let owner = crate::test_credentials::authenticate(&server, &owner_recipe);
     assert!(owner.is_owner_grade());
+    (_dir, server, actor, anchor, owner)
+}
+
+#[tokio::test]
+async fn owner_feed_uses_persisted_watches_and_refuses_agent_subscribers() {
+    let (_dir, server, actor, anchor, owner) = owner_feed_fixture();
     let source = BoundSource::new(Arc::downgrade(&server), owner.clone(), "watch-doc".into());
     let initial = source
         .derive(&ScopedView::default(), Channel::OwnerFeed)
@@ -935,7 +946,12 @@ async fn owner_feed_uses_persisted_watches_and_refuses_agent_subscribers() {
         .unwrap();
     let queued = subscribed.buffered().unwrap();
     assert_eq!(queued.len(), 1, "{queued:?}");
-    assert_eq!(queued[0].kind, "gap", "{queued:?}");
+    assert_eq!(queued[0].kind, "data", "{queued:?}");
+    assert!(
+        !serde_json::to_string(&queued)
+            .unwrap()
+            .contains("Updated name")
+    );
     let assert_scrubbed = |pushes: &[subscriptions::Push]| {
         let wire = serde_json::to_string(pushes).unwrap();
         assert!(!wire.contains("Updated name"), "retained secret: {wire}");
@@ -990,4 +1006,91 @@ async fn owner_feed_uses_persisted_watches_and_refuses_agent_subscribers() {
             .value,
         json!([])
     );
+}
+
+#[tokio::test]
+async fn owner_feed_socket_delivers_two_local_changes_without_reopen_or_poll() {
+    let (_dir, server, actor, anchor, owner) = owner_feed_fixture();
+    let hub = connection::Hub::for_server(&server);
+    let mut socket = connection::Connection::new(hub, 31);
+    let opened = socket
+        .control(
+            &owner,
+            SubRequest::Open {
+                subscription_id: 9,
+                scoped_view: ScopedView::default(),
+                channel: Channel::OwnerFeed,
+                cursor: None,
+                origin: None,
+            },
+        )
+        .unwrap();
+    let snapshot = test_wire::reply(&opened);
+    assert_eq!(snapshot["result"], json!([]));
+    socket
+        .control(
+            &owner,
+            SubRequest::Ack {
+                subscription_id: 9,
+                cursor: serde_json::from_value(snapshot["cursor"].clone()).unwrap(),
+            },
+        )
+        .unwrap();
+
+    // No forced owner_feed_poll_now() and no materializer notification:
+    // delivery happens before the one-second synthetic poll can run.
+    oneiron::saved_query::set_memory_watch(server.vault(), actor, anchor, true, AT + 1).unwrap();
+    let first = test_wire::reply(&socket.delivery().unwrap());
+    assert_eq!(first["kind"], "data", "{first:#}");
+    assert_eq!(
+        first["result"][0]["timeline"]["records"][0]["item"]["val"],
+        "Original name"
+    );
+
+    let mut changed = server.vault().get_claim(&anchor).unwrap().unwrap();
+    changed.value = rmpv::Value::from("Second name");
+    server
+        .vault()
+        .put_claim(
+            &anchor,
+            &changed,
+            oneiron::TimeRange { start: AT, end: AT },
+            AT,
+        )
+        .unwrap();
+    let second = test_wire::reply(&socket.delivery().unwrap());
+    assert_eq!(second["kind"], "data", "{second:#}");
+    assert_eq!(
+        second["result"][0]["timeline"]["records"][0]["item"]["val"],
+        "Second name"
+    );
+
+    let next = EntityId::now();
+    changed.value = rmpv::Value::from("Third name");
+    server
+        .vault()
+        .put_claim(
+            &next,
+            &changed,
+            oneiron::TimeRange {
+                start: AT + 2,
+                end: AT + 2,
+            },
+            AT + 2,
+        )
+        .unwrap();
+    server
+        .vault()
+        .supersede_claim(&next, &anchor, AT + 3)
+        .unwrap();
+    let third = test_wire::reply(&socket.delivery().unwrap());
+    assert_eq!(third["kind"], "data", "{third:#}");
+    assert_eq!(
+        third["result"][0]["timeline"]["records"]
+            .as_array()
+            .unwrap()
+            .len(),
+        2
+    );
+    assert!(socket.has_active_subscriptions());
 }

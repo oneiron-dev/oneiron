@@ -500,20 +500,43 @@ impl LiveQueries {
                 })
             {
                 let cursor = state.cursor(derived.cursor)?;
-                let sub = state.subs.get_mut(&id).ok_or_else(state_error)?;
-                sub.ring.clear();
-                sub.ring.push_back(Push {
+                let push = Push {
                     subscription_id: id,
-                    cursor,
-                    kind: "gap",
-                    result: None,
-                });
-                sub.bytes = push_bytes(sub.ring.make_contiguous())?;
-                sub.budget
-                    .resize(sub.bytes.max(4096) + sub.metadata_bytes)?;
-                sub.needs_resync = true;
+                    cursor: cursor.clone(),
+                    kind: "data",
+                    result: Some(derived.value),
+                };
+                let bytes = push_bytes(std::slice::from_ref(&push))?;
+                let sub = state.subs.get_mut(&id).ok_or_else(state_error)?;
                 sub.current = fingerprint;
                 sub.dependencies = derived.dependencies;
+                // Owner feeds are a coalesced latest-state projection. This
+                // drops old bodies after either a local edit OR a policy
+                // narrowing, then emits only the newly authorized value.
+                // Neither transition requires the client to resubscribe.
+                if bytes <= MAX_RING_BYTES
+                    && sub
+                        .budget
+                        .resize(sub.metadata_bytes + bytes.max(4096))
+                        .is_ok()
+                {
+                    sub.ring.clear();
+                    sub.ring.push_back(push);
+                    sub.bytes = bytes;
+                } else {
+                    // Only a true payload/budget overflow needs a gap.
+                    sub.ring.clear();
+                    sub.ring.push_back(Push {
+                        subscription_id: id,
+                        cursor,
+                        kind: "gap",
+                        result: None,
+                    });
+                    sub.bytes = push_bytes(sub.ring.make_contiguous())?;
+                    sub.budget
+                        .resize(sub.metadata_bytes + sub.bytes.max(4096))?;
+                    sub.needs_resync = true;
+                }
             }
         }
         Ok(state
