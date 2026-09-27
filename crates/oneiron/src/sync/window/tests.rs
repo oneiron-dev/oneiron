@@ -19,6 +19,152 @@ fn test_vault() -> (tempfile::TempDir, Arc<Vault>) {
     (dir, vault)
 }
 
+#[test]
+fn typed_addressing_edge_survives_reverse_and_forward_replay_but_forged_peer_edge_does_not()
+-> Result<()> {
+    let (_dir, source, conversation, actor) = crate::conversation_dag::fixtures::fixture();
+    let recipient = EntityId::now();
+    let forged = EntityId::now();
+    for person in [recipient, forged] {
+        source.put_entity(
+            &person,
+            crate::registry::ENTITY_TYPE_PERSON,
+            TimeRange { start: 1, end: 1 },
+            1,
+            &crate::conversation_dag::fixtures::body("person"),
+        )?;
+    }
+    let mut input = crate::conversation_dag::fixtures::input(conversation, None, true, actor);
+    input.address = crate::conversation_dag::AddressMode::Direct;
+    input.recipients = vec![recipient];
+    let record = source.append_dag_record(&input)?.id;
+    let key = WindowKey::from_timestamp(input.learned_at);
+    let doc = create_window_doc("addressing-source", &key);
+    reverse_rematerialize(&source, &doc, &key)?;
+    let honest = format_edge_key(&record, EdgeKind::AddressedTo, &recipient);
+    assert!(map_contains_binary(&doc.get_map("edges"), &honest));
+    let forged_key = format_edge_key(&record, EdgeKind::AddressedTo, &forged);
+    map_insert_bytes(
+        &doc.get_map("edges"),
+        &forged_key,
+        &encode_edge_value_for_crdt(EdgeKind::AddressedTo, 1.0, input.learned_at, None, None)?,
+    )?;
+    doc.commit();
+    let (_peer_dir, peer) = test_vault();
+    forward_rematerialize(&peer, &doc, &Materializer::new(), &key)?;
+    assert_eq!(
+        peer.targets(&record, EdgeKind::AddressedTo, None)?,
+        [recipient]
+    );
+    assert!(!peer.edge_exists(&record, EdgeKind::AddressedTo, &forged)?);
+    let rejected = crate::sync::quarantine::quarantined_records(&peer)?;
+    assert!(
+        rejected
+            .iter()
+            .any(|(_, row)| row.container == QuarantineContainer::Edges
+                && row.reason_code == "ReservedEdgeKind")
+    );
+    // An untrusted edges-map removal cannot tear a locally stamped edge.
+    let materializer = std::sync::Arc::new(Materializer::new());
+    let _subscription =
+        crate::sync::bridge::register_observer_b(&doc, &peer, &materializer, key.as_str());
+    crate::sync::loro_support::map_delete(&doc.get_map("edges"), &honest)?;
+    doc.commit();
+    assert!(peer.edge_exists(&record, EdgeKind::AddressedTo, &recipient)?);
+    Ok(())
+}
+
+#[test]
+fn typed_addressing_recovery_restores_only_body_proved_edges() -> Result<()> {
+    let (_dir, source, conv, actor) = crate::conversation_dag::fixtures::fixture();
+    let person = EntityId::now();
+    source.put_entity(
+        &person,
+        crate::registry::ENTITY_TYPE_PERSON,
+        TimeRange { start: 1, end: 1 },
+        1,
+        &crate::conversation_dag::fixtures::body("recipient"),
+    )?;
+    let mut input = crate::conversation_dag::fixtures::input(conv, None, true, actor);
+    input.address = crate::conversation_dag::AddressMode::Direct;
+    input.recipients = vec![person];
+    let record = source.append_dag_record(&input)?.id;
+    let key = WindowKey::from_timestamp(input.learned_at);
+    let doc = create_window_doc("source", &key);
+    // Keep the artifact at the conversation boundary: a test policy fixture
+    // minted for the append door is not a recovery dependency of the TURN.
+    for id in [conv, actor.entity_ref(), person, record] {
+        map_insert_bytes(
+            &doc.get_map("entities"),
+            &id.to_hex(),
+            &source.get_raw_unsealed(&id)?.unwrap(),
+        )?;
+    }
+    for edge in source.edges_out(&record)? {
+        let raw = encode_edge_value_for_crdt(
+            edge.kind,
+            edge.weight,
+            edge.created_at,
+            edge.vad,
+            edge.provenance,
+        )?;
+        map_insert_bytes(
+            &doc.get_map("edges"),
+            &format_edge_key(&record, edge.kind, &edge.target),
+            &raw,
+        )?;
+    }
+    doc.commit();
+    let snapshot = crate::recovery::capture_canonical_window(&source, key.as_str(), &doc)?;
+    assert!(
+        snapshot
+            .base_edges
+            .iter()
+            .any(|edge| edge.source == *record.as_bytes()
+                && edge.kind == EdgeKind::AddressedTo as u8
+                && edge.target == *person.as_bytes())
+    );
+    let dest_dir = tempfile::tempdir()?;
+    let peer = Vault::open(dest_dir.path(), VaultConfig::device())?;
+    let path = dest_dir.path().join("manifest");
+    std::fs::write(&path, b"corrupt")?;
+    crate::recovery::recover_vault_window(
+        &peer,
+        &Materializer::new(),
+        &path,
+        &snapshot,
+        crate::recovery::RecoveryBudget::default(),
+    )?;
+    assert_eq!(
+        peer.targets(&record, EdgeKind::AddressedTo, None)?,
+        [person]
+    );
+    let mut forged = snapshot;
+    let entry = forged
+        .base_edges
+        .iter_mut()
+        .find(|edge| edge.source == *record.as_bytes() && edge.kind == EdgeKind::AddressedTo as u8)
+        .unwrap();
+    entry.target = *actor.entity_ref().as_bytes();
+    forged
+        .base_edges
+        .sort_by_key(|row| (row.source, row.kind, row.target));
+    let fresh_dir = tempfile::tempdir()?;
+    let fresh = Vault::open(fresh_dir.path(), VaultConfig::device())?;
+    assert!(
+        crate::recovery::recover_vault_window(
+            &fresh,
+            &Materializer::new(),
+            fresh_dir.path().join("manifest"),
+            &forged,
+            crate::recovery::RecoveryBudget::default(),
+        )
+        .is_err()
+    );
+    assert_eq!(fresh.get_entity_type(&record)?, None);
+    Ok(())
+}
+
 /// Pinned 25-byte entity envelope: type u8 + occurred_start/end u64 BE +
 /// learned_at u64 BE + body (`occurred == learned` so CRDT-vs-LMDB
 /// byte-equality is exact).

@@ -5758,3 +5758,63 @@ fn a_named_facet_request_selects_a_note_born_under_that_facet() {
 
     assert!(import_ids(&note_window_export(&vault, note, &selector)).contains(&note));
 }
+
+#[test]
+fn federation_addressing_copy_requires_stamped_source_and_exact_edge_bytes() {
+    let (_dir, source, conv, actor) = crate::conversation_dag::fixtures::fixture();
+    let recipient = EntityId::now();
+    let forged = EntityId::now();
+    for id in [recipient, forged] {
+        source
+            .put_entity(
+                &id,
+                ENTITY_TYPE_PERSON,
+                TimeRange { start: 1, end: 1 },
+                1,
+                &crate::conversation_dag::fixtures::body("person"),
+            )
+            .unwrap();
+    }
+    let mut input = crate::conversation_dag::fixtures::input(conv, None, true, actor);
+    input.address = crate::conversation_dag::AddressMode::Direct;
+    input.recipients = vec![recipient];
+    let record = source.append_dag_record(&input).unwrap().id;
+    let key = WindowKey::from_timestamp(input.learned_at);
+    let source_doc = create_window_doc("source", &key);
+    crate::sync::window::reverse_rematerialize(&source, &source_doc, &key).unwrap();
+    let valid = crate::sync::bridge::format_edge_key(&record, EdgeKind::AddressedTo, &recipient);
+    let invalid = crate::sync::bridge::format_edge_key(&record, EdgeKind::AddressedTo, &forged);
+    map_insert_bytes(
+        &source_doc.get_map("edges"),
+        &invalid,
+        &encode_edge_value_for_crdt(EdgeKind::AddressedTo, 1.0, input.learned_at, None, None)
+            .unwrap(),
+    )
+    .unwrap();
+    let target = create_window_doc("target", &key);
+    let peer_dir = tempfile::tempdir().unwrap();
+    let peer = Vault::open(peer_dir.path(), crate::VaultConfig::device()).unwrap();
+    edge::copy_admitted_edges(
+        &peer,
+        &key,
+        &source_doc.get_map("entities"),
+        &source_doc.get_map("edges"),
+        &target.get_map("edges"),
+    )
+    .unwrap();
+    assert!(crate::sync::loro_support::map_contains_binary(
+        &target.get_map("edges"),
+        &valid
+    ));
+    assert!(!crate::sync::loro_support::map_contains_binary(
+        &target.get_map("edges"),
+        &invalid
+    ));
+    assert!(
+        quarantined_records(&peer)
+            .unwrap()
+            .iter()
+            .any(|(_, row)| row.container == QuarantineContainer::Edges
+                && row.reason_code == "ReservedEdgeKind")
+    );
+}

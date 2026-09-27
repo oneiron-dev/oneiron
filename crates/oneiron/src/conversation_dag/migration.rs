@@ -51,6 +51,13 @@ pub(crate) fn migrate_in_txn(
             _ => {}
         }
         graph::require_member(&vault.store, txn, conversation, &id)?;
+        let body = graph::require_type(&vault.store, txn, &id, ENTITY_TYPE_TURN)?;
+        super::admission::record_kind(&body)?;
+        let raw = vault
+            .store
+            .port_entity_record(txn, &id)?
+            .ok_or(Error::EntityNotFound)?;
+        super::admission::reconcile_addressing(vault, txn, &id, &body, raw.learned_at)?;
         super::admission::pin_record(&vault.store, txn, &id)?;
         if let Some(session) =
             crate::compaction::turn_session_membership_in_txn(&vault.store, txn, &id)?

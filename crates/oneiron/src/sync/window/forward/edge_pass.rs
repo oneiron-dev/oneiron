@@ -102,6 +102,13 @@ pub(super) fn run(ctx: &RematCtx<'_>, ledger: &mut RematLedger) -> Result<()> {
                 }
             };
 
+            if kind == crate::edge::EdgeKind::AddressedTo
+                && crate::recovery::retained_soft_shell(ctx.doc, &src).is_some()
+            {
+                // The retained soft shell no longer contains its `to` carrier.
+                return;
+            }
+
             // Never re-add an edge whose endpoint is tombstoned in the CRDT.
             // ANY-value, entity-canonical presence — a non-binary tombstone
             // gates too, and a case-shifted hex alias still names the id.
@@ -136,7 +143,9 @@ pub(super) fn run(ctx: &RematCtx<'_>, ledger: &mut RematLedger) -> Result<()> {
                         return Ok(EdgeRematOutcome::Deferred);
                     }
                 }
-                if let Err(reserved) = crate::edge::validate_public_edge_kind(kind) {
+                if kind != crate::edge::EdgeKind::AddressedTo
+                    && let Err(reserved) = crate::edge::validate_public_edge_kind(kind)
+                {
                     let mandated_at = vault
                         .identity_topology_mandated_shell_edge_in_txn(&*wtxn, &src, kind, &tgt)?;
                     let door_echo = mandated_at.is_some_and(|at| {
@@ -160,6 +169,27 @@ pub(super) fn run(ctx: &RematCtx<'_>, ledger: &mut RematLedger) -> Result<()> {
                 let tgt_exists = vault.store.entities.get(&*wtxn, tgt.as_bytes())?.is_some();
                 if !src_exists || !tgt_exists {
                     return Ok(EdgeRematOutcome::Deferred);
+                }
+
+                if kind == crate::edge::EdgeKind::AddressedTo
+                    && !crate::conversation_dag::addressed_to_echo_in_txn(
+                        &vault.store,
+                        &*wtxn,
+                        &src,
+                        &tgt,
+                        decoded,
+                    )?
+                {
+                    quarantine::quarantine_rejected_op_in_txn(
+                        vault,
+                        wtxn,
+                        window_key.as_str(),
+                        QuarantineContainer::Edges,
+                        key,
+                        &crate::error::RegistryError::ReservedEdgeKind("conversation_dag").into(),
+                        buf,
+                    )?;
+                    return Ok(EdgeRematOutcome::Quarantined);
                 }
 
                 // ONE-1645 replay door for the FacetOf type table. The batch

@@ -343,3 +343,149 @@ fn gdpr_delete_after_user_delete_purges_a_dag_record() {
         .unwrap();
     assert!(vault.get(&id).unwrap().is_none());
 }
+
+#[test]
+fn typed_addressing_first_insert_is_checked_before_adoption_for_both_put_origins() {
+    let (_dir, vault, conv, actor) = fixture();
+    let person = EntityId::now();
+    vault
+        .put_entity(
+            &person,
+            crate::registry::ENTITY_TYPE_PERSON,
+            time(1),
+            1,
+            &body("person"),
+        )
+        .unwrap();
+    let mut direct = input(conv, None, true, actor);
+    direct.address = AddressMode::Direct;
+    direct.recipients = vec![person];
+    let direct = vault.append_dag_record(&direct).unwrap().id;
+    let original = vault.get(&direct).unwrap().unwrap();
+    let mut entries = match rmpv::decode::read_value(&mut original.as_slice()).unwrap() {
+        rmpv::Value::Map(entries) => entries,
+        _ => unreachable!(),
+    };
+    for bad in [
+        ("addr", rmpv::Value::from("private")),
+        ("addr", rmpv::Value::from("broadcast")),
+        ("addr", rmpv::Value::from("reply")),
+        ("to", rmpv::Value::Array(vec![])),
+        (
+            "to",
+            rmpv::Value::Array(vec![rmpv::Value::from(conv.to_hex())]),
+        ),
+        (
+            "to",
+            rmpv::Value::Array(vec![
+                rmpv::Value::from(person.to_hex()),
+                rmpv::Value::from(person.to_hex()),
+            ]),
+        ),
+        (
+            "to",
+            rmpv::Value::Array(vec![rmpv::Value::from("not-an-id")]),
+        ),
+    ] {
+        let (_, value) = entries
+            .iter_mut()
+            .find(|(k, _)| k.as_str() == Some(bad.0))
+            .unwrap();
+        let prior = std::mem::replace(value, bad.1);
+        let mut payload = Vec::new();
+        rmpv::encode::write_value(&mut payload, &rmpv::Value::Map(entries.clone())).unwrap();
+        entries
+            .iter_mut()
+            .find(|(k, _)| k.as_str() == Some(bad.0))
+            .unwrap()
+            .1 = prior;
+        for replicated in [false, true] {
+            let id = EntityId::now();
+            let batch = vault.batch();
+            let batch = if replicated {
+                batch.put_replicated(&id, ENTITY_TYPE_TURN, time(1), 1, &payload)
+            } else {
+                batch.put(&id, ENTITY_TYPE_TURN, time(1), 1, &payload)
+            };
+            assert_eq!(
+                batch.commit().unwrap_err().kind(),
+                ErrorKind::InvalidConversationDag
+            );
+            assert_eq!(vault.get_entity_type(&id).unwrap(), None);
+        }
+    }
+    let opaque = EntityId::now();
+    vault
+        .put_entity(&opaque, ENTITY_TYPE_TURN, time(1), 1, b"opaque turn")
+        .unwrap();
+    assert_eq!(
+        vault.get_entity_type(&opaque).unwrap(),
+        Some(ENTITY_TYPE_TURN)
+    );
+}
+
+#[test]
+fn received_address_carrier_reconstructs_only_body_mandated_edges_at_adoption() {
+    let (_dir, source, conv, actor) = fixture();
+    let person = EntityId::now();
+    source
+        .put_entity(
+            &person,
+            crate::registry::ENTITY_TYPE_PERSON,
+            time(1),
+            1,
+            &body("recipient"),
+        )
+        .unwrap();
+    let mut direct = input(conv, None, true, actor);
+    direct.address = AddressMode::Direct;
+    direct.recipients = vec![person];
+    let direct = source.append_dag_record(&direct).unwrap().id;
+    let dir = tempfile::tempdir().unwrap();
+    let peer = crate::Vault::open(dir.path(), crate::VaultConfig::default()).unwrap();
+    for id in [conv, direct] {
+        let raw = source.get_raw_unsealed(&id).unwrap().unwrap();
+        let h = crate::batch::EntityMetadataHeader::parse(&raw).unwrap();
+        peer.batch()
+            .put_replicated(
+                &id,
+                h.entity_type,
+                time(h.occurred_start),
+                h.learned_at,
+                &raw[crate::batch::ENTITY_METADATA_HEADER_LEN..],
+            )
+            .commit()
+            .unwrap();
+    }
+    peer.batch()
+        .edge_checked(&direct, &conv, 1.0)
+        .commit()
+        .unwrap();
+    assert_eq!(
+        peer.migrate_conversation_dag(&conv).unwrap_err().kind(),
+        ErrorKind::EntityNotFound
+    );
+    assert!(
+        peer.targets(&direct, EdgeKind::AddressedTo, None)
+            .unwrap()
+            .is_empty()
+    );
+    let raw = source.get_raw_unsealed(&person).unwrap().unwrap();
+    let h = crate::batch::EntityMetadataHeader::parse(&raw).unwrap();
+    peer.batch()
+        .put_replicated(
+            &person,
+            h.entity_type,
+            time(h.occurred_start),
+            h.learned_at,
+            &raw[crate::batch::ENTITY_METADATA_HEADER_LEN..],
+        )
+        .commit()
+        .unwrap();
+    assert!(peer.migrate_conversation_dag(&conv).unwrap());
+    assert_eq!(
+        peer.targets(&direct, EdgeKind::AddressedTo, None).unwrap(),
+        [person]
+    );
+    assert_eq!(peer.head(&conv).unwrap(), Some(direct));
+}

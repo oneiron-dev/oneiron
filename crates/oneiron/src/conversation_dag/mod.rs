@@ -6,6 +6,8 @@
 
 mod admission;
 mod graph;
+#[cfg(feature = "sync")]
+pub(crate) use admission::{addressed_to_echo, addressed_to_echo_in_txn};
 pub(crate) use admission::{
     guard_record_put, keep_membership_pin, pin_membership, pin_typed_record,
     validate_local_membership,
