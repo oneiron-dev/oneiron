@@ -3138,7 +3138,7 @@
      "path": "src/batch/put_apply/put_staging.rs",
      "purpose": "Body/index/edge row staging helpers shared by the put and update paths",
      "surface": {
-      "crate-vis": 12
+      "crate-vis": 15
      }
     },
     {
@@ -7583,7 +7583,7 @@
      "path": "src/claim/scoped_read.rs",
      "purpose": "The policy-gated read lane: [`ScopedReadActorKey`], [`ScopedRead`], and the admission/filtering surface that…",
      "surface": {
-      "crate-vis": 5,
+      "crate-vis": 6,
       "fn": 14,
       "re-export": 3,
       "struct": 1
@@ -8480,7 +8480,7 @@
      "notable": [
       "SelfAgentSpawnCall",
       "SelfAgentSpawnResult",
-      "SelfAskHumanCall",
+      "SelfAskCall",
       "SelfCall",
       "SelfContextCall",
       "SelfContextResult",
@@ -10063,10 +10063,39 @@
      "path": "src/config/failure_signals.rs",
      "purpose": "Deployment-tier participation is separate from permission to train",
      "surface": {
+      "crate-vis": 1,
       "enum": 1,
       "fn": 2,
+      "re-export": 1,
       "struct": 1
      }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "RedactionKind",
+      "RedactionSpan",
+      "Tier2Redactor",
+      "Tier2Sample"
+     ],
+     "path": "src/config/failure_signals/samples.rs",
+     "purpose": "Vault-local tier-2 sampling",
+     "surface": {
+      "crate-vis": 1,
+      "enum": 1,
+      "fn": 2,
+      "struct": 2,
+      "trait": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "src/config/failure_signals/tests.rs",
+     "purpose": "—",
+     "surface": {}
     },
     {
      "bucket": "s",
@@ -11530,7 +11559,7 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "m",
      "kind": "test",
      "notable": [],
      "path": "src/context_pack/l2_base/tests.rs",
@@ -18023,13 +18052,13 @@
      "path": "src/human_task/followup.rs",
      "purpose": "Native-human routing, follow-up cursor lifecycle and the wake driver",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 4,
       "fn": 6,
       "struct": 1
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "test",
      "notable": [],
      "path": "src/human_task/followup_tests.rs",
@@ -18474,7 +18503,7 @@
      "path": "src/ingest/admission.rs",
      "purpose": "Imported-evidence admission: typed claim and entity intake with JSON-to-MessagePack bridging",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 4,
       "fn": 7,
       "struct": 2
      }
@@ -18523,6 +18552,25 @@
      "bucket": "m",
      "kind": "src",
      "notable": [
+      "DocsDeepClaim",
+      "DocsDeepExtractor",
+      "DocsDeepReceipt",
+      "DocsDeepTrigger"
+     ],
+     "path": "src/ingest/docs_deep.rs",
+     "purpose": "On-demand docs NER: only a named trigger crosses the thin-star boundary",
+     "surface": {
+      "crate-vis": 6,
+      "enum": 1,
+      "fn": 1,
+      "struct": 2,
+      "trait": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
       "DocsDerivationEnvelope",
       "DocsImportCeiling",
       "DocsImportReceipt",
@@ -18538,7 +18586,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "test",
      "notable": [],
      "path": "src/ingest/docs_tests.rs",
@@ -18891,9 +18939,9 @@
      "path": "src/ingest/mod.rs",
      "purpose": "Ingest source registry and source-local normalization",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 4,
       "mod": 3,
-      "re-export": 13
+      "re-export": 14
      }
     },
     {
@@ -18963,7 +19011,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "DocsExpansion",
@@ -18974,7 +19022,7 @@
      "purpose": "Read-only knowledge ladder",
      "surface": {
       "enum": 1,
-      "fn": 4,
+      "fn": 5,
       "struct": 2
      }
     },
@@ -20187,6 +20235,7 @@
      "path": "src/llm/bus.rs",
      "purpose": "Ephemeral one-producer fanout",
      "surface": {
+      "crate-vis": 2,
       "fn": 5,
       "struct": 2,
       "trait": 1
@@ -21019,13 +21068,14 @@
      "notable": [
       "ProgressSnapshot",
       "ProgressSubscriber",
+      "VoiceChunkPolicy",
       "VoiceChunker"
      ],
      "path": "src/llm/subscribers.rs",
      "purpose": "Pure clock-injected progress and voice stages",
      "surface": {
-      "fn": 3,
-      "struct": 3
+      "fn": 6,
+      "struct": 4
      }
     },
     {
@@ -21591,7 +21641,7 @@
      "purpose": "Schedule-only dispatch of connector sends through the OF-327 chokepoint",
      "surface": {
       "const": 1,
-      "crate-vis": 1,
+      "crate-vis": 2,
       "fn": 4
      }
     },
@@ -23527,7 +23577,7 @@
      "path": "src/outbound/mod.rs",
      "purpose": "Outbound action capability manifests and dispatch spine for OF-327",
      "surface": {
-      "crate-vis": 4,
+      "crate-vis": 5,
       "re-export": 7
      }
     },
@@ -31986,14 +32036,14 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [],
      "path": "src/task_verb/ask_facade.rs",
      "purpose": "Async scope-authority asks over existing consult TASKs",
      "surface": {
-      "crate-vis": 2,
-      "fn": 6
+      "crate-vis": 5,
+      "fn": 7
      }
     },
     {
@@ -32005,13 +32055,23 @@
      "surface": {}
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/task_verb/ask_preflight.rs",
+     "purpose": "Read-only ask preflight over the exact admission holder and route facts",
+     "surface": {
+      "fn": 1
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/task_verb/ask_record.rs",
      "purpose": "Protected replicated ask facts",
      "surface": {
-      "crate-vis": 20
+      "crate-vis": 21
      }
     },
     {
@@ -32063,6 +32123,10 @@
       "TaskAskLadderPrediction",
       "TaskAskNeed",
       "TaskAskOptionId",
+      "TaskAskPersonEvidence",
+      "TaskAskPersonKind",
+      "TaskAskPreflight",
+      "TaskAskPreflightRecipient",
       "TaskAskProvisional",
       "TaskAskQuestion",
       "TaskAskReceipt",
@@ -32081,9 +32145,9 @@
      "purpose": "Typed asks: response coverage, decision reducers, and policy-bound revisions",
      "surface": {
       "crate-vis": 2,
-      "enum": 15,
+      "enum": 16,
       "fn": 5,
-      "struct": 17
+      "struct": 20
      }
     },
     {
@@ -32446,6 +32510,7 @@
       "TaskAnswerRequest",
       "TaskAskRequest",
       "TaskAskShort",
+      "TaskCanAskRequest",
       "TaskCreateRequest",
       "TaskRequest",
       "TaskWaitRequest"
@@ -32454,7 +32519,7 @@
      "purpose": "Shared typed agent-verb inputs and generated transport dispatch",
      "surface": {
       "enum": 1,
-      "struct": 15
+      "struct": 16
      }
     },
     {
@@ -32464,7 +32529,7 @@
      "path": "src/task_verb/sdk_generated.rs",
      "purpose": "—",
      "surface": {
-      "fn": 30
+      "fn": 32
      }
     },
     {
@@ -33445,7 +33510,7 @@
      "purpose": "ONE-1807: the engine half of a transport-neutral text-brain voice cascade",
      "surface": {
       "mod": 3,
-      "re-export": 5
+      "re-export": 6
      }
     },
     {
@@ -33586,6 +33651,21 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "VoiceStreamConfig",
+      "VoiceStreamFailure"
+     ],
+     "path": "src/voice_cascade/stream.rs",
+     "purpose": "Live, ephemeral LLM-stream fanout to TTS",
+     "surface": {
+      "enum": 1,
+      "fn": 1,
+      "struct": 1
+     }
+    },
+    {
      "bucket": "m",
      "kind": "test",
      "notable": [],
@@ -33622,6 +33702,14 @@
      "kind": "test",
      "notable": [],
      "path": "src/voice_cascade/tests/session.rs",
+     "purpose": "—",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "src/voice_cascade/tests/stream.rs",
      "purpose": "—",
      "surface": {}
     },
@@ -35260,7 +35348,7 @@
      "purpose": "Companion relationship/persona record substrate"
     },
     "config": {
-     "files": 3,
+     "files": 5,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "file+dir",
@@ -35638,7 +35726,7 @@
      "purpose": "OF-234 / ONE-1545: Dreamer-run inbox grouping + auto-approve exception queue"
     },
     "ingest": {
-     "files": 41,
+     "files": 42,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -36121,9 +36209,9 @@
      "purpose": "Replicated TASK authority: owner proof, cancellation, and acknowledgement as immutable companion TASK entities"
     },
     "task_verb": {
-     "files": 59,
+     "files": 60,
      "impl_vault": true,
-     "largest_src_bucket": "m",
+     "largest_src_bucket": "L",
      "layout": "dir",
      "purpose": "Typed, actor-bound verbs over the Context Board TASKS section"
     },
@@ -36191,7 +36279,7 @@
      "purpose": "ARCH-0073 vault auto-cleanup: the Dreamer ARCHIVE cron (ONE-1931)"
     },
     "voice_cascade": {
-     "files": 22,
+     "files": 24,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "file+dir",
@@ -36240,10 +36328,10 @@
      "purpose": "Write-path stamping: `WriteActor`/`WriteProvenance`/`WriteEnvelope`/`ClaimCandidate` + evidence stamping"
     }
    },
-   "over_bar": 10,
+   "over_bar": 11,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2140,
-   "test_files": 729
+   "source_files": 2144,
+   "test_files": 731
   },
   "oneiron-android": {
    "files": [
@@ -36426,7 +36514,7 @@
      "path": "src/beam/citations.rs",
      "purpose": "Evidence-backed per-number citations",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 4
      }
     },
     {
@@ -38887,7 +38975,7 @@
      "path": "src/facade/client/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 21
+      "fn": 23
      }
     },
     {
@@ -39170,7 +39258,7 @@
      "path": "src/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 22
+      "fn": 24
      }
     },
     {
