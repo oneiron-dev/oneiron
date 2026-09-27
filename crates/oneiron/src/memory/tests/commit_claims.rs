@@ -78,7 +78,7 @@ fn commit_imported_lands_proposed_and_appears_in_pending_writes() {
 
     let receipt = facade
         .claim_upsert(&claim_input(
-            "eiri.onboarding.answer",
+            "companion.onboarding.answer",
             &subject,
             "imported",
             serde_json::json!({"question_id": "q-1", "selected_option_id": "a"}),
@@ -389,7 +389,7 @@ fn multi_cardinality_supersede_matches_on_question_id() {
 
     let answer = |question: &str, option: &str, at: u64| {
         let mut input = claim_input(
-            "eiri.onboarding.answer",
+            "companion.onboarding.answer",
             &subject,
             "imported",
             serde_json::json!({"question_id": question, "selected_option_id": option}),
@@ -421,7 +421,7 @@ fn multi_cardinality_supersede_matches_on_question_id() {
     let claims = facade
         .claim_list(&ClaimListFilter {
             subject_ref: Some(subject.to_hex()),
-            predicate: Some("eiri.onboarding.answer".to_owned()),
+            predicate: Some("companion.onboarding.answer".to_owned()),
             lifecycle: Some("active".to_owned()),
             limit: 10,
         })
@@ -927,72 +927,45 @@ fn put_structural_rejects_cross_kind_id_reuse_without_side_effects() {
 }
 
 #[test]
-fn put_companion_record_creates_and_optionally_retires() {
+fn persona_baseline_and_scenario_do_not_register_companion_persona() {
     let (_dir, vault) = open_vault();
-    let actor = put_person(&vault, 0xE1);
-    let owner = put_person(&vault, 0xE2);
-    let persona = put_person(&vault, 0xE3);
-    let facade = facade_for(&vault, actor);
+    let person = EntityId::from_bytes([0xE2; 16]).expect("person id");
+    let facet = EntityId::from_bytes([0xE3; 16]).expect("facet id");
+    vault
+        .put_entity(&person, ENTITY_TYPE_PERSON, test_time(1), 1, b"")
+        .expect("PERSON fixture");
 
-    let active = facade
-        .put_companion_record(&CompanionRecordInput {
-            id: None,
-            owner_ref: owner.to_hex(),
-            persona_ref: persona.to_hex(),
-            value: serde_json::json!({"name": "Yuki", "vibes": ["calm"]}),
-            source: None,
-            retired_at: None,
-            learned_at: 900,
-        })
-        .expect("companion record");
-    let record = vault
-        .get_companion_record(&EntityId::from_hex(&active.id_hex).unwrap())
-        .expect("read record")
-        .expect("record exists");
-    assert_eq!(record.lifecycle, ClaimLifecycleStatus::Active);
-    assert!(!record.lifecycle_events.is_empty(), "created event stamped");
+    vault
+        .put_persona_baseline(
+            &person,
+            &serde_json::json!({"name": "Yuki", "vibes": ["calm"]}),
+            900,
+        )
+        .expect("PERSON baseline");
+    vault
+        .put_persona_scenario(
+            &person,
+            &facet,
+            &serde_json::json!({"name": "Rei"}),
+            crate::federation::Sensitivity::Private,
+            950,
+        )
+        .expect("FACET scenario");
 
-    // A second persona registered retired (migration of isActive == false).
-    let persona_two = put_person(&vault, 0xE4);
-    let retired = facade
-        .put_companion_record(&CompanionRecordInput {
-            id: None,
-            owner_ref: owner.to_hex(),
-            persona_ref: persona_two.to_hex(),
-            value: serde_json::json!({"name": "Rei"}),
-            source: Some("imported".to_owned()),
-            retired_at: Some(950),
-            learned_at: 900,
-        })
-        .expect("retired record");
-    let record = vault
-        .get_companion_record(&EntityId::from_hex(&retired.id_hex).unwrap())
-        .expect("read record")
-        .expect("record exists");
-    assert_eq!(record.lifecycle, ClaimLifecycleStatus::Retracted);
-
-    // The hard-delete resurrection guard is rechecked in the same write
-    // transaction as companion creation, rather than trusting a stale
-    // preflight probe for caller-supplied ids.
-    let tombstoned_id = put_person(&vault, 0xE5);
-    assert!(vault.delete_entity(&tombstoned_id).expect("hard delete"));
-    let err = facade
-        .put_companion_record(&CompanionRecordInput {
-            id: Some(tombstoned_id.to_hex()),
-            owner_ref: owner.to_hex(),
-            persona_ref: persona.to_hex(),
-            value: serde_json::json!({"name": "Never resurrect"}),
-            source: None,
-            retired_at: None,
-            learned_at: 960,
-        })
-        .expect_err("hard-deleted ids must not become companion records");
-    assert_eq!(err.code, MEMORY_CODE_FORBIDDEN);
+    assert_eq!(
+        vault.get_entity_type(&person).expect("PERSON type"),
+        Some(ENTITY_TYPE_PERSON)
+    );
+    assert_eq!(
+        vault.get_entity_type(&facet).expect("FACET type"),
+        Some(crate::registry::ENTITY_TYPE_FACET)
+    );
     assert!(
         vault
-            .get_companion_record(&tombstoned_id)
-            .expect("read rejected record")
-            .is_none()
+            .companion_register()
+            .expect("companion register")
+            .is_empty(),
+        "PERSON baselines and FACET scenarios do not register companion personas"
     );
 }
 
@@ -1011,7 +984,7 @@ fn admit_imported_claim_rides_the_ingest_trust_ceiling() {
             source_record_id: "row-42".to_owned(),
             id: None,
             subject_ref: subject.to_hex(),
-            predicate: "eiri.onboarding.answer".to_owned(),
+            predicate: "companion.onboarding.answer".to_owned(),
             value: serde_json::json!({"question_id": "q-9", "selected_option_id": "b"}),
             occurred_at: 1000,
             learned_at: None,
@@ -1029,7 +1002,7 @@ fn admit_imported_claim_rides_the_ingest_trust_ceiling() {
             source_record_id: "row-1".to_owned(),
             id: None,
             subject_ref: subject.to_hex(),
-            predicate: "eiri.onboarding.answer".to_owned(),
+            predicate: "companion.onboarding.answer".to_owned(),
             value: serde_json::json!({"question_id": "q-1"}),
             occurred_at: 1001,
             learned_at: None,
