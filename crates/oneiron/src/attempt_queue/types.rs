@@ -369,6 +369,12 @@ pub struct AttemptRecord {
     /// migration is needed and an old row stays byte-identically readable.
     #[serde(default)]
     pub result_ref: Option<AttemptResultRef>,
+    /// Branch-addressed control inbox and settled replay receipts.
+    #[serde(default)]
+    pub signals: Vec<crate::run_tree::RunBranchSignal>,
+    /// Durable ask handles, including partial replies, for this branch only.
+    #[serde(default)]
+    pub asks: Vec<crate::run_tree::RunAsk>,
     /// Operator-selected placement, separate from the immutable executor payload.
     #[serde(default)]
     pub placement: Option<AttemptPlacement>,

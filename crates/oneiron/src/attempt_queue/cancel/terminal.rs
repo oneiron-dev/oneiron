@@ -574,6 +574,8 @@ fn landing_successor(
             },
             ..AttemptCancelState::default()
         },
+        signals: Vec::new(),
+        asks: Vec::new(),
         placement: source.placement.as_ref().map(|placement| {
             crate::attempt_queue::AttemptPlacement {
                 worker: placement.worker.clone(),

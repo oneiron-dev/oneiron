@@ -106,6 +106,8 @@ impl AttemptQueue<'_> {
             // A retry is a NEW attempt: it has produced nothing yet, and the
             // finalized source keeps sole ownership of the artifact its own
             // try left behind.
+            signals: Vec::new(),
+            asks: Vec::new(),
             placement: source.placement.as_ref().map(|placement| {
                 crate::attempt_queue::AttemptPlacement {
                     worker: placement.worker.clone(),

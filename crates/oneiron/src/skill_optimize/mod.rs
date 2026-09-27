@@ -55,7 +55,10 @@
 //! the canon has no store of its own — its concrete form is the gated
 //! skill-edit proposals ED-04's miner and SK-04's discovery arm already mint.
 //! This job LISTS the open ones for its skill and hands them to the author, so
-//! a question already asked is visible to whoever drafts the next one.
+//! a question already asked is visible to whoever drafts the next one. It also
+//! joins prior rejected optimizer edits for that skill to their proposals,
+//! showing the proposed text and categorical rejection reason without showing
+//! the held-out scores or receipts.
 //!
 //! # Exclusion is structural, and it fails closed
 //!
@@ -130,19 +133,25 @@ mod ask_band;
 mod brief;
 mod dials;
 mod gate;
+mod goal_axes;
 mod job;
 mod selection;
 mod tier;
 
 pub use self::ask_band::{AskBandLabel, AskBandPolicy};
 pub use self::brief::{
-    SKILL_OPTIMIZE_CALL_PURPOSE_NAME, SKILL_OPTIMIZE_MAX_BRIEF_EVIDENCE,
-    SKILL_OPTIMIZE_RATIONALE_MAX_BYTES, SkillEditDraft, SkillOptimizeAuthor, SkillOptimizeBrief,
-    optimize_brief, optimize_brief_for_principal_at, skill_optimize_call_purpose,
+    RejectedSkillEdit, RejectedSkillEditReason, SKILL_OPTIMIZE_CALL_PURPOSE_NAME,
+    SKILL_OPTIMIZE_MAX_BRIEF_EVIDENCE, SKILL_OPTIMIZE_RATIONALE_MAX_BYTES, SkillEditDraft,
+    SkillOptimizeAuthor, SkillOptimizeBrief, optimize_brief, optimize_brief_for_principal_at,
+    skill_optimize_call_purpose,
 };
 pub use self::dials::{
     DEFAULT_SKILL_OPTIMIZE_MIN_OUTCOMES, SKILL_OPTIMIZE_MIN_OUTCOMES_KEY,
     set_skill_optimize_min_outcomes, skill_optimize_min_outcomes,
+};
+pub use self::goal_axes::{
+    AxisArm, AxisScores, ConfidenceInterval, GoalAxisBandit, GoalAxisPlan, GoalAxisReport,
+    GoalAxisScorer, OnlineAxisMeasurement, OnlineAxisOutcome, OnlineAxisSample, measure_goal_axes,
 };
 pub use self::job::{
     PROVENANCE_OPTIMIZE_ATTEMPT_KEY, PROVENANCE_OPTIMIZE_CYCLE_KEY,

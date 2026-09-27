@@ -12,7 +12,7 @@ use crate::temporal::TimeRange;
 use super::codec::{invalid, map_entry};
 use super::posterior::SkillReliabilityPosterior;
 use super::projector::PREDICATE_SKILL_RELIABILITY;
-use super::provenance::skill_reliability_prior;
+use super::provenance::{skill_reliability_prior, skill_reliability_prior_in_txn};
 use rmpv::Value;
 
 /// Reads the legacy unknown-executor arm, or `None` when it has never been
@@ -168,11 +168,41 @@ pub fn rebuild_skill_confidence_cache(vault: &Vault, skill: &EntityId, at: u64) 
 /// ranking (sum of [`SkillReliabilityPosterior::observations`]); it is an
 /// argument rather than a hidden scan so ranking N skills costs N reads, not N².
 pub fn skill_selection_score(vault: &Vault, skill: &EntityId, total_pulls: u32) -> Result<f32> {
-    let posterior = match skill_reliability_posterior(vault, skill)? {
-        Some(posterior) => posterior,
-        None => skill_reliability_prior(vault, skill)?,
-    };
-    Ok(posterior.ucb(total_pulls))
+    let rtxn = vault.store.env.read_txn()?;
+    skill_selection_score_in_txn(vault, &rtxn, skill, total_pulls)
+}
+
+/// Same score as the public door, on the retrieval candidate's read snapshot.
+fn skill_selection_score_in_txn(
+    vault: &Vault,
+    rtxn: &heed::RoTxn<'_>,
+    skill: &EntityId,
+    total_pulls: u32,
+) -> Result<f32> {
+    Ok(skill_selection_score_from_posterior(
+        selection_posterior_in_txn(vault, rtxn, skill)?,
+        total_pulls,
+    ))
+}
+
+/// The shared score computation after a candidate set has fixed its pull horizon.
+/// Lets retrieval reuse the posterior it already resolved for that horizon.
+pub(crate) fn skill_selection_score_from_posterior(
+    posterior: SkillReliabilityPosterior,
+    total_pulls: u32,
+) -> f32 {
+    posterior.ucb(total_pulls)
+}
+
+pub(crate) fn selection_posterior_in_txn(
+    vault: &Vault,
+    rtxn: &heed::RoTxn<'_>,
+    skill: &EntityId,
+) -> Result<SkillReliabilityPosterior> {
+    match resolved_reliability_posterior_in_txn(vault, rtxn, skill, None)? {
+        Some(posterior) => Ok(posterior),
+        None => skill_reliability_prior_in_txn(vault, rtxn, skill),
+    }
 }
 
 /// Pair-specific UCB ranking, seeded from provenance until measured. Never

@@ -71,6 +71,7 @@ pub use self::read::{
     skill_reliability_posterior, skill_reliability_posterior_for_executor, skill_selection_score,
     skill_selection_score_for_executor,
 };
+pub(crate) use self::read::{selection_posterior_in_txn, skill_selection_score_from_posterior};
 
 #[cfg(test)]
 mod tests;

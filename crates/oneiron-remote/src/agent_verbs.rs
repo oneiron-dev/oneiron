@@ -329,7 +329,7 @@ impl OneironClient {
     }
     pub fn tasks_ask(
         &self,
-        input: &oneiron::task_verb::TaskAskSpec,
+        input: &oneiron::task_verb::sdk::TaskAskRequest,
     ) -> Result<oneiron::task_verb::TaskAskReceipt, MemoryError> {
         let value = serde_json::to_value(input).map_err(|_| {
             crate::error::bad_request(
