@@ -50,6 +50,7 @@ fn run_case(case: LateCall) -> Result<()> {
     let mut config = VaultConfig::device();
     config.store_clock = store_clock.bundle();
     let (_dir, vault) = crate::test_util::open_test_vault_with(config);
+    authorize_test_inference(&vault)?;
     grant_fixture_reads(&vault)?;
     let store = DreamerRunnerStore::new(&vault);
     let node_id = crate::identity::load_or_mint_client_id(&vault)?;
@@ -142,6 +143,7 @@ fn run_case(case: LateCall) -> Result<()> {
         actor: vault.dreamer_authority()?,
         model: crate::ModelId::new("test/model@r1").expect("model"),
         sink: &mut sink,
+        inference: test_inference_host(),
         scope: None,
     };
     let clock = std::sync::Arc::clone(&backend.clock);
@@ -220,6 +222,7 @@ fn run_case(case: LateCall) -> Result<()> {
         actor: vault.dreamer_authority()?,
         model: crate::ModelId::new("test/model@r1").expect("model"),
         sink: &mut sink,
+        inference: test_inference_host(),
         scope: None,
     };
     let resumed = ready(driver.run_wake_pass(

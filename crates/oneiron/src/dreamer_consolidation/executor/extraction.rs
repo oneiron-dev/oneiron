@@ -8,11 +8,14 @@ impl ConsolidationExecutor<'_> {
         partition: &ConsolidationPartitionKey,
         transcript: &str,
         scope: &crate::llm::Scope,
-    ) -> LlmRequest {
+    ) -> Result<LlmRequest> {
+        let locality = self.inference.selected_locality().ok_or_else(|| {
+            crate::Error::InvalidConfig("consolidation host binding needs locality".into())
+        })?;
         let system = r#"Extract durable memory claims from the conversation transcript.
 Respond with JSON: {"candidates":[{"subject":"<32-hex entity id>","predicate":"<dotted.predicate>","value":<json>,"confidence":<0..1>,"evidence_refs":[{"source_id":"<32-hex id>","byte_range":[start,end]}]}]}.
 Each evidence ref names a source id and either a UTF-8 byte range in the displayed turn text (start inclusive, end exclusive) or claim_id. Only claims stated by the user or assistant; never invent evidence refs."#;
-        LlmRequest {
+        Ok(LlmRequest {
             model: self.model.clone(),
             envelope: CallEnvelope {
                 scope: scope.clone(),
@@ -32,7 +35,7 @@ Each evidence ref names a source id and either a UTF-8 byte range in the display
                 response_format: ResponseFormat::Json {
                     schema: super::super::extracted_people::extraction_response_schema(),
                 },
-                locality: ModelLocality::OwnServer,
+                locality,
             }.with_purpose_defaults(),
             messages: vec![
                 LlmMessage {
@@ -54,7 +57,7 @@ Each evidence ref names a source id and either a UTF-8 byte range in the display
             tools: Vec::new(),
             params: BTreeMap::new(),
             provider_options: BTreeMap::new(),
-        }
+        })
     }
 
     pub(super) fn decode_candidates(

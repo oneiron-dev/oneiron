@@ -223,6 +223,7 @@ fn execute_at_pin<'a>(
         actor: fx.run.agent_actor,
         model: crate::ModelId::new("test/model@r1").unwrap(),
         sink,
+        inference: test_inference_host(),
         scope: Some(scope),
     };
     block_on_ready(executor.execute(
@@ -543,6 +544,7 @@ fn exact_persisted_head_attaches_evidence_without_judge_or_duplicate_and_survive
     drop(sink);
     drop(vault);
     let vault = Vault::open(dir.path(), VaultConfig::device())?;
+    authorize_test_inference(&vault)?;
     assert_eq!(vault.get_raw(&fx.head)?.as_ref(), Some(&before));
     assert_eq!(names(&vault, fx.subject)?, vec![fx.head]);
     assert_eq!(

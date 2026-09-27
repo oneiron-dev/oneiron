@@ -46,6 +46,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         diarization_model_id: "pyannote/speaker-diarization-community-1".into(),
         cleanup_policy: None,
         local_only: true,
+        batch_asr_policy: None,
     };
     match produce_meeting_transcript(&file, &options, &mut host) {
         Err(AudioError::Host { stage, code })
