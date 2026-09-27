@@ -16050,11 +16050,13 @@
      "bucket": "m",
      "kind": "src",
      "notable": [
+      "Ceiling",
       "FederationDirectionScope",
       "FederationPactScope",
       "FederationScopeBands",
       "FederationScopeFacets",
-      "FederationScopeWorlds"
+      "FederationScopeWorlds",
+      "Position"
      ],
      "path": "src/federation/pact_scope.rs",
      "purpose": "Pact direction-scope lattice (worlds/facets/bands axes) and canonical codec",
@@ -16062,9 +16064,9 @@
       "const": 1,
       "crate-vis": 7,
       "enum": 3,
-      "fn": 6,
+      "fn": 12,
       "re-export": 1,
-      "struct": 2
+      "struct": 4
      }
     },
     {

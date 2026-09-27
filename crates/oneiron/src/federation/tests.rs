@@ -960,12 +960,15 @@ fn federation_direction_scope_partial_order_is_axis_wise() {
         FederationScopeBands::Bottom,
     );
 
-    assert!(narrow.is_narrowing_of(&all));
-    assert!(!all.is_narrowing_of(&narrow));
-    assert!(bottom.is_narrowing_of(&narrow));
-    assert!(!narrow.is_narrowing_of(&bottom));
-    assert!(all.is_narrowing_of(&all));
-    assert!(bottom.is_narrowing_of(&bottom));
+    assert!(Position::new(narrow.clone()).is_narrowing_of(&Ceiling::new(all.clone())));
+    assert!(!Position::new(all.clone()).is_narrowing_of(&Ceiling::new(narrow.clone())));
+    assert!(Position::new(bottom.clone()).is_narrowing_of(&Ceiling::new(narrow.clone())));
+    // A bottom record position passes any ceiling; a bottom permission
+    // ceiling admits only bottom positions and confers no non-bottom record.
+    assert!(Position::new(bottom.clone()).is_narrowing_of(&Ceiling::new(all.clone())));
+    assert!(!Position::new(narrow).is_narrowing_of(&Ceiling::new(bottom.clone())));
+    assert!(Position::new(all.clone()).is_narrowing_of(&Ceiling::new(all)));
+    assert!(Position::new(bottom.clone()).is_narrowing_of(&Ceiling::new(bottom)));
 
     // Bottom ⊑ Worlds(S) ⊑ Worlds(T ⊇ S) ⊑ All; Base is not implicit.
     let one_world = FederationScopeWorlds::Worlds(vec![scope_entity(0x10)]);

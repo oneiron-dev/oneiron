@@ -4352,12 +4352,12 @@ fn disjoint_concurrent_narrows_meet_at_bottom_and_deny_content() {
     let ceiling =
         effective_scope_for_grant(&fold, &grant_id).expect("a pact-bound grant has a ceiling");
     assert_eq!(
-        ceiling.facets,
+        ceiling.as_scope().facets,
         FederationScopeFacets::Bottom,
         "disjoint facet narrows must meet at ⊥, not widen"
     );
     assert_eq!(
-        ceiling.bands,
+        ceiling.as_scope().bands,
         FederationScopeBands::Bottom,
         "disjoint band narrows must meet at ⊥, not widen"
     );
@@ -4379,7 +4379,10 @@ fn disjoint_concurrent_narrows_meet_at_bottom_and_deny_content() {
     // `bottom_ceiling_exports_nothing_to_an_unnarrowed_request`.
     let silent = SyncSelector::new(grant_id, member, SyncSelectorWorld::All, vec![], vec![]);
     assert_eq!(
-        resolve_selector_position(&silent, &ceiling).unwrap().facets,
+        resolve_selector_position(&silent, &ceiling)
+            .unwrap()
+            .as_scope()
+            .facets,
         FederationScopeFacets::Bottom
     );
     authorize_sync_selector(&vault, test_selector_scope(), &silent)
@@ -4519,7 +4522,7 @@ fn multiple_active_pacts_intersect_into_one_ceiling() {
     let ceiling =
         effective_scope_for_grant(&fold, &grant_id).expect("a pact-bound grant has a ceiling");
     assert_eq!(
-        ceiling.facets,
+        ceiling.as_scope().facets,
         FederationScopeFacets::Some(vec![facet_b]),
         "the ceiling is the meet of every bound pact, not one arbitrary pact"
     );

@@ -105,6 +105,66 @@ pub struct FederationDirectionScope {
     pub bands: FederationScopeBands,
 }
 
+/// A record or selector position, never a source of authority.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Position(FederationDirectionScope);
+
+/// A permission ceiling from a grant, pact, or slip.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Ceiling(FederationDirectionScope);
+
+impl Position {
+    /// Marks a record or resolved selector scope as a position.
+    pub fn new(scope: FederationDirectionScope) -> Self {
+        Self(scope)
+    }
+
+    /// The scope used to filter records after admission.
+    pub fn as_scope(&self) -> &FederationDirectionScope {
+        &self.0
+    }
+
+    /// Returns the resolved position for an existing filter door.
+    pub fn into_scope(self) -> FederationDirectionScope {
+        self.0
+    }
+
+    /// A position can only be checked against a permission ceiling.
+    ///
+    /// ```compile_fail
+    /// use oneiron::federation::{Ceiling, FederationDirectionScope, FederationScopeBands,
+    ///     FederationScopeFacets, FederationScopeWorlds, Position};
+    /// let scope = FederationDirectionScope { worlds: FederationScopeWorlds::All,
+    ///     facets: FederationScopeFacets::All, bands: FederationScopeBands::All };
+    /// let position = Position::new(scope.clone());
+    /// let ceiling = Ceiling::new(scope);
+    /// // A ceiling cannot stand in for a record position, nor the reverse.
+    /// Position::is_narrowing_of(&ceiling, &position);
+    /// ```
+    #[must_use]
+    pub fn is_narrowing_of(&self, ceiling: &Ceiling) -> bool {
+        self.0.narrows(&ceiling.0)
+    }
+}
+
+impl Ceiling {
+    /// Marks an authority-bearing direction scope as a ceiling.
+    pub fn new(scope: FederationDirectionScope) -> Self {
+        Self(scope)
+    }
+
+    /// Read the authority scope without turning it into a record position.
+    pub fn as_scope(&self) -> &FederationDirectionScope {
+        &self.0
+    }
+
+    /// Compare two permission ceilings, such as a unilateral overlay and its pact.
+    #[must_use]
+    pub fn is_within(&self, other: &Ceiling) -> bool {
+        self.0.narrows(&other.0)
+    }
+}
+
 /// Dual-signed federation pact scope pair.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FederationPactScope {
@@ -274,9 +334,9 @@ impl FederationDirectionScope {
         self.bands.validate()
     }
 
-    /// Axis-wise partial order: `self ⊑ ceiling`.
-    #[must_use]
-    pub fn is_narrowing_of(&self, ceiling: &Self) -> bool {
+    // The raw lattice comparison is private: callers must choose a position
+    // versus ceiling, or explicitly compare two authority ceilings.
+    fn narrows(&self, ceiling: &Self) -> bool {
         self.worlds.is_narrowing_of(&ceiling.worlds)
             && self.facets.is_narrowing_of(&ceiling.facets)
             && self.bands.is_narrowing_of(&ceiling.bands)
