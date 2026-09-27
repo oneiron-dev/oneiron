@@ -149,7 +149,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `linear_sync` | dir | 6 | m | — | Issue-tracker mirror adapter: one TASK ↔ one Linear issue, bidirectional, conflict-surfacing (ONE-1905… |
 | `linkedin_connector` | dir | 8 | m | — | LinkedIn connector adapter surface (ONE-1563 / LNKD-1) |
 | `linkedin_lead_preload` | file+dir | 5 | m | yes | Deterministic LinkedIn entity resolution and explicit runtime-path corpus preload |
-| `llm` | dir | 77 | m | yes | Engine-facing LLM invocation seam |
+| `llm` | dir | 79 | m | yes | Engine-facing LLM invocation seam |
 | `m8_forward_oracle` | dir | 6 | m | — | M8 forward test oracle — authored by the path opener (ONE-1685) for the M8-A / M8-B remainder tickets |
 | `maintain` | dir | 6 | m | — | — |
 | `memory` | dir | 77 | XL | yes | BRIDGE-01 (ONE-1454): transport-agnostic memory facade |
@@ -209,7 +209,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `subject_model` | file+dir | 15 | m | yes | Subject model: who, if anyone, stands behind an actor (ARCH-0063 R7) |
 | `surface_event` | dir | 6 | m | yes | Inbound SurfaceEvent adapter contract (OF-347 CID-6) |
 | `sweep` | dir | 5 | m | — | ARCH-0038 historical-carrier sweep executor — ONE-1087 / ONE-1091 phase 1 (manual trigger via… |
-| `sync` | dir | 100 | m | yes | CRDT sync layer for Oneiron |
+| `sync` | dir | 101 | m | yes | CRDT sync layer for Oneiron |
 | `task_authority` | file | 1 | L | yes | Replicated TASK authority: owner proof, cancellation, and acknowledgement as immutable companion TASK entities |
 | `task_verb` | dir | 60 | m | yes | Typed, actor-bound verbs over the Context Board TASKS section |
 | `temporal` | file | 1 | m | — | `TimeRange`, temporal expressions/parsing, granularity/anchor enums |
