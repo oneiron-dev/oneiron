@@ -126,6 +126,7 @@
 //! skill. They converge to two open questions a decider answers, never to a
 //! silent double edit — nothing here writes canon.
 
+mod ask_band;
 mod brief;
 mod dials;
 mod gate;
@@ -134,6 +135,7 @@ mod job;
 mod selection;
 mod tier;
 
+pub use self::ask_band::{AskBandLabel, AskBandPolicy};
 pub use self::brief::{
     SKILL_OPTIMIZE_CALL_PURPOSE_NAME, SKILL_OPTIMIZE_MAX_BRIEF_EVIDENCE,
     SKILL_OPTIMIZE_RATIONALE_MAX_BYTES, SkillEditDraft, SkillOptimizeAuthor, SkillOptimizeBrief,
@@ -157,15 +159,16 @@ pub use self::job::{
 pub use self::selection::{SkillOptimizeCandidate, optimize_candidates};
 pub use self::tier::{SkillTierVerdict, skill_governance_tier};
 pub use gate::{
-    DEFAULT_SKILL_EDIT_CYCLE_CAP, HELD_OUT_REPLAY_SCORER, HELD_OUT_RESERVE_DIVISOR,
-    HeldOutReplayCase, HeldOutReplayScorer, HeldOutVerdict, SKILL_EDIT_CYCLE_CAP_KEY,
-    SKILL_EDIT_CYCLE_MAX_BYTES, SKILL_EDIT_SCORE_CALL_PURPOSE_NAME, SkillEditCycle,
-    SkillEditDisposition, admit_optimized_skill_revision, dev_receipts,
-    held_out_receipt_set_digest, held_out_receipts, is_skill_edit_verdict_receipt,
-    receipt_is_held_out, register_held_out_replay_scorer, score_gate_skill_edit,
-    score_gate_skill_edit_in_cycle, score_gate_skill_edit_with_scorer, set_skill_edit_cycle_cap,
-    skill_body_binding_digest, skill_edit_cycle_cap, skill_edit_score_call_purpose,
-    skill_edit_verdict, skill_edit_verdicts, skill_edit_verdicts_for_proposal,
+    AuditPair, BlindPreference, DEFAULT_SKILL_EDIT_CYCLE_CAP, HELD_OUT_REPLAY_SCORER,
+    HELD_OUT_RESERVE_DIVISOR, HeldOutReplayCase, HeldOutReplayScorer, HeldOutVerdict,
+    JudgeMeasurements, PreferredResponse, SKILL_EDIT_CYCLE_CAP_KEY, SKILL_EDIT_CYCLE_MAX_BYTES,
+    SKILL_EDIT_SCORE_CALL_PURPOSE_NAME, SkillEditCycle, SkillEditDisposition, WorldAxisScore,
+    admit_optimized_skill_revision, dev_receipts, held_out_receipt_set_digest, held_out_receipts,
+    is_skill_edit_verdict_receipt, receipt_is_held_out, register_held_out_replay_scorer,
+    score_gate_skill_edit, score_gate_skill_edit_in_cycle, score_gate_skill_edit_with_scorer,
+    set_skill_edit_cycle_cap, skill_body_binding_digest, skill_edit_cycle_cap,
+    skill_edit_score_call_purpose, skill_edit_verdict, skill_edit_verdicts,
+    skill_edit_verdicts_for_proposal,
 };
 pub(crate) use gate::{
     check_optimizer_admission_in_txn, optimizer_birth_marker_for_create_in_txn,
