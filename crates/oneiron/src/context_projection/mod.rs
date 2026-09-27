@@ -50,7 +50,7 @@ pub use self::panel_spec::{
 };
 pub use self::resolution::{
     CONTEXT_PROJECTION_MAX_ANCESTORS, CONTEXT_SPEC_MEMORY_SCAN_LIMIT, ContextResolutionRequest,
-    ResolvedContextProjection, resolve_context_spec,
+    ResolvedContextProjection, WorkflowOutputContextRef, resolve_context_spec,
 };
 pub use self::spec::{
     CONTEXT_SPEC_DEFAULT_CHAT_LAST_N, CONTEXT_SPEC_DEFAULT_MEMORY_LIMIT,
