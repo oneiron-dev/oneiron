@@ -929,7 +929,7 @@ mod human_fixture {
         pub(crate) fn human_input_wait(&self, task_ref: EntityId) -> SelfDurableWait {
             SelfDurableWait {
                 wait_id: task_ref,
-                effect: SelfEffect::AskHuman,
+                effect: SelfEffect::Ask,
                 reason: SelfDurableWaitReason::HumanInput,
                 prompt: None,
             }
@@ -2116,7 +2116,7 @@ mod cb_a {
         use oneiron::registry::ENTITY_TYPE_PERSON;
         use oneiron::{
             EdgeActorClass, EntityId, TimeRange, WriteActor, code_run::HostSelfDispatcher,
-            code_run::SelfAskHumanCall, code_run::SelfCall, code_run::SelfDispatchOutcome,
+            code_run::SelfAskCall, code_run::SelfCall, code_run::SelfDispatchOutcome,
             code_run::SelfDispatcher, task_verb::TaskAssignee, task_verb::TaskCreateSpec,
         };
 
@@ -2180,8 +2180,8 @@ mod cb_a {
         )
         .expect("bind dispatcher to the human TASK");
         let wait = match dispatcher
-            .dispatch(SelfCall::AskHuman(SelfAskHumanCall::new("decide")))
-            .expect("dispatch self.ask_human")
+            .dispatch(SelfCall::Ask(SelfAskCall::new("decide")))
+            .expect("dispatch ask")
         {
             SelfDispatchOutcome::DurableWait(wait) => wait,
             other => panic!("unexpected ask-human outcome: {other:?}"),

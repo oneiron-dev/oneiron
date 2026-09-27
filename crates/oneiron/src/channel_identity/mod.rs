@@ -77,7 +77,6 @@ pub(crate) use self::codec::validate_channel_identity_put_carrier;
 #[cfg(test)]
 use self::record::StoredIdentityParts;
 pub(crate) use self::sender::enrich_dispatch_channel_identity;
-#[cfg(test)]
 pub(crate) use self::sender::resolve_channel_identity_ref_for_connector;
 pub(crate) use self::transition::{
     IdentityTransition, admit_channel_identity_transition_in_txn, step_channel_identity_in_txn,

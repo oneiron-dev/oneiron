@@ -11,6 +11,7 @@ use crate::comm::{
     CommClaimValue, record_comm_inbound_stop, resolve_or_create_comm_party, run_comm_projector,
 };
 use crate::config::VaultConfig;
+use crate::connector_key::ConnectorKeyRecord;
 use crate::counterparty_contact::CounterpartyContactRecord;
 use crate::dreamer_runner::{
     DreamerRunnerStore, EnqueueDreamerAttempt, EnqueueDreamerAttemptOutcome, ParkDreamerAttempt,
@@ -27,6 +28,8 @@ pub(super) const NOW: u64 = 1_772_600_000;
 const HUMAN_ADDRESS: &str = "alice@example.test";
 
 const OWN_ADDRESS: &str = "assistant@example.test";
+const ACTOR_ADDRESS: &str = "owner@example.test";
+const ACTOR_IDENTITY: u8 = 0x7A;
 
 pub(super) const STEP_HASH: [u8; 32] = [0x71; 32];
 
@@ -143,6 +146,38 @@ pub(super) fn seed_human_vault(vault: &Vault, granted: bool) -> (EntityId, Entit
     (owner, person)
 }
 
+fn add_owner_route(fixture: &HumanFixture) {
+    let vault = &fixture.vault;
+    let owner = fixture.owner;
+    // A contact on an unrelated vault face sorts before the ACTOR's sender.
+    // Preflight and the outbound scheduler must both choose the latter.
+    vault
+        .register_connector_key(
+            &crate::test_util::entity(0x78),
+            ConnectorKeyRecord::active("email", Some(owner), Vec::new(), NOW),
+        )
+        .expect("owner connector key");
+    let actor_identity = crate::test_util::entity(ACTOR_IDENTITY);
+    let mut identity = ChannelIdentity::requested(
+        "email",
+        ACTOR_ADDRESS,
+        SelfHeldShape::DedicatedAddress,
+        ChannelIdentityBinding::actor(owner),
+        NOW,
+    );
+    identity.state = ChannelIdentityState::Active;
+    vault
+        .create_channel_identity(&actor_identity, &identity)
+        .expect("owner sending face");
+    vault
+        .create_counterparty_contact(
+            &crate::test_util::entity(0x79),
+            &CounterpartyContactRecord::user_introduction(actor_identity, HUMAN_ADDRESS, NOW)
+                .expect("owner contact"),
+        )
+        .expect("owner contact route");
+}
+
 pub(super) fn put_person(vault: &Vault, id: EntityId) {
     vault
         .put_entity(
@@ -243,7 +278,7 @@ pub(super) fn park_on_human(
 fn human_input_wait(task_ref: EntityId) -> crate::code_run::SelfDurableWait {
     crate::code_run::SelfDurableWait {
         wait_id: task_ref,
-        effect: crate::code_run::SelfEffect::AskHuman,
+        effect: crate::code_run::SelfEffect::Ask,
         reason: crate::code_run::SelfDurableWaitReason::HumanInput,
         prompt: None,
     }
@@ -310,6 +345,248 @@ fn native_route_resolves_a_vault_known_person() {
         crate::test_util::entity(0x7C),
         "the route names OUR sending identity, not the recipient"
     );
+}
+
+fn routed_ask_spec(fixture: &HumanFixture) -> crate::task_verb::TaskAskSpec {
+    use crate::task_verb::{
+        ConsultPayloadRef, TaskAskDefault, TaskAskQuestion, TaskAskSpec, TaskAskTarget,
+    };
+    let question = crate::test_util::entity(0x7F);
+    let body = rmp_serde::to_vec_named(&std::collections::BTreeMap::from([("role", "question")]))
+        .expect("encode question");
+    fixture
+        .vault
+        .put_entity(
+            &question,
+            ENTITY_TYPE_TURN,
+            TimeRange {
+                start: NOW,
+                end: NOW,
+            },
+            NOW,
+            &body,
+        )
+        .expect("question turn");
+    TaskAskSpec::shorthand(
+        Some(TaskAskTarget::People([fixture.person].into())),
+        TaskAskQuestion::new(ConsultPayloadRef::Turn(question)),
+        Some(u64::MAX),
+        TaskAskDefault::Hold,
+    )
+}
+
+#[test]
+fn can_ask_reports_live_face_channel_and_word_without_creating_a_task() {
+    let fixture = HumanFixture::open();
+    add_owner_route(&fixture);
+    let spec = routed_ask_spec(&fixture);
+    let before = fixture
+        .vault
+        .entities_by_type(crate::registry::ENTITY_TYPE_TASK)
+        .expect("tasks before");
+    let memory = fixture.vault.memory(fixture.owner, EdgeActorClass::Agent);
+    let preflight = memory.tasks_can_ask(&spec).expect("preflight");
+    let sdk_preflight =
+        crate::task_verb::sdk::invoke(&memory, "can", serde_json::json!({"ask": spec}))
+            .expect("SDK can(ask)");
+    assert_eq!(
+        sdk_preflight,
+        serde_json::to_value(&preflight).expect("encode preflight")
+    );
+    let mut deprecated = serde_json::to_value(&spec).expect("ask schema");
+    deprecated
+        .as_object_mut()
+        .expect("spec object")
+        .insert("escalation".into(), serde_json::json!(["email"]));
+    assert!(crate::task_verb::sdk::invoke(&memory, "tasks.ask", deprecated).is_err());
+    assert!(crate::task_verb::sdk::AgentVerb::from_name("ask_human").is_none());
+    assert_eq!(preflight.recipients.len(), 1);
+    let recipient = &preflight.recipients[0];
+    assert_eq!(recipient.who, fixture.person);
+    assert_eq!(recipient.face.as_deref(), Some(ACTOR_ADDRESS));
+    assert_eq!(recipient.channel.as_deref(), Some("email"));
+    assert!(recipient.word_required);
+    assert_eq!(
+        fixture
+            .vault
+            .entities_by_type(crate::registry::ENTITY_TYPE_TASK)
+            .expect("tasks after"),
+        before
+    );
+    assert!(
+        human_followup_records(&fixture.vault)
+            .expect("notices")
+            .is_empty()
+    );
+}
+
+#[test]
+fn peer_responder_with_person_row_never_reports_a_human_notice_route() {
+    let fixture = HumanFixture::open();
+    add_owner_route(&fixture);
+    let mut spec = routed_ask_spec(&fixture);
+    spec.who = Some(crate::task_verb::TaskAskTarget::Responder(
+        TaskAssignee::Peer {
+            actor_ref: fixture.person,
+        },
+    ));
+    let memory = fixture.vault.memory(fixture.owner, EdgeActorClass::Agent);
+    let preflight = memory.tasks_can_ask(&spec).expect("peer preflight");
+    assert_eq!(preflight.recipients.len(), 1);
+    assert_eq!(preflight.recipients[0].who, fixture.person);
+    assert_eq!(preflight.recipients[0].face, None);
+    assert_eq!(preflight.recipients[0].channel, None);
+    let receipt = memory.tasks_ask(&spec).expect("peer ask");
+    let task = receipt.task_refs[0];
+    assert_eq!(
+        crate::task_verb::task_human_assignee(&fixture.vault, task).unwrap(),
+        None
+    );
+    assert!(
+        human_followup_record(&fixture.vault, task)
+            .unwrap()
+            .is_none()
+    );
+}
+
+#[test]
+fn preflight_face_is_the_sender_on_the_scheduled_ask_notice() {
+    let fixture = HumanFixture::open();
+    add_owner_route(&fixture);
+    let mut spec = routed_ask_spec(&fixture);
+    spec.remind = Some(vec![1]);
+    let memory = fixture.vault.memory(fixture.owner, EdgeActorClass::Agent);
+    let route = memory.tasks_can_ask(&spec).expect("preflight");
+    let face = route.recipients[0].face.as_deref().expect("sender face");
+    assert_eq!(face, ACTOR_ADDRESS);
+    let receipt = memory.tasks_ask(&spec).expect("admit ask");
+    let task = receipt.task_refs[0];
+    let due = fixture.cursor(task).next_due_at.expect("notice deadline");
+    let notice = HumanTaskFollowupDriver::new(&fixture.vault)
+        .run_due(due, 16)
+        .expect("schedule");
+    assert_eq!(notice.len(), 1);
+    let sender_ref = notice[0].sender_ref.expect("sender on scheduled effect");
+    assert_eq!(sender_ref, crate::test_util::entity(ACTOR_IDENTITY));
+    let sender = fixture
+        .vault
+        .get_channel_identity(&sender_ref)
+        .expect("sender read")
+        .expect("sender identity");
+    assert_eq!(sender.address_or_handle, face);
+    assert_ne!(sender_ref, crate::test_util::entity(0x7C));
+}
+
+#[test]
+fn delegated_read_only_face_is_not_a_sending_route() {
+    use crate::channel_identity::{
+        DelegatedGrant, DelegatedGrantScope, DelegatedProvisionRequest, delegated_custody_scopes,
+    };
+    use crate::secret_custody::{
+        CustodyClass, CustodyTier, SECRET_CUSTODY_SCHEMA_VERSION, SecretBinding,
+        SecretCustodyFloor, SecretCustodyRecord, SecretCustodyStatus,
+    };
+    let fixture = HumanFixture::open();
+    add_owner_route(&fixture);
+    let address = "member@example.test";
+    let grant = DelegatedGrant::new("oauth/gmail/review", vec![DelegatedGrantScope::MailRead]);
+    fixture
+        .vault
+        .register_secret(SecretCustodyRecord {
+            schema_version: SECRET_CUSTODY_SCHEMA_VERSION,
+            name: grant.custody_record_ref.clone(),
+            class: CustodyClass::CrossVault,
+            device_only: true,
+            value_bytes: b"member-token".to_vec(),
+            status: SecretCustodyStatus::Active,
+            registered_at: NOW,
+            rotated_at: None,
+            rotation_generation: 0,
+            bindings: vec![SecretBinding {
+                effector: "connector:gmail".to_owned(),
+                tier_ceiling: CustodyTier::T0Doored,
+                scopes: delegated_custody_scopes("email", address),
+            }],
+            manifest_ref: String::new(),
+            declared_paths: Vec::new(),
+            policy_floor_snapshot: SecretCustodyFloor::default(),
+        })
+        .expect("delegated read custody");
+    let id = crate::test_util::entity(0x71);
+    fixture
+        .vault
+        .provision_delegated_identity(
+            &id,
+            DelegatedProvisionRequest {
+                channel: "email".to_owned(),
+                address_or_handle: address.to_owned(),
+                binding: ChannelIdentityBinding::actor(fixture.owner),
+                grant,
+            },
+            NOW,
+        )
+        .expect("delegate identity");
+    fixture
+        .vault
+        .transition_channel_identity(
+            &id,
+            ChannelIdentityState::PendingFulfillment,
+            Some(ChannelIdentityFulfillment::Api),
+            NOW,
+            None,
+        )
+        .expect("pending delegate");
+    fixture
+        .vault
+        .transition_channel_identity(&id, ChannelIdentityState::Active, None, NOW, None)
+        .expect("active delegate");
+    fixture
+        .vault
+        .create_counterparty_contact(
+            &crate::test_util::entity(0x72),
+            &CounterpartyContactRecord::user_introduction(id, HUMAN_ADDRESS, NOW)
+                .expect("delegate contact"),
+        )
+        .expect("delegate recipient");
+    let spec = routed_ask_spec(&fixture);
+    let preflight = fixture
+        .vault
+        .memory(fixture.owner, EdgeActorClass::Agent)
+        .tasks_can_ask(&spec)
+        .expect("sender route");
+    assert_eq!(preflight.recipients[0].face.as_deref(), Some(ACTOR_ADDRESS));
+    assert_ne!(preflight.recipients[0].face.as_deref(), Some(address));
+}
+
+#[test]
+fn ask_follow_up_ladder_exhausts_without_closing_the_ask() {
+    let fixture = HumanFixture::open();
+    add_owner_route(&fixture);
+    let mut spec = routed_ask_spec(&fixture);
+    spec.remind = Some(vec![1, 2]);
+    let memory = fixture.vault.memory(fixture.owner, EdgeActorClass::Agent);
+    let receipt = memory.tasks_ask(&spec).expect("routed ask");
+    let task = receipt.task_refs[0];
+    let driver = HumanTaskFollowupDriver::new(&fixture.vault);
+    let first_due = fixture.cursor(task).next_due_at.expect("first notice");
+    let first = driver.run_due(first_due, 16).expect("first notice");
+    assert_eq!(first.len(), 1);
+    let second_due = fixture.cursor(task).next_due_at.expect("second notice");
+    let second = driver.run_due(second_due, 16).expect("second notice");
+    assert_eq!(second.len(), 1);
+    assert_ne!(first[0].stage_token, second[0].stage_token);
+    assert_eq!(fixture.cursor(task).next_due_at, Some(u64::MAX));
+    assert!(
+        driver
+            .run_due(second_due + 10, 16)
+            .expect("exhausted")
+            .is_empty()
+    );
+    assert!(matches!(
+        memory.tasks_ask_status(receipt.handle).expect("status"),
+        crate::task_verb::TaskAskStatus::Pending { .. }
+    ));
+    assert!(!crate::task_verb::task_is_terminal(&fixture.vault, task).expect("task lifecycle"));
 }
 
 /// Every rejection keeps its own name: a non-person is not "unreachable",
