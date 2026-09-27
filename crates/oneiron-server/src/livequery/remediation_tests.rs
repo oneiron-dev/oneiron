@@ -218,7 +218,7 @@ fn a_refresh_between_publication_and_purge_does_not_consume_the_invalidation() {
             containers: vec!["w:2026-03/entities/11111111111111111111111111111111".into()],
             bytes: 0,
 
-            entity_blob_hashes: Default::default(),
+            revision_events: Vec::new(),
         },
         &OriginMark {
             conn_id: None,

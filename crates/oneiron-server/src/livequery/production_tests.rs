@@ -54,6 +54,38 @@ fn server_with_config(config: oneiron::VaultConfig) -> (tempfile::TempDir, Arc<S
     (dir, server)
 }
 
+fn revision_event(
+    server: &SyncServer,
+    entity: EntityId,
+    previous_revision: Option<oneiron::memory::RevisionRef>,
+) -> oneiron::sync::bridge::RevisionEvent {
+    oneiron::sync::bridge::RevisionEvent::Original(oneiron::memory::EntityRevisionChange {
+        entity,
+        previous_revision,
+        revision: Some(server.vault().pin_entity_revision(&entity).unwrap()),
+        indexed_revision: server.vault().indexed_revision(&entity).unwrap(),
+    })
+}
+
+fn publish_indexed(
+    hub: &connection::Hub,
+    report: &oneiron::memory::IndexedRefreshReport,
+    id: EntityId,
+    previous_indexed: oneiron::memory::RevisionRef,
+) {
+    let indexed = report
+        .refreshed
+        .iter()
+        .find(|(entity, _)| *entity == id)
+        .unwrap()
+        .1;
+    hub.indexed_published(&[oneiron::memory::IndexedPublication {
+        entity: id,
+        previous_indexed,
+        indexed,
+    }]);
+}
+
 pub(super) fn token(class: &str) -> String {
     let actor = if class == "system" { MACHINE } else { ACTOR };
     format!("scope=core:read;principal_ref={actor};actor_class={class};jti={JTI}-{class}")
@@ -992,7 +1024,7 @@ async fn indexed_publication_wakes_an_open_entity_subscription() {
             containers: vec![path.clone()],
             bytes: 0,
 
-            entity_blob_hashes: Default::default(),
+            revision_events: vec![revision_event(&server, id, Some(indexed))],
         },
         &OriginMark::default(),
     );
@@ -1008,7 +1040,7 @@ async fn indexed_publication_wakes_an_open_entity_subscription() {
         .refresh_staged_indexed_at_idle(u64::MAX)
         .unwrap();
     assert!(report.refreshed.iter().any(|(entity, _)| *entity == id));
-    hub.indexed_published(&report.refreshed);
+    publish_indexed(&hub, &report, id, indexed);
     queries.refresh().unwrap();
     let pending = queries.pending(7).unwrap();
     assert_eq!(pending.len(), 1);
@@ -1095,6 +1127,7 @@ async fn earlier_index_commit_wakes_its_subscriber_when_later_provider_fails() {
         );
         queries.ack(sub, &opened[0].cursor).unwrap();
     }
+    let indexed_a = server.vault().indexed_revision(&a).unwrap().unwrap();
     put(a, "firstpartial new");
     put(b, "secondpartial new");
     for id in [a, b] {
@@ -1106,7 +1139,15 @@ async fn earlier_index_commit_wakes_its_subscriber_when_later_provider_fails() {
                 containers: vec![path.clone()],
                 bytes: 0,
 
-                entity_blob_hashes: Default::default(),
+                revision_events: vec![revision_event(
+                    &server,
+                    id,
+                    Some(if id == a {
+                        indexed_a
+                    } else {
+                        indexed_b.unwrap()
+                    }),
+                )],
             },
             &oneiron::sync::bridge::OriginMark::default(),
         );
@@ -1118,7 +1159,7 @@ async fn earlier_index_commit_wakes_its_subscriber_when_later_provider_fails() {
     let outcome = server.vault().refresh_indexed_at_idle_with_publication(
         u64::MAX,
         &FailsSecond(b),
-        |id, revision| hub.indexed_published(&[(id, revision)]),
+        |publication| hub.indexed_published(&[publication]),
     );
     assert!(
         matches!(outcome, Err(oneiron::Error::UpstreamToolFailure { .. })),
@@ -1192,12 +1233,28 @@ async fn delayed_index_publication_filters_own_echo_but_delivers_foreign_and_mix
         clients.push(queries);
     }
     let path = format!("e:{}", id.to_hex());
+    let last = std::cell::Cell::new(server.vault().indexed_revision(&id).unwrap().unwrap());
     let blob_hash = || *blake3::hash(&server.vault().get_raw(&id).unwrap().unwrap()).as_bytes();
-    let notify = |by: OriginMark, hash: [u8; 32]| {
+    let notify = |by: OriginMark, _hash: [u8; 32]| {
+        let live = server.vault().pin_entity_revision(&id).unwrap();
+        let previous = last.replace(live);
+        let event = if by.origin.as_deref() == Some(oneiron::sync::bridge::BRIDGE_ORIGIN) {
+            oneiron::sync::bridge::RevisionEvent::Mirror {
+                entity: id,
+                source_revision: Some(live),
+            }
+        } else {
+            oneiron::sync::bridge::RevisionEvent::Original(oneiron::memory::EntityRevisionChange {
+                entity: id,
+                previous_revision: Some(previous),
+                revision: Some(live),
+                indexed_revision: server.vault().indexed_revision(&id).unwrap(),
+            })
+        };
         let diff = MaterializedDiffSummary {
             containers: vec![path.clone()],
             bytes: 0,
-            entity_blob_hashes: [(path.clone(), hash)].into(),
+            revision_events: vec![event],
         };
         for client in &clients {
             client.on_materialized(&path, &diff, &by);
@@ -1220,11 +1277,12 @@ async fn delayed_index_publication_filters_own_echo_but_delivers_foreign_and_mix
         },
         writer_hash,
     );
+    let previous_indexed = server.vault().indexed_revision(&id).unwrap().unwrap();
     let report = server
         .vault()
         .refresh_staged_indexed_at_idle(u64::MAX)
         .unwrap();
-    hub.indexed_published(&report.refreshed);
+    publish_indexed(&hub, &report, id, previous_indexed);
     for client in &clients {
         client.refresh().unwrap();
     }
@@ -1255,11 +1313,12 @@ async fn delayed_index_publication_filters_own_echo_but_delivers_foreign_and_mix
         },
         independent_hash,
     );
+    let previous_indexed = server.vault().indexed_revision(&id).unwrap().unwrap();
     let report = server
         .vault()
         .refresh_staged_indexed_at_idle(u64::MAX)
         .unwrap();
-    hub.indexed_published(&report.refreshed);
+    publish_indexed(&hub, &report, id, previous_indexed);
     for client in &clients {
         client.refresh().unwrap();
         let tail = client.pending(7).unwrap();
@@ -1296,11 +1355,12 @@ async fn delayed_index_publication_filters_own_echo_but_delivers_foreign_and_mix
         client.refresh().unwrap();
         assert!(client.pending(7).unwrap().is_empty());
     }
+    let previous_indexed = server.vault().indexed_revision(&id).unwrap().unwrap();
     let report = server
         .vault()
         .refresh_staged_indexed_at_idle(u64::MAX)
         .unwrap();
-    hub.indexed_published(&report.refreshed);
+    publish_indexed(&hub, &report, id, previous_indexed);
     for client in &clients {
         client.refresh().unwrap();
         let tail = client.pending(7).unwrap();
@@ -1370,7 +1430,8 @@ async fn settled_out_of_view_births_do_not_exhaust_lag_origin_retention() {
             &MaterializedDiffSummary {
                 containers: vec![path.clone()],
                 bytes: 0,
-                entity_blob_hashes: Default::default(),
+
+                revision_events: Vec::new(),
             },
             &OriginMark {
                 conn_id: Some(1),
@@ -1383,6 +1444,7 @@ async fn settled_out_of_view_births_do_not_exhaust_lag_origin_retention() {
             "unrelated settled birth {number} caused a gap"
         );
     }
+    let prior = server.vault().indexed_revision(&watched).unwrap().unwrap();
     put(watched, "lagcachemarker second");
     let path = format!("e:{}", watched.to_hex());
     queries.on_materialized(
@@ -1390,7 +1452,8 @@ async fn settled_out_of_view_births_do_not_exhaust_lag_origin_retention() {
         &MaterializedDiffSummary {
             containers: vec![path.clone()],
             bytes: 0,
-            entity_blob_hashes: Default::default(),
+
+            revision_events: vec![revision_event(&server, watched, Some(prior))],
         },
         &OriginMark::default(),
     );
@@ -1398,11 +1461,12 @@ async fn settled_out_of_view_births_do_not_exhaust_lag_origin_retention() {
     // Until idle publication, the indexed view is unchanged.
     assert!(queries.pending(9).unwrap().is_empty());
     server.vault().set_indexed_idle_delay_ms(0).unwrap();
+    let previous_indexed = server.vault().indexed_revision(&watched).unwrap().unwrap();
     let report = server
         .vault()
         .refresh_staged_indexed_at_idle(u64::MAX)
         .unwrap();
-    hub.indexed_published(&report.refreshed);
+    publish_indexed(&hub, &report, watched, previous_indexed);
     queries.refresh().unwrap();
     let tail = queries.pending(9).unwrap();
     assert_eq!(tail.len(), 1);

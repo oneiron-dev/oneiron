@@ -252,7 +252,7 @@ async fn write(f: &Fixture, world: &str, value: u64) {
             containers: vec![path.clone()],
             bytes: 1,
 
-            entity_blob_hashes: Default::default(),
+            revision_events: Vec::new(),
         },
         &OriginMark::default(),
     );

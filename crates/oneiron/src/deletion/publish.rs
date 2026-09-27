@@ -268,7 +268,7 @@ impl Vault {
                     },
                     bytes: 0,
 
-                    entity_blob_hashes: Default::default(),
+                    revision_events: Vec::new(),
                 },
                 &crate::sync::bridge::OriginMark {
                     conn_id: None,

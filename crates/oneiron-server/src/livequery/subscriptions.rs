@@ -6,7 +6,6 @@ use super::*;
 use loro::{ExportMode, LoroDoc, VersionVector};
 use oneiron::sync::bridge::{LiveQueryTee, MaterializedDiffSummary, OriginMark};
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
 pub(crate) const LIVEQUERY_RING_CAPACITY: usize = 1024;
@@ -27,12 +26,6 @@ pub(crate) struct DerivedView {
 /// must not return raw full-window updates as app-tier data.
 pub(crate) trait LiveQuerySource: Send + Sync {
     fn derive(&self, view: &ScopedView, channel: Channel) -> Result<DerivedView, AppError>;
-    /// True only while this entity's live body is ahead of its indexed body.
-    /// Called outside Observer B; births, metadata-only puts and edges need no
-    /// delayed-origin retention.
-    fn indexed_lag(&self, _path: &str) -> Result<bool, AppError> {
-        Ok(false)
-    }
     /// Probe insertions and changed memberships not yet in the served read set.
     fn membership_changed(
         &self,
@@ -143,9 +136,7 @@ pub(crate) struct LiveQueries {
     session_budget: Arc<Budget>,
     hub_budget: Arc<Budget>,
     state: Mutex<State>,
-    invalidations: Mutex<VecDeque<(String, MaterializedDiffSummary, OriginMark)>>,
-    index_origins: Mutex<BTreeMap<String, OriginMark>>,
-    invalidation_gap: AtomicBool,
+    tracker: super::publication::PublicationTracker,
 }
 
 struct State {
@@ -206,9 +197,7 @@ impl LiveQueries {
                 subs: BTreeMap::new(),
                 index: BTreeMap::new(),
             }),
-            invalidations: Mutex::new(VecDeque::new()),
-            index_origins: Mutex::new(BTreeMap::new()),
-            invalidation_gap: AtomicBool::new(false),
+            tracker: super::publication::PublicationTracker::default(),
         }
     }
 
@@ -488,14 +477,14 @@ impl LiveQueries {
 
     fn materialized(
         &self,
-        changes: &[(String, MaterializedDiffSummary, OriginMark)],
+        changes: &[(String, MaterializedDiffSummary, Vec<OriginMark>)],
     ) -> Result<(), AppError> {
         let mut state = self.state.lock().map_err(|_| state_error())?;
         // Coarse re-derive sees CURRENT state, not intermediate event
         // states. Suppress only when EVERY affecting invalidation is our
         // own; an earlier own write must not swallow a later foreign one.
         let mut affected = BTreeMap::<u64, bool>::new();
-        for (path, diff, by) in changes {
+        for (path, diff, contributors) in changes {
             for (dependency, ids) in &state.index {
                 let relevant = dependency == path
                     || path
@@ -519,8 +508,11 @@ impl LiveQueries {
                     {
                         continue;
                     }
-                    let own = by.conn_id == Some(state.conn_id)
-                        || (by.origin.is_some() && by.origin == state.subs[id].origin);
+                    let own = !contributors.is_empty()
+                        && contributors.iter().all(|by| {
+                            by.conn_id == Some(state.conn_id)
+                                || (by.origin.is_some() && by.origin == state.subs[id].origin)
+                        });
                     affected
                         .entry(*id)
                         .and_modify(|echo| *echo &= own)
@@ -586,89 +578,79 @@ impl LiveQueries {
     /// Facade reads such as recall may persist retrieval telemetry; doing
     /// that inside the materializer callback would re-enter Loro.
     pub(crate) fn refresh(&self) -> Result<(), AppError> {
-        let changes = {
-            let mut pending = self.invalidations.lock().map_err(|_| state_error())?;
-            std::mem::take(&mut *pending)
-        };
-        if self.invalidation_gap.swap(false, Ordering::AcqRel) {
-            self.index_origins
-                .lock()
-                .map_err(|_| state_error())?
-                .clear();
-            self.require_resync();
-            return Ok(());
-        }
-        if changes.is_empty() {
-            return Ok(());
+        let (changes, lost) = self.tracker.take();
+        if !lost.is_empty() {
+            self.require_resync_scoped(&lost);
         }
         let mut ready = Vec::new();
-        for (path, diff, by) in changes {
-            match self.source.ready(&diff, &by) {
-                Ok(true) => ready.push((path, diff, by)),
-                Ok(false) => self.on_materialized(&path, &diff, &by),
+        for row in changes {
+            let by = row.contributors.first().cloned().unwrap_or_default();
+            match self.source.ready(&row.diff, &by) {
+                Ok(true) => ready.push((row.path, row.diff, row.contributors)),
+                Ok(false) => self.tracker.record(&row.path, &row.diff, &by),
                 Err(error) => {
                     self.require_resync();
                     return Err(error);
                 }
             }
         }
-        if let Err(error) = self
-            .retain_lagged_origins(&ready)
-            .and_then(|()| self.materialized(&ready))
-        {
+        if let Err(error) = self.materialized(&ready) {
             self.require_resync();
             return Err(error);
         }
         Ok(())
     }
 
-    /// Retain only edits whose indexed body still lags. Scanning the already
-    /// queued notices here avoids a vault read in Observer B's Loro callback.
-    fn retain_lagged_origins(
-        &self,
-        changes: &[(String, MaterializedDiffSummary, OriginMark)],
-    ) -> Result<(), AppError> {
-        let mut origins = self.index_origins.lock().map_err(|_| state_error())?;
-        let mut candidates = BTreeMap::<String, OriginMark>::new();
-        for (path, diff, by) in changes {
-            for changed in std::iter::once(path).chain(diff.containers.iter()) {
-                if changed
-                    .strip_prefix("e:")
-                    .is_some_and(|id| oneiron::EntityId::from_hex(id).is_ok())
-                {
-                    candidates
-                        .entry(changed.clone())
-                        .and_modify(|prior| merge_origin(prior, by))
-                        .or_insert_with(|| by.clone());
-                }
+    fn require_resync_scoped(&self, paths: &BTreeSet<String>) {
+        let Ok(mut state) = self.state.lock() else {
+            return;
+        };
+        for (id, sub) in &mut state.subs {
+            let affected = paths.contains("*")
+                || paths.iter().any(|path| {
+                    sub.dependencies.contains(path)
+                        || (sub
+                            .dependencies
+                            .iter()
+                            .any(|dep| dep.starts_with("membership:"))
+                            && self
+                                .source
+                                .membership_changed(
+                                    &sub.view,
+                                    sub.channel,
+                                    &MaterializedDiffSummary {
+                                        containers: vec![path.clone()],
+                                        bytes: 0,
+                                        revision_events: Vec::new(),
+                                    },
+                                )
+                                .unwrap_or(true))
+                });
+            if !affected {
+                continue;
             }
-        }
-        // Retire settled/deleted/superseded bodies, even if an idle pass never
-        // sent a publication (births and metadata-only writes are examples).
-        let paths: Vec<_> = origins.keys().cloned().collect();
-        for path in paths {
-            if !self.source.indexed_lag(&path)? {
-                origins.remove(&path);
+            if let Some(cursor) = sub
+                .ring
+                .back()
+                .map(|p| p.cursor.clone())
+                .or_else(|| sub.acked.clone())
+            {
+                sub.ring.clear();
+                sub.ring.push_back(Push {
+                    subscription_id: *id,
+                    cursor,
+                    kind: "gap",
+                    result: None,
+                });
+                sub.bytes = push_bytes(sub.ring.make_contiguous()).unwrap_or(4096);
+                let _ = sub.budget.resize(sub.metadata_bytes + sub.bytes.max(4096));
             }
+            sub.needs_resync = true;
         }
-        for (path, by) in candidates {
-            if self.source.indexed_lag(&path)? {
-                origins
-                    .entry(path)
-                    .and_modify(|prior| merge_origin(prior, &by))
-                    .or_insert(by);
-            }
-        }
-        let bytes: usize = origins
-            .iter()
-            .map(|(path, by)| path.len() + by.origin.as_ref().map_or(0, String::len) + 64)
-            .sum();
-        if origins.len() > LIVEQUERY_RING_CAPACITY || bytes > 64 * 1024 {
-            origins.clear();
-            self.invalidation_gap.store(true, Ordering::Release);
-            return Err(state_error());
-        }
-        Ok(())
+    }
+
+    pub(super) fn on_indexed_published(&self, publication: oneiron::memory::IndexedPublication) {
+        self.tracker.publish(publication);
     }
 
     fn require_resync(&self) {
@@ -696,131 +678,9 @@ impl LiveQueries {
     }
 }
 
-impl LiveQueries {
-    pub(super) fn on_indexed_published(&self, path: &str, diff: &MaterializedDiffSummary) {
-        // If index publication beats the timer, the contributing writes still
-        // sit in the invalidation queue, not the retained lag map. Fold both.
-        let queued = self
-            .invalidations
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .iter()
-            .filter(|(changed, diff, _)| {
-                changed == path || diff.containers.iter().any(|item| item == path)
-            })
-            .map(|(_, _, by)| by.clone())
-            .collect::<Vec<_>>();
-        let cached = self
-            .index_origins
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .remove(path);
-        let mut contributors = cached.into_iter().chain(queued);
-        let mut by = contributors.next().unwrap_or_default();
-        for contributor in contributors {
-            merge_origin(&mut by, &contributor);
-        }
-        self.enqueue_invalidation(path, diff, &by);
-    }
-
-    fn enqueue_invalidation(&self, path: &str, diff: &MaterializedDiffSummary, by: &OriginMark) {
-        let Ok(mut pending) = self.invalidations.lock() else {
-            self.invalidation_gap.store(true, Ordering::Release);
-            return;
-        };
-        // Bound invalidation metadata independently of every subscription
-        // ring. An overflow loses history explicitly, never silently.
-        let bytes: usize = pending
-            .iter()
-            .map(|(path, diff, by)| {
-                path.len()
-                    + by.origin.as_ref().map_or(0, String::len)
-                    + 128
-                    + diff
-                        .containers
-                        .iter()
-                        .map(|path| path.len() + 32)
-                        .sum::<usize>()
-            })
-            .sum();
-        let changed_paths = diff.containers.as_slice();
-        let incoming = path.len()
-            + by.origin.as_ref().map_or(0, String::len)
-            + 128
-            + changed_paths
-                .iter()
-                .map(|path| path.len() + 32 + 66)
-                .sum::<usize>();
-        if pending.len() >= LIVEQUERY_RING_CAPACITY || bytes.saturating_add(incoming) > 64 * 1024 {
-            pending.clear();
-            self.index_origins
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner)
-                .clear();
-            self.invalidation_gap.store(true, Ordering::Release);
-            return;
-        }
-        // Entity-indexed subscriptions need the key delta even on an ordinary
-        // commit. Bound it before cloning, and normalize deletion publications
-        // that still originate from the window transport.
-        let mut containers: BTreeSet<String> = changed_paths.iter().cloned().collect();
-        for changed in changed_paths {
-            if (changed.contains("/entities/") || changed.contains("/tombstones/"))
-                && let Some(id) = changed.rsplit('/').next()
-                && let Ok(id) = oneiron::EntityId::from_hex(id)
-            {
-                containers.insert(format!("e:{}", id.to_hex()));
-            }
-        }
-        // A bridge mirror of the same entity blob is one write, not a
-        // foreign contribution. A distinct bridge blob (or an edge change)
-        // remains foreign. Match the committed blob, never merely the path.
-        let mut origin = by.clone();
-        if by.origin.as_deref() == Some(oneiron::sync::bridge::BRIDGE_ORIGIN)
-            && !diff.entity_blob_hashes.is_empty()
-        {
-            let mut matched = Vec::new();
-            for (entity, hash) in &diff.entity_blob_hashes {
-                let found = pending.iter().rev().find(|(_, prior, previous)| {
-                    previous.origin.as_deref() != Some(oneiron::sync::bridge::BRIDGE_ORIGIN)
-                        && prior.entity_blob_hashes.get(entity) == Some(hash)
-                });
-                if let Some((_, _, previous)) = found {
-                    matched.push(previous.clone());
-                } else {
-                    matched.clear();
-                    break;
-                }
-            }
-            if let Some(first) = matched.first() {
-                origin = first.clone();
-                for contributor in matched.iter().skip(1) {
-                    merge_origin(&mut origin, contributor);
-                }
-            }
-        }
-        pending.push_back((
-            path.to_owned(),
-            MaterializedDiffSummary {
-                containers: containers.into_iter().collect(),
-                bytes: diff.bytes,
-
-                entity_blob_hashes: diff.entity_blob_hashes.clone(),
-            },
-            origin,
-        ));
-    }
-}
-
 impl LiveQueryTee for LiveQueries {
     fn on_materialized(&self, path: &str, diff: &MaterializedDiffSummary, by: &OriginMark) {
-        self.enqueue_invalidation(path, diff, by);
-    }
-}
-
-fn merge_origin(prior: &mut OriginMark, next: &OriginMark) {
-    if prior.conn_id != next.conn_id || prior.origin != next.origin {
-        *prior = OriginMark::default();
+        self.tracker.record(path, diff, by);
     }
 }
 

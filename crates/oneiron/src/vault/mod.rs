@@ -7,6 +7,8 @@ mod doctor_manifest;
 mod edges;
 mod entities;
 pub(crate) mod entity_revision;
+#[cfg(feature = "sync")]
+pub(crate) use entity_revision::EntityRevisionChange;
 pub use entity_revision::{
     IndexedRefreshReport, IndexedRevisionEmbedder, IndexedRevisionInput, PinnedCitation, ReadMode,
     ResolvedCitation, RevisionRef,

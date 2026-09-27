@@ -1,8 +1,8 @@
 //! Reverse rematerialization plus skip/policy predicates and carrier removal.
 
-use std::collections::HashSet;
+use std::collections::{BTreeMap, HashSet};
 
-use super::bridge::{self, BRIDGE_ORIGIN, encode_edge_value_for_crdt, format_edge_key};
+use super::bridge::{self, encode_edge_value_for_crdt, format_edge_key};
 use super::loro_support::{
     map_contains_binary, map_delete, map_for_each_tombstone_value, map_for_each_value_bytes,
     map_get_bytes, map_insert_bytes, tombstone_map_contains_id, tombstone_values_for_id,
@@ -51,6 +51,7 @@ pub fn reverse_rematerialize(vault: &Vault, doc: &LoroDoc, window_key: &WindowKe
 
     let mut count = 0u32;
     let mut wrote_any = false;
+    let mut mirror_sources = BTreeMap::new();
     let entities_in_range_set: HashSet<EntityId> = entities_in_range.iter().copied().collect();
     let mut protected_tombstones = HashSet::new();
     let mut entity_tombstones = Vec::new();
@@ -69,7 +70,7 @@ pub fn reverse_rematerialize(vault: &Vault, doc: &LoroDoc, window_key: &WindowKe
         }
     });
     for (id, key, tombstone) in entity_tombstones {
-        let Some(raw) = vault.get_raw_unsealed(&id)? else {
+        let Some((raw, source_revision)) = vault.get_raw_and_revision_unsealed(&id)? else {
             continue;
         };
         let Some(header) = EntityMetadataHeader::parse(&raw) else {
@@ -94,6 +95,9 @@ pub fn reverse_rematerialize(vault: &Vault, doc: &LoroDoc, window_key: &WindowKe
         let hex_id = id.to_hex();
         if !map_contains_binary(&entities_map, &hex_id) {
             map_insert_bytes(&entities_map, &hex_id, &raw)?;
+            if let Some(revision) = source_revision {
+                mirror_sources.insert(id, revision);
+            }
             wrote_any = true;
             count += 1;
         }
@@ -125,7 +129,7 @@ pub fn reverse_rematerialize(vault: &Vault, doc: &LoroDoc, window_key: &WindowKe
             continue;
         }
 
-        let Some(raw) = vault.get_raw_unsealed(id)? else {
+        let Some((raw, source_revision)) = vault.get_raw_and_revision_unsealed(id)? else {
             continue;
         };
 
@@ -186,6 +190,9 @@ pub fn reverse_rematerialize(vault: &Vault, doc: &LoroDoc, window_key: &WindowKe
                     map_insert_bytes(&entities_map, hex_id.as_str(), &canonical)?;
                 } else {
                     map_insert_bytes(&entities_map, hex_id.as_str(), raw.as_slice())?;
+                }
+                if let Some(revision) = source_revision {
+                    mirror_sources.insert(*id, revision);
                 }
                 wrote_any = true;
                 count += 1;
@@ -276,7 +283,8 @@ pub fn reverse_rematerialize(vault: &Vault, doc: &LoroDoc, window_key: &WindowKe
 
     // Commit all bridge writes with origin tag
     if wrote_any {
-        doc.commit_with(CommitOptions::new().origin(BRIDGE_ORIGIN));
+        let origin = bridge::origin_for_mirrors(&mirror_sources)?;
+        doc.commit_with(CommitOptions::new().origin(&origin));
     }
     Ok(count)
 }

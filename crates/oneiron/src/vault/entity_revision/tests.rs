@@ -224,7 +224,7 @@ fn each_index_commit_is_published_before_a_later_provider_failure() {
     let mut published: Vec<crate::memory::IndexedPublication> = Vec::new();
     let error =
         vault.refresh_indexed_at_idle_with_publication(u64::MAX, &FailsSecond(b), |publication| {
-            published.push(publication)
+            published.push(publication);
         });
     assert!(matches!(
         error,

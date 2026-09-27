@@ -302,6 +302,25 @@ impl Vault {
     /// would turn one custody carrier into a wedged window. `get_raw_in` is
     /// unsealed for the same reason. Everything outside those passes uses the
     /// sealed public [`Vault::get_raw`].
+    /// Reads the mirror body and its source revision in one LMDB snapshot.
+    #[cfg(feature = "sync")]
+    pub(crate) fn get_raw_and_revision_unsealed(
+        &self,
+        id: &EntityId,
+    ) -> Result<Option<(Vec<u8>, Option<crate::vault::RevisionRef>)>> {
+        let txn = self.store.env.read_txn()?;
+        let Some(raw) = self.get_raw_in(&txn, id)? else {
+            return Ok(None);
+        };
+        let revision = crate::vault::entity_revision::revision_for_mode_in_txn(
+            &self.store,
+            &txn,
+            id,
+            crate::vault::ReadMode::Live,
+        )?;
+        Ok(Some((raw, revision)))
+    }
+
     pub(crate) fn get_raw_unsealed(&self, id: &EntityId) -> Result<Option<Vec<u8>>> {
         let rtxn = self.store.env.read_txn()?;
         self.get_raw_in(&rtxn, id)

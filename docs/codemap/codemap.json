@@ -21069,7 +21069,7 @@
      "surface": {
       "crate-vis": 8,
       "mod": 2,
-      "re-export": 20
+      "re-export": 21
      }
     },
     {
@@ -30235,7 +30235,7 @@
      "path": "src/sync/bridge/entities.rs",
      "purpose": "Entity-delta materialization and the per-entity blob writer",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 7
      }
     },
     {
@@ -30245,8 +30245,8 @@
      "path": "src/sync/bridge/mod.rs",
      "purpose": "Entity bridge: CRDT ↔ LMDB materialization observers",
      "surface": {
-      "crate-vis": 6,
-      "re-export": 3
+      "crate-vis": 7,
+      "re-export": 4
      }
     },
     {
@@ -30268,6 +30268,19 @@
       "fn": 13,
       "struct": 5,
       "trait": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "RevisionEvent"
+     ],
+     "path": "src/sync/bridge/provenance.rs",
+     "purpose": "Commit-bound identity for LMDB-to-Loro entity mirrors",
+     "surface": {
+      "crate-vis": 3,
+      "enum": 1
      }
     },
     {
@@ -32429,7 +32442,7 @@
      "path": "src/vault/entities.rs",
      "purpose": "Vault entity, vector, short-id and type-index reads and writes",
      "surface": {
-      "crate-vis": 13,
+      "crate-vis": 14,
       "fn": 17,
       "struct": 1
      }
@@ -32518,6 +32531,8 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
+      "EntityRevisionChange",
+      "IndexedPublication",
       "IndexedRefreshReport",
       "IndexedRevisionEmbedder",
       "IndexedRevisionInput",
@@ -32531,7 +32546,7 @@
      "surface": {
       "enum": 1,
       "fn": 3,
-      "struct": 5,
+      "struct": 7,
       "trait": 1
      }
     },
@@ -32544,7 +32559,7 @@
      "path": "src/vault/mod.rs",
      "purpose": "Top-level `Vault` API: the crate's main entry point for all LMDB-backed entity / vector / edge / text /…",
      "surface": {
-      "crate-vis": 6,
+      "crate-vis": 7,
       "re-export": 5,
       "struct": 1
      }
@@ -35452,7 +35467,7 @@
      "purpose": "ARCH-0038 historical-carrier sweep executor — ONE-1087 / ONE-1091 phase 1 (manual trigger via…"
     },
     "sync": {
-     "files": 100,
+     "files": 101,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -35587,7 +35602,7 @@
    },
    "over_bar": 10,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2100,
+   "source_files": 2101,
    "test_files": 719
   },
   "oneiron-android": {
@@ -41421,6 +41436,16 @@
      }
     },
     {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/livequery/publication.rs",
+     "purpose": "Revision-keyed publication lifecycle; one bounded owner per logical session",
+     "surface": {
+      "crate-vis": 5
+     }
+    },
+    {
      "bucket": "s",
      "kind": "src",
      "notable": [],
@@ -41467,7 +41492,7 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/livequery/subscriptions.rs",
@@ -42693,9 +42718,9 @@
      "purpose": "—"
     },
     "livequery": {
-     "files": 17,
+     "files": 18,
      "impl_vault": false,
-     "largest_src_bucket": "L",
+     "largest_src_bucket": "m",
      "layout": "file+dir",
      "purpose": "App-tier framing and coarse live-query state, separate from WindowSync"
     },
@@ -42784,9 +42809,9 @@
      "purpose": "RC42 observation-only wire counters"
     }
    },
-   "over_bar": 2,
+   "over_bar": 1,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 231,
+   "source_files": 232,
    "test_files": 97
   },
   "oneiron-uniffi": {

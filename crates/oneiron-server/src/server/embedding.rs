@@ -169,8 +169,8 @@ impl SyncServer {
                     let server = Arc::clone(self);
                     let hub = crate::livequery::connection::Hub::for_server(self);
                     let refreshed = tokio::task::spawn_blocking(move || {
-                        server.refresh_indexed_idle(|id, revision| {
-                            hub.indexed_published(&[(id, revision)]);
+                        server.refresh_indexed_idle(|publication| {
+                            hub.indexed_published(&[publication]);
                         })
                     })
                     .await;
@@ -271,7 +271,7 @@ impl oneiron::memory::IndexedRevisionEmbedder for IndexedProvider<'_> {
 impl SyncServer {
     fn refresh_indexed_idle(
         &self,
-        published: impl FnMut(oneiron::EntityId, oneiron::memory::RevisionRef),
+        published: impl FnMut(oneiron::memory::IndexedPublication),
     ) -> oneiron::Result<oneiron::memory::IndexedRefreshReport> {
         let slot = self
             .embedder

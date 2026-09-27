@@ -101,7 +101,7 @@ impl SyncClient {
                 containers: vec![format!("w:{window}/entities/{}", note.to_hex())],
                 bytes: 0,
 
-                entity_blob_hashes: Default::default(),
+                revision_events: Vec::new(),
             },
             &crate::sync::bridge::OriginMark {
                 conn_id: None,

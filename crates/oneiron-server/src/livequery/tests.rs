@@ -75,7 +75,7 @@ fn notify(tier: &LiveQueries, world: &str, by: OriginMark) {
             containers: vec![path.clone()],
             bytes: 1,
 
-            entity_blob_hashes: Default::default(),
+            revision_events: Vec::new(),
         },
         &by,
     );
@@ -447,7 +447,7 @@ fn tee_defers_facade_work_until_the_subscription_loop_runs() {
             containers: vec![],
             bytes: 0,
 
-            entity_blob_hashes: Default::default(),
+            revision_events: Vec::new(),
         },
         &OriginMark::default(),
     );
@@ -473,7 +473,7 @@ fn deferred_own_write_does_not_hide_a_later_foreign_write() {
                 containers: vec![],
                 bytes: 0,
 
-                entity_blob_hashes: Default::default(),
+                revision_events: Vec::new(),
             },
             &OriginMark {
                 conn_id: Some(conn),
@@ -519,4 +519,33 @@ fn bridge_origin_edge_updates_name_both_entity_documents() {
         .filter_map(|path| path.strip_prefix("e:"))
         .collect();
     assert_eq!(deps, std::collections::BTreeSet::from([WORLD_A, WORLD_B]));
+}
+
+#[test]
+fn lost_publication_provenance_gaps_only_the_affected_subscription() {
+    let source = Arc::new(Source::default());
+    let tier = LiveQueries::new(1, source);
+    for (id, world) in [(1, WORLD_A), (2, WORLD_B)] {
+        let opened = tier
+            .open(id, view(world), Channel::View, None, None)
+            .unwrap();
+        tier.ack(id, &opened[0].cursor).unwrap();
+    }
+    let path = format!("world/{WORLD_A}");
+    for _ in 0..1100 {
+        tier.on_materialized(
+            &path,
+            &MaterializedDiffSummary {
+                containers: vec![path.clone()],
+                bytes: 0,
+                revision_events: Vec::new(),
+            },
+            &OriginMark::default(),
+        );
+    }
+    tier.refresh().unwrap();
+    let a = tier.pending(1).unwrap();
+    assert_eq!(a.len(), 1);
+    assert_eq!(a[0].kind, "gap");
+    assert!(tier.pending(2).unwrap().is_empty());
 }

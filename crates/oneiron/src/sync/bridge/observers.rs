@@ -385,9 +385,8 @@ pub struct MaterializedDiffSummary {
     pub containers: Vec<String>,
     /// Total changed key and binary-value bytes, for accounting only.
     pub bytes: usize,
-    /// Hash of each entity-map blob in this commit. Correlates an Observer B
-    /// write with its bridge mirror without treating later local writes as echoes.
-    pub entity_blob_hashes: std::collections::BTreeMap<String, [u8; 32]>,
+    /// Revision identities captured at the transaction or bridge-commit door.
+    pub revision_events: Vec<super::RevisionEvent>,
 }
 
 /// Transport correlation only; never actor authority.
@@ -488,12 +487,26 @@ fn subscribe_map_observer(
                 // its post-commit notification; never invalidate on this event.
                 return;
             }
-            if event.origin == BRIDGE_ORIGIN {
-                // The bridge mirrors an already committed LMDB write.
+            if super::provenance::is_bridge(event.origin) {
+                // A mirror identifies its source in the same Loro commit.
+                // Other/legacy bridge commits are independent foreign changes.
+                let sources = super::provenance::mirror_sources(event.origin);
                 for cdiff in &event.events {
                     if let Some(delta) = cdiff.diff.as_map() {
                         let path = format!("w:{window_key}/{}", live_query.0);
-                        let diff = entity_document_diff(&path, live_query.0, delta);
+                        let mut diff = entity_document_diff(&path, live_query.0, delta);
+                        if live_query.0 == "entities" {
+                            for key in delta.updated.keys() {
+                                if let Ok(entity) = EntityId::from_hex(key) {
+                                    diff.revision_events.push(super::RevisionEvent::Mirror {
+                                        entity,
+                                        source_revision: sources
+                                            .as_ref()
+                                            .and_then(|s| s.get(&entity).copied()),
+                                    });
+                                }
+                            }
+                        }
                         materializer.notify_live_queries(
                             &path,
                             &diff,
@@ -506,19 +519,38 @@ fn subscribe_map_observer(
                 }
                 return;
             }
-            let _guard = materializer.lock();
             for cdiff in &event.events {
                 if let Some(map_delta) = cdiff.diff.as_map() {
-                    let committed = materialize(
-                        &callback_doc,
-                        map_delta,
-                        &vault,
-                        &window_key,
-                        lease_vault_id,
-                    );
+                    let (committed, changes) = {
+                        let _guard = materializer.lock();
+                        if live_query.0 == "entities" {
+                            super::entities::materialize_entities_with_changes(
+                                &callback_doc,
+                                map_delta,
+                                &vault,
+                                &window_key,
+                                lease_vault_id,
+                            )
+                        } else {
+                            (
+                                materialize(
+                                    &callback_doc,
+                                    map_delta,
+                                    &vault,
+                                    &window_key,
+                                    lease_vault_id,
+                                ),
+                                Vec::new(),
+                            )
+                        }
+                    };
                     if committed {
                         let path = format!("w:{window_key}/{}", live_query.0);
-                        let diff = entity_document_diff(&path, live_query.0, map_delta);
+                        let mut diff = entity_document_diff(&path, live_query.0, map_delta);
+                        diff.revision_events = changes
+                            .into_iter()
+                            .map(super::RevisionEvent::Original)
+                            .collect();
                         let by = OriginMark {
                             conn_id: event
                                 .origin
@@ -544,17 +576,10 @@ fn entity_document_diff(
 ) -> MaterializedDiffSummary {
     let mut containers = std::collections::BTreeSet::new();
     let mut bytes = 0usize;
-    let mut entity_blob_hashes = std::collections::BTreeMap::new();
     for (key, value) in &delta.updated {
         bytes = bytes.saturating_add(key.len());
         if let Some(loro::ValueOrContainer::Value(loro::LoroValue::Binary(blob))) = value {
             bytes = bytes.saturating_add(blob.len());
-            if container == "entities"
-                && let Ok(id) = crate::EntityId::from_hex(key)
-            {
-                entity_blob_hashes
-                    .insert(format!("e:{}", id.to_hex()), *blake3::hash(blob).as_bytes());
-            }
         }
         containers.insert(format!("{path}/{key}"));
         if container == "edges" {
@@ -569,6 +594,6 @@ fn entity_document_diff(
     MaterializedDiffSummary {
         containers: containers.into_iter().collect(),
         bytes,
-        entity_blob_hashes,
+        revision_events: Vec::new(),
     }
 }

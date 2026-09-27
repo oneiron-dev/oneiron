@@ -89,10 +89,7 @@ impl Hub {
     /// Indexed publication happens after the vault transaction commits, not
     /// in Observer B. Feed only the published entity ids through the existing
     /// dependency index; neither unindexed edits nor raw documents are pushed.
-    pub(crate) fn indexed_published(
-        &self,
-        refreshed: &[(oneiron::EntityId, oneiron::memory::RevisionRef)],
-    ) {
+    pub(crate) fn indexed_published(&self, publications: &[oneiron::memory::IndexedPublication]) {
         let sessions: Vec<_> = self
             .sessions
             .lock()
@@ -100,16 +97,9 @@ impl Hub {
             .values()
             .map(|session| Arc::clone(&session.queries))
             .collect();
-        for (id, _) in refreshed {
-            let path = format!("e:{}", id.to_hex());
-            let diff = oneiron::sync::bridge::MaterializedDiffSummary {
-                containers: vec![path.clone()],
-                bytes: 0,
-
-                entity_blob_hashes: Default::default(),
-            };
+        for publication in publications {
             for queries in &sessions {
-                queries.on_indexed_published(&path, &diff);
+                queries.on_indexed_published(*publication);
             }
         }
     }
