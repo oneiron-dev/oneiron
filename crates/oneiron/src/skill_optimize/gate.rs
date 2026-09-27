@@ -140,7 +140,10 @@ mod ledger;
 mod measurement;
 mod verdict;
 
-pub use admission::{admit_optimized_skill_revision, resolve_skill_edit_tradeoff};
+pub use admission::{
+    admit_optimized_skill_revision, resolve_skill_edit_tradeoff,
+    resolve_skill_edit_tradeoff_in_cycle,
+};
 pub use basis::{
     HELD_OUT_REPLAY_SCORER, HeldOutReplayCase, HeldOutReplayScorer, SkillEditCycle, dev_receipts,
     held_out_receipt_set_digest, held_out_receipts, receipt_is_held_out,

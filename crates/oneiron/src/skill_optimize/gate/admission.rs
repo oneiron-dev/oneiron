@@ -76,6 +76,57 @@ pub fn resolve_skill_edit_tradeoff(
     choice: TradeoffChoice,
     at: u64,
 ) -> Result<HeldOutVerdict> {
+    resolve_skill_edit_tradeoff_with_cycle(
+        vault, proposal, pending_id, owner, evidence, choice, None, at,
+    )
+}
+
+/// Resolve a pending tradeoff in a later, proven Dreamer attempt. The new
+/// cycle is charged only when the approval is written; a retry returns the
+/// same ruling without spending another slot.
+/// # Errors
+/// Unknown attempt, stale scored basis, exhausted cycle cap, or storage errors.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the exact decision and proven attempt must both be supplied at the authority door"
+)]
+pub fn resolve_skill_edit_tradeoff_in_cycle(
+    vault: &Vault,
+    proposal: &EntityId,
+    pending_id: EntityId,
+    owner: &crate::consent::AuthenticatedOwner,
+    evidence: &str,
+    choice: TradeoffChoice,
+    attempt: AttemptId,
+    at: u64,
+) -> Result<HeldOutVerdict> {
+    let cycle = proven_cycle(vault, attempt)?;
+    resolve_skill_edit_tradeoff_with_cycle(
+        vault,
+        proposal,
+        pending_id,
+        owner,
+        evidence,
+        choice,
+        Some(cycle),
+        at,
+    )
+}
+
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the decision binds proposal, owner, evidence, choice and proven cycle independently"
+)]
+fn resolve_skill_edit_tradeoff_with_cycle(
+    vault: &Vault,
+    proposal: &EntityId,
+    pending_id: EntityId,
+    owner: &crate::consent::AuthenticatedOwner,
+    evidence: &str,
+    choice: TradeoffChoice,
+    cycle: Option<SkillEditCycle>,
+    at: u64,
+) -> Result<HeldOutVerdict> {
     if evidence.trim().is_empty() || evidence.len() > 256 {
         return Err(invalid(
             "tradeoff decision requires a bounded evidence reference",
@@ -131,13 +182,15 @@ pub fn resolve_skill_edit_tradeoff(
         if floor_regressed(&latest.goal_axes) || !is_tradeoff(&latest.goal_axes) {
             return Err(invalid("only a non-floor tradeoff may be resolved"));
         }
-        if matches!(choice, TradeoffChoice::Approve) {
-            let cycle = SkillEditCycle::new(latest.cycle.clone())?;
-            if accepted_in_cycle_in_txn(vault, txn, &cycle, proposal)?
+        let granting_cycle = match &cycle {
+            Some(cycle) => cycle.clone(),
+            None => SkillEditCycle::new(latest.cycle.clone())?,
+        };
+        if matches!(choice, TradeoffChoice::Approve)
+            && accepted_in_cycle_in_txn(vault, txn, &granting_cycle, proposal)?
                 >= cycle_cap_in_txn(vault, txn)?
-            {
-                return Err(invalid("tradeoff approval exceeds the cycle admission cap"));
-            }
+        {
+            return Err(invalid("tradeoff approval exceeds the cycle admission cap"));
         }
         let disposition = match choice {
             TradeoffChoice::Approve => SkillEditDisposition::AcceptedTradeoff,
@@ -148,6 +201,7 @@ pub fn resolve_skill_edit_tradeoff(
             disposition,
             accepted: disposition.admits(),
             tradeoff_resolution: Some(decision),
+            cycle: granting_cycle.as_str().to_owned(),
             at,
             ..latest
         };

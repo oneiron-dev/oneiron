@@ -67,12 +67,55 @@ fn validate_axes(axes: &[GoalAxisSpec]) -> Result<()> {
     Ok(())
 }
 
+fn read_goal_lineage_skill(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    id: &EntityId,
+) -> Result<SkillRecord> {
+    let raw = vault
+        .store
+        .entities
+        .get(txn, id.as_bytes())?
+        .ok_or(Error::EntityNotFound)?;
+    let header = crate::batch::EntityMetadataHeader::parse(&raw)
+        .ok_or(Error::CorruptedIndex("skill goal lineage entity header"))?;
+    if header.entity_type != crate::registry::ENTITY_TYPE_SKILL {
+        return Err(invalid("skill goal lineage predecessor is not a skill"));
+    }
+    crate::skill::decode_skill_record(&raw[crate::batch::ENTITY_METADATA_HEADER_LEN..])
+}
+
+/// Resolve the immutable optimize-of chain to the human-governed skill identity.
+/// A missing or malformed predecessor fails closed, never to the scalar default.
+fn goal_owner_in_txn(vault: &Vault, txn: &heed::RoTxn<'_>, skill: &EntityId) -> Result<EntityId> {
+    let mut id = *skill;
+    let mut visited = BTreeSet::new();
+    loop {
+        if !visited.insert(id) {
+            return Err(invalid("cyclic skill goal lineage"));
+        }
+        let record = read_goal_lineage_skill(vault, txn, &id)?;
+        if provenance_str(&record, PROVENANCE_BIRTH_KEY).as_deref()
+            != Some(SKILL_OPTIMIZE_BIRTH_PATH)
+        {
+            return Ok(id);
+        }
+        let parent = target_of(&record)?;
+        let prior = read_goal_lineage_skill(vault, txn, &parent)?;
+        if prior.skill_id != record.skill_id {
+            return Err(invalid("skill goal lineage crosses skill identity"));
+        }
+        id = parent;
+    }
+}
+
 pub(super) fn goal_definition_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     skill: &EntityId,
 ) -> Result<GoalDefinition> {
-    let Some(raw) = vault.store.vault_meta.get(txn, &goal_key(skill))? else {
+    let root = goal_owner_in_txn(vault, txn, skill)?;
+    let Some(raw) = vault.store.vault_meta.get(txn, &goal_key(&root))? else {
         return Ok(GoalDefinition {
             revision: DEFAULT_GOAL_REVISION.to_owned(),
             axes: vec![GoalAxisSpec {
@@ -103,7 +146,7 @@ pub fn set_skill_edit_goal_axes(
     validate_axes(&axes)?;
     vault.with_write_txn(|txn| {
         owner.revalidate_in_txn(vault, txn)?;
-        vault.read_skill_record_in_txn(txn, skill)?;
+        let root = goal_owner_in_txn(vault, txn, skill)?;
         let definition = GoalDefinition {
             revision: vault.store.clock.entity_id()?.to_hex(),
             axes,
@@ -113,7 +156,7 @@ pub fn set_skill_edit_goal_axes(
         vault
             .store
             .vault_meta
-            .put(txn, &goal_key(skill), &encoded)?;
+            .put(txn, &goal_key(&root), &encoded)?;
         Ok(definition.revision)
     })
 }

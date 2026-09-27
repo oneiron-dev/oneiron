@@ -4720,6 +4720,7 @@ struct VectorScorer {
     primary: (f32, f32),
     floor: (f32, f32),
     cost: (f32, f32),
+    baseline: &'static str,
     seen: RefCell<Vec<(String, String, Vec<String>)>>,
 }
 
@@ -4729,8 +4730,14 @@ impl VectorScorer {
             primary,
             floor,
             cost,
+            baseline: TARGET_DESC,
             seen: RefCell::new(Vec::new()),
         }
+    }
+
+    fn with_baseline(mut self, baseline: &'static str) -> Self {
+        self.baseline = baseline;
+        self
     }
 }
 
@@ -4753,7 +4760,7 @@ impl HeldOutReplayScorer for VectorScorer {
             "human_minutes" => self.cost,
             _ => panic!("unknown axis"),
         };
-        Ok(if case.instructions == TARGET_DESC {
+        Ok(if case.instructions == self.baseline {
             before
         } else {
             after
@@ -5155,5 +5162,180 @@ fn authenticated_tradeoff_resolution_approves_rejects_and_refuses_stale_decision
             ClaimApprovalStatus::Proposed
         );
     }
+    Ok(())
+}
+
+fn successor_goal_proposal(vault: &Vault, target: &EntityId) -> EntityId {
+    let id = EntityId::now();
+    let mut record = optimizer_proposal_record_citing(
+        vault,
+        target,
+        Value::Array(Vec::new()),
+        HAND_CRAFTED_CYCLE,
+    );
+    record.desc = "Next generation instructions.".to_owned();
+    vault
+        .put_skill_record(&id, &record, t(300), 301)
+        .expect("put successor proposal");
+    id
+}
+
+#[test]
+fn goal_definition_survives_two_optimizer_generations_and_owner_edit_revokes_successor_permission()
+-> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    let (a, b) = losing_skill_with_proposal(&vault, "oneiron.skill.goal_lineage");
+    let owner = vector_owner(&vault);
+    let original = set_skill_edit_goal_axes(&vault, &owner, &a, vector_axes())?;
+    let b_pass = score_gate_skill_edit_in_cycle(
+        &vault,
+        &b,
+        &VectorScorer::new((0.4, 0.8), (0.8, 0.8), (0.5, 0.6)),
+        wake(&vault, "lineage-a", 10),
+        900,
+    )?;
+    assert_eq!(b_pass.disposition, SkillEditDisposition::Accepted);
+    admit_optimized_skill_revision(&vault, &b, t(400), 401)?;
+    vault.supersede_skill_record(&a, &b, t(402), 403)?;
+
+    // Give B its own held-out outcome. This isolates the gate's lineage law
+    // from the separate selector and attribution projector.
+    let receipt = (0u64..)
+        .map(|n| format!("successor-reserve:{n}"))
+        .find(|id| receipt_is_held_out(&b, id))
+        .expect("a held-out receipt exists");
+    let mut encoded = Vec::new();
+    rmpv::encode::write_value(
+        &mut encoded,
+        &Value::Map(vec![
+            (Value::from("schema_version"), Value::from(1u64)),
+            (Value::from("win"), Value::Boolean(false)),
+            (Value::from("at"), Value::from(500u64)),
+        ]),
+    )
+    .expect("encode outcome");
+    vault.with_write_txn(|txn| {
+        let mut key = b"skill_reliability:outcome:v1:".to_vec();
+        key.extend_from_slice(b.as_bytes());
+        key.extend_from_slice(receipt.as_bytes());
+        vault.store.vault_meta.put(txn, &key, &encoded)?;
+        Ok(())
+    })?;
+    let c = successor_goal_proposal(&vault, &b);
+    let floor_loss = score_gate_skill_edit_in_cycle(
+        &vault,
+        &c,
+        &VectorScorer::new((0.4, 0.9), (0.8, 0.7), (0.5, 0.6)).with_baseline(DRAFTED_DESC),
+        wake(&vault, "lineage-b", 20),
+        901,
+    )?;
+    assert_eq!(floor_loss.goal_revision, original);
+    assert_eq!(floor_loss.disposition, SkillEditDisposition::Rejected);
+    assert!(floor_loss.goal_axes["safety"].after < floor_loss.goal_axes["safety"].before);
+    assert!(floor_loss.goal_axes["quality"].after > floor_loss.goal_axes["quality"].before);
+    // A later human edit on the current successor changes the shared ruler.
+    let next = successor_goal_proposal(&vault, &b);
+    let accepted = score_gate_skill_edit_in_cycle(
+        &vault,
+        &next,
+        &VectorScorer::new((0.4, 0.8), (0.8, 0.8), (0.5, 0.6)).with_baseline(DRAFTED_DESC),
+        wake(&vault, "lineage-c", 30),
+        902,
+    )?;
+    assert_eq!(accepted.disposition, SkillEditDisposition::Accepted);
+    let changed = set_skill_edit_goal_axes(&vault, &owner, &b, vector_axes())?;
+    assert_ne!(original, changed);
+    assert_eq!(
+        admit_optimized_skill_revision(&vault, &next, t(404), 405)
+            .expect_err("new human goal invalidates B's pending permission")
+            .kind(),
+        ErrorKind::InvalidSkillBody
+    );
+    Ok(())
+}
+
+#[test]
+fn approved_tradeoff_uses_a_proven_later_cycle_after_original_cap_is_full() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    set_skill_edit_cycle_cap(&vault, 1)?;
+    let (_, first) = losing_skill_with_proposal(&vault, "oneiron.skill.cap_first");
+    let (skill, pending_id) = losing_skill_with_proposal(&vault, "oneiron.skill.cap_tradeoff");
+    let owner = vector_owner(&vault);
+    set_skill_edit_goal_axes(&vault, &owner, &skill, vector_axes())?;
+    let c = wake(&vault, "cap-C", 10);
+    let accepted =
+        score_gate_skill_edit_in_cycle(&vault, &first, &StubScorer::improving(), c, 900)?;
+    assert_eq!(accepted.disposition, SkillEditDisposition::Accepted);
+    let pending = score_gate_skill_edit_in_cycle(
+        &vault,
+        &pending_id,
+        &VectorScorer::new((0.4, 0.8), (0.8, 0.8), (0.7, 0.4)),
+        c,
+        901,
+    )?;
+    assert_eq!(
+        pending.disposition,
+        SkillEditDisposition::NeedsTradeoffDecision
+    );
+    assert_eq!(
+        resolve_skill_edit_tradeoff(
+            &vault,
+            &pending_id,
+            pending.id,
+            &owner,
+            "pick:cap",
+            TradeoffChoice::Approve,
+            902
+        )
+        .expect_err("cycle C is full")
+        .kind(),
+        ErrorKind::InvalidSkillBody
+    );
+    assert_eq!(
+        skill_edit_verdicts_for_proposal(&vault, &pending_id)?.len(),
+        1
+    );
+    let d = wake(&vault, "cap-D", 20);
+    assert_eq!(
+        score_gate_skill_edit_in_cycle(&vault, &pending_id, &UnreachableScorer, d, 903)?,
+        pending
+    );
+    let resolved = resolve_skill_edit_tradeoff_in_cycle(
+        &vault,
+        &pending_id,
+        pending.id,
+        &owner,
+        "pick:cap",
+        TradeoffChoice::Approve,
+        d,
+        904,
+    )?;
+    assert_eq!(resolved.cycle, "run:cap-D");
+    assert_eq!(resolved.goal_axes, pending.goal_axes);
+    assert_eq!(
+        resolve_skill_edit_tradeoff_in_cycle(
+            &vault,
+            &pending_id,
+            pending.id,
+            &owner,
+            "pick:cap",
+            TradeoffChoice::Approve,
+            d,
+            905
+        )?,
+        resolved
+    );
+    assert_eq!(
+        skill_edit_verdicts_for_proposal(&vault, &pending_id)?.len(),
+        2
+    );
+    let (_, third) = losing_skill_with_proposal(&vault, "oneiron.skill.cap_third");
+    let blocked = score_gate_skill_edit_in_cycle(&vault, &third, &StubScorer::improving(), d, 906)?;
+    assert_eq!(blocked.disposition, SkillEditDisposition::DeferredCycleCap);
+    admit_optimized_skill_revision(&vault, &pending_id, t(400), 401)?;
+    assert_eq!(
+        stored(&vault, &pending_id).lifecycle_status,
+        SkillLifecycle::Active
+    );
     Ok(())
 }
