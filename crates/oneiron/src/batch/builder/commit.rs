@@ -102,6 +102,7 @@ impl BatchBuilder<'_> {
         // relocation. The content-hash index row is maintained by
         // `deindex_entity` inside `apply_ops`, and verdicts anchor to the
         // content bytes rather than to any departing holder.
+        let changes_claims = super::super::vad_postcommit::ops_change_proactivity(&self.ops);
         apply_ops_with_gate_mode(
             &self.vault.store,
             &self.vault.config,
@@ -118,6 +119,9 @@ impl BatchBuilder<'_> {
             .resolved_dreamer_vad_approvals_in_txn(&wtxn, pending_vad_ids)?;
         crate::ports::recorded_at_in_txn(&self.vault.store, &mut wtxn)?;
         wtxn.commit()?;
+        if changes_claims {
+            self.vault.store.notify_proactivity_changes();
+        }
         while self.vault.collect_lfs_garbage(32)? != 0 {}
         for decision in staged_gate_decisions {
             decision.record_metrics(&self.vault.store.diagnostics.gate);
