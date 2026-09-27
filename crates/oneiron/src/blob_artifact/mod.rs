@@ -27,6 +27,7 @@ mod body;
 mod lifecycle;
 mod provenance;
 mod store_keys;
+mod version_codec;
 mod versions;
 
 pub(crate) use self::body::validate_blob_artifact_body_bytes;
