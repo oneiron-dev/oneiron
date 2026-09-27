@@ -23,6 +23,10 @@ mod pinned_reads;
 mod point_reads;
 mod receipt;
 mod retrieval_visibility;
+mod weave_report;
+pub use weave_report::{
+    WeaveItem, WeaveReader, WeaveReport, WeaveSection, WeaveSectionKind, WeaveSectionSpec,
+};
 mod versions;
 pub use receipt::{ReadScope, ScopedReadReceipt, ScopedReadResult};
 
@@ -491,7 +495,11 @@ impl<'a> ScopedRead<'a> {
         self.is_entity_readable_in(&rtxn, id)
     }
 
-    fn is_entity_readable_in(&self, rtxn: &heed::RoTxn<'_>, id: &EntityId) -> Result<bool> {
+    pub(crate) fn is_entity_readable_in(
+        &self,
+        rtxn: &heed::RoTxn<'_>,
+        id: &EntityId,
+    ) -> Result<bool> {
         let policy = self.policy_manifest_in(rtxn)?;
         self.is_entity_readable_with_policy_in(rtxn, &policy, id)
     }
@@ -578,9 +586,18 @@ impl<'a> ScopedRead<'a> {
         if header.entity_type == ENTITY_TYPE_CLAIM {
             self.is_claim_raw_readable_with_policy_in(rtxn, policy, id, raw, filter)
         } else {
-            let Some(scope) =
-                crate::federation::record_scope::scope_for_blob(&self.vault.store, rtxn, *id, raw)?
-            else {
+            let scope = match self.session_view {
+                Some(view) => {
+                    crate::federation::record_scope::scope_for_blob(view, rtxn, *id, raw)?
+                }
+                None => crate::federation::record_scope::scope_for_blob(
+                    &self.vault.store,
+                    rtxn,
+                    *id,
+                    raw,
+                )?,
+            };
+            let Some(scope) = scope else {
                 return Ok(false);
             };
             Ok(crate::gate::scoped_read_record_allowed(

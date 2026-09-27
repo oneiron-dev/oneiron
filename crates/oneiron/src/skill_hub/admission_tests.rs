@@ -325,7 +325,9 @@ fn raw_create_and_delete_recreate_cannot_launder_import_origin() -> Result<()> {
     let id = EntityId::now();
     let mut record = package("fixture.raw", "1", "raw").record;
     fixture.vault.put_skill_record(&id, &record, at(10), 10)?;
-    fixture.vault.delete_entity(&id)?;
+    fixture
+        .vault
+        .delete_entity_with_options(&id, crate::deletion::DeleteEntityOptions { purge: true })?;
     record.source = ClaimSource::UserStated;
     assert!(
         fixture
