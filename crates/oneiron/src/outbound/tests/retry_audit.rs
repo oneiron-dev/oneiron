@@ -715,3 +715,90 @@ fn send_receipt_identity_cannot_replace_audit_evidence() -> crate::Result<()> {
     assert_eq!(retry_storage_snapshot(&vault)?, before);
     Ok(())
 }
+
+#[test]
+fn stale_suppression_settlement_cannot_overwrite_a_delivered_task()
+-> std::result::Result<(), Box<dyn std::error::Error>> {
+    use crate::outbound::retry_audit::settle_suppressed_send;
+    use std::sync::{Arc, Barrier, mpsc};
+    use std::time::Duration;
+    let (_tmp, vault) = temp_vault();
+    let actor = entity(0x7f);
+    put_connector_task_actor(&vault, actor, 90)?;
+    put_policy_manifest_bytes(
+        &vault,
+        entity(0x80),
+        &policy_manifest(&actor.to_hex(), "email", &["send"]),
+    )?;
+    let draft = one_1768_draft("email", "send", "suppression-winner");
+    vault
+        .memory(actor, EdgeActorClass::Agent)
+        .schedule_outbound(&draft)
+        .expect("schedule task");
+    let task = vault.connector_send_tasks()?.pop().expect("task");
+    let queue = AttemptQueue::new(&vault);
+    let claimed = queue.claim_kind(
+        crate::memory::BRIDGE_OUTBOUND_ATTEMPT_KIND,
+        ClaimAttempt {
+            lease_owner: super::super::executor::CONNECTOR_TASK_EXECUTOR_LEASE_OWNER.to_owned(),
+            now: 91,
+        },
+    )?;
+    let ClaimOutcome::Claimed(attempt) = claimed else {
+        panic!("claim task")
+    };
+    let attempt_id = attempt.id;
+    let barrier = Arc::new(Barrier::new(2));
+    let (release_tx, release_rx) = mpsc::channel();
+    let finish = std::thread::scope(|scope| {
+        let barrier_thread = Arc::clone(&barrier);
+        let vault = &vault;
+        let worker = scope.spawn(move || {
+            barrier_thread.wait();
+            release_rx
+                .recv_timeout(Duration::from_secs(10))
+                .expect("release suppression");
+            settle_suppressed_send(vault, &attempt, task.task_ref, 92)
+        });
+        barrier.wait();
+        let receipt = outbound_intent_receipt(
+            "receipt:delivered-winner",
+            format!("intent:task:{}", task.task_ref.to_hex()),
+            &task.intent,
+            92,
+            "delivered_to_channel",
+        );
+        assert!(
+            persist_send_receipt(
+                vault,
+                task.task_ref,
+                receipt,
+                crate::receipt::SendReceiptOutcome::Delivered,
+                true,
+                draft.idempotency_key.as_deref().map(|key| (actor, key))
+            )
+            .expect("persist delivered winner")
+        );
+        super::super::connector_task::project_connector_send_task_outcome(
+            vault,
+            task.task_ref,
+            ConnectorSendTaskOutcome::Delivered,
+            92,
+        )
+        .expect("project delivered winner");
+        release_tx.send(()).expect("release");
+        worker.join().expect("suppression thread")
+    });
+    finish?;
+    let settled = vault.connector_send_task(&task.task_ref)?.expect("task");
+    assert_eq!(settled.outcome, Some(ConnectorSendTaskOutcome::Delivered));
+    assert_eq!(settled.suppression, None);
+    assert!(delivered_send_receipt_for_task(&vault, task.task_ref)?.is_some());
+    let record = queue
+        .list()?
+        .into_iter()
+        .find(|row| row.id == attempt_id)
+        .expect("attempt");
+    assert_eq!(record.state, AttemptState::Completed);
+    Ok(())
+}
