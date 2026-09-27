@@ -1,14 +1,61 @@
 //! Actor-scoped, receipt-backed proposal observation; crossing only asks a question.
 
-use crate::{EntityId, Result, Vault, error::Error, store::Store};
+use crate::side_table::{self, Named, SideKey, SideTable};
+use crate::{
+    EntityId, Result, Vault,
+    error::{Error, ErrorKind},
+    store::Store,
+};
 use serde::{Deserialize, Serialize};
 
 /// Default is above ordinary fleet volume. A trusted manifest may set a
 /// different positive advisory threshold; it never becomes an admission cap.
 pub(crate) const DEFAULT_PROPOSAL_CHECK_THRESHOLD: u64 = 1_000_000;
-const COUNT: &[u8] = b"proposal:actor_count:v1:";
-const RECEIPT: &[u8] = b"proposal:submission:v1:";
-const HISTORY: &[u8] = b"proposal:receipt:v1:";
+/// Counter and the first policy threshold-crossing for one actor.
+const COUNT: SideTable<EntityId, ActorCount, Named> =
+    SideTable::new(&side_table::PROPOSAL_ACTOR_COUNT);
+/// Latest receipt for one actor and proposal identity.
+const RECEIPT: SideTable<ProposalKey, ProposalSubmissionReceipt, Named> =
+    SideTable::new(&side_table::PROPOSAL_SUBMISSION);
+/// Immutable receipt keyed by actor and monotonically increasing count.
+const HISTORY: SideTable<HistoryKey, ProposalSubmissionReceipt, Named> =
+    SideTable::new(&side_table::PROPOSAL_RECEIPT_HISTORY);
+
+struct ProposalKey {
+    actor: EntityId,
+    proposal_ref: String,
+}
+impl SideKey for ProposalKey {
+    fn encode_into(&self, out: &mut Vec<u8>) {
+        out.extend_from_slice(self.actor.as_bytes());
+        out.push(b':');
+        out.extend_from_slice(self.proposal_ref.as_bytes());
+    }
+    fn decode_key(bytes: &[u8]) -> Option<Self> {
+        let actor = EntityId::from_bytes(bytes.get(..16)?.try_into().ok()?).ok()?;
+        (bytes.get(16) == Some(&b':')).then_some(Self {
+            actor,
+            proposal_ref: String::from_utf8(bytes.get(17..)?.to_vec()).ok()?,
+        })
+    }
+}
+struct HistoryKey {
+    actor: EntityId,
+    count: u64,
+}
+impl SideKey for HistoryKey {
+    fn encode_into(&self, out: &mut Vec<u8>) {
+        out.extend_from_slice(self.actor.as_bytes());
+        out.push(b':');
+        out.extend_from_slice(&self.count.to_be_bytes());
+    }
+    fn decode_key(bytes: &[u8]) -> Option<Self> {
+        (bytes.len() == 25 && bytes[16] == b':').then_some(Self {
+            actor: EntityId::from_bytes(bytes[..16].try_into().ok()?).ok()?,
+            count: u64::from_be_bytes(bytes[17..].try_into().ok()?),
+        })
+    }
+}
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ProposalSubmissionCheck {
@@ -35,21 +82,15 @@ struct ActorCount {
     check: Option<ProposalSubmissionCheck>,
 }
 
-fn encode<T: Serialize>(value: &T) -> Result<Vec<u8>> {
-    rmp_serde::to_vec_named(value)
-        .map_err(|_| Error::InvariantViolation("proposal observation encode"))
-}
-fn decode<T: serde::de::DeserializeOwned>(raw: &[u8]) -> Result<T> {
-    rmp_serde::from_slice(raw).map_err(|_| Error::CorruptedIndex("proposal observation"))
-}
-fn count_key(actor: &EntityId) -> Vec<u8> {
-    [COUNT, actor.as_bytes()].concat()
-}
-fn receipt_key(actor: &EntityId, proposal_ref: &str) -> Vec<u8> {
-    [RECEIPT, actor.as_bytes(), b":", proposal_ref.as_bytes()].concat()
-}
-fn history_key(actor: &EntityId, count: u64) -> Vec<u8> {
-    [HISTORY, actor.as_bytes(), b":", &count.to_be_bytes()].concat()
+/// Preserve the pre-typed refusal for a malformed persisted receipt.
+fn read_row<T>(result: Result<Option<T>>) -> Result<Option<T>> {
+    result.map_err(|error| {
+        if error.kind() == ErrorKind::SideTableRow {
+            Error::CorruptedIndex("proposal observation")
+        } else {
+            error
+        }
+    })
 }
 
 /// Runs in the proposal's write transaction, after its admission checks. A
@@ -64,9 +105,11 @@ pub(crate) fn observe_submission_in_txn(
     threshold: u64,
     revision_changed: bool,
 ) -> Result<()> {
-    let rk = receipt_key(&actor, proposal_ref);
-    if let Some(raw) = store.vault_meta.get(txn, &rk)? {
-        let old: ProposalSubmissionReceipt = decode(&raw)?;
+    let rk = ProposalKey {
+        actor,
+        proposal_ref: proposal_ref.to_owned(),
+    };
+    if let Some(old) = read_row(RECEIPT.get(store, txn, &rk))? {
         if old.actor != actor.to_hex() || old.proposal_ref != proposal_ref {
             return Err(Error::CorruptedIndex(
                 "proposal submission receipt identity",
@@ -76,13 +119,7 @@ pub(crate) fn observe_submission_in_txn(
             return Ok(());
         }
     }
-    let ck = count_key(&actor);
-    let mut counter: ActorCount = store
-        .vault_meta
-        .get(txn, &ck)?
-        .map(|raw| decode(&raw))
-        .transpose()?
-        .unwrap_or_default();
+    let mut counter = read_row(COUNT.get(store, txn, &actor))?.unwrap_or_default();
     counter.count = counter.count.saturating_add(1);
     if counter.count > threshold && counter.check.is_none() {
         counter.check = Some(ProposalSubmissionCheck {
@@ -97,14 +134,18 @@ pub(crate) fn observe_submission_in_txn(
         proposal_ref: proposal_ref.to_owned(),
         count: counter.count,
     };
-    let encoded = encode(&receipt)?;
-    // The identity key is only the latest receipt. Never rewrite history when
-    // a changed submission reuses an actor-owned claim ID.
-    store
-        .vault_meta
-        .put(txn, &history_key(&actor, counter.count), &encoded)?;
-    store.vault_meta.put(txn, &rk, &encoded)?;
-    store.vault_meta.put(txn, &ck, &encode(&counter)?)?;
+    // The identity key is only the latest receipt; changed submissions append history.
+    HISTORY.put(
+        store,
+        txn,
+        &HistoryKey {
+            actor,
+            count: counter.count,
+        },
+        &receipt,
+    )?;
+    RECEIPT.put(store, txn, &rk, &receipt)?;
+    COUNT.put(store, txn, &actor, &counter)?;
     Ok(())
 }
 
@@ -116,12 +157,7 @@ impl Vault {
         actor: &EntityId,
     ) -> Result<Option<ProposalSubmissionCheck>> {
         let txn = self.store.env.read_txn()?;
-        let row: Option<ActorCount> = self
-            .store
-            .vault_meta
-            .get(&txn, &count_key(actor))?
-            .map(|raw| decode(&raw))
-            .transpose()?;
+        let row = read_row(COUNT.get(&self.store, &txn, actor))?;
         Ok(row.and_then(|row| row.check))
     }
 
@@ -132,11 +168,14 @@ impl Vault {
         proposal_ref: &str,
     ) -> Result<Option<ProposalSubmissionReceipt>> {
         let txn = self.store.env.read_txn()?;
-        self.store
-            .vault_meta
-            .get(&txn, &receipt_key(actor, proposal_ref))?
-            .map(|raw| decode(&raw))
-            .transpose()
+        read_row(RECEIPT.get(
+            &self.store,
+            &txn,
+            &ProposalKey {
+                actor: *actor,
+                proposal_ref: proposal_ref.to_owned(),
+            },
+        ))
     }
 
     /// Immutable accounting receipt at this actor's submission count.
@@ -146,11 +185,14 @@ impl Vault {
         count: u64,
     ) -> Result<Option<ProposalSubmissionReceipt>> {
         let txn = self.store.env.read_txn()?;
-        self.store
-            .vault_meta
-            .get(&txn, &history_key(actor, count))?
-            .map(|raw| decode(&raw))
-            .transpose()
+        read_row(HISTORY.get(
+            &self.store,
+            &txn,
+            &HistoryKey {
+                actor: *actor,
+                count,
+            },
+        ))
     }
 }
 
