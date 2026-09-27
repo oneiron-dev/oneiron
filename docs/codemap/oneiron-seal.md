@@ -40,6 +40,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/native/verify/verify_dss_core.rs` | src | m | 8 crate-vis | — | DSS validation: Cert/CRL/OCSP array decoding, issuer binding and coverage rules, DSS-revision coverage… |
 | `src/native/verify/verify_modifications.rs` | src | m | 4 crate-vis | — | Conservative, shared pre-sign and post-sign incremental-revision analysis |
 | `src/native/verify/verify_report.rs` | src | s | 1 crate-vis | — | Per-envelope report facts, separate from PDF trust and modification policy |
+| `src/native/verify/verify_revision_tokens.rs` | src | s | 5 crate-vis | — | Bounded PDF lexical framing for revision object definitions and stream payloads |
 | `src/native/verify/verify_revocation.rs` | src | m | 7 crate-vis | — | CRL/OCSP evidence validators: issuer key-binding, freshness windows and clock-skew bounds |
 | `src/native/verify/verify_sig_pipeline.rs` | src | m | 15 crate-vis | — | Signature discovery and evaluation: AcroForm collection plus CAdES signer, signature-timestamp and… |
 | `src/native/verify/verify_tests_dss_b.rs` | src | m | 2 crate-vis | — | Verifier tests B: remaining DSS coverage and binding tests, KU gates, OCSP delegate and TSP token tests |

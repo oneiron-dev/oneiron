@@ -18,6 +18,7 @@ fn axis(checks: &Checks, kinds: &[VerifyCheckKind]) -> VerifyVerdict {
     if selected.iter().any(|c| c.status == VerifyCheckStatus::Fail) {
         VerifyVerdict::Failed
     } else if selected.is_empty()
+        || !selected.iter().any(|c| c.status == VerifyCheckStatus::Pass)
         || selected
             .iter()
             .any(|c| c.status == VerifyCheckStatus::NotRun)

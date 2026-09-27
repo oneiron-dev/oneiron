@@ -4,6 +4,9 @@
 //! after a signer. Unknown objects, redefinitions and ambiguous revisions
 //! default to suspicious; structural indicators are not verdicts on their own.
 
+use super::verify_revision_tokens::{
+    revision_headers, scan_headers, stream_delimiter, stream_payloads,
+};
 use super::verify_sig_pipeline::{check_byte_range, collect_signatures};
 use crate::api::{ModificationLevel, ModificationStatus, SealResourceLimits, VerifyAnomaly};
 use lopdf::{Dictionary, Document, LoadOptions, Object, ObjectId};
@@ -431,9 +434,7 @@ fn xref_previous(bytes: &[u8], at: usize, footer_start: usize) -> Option<Option<
     let header = if section.starts_with(b"xref") {
         section
     } else {
-        let stream_at = section
-            .windows(b"stream\n".len())
-            .position(|w| w == b"stream\n")?;
+        let (stream_at, _) = stream_delimiter(section)?;
         &section[..stream_at]
     };
     let mut found = None;
@@ -554,91 +555,6 @@ pub(super) fn structural_anomalies(
         prior_end = end;
     }
     out
-}
-
-/// Keep object-header recognition out of length-delimited stream payloads.
-/// The effective xref gives the stream's raw header offset; lopdf retains
-/// its encoded content length even when a decoded view is also available.
-fn stream_payloads(doc: &Document, bytes: &[u8], limit: usize) -> Vec<(usize, usize)> {
-    let mut spans = Vec::new();
-    for (id, obj) in doc.objects.iter().take(limit.min(10_000)) {
-        let Object::Stream(stream) = obj else {
-            continue;
-        };
-        let Some(lopdf::xref::XrefEntry::Normal { offset, .. }) = doc.reference_table.get(id.0)
-        else {
-            continue;
-        };
-        let at = *offset as usize;
-        let Some(header) = bytes.get(at..bytes.len().min(at.saturating_add(4096))) else {
-            continue;
-        };
-        let Some(pos) = header
-            .windows(b"stream\n".len())
-            .position(|w| w == b"stream\n")
-        else {
-            continue;
-        };
-        let begin = at + pos + b"stream\n".len();
-        let Some(end) = begin.checked_add(stream.content.len()) else {
-            continue;
-        };
-        if bytes.get(begin..end) == Some(stream.content.as_slice()) {
-            spans.push((begin, end));
-        }
-    }
-    spans
-}
-
-struct HeaderScan {
-    ids: BTreeSet<ObjectId>,
-    duplicate: bool,
-}
-
-fn scan_headers(
-    segment: &[u8],
-    base: usize,
-    max_objects: usize,
-    spans: &[(usize, usize)],
-) -> Option<HeaderScan> {
-    let mut scan = HeaderScan {
-        ids: BTreeSet::new(),
-        duplicate: false,
-    };
-    let mut offset = base;
-    for line in segment.split_inclusive(|b| *b == b'\n') {
-        let current = offset;
-        offset += line.len();
-        if spans
-            .iter()
-            .any(|&(start, end)| current >= start && current < end)
-        {
-            continue;
-        }
-        let line = line.strip_suffix(b"\n").unwrap_or(line);
-        let Some(prefix) = line.strip_suffix(b" obj") else {
-            continue;
-        };
-        let mut parts = prefix.split(|b| *b == b' ');
-        let (Some(num), Some(generation), None) = (parts.next(), parts.next(), parts.next()) else {
-            return None;
-        };
-        let num = std::str::from_utf8(num).ok()?.parse::<u32>().ok()?;
-        let generation = std::str::from_utf8(generation).ok()?.parse::<u16>().ok()?;
-        if !scan.ids.insert((num, generation)) {
-            scan.duplicate = true;
-        }
-        if scan.ids.len() > max_objects.min(10_000) {
-            return None;
-        }
-    }
-    Some(scan)
-}
-
-/// Scan a raw segment without stream metadata (also used for xref headers).
-fn revision_headers(segment: &[u8], max_objects: usize) -> Option<BTreeSet<ObjectId>> {
-    let scan = scan_headers(segment, 0, max_objects, &[])?;
-    (!scan.duplicate).then_some(scan.ids)
 }
 
 fn accounted_headers(

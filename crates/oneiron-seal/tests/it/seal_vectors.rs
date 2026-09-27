@@ -91,6 +91,39 @@ async fn seal_output_exceeding_verify_cap_is_refused_at_seal_time() {
 }
 
 #[tokio::test]
+async fn crlf_xref_stream_input_seals_and_self_verifies() {
+    let lf = fixture_pdf("stream_1page.pdf");
+    let mut crlf = lf.clone();
+    let stream = b"stream\n";
+    let at = crlf
+        .windows(stream.len())
+        .position(|w| w == stream)
+        .unwrap();
+    crlf.splice(at..at + stream.len(), b"stream\r\n".iter().copied());
+    let endstream = b"endstream\n";
+    let at = crlf
+        .windows(endstream.len())
+        .position(|w| w == endstream)
+        .unwrap();
+    crlf.splice(at..at + endstream.len(), b"endstream\r\n".iter().copied());
+    for input in [lf, crlf] {
+        let identity = p256_identity(false);
+        let anchors = vec![identity.cert_der.clone()];
+        let (engine, _) = engine_with(
+            identity,
+            Arc::new(OfflineFetcher),
+            config_for(anchors, false),
+        );
+        let sealed = engine
+            .seal_pdf(&input, &request(PadesProfile::BaselineB))
+            .await
+            .unwrap();
+        assert!(sealed.self_verify_report.passes_self_verify());
+        assert_eq!(sealed.self_verify_report.revisions.len(), 2);
+    }
+}
+
+#[tokio::test]
 async fn literal_eof_in_content_stream_is_not_an_incremental_revision() {
     let mut input = fixture_pdf("content_1page.pdf");
     let old = b"(oneiron)";

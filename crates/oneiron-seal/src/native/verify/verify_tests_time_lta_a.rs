@@ -129,6 +129,49 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn malformed_document_timestamp_trust_never_reads_as_passed() {
+        let signer = test_ca("dts-trust-signer");
+        let tsa = tsa_ca();
+        let b1 = append_sig_revision(&base_input(), &signer, "dts-trust", None, AT_UNIX);
+        let b2 = append_doc_ts_revision(&b1, &tsa, AT_UNIX);
+        let mut bad_token = b2.clone();
+        let token_at = bad_token
+            .windows(b"/Contents <".len())
+            .rposition(|w| w == b"/Contents <")
+            .unwrap()
+            + b"/Contents <".len();
+        bad_token[token_at] = b'F'; // not a DER ContentInfo
+        let mut bad_range = b2;
+        let range_at = bad_range
+            .windows(b"/ByteRange [0 ".len())
+            .rposition(|w| w == b"/ByteRange [0 ")
+            .unwrap()
+            + b"/ByteRange [".len();
+        bad_range[range_at] = b'1'; // shape broken, trust cannot run
+        for bytes in [bad_token, bad_range] {
+            for roots in [vec![signer.cert_der.clone(), tsa.cert_der.clone()], vec![]] {
+                let report = verify_engine(roots, AT_UNIX)
+                    .verify_sealed_pdf(&bytes)
+                    .unwrap();
+                let dts = report
+                    .signatures
+                    .iter()
+                    .find(|s| s.kind == crate::api::SignatureKind::DocumentTimestamp)
+                    .unwrap();
+                assert_eq!(report.verdict(), crate::api::VerifyVerdict::Failed);
+                assert_eq!(dts.integrity, crate::api::VerifyVerdict::Failed);
+                assert_eq!(dts.trust, crate::api::VerifyVerdict::Indeterminate);
+                let trust = dts
+                    .checks
+                    .iter()
+                    .find(|c| c.kind == VerifyCheckKind::DocumentTimestampTrust)
+                    .unwrap();
+                assert_eq!(trust.status, VerifyCheckStatus::NotRun);
+            }
+        }
+    }
+
+    #[test]
     fn future_dated_doc_timestamp_is_rejected() {
         // The DocTimeStamp genTime feeds archival evidence freshness; a
         // future-dated one must fail, not launder stale evidence.
@@ -152,6 +195,18 @@ pub(crate) mod tests {
             "future-dated DocTimeStamp must fail its check"
         );
         assert!(report.verdict() != crate::api::VerifyVerdict::Passed);
+        let dts = report
+            .signatures
+            .iter()
+            .find(|s| s.kind == crate::api::SignatureKind::DocumentTimestamp)
+            .unwrap();
+        assert_eq!(dts.trust, crate::api::VerifyVerdict::Indeterminate);
+        assert!(
+            dts.checks
+                .iter()
+                .any(|c| c.kind == VerifyCheckKind::DocumentTimestampTrust
+                    && c.status == VerifyCheckStatus::NotRun)
+        );
     }
 
     #[test]
@@ -548,6 +603,73 @@ pub(crate) mod tests {
             anchors: vec![signer.cert_der.clone(), signer2.cert_der, tsa.cert_der],
             signer_cert: signer.cert_der,
             stale_later_crl: crl,
+        }
+    }
+
+    #[test]
+    fn public_verifier_reports_crlf_and_inline_duplicate_definitions() {
+        let signer = test_ca("duplicate-spelling-signer");
+        let engine = verify_engine(vec![signer.cert_der.clone()], VERIFY_SECS);
+        for (suffix, duplicate) in [
+            (
+                "crlf",
+                b"1 0 obj\r\n<< /Type /Catalog /Pages 2 0 R >>\r\nendobj\r\n".as_slice(),
+            ),
+            (
+                "inline",
+                b"1 0 obj << /Type /Catalog /Pages 2 0 R >>\nendobj\n",
+            ),
+        ] {
+            let mut input = base_input();
+            let xref = input
+                .windows(b"xref\n".len())
+                .position(|w| w == b"xref\n")
+                .unwrap();
+            input.splice(xref..xref, duplicate.iter().copied());
+            let at = input
+                .windows(b"startxref\n186\n".len())
+                .position(|w| w == b"startxref\n186\n")
+                .unwrap();
+            input.splice(
+                at..at + b"startxref\n186\n".len(),
+                format!("startxref\n{}\n", xref + duplicate.len()).bytes(),
+            );
+            let signed = append_sig_revision(&input, &signer, suffix, None, AT_UNIX);
+            let first = engine.verify_sealed_pdf(&signed).unwrap();
+            assert!(
+                first
+                    .anomalies
+                    .contains(&crate::api::VerifyAnomaly::DuplicateObjectNumber),
+                "before signing: {suffix}"
+            );
+            assert_eq!(first.verdict(), crate::api::VerifyVerdict::Passed);
+            let state = pdf::reparse_revision(&signed, &SealResourceLimits::default()).unwrap();
+            let id = state.max_obj + 1;
+            let mut later = signed;
+            let extra = if suffix == "crlf" {
+                format!("\n{id} 0 obj\r\n<< /Probe /Orphan >>\r\nendobj\r\n")
+            } else {
+                format!("\n{id} 0 obj << /Probe /Orphan >>\nendobj\n")
+            };
+            later.extend_from_slice(extra.as_bytes());
+            let active = later.len();
+            later.extend_from_slice(
+                format!("{id} 0 obj\n<< /Probe /Active >>\nendobj\n").as_bytes(),
+            );
+            let xref_offset = later.len();
+            later.extend_from_slice(format!("xref\n{id} 1\n{active:010} 00000 n\r\ntrailer\n<< /Size {} /Prev {} /Root {} {} R >>\nstartxref\n{xref_offset}\n%%EOF",
+                id + 1, state.prev_startxref, state.root.0, state.root.1).as_bytes());
+            let second = engine.verify_sealed_pdf(&later).unwrap();
+            assert!(
+                second
+                    .anomalies
+                    .contains(&crate::api::VerifyAnomaly::DuplicateObjectNumber),
+                "after signing: {suffix}"
+            );
+            assert_eq!(
+                second.modifications,
+                crate::api::ModificationStatus::Suspicious
+            );
         }
     }
 

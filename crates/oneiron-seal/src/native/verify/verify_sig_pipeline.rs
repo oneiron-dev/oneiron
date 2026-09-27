@@ -697,7 +697,10 @@ pub(super) fn verify_doc_ts(
         VerifyFindingCode::DocumentTimestampInvalid,
     );
     if !crypto_ok {
-        checks.absent(VerifyCheckKind::DocumentTimestampTrust);
+        checks.not_run(
+            VerifyCheckKind::DocumentTimestampTrust,
+            VerifyFindingCode::TrustCheckNotRun,
+        );
         return DocTimestampOutcome::Invalid;
     }
     let Some((gen_time, tsa_chain_ders)) = token else {
