@@ -32,6 +32,10 @@ pub enum IntentLedgerError {
     InvalidInput(&'static str),
     #[error("the verified outbound actor is no longer valid")]
     InvalidBoundActor,
+    #[error("the durable step failure is not eligible for an effect")]
+    FailureResultIneligible,
+    #[error(transparent)]
+    Step(#[from] crate::llm::DurableStepError),
     #[error("invalid outbound intent ledger record: {0}")]
     InvalidRecord(&'static str),
     #[error("invalid outbound intent transition: {from:?} -> {to:?}")]

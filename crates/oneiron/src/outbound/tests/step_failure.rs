@@ -22,6 +22,16 @@ impl LlmBackend for FatalBackend {
     }
 }
 
+struct NeverTransport;
+impl crate::outbound_chokepoint::OutboundTransport for NeverTransport {
+    fn send(
+        &mut self,
+        _: &crate::outbound_intent_ledger::FrozenOutboundCall,
+    ) -> crate::outbound_intent_ledger::OutboundSendOutcome {
+        panic!("ineligible Pending step cannot reach transport")
+    }
+}
+
 fn ready<F: Future>(future: F) -> F::Output {
     let mut future = std::pin::pin!(future);
     let mut cx = Context::from_waker(Waker::noop());
@@ -184,6 +194,66 @@ fn step_derived_effect_rechecks_resident_eligibility_and_still_uses_gate()
         manifest_id,
         &failure_manifest(&agent.to_hex(), true, true),
     )?;
+    // The caller starts with an eligible row, but it is revoked after payload
+    // preflight and BEFORE the outbound writer transaction starts. The hook
+    // parks only this scoped worker; no process-global test state is shared.
+    let raced = std::thread::scope(|scope| {
+        let (arrived_tx, arrived_rx) = std::sync::mpsc::sync_channel(0);
+        let (release_tx, release_rx) = std::sync::mpsc::sync_channel(0);
+        let candidate = outbound.clone();
+        let vault_ref = &vault;
+        let step_request_ref = &step_request;
+        let sink_ref = &mut sink;
+        let worker = scope.spawn(move || {
+            crate::outbound_chokepoint::BEFORE_NEW_ADMISSION.with(|hook| {
+                *hook.borrow_mut() = Some(Box::new(move || {
+                    arrived_tx.send(()).expect("at admission seam");
+                    release_rx.recv().expect("resume admission");
+                }));
+            });
+            vault_ref.dispatch_outbound_intent_from_step(
+                attempt_id,
+                step_request_ref,
+                candidate,
+                sink_ref,
+            )
+        });
+        arrived_rx
+            .recv_timeout(std::time::Duration::from_secs(10))
+            .expect("pre-admission rendezvous");
+        put_policy_manifest_bytes(
+            &vault,
+            manifest_id,
+            &failure_manifest(&agent.to_hex(), false, true),
+        )
+        .expect("revoke before admission");
+        release_tx.send(()).expect("release admission");
+        worker.join().expect("dispatch worker")
+    });
+    assert!(matches!(
+        raced,
+        Err(OutboundDispatchError::FailureResultIneligible)
+    ));
+    assert!(sink.calls.is_empty());
+    let effect_attempt =
+        crate::outbound::dispatch_attempt_id::outbound_dispatch_attempt_id(&outbound.intent_ref)?;
+    let txn = vault.store.env.read_txn()?;
+    assert!(
+        crate::outbound_intent_ledger::read_intent_for_attempt_in_txn(
+            &vault,
+            &txn,
+            effect_attempt,
+            0
+        )?
+        .is_none()
+    );
+    drop(txn);
+
+    put_policy_manifest_bytes(
+        &vault,
+        manifest_id,
+        &failure_manifest(&agent.to_hex(), true, true),
+    )?;
     let result = vault.dispatch_outbound_intent_from_step(
         attempt_id,
         &step_request,
@@ -191,6 +261,61 @@ fn step_derived_effect_rechecks_resident_eligibility_and_still_uses_gate()
         &mut sink,
     )?;
     assert_eq!(result.outcome, OutboundDispatchOutcome::DeliveredToChannel);
+    assert_eq!(sink.calls.len(), 1);
+    let gate_count = vault.gate_decisions(100)?.len();
+    let txn = vault.store.env.read_txn()?;
+    let delivered_row = crate::outbound_intent_ledger::read_intent_for_attempt_in_txn(
+        &vault,
+        &txn,
+        effect_attempt,
+        0,
+    )?
+    .expect("delivered row");
+    drop(txn);
+
+    // A later restriction cannot hide the already-recorded Done/Acked result.
+    put_policy_manifest_bytes(
+        &vault,
+        manifest_id,
+        &failure_manifest(&agent.to_hex(), false, true),
+    )?;
+    let replay = vault.dispatch_outbound_intent_from_step(
+        attempt_id,
+        &step_request,
+        outbound.clone(),
+        &mut sink,
+    )?;
+    assert_eq!(replay.outcome, OutboundDispatchOutcome::DeliveredToChannel);
+    assert_eq!(sink.calls.len(), 1, "terminal replay must never resend");
+    assert_eq!(vault.gate_decisions(100)?.len(), gate_count);
+    let txn = vault.store.env.read_txn()?;
+    let replayed_row = crate::outbound_intent_ledger::read_intent_for_attempt_in_txn(
+        &vault,
+        &txn,
+        effect_attempt,
+        0,
+    )?
+    .expect("replayed row");
+    assert_eq!(
+        replayed_row.budget_accounting,
+        delivered_row.budget_accounting
+    );
+    assert!(
+        replayed_row == delivered_row,
+        "terminal replay rewrote its ledger row"
+    );
+    drop(txn);
+    assert!(matches!(
+        vault.dispatch_outbound_intent_from_step(
+            attempt_id,
+            &mismatched_step,
+            outbound.clone(),
+            &mut sink
+        ),
+        Err(OutboundDispatchError::Chokepoint(
+            crate::outbound_intent_ledger::IntentLedgerError::InvalidRecord(_)
+        ))
+    ));
     assert_eq!(sink.calls.len(), 1);
 
     // Permission from the failure row never replaces the ordinary effect gate.
@@ -202,6 +327,9 @@ fn step_derived_effect_rechecks_resident_eligibility_and_still_uses_gate()
     let mut other_intent = outbound;
     other_intent.receipt_id = "receipt:step-effect:no-grant".into();
     other_intent.intent_ref = "intent:step-effect:no-grant".into();
+    let mut pending_request = other_intent.clone();
+    pending_request.receipt_id = "receipt:step-effect:pending".into();
+    pending_request.intent_ref = "intent:step-effect:pending".into();
     let denied = vault.dispatch_outbound_intent_from_step(
         attempt_id,
         &step_request,
@@ -210,5 +338,93 @@ fn step_derived_effect_rechecks_resident_eligibility_and_still_uses_gate()
     )?;
     assert_ne!(denied.outcome, OutboundDispatchOutcome::DeliveredToChannel);
     assert_eq!(sink.calls.len(), 1);
+
+    // A Pending live retry is not terminal replay: it must read the current
+    // failure rule again and may send only after that rule admits the result.
+    put_policy_manifest_bytes(
+        &vault,
+        manifest_id,
+        &failure_manifest(&agent.to_hex(), true, true),
+    )?;
+    sink.outcome = OutboundExecutionOutcome::failed("provider_timeout");
+    let first = vault.dispatch_outbound_intent_from_step(
+        attempt_id,
+        &step_request,
+        pending_request.clone(),
+        &mut sink,
+    )?;
+    assert_eq!(first.outcome, OutboundDispatchOutcome::Failed);
+    assert_eq!(sink.calls.len(), 2);
+    let pending_attempt = crate::outbound::dispatch_attempt_id::outbound_dispatch_attempt_id(
+        &pending_request.intent_ref,
+    )?;
+    let txn = vault.store.env.read_txn()?;
+    let pending_row = crate::outbound_intent_ledger::read_intent_for_attempt_in_txn(
+        &vault,
+        &txn,
+        pending_attempt,
+        0,
+    )?
+    .expect("pending ledger row");
+    assert_eq!(
+        pending_row.state,
+        crate::outbound_intent_ledger::IntentState::Pending
+    );
+    drop(txn);
+    put_policy_manifest_bytes(
+        &vault,
+        manifest_id,
+        &failure_manifest(&agent.to_hex(), false, true),
+    )?;
+    assert!(matches!(
+        vault.dispatch_outbound_intent_from_step(
+            attempt_id,
+            &step_request,
+            pending_request.clone(),
+            &mut sink,
+        ),
+        Err(OutboundDispatchError::FailureResultIneligible)
+    ));
+    assert_eq!(sink.calls.len(), 2);
+    // Engine-owned Resume has no prepared request but still carries the
+    // authenticated step binding in the frozen ledger payload.
+    let authority = crate::outbound_consent::OutboundBindingAuthority::for_vault(&vault)?;
+    assert!(matches!(
+        crate::outbound_chokepoint::execute_outbound_effect(
+            &vault,
+            &authority,
+            crate::outbound_chokepoint::OutboundEffectCommand::Resume(pending_row.id),
+            1_000,
+            &mut NeverTransport,
+        ),
+        Err(crate::outbound_intent_ledger::IntentLedgerError::FailureResultIneligible)
+    ));
+    let txn = vault.store.env.read_txn()?;
+    let blocked_row = crate::outbound_intent_ledger::read_intent_for_attempt_in_txn(
+        &vault,
+        &txn,
+        pending_attempt,
+        0,
+    )?
+    .expect("pending row remains");
+    assert_eq!(
+        blocked_row.state,
+        crate::outbound_intent_ledger::IntentState::Pending
+    );
+    drop(txn);
+    put_policy_manifest_bytes(
+        &vault,
+        manifest_id,
+        &failure_manifest(&agent.to_hex(), true, true),
+    )?;
+    sink.outcome = OutboundExecutionOutcome::delivered_to_channel("provider:message:two");
+    let resumed = vault.dispatch_outbound_intent_from_step(
+        attempt_id,
+        &step_request,
+        pending_request,
+        &mut sink,
+    )?;
+    assert_eq!(resumed.outcome, OutboundDispatchOutcome::DeliveredToChannel);
+    assert_eq!(sink.calls.len(), 3);
     Ok(())
 }

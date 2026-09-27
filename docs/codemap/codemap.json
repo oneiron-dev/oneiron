@@ -20444,7 +20444,7 @@
      "path": "src/llm/step/mod.rs",
      "purpose": "LLM-5 durable-step layer: `call_as_step` BLAKE3 memoization plus the unified Budget/Consent trap record…",
      "surface": {
-      "crate-vis": 4,
+      "crate-vis": 5,
       "re-export": 5
      }
     },
@@ -20480,7 +20480,7 @@
      "path": "src/llm/step/step_claim.rs",
      "purpose": "Terminal dreamer.step claim write, step-claim codec, and memo-index maintenance",
      "surface": {
-      "crate-vis": 13
+      "crate-vis": 15
      }
     },
     {
@@ -20556,7 +20556,7 @@
      "purpose": "Shared durable-step type layer: schema consts, error, progression/trap enums, step context, and outcome",
      "surface": {
       "const": 8,
-      "crate-vis": 42,
+      "crate-vis": 46,
       "enum": 5,
       "fn": 3,
       "struct": 2,
@@ -22886,7 +22886,7 @@
      "path": "src/outbound/dispatch_pipeline/pipeline.rs",
      "purpose": "O2 resolve-gate-window-execute dispatch pipeline: dispatch, verified-actor dispatch, and the dispatch_inner…",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 2,
       "fn": 1,
       "struct": 1
      }
@@ -23176,7 +23176,7 @@
      "surface": {}
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "test",
      "notable": [],
      "path": "src/outbound/tests/step_failure.rs",
@@ -23200,7 +23200,7 @@
      "path": "src/outbound_chokepoint/admission.rs",
      "purpose": "New-effect admission path: actor/booking/calendar checks, gate eval, one-shot budget debit, Pending insert",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 3
      }
     },
     {

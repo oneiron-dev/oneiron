@@ -108,6 +108,13 @@ pub(crate) fn execute_outbound_effect<T: OutboundTransport>(
     }
 
     let policy = gate::resolve_policy_manifest(&vault.store, &wtxn)?;
+    enforce_step_failure_policy(
+        vault,
+        &wtxn,
+        &policy,
+        &prepared.payload,
+        prepared.gate.provenance.actor_entity_ref,
+    )?;
     let required_grant_id = match &prepared.authorization {
         PreparedAuthorization::None => None,
         PreparedAuthorization::ScopedMcp { grant_id, .. } => Some(*grant_id),
@@ -248,6 +255,26 @@ pub(crate) fn execute_outbound_effect<T: OutboundTransport>(
         .collect();
     result.budget_charge = budget_charge;
     Ok(result)
+}
+
+/// An absent binding means an ordinary non-step effect. A present binding is
+/// verified against the durable step and the resident policy in the SAME
+/// transaction the caller uses for ordinary effect governance.
+pub(super) fn enforce_step_failure_policy(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    policy: &gate::PolicyManifestResolution,
+    payload: &[u8],
+    actor: Option<crate::entity_id::EntityId>,
+) -> Result<(), IntentLedgerError> {
+    let Some(binding) = crate::llm::StepEffectBinding::from_frozen_payload(payload)? else {
+        return Ok(());
+    };
+    let actor = actor.ok_or(IntentLedgerError::InvalidBoundActor)?;
+    if !crate::llm::verified_step_effector_eligible_in_txn(vault, txn, policy, binding, actor)? {
+        return Err(IntentLedgerError::FailureResultIneligible);
+    }
+    Ok(())
 }
 
 fn charge_once(

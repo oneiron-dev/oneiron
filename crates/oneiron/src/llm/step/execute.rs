@@ -4,8 +4,8 @@ use super::super::{
     BudgetDenied, BudgetGuard, CallClass, LlmBackend, LlmError, LlmRequest, LlmResponse, LlmResult,
 };
 use super::step_claim::{
-    decode_step_claim_value, load_step_response, log_terminal_step, step_claim_matches_request,
-    step_index_lookup,
+    decode_step_claim_value, load_step_response, load_step_response_in_txn, log_terminal_step,
+    step_claim_matches_request, step_index_lookup, step_index_lookup_in_txn,
 };
 use super::step_state::{step_state_delete, step_state_read, step_state_write};
 use super::trap::{open_trap, trap_park_owner};
@@ -233,31 +233,30 @@ pub async fn call_as_step_with_fallbacks(
     })
 }
 
-/// Verify a persisted step and consult live resident policy before any
-/// step-derived outbound effect is prepared. A caller-supplied decision is
-/// never an authority: the local memo index and the exact request bind the
-/// result, and the normal outbound Gate still decides the effect.
-pub(crate) fn verified_step_effector_eligible(
+/// Verify a persisted step and resolve resident eligibility in the SAME
+/// snapshot as outbound Gate admission or Pending live-retry governance.
+/// Terminal Done/Abandoned replay does not call this door.
+pub(crate) fn verified_step_effector_eligible_in_txn(
     vault: &crate::Vault,
-    attempt_id: crate::attempt_queue::AttemptId,
-    request: &LlmRequest,
+    txn: &heed::RoTxn<'_>,
+    policy: &crate::gate::PolicyManifestResolution,
+    binding: super::types::StepEffectBinding,
     effect_actor: crate::entity_id::EntityId,
 ) -> DurableStepResult<bool> {
-    let step_hash = request.canonical_hash()?;
-    let claim_id = step_index_lookup(vault, attempt_id, &step_hash)?.ok_or(
-        Error::InvalidClaimBody("step-derived effect requires a completed step"),
-    )?;
+    let claim_id = step_index_lookup_in_txn(vault, txn, binding.attempt_id, &binding.step_hash)?
+        .ok_or(Error::InvalidClaimBody(
+            "step-derived effect requires a completed step",
+        ))?;
     let body = vault
-        .get_claim(&claim_id)?
+        .get_claim_in_txn(txn, &claim_id)?
         .ok_or(Error::InvalidClaimBody("dreamer step index claim missing"))?;
     let decoded = decode_step_claim_value(&body.value)?;
     if body.predicate != super::types::DREAMER_STEP_PREDICATE
         || body.lifecycle != crate::claim::ClaimLifecycleStatus::Active
         || body.stale
-        || decoded.attempt_id != attempt_id
-        || decoded.step_hash != step_hash
+        || decoded.attempt_id != binding.attempt_id
+        || decoded.step_hash != binding.step_hash
         || !super::step_claim::step_claim_binding_is_trusted(&decoded, &body)
-        || !step_claim_matches_request(&decoded, request)?
     {
         return Err(Error::InvalidClaimBody("step-derived effect request mismatch").into());
     }
@@ -271,8 +270,9 @@ pub(crate) fn verified_step_effector_eligible(
     if !actor_matches {
         return Err(Error::InvalidClaimBody("step-derived effect actor mismatch").into());
     }
-    let response = load_step_response(vault, &decoded)?;
-    Ok(failure_policy(vault, &response)?.is_none_or(|decision| decision.effector_eligible))
+    let response = load_step_response_in_txn(vault, txn, &decoded)?;
+    Ok(super::super::fallback_failure_class(&response)
+        .is_none_or(|class| policy.dreamer_failure_decision(class).effector_eligible))
 }
 
 fn failure_policy(

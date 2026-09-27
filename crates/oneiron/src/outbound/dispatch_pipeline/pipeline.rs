@@ -26,7 +26,17 @@ impl OutboundDispatchPipeline {
         request: OutboundDispatchRequest,
         sink: &mut S,
     ) -> std::result::Result<OutboundDispatchResult, OutboundDispatchError> {
-        self.dispatch_inner(vault, request, sink, None)
+        self.dispatch_inner(vault, request, sink, None, None)
+    }
+
+    pub(in crate::outbound) fn dispatch_from_step<S: OutboundExecutionSink>(
+        self,
+        vault: &Vault,
+        request: OutboundDispatchRequest,
+        sink: &mut S,
+        binding: crate::llm::StepEffectBinding,
+    ) -> std::result::Result<OutboundDispatchResult, OutboundDispatchError> {
+        self.dispatch_inner(vault, request, sink, None, Some(binding))
     }
 
     /// Dispatches an outbound intent after validating the facade-bound actor
@@ -40,7 +50,7 @@ impl OutboundDispatchPipeline {
         actor: EntityId,
         actor_class: EdgeActorClass,
     ) -> std::result::Result<OutboundDispatchResult, OutboundDispatchError> {
-        self.dispatch_inner(vault, request, sink, Some((actor, actor_class)))
+        self.dispatch_inner(vault, request, sink, Some((actor, actor_class)), None)
     }
 
     fn dispatch_inner<S: OutboundExecutionSink>(
@@ -49,6 +59,7 @@ impl OutboundDispatchPipeline {
         mut request: OutboundDispatchRequest,
         sink: &mut S,
         verified_actor: Option<(EntityId, EdgeActorClass)>,
+        step_binding: Option<crate::llm::StepEffectBinding>,
     ) -> std::result::Result<OutboundDispatchResult, OutboundDispatchError> {
         crate::dreamer_runner::maintenance::representation::validate_dispatch(vault, &request)?;
         // OF-326 talk-only (ONE-1546): an intent originating from a session
@@ -153,6 +164,7 @@ impl OutboundDispatchPipeline {
             let payload = serde_json::to_vec(&FrozenOutboundPayload {
                 intent: &request.intent,
                 hygiene_headers,
+                dreamer_step: step_binding.map(crate::llm::StepEffectBinding::frozen_value),
                 calendar_invite: request.calendar_invite.as_ref(),
                 space_posting: space_posting.as_ref(),
                 actor_class: &request.actor.actor_class,

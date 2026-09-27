@@ -1,6 +1,6 @@
 //! Replay/send path: ledger-state dispatch, recovery governance, live-retry gate, transport outcomes.
 
-use super::admission::verify_booking_effect;
+use super::admission::{enforce_step_failure_policy, verify_booking_effect};
 use super::types::{
     OutboundEffectResult, OutboundTransport, PreparedAuthorization, PreparedEffect,
 };
@@ -157,6 +157,13 @@ fn send_pending_with_gate<T: OutboundTransport>(
     if let Some(prepared) = prepared {
         let mut wtxn = vault.store.env.write_txn().map_err(Error::from)?;
         let policy = gate::resolve_policy_manifest(&vault.store, &wtxn)?;
+        enforce_step_failure_policy(
+            vault,
+            &wtxn,
+            &policy,
+            &prepared.payload,
+            prepared.gate.provenance.actor_entity_ref,
+        )?;
         let required_grant_id = match &prepared.authorization {
             PreparedAuthorization::None => None,
             PreparedAuthorization::ScopedMcp { grant_id, .. } => Some(*grant_id),
@@ -183,6 +190,22 @@ fn send_pending_with_gate<T: OutboundTransport>(
             result.dispatch.replayed = replayed;
             return Ok(result);
         }
+    } else if crate::llm::StepEffectBinding::from_frozen_payload(record.payload())?.is_some() {
+        // Engine-owned Resume has no PreparedEffect. Its frozen step identity
+        // still rechecks the resident restriction before a Pending live send.
+        let txn = vault.store.env.write_txn().map_err(Error::from)?;
+        let policy = gate::resolve_policy_manifest(&vault.store, &txn)?;
+        let frozen: serde_json::Value = serde_json::from_slice(record.payload())
+            .map_err(|_| IntentLedgerError::InvalidRecord("invalid frozen outbound payload"))?;
+        let actor_hex = frozen
+            .get("actor_entity_ref")
+            .and_then(serde_json::Value::as_str)
+            .ok_or(IntentLedgerError::InvalidRecord(
+                "step effect actor missing",
+            ))?;
+        let actor = crate::entity_id::EntityId::from_hex(actor_hex)
+            .map_err(|_| IntentLedgerError::InvalidRecord("step effect actor invalid"))?;
+        enforce_step_failure_policy(vault, &txn, &policy, record.payload(), Some(actor))?;
     }
 
     // F2 is checked again at the last in-process boundary before transport.
