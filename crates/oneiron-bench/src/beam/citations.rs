@@ -317,7 +317,10 @@ mod tests {
                     }),
                     "{key}"
                 ),
-                Err(_) => assert!(matches!(key, "benchmark" | "tier" | "backbone")),
+                Err(_) => assert!(
+                    matches!(key, "benchmark" | "tier" | "backbone" | "scale"),
+                    "{key}"
+                ),
             }
         }
         for (key, value) in [
