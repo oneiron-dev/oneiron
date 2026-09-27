@@ -1292,6 +1292,27 @@ fn nonmember_remote_reaction_does_not_poison_other_pills() {
             .iter()
             .all(|signal| signal.reaction != id)
     );
+    let later = vault
+        .react(ReactionInput {
+            message,
+            by: bob,
+            glyph: "👀".into(),
+            occurred_at: 20,
+            external_id: None,
+            actor: crate::WriteActor::new(bob, crate::EdgeActorClass::Human),
+        })
+        .unwrap();
+    assert_eq!(
+        later.state,
+        ReactionState::Put,
+        "an invalid pre-join peer row must not toggle away a new valid put"
+    );
+    assert_ne!(later.id, id);
+    assert!(
+        vault.reaction_pills(&[message], bob).unwrap()[&message]
+            .iter()
+            .any(|pill| pill.glyph == "👀" && pill.by == vec![bob])
+    );
 }
 
 #[cfg(feature = "sync")]

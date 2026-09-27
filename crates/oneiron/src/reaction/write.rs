@@ -95,6 +95,12 @@ pub(super) fn live_for_message(
         if author.as_slice() != [reaction.by] || target.as_slice() != [message] {
             continue;
         }
+        let Some(room) = room_for_record_in(vault, txn, message)? else {
+            continue;
+        };
+        if !crate::conversation::member_at_in(vault, txn, room, reaction.by, reaction.at)? {
+            continue; // A hostile historical peer row cannot toggle a valid new put.
+        }
         let raw = vault
             .store
             .entities
