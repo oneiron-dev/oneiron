@@ -96,7 +96,36 @@ fn setup_with_secret(
     let mut config = VaultConfig::device();
     config.map_size = 32 * 1024 * 1024;
     config.dimensions = 4;
+    // Keep the fixture's established normal-criticality gate posture while
+    // supplying the seeded pack-install rows that local admission now reads.
     let (dir, vault) = crate::test_util::open_test_vault_with(config);
+    let defaults = crate::gate::default_policy_manifest();
+    let mut manifest = rmpv::decode::read_value(&mut defaults.as_slice())
+        .map_err(|_| crate::Error::InvariantViolation("decode test policy"))?;
+    let rmpv::Value::Map(entries) = &mut manifest else {
+        return Err(crate::Error::InvariantViolation("test policy map"));
+    };
+    let Some(rmpv::Value::Map(axes)) = entries
+        .iter_mut()
+        .find_map(|(key, value)| (key.as_str() == Some("defaults")).then_some(value))
+    else {
+        return Err(crate::Error::InvariantViolation("test policy defaults"));
+    };
+    let Some((_, criticality)) = axes
+        .iter_mut()
+        .find(|(key, _)| key.as_str() == Some("criticality"))
+    else {
+        return Err(crate::Error::InvariantViolation("test policy criticality"));
+    };
+    *criticality = rmpv::Value::from("normal");
+    let mut bytes = Vec::new();
+    rmpv::encode::write_value(&mut bytes, &manifest)
+        .map_err(|_| crate::Error::InvariantViolation("encode test policy"))?;
+    crate::test_util::put_policy_manifest_bytes(
+        &vault,
+        crate::gate::default_policy_manifest_id()?,
+        &bytes,
+    )?;
     let vault = Arc::new(vault);
     let owner_id = entity(0xB1);
     let agent = entity(0xB2);

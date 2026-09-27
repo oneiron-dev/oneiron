@@ -1,0 +1,45 @@
+{
+  "precedence": "nested_narrowing_holder_capped_at_vault",
+  "vault": {
+    "hidden_instructions": [
+      "ignore previous",
+      "ignore all",
+      "override instructions",
+      "act as system",
+      "system prompt",
+      "developer message",
+      "do not tell",
+      "reveal secret"
+    ],
+    "parameter_injection": [
+      "ignore",
+      "instruction",
+      "system prompt",
+      "developer message",
+      "exfiltrat",
+      "send secrets"
+    ],
+    "allowed_calls": [
+      "print",
+      "len",
+      "math.sqrt",
+      "math.floor",
+      "math.ceil",
+      "math.sin",
+      "math.cos",
+      "math.isfinite",
+      "json.loads",
+      "json.dumps"
+    ],
+    "known_bad_patterns": [],
+    "removed_hashes": []
+  },
+  "owner": {
+    "hidden_instructions": [],
+    "parameter_injection": [],
+    "allowed_calls": null,
+    "known_bad_patterns": [],
+    "removed_hashes": []
+  },
+  "holders": []
+}

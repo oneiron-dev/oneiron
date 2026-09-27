@@ -41,6 +41,19 @@ impl Vault {
         if !verdict.fits {
             return Err(invalid("pack did not pass fit"));
         }
+        let observed_tools = policy.observed_tools(&source)?;
+        if observed_tools.len() > 256
+            || observed_tools.iter().any(|tool| {
+                tool.name.is_empty()
+                    || tool.name.len() > 128
+                    || tool.description.len() > 16_384
+                    || serde_json::to_vec(&tool.input_schema).map_or(true, |bytes| {
+                        bytes.len() > crate::skill_hub::MAX_HUB_FILE_BYTES
+                    })
+            })
+        {
+            return Err(invalid("observed tool manifest exceeds bounds"));
+        }
         // Even a flag-off Candidate has a qualified *shape*. Running code
         // also needs the host's source-bound sandbox suite and runtime pin.
         let qualification = if let Some(adapter @ PackAdapter::Script(_)) = &source.manifest.adapter
@@ -73,6 +86,9 @@ impl Vault {
             verdict,
             qualification.as_ref(),
         )?;
+        let blocked_reason =
+            self.screen_pack_in_txn(&txn, &source, &observed_tools, publisher.identity())?;
+        let scan_risk = self.pack_scan_risk_in_txn(&txn, source.content_hash())?;
         Ok(PackInstallAsk {
             source_id,
             hub: hub.clone(),
@@ -83,6 +99,9 @@ impl Vault {
             manifest: source.manifest().clone(),
             permissions,
             qualification,
+            observed_tools,
+            blocked_reason,
+            scan_risk,
         })
     }
     /// The copied object is not a grant. Requested powers remain on its card;
@@ -90,6 +109,11 @@ impl Vault {
     pub fn install_pack(&self, ask: &PackInstallAsk) -> Result<PackInstallDisposition> {
         self.with_write_txn(|txn| {
             let source = self.check_pack_install_ask(txn, ask)?;
+            if let Some(reason) = self.screen_pack_in_txn(
+                txn, &source, &ask.observed_tools, ask.publisher.identity(),
+            )? {
+                return Ok(PackInstallDisposition::Blocked { reason });
+            }
             let at = crate::unix_seconds_now();
             let skills = self.import_pack_skills_in_txn(
                 txn, &source, &ask.hub, &ask.publisher, at,

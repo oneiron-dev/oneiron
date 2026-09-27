@@ -4,6 +4,7 @@ use std::io::Cursor;
 
 use rmpv::Value;
 
+use crate::gate::PackInstallPolicy;
 use crate::gate::ceiling::{
     ActorCeiling, DelegationGrantRecord, PolicyOwnerPatternRow, PolicyOwnerPolicyRow, PolicyPack,
     PolicySignature, SourceTrustCeiling,
@@ -21,6 +22,8 @@ use crate::gate::constants::{
 };
 use crate::gate::grants::PolicyScopedGrant;
 use crate::gate::hosted_tts_policy::HostedTtsPolicy;
+use crate::gate::pack_install_policy::KEY as PACK_INSTALL_POLICY_KEY;
+
 use crate::gate::resolution::CommOptOutPosture;
 use crate::llm::{BudgetExhaustionPolicy, BudgetPolicyTable};
 
@@ -58,7 +61,9 @@ pub(in crate::gate) struct DecodedPolicyManifest {
     /// names one.
     pub(in crate::gate) auto_checker: Option<String>,
     pub(in crate::gate) budget_policy: BudgetPolicyTable,
+    pub(in crate::gate) pack_install_policy: Option<PackInstallPolicy>,
     pub(in crate::gate) hosted_tts: HostedTtsPolicy,
+
     pub(in crate::gate) diagnostic_bounds: Option<crate::self_heal::tripwires::TripwireBounds>,
     pub(in crate::gate) proposal_check_threshold: Option<u64>,
     pub(in crate::gate) weave_correction_policy: Option<crate::gate::WeaveCorrectionPolicy>,
@@ -105,7 +110,9 @@ pub(in crate::gate) fn decode_policy_manifest(data: &[u8]) -> Option<DecodedPoli
                 | POLICY_COMM_OPT_OUT_POSTURE_KEY
                 | POLICY_AUTO_CHECKER_KEY
                 | POLICY_BUDGET_POLICY_KEY
+                | PACK_INSTALL_POLICY_KEY
                 | POLICY_HOSTED_TTS_KEY
+
                 | "diagnostic_bounds"
                 | "proposal_check_threshold"
                 | POLICY_WEAVE_CORRECTION_POLICY_KEY
@@ -225,6 +232,11 @@ pub(in crate::gate) fn decode_policy_manifest(data: &[u8]) -> Option<DecodedPoli
         MapValue::Duplicate => return None,
         MapValue::Present(value) => Some(nonblank_bounded_string(value, AUTO_CHECKER_REF_MAX_LEN)?),
     };
+    let pack_install_policy = match single_map_value(&entries, PACK_INSTALL_POLICY_KEY) {
+        MapValue::Missing => None,
+        MapValue::Duplicate => return None,
+        MapValue::Present(value) => Some(PackInstallPolicy::decode(value.clone())?),
+    };
     let budget_policy = match single_map_value(&entries, POLICY_BUDGET_POLICY_KEY) {
         MapValue::Missing => BudgetPolicyTable::default(),
         MapValue::Duplicate => return None,
@@ -284,7 +296,9 @@ pub(in crate::gate) fn decode_policy_manifest(data: &[u8]) -> Option<DecodedPoli
         comm_opt_out_posture,
         auto_checker,
         budget_policy,
+        pack_install_policy,
         hosted_tts,
+
         diagnostic_bounds,
         proposal_check_threshold,
         weave_correction_policy,

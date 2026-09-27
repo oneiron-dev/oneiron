@@ -17,6 +17,7 @@ use super::constants::{
     SOURCE_TRUST_MAX_AUTO_SENSITIVITY_KEY, SOURCE_TRUST_RECEIPTED_KEY, SOURCE_TRUST_WARNED_KEY,
 };
 use super::definition_ceiling::first_party_connector_actor_ref;
+use super::pack_install_policy::{KEY as PACK_INSTALL_POLICY_KEY, PackInstallPolicy};
 
 const DEFAULT_POLICY_MANIFEST_ID: [u8; ENTITY_ID_LEN] = [0xD7; ENTITY_ID_LEN];
 pub(crate) const DEFAULT_POLICY_MANIFEST_TIMESTAMP: u64 = 0;
@@ -395,6 +396,10 @@ pub(crate) fn default_policy_manifest() -> Vec<u8> {
                     ),
                 ),
             ]),
+        ),
+        (
+            Value::from(PACK_INSTALL_POLICY_KEY),
+            PackInstallPolicy::shipped().encode(),
         ),
         (
             Value::from(POLICY_ON_BUDGET_EXHAUSTED_KEY),
