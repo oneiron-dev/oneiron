@@ -71,13 +71,13 @@ fn origin_scope(
             ..Default::default()
         });
     }
-    if let Some((project, subproject, thread)) =
+    if let Some(location) =
         crate::workspace_roster::effect_project_origin_in_txn(store, txn, origin)?
     {
         return Ok(PolicyEvaluationScope {
-            project: Some(project),
-            subproject,
-            thread,
+            project: Some(location.project),
+            subproject: location.subproject,
+            thread: location.thread,
             unknown_world: true,
             ..Default::default()
         });

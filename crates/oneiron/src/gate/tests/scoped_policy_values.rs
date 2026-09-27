@@ -996,7 +996,7 @@ fn effect_door_uses_verified_project_and_thread_origin_and_persists_deciding_row
     })?;
     assert_eq!(decision.outcome(), GateOutcome::Pending);
     assert!(decision.policy_row_ref().is_none());
-    let mut forged = unbound.clone();
+    let mut forged = unbound;
     forged.send_ref = Some("intent:project-a".to_owned());
     forged.channel = "other".to_owned();
     let (_, forged_decision, _) = vault.with_write_txn(|txn| {
@@ -1141,7 +1141,7 @@ fn delegated_project_holder_changes_only_their_row_and_can_explain_it() -> Resul
             Some(project_b),
         ),
     ];
-    put_policy_manifest_bytes(&vault, id, &manifest(rows.clone()))?;
+    put_policy_manifest_bytes(&vault, id, &manifest(rows))?;
     assert!(vault.set_policy_value_why(&admin, id, "project-a", "Because A", false, 3)?);
     assert!(
         vault
@@ -1171,7 +1171,7 @@ fn delegated_project_holder_changes_only_their_row_and_can_explain_it() -> Resul
     assert_eq!(proposal.row_ref, "project-b");
     assert_eq!(proposal.scope, format!("project:{}", project_b.to_hex()));
     assert_eq!(vault.get(&id)?, Some(current.clone()));
-    let mut changed = current.clone();
+    let mut changed = current;
     rewrite_policy_manifest_entries(&mut changed, |entries| {
         let (_, Value::Array(rows)) = entries
             .iter_mut()

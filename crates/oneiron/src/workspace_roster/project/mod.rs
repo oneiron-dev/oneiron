@@ -231,11 +231,18 @@ fn policy_project_path(
     }
 }
 
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct EffectProjectOrigin {
+    pub(crate) project: EntityId,
+    pub(crate) subproject: Option<EntityId>,
+    pub(crate) thread: Option<EntityId>,
+}
+
 pub(crate) fn effect_project_origin_in_txn(
     store: &crate::store::Store,
     txn: &heed::RoTxn<'_>,
     origin: EntityId,
-) -> Result<Option<(EntityId, Option<EntityId>, Option<EntityId>)>> {
+) -> Result<Option<EffectProjectOrigin>> {
     let Some(kind) = project_type(store) else {
         return Ok(None);
     };
@@ -245,7 +252,11 @@ pub(crate) fn effect_project_origin_in_txn(
             return Ok(None);
         }
         let (project, subproject) = policy_project_path(store, txn, origin, kind, &project)?;
-        return Ok(Some((project, subproject, None)));
+        return Ok(Some(EffectProjectOrigin {
+            project,
+            subproject,
+            thread: None,
+        }));
     }
     let Some(raw) = store.entities.get(txn, origin.as_bytes())? else {
         return Ok(None);
@@ -268,7 +279,11 @@ pub(crate) fn effect_project_origin_in_txn(
         return Err(invalid());
     }
     let (project, subproject) = policy_project_path(store, txn, project_id, kind, &project)?;
-    Ok(Some((project, subproject, Some(origin))))
+    Ok(Some(EffectProjectOrigin {
+        project,
+        subproject,
+        thread: Some(origin),
+    }))
 }
 
 impl Vault {
