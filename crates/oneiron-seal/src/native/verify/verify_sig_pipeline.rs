@@ -7,12 +7,17 @@ use crate::api::{
 };
 use crate::error::SealError;
 
-use super::super::{cms, pdf, tsp};
+use super::super::{cms, pdf};
 use super::verify_chain_gates::{
     VerifyCtx, malformed_input, signer_root_unavailable, validate_chain,
 };
 use super::verify_dss_core::EmbeddedCert;
-use super::verify_revocation::gen_time_beyond_skew;
+#[path = "timestamp_evidence.rs"]
+mod timestamp_evidence;
+use timestamp_evidence::{TimestampEvidence, TimestampKind};
+#[cfg(test)]
+#[path = "verify_tests_timestamp_evidence.rs"]
+mod verify_tests_timestamp_evidence;
 
 #[derive(Debug)]
 pub(super) struct SigEntry {
@@ -415,8 +420,7 @@ pub(super) fn verify_cades_sig(
             false,
             VerifyFindingCode::CertificatePathInvalid,
         );
-        checks.absent(VerifyCheckKind::SignatureTimestamp);
-        checks.absent(VerifyCheckKind::SignatureTimestampTrust);
+        TimestampEvidence::NotEvaluated.project(TimestampKind::Signature, checks, covered);
         return;
     };
     covered.extend(
@@ -479,8 +483,11 @@ fn verify_signer(
             false,
             VerifyFindingCode::CertificatePathInvalid,
         );
-        checks.absent(VerifyCheckKind::SignatureTimestamp);
-        checks.absent(VerifyCheckKind::SignatureTimestampTrust);
+        TimestampEvidence::for_signature(ctx.clock_ms, signer, anchors).project(
+            TimestampKind::Signature,
+            checks,
+            covered,
+        );
         return;
     };
     let cert_der = &parsed.certificates[idx];
@@ -503,7 +510,8 @@ fn verify_signer(
         sig_ok,
         VerifyFindingCode::SignatureMismatch,
     );
-    let ts_gen_time = verify_ts_token(ctx.clock_ms, signer, anchors, checks, covered);
+    let ts_evidence = TimestampEvidence::for_signature(ctx.clock_ms, signer, anchors);
+    let ts_gen_time = ts_evidence.project(TimestampKind::Signature, checks, covered);
     let at_unix = ts_gen_time.unwrap_or(ctx.clock_ms / 1000);
     let chain_ders: Vec<Vec<u8>> = std::iter::once(cert_der.clone())
         .chain(
@@ -535,118 +543,10 @@ fn verify_signer(
     }
 }
 
-/// Validate the optional `signatureTimeStampToken` unsigned attribute.
-/// Present-but-malformed fails; absent is allowed. Returns the token genTime
-/// (unix seconds) for applicable-time chain validation; a validated token's
-/// TSA chain is recorded in `covered` for the DSS binding. The genTime is
-/// bounded against the verify clock (`clock_ms`): a future-dated token past
-/// the documented skew is rejected, never clamped.
-fn verify_ts_token(
-    clock_ms: u64,
-    signer: &cms::ParsedSignerInfo,
-    anchors: &[pkix_chain::TrustAnchor],
-    checks: &mut Checks,
-    covered: &mut Vec<EmbeddedCert>,
-) -> Option<u64> {
-    let mut token_der = None;
-    for attr in &signer.unsigned_attrs {
-        let Ok((oid, value)) = cms::parse_attribute(attr) else {
-            checks.record(
-                VerifyCheckKind::SignatureTimestamp,
-                false,
-                VerifyFindingCode::TimestampInvalid,
-            );
-            return None;
-        };
-        if oid == cms::OID_ATTR_TS_TOKEN.as_bytes() {
-            if token_der.is_some() {
-                checks.record(
-                    VerifyCheckKind::SignatureTimestamp,
-                    false,
-                    VerifyFindingCode::TimestampInvalid,
-                );
-                checks.not_run(
-                    VerifyCheckKind::SignatureTimestampTrust,
-                    VerifyFindingCode::TrustCheckNotRun,
-                );
-                return None;
-            }
-            token_der = Some(value.full.to_vec());
-        }
-    }
-    let Some(token) = token_der else {
-        checks.absent(VerifyCheckKind::SignatureTimestamp);
-        checks.absent(VerifyCheckKind::SignatureTimestampTrust);
-        return None;
-    };
-    let imprint = cms::sha256(&signer.signature);
-    let Ok((gen_time, tsa_chain_ders)) = tsp::validate_token_crypto_for_verify(&token, &imprint)
-    else {
-        checks.record(
-            VerifyCheckKind::SignatureTimestamp,
-            false,
-            VerifyFindingCode::TimestampInvalid,
-        );
-        checks.not_run(
-            VerifyCheckKind::SignatureTimestampTrust,
-            VerifyFindingCode::TrustCheckNotRun,
-        );
-        return None;
-    };
-    if gen_time_beyond_skew(gen_time, clock_ms) {
-        checks.record(
-            VerifyCheckKind::SignatureTimestamp,
-            false,
-            VerifyFindingCode::TimestampInvalid,
-        );
-        checks.not_run(
-            VerifyCheckKind::SignatureTimestampTrust,
-            VerifyFindingCode::TrustCheckNotRun,
-        );
-        return None;
-    }
-    checks.record(
-        VerifyCheckKind::SignatureTimestamp,
-        true,
-        VerifyFindingCode::TimestampInvalid,
-    );
-    if tsp::validate_tsa_chain(&tsa_chain_ders, anchors, gen_time).is_err() {
-        if anchors.is_empty() || tsp::tsa_root_unavailable(&tsa_chain_ders, gen_time) {
-            checks.not_run(
-                VerifyCheckKind::SignatureTimestampTrust,
-                VerifyFindingCode::TrustRootUnavailable,
-            );
-            covered.extend(
-                tsa_chain_ders
-                    .iter()
-                    .filter_map(|d| EmbeddedCert::from_der(d)),
-            );
-        } else {
-            checks.record(
-                VerifyCheckKind::SignatureTimestampTrust,
-                false,
-                VerifyFindingCode::CertificatePathInvalid,
-            );
-        }
-        return None;
-    }
-    checks.record(
-        VerifyCheckKind::SignatureTimestampTrust,
-        true,
-        VerifyFindingCode::CertificatePathInvalid,
-    );
-    covered.extend(
-        tsa_chain_ders
-            .iter()
-            .filter_map(|d| EmbeddedCert::from_der(d)),
-    );
-    Some(gen_time)
-}
-
 /// Verify one DocTimeStamp dictionary (§7.6/§7.7): ByteRange coverage and
-/// the RFC 3161 token over the covered bytes. Only a FULLY accepted
-/// DocTimeStamp records its TSA chain in `covered` for the DSS binding — a
-/// rejected token leaves no trace in the binding set. Returns the token's
+/// the RFC 3161 token over the covered bytes. Cryptographically valid tokens
+/// with trusted or unavailable TSA roots contribute their chain to `covered`
+/// for DSS binding; invalid or rejected tokens leave no trace. Returns the token's
 /// genTime (unix seconds) when every check passes; the caller feeds it to
 /// DSS evidence freshness only when the ByteRange provably covers the final
 /// /DSS revision (`dss_revision_end`). The genTime is bounded against the
@@ -692,59 +592,12 @@ pub(super) fn verify_doc_ts(
                 }
                 tail.is_empty()
             });
-    let token = unpadded_cms(&e.contents).and_then(|der| {
-        let imprint = pdf::hash_byte_range(bytes, e.byte_range).ok()?;
-        tsp::validate_token_crypto_for_verify(der, &imprint).ok()
-    });
-    let crypto_ok = br_ok
-        && covers_end
-        && token
-            .as_ref()
-            .is_some_and(|(gen_time, _)| !gen_time_beyond_skew(*gen_time, clock_ms));
-    checks.record(
-        VerifyCheckKind::DocumentTimestamp,
-        crypto_ok,
-        VerifyFindingCode::DocumentTimestampInvalid,
-    );
-    if !crypto_ok {
-        checks.not_run(
-            VerifyCheckKind::DocumentTimestampTrust,
-            VerifyFindingCode::TrustCheckNotRun,
-        );
-        return DocTimestampOutcome::Invalid;
+    let evidence =
+        TimestampEvidence::for_document(bytes, e, anchors, clock_ms, br_ok && covers_end);
+    let trusted_time = evidence.project(TimestampKind::Document, checks, covered);
+    match (trusted_time, evidence.provisional_time()) {
+        (Some(time), _) => DocTimestampOutcome::Trusted(time),
+        (None, Some(time)) => DocTimestampOutcome::Untrusted(time),
+        (None, None) => DocTimestampOutcome::Invalid,
     }
-    let Some((gen_time, tsa_chain_ders)) = token else {
-        return DocTimestampOutcome::Invalid;
-    };
-    if tsp::validate_tsa_chain(&tsa_chain_ders, anchors, gen_time).is_err() {
-        if anchors.is_empty() || tsp::tsa_root_unavailable(&tsa_chain_ders, gen_time) {
-            checks.not_run(
-                VerifyCheckKind::DocumentTimestampTrust,
-                VerifyFindingCode::TrustRootUnavailable,
-            );
-            covered.extend(
-                tsa_chain_ders
-                    .iter()
-                    .filter_map(|d| EmbeddedCert::from_der(d)),
-            );
-        } else {
-            checks.record(
-                VerifyCheckKind::DocumentTimestampTrust,
-                false,
-                VerifyFindingCode::CertificatePathInvalid,
-            );
-        }
-        return DocTimestampOutcome::Untrusted(gen_time);
-    }
-    checks.record(
-        VerifyCheckKind::DocumentTimestampTrust,
-        true,
-        VerifyFindingCode::CertificatePathInvalid,
-    );
-    covered.extend(
-        tsa_chain_ders
-            .iter()
-            .filter_map(|d| EmbeddedCert::from_der(d)),
-    );
-    DocTimestampOutcome::Trusted(gen_time)
 }

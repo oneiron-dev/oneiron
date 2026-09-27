@@ -39346,7 +39346,7 @@
      "surface": {}
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "NativeSealEngine"
@@ -39398,10 +39398,20 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/native/pdf/lex.rs",
+     "purpose": "Bounded PDF structural tokens",
+     "surface": {
+      "crate-vis": 9
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/native/pdf/mod.rs",
      "purpose": "Read-only PDF parse plus byte-exact incremental-update writer (§7.1, §7.2)",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 5
      }
     },
     {
@@ -39422,6 +39432,16 @@
      "purpose": "Prepared-input validation (§7.1): object/catalog scans, strict load, xref consistency, and RevisionState…",
      "surface": {
       "crate-vis": 14
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/native/pdf/revision_facts.rs",
+     "purpose": "One bounded structural account of PDF revisions, definitions and xref roles",
+     "surface": {
+      "crate-vis": 9
      }
     },
     {
@@ -39501,6 +39521,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/native/verify/timestamp_evidence.rs",
+     "purpose": "Shared RFC 3161 evidence evaluation and exhaustive report projection",
+     "surface": {
+      "crate-vis": 7
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
@@ -39527,7 +39557,7 @@
      "path": "src/native/verify/verify_modifications.rs",
      "purpose": "Conservative, shared pre-sign and post-sign incremental-revision analysis",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 2
      }
     },
     {
@@ -39538,16 +39568,6 @@
      "purpose": "Per-envelope report facts, separate from PDF trust and modification policy",
      "surface": {
       "crate-vis": 1
-     }
-    },
-    {
-     "bucket": "s",
-     "kind": "src",
-     "notable": [],
-     "path": "src/native/verify/verify_revision_tokens.rs",
-     "purpose": "Bounded PDF lexical framing for revision object definitions and stream payloads",
-     "surface": {
-      "crate-vis": 5
      }
     },
     {
@@ -39619,6 +39639,14 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/native/verify/verify_tests_timestamp_evidence.rs",
+     "purpose": "Public native-verifier regressions for both RFC 3161 timestamp forms",
+     "surface": {}
+    },
+    {
      "bucket": "m",
      "kind": "test",
      "notable": [],
@@ -39685,7 +39713,7 @@
      "purpose": "Stable seal error classes and codes (ONE-1837 §6)"
     },
     "native": {
-     "files": 34,
+     "files": 37,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -39694,7 +39722,7 @@
    },
    "over_bar": 1,
    "purpose": "Native Rust PAdES seal and verification engine (ONE-1837)",
-   "source_files": 34,
+   "source_files": 37,
    "test_files": 9
   },
   "oneiron-server": {

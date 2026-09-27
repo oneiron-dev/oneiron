@@ -1,7 +1,7 @@
 //! Per-envelope report facts, separate from PDF trust and modification policy.
 
 use super::super::pdf;
-use super::verify_modifications::eof_tail;
+use super::super::pdf::eof_tail;
 use super::verify_sig_pipeline::{Checks, SigEntry, check_byte_range, check_byte_range_shape};
 use crate::api::{
     ByteRangeEvidence, DigestAlgorithm, PadesProfile, Sha256Digest, SignatureCoverage,
@@ -17,7 +17,10 @@ fn axis(checks: &Checks, kinds: &[VerifyCheckKind]) -> VerifyVerdict {
         .collect();
     if selected.iter().any(|c| c.status == VerifyCheckStatus::Fail) {
         VerifyVerdict::Failed
-    } else if selected.is_empty()
+    } else if selected.len() != kinds.len()
+        || kinds
+            .iter()
+            .any(|kind| selected.iter().filter(|c| c.kind == *kind).count() != 1)
         || !selected.iter().any(|c| c.status == VerifyCheckStatus::Pass)
         || selected
             .iter()
