@@ -17306,8 +17306,21 @@
      "path": "src/gate/mod.rs",
      "purpose": "DEC-0005 Gate policy manifest resolver",
      "surface": {
-      "crate-vis": 28,
-      "re-export": 3
+      "crate-vis": 29,
+      "re-export": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "PackInstallPolicyOverride"
+     ],
+     "path": "src/gate/pack_install_policy.rs",
+     "purpose": "Vault-resident connector-pack install rows; default behavior is shipped data",
+     "surface": {
+      "crate-vis": 12,
+      "struct": 1
      }
     },
     {
@@ -17351,7 +17364,7 @@
      "path": "src/gate/resolution/accessors.rs",
      "purpose": "Read-only resolved-field accessors plus the frontier-hash entry",
      "surface": {
-      "crate-vis": 26
+      "crate-vis": 27
      }
     },
     {
@@ -29926,6 +29939,7 @@
       "PackInstallDisposition",
       "PackInstallReceipt",
       "PackInstallStatus",
+      "PackObservedTool",
       "PackPermissions",
       "PackQualification",
       "PackQualifier",
@@ -29935,8 +29949,8 @@
      "purpose": "Source-bound post-fit decisions and install receipts; install never grants authority",
      "surface": {
       "enum": 3,
-      "fn": 6,
-      "struct": 7,
+      "fn": 8,
+      "struct": 8,
       "trait": 2
      }
     },
@@ -30008,7 +30022,7 @@
      "purpose": "Exact, inert PACK.md source catalogs",
      "surface": {
       "crate-vis": 5,
-      "re-export": 6
+      "re-export": 8
      }
     },
     {
@@ -30022,6 +30036,28 @@
      }
     },
     {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "PackInstallRules"
+     ],
+     "path": "src/skill_hub/pack_catalog/screening.rs",
+     "purpose": "Bounded, source-bound install rules for connector tool manifests",
+     "surface": {
+      "crate-vis": 2,
+      "fn": 2,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "src/skill_hub/pack_catalog/screening_tests.rs",
+     "purpose": "Caller-visible screening regressions on the post-fit install API",
+     "surface": {}
+    },
+    {
      "bucket": "s",
      "kind": "src",
      "notable": [],
@@ -30029,6 +30065,16 @@
      "purpose": "One qualified execution shape for both pack admission and foreign launch",
      "surface": {
       "crate-vis": 7
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/skill_hub/pack_catalog/script_policy.rs",
+     "purpose": "Closed Python install profile over a maintained grammar, not token spelling",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -30077,6 +30123,16 @@
      "purpose": "Source custody tests: exact bytes, inert imports, generic/replay parity and rollback",
      "surface": {
       "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/skill_hub/pack_catalog/tool_schema.rs",
+     "purpose": "Closed Draft 2020-12 tool-schema profile: resource-aware nodes, not a JSON rewrite",
+     "surface": {
+      "crate-vis": 6
      }
     },
     {
@@ -36520,7 +36576,7 @@
      "purpose": "—"
     },
     "gate": {
-     "files": 78,
+     "files": 79,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -37003,7 +37059,7 @@
      "purpose": "Message-to-skill conversion — the user-initiated middle road into the skill library (ARCH-0017, registry…"
     },
     "skill_hub": {
-     "files": 58,
+     "files": 62,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -37208,8 +37264,8 @@
    },
    "over_bar": 2,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2207,
-   "test_files": 754
+   "source_files": 2211,
+   "test_files": 755
   },
   "oneiron-android": {
    "files": [

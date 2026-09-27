@@ -62,7 +62,10 @@ fn fixture(
     config.dimensions = 4;
     // Boundary fixtures stage a full 16 MiB source plus its catalog indexes.
     config.map_size = 128 * 1024 * 1024;
-    let (dir, vault) = crate::test_util::open_test_vault_with(config);
+    // Install admission resolves the seeded policy manifest. The generic
+    // legacy helper deindexes it and cannot serve this fixture.
+    let dir = tempfile::tempdir()?;
+    let vault = Vault::open(dir.path(), config)?;
     let owner = EntityId::now();
     let at = TimeRange { start: 1, end: 1 };
     vault.put_entity(&owner, crate::registry::ENTITY_TYPE_PERSON, at, 1, b"owner")?;
