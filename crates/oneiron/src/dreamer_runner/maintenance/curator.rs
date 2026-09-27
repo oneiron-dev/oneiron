@@ -159,7 +159,7 @@ pub(super) fn run(
         let proposed_action = action["kind"].clone();
         candidates.push((id,serde_json::json!({"target":id.to_hex(),"source_hash":blake3::hash(&bytes[ENTITY_METADATA_HEADER_LEN..]).to_hex().to_string(),"action":action,"rubric":rubric,"grade":{
             "authorship":"verified_dreamer_generated",
-            "freshness":{"age_secs":now.saturating_sub(header.learned_at),"minimum_age_secs":rubric.minimum_age_secs},
+            "freshness":{"learned_at":header.learned_at,"minimum_age_secs":rubric.minimum_age_secs},
             "least_force":{"prior_rung":prior_rung.map(|r| match r {
                 ClaimDemotionRung::Decayed => "decayed",
                 ClaimDemotionRung::Weakened => "weakened",

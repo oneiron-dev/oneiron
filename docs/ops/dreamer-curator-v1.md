@@ -16,9 +16,12 @@ must re-read the target and its source hash before accepting any action.
 The v1 demotion rubric is: no rung → `claim_of_weight` (factor 0.8),
 `decayed` → confidence weakening (factor 0.8), `weakened` → stale-mark,
 `stale` → retract. The proposal contains the target body hash, question set,
-observed grade, and suggested action. These are **proposals**, not proof of a
-semantic contradiction. The reviewer checks present-day corroboration and
-rejects the proposal if the evidence still supports the belief. A semantic
+observed grade, and suggested action. Freshness reports the stable `learned_at`
+stamp and policy threshold, not the elapsed age at each wake: an unchanged
+source and policy must produce one proposal across nightly/idle retries.
+These are **proposals**, not proof of a semantic contradiction. The reviewer
+checks present-day corroboration and rejects the proposal if the evidence still
+supports the belief. A semantic
 verdict cannot be inferred from elapsed time. Never use VAD, a hard delete,
 or an automatic acceptance of this review cue.
 

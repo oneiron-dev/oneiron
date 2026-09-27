@@ -104,7 +104,7 @@ fn idle_curator_grades_own_consolidation_and_only_proposes_minimum_force() -> Re
         serde_json::from_str(proposed.1.value.as_str().unwrap()).unwrap();
     assert_eq!(value["action"]["kind"], "claim_of_weight");
     assert_eq!(value["grade"]["authorship"], "verified_dreamer_generated");
-    assert_eq!(value["grade"]["freshness"]["age_secs"], 99_999);
+    assert_eq!(value["grade"]["freshness"]["learned_at"], 1);
     assert_eq!(
         value["grade"]["least_force"]["prior_rung"],
         serde_json::Value::Null
@@ -119,6 +119,46 @@ fn idle_curator_grades_own_consolidation_and_only_proposes_minimum_force() -> Re
             .is_some_and(|question| !question.is_empty())
     );
     assert!(vault.get(&target)?.is_some());
+
+    let owner_id = entity(0x52);
+    vault.put_entity(
+        &owner_id,
+        crate::registry::ENTITY_TYPE_PERSON,
+        TimeRange { start: 1, end: 1 },
+        1,
+        b"owner",
+    )?;
+    let owner = vault.authenticate_owner(
+        owner_id,
+        &owner_id.to_hex(),
+        true,
+        crate::store::GateDecisionId::now(),
+    )?;
+    let digest = vault.proactivity_digest(&owner, 100_000, None)?.unwrap();
+    assert!(
+        digest
+            .groups
+            .values()
+            .flatten()
+            .any(|item| item.claim_ref == proposed.0)
+    );
+
+    // A new nightly attempt and a later retry see the same source revision.
+    // Neither creates a new proposal ID or resurfaces it in the digest.
+    for (trigger, now) in [
+        (CuratorTrigger::Nightly, 186_400),
+        (CuratorTrigger::Idle, 272_800),
+    ] {
+        vault.schedule_curator(trigger, now)?;
+        drive(&vault, now)?;
+        let proposals: Vec<_> = claims(&vault, &target)?
+            .into_iter()
+            .filter(|(_, body)| body.predicate == "dreamer.curator.proposal")
+            .collect();
+        assert_eq!(proposals.len(), 1);
+        assert_eq!(proposals[0].0, proposed.0);
+        assert!(vault.proactivity_digest(&owner, now, None)?.is_none());
+    }
     Ok(())
 }
 #[test]
