@@ -181,6 +181,15 @@ pub(crate) fn resolve_policy_manifest(
                     *slot = Some(slot.map_or(limits, |previous| previous.narrow(limits)));
                 }
                 resolution.hosted_tts.rows.extend(decoded.hosted_tts.rows);
+                if let Some(bounds) = decoded.docedit_resource_policy {
+                    let baseline = crate::gate::docedit_resource::DoceditResourcePolicy::shipped();
+                    resolution.docedit_resource_policy = Some(
+                        resolution
+                            .docedit_resource_policy
+                            .unwrap_or(baseline)
+                            .restrict(bounds),
+                    );
+                }
 
                 if !resolution
                     .slide_review_policy
@@ -310,6 +319,19 @@ fn has_duplicate_owner_policy_row(rows: &[PolicyOwnerPolicyRow]) -> bool {
 }
 
 impl Vault {
+    /// Resolve the live document package limits from trusted policy rows.
+    /// A missing or invalid manifest is a refusal, never an organ fallback.
+    pub fn docedit_package_limits(&self) -> Result<oneiron_docedit::retained_opc::Limits> {
+        let rtxn = self.store.env.read_txn()?;
+        let resolution = resolve_policy_manifest(&self.store, &rtxn)?;
+        let policy = resolution.docedit_resource_policy().ok_or_else(|| {
+            Error::InvalidConfig(
+                "document resource policy is unavailable or fail-closed".to_owned(),
+            )
+        })?;
+        Ok(policy.organ_limits())
+    }
+
     /// Builds the ONE policy-aware LLM budget meter for one wake pass: the
     /// same `BudgetGuard`, bound at construction to the engine-stamped actor
     /// and to the live manifest's resolved `budget_policy` table.
