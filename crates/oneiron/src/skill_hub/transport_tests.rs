@@ -667,6 +667,7 @@ fn inactive_reimports_preserve_local_state_and_report_no_install_from_two_hubs()
         SkillLifecycle::Stale,
         SkillLifecycle::Quarantined,
         SkillLifecycle::Superseded,
+        SkillLifecycle::Active,
     ] {
         let tree = files("fixture.inactive", "1", "Preserve this skill.");
         let servers = [
@@ -720,6 +721,10 @@ fn inactive_reimports_preserve_local_state_and_report_no_install_from_two_hubs()
         )?;
         let mut record = vault.get_skill_record(&id)?.expect("installed skill");
         match inactive {
+            SkillLifecycle::Active => {
+                record.approval_status = ClaimApprovalStatus::Proposed;
+                vault.update_skill_record(&id, &record, at, 11)?;
+            }
             SkillLifecycle::Stale => {
                 record.lifecycle_status = SkillLifecycle::Stale;
                 vault.update_skill_record(&id, &record, at, 11)?;
@@ -767,6 +772,7 @@ fn inactive_reimports_preserve_local_state_and_report_no_install_from_two_hubs()
                     SkillLifecycle::Stale => InstallHoldReason::Stale,
                     SkillLifecycle::Quarantined => InstallHoldReason::Quarantined,
                     SkillLifecycle::Superseded => InstallHoldReason::Superseded,
+                    SkillLifecycle::Active => InstallHoldReason::UnloadableApproval,
                     _ => unreachable!(),
                 };
                 assert_eq!(
@@ -782,6 +788,18 @@ fn inactive_reimports_preserve_local_state_and_report_no_install_from_two_hubs()
                         .approve_marketplace_permission_ask(&owner, &id, source, at, 21,)
                         .is_err()
                 );
+                let queue = AttemptQueue::new(&vault);
+                let EnqueueOutcome::Enqueued(attempt) = queue.enqueue(EnqueueAttempt {
+                    kind: "inactive.marketplace".into(),
+                    payload: vec![],
+                    dedupe_key: None,
+                    run_id: None,
+                    now: 22,
+                })?
+                else {
+                    panic!("fresh attempt");
+                };
+                assert!(vault.load_attempt_skill_pack(attempt.id, &id, 23).is_err());
             }
         }
         assert_eq!(vault.skill_hub_provenance_count(&id)?, 2);
@@ -797,6 +815,7 @@ fn inactive_reimports_preserve_local_state_and_report_no_install_from_two_hubs()
                 InstallDisposition::NotInstalled(match inactive {
                     SkillLifecycle::Stale => InstallHoldReason::Stale,
                     SkillLifecycle::Quarantined => InstallHoldReason::Quarantined,
+                    SkillLifecycle::Active => InstallHoldReason::UnloadableApproval,
                     _ => InstallHoldReason::Superseded,
                 })
                 .as_str()
