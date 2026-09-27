@@ -785,13 +785,6 @@ mod revision_tests {
         precedence: Option<&str>,
         rows: &[(&str, &str)],
     ) -> Result<()> {
-        let data = crate::gate::default_policy_manifest();
-        let mut cursor = std::io::Cursor::new(data);
-        let rmpv::Value::Map(mut entries) =
-            rmpv::decode::read_value(&mut cursor).expect("default policy map")
-        else {
-            panic!("default policy map");
-        };
         fn set_row(entries: &mut [(rmpv::Value, rmpv::Value)], key: &str, value: rmpv::Value) {
             entries
                 .iter_mut()
@@ -799,6 +792,13 @@ mod revision_tests {
                 .expect("default policy class row")
                 .1 = value;
         }
+        let data = crate::gate::default_policy_manifest();
+        let mut cursor = std::io::Cursor::new(data);
+        let rmpv::Value::Map(mut entries) =
+            rmpv::decode::read_value(&mut cursor).expect("default policy map")
+        else {
+            panic!("default policy map");
+        };
         set_row(
             &mut entries,
             "connector_class_carry",
@@ -831,10 +831,11 @@ mod revision_tests {
 
     #[test]
     fn vault_class_ceiling_is_configurable_holder_capped_and_frontier_bound() -> Result<()> {
+        type Frontier = ([u8; 32], BTreeSet<(String, String)>, bool);
         let dir = tempfile::tempdir()?;
         let vault = Vault::open(dir.path(), crate::VaultConfig::default())?;
         let default_id = crate::gate::default_policy_manifest_id()?;
-        let frontier = |vault: &Vault| -> Result<([u8; 32], BTreeSet<(String, String)>, bool)> {
+        let frontier = |vault: &Vault| -> Result<Frontier> {
             let txn = vault.store.env.read_txn()?;
             let policy = crate::gate::resolve_policy_manifest(&vault.store, &txn)?;
             Ok((
