@@ -26,7 +26,7 @@ const ATTEMPT_PACK_RECEIPT_ID_PREFIX: &str = "attempt:";
 
 const OUTBOUND_RECEIPT_SCHEMA: &str = "outbound_receipt.v1";
 const OUTBOUND_ENGINE_REGISTER: &str = "neutral";
-const OUTBOUND_CARE_REGISTER: &str = "eirispec_care_register";
+const OUTBOUND_CARE_REGISTER: &str = "care_register";
 const OUTBOUND_AUDIT_REGISTER: &str = "dashboard_atom_kit_audit";
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -92,11 +92,16 @@ pub(crate) fn stamp_attempt_pack_receipt_in_txn(
     record: &AttemptRecord,
     actor: &str,
 ) -> Result<()> {
-    if record.manifest().is_empty() {
+    let receipt_id = attempt_pack_receipt_id(&record.id);
+    // A resident's terminal attempt has an attributable outcome even when it
+    // loaded no skill. Unbound legacy attempts keep their manifest-only rule.
+    if record.manifest().is_empty()
+        && crate::skill::resident::receipt_resident_in_txn(store, wtxn, &receipt_id)?.is_none()
+    {
         return Ok(());
     }
     let mut receipt = ReceiptRecord {
-        receipt_id: attempt_pack_receipt_id(&record.id),
+        receipt_id,
         receipt_kind: ReceiptKind::Outbound,
         occurred_at: record.updated_at,
         actor: Some(actor.to_owned()),
@@ -354,7 +359,7 @@ pub(super) fn scan_durable_send_receipts(vault: &Vault) -> Result<ReceiptScan> {
     durable_send_receipts(vault).map(ReceiptScan::from_complete_records)
 }
 
-pub(super) fn durable_send_receipts(vault: &Vault) -> Result<Vec<ReceiptRecord>> {
+pub(crate) fn durable_send_receipts(vault: &Vault) -> Result<Vec<ReceiptRecord>> {
     vault
         .store
         .send_receipt_rows()?

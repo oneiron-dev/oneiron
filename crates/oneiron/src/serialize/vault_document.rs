@@ -1,5 +1,5 @@
 //! Whole-vault export uses the ContextPack format writers without retrieval
-//! projection, timestamp normalization, truncation, token budgets, or short IDs.
+//! projection, timestamp normalization, truncation, or token budgets.
 use serde_json::Value;
 
 use super::credential_nulling::null_credentials;
@@ -82,6 +82,7 @@ pub(crate) fn serialize_vault_snapshot(
         }
         let entity = ExportEntity {
             id: raw.id.to_hex(),
+            short_ref: raw.short_ref,
             entity_type: raw.header.entity_type,
             occurred_start: raw.header.occurred_start,
             occurred_end: raw.header.occurred_end,

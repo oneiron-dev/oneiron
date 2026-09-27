@@ -21,15 +21,18 @@ impl Vault {
         token: &EsignCapability,
         bytes: &[u8],
     ) -> Result<String> {
-        let now = crate::unix_seconds_now();
-        // Authenticate and account before any attacker-controlled image decode.
-        self.with_write_txn(|txn| {
+        let now = self.now_recorded_at();
+        // Authenticate before attacker-controlled image decode. Count the
+        // attempt separately so an observation failure never denies signing.
+        let (document, recipient) = self.with_write_txn(|txn| {
             let cap = binding(self, txn, token)?;
             if cap.revoked_at.is_some() || now >= cap.hard_expires_at {
                 return Err(invalid("invalid capability"));
             }
-            super::rate::admit(self, txn, &cap.document, &cap.recipient, now)
+            Ok((cap.document, cap.recipient))
         })?;
+        let _ =
+            self.with_write_txn(|txn| super::rate::observe(self, txn, &document, &recipient, now));
         if bytes.is_empty() || bytes.len() > 2 * 1024 * 1024 {
             return Err(invalid("signature image size"));
         }
@@ -57,7 +60,7 @@ impl Vault {
         if canonical.len() > 2 * 1024 * 1024 {
             return Err(invalid("signature image output size"));
         }
-        let now = crate::unix_seconds_now();
+        let now = self.now_recorded_at();
         self.with_write_txn(|txn| {
             let cap = binding(self, txn, token)?;
             let id = EntityId::from_hex(&cap.document)?;
@@ -169,11 +172,11 @@ impl Vault {
         image_ref: &str,
     ) -> Result<Vec<u8>> {
         reference(image_ref)?;
-        let now = crate::unix_seconds_now();
-        self.with_write_txn(|txn| {
+        let now = self.now_recorded_at();
+        let _ = self.with_write_txn(|txn| {
             let cap = binding(self, txn, token)?;
-            super::rate::admit(self, txn, &cap.document, &cap.recipient, now)
-        })?;
+            super::rate::observe(self, txn, &cap.document, &cap.recipient, now)
+        });
         let txn = self.store.env.read_txn()?;
         let cap = binding(self, &txn, token)?;
         let id = EntityId::from_hex(&cap.document)?;

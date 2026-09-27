@@ -30,6 +30,50 @@ pub(super) fn append_optional_receipt_field(
     }
 }
 
+/// This exact receipt is committed by the common outbound admission writer.
+/// A replay reads it back instead of recreating a second suppression decision.
+pub(super) fn suppression_receipt_for_dispatch(
+    request: &OutboundDispatchRequest,
+    decision: &OutboundDeliveryWindowDecision,
+    resolution: &DeliveryWindowResolution,
+) -> Option<ReceiptRecord> {
+    request
+        .intent
+        .dedupe_key
+        .as_deref()
+        .filter(|key| !key.trim().is_empty())?;
+    let mut receipt = outbound_intent_receipt(
+        request.receipt_id.clone(),
+        request.intent_ref.clone(),
+        &request.intent,
+        request.occurred_at,
+        "suppressed",
+    );
+    receipt
+        .fields
+        .insert("suppression".to_owned(), "dedupe".to_owned());
+    receipt.fields.insert(
+        "suppression_evidence".to_owned(),
+        "replicated_observation".to_owned(),
+    );
+    receipt
+        .policy_trace
+        .push("outbound.dedupe.cooldown".to_owned());
+    receipt.policy_trace.push(decision.policy_trace());
+    receipt
+        .fields
+        .insert("gate_outcome".to_owned(), "allow".to_owned());
+    receipt
+        .fields
+        .insert("gate_reason_codes".to_owned(), "gate.allow".to_owned());
+    append_window_receipt_fields(&mut receipt, decision);
+    append_window_resolution_receipt_fields(&mut receipt, resolution, decision);
+    if let Some(context) = request.context_receipt.as_ref() {
+        context.append_to_fields(&mut receipt.fields);
+    }
+    Some(receipt)
+}
+
 pub(super) fn append_execution_receipt_fields(
     receipt: &mut ReceiptRecord,
     fields: &BTreeMap<String, String>,
@@ -243,7 +287,7 @@ pub(super) fn dispatch_result_receipt(
     verb_contract: &OutboundVerbContract,
     policy_risk: ExternalEffectPolicyRisk,
     space_posting: Option<&FrozenSpacePosting>,
-    admission: &AdmissionStage,
+    admission: Option<&AdmissionStage>,
     verdict: DispatchVerdict,
 ) -> OutboundDispatchResult {
     let DispatchVerdict {
@@ -255,11 +299,23 @@ pub(super) fn dispatch_result_receipt(
         effect_state,
         outcome,
         execution,
+        suppression_receipt,
     } = verdict;
     let gate_outcome_kind = gate_outcome;
     let gate_outcome = gate_outcome_kind.as_str().to_owned();
-    let window_decision = &admission.window_decision;
-    let window_resolution = &admission.window_resolution;
+    if let Some(receipt) = suppression_receipt {
+        return OutboundDispatchResult {
+            outcome,
+            gate_decision_id: gate_decision_ref,
+            gate_outcome,
+            gate_reason_codes,
+            receipt,
+            effector_budget: None,
+            budget_ladder_events: Vec::new(),
+        };
+    }
+    let window_decision = admission.map(|stage| &stage.window_decision);
+    let window_resolution = admission.map(|stage| &stage.window_resolution);
     let mut engine_receipt_fields = BTreeMap::new();
     let mut engine_policy_trace = Vec::new();
     if let Some(posting) = space_posting {
@@ -276,7 +332,7 @@ pub(super) fn dispatch_result_receipt(
             posting.policy_risk().to_string(),
         );
     }
-    if let Some(seat) = admission.seat.as_ref() {
+    if let Some(seat) = admission.and_then(|stage| stage.seat.as_ref()) {
         engine_receipt_fields.extend(seat.receipt_fields.clone());
         engine_policy_trace.extend(seat.policy_trace.iter().cloned());
     }
@@ -293,7 +349,9 @@ pub(super) fn dispatch_result_receipt(
     receipt
         .policy_trace
         .extend(gate_receipt_reasons.iter().cloned());
-    receipt.policy_trace.push(window_decision.policy_trace());
+    if let Some(window_decision) = window_decision {
+        receipt.policy_trace.push(window_decision.policy_trace());
+    }
     receipt.policy_trace.extend(engine_policy_trace);
     if let Some(gate_decision_ref) = gate_decision_ref.as_deref() {
         receipt
@@ -437,8 +495,10 @@ pub(super) fn dispatch_result_receipt(
         &gate_reason_codes,
         &gate_receipt_reasons,
     );
-    append_window_receipt_fields(&mut receipt, window_decision);
-    append_window_resolution_receipt_fields(&mut receipt, window_resolution, window_decision);
+    if let (Some(window_resolution), Some(window_decision)) = (window_resolution, window_decision) {
+        append_window_receipt_fields(&mut receipt, window_decision);
+        append_window_resolution_receipt_fields(&mut receipt, window_resolution, window_decision);
+    }
     if let Some(context) = request.context_receipt.as_ref() {
         context.append_to_fields(&mut receipt.fields);
     }

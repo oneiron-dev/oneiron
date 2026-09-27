@@ -130,6 +130,8 @@ impl Memory<'_> {
             &input.outbound_draft(),
             &OutboundScheduleContext::default(),
             Some(&input.frozen_payload()),
+            None,
         )
+        .map(|(receipt, _)| receipt)
     }
 }

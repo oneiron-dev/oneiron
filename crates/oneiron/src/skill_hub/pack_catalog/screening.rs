@@ -1,6 +1,6 @@
 //! Bounded, source-bound install rules for connector tool manifests.
 use super::tool_schema::{ResolvedToolSchema, TextRole};
-use super::{PackKind, PackObservedTool, PackQualification, PackSource, invalid};
+use super::{PackKind, PackObservedTool, PackSource, invalid};
 use crate::gate::{
     EffectivePackInstallPolicy, HolderInstallRow, PackInstallPolicyOverride, PackInstallRuleRow,
 };
@@ -98,7 +98,7 @@ impl Vault {
         &self,
         txn: &heed::RoTxn<'_>,
         source: &PackSource,
-        qualification: &PackQualification,
+        observed_tools: &[PackObservedTool],
         holder: &str,
     ) -> Result<Option<String>> {
         let resolution = crate::gate::resolve_policy_manifest(&self.store, txn)?;
@@ -128,11 +128,14 @@ impl Vault {
                 return Ok(Some(format!("secret-shaped string in {}", file.path)));
             }
             if file.path.starts_with("scripts/")
+                && file.path.ends_with(".py")
                 && let Some(reason) =
                     super::script_policy::screen_script(&file.path, text, &rules.allowed_calls)
             {
                 return Ok(Some(format!("{reason} in {}", file.path)));
             }
+            // The qualified code-mode JS sandbox adapter is not a host-side
+            // Python interpreter. Its host-call boundary is its runtime plan.
         }
         if source.manifest().kind != PackKind::Connector {
             return Ok(None);
@@ -214,10 +217,12 @@ impl Vault {
                 (description.to_owned(), resolved.canonical().clone()),
             );
         }
-        if declared.is_empty() {
-            return Ok(Some("connector has no declared tool manifest".into()));
+        if declared.is_empty() && observed_tools.is_empty() {
+            // A channel pack can expose no MCP tools. A nonempty observed
+            // surface below still fails the exact declared/actual count.
+            return Ok(None);
         }
-        if declared.len() != qualification.observed_tools.len() {
+        if declared.len() != observed_tools.len() {
             return Ok(Some("declared-vs-actual tool count mismatch".into()));
         }
         let mut seen = BTreeSet::new();
@@ -225,7 +230,7 @@ impl Vault {
             name,
             description,
             input_schema,
-        } in &qualification.observed_tools
+        } in observed_tools
         {
             if !seen.insert(name) {
                 return Ok(Some(format!("duplicate observed tool: {name}")));
