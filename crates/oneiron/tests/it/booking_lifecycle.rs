@@ -523,6 +523,49 @@ fn reminder_wake_rechecks_confirmed_status_and_current_occurrence() {
     );
 }
 
+#[test]
+fn reminder_wake_refuses_a_user_deleted_booking_shell() {
+    use oneiron::booking::{ReminderAction, booking_due_reminder, booking_reminder_wakes};
+    use oneiron::deletion::DeleteReason;
+
+    let fixture = Fixture::open();
+    let slot = slot_of(&fixture.offered_slots()[0]);
+    let confirmed = book(&fixture, session(b"deleted-reminder"), slot);
+    let event = confirmed.calendar.event_ref;
+    let wakes =
+        booking_reminder_wakes(event, slot.start, NOW, 45 * 60, 15 * 60).expect("reminder plan");
+    let first = &wakes[0];
+    assert_eq!(
+        booking_due_reminder(&fixture.vault, first, first.due_utc).expect("live booking"),
+        Some(ReminderAction::RescheduleFirst)
+    );
+
+    let deleted = fixture
+        .vault
+        .delete_entity_with_reason(&event, DeleteReason::UserDelete)
+        .expect("public user deletion");
+    assert!(deleted.existed);
+    assert!(
+        fixture
+            .vault
+            .is_deleted_shell(&event)
+            .expect("deleted shell")
+    );
+    // A user delete keeps the EVENT type in its shell. That retained type
+    // (and the booking claims) is not authority to send a reminder.
+    assert_eq!(
+        fixture
+            .vault
+            .get_entity_type(&event)
+            .expect("retained type"),
+        Some(ENTITY_TYPE_EVENT)
+    );
+    assert_eq!(
+        booking_due_reminder(&fixture.vault, first, first.due_utc).expect("deleted booking"),
+        None
+    );
+}
+
 // -------------------------------------------------------------------------
 // Holds
 // -------------------------------------------------------------------------

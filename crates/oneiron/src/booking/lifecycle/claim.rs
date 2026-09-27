@@ -79,6 +79,19 @@ pub(in crate::booking) fn confirmed_start_for_reminder(
     event_ref: &EntityId,
 ) -> Result<Option<u64>, BookingError> {
     let rtxn = read_txn(vault)?;
+    // Soft deletion keeps the EVENT header, occurrence, claims, and receipt.
+    // Resolve deletion metadata in this SAME snapshot before any of those
+    // retained facts can authorize a due reminder.
+    if !matches!(
+        crate::vault::live_entity_row_in_txn(&vault.store, &rtxn, event_ref)
+            .map_err(|error| engine_failure("booking EVENT liveness", error))?,
+        crate::vault::LiveEntityRow::Live {
+            entity_type: ENTITY_TYPE_EVENT,
+            ..
+        }
+    ) {
+        return Ok(None);
+    }
     let facts = read_booking_facts(vault, &rtxn, event_ref)?;
     if facts.status != BookingStatus::Confirmed {
         return Ok(None);
