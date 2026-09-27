@@ -22,7 +22,8 @@ pub enum WeaveReader<'a> {
     Agent(EntityId),
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum WeaveSectionKind {
     Changes,
     Projects,
@@ -433,7 +434,7 @@ fn weave_edge_live(flags: Option<crate::edge::EdgeProvenanceFlags>) -> bool {
 }
 
 impl WeaveSectionKind {
-    fn allowed_for(self, reader: &WeaveReader<'_>) -> bool {
+    pub(super) fn allowed_for(self, reader: &WeaveReader<'_>) -> bool {
         match reader {
             WeaveReader::Person(_) => matches!(
                 self,

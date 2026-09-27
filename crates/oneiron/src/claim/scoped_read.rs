@@ -23,6 +23,10 @@ mod pinned_reads;
 mod point_reads;
 mod receipt;
 mod retrieval_visibility;
+mod weave_digest;
+pub use weave_digest::{
+    StoredWeaveDigest, WeaveDigestCadence, WeaveDigestReader, WeaveDigestSchedule,
+};
 mod weave_report;
 pub use weave_report::{
     WeaveItem, WeaveReader, WeaveReport, WeaveSection, WeaveSectionKind, WeaveSectionSpec,

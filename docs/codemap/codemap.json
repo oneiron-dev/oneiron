@@ -7518,7 +7518,7 @@
      "surface": {
       "crate-vis": 5,
       "fn": 14,
-      "re-export": 3,
+      "re-export": 4,
       "struct": 1
      }
     },
@@ -7646,6 +7646,31 @@
      "bucket": "m",
      "kind": "src",
      "notable": [
+      "StoredWeaveDigest",
+      "WeaveDigestCadence",
+      "WeaveDigestReader",
+      "WeaveDigestSchedule"
+     ],
+     "path": "src/claim/scoped_read/weave_digest.rs",
+     "purpose": "Host-triggered, per-reader report schedules",
+     "surface": {
+      "enum": 2,
+      "fn": 4,
+      "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/claim/scoped_read/weave_digest/tests.rs",
+     "purpose": "—",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
       "WeaveItem",
       "WeaveReader",
       "WeaveReport",
@@ -7656,6 +7681,7 @@
      "path": "src/claim/scoped_read/weave_report.rs",
      "purpose": "Live weave data for a reader, not a saved digest or a rendered section recipe",
      "surface": {
+      "crate-vis": 1,
       "enum": 3,
       "fn": 1,
       "struct": 3
@@ -34784,7 +34810,7 @@
      "purpose": "—"
     },
     "claim": {
-     "files": 39,
+     "files": 41,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -35899,8 +35925,8 @@
    },
    "over_bar": 11,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2118,
-   "test_files": 722
+   "source_files": 2119,
+   "test_files": 723
   },
   "oneiron-android": {
    "files": [
