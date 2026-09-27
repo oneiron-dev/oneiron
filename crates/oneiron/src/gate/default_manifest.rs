@@ -8,7 +8,8 @@ use crate::provenance::PREDICATE_EDGE_PROVENANCE;
 
 use super::constants::{
     ACTOR_CEILING_KEY, ACTOR_CLASS_KEY, ACTOR_REF_KEY, AXIS_CRITICALITY_KEY, AXIS_SENSITIVITY_KEY,
-    LOCAL_WRITE_ACTOR_CLASS, POLICY_ACTOR_CEILINGS_KEY, POLICY_DEFAULTS_KEY,
+    LOCAL_WRITE_ACTOR_CLASS, POLICY_ACTOR_CEILINGS_KEY,
+    POLICY_CONSULT_FANOUT_APPROVAL_THRESHOLD_KEY, POLICY_DEFAULTS_KEY,
     POLICY_MIN_ENGINE_VERSION_KEY, POLICY_ON_BUDGET_EXHAUSTED_KEY, POLICY_OWNER_POLICY_ENABLED_KEY,
     POLICY_OWNER_POLICY_ROWS_KEY, POLICY_PACK_ID_KEY, POLICY_PACK_VERSION_KEY, POLICY_RULES_KEY,
     POLICY_SCHEMA_VERSION, POLICY_SCHEMA_VERSION_KEY, POLICY_SIGNATURES_KEY,
@@ -361,6 +362,12 @@ pub(crate) fn default_policy_manifest() -> Vec<u8> {
             Value::from(POLICY_ON_BUDGET_EXHAUSTED_KEY),
             Value::from("suspend"),
         ),
+        // Approval is triggered above this threshold. Keep the default as
+        // policy data so owner-authenticated manifest edits control it.
+        (
+            Value::from(POLICY_CONSULT_FANOUT_APPROVAL_THRESHOLD_KEY),
+            Value::from(25_u64),
+        ),
         // The owner policy plane ships OFF with zero rows: a fresh vault
         // classifies nothing and calls no safeguard model until its owner
         // opts in and writes their own rows.
@@ -387,4 +394,12 @@ pub(crate) fn default_policy_manifest() -> Vec<u8> {
     let mut data = Vec::new();
     rmpv::encode::write_value(&mut data, &manifest).expect("encode default policy manifest");
     data
+}
+
+/// Default for caller-side policy builders, read from the shipped manifest
+/// rather than duplicated as executable behavior.
+pub(crate) fn default_consult_fanout_approval_threshold() -> u32 {
+    super::decode::decode_policy_manifest(&default_policy_manifest())
+        .and_then(|manifest| manifest.consult_fanout_approval_threshold)
+        .expect("the shipped fan-out threshold row must decode")
 }

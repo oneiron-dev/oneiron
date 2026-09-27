@@ -38,6 +38,19 @@ impl PolicyManifestResolution {
         self.diagnostics.manifest_count > 0 || self.diagnostics.loaded_manifest_forces_fail_closed()
     }
 
+    /// No runtime default: missing or malformed owner policy must not allow a
+    /// fan-out to pass silently under an invented threshold.
+    pub(crate) fn consult_fanout_approval_threshold(&self) -> crate::error::Result<u32> {
+        if self.diagnostics.is_fail_closed() {
+            return Err(crate::error::Error::InvalidConfig(
+                "fan-out policy manifest is unavailable".into(),
+            ));
+        }
+        self.consult_fanout_approval_threshold.ok_or_else(|| {
+            crate::error::Error::InvalidConfig("fan-out approval threshold row missing".into())
+        })
+    }
+
     #[must_use]
     pub(crate) fn proposal_check_threshold(&self) -> u64 {
         self.proposal_check_threshold

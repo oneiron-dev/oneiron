@@ -18,7 +18,7 @@ pub struct ConsultFanOutPolicy {
 impl Default for ConsultFanOutPolicy {
     fn default() -> Self {
         Self {
-            approval_threshold: 25,
+            approval_threshold: crate::gate::default_consult_fanout_approval_threshold(),
             mode: ConsultFanOutMode::Auto,
             peer_rate: None,
         }
@@ -55,4 +55,11 @@ pub struct ConsultFanOutMeter {
     pub plan_digest: [u8; 32],
     /// AGENTS rows, generated from this same estimate, not re-metered.
     pub board_rows: Vec<AgentRow>,
+}
+
+/// Side-effect-free estimate of the counted consults in a submitted plan.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ConsultFanOutEstimate {
+    pub total_count: u32,
+    pub per_peer: BTreeMap<String, u32>,
 }

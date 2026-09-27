@@ -50,6 +50,10 @@ pub(super) fn hash_policy_frontier_v0(
         hash_u64(hasher, bounds.actor_writes);
     }
 
+    if let Some(threshold) = resolution.consult_fanout_approval_threshold {
+        hash_str(hasher, "consult_fanout_approval_threshold");
+        hash_u64(hasher, u64::from(threshold));
+    }
     if let Some(threshold) = resolution.proposal_check_threshold {
         hash_str(hasher, "proposal_check_threshold");
         hash_u64(hasher, threshold);

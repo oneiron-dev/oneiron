@@ -30,6 +30,11 @@ pub(super) const POLICY_ON_BUDGET_EXHAUSTED_KEY: &str = "on_budget_exhausted";
 /// unrecognized token fails the whole manifest closed at parse time, in the
 /// same class as an invalid `on_budget_exhausted` token.
 pub(super) const POLICY_COMM_OPT_OUT_POSTURE_KEY: &str = "comm_opt_out_posture";
+/// Vault-wide limit at which a consult fan-out requires its ordinary approval
+/// ladder. The default is stored in the default manifest, not applied by the
+/// fan-out runtime when policy data is absent.
+pub(crate) const POLICY_CONSULT_FANOUT_APPROVAL_THRESHOLD_KEY: &str =
+    "consult_fanout_approval_threshold";
 /// Optional top-level manifest key naming the HOST's auto checker (ONE-1296).
 ///
 /// The value is an opaque non-empty string the engine never interprets: it

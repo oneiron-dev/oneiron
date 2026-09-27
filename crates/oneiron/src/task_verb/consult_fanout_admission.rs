@@ -20,7 +20,7 @@ use crate::error::{Error, Result};
 use crate::fanout_auto::{
     FanoutAskClassifier, FanoutAskContext, FanoutAskTrigger, LearningFanoutAutoDecider,
 };
-use crate::gate::PolicyApprovalCeiling;
+use crate::gate::{POLICY_CONSULT_FANOUT_APPROVAL_THRESHOLD_KEY, PolicyApprovalCeiling};
 use crate::memory::{
     MEMORY_CODE_FORBIDDEN, MEMORY_CODE_INVALID_STATE, Memory, MemoryError, MemoryResult,
     facade_provenance, verify_actor_binding,
@@ -30,6 +30,8 @@ use crate::outbound_chokepoint::{
     FanoutPlan, FanoutPlanEdge, PeerRateSnapshot, admit_fanout_with_history, fanout_estimate,
     fanout_history_pathology,
 };
+use crate::ports::EntityStoreRead;
+use crate::registry::ENTITY_TYPE_POLICY_MANIFEST;
 use crate::task_verb::sdk::AgentVerb;
 use crate::unix_seconds_now;
 use rmpv::Value;
@@ -51,16 +53,64 @@ impl Memory<'_> {
         self.fan_out_consults_with_classifier(input, None)
     }
 
+    /// Admit a counted consult plan under a named preset. Repeated peer IDs
+    /// represent separate consult TASKs; the estimate groups them by peer.
+    pub fn fan_out_counted_consults(
+        &self,
+        input: &ConsultFanOutSpec,
+        preset: &str,
+    ) -> MemoryResult<ConsultFanOutReceipt> {
+        if preset.is_empty() || preset.trim() != preset {
+            return Err(MemoryError::bad_request("fan-out preset must be canonical"));
+        }
+        self.fan_out_consults_impl(input, None, true, Some(preset))
+    }
+
+    /// Meter a counted plan before admission. This does not write a TASK,
+    /// run a classifier, or persist a pause.
+    pub fn estimate_counted_consults(
+        &self,
+        input: &ConsultFanOutSpec,
+        preset: &str,
+    ) -> MemoryResult<super::ConsultFanOutEstimate> {
+        verify_actor_binding(self.vault(), self.actor(), self.actor_class())?;
+        if preset.is_empty() || preset.trim() != preset {
+            return Err(MemoryError::bad_request("fan-out preset must be canonical"));
+        }
+        let now = input.now.unwrap_or_else(unix_seconds_now);
+        let correlation = EntityId::now();
+        self.validate_fanout(input, correlation, now, true)?;
+        let txn = self.vault().store.env.read_txn().map_err(Error::from)?;
+        let policy = policy_in(self.vault(), &txn)?;
+        let plan =
+            FrozenInput::new(input, now, Some(preset)).plan(self.actor(), correlation, &policy)?;
+        let estimate = fanout_estimate(&plan)?;
+        Ok(super::ConsultFanOutEstimate {
+            total_count: estimate.total_count,
+            per_peer: estimate.per_peer,
+        })
+    }
+
     /// Host-injected AUTO classifier. Unavailable or uncertain classifiers surface a pause.
     pub fn fan_out_consults_with_classifier(
         &self,
         input: &ConsultFanOutSpec,
         classifier: Option<&dyn FanoutAskClassifier>,
     ) -> MemoryResult<ConsultFanOutReceipt> {
+        self.fan_out_consults_impl(input, classifier, false, None)
+    }
+
+    fn fan_out_consults_impl(
+        &self,
+        input: &ConsultFanOutSpec,
+        classifier: Option<&dyn FanoutAskClassifier>,
+        allow_repeated_peers: bool,
+        preset: Option<&str>,
+    ) -> MemoryResult<ConsultFanOutReceipt> {
         verify_actor_binding(self.vault(), self.actor(), self.actor_class())?;
         let now = input.now.unwrap_or_else(unix_seconds_now);
         let correlation = EntityId::now();
-        let validated = self.validate_fanout(input, correlation, now)?;
+        let validated = self.validate_fanout(input, correlation, now, allow_repeated_peers)?;
         let policy = {
             let txn = self
                 .vault()
@@ -70,7 +120,7 @@ impl Memory<'_> {
                 .map_err(crate::error::Error::from)?;
             policy_in(self.vault(), &txn)?
         };
-        let frozen = FrozenInput::new(input, now);
+        let frozen = FrozenInput::new(input, now, preset);
         let plan = frozen.plan(self.actor(), correlation, &policy)?;
         let estimate = fanout_estimate(&plan)?;
         let mut run = StoredFanout {
@@ -192,12 +242,71 @@ impl Memory<'_> {
             .memory(owner.actor(), crate::EdgeActorClass::Human)
             .with_verified_actor_write_txn(|txn| {
                 self.reauthenticate_fanout_owner(owner)?;
+                let id = crate::gate::default_policy_manifest_id()?;
+                let row = self
+                    .vault()
+                    .store
+                    .port_entity_record(txn, &id)?
+                    .ok_or_else(|| MemoryError::bad_request("default policy manifest missing"))?;
+                if row.entity_type != ENTITY_TYPE_POLICY_MANIFEST {
+                    return Err(MemoryError::bad_request("default policy manifest mistyped"));
+                }
+                let mut cursor = std::io::Cursor::new(row.body.as_slice());
+                let mut manifest = rmpv::decode::read_value(&mut cursor)
+                    .map_err(|_| MemoryError::bad_request("default policy manifest malformed"))?;
+                if cursor.position() != row.body.len() as u64 {
+                    return Err(MemoryError::bad_request(
+                        "default policy manifest trailing data",
+                    ));
+                }
+                let Value::Map(ref mut entries) = manifest else {
+                    return Err(MemoryError::bad_request(
+                        "default policy manifest malformed",
+                    ));
+                };
+                let positions: Vec<_> = entries
+                    .iter()
+                    .enumerate()
+                    .filter_map(|(index, (key, _))| {
+                        (key.as_str() == Some(POLICY_CONSULT_FANOUT_APPROVAL_THRESHOLD_KEY))
+                            .then_some(index)
+                    })
+                    .collect();
+                let [index] = positions.as_slice() else {
+                    return Err(MemoryError::bad_request(
+                        "fan-out approval threshold row missing or duplicated",
+                    ));
+                };
+                if entries[*index].1.as_u64().is_none() {
+                    return Err(MemoryError::bad_request(
+                        "fan-out approval threshold row malformed",
+                    ));
+                }
+                entries[*index].1 = Value::from(u64::from(policy.approval_threshold));
+                let mut bytes = Vec::new();
+                rmpv::encode::write_value(&mut bytes, &manifest)
+                    .map_err(|_| MemoryError::bad_request("cannot encode policy manifest"))?;
+                self.vault().write_owner_policy_manifest_in_txn(
+                    owner,
+                    txn,
+                    id,
+                    bytes,
+                    unix_seconds_now(),
+                )?;
                 self.vault()
                     .store
                     .vault_meta
                     .put(txn, POLICY_KEY, &encode(policy)?)?;
                 Ok(())
             })
+    }
+
+    /// Reads the effective owner-authored vault policy, including the resolved
+    /// manifest threshold rather than a caller or code-level fallback.
+    pub fn get_consult_fanout_policy(&self) -> MemoryResult<ConsultFanOutPolicy> {
+        verify_actor_binding(self.vault(), self.actor(), self.actor_class())?;
+        let txn = self.vault().store.env.read_txn().map_err(Error::from)?;
+        Ok(policy_in(self.vault(), &txn)?)
     }
 
     /// Rebuilds this actor's AGENTS counts from the durable metering rows.
@@ -254,6 +363,7 @@ impl Memory<'_> {
         input: &ConsultFanOutSpec,
         correlation: EntityId,
         now: u64,
+        allow_repeated_peers: bool,
     ) -> MemoryResult<Vec<ValidatedTaskCreate>> {
         if input.assignees.is_empty() {
             return Err(MemoryError::bad_request(
@@ -262,7 +372,7 @@ impl Memory<'_> {
         }
         let mut peers = input.assignees.clone();
         peers.sort_unstable();
-        if peers.windows(2).any(|pair| pair[0] == pair[1]) {
+        if !allow_repeated_peers && peers.windows(2).any(|pair| pair[0] == pair[1]) {
             return Err(MemoryError::bad_request(
                 "fan-out assignees must be distinct peer actors",
             ));
@@ -386,6 +496,8 @@ impl Memory<'_> {
             run.input
                 .assignees
                 .iter()
+                .collect::<std::collections::BTreeSet<_>>()
+                .into_iter()
                 .map(|peer| PeerRateSnapshot {
                     peer_ref: peer.clone(),
                     window_secs: rate.window_secs,

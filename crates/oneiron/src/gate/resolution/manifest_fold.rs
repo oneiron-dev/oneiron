@@ -155,6 +155,13 @@ pub(crate) fn resolve_policy_manifest(
                             .map_or(threshold, |old| old.min(threshold)),
                     );
                 }
+                if let Some(threshold) = decoded.consult_fanout_approval_threshold {
+                    resolution.consult_fanout_approval_threshold = Some(
+                        resolution
+                            .consult_fanout_approval_threshold
+                            .map_or(threshold, |old| old.min(threshold)),
+                    );
+                }
                 resolution.packs.push(decoded.pack);
             }
             None => {

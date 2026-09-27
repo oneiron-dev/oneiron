@@ -26,10 +26,12 @@ pub(super) struct FrozenInput {
     pub(super) deadline_at: u64,
     label: Option<String>,
     pub(super) now: u64,
+    /// An explicit preset scopes a counted fan-out standing ruling.
+    pub(super) preset: Option<String>,
 }
 
 impl FrozenInput {
-    pub(super) fn new(input: &ConsultFanOutSpec, now: u64) -> Self {
+    pub(super) fn new(input: &ConsultFanOutSpec, now: u64, preset: Option<&str>) -> Self {
         let mut assignees: Vec<_> = input.assignees.iter().map(EntityId::to_hex).collect();
         assignees.sort_unstable();
         Self {
@@ -43,6 +45,7 @@ impl FrozenInput {
             deadline_at: input.deadline_at,
             label: input.label.clone(),
             now,
+            preset: preset.map(str::to_owned),
         }
     }
 
@@ -79,15 +82,23 @@ impl FrozenInput {
             brief_ref: self.question.clone(),
             actor_ref: actor.to_hex(),
             mode: policy.mode,
-            edges: self
-                .assignees
-                .iter()
-                .map(|peer| FanoutPlanEdge {
-                    from_peer_ref: actor.to_hex(),
-                    to_peer_ref: peer.clone(),
-                    count: 1,
-                })
-                .collect(),
+            edges: {
+                let mut counts = std::collections::BTreeMap::<&str, u32>::new();
+                for peer in &self.assignees {
+                    let count = counts.entry(peer).or_default();
+                    *count = count
+                        .checked_add(1)
+                        .ok_or(Error::ArithmeticOverflow("fan-out per-peer count"))?;
+                }
+                counts
+                    .into_iter()
+                    .map(|(peer, count)| FanoutPlanEdge {
+                        from_peer_ref: actor.to_hex(),
+                        to_peer_ref: peer.to_owned(),
+                        count,
+                    })
+                    .collect()
+            },
         })
     }
 }
@@ -108,7 +119,10 @@ pub(super) struct StoredFanout {
 impl StoredFanout {
     pub(super) fn scope(&self) -> String {
         // A cap is for this actor, this durable question and the consult verb.
-        format!("consult:{}:{}", self.plan.actor_ref, self.plan.brief_ref)
+        match &self.input.preset {
+            Some(preset) => format!("consult:{}:preset:{preset}", self.plan.actor_ref),
+            None => format!("consult:{}:{}", self.plan.actor_ref, self.plan.brief_ref),
+        }
     }
 
     pub(super) fn receipt(&self) -> MemoryResult<ConsultFanOutReceipt> {
@@ -190,13 +204,17 @@ pub(super) fn runs_in(vault: &Vault, txn: &heed::RoTxn<'_>) -> Result<Vec<Stored
 }
 
 pub(super) fn policy_in(vault: &Vault, txn: &heed::RoTxn<'_>) -> Result<ConsultFanOutPolicy> {
-    vault
+    let threshold = crate::gate::resolve_policy_manifest(&vault.store, txn)?
+        .consult_fanout_approval_threshold()?;
+    let mut policy: ConsultFanOutPolicy = vault
         .store
         .vault_meta
         .get(txn, POLICY_KEY)?
         .map(|raw| decode(&raw))
-        .transpose()
-        .map(Option::unwrap_or_default)
+        .transpose()?
+        .unwrap_or_default();
+    policy.approval_threshold = threshold;
+    Ok(policy)
 }
 
 /// The caller commits this transaction before returning any durable ref.

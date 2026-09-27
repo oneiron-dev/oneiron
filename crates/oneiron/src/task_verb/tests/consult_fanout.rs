@@ -451,3 +451,182 @@ fn fanout_corrupt_standing_policy_refuses_even_below_threshold() {
     assert_eq!(error.code, crate::memory::MEMORY_CODE_INTERNAL);
     assert_eq!(task_entity_census(&vault), 1);
 }
+
+#[test]
+fn counted_fanout_estimates_and_mints_each_consult_for_one_peer() {
+    let (_dir, vault) = open_vault();
+    let actor = own_agent(&vault);
+    let peer = consult_peer(&vault, 0xE2);
+    let input = ConsultFanOutSpec {
+        question_ref: consult_turn(&vault, 0x7A),
+        context_refs: Vec::new(),
+        assignees: vec![peer; 3],
+        deadline_at: unix_seconds_now() + 3600,
+        label: None,
+        now: None,
+    };
+    let facade = vault.memory(actor, EdgeActorClass::Agent);
+    let estimate = facade
+        .estimate_counted_consults(&input, "research")
+        .unwrap();
+    assert_eq!(estimate.total_count, 3);
+    assert_eq!(estimate.per_peer[&peer.to_hex()], 3);
+    assert_eq!(task_entity_census(&vault), 0);
+    let admitted = facade.fan_out_counted_consults(&input, "research").unwrap();
+    assert_eq!(admitted.task_refs.len(), 3);
+    assert_eq!(admitted.meter.total_count, 3);
+    assert_eq!(admitted.meter.per_peer[&peer.to_hex()], 3);
+    assert_eq!(task_entity_census(&vault), 3);
+}
+
+#[test]
+fn counted_fanout_remembered_cap_is_preset_scoped() {
+    let (_dir, vault) = open_vault();
+    let actor = own_agent(&vault);
+    let human = owner(&vault);
+    let peer = consult_peer(&vault, 0xE2);
+    let base = ConsultFanOutSpec {
+        question_ref: consult_turn(&vault, 0x7A),
+        context_refs: Vec::new(),
+        assignees: vec![peer; 2],
+        deadline_at: unix_seconds_now() + 3600,
+        label: None,
+        now: None,
+    };
+    let facade = vault.memory(actor, EdgeActorClass::Agent);
+    facade
+        .set_consult_fanout_policy(
+            &human,
+            &ConsultFanOutPolicy {
+                approval_threshold: 1,
+                ..ConsultFanOutPolicy::default()
+            },
+        )
+        .unwrap();
+    let paused = facade.fan_out_counted_consults(&base, "research").unwrap();
+    assert!(paused.paused.is_some());
+    assert!(paused.task_refs.is_empty());
+    let ruled = facade
+        .resume_fan_out_consults_with_cap(
+            paused.correlation_ref,
+            paused.meter.plan_digest,
+            ConsultFanOutChoice::ApproveAndRemember,
+            &human,
+            Some(5),
+        )
+        .unwrap();
+    assert_eq!(ruled.task_refs.len(), 2);
+    let larger = ConsultFanOutSpec {
+        assignees: vec![peer; 4],
+        ..base.clone()
+    };
+    assert_eq!(
+        facade
+            .fan_out_counted_consults(&larger, "research")
+            .unwrap()
+            .task_refs
+            .len(),
+        4
+    );
+    assert!(
+        facade
+            .fan_out_counted_consults(&larger, "outreach")
+            .unwrap()
+            .paused
+            .is_some()
+    );
+    let over = ConsultFanOutSpec {
+        assignees: vec![peer; 6],
+        ..base
+    };
+    assert!(
+        facade
+            .fan_out_counted_consults(&over, "research")
+            .unwrap()
+            .paused
+            .is_some()
+    );
+}
+
+#[test]
+fn fanout_threshold_is_owner_authored_manifest_data_and_survives_reopen() {
+    let (dir, vault) = open_vault();
+    let actor = own_agent(&vault);
+    let human = owner(&vault);
+    let facade = vault.memory(actor, EdgeActorClass::Agent);
+    assert_eq!(
+        facade
+            .get_consult_fanout_policy()
+            .unwrap()
+            .approval_threshold,
+        25
+    );
+    let next = ConsultFanOutPolicy {
+        approval_threshold: 100,
+        ..ConsultFanOutPolicy::default()
+    };
+    facade.set_consult_fanout_policy(&human, &next).unwrap();
+    let manifest_id = crate::gate::default_policy_manifest_id().unwrap();
+    let raw = vault
+        .latest_entity_bodies_by_type(crate::registry::ENTITY_TYPE_POLICY_MANIFEST, 10, 100)
+        .unwrap()
+        .into_iter()
+        .find(|(id, _, _)| *id == manifest_id)
+        .unwrap()
+        .2;
+    let Value::Map(rows) = rmpv::decode::read_value(&mut raw.as_slice()).unwrap() else {
+        panic!("default manifest must remain a map")
+    };
+    let row = rows
+        .iter()
+        .find(|(name, _)| {
+            name.as_str() == Some(crate::gate::POLICY_CONSULT_FANOUT_APPROVAL_THRESHOLD_KEY)
+        })
+        .unwrap();
+    assert_eq!(row.1.as_u64(), Some(100));
+    drop(vault);
+    let reopened = Vault::open(dir.path(), VaultConfig::default()).unwrap();
+    assert_eq!(
+        reopened
+            .memory(actor, EdgeActorClass::Agent)
+            .get_consult_fanout_policy()
+            .unwrap()
+            .approval_threshold,
+        100
+    );
+}
+
+#[test]
+fn fanout_missing_manifest_threshold_refuses_instead_of_falling_back() {
+    let (_dir, vault) = open_vault();
+    let actor = own_agent(&vault);
+    let peer = consult_peer(&vault, 0xE2);
+    let Value::Map(mut rows) =
+        rmpv::decode::read_value(&mut crate::gate::default_policy_manifest().as_slice()).unwrap()
+    else {
+        panic!("default manifest must be a map")
+    };
+    rows.retain(|(name, _)| {
+        name.as_str() != Some(crate::gate::POLICY_CONSULT_FANOUT_APPROVAL_THRESHOLD_KEY)
+    });
+    let mut bytes = Vec::new();
+    rmpv::encode::write_value(&mut bytes, &Value::Map(rows)).unwrap();
+    crate::test_util::put_policy_manifest_bytes(
+        &vault,
+        crate::gate::default_policy_manifest_id().unwrap(),
+        &bytes,
+    )
+    .unwrap();
+    let input = ConsultFanOutSpec {
+        question_ref: consult_turn(&vault, 0x7A),
+        context_refs: Vec::new(),
+        assignees: vec![peer],
+        deadline_at: unix_seconds_now() + 3600,
+        label: None,
+        now: None,
+    };
+    let facade = vault.memory(actor, EdgeActorClass::Agent);
+    assert!(facade.get_consult_fanout_policy().is_err());
+    assert!(facade.fan_out_counted_consults(&input, "research").is_err());
+    assert_eq!(task_entity_census(&vault), 0);
+}

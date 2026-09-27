@@ -16686,7 +16686,7 @@
      "path": "src/gate/constants.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 77
+      "crate-vis": 78
      }
     },
     {
@@ -16774,7 +16774,7 @@
      "path": "src/gate/default_manifest.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 4
      }
     },
     {
@@ -16959,7 +16959,7 @@
      "path": "src/gate/mod.rs",
      "purpose": "DEC-0005 Gate policy manifest resolver",
      "surface": {
-      "crate-vis": 26,
+      "crate-vis": 27,
       "re-export": 3
      }
     },
@@ -17004,7 +17004,7 @@
      "path": "src/gate/resolution/accessors.rs",
      "purpose": "Read-only resolved-field accessors plus the frontier-hash entry",
      "surface": {
-      "crate-vis": 24
+      "crate-vis": 25
      }
     },
     {
@@ -32248,7 +32248,7 @@
      "purpose": "Meter and admit consult fan-outs before any TASK exists",
      "surface": {
       "crate-vis": 4,
-      "fn": 4
+      "fn": 7
      }
     },
     {
@@ -32268,7 +32268,7 @@
      "path": "src/task_verb/consult_fanout_resume.rs",
      "purpose": "Authenticated exact-digest resume; ruling, policy and TASKs commit together",
      "surface": {
-      "fn": 2
+      "fn": 3
      }
     },
     {
@@ -32286,6 +32286,7 @@
      "kind": "src",
      "notable": [
       "ConsultFanOutChoice",
+      "ConsultFanOutEstimate",
       "ConsultFanOutMeter",
       "ConsultFanOutPause",
       "ConsultFanOutPolicy",
@@ -32296,7 +32297,7 @@
      "surface": {
       "enum": 1,
       "re-export": 1,
-      "struct": 4
+      "struct": 5
      }
     },
     {
@@ -34673,7 +34674,7 @@
      "path": "tests/it/effect_spine_oracle.rs",
      "purpose": "Effect Spine forward test oracle (doc 13, ONE-1713 epic) — authored by the ONE-1714 path opener",
      "surface": {
-      "crate-vis": 102
+      "crate-vis": 103
      }
     },
     {

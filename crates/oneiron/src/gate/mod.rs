@@ -47,6 +47,7 @@ pub use self::confirm::{
 pub(crate) use self::confirm::{
     critical_write_confirm_binding, reconcile_critical_write_confirm_on_replicated_overwrite,
 };
+pub(crate) use self::constants::POLICY_CONSULT_FANOUT_APPROVAL_THRESHOLD_KEY;
 #[cfg(test)]
 pub(crate) use self::constants::{
     FIRST_PARTY_CONNECTOR_ACTOR_ID, POLICY_LEGAL_FLOOR_ROWS_KEY, POLICY_OWNER_POLICY_DOCUMENT_KEY,
@@ -60,7 +61,8 @@ pub(crate) use self::decision::gate_metric_emission_count_for_test;
 pub(crate) use self::decision::{GateDecision, GateMetrics, GateOutcome, GateReasonCode};
 pub(crate) use self::decode::normalize_policy_manifest_scope;
 pub(crate) use self::default_manifest::{
-    DEFAULT_POLICY_MANIFEST_TIMESTAMP, default_policy_manifest, default_policy_manifest_id,
+    DEFAULT_POLICY_MANIFEST_TIMESTAMP, default_consult_fanout_approval_threshold,
+    default_policy_manifest, default_policy_manifest_id,
 };
 pub(crate) use self::definition_ceiling::agent_definition_ceiling_for_actor;
 #[cfg(test)]
