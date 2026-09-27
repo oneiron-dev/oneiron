@@ -120,11 +120,12 @@ impl FromStr for EmbedderQuant {
 #[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq)]
 #[serde(rename_all = "kebab-case")]
 pub enum EmbedderDevice {
-    /// The best device this build can reach: Metal, else CPU.
+    /// The best device this build can reach: Metal, then CUDA, else CPU.
     #[default]
     Auto,
     Cpu,
     Metal,
+    Cuda,
 }
 
 impl EmbedderDevice {
@@ -133,6 +134,7 @@ impl EmbedderDevice {
             Self::Auto => "auto",
             Self::Cpu => "cpu",
             Self::Metal => "metal",
+            Self::Cuda => "cuda",
         }
     }
 }
@@ -145,8 +147,9 @@ impl FromStr for EmbedderDevice {
             "auto" => Ok(Self::Auto),
             "cpu" => Ok(Self::Cpu),
             "metal" => Ok(Self::Metal),
+            "cuda" => Ok(Self::Cuda),
             other => Err(format!(
-                "unknown embedder device {other:?} (expected auto, cpu or metal)"
+                "unknown embedder device {other:?} (expected auto, cpu, metal or cuda)"
             )),
         }
     }
@@ -497,7 +500,7 @@ pub struct EmbedderArgs {
     /// Root directory downloaded models are stored under.
     #[arg(long = "embedder-models-dir")]
     pub embedder_models_dir: Option<PathBuf>,
-    /// Local device: `auto`, `cpu` or `metal`.
+    /// Local device: `auto`, `cpu`, `metal` or `cuda`.
     #[arg(long = "embedder-device", value_parser = parse_device)]
     pub embedder_device: Option<EmbedderDevice>,
     /// Threads the load-time quantisation spreads over; `0` means all cores.

@@ -150,6 +150,31 @@ fn a_zero_request_timeout_is_refused_rather_than_timing_out_every_request() {
 }
 
 #[test]
+fn a_cuda_device_resolves_through_the_config_file() {
+    let resolved = resolve("dimensions = 1024\n\n[embedder]\ndevice = \"cuda\"\n")
+        .expect("cuda is a supported local device");
+    assert_eq!(
+        resolved.embedder.expect("embedder configured").local.device,
+        EmbedderDevice::Cuda
+    );
+}
+
+#[test]
+fn a_cuda_device_resolves_through_the_environment() {
+    let env = EnvConfig::from_pairs([
+        ("ONEIRON_DIMENSIONS", "1024"),
+        ("ONEIRON_EMBEDDER_DEVICE", "cuda"),
+    ])
+    .expect("cuda parses");
+    let resolved = resolve_serve_config_with_sources(&ServeArgs::default(), env, None)
+        .expect("cuda is a supported local device");
+    assert_eq!(
+        resolved.embedder.expect("embedder configured").local.device,
+        EmbedderDevice::Cuda
+    );
+}
+
+#[test]
 fn an_unknown_provider_name_fails_closed() {
     let error = resolve("dimensions = 1024\n\n[embedder]\nprovider = \"magic\"\n")
         .expect_err("an unknown provider is refused");

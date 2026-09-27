@@ -17,7 +17,12 @@ pub(super) fn resolve_device(configured: EmbedderDevice) -> oneiron::Result<Devi
         EmbedderDevice::Metal => Device::new_metal(0).map_err(|e| {
             oneiron::Error::InvalidConfig(format!("embedder device metal is unavailable: {e}"))
         }),
-        EmbedderDevice::Auto => Ok(Device::new_metal(0).unwrap_or(Device::Cpu)),
+        EmbedderDevice::Cuda => Device::new_cuda(0).map_err(|e| {
+            oneiron::Error::InvalidConfig(format!("embedder device cuda is unavailable: {e}"))
+        }),
+        EmbedderDevice::Auto => Ok(Device::new_metal(0)
+            .or_else(|_| Device::new_cuda(0))
+            .unwrap_or(Device::Cpu)),
     }
 }
 
