@@ -719,3 +719,38 @@ async fn selected_preview_lifecycle_matrix_keeps_retained_shape_separate_from_co
         }
     }
 }
+
+#[tokio::test]
+async fn empty_room_remains_listable_after_dag_read() {
+    let (_dir, server, actor) = setup();
+    let empty = post(&server, "/v1/core/conversations", json!({"body": {}})).await;
+    let healthy = post(&server, "/v1/core/conversations", json!({"body": {}})).await;
+    let healthy_records = format!(
+        "/v1/core/conversations/{}/records",
+        healthy["id"].as_str().unwrap()
+    );
+    post(
+        &server,
+        &healthy_records,
+        json!({
+            "advance": true, "actor": actor, "body": {"txt": "healthy room content"},
+        }),
+    )
+    .await;
+    let empty_records = format!(
+        "/v1/core/conversations/{}/records",
+        empty["id"].as_str().unwrap()
+    );
+    let dag = get(&server, &empty_records).await;
+    assert!(dag["head"].is_null());
+    assert_eq!(dag["main_line"], json!([]));
+    let list = get(&server, "/v1/core/conversations?limit=20").await;
+    let rows = list["items"].as_array().unwrap();
+    assert!(
+        rows.iter().find(|row| row["id"] == empty["id"]).unwrap()["lastMessageSnippet"].is_null()
+    );
+    assert_eq!(
+        rows.iter().find(|row| row["id"] == healthy["id"]).unwrap()["lastMessageSnippet"],
+        "healthy room content"
+    );
+}

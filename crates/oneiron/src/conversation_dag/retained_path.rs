@@ -59,6 +59,7 @@ pub(crate) struct SelectedPathSnapshot {
 pub(crate) enum PreviewTopology {
     Selected(SelectedPathSnapshot),
     ChildOfOnly,
+    ProvenEmpty,
 }
 
 enum SessionReadEvidence {
@@ -122,15 +123,19 @@ fn session_evidence(
     }
 }
 
-fn prove_childof_only(vault: &Vault, txn: &RoTxn<'_>, conversation: &EntityId) -> Result<()> {
+fn prove_childof_only(
+    vault: &Vault,
+    txn: &RoTxn<'_>,
+    conversation: &EntityId,
+) -> Result<PreviewTopology> {
     let store = &vault.store;
-    if store
+    let marker = store
         .vault_meta
-        .get(txn, &graph::key(MIGRATED, conversation))?
-        .is_some()
-    {
-        return Err(graph::invalid("DAG has no selected HEAD"));
+        .get(txn, &graph::key(MIGRATED, conversation))?;
+    if marker.as_deref().is_some_and(|value| value != [1]) {
+        return Err(Error::CorruptedIndex("conversation DAG migration marker"));
     }
+    let mut has_turn = false;
     for entry in store.port_edges(
         txn,
         conversation,
@@ -144,6 +149,10 @@ fn prove_childof_only(vault: &Vault, txn: &RoTxn<'_>, conversation: &EntityId) -
         };
         if raw.entity_type != ENTITY_TYPE_TURN {
             continue;
+        }
+        has_turn = true;
+        if marker.is_some() {
+            return Err(graph::invalid("DAG has no selected HEAD"));
         }
         if !graph::edge_ids(store, txn, &id, EdgeKind::Parent, false, 2)?.is_empty()
             || graph::read_id(store, txn, CANONICAL, &id)?.is_some()
@@ -175,7 +184,13 @@ fn prove_childof_only(vault: &Vault, txn: &RoTxn<'_>, conversation: &EntityId) -
             }
         }
     }
-    Ok(())
+    if has_turn {
+        Ok(PreviewTopology::ChildOfOnly)
+    } else if marker.is_some() {
+        Ok(PreviewTopology::ProvenEmpty)
+    } else {
+        Ok(PreviewTopology::ChildOfOnly)
+    }
 }
 
 impl SelectedPathSnapshot {
@@ -193,8 +208,7 @@ impl SelectedPathSnapshot {
             return Err(graph::invalid("selected conversation is not live"));
         }
         let Some(head) = head else {
-            prove_childof_only(vault, txn, conversation)?;
-            return Ok(PreviewTopology::ChildOfOnly);
+            return prove_childof_only(vault, txn, conversation);
         };
         let mut seen = HashSet::new();
         let mut reversed = Vec::new();

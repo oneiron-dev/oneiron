@@ -30,6 +30,7 @@ impl Vault {
                 return Ok(None);
             }
             PreviewTopology::ChildOfOnly => {}
+            PreviewTopology::ProvenEmpty => return Ok(None),
         }
         let mut latest: Option<(u64, EntityId, String)> = None;
         for edge in self.store.port_edges(
@@ -95,6 +96,8 @@ impl Vault {
             if self.archive_tombstone_in_txn(txn, &id)?.is_some() {
                 continue;
             }
+            #[cfg(feature = "sync")]
+            let body = crate::entity_doc::resolve_record_body(&self.store, txn, &id, &body)?;
             let Some(message) = rmp_serde::from_slice::<Value>(&body).ok() else {
                 continue;
             };
@@ -115,6 +118,10 @@ impl Vault {
         if let Some((_, _, text)) = latest {
             return Ok(Some(text));
         }
+        #[cfg(feature = "sync")]
+        let resolved = crate::entity_doc::resolve_record_body(&self.store, txn, &turn.id, body)?;
+        #[cfg(feature = "sync")]
+        let body = resolved.as_slice();
         Ok(rmp_serde::from_slice::<Value>(body)
             .ok()
             .and_then(|body| body.get("txt").and_then(Value::as_str).map(str::to_owned)))
