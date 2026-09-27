@@ -171,6 +171,7 @@ impl NativeClient {
                 suggestions: vec!["Use the documented keyed DTO.".to_owned()],
                 successor_short_id: None,
                 gate_denial: None,
+                read_receipt: None,
             })
         })?;
         let output = self.inner.agent_verb("can", input).map_err(facade_error)?;
@@ -185,6 +186,7 @@ impl NativeClient {
                 suggestions: vec!["Use the documented keyed DTO.".to_owned()],
                 successor_short_id: None,
                 gate_denial: None,
+                read_receipt: None,
             })
         })?;
         let output = self.inner.agent_verb("peek", input).map_err(facade_error)?;
