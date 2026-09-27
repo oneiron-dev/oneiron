@@ -1699,6 +1699,7 @@ fn cross_resident_diary_coreference_requires_both_exact_grants_on_every_read() {
 
 #[test]
 fn empty_or_revoked_diary_link_does_not_use_a_neighbor_slot() {
+    use crate::context_pack::ContextEntity;
     use crate::note::{NoteScope, NoteWriteEnvelope};
     let (_dir, vault) = open_vault();
     let a = put_person(&vault, 0x51);
@@ -1733,8 +1734,97 @@ fn empty_or_revoked_diary_link_does_not_use_a_neighbor_slot() {
     };
     mb.link_diary_coreference(b_note, hidden).unwrap();
     mb.link_diary_coreference(b_note, visible).unwrap();
-    ma.grant_diary_coreference(b_note, visible).unwrap();
-    mb.grant_diary_coreference(b_note, visible).unwrap();
+    let visible_grant_a = ma.grant_diary_coreference(b_note, visible).unwrap();
+    let visible_grant_b = mb.grant_diary_coreference(b_note, visible).unwrap();
+    assert!(
+        b_note < low,
+        "injected ID source orders b before both a notes"
+    );
+    let issuer = crate::authority::HostSlipIssuer::from_secret(b"diary graph-ask matrix").unwrap();
+    let root = vault.ensure_host_root_slip(&issuer).unwrap();
+    let mut claims = root.claims;
+    claims.slip_id = *blake3::hash(a.as_bytes()).as_bytes();
+    claims.holder_ref = a.to_hex();
+    claims.actor_class = Some("human".into());
+    let slip = vault.mint_capability_slip(&issuer, claims).unwrap();
+    let sig = issuer
+        .binding_proof(&slip, b"diary graph-ask matrix")
+        .unwrap();
+    let proof = vault
+        .verify_capability_slip(&issuer.public_key(), &slip, b"diary graph-ask matrix", &sig)
+        .unwrap();
+    let read_a =
+        vault.scoped_read(crate::claim::ScopedReadActorKey::from_verified_slip(&proof).unwrap());
+    let graph = || {
+        read_a
+            .graph_ask_neighbors(&b_note, 3, 3, 16_384)
+            .unwrap()
+            .unwrap()
+    };
+    let baseline_graph: Vec<_> = graph().into_iter().map(|row| row.0).collect();
+    assert_eq!(baseline_graph.len(), 3);
+    assert_eq!(baseline_graph.last(), Some(&visible));
+    assert!(!baseline_graph.contains(&hidden));
+    let outbound = read_a.edges_out(&b_note).unwrap().value.unwrap();
+    assert!(
+        outbound
+            .iter()
+            .any(|edge| edge.kind == EdgeKind::SameAs && edge.target == visible)
+    );
+    assert!(
+        !outbound
+            .iter()
+            .any(|edge| edge.kind == EdgeKind::SameAs && edge.target == hidden)
+    );
+    let pack_check = |shared_hidden: bool| {
+        let item = |id: EntityId, edges| ContextEntity {
+            critical: false,
+            id,
+            short_id: id.to_hex(),
+            content_hash: 0,
+            source_revision_ref: None,
+            entity_type: ENTITY_TYPE_NOTE,
+            score: 1.0,
+            fields: None,
+            edges,
+            vector: None,
+        };
+        let mut pack = vault
+            .context_pack()
+            .search_text("absent-pack-query", 4)
+            .run()
+            .unwrap();
+        pack.results = vec![item(b_note, Some(vault.edges_out(&b_note).unwrap()))];
+        pack.neighbors = vec![item(hidden, None), item(visible, None)];
+        let receipt = read_a.filter_context_pack(&mut pack).unwrap();
+        assert_eq!(
+            pack.neighbors
+                .iter()
+                .map(|item| item.id)
+                .collect::<Vec<_>>(),
+            if shared_hidden {
+                vec![hidden, visible]
+            } else {
+                vec![visible]
+            }
+        );
+        let edges = pack.results[0].edges.as_ref().unwrap();
+        assert_eq!(
+            edges
+                .iter()
+                .any(|edge| edge.kind == EdgeKind::SameAs && edge.target == hidden),
+            shared_hidden
+        );
+        assert!(
+            edges
+                .iter()
+                .any(|edge| edge.kind == EdgeKind::SameAs && edge.target == visible)
+        );
+        if !shared_hidden {
+            assert_eq!(receipt.suppressed_count, 0);
+        }
+    };
+    pack_check(false);
     let opts = NeighborOpts {
         edge_kind: Some("same_as".into()),
         limit: 1,
@@ -1747,8 +1837,58 @@ fn empty_or_revoked_diary_link_does_not_use_a_neighbor_slot() {
     mb.grant_diary_coreference(b_note, hidden).unwrap();
     let first = mb.neighbors(&b_note.to_hex(), &opts).unwrap();
     assert_eq!(first[0].short_id, ma.short_ref_or_hex(&hidden).unwrap());
+    let newly_shared: Vec<_> = graph().into_iter().map(|row| row.0).collect();
+    assert_eq!(newly_shared.len(), 3);
+    assert_eq!(newly_shared.last(), Some(&hidden));
+    pack_check(true);
     ma.revoke_diary_coreference_grant(hidden_grant).unwrap();
+    pack_check(false);
+    assert_eq!(
+        graph().into_iter().map(|row| row.0).collect::<Vec<_>>(),
+        baseline_graph
+    );
     let restored = mb.neighbors(&b_note.to_hex(), &opts).unwrap();
     assert_eq!(restored.len(), 1);
     assert_eq!(restored[0].short_id, ma.short_ref_or_hex(&visible).unwrap());
+
+    let wrong_scope_id = EntityId::now();
+    vault
+        .create_access_grant(
+            &wrong_scope_id,
+            &crate::access_grant::AccessGrant::companion_profile_read(a, a, visible, 1),
+        )
+        .unwrap();
+    let malformed_id = EntityId::now();
+    vault
+        .with_write_txn(|txn| {
+            let raw = vault
+                .store
+                .entities
+                .get(txn, visible_grant_a.as_bytes())?
+                .unwrap();
+            let mut malformed = raw[..ENTITY_METADATA_HEADER_LEN].to_vec();
+            malformed.extend_from_slice(b"not a grant body");
+            vault
+                .store
+                .entities
+                .put(txn, malformed_id.as_bytes(), &malformed)?;
+            Ok(())
+        })
+        .unwrap();
+    let absent = EntityId::from_bytes([0xf5; 16]).unwrap();
+    let opaque = ma.revoke_diary_coreference_grant(absent).unwrap_err();
+    for id in [b_note, visible_grant_b, wrong_scope_id, malformed_id] {
+        assert_eq!(ma.revoke_diary_coreference_grant(id).unwrap_err(), opaque);
+    }
+    assert_eq!(
+        graph().into_iter().map(|row| row.0).collect::<Vec<_>>(),
+        baseline_graph
+    );
+    ma.revoke_diary_coreference_grant(visible_grant_a).unwrap();
+    assert!(
+        read_a
+            .graph_ask_neighbors(&b_note, 3, 3, 16_384)
+            .unwrap()
+            .is_none()
+    );
 }

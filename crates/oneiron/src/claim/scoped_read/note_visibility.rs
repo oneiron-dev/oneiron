@@ -76,29 +76,6 @@ impl ScopedRead<'_> {
 }
 
 impl ScopedRead<'_> {
-    pub(super) fn diary_edge_readable_in(
-        &self,
-        txn: &heed::RoTxn<'_>,
-        source: EntityId,
-        edge: &crate::edge::EdgeInfo,
-    ) -> Result<bool> {
-        if edge.kind != crate::edge::EdgeKind::SameAs {
-            return Ok(true);
-        }
-        let source_note = self
-            .entity_record_in(txn, &source)?
-            .is_some_and(|row| row.entity_type == crate::registry::ENTITY_TYPE_NOTE);
-        let target_note = self
-            .entity_record_in(txn, &edge.target)?
-            .is_some_and(|row| row.entity_type == crate::registry::ENTITY_TYPE_NOTE);
-        if source_note || target_note {
-            return crate::note::diary_coreference_shared_in(self.vault, txn, source, edge.target);
-        }
-        Ok(true)
-    }
-}
-
-impl ScopedRead<'_> {
     /// Private diary candidates admitted under this query's snapshot. The
     /// pipeline keeps the set only for this run and still performs its final
     /// current + indexed-frontier authority checks on every resulting hit.
@@ -106,7 +83,7 @@ impl ScopedRead<'_> {
         &self,
         txn: &heed::RoTxn<'_>,
         requested: &crate::gate::ResolvedRetrievalFilter,
-    ) -> Result<HashSet<EntityId>> {
+    ) -> Result<super::ScopedDiaryCandidates> {
         let (_, policy) = self.resolve_retrieval_filter_in(txn, None)?;
         let mut admitted = HashSet::new();
         for row in self
@@ -135,6 +112,6 @@ impl ScopedRead<'_> {
                 admitted.insert(id);
             }
         }
-        Ok(admitted)
+        Ok(super::ScopedDiaryCandidates::from_admission(admitted))
     }
 }

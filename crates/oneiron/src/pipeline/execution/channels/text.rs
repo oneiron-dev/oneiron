@@ -31,7 +31,7 @@ pub(super) struct TextChannelInputs<'a> {
     pub(super) filter_config: PipelineFilterConfig<'a>,
     pub(super) authority_filter: &'a crate::gate::ResolvedRetrievalFilter,
     pub(super) text_scope_widening_active: bool,
-    pub(super) private_note_ids: Option<&'a std::collections::HashSet<EntityId>>,
+    pub(super) private_note_ids: Option<&'a crate::claim::ScopedDiaryCandidates>,
     /// The D19 widening probe's gate cache, moved in and reused as the
     /// exact-posting probe gate.
     pub(super) claim_gate_widening_probe: ClaimStatusGateCache,

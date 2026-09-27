@@ -391,7 +391,7 @@ pub use kind_contract::{
 };
 mod birth;
 mod coreference;
-pub(crate) use coreference::{readable_through_link, shared_in as diary_coreference_shared_in};
+pub(crate) use coreference::{edge_access_in as diary_edge_access_in, readable_through_link};
 #[cfg(feature = "sync")]
 mod brief_view;
 mod document;

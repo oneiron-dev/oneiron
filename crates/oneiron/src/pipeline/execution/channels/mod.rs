@@ -52,7 +52,7 @@ struct SnapshotInputs<'a> {
 
 /// One snapshot's actor-bound NOTE admission and the gates that share it.
 struct ScopedChannelAdmission {
-    private_note_ids: Option<std::sync::Arc<std::collections::HashSet<crate::EntityId>>>,
+    private_note_ids: Option<std::sync::Arc<crate::claim::ScopedDiaryCandidates>>,
     accumulator: ChannelAccumulator,
     claim_gate: ClaimStatusGateCache,
     widening_probe: ClaimStatusGateCache,

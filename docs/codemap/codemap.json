@@ -7519,7 +7519,7 @@
      "surface": {}
     },
     {
-     "bucket": "L",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "ScopedRead"
@@ -7528,7 +7528,7 @@
      "purpose": "The policy-gated read lane: [`ScopedReadActorKey`], [`ScopedRead`], and the admission/filtering surface that…",
      "surface": {
       "crate-vis": 5,
-      "fn": 13,
+      "fn": 12,
       "re-export": 3,
       "struct": 1
      }
@@ -7558,13 +7558,33 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/claim/scoped_read/admission.rs",
+     "purpose": "One-snapshot scoped row projection: value and receipt contribution together",
+     "surface": {
+      "crate-vis": 9
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/claim/scoped_read/edge_admission.rs",
+     "purpose": "The one scoped graph projection: exact relation + both endpoints, then limits",
+     "surface": {
+      "crate-vis": 4
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/claim/scoped_read/graph_reads.rs",
      "purpose": "Receipted graph and timeline reads under the resolved actor floor",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 2,
       "fn": 4
      }
     },
@@ -7585,7 +7605,7 @@
      "path": "src/claim/scoped_read/note_visibility.rs",
      "purpose": "Actor and class checks for private NOTE bodies in scoped reads",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 2
      }
     },
     {
@@ -7620,7 +7640,7 @@
      "path": "src/claim/scoped_read/receipt.rs",
      "purpose": "Mandatory read receipts",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 1,
       "fn": 4,
       "struct": 3
      }
@@ -7644,14 +7664,14 @@
      "surface": {}
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/claim/scoped_read/versions.rs",
      "purpose": "Explicit read frontiers keep the scoped lane's current and historic gates",
      "surface": {
-      "crate-vis": 6,
-      "fn": 1
+      "crate-vis": 7,
+      "fn": 2
      }
     },
     {
@@ -20239,7 +20259,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "test",
      "notable": [],
      "path": "src/llm/decision/questions/graph_ask_tests.rs",
@@ -22145,11 +22165,40 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
-     "path": "src/note/coreference.rs",
-     "purpose": "Resident-scoped diary coreference, separate from cross-vault PERSON identity",
+     "path": "src/note/coreference/access.rs",
+     "purpose": "One transaction-bound answer for node and exact-relation diary access",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 7
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/note/coreference/commands.rs",
+     "purpose": "Resident submissions and revocation",
+     "surface": {
       "fn": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/note/coreference/mod.rs",
+     "purpose": "Transaction-bound resident diary coreference over NOTE, edge and grant rows",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/note/coreference/pair.rs",
+     "purpose": "Canonical pair identity and resident-owned submission witnesses",
+     "surface": {
+      "crate-vis": 7
      }
     },
     {
@@ -34960,9 +35009,9 @@
      "purpose": "—"
     },
     "claim": {
-     "files": 39,
+     "files": 41,
      "impl_vault": true,
-     "largest_src_bucket": "L",
+     "largest_src_bucket": "m",
      "layout": "dir",
      "purpose": "CLAIM body ABI + typed Claim API (ARCH-0003, pinned decisions D11/D17/D18)"
     },
@@ -35555,7 +35604,7 @@
      "purpose": "Durable batched speculation over real detached worktrees"
     },
     "note": {
-     "files": 29,
+     "files": 32,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "file+dir",
@@ -36073,9 +36122,9 @@
      "purpose": "Write-path stamping: `WriteActor`/`WriteProvenance`/`WriteEnvelope`/`ClaimCandidate` + evidence stamping"
     }
    },
-   "over_bar": 11,
+   "over_bar": 10,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2130,
+   "source_files": 2135,
    "test_files": 725
   },
   "oneiron-android": {

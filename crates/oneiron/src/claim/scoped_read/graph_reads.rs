@@ -15,8 +15,8 @@ type SupersessionParts = (TimelineEntityParts, TimelineEntityParts);
 
 impl ScopedRead<'_> {
     /// The graph-ask recipe reads at most `limit` usable outgoing neighbors.
-    /// Cap the raw scan too, so an invisible high-degree region cannot force
-    /// an unbounded authority walk. Unit and neighbors share one read snapshot.
+    /// Its semantic scan cap applies after admission, so Empty relations cannot
+    /// consume a slot or create a raw-degree error. One read snapshot binds all.
     pub(crate) fn graph_ask_neighbors(
         &self,
         unit: &EntityId,
@@ -24,21 +24,39 @@ impl ScopedRead<'_> {
         scan_limit: usize,
         max_body_bytes: usize,
     ) -> Result<Option<GraphAskNeighbors>> {
-        let txn = self.vault.store.env.read_txn()?;
-        let (filter, policy) = self.resolve_retrieval_filter_in(&txn, None)?;
-        if !self.is_entity_retrievable_with_policy_in(&txn, &policy, &filter, unit)? {
+        let txn = self.grant_read_txn()?;
+        self.graph_ask_neighbors_in_txn(&txn, unit, limit, scan_limit, max_body_bytes)
+    }
+
+    /// Recheck the exact adjacency in an already-held write/read snapshot.
+    pub(crate) fn graph_ask_neighbors_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        unit: &EntityId,
+        limit: usize,
+        scan_limit: usize,
+        max_body_bytes: usize,
+    ) -> Result<Option<GraphAskNeighbors>> {
+        let (filter, policy) = self.resolve_retrieval_filter_in(txn, None)?;
+        let admitted = self.admitted_edges_in(
+            txn,
+            &policy,
+            &filter,
+            unit,
+            EdgeDirection::Out,
+            None,
+            scan_limit,
+            scan_limit,
+            true,
+        )?;
+        if !admitted.source.visible() {
             return Ok(None);
         }
         let mut kept = Vec::new();
-        let mut seen = HashSet::new();
-        seen.insert(*unit);
-        for entry in self.out_edges_in(&txn, unit, None)?.take(scan_limit) {
-            let edge = entry?;
-            if !seen.insert(edge.target) {
-                continue;
-            }
+        for edge in admitted.edges {
+            let edge = edge.info();
             let Some(raw) = self.entity_raw_with_mode_in(
-                &txn,
+                txn,
                 &policy,
                 &filter,
                 &edge.target,
@@ -69,31 +87,25 @@ impl ScopedRead<'_> {
     pub fn edges_out(&self, id: &EntityId) -> Result<ScopedReadResult<Option<Vec<EdgeInfo>>>> {
         let txn = self.grant_read_txn()?;
         let (filter, policy) = self.resolve_retrieval_filter_in(&txn, None)?;
-        let mut suppressed = 0;
-        let value = if self.is_entity_retrievable_with_policy_in(&txn, &policy, &filter, id)? {
-            let mut kept = Vec::new();
-            for edge in self.edges_out_in(&txn, id)? {
-                // Empty-scope diary links are not even counted in the receipt:
-                // a count would reveal a private cross-diary endpoint.
-                if !self.diary_edge_readable_in(&txn, *id, &edge)? {
-                    continue;
-                }
-                if self.is_entity_retrievable_with_policy_in(
-                    &txn,
-                    &policy,
-                    &filter,
-                    &edge.target,
-                )? {
-                    kept.push(edge);
-                } else if self.countable_suppression_in(&txn, &edge.target)? {
-                    suppressed += 1;
-                }
-            }
-            Some(kept)
-        } else {
-            suppressed += usize::from(self.countable_suppression_in(&txn, id)?);
-            None
-        };
+        let admitted = self.admitted_edges_in(
+            &txn,
+            &policy,
+            &filter,
+            id,
+            EdgeDirection::Out,
+            None,
+            usize::MAX,
+            usize::MAX,
+            false,
+        )?;
+        let suppressed = admitted.source.suppression() + admitted.suppressed;
+        let value = admitted.source.visible().then(|| {
+            admitted
+                .edges
+                .into_iter()
+                .map(super::edge_admission::AdmittedEdge::info)
+                .collect()
+        });
         Ok(ScopedReadResult {
             value,
             receipt: self.receipt_for(None, &policy, &filter, suppressed),
@@ -105,8 +117,12 @@ impl ScopedRead<'_> {
         let (filter, policy) = {
             let txn = self.grant_read_txn()?;
             let (filter, policy) = self.resolve_retrieval_filter_in(&txn, None)?;
-            if !self.timeline_anchor_allowed_in(&txn, &policy, &filter, anchor)? {
-                let suppressed = usize::from(self.countable_suppression_in(&txn, anchor)?);
+            let admitted = self.admit_in(&txn, anchor, || {
+                self.timeline_anchor_allowed_in(&txn, &policy, &filter, anchor)
+                    .map(|visible| visible.then_some(()))
+            })?;
+            if !admitted.visible() {
+                let suppressed = admitted.suppression();
                 return Ok(ScopedReadResult {
                     value: MemoryTimeline {
                         anchor: *anchor,
@@ -125,13 +141,20 @@ impl ScopedRead<'_> {
         let mut suppressed = 0;
         let mut kept = Vec::new();
         for record in timeline.records {
-            if anchor_allowed
-                && self.timeline_record_allowed_in(&txn, &policy, &filter, &record)?
-                && self.timeline_record_allowed_in(&txn, &fresh_policy, &fresh_filter, &record)?
-            {
+            let admitted = self.admit_in(&txn, &record.id, || {
+                Ok((anchor_allowed
+                    && self.timeline_record_allowed_in(&txn, &policy, &filter, &record)?
+                    && self.timeline_record_allowed_in(
+                        &txn,
+                        &fresh_policy,
+                        &fresh_filter,
+                        &record,
+                    )?)
+                .then_some(()))
+            })?;
+            suppressed += admitted.suppression();
+            if admitted.visible() {
                 kept.push(record);
-            } else if self.countable_suppression_in(&txn, &record.id)? {
-                suppressed += 1;
             }
         }
         let ids: HashSet<_> = kept.iter().map(|record| record.id).collect();
@@ -167,8 +190,12 @@ impl ScopedRead<'_> {
                 value.push(None);
                 continue;
             }
-            if !self.timeline_record_allowed_in(&txn, &policy, &filter, record)? {
-                suppressed += usize::from(self.countable_suppression_in(&txn, &record.id)?);
+            let admitted = self.admit_in(&txn, &record.id, || {
+                self.timeline_record_allowed_in(&txn, &policy, &filter, record)
+                    .map(|visible| visible.then_some(()))
+            })?;
+            suppressed += admitted.suppression();
+            if !admitted.visible() {
                 value.push(None);
                 continue;
             }

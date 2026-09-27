@@ -12,7 +12,6 @@ use crate::store::ShortIdAliasTarget;
 use crate::vault::require_key_len;
 use crate::{EntityId, HydratedShortId, Vault};
 use heed::{RoTxn, RwTxn};
-use std::collections::HashSet;
 impl Vault {
     /// Actor-bound diary ids are evaluated by the scoped query in this read
     /// transaction. The ownerless RetrievalIndex trait always passes None.
@@ -22,7 +21,7 @@ impl Vault {
         query: &[f32],
         limit: usize,
         skip_rescore: bool,
-        private_note_ids: Option<&HashSet<EntityId>>,
+        private_note_ids: Option<&crate::claim::ScopedDiaryCandidates>,
     ) -> Result<Vec<ScoredEntity>> {
         let population = crate::hnsw::hnsw_entity_count(&self.store, txn)?;
         // A nonzero request still validates an apparently empty index.
@@ -129,7 +128,7 @@ fn filter_results(
     vault: &Vault,
     txn: &RoTxn<'_>,
     rows: Vec<ScoredEntity>,
-    private_note_ids: Option<&HashSet<EntityId>>,
+    private_note_ids: Option<&crate::claim::ScopedDiaryCandidates>,
 ) -> Result<Vec<ScoredEntity>> {
     let mut result = Vec::new();
     for row in rows {

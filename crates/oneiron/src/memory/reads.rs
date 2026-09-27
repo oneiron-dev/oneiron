@@ -18,7 +18,7 @@ use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;
 use crate::error::Error;
 use crate::ports::EdgeStoreRead;
-use crate::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_NOTE};
+use crate::registry::ENTITY_TYPE_CLAIM;
 
 const SNIPPET_MAX_CHARS: usize = 160;
 
@@ -359,25 +359,17 @@ impl Memory<'_> {
             } else {
                 crate::ports::EdgeDirection::In
             };
-            for (scanned, entry) in self
-                .vault
-                .store
-                .port_edges(&txn, &id, edge_direction, kind_filter, None)?
-                .enumerate()
+            for entry in
+                self.vault
+                    .store
+                    .port_edges(&txn, &id, edge_direction, kind_filter, None)?
             {
-                if scanned >= crate::vault::MAX_EDGE_QUERY_RESULTS {
-                    return Err(Error::IndexOverflow("memory neighbors").into());
-                }
                 let edge = entry?;
                 if opts.min_weight.is_some_and(|min| edge.weight < min) {
                     continue;
                 }
                 // Endpoint admission is not consent to a DIFFERENT link.
-                if edge.kind == EdgeKind::SameAs
-                    && (self.vault.get_entity_type_in_txn(&txn, &id)? == Some(ENTITY_TYPE_NOTE)
-                        || self.vault.get_entity_type_in_txn(&txn, &edge.target)?
-                            == Some(ENTITY_TYPE_NOTE))
-                    && !crate::note::diary_coreference_shared_in(self.vault, &txn, id, edge.target)?
+                if !crate::note::diary_edge_access_in(self.vault, &txn, id, edge.kind, edge.target)?
                 {
                     continue;
                 }

@@ -1,6 +1,6 @@
 //! Query-side: term collection, prefix expansion, search entry points, hint collapse.
 use std::collections::hash_map::Entry;
-use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::str;
 
 use heed::RoTxn;
@@ -31,7 +31,7 @@ where
     pub(crate) recency: Option<Bm25RecencyConfig>,
     pub(crate) exact_posting_matches_scope: &'a mut F,
     /// The scoped query's transaction-local, authenticated diary NOTE ids.
-    pub(crate) private_note_ids: Option<&'a HashSet<EntityId>>,
+    pub(crate) private_note_ids: Option<&'a crate::claim::ScopedDiaryCandidates>,
 }
 
 #[derive(Debug, Clone, Copy, Default)]

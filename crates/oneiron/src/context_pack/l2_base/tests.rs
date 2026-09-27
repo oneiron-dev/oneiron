@@ -412,7 +412,9 @@ fn implicit_owner_subject_reuses_prefix_and_keeps_fresh_hits_in_delta() -> Resul
 #[test]
 fn implicit_persona_subjects_follow_companion_scope_not_unrelated_people() -> Result<()> {
     use crate::claim::{ClaimSource, ScopedReadActorKey};
-    use crate::companion::{CompanionProvenance, CompanionRecord, CompanionScope};
+    use crate::companion::{
+        CompanionProvenance, CompanionRecord, CompanionScope, CompanionSubject,
+    };
     use crate::edge::EdgeActorClass;
     let (_dir, vault, unrelated) = fixture();
     let person = crate::test_util::entity(0x64);
@@ -433,11 +435,12 @@ fn implicit_persona_subjects_follow_companion_scope_not_unrelated_people() -> Re
     );
     vault.create_companion_record(
         &crate::test_util::entity(0x66),
-        &CompanionRecord::persona(
+        &CompanionRecord::new(
             CompanionScope::personal(person),
-            persona,
+            CompanionSubject::persona(persona),
             rmpv::Value::from("persona"),
             provenance,
+            ClaimLifecycleStatus::Active,
             crate::federation::Sensitivity::Private,
         ),
         1,
@@ -505,7 +508,9 @@ fn implicit_persona_subjects_follow_companion_scope_not_unrelated_people() -> Re
 #[test]
 fn implicit_prefix_limits_do_not_fail_an_otherwise_valid_pack() -> Result<()> {
     use crate::claim::ClaimSource;
-    use crate::companion::{CompanionProvenance, CompanionRecord, CompanionScope};
+    use crate::companion::{
+        CompanionProvenance, CompanionRecord, CompanionScope, CompanionSubject,
+    };
     use crate::edge::EdgeActorClass;
     let (_dir, vault, _) = fixture();
     let provenance = CompanionProvenance::new(
@@ -519,11 +524,12 @@ fn implicit_prefix_limits_do_not_fail_an_otherwise_valid_pack() -> Result<()> {
     for n in 0..9_u8 {
         vault.create_companion_record(
             &crate::test_util::entity(0x90 + n),
-            &CompanionRecord::persona(
+            &CompanionRecord::new(
                 CompanionScope::neutral(),
-                crate::test_util::entity(0x80 + n),
+                CompanionSubject::persona(crate::test_util::entity(0x80 + n)),
                 rmpv::Value::from("persona"),
                 provenance.clone(),
+                ClaimLifecycleStatus::Active,
                 crate::federation::Sensitivity::Public,
             ),
             1,
@@ -564,7 +570,9 @@ fn implicit_prefix_limits_do_not_fail_an_otherwise_valid_pack() -> Result<()> {
 #[test]
 fn unscoped_owner_discovers_its_personal_persona_not_a_strangers() -> Result<()> {
     use crate::claim::ClaimSource;
-    use crate::companion::{CompanionProvenance, CompanionRecord, CompanionScope};
+    use crate::companion::{
+        CompanionProvenance, CompanionRecord, CompanionScope, CompanionSubject,
+    };
     use crate::edge::EdgeActorClass;
     let (_dir, vault, stranger) = fixture();
     let owner = vault.ensure_embedded_owner_actor().unwrap();
@@ -583,11 +591,12 @@ fn unscoped_owner_discovers_its_personal_persona_not_a_strangers() -> Result<()>
     ] {
         vault.create_companion_record(
             &id,
-            &CompanionRecord::persona(
+            &CompanionRecord::new(
                 CompanionScope::personal(person),
-                persona,
+                CompanionSubject::persona(persona),
                 rmpv::Value::from("persona"),
                 provenance.clone(),
+                ClaimLifecycleStatus::Active,
                 crate::federation::Sensitivity::Public,
             ),
             1,

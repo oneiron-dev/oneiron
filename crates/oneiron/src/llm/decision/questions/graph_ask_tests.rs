@@ -134,6 +134,31 @@ impl GraphAnswerer for FixedAnswerer {
     }
 }
 
+struct RevokeDuringAnswer<'a> {
+    vault: &'a Vault,
+    actor: EntityId,
+    grant: EntityId,
+    neighbor: EntityId,
+    saw_neighbor: bool,
+}
+impl GraphAnswerer for RevokeDuringAnswer<'_> {
+    fn answer(
+        &mut self,
+        _: &DecisionQuestion,
+        context: &GraphUnitContext,
+    ) -> crate::Result<Option<GraphPrediction>> {
+        self.saw_neighbor = context
+            .sources
+            .iter()
+            .any(|source| source.id == self.neighbor);
+        self.vault
+            .memory(self.actor, EdgeActorClass::Human)
+            .revoke_diary_coreference_grant(self.grant)
+            .unwrap();
+        Ok(Some(prediction()))
+    }
+}
+
 fn scoped_claim(principal: EntityId, subject: EntityId) -> ClaimBody {
     let mut body = ClaimBody::new(
         "profile.note",
@@ -780,5 +805,69 @@ fn high_degree_unit_stops_after_bounded_readable_neighborhood() -> crate::Result
     assert_eq!(result.answers.len(), 1);
     assert_eq!(answerer.contexts.len(), 1);
     assert_eq!(answerer.contexts[0].sources.len(), 17);
+    Ok(())
+}
+
+#[test]
+fn diary_pair_revoked_during_answerer_cannot_be_used_as_graph_evidence() -> crate::Result<()> {
+    use crate::note::{NoteKind, NoteScope, NoteWriteEnvelope};
+    let (_temp, vault) = open_vault();
+    let (a, _) = identities(&vault)?;
+    let b = EntityId::now();
+    put_entity(&vault, b, ENTITY_TYPE_PERSON, b"other resident")?;
+    let am = vault.memory(a, EdgeActorClass::Human);
+    let bm = vault.memory(b, EdgeActorClass::Human);
+    let diary = |memory: &crate::memory::Memory<'_>, owner: EntityId| {
+        let receipt = memory
+            .author_note(&NoteWriteEnvelope {
+                kind: NoteKind::Diary,
+                scope: NoteScope::ActorPrivate { owner_ref: owner },
+                markdown: "private diary text".into(),
+                source_revision_ref: [7; 16],
+                mask: None,
+            })
+            .unwrap();
+        EntityId::from_hex(&receipt.id_hex).unwrap()
+    };
+    let a1 = diary(&am, a);
+    let a2 = diary(&am, a);
+    let b_note = diary(&bm, b);
+    assert!(a2 < b_note);
+    am.link_diary_coreference(a1, b_note).unwrap();
+    am.link_diary_coreference(a2, b_note).unwrap();
+    am.grant_diary_coreference(a1, b_note).unwrap();
+    bm.grant_diary_coreference(a1, b_note).unwrap();
+    let revoked = am.grant_diary_coreference(a2, b_note).unwrap();
+    bm.grant_diary_coreference(a2, b_note).unwrap();
+
+    let mut answerer = RevokeDuringAnswer {
+        vault: &vault,
+        actor: a,
+        grant: revoked,
+        neighbor: b_note,
+        saw_neighbor: false,
+    };
+    let result = run_graph_ask(
+        &vault,
+        a,
+        WriteActor::new(a, EdgeActorClass::Human),
+        question(),
+        &[a2],
+        &mut answerer,
+        23,
+    )
+    .map_err(|failure| *failure.error)?;
+    assert!(
+        answerer.saw_neighbor,
+        "shared pair initially enters the callback"
+    );
+    assert!(result.answers.is_empty());
+    assert_eq!(result.abstained, vec![a2]);
+    // B remains independently readable through a1-b; only the a2-b edge
+    // was revoked. A node-level recheck alone would falsely admit this answer.
+    let scoped = vault.scoped_read(
+        crate::claim::ScopedReadActorKey::with_actor_class(a.to_hex(), "human").unwrap(),
+    );
+    assert!(scoped.get(&b_note)?.value.is_some());
     Ok(())
 }
