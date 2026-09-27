@@ -35,8 +35,9 @@ pub(super) struct FoldContext<'a> {
     /// [`folded_peer_device_is_consent_root`] only inside
     /// [`fold_peer_authority_log`].
     pub(super) consent_arm: fn(&FoldedDevice) -> bool,
-    /// Managed roots issue slips; legacy device-key widens are not a door.
-    pub(super) hosted_root: bool,
+    /// Only verified pre-handoff ancestry can use retired device-key ops.
+    /// None is the legacy-only reference fold, never the posture-aware vault door.
+    pub(super) pre_handoff_entries: Option<&'a BTreeSet<AuthorityEntryHash>>,
 }
 
 impl FoldContext<'_> {
@@ -45,11 +46,12 @@ impl FoldContext<'_> {
     }
 }
 
-#[derive(Default)]
+#[derive(Default, Clone, Copy)]
 struct FoldLocalInputs<'a> {
     observations: Option<&'a AuthorityLocalObservations>,
     deadline_observer: Option<&'a Cell<Option<u64>>>,
-    hosted_root: bool,
+    retire_device_ops: bool,
+    pre_handoff_entries: Option<&'a BTreeSet<AuthorityEntryHash>>,
 }
 
 /// Folds a set of authority entries into a deterministic roster.
@@ -66,7 +68,10 @@ pub fn fold_authority_log(entries: &[AuthorityLogEntry]) -> AuthorityFold {
         true,
         &peer_consent_roots,
         folded_device_can_authority_consent,
-        FoldLocalInputs::default(),
+        FoldLocalInputs {
+            retire_device_ops: true,
+            ..FoldLocalInputs::default()
+        },
     )
 }
 
@@ -83,6 +88,51 @@ pub(super) fn fold_authority_log_without_seen_time_delay(
         false,
         &peer_consent_roots,
         folded_device_can_authority_consent,
+        FoldLocalInputs::default(),
+    )
+}
+
+// Historical signed-history reference for unit tests of pre-handoff ancestry.
+// Never used by Vault, peers, cache, replay admission, or public authorization.
+#[cfg(test)]
+pub(super) fn fold_legacy_authority_log(entries: &[AuthorityLogEntry]) -> AuthorityFold {
+    fold_authority_log_inner(
+        entries,
+        &BTreeMap::new(),
+        Some(0),
+        true,
+        &BTreeMap::new(),
+        folded_device_can_authority_consent,
+        FoldLocalInputs::default(),
+    )
+}
+
+#[cfg(test)]
+pub(super) fn fold_legacy_authority_log_with_seen_times(
+    entries: &[AuthorityLogEntry],
+    first_seen_at_secs: &BTreeMap<AuthorityEntryHash, u64>,
+    now_secs: u64,
+) -> AuthorityFold {
+    fold_authority_log_inner(
+        entries,
+        first_seen_at_secs,
+        Some(now_secs),
+        true,
+        &BTreeMap::new(),
+        folded_device_can_authority_consent,
+        FoldLocalInputs::default(),
+    )
+}
+
+#[cfg(test)]
+pub(super) fn fold_legacy_peer_authority_log(entries: &[AuthorityLogEntry]) -> AuthorityFold {
+    fold_authority_log_inner(
+        entries,
+        &BTreeMap::new(),
+        None,
+        false,
+        &BTreeMap::new(),
+        folded_peer_device_is_consent_root,
         FoldLocalInputs::default(),
     )
 }
@@ -125,7 +175,10 @@ pub(crate) fn fold_authority_log_with_peer_consent_roots(
         true,
         peer_consent_roots,
         folded_device_can_authority_consent,
-        FoldLocalInputs::default(),
+        FoldLocalInputs {
+            retire_device_ops: true,
+            ..FoldLocalInputs::default()
+        },
     )
 }
 
@@ -151,7 +204,7 @@ pub fn fold_authority_log_for_posture(
         peer_consent_roots,
         consent,
         FoldLocalInputs {
-            hosted_root: posture == crate::HostingPrivacyPosture::Hosted,
+            retire_device_ops: true,
             ..FoldLocalInputs::default()
         },
     )
@@ -178,7 +231,10 @@ pub fn fold_peer_authority_log(entries: &[AuthorityLogEntry]) -> AuthorityFold {
         false,
         &peer_consent_roots,
         folded_peer_device_is_consent_root,
-        FoldLocalInputs::default(),
+        FoldLocalInputs {
+            retire_device_ops: true,
+            ..FoldLocalInputs::default()
+        },
     )
 }
 
@@ -210,7 +266,8 @@ pub(super) fn fold_authority_log_with_local_observations_and_posture_with_deadli
         FoldLocalInputs {
             observations: Some(observations),
             deadline_observer: Some(&deadline),
-            hosted_root: posture == crate::HostingPrivacyPosture::Hosted,
+            retire_device_ops: true,
+            pre_handoff_entries: None,
         },
     );
     (fold, deadline.get())
@@ -225,6 +282,58 @@ fn fold_authority_log_inner(
     consent_arm: fn(&FoldedDevice) -> bool,
     local: FoldLocalInputs<'_>,
 ) -> AuthorityFold {
+    if local.retire_device_ops {
+        // Only a fully verified re-root can authenticate retired ancestry.
+        // The probe never authorizes; shrink candidate handoffs until each
+        // survives a strict refold under just its own pre-handoff ancestors.
+        let probe = fold_authority_log_inner(
+            entries,
+            first_seen_at_secs,
+            now_secs,
+            enforce_seen_time_delay,
+            peer_consent_roots,
+            consent_arm,
+            FoldLocalInputs {
+                retire_device_ops: false,
+                pre_handoff_entries: None,
+                ..local
+            },
+        );
+        let mut candidates: BTreeSet<_> = if probe.vault_root_is_conflicted() {
+            BTreeSet::new()
+        } else {
+            entries
+                .iter()
+                .filter(|entry| matches!(entry.op, AuthorityOp::ReRoot { .. }))
+                .filter_map(|entry| authority_entry_hash(entry).ok())
+                .filter(|hash| probe.valid_entries.contains(hash))
+                .collect()
+        };
+        loop {
+            let allowed = verified_handoff_ancestors(entries, &candidates);
+            let result = fold_authority_log_inner(
+                entries,
+                first_seen_at_secs,
+                now_secs,
+                enforce_seen_time_delay,
+                peer_consent_roots,
+                consent_arm,
+                FoldLocalInputs {
+                    retire_device_ops: false,
+                    pre_handoff_entries: Some(&allowed),
+                    ..local
+                },
+            );
+            let retained: BTreeSet<_> = candidates
+                .intersection(&result.valid_entries)
+                .copied()
+                .collect();
+            if retained == candidates {
+                return result;
+            }
+            candidates = retained;
+        }
+    }
     let mut vetoed_widens = BTreeSet::new();
     let sequence_floors = local
         .observations
@@ -246,7 +355,7 @@ fn fold_authority_log_inner(
             entry_ancestors: None,
             peer_consent_roots,
             consent_arm,
-            hosted_root: local.hosted_root,
+            pre_handoff_entries: local.pre_handoff_entries,
         },
     );
     for _ in 0..=entries.len() {
@@ -266,7 +375,7 @@ fn fold_authority_log_inner(
                 entry_ancestors: None,
                 peer_consent_roots,
                 consent_arm,
-                hosted_root: local.hosted_root,
+                pre_handoff_entries: local.pre_handoff_entries,
             },
         );
     }
@@ -292,6 +401,70 @@ fn fold_authority_log_inner(
         }
     }
     fold
+}
+
+/// Retired device operations are usable only in a verified re-root's signed
+/// ancestry and only before the first handoff on that branch. A later re-root
+/// never revives device-key enrollment after a prior handoff.
+fn verified_handoff_ancestors(
+    entries: &[AuthorityLogEntry],
+    valid_handoffs: &BTreeSet<AuthorityEntryHash>,
+) -> BTreeSet<AuthorityEntryHash> {
+    let by_hash: BTreeMap<_, _> = entries
+        .iter()
+        .filter_map(|entry| authority_entry_hash(entry).ok().map(|hash| (hash, entry)))
+        .collect();
+    let mut permitted = BTreeSet::new();
+    for (hash, entry) in &by_hash {
+        if !valid_handoffs.contains(hash) || !matches!(entry.op, AuthorityOp::ReRoot { .. }) {
+            continue;
+        }
+        let mut stack = entry.parent_hashes.clone();
+        let mut visited = BTreeSet::new();
+        while let Some(parent) = stack.pop() {
+            if !visited.insert(parent) {
+                continue;
+            }
+            let Some(ancestor) = by_hash.get(&parent) else {
+                continue;
+            };
+            if matches!(ancestor.op, AuthorityOp::ReRoot { .. }) {
+                continue;
+            }
+            stack.extend(ancestor.parent_hashes.iter().copied());
+            if matches!(
+                ancestor.op,
+                AuthorityOp::EnrollDevice { .. }
+                    | AuthorityOp::RotateKey { .. }
+                    | AuthorityOp::SetTierFloor { .. }
+                    | AuthorityOp::VetoPendingWiden { .. }
+            ) && !has_re_root_ancestor(ancestor, &by_hash)
+            {
+                permitted.insert(parent);
+            }
+        }
+    }
+    permitted
+}
+
+fn has_re_root_ancestor(
+    entry: &AuthorityLogEntry,
+    by_hash: &BTreeMap<AuthorityEntryHash, &AuthorityLogEntry>,
+) -> bool {
+    let mut stack = entry.parent_hashes.clone();
+    let mut visited = BTreeSet::new();
+    while let Some(hash) = stack.pop() {
+        if !visited.insert(hash) {
+            continue;
+        }
+        if let Some(ancestor) = by_hash.get(&hash) {
+            if matches!(ancestor.op, AuthorityOp::ReRoot { .. }) {
+                return true;
+            }
+            stack.extend(ancestor.parent_hashes.iter().copied());
+        }
+    }
+    false
 }
 
 fn fold_authority_log_once(

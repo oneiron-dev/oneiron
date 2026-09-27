@@ -213,3 +213,126 @@ fn managed_root_accepts_logged_slips_but_never_device_key_widens() {
         }
     }
 }
+
+#[test]
+fn retired_device_key_widens_do_not_activate_in_any_posture() {
+    let root = ed_key(71);
+    let root_key = authority_key_from_ed(&root);
+    let genesis = genesis_entry(71, DEFAULT_PENDING_WIDEN_DELAY_SECS, 1);
+    let vault_id = genesis_vault_id(&genesis).unwrap();
+    let new_key = authority_key_from_ed(&ed_key(72));
+    for posture in [
+        crate::HostingPrivacyPosture::Hosted,
+        crate::HostingPrivacyPosture::SelfHostLocal,
+        crate::HostingPrivacyPosture::Relay,
+    ] {
+        for tier in [AuthorityTier::Software, AuthorityTier::Hardware] {
+            let candidate = device(new_key.clone(), ROLE_OWNER | ROLE_ADMIN, tier);
+            for op in [
+                AuthorityOp::EnrollDevice {
+                    device: candidate.clone(),
+                },
+                AuthorityOp::RotateKey {
+                    old_key: root_key.clone(),
+                    new_device: candidate,
+                },
+                AuthorityOp::SetTierFloor {
+                    tier_floor: AuthorityTier::Hardware,
+                },
+            ] {
+                let attempted = sign_ed(
+                    unsigned_entry(
+                        Some(vault_id),
+                        1,
+                        vec![authority_entry_hash(&genesis).unwrap()],
+                        op,
+                        root_key.clone(),
+                        2,
+                    ),
+                    &root,
+                );
+                let hash = authority_entry_hash(&attempted).unwrap();
+                let seen = BTreeMap::from([(hash, 1)]);
+                let folded = fold_authority_log_for_posture(
+                    &[genesis.clone(), attempted],
+                    &seen,
+                    1 + DEFAULT_PENDING_WIDEN_DELAY_SECS,
+                    &BTreeMap::new(),
+                    posture,
+                );
+                assert!(
+                    !folded.valid_entries.contains(&hash),
+                    "{posture:?} {tier:?}"
+                );
+                assert!(!folded.roster.contains_key(&new_key));
+                assert!(!folded.roster[&root_key].revoked);
+            }
+        }
+    }
+}
+
+#[test]
+fn pairing_mints_a_logged_slip_not_a_client_authority_key_in_every_posture() {
+    let issuer = HostSlipIssuer::from_secret(b"posture-pairing-root").unwrap();
+    for posture in [
+        crate::HostingPrivacyPosture::Hosted,
+        crate::HostingPrivacyPosture::SelfHostLocal,
+        crate::HostingPrivacyPosture::Relay,
+    ] {
+        let dir = tempfile::tempdir().unwrap();
+        let mut config = crate::VaultConfig::default();
+        config.privacy = crate::config::VaultPrivacyConfig {
+            posture,
+            data_key_custody: if posture == crate::HostingPrivacyPosture::Hosted {
+                crate::config::VaultDataKeyCustody::HostManagedKms {
+                    key_ref: "posture-pairing".into(),
+                }
+            } else {
+                crate::config::VaultDataKeyCustody::OwnerHeldLocal
+            },
+        };
+        let vault = crate::Vault::open(dir.path(), config).unwrap();
+        let genesis = issuer
+            .sign_entry(
+                None,
+                0,
+                vec![],
+                AuthorityOp::Genesis {
+                    device: DeviceAuthority {
+                        key: issuer.public_key(),
+                        transport_key_binding: issuer.binding_key(),
+                        attestation: AuthorityAttestation {
+                            kind: "HostRoot".into(),
+                            evidence: Vec::new(),
+                        },
+                        tier: AuthorityTier::Software,
+                        roles: ROLE_OWNER | ROLE_ADMIN,
+                    },
+                    genesis_nonce: [91; 32],
+                    recovery: GenesisRecoveryStep::Saved([1; 32]),
+                    tier_floor: AuthorityTier::Software,
+                    pending_widen_delay_secs: DEFAULT_PENDING_WIDEN_DELAY_SECS,
+                },
+                1,
+            )
+            .unwrap();
+        vault
+            .put_authority_log_entry(&genesis, crate::TimeRange { start: 1, end: 1 }, 1)
+            .unwrap();
+        let link = vault
+            .issue_pairing_link(&issuer, crate::federation::Scope::top(), 120)
+            .unwrap();
+        let holder = ed_key(73);
+        let public = holder.verifying_key().to_bytes();
+        let sig = holder
+            .sign(&pairing_binding_transcript(&link.code, &public, "new-client").unwrap())
+            .to_bytes();
+        let slip = vault
+            .redeem_pairing_link(&issuer, &link.code, "new-client", public, &sig)
+            .unwrap();
+        let fold = vault.authority_fold().unwrap();
+        assert!(fold.slip_is_live(&slip.claims.slip_id), "{posture:?}");
+        assert_eq!(fold.roster.len(), 1, "{posture:?}");
+        assert!(!fold.roster.contains_key(&AuthorityKey::Ed25519(public)));
+    }
+}

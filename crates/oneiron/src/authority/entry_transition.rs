@@ -21,17 +21,18 @@ pub(super) fn fold_entry_state(
         return EntryFold::Invalid(AuthorityFoldIssue::InvalidEntry(hash));
     }
 
-    // Managed clients pair for logged capability slips. A legacy device-key
-    // enrollment/rotation or tier-floor change cannot grant managed authority,
-    // regardless of attestation, signer quorum, or elapsed local time.
-    if context.hosted_root
-        && matches!(
-            entry.op,
-            AuthorityOp::EnrollDevice { .. }
-                | AuthorityOp::RotateKey { .. }
-                | AuthorityOp::SetTierFloor { .. }
-                | AuthorityOp::VetoPendingWiden { .. }
-        )
+    // Slips are the client credential in every posture. Retired device-key
+    // operations survive only as verified pre-handoff ancestry: a later
+    // enrolment cannot gain authority by waiting out the old delay window.
+    if matches!(
+        entry.op,
+        AuthorityOp::EnrollDevice { .. }
+            | AuthorityOp::RotateKey { .. }
+            | AuthorityOp::SetTierFloor { .. }
+            | AuthorityOp::VetoPendingWiden { .. }
+    ) && context
+        .pre_handoff_entries
+        .is_some_and(|permitted| !permitted.contains(&hash))
     {
         return EntryFold::Invalid(AuthorityFoldIssue::InvalidEntry(hash));
     }

@@ -159,7 +159,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/authority/entry_transition.rs` | src | m | 5 crate-vis | — | Per-entry state transition and the consent / quorum / widen-delay predicates |
 | `src/authority/federation_pact.rs` | src | m | 3 struct · 4 enum · 5 fn · 2 crate-vis | FederationGrantActivation, FederationLifecycleAction, FederationLifecycleKind, FederationLifecycleRejection, FederationPactGesture, FederationPactState, FederationPactStatus | Federation lifecycle and pact types |
 | `src/authority/first_seen_clock.rs` | src | s | 12 crate-vis | — | First-seen sidecar keys and the per-vault logical observation clock |
-| `src/authority/fold_engine.rs` | src | m | 4 fn · 5 crate-vis | — | Top-level fold orchestration |
+| `src/authority/fold_engine.rs` | src | m | 4 fn · 8 crate-vis | — | Top-level fold orchestration |
 | `src/authority/fold_state.rs` | src | m | 5 struct · 3 enum · 3 fn · 6 crate-vis | ActorBindingRejection, ActorBindingState, ActorBindingStatus, AuthorityFold, AuthorityFoldIssue, AuthorityPendingWiden, FoldedActorBinding, FoldedDevice | Folded-state data model and the two-state merge |
 | `src/authority/history_transfer.rs` | src | s | 1 struct · 6 fn · 1 crate-vis | VaultRecoveryRequest | Signed-history migration and independently authorized per-vault re-root doors |
 | `src/authority/ingest_observation.rs` | src | s | 1 struct · 2 fn · 1 const · 1 crate-vis | AuthorityIngestCheck | Non-refusing authority replay observation with one typed check per peer/window |
@@ -191,12 +191,12 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/authority/tests/federation_lifecycle.rs` | test | m | — | — | Federation pact lifecycle transitions and totality table |
 | `src/authority/tests/federation_merge.rs` | test | L | — | — | Federation DAG merges, grant divergence healing and tiebreaks |
 | `src/authority/tests/foundations.rs` | test | m | — | — | Genesis vectors, wall-clock clock, signature suites, roles and quorum |
-| `src/authority/tests/history_transfer.rs` | test | s | — | — | Full signed-history portability, account auth and independent recovery composition |
-| `src/authority/tests/hosted_consent.rs` | test | s | — | — | Managed host-root consent is explicit, never inferred in self-host mode |
+| `src/authority/tests/history_transfer.rs` | test | m | — | — | Full signed-history portability, account auth and independent recovery composition |
+| `src/authority/tests/hosted_consent.rs` | test | m | — | — | Managed host-root consent is explicit, never inferred in self-host mode |
 | `src/authority/tests/mod.rs` | test | s | — | — | — |
-| `src/authority/tests/observation_safety.rs` | test | m | — | — | Persisted anti-rollback, bounded stale-roster approvals and advisory ingest checks |
+| `src/authority/tests/observation_safety.rs` | test | s | — | — | Persisted anti-rollback, bounded stale-roster approvals and advisory ingest checks |
 | `src/authority/tests/peer_roster.rs` | test | m | — | — | Peer roster derivation from relayed entries |
-| `src/authority/tests/readonly_fold.rs` | test | L | 1 crate-vis | — | Readonly fold against full fold under clock skew and sidecars |
+| `src/authority/tests/readonly_fold.rs` | test | m | 1 crate-vis | — | Readonly fold against full fold under clock skew and sidecars |
 | `src/authority/tests/recovery_ceremony.rs` | test | s | — | — | Mandatory recovery-secret setup and in-chain re-rooting |
 | `src/authority/tests/retired_ceiling.rs` | test | s | — | — | Historic ceiling bytes remain verifiable but no local ceiling verb remains |
 | `src/authority/tests/revoke_freeze_bypass.rs` | test | m | — | — | Pending-widen freeze with RevokeActor emergency bypass |

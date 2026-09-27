@@ -364,7 +364,7 @@ impl LocalFoldContext {
             entry_ancestors: None,
             peer_consent_roots: &self.peer_consent_roots,
             consent_arm: folded_device_can_authority_consent,
-            hosted_root: false,
+            pre_handoff_entries: None,
         }
     }
 }

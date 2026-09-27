@@ -25,7 +25,7 @@ fn software_tier_widen_waits_for_local_seen_time_window() {
     let first_seen = BTreeMap::from([(enroll_hash, 10)]);
     let new_key = authority_key_from_ed(&ed_key(61));
 
-    let before = fold_authority_log_with_seen_times(
+    let before = fold_legacy_authority_log_with_seen_times(
         &[genesis.clone(), enroll.clone()],
         &first_seen,
         10 + delay - 1,
@@ -36,13 +36,14 @@ fn software_tier_widen_waits_for_local_seen_time_window() {
     assert_eq!(pending.eligible_at_secs, Some(10 + delay));
     assert_eq!(pending.delay_secs, delay);
 
-    let after = fold_authority_log_with_seen_times(&[genesis, enroll], &first_seen, 10 + delay);
+    let after =
+        fold_legacy_authority_log_with_seen_times(&[genesis, enroll], &first_seen, 10 + delay);
     assert!(after.roster.contains_key(&new_key));
     assert!(after.pending_widens.is_empty());
 }
 
 #[test]
-fn hardware_tier_and_attestation_do_not_authorize_instant_widen() {
+fn hardware_tier_and_attestation_do_not_authorize_any_device_widen() {
     let owner = ed_key(62);
     let owner_key = authority_key_from_ed(&owner);
     for (tier, kind) in [
@@ -84,24 +85,16 @@ fn hardware_tier_and_attestation_do_not_authorize_instant_widen() {
         let enroll_hash = authority_entry_hash(&enroll).unwrap();
         let first_seen = BTreeMap::from([(enroll_hash, 1)]);
         let entries = [genesis, enroll];
-        let before = fold_authority_log_with_seen_times(&entries, &first_seen, 1);
-        assert!(
-            !before
-                .roster
-                .contains_key(&authority_key_from_ed(&ed_key(63)))
-        );
-        assert!(before.pending_widens.contains_key(&enroll_hash));
-        let after = fold_authority_log_with_seen_times(
-            &entries,
-            &first_seen,
-            1 + DEFAULT_PENDING_WIDEN_DELAY_SECS,
-        );
-        assert!(
-            after
-                .roster
-                .contains_key(&authority_key_from_ed(&ed_key(63)))
-        );
-        assert!(after.pending_widens.is_empty());
+        for now in [1, 1 + DEFAULT_PENDING_WIDEN_DELAY_SECS] {
+            let fold = fold_authority_log_with_seen_times(&entries, &first_seen, now);
+            assert!(!fold.valid_entries.contains(&enroll_hash));
+            assert!(
+                !fold
+                    .roster
+                    .contains_key(&authority_key_from_ed(&ed_key(63)))
+            );
+            assert!(fold.pending_widens.is_empty());
+        }
     }
 }
 
@@ -135,7 +128,7 @@ fn veto_from_owner_kills_pending_widen_in_every_arrival_order() {
     ];
 
     for entries in permutations {
-        let fold = fold_authority_log_with_seen_times(&entries, &first_seen, 200);
+        let fold = fold_legacy_authority_log_with_seen_times(&entries, &first_seen, 200);
         assert!(
             !fold
                 .roster
@@ -169,7 +162,8 @@ fn veto_after_local_seen_time_window_does_not_revoke_active_widen() {
     let veto_hash = authority_entry_hash(&veto).unwrap();
     let first_seen = BTreeMap::from([(pending_hash, 0)]);
 
-    let fold = fold_authority_log_with_seen_times(&[veto, pending, genesis], &first_seen, delay);
+    let fold =
+        fold_legacy_authority_log_with_seen_times(&[veto, pending, genesis], &first_seen, delay);
 
     assert!(
         fold.roster
@@ -220,7 +214,7 @@ fn admin_without_owner_role_cannot_veto_pending_widen() {
     let veto_hash = authority_entry_hash(&veto).unwrap();
     let first_seen = BTreeMap::from([(enroll_admin_hash, 0), (pending_hash, delay)]);
 
-    let fold = fold_authority_log_with_seen_times(
+    let fold = fold_legacy_authority_log_with_seen_times(
         &[veto, pending, enroll_admin, genesis],
         &first_seen,
         delay,
@@ -257,7 +251,7 @@ fn veto_child_of_delayed_rotation_survives_when_old_key_lands_revoked() {
     let delay = DEFAULT_PENDING_WIDEN_DELAY_SECS;
     let first_seen = BTreeMap::from([(rotation_hash, 0), (malicious_hash, delay)]);
 
-    let fold = fold_authority_log_with_seen_times(
+    let fold = fold_legacy_authority_log_with_seen_times(
         &[veto, malicious_widen, rotation, genesis],
         &first_seen,
         delay,
@@ -303,7 +297,7 @@ fn delayed_rotation_veto_key_cannot_veto_descendant_widen() {
     let veto_hash = authority_entry_hash(&veto).unwrap();
     let first_seen = BTreeMap::from([(rotation_hash, 0), (future_hash, 0)]);
 
-    let fold = fold_authority_log_with_seen_times(
+    let fold = fold_legacy_authority_log_with_seen_times(
         &[veto, future_widen, rotation, genesis],
         &first_seen,
         DEFAULT_PENDING_WIDEN_DELAY_SECS,
@@ -357,7 +351,7 @@ fn child_of_pending_widen_waits_for_parent_seen_time_eligibility() {
     let child_hash = authority_entry_hash(&child_widen).unwrap();
     let first_seen = BTreeMap::from([(pending_hash, 0), (child_hash, 0)]);
 
-    let before = fold_authority_log_with_seen_times(
+    let before = fold_legacy_authority_log_with_seen_times(
         &[child_widen.clone(), pending_admin.clone(), genesis.clone()],
         &first_seen,
         delay - 1,
@@ -365,7 +359,7 @@ fn child_of_pending_widen_waits_for_parent_seen_time_eligibility() {
     assert!(!before.valid_entries.contains(&child_hash));
     assert!(!before.roster.contains_key(&authority_key_from_ed(&child)));
 
-    let after = fold_authority_log_with_seen_times(
+    let after = fold_legacy_authority_log_with_seen_times(
         &[child_widen, pending_admin, genesis],
         &first_seen,
         delay,
@@ -397,7 +391,7 @@ fn non_widen_child_of_pending_widen_waits_for_parent_seen_time_eligibility() {
     let child_hash = authority_entry_hash(&child_ceiling).unwrap();
     let first_seen = BTreeMap::from([(pending_hash, 0)]);
 
-    let before = fold_authority_log_with_seen_times(
+    let before = fold_legacy_authority_log_with_seen_times(
         &[
             child_ceiling.clone(),
             pending_admin.clone(),
@@ -409,7 +403,7 @@ fn non_widen_child_of_pending_widen_waits_for_parent_seen_time_eligibility() {
     assert!(!before.valid_entries.contains(&child_hash));
     assert!(before.pending_widens.contains_key(&pending_hash));
 
-    let after = fold_authority_log_with_seen_times(
+    let after = fold_legacy_authority_log_with_seen_times(
         &[child_ceiling, pending_admin, genesis],
         &first_seen,
         delay,
@@ -444,12 +438,12 @@ fn devices_with_different_first_seen_times_temporarily_diverge_then_converge() {
     let early_seen = BTreeMap::from([(pending_hash, 0)]);
     let late_seen = BTreeMap::from([(pending_hash, delay - 25)]);
 
-    let early_fold = fold_authority_log_with_seen_times(
+    let early_fold = fold_legacy_authority_log_with_seen_times(
         &[genesis.clone(), pending.clone()],
         &early_seen,
         delay + 50,
     );
-    let late_fold = fold_authority_log_with_seen_times(
+    let late_fold = fold_legacy_authority_log_with_seen_times(
         &[genesis.clone(), pending.clone()],
         &late_seen,
         delay + 50,
@@ -458,7 +452,8 @@ fn devices_with_different_first_seen_times_temporarily_diverge_then_converge() {
     assert!(!late_fold.roster.contains_key(&new_key));
     assert!(late_fold.pending_widens.contains_key(&pending_hash));
 
-    let late_after = fold_authority_log_with_seen_times(&[genesis, pending], &late_seen, delay * 2);
+    let late_after =
+        fold_legacy_authority_log_with_seen_times(&[genesis, pending], &late_seen, delay * 2);
     assert_eq!(early_fold.roster, late_after.roster);
     assert!(late_after.pending_widens.is_empty());
 }
@@ -507,7 +502,7 @@ fn concurrent_restriction_beats_pending_widen_after_delay() {
         (pending_hash, delay),
     ]);
 
-    let fold = fold_authority_log_with_seen_times(
+    let fold = fold_legacy_authority_log_with_seen_times(
         &[pending, revoke, enroll_second, genesis],
         &first_seen,
         delay * 2,
@@ -541,7 +536,7 @@ fn genesis_delay_knob_defaults_within_band_and_custom_delay_is_honored() {
     let pending_hash = authority_entry_hash(&pending).unwrap();
     let first_seen = BTreeMap::from([(pending_hash, 0)]);
 
-    let before = fold_authority_log_with_seen_times(
+    let before = fold_legacy_authority_log_with_seen_times(
         &[genesis.clone(), pending.clone()],
         &first_seen,
         custom_delay - 1,
@@ -556,7 +551,8 @@ fn genesis_delay_knob_defaults_within_band_and_custom_delay_is_honored() {
             .contains_key(&authority_key_from_ed(&ed_key(72)))
     );
 
-    let after = fold_authority_log_with_seen_times(&[genesis, pending], &first_seen, custom_delay);
+    let after =
+        fold_legacy_authority_log_with_seen_times(&[genesis, pending], &first_seen, custom_delay);
     assert!(
         after
             .roster
@@ -574,8 +570,8 @@ fn timestamp_is_advisory_for_fold_output() {
     let enroll_a = enroll_entry(vault_a, &genesis_a, &owner, 8, 1, 2);
     let enroll_b = enroll_entry(vault_b, &genesis_b, &owner, 8, 1, 999_998);
 
-    let fold_a = fold_authority_log(&[genesis_a, enroll_a]);
-    let fold_b = fold_authority_log(&[genesis_b, enroll_b]);
+    let fold_a = fold_legacy_authority_log(&[genesis_a, enroll_a]);
+    let fold_b = fold_legacy_authority_log(&[genesis_b, enroll_b]);
     let roles_a: Vec<_> = fold_a
         .roster
         .values()
@@ -641,7 +637,7 @@ proptest! {
         if include_revoke {
             entries.push(revoke);
         }
-        let baseline = fold_authority_log(&entries);
+        let baseline = fold_legacy_authority_log(&entries);
 
         let mut permuted = Vec::new();
         for index in perm {
@@ -654,7 +650,7 @@ proptest! {
                 permuted.push(entry.clone());
             }
         }
-        let folded = fold_authority_log(&permuted);
+        let folded = fold_legacy_authority_log(&permuted);
         prop_assert_eq!(folded.vault_id, baseline.vault_id);
         prop_assert_eq!(folded.roster, baseline.roster);
         prop_assert_eq!(folded.tier_floor, baseline.tier_floor);
@@ -688,7 +684,7 @@ proptest! {
             entries.push(veto);
         }
         let first_seen = BTreeMap::from([(pending_hash, 0)]);
-        let baseline = fold_authority_log_with_seen_times(&entries, &first_seen, delay - 1);
+        let baseline = fold_legacy_authority_log_with_seen_times(&entries, &first_seen, delay - 1);
 
         let mut permuted = Vec::new();
         for index in perm {
@@ -701,7 +697,7 @@ proptest! {
                 permuted.push(entry.clone());
             }
         }
-        let folded = fold_authority_log_with_seen_times(&permuted, &first_seen, delay - 1);
+        let folded = fold_legacy_authority_log_with_seen_times(&permuted, &first_seen, delay - 1);
         prop_assert_eq!(folded.vault_id, baseline.vault_id);
         prop_assert_eq!(folded.roster, baseline.roster);
         prop_assert_eq!(folded.pending_widens, baseline.pending_widens);

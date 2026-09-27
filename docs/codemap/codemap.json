@@ -1803,7 +1803,7 @@
      "path": "src/authority/fold_engine.rs",
      "purpose": "Top-level fold orchestration",
      "surface": {
-      "crate-vis": 5,
+      "crate-vis": 8,
       "fn": 4
      }
     },
@@ -2161,7 +2161,7 @@
      "surface": {}
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "test",
      "notable": [],
      "path": "src/authority/tests/history_transfer.rs",
@@ -2169,7 +2169,7 @@
      "surface": {}
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "test",
      "notable": [],
      "path": "src/authority/tests/hosted_consent.rs",
@@ -2185,7 +2185,7 @@
      "surface": {}
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "test",
      "notable": [],
      "path": "src/authority/tests/observation_safety.rs",
@@ -2201,7 +2201,7 @@
      "surface": {}
     },
     {
-     "bucket": "L",
+     "bucket": "m",
      "kind": "test",
      "notable": [],
      "path": "src/authority/tests/readonly_fold.rs",

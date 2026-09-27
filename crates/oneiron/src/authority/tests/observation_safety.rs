@@ -3,80 +3,6 @@
 use super::support::*;
 use super::*;
 
-fn put_replay(vault: &crate::Vault, entry: &AuthorityLogEntry, learned: u64) -> EntityId {
-    let id = authority_log_entity_id(entry).unwrap();
-    let body = encode_authority_log_entry_body(entry).unwrap();
-    vault
-        .batch()
-        .put_replicated(
-            &id,
-            ENTITY_TYPE_AUTHORITY_LOG,
-            TimeRange { start: 1, end: 1 },
-            learned,
-            &body,
-        )
-        .commit()
-        .unwrap();
-    id
-}
-
-#[test]
-fn signer_hwm_survives_reopen_without_rejecting_its_original_history() {
-    let dir = tempfile::tempdir().unwrap();
-    let owner = ed_key(181);
-    let genesis = genesis_entry(181, DEFAULT_PENDING_WIDEN_DELAY_SECS, u64::MAX);
-    let vault_id = genesis_vault_id(&genesis).unwrap();
-    let first = set_tier_floor_entry(vault_id, &genesis, &owner, 1, AuthorityTier::Software);
-    let high = set_tier_floor_entry(vault_id, &first, &owner, 10, AuthorityTier::Software);
-    let old = set_tier_floor_entry_at(vault_id, &genesis, &owner, 5, AuthorityTier::Software, 0);
-    // This is a fresh, canonical hash with an old seq. Its OWN ancestry does
-    // not reject it; the persisted local observation must do that work.
-    let old_hash = authority_entry_hash(&old).unwrap();
-    assert!(
-        fold_authority_log(&[genesis.clone(), old.clone()])
-            .valid_entries
-            .contains(&old_hash)
-    );
-    {
-        let vault = crate::Vault::open(dir.path(), crate::VaultConfig::device()).unwrap();
-        for entry in [&genesis, &first, &high] {
-            vault
-                .put_authority_log_entry(entry, TimeRange { start: 1, end: 1 }, 1)
-                .unwrap();
-        }
-        // Do not call a fold before closing: the write transaction owns HWM
-        // durability, not a later opportunistic read.
-    }
-    let vault = crate::Vault::open(dir.path(), crate::VaultConfig::device()).unwrap();
-    let old_id = put_replay(&vault, &old, u64::MAX);
-    assert_eq!(
-        vault.get_authority_log_entry(&old_id).unwrap(),
-        Some(old.clone())
-    );
-    let fold = vault.authority_fold().unwrap();
-    assert!(
-        fold.issues
-            .contains(&AuthorityFoldIssue::NonMonotonicSeq(old_hash))
-    );
-    assert!(!fold.valid_entries.contains(&old_hash));
-    for entry in [&genesis, &first, &high] {
-        assert!(
-            fold.valid_entries
-                .contains(&authority_entry_hash(entry).unwrap())
-        );
-        put_replay(&vault, entry, 999);
-    }
-    // Metadata echoes cannot refresh either an accepted or a rejected receipt.
-    put_replay(&vault, &old, 999);
-    assert_eq!(vault.authority_fold().unwrap(), fold);
-    let txn = vault.store.env.read_txn().unwrap();
-    assert_eq!(vault.authority_fold_readonly_in_txn(&txn).unwrap(), fold);
-    drop(txn);
-    drop(vault);
-    let reopened = crate::Vault::open(dir.path(), crate::VaultConfig::device()).unwrap();
-    assert_eq!(reopened.authority_fold().unwrap(), fold);
-}
-
 fn stale_approval_fixture() -> (Vec<AuthorityLogEntry>, AuthorityKey, EntityId) {
     let owner = ed_key(184);
     let successor = ed_key(185);
@@ -153,7 +79,7 @@ fn stale_approval_expires_by_first_seen_age_without_losing_descendant_revoke() {
         .iter()
         .map(|entry| (authority_entry_hash(entry).unwrap(), 100))
         .collect::<BTreeMap<_, _>>();
-    let inside = fold_authority_log_with_seen_times(
+    let inside = fold_legacy_authority_log_with_seen_times(
         &entries,
         &first_seen,
         100 + DEFAULT_STALE_ROSTER_WINDOW_SECS,
@@ -161,7 +87,7 @@ fn stale_approval_expires_by_first_seen_age_without_losing_descendant_revoke() {
     assert!(inside.valid_entries.contains(&approval_hash));
     assert!(actor_binding_is_active(&inside, &actor, "human"));
     assert!(inside.roster[&revoked_key].revoked);
-    let outside = fold_authority_log_with_seen_times(
+    let outside = fold_legacy_authority_log_with_seen_times(
         &entries,
         &first_seen,
         101 + DEFAULT_STALE_ROSTER_WINDOW_SECS,
@@ -178,7 +104,7 @@ fn stale_approval_expires_by_first_seen_age_without_losing_descendant_revoke() {
     let mut late_seen = first_seen.clone();
     late_seen.insert(approval_hash, 101 + DEFAULT_STALE_ROSTER_WINDOW_SECS);
     assert!(
-        fold_authority_log_with_seen_times(
+        fold_legacy_authority_log_with_seen_times(
             &entries,
             &late_seen,
             101 + DEFAULT_STALE_ROSTER_WINDOW_SECS,
@@ -206,7 +132,7 @@ fn stale_approval_expires_by_first_seen_age_without_losing_descendant_revoke() {
     let mut renewed = entries.clone();
     renewed.push(fresh);
     late_seen.insert(fresh_hash, 101 + DEFAULT_STALE_ROSTER_WINDOW_SECS);
-    let renewed_fold = fold_authority_log_with_seen_times(
+    let renewed_fold = fold_legacy_authority_log_with_seen_times(
         &renewed,
         &late_seen,
         101 + DEFAULT_STALE_ROSTER_WINDOW_SECS,
@@ -221,203 +147,10 @@ fn stale_approval_expires_by_first_seen_age_without_losing_descendant_revoke() {
     let reversed = entries.into_iter().rev().collect::<Vec<_>>();
     assert_eq!(
         outside,
-        fold_authority_log_with_seen_times(
+        fold_legacy_authority_log_with_seen_times(
             &reversed,
             &first_seen,
             101 + DEFAULT_STALE_ROSTER_WINDOW_SECS,
         )
     );
-}
-
-#[test]
-fn duration_v1_is_stored_and_changes_the_live_authority_fold() {
-    let dir = tempfile::tempdir().unwrap();
-    let vault = open_vault_at(dir.path(), 1_000);
-    let policy = AuthorityObservationPolicy {
-        stale_roster_window_secs: 10,
-        ..AuthorityObservationPolicy::default()
-    };
-    vault.set_authority_observation_policy(policy).unwrap();
-    let (entries, revoked_key, actor) = stale_approval_fixture();
-    for entry in &entries[..2] {
-        vault
-            .put_authority_log_entry(entry, TimeRange { start: 1, end: 1 }, 0)
-            .unwrap();
-    }
-    mature_observed_widen(&vault, &entries[1]);
-    vault
-        .put_authority_log_entry(&entries[2], TimeRange { start: 1, end: 1 }, 0)
-        .unwrap();
-    let now = mature_observed_widen(&vault, &entries[2]);
-    for entry in &entries[3..] {
-        vault
-            .put_authority_log_entry(entry, TimeRange { start: 1, end: 1 }, 0)
-            .unwrap();
-    }
-    let approval_hash = authority_entry_hash(&entries[3]).unwrap();
-    assert!(actor_binding_is_active(
-        &vault.authority_fold().unwrap(),
-        &actor,
-        "human"
-    ));
-    let advanced = now + 20;
-    vault
-        .with_write_txn(|txn| {
-            vault.store.sync_state.put(
-                txn,
-                authority_first_seen_clock_sync_key(),
-                &encode_authority_first_seen_secs(advanced),
-            )?;
-            Ok(())
-        })
-        .unwrap();
-    let outside = vault.authority_fold().unwrap();
-    assert!(
-        outside
-            .issues
-            .contains(&AuthorityFoldIssue::StaleRosterApproval(approval_hash))
-    );
-    assert!(!actor_binding_is_active(&outside, &actor, "human"));
-    assert!(outside.roster[&revoked_key].revoked);
-    let txn = vault.store.env.read_txn().unwrap();
-    assert_eq!(vault.authority_fold_readonly_in_txn(&txn).unwrap(), outside);
-    drop(txn);
-    drop(vault);
-    let reopened = open_vault_at(dir.path(), 1_000);
-    assert_eq!(reopened.authority_observation_policy().unwrap(), policy);
-    assert_eq!(reopened.authority_fold().unwrap(), outside);
-}
-
-#[test]
-fn warm_authority_cache_rechecks_changed_observation_policy() {
-    let dir = tempfile::tempdir().unwrap();
-    let vault = open_vault_at(dir.path(), 1_000);
-    let (entries, _revoked_key, actor) = stale_approval_fixture();
-    for entry in &entries[..2] {
-        vault
-            .put_authority_log_entry(entry, TimeRange { start: 1, end: 1 }, 0)
-            .unwrap();
-    }
-    mature_observed_widen(&vault, &entries[1]);
-    vault
-        .put_authority_log_entry(&entries[2], TimeRange { start: 1, end: 1 }, 0)
-        .unwrap();
-    let now = mature_observed_widen(&vault, &entries[2]);
-    for entry in &entries[3..] {
-        vault
-            .put_authority_log_entry(entry, TimeRange { start: 1, end: 1 }, 0)
-            .unwrap();
-    }
-    authority_observation_secs(&vault.store, now + 100, 0);
-    let txn = vault.store.env.read_txn().unwrap();
-    let warm = vault.authority_view_readonly_in_txn(&txn).unwrap();
-    assert!(actor_binding_is_active(&warm, &actor, "human"));
-    drop(txn);
-    vault
-        .set_authority_observation_policy(AuthorityObservationPolicy {
-            stale_roster_window_secs: 10,
-            ..AuthorityObservationPolicy::default()
-        })
-        .unwrap();
-    let txn = vault.store.env.read_txn().unwrap();
-    let changed = vault.authority_view_readonly_in_txn(&txn).unwrap();
-    assert_eq!(changed.generation(), warm.generation());
-    assert!(!actor_binding_is_active(&changed, &actor, "human"));
-    drop(txn);
-    assert!(!actor_binding_is_active(
-        &vault.authority_fold().unwrap(),
-        &actor,
-        "human"
-    ));
-}
-
-#[test]
-fn authority_replay_admits_every_row_and_raises_one_typed_peer_check() {
-    let dir = tempfile::tempdir().unwrap();
-    let vault = crate::Vault::open(dir.path(), crate::VaultConfig::device()).unwrap();
-    let policy = AuthorityObservationPolicy {
-        ingest_check_threshold: 2,
-        ..AuthorityObservationPolicy::default()
-    };
-    vault.set_authority_observation_policy(policy).unwrap();
-    let owner = ed_key(190);
-    let genesis = genesis_entry(190, DEFAULT_PENDING_WIDEN_DELAY_SECS, 0);
-    let vault_id = genesis_vault_id(&genesis).unwrap();
-    vault
-        .put_authority_log_entry(&genesis, TimeRange { start: 1, end: 1 }, 0)
-        .unwrap();
-    let mut parent = genesis;
-    let mut rows = Vec::new();
-    for seq in 1..=5 {
-        let entry = set_tier_floor_entry(vault_id, &parent, &owner, seq, AuthorityTier::Software);
-        let id = put_replay(&vault, &entry, 0);
-        assert_eq!(
-            vault.get_authority_log_entry(&id).unwrap(),
-            Some(entry.clone())
-        );
-        rows.push(entry.clone());
-        parent = entry;
-    }
-    let checks = vault.authority_ingest_checks().unwrap();
-    assert_eq!(checks.len(), 1);
-    assert_eq!(
-        checks[0].peer_id,
-        AuthorityIngestCheck::peer_id_for_signer(&authority_key_from_ed(&owner),)
-    );
-    assert_eq!(checks[0].count, 3);
-    assert_eq!(checks[0].threshold, 2);
-    let fold = vault.authority_fold().unwrap();
-    for entry in &rows {
-        assert!(
-            fold.valid_entries
-                .contains(&authority_entry_hash(entry).unwrap())
-        );
-        put_replay(&vault, entry, 1);
-    }
-    assert_eq!(vault.authority_ingest_checks().unwrap(), checks);
-    drop(vault);
-    let reopened = crate::Vault::open(dir.path(), crate::VaultConfig::device()).unwrap();
-    assert_eq!(reopened.authority_ingest_checks().unwrap(), checks);
-}
-
-#[test]
-fn late_causal_ancestors_heal_without_allowing_unrelated_rollback() {
-    let owner = ed_key(181);
-    let genesis = genesis_entry(181, DEFAULT_PENDING_WIDEN_DELAY_SECS, u64::MAX);
-    let vault_id = genesis_vault_id(&genesis).unwrap();
-    let middle = set_tier_floor_entry(vault_id, &genesis, &owner, 5, AuthorityTier::Software);
-    let tip = set_tier_floor_entry(vault_id, &middle, &owner, 10, AuthorityTier::Software);
-    let old = set_tier_floor_entry_at(vault_id, &genesis, &owner, 4, AuthorityTier::Software, 0);
-    let mut outputs = Vec::new();
-    for order in [[&genesis, &middle, &tip], [&genesis, &tip, &middle]] {
-        let dir = tempfile::tempdir().unwrap();
-        {
-            let vault = crate::Vault::open(dir.path(), crate::VaultConfig::device()).unwrap();
-            vault
-                .put_authority_log_entry(&genesis, TimeRange { start: 1, end: 1 }, 1)
-                .unwrap();
-            for entry in order {
-                put_replay(&vault, entry, 1);
-            }
-            put_replay(&vault, &old, 1);
-            // An outsider's signed descendant is not a voucher for rollback.
-            let outsider = ed_key(182);
-            let forged =
-                set_tier_floor_entry(vault_id, &old, &outsider, 20, AuthorityTier::Software);
-            put_replay(&vault, &forged, 1);
-        }
-        let vault = crate::Vault::open(dir.path(), crate::VaultConfig::device()).unwrap();
-        let fold = vault.authority_fold().unwrap();
-        for entry in [&genesis, &middle, &tip] {
-            assert!(
-                fold.valid_entries
-                    .contains(&authority_entry_hash(entry).unwrap())
-            );
-        }
-        assert!(fold.issues.contains(&AuthorityFoldIssue::NonMonotonicSeq(
-            authority_entry_hash(&old).unwrap()
-        )));
-        outputs.push(fold);
-    }
-    assert_eq!(outputs[0], outputs[1]);
 }

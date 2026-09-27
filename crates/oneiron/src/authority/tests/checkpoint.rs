@@ -4,7 +4,7 @@ use super::*;
 use crate::{TimeRange, Vault, VaultConfig};
 
 #[test]
-fn quorum_checkpoint_roundtrip_matches_replay_and_rejects_tampering() {
+fn root_handoff_checkpoint_roundtrip_matches_replay_and_rejects_tampering() {
     let dir = tempfile::tempdir().unwrap();
     let vault = Vault::open(dir.path(), VaultConfig::default()).unwrap();
     let root = ed_key(151);
@@ -25,30 +25,18 @@ fn quorum_checkpoint_roundtrip_matches_replay_and_rejects_tampering() {
         })
         .unwrap();
     let first_hash = authority_checkpoint_hash(&first).unwrap();
-    let enroll = enroll_device_entry(
-        genesis_vault_id(&genesis).unwrap(),
-        &genesis,
-        &root,
-        EnrollSpec {
-            seed: 152,
-            roles: ROLE_AGENT,
-            tier: AuthorityTier::Software,
-            seq: 1,
-            ts: 2,
-        },
-    );
     vault
-        .put_authority_log_entry(&enroll, TimeRange { start: 2, end: 2 }, 2)
+        .re_root_authority(
+            device(
+                peer_key.clone(),
+                ROLE_OWNER | ROLE_ADMIN,
+                AuthorityTier::Software,
+            ),
+            root_key.clone(),
+            |bytes| Ok(root.sign(bytes).to_bytes().to_vec()),
+        )
         .unwrap();
-    // A Hardware root does not instantly authorize the second signer.
-    assert!(
-        vault
-            .authority_fold()
-            .unwrap()
-            .pending_widens
-            .contains_key(&authority_entry_hash(&enroll).unwrap())
-    );
-    mature_observed_widen(&vault, &enroll);
+    assert!(vault.authority_fold().unwrap().roster[&root_key].revoked);
     assert!(
         vault
             .write_authority_checkpoint(vec![root_key.clone()], |_, bytes| Ok(root
@@ -58,12 +46,8 @@ fn quorum_checkpoint_roundtrip_matches_replay_and_rejects_tampering() {
             .is_err()
     );
     let checkpoint = vault
-        .write_authority_checkpoint(vec![root_key.clone(), peer_key], |key, bytes| {
-            Ok(if key == &root_key {
-                root.sign(bytes).to_bytes().to_vec()
-            } else {
-                peer.sign(bytes).to_bytes().to_vec()
-            })
+        .write_authority_checkpoint(vec![peer_key], |_, bytes| {
+            Ok(peer.sign(bytes).to_bytes().to_vec())
         })
         .unwrap();
     assert_eq!(checkpoint.parent_hashes, vec![first_hash]);
