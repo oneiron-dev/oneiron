@@ -101,7 +101,7 @@ pub(crate) fn validated_local_record_for_canonical(
         }
         return Ok(None);
     }
-    if expected.is_some_and(|candidate| candidate != raw.as_ref()) {
+    if expected.is_some_and(|candidate| candidate != raw.as_slice()) {
         return Err(Error::CorruptedIndex(
             "canonical receipt record carrier diverged",
         ));
@@ -117,7 +117,7 @@ pub(crate) fn validated_local_record_for_canonical(
             "canonical receipt record/index binding",
         ));
     }
-    Ok(Some(raw.into_owned()))
+    Ok(Some(raw))
 }
 
 /// Enumerate the validated receipt family owned by this canonical window,
