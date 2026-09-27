@@ -189,8 +189,8 @@ use decision::{
     standing_verdict_in_txn,
 };
 use goal_axis::{
-    GoalDefinition, dominates, floor_regressed, goal_definition_in_txn, is_tradeoff,
-    score_goal_axes, validate_goal_vector,
+    GoalDefinition, bind_successor_goal_in_txn, dominates, floor_regressed, goal_definition_in_txn,
+    is_tradeoff, score_goal_axes, validate_goal_vector,
 };
 use ledger::{record_verdict_in_txn, verdict_rows_in_txn};
 use measurement::{measure, validate_measurements, world_labels_digest};

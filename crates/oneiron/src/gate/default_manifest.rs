@@ -12,9 +12,9 @@ use super::constants::{
     POLICY_MIN_ENGINE_VERSION_KEY, POLICY_ON_BUDGET_EXHAUSTED_KEY, POLICY_OWNER_POLICY_ENABLED_KEY,
     POLICY_OWNER_POLICY_ROWS_KEY, POLICY_PACK_ID_KEY, POLICY_PACK_VERSION_KEY, POLICY_RULES_KEY,
     POLICY_SCHEMA_VERSION, POLICY_SCHEMA_VERSION_KEY, POLICY_SIGNATURES_KEY,
-    POLICY_SOURCE_TRUST_KEY, RULE_AXES_KEY, RULE_EXACT_KEY, RULE_PREFIX_KEY, SIGNATURE_ALG_KEY,
-    SIGNATURE_KEY_ID_KEY, SIGNATURE_SIG_KEY, SOURCE_TRUST_MAX_AUTO_SENSITIVITY_KEY,
-    SOURCE_TRUST_RECEIPTED_KEY, SOURCE_TRUST_WARNED_KEY,
+    POLICY_SKILL_EDIT_GOAL_KEY, POLICY_SOURCE_TRUST_KEY, RULE_AXES_KEY, RULE_EXACT_KEY,
+    RULE_PREFIX_KEY, SIGNATURE_ALG_KEY, SIGNATURE_KEY_ID_KEY, SIGNATURE_SIG_KEY,
+    SOURCE_TRUST_MAX_AUTO_SENSITIVITY_KEY, SOURCE_TRUST_RECEIPTED_KEY, SOURCE_TRUST_WARNED_KEY,
 };
 use super::definition_ceiling::first_party_connector_actor_ref;
 
@@ -44,6 +44,16 @@ pub(crate) fn default_policy_manifest() -> Vec<u8> {
             Value::from("oneiron-default-policy"),
         ),
         (Value::from(POLICY_PACK_VERSION_KEY), Value::from("v1")),
+        (
+            Value::from(POLICY_SKILL_EDIT_GOAL_KEY),
+            rmpv::ext::to_value(
+                serde_json::from_str::<serde_json::Value>(include_str!(
+                    "skill_edit_goal_default.json"
+                ))
+                .expect("shipped skill edit goal policy parses"),
+            )
+            .expect("shipped skill edit goal policy encodes"),
+        ),
         (
             Value::from(POLICY_MIN_ENGINE_VERSION_KEY),
             Value::from(env!("CARGO_PKG_VERSION")),

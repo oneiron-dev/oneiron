@@ -16406,7 +16406,7 @@
      "path": "src/gate/constants.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 77
+      "crate-vis": 78
      }
     },
     {
@@ -16679,7 +16679,7 @@
      "path": "src/gate/mod.rs",
      "purpose": "DEC-0005 Gate policy manifest resolver",
      "surface": {
-      "crate-vis": 26,
+      "crate-vis": 27,
       "re-export": 3
      }
     },
@@ -16724,7 +16724,7 @@
      "path": "src/gate/resolution/accessors.rs",
      "purpose": "Read-only resolved-field accessors plus the frontier-hash entry",
      "surface": {
-      "crate-vis": 24
+      "crate-vis": 25
      }
     },
     {
@@ -16805,6 +16805,16 @@
      "notable": [],
      "path": "src/gate/share.rs",
      "purpose": "Narrow adapter for the audience-crossing creation of a brief read grant",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/gate/skill_edit_goal_policy.rs",
+     "purpose": "Typed optimizer goal rows authored by trusted policy manifests",
      "surface": {
       "crate-vis": 2
      }
@@ -28928,7 +28938,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "GoalAxisKind",
@@ -28938,7 +28948,7 @@
      "path": "src/skill_optimize/gate/goal_axis.rs",
      "purpose": "Goal-axis replay scores",
      "surface": {
-      "crate-vis": 7,
+      "crate-vis": 8,
       "enum": 1,
       "fn": 1,
       "struct": 2
@@ -34803,7 +34813,7 @@
      "purpose": "—"
     },
     "gate": {
-     "files": 75,
+     "files": 76,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -35491,7 +35501,7 @@
    },
    "over_bar": 9,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2095,
+   "source_files": 2096,
    "test_files": 718
   },
   "oneiron-android": {

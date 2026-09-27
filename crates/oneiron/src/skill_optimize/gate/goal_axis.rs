@@ -36,10 +36,16 @@ pub(super) struct GoalDefinition {
 }
 
 const GOAL_PREFIX: &[u8] = b"skill_optimize/goal/v1\0";
-const DEFAULT_GOAL_REVISION: &str = "scalar-default-v1";
+/// Immutable local admission binding; unlike a predecessor body, it survives
+/// a person's erasure of old instructions.
+const GOAL_OWNER_PREFIX: &[u8] = b"skill_optimize/goal_owner/v1\0";
 
 fn goal_key(skill: &EntityId) -> Vec<u8> {
     [GOAL_PREFIX, skill.as_bytes()].concat()
+}
+
+fn goal_owner_key(skill: &EntityId) -> Vec<u8> {
+    [GOAL_OWNER_PREFIX, skill.as_bytes()].concat()
 }
 
 fn validate_axes(axes: &[GoalAxisSpec]) -> Result<()> {
@@ -95,6 +101,21 @@ fn goal_owner_in_txn(vault: &Vault, txn: &heed::RoTxn<'_>, skill: &EntityId) -> 
             return Err(invalid("cyclic skill goal lineage"));
         }
         let record = read_goal_lineage_skill(vault, txn, &id)?;
+        if let Some(raw) = vault.store.vault_meta.get(txn, &goal_owner_key(&id))? {
+            let root = EntityId::from_bytes(
+                raw.as_ref()
+                    .try_into()
+                    .map_err(|_| Error::CorruptedIndex("skill goal owner binding"))?,
+            )
+            .map_err(|_| Error::CorruptedIndex("skill goal owner binding"))?;
+            if root == id
+                || provenance_str(&record, PROVENANCE_BIRTH_KEY).as_deref()
+                    != Some(SKILL_OPTIMIZE_BIRTH_PATH)
+            {
+                return Err(Error::CorruptedIndex("skill goal owner binding"));
+            }
+            return Ok(root);
+        }
         if provenance_str(&record, PROVENANCE_BIRTH_KEY).as_deref()
             != Some(SKILL_OPTIMIZE_BIRTH_PATH)
         {
@@ -109,28 +130,98 @@ fn goal_owner_in_txn(vault: &Vault, txn: &heed::RoTxn<'_>, skill: &EntityId) -> 
     }
 }
 
+/// Pin the admitted successor to its goal identity in the same transaction
+/// as activation. The binding remains usable when historical bodies are erased.
+pub(super) fn bind_successor_goal_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    successor: &EntityId,
+    predecessor: &EntityId,
+) -> Result<()> {
+    let root = goal_owner_in_txn(vault, txn, predecessor)?;
+    let key = goal_owner_key(successor);
+    if let Some(existing) = vault.store.vault_meta.get(txn, &key)? {
+        if existing.as_ref() != root.as_bytes() {
+            return Err(Error::CorruptedIndex("skill goal owner binding"));
+        }
+    } else {
+        vault.store.vault_meta.put(txn, &key, root.as_bytes())?;
+    }
+    Ok(())
+}
+
+fn manifest_axes_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+) -> Result<(Vec<GoalAxisSpec>, Vec<crate::gate::SkillEditGoalPolicy>)> {
+    let resolved = crate::gate::resolve_policy_manifest(&vault.store, txn)?;
+    let policies = resolved
+        .skill_edit_goal_policies()
+        .ok_or(invalid(
+            "no trusted skill edit goal policy manifest is in force",
+        ))?
+        .to_vec();
+    let mut axes: Vec<GoalAxisSpec> = Vec::new();
+    for policy in &policies {
+        for axis in &policy.axes {
+            if let Some(existing) = axes.iter().find(|existing| existing.name == axis.name) {
+                if existing.kind != axis.kind {
+                    return Err(invalid("conflicting manifest goal axis kinds"));
+                }
+            } else {
+                axes.push(axis.clone());
+            }
+        }
+    }
+    validate_axes(&axes)?;
+    Ok((axes, policies))
+}
+
 pub(super) fn goal_definition_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     skill: &EntityId,
 ) -> Result<GoalDefinition> {
+    let (mut axes, policies) = manifest_axes_in_txn(vault, txn)?;
     let root = goal_owner_in_txn(vault, txn, skill)?;
-    let Some(raw) = vault.store.vault_meta.get(txn, &goal_key(&root))? else {
-        return Ok(GoalDefinition {
-            revision: DEFAULT_GOAL_REVISION.to_owned(),
-            axes: vec![GoalAxisSpec {
-                name: "held_out".to_owned(),
-                kind: GoalAxisKind::Primary,
-            }],
-        });
-    };
-    let definition: GoalDefinition =
-        serde_json::from_slice(&raw).map_err(|_| Error::CorruptedIndex("skill goal definition"))?;
-    validate_axes(&definition.axes).map_err(|_| Error::CorruptedIndex("skill goal definition"))?;
-    if EntityId::from_hex(&definition.revision).is_err() {
-        return Err(Error::CorruptedIndex("skill goal definition"));
+    let override_row = vault
+        .store
+        .vault_meta
+        .get(txn, &goal_key(&root))?
+        .map(|raw| {
+            serde_json::from_slice::<GoalDefinition>(&raw)
+                .map_err(|_| Error::CorruptedIndex("skill goal definition"))
+        })
+        .transpose()?;
+    if let Some(definition) = &override_row {
+        validate_axes(&definition.axes)
+            .map_err(|_| Error::CorruptedIndex("skill goal definition"))?;
+        if EntityId::from_hex(&definition.revision).is_err() {
+            return Err(Error::CorruptedIndex("skill goal definition"));
+        }
+        for axis in &definition.axes {
+            if let Some(existing) = axes.iter().find(|existing| existing.name == axis.name) {
+                if existing.kind != axis.kind {
+                    return Err(invalid("holder goal override conflicts with vault policy"));
+                }
+            } else {
+                axes.push(axis.clone());
+            }
+        }
     }
-    Ok(definition)
+    validate_axes(&axes)?;
+    let mut hash = Sha256::new();
+    hash.update(b"skill_optimize:effective_goal:v1\0");
+    hash.update(
+        serde_json::to_vec(&policies).map_err(|_| invalid("goal policy hash encode failed"))?,
+    );
+    if let Some(row) = override_row {
+        hash.update(row.revision.as_bytes());
+    }
+    Ok(GoalDefinition {
+        revision: bytes_to_hex_lower(&hash.finalize()),
+        axes,
+    })
 }
 
 /// The authenticated human sets the goal axes used by the optimizer for this
@@ -146,6 +237,12 @@ pub fn set_skill_edit_goal_axes(
     validate_axes(&axes)?;
     vault.with_write_txn(|txn| {
         owner.revalidate_in_txn(vault, txn)?;
+        let (required, _) = manifest_axes_in_txn(vault, txn)?;
+        if !required.iter().all(|axis| axes.contains(axis)) {
+            return Err(invalid(
+                "holder goal override cannot widen or remove vault goal axes",
+            ));
+        }
         let root = goal_owner_in_txn(vault, txn, skill)?;
         let definition = GoalDefinition {
             revision: vault.store.clock.entity_id()?.to_hex(),
@@ -157,7 +254,7 @@ pub fn set_skill_edit_goal_axes(
             .store
             .vault_meta
             .put(txn, &goal_key(&root), &encoded)?;
-        Ok(definition.revision)
+        Ok(goal_definition_in_txn(vault, txn, skill)?.revision)
     })
 }
 
@@ -167,15 +264,27 @@ pub(super) fn score_goal_axes(
     after: &HeldOutReplayCase<'_>,
     definition: &GoalDefinition,
 ) -> Result<BTreeMap<String, GoalAxisScore>> {
-    if scorer.goal_axes(before)? != definition.axes {
+    let declared = scorer.goal_axes(before)?;
+    let scalar_only = declared.is_empty()
+        && definition.axes.len() == 1
+        && definition.axes[0].kind == GoalAxisKind::Primary;
+    if !scalar_only && declared != definition.axes {
         return Err(invalid(
             "scorer goal axes differ from the authenticated goal definition",
         ));
     }
     let mut scored = BTreeMap::new();
     for axis in &definition.axes {
-        let old = validate_score(scorer.score_goal_axis(before, axis)?)?;
-        let new = validate_score(scorer.score_goal_axis(after, axis)?)?;
+        let old = validate_score(if scalar_only {
+            scorer.score(before)?
+        } else {
+            scorer.score_goal_axis(before, axis)?
+        })?;
+        let new = validate_score(if scalar_only {
+            scorer.score(after)?
+        } else {
+            scorer.score_goal_axis(after, axis)?
+        })?;
         scored.insert(
             axis.name.clone(),
             GoalAxisScore {

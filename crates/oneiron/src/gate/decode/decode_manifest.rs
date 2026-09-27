@@ -4,6 +4,7 @@ use std::io::Cursor;
 
 use rmpv::Value;
 
+use crate::gate::SkillEditGoalPolicy;
 use crate::gate::ceiling::{
     ActorCeiling, DelegationGrantRecord, PolicyOwnerPatternRow, PolicyOwnerPolicyRow, PolicyPack,
     PolicySignature, SourceTrustCeiling,
@@ -16,7 +17,8 @@ use crate::gate::constants::{
     POLICY_OWNER_POLICY_OUTPUT_CONTRACT_KEY, POLICY_OWNER_POLICY_PATTERNS_KEY,
     POLICY_OWNER_POLICY_ROWS_KEY, POLICY_PACK_ID_KEY, POLICY_PACK_VERSION_KEY, POLICY_RULES_KEY,
     POLICY_SCHEMA_VERSION, POLICY_SCHEMA_VERSION_KEY, POLICY_SCOPED_GRANTS_KEY,
-    POLICY_SIGNATURE_KEY, POLICY_SIGNATURES_KEY, POLICY_SOURCE_TRUST_KEY,
+    POLICY_SIGNATURE_KEY, POLICY_SIGNATURES_KEY, POLICY_SKILL_EDIT_GOAL_KEY,
+    POLICY_SOURCE_TRUST_KEY,
 };
 use crate::gate::grants::PolicyScopedGrant;
 use crate::gate::resolution::CommOptOutPosture;
@@ -42,6 +44,7 @@ pub(in crate::gate) struct DecodedPolicyManifest {
     pub(in crate::gate) source_trust: SourceTrustCeiling,
     pub(in crate::gate) single_valued_predicates: std::collections::BTreeSet<String>,
     pub(in crate::gate) scoped_grants: Vec<PolicyScopedGrant>,
+    pub(in crate::gate) skill_edit_goal: Option<SkillEditGoalPolicy>,
     pub(in crate::gate) owner_policy_rows: Vec<PolicyOwnerPolicyRow>,
     pub(in crate::gate) owner_policy_rows_dropped: bool,
     pub(in crate::gate) owner_policy_enabled: bool,
@@ -87,6 +90,7 @@ pub(in crate::gate) fn decode_policy_manifest(data: &[u8]) -> Option<DecodedPoli
                 | POLICY_SOURCE_TRUST_KEY
                 | "single_valued_predicates"
                 | POLICY_SCOPED_GRANTS_KEY
+                | POLICY_SKILL_EDIT_GOAL_KEY
                 | POLICY_OWNER_POLICY_ROWS_KEY
                 | POLICY_OWNER_POLICY_ENABLED_KEY
                 | POLICY_OWNER_POLICY_DOCUMENT_KEY
@@ -138,6 +142,11 @@ pub(in crate::gate) fn decode_policy_manifest(data: &[u8]) -> Option<DecodedPoli
         MapValue::Missing => std::collections::BTreeSet::new(),
         MapValue::Duplicate => return None,
         MapValue::Present(value) => parse_single_valued_predicates(value)?,
+    };
+    let skill_edit_goal = match single_map_value(&entries, POLICY_SKILL_EDIT_GOAL_KEY) {
+        MapValue::Missing => None,
+        MapValue::Duplicate => return None,
+        MapValue::Present(value) => Some(SkillEditGoalPolicy::decode(value.clone())?),
     };
     let scoped_grants = match single_map_value(&entries, POLICY_SCOPED_GRANTS_KEY) {
         MapValue::Missing => Vec::new(),
@@ -253,6 +262,7 @@ pub(in crate::gate) fn decode_policy_manifest(data: &[u8]) -> Option<DecodedPoli
         delegated_grants,
         source_trust,
         scoped_grants,
+        skill_edit_goal,
         single_valued_predicates,
         owner_policy_rows,
         owner_policy_rows_dropped,

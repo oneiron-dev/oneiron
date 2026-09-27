@@ -290,23 +290,17 @@ pub trait HeldOutReplayScorer {
     /// than guess: an invented scalar is a silent accept.
     fn score(&self, case: &HeldOutReplayCase<'_>) -> Result<f32>;
 
-    /// Goal axes configured by the host for this skill. The default keeps
-    /// existing scalar-only judges as a single primary held-out axis.
+    /// Optional scorer-declared goal axes. Empty means this is a scalar-only
+    /// judge, which may score only a manifest selecting one primary axis.
+    /// Neither the axis name nor the goal definition lives in this trait.
     fn goal_axes(&self, _case: &HeldOutReplayCase<'_>) -> Result<Vec<GoalAxisSpec>> {
-        Ok(vec![GoalAxisSpec {
-            name: "held_out".to_owned(),
-            kind: GoalAxisKind::Primary,
-        }])
+        Ok(Vec::new())
     }
 
-    /// Score one version on one goal axis. A custom axis needs a real judge;
-    /// it cannot inherit the scalar as an invented floor or cost measurement.
-    fn score_goal_axis(&self, case: &HeldOutReplayCase<'_>, axis: &GoalAxisSpec) -> Result<f32> {
-        if axis.name == "held_out" && axis.kind == GoalAxisKind::Primary {
-            self.score(case)
-        } else {
-            Err(invalid("no goal-axis scorer is registered for this axis"))
-        }
+    /// A vector scorer must judge each declared axis explicitly. The scalar
+    /// single-primary path calls `score` at the gate and never invokes this.
+    fn score_goal_axis(&self, _case: &HeldOutReplayCase<'_>, _axis: &GoalAxisSpec) -> Result<f32> {
+        Err(invalid("no goal-axis scorer is registered for this axis"))
     }
 
     /// Score requirement coverage using only the task identity and rubric text.

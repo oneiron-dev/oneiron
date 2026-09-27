@@ -264,6 +264,7 @@ pub(crate) fn with_optimized_skill_admission(
     admitted.lifecycle_status = SkillLifecycle::Active;
     validate_skill_update(&staged, &admitted)?;
     let data = crate::skill::encode_skill_record(&admitted)?;
+    bind_successor_goal_in_txn(vault, wtxn, proposal, &target)?;
     apply(wtxn, data)?;
     Ok(None)
 }

@@ -4701,6 +4701,10 @@ fn vector_owner(vault: &Vault) -> crate::consent::AuthenticatedOwner {
 fn vector_axes() -> Vec<GoalAxisSpec> {
     vec![
         GoalAxisSpec {
+            name: "held_out".into(),
+            kind: GoalAxisKind::Primary,
+        },
+        GoalAxisSpec {
             name: "quality".into(),
             kind: GoalAxisKind::Primary,
         },
@@ -4715,12 +4719,41 @@ fn vector_axes() -> Vec<GoalAxisSpec> {
     ]
 }
 
+fn put_narrowing_goal_manifest(vault: &Vault, id: EntityId, axes: Vec<GoalAxisSpec>) -> Result<()> {
+    let baseline = crate::gate::default_policy_manifest();
+    let Value::Map(mut entries) = rmpv::decode::read_value(&mut std::io::Cursor::new(baseline))
+        .expect("shipped manifest decodes")
+    else {
+        panic!("manifest map")
+    };
+    let (_, policy) = entries
+        .iter_mut()
+        .find(|(key, _)| key.as_str() == Some("skill_edit_goal_policy"))
+        .expect("shipped goal policy row");
+    let mut narrowed = vec![GoalAxisSpec {
+        name: "held_out".into(),
+        kind: GoalAxisKind::Primary,
+    }];
+    narrowed.extend(axes);
+    *policy = rmpv::ext::to_value(serde_json::json!({
+        "precedence": "nested_narrowing", "holder_max_scope": "vault", "axes": narrowed
+    }))
+    .expect("encode policy value");
+    let parsed = crate::gate::SkillEditGoalPolicy::decode(policy.clone())
+        .expect("goal-policy fixture value roundtrips");
+    assert_eq!(parsed.precedence, "nested_narrowing");
+    let mut encoded = Vec::new();
+    rmpv::encode::write_value(&mut encoded, &Value::Map(entries)).expect("encode manifest");
+    crate::test_util::put_policy_manifest_bytes(vault, id, &encoded)
+}
+
 // ONE-2114: a headline win is not an admission when any goal axis regresses.
 struct VectorScorer {
     primary: (f32, f32),
     floor: (f32, f32),
     cost: (f32, f32),
     baseline: &'static str,
+    axes: Option<Vec<GoalAxisSpec>>,
     seen: RefCell<Vec<(String, String, Vec<String>)>>,
 }
 
@@ -4731,12 +4764,18 @@ impl VectorScorer {
             floor,
             cost,
             baseline: TARGET_DESC,
+            axes: None,
             seen: RefCell::new(Vec::new()),
         }
     }
 
     fn with_baseline(mut self, baseline: &'static str) -> Self {
         self.baseline = baseline;
+        self
+    }
+
+    fn with_axes(mut self, axes: Vec<GoalAxisSpec>) -> Self {
+        self.axes = Some(axes);
         self
     }
 }
@@ -4746,7 +4785,7 @@ impl HeldOutReplayScorer for VectorScorer {
         panic!("a multi-axis scorer cannot fall back to a scalar")
     }
     fn goal_axes(&self, _: &HeldOutReplayCase<'_>) -> Result<Vec<GoalAxisSpec>> {
-        Ok(vector_axes())
+        Ok(self.axes.clone().unwrap_or_else(vector_axes))
     }
     fn score_goal_axis(&self, case: &HeldOutReplayCase<'_>, axis: &GoalAxisSpec) -> Result<f32> {
         self.seen.borrow_mut().push((
@@ -4755,7 +4794,7 @@ impl HeldOutReplayScorer for VectorScorer {
             case.held_out_receipts.to_vec(),
         ));
         let (before, after) = match axis.name.as_str() {
-            "quality" => self.primary,
+            "quality" | "held_out" => self.primary,
             "safety" => self.floor,
             "human_minutes" => self.cost,
             _ => panic!("unknown axis"),
@@ -4850,8 +4889,8 @@ fn goal_vector_dominance_admits_rejects_regressions_and_defers_tradeoffs() -> Re
         assert_eq!(verdict.goal_axes["human_minutes"].kind, GoalAxisKind::Cost);
         assert_eq!(
             scorer.seen.borrow().len(),
-            6,
-            "both bodies on all three axes"
+            8,
+            "both bodies on all four axes"
         );
         let reserved = held_out_receipts(&vault, &skill)?;
         assert!(
@@ -5181,7 +5220,7 @@ fn successor_goal_proposal(vault: &Vault, target: &EntityId) -> EntityId {
 }
 
 #[test]
-fn goal_definition_survives_two_optimizer_generations_and_owner_edit_revokes_successor_permission()
+fn goal_definition_survives_erased_predecessor_and_owner_edit_revokes_successor_permission()
 -> Result<()> {
     let (_tmp, vault) = temp_vault();
     let (a, b) = losing_skill_with_proposal(&vault, "oneiron.skill.goal_lineage");
@@ -5197,6 +5236,11 @@ fn goal_definition_survives_two_optimizer_generations_and_owner_edit_revokes_suc
     assert_eq!(b_pass.disposition, SkillEditDisposition::Accepted);
     admit_optimized_skill_revision(&vault, &b, t(400), 401)?;
     vault.supersede_skill_record(&a, &b, t(402), 403)?;
+    assert!(
+        vault.delete_entity(&a)?,
+        "the person can erase A's old instructions"
+    );
+    assert!(vault.get_skill_record(&a)?.is_none());
 
     // Give B its own held-out outcome. This isolates the gate's lineage law
     // from the separate selector and attribution projector.
@@ -5337,5 +5381,106 @@ fn approved_tradeoff_uses_a_proven_later_cycle_after_original_cap_is_full() -> R
         stored(&vault, &pending_id).lifecycle_status,
         SkillLifecycle::Active
     );
+    Ok(())
+}
+
+#[test]
+fn shipped_goal_manifest_is_effective_and_holder_may_narrow_but_not_widen() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    let (skill, proposal) = losing_skill_with_proposal(&vault, "oneiron.skill.manifest_default");
+    let owner = vector_owner(&vault);
+    let dropped_primary = vec![GoalAxisSpec {
+        name: "quality".into(),
+        kind: GoalAxisKind::Primary,
+    }];
+    assert_eq!(
+        set_skill_edit_goal_axes(&vault, &owner, &skill, dropped_primary)
+            .expect_err("holder may not drop shipped primary axis")
+            .kind(),
+        ErrorKind::InvalidSkillBody
+    );
+    // No policy override landed. The shipped manifest row still selects the
+    // scalar replay path; this is not a hardcoded Rust fallback.
+    let scalar = score_gate_skill_edit_in_cycle(
+        &vault,
+        &proposal,
+        &StubScorer::improving(),
+        wake(&vault, "shipped", 10),
+        900,
+    )?;
+    assert_eq!(scalar.disposition, SkillEditDisposition::Accepted);
+    assert_eq!(scalar.goal_axes.len(), 1);
+    assert_eq!(scalar.goal_axes["held_out"].kind, GoalAxisKind::Primary);
+    let (other, second) = losing_skill_with_proposal(&vault, "oneiron.skill.manifest_narrow");
+    set_skill_edit_goal_axes(&vault, &owner, &other, vector_axes())?;
+    let narrowed = score_gate_skill_edit_in_cycle(
+        &vault,
+        &second,
+        &VectorScorer::new((0.4, 0.7), (0.8, 0.8), (0.5, 0.6)),
+        wake(&vault, "narrow", 20),
+        901,
+    )?;
+    assert_eq!(narrowed.disposition, SkillEditDisposition::Accepted);
+    assert_eq!(narrowed.goal_axes["safety"].kind, GoalAxisKind::Floor);
+    Ok(())
+}
+
+#[test]
+fn inherited_policy_floor_change_revokes_a_cached_acceptance_and_scores_fresh() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    let (skill, proposal) = losing_skill_with_proposal(&vault, "oneiron.skill.policy_change");
+    let old = score_gate_skill_edit_in_cycle(
+        &vault,
+        &proposal,
+        &StubScorer::improving(),
+        wake(&vault, "policy-old", 10),
+        900,
+    )?;
+    assert_eq!(old.disposition, SkillEditDisposition::Accepted);
+    put_narrowing_goal_manifest(
+        &vault,
+        crate::gate::default_policy_manifest_id()?,
+        vec![GoalAxisSpec {
+            name: "safety".into(),
+            kind: GoalAxisKind::Floor,
+        }],
+    )?;
+    let policy = crate::gate::resolve_policy_manifest(&vault.store, &vault.store.env.read_txn()?)?;
+    assert!(
+        policy.skill_edit_goal_policies().is_some(),
+        "policy diagnostics: {:?}; contributions: {:?}",
+        policy.diagnostics(),
+        vault.manifest_contributions()?
+    );
+    assert_eq!(
+        admit_optimized_skill_revision(&vault, &proposal, t(400), 401)
+            .expect_err("inherited floor change revokes old acceptance")
+            .kind(),
+        ErrorKind::InvalidSkillBody
+    );
+    assert_eq!(
+        stored(&vault, &proposal).lifecycle_status,
+        SkillLifecycle::Candidate
+    );
+    let fresh = optimizer_proposal_citing(&vault, &skill, Value::Array(Vec::new()));
+    let new = score_gate_skill_edit_in_cycle(
+        &vault,
+        &fresh,
+        &VectorScorer::new((0.4, 0.9), (0.8, 0.7), (0.5, 0.6)).with_axes(vec![
+            GoalAxisSpec {
+                name: "held_out".into(),
+                kind: GoalAxisKind::Primary,
+            },
+            GoalAxisSpec {
+                name: "safety".into(),
+                kind: GoalAxisKind::Floor,
+            },
+        ]),
+        wake(&vault, "policy-new", 20),
+        902,
+    )?;
+    assert_eq!(new.disposition, SkillEditDisposition::Rejected);
+    assert_ne!(new.goal_revision, old.goal_revision);
+    assert!(new.goal_axes["safety"].after < new.goal_axes["safety"].before);
     Ok(())
 }
