@@ -27,7 +27,7 @@ use crate::write_envelope::{
 /// Predicates with declared multi-cardinality supersession keys (B1c,
 /// RATIFY-20260710 R0): the prior-claim match extends
 /// `subject+scope+predicate` with `value.question_id`.
-pub const MULTI_CARDINALITY_PREDICATES: [&str; 1] = ["eiri.onboarding.answer"];
+pub const MULTI_CARDINALITY_PREDICATES: [&str; 1] = ["companion.onboarding.answer"];
 
 const MULTI_CARDINALITY_VALUE_KEY: &str = "question_id";
 
@@ -564,8 +564,8 @@ impl Memory<'_> {
         let mut approval =
             forced_approval.unwrap_or_else(|| requested_approval(source, input.scope.as_ref()));
         // Every commit is ONE engine transaction: gate decision, claim
-        // write, and (with a prior revision) the supersession commit or
-        // roll back together. No phantom receipts (a decision can never
+        // write, and (with a prior revision) the deferred closure binding
+        // commit or roll back together. No phantom receipts (a decision can never
         // outlive a write that failed later validation) and no orphan
         // revisions behind a rejected receipt. The fail-closed trade: a
         // rolled-back write also drops its gate decision.
@@ -657,30 +657,16 @@ impl Memory<'_> {
                         )?;
                     }
                 }
-                if let Some(old_id) = prior {
-                    let policy = crate::gate::resolve_policy_manifest(&self.vault.store, wtxn)?;
-                    let old = self
-                        .vault
-                        .require_named_claim_target_active_in(wtxn, &old_id)?;
-                    let probe = candidate
-                        .clone()
-                        .into_claim_body(&envelope, self.vault.default_facet_in_txn(wtxn)?);
-                    if !policy.is_single_valued_predicate(&input.predicate)
-                        || crate::claim::claim_source_widens_beyond(
-                            old.source.unwrap_or(ClaimSource::UserStated),
-                            source,
-                        )
-                        || self
-                            .vault
-                            .supersession_requires_confirmation_in_txn(wtxn, &old_id, &probe)?
-                    {
-                        envelope = WriteEnvelope::new(
-                            envelope.actor(),
-                            source,
-                            envelope.provenance().clone(),
-                            ClaimApprovalStatus::Proposed,
-                        );
-                    }
+                // A replacement is a create-versus-closure proposal even when its
+                // source and actor would qualify for Auto. The later grant is
+                // the only door allowed to close the prior head.
+                if prior.is_some() {
+                    envelope = WriteEnvelope::new(
+                        envelope.actor(),
+                        source,
+                        envelope.provenance().clone(),
+                        ClaimApprovalStatus::Proposed,
+                    );
                 }
                 let closure_envelope = envelope.clone();
                 apply_ops_with_gate_mode(
