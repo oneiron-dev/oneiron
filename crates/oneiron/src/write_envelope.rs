@@ -348,6 +348,12 @@ impl ClaimCandidate {
         self
     }
 
+    /// Candidate-local evidence data, before the promotion writer replaces it
+    /// with the sealed evidence envelope.
+    pub(crate) fn evidence(&self) -> Option<&Value> {
+        self.evidence.as_ref()
+    }
+
     /// Adds an optional validity window.
     #[must_use]
     pub fn with_validity(mut self, valid_from: Option<u64>, valid_to: Option<u64>) -> Self {
