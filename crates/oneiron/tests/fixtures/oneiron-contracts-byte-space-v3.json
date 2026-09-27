@@ -1,9 +1,9 @@
 {
   "note": "VENDORED CANON SNAPSHOT — do not hand-edit. Generated from oneiron-docs site/src/data/oneiron-contracts.ts at the recorded commit. payloadBlake3 is BLAKE3 over the compact (no-whitespace, authored key order) JSON serialization of `payload`.",
   "docsRepo": "oneiron-docs",
-  "docsCommit": "24fc8f5114e6e0e0145e75396dbf2da0b3377b48",
+  "docsCommit": "d72f1c269a266da25e90f1bd5adc61bd868cc362",
   "docsPath": "site/src/data/oneiron-contracts.ts",
-  "payloadBlake3": "8bc607b4c9e63cfaead9b0a9036578bb758673c5319b84a469e434b7bbda6b44",
+  "payloadBlake3": "a13cc259b661f15b74174361a3095d383ab284b1f2592a3395b84ddaaf918a20",
   "payload": {
     "contractVersion": "1.0.0",
     "storageAbiVersion": 20,
@@ -159,14 +159,15 @@
         "zone": "system",
         "family": "outbound communication and consent",
         "range": "80–89",
-        "free": 4,
+        "free": 3,
         "kinds": [
           "CONNECTOR_KEY",
           "CHANNEL_IDENTITY",
           "COUNTERPARTY_CONTACT",
           "OUTBOUND_GRANT",
           "COMM_RECORD",
-          "PERSONA_SNAPSHOT_EXPORT"
+          "PERSONA_SNAPSHOT_EXPORT",
+          "RECEIPT_RECORD"
         ]
       },
       {
@@ -632,6 +633,14 @@
         "family": "outbound communication and consent"
       },
       {
+        "id": "RECEIPT_RECORD",
+        "classification": "maintenance",
+        "typeByte": 86,
+        "shortIdPrefix": null,
+        "typeByteRange": "80–89",
+        "family": "outbound communication and consent"
+      },
+      {
         "id": "SKILL_CONTENT_ANCHOR",
         "classification": "maintenance",
         "typeByte": 93,
@@ -714,6 +723,11 @@
       {
         "byte": 85,
         "kind": "PERSONA_SNAPSHOT_EXPORT",
+        "state": "assigned"
+      },
+      {
+        "byte": 86,
+        "kind": "RECEIPT_RECORD",
         "state": "assigned"
       },
       {
