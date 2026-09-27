@@ -90,7 +90,7 @@ pub(crate) fn migrate_in_txn(
         let metadata =
             EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity header"))?;
         if let Some(body) = raw.get(crate::batch::ENTITY_METADATA_HEADER_LEN..) {
-            already_dag |= super::admission::record_kind(body)?.is_some();
+            already_dag |= super::topology::record_kind(body)?.is_some();
         }
         turns.push((metadata.occurred_start, id));
     }

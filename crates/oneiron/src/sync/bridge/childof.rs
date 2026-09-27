@@ -197,6 +197,7 @@ pub(super) fn apply_materialized_edge_ops(
     ops: Vec<BatchOp>,
     metas: &[EdgeOpMeta],
     window_key: &str,
+    tombstones_map: &LoroMap,
 ) -> Result<()> {
     debug_assert_eq!(ops.len(), metas.len());
     let mut child_of_adds = Vec::<PendingEdgeOp>::new();
@@ -351,81 +352,35 @@ pub(super) fn apply_materialized_edge_ops(
         }
     }
 
-    // Parent is checked only after this delta's ChildOf winners have landed.
-    // Apply each accepted Parent before checking the next one: the read in
-    // validate_received_parent now sees every earlier candidate in this
-    // SAME transaction, so cardinality and cycles cannot hide in `ops`.
+    // Parent candidates use the ONE admission door after this delta's
+    // ChildOf winners have landed. Each accepted write is visible to the
+    // next candidate's prospective check in the same transaction.
     parent_adds
         .sort_by_key(|entry| Store::encode_edge_key(&entry.src, EdgeKind::Parent, &entry.tgt));
     for pending in parent_adds {
-        match crate::conversation_dag::validate_received_parent(
-            &vault.store,
-            &*wtxn,
+        let BatchOp::EdgeWithCreatedAt {
+            weight, created_at, ..
+        } = &pending.op
+        else {
+            return Err(crate::Error::CorruptedIndex("received Parent operation"));
+        };
+        let bytes =
+            super::encode_edge_value_for_crdt(EdgeKind::Parent, *weight, *created_at, None, None)?;
+        let tombstoned =
+            crate::sync::loro_support::tombstone_map_contains_id(tombstones_map, &pending.src)
+                || crate::sync::loro_support::tombstone_map_contains_id(
+                    tombstones_map,
+                    &pending.tgt,
+                );
+        super::parent_retry::submit(
+            vault,
+            wtxn,
+            window_key,
             pending.src,
             pending.tgt,
-        ) {
-            Ok(crate::conversation_dag::ReceivedEdgeAdmission::Admit) => {}
-            Ok(crate::conversation_dag::ReceivedEdgeAdmission::Deferred) => {
-                // Keep the exact bounded edge payload, not only a marker
-                // that a later unrelated ChildOf write could discharge.
-                let BatchOp::EdgeWithCreatedAt {
-                    weight, created_at, ..
-                } = &pending.op
-                else {
-                    return Err(crate::Error::CorruptedIndex("received Parent operation"));
-                };
-                let value = super::encode_edge_value_for_crdt(
-                    EdgeKind::Parent,
-                    *weight,
-                    *created_at,
-                    None,
-                    None,
-                )?;
-                super::parent_retry::defer(
-                    vault,
-                    wtxn,
-                    window_key,
-                    &pending.src,
-                    &pending.tgt,
-                    &value,
-                )?;
-                continue;
-            }
-            Err(rejected) if remote_rejection_reason(&rejected).is_some() => {
-                quarantine_edge_apply_failure(
-                    vault,
-                    wtxn,
-                    window_key,
-                    &metas[pending.index],
-                    &rejected,
-                )?;
-                super::parent_retry::settle(vault, wtxn, window_key, &pending.src, &pending.tgt)?;
-                continue;
-            }
-            Err(local) => return Err(local),
-        }
-        let apply_result = batch::apply_ops(
-            &vault.store,
-            &vault.config,
-            &vault.analyzer,
-            wtxn,
-            vec![pending.op],
-            vault
-                .text_index_trusted
-                .load(std::sync::atomic::Ordering::Acquire),
-            false,
-            false,
-        );
-        match apply_result {
-            Err(e) if remote_rejection_reason(&e).is_none() => return Err(e),
-            Err(e) => {
-                quarantine_edge_apply_failure(vault, wtxn, window_key, &metas[pending.index], &e)?;
-                super::parent_retry::settle(vault, wtxn, window_key, &pending.src, &pending.tgt)?;
-            }
-            Ok(()) => {
-                super::parent_retry::settle(vault, wtxn, window_key, &pending.src, &pending.tgt)?;
-            }
-        }
+            &bytes,
+            tombstoned,
+        )?;
     }
     Ok(())
 }

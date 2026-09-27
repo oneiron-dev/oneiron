@@ -6,15 +6,13 @@
 
 mod admission;
 mod graph;
-#[cfg(feature = "sync")]
-pub(crate) use admission::{
-    ReceivedEdgeAdmission, validate_received_edge, validate_received_edge_shape,
-    validate_received_parent,
-};
+pub(crate) mod topology;
 pub(crate) use admission::{
     guard_record_put, keep_membership_pin, pin_membership, pin_typed_record,
     validate_local_membership,
 };
+#[cfg(feature = "sync")]
+pub(crate) use admission::{validate_received_edge, validate_received_parent_value};
 mod membership;
 mod migration;
 pub(crate) use membership::{stage_session_carrier, validate_session_carrier};
