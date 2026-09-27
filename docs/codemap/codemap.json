@@ -4259,6 +4259,30 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "BookingFaq",
+      "BookingLandingContent",
+      "BookingSlotPreview",
+      "BookingSnippetLink"
+     ],
+     "path": "src/booking/conversion.rs",
+     "purpose": "Renderer-neutral booking conversion data, derived only from public slots and owner copy",
+     "surface": {
+      "fn": 3,
+      "struct": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/booking/conversion/tests.rs",
+     "purpose": "—",
+     "surface": {}
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [
@@ -4725,8 +4749,8 @@
      "path": "src/booking/mod.rs",
      "purpose": "Engine-generic booking module",
      "surface": {
-      "mod": 13,
-      "re-export": 10
+      "mod": 15,
+      "re-export": 12
      }
     },
     {
@@ -4809,6 +4833,31 @@
       "crate-vis": 3,
       "fn": 2
      }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "BookingReminderStage",
+      "BookingReminderWake",
+      "NoShowEscalation"
+     ],
+     "path": "src/booking/reminder.rs",
+     "purpose": "Booking reminder planning, without a process timer or outbound side effect",
+     "surface": {
+      "const": 1,
+      "enum": 2,
+      "fn": 3,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/booking/reminder/tests.rs",
+     "purpose": "—",
+     "surface": {}
     },
     {
      "bucket": "s",
@@ -33825,7 +33874,7 @@
      "purpose": "—"
     },
     "booking": {
-     "files": 75,
+     "files": 79,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -35024,8 +35073,8 @@
    },
    "over_bar": 9,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2068,
-   "test_files": 710
+   "source_files": 2070,
+   "test_files": 712
   },
   "oneiron-android": {
    "files": [
@@ -38617,7 +38666,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/api/booking/public.rs",
