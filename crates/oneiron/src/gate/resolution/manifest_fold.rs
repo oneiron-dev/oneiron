@@ -25,6 +25,9 @@ pub(crate) fn resolve_policy_manifest(
     let mut resolution = PolicyManifestResolution::default();
     let mut untrusted_source_rows = Vec::new();
     let mut delegated_rows: Vec<DelegationGrantRecord> = Vec::new();
+    let mut authored_confidence: Option<crate::gate::carry_forward_policy::CarryForwardPolicy> =
+        None;
+    let mut seeded_confidence: Option<crate::gate::carry_forward_policy::CarryForwardPolicy> = None;
 
     for index_entry in store.port_entity_ids_by_type(txn, ENTITY_TYPE_POLICY_MANIFEST, None)? {
         let id = match index_entry {
@@ -156,20 +159,23 @@ pub(crate) fn resolve_policy_manifest(
                     );
                 }
                 if let Some(confidence) = decoded.carry_forward_confidence {
-                    // The shipped row is a starting value, not a permanent
-                    // minimum. The first trusted vault-authored row can choose
-                    // either direction; additional authored packs intersect
-                    // restrictively. Scan order cannot let the shipped row
-                    // veto an owner's choice or erase a holder override.
-                    let shipped = id == crate::gate::default_policy_manifest_id()?
-                        && decoded.pack._pack_id == "oneiron-default-policy";
-                    if shipped && resolution.carry_forward_precedence_configured {
-                        // The explicit vault row already owns this decision.
-                    } else if !shipped && !resolution.carry_forward_precedence_configured {
-                        resolution.carry_forward_confidence = confidence;
-                        resolution.carry_forward_precedence_configured = true;
-                    } else if !resolution.carry_forward_confidence.restrict(confidence) {
-                        resolution.diagnostics.malformed_manifest_seen = true;
+                    // Trust answers WHO may author; this body-bound local marker
+                    // answers whether the bytes are still the untouched seed.
+                    // ID and pack name are document identity, never origin.
+                    let seeded = crate::gate::manifest_authenticity::manifest_is_seeded_default(
+                        store, txn, &id, body,
+                    )?;
+                    let target = if seeded {
+                        &mut seeded_confidence
+                    } else {
+                        &mut authored_confidence
+                    };
+                    if let Some(existing) = target {
+                        if !existing.restrict(confidence) {
+                            resolution.diagnostics.malformed_manifest_seen = true;
+                        }
+                    } else {
+                        *target = Some(confidence);
                     }
                 }
                 resolution.packs.push(decoded.pack);
@@ -179,6 +185,11 @@ pub(crate) fn resolve_policy_manifest(
             }
         }
     }
+
+    resolution.carry_forward_authored = authored_confidence.is_some();
+    resolution.carry_forward_confidence = authored_confidence
+        .or(seeded_confidence)
+        .unwrap_or_default();
 
     for contribution in untrusted_source_rows {
         resolution.source_trust.restrict_only(contribution);

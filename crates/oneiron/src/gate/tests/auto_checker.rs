@@ -204,6 +204,7 @@ fn gate_claim_write(
             envelope: Some(envelope),
             auto_checker: checker,
             defer_metrics_until_commit: false,
+            transition: None,
         },
         &policy,
         GateWriteMode {

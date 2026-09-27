@@ -690,3 +690,404 @@ fn malformed_precedence_and_conflicting_vault_rows_fail_closed() -> Result<()> {
     assert!(policy.is_fail_closed());
     Ok(())
 }
+
+fn replace_seed_confidence(
+    vault: &Vault,
+    owner: &crate::consent::AuthenticatedOwner,
+    care: f32,
+    precedence: &str,
+    now: u64,
+) -> Result<()> {
+    let mut data = crate::gate::default_policy_manifest();
+    rewrite_policy_manifest_entries(&mut data, |entries| {
+        let encoded = confidence_manifest(care, precedence, Vec::new());
+        let Value::Map(config) = rmpv::decode::read_value(&mut encoded.as_slice()).expect("policy")
+        else {
+            unreachable!("map")
+        };
+        let value = config
+            .iter()
+            .find(|(key, _)| key.as_str() == Some("carry_forward_confidence"))
+            .expect("confidence row")
+            .1
+            .clone();
+        let (_, current) = entries
+            .iter_mut()
+            .find(|(key, _)| key.as_str() == Some("carry_forward_confidence"))
+            .expect("shipped row");
+        *current = value;
+    });
+    vault.install_owner_policy_manifest(
+        owner,
+        crate::gate::default_policy_manifest_id()?,
+        data,
+        now,
+    )
+}
+
+#[test]
+fn in_place_owner_edit_of_seed_is_authored_even_with_same_identity_and_bytes() -> Result<()> {
+    let (_dir, vault) = crate::test_util::open_test_vault_with(crate::VaultConfig::default());
+    let seeded = vault.with_write_txn(|txn| {
+        let policy = crate::gate::resolve_policy_manifest(&vault.store, txn)?;
+        policy.read_frontier_hash()
+    })?;
+    let owner = consent_bundle_owner(&vault, test_id(0x60))?;
+    replace_seed_confidence(&vault, &owner, 0.8, "holder_override_capped", 10)?;
+    let edited =
+        vault.with_write_txn(|txn| crate::gate::resolve_policy_manifest(&vault.store, txn))?;
+    assert_eq!(
+        edited.carry_forward_floor(CarryForwardKind::CareCheckIn, None),
+        0.8
+    );
+    assert_eq!(
+        edited.carry_forward_confidence.precedence.as_str(),
+        "holder_override_capped"
+    );
+    assert_ne!(seeded, edited.read_frontier_hash()?);
+    let (subject, envelope) = forward_envelope(&vault, ClaimApprovalStatus::Auto)?;
+    let lower_id = test_id(0x31);
+    vault.put_carry_forward_claim(
+        &lower_id,
+        CarryForwardClaim {
+            kind: CarryForwardKind::CareCheckIn,
+            subject,
+            detail: "owner lowered the floor".into(),
+            confidence: 0.85,
+        },
+        &envelope,
+        test_time(12),
+        12,
+    )?;
+    assert_eq!(
+        vault
+            .get_claim(&lower_id)?
+            .expect("lower-floor write")
+            .approval,
+        ClaimApprovalStatus::Auto
+    );
+    replace_seed_confidence(&vault, &owner, 0.9, "nested_narrowing", 13)?;
+    let reauthored =
+        vault.with_write_txn(|txn| crate::gate::resolve_policy_manifest(&vault.store, txn))?;
+    assert_eq!(
+        reauthored.carry_forward_floor(CarryForwardKind::CareCheckIn, None),
+        0.9
+    );
+    assert_ne!(
+        seeded,
+        reauthored.read_frontier_hash()?,
+        "intentionally authored defaults have an authored frontier"
+    );
+    let higher_id = test_id(0x32);
+    vault.put_carry_forward_claim(
+        &higher_id,
+        CarryForwardClaim {
+            kind: CarryForwardKind::CareCheckIn,
+            subject,
+            detail: "owner restored the floor".into(),
+            confidence: 0.85,
+        },
+        &envelope,
+        test_time(14),
+        14,
+    )?;
+    assert_eq!(
+        vault
+            .get_claim(&higher_id)?
+            .expect("restored-floor proposal")
+            .approval,
+        ClaimApprovalStatus::Proposed
+    );
+    Ok(())
+}
+
+#[test]
+fn edited_seed_and_second_authored_row_narrow_in_both_scan_orders() -> Result<()> {
+    for other_id in [test_id(0x30), test_id(0xe0)] {
+        let (_dir, vault) = crate::test_util::open_test_vault_with(crate::VaultConfig::default());
+        let owner = consent_bundle_owner(&vault, test_id(0x60))?;
+        replace_seed_confidence(&vault, &owner, 0.95, "nested_narrowing", 10)?;
+        put_policy_manifest_bytes(
+            &vault,
+            other_id,
+            &confidence_manifest(0.96, "nested_narrowing", Vec::new()),
+        )?;
+        let policy =
+            vault.with_write_txn(|txn| crate::gate::resolve_policy_manifest(&vault.store, txn))?;
+        assert!(!policy.is_fail_closed());
+        assert_eq!(
+            policy.carry_forward_floor(CarryForwardKind::CareCheckIn, None),
+            0.96
+        );
+    }
+    Ok(())
+}
+
+fn stricter_care_fixture() -> Result<(tempfile::TempDir, Vault, EntityId, WriteEnvelope, EntityId)>
+{
+    let (dir, vault) = temp_vault();
+    put_policy_manifest_bytes(
+        &vault,
+        test_id(0x70),
+        &confidence_manifest(0.9, "nested_narrowing", Vec::new()),
+    )?;
+    let (subject, envelope) = forward_envelope(&vault, ClaimApprovalStatus::Auto)?;
+    let id = test_id(0x71);
+    vault.put_carry_forward_claim(
+        &id,
+        CarryForwardClaim {
+            kind: CarryForwardKind::CareCheckIn,
+            subject,
+            detail: "care before change".into(),
+            confidence: 0.9,
+        },
+        &envelope,
+        test_time(10),
+        10,
+    )?;
+    put_policy_manifest_bytes(
+        &vault,
+        test_id(0x70),
+        &confidence_manifest(0.95, "nested_narrowing", Vec::new()),
+    )?;
+    Ok((dir, vault, subject, envelope, id))
+}
+
+#[test]
+fn stricter_policy_does_not_block_canonical_decay_weaken_stale_or_retract() -> Result<()> {
+    let (_dir, vault, subject, _envelope, id) = stricter_care_fixture()?;
+    assert_eq!(
+        vault.apply_claim_demotion(
+            &id,
+            crate::claim::ClaimDemotionAction::Decay {
+                new_claim_of_weight: 0.1
+            },
+            20
+        )?,
+        crate::claim::ClaimDemotionRung::Decayed
+    );
+    let edge = vault
+        .edges_out(&id)?
+        .into_iter()
+        .find(|edge| edge.kind == EdgeKind::ClaimOf && edge.target == subject)
+        .expect("claim_of edge");
+    assert_eq!(edge.weight, 0.1);
+    assert_eq!(
+        vault.apply_claim_demotion(
+            &id,
+            crate::claim::ClaimDemotionAction::Weaken {
+                new_confidence: 0.8
+            },
+            21
+        )?,
+        crate::claim::ClaimDemotionRung::Weakened
+    );
+    vault.apply_claim_demotion(&id, crate::claim::ClaimDemotionAction::MarkStale, 22)?;
+    vault.retract_claim(&id, 23)?;
+    let closed = vault
+        .get_claim(&id)?
+        .expect("closed after policy tightening");
+    assert_eq!(closed.confidence, 0.8);
+    assert_eq!(closed.approval, ClaimApprovalStatus::Auto);
+    assert!(closed.stale);
+    assert_eq!(closed.lifecycle, crate::ClaimLifecycleStatus::Retracted);
+    assert_eq!(closed.valid_to, Some(23));
+    Ok(())
+}
+
+#[test]
+fn stricter_policy_does_not_block_canonical_supersession() -> Result<()> {
+    let (_dir, vault, subject, envelope, old) = stricter_care_fixture()?;
+    let new_id = test_id(0x72);
+    vault.put_carry_forward_claim(
+        &new_id,
+        CarryForwardClaim {
+            kind: CarryForwardKind::CareCheckIn,
+            subject,
+            detail: "revised care".into(),
+            confidence: 0.95,
+        },
+        &envelope,
+        test_time(11),
+        11,
+    )?;
+    vault.supersede_claim(&new_id, &old, 20)?;
+    let closed = vault.get_claim(&old)?.expect("closed old head");
+    assert_eq!(closed.approval, ClaimApprovalStatus::Auto);
+    assert_eq!(closed.lifecycle, crate::ClaimLifecycleStatus::Superseded);
+    assert_eq!(closed.valid_to, Some(20));
+    assert_eq!(closed.confidence, 0.9);
+    assert_eq!(
+        vault.get_claim(&new_id)?.expect("replacement").lifecycle,
+        crate::ClaimLifecycleStatus::Active
+    );
+    Ok(())
+}
+
+#[test]
+fn sealed_transition_cannot_be_borrowed_by_fresh_changed_or_stale_claim() -> Result<()> {
+    use crate::batch::{
+        ApplyOpsGateMode, BatchOp, ClaimMaterialization, ENTITY_METADATA_HEADER_LEN,
+    };
+    let (_dir, vault, _subject, _envelope, id) = stricter_care_fixture()?;
+    let mut closed = vault.get_claim(&id)?.expect("current head");
+    closed.lifecycle = crate::ClaimLifecycleStatus::Retracted;
+    closed.valid_to = Some(20);
+    let operation = BatchOp::Put {
+        id,
+        entity_type: crate::registry::ENTITY_TYPE_CLAIM,
+        occurred: TimeRange { start: 10, end: 20 },
+        learned_at: 10,
+        data: crate::claim::encode_claim_body(&closed)?,
+        allow_maintenance: false,
+        allow_reserved_predicate: false,
+        hub_sync_imported: false,
+    };
+    let proof = vault.with_write_txn(|txn| {
+        let (_, proof) = ClaimMaterialization::verified_lifecycle(&vault.store, txn, &operation)?;
+        Ok(proof)
+    })?;
+    let run = |op: BatchOp, proof: crate::batch::VerifiedClaimTransition| {
+        vault.with_write_txn(|txn| {
+            crate::batch::apply_ops_with_gate_mode(
+                &vault.store,
+                &vault.config,
+                &vault.analyzer,
+                txn,
+                vec![op],
+                false,
+                ApplyOpsGateMode::new(false, false).with_verified_claim_transitions(vec![proof]),
+            )
+        })
+    };
+    let fresh_id = test_id(0x79);
+    let mut fresh = operation.clone();
+    if let BatchOp::Put { id, .. } = &mut fresh {
+        *id = fresh_id;
+    }
+    assert!(run(fresh, proof.clone()).is_err());
+    assert!(vault.get_claim(&fresh_id)?.is_none());
+    let mut changed = operation.clone();
+    if let BatchOp::Put { data, .. } = &mut changed {
+        let mut body = crate::claim::decode_claim_body(data, false)?;
+        body.value = Value::from("substituted body");
+        *data = crate::claim::encode_claim_body(&body)?;
+    }
+    assert!(run(changed, proof.clone()).is_err());
+    let raw = vault.get_raw(&id)?.expect("unchanged current row");
+    vault.apply_claim_demotion(
+        &id,
+        crate::claim::ClaimDemotionAction::Decay {
+            new_claim_of_weight: 0.5,
+        },
+        21,
+    )?;
+    assert!(
+        run(operation, proof).is_err(),
+        "stale predecessor cannot reuse proof"
+    );
+    assert_ne!(vault.get_raw(&id)?.expect("decayed"), raw);
+    assert_eq!(
+        vault.get_claim(&id)?.expect("still active").lifecycle,
+        crate::ClaimLifecycleStatus::Active
+    );
+    // Same raw header offset remains a store invariant, not a proof axis.
+    assert!(vault.get_raw(&id)?.expect("claim raw").len() > ENTITY_METADATA_HEADER_LEN);
+    Ok(())
+}
+
+#[test]
+fn canonical_demotion_rejects_wrong_or_increasing_edge_delta_after_tightening() -> Result<()> {
+    use crate::batch::{BatchOp, ClaimMaterialization};
+    let (_dir, vault, subject, _envelope, id) = stricter_care_fixture()?;
+    vault.apply_claim_demotion(
+        &id,
+        crate::claim::ClaimDemotionAction::Decay {
+            new_claim_of_weight: 0.5,
+        },
+        20,
+    )?;
+    let raw = vault.get_raw(&id)?.expect("decayed");
+    let next = vault.get_claim(&id)?.expect("decayed body");
+    let put = BatchOp::Put {
+        id,
+        entity_type: crate::registry::ENTITY_TYPE_CLAIM,
+        occurred: TimeRange { start: 10, end: 21 },
+        learned_at: 10,
+        data: crate::claim::encode_claim_body(&next)?,
+        allow_maintenance: false,
+        allow_reserved_predicate: false,
+        hub_sync_imported: false,
+    };
+    for (target, weight) in [(subject, 0.8), (test_id(0x79), 0.1)] {
+        let error = vault
+            .with_write_txn(|txn| {
+                ClaimMaterialization::apply_demotion(
+                    &vault,
+                    txn,
+                    vec![
+                        put.clone(),
+                        BatchOp::SetEdgeWeight {
+                            src: id,
+                            kind: EdgeKind::ClaimOf,
+                            tgt: target,
+                            weight,
+                        },
+                    ],
+                )
+            })
+            .expect_err("invalid edge bundle cannot mint a proof");
+        assert!(matches!(error, Error::InvalidClaimBody(_)), "{error:?}");
+        assert_eq!(vault.get_raw(&id)?.expect("no partial put"), raw);
+    }
+    Ok(())
+}
+
+#[test]
+fn proposed_to_auto_materialization_rechecks_current_care_floor() -> Result<()> {
+    let (_dir, vault) = temp_vault();
+    put_policy_manifest_bytes(
+        &vault,
+        test_id(0x70),
+        &confidence_manifest(0.95, "nested_narrowing", Vec::new()),
+    )?;
+    let (subject, envelope) = forward_envelope(&vault, ClaimApprovalStatus::Auto)?;
+    let id = test_id(0x71);
+    vault.put_carry_forward_claim(
+        &id,
+        CarryForwardClaim {
+            kind: CarryForwardKind::CareCheckIn,
+            subject,
+            detail: "parked care".into(),
+            confidence: 0.9,
+        },
+        &envelope,
+        test_time(10),
+        10,
+    )?;
+    assert_eq!(
+        vault.get_claim(&id)?.expect("parked").approval,
+        ClaimApprovalStatus::Proposed
+    );
+    let error = vault
+        .with_write_txn(|txn| {
+            crate::batch::ClaimMaterialization::apply_deferred_auto_grant(&vault, txn, &id, None)
+        })
+        .err()
+        .expect("deferred Auto still requires current confidence");
+    assert!(
+        matches!(
+            error,
+            Error::Gate(crate::error::GateError::GateWriteRejected {
+                outcome: "pending",
+                ..
+            })
+        ),
+        "{error:?}"
+    );
+    assert_eq!(
+        vault.get_claim(&id)?.expect("still parked").approval,
+        ClaimApprovalStatus::Proposed
+    );
+    Ok(())
+}

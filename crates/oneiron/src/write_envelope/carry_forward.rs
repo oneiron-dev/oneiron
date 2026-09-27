@@ -108,20 +108,30 @@ pub(crate) fn validate_claim(body: &ClaimBody) -> Result<()> {
 
 /// Enforce the floor on local put admission. Replay validates the claim shape,
 /// but receives final CRDT heads without their local transition history. A
-/// locally authored below-floor Auto head must follow a monotonic demotion or
-/// an exact lifecycle closure; new generic/raw Auto claims are refused.
+/// local below-floor final state requires a sealed proof from its canonical
+/// transition validator; new generic/raw Auto claims are refused.
+/// Admission axes travel together so the proof cannot be paired with the
+/// wrong target metadata at the common materialization door.
+pub(crate) struct CarryForwardAdmission<'a> {
+    pub(crate) envelope: Option<&'a WriteEnvelope>,
+    pub(crate) transition: Option<&'a crate::batch::VerifiedClaimTransition>,
+    pub(crate) occurred: TimeRange,
+    pub(crate) learned_at: u64,
+}
+
 pub(crate) fn validate_admission(
     store: &crate::store::Store,
     txn: &heed::RoTxn<'_>,
     id: &EntityId,
     body: &ClaimBody,
-    envelope: Option<&WriteEnvelope>,
+    admission: CarryForwardAdmission<'_>,
 ) -> Result<()> {
     let Some(kind) = CarryForwardKind::from_predicate(&body.predicate) else {
         return Ok(());
     };
     let prior = prior_claim(store, txn, id)?;
-    let actor = envelope
+    let actor = admission
+        .envelope
         .map(|envelope| envelope.actor().entity_ref())
         .or_else(|| {
             prior
@@ -135,47 +145,21 @@ pub(crate) fn validate_admission(
     {
         return Ok(());
     }
-    let valid = match body.approval {
-        ClaimApprovalStatus::Auto => prior
-            .as_ref()
-            .is_some_and(|prior| valid_auto_transition(prior, body)),
-        ClaimApprovalStatus::Approved => prior.as_ref().is_some_and(|prior| {
-            matches!(
-                prior.approval,
-                ClaimApprovalStatus::Proposed | ClaimApprovalStatus::Approved
-            ) && prior.predicate == body.predicate
-                && prior.subject == body.subject
-        }),
-        ClaimApprovalStatus::Rejected => prior.as_ref().is_some_and(|prior| {
-            matches!(
-                prior.approval,
-                ClaimApprovalStatus::Proposed | ClaimApprovalStatus::Rejected
-            ) && prior.predicate == body.predicate
-                && prior.subject == body.subject
-                && body.lifecycle == crate::claim::ClaimLifecycleStatus::Retracted
-        }),
-        ClaimApprovalStatus::Proposed => true,
-    };
-    if valid {
-        Ok(())
-    } else {
-        Err(Error::InvalidClaimBody(
-            "carry-forward confidence requires a proposal or bound lifecycle transition",
-        ))
+    if let Some(proof) = admission.transition
+        && proof.matches_put(
+            store,
+            txn,
+            id,
+            body,
+            admission.occurred,
+            admission.learned_at,
+        )?
+    {
+        return Ok(());
     }
-}
-
-/// The Gate can preserve a prior Auto head for exact confidence weakening or
-/// lifecycle closure, without treating either as a new automatic admission.
-pub(crate) fn allows_auto_demotion(
-    store: &crate::store::Store,
-    txn: &heed::RoTxn<'_>,
-    id: &EntityId,
-    body: &ClaimBody,
-) -> Result<bool> {
-    Ok(prior_claim(store, txn, id)?
-        .as_ref()
-        .is_some_and(|prior| valid_auto_transition(prior, body)))
+    Err(Error::InvalidClaimBody(
+        "carry-forward confidence requires verified lifecycle transition",
+    ))
 }
 
 fn actor_from_evidence(evidence: &Value) -> Option<EntityId> {
@@ -206,61 +190,6 @@ fn prior_claim(
         return Ok(None);
     }
     crate::claim::decode_claim_body(&raw[ENTITY_METADATA_HEADER_LEN..], true).map(Some)
-}
-
-/// Match canonical demotion deltas or the exact terminal lifecycle closure.
-/// A raw caller cannot create a new low-confidence Auto head by stamping a rung.
-fn valid_auto_transition(prior: &ClaimBody, next: &ClaimBody) -> bool {
-    use crate::claim::{CLAIM_SCOPE_DEMOTION_RUNG_KEY, ClaimDemotionRung, claim_demotion_rung};
-    if prior.approval != ClaimApprovalStatus::Auto
-        || prior.lifecycle != crate::claim::ClaimLifecycleStatus::Active
-        || next.confidence > prior.confidence
-    {
-        return false;
-    }
-    if matches!(
-        next.lifecycle,
-        crate::claim::ClaimLifecycleStatus::Retracted
-            | crate::claim::ClaimLifecycleStatus::Superseded
-    ) && let Some(valid_to) = next.valid_to
-    {
-        let mut expected = prior.clone();
-        expected.lifecycle = next.lifecycle;
-        expected.valid_to = Some(valid_to);
-        return expected == *next;
-    }
-    let Ok(before) = claim_demotion_rung(prior) else {
-        return false;
-    };
-    let Ok(after) = claim_demotion_rung(next) else {
-        return false;
-    };
-    let mut expected = prior.clone();
-    let rung = match (before, after) {
-        (
-            Some(ClaimDemotionRung::Decayed | ClaimDemotionRung::Weakened),
-            Some(ClaimDemotionRung::Weakened),
-        ) => {
-            expected.confidence = next.confidence;
-            "weakened"
-        }
-        (Some(ClaimDemotionRung::Weakened), Some(ClaimDemotionRung::Stale)) => {
-            expected.stale = true;
-            "stale"
-        }
-        _ => return prior == next, // idempotent same-body replay only
-    };
-    let mut scope = match expected.scope.take() {
-        Some(Value::Map(entries)) => entries,
-        _ => return false,
-    };
-    scope.retain(|(key, _)| key.as_str() != Some(CLAIM_SCOPE_DEMOTION_RUNG_KEY));
-    scope.push((
-        Value::from(CLAIM_SCOPE_DEMOTION_RUNG_KEY),
-        Value::from(rung),
-    ));
-    expected.scope = Some(Value::Map(scope));
-    expected == *next
 }
 
 impl Vault {

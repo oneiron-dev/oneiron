@@ -12,6 +12,7 @@ pub(crate) struct ApplyOpsGateMode {
     pub(super) include_source_in_gate_input: bool,
     pub(super) claim_gate_prechecked: bool,
     pub(super) claim_materializations: VecDeque<ClaimMaterialization>,
+    pub(super) claim_transitions: VecDeque<super::VerifiedClaimTransition>,
     pub(super) preflight_gate_decision_ids:
         HashMap<EntityId, VecDeque<Option<crate::store::GateDecisionId>>>,
     /// The caller's active mask: the FACET every NOTE and ASSET born in this
@@ -28,6 +29,7 @@ impl ApplyOpsGateMode {
             include_source_in_gate_input: false,
             claim_gate_prechecked: false,
             claim_materializations: VecDeque::new(),
+            claim_transitions: VecDeque::new(),
             preflight_gate_decision_ids: HashMap::new(),
             birth_mask: None,
         }
@@ -48,6 +50,14 @@ impl ApplyOpsGateMode {
         bindings: Vec<ClaimMaterialization>,
     ) -> Self {
         self.claim_materializations = bindings.into();
+        self
+    }
+
+    pub(crate) fn with_verified_claim_transitions(
+        mut self,
+        proofs: Vec<super::VerifiedClaimTransition>,
+    ) -> Self {
+        self.claim_transitions = proofs.into();
         self
     }
 

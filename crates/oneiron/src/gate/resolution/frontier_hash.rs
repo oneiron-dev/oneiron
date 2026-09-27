@@ -45,8 +45,9 @@ pub(super) fn hash_policy_frontier_v0(
     hash_budget_policy_table(hasher, &resolution.budget_policy);
     // A row resolving to shipped defaults has the historical frontier bytes.
     // Only a behavior-changing override contributes new hash material.
-    if resolution.carry_forward_confidence
-        != crate::gate::carry_forward_policy::CarryForwardPolicy::default()
+    if resolution.carry_forward_authored
+        || resolution.carry_forward_confidence
+            != crate::gate::carry_forward_policy::CarryForwardPolicy::default()
     {
         hash_str(hasher, "carry_forward_confidence");
         hash_str(

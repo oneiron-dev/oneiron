@@ -11,6 +11,7 @@ pub(super) struct ClaimPutAdmission<'a> {
     pub(super) allow_reserved_predicate: bool,
     pub(super) write_envelope: Option<&'a WriteEnvelope>,
     pub(super) replicated: bool,
+    pub(super) transition: Option<&'a crate::batch::VerifiedClaimTransition>,
 }
 
 pub(super) fn admit_claim_put(
@@ -47,7 +48,12 @@ pub(super) fn admit_claim_put(
                 txn,
                 &id,
                 body,
-                input.write_envelope,
+                crate::write_envelope::carry_forward::CarryForwardAdmission {
+                    envelope: input.write_envelope,
+                    transition: input.transition,
+                    occurred: input.occurred,
+                    learned_at: input.learned_at,
+                },
             )?;
         }
         crate::scope_summary::merge_summary_ref(body)?;

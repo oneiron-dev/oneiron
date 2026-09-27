@@ -142,6 +142,7 @@ fn check_claim_policy_for_write_with_record_inner(
         envelope,
         auto_checker,
         defer_metrics_until_commit,
+        transition,
     } = write;
     *recorded_decision = None;
     if let Some(envelope) = envelope {
@@ -277,9 +278,9 @@ fn check_claim_policy_for_write_with_record_inner(
                 )
             && (body.approval == ClaimApprovalStatus::Proposed
                 || body.approval == ClaimApprovalStatus::Auto
-                    && !crate::write_envelope::carry_forward::allows_auto_demotion(
-                        store, &*wtxn, id, body,
-                    )?)
+                    && !transition.is_some_and(|proof| {
+                        proof.matches_body(store, &*wtxn, id, body).unwrap_or(false)
+                    }))
         {
             decision = GateDecision::pending(vec![GateReasonCode::PendingCarryForwardConfidence]);
         }

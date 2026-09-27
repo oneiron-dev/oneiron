@@ -506,6 +506,11 @@ pub(super) fn seed_default_policy_manifest_in_txn(
         &crate::gate::trusted_manifest_key(id),
         blake3::hash(&body).as_bytes(),
     )?;
+    sync_state.put(
+        wtxn,
+        &crate::gate::seeded_manifest_key(id),
+        blake3::hash(&body).as_bytes(),
+    )?;
     type_index.put(
         wtxn,
         &Store::encode_type_key(ENTITY_TYPE_POLICY_MANIFEST, id),

@@ -2512,7 +2512,7 @@
      "path": "src/batch/base_apply/mod.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 3
      }
     },
     {
@@ -2629,7 +2629,7 @@
      "path": "src/batch/claim_materialization.rs",
      "purpose": "Exact-operation envelope handoff",
      "surface": {
-      "crate-vis": 15
+      "crate-vis": 17
      }
     },
     {
@@ -3013,7 +3013,7 @@
      "path": "src/batch/gate_mode.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 8
+      "crate-vis": 9
      }
     },
     {
@@ -3051,7 +3051,7 @@
      "path": "src/batch/mod.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 23,
+      "crate-vis": 24,
       "mod": 1,
       "re-export": 2
      }
@@ -3394,6 +3394,16 @@
      "purpose": "—",
      "surface": {
       "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/batch/verified_claim_transition.rs",
+     "purpose": "Sealed operation proof: minted only after the owning consent, curation or lifecycle validator checks the…",
+     "surface": {
+      "crate-vis": 11
      }
     },
     {
@@ -17017,7 +17027,7 @@
      "path": "src/gate/doors/peripheral.rs",
      "purpose": "Write mode types and the small standalone claim doors",
      "surface": {
-      "crate-vis": 12
+      "crate-vis": 13
      }
     },
     {
@@ -17120,7 +17130,7 @@
      "path": "src/gate/manifest_authenticity.rs",
      "purpose": "Local write-door authentication for manifest contributions",
      "surface": {
-      "crate-vis": 6,
+      "crate-vis": 8,
       "fn": 4,
       "struct": 1
      }
@@ -17303,7 +17313,7 @@
      "surface": {}
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "test",
      "notable": [],
      "path": "src/gate/tests/carry_forward.rs",
@@ -34727,7 +34737,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "src",
      "notable": [
       "CarryForwardClaim",
@@ -35550,7 +35560,7 @@
      "purpose": "Engine-side AR-3 autoreason campaign configuration and report join"
     },
     "batch": {
-     "files": 89,
+     "files": 90,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -36777,7 +36787,7 @@
    },
    "over_bar": 2,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2181,
+   "source_files": 2182,
    "test_files": 738
   },
   "oneiron-android": {

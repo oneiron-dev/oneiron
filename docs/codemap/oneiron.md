@@ -221,7 +221,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/batch/authority_log.rs` | src | s | 6 crate-vis | — | — |
 | `src/batch/base_apply/edge.rs` | src | s | 2 crate-vis | — | — |
 | `src/batch/base_apply/indexes.rs` | src | s | 2 crate-vis | — | — |
-| `src/batch/base_apply/mod.rs` | src | m | 2 crate-vis | — | — |
+| `src/batch/base_apply/mod.rs` | src | m | 3 crate-vis | — | — |
 | `src/batch/base_apply/validation.rs` | src | s | 3 crate-vis | — | — |
 | `src/batch/builder/claims.rs` | src | s | 5 fn · 1 crate-vis | — | Claim-candidate builder doors plus the gap-decay op constructor |
 | `src/batch/builder/commit.rs` | src | s | 1 fn · 2 crate-vis | — | Commit terminal: validation short-circuit, preflight, apply, VAD postcommit |
@@ -232,7 +232,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/batch/builder/puts.rs` | src | s | 2 fn · 3 crate-vis | — | Entity-put builder doors including the sync/test replicated door |
 | `src/batch/child_of_overlay.rs` | src | m | 17 crate-vis | — | — |
 | `src/batch/claim_candidate_apply.rs` | src | s | 3 crate-vis | — | — |
-| `src/batch/claim_materialization.rs` | src | m | 15 crate-vis | — | Exact-operation envelope handoff |
+| `src/batch/claim_materialization.rs` | src | m | 17 crate-vis | — | Exact-operation envelope handoff |
 | `src/batch/claim_materialization/tests.rs` | test | s | — | — | — |
 | `src/batch/claim_materialization/tests/freshness.rs` | test | m | — | — | Binding freshness after authorized replacements and unbound writes |
 | `src/batch/claim_materialization/tests/lifecycle_actor_regressions.rs` | test | m | — | — | Actor lifecycle counterexamples and controls |
@@ -265,11 +265,11 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/batch/export/tests.rs` | test | L | — | — | — |
 | `src/batch/facet_identity.rs` | src | s | 1 crate-vis | — | FACET overwrite checks for immutable substrate identity and retired privacy axes |
 | `src/batch/facet_validation.rs` | src | s | 5 crate-vis | — | — |
-| `src/batch/gate_mode.rs` | src | s | 8 crate-vis | — | — |
+| `src/batch/gate_mode.rs` | src | s | 9 crate-vis | — | — |
 | `src/batch/gate_staging.rs` | src | s | 1 crate-vis | — | — |
 | `src/batch/gate_staging/tests.rs` | test | s | — | — | — |
 | `src/batch/lexical_query_hints.rs` | src | m | 21 crate-vis | — | — |
-| `src/batch/mod.rs` | src | s | 1 mod · 2 re-export · 23 crate-vis | — | — |
+| `src/batch/mod.rs` | src | s | 1 mod · 2 re-export · 24 crate-vis | — | — |
 | `src/batch/ops_pipeline.rs` | src | m | 14 crate-vis | — | — |
 | `src/batch/person_substrate.rs` | src | s | 3 crate-vis | — | Atomic deterministic PERSON substrate masks, including replay and open-time repair |
 | `src/batch/phonetic_apply.rs` | src | s | 10 crate-vis | — | — |
@@ -306,6 +306,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/batch/types.rs` | src | s | 16 crate-vis | — | — |
 | `src/batch/vad_postcommit.rs` | src | s | 9 crate-vis | — | Transaction-owner handoff for Dreamer VAD approvals and digest invalidation |
 | `src/batch/vector_apply.rs` | src | s | 3 crate-vis | — | — |
+| `src/batch/verified_claim_transition.rs` | src | m | 11 crate-vis | — | Sealed operation proof: minted only after the owning consent, curation or lifecycle validator checks the… |
 | `src/blob_artifact/body.rs` | src | s | 1 struct · 4 fn · 4 const · 2 crate-vis | BlobArtifactBody | Blob artifact body: pinned body keys, body type, MessagePack codec, and validators |
 | `src/blob_artifact/esign/artifact_actor.rs` | src | s | 1 crate-vis | — | Vault-local machine identity for capability uploads and verified seal output |
 | `src/blob_artifact/esign/capability.rs` | src | s | 1 struct · 4 fn · 3 crate-vis | EsignCapability | Session-less, high-entropy capabilities |
@@ -1361,7 +1362,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/gate/doors/consent.rs` | src | s | 9 crate-vis | — | Consent binding hashes plus the pending lifecycle and enforcement matrix |
 | `src/gate/doors/dreamer_run.rs` | src | s | 4 crate-vis | — | — |
 | `src/gate/doors/mod.rs` | src | s | 8 crate-vis | — | Claim write doors: policy gating for local claim writes |
-| `src/gate/doors/peripheral.rs` | src | s | 12 crate-vis | — | Write mode types and the small standalone claim doors |
+| `src/gate/doors/peripheral.rs` | src | s | 13 crate-vis | — | Write mode types and the small standalone claim doors |
 | `src/gate/doors/recorded.rs` | src | s | 5 crate-vis | — | Recorded claim decisions retained until transaction commit or selective denial rollback |
 | `src/gate/dreamer_precommit.rs` | src | s | 4 crate-vis | — | GATE-12 pre-commit validation for Dreamer-authored claim writes |
 | `src/gate/effect/effect_consent.rs` | src | s | 3 crate-vis | — | Pure DEC-0006 consent constructors over gate input |
@@ -1371,7 +1372,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/gate/foreign_agent.rs` | src | m | 3 fn · 1 crate-vis | — | Owner-bound foreign introductions |
 | `src/gate/grants.rs` | src | m | 8 crate-vis | — | — |
 | `src/gate/input.rs` | src | m | 15 crate-vis | — | — |
-| `src/gate/manifest_authenticity.rs` | src | s | 1 struct · 4 fn · 6 crate-vis | ManifestContribution | Local write-door authentication for manifest contributions |
+| `src/gate/manifest_authenticity.rs` | src | s | 1 struct · 4 fn · 8 crate-vis | ManifestContribution | Local write-door authentication for manifest contributions |
 | `src/gate/mod.rs` | src | s | 3 re-export · 26 crate-vis | — | DEC-0005 Gate policy manifest resolver |
 | `src/gate/proposal_observation.rs` | src | s | 2 struct · 3 fn · 1 const · 2 crate-vis | ProposalSubmissionCheck, ProposalSubmissionReceipt | Actor-scoped, receipt-backed proposal observation; crossing only asks a question |
 | `src/gate/repair.rs` | src | s | 3 crate-vis | — | Pure, per-proposal consent recomputation |
@@ -1390,7 +1391,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/gate/tests/auto_signals.rs` | test | s | — | — | W7-C01: rate and failure streak are soft checker inputs, never a durable trip |
 | `src/gate/tests/budget_policy.rs` | test | m | — | — | ONE-1348 budget_policy manifest parse, resolution, and factory tests |
 | `src/gate/tests/burst_retired.rs` | test | s | — | — | Write velocity does not replace the ordinary verdict or create a pause |
-| `src/gate/tests/carry_forward.rs` | test | m | 2 crate-vis | — | ONE-2032: four forward kinds round-trip the shared claim Gate |
+| `src/gate/tests/carry_forward.rs` | test | L | 2 crate-vis | — | ONE-2032: four forward kinds round-trip the shared claim Gate |
 | `src/gate/tests/carry_forward_sync.rs` | test | s | — | — | Current-head CRDT replay does not depend on a receiver's local lifecycle history |
 | `src/gate/tests/charter_ceiling.rs` | test | m | 1 crate-vis | — | Definition ceiling and charter never-key and never-channel enforcement |
 | `src/gate/tests/claim_candidate_lineage.rs` | test | s | — | — | — |
@@ -2842,7 +2843,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/workspace_roster/tests/current_architecture.rs` | test | m | 2 crate-vis | — | — |
 | `src/workspace_roster/tests/onboarding_replay.rs` | test | m | — | — | — |
 | `src/write_envelope.rs` | src | m | 5 struct · 28 fn · 1 mod · 17 crate-vis | ClaimCandidate, SourceLineage, WriteActor, WriteEnvelope, WriteProvenance | Write-path stamping: `WriteActor`/`WriteProvenance`/`WriteEnvelope`/`ClaimCandidate` + evidence stamping |
-| `src/write_envelope/carry_forward.rs` | src | m | 1 struct · 1 enum · 4 fn · 3 crate-vis | CarryForwardClaim, CarryForwardKind | Confidence-gated forward commitments, separate from belief consolidation and the commitment ledger |
+| `src/write_envelope/carry_forward.rs` | src | s | 1 struct · 1 enum · 4 fn · 3 crate-vis | CarryForwardClaim, CarryForwardKind | Confidence-gated forward commitments, separate from belief consolidation and the commitment ledger |
 | `src/write_envelope/tests.rs` | test | m | — | — | ONE-1314 · the source-lineage axis on the write envelope |
 | `tests/build_cache.rs` | test | s | — | — | Public cache boundary: real vaults and BLOB_ARTIFACT versions only |
 | `tests/cb_oracle_common/mod.rs` | test | s | — | — | Shared fixtures for the split Context Board oracle files |
