@@ -73,12 +73,97 @@ fn ceiling_key(asset: EntityId) -> String {
 fn receipt_key(asset: EntityId) -> String {
     format!("docs-deep-receipt:v1:{}", asset.to_hex())
 }
-pub(super) fn source_hash(text: &str) -> String {
-    let normalized = text
-        .strip_prefix('\u{feff}')
+fn transport_normalized_text(text: &str) -> String {
+    text.strip_prefix('\u{feff}')
         .unwrap_or(text)
-        .replace("\r\n", "\n");
-    blake3::hash(normalized.as_bytes()).to_hex().to_string()
+        .replace("\r\n", "\n")
+}
+
+pub(super) fn source_hash(text: &str) -> String {
+    blake3::hash(transport_normalized_text(text).as_bytes())
+        .to_hex()
+        .to_string()
+}
+
+fn imported_docs_source_body(body: &[u8], kind: u8) -> Option<Value> {
+    let mut value: Value = rmp_serde::from_slice(body).ok()?;
+    let fields = value.as_object_mut()?;
+    if fields.get("source")?.as_str()? != "imported" {
+        return None;
+    }
+    let text = transport_normalized_text(fields.get("text")?.as_str()?);
+    fields.insert("text".into(), Value::String(text));
+    if kind == ENTITY_TYPE_ASSET {
+        // NER reads the page text, not the renderer path or registry metadata.
+        fields.remove("path");
+        fields.remove("registry");
+    }
+    Some(value)
+}
+
+/// Classifies a changed imported docs source at the shared put door.
+/// The caller invalidates dependents after releasing the old-row read borrow,
+/// in the same writer transaction; transport-only changes are not new sources.
+pub(crate) fn docs_source_put_changes(
+    store: &crate::store::Store,
+    txn: &heed::RoTxn<'_>,
+    id: &EntityId,
+    kind: u8,
+    previous: &[u8],
+    next: &[u8],
+) -> Result<bool> {
+    if !matches!(
+        kind,
+        ENTITY_TYPE_ASSET | crate::registry::ENTITY_TYPE_ASSET_TEXT
+    ) {
+        return Ok(false);
+    }
+    let Some(previous) = imported_docs_source_body(previous, kind) else {
+        return Ok(false);
+    };
+    if kind == ENTITY_TYPE_ASSET
+        && store
+            .vault_meta
+            .get(txn, receipt_key(*id).as_bytes())?
+            .is_none()
+    {
+        // The docs importer retracted its prior claims and removed their
+        // receipt before staging a changed approved source revision.
+        return Ok(false);
+    }
+    Ok(Some(previous) != imported_docs_source_body(next, kind))
+}
+
+/// Only the shared batch entity-put door calls this, before it stages a new
+/// body. Classify under a read borrow, release that borrow, then invalidate
+/// dependents in the same transaction as the replacement.
+pub(crate) fn invalidate_docs_source_before_put(
+    store: &crate::store::Store,
+    txn: &mut heed::RwTxn<'_>,
+    id: &EntityId,
+    kind: u8,
+    next: &[u8],
+) -> Result<()> {
+    if !matches!(
+        kind,
+        ENTITY_TYPE_ASSET | crate::registry::ENTITY_TYPE_ASSET_TEXT
+    ) {
+        return Ok(());
+    }
+    let changed = {
+        let Some(raw) = store.entities.get(&*txn, id.as_bytes())? else {
+            return Ok(());
+        };
+        if raw.len() < ENTITY_METADATA_HEADER_LEN {
+            return Err(Error::CorruptedIndex("docs source header"));
+        }
+        let previous = &raw[ENTITY_METADATA_HEADER_LEN..];
+        previous != next && docs_source_put_changes(store, txn, id, kind, previous, next)?
+    };
+    if changed {
+        crate::ports::invalidate_source_in_txn(store, txn, id)?;
+    }
+    Ok(())
 }
 
 /// The import's approved revision is the only source that can enable deep work.
@@ -328,6 +413,9 @@ impl Vault {
                 &claim.id,
                 &claim.chunk,
             )?;
+            // The dependency index is one hop, not recursive. Bind the root
+            // asset too, so deleting it invalidates the derived claim directly.
+            crate::ports::record_derived_edge_in_txn(&self.store, &mut txn, &claim.id, &asset)?;
             self.store
                 .delete_pending_gate_consent_in_txn(&mut txn, &claim.id)?;
             receipt.claim_refs.push(claim.id.to_hex());

@@ -722,6 +722,9 @@ fn docs_deep_transport_reimport_preserves_claims_and_receipt() -> Result<()> {
     let crlf = vault.deep_ingest_docs_asset(&owner, asset, DocsDeepTrigger::Explicit, &ner, 7)?;
     assert_eq!(crlf.claim_refs, original.claim_refs);
     assert_eq!(ner.0.load(Ordering::Relaxed), calls);
+    grant_core_read(&vault, "owner")?;
+    let reader = vault.scoped_read(crate::claim::ScopedReadActorKey::new("owner").unwrap());
+    assert!(reader.is_entity_readable(&EntityId::from_hex(&original.claim_refs[0])?)?);
     assert_eq!(
         vault
             .get_claim(&EntityId::from_hex(&original.claim_refs[0])?)?
@@ -729,5 +732,67 @@ fn docs_deep_transport_reimport_preserves_claims_and_receipt() -> Result<()> {
             .lifecycle,
         crate::claim::ClaimLifecycleStatus::Active
     );
+    Ok(())
+}
+
+#[test]
+fn deleting_docs_asset_invalidates_its_deep_claim_at_normal_read() -> Result<()> {
+    let (_dir, vault, owner, _doc, _ceiling, receipt) = deep_fixture()?;
+    let asset = EntityId::from_hex(&receipt.asset_refs[0])?;
+    let deep =
+        vault.deep_ingest_docs_asset(&owner, asset, DocsDeepTrigger::Explicit, &MultiNer, 3)?;
+    let claim = EntityId::from_hex(&deep.claim_refs[0])?;
+    grant_core_read(&vault, "owner")?;
+    let reader = vault.scoped_read(crate::claim::ScopedReadActorKey::new("owner").unwrap());
+    assert!(reader.is_entity_readable(&claim)?);
+    vault.delete_entity(&asset)?;
+    let txn = vault.store.env.read_txn()?;
+    assert!(crate::ports::stale_in_txn(&vault.store, &txn, &claim)?);
+    drop(txn);
+    assert!(!reader.is_entity_readable(&claim)?);
+    Ok(())
+}
+
+#[test]
+fn ordinary_docs_source_put_invalidates_live_deep_claims() -> Result<()> {
+    for change_asset in [false, true] {
+        let (_dir, vault, owner, _doc, _ceiling, receipt) = deep_fixture()?;
+        let asset = EntityId::from_hex(&receipt.asset_refs[0])?;
+        let chunk = EntityId::from_hex(&receipt.chunk_refs[1])?;
+        let deep = vault.deep_ingest_docs_asset(
+            &owner,
+            asset,
+            DocsDeepTrigger::Explicit,
+            &Ner(std::sync::atomic::AtomicUsize::new(0)),
+            3,
+        )?;
+        let claim = EntityId::from_hex(&deep.claim_refs[0])?;
+        grant_core_read(&vault, "owner")?;
+        let reader = vault.scoped_read(crate::claim::ScopedReadActorKey::new("owner").unwrap());
+        assert!(reader.is_entity_readable(&claim)?);
+        let source = if change_asset { asset } else { chunk };
+        let kind = if change_asset {
+            crate::registry::ENTITY_TYPE_ASSET
+        } else {
+            crate::registry::ENTITY_TYPE_ASSET_TEXT
+        };
+        let txn = vault.store.env.read_txn()?;
+        let raw = vault.get_raw_in(&txn, &source)?.unwrap();
+        let mut body: serde_json::Value =
+            rmp_serde::from_slice(&raw[crate::batch::ENTITY_METADATA_HEADER_LEN..]).unwrap();
+        drop(txn);
+        body["text"] = json!("# Gravity\n\nA different source fact.");
+        vault.put_entity(
+            &source,
+            kind,
+            TimeRange { start: 4, end: 4 },
+            4,
+            &rmp_serde::to_vec_named(&body).unwrap(),
+        )?;
+        let txn = vault.store.env.read_txn()?;
+        assert!(crate::ports::stale_in_txn(&vault.store, &txn, &claim)?);
+        drop(txn);
+        assert!(!reader.is_entity_readable(&claim)?);
+    }
     Ok(())
 }

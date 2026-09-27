@@ -18284,7 +18284,7 @@
      "path": "src/ingest/docs_deep.rs",
      "purpose": "On-demand docs NER: only a named trigger crosses the thin-star boundary",
      "surface": {
-      "crate-vis": 4,
+      "crate-vis": 6,
       "enum": 1,
       "fn": 1,
       "struct": 2,
@@ -18663,7 +18663,7 @@
      "path": "src/ingest/mod.rs",
      "purpose": "Ingest source registry and source-local normalization",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 4,
       "mod": 3,
       "re-export": 14
      }
