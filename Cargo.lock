@@ -7254,6 +7254,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "oneiron-linear"
+version = "0.1.0"
+dependencies = [
+ "blake3",
+ "chrono",
+ "oneiron",
+ "reqwest 0.12.28",
+ "rmp-serde",
+ "rmpv",
+ "serde_json",
+ "tempfile",
+]
+
+[[package]]
 name = "oneiron-llm-anthropic"
 version = "0.1.0"
 dependencies = [

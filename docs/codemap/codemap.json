@@ -16949,7 +16949,7 @@
      "purpose": "Local write-door authentication for manifest contributions",
      "surface": {
       "crate-vis": 6,
-      "fn": 3,
+      "fn": 4,
       "struct": 1
      }
     },
@@ -19738,7 +19738,7 @@
      "purpose": "LinearSyncAdapter push/pull/apply verbs with replay, conflict, and receipt logic",
      "surface": {
       "crate-vis": 2,
-      "fn": 7,
+      "fn": 8,
       "struct": 1
      }
     },
@@ -23527,7 +23527,7 @@
      "purpose": "Vault facade seams for dispatching outbound intents",
      "surface": {
       "crate-vis": 2,
-      "fn": 1
+      "fn": 2
      }
     },
     {
@@ -26242,6 +26242,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/receipt/direct_dispatch.rs",
+     "purpose": "Ordinary outbound receipts for hosts that call dispatch directly",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/receipt/dispatch_observation.rs",
      "purpose": "Passive OF-327 per-try audit observations; never resend authority",
      "surface": {
@@ -26345,7 +26355,7 @@
      "path": "src/receipt/mod.rs",
      "purpose": "Unified receipt-family query surface over existing receipt emitters",
      "surface": {
-      "crate-vis": 14,
+      "crate-vis": 15,
       "re-export": 8
      }
     },
@@ -27867,6 +27877,19 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
+      "CentroidReplay"
+     ],
+     "path": "src/self_heal/centroid_evidence.rs",
+     "purpose": "Immutable, content-addressed centroid inputs beside vault-local telemetry",
+     "surface": {
+      "fn": 2,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
       "ConsentDeniedDetector"
      ],
      "path": "src/self_heal/consent_detector.rs",
@@ -27896,6 +27919,24 @@
      "surface": {
       "crate-vis": 5,
       "fn": 2
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "ClosedFormPredicate",
+      "GraduatedT1",
+      "MintedT2",
+      "ReviewedFinding"
+     ],
+     "path": "src/self_heal/distillation.rs",
+     "purpose": "Owner-labeled T3 evidence -> T2 policy -> closed-form T1 proof",
+     "surface": {
+      "crate-vis": 1,
+      "enum": 1,
+      "fn": 4,
+      "struct": 3
      }
     },
     {
@@ -27969,8 +28010,8 @@
      "purpose": "GATE-14 layer 1 (ONE-1394): deterministic detectors and the typed `DiagnosticEvent` maintenance entity",
      "surface": {
       "crate-vis": 4,
-      "mod": 3,
-      "re-export": 7
+      "mod": 5,
+      "re-export": 8
      }
     },
     {
@@ -28074,6 +28115,33 @@
      "notable": [],
      "path": "src/self_heal/text_tests.rs",
      "purpose": "—",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "DetectorPolicy",
+      "ProposedDiagnostic",
+      "ProposedTier",
+      "TelemetryJudge"
+     ],
+     "path": "src/self_heal/tiered.rs",
+     "purpose": "Model-graded detection over ARCH-0037 runs",
+     "surface": {
+      "crate-vis": 4,
+      "enum": 1,
+      "fn": 3,
+      "struct": 2,
+      "trait": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "src/self_heal/tiered_tests.rs",
+     "purpose": "Observable propose-only outputs and reviewed distillation",
      "surface": {}
     },
     {
@@ -32467,7 +32535,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "test",
      "notable": [],
      "path": "src/task_verb/production_ports_tests.rs",
@@ -36006,7 +36074,7 @@
      "purpose": "Host-injected HyDE query-expansion seam"
     },
     "receipt": {
-     "files": 19,
+     "files": 20,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -36111,7 +36179,7 @@
      "purpose": "Snapshot-time secret custody filtering (ARCH-0069 S4/S5)"
     },
     "self_heal": {
-     "files": 23,
+     "files": 27,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -36379,8 +36447,8 @@
    },
    "over_bar": 11,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2146,
-   "test_files": 734
+   "source_files": 2150,
+   "test_files": 735
   },
   "oneiron-android": {
    "files": [
@@ -38315,6 +38383,149 @@
    "over_bar": 0,
    "purpose": "OpenRouter Image API adapter",
    "source_files": 3,
+   "test_files": 1
+  },
+  "oneiron-linear": {
+   "files": [
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "VaultLinearOutboundDoor"
+     ],
+     "path": "src/dispatch.rs",
+     "purpose": "Linear mutations through the vault's replay-first outbound dispatch door",
+     "surface": {
+      "fn": 3,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "LinearHostEgress",
+      "LinearOutboundDoor"
+     ],
+     "path": "src/egress.rs",
+     "purpose": "Outbound mutation mapping; host door enforces policy and replay custody",
+     "surface": {
+      "crate-vis": 2,
+      "fn": 2,
+      "struct": 1,
+      "trait": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "GraphQlCall",
+      "GraphQlExecutor",
+      "GraphQlTransportError",
+      "HttpLinearClient"
+     ],
+     "path": "src/http.rs",
+     "purpose": "Bounded host-owned GraphQL transport; credentials never enter the engine",
+     "surface": {
+      "crate-vis": 1,
+      "enum": 1,
+      "fn": 1,
+      "struct": 2,
+      "trait": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/journal.rs",
+     "purpose": "Host response custody beneath the engine outbound dispatch, not a second gate",
+     "surface": {
+      "crate-vis": 8
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/lib.rs",
+     "purpose": "Host-side Linear GraphQL adapter for the engine's TASK ↔ issue mirror",
+     "surface": {
+      "re-export": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "LinearHostChangeSource",
+      "LinearTrackerConfig"
+     ],
+     "path": "src/source.rs",
+     "purpose": "Linear issue snapshots from the team-scoped cursor-paged GraphQL connection",
+     "surface": {
+      "crate-vis": 2,
+      "fn": 3,
+      "struct": 2
+     }
+    },
+    {
+     "bucket": "L",
+     "kind": "test",
+     "notable": [],
+     "path": "src/tests.rs",
+     "purpose": "—",
+     "surface": {}
+    }
+   ],
+   "modules": {
+    "dispatch": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "Linear mutations through the vault's replay-first outbound dispatch door"
+    },
+    "egress": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "Outbound mutation mapping; host door enforces policy and replay custody"
+    },
+    "http": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "Bounded host-owned GraphQL transport; credentials never enter the engine"
+    },
+    "journal": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "Host response custody beneath the engine outbound dispatch, not a second gate"
+    },
+    "source": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "Linear issue snapshots from the team-scoped cursor-paged GraphQL connection"
+    },
+    "tests": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "—",
+     "layout": "file",
+     "purpose": "—"
+    }
+   },
+   "over_bar": 0,
+   "purpose": "Host-side Linear GraphQL adapter for the engine's TASK ↔ issue mirror",
+   "source_files": 6,
    "test_files": 1
   },
   "oneiron-llm-anthropic": {
