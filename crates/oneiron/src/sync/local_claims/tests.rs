@@ -99,6 +99,7 @@ impl Fixture {
                 }],
                 fields: Vec::new(),
                 full_trail_appendix: true,
+                lifecycle: None,
             },
             EsignAuditActor {
                 actor: owner.to_hex(),
