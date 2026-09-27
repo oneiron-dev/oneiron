@@ -306,8 +306,13 @@ impl Vault {
             grant: ConsentGrant::Standing(grant),
         };
 
-        let key = consent_grant_key(&row.grant_ref());
+        let grant_ref = row.grant_ref();
+        let key = consent_grant_key(&grant_ref);
         let data = encode_consent_grant_row(&row)?;
+        // A same-bound re-mint is a NEW issuance, even with the same
+        // AuthenticatedOwner. Its predecessor's reason and undo must not
+        // authorize or revoke this replacement.
+        super::owner_reason::retire_owner_reason_rules_in_txn(&self.store, wtxn, &grant_ref)?;
         // Re-minting an identical bound is the owner re-affirming it; the row
         // is idempotent, and the receipt is still written so the act is
         // audit-visible.

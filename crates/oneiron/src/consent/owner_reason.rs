@@ -1,6 +1,7 @@
 //! Owner-authenticated confirm reasons, bounded rule rows, and their derived grants.
 
 use serde::{Deserialize, Serialize};
+use std::cmp::Reverse;
 
 use crate::Vault;
 use crate::error::{Error, GateError, Result};
@@ -97,9 +98,21 @@ fn decode(raw: &[u8], key_bytes: &[u8]) -> Result<RuleRow> {
     Ok(row)
 }
 
-/// Rank same-class candidates for ASK prefill only, never for authority.
-/// The grant's actual containment still decides confident automatic reuse.
-fn prefill_proximity(recorded: &GrantBound, required: &GrantBound) -> usize {
+/// Relevance is advice, never authority. Compare *all* live same-class rows,
+/// including overlapping grants that each contain the request. Exact scope
+/// beats wider scope; matching targets and shared selectors break lesser ties.
+/// Only `GrantBound::contains` authorizes a confident automatic use.
+type ReasonRank = (bool, bool, bool, usize, Reverse<usize>, [u8; 16]);
+
+fn reason_rank(recorded: &GrantBound, required: &GrantBound, id: [u8; 16]) -> Option<ReasonRank> {
+    let covers = recorded.contains(required);
+    if !covers
+        && (recorded.domain() != required.domain()
+            || recorded.subject() != required.subject()
+            || recorded.class() != required.class())
+    {
+        return None;
+    }
     let (selectors, candidate, same_target) = match (recorded.envelope(), required.envelope()) {
         (BoundEnvelope::Action(a), BoundEnvelope::Action(b)) => (
             a.selectors(),
@@ -109,13 +122,20 @@ fn prefill_proximity(recorded: &GrantBound, required: &GrantBound) -> usize {
         (BoundEnvelope::Disclosure(a), BoundEnvelope::Disclosure(b)) => {
             (a.selectors(), b.selectors(), false)
         }
-        _ => return 0,
+        _ => return None,
     };
-    usize::from(same_target) * 2
-        + candidate
-            .iter()
-            .filter(|selector| selectors.binary_search(selector).is_ok())
-            .count()
+    let shared = candidate
+        .iter()
+        .filter(|selector| selectors.binary_search(selector).is_ok())
+        .count();
+    Some((
+        covers,
+        recorded == required,
+        same_target,
+        shared,
+        Reverse(selectors.len()),
+        id,
+    ))
 }
 
 /// Any revocation of the derived grant retires its rule in the same transaction.
@@ -160,11 +180,14 @@ impl Vault {
     ) -> Result<OwnerReasonConfirmation> {
         let digest = effect.digest();
         let Some(reason) = payload.reason else {
-            let receipt = self.approve_once(owner, digest)?;
-            return Ok(OwnerReasonConfirmation {
-                receipt,
-                notice_text: None,
-                undo: None,
+            return self.with_write_txn(|txn| {
+                owner.revalidate_in_txn(self, &*txn)?;
+                let receipt = self.approve_once_in_txn(txn, owner, digest)?;
+                Ok(OwnerReasonConfirmation {
+                    receipt,
+                    notice_text: None,
+                    undo: None,
+                })
             });
         };
         let reason = reason.trim();
@@ -187,6 +210,7 @@ impl Vault {
             )));
         }
         self.with_write_txn(|txn| {
+            owner.revalidate_in_txn(self, &*txn)?;
             let grant_ref = bound.digest().to_hex();
             if self
                 .consent_grant_in_txn(&*txn, &grant_ref)?
@@ -277,14 +301,10 @@ impl Vault {
         confidence: ReasonMatchConfidence,
     ) -> Result<OwnerReasonVerdict> {
         self.with_write_txn(|txn| {
-            let required = effect
-                .action_requirement()
-                .or_else(|| effect.disclosure_requirement());
-            let mut nearest: Option<(usize, [u8; 16], String)> = None;
-            let mut exact = None;
+            let mut best: Option<(ReasonRank, RuleRow)> = None;
             for entry in self.store.vault_meta.prefix_iter(&*txn, RULE_PREFIX)? {
-                let (k, raw) = entry?;
-                let rule = decode(&raw, &k)?;
+                let (key, raw) = entry?;
+                let rule = decode(&raw, &key)?;
                 let Some(grant) = self.consent_grant_in_txn(&*txn, &rule.grant_ref)? else {
                     return Err(Error::CorruptedIndex("owner reason grant"));
                 };
@@ -295,32 +315,27 @@ impl Vault {
                 {
                     continue;
                 }
-                let Some(required) = required else {
-                    continue;
-                };
-                let bound = grant.grant.bound();
-                if bound.contains(required) {
-                    exact = Some(rule);
-                    break;
-                }
-                if bound.domain() == required.domain()
-                    && bound.subject() == required.subject()
-                    && bound.class() == required.class()
+                let rank = [effect.action_requirement(), effect.disclosure_requirement()]
+                    .into_iter()
+                    .flatten()
+                    .filter_map(|required| {
+                        reason_rank(grant.grant.bound(), required, rule.decision_id)
+                    })
+                    .max();
+                if let Some(rank) = rank
+                    && best.as_ref().is_none_or(|(old, _)| rank > *old)
                 {
-                    let score = prefill_proximity(bound, required);
-                    if nearest
-                        .as_ref()
-                        .is_none_or(|(best, id, _)| (score, rule.decision_id) > (*best, *id))
-                    {
-                        nearest = Some((score, rule.decision_id, rule.reason));
-                    }
+                    best = Some((rank, rule));
                 }
             }
-            let Some(rule) = exact else {
-                return Ok(OwnerReasonVerdict::Ask {
-                    prefill: nearest.map(|(_, _, reason)| reason),
-                });
+            let Some((rank, rule)) = best else {
+                return Ok(OwnerReasonVerdict::Ask { prefill: None });
             };
+            if !rank.0 {
+                return Ok(OwnerReasonVerdict::Ask {
+                    prefill: Some(rule.reason),
+                });
+            }
             if confidence == ReasonMatchConfidence::Unsure || effect.catastrophe().is_some() {
                 return Ok(OwnerReasonVerdict::Ask {
                     prefill: Some(rule.reason),
