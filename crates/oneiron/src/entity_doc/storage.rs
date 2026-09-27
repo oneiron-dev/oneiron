@@ -439,6 +439,18 @@ pub(crate) fn has_record_head(store: &Store, txn: &RoTxn<'_>, entity: &EntityId)
         .is_some())
 }
 
+/// Read the exact durable document head after the live body was admitted.
+pub(crate) fn record_head_bytes(
+    store: &Store,
+    txn: &RoTxn<'_>,
+    entity: &EntityId,
+) -> Result<Option<Vec<u8>>> {
+    Ok(store
+        .vault_meta
+        .get(txn, head_key(entity).as_bytes())?
+        .map(|raw| raw.to_vec()))
+}
+
 /// Read-only view for existing typed record readers; the durable row retains
 /// only the pointer and immutable fields, never a second copy of the text.
 pub(crate) fn resolve_record_body(
