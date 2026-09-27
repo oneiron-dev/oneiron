@@ -13,8 +13,8 @@ It packages the existing `MeetingTranscriptSource` and `produce_meeting_transcri
 it does not reimplement the engine pipeline. The runnable entry point is
 `crates/oneiron/examples/meeting_audio_import.rs`. A host runs this once per
 file after it has resolved capture permission, the audio-processing setting,
-the OF-133 ASR route and runtime access. A decoded mp4 is **not** itself proof
-that ASR, alignment, community-1 or cleanup ran.
+the OF-133 role routes and runtime access. A decoded mp4 is **not** itself proof
+that ASR, alignment, diarization or cleanup ran.
 
 ## Host policy (supply at run time)
 
@@ -33,24 +33,28 @@ The resident agent also chooses policy for E1/E3 experiments and the
 speaker-enrollment match threshold τ. It must not call a fixture result
 "measured", infer biometric consent from import approval, or silently pick a
 batch default. Keep a policy revision and approval reference outside the
-recording and outside engine code. E1 needs consented real JP/EN/UK meetings,
-Qwen3-ASR and Soniox async on the same corpus, language-specific WER and
-proper-noun/timing review. UK Qwen support is currently refused; record that
-as an unsupported arm, not a fabricated score. A measured selection receipt
-still needs a separate authenticated OF-133 ASR-role selection act. If Soniox
-wins, use a Soniox-capable host; this local Qwen bridge refuses it.
+recording and outside engine code. The E1 bake-off and winner choice are a
+**separate owner ticket**, not an adapter precondition. When a measured receipt
+is supplied, it needs a consented cohort, two or more actual arms, a winner
+in those arms, and a separate authenticated OF-133 role-selection act. The host resolves the role's route by description, not a named model or
+locality tier; the ids below are the resulting selections, not routing policy.
 
 ## Setup and run
 
 Provision an *existing* native Python interpreter, ffmpeg, immutable local
-snapshots (Qwen ASR, acoustic word aligner, community-1 and cleanup model),
+snapshots for the routed ASR, acoustic aligner, diarizer and cleanup models,
 licenses/access records, exact hashes and a private workspace. The runtime
 profile format and its helper/worker pins are in
 `scripts/meeting-audio-runtime.md`. Do not install packages, fetch weights,
 run `uv` inline launchers, or substitute word times from chunk boundaries.
 The native adapter preflights every required port and refuses absent ones.
-The supplied `route_receipt_ref` is an opaque host-supplied OF-133 reference;
-this diagnostic CLI cannot authenticate or create a selection act.
+Each role carries a host-supplied OF-133 `route_receipt_ref`, model id and
+model revision. The example cannot authenticate or create a selection act.
+Its native host is one implementation, not the router: it checks each selected
+id/revision against the pinned runtime profile (including worker profiles).
+Here `model_revision` is the last path component of the native model snapshot.
+A remote selection stops before inference and needs a different
+`MeetingAudioHost` implementation; the native bridge cannot pretend to run it.
 
 Write a *private*, host-owned JSON config with absolute paths (not a checked-in
 secret). For example, replace **every** placeholder:
@@ -61,7 +65,7 @@ secret). For example, replace **every** placeholder:
   "bridge": "/absolute/oneiron/scripts/meeting-audio-native.py",
   "ffmpeg": "/absolute/bin/ffmpeg",
   "workspace": "/absolute/private/workspace",
-  "model_snapshot": "/absolute/pinned/qwen-snapshot",
+  "model_snapshot": "/absolute/pinned/asr-snapshot-revision",
   "runtime_profile": "/absolute/private/profile.json",
   "runtime_profile_sha256": "64-lowercase-hex-of-exact-profile",
   "audio": "/absolute/private/meeting.mp4",
@@ -69,7 +73,12 @@ secret). For example, replace **every** placeholder:
   "language_hint": "English",
   "capture_started_at": null,
   "glossary": "/absolute/private/glossary-v1.json",
-  "route_receipt_ref": "authenticated-host-route-reference",
+  "routes": {
+    "asr": {"model_id": "host-selected-asr", "model_revision": "asr-snapshot-revision", "route_receipt_ref": "host-asr-selection", "execution": "native"},
+    "aligner": {"model_id": "host-selected-aligner", "model_revision": "aligner-snapshot-revision", "route_receipt_ref": "host-alignment-selection", "execution": "native"},
+    "diarization": {"model_id": "host-selected-diarizer", "model_revision": "diarizer-snapshot-revision", "route_receipt_ref": "host-diarization-selection", "execution": "native"},
+    "cleanup": {"model_id": "host-selected-cleanup", "model_revision": "cleanup-snapshot-revision", "route_receipt_ref": "host-cleanup-selection", "execution": "native"}
+  },
   "measured_e1": null
 }
 ```
@@ -82,10 +91,10 @@ cargo run -p oneiron --example meeting_audio_import -- /absolute/private/adapter
 
 `measured_e1` may instead be `{ "cohort": "/absolute/cohort.json",
 "selection": "/absolute/e1-selection.json", "evidence_ref": "host-evidence-ref" }`.
-The CLI checks that both receipts bind the same cohort and Qwen won over a
-Soniox async arm. It **does not** validate consent, score actual model output,
+The CLI checks the cohort binding, at least two arms, and that the routed ASR
+model id and revision are the winner named by the selection receipt. It **does not** validate consent, score actual model output,
 or authenticate the OF-133 act. The host must do that separately. No E1 claim
-is made when `measured_e1` is null (the default is provisional).
+is made when `measured_e1` is null (the routed model remains provisional).
 
 The CLI fails closed on invalid profile/model/route or missing port. It writes
 one new file only after `ProducedMeetingTranscript` has passed the real ingest
@@ -106,6 +115,7 @@ the existing [CAL-08] seam, not a new parser in this skill.
 - A native mp4 import proof must retain the exact media hash, output artifact,
   normalizer result, host-profile hashes, invocation receipts and bulk-import
   approval receipt. A fixture-only run may prove plumbing, never model quality.
-- E1 requires consented cohort and both actual arms. No such E1 default is
-  bundled here. See `scripts/meeting-audio-runtime.md` for the current native
-  port gaps and the separate E3 arm; no threshold τ is baked into this adapter.
+- E1 requires a consented cohort and at least two actual arms. Qualification
+  and the model winner belong to the separate owner bake-off ticket. See
+  `scripts/meeting-audio-runtime.md` for native port gaps and the separate
+  E3 arm; no threshold τ or named model is baked into this adapter.
