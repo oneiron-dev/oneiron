@@ -7,7 +7,7 @@ use std::collections::BTreeSet;
 
 /// Serialization version for [`EditManifest`]. Bump on any incompatible change
 /// to the op vocabulary or manifest shape.
-pub const EDIT_MANIFEST_SCHEMA_VERSION: u32 = 1;
+pub const EDIT_MANIFEST_SCHEMA_VERSION: u32 = 2;
 
 /// Whether the pipeline ran in full-edit or minimal-mutation mode. Heavy
 /// pivot/chart/macro workbooks force [`MutationMode::Minimal`].

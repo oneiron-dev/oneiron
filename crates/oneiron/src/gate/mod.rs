@@ -17,6 +17,7 @@ mod decode;
 mod default_manifest;
 mod definition_ceiling;
 mod docedit_resource;
+mod docx_budget;
 mod doors;
 mod dreamer_precommit;
 mod effect;

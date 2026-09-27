@@ -889,6 +889,24 @@ fn minimal_mutation_mode_refuses_structural_ops() {
     assert_eq!(proposal.manifest.mutation_mode, MutationMode::Minimal);
 }
 
+#[test]
+fn spreadsheet_session_cannot_apply_native_docx_revisions() {
+    let input = xlsx_bytes(&base_parts());
+    let plan = EditPlan::new(vec![EditOp::DocxRevision {
+        transaction: "{}".to_owned(),
+    }]);
+    assert!(matches!(
+        run_edit_roundtrip(
+            &FixtureSession::faithful(),
+            &input,
+            OfficeFormat::Xlsx,
+            &plan,
+            "run"
+        ),
+        Err(Error::Artifact(ArtifactError::InvalidEditManifest(_)))
+    ));
+}
+
 // A real openpyxl 3.1.5 load_workbook(keep_links=True, data_only=False)
 // B1 edit/save pair. The target spelling changes to /xl/..., but resolves to
 // the same link part; no external link bytes or workbook references are lost.
