@@ -384,3 +384,89 @@ fn queued_policy_push_enters_the_existing_human_followup_ladder() -> TestResult 
     assert_eq!(vault.drive_policy_notification_queue(NOW + 2, 10)?, 0);
     Ok(())
 }
+
+#[test]
+fn expiring_delegate_needs_an_owner_minted_named_policy_grant() -> TestResult {
+    use crate::batch::{BatchOp, ENTITY_METADATA_HEADER_LEN, apply_ops};
+    use crate::federation::{
+        FederationGrant, decode_federation_grant_body, encode_federation_grant_body,
+    };
+    let (_dir, vault, owner) = open()?;
+    let delegate = person(&vault, 0x39)?;
+    let creation = vault.initialize_shared_vault(
+        &owner,
+        57,
+        None,
+        &[InitialSharedMember {
+            member_ref: owner.actor(),
+            role: Some(FederationGrantRole::Owner),
+        }],
+        10,
+    )?;
+    let owner_grant = creation
+        .grant_refs
+        .iter()
+        .find_map(|reference| {
+            let id = EntityId::from_hex(reference).ok()?;
+            let raw = vault.get_raw(&id).ok()??;
+            let grant = decode_federation_grant_body(&raw[ENTITY_METADATA_HEADER_LEN..]).ok()?;
+            (grant.member_ref == owner.actor()).then_some(grant)
+        })
+        .expect("stored owner grant");
+    let now = vault.store.clock.now_recorded_at();
+    let scoped =
+        FederationGrant::attenuated_delegate(&owner_grant, delegate.actor(), now, now + 3600)?;
+    vault.with_write_txn(|txn| {
+        apply_ops(
+            &vault.store,
+            &vault.config,
+            &vault.analyzer,
+            txn,
+            vec![BatchOp::Put {
+                id: EntityId::now(),
+                entity_type: crate::registry::ENTITY_TYPE_FEDERATION_GRANT,
+                occurred: TimeRange {
+                    start: now,
+                    end: now,
+                },
+                learned_at: now,
+                data: encode_federation_grant_body(&scoped)?,
+                allow_maintenance: true,
+                allow_reserved_predicate: false,
+                hub_sync_imported: false,
+            }],
+            vault
+                .text_index_trusted
+                .load(std::sync::atomic::Ordering::Acquire),
+            false,
+            true,
+        )
+    })?;
+    let add = change(
+        "Keep this safe",
+        PolicyRowAction::Block,
+        PolicyRowScope::Project("project-1".into()),
+        true,
+    );
+    assert!(matches!(
+        vault.submit_policy_row_change(&delegate, add.clone(), now)?,
+        PolicyRowSubmission::Proposed(_)
+    ));
+    let bound = GrantBound::action(
+        ActorBound::new(delegate.actor().to_hex())?.with_actor_class("human")?,
+        ActionClass::new("policy.change")?,
+        ActionEnvelope::new(["owner_policy_rows".to_owned()])?,
+    )?;
+    vault.create_standing_grant(&owner, bound)?;
+    let PolicyRowSubmission::Landed(receipt) =
+        vault.submit_policy_row_change(&delegate, add, now)?
+    else {
+        panic!("owner-granted delegate should land now");
+    };
+    assert_eq!(receipt.author, delegate.actor().to_hex());
+    assert_eq!(
+        receipt.change.scope(),
+        &PolicyRowScope::Project("project-1".into())
+    );
+    Ok(())
+}
