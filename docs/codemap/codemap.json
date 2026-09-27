@@ -39622,9 +39622,9 @@
      "kind": "src",
      "notable": [],
      "path": "src/api/esign.rs",
-     "purpose": "Public session-less signing lens",
+     "purpose": "Session-less signing ceremony",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 2
      }
     },
     {
@@ -41442,7 +41442,18 @@
      "path": "src/managed/mod.rs",
      "purpose": "Managed serve mode: the vault engine as a supervised child process",
      "surface": {
+      "crate-vis": 1,
       "re-export": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/managed/peer.rs",
+     "purpose": "Kernel-verified local transport peer, not a public caller IP",
+     "surface": {
+      "crate-vis": 2
      }
     },
     {
@@ -42404,6 +42415,14 @@
      "surface": {}
     },
     {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/it_esign_public.rs",
+     "purpose": "The public path and signing API are separate from hosted device leases",
+     "surface": {}
+    },
+    {
      "bucket": "XL",
      "kind": "test",
      "notable": [],
@@ -42528,7 +42547,7 @@
      "purpose": "App-tier framing and coarse live-query state, separate from WindowSync"
     },
     "managed": {
-     "files": 10,
+     "files": 11,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -42614,8 +42633,8 @@
    },
    "over_bar": 1,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 230,
-   "test_files": 96
+   "source_files": 231,
+   "test_files": 97
   },
   "oneiron-uniffi": {
    "files": [
