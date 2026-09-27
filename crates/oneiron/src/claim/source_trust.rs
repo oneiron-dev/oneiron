@@ -264,7 +264,7 @@ pub(crate) fn claim_generic_readable(body: &ClaimBody) -> bool {
 /// * `appr ∈ {auto, approved}` — respect consent;
 /// * `life = active` — only current beliefs;
 /// * `stale = false` — only regenerated content (absent on disk means
-///   `false`, [`decode_claim_body`]; absence alone never excludes).
+///   `false`, [`crate::claim::decode_claim_body`]; absence alone never excludes).
 ///
 /// The gate is an EXCLUSION, not an error: failing claims are silently
 /// dropped and counted (`PackStats::claims_suppressed`). Targeted reads stay

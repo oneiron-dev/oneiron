@@ -709,7 +709,12 @@ mod seam {
     /// `user_hard_delete` contract, which is the door r6 §9 rules on.
     pub(crate) fn hard_erase_entity(vault: &Vault, id: &EntityId) {
         assert!(
-            vault.delete_entity(id).expect("hard erase entity"),
+            vault
+                .delete_entity_with_options(
+                    id,
+                    oneiron::deletion::DeleteEntityOptions { purge: true },
+                )
+                .expect("hard erase entity"),
             "the fixture entity must exist to be erased"
         );
     }
