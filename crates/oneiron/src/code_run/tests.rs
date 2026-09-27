@@ -3119,6 +3119,7 @@ fn coordination_effects_and_outcomes_round_trip_through_replay_wire() {
             question_digest: [0; 32],
             unmet_sources: Default::default(),
             outcome_answer_ref: None,
+            link_result_proof: None,
         },
     };
     let outcomes = vec![

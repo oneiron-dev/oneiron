@@ -128,15 +128,6 @@ pub(super) fn validate_source(
     {
         return Err(invalid());
     }
-    let raw = store
-        .entities
-        .get(txn, fact.actor.as_bytes())?
-        .ok_or_else(invalid)?;
-    if EntityMetadataHeader::parse(&raw)
-        .is_none_or(|header| header.entity_type != crate::registry::ENTITY_TYPE_PERSON)
-    {
-        return Err(invalid());
-    }
     let verifying = VerifyingKey::from_bytes(&group.link_verify_key).map_err(|_| invalid())?;
     let signature: [u8; 64] = proof
         .signature
@@ -156,5 +147,86 @@ pub(super) fn validate_source(
             ),
             &Signature::from_bytes(&signature),
         )
+        .map_err(|_| invalid())?;
+    // A forged proof is refused above for good; a genuine word whose PERSON
+    // row has not replicated yet stays retryable.
+    let raw = store
+        .entities
+        .get(txn, fact.actor.as_bytes())?
+        .ok_or(Error::Record(RecordError::AskDependencyPending))?;
+    if EntityMetadataHeader::parse(&raw)
+        .is_none_or(|header| header.entity_type != crate::registry::ENTITY_TYPE_PERSON)
+    {
+        return Err(invalid());
+    }
+    Ok(())
+}
+
+const SETTLEMENT_TRANSCRIPT: &[u8] = b"oneiron.tasks.ask.link_settlement.v1\0";
+
+fn settlement_message(result: &super::super::TaskAskResult) -> Result<Vec<u8>> {
+    let mut unsigned = result.clone();
+    unsigned.settlement.link_result_proof = None;
+    let body = rmp_serde::to_vec_named(&unsigned).map_err(|_| invalid())?;
+    let mut message = Vec::with_capacity(SETTLEMENT_TRANSCRIPT.len() + body.len());
+    message.extend_from_slice(SETTLEMENT_TRANSCRIPT);
+    message.extend_from_slice(&body);
+    Ok(message)
+}
+
+fn needs_settlement_proof(result: &super::super::TaskAskResult) -> bool {
+    result
+        .evidence
+        .iter()
+        .any(|entry| entry.source == TaskAskSource::ForeignStated)
+}
+
+pub(in crate::task_verb) fn sign_settlement(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    group_id: EntityId,
+    group: &AskGroup,
+    result: &super::super::TaskAskResult,
+) -> Result<Option<Vec<u8>>> {
+    if !needs_settlement_proof(result) {
+        return Ok(None);
+    }
+    let raw = vault
+        .store
+        .vault_meta
+        .get(txn, &signer_key(group_id))?
+        .ok_or_else(invalid)?;
+    let seed: [u8; 32] = raw.as_ref().try_into().map_err(|_| invalid())?;
+    let signer = SigningKey::from_bytes(&seed);
+    if signer.verifying_key().to_bytes() != group.link_verify_key
+        || result.settlement.group_ref != group_id
+    {
+        return Err(invalid());
+    }
+    Ok(Some(
+        signer
+            .sign(&settlement_message(result)?)
+            .to_bytes()
+            .to_vec(),
+    ))
+}
+
+pub(in crate::task_verb) fn verify_settlement(
+    group: &AskGroup,
+    result: &super::super::TaskAskResult,
+) -> Result<()> {
+    let Some(proof) = &result.settlement.link_result_proof else {
+        return if needs_settlement_proof(result) {
+            Err(invalid())
+        } else {
+            Ok(())
+        };
+    };
+    if !needs_settlement_proof(result) {
+        return Err(invalid());
+    }
+    let key = VerifyingKey::from_bytes(&group.link_verify_key).map_err(|_| invalid())?;
+    let bytes: [u8; 64] = proof.as_slice().try_into().map_err(|_| invalid())?;
+    key.verify(&settlement_message(result)?, &Signature::from_bytes(&bytes))
         .map_err(|_| invalid())
 }

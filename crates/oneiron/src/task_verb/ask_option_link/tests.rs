@@ -278,3 +278,139 @@ fn governed_link_requires_explicit_disclosed_source_before_consuming_token() -> 
     assert_eq!(result.evidence[0].word.provenance_refs, [reference].into());
     Ok(())
 }
+
+#[test]
+fn settlement_replay_without_issuer_proof_is_refused_for_unissued_and_voided_links() -> TestResult {
+    use crate::task_verb::{
+        TaskAskAnswer, TaskAskCoverage, TaskAskEvidence, TaskAskEvidenceReason, TaskAskResult,
+        TaskAskSettlement, TaskAskSettlementReason, TaskAskWord,
+    };
+    use std::collections::BTreeSet;
+    let dir = tempfile::tempdir()?;
+    let vault = Vault::open(dir.path(), VaultConfig::default())?;
+    let owner = vault.ensure_embedded_owner_actor()?;
+    let friends = [
+        EntityId::from_bytes([0x61; 16])?,
+        EntityId::from_bytes([0x62; 16])?,
+        EntityId::from_bytes([0x63; 16])?,
+    ];
+    for friend in friends {
+        super::super::tests::support::put_person(&vault, friend);
+    }
+    let mut question =
+        TaskAskQuestion::new(super::super::tests::support::consult_turn(&vault, 0x64));
+    question.options = [(TaskAskOptionId::new("yes")?, "Yes".to_string())].into();
+    let mut spec = TaskAskSpec::shorthand(
+        Some(TaskAskTarget::People(friends.into())),
+        question,
+        Some(u64::MAX),
+        Default::default(),
+    );
+    spec.intent_key = "hostile-settlement-replay".to_string();
+    let memory = vault.memory(owner, EdgeActorClass::Human);
+    let ask = memory.tasks_ask(&spec)?.handle;
+    let issued = memory.tasks_ask_option_link(ask, friends[0])?;
+    let voided = memory.tasks_ask_option_link(ask, friends[1])?;
+    vault.void_ask_option_link(&voided.token)?;
+    // friends[2] never receives a link at all.
+    let group = {
+        let txn = vault.store.env.read_txn()?;
+        super::super::ask_record::read_group(&vault, &txn, ask.group_ref)?.expect("ask group")
+    };
+    let reference = super::super::ask_record::derived_id(
+        b"oneiron.tasks.ask.settlement",
+        ask.group_ref,
+        b"receipt",
+    )?;
+    let electorate: BTreeSet<_> = friends.into();
+    for friend in [friends[1], friends[2]] {
+        let answer = TaskAskAnswer {
+            task_ref: super::super::ask_record::member_id(ask.group_ref, friend)?,
+            actor_ref: friend,
+            result_ref: friend,
+            word_ref: EntityId::from_bytes([0x65; 16])?,
+        };
+        let mut word = TaskAskWord::new(friend);
+        word.option = Some(TaskAskOptionId::new("yes")?);
+        let forged = TaskAskResult {
+            effect_authorization: TaskAskEffectAuthorization::NotEvaluatedByAsk,
+            coverage: TaskAskCoverage {
+                met: true,
+                required: 1,
+                responded: [friend].into(),
+                unknown: electorate
+                    .iter()
+                    .copied()
+                    .filter(|person| *person != friend)
+                    .collect(),
+                unmet_people: BTreeSet::new(),
+            },
+            decision: TaskAskDecision::First(answer),
+            fallback: None,
+            evidence: vec![TaskAskEvidence {
+                answer,
+                word,
+                source: TaskAskSource::ForeignStated,
+                person_ref: friend,
+                order: 1,
+                reason: TaskAskEvidenceReason::Counted,
+                ladder_changed: None,
+            }],
+            settlement: TaskAskSettlement {
+                group_ref: ask.group_ref,
+                reference,
+                revision: group.effective.what.revision,
+                at: group.created_at + 1,
+                cutoff_order: 1,
+                reason: TaskAskSettlementReason::FirstWord,
+                requested: group.requested.clone(),
+                effective: group.effective.clone(),
+                base_policy_version: group.base_policy_version,
+                electorate: electorate.clone(),
+                question_digest: group.question_digest,
+                unmet_sources: BTreeSet::new(),
+                outcome_answer_ref: None,
+                link_result_proof: None,
+            },
+        };
+        // The reducer transcript is self-consistent; only the missing issuer
+        // proof separates it from a genuine receipt.
+        super::super::ask_settlement::validate_result(reference, &forged)?;
+        let mut stolen = forged.clone();
+        stolen.settlement.link_result_proof = Some(vec![0; 64]);
+        for hostile in [forged, stolen] {
+            let now = vault.store.clock.now_recorded_at();
+            let refused = vault.with_write_txn(|txn| {
+                super::super::ask_record::put(
+                    &vault,
+                    txn,
+                    reference,
+                    "tasks.ask_settlement",
+                    &hostile,
+                    now,
+                )
+            });
+            assert_eq!(
+                refused.expect_err("unsigned link receipt").kind(),
+                crate::error::ErrorKind::InvalidTaskBody
+            );
+        }
+    }
+    assert!(vault.get_raw(&reference)?.is_none());
+    assert!(matches!(
+        memory.tasks_ask_status(ask)?,
+        TaskAskStatus::Pending { .. }
+    ));
+
+    let answer = vault.answer_ask_option_link(&issued.token, &TaskAskOptionId::new("yes")?)?;
+    let TaskAskStatus::Settled(result) = memory.tasks_ask_status(ask)? else {
+        panic!("the issued link settles the ask");
+    };
+    assert_eq!(result.decision, TaskAskDecision::First(answer));
+    assert!(result.settlement.link_result_proof.is_some());
+    super::super::ask_record::verify_link_settlement(&group, &result)?;
+    let mut altered = (*result).clone();
+    altered.settlement.at += 1;
+    assert!(super::super::ask_record::verify_link_settlement(&group, &altered).is_err());
+    Ok(())
+}

@@ -50,7 +50,17 @@ pub(super) fn materialize_entities_from_delta(
     let mut applied_ops: Vec<(EntityId, Vec<u8>)> = Vec::new();
     let mut pending_companion_scrubs = Vec::new();
     let result = vault.with_write_txn(|wtxn| {
-        for (key, new_val) in &delta.updated {
+        // One delta has no row order: an ask word or receipt must not reach
+        // its group check before a group or person carried by the same delta.
+        let mut updates: Vec<_> = delta.updated.iter().collect();
+        updates.sort_by_key(|(_, value)| {
+            matches!(
+                value,
+                Some(loro::ValueOrContainer::Value(loro::LoroValue::Binary(blob)))
+                    if crate::task_verb::waits_for_ask_group(blob)
+            )
+        });
+        for (key, new_val) in updates {
             match new_val {
                 Some(loro::ValueOrContainer::Value(loro::LoroValue::Binary(blob))) => {
                     // Pre-validate the REMOTE bytes structurally BEFORE any

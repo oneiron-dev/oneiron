@@ -32,6 +32,7 @@ pub(super) fn read_result(
                 .iter()
                 .map(|member| ask_record::entity(&member.actor))
                 .collect::<Result<BTreeSet<_>>>()?;
+            ask_record::verify_link_settlement(&group, result)?;
             if result.settlement.requested != group.requested
                 || result.settlement.effective != group.effective
                 || result.settlement.electorate != who
@@ -150,6 +151,7 @@ pub(super) fn settle_in(
             question_digest: group.question_digest,
             unmet_sources,
             outcome_answer_ref: None,
+            link_result_proof: None,
         },
     };
     if result.coverage.met
@@ -207,6 +209,8 @@ pub(super) fn settle_in(
             result.settlement.outcome_answer_ref = Some(bound.claim);
         }
     }
+    let proof = ask_record::sign_link_settlement(vault, txn, id, &group, &result)?;
+    result.settlement.link_result_proof = proof;
     ask_record::put(vault, txn, reference, SETTLEMENT, &result, now)?;
     super::ask_facade::signal_waiters(vault, txn, id, now.saturating_mul(1000))
         .map_err(|_| ask_record::invalid())?;

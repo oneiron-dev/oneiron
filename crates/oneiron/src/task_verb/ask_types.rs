@@ -667,6 +667,9 @@ pub struct TaskAskSettlement {
     pub question_digest: [u8; 32],
     pub unmet_sources: BTreeSet<ConsultPayloadRef>,
     pub outcome_answer_ref: Option<EntityId>,
+    /// Issuer signature over this complete receipt when link-derived words occur.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub link_result_proof: Option<Vec<u8>>,
 }
 /// Ask settlement cannot grant or deny an external effect. Only the separate
 /// effect gate evaluates that authority against its own live inputs.
