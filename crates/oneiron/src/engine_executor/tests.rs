@@ -18,6 +18,7 @@ use crate::{
 
 use super::*;
 
+mod output_decay;
 mod seat_routing;
 mod speech_identity_regressions;
 

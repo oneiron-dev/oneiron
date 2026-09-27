@@ -176,6 +176,13 @@ impl ExecutorLegibility<'_> {
 
 /// Host import bridge exposed to a JS runtime component.
 pub trait JsCodeModeHost {
+    /// Resolves only a reserved recoverable-output virtual path. Other hosts
+    /// deny by default; the linked sandbox.fs.read_file bridge routes normal
+    /// file reads to its existing adapter.
+    fn read_recoverable_output(&mut self, _path: &str) -> Result<Option<Vec<u8>>> {
+        Ok(None)
+    }
+
     /// Dispatches one typed `self.*` call through the host-owned traps.
     /// Every response carries the budget legibility envelope inside a wake
     /// pass (design D5: attached to EVERY host-call response) — including

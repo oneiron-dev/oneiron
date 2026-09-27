@@ -618,26 +618,35 @@ fn later_host_fork_revokes_cached_owner_auth_and_its_session_jti() {
         end: fixture.root.claims.issued_at,
     };
     let mut rows = Vec::new();
-    for id in [[71; 32], [72; 32]] {
+    for offset in [1, 2] {
+        let fork_time = at.start + offset;
+        let fork_at = oneiron::TimeRange {
+            start: fork_time,
+            end: fork_time,
+        };
         let mut entry = AuthorityLogEntry {
             schema_version: AUTHORITY_LOG_SCHEMA_VERSION,
             vault_id: Some(fixture.root.claims.vault_id),
             seq: 2,
             parent_hashes: vec![parent],
-            op: AuthorityOp::SlipRevoke { slip_id: id },
+            // Both sides of the later fork explicitly revoke the cached root.
+            // Distinct timestamps make these distinct signed fork entries.
+            op: AuthorityOp::SlipRevoke {
+                slip_id: fixture.root.claims.slip_id,
+            },
             signer: AuthoritySignature {
                 suite: AuthoritySignatureSuite::Ed25519,
                 public_key: fixture.issuer.public_key(),
                 signature: vec![0; 64],
             },
             cosigns: Vec::new(),
-            ts: at.start,
+            ts: fork_time,
         };
         entry.signer.signature = signing
             .sign(&authority_transcript(&entry).unwrap())
             .to_bytes()
             .to_vec();
-        rows.push((entry, at, at.start));
+        rows.push((entry, fork_at, fork_time));
     }
     fixture.vault.put_authority_log_entries(&rows).unwrap();
     assert!(!auth.credential_is_live(fixture.vault.as_ref()));
