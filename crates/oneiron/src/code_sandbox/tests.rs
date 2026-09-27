@@ -169,6 +169,7 @@ fn code_sandbox_foreign_and_untrusted_link_zero_write_imports() {
             "sandbox.credential.call",
             "oneiron.clock.now_unix_ms",
             "oneiron.random.bytes",
+            "self.json.validate",
             "self.memory.search",
             "self.memory.put_claim",
             "self.memory.supersede_claim",

@@ -19,6 +19,9 @@ impl GuestImports for Host {
         }
         Ok(vec![7; n as usize])
     }
+    fn json_validate(&mut self, _: String, _: String) -> Result<bool, String> {
+        Err("validator uses the shared host import".into())
+    }
     fn memory_search(&mut self, _: SearchInput) -> Result<SearchOutput, String> {
         Ok(SearchOutput { results: vec![] })
     }
