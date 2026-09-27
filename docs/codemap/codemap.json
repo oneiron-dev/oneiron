@@ -3452,6 +3452,21 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [
+      "EsignMailDelivery",
+      "EsignMailTransport"
+     ],
+     "path": "src/blob_artifact/esign/delivery.rs",
+     "purpose": "Lease-fenced cloud-edge handoff; provider and capability secrets stay in the host",
+     "surface": {
+      "fn": 2,
+      "struct": 1,
+      "trait": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [],
      "path": "src/blob_artifact/esign/field_admission.rs",
      "purpose": "Admit saved and final field marks against the immutable original page geometry",
@@ -3460,7 +3475,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/blob_artifact/esign/fold.rs",
@@ -3484,13 +3499,30 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [
+      "EsignDeliveryPayload",
+      "EsignMailTransition"
+     ],
+     "path": "src/blob_artifact/esign/lifecycle.rs",
+     "purpose": "Durable, transactionally claimed e-sign lifecycle notifications and expiry",
+     "surface": {
+      "const": 1,
+      "crate-vis": 5,
+      "enum": 1,
+      "fn": 1,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [],
      "path": "src/blob_artifact/esign/mod.rs",
      "purpose": "Native signing requests on versioned blob artifacts; claims are the state machine",
      "surface": {
       "crate-vis": 1,
       "mod": 2,
-      "re-export": 6
+      "re-export": 8
      }
     },
     {
@@ -3507,6 +3539,7 @@
       "EsignEventRow",
       "EsignField",
       "EsignItem",
+      "EsignLifecyclePolicy",
       "EsignRecipient",
       "EsignState",
       "FieldGeometry",
@@ -3522,7 +3555,7 @@
      "surface": {
       "crate-vis": 4,
       "enum": 9,
-      "struct": 10
+      "struct": 11
      }
     },
     {
@@ -34239,7 +34272,7 @@
      "purpose": "—"
     },
     "blob_artifact": {
-     "files": 38,
+     "files": 40,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -35459,7 +35492,7 @@
    },
    "over_bar": 9,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2093,
+   "source_files": 2095,
    "test_files": 718
   },
   "oneiron-android": {

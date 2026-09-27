@@ -33,6 +33,8 @@ impl EsignState {
             rejection: None,
             sealed_sha256: vec![],
             reseal_pending: false,
+            reminder_claims: Default::default(),
+            sent_at: None,
         })
     }
     fn has_actionable_recipient(&self) -> bool {
@@ -123,6 +125,7 @@ impl EsignState {
                     return Err(invalid("document cannot be sent"));
                 }
                 self.status = DocumentStatus::Pending;
+                self.sent_at = Some(now);
                 for r in self.recipients.values_mut() {
                     r.delivery = DeliveryStatus::Sent;
                 }
@@ -215,6 +218,41 @@ impl EsignState {
                     return Err(invalid("document has not expired"));
                 }
                 self.status = DocumentStatus::Expired;
+            }
+            EsignEvent::RecipientExpired { recipient } => {
+                if !matches!(self.status, DocumentStatus::Draft | DocumentStatus::Pending)
+                    || !self.document.recipients.iter().any(|r| {
+                        &r.id == recipient
+                            && matches!(r.role, RecipientRole::Signer | RecipientRole::Approver)
+                    })
+                    || self.recipients[recipient].signing == SigningStatus::Completed
+                    || now < self.recipients[recipient].expires_at
+                {
+                    return Err(invalid("recipient has not expired"));
+                }
+                self.status = DocumentStatus::Expired;
+            }
+            EsignEvent::ReminderClaimed { recipient, stage } => {
+                let Some(sent) = self.sent_at else {
+                    return Err(invalid("reminder before send"));
+                };
+                let policy = &self.document.lifecycle;
+                let progress = self
+                    .recipients
+                    .get(recipient)
+                    .ok_or_else(|| invalid("unknown reminder recipient"))?;
+                if !policy.reminder
+                    || self.status != DocumentStatus::Pending
+                    || self.rejection.is_some()
+                    || progress.signing != SigningStatus::Ready
+                    || now >= progress.expires_at
+                    || now >= self.document.expires_at
+                    || now.saturating_sub(sent) >= policy.reminder_max_age_seconds
+                    || !super::lifecycle::reminder_due(policy, progress.expires_at, *stage, now)
+                    || !self.reminder_claims.insert((recipient.clone(), *stage))
+                {
+                    return Err(invalid("reminder is not due"));
+                }
             }
             EsignEvent::Sealed {
                 rejected,

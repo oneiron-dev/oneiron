@@ -51,6 +51,16 @@ fn document(artifact: EntityId) -> EsignDocument {
             meta: FieldMeta::Text { max_bytes: 50 },
         }],
         full_trail_appendix: true,
+        lifecycle: EsignLifecyclePolicy {
+            invite: false,
+            pending: false,
+            completed: false,
+            rejection: false,
+            voided: false,
+            expired: false,
+            reminder: false,
+            ..Default::default()
+        },
     }
 }
 fn original_pdf() -> &'static [u8] {
@@ -1222,6 +1232,7 @@ fn draft_reissuance_replaces_only_revoked_expired_or_short_lived_capabilities() 
         let now = crate::unix_seconds_now();
         doc.sequential = false;
         doc.fields.clear();
+        doc.lifecycle.reminder = true;
         for recipient in &mut doc.recipients {
             recipient.automated = false;
         }
@@ -1537,5 +1548,224 @@ fn unrenderable_fields_are_refused_before_save_and_final_signature_without_locki
     )
     .unwrap();
     assert_eq!(prepared.original_pages, 1);
+    Ok(())
+}
+
+#[test]
+fn lifecycle_claims_reminders_once_in_window_and_expires_unsealed() -> Result<()> {
+    let (_dir, vault, id, mut doc) = setup()?;
+    let day = 86_400;
+    doc.expires_at = 10 * day;
+    doc.recipients[0].expires_at = 8 * day;
+    doc.recipients[1].expires_at = 10 * day;
+    doc.lifecycle = EsignLifecyclePolicy::default();
+    event(
+        &vault,
+        id,
+        EsignEvent::Drafted {
+            document: doc.clone(),
+        },
+        2,
+    )?;
+    event(&vault, id, EsignEvent::Sent, 3)?;
+    assert_eq!(vault.sweep_esign_lifecycle(3 * day - 1)?, 0);
+    assert_eq!(vault.sweep_esign_lifecycle(3 * day)?, 1);
+    assert_eq!(vault.sweep_esign_lifecycle(3 * day)?, 0);
+    assert_eq!(vault.sweep_esign_lifecycle(6 * day)?, 1);
+    let reminders = vault
+        .esign_audit(id)?
+        .into_iter()
+        .filter(|r| matches!(r.event, EsignEvent::ReminderClaimed { .. }))
+        .count();
+    assert_eq!(reminders, 2);
+    assert_eq!(vault.sweep_esign_lifecycle(8 * day)?, 1);
+    assert_eq!(vault.sweep_esign_lifecycle(10 * day)?, 0);
+    assert_eq!(vault.esign_document(id)?.status, DocumentStatus::Expired);
+    assert!(vault.sealed_esign_document(id)?.is_none());
+    let attempts = crate::attempt_queue::AttemptQueue::new(&vault).list()?;
+    assert_eq!(
+        attempts
+            .iter()
+            .filter(|a| a.kind == ESIGN_DELIVERY_ATTEMPT_KIND)
+            .count(),
+        4
+    );
+    let transitions: Vec<_> = attempts
+        .iter()
+        .filter(|a| a.kind == ESIGN_DELIVERY_ATTEMPT_KIND)
+        .map(|a| {
+            serde_json::from_slice::<EsignDeliveryPayload>(&a.payload)
+                .unwrap()
+                .transition
+        })
+        .collect();
+    assert_eq!(
+        transitions
+            .iter()
+            .filter(|t| **t == EsignMailTransition::Reminder)
+            .count(),
+        2
+    );
+    assert_eq!(
+        transitions
+            .iter()
+            .filter(|t| **t == EsignMailTransition::Expiry)
+            .count(),
+        2
+    );
+    Ok(())
+}
+
+#[test]
+fn lifecycle_switches_and_thirty_day_cap_are_enforced() -> Result<()> {
+    let (_dir, vault, id, mut doc) = setup()?;
+    let day = 86_400;
+    doc.expires_at = 40 * day;
+    for r in &mut doc.recipients {
+        r.expires_at = doc.expires_at;
+    }
+    doc.lifecycle = EsignLifecyclePolicy {
+        expired: false,
+        reminder_max_age_seconds: 30 * day,
+        ..Default::default()
+    };
+    event(&vault, id, EsignEvent::Drafted { document: doc }, 2)?;
+    event(&vault, id, EsignEvent::Sent, 3)?;
+    assert_eq!(vault.sweep_esign_lifecycle(35 * day)?, 0);
+    assert_eq!(vault.sweep_esign_lifecycle(40 * day)?, 1);
+    assert!(
+        crate::attempt_queue::AttemptQueue::new(&vault)
+            .list()?
+            .is_empty()
+    );
+    Ok(())
+}
+
+#[test]
+fn lifecycle_materializes_calendar_expiry_for_each_recipient() -> Result<()> {
+    let mut doc = document(EntityId::now());
+    doc.expires_at = 0;
+    for r in &mut doc.recipients {
+        r.expires_at = 0;
+    }
+    let now = 1_735_603_200; // 2024-12-31 UTC: three months clamps to March 31.
+    super::lifecycle::materialize_expiry(&mut doc, now)?;
+    assert_eq!(doc.expires_at, 1_743_379_200);
+    assert!(
+        doc.recipients
+            .iter()
+            .all(|r| r.expires_at == doc.expires_at)
+    );
+    Ok(())
+}
+
+#[test]
+fn lifecycle_transition_matrix_respects_document_switches() -> Result<()> {
+    let (_dir, vault, id, mut doc, owner) = ceremony_setup()?;
+    doc.lifecycle = EsignLifecyclePolicy {
+        voided: false,
+        ..Default::default()
+    };
+    event(
+        &vault,
+        id,
+        EsignEvent::Drafted {
+            document: doc.clone(),
+        },
+        crate::unix_seconds_now(),
+    )?;
+    vault.issue_esign_capabilities(&owner, id)?;
+    let send = EsignOutboundCommand {
+        document: id.to_hex(),
+        recipient_count: 2,
+        verb: EsignOutboundVerb::SendForSignature,
+        reason: None,
+    };
+    let result = vault
+        .dispatch_esign(
+            send_request(id, owner.actor(), send.verb, "matrix-send"),
+            &send,
+            None,
+            None,
+        )
+        .unwrap();
+    assert_eq!(
+        result.outcome,
+        crate::outbound::OutboundDispatchOutcome::DeliveredToChannel
+    );
+    let attempts = crate::attempt_queue::AttemptQueue::new(&vault).list()?;
+    let invites: Vec<_> = attempts
+        .iter()
+        .filter(|a| a.kind == ESIGN_DELIVERY_ATTEMPT_KIND)
+        .map(|a| serde_json::from_slice::<EsignDeliveryPayload>(&a.payload).unwrap())
+        .collect();
+    assert_eq!(invites.len(), 1);
+    assert_eq!(invites[0].transition, EsignMailTransition::Invite);
+    assert_eq!(invites[0].recipient, doc.recipients[0].id);
+    let void = EsignOutboundCommand {
+        verb: EsignOutboundVerb::Void,
+        reason: Some("withdrawn".into()),
+        ..send
+    };
+    vault
+        .dispatch_esign(
+            send_request(id, owner.actor(), void.verb, "matrix-void"),
+            &void,
+            None,
+            None,
+        )
+        .unwrap();
+    assert_eq!(vault.esign_document(id)?.status, DocumentStatus::Voided);
+    assert_eq!(
+        crate::attempt_queue::AttemptQueue::new(&vault)
+            .list()?
+            .iter()
+            .filter(|a| a.kind == ESIGN_DELIVERY_ATTEMPT_KIND)
+            .count(),
+        1
+    );
+    Ok(())
+}
+
+#[test]
+fn sequential_promotion_notifies_only_the_new_ready_recipient() -> Result<()> {
+    let (_dir, vault, id, mut doc) = setup()?;
+    doc.lifecycle = EsignLifecyclePolicy::default();
+    doc.fields.clear();
+    event(
+        &vault,
+        id,
+        EsignEvent::Drafted {
+            document: doc.clone(),
+        },
+        2,
+    )?;
+    event(&vault, id, EsignEvent::Sent, 3)?;
+    event(
+        &vault,
+        id,
+        EsignEvent::Viewed {
+            recipient: doc.recipients[0].id.clone(),
+        },
+        4,
+    )?;
+    event(
+        &vault,
+        id,
+        EsignEvent::Signed {
+            recipient: doc.recipients[0].id.clone(),
+            next: None,
+        },
+        5,
+    )?;
+    let notices: Vec<_> = crate::attempt_queue::AttemptQueue::new(&vault)
+        .list()?
+        .iter()
+        .filter(|a| a.kind == ESIGN_DELIVERY_ATTEMPT_KIND)
+        .map(|a| serde_json::from_slice::<EsignDeliveryPayload>(&a.payload).unwrap())
+        .collect();
+    assert_eq!(notices.len(), 1);
+    assert_eq!(notices[0].transition, EsignMailTransition::Pending);
+    assert_eq!(notices[0].recipient, doc.recipients[1].id);
     Ok(())
 }

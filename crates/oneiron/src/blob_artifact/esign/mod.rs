@@ -1,15 +1,18 @@
 //! Native signing requests on versioned blob artifacts; claims are the state machine.
+mod delivery;
 mod field_admission;
 mod fold;
 mod ledger;
+mod lifecycle;
 mod model;
 #[cfg(test)]
 mod tests;
 pub(crate) use ledger::{reject_event_delete, validate_event_claim};
 pub use model::{
     AccessStatus, DeliveryStatus, DocumentKind, DocumentStatus, EsignAuditActor, EsignDocument,
-    EsignEvent, EsignEventRow, EsignField, EsignItem, EsignRecipient, EsignState, FieldGeometry,
-    FieldMeta, FieldValue, RecipientRole, RecipientState, SignatureRow, SigningStatus,
+    EsignEvent, EsignEventRow, EsignField, EsignItem, EsignLifecyclePolicy, EsignRecipient,
+    EsignState, FieldGeometry, FieldMeta, FieldValue, RecipientRole, RecipientState, SignatureRow,
+    SigningStatus,
 };
 
 mod capability;
@@ -20,6 +23,8 @@ pub use ceremony::{ESIGN_SEAL_ATTEMPT_KIND, SigningAction, SigningOutcome, Signi
 pub use principals::{SigningAutonomy, SigningPrincipal};
 
 mod outbound;
+pub use delivery::{EsignMailDelivery, EsignMailTransport};
+pub use lifecycle::{ESIGN_DELIVERY_ATTEMPT_KIND, EsignDeliveryPayload, EsignMailTransition};
 pub use outbound::{EsignOutboundCommand, EsignOutboundVerb};
 
 mod signature_image;

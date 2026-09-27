@@ -5,7 +5,14 @@ use crate::{EntityId, TimeRange, Vault, VaultConfig};
 use oneiron_seal::*;
 use p256::ecdsa::signature::hazmat::PrehashSigner;
 use p256::pkcs8::DecodePrivateKey;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
+struct MailCapture(Mutex<Vec<EsignMailDelivery>>);
+impl EsignMailTransport for MailCapture {
+    fn send(&self, mail: &EsignMailDelivery) -> crate::Result<String> {
+        self.0.lock().unwrap().push(mail.clone());
+        Ok("provider:accepted".into())
+    }
+}
 struct Backend {
     key: p256::ecdsa::SigningKey,
     cert: Vec<u8>,
@@ -149,6 +156,7 @@ fn native_seal_verifies_before_atomic_terminal_and_retries_from_pristine_origina
         }],
         fields: vec![],
         full_trail_appendix: true,
+        lifecycle: Default::default(),
     };
     let actor = EsignAuditActor {
         actor: owner.to_hex(),
@@ -214,6 +222,18 @@ fn native_seal_verifies_before_atomic_terminal_and_retries_from_pristine_origina
         .read_blob_artifact_version(&EntityId::from_hex(&sealed.items[0].sealed_artifact)?, 1)?
         .unwrap();
     assert!(lopdf::Document::load_mem(&sealed_bytes)?.get_pages().len() > 1);
+    let mail = MailCapture(Mutex::new(Vec::new()));
+    assert!(vault.deliver_one_esign("cloud-edge", crate::unix_seconds_now(), &mail)?);
+    let delivered = mail.0.lock().unwrap();
+    assert_eq!(delivered.len(), 1);
+    assert_eq!(
+        delivered[0].payload.transition,
+        EsignMailTransition::Completed
+    );
+    assert_eq!(delivered[0].sealed_pdfs, vec![sealed_bytes.clone()]);
+    drop(delivered);
+    assert!(!vault.deliver_one_esign("cloud-edge", crate::unix_seconds_now(), &mail)?);
+    assert_eq!(mail.0.lock().unwrap().len(), 1);
     assert_eq!(
         vault.esign_pdf_for_capability(
             &capabilities[0].1,
@@ -261,6 +281,15 @@ fn native_seal_verifies_before_atomic_terminal_and_retries_from_pristine_origina
         panic!("reseal job missing")
     };
     let resealed = run(vault.seal_esign_attempt(&reseal, &engine, PadesProfile::BaselineB, url))?;
+    // A repair seal is not a second lifecycle completion message.
+    assert_eq!(
+        queue
+            .list()?
+            .iter()
+            .filter(|a| a.kind == ESIGN_DELIVERY_ATTEMPT_KIND)
+            .count(),
+        1
+    );
     assert_ne!(
         resealed.items[0].sealed_artifact,
         sealed.items[0].sealed_artifact

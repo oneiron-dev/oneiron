@@ -108,7 +108,8 @@ pub(super) fn append(
         return Err(Error::EntityNotFound);
     }
     let rows = events_in(vault, txn, document)?;
-    let state = if let Some(mut state) = fold(&rows)? {
+    let previous = fold(&rows)?;
+    let state = if let Some(mut state) = previous.clone() {
         state.apply(&event, now)?;
         state
     } else if let EsignEvent::Drafted { document } = &event {
@@ -159,6 +160,7 @@ pub(super) fn append(
         .concat(),
         &bytes,
     )?;
+    super::lifecycle::transition(vault, txn, document, previous.as_ref(), &state, &row)?;
     Ok(state)
 }
 
@@ -172,7 +174,9 @@ impl Vault {
         actor: EsignAuditActor,
         now: u64,
     ) -> Result<()> {
-        validate_document(body, now)?;
+        let mut body = body.clone();
+        super::lifecycle::materialize_expiry(&mut body, now)?;
+        validate_document(&body, now)?;
         self.with_write_txn(|txn| {
             if !events_in(self, txn, document)?.is_empty() {
                 return Err(invalid("document already exists"));
@@ -200,6 +204,11 @@ impl Vault {
                 },
                 actor,
                 now,
+            )?;
+            self.store.vault_meta.put(
+                txn,
+                &[super::lifecycle::INDEX, document.as_bytes()].concat(),
+                b"1",
             )?;
             Ok(())
         })

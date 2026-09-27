@@ -110,6 +110,40 @@ pub struct EsignDocument {
     pub recipients: Vec<EsignRecipient>,
     pub fields: Vec<EsignField>,
     pub full_trail_appendix: bool,
+    /// Pack-supplied policy; defaults are materialized with the draft.
+    #[serde(default)]
+    pub lifecycle: EsignLifecyclePolicy,
+}
+/// Per-document mail switches and bounded reminder ladder. The host pack may
+/// override these rows before the document is drafted.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct EsignLifecyclePolicy {
+    pub invite: bool,
+    pub pending: bool,
+    pub completed: bool,
+    pub rejection: bool,
+    pub voided: bool,
+    pub expired: bool,
+    pub reminder: bool,
+    pub reminder_lead_seconds: [u64; 2],
+    pub reminder_max_age_seconds: u64,
+}
+impl Default for EsignLifecyclePolicy {
+    fn default() -> Self {
+        const DAY: u64 = 24 * 60 * 60;
+        Self {
+            invite: true,
+            pending: true,
+            completed: true,
+            rejection: true,
+            voided: true,
+            expired: true,
+            reminder: true,
+            reminder_lead_seconds: [5 * DAY, 2 * DAY],
+            reminder_max_age_seconds: 30 * DAY,
+        }
+    }
 }
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -166,6 +200,13 @@ pub enum EsignEvent {
         reason: String,
     },
     Expired,
+    RecipientExpired {
+        recipient: String,
+    },
+    ReminderClaimed {
+        recipient: String,
+        stage: u8,
+    },
     /// Authored only after native verification succeeds for every sealed item.
     Sealed {
         rejected: bool,
@@ -186,7 +227,8 @@ impl EsignEvent {
             Self::Signed { .. } => "esign.signed",
             Self::Declined { .. } => "esign.declined",
             Self::Voided { .. } => "esign.voided",
-            Self::Expired => "esign.expired",
+            Self::Expired | Self::RecipientExpired { .. } => "esign.expired",
+            Self::ReminderClaimed { .. } => "esign.reminder_claimed",
             Self::Sealed {
                 rejected: false, ..
             } => "esign.completed",
@@ -214,6 +256,8 @@ pub struct EsignState {
     pub rejection: Option<String>,
     pub sealed_sha256: Vec<[u8; 32]>,
     pub reseal_pending: bool,
+    pub(super) reminder_claims: BTreeSet<(String, u8)>,
+    pub(super) sent_at: Option<u64>,
 }
 
 pub(super) fn invalid(reason: &'static str) -> Error {
@@ -235,6 +279,9 @@ pub(super) fn validate_document(doc: &EsignDocument, now: u64) -> Result<()> {
         || doc.recipients.len() > 1000
         || doc.fields.len() > 10000
         || doc.expires_at <= now
+        || doc.lifecycle.reminder_lead_seconds[0] <= doc.lifecycle.reminder_lead_seconds[1]
+        || doc.lifecycle.reminder_lead_seconds[1] == 0
+        || doc.lifecycle.reminder_max_age_seconds == 0
     {
         return Err(invalid("invalid document bounds"));
     }
