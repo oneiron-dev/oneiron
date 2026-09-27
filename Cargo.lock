@@ -7082,6 +7082,7 @@ dependencies = [
  "aes-gcm",
  "arc-swap",
  "async-trait",
+ "base64 0.22.1",
  "blake3",
  "chrono",
  "chrono-tz",
