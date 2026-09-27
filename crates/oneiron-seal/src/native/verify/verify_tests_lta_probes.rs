@@ -131,17 +131,11 @@ pub(crate) mod tests {
 
     #[test]
     fn probe_a_filler_span_craft_attests_every_evaluated_byte() {
-        // Precondition: filler objects after the newest DSS-related object
-        // let the doc-ts span2 stop at dss_revision_end BEFORE the owning
-        // revision's xref/trailer. The gate passes — and the grant is SOUND:
-        // every object the /DSS evaluation dereferences is in the measured
-        // id set, so its offset is <= newest < dss_end == br_end and its
-        // bytes sit inside the hashed spans (the only excluded range is the
-        // /Contents gap inside the doc-ts object itself). The uncovered
-        // filler/xref/trailer bytes feed no evidence evaluation; the xref
-        // chain is attested by the final covering signature. Regression pin:
-        // a gate change to revision-end semantics flips this honest-but-
-        // unusual document to Invalid (dss_revision_end no longer == br_end).
+        // Filler after the latest DSS object lets this validated token cover
+        // every evaluated evidence byte but stop before its own revision's
+        // xref/trailer. That is insufficient for archival profile credit:
+        // the timestamp must cover its entire structural revision. The
+        // first signer retains only its independently verified B-T rung.
         let (bytes, anchors, br_end, rev_xref, newest_dss) = span_craft_fixture();
         assert!(
             br_end < rev_xref,
@@ -161,13 +155,10 @@ pub(crate) mod tests {
         // The span-crafted timestamp attests the DSS bytes, but ends before
         // its own revision EOF. It cannot own a structural revision, so the
         // modification classifier must not claim Clean. The first signer's
-        // evidence still supports its archival profile independently.
+        // signature timestamp still supports its B-T profile independently.
         assert_eq!(report.modifications, crate::api::Modifications::NotRun);
         assert!(!report.valid());
-        assert_eq!(
-            report.signatures[0].profile,
-            Some(PadesProfile::BaselineLta)
-        );
+        assert_eq!(report.signatures[0].profile, Some(PadesProfile::BaselineT));
     }
 
     #[test]

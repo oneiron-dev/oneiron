@@ -292,3 +292,86 @@ fn review_compressed_xref_uses_configured_limit() {
     let report = engine.verify_sealed_pdf(&signed).unwrap();
     assert_eq!(report.verdict(), VerifyVerdict::Passed);
 }
+
+#[test]
+fn review_r2_four_eol_bytes_remain_valid() {
+    let signer = test_ca("review-eol-four");
+    let signed = append_sig_revision(&base_input(), &signer, "eol-four", None, AT_UNIX);
+    let engine = verify_engine(vec![signer.cert_der], AT_UNIX);
+    assert_eq!(
+        engine.verify_sealed_pdf(&signed).unwrap().verdict(),
+        VerifyVerdict::Passed
+    );
+    let mut failures = Vec::new();
+    for suffix in [b"\n".as_slice(), b"\r", b"\r\n", b"\n\n", b"\r\n\r\n"] {
+        let mut input = signed.clone();
+        input.extend_from_slice(suffix);
+        let report = engine.verify_sealed_pdf(&input).unwrap();
+        if report.verdict() != VerifyVerdict::Passed {
+            failures.push(suffix.to_vec());
+        }
+    }
+    assert!(
+        failures.is_empty(),
+        "lawful EOL suffixes rejected: {failures:?}"
+    );
+}
+
+#[test]
+fn review_r2_fake_xref_object_is_not_lta() {
+    let signer = test_ca("review-fake-xref");
+    let signed = append_sig_revision(&base_input(), &signer, "fake-xref", None, AT_UNIX);
+    let state = pdf::reparse_revision(&signed, &SealResourceLimits::default()).unwrap();
+    let material = super::super::profile::DssMaterial {
+        certs_der: vec![signer.cert_der.clone()],
+        ocsps_der: vec![],
+        crls_der: vec![],
+    };
+    let (mut objects, dss_obj) =
+        super::super::profile::build_dss_objects(&material, state.max_obj + 1).unwrap();
+    objects.push((
+        dss_obj + 1,
+        b"<< /Type /XRef /Unknown (changed) >>".to_vec(),
+    ));
+    let out = pdf::append_revision(
+        &signed,
+        &state,
+        &pdf::RevisionKind::Dss {
+            material_objects: objects,
+            dss_obj,
+        },
+        0,
+    )
+    .unwrap();
+    let engine = verify_engine(vec![signer.cert_der], AT_UNIX);
+    let report = engine.verify_sealed_pdf(&out.bytes).unwrap();
+    assert_eq!(report.modifications, Modifications::Suspicious);
+}
+
+#[test]
+fn review_r2_known_expired_leaf_is_failure() {
+    let root = test_ca("review-expiry-root");
+    let signer = ocsp_delegate_with_kus(
+        &root,
+        "expired-leaf",
+        (2010, 1, 1),
+        (2020, 1, 1),
+        vec![rcgen::KeyUsagePurpose::DigitalSignature],
+    );
+    let signed = append_sig_revision(&base_input(), &signer, "expiry", None, AT_UNIX);
+    let engine = verify_engine(vec![root.cert_der], AT_UNIX);
+    let report = engine.verify_sealed_pdf(&signed).unwrap();
+    assert_eq!(report.signatures[0].trust, VerifyCheckStatus::Fail);
+}
+
+#[test]
+fn review_r2_document_timestamp_supplies_baseline_t() {
+    let signer = test_ca("review-docts-t");
+    let tsa = tsa_ca();
+    let signed = append_sig_revision(&base_input(), &signer, "docts-t", None, AT_UNIX);
+    let stamped = append_doc_ts_revision(&signed, &tsa, AT_UNIX);
+    let engine = verify_engine(vec![signer.cert_der, tsa.cert_der], AT_UNIX);
+    let report = engine.verify_sealed_pdf(&stamped).unwrap();
+    assert_eq!(report.verdict(), VerifyVerdict::Passed);
+    assert_eq!(report.signatures[0].profile, Some(PadesProfile::BaselineT));
+}

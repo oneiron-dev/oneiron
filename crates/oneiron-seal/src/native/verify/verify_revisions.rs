@@ -28,14 +28,47 @@ fn changed(before: &Document, after: &Document) -> Option<BTreeSet<ObjectId>> {
             .collect(),
     )
 }
-fn is_xref(obj: &Object) -> bool {
-    let d = match obj {
-        Object::Dictionary(d) => d,
-        Object::Stream(s) => &s.dict,
-        _ => return false,
+/// Only the section's actual native xref STREAM is infrastructure. A new
+/// object declaring `/Type /XRef` elsewhere is still an unknown change.
+fn is_written_xref_stream(before: &Document, after: &Document, id: ObjectId) -> bool {
+    let Some(Object::Stream(stream)) = after.objects.get(&id) else {
+        return false;
     };
-    d.get(b"Type")
-        .is_ok_and(|ty| matches!(ty, Object::Name(n) if n == b"XRef"))
+    if !matches!(after.reference_table.get(id.0),
+        Some(lopdf::xref::XrefEntry::Normal { offset, generation })
+            if *generation == id.1 && *offset as usize == after.xref_start)
+    {
+        return false;
+    }
+    let d = &stream.dict;
+    if d.iter().any(|(key, _)| {
+        ![
+            b"Type".as_slice(),
+            b"W",
+            b"Index",
+            b"Size",
+            b"Prev",
+            b"Root",
+            b"Info",
+            b"ID",
+            b"Length",
+        ]
+        .contains(&key.as_slice())
+    }) {
+        return false;
+    }
+    matches!(d.get(b"Type"), Ok(Object::Name(n)) if n == b"XRef")
+        && matches!(d.get(b"Length"), Ok(Object::Integer(n))
+            if usize::try_from(*n).ok() == Some(stream.content.len()))
+        && matches!(d.get(b"Prev"), Ok(Object::Integer(n))
+            if usize::try_from(*n).ok() == Some(before.xref_start))
+        && matches!(d.get(b"Size"), Ok(Object::Integer(n)) if *n > 0)
+        && d.get(b"Root").ok() == after.trailer.get(b"Root").ok()
+        && matches!(d.get(b"W"), Ok(Object::Array(w))
+            if w.as_slice() == [Object::Integer(1), Object::Integer(8), Object::Integer(2)])
+        && matches!(d.get(b"Index"), Ok(Object::Array(index))
+            if !index.is_empty() && index.len() % 2 == 0
+                && index.iter().all(|v| matches!(v, Object::Integer(n) if *n >= 0)))
 }
 
 fn without(dict: &lopdf::Dictionary, keys: &[&[u8]]) -> lopdf::Dictionary {
@@ -127,7 +160,7 @@ fn dss_allowed(before: &Document, after: &Document, ids: &BTreeSet<ObjectId>) ->
     ids.iter().all(|id| {
         (allowed.contains(id)
             && (!before.objects.contains_key(id) || Some(*id) == catalog_id(after)))
-            || (!before.objects.contains_key(id) && after.objects.get(id).is_some_and(is_xref))
+            || (!before.objects.contains_key(id) && is_written_xref_stream(before, after, *id))
     })
 }
 
@@ -238,7 +271,7 @@ fn doc_timestamp_allowed(
             && (!before.objects.contains_key(id)
                 || Some(*id) == catalog_id(after)
                 || Some(*id) == ref_id(af_obj)))
-            || (!before.objects.contains_key(id) && after.objects.get(id).is_some_and(is_xref))
+            || (!before.objects.contains_key(id) && is_written_xref_stream(before, after, *id))
     })
 }
 
@@ -247,10 +280,10 @@ fn doc_timestamp_allowed(
 pub(super) fn classify(
     bytes: &[u8],
     signatures: &[SignatureReport],
-    final_doc: &Document,
+    ends: Option<&[usize]>,
     limits: &SealResourceLimits,
 ) -> (Vec<RevisionReport>, Modifications, Vec<Anomaly>) {
-    let Some(ends) = pdf::revision_ends(bytes, final_doc, limits) else {
+    let Some(ends) = ends else {
         return (vec![], Modifications::NotRun, vec![]);
     };
     let mut revisions = Vec::new();
@@ -260,7 +293,7 @@ pub(super) fn classify(
     let mut modification = ModificationLevel::None;
     let mut suspicious = false;
     let mut work = 0usize;
-    for (index, end) in ends.into_iter().enumerate() {
+    for (index, end) in ends.iter().copied().enumerate() {
         work = work.saturating_add(end);
         if work > 2 * 1024 * 1024 * 1024 {
             return (revisions, Modifications::NotRun, anomalies);
@@ -360,4 +393,53 @@ pub(super) fn classify(
         },
         anomalies,
     )
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(
+        clippy::unwrap_used,
+        reason = "test fixture construction is infallible here"
+    )]
+    use super::super::verify_tests_fixtures_dss_a::tests::{AT_UNIX, test_ca};
+    use super::super::verify_tests_lta_probes::tests::base_input;
+    use super::super::verify_tests_time_lta_a::tests::{
+        append_doc_ts_revision, append_sig_revision, tsa_ca, verify_engine,
+    };
+    use super::*;
+    use crate::api::PdfSealEngine;
+
+    #[test]
+    fn fake_xref_tag_cannot_waive_doc_timestamp_whitelist() {
+        let signer = test_ca("ts-fake-xref");
+        let tsa = tsa_ca();
+        let signed = append_sig_revision(&base_input(), &signer, "ts-fake-xref", None, AT_UNIX);
+        let stamped = append_doc_ts_revision(&signed, &tsa, AT_UNIX);
+        let engine = verify_engine(vec![signer.cert_der, tsa.cert_der], AT_UNIX);
+        let report = engine.verify_sealed_pdf(&stamped).unwrap();
+        let before = Document::load_mem(&signed).unwrap();
+        let mut after = Document::load_mem(&stamped).unwrap();
+        let mut ids = changed(&before, &after).unwrap();
+        assert!(doc_timestamp_allowed(
+            &before,
+            &after,
+            &ids,
+            &report.signatures[1]
+        ));
+        let fake_id = (
+            after.trailer.get(b"Size").unwrap().as_i64().unwrap() as u32,
+            0,
+        );
+        let mut fake = lopdf::Dictionary::new();
+        fake.set("Type", Object::Name(b"XRef".to_vec()));
+        fake.set("Unknown", Object::string_literal("changed"));
+        after.objects.insert(fake_id, Object::Dictionary(fake));
+        ids.insert(fake_id);
+        assert!(!doc_timestamp_allowed(
+            &before,
+            &after,
+            &ids,
+            &report.signatures[1]
+        ));
+    }
 }

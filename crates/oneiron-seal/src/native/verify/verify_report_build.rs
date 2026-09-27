@@ -107,9 +107,10 @@ pub(super) fn classify_signature(
     checks: &[VerifyCheck],
     dss_ok: bool,
     covering_dts_valid: bool,
+    covering_dts_archival: bool,
 ) -> Option<PadesProfile> {
     if checks.iter().any(|c| {
-        c.status == VerifyCheckStatus::Fail
+        (c.status == VerifyCheckStatus::Fail && c.kind != VerifyCheckKind::ValidationMaterial)
             || (c.status == VerifyCheckStatus::NotRun
                 && !matches!(
                     c.kind,
@@ -121,10 +122,11 @@ pub(super) fn classify_signature(
     let checks = Checks {
         list: checks.to_vec(),
     };
-    let t = checks.passed(VerifyCheckKind::SignatureTimestamp)
+    let trusted_sig_ts = checks.passed(VerifyCheckKind::SignatureTimestamp)
         && checks.passed(VerifyCheckKind::TimestampCertificatePath);
+    let t = trusted_sig_ts || covering_dts_valid;
     let lt = t && dss_ok;
-    Some(if lt && covering_dts_valid {
+    Some(if lt && covering_dts_archival {
         PadesProfile::BaselineLta
     } else if lt {
         PadesProfile::BaselineLt

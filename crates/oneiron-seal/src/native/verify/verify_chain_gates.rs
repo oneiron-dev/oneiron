@@ -210,16 +210,13 @@ pub(crate) fn verify_document(
         pdf::analyze_security(&doc, false).is_ok(),
         VerifyFindingCode::InvalidPdfRevision,
     );
-    // Legal revision chain and final EOF: the strict parse plus an EOF tail
-    // (an optional single trailing EOL is tolerated for interoperability).
-    let eof_ok = bytes
-        .strip_suffix(b"\n")
-        .or_else(|| bytes.strip_suffix(b"\r\n"))
-        .unwrap_or(bytes)
-        .ends_with(b"%%EOF");
+    // The same structural xref/EOF analysis used by prepared admission
+    // accepts up to four final CR/LF bytes. Do not keep a competing
+    // single-newline predicate on the verify side.
+    let revision_ends = pdf::revision_ends(bytes, &doc, limits);
     checks.record(
         VerifyCheckKind::PdfRevision,
-        eof_ok,
+        revision_ends.is_some(),
         VerifyFindingCode::InvalidPdfRevision,
     );
     let anchors = anchors(ctx.config);
@@ -265,9 +262,17 @@ pub(crate) fn verify_document(
                 ctx.clock_ms,
             ) {
                 let br_end = e.byte_range[2].saturating_add(e.byte_range[3]);
-                doc_ts_times[i] = Some(gen_time);
-                if dss_end.is_some_and(|end| br_end >= end) {
-                    archival_time = Some(gen_time);
+                // Cryptographic token validity alone does not confer archival
+                // time. The timestamp must reach its own structural revision
+                // EOF (including at most four signed EOL bytes).
+                let complete = revision_ends
+                    .as_deref()
+                    .is_some_and(|ends| ends.iter().any(|end| pdf::owns_eof(bytes, *end, br_end)));
+                if complete {
+                    doc_ts_times[i] = Some(gen_time);
+                    if dss_end.is_some_and(|end| br_end >= end) {
+                        archival_time = Some(gen_time);
+                    }
                 }
             }
         } else {
@@ -292,12 +297,31 @@ pub(crate) fn verify_document(
             continue;
         }
         let signer_end = signatures[i].byte_range.covers_to;
-        let covering = dss_end.and_then(|dss_end| {
-            doc_ts_times.iter().enumerate().rev().find_map(|(j, time)| {
-                let ts_end = signatures[j].byte_range.covers_to?;
-                let time = (*time)?;
-                (ts_end >= dss_end && signer_end.is_some_and(|end| ts_end >= end))
-                    .then_some((j, time))
+        let signer_owns_revision = signer_end.is_some_and(|signed_end| {
+            revision_ends.as_deref().is_some_and(|ends| {
+                ends.iter()
+                    .any(|end| pdf::owns_eof(bytes, *end, signed_end))
+            })
+        });
+        // A full, trusted document timestamp supplies B-T even when no DSS
+        // exists. DSS coverage is an additional requirement for B-LTA only.
+        let covering_time = signer_owns_revision
+            .then(|| {
+                doc_ts_times.iter().enumerate().rev().find_map(|(j, time)| {
+                    let ts_end = signatures[j].byte_range.covers_to?;
+                    let time = (*time)?;
+                    signer_end
+                        .is_some_and(|end| ts_end >= end)
+                        .then_some((j, time))
+                })
+            })
+            .flatten();
+        let archival_time_for_sig = covering_time.filter(|(j, _)| {
+            dss_end.is_some_and(|dss_end| {
+                signatures[*j]
+                    .byte_range
+                    .covers_to
+                    .is_some_and(|end| end >= dss_end)
             })
         });
         let mut evidence = Vec::new();
@@ -306,7 +330,7 @@ pub(crate) fn verify_document(
                 evidence.push(cert);
             }
         }
-        if let Some((j, _)) = covering {
+        if let Some((j, _)) = archival_time_for_sig {
             for cert in &covered[covered_ranges[j].clone()] {
                 if let Some(cert) = EmbeddedCert::from_der(&cert.der) {
                     evidence.push(cert);
@@ -318,17 +342,21 @@ pub(crate) fn verify_document(
             &doc,
             &anchor_certs,
             &evidence,
-            covering.map_or(ctx.clock_ms / 1000, |(_, time)| time),
+            archival_time_for_sig.map_or(ctx.clock_ms / 1000, |(_, time)| time),
             limits.max_input_bytes,
             &mut material_checks,
         );
         let dss_ok = material_checks.passed(VerifyCheckKind::ValidationMaterial);
         signatures[i].checks.extend(material_checks.list);
-        signatures[i].profile =
-            classify_signature(&signatures[i].checks, dss_ok, covering.is_some());
+        signatures[i].profile = classify_signature(
+            &signatures[i].checks,
+            dss_ok,
+            covering_time.is_some(),
+            archival_time_for_sig.is_some(),
+        );
     }
     let (revisions, modifications, anomalies) =
-        verify_revisions::classify(bytes, &signatures, &doc, limits);
+        verify_revisions::classify(bytes, &signatures, revision_ends.as_deref(), limits);
     for signature in &mut signatures {
         if signature.coverage == crate::api::Coverage::ContiguousFromStart
             && revisions

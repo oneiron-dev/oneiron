@@ -47,7 +47,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/native/verify/verify_tests_dss_b.rs` | src | m | 2 crate-vis | — | Verifier tests B: remaining DSS coverage and binding tests, KU gates, OCSP delegate and TSP token tests |
 | `src/native/verify/verify_tests_fixtures_dss_a.rs` | src | m | 23 crate-vis | — | Verifier tests A: rcgen fixtures, CRL/OCSP builders, DSS harness and first DSS revocation tests |
 | `src/native/verify/verify_tests_lta_probes.rs` | src | m | 5 crate-vis | — | Verifier tests D: span-craft and probe archival tests, flate CRL, object limit, typeless and orphan… |
-| `src/native/verify/verify_tests_review.rs` | src | s | — | — | Regression probes for per-signature report and revision admission |
+| `src/native/verify/verify_tests_review.rs` | src | m | — | — | Regression probes for per-signature report and revision admission |
 | `src/native/verify/verify_tests_sig_shapes.rs` | src | m | — | — | Verifier tests E: ByteRange and Contents shapes, field-tree reachability and cycles, SubFilter dispatch… |
 | `src/native/verify/verify_tests_time_lta_a.rs` | src | m | 18 crate-vis | — | Verifier tests C: skew and freshness tests, DocTimeStamp covered-set tests, LTA fixture and revision-append… |
 | `tests/it/fetch_policy.rs` | test | m | — | — | Fetch-policy tests (§5, §10): offline fetcher posture, policy defaults, and — with `network-fetch` — the… |
