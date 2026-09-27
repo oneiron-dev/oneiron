@@ -109,8 +109,8 @@ async fn remote_proposal_cannot_land_widen_but_host_bound_holder_can_once() {
             .unwrap()
             .is_none()
     );
-    // Both local stdio/keychain and remote HTTP carry the same logged,
-    // holder-bound instrument. The transport gives no extra authority.
+    // HTTP authority follows the logged holder-bound instrument, not the
+    // caller's ability to reach the server over a network.
     let holder_recipe = format!(
         "scope=core:auth;principal_ref={};actor_class=human",
         owner.to_hex()
@@ -138,4 +138,220 @@ async fn remote_proposal_cannot_land_widen_but_host_bound_holder_can_once() {
         .insert("idempotency-key", "widen-once".parse().unwrap());
     let (status, _) = route_json(server.clone(), replay).await;
     assert_eq!(status, StatusCode::CONFLICT);
+
+    // The encoder itself refuses out-of-model requests; the route accepts
+    // every delta that this existing structural model can produce.
+    assert!(
+        ActionEnvelope::new(
+            (0..=oneiron::consent::MAX_ENVELOPE_SELECTORS).map(|i| format!("world:{i:03}"))
+        )
+        .is_err()
+    );
+    assert!(ActionEnvelope::new(["x".repeat(oneiron::consent::MAX_CONSENT_REF_LEN + 1)]).is_err());
+    // Every structurally valid frozen delta can land, not just deltas below
+    // the old 4 KiB decoded route limit. Exercise the selector ceiling too.
+    for count in [9, oneiron::consent::MAX_ENVELOPE_SELECTORS] {
+        let selectors = (0..count).map(|index| format!("world:{index:03}:{}", "x".repeat(502)));
+        let large = GrantBound::action(
+            ActorBound::new(agent.to_hex()).unwrap(),
+            ActionClass::new("claim.put").unwrap(),
+            ActionEnvelope::new(selectors).unwrap(),
+        )
+        .unwrap();
+        let proposal = vault
+            .propose_action_widen(
+                &proof,
+                large.clone(),
+                &owner.to_hex(),
+                vault.now_recorded_at() + 300,
+            )
+            .unwrap();
+        assert!(proposal.canonical_delta.len() > 4096);
+        let delta = proposal
+            .canonical_delta
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect::<String>();
+        let body = json!({"proposal_ref":proposal.proposal_ref,"expected_delta":delta});
+        let (status, response) = route_json(
+            server.clone(),
+            core_request_with_authz("POST", path, test_bearer(&holder_recipe), Some(&body)),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{response}");
+        assert_eq!(response["grant_ref"], large.digest().to_hex());
+        assert!(
+            vault
+                .consent_grant(&large.digest().to_hex())
+                .unwrap()
+                .unwrap()
+                .is_active()
+        );
+    }
+}
+
+#[tokio::test]
+async fn managed_host_account_holder_lands_once_but_host_root_and_other_account_cannot() {
+    use crate::managed::{ManagedState, WakeLedger, build_managed_app};
+    use axum::body::{Body, to_bytes};
+    use oneiron_vault_contract::{
+        DEK_LEN, ManagedWidenAction, TOKEN_LEN, TokenHex, read_credentials, write_credentials,
+    };
+    use tower::ServiceExt;
+
+    let (dir, mut server) = auth_test_server();
+    let issuer = HostSlipIssuer::from_secret(b"secret").unwrap();
+    server.vault().ensure_host_root_slip(&issuer).unwrap();
+    Arc::get_mut(&mut server).unwrap().managed_issuer = Some(issuer);
+    let vault = server.vault();
+    let owner = oneiron::EntityId::now();
+    let agent = oneiron::EntityId::now();
+    let other = oneiron::EntityId::now();
+    for actor in [owner, agent, other] {
+        vault
+            .put_entity(
+                &actor,
+                ENTITY_TYPE_PERSON,
+                oneiron::TimeRange { start: 1, end: 1 },
+                1,
+                b"person",
+            )
+            .unwrap();
+    }
+    let agent_recipe = format!(
+        "scope=propose_action_widen;principal_ref={};actor_class=agent",
+        agent.to_hex()
+    );
+    let (slip, key) = slip_credentials::credential(&server, &agent_recipe);
+    let proof = vault
+        .verify_capability_slip(
+            &server.managed_issuer.as_ref().unwrap().public_key(),
+            &slip,
+            b"managed-widen",
+            &key.sign(&slip.binding_transcript(b"managed-widen").unwrap())
+                .to_bytes(),
+        )
+        .unwrap();
+    let bound = GrantBound::action(
+        ActorBound::new(agent.to_hex()).unwrap(),
+        ActionClass::new("claim.put").unwrap(),
+        ActionEnvelope::new(["world:managed".to_owned()]).unwrap(),
+    )
+    .unwrap();
+    let proposal = vault
+        .propose_action_widen(
+            &proof,
+            bound.clone(),
+            &owner.to_hex(),
+            vault.now_recorded_at() + 300,
+        )
+        .unwrap();
+    let delta = proposal
+        .canonical_delta
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect::<String>();
+    let payload = json!({"proposal_ref":proposal.proposal_ref,"expected_delta":delta}).to_string();
+    let token = [0x62; TOKEN_LEN];
+    let mut frame = Vec::new();
+    write_credentials(&mut frame, &[0x71; DEK_LEN], &token).unwrap();
+    let credentials = read_credentials(&frame[..]).unwrap();
+    let ledger = WakeLedger::load(
+        vault.clone(),
+        "managed-test".into(),
+        dir.path().join("supervisor.sock"),
+        &credentials,
+    )
+    .unwrap();
+    let state = Arc::new(ManagedState::new(
+        "managed-test".into(),
+        server.clone(),
+        ledger,
+    ));
+    let app = build_managed_app(server.clone(), state);
+    let token = TokenHex::from_token(&token);
+    let send = |action: Option<ManagedWidenAction>| {
+        let mut builder = Request::builder()
+            .method("POST")
+            .uri("/v1/core/consent/widen/accept")
+            .header(CONTENT_TYPE, "application/json")
+            .header(AUTHORIZATION, "Bearer spoofed-human");
+        if let Some(action) = action {
+            builder = builder.header(
+                "x-oneiron-managed-widen-action",
+                serde_json::to_string(&action).unwrap(),
+            );
+        }
+        builder.body(Body::from(payload.clone())).unwrap()
+    };
+    let unsigned = app.clone().oneshot(send(None)).await.unwrap();
+    assert_eq!(unsigned.status(), StatusCode::FORBIDDEN);
+    let other_action = ManagedWidenAction::sign_after_account_auth(
+        &token,
+        "managed-test",
+        &other.to_hex(),
+        payload.as_bytes(),
+    );
+    assert_eq!(
+        app.clone()
+            .oneshot(send(Some(other_action)))
+            .await
+            .unwrap()
+            .status(),
+        StatusCode::FORBIDDEN
+    );
+    let mut tampered = ManagedWidenAction::sign_after_account_auth(
+        &token,
+        "managed-test",
+        &owner.to_hex(),
+        payload.as_bytes(),
+    );
+    tampered.mac.replace_range(..1, "0");
+    if tampered.mac.starts_with('0') {
+        tampered.mac.replace_range(..1, "1");
+    }
+    assert_eq!(
+        app.clone()
+            .oneshot(send(Some(tampered)))
+            .await
+            .unwrap()
+            .status(),
+        StatusCode::FORBIDDEN
+    );
+    assert!(
+        vault
+            .consent_grant(&bound.digest().to_hex())
+            .unwrap()
+            .is_none()
+    );
+    let owner_action = ManagedWidenAction::sign_after_account_auth(
+        &token,
+        "managed-test",
+        &owner.to_hex(),
+        payload.as_bytes(),
+    );
+    let response = app
+        .clone()
+        .oneshot(send(Some(owner_action.clone())))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let body: serde_json::Value =
+        serde_json::from_slice(&to_bytes(response.into_body(), 4096).await.unwrap()).unwrap();
+    assert_eq!(body["grant_ref"], bound.digest().to_hex());
+    assert_eq!(body["decision_id"].as_str().unwrap().len(), 32);
+    assert!(
+        vault
+            .consent_grant(&bound.digest().to_hex())
+            .unwrap()
+            .unwrap()
+            .is_active()
+    );
+    assert_eq!(
+        app.oneshot(send(Some(owner_action)))
+            .await
+            .unwrap()
+            .status(),
+        StatusCode::CONFLICT
+    );
 }

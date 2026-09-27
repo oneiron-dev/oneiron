@@ -42122,7 +42122,7 @@
      "surface": {}
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "test",
      "notable": [],
      "path": "src/api/tests/relay_widen.rs",
@@ -43158,7 +43158,7 @@
      "purpose": "Managed wake ledger: entries, revision, and supervisor pushes",
      "surface": {
       "const": 1,
-      "crate-vis": 1,
+      "crate-vis": 2,
       "fn": 7,
       "struct": 1
      }
@@ -43188,7 +43188,7 @@
      "path": "src/managed/mod.rs",
      "purpose": "Managed serve mode: the vault engine as a supervised child process",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 2,
       "re-export": 5
      }
     },
@@ -43224,6 +43224,7 @@
      "purpose": "Managed runtime state, the reap freeze gate, and the supervised serve loop",
      "surface": {
       "const": 1,
+      "crate-vis": 1,
       "fn": 20,
       "struct": 3,
       "type": 1
@@ -44658,12 +44659,25 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [
+      "ManagedWidenAction"
+     ],
+     "path": "src/lib/managed_holder.rs",
+     "purpose": "Host-attested account action for one managed widen request",
+     "surface": {
+      "fn": 2,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [],
      "path": "src/lib/mod.rs",
      "purpose": "Supervisor ⇄ vault child-process contract: wire types, credential framing, limits",
      "surface": {
       "mod": 3,
-      "re-export": 6
+      "re-export": 7
      }
     },
     {
@@ -44719,7 +44733,7 @@
    ],
    "modules": {
     "lib": {
-     "files": 14,
+     "files": 15,
      "impl_vault": false,
      "largest_src_bucket": "s",
      "layout": "dir",
@@ -44728,7 +44742,7 @@
    },
    "over_bar": 0,
    "purpose": "Supervisor ⇄ vault child-process contract: wire types, credential framing, limits",
-   "source_files": 11,
+   "source_files": 12,
    "test_files": 3
   }
  }

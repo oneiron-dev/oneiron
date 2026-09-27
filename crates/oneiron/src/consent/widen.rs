@@ -342,7 +342,8 @@ impl Vault {
         expected_delta: &[u8],
     ) -> Result<ConsentReceipt> {
         let claims = credential.claims();
-        if claims.holder_ref != owner.actor().to_hex()
+        if claims.single_use
+            || claims.holder_ref != owner.actor().to_hex()
             || claims.actor_class.as_deref() != Some("human")
             || !credential.allows_verb("core:auth")
         {
@@ -362,6 +363,7 @@ impl Vault {
     ) -> Result<ConsentReceipt> {
         let key = key(reference)?;
         self.with_write_txn(|txn| {
+            owner.revalidate_in_txn(self, &*txn)?;
             if let Some(credential) = credential
                 && !self.capability_slip_is_live_in_txn(&*txn, credential)?
             {

@@ -3,11 +3,12 @@ use super::super::json_payload;
 use crate::{
     auth::{CoreAuth, CoreScope},
     error::{ApiError, ApiErrorEnvelope, EnvelopedApiError},
+    managed::ManagedWidenHolder,
     server::SyncServer,
 };
 use axum::{
     Json,
-    extract::{State, rejection::JsonRejection},
+    extract::{Extension, State, rejection::JsonRejection},
 };
 use oneiron::{ErrorKind, store::GateDecisionId};
 use serde::{Deserialize, Serialize};
@@ -37,24 +38,34 @@ pub(crate) struct CoreAcceptWidenResponse {
 pub(crate) async fn core_accept_widen(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
+    managed_holder: Option<Extension<ManagedWidenHolder>>,
     payload: Result<Json<CoreAcceptWidenRequest>, JsonRejection>,
 ) -> Result<Json<CoreAcceptWidenResponse>, EnvelopedApiError> {
     auth.require(CoreScope::Auth)?;
-    // Neither an OAuth login, a bare host secret, nor a claimed actor id is a
-    // human holder's signed action. Both stdio/keychain and HTTP slips cross
-    // the same verification door before this route can be reached.
-    let credential = auth
-        .verified_slip()
-        .filter(|_| auth.actor_class() == Some("human"))
-        .ok_or_else(|| ApiError::forbidden_scope("consent:widen:holder"))?;
-    let principal = auth
-        .principal_ref()
-        .ok_or_else(|| ApiError::forbidden_scope("consent:widen:holder"))?;
-    let actor = oneiron::EntityId::from_hex(principal)
-        .map_err(|_| ApiError::forbidden_scope("consent:widen:holder"))?;
+    // Managed mode accepts only a supervisor-MACed account action installed
+    // by its socket middleware. A host root by itself is never a holder.
+    // Unmanaged HTTP and local clients use the same logged human slip door.
+    let (actor, principal, credential) = if server.managed_issuer.is_some() {
+        let actor = managed_holder
+            .ok_or_else(|| ApiError::forbidden_scope("consent:widen:holder"))?
+            .0
+            .0;
+        (actor, actor.to_hex(), None)
+    } else {
+        let credential = auth
+            .verified_slip()
+            .filter(|_| auth.actor_class() == Some("human"))
+            .ok_or_else(|| ApiError::forbidden_scope("consent:widen:holder"))?;
+        let principal = auth
+            .principal_ref()
+            .ok_or_else(|| ApiError::forbidden_scope("consent:widen:holder"))?;
+        let actor = oneiron::EntityId::from_hex(principal)
+            .map_err(|_| ApiError::forbidden_scope("consent:widen:holder"))?;
+        (actor, principal.to_owned(), Some(credential))
+    };
     let req = json_payload(payload)?;
     let delta = req.expected_delta.as_bytes().chunks_exact(2);
-    if req.expected_delta.len() > 8192 || !delta.remainder().is_empty() {
+    if !delta.remainder().is_empty() {
         return Err(ApiError::bad_request("invalid expected_delta", Some("expected_delta")).into());
     }
     let delta = delta
@@ -71,20 +82,27 @@ pub(crate) async fn core_accept_widen(
         .ok_or_else(|| ApiError::bad_request("invalid expected_delta", Some("expected_delta")))?;
     let owner = server
         .vault()
-        .authenticate_owner(actor, principal, true, GateDecisionId::now())
+        .authenticate_owner(actor, &principal, true, GateDecisionId::now())
         .map_err(|_| ApiError::forbidden_scope("consent:widen:holder"))?;
-    let receipt = server
-        .vault()
-        .accept_credential_widen(&owner, credential, &req.proposal_ref, &delta)
-        .map_err(|error| match error.kind() {
-            ErrorKind::ConsentOwnerNotAuthenticated => {
-                ApiError::forbidden_scope("consent:widen:holder")
-            }
-            ErrorKind::InvalidConsentGrantRow | ErrorKind::InvalidConsentBound => {
-                ApiError::invalid_state(Some("consent_widen_proposal"))
-            }
-            _ => ApiError::internal_server_error("widen approval failed"),
-        })?;
+    let result = match credential {
+        Some(credential) => {
+            server
+                .vault()
+                .accept_credential_widen(&owner, credential, &req.proposal_ref, &delta)
+        }
+        None => server
+            .vault()
+            .accept_widen(&owner, &req.proposal_ref, &delta),
+    };
+    let receipt = result.map_err(|error| match error.kind() {
+        ErrorKind::ConsentOwnerNotAuthenticated => {
+            ApiError::forbidden_scope("consent:widen:holder")
+        }
+        ErrorKind::InvalidConsentGrantRow | ErrorKind::InvalidConsentBound => {
+            ApiError::invalid_state(Some("consent_widen_proposal"))
+        }
+        _ => ApiError::internal_server_error("widen approval failed"),
+    })?;
     Ok(Json(CoreAcceptWidenResponse {
         decision_id: receipt.decision_id().to_hex(),
         grant_ref: receipt
