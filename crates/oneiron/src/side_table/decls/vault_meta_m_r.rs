@@ -134,6 +134,10 @@ side_tables! {
     ORIGIN_VISIBLE_REF: VaultMeta b"origin:visible_ref:v1:" Raw;
     /// Best-effort de-duplication lease for one authorized-outbound recovery sweep. Key: ().
     OUTBOUND_AUTHORIZED_RECOVERY_LEASE: VaultMeta b"outbound:authorized_recovery_lease:v1" Raw;
+    /// Hash of semantic send key -> (intent id hash32, reservation timestamp u64be). Key: hash32.
+    OUTBOUND_DEDUPE_RESERVATION: VaultMeta b"outbound:dedupe:v1:" Raw;
+    /// Intent id -> semantic send key's full `outbound:dedupe:v1:` key. Key: hash32.
+    OUTBOUND_DEDUPE_INTENT: VaultMeta b"outbound:dedupe_intent:v1:" Raw;
     /// Unique index from one logical dispatch call to its immutable intent id. Key: id16(attempt) +
     /// u64be(call seq).
     OUTBOUND_INTENT_ATTEMPT_INDEX: VaultMeta b"outbound:intent_attempt:v1:" Raw;
@@ -143,6 +147,10 @@ side_tables! {
     /// Durable outbound-send intent ledger row: state machine, endpoint binding, and accounting. Key:
     /// hash32.
     OUTBOUND_INTENT_LEDGER_RECORD: VaultMeta b"outbound:intent_ledger:v2:" Raw;
+    /// Deterministic receipt id -> intent id. Key: id16.
+    OUTBOUND_SUPPRESSION_INDEX: VaultMeta b"outbound:suppression_index:v1:" Raw;
+    /// Device-local receipt body, `rmp_serde::to_vec_named`. Key: hash32 (intent id).
+    OUTBOUND_SUPPRESSION_RECEIPT: VaultMeta b"outbound:suppression_receipt:v1:" Named;
     /// Gate outcome of a scheduled outbound attempt's first dispatch. Key: id16.
     ///
     /// Codec fixed to `Raw` (T47 store slice): `store::outbound_send_receipt`
