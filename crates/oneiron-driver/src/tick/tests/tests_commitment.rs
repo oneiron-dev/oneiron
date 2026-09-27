@@ -361,3 +361,97 @@ fn lifecycle_due_never_arms_timer() {
         "one attempt per phase — Lead and Due — and nothing more"
     );
 }
+
+#[test]
+fn large_pending_digest_index_keeps_independent_attempt_deadline() {
+    use oneiron::ClaimCandidate;
+    use oneiron::claim::{ClaimApprovalStatus, ClaimSource, ClaimSubject};
+    use oneiron::dreamer_runner::maintenance::digest::ProactivityCadence;
+    use oneiron::write_envelope::{WriteEnvelope, WriteProvenance};
+    let (_dir, vault) = open_vault();
+    let local = vault_client_node_id(&vault);
+    elect_home(&vault, local, 1);
+    let owner_id = commitment_party(0x91);
+    vault
+        .put_entity(
+            &owner_id,
+            ENTITY_TYPE_PERSON,
+            TimeRange { start: 1, end: 1 },
+            1,
+            b"owner",
+        )
+        .unwrap();
+    let owner = vault
+        .authenticate_owner(
+            owner_id,
+            &owner_id.to_hex(),
+            true,
+            oneiron::store::GateDecisionId::now(),
+        )
+        .unwrap();
+    vault
+        .set_proactivity_cadence(
+            &owner,
+            &ProactivityCadence {
+                period_secs: 100,
+                group_by_facet: true,
+                urgent_breakthrough: true,
+            },
+        )
+        .unwrap();
+    let actor = vault.dreamer_authority().unwrap();
+    let envelope = WriteEnvelope::new(
+        actor,
+        ClaimSource::Generated,
+        WriteProvenance::new(rmpv::Value::Map(vec![(
+            rmpv::Value::from("surface"),
+            rmpv::Value::from("dreamer"),
+        )]))
+        .unwrap(),
+        ClaimApprovalStatus::Proposed,
+    );
+    let add = |start: u64, end: u64| {
+        for chunk in (start..end).collect::<Vec<_>>().chunks(250) {
+            let mut batch = vault.batch();
+            for &index in chunk {
+                let mut bytes = [0x88; 16];
+                bytes[..8].copy_from_slice(&index.to_be_bytes());
+                let id = EntityId::from_bytes(bytes).unwrap();
+                batch = batch.claim_candidate(
+                    &id,
+                    ClaimCandidate::new(
+                        "dreamer.proactivity.follow_up",
+                        ClaimSubject::Entity(actor.entity_ref()),
+                        rmpv::Value::from("pending"),
+                        0.7,
+                    ),
+                    &envelope,
+                    TimeRange { start: 1, end: 1 },
+                    1,
+                );
+            }
+            batch.commit().unwrap();
+        }
+    };
+    add(0, 1);
+    vault
+        .proactivity_digest(&owner, 100, None)
+        .unwrap()
+        .unwrap();
+    add(1, 10_001);
+    assert_eq!(vault.next_proactivity_digest_at().unwrap(), Some(200));
+    enqueue(
+        &vault,
+        DreamerConsolidationScope::Micro,
+        "unrelated-due",
+        105,
+    );
+    let mut source = AttemptQueueDeadlines::with_commitment_clock(&vault, local, frozen_clock(0));
+    assert_eq!(
+        source.next_deadline().unwrap(),
+        Some(CommitmentDeadline {
+            due_at_ms: 105_000,
+            scope: DreamerConsolidationScope::Micro,
+        })
+    );
+}
