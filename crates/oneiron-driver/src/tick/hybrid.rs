@@ -21,47 +21,76 @@ use crate::session::SessionHint;
 pub struct HybridTick<D> {
     timer: TimerTick<D>,
     push: PushTick,
+    changes: Option<tokio::sync::watch::Receiver<u64>>,
+    push_open: bool,
 }
 
 impl<D: DeadlineSource> HybridTick<D> {
     #[must_use]
     pub fn new(timer: TimerTick<D>, push: PushTick) -> Self {
-        Self { timer, push }
+        let changes = timer.subscribe_changes();
+        Self {
+            timer,
+            push,
+            changes,
+            push_open: true,
+        }
+    }
+}
+
+async fn wait_for_change(changes: &mut Option<tokio::sync::watch::Receiver<u64>>) {
+    if let Some(receiver) = changes {
+        if receiver.changed().await.is_err() {
+            *changes = None;
+        }
+    } else {
+        std::future::pending::<()>().await;
     }
 }
 
 impl<D: DeadlineSource> TickSource for HybridTick<D> {
     async fn next_tick(&mut self) -> Option<Tick> {
-        match self.timer.read_deadline() {
-            // A deadline that is already due beats any pending push.
-            Some(deadline) if deadline.due_at_ms <= self.timer.now() => {
-                Some(Tick::Deadline(deadline))
-            }
-            Some(deadline) => {
-                let clock = Arc::clone(&self.timer.now_ms);
-                let winner = tokio::select! {
-                    biased;
-                    () = sleep_until_due(&clock, deadline.due_at_ms) => None,
-                    push = self.push.recv() => Some(push),
-                };
-                match winner {
-                    // The deadline came due first.
-                    None => Some(Tick::Deadline(deadline)),
-                    // A push won; the un-consumed deadline re-surfaces on
-                    // the next cycle's fresh read.
-                    Some(Some(tick)) => Some(tick),
-                    // Push lane closed while a deadline is armed: wait the
-                    // deadline out on the timer lane alone.
-                    Some(None) => {
-                        sleep_until_due(&clock, deadline.due_at_ms).await;
-                        Some(Tick::Deadline(deadline))
+        loop {
+            match self.timer.read_deadline() {
+                // A due deadline beats buffered push, even after invalidation.
+                Some(deadline) if deadline.due_at_ms <= self.timer.now() => {
+                    return Some(Tick::Deadline(deadline));
+                }
+                Some(deadline) => {
+                    let clock = Arc::clone(&self.timer.now_ms);
+                    // A closed push lane must not discard an already-read
+                    // deadline from a one-shot source. Keep the ORIGINAL sleep
+                    // (not a restarted duration) until it fires or changes.
+                    let sleep = sleep_until_due(&clock, deadline.due_at_ms);
+                    tokio::pin!(sleep);
+                    loop {
+                        tokio::select! {
+                            biased;
+                            () = &mut sleep => {
+                                return Some(Tick::Deadline(deadline));
+                            }
+                            () = wait_for_change(&mut self.changes) => break,
+                            push = self.push.recv(), if self.push_open => match push {
+                                Some(tick) => return Some(tick),
+                                None => self.push_open = false,
+                            },
+                        }
+                    }
+                }
+                None => {
+                    if !self.push_open {
+                        return None;
+                    }
+                    tokio::select! {
+                        biased;
+                        () = wait_for_change(&mut self.changes) => continue,
+                        push = self.push.recv() => match push {
+                            Some(tick) => return Some(tick),
+                            None => self.push_open = false,
+                        },
                     }
                 }
             }
-            // No timed work: only a push can wake us. `None` from the push
-            // lane means no producers remain either — the source is
-            // exhausted.
-            None => self.push.recv().await,
         }
     }
 

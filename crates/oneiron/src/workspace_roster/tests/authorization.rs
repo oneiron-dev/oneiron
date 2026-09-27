@@ -68,9 +68,6 @@ fn every_onboarding_mutation_rechecks_revoked_authority_after_preflight() -> Res
         ("work facet", |v, i, w| {
             ensure_work_facet_edge(v, i, birth(i).person_ref, birth(i).work_facet_ref, w)
         }),
-        ("persona baseline", |v, i, w| {
-            ensure_persona_baseline(v, i, birth(i), w)
-        }),
         ("profile grant", |v, i, w| {
             ensure_companion_profile_grant(v, i, birth(i), w)
         }),
@@ -775,13 +772,13 @@ fn invalid_owner_api_bounds_leave_journal_incomplete_without_grants() -> Result<
             ))
         ));
         activate_mailbox(&vault, entity(MAILBOX_IDENTITY))?;
-        let before = durable_rows(&vault)?;
+        let before = durable_rows_without_authorization_clock(&vault)?;
         assert!(matches!(
             vault.onboard_workspace_member(intent.clone(), &writer(WRITER), Some(&owner)),
             Err(Error::Gate(GateError::InvalidConsentBound(_)))
         ));
         assert_eq!(
-            durable_rows(&vault)?,
+            durable_rows_without_authorization_clock(&vault)?,
             before,
             "owner API apply rolls back every partial mint"
         );

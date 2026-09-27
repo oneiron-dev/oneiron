@@ -9,10 +9,7 @@ use heed::RoTxn;
 use crate::Vault;
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::claim::{ClaimBody, claim_surfaceable};
-use crate::companion::{
-    CompanionLifecycleEvent, CompanionScope, CompanionSubject, ENTITY_TYPE_COMPANION_REGISTER,
-    decode_companion_record_body,
-};
+use crate::companion::ENTITY_TYPE_COMPANION_REGISTER;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::registry::ENTITY_TYPE_CLAIM;
@@ -354,7 +351,8 @@ fn decode_entity_fields(
         || (entity_type == crate::registry::ENTITY_TYPE_FACET
             && crate::companion::is_identity_facet_body(payload))
     {
-        return decode_companion_register_fields(payload);
+        // Retired companion identity rows are not persona read surfaces.
+        return Some(HashMap::new());
     }
 
     let mut cursor = Cursor::new(payload);
@@ -372,86 +370,6 @@ fn decode_entity_fields(
     }
 
     Some(out)
-}
-
-fn decode_companion_register_fields(raw: &[u8]) -> Option<HashMap<String, serde_json::Value>> {
-    let record = decode_companion_record_body(raw).ok()?;
-    let mut out = HashMap::new();
-    out.insert(
-        "kind".to_owned(),
-        serde_json::Value::String(record.kind().as_str().to_owned()),
-    );
-    out.insert("scope".to_owned(), companion_scope_to_json(&record.scope));
-    out.insert(
-        "subject".to_owned(),
-        companion_subject_to_json(&record.subject),
-    );
-    out.insert(
-        "lifecycle".to_owned(),
-        serde_json::Value::String(record.lifecycle.as_str().to_owned()),
-    );
-    out.insert(
-        "sensitivity".to_owned(),
-        serde_json::Value::String(record.sensitivity.as_str().to_owned()),
-    );
-    out.insert(
-        "provenance".to_owned(),
-        serde_json::json!({
-            "actor_ref": record.provenance.actor_ref.to_hex(),
-            "actor_class": record.provenance.actor_class as u8,
-            "source": record.provenance.source.as_str(),
-            "approval": record.provenance.approval.as_str(),
-        }),
-    );
-    out.insert(
-        "lifecycle_events".to_owned(),
-        companion_lifecycle_events_to_json(&record.lifecycle_events),
-    );
-    Some(out)
-}
-
-fn companion_lifecycle_events_to_json(events: &[CompanionLifecycleEvent]) -> serde_json::Value {
-    serde_json::Value::Array(
-        events
-            .iter()
-            .map(|event| {
-                serde_json::json!({
-                    "kind": event.kind.as_str(),
-                    "at": event.at,
-                })
-            })
-            .collect(),
-    )
-}
-
-fn companion_scope_to_json(scope: &CompanionScope) -> serde_json::Value {
-    match scope {
-        CompanionScope::Neutral => serde_json::json!({ "kind": "neutral" }),
-        CompanionScope::Personal { person_ref } => {
-            serde_json::json!({ "kind": "personal", "person_ref": person_ref.to_hex() })
-        }
-        CompanionScope::SharedVault { vault_id } => {
-            serde_json::json!({ "kind": "shared_vault", "vault_id": vault_id })
-        }
-    }
-}
-
-fn companion_subject_to_json(subject: &CompanionSubject) -> serde_json::Value {
-    match subject {
-        CompanionSubject::Persona { persona_ref } => {
-            serde_json::json!({ "kind": "persona", "persona_ref": persona_ref.to_hex() })
-        }
-        CompanionSubject::Relationship {
-            source_ref,
-            target_ref,
-        } => serde_json::json!({
-            "kind": "relationship",
-            "relationship_ref": {
-                "source_ref": source_ref.to_hex(),
-                "target_ref": target_ref.to_hex(),
-            }
-        }),
-    }
 }
 
 pub(super) fn rmpv_to_json(value: &rmpv::Value) -> serde_json::Value {

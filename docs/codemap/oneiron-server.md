@@ -12,7 +12,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | path | kind | bucket | pub surface | notable types | purpose |
 |---|---|---|---|---|---|
 | `src/actions.rs` | src | s | 1 struct · 4 fn | SharedActionExecutor | Host-bound UI and agent action executor over the engine's one verb registry |
-| `src/api/artifacts.rs` | src | s | 14 crate-vis | — | — |
+| `src/api/artifacts.rs` | src | m | 16 crate-vis | — | — |
 | `src/api/booking.rs` | src | m | 14 crate-vis | — | ONE-1819 [BK-08] the agent-readable booking surface |
 | `src/api/booking/admission.rs` | src | m | 2 crate-vis | — | — |
 | `src/api/booking/constants.rs` | src | s | 14 crate-vis | — | — |
@@ -21,7 +21,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/booking/lifecycle.rs` | src | s | 3 crate-vis | — | — |
 | `src/api/booking/offerability.rs` | src | s | 1 crate-vis | — | — |
 | `src/api/booking/page_token.rs` | src | s | 4 crate-vis | — | — |
-| `src/api/booking/public.rs` | src | s | 6 crate-vis | — | Anonymous, published-capability-only booking transport |
+| `src/api/booking/public.rs` | src | m | 6 crate-vis | — | Anonymous, published-capability-only booking transport |
 | `src/api/booking/public_availability.rs` | src | s | 5 crate-vis | — | Query-bound slot cache |
 | `src/api/booking/public_availability_tests.rs` | test | s | — | — | — |
 | `src/api/booking/public_fixture.rs` | src | m | 30 crate-vis | — | Shared fixtures for tests that enter the real public router |
@@ -41,11 +41,9 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/client_metadata.rs` | src | s | 2 crate-vis | — | Public CIMD documents derived only from the configured OAuth resource origin |
 | `src/api/companion/access_grants.rs` | src | s | 9 crate-vis | — | Companion access-grant routes and DTOs |
 | `src/api/companion/auth.rs` | src | s | 5 crate-vis | — | Companion authorization helpers |
-| `src/api/companion/errors.rs` | src | s | 4 crate-vis | — | Companion error constructors |
-| `src/api/companion/mod.rs` | src | s | 8 crate-vis | — | Companion control-plane surface: access grants, psych-mirror profiles, and the companion register record… |
+| `src/api/companion/errors.rs` | src | s | 3 crate-vis | — | Companion error constructors |
+| `src/api/companion/mod.rs` | src | s | 5 crate-vis | — | Companion control-plane surface: access grants and psych-mirror profiles |
 | `src/api/companion/profiles.rs` | src | m | 24 crate-vis | — | Companion profile routes, DTOs, and state builders |
-| `src/api/companion/register.rs` | src | m | 18 crate-vis | — | Companion register record routes and DTOs |
-| `src/api/companion/register_wire.rs` | src | s | 14 crate-vis | — | Register wire-format converters and validators |
 | `src/api/consumer_usage.rs` | src | s | 4 crate-vis | — | Per-vault usage facts |
 | `src/api/context_board/cursor.rs` | src | s | 12 crate-vis | — | Server-owned MEMORIES cursors and session read sets, keyed by principal and session |
 | `src/api/context_board/memories.rs` | src | m | 19 crate-vis | — | MEMORIES request controls, response DTOs, slot-budget resolution and companion assembly |
@@ -78,7 +76,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/esign/presentation.rs` | src | s | 9 crate-vis | — | Stateless field editor and capability-scoped ceremony presentation adapters |
 | `src/api/facade.rs` | src | m | 2 crate-vis | — | ONE-1441 WIRE-P1: the bounded HTTP projection of the engine memory surface |
 | `src/api/facade/agent_verbs.rs` | src | m | 1 crate-vis | — | — |
-| `src/api/facade/tests.rs` | test | m | — | — | — |
+| `src/api/facade/tests.rs` | test | L | — | — | — |
 | `src/api/git_http/gate.rs` | src | s | 9 crate-vis | — | Authentication gate and service canonicalization for Git smart-HTTP |
 | `src/api/git_http/mod.rs` | src | s | 1 crate-vis | — | Git smart-HTTP routes (ARCH-0068 Phase A, ONE-1908) |
 | `src/api/git_http/routes.rs` | src | s | 9 crate-vis | — | Git smart-HTTP routes and per-service RPC handlers |
@@ -103,11 +101,17 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/mcp_gateway/board_setup.rs` | src | m | 16 crate-vis | — | Board state, setup grammar, and page preflight |
 | `src/api/mcp_gateway/envelope.rs` | src | s | 14 crate-vis | — | JSON-RPC envelope types and request dispatch |
 | `src/api/mcp_gateway/exec_board_verbs.rs` | src | m | 6 crate-vis | — | Execute-code and board-verb executors |
-| `src/api/mcp_gateway/facade_verbs.rs` | src | L | 23 crate-vis | — | Facade-backed MCP verb executors |
+| `src/api/mcp_gateway/facade_verbs/ask.rs` | src | s | 2 crate-vis | — | — |
+| `src/api/mcp_gateway/facade_verbs/calendar.rs` | src | s | 1 crate-vis | — | — |
+| `src/api/mcp_gateway/facade_verbs/mod.rs` | src | m | 22 crate-vis | — | Facade-backed MCP verb executors |
+| `src/api/mcp_gateway/facade_verbs/nav.rs` | src | s | 2 crate-vis | — | — |
+| `src/api/mcp_gateway/facade_verbs/read.rs` | src | s | 1 crate-vis | — | — |
+| `src/api/mcp_gateway/facade_verbs/tests.rs` | test | s | — | — | — |
 | `src/api/mcp_gateway/memory_response.rs` | src | s | 1 crate-vis | — | Tool-first projections of the engine-owned typed read table |
 | `src/api/mcp_gateway/mod.rs` | src | s | 9 crate-vis | — | — |
 | `src/api/mcp_gateway/tasks_response.rs` | src | m | 8 crate-vis | — | Tasks verb and response shaping |
-| `src/api/memory.rs` | src | L | 20 crate-vis | — | — |
+| `src/api/memory/mod.rs` | src | m | 19 crate-vis | — | — |
+| `src/api/memory/watch.rs` | src | s | 3 crate-vis | — | — |
 | `src/api/memory_reason.rs` | src | m | 19 crate-vis | — | ONE-207: `POST /v1/companion/memory/reason` |
 | `src/api/memory_reason/deep_admission.rs` | src | s | 9 crate-vis | — | — |
 | `src/api/memory_reason/deep_admission/tests.rs` | test | s | — | — | — |
@@ -165,7 +169,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/tests/support_mcp.rs` | test | m | 32 crate-vis | — | Shared MCP test harness: legacy adapter, tool-first endpoints, scoping, code-run fixtures |
 | `src/api/tests/support_mcp_credentials.rs` | test | s | 3 crate-vis | — | Paired MCP fixture credentials |
 | `src/api/tests/surface_events.rs` | test | m | — | — | Surface-event submit/replay/receipts, scope enforcement, idempotency + durability, malformed-input mapping |
-| `src/api/tests/surface_routes.rs` | test | m | — | — | Health/runtime/discover redaction, outbound capability contracts, local artifact serving, context-board seed… |
+| `src/api/tests/surface_routes.rs` | test | L | — | — | Health/runtime/discover redaction, outbound capability contracts, local artifact serving, context-board seed… |
 | `src/api/tests/vad_and_error_mapping.rs` | test | m | — | — | Turn/message VAD annotate routes plus core-engine-error to HTTP status mapping matrix |
 | `src/api/vad.rs` | src | m | 9 crate-vis | — | — |
 | `src/auth.rs` | src | m | 31 crate-vis | — | HTTP authentication for log-backed version-two capability slips |
@@ -227,7 +231,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/handler/lfs_chunks.rs` | src | s | 1 crate-vis | — | Versioned owner-authenticated chunk requests, disjoint from selector window mode |
 | `src/handler/message_stream_tests.rs` | test | s | — | — | Streaming text stays on the existing opaque, budgeted ephemeral hub lane |
 | `src/handler/mod.rs` | src | s | 2 crate-vis | — | WebSocket upgrade handler and connection lifecycle |
-| `src/handler/note_socket_tests.rs` | test | m | — | — | Real websocket NOTE commands: actor binding, durable pins, reviewed edits |
+| `src/handler/note_socket_tests.rs` | test | L | — | — | Real websocket NOTE commands: actor binding, durable pins, reviewed edits |
 | `src/handler/tests.rs` | test | XL | — | — | — |
 | `src/handler/transport.rs` | src | m | 11 crate-vis | — | Guarded socket chokepoint with revocation consults on queue and flush |
 | `src/handler/window_sync.rs` | src | s | 4 crate-vis | — | WindowSync sub-tag dispatcher with selector and VV paths |
@@ -247,7 +251,8 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/livequery/routing.rs` | src | s | 3 crate-vis | — | Private routing header for the EXISTING server broadcast channel |
 | `src/livequery/socket_tests.rs` | test | m | — | — | Real TCP/WebSocket ownership tests |
 | `src/livequery/source.rs` | src | m | 3 crate-vis | — | Authority-bound coarse projection |
-| `src/livequery/subscriptions.rs` | src | L | 20 crate-vis | — | Coarse derivation, retained rings and cumulative cursor acknowledgements |
+| `src/livequery/subscriptions/delivery.rs` | src | s | 1 crate-vis | — | — |
+| `src/livequery/subscriptions/mod.rs` | src | m | 19 crate-vis | — | Coarse derivation, retained rings and cumulative cursor acknowledgements |
 | `src/livequery/test_wire.rs` | src | s | 4 crate-vis | — | Socket fixture codec |
 | `src/livequery/tests.rs` | test | m | — | — | — |
 | `src/livequery/wire.rs` | src | s | 11 crate-vis | — | Version-8 app envelopes |
@@ -332,7 +337,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `tests/it/main.rs` | test | s | — | — | Consolidated integration-test binary: five former standalone `tests/*.rs` Cargo targets compiled and linked… |
 | `tests/it/mcp_booking.rs` | test | m | — | — | ONE-1819 [BK-08] MCP-side gates for `oneiron.book` |
 | `tests/it/mcp_oracle.rs` | test | m | — | — | Context Board forward test oracle — MCP surface + packaging arms, epic ONE-1692, relocated from the engine… |
-| `tests/it/remote_pairing.rs` | test | s | — | — | A paired `oneiron_remote::OneironClient` against the real router |
+| `tests/it/remote_pairing.rs` | test | m | — | — | A paired `oneiron_remote::OneironClient` against the real router |
 | `tests/it/skills_pack.rs` | test | m | — | — | — |
 | `tests/it/ws_sync.rs` | test | XL | — | — | WebSocket integration tests for the sync server (ONE-1129) |
 | `tests/it_esign_public.rs` | test | m | — | — | The public path and signing API are separate from hosted device leases |

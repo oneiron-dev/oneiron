@@ -1,7 +1,7 @@
 //! The remote System One protocol adapter; policy and receipts live in `oneiron::llm::decision`.
 
 use oneiron::llm::decision::{
-    AnswerContract, DecisionAnswer, DecisionRung, DecisionSeat, ProviderPin, SeatAnswer,
+    AnswerContract, DecisionAnswer, DecisionRung, ProviderPin, RemoteDecisionSeat, SeatAnswer,
     SeatFuture, SeatRequest,
 };
 use oneiron::{BudgetLease, FatalLlmError, LlmUsage, RetryableLlmError};
@@ -68,7 +68,7 @@ impl SystemOneSeat {
     }
 }
 
-impl DecisionSeat for SystemOneSeat {
+impl RemoteDecisionSeat for SystemOneSeat {
     fn pin(&self) -> ProviderPin {
         self.pin.clone()
     }

@@ -39,6 +39,7 @@ impl Vault {
         // any write lock. This rendezvous is a no-op in non-test builds.
         signal_after_delete_probe(self);
         signal_delete_rendezvous(self, DeleteRendezvous::BeforeFirstDeletionTxn, id, None);
+        self.reserve_user_brief_delete(id, reason, gate)?;
         // ONE-1149: the deletion request UUID is minted only AFTER the probe
         // above says there is something to erase.
         let request_uuid = uuid::Uuid::from_bytes(self.store.clock.ulid()?);

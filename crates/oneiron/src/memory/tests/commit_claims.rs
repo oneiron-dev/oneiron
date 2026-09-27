@@ -960,13 +960,13 @@ fn persona_baseline_and_scenario_do_not_register_companion_persona() {
         vault.get_entity_type(&facet).expect("FACET type"),
         Some(crate::registry::ENTITY_TYPE_FACET)
     );
-    assert!(
-        vault
-            .companion_register()
-            .expect("companion register")
-            .is_empty(),
-        "PERSON baselines and FACET scenarios do not register companion personas"
+    assert_eq!(
+        crate::companion::validated_persona_baseline(&vault.get(&person).unwrap().unwrap())
+            .expect("PERSON baseline"),
+        serde_json::json!({"name": "Yuki", "vibes": ["calm"]})
     );
+    let scenario = vault.get(&facet).expect("scenario").expect("FACET body");
+    assert!(!crate::companion::is_identity_facet_body(&scenario));
 }
 
 #[test]

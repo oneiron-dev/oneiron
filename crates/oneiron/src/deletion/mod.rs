@@ -22,7 +22,7 @@ pub use coop_request::{
     SignedCooperativeDeletionRequest, decode_and_verify_cooperative_deletion_request,
     encode_cooperative_deletion_request_body, encode_signed_cooperative_deletion_request,
 };
-pub use delete::DeleteEntityOutcome;
+pub use delete::{DeleteEntityOptions, DeleteEntityOutcome, DeleteEntityPreview};
 pub use sweep_queue::arch0038_carrier_classes;
 pub use timeline::{
     HydratedShortIdDeletion, HydratedShortIdDeletionReason, HydratedShortIdDeletionSource,

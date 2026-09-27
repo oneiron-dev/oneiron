@@ -32,11 +32,12 @@ pub use recorded_evaluation::{
     SpeakerScore, WordCluster, evaluate_recorded_audio,
 };
 pub use types::{
-    AsrOutput, AsrPackRequest, AsrRole, AsrRoute, AsrWord, AudioFile, BatchAsrRequest,
-    BatchDefault, BulkImportAuthorizer, BulkImportBinding, BulkImportReceipt, CleanupOutput,
-    CleanupRequest, GlobalDiarization, InferenceExecution, InferenceProvenance, MeetingAudioHost,
-    Pcm16, ProcessingTier, ProducerOptions, SourceSpan, SpeakerTrack, SpeechPack, SpeechSpan,
-    TranscriptTurn, TranscriptWord, VadOutput,
+    AllowedWordCorrection, AsrOutput, AsrPackRequest, AsrRole, AsrRoute, AsrWord, AudioFile,
+    BatchAsrRequest, BatchDefault, BulkImportAuthorizer, BulkImportBinding, BulkImportReceipt,
+    CleanupOutput, CleanupPolicy, CleanupRequest, GlobalDiarization, InferenceExecution,
+    InferenceProvenance, LanguageCorrectionRules, MeetingAudioHost, Pcm16, ProcessingTier,
+    ProducerOptions, SourceSpan, SpeakerTrack, SpeechPack, SpeechSpan, TranscriptTurn,
+    TranscriptWord, VadOutput,
 };
 
 #[cfg(test)]

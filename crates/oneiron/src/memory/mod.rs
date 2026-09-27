@@ -36,7 +36,9 @@ pub mod caps;
 mod chat;
 mod claims;
 mod dreamer;
+mod entity_delete;
 mod error;
+mod export;
 mod expression_preference;
 pub mod extraction;
 mod key_value;
@@ -78,6 +80,7 @@ pub use error::{
     MEMORY_CODE_OFF_RECORD_SESSION_DOOR, MEMORY_CODE_OWNER_BINDING_REQUIRED,
     MEMORY_CODE_VAULT_LOCKED_SINGLE_WRITER, MemoryError, MemoryGateDenial, MemoryResult,
 };
+pub use export::{ExportOptions, MemoryExport};
 pub use expression_preference::{
     ExpressionPreferenceInput, ExpressionPreferenceReceipt, ExpressionPreferenceView,
 };

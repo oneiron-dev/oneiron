@@ -2022,7 +2022,10 @@ fn type_76_events_are_delete_protected_on_every_delete_door() {
     // dropping the event while the merged_into edge survives would wedge
     // the shell (undo → EntityNotFound), so all reject typed.
     let err = vault
-        .delete_entity(&event_id)
+        .delete_entity_with_options(
+            &event_id,
+            crate::deletion::DeleteEntityOptions { purge: true },
+        )
         .expect_err("delete_entity must reject the ledger event");
     assert!(matches!(
         err,
