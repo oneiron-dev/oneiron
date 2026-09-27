@@ -608,10 +608,13 @@ async fn ws_upgrade_rejects_a_live_scoped_token_that_works_on_v1() {
     ]));
     scoped
         .slip
-        .attenuate(oneiron::authority::SlipCaveat {
-            scope: Some(scope),
-            ..Default::default()
-        })
+        .attenuate(
+            oneiron::authority::SlipCaveat {
+                scope: Some(scope),
+                ..Default::default()
+            },
+            &scoped.holder,
+        )
         .unwrap();
 
     // The credential is authentic and live: it is served on its own /v1 route.
@@ -706,6 +709,48 @@ async fn connect_bound(
     }
     Ok(ws)
 }
+async fn signed_slip_http_get(addr: SocketAddr, credential: &BoundCredential) -> String {
+    let headers = format!(
+        "Authorization: Bearer {}\r\nx-oneiron-binding: {}\r\n",
+        credential.slip.to_token().unwrap(),
+        binding_proof(credential),
+    );
+    String::from_utf8(http_get_with_headers(addr, "/v1/core/outbound/capabilities", &headers).await)
+        .unwrap()
+}
+
+#[tokio::test]
+async fn http_and_ws_signed_slip_refuse_foreign_mint_key_and_tampered_claims() {
+    use ed25519_dalek::Signer;
+    let dir = tempfile::tempdir().unwrap();
+    let (addr, server, handle) = spawn_server(
+        open_vault(dir.path()),
+        config_with_secret(Some("signed-ws-host")),
+    )
+    .await;
+    let mut credential = mint_identified_owner_token(&server, "signed-ws-host", "signed-ws");
+    assert_http_status(&signed_slip_http_get(addr, &credential).await, 200);
+    let ws = connect_bound(addr, &credential, true).await.unwrap();
+    drop(ws);
+    let mut wire = serde_json::to_value(&credential.slip).unwrap();
+    let mut transcript = b"oneiron/capability-slip/v0/mint\0".to_vec();
+    transcript.extend_from_slice(&serde_json::to_vec(&credential.slip.claims).unwrap());
+    wire["signature"] = serde_json::json!(
+        ed25519_dalek::SigningKey::from_bytes(&[19; 32])
+            .sign(&transcript)
+            .to_bytes()
+            .to_vec()
+    );
+    credential.slip = serde_json::from_value(wire).unwrap();
+    assert_http_status(&signed_slip_http_get(addr, &credential).await, 401);
+    assert_unauthorized(&connect_bound(addr, &credential, true).await.unwrap_err());
+    credential = mint_identified_owner_token(&server, "signed-ws-host", "another-signed-ws");
+    credential.slip.claims.scope = oneiron::federation::Scope::default();
+    assert_http_status(&signed_slip_http_get(addr, &credential).await, 401);
+    assert_unauthorized(&connect_bound(addr, &credential, true).await.unwrap_err());
+    handle.abort();
+}
+
 fn revoke_owner_slip(server: &SyncServer, secret: &str, jti: &str) {
     let issuer = oneiron::authority::HostSlipIssuer::from_secret(secret.as_bytes()).unwrap();
     server
