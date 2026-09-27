@@ -132,13 +132,11 @@ impl Vault {
 
     /// Stores raw output bytes under a deterministic content handle.
     pub fn put_code_run_raw_output(&self, output: &CodeRunRawOutput, raw: &[u8]) -> Result<()> {
-        let expected = CodeRunRawOutput::from_bytes(output.path.clone(), raw)?;
-        if expected != *output {
+        if CodeRunRawOutput::from_bytes(output.path.clone(), raw)? != *output {
             return Err(invalid_code_run_replay(
                 "raw output metadata does not match bytes",
             ));
         }
-
         let mut wtxn = self.store.env.write_txn()?;
         self.store
             .vault_meta
