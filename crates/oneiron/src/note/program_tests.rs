@@ -684,6 +684,31 @@ fn switch_moves_the_head_pointer_to_the_fork() {
 }
 
 #[test]
+fn titled_body_rewrite_switch_retains_title_and_reservation() {
+    let (_dir, vault, actor) = fixture();
+    let note = vault.create_note("research", "origin", actor).unwrap();
+    let other = vault.create_note("research", "other", actor).unwrap();
+    let title = |text: &str| NoteOperation {
+        request_id: EntityId::now(),
+        change: NoteChange::SetTitle { title: text.into() },
+    };
+    let memory = vault.memory(actor.entity_ref(), actor.actor_class());
+    memory
+        .apply_local_note_operation(note, &title("A titled note"))
+        .unwrap();
+    switched_to_rewrite(&vault, actor, note);
+    assert_eq!(
+        vault.note_document(note).unwrap().title.as_deref(),
+        Some("A titled note")
+    );
+    assert!(
+        memory
+            .apply_local_note_operation(other, &title("a   titled note"))
+            .is_err()
+    );
+}
+
+#[test]
 fn note_title_reservation_is_atomic_and_normalized_in_featureless_mode() {
     let (_dir, vault, actor) = fixture();
     let a = vault.create_note("research", "first", actor).unwrap();

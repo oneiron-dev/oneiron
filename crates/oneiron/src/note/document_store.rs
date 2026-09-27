@@ -58,23 +58,35 @@ pub(super) fn persist(vault: &Vault, txn: &mut heed::RwTxn<'_>, doc: &NoteDocume
         .vault_meta
         .get(txn, reverse.as_bytes())?
         .map(|key| key.to_vec());
-    let next = doc
-        .title()?
-        .map(|title| {
-            let normalized = title
-                .split_whitespace()
-                .collect::<Vec<_>>()
-                .join(" ")
-                .to_lowercase();
-            let (_, core) = super::verbs::note_core(vault, txn, doc.id)?;
-            let digest = blake3::hash(normalized.as_bytes());
-            Ok::<_, crate::Error>(format!(
-                "note.title/v1/author/{}:{}",
-                core.author_ref.to_hex(),
-                digest.to_hex()
-            ))
-        })
-        .transpose()?;
+    // A replica receives already-admitted authority state one document at a
+    // time. Its local reservation is not a second admission authority: an
+    // offline cross-document title swap could otherwise deadlock in either
+    // arrival order. Drop any old reservation when this vault is a replica.
+    let replica = vault
+        .store
+        .sync_state
+        .get(txn, &format!("ds:e:{}", doc.id.to_hex()))?
+        .is_some();
+    let next = if replica {
+        None
+    } else {
+        doc.title()?
+            .map(|title| {
+                let normalized = title
+                    .split_whitespace()
+                    .collect::<Vec<_>>()
+                    .join(" ")
+                    .to_lowercase();
+                let (_, core) = super::verbs::note_core(vault, txn, doc.id)?;
+                let digest = blake3::hash(normalized.as_bytes());
+                Ok::<_, crate::Error>(format!(
+                    "note.title/v1/author/{}:{}",
+                    core.author_ref.to_hex(),
+                    digest.to_hex()
+                ))
+            })
+            .transpose()?
+    };
     if let Some(ref key) = next
         && let Some(owner) = vault.store.vault_meta.get(txn, key.as_bytes())?
         && owner.as_ref() != doc.id.as_bytes()
@@ -240,6 +252,25 @@ impl Memory<'_> {
             },
         )
         .map(|_| ())
+    }
+
+    /// Set editable NOTE metadata under the same actor and title gate as socket ops.
+    pub fn set_note_title(
+        &self,
+        note: EntityId,
+        title: impl Into<String>,
+    ) -> MemoryResult<NoteEditOutcome> {
+        Ok(self
+            .apply_local_note_operation(
+                note,
+                &super::NoteOperation {
+                    request_id: EntityId::now(),
+                    change: super::NoteChange::SetTitle {
+                        title: title.into(),
+                    },
+                },
+            )?
+            .outcome)
     }
 
     /// Free prose commits now. Cited spans go through the reviewed claim door.

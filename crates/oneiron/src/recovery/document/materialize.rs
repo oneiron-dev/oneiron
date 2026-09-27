@@ -303,20 +303,31 @@ pub(crate) fn run_in_txn(
                     vault,
                     txn,
                     note,
-                    head,
-                    u64::try_from(seq).map_err(|_| invalid("NOTE head sequence"))?,
+                    (
+                        head,
+                        u64::try_from(seq).map_err(|_| invalid("NOTE head sequence"))?,
+                    ),
                     &row.text,
+                    row.title.as_deref(),
                     &row.authorship,
                 )?;
             } else {
-                crate::note::recovery::restore(vault, txn, note, &row.text, &row.authorship)?;
+                crate::note::recovery::restore(
+                    vault,
+                    txn,
+                    note,
+                    &row.text,
+                    row.title.as_deref(),
+                    &row.authorship,
+                )?;
             }
         } else {
             let key = crate::note::documents::doc_key(note, id(row.head)?);
             // Proposal equality is a text-value claim, never proof that a
             // nested Loro snapshot has no erased history. Rebuild even when
             // the current text matches; live value-equal docs remain untouched.
-            let doc = crate::note::documents::proposal_value(note, &row.text)?;
+            let doc =
+                crate::note::documents::proposal_value(note, &row.text, row.title.as_deref())?;
             vault
                 .store
                 .sync_state

@@ -21695,7 +21695,7 @@
      "purpose": "Actor-bound NOTE editor verbs and atomic entity-document persistence",
      "surface": {
       "crate-vis": 5,
-      "fn": 7
+      "fn": 8
      }
     },
     {
@@ -25633,7 +25633,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "CanonicalDocument",

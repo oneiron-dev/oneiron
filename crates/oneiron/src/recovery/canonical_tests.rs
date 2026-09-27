@@ -28,6 +28,10 @@ fn fixture() -> Result<Fixture> {
     let note = vault
         .create_note("research", "birth document", actor)
         .unwrap();
+    vault
+        .memory(owner, EdgeActorClass::Human)
+        .set_note_title(note, "Recovered title")
+        .expect("title operation");
     let NoteEditOutcome::RewriteFork { fork } = vault
         .edit_note(
             note,
@@ -290,6 +294,25 @@ fn standard_forward_rebuild_restores_documents_shells_graph_and_indexes() -> Res
     assert_eq!(
         target.note_text(fixture.note)?,
         fixture.vault.note_text(fixture.note)?
+    );
+    assert_eq!(
+        target.note_document(fixture.note)?.title.as_deref(),
+        Some("Recovered title")
+    );
+    // The recovered authority reserves the title in its own writer.
+    let owner = fixture.vault.read_note(&fixture.note)?.unwrap().author_ref;
+    let second = target
+        .create_note(
+            "research",
+            "another body",
+            WriteActor::new(owner, EdgeActorClass::Human),
+        )
+        .expect("create second note");
+    assert!(
+        target
+            .memory(owner, EdgeActorClass::Human)
+            .set_note_title(second, "  recovered  TITLE  ")
+            .is_err()
     );
     assert_eq!(
         target.get_raw(&fixture.soft)?,

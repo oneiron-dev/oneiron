@@ -5,10 +5,11 @@ use crate::{EntityId, Result, Vault};
 pub(crate) fn rebuild(
     note: EntityId,
     text: &str,
+    title: Option<&str>,
     authorship: &[super::NoteAuthorship],
 ) -> Result<loro::LoroDoc> {
     super::validate_markdown(text)?;
-    let doc = super::documents::proposal_value(note, text)?;
+    let doc = super::documents::proposal_value(note, text, title)?;
     let mut previous = None;
     for record in authorship {
         if previous.is_some_and(|id| id >= record.operation) {
@@ -87,14 +88,14 @@ pub(crate) fn capture(
 pub(crate) fn values(
     note: EntityId,
     doc: loro::LoroDoc,
-) -> Result<(String, Vec<super::NoteAuthorship>)> {
+) -> Result<(String, Option<String>, Vec<super::NoteAuthorship>)> {
     let view = NoteDocument::from_loro(note, doc)?.view()?;
     if !view.pins.is_empty() {
         return Err(invalid(
             "history-free NOTE recovery requires citation rebasing",
         ));
     }
-    Ok((view.markdown, view.authorship))
+    Ok((view.markdown, view.title, view.authorship))
 }
 
 /// Rebuilds a switched head's document where this vault has none: the head
@@ -104,14 +105,14 @@ pub(crate) fn restore_head(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
     note: EntityId,
-    head: EntityId,
-    seq: u64,
+    head_and_seq: (EntityId, u64),
     text: &str,
+    title: Option<&str>,
     authorship: &[super::NoteAuthorship],
 ) -> Result<()> {
     guard(vault, txn, note)?;
-    super::documents::set_head(&vault.store, txn, note, head, seq)?;
-    let doc = NoteDocument::from_loro(note, rebuild(note, text, authorship)?)?;
+    super::documents::set_head(&vault.store, txn, note, head_and_seq.0, head_and_seq.1)?;
+    let doc = NoteDocument::from_loro(note, rebuild(note, text, title, authorship)?)?;
     super::document_store::persist(vault, txn, &doc)
 }
 
@@ -121,11 +122,12 @@ pub(crate) fn restore(
     txn: &mut heed::RwTxn<'_>,
     note: EntityId,
     text: &str,
+    title: Option<&str>,
     authorship: &[super::NoteAuthorship],
 ) -> Result<()> {
     guard(vault, txn, note)?;
     let old = super::document_store::load(vault, txn, note)?.view()?;
-    if old.markdown == text && old.authorship == authorship {
+    if old.markdown == text && old.title.as_deref() == title && old.authorship == authorship {
         return Ok(());
     }
     if old
@@ -135,7 +137,7 @@ pub(crate) fn restore(
     {
         return Err(invalid("NOTE recovery would discard admitted provenance"));
     }
-    let doc = NoteDocument::from_loro(note, rebuild(note, text, authorship)?)?;
+    let doc = NoteDocument::from_loro(note, rebuild(note, text, title, authorship)?)?;
     for prefix in ["qd:e:", "ad:e:", "nr:e:", "nc:e:"] {
         super::delete::delete_sync_prefix(
             &vault.store,
