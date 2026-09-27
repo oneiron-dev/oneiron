@@ -226,6 +226,16 @@ pub fn outbound_capability_manifest(
         .find(|manifest| manifest.connector == connector)
 }
 
+/// Whether a registered connector/verb pair uses the exact stored spelling.
+/// Capability lookup accepts normalized caller spellings, but a counterparty-
+/// bound TASK must freeze the manifest spelling: its durable receipt feeds the
+/// comm projector, whose channel-class keys are exact.
+pub(crate) fn is_canonical_outbound_verb(connector: &str, verb: &str) -> bool {
+    outbound_capability_manifest(connector).is_some_and(|manifest| {
+        manifest.connector == connector && manifest.verbs.iter().any(|entry| entry.kind == verb)
+    })
+}
+
 /// Resolves one verb contract or returns a typed unsupported-capability error.
 pub fn outbound_verb_contract(
     connector: &str,

@@ -44,7 +44,9 @@ pub use self::projector::{
     record_comm_inbound_reply, record_comm_inbound_stop, record_comm_send_receipt,
     record_comm_thread_event, run_comm_projector,
 };
-pub(crate) use self::records::validate_comm_record_body_bytes;
+pub(crate) use self::records::{
+    validate_comm_record_body_bytes, validate_key_string as validate_comm_party_key,
+};
 
 use std::collections::{BTreeMap, HashMap, HashSet};
 
