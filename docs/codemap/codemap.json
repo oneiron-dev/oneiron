@@ -11352,7 +11352,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "test",
      "notable": [],
      "path": "src/context_pack/capability_tests.rs",
@@ -23840,7 +23840,7 @@
      "path": "src/pipeline/capabilities.rs",
      "purpose": "Capability candidates have a separate turn budget, never the memory budget",
      "surface": {
-      "crate-vis": 8
+      "crate-vis": 9
      }
     },
     {
@@ -29188,7 +29188,7 @@
      "path": "src/skill_reliability/mod.rs",
      "purpose": "ARCH-0053 §5 skill reliability (SK-05, ONE-1738): the Beta(α, β) posterior that decides which skills load…",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 3,
       "re-export": 6
      }
     },
@@ -29228,6 +29228,7 @@
      "path": "src/skill_reliability/provenance.rs",
      "purpose": "Classifying a stored skill for the prior table: the scan-clearance and hub-vouch reads behind the…",
      "surface": {
+      "crate-vis": 1,
       "fn": 2
      }
     },
@@ -29238,7 +29239,7 @@
      "path": "src/skill_reliability/read.rs",
      "purpose": "Reading reliability truth back: the resolved posterior, the selection score, and the confidence-cache rebuild",
      "surface": {
-      "crate-vis": 4,
+      "crate-vis": 6,
       "fn": 3
      }
     },

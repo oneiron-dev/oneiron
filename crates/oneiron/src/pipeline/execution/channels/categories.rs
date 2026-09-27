@@ -1,6 +1,8 @@
 //! Independent memory, skill and agent budgets on one retrieval snapshot.
 
-use super::super::super::capabilities::{CapabilityLane, PER_KIND_CAPABILITY_LIMIT};
+use super::super::super::capabilities::{
+    CapabilityLane, PER_KIND_CAPABILITY_LIMIT, SKILL_RANK_CANDIDATE_LIMIT,
+};
 use super::super::types::RetrievalTxnOutput;
 use super::{PipelineBuilder, SnapshotInputs};
 use crate::Result;
@@ -36,21 +38,28 @@ impl PipelineBuilder<'_> {
                 query.memory_category = true;
             } else {
                 query.candidate_filter = Some(&predicate);
-                query.result_limit = PER_KIND_CAPABILITY_LIMIT;
+                // Do not cut skills to the five semantic leaders before the
+                // reliability bandit sees them. Agent discovery is unchanged.
+                let candidate_limit = if lane == CapabilityLane::Skill {
+                    SKILL_RANK_CANDIDATE_LIMIT
+                } else {
+                    PER_KIND_CAPABILITY_LIMIT
+                };
+                query.result_limit = candidate_limit;
                 if let Some((_, limit)) = &mut query.text_search
                     && *limit > 0
                 {
-                    *limit = PER_KIND_CAPABILITY_LIMIT;
+                    *limit = candidate_limit;
                 }
                 if let Some((_, limit)) = &mut query.vector_search
                     && *limit > 0
                 {
-                    *limit = PER_KIND_CAPABILITY_LIMIT;
+                    *limit = candidate_limit;
                 }
                 if let Some(config) = &mut query.temporal_search
                     && config.limit > 0
                 {
-                    config.limit = PER_KIND_CAPABILITY_LIMIT;
+                    config.limit = candidate_limit;
                 }
                 // Capability discovery does not seed or spend memory expansion.
                 query.ppr_expand = None;
