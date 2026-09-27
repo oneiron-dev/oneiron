@@ -470,3 +470,60 @@ fn multi_source_refresh_is_atomic_on_parse_and_storage_refusals() -> Result<()> 
     }
     Ok(())
 }
+
+#[test]
+fn scheduled_scraper_fetches_changed_snapshots_without_changing_answerer_bindings() -> Result<()> {
+    use std::{collections::VecDeque, sync::Arc, time::Duration};
+    struct Fetch(VecDeque<serde_json::Value>);
+    impl ScoreFetch for Fetch {
+        fn fetch(&mut self, _: &ScoreSourceConfig) -> Result<serde_json::Value> {
+            Ok(self
+                .0
+                .pop_front()
+                .expect("one fixture per scheduled attempt"))
+        }
+    }
+    let dir = tempfile::tempdir().unwrap();
+    let vault = Arc::new(Vault::open(
+        dir.path().join("vault"),
+        crate::VaultConfig::device(),
+    )?);
+    let registered = row("one");
+    let model = registered.catalog.model.clone();
+    vault.put_model_registry_row(&registered)?;
+    let config = ScoreScraperConfig {
+        version: 1,
+        fetch_interval_secs: 1,
+        sources: vec![ScoreSourceConfig {
+            id: "external-bench".into(),
+            url: "https://example.invalid/scores".into(),
+            rows_pointer: "/data".into(),
+            model_pointer: "/model".into(),
+            score_pointer: "/score".into(),
+            benchmark: "quality".into(),
+            model_bindings: BTreeMap::from([("external".into(), model.clone())]),
+        }],
+    };
+    let snapshot = |score| serde_json::json!({"data": [{"model":"external", "score":score}]});
+    let scraper = ScoreScraper::new(config, Fetch(vec![snapshot(50), snapshot(70)].into()))?;
+    let worker = scraper.start(Arc::clone(&vault));
+    let first = worker
+        .results()
+        .recv_timeout(Duration::from_secs(5))
+        .unwrap()?;
+    assert_eq!(first.len(), 1);
+    let second = worker
+        .results()
+        .recv_timeout(Duration::from_secs(5))
+        .unwrap()?;
+    assert_eq!(second.len(), 1);
+    assert_eq!(second[0].previous, Some(50.0));
+    drop(worker);
+    assert_eq!(vault.model_score_diffs(&model)?.len(), 2);
+    assert_eq!(
+        vault.model_registry_row(&model)?.unwrap().catalog,
+        registered.catalog
+    );
+    assert!(vault.model_manifest()?.is_none());
+    Ok(())
+}
