@@ -153,6 +153,7 @@ impl Store {
             #[cfg(unix)]
             retrieval_telemetry_lease: Mutex::new(None),
             authority_local_clock: Mutex::new(AuthorityLocalClock::default()),
+            authority_fold_cache: Mutex::new(None),
             l2_base_cache: Mutex::new(crate::context_pack::L2BaseCache::default()),
             clock,
             diagnostics: Diagnostics::default(),
