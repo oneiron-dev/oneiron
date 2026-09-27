@@ -166,15 +166,23 @@ The configured issuer secret and device-lease keys are not bearer credentials.
   `ONEIRON_AUTH_SECRET=… oneiron token bootstrap --config <config> --url <origin>`
   locally. This prints a one-time link for the existing embedded owner; it
   never sends or prints the issuer secret. Start the daemon, then redeem the
-  link with a new holder key. Non-loopback origins must use HTTPS.
+  link with a new holder key. Non-loopback origins must use HTTPS. The optional
+  `--lifetime-secs` can only shorten the trusted vault policy's initial-owner
+  ceiling (default one year); the link itself still expires after one hour.
   A configured OAuth JWT is valid only at `POST /v1/core/pairing/oauth` with
   a signed holder-key exchange request. Send `Authorization: Bearer <JWT>` and
   JSON `{ "binding_key": "<64 lowercase hex>", "nonce": "<32 hex>",
-  "signature": "<128 lowercase hex>" }`. Sign the byte transcript
+  "signature": "<128 lowercase hex>", "lifetime_secs": <optional positive seconds> }`.
+  Sign the byte transcript
   `b"oneiron/oauth-slip-pair/v1" || BLAKE3(JWT bytes) || binding_key bytes || nonce UTF-8`
   with the holder's Ed25519 key. The JWT subject must name an existing actor;
   the returned logged slip carries only its `read`/`propose` verbs and no longer
-  than the JWT's remaining lifetime (at most one hour). The JWT itself is not
+  than the JWT's remaining lifetime, the trusted vault policy's OAuth
+  ceiling (default one hour), or the optional caller-narrowed lifetime.
+  The `credential_lifetimes` policy-manifest map contains positive
+  `oauth_exchange_secs` and `initial_owner_secs` maxima. Trusted packs meet at
+  the shortest lifetime; malformed policies refuse issuance, not fall back.
+  The JWT itself is not
   a data-route credential.
 
 A slip is verified against the issuing host's public key and the authority log.

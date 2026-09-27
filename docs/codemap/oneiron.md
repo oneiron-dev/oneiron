@@ -178,7 +178,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/authority/slip_replay/tests.rs` | test | s | — | — | Replay-window boundaries, persistence, and eviction by timestamp |
 | `src/authority/slip_state.rs` | src | s | 2 struct · 2 fn · 2 crate-vis | FoldedSlip, SlipAuthorityState | Log-derived capability mint ancestry and monotone subtree tombstones |
 | `src/authority/slip_tests.rs` | test | XL | — | — | Caller-observable slip, pairing and residue regressions |
-| `src/authority/slip_vault.rs` | src | m | 1 struct · 22 fn · 8 crate-vis | HostSlipIssuer | Host-root bootstrap and atomic authority-log capability issuance |
+| `src/authority/slip_vault.rs` | src | m | 1 struct · 23 fn · 8 crate-vis | HostSlipIssuer | Host-root bootstrap and atomic authority-log capability issuance |
 | `src/authority/slip_wire.rs` | src | s | 2 crate-vis | — | Field-by-field signed capability claims and six-axis Scope wire codec |
 | `src/authority/stale_roster.rs` | src | s | 2 crate-vis | — | Clock-free expiry of approvals resting on a subsequently revoked roster |
 | `src/authority/tests/actor_binding.rs` | test | L | — | — | Actor bind, rebind and revoke fold, qualification and DAG merge |
@@ -1325,7 +1325,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/gate/bundle.rs` | src | m | 4 fn · 5 const | — | — |
 | `src/gate/ceiling.rs` | src | m | 37 crate-vis | — | — |
 | `src/gate/confirm.rs` | src | m | 1 struct · 1 enum · 2 fn · 4 const · 10 crate-vis | CriticalWriteConfirmBinding, CriticalWriteConfirmResolution | — |
-| `src/gate/constants.rs` | src | s | 77 crate-vis | — | — |
+| `src/gate/constants.rs` | src | s | 78 crate-vis | — | — |
 | `src/gate/decision.rs` | src | m | 28 crate-vis | — | — |
 | `src/gate/decode/decode_manifest.rs` | src | m | 6 crate-vis | — | Manifest envelope plus DecodedPolicyManifest assembly |
 | `src/gate/decode/decode_map_util.rs` | src | s | 13 crate-vis | — | Generic MessagePack map accessors, signature values, and semver compare |
@@ -1359,8 +1359,8 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/gate/resolution/accessors.rs` | src | s | 24 crate-vis | — | Read-only resolved-field accessors plus the frontier-hash entry |
 | `src/gate/resolution/evaluation.rs` | src | m | 6 crate-vis | — | Decision core: ceilings, source-trust, and gate evaluation |
 | `src/gate/resolution/frontier_hash.rs` | src | m | 5 crate-vis | — | Read-frontier hash worker plus byte-level hash encoders |
-| `src/gate/resolution/manifest_fold.rs` | src | m | 1 fn · 2 crate-vis | — | Store-scanning manifest fold plus budget-guard and trust adapters |
-| `src/gate/resolution/manifest_types.rs` | src | s | 7 crate-vis | — | Resolved-view types plus the `PolicyManifestResolution` struct definition |
+| `src/gate/resolution/manifest_fold.rs` | src | m | 1 fn · 3 crate-vis | — | Store-scanning manifest fold plus budget-guard and trust adapters |
+| `src/gate/resolution/manifest_types.rs` | src | s | 9 crate-vis | — | Resolved-view types plus the `PolicyManifestResolution` struct definition |
 | `src/gate/resolution/mod.rs` | src | s | 5 crate-vis | — | — |
 | `src/gate/retrieval_filter.rs` | src | m | 1 struct · 5 crate-vis | RetrievalFilter | Retrieval authority projection and narrowing, independent of result filtering |
 | `src/gate/retrieval_filter/tests.rs` | test | m | — | — | — |
@@ -1374,6 +1374,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/gate/tests/claim_candidate_lineage.rs` | test | s | — | — | — |
 | `src/gate/tests/connector_budget.rs` | test | m | 4 crate-vis | — | Connector-key lifecycle, rate limits, and the effector-budget ledger |
 | `src/gate/tests/consent_bundle.rs` | test | m | 3 crate-vis | — | Gate consent bundles: aggregate, review, approve and decline, and rollback |
+| `src/gate/tests/credential_lifetimes.rs` | test | s | — | — | Credential expiry policies are trusted, restrictive and applied at mint |
 | `src/gate/tests/critical_confirm_index.rs` | test | L | — | — | Critical-write confirm index, cursor, fence, and settle and decline receipts |
 | `src/gate/tests/critical_confirm_lifecycle.rs` | test | m | 3 crate-vis | — | Critical-write confirm lifecycle: binding, expiry, sweep, and overwrite invalidation |
 | `src/gate/tests/delegation.rs` | test | m | — | — | Delegated grants: fold, revoke dominance, depth cap, and cross-manifest chains |

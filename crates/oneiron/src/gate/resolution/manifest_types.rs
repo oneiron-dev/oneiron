@@ -72,11 +72,34 @@ impl CommOptOutPosture {
     }
 }
 
+/// Per-vault maxima for the two host-minted credential paths. The seeded
+/// manifest declares these values; later trusted packs can only lower them.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct CredentialLifetimePolicy {
+    pub(crate) oauth_exchange_secs: u64,
+    pub(crate) initial_owner_secs: u64,
+}
+impl Default for CredentialLifetimePolicy {
+    fn default() -> Self {
+        Self {
+            oauth_exchange_secs: 3600,
+            initial_owner_secs: 365 * 24 * 60 * 60,
+        }
+    }
+}
+impl CredentialLifetimePolicy {
+    pub(crate) fn restrict(&mut self, other: Self) {
+        self.oauth_exchange_secs = self.oauth_exchange_secs.min(other.oauth_exchange_secs);
+        self.initial_owner_secs = self.initial_owner_secs.min(other.initial_owner_secs);
+    }
+}
+
 #[derive(Debug, Clone, Default, PartialEq)]
 pub(crate) struct PolicyManifestResolution {
     pub(crate) diagnostics: PolicyManifestDiagnostics,
     pub(crate) diagnostic_bounds: Option<crate::self_heal::tripwires::TripwireBounds>,
     pub(crate) proposal_check_threshold: Option<u64>,
+    pub(crate) credential_lifetimes: CredentialLifetimePolicy,
     pub(super) packs: Vec<PolicyPack>,
     pub(super) actor_ceilings: Vec<ActorCeiling>,
     pub(crate) delegation_fold: DelegationFoldCache,

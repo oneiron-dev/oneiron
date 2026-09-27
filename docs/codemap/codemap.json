@@ -2057,7 +2057,7 @@
      "purpose": "Host-root bootstrap and atomic authority-log capability issuance",
      "surface": {
       "crate-vis": 8,
-      "fn": 22,
+      "fn": 23,
       "struct": 1
      }
     },
@@ -16651,7 +16651,7 @@
      "path": "src/gate/constants.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 77
+      "crate-vis": 78
      }
     },
     {
@@ -16999,7 +16999,7 @@
      "path": "src/gate/resolution/manifest_fold.rs",
      "purpose": "Store-scanning manifest fold plus budget-guard and trust adapters",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 3,
       "fn": 1
      }
     },
@@ -17010,7 +17010,7 @@
      "path": "src/gate/resolution/manifest_types.rs",
      "purpose": "Resolved-view types plus the `PolicyManifestResolution` struct definition",
      "surface": {
-      "crate-vis": 7
+      "crate-vis": 9
      }
     },
     {
@@ -17131,6 +17131,14 @@
      "surface": {
       "crate-vis": 3
      }
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/gate/tests/credential_lifetimes.rs",
+     "purpose": "Credential expiry policies are trusted, restrictive and applied at mint",
+     "surface": {}
     },
     {
      "bucket": "L",
@@ -35576,7 +35584,7 @@
      "purpose": "—"
     },
     "gate": {
-     "files": 75,
+     "files": 76,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -36265,7 +36273,7 @@
    "over_bar": 11,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
    "source_files": 2141,
-   "test_files": 729
+   "test_files": 730
   },
   "oneiron-android": {
    "files": [

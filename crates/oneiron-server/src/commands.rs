@@ -156,7 +156,7 @@ fn token_bootstrap_link(args: &TokenBootstrapArgs) -> anyhow::Result<String> {
     let link = vault.issue_pairing_link_for_principal(
         &issuer,
         oneiron::federation::Scope::top(),
-        365 * 24 * 60 * 60,
+        args.lifetime_secs.unwrap_or(u64::MAX),
         oneiron::authority::PairingPrincipal {
             holder_ref: Some(owner.to_hex()),
             actor_class: Some("human".into()),

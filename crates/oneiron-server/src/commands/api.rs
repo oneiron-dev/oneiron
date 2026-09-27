@@ -195,9 +195,13 @@ pub(super) fn signed_binding_for_seed(token: &str, seed: &str) -> anyhow::Result
             .try_into()
             .map_err(|_| anyhow::anyhow!("invalid binding seed length"))?,
     );
+    let current_binding_key = slip
+        .caveats
+        .last()
+        .map_or(slip.claims.binding_key, |caveat| caveat.next_binding_key);
     anyhow::ensure!(
-        key.verifying_key().to_bytes() == slip.claims.binding_key,
-        "binding seed does not match the capability slip"
+        key.verifying_key().to_bytes() == current_binding_key,
+        "binding seed does not match the capability slip's current holder"
     );
     let timestamp = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)?

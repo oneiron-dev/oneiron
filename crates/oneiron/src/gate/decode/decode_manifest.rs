@@ -10,16 +10,16 @@ use crate::gate::ceiling::{
 };
 use crate::gate::constants::{
     POLICY_ACTOR_CEILINGS_KEY, POLICY_AUTO_CHECKER_KEY, POLICY_BUDGET_POLICY_KEY,
-    POLICY_COMM_OPT_OUT_POSTURE_KEY, POLICY_DEFAULTS_KEY, POLICY_DELEGATED_GRANTS_KEY,
-    POLICY_LEGAL_FLOOR_ROWS_KEY, POLICY_MIN_ENGINE_VERSION_KEY, POLICY_ON_BUDGET_EXHAUSTED_KEY,
-    POLICY_OWNER_POLICY_DOCUMENT_KEY, POLICY_OWNER_POLICY_ENABLED_KEY,
-    POLICY_OWNER_POLICY_OUTPUT_CONTRACT_KEY, POLICY_OWNER_POLICY_PATTERNS_KEY,
-    POLICY_OWNER_POLICY_ROWS_KEY, POLICY_PACK_ID_KEY, POLICY_PACK_VERSION_KEY, POLICY_RULES_KEY,
-    POLICY_SCHEMA_VERSION, POLICY_SCHEMA_VERSION_KEY, POLICY_SCOPED_GRANTS_KEY,
-    POLICY_SIGNATURE_KEY, POLICY_SIGNATURES_KEY, POLICY_SOURCE_TRUST_KEY,
+    POLICY_COMM_OPT_OUT_POSTURE_KEY, POLICY_CREDENTIAL_LIFETIMES_KEY, POLICY_DEFAULTS_KEY,
+    POLICY_DELEGATED_GRANTS_KEY, POLICY_LEGAL_FLOOR_ROWS_KEY, POLICY_MIN_ENGINE_VERSION_KEY,
+    POLICY_ON_BUDGET_EXHAUSTED_KEY, POLICY_OWNER_POLICY_DOCUMENT_KEY,
+    POLICY_OWNER_POLICY_ENABLED_KEY, POLICY_OWNER_POLICY_OUTPUT_CONTRACT_KEY,
+    POLICY_OWNER_POLICY_PATTERNS_KEY, POLICY_OWNER_POLICY_ROWS_KEY, POLICY_PACK_ID_KEY,
+    POLICY_PACK_VERSION_KEY, POLICY_RULES_KEY, POLICY_SCHEMA_VERSION, POLICY_SCHEMA_VERSION_KEY,
+    POLICY_SCOPED_GRANTS_KEY, POLICY_SIGNATURE_KEY, POLICY_SIGNATURES_KEY, POLICY_SOURCE_TRUST_KEY,
 };
 use crate::gate::grants::PolicyScopedGrant;
-use crate::gate::resolution::CommOptOutPosture;
+use crate::gate::resolution::{CommOptOutPosture, CredentialLifetimePolicy};
 use crate::llm::{BudgetExhaustionPolicy, BudgetPolicyTable};
 
 use super::decode_map_util::{
@@ -58,6 +58,7 @@ pub(in crate::gate) struct DecodedPolicyManifest {
     pub(in crate::gate) budget_policy: BudgetPolicyTable,
     pub(in crate::gate) diagnostic_bounds: Option<crate::self_heal::tripwires::TripwireBounds>,
     pub(in crate::gate) proposal_check_threshold: Option<u64>,
+    pub(in crate::gate) credential_lifetimes: CredentialLifetimePolicy,
     pub(in crate::gate) unsupported_schema: bool,
     pub(in crate::gate) engine_version_floor: bool,
     pub(in crate::gate) unknown_axis_seen: bool,
@@ -81,6 +82,7 @@ pub(in crate::gate) fn decode_policy_manifest(data: &[u8]) -> Option<DecodedPoli
                 | POLICY_PACK_VERSION_KEY
                 | POLICY_MIN_ENGINE_VERSION_KEY
                 | POLICY_DEFAULTS_KEY
+                | POLICY_CREDENTIAL_LIFETIMES_KEY
                 | POLICY_RULES_KEY
                 | POLICY_ACTOR_CEILINGS_KEY
                 | POLICY_DELEGATED_GRANTS_KEY
@@ -118,6 +120,31 @@ pub(in crate::gate) fn decode_policy_manifest(data: &[u8]) -> Option<DecodedPoli
     let min_engine_version = required_string(&entries, POLICY_MIN_ENGINE_VERSION_KEY)?;
     let engine_version_floor = version_gt(&min_engine_version, env!("CARGO_PKG_VERSION"))?;
     let defaults = parse_axes(required_value(&entries, POLICY_DEFAULTS_KEY)?)?;
+    let credential_lifetimes = match single_map_value(&entries, POLICY_CREDENTIAL_LIFETIMES_KEY) {
+        MapValue::Missing => CredentialLifetimePolicy::default(),
+        MapValue::Duplicate => return None,
+        MapValue::Present(Value::Map(rows)) => {
+            if rows.len() != 2
+                || rows.iter().any(|(key, _)| {
+                    !matches!(
+                        key.as_str(),
+                        Some("oauth_exchange_secs" | "initial_owner_secs")
+                    )
+                })
+            {
+                return None;
+            }
+            let duration = |name| match single_map_value(rows, name) {
+                MapValue::Present(value) => value.as_u64().filter(|secs| *secs > 0),
+                MapValue::Missing | MapValue::Duplicate => None,
+            };
+            CredentialLifetimePolicy {
+                oauth_exchange_secs: duration("oauth_exchange_secs")?,
+                initial_owner_secs: duration("initial_owner_secs")?,
+            }
+        }
+        MapValue::Present(_) => return None,
+    };
     let rules = parse_rules(required_value(&entries, POLICY_RULES_KEY)?)?;
     let actor_ceilings =
         parse_actor_ceilings(required_value(&entries, POLICY_ACTOR_CEILINGS_KEY)?)?;
@@ -268,6 +295,7 @@ pub(in crate::gate) fn decode_policy_manifest(data: &[u8]) -> Option<DecodedPoli
         budget_policy,
         diagnostic_bounds,
         proposal_check_threshold,
+        credential_lifetimes,
         unsupported_schema,
         engine_version_floor,
         unknown_axis_seen,

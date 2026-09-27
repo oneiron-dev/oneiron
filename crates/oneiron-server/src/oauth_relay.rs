@@ -522,11 +522,12 @@ mod tests {
         let key = holder.verifying_key().to_bytes();
         let hex = |bytes: &[u8]| bytes.iter().map(|b| format!("{b:02x}")).collect::<String>();
         let mut issued = None;
-        for _ in 0..2 {
+        for requested in [u64::MAX, 10] {
             let nonce = oneiron::EntityId::now().to_hex();
             let transcript = oauth_binding_transcript(&jwt, &key, &nonce).unwrap();
             let payload = serde_json::json!({"binding_key":hex(&key), "nonce":nonce,
-                "signature":hex(&holder.sign(&transcript).to_bytes())});
+                "signature":hex(&holder.sign(&transcript).to_bytes()),
+                "lifetime_secs":requested});
             let request = Request::builder()
                 .method("POST")
                 .uri("/v1/core/pairing/oauth")
@@ -538,7 +539,12 @@ mod tests {
             assert_eq!(response.status(), StatusCode::OK);
             let bytes = to_bytes(response.into_body(), 100_000).await.unwrap();
             let paired: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
-            issued = Some(CapabilitySlip::from_token(paired["token"].as_str().unwrap()).unwrap());
+            let minted = CapabilitySlip::from_token(paired["token"].as_str().unwrap()).unwrap();
+            assert!(minted.claims.ttl_secs <= 3600);
+            if requested == 10 {
+                assert_eq!(minted.claims.ttl_secs, 10);
+            }
+            issued = Some(minted);
         }
         let slip = issued.unwrap();
         assert_eq!(slip.claims.holder_ref, subject.to_hex());

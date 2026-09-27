@@ -55,6 +55,9 @@ pub(super) fn hash_policy_frontier_v0(
         hash_u64(hasher, threshold);
     }
 
+    hash_str(hasher, "credential_lifetimes");
+    hash_u64(hasher, resolution.credential_lifetimes.oauth_exchange_secs);
+    hash_u64(hasher, resolution.credential_lifetimes.initial_owner_secs);
     hash_len(hasher, resolution.packs.len());
     for pack in &resolution.packs {
         hash_str(hasher, &pack._pack_id);

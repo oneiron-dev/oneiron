@@ -34,20 +34,22 @@ pub(crate) async fn core_propose(
     State(server): State<Arc<SyncServer>>,
     payload: Result<Json<CoreProposeRequest>, JsonRejection>,
 ) -> Result<Json<CoreProposeResponse>, EnvelopedApiError> {
-    if !auth.has_scope(CoreScope::Write) {
-        auth.require(CoreScope::Propose)?;
-    }
+    // Membership picks a verb; `require` also checks the effective record and
+    // channel ceiling. No unrelated read verb may change this write decision.
+    let permission = if auth.has_scope(CoreScope::Write) {
+        CoreScope::Write
+    } else {
+        CoreScope::Propose
+    };
+    auth.require(permission)?;
     let request = json_payload(payload)?;
     let subject = oneiron::EntityId::from_hex(&request.subject)
         .map_err(|_| ApiError::bad_request("invalid subject reference", Some("subject")))?;
-    // A propose-only logged slip cannot create a ScopedReadActorKey (read is
-    // deliberately absent). The host checks existence without projecting the
-    // target or granting its contents to the caller. Read-capable callers keep
-    // the scoped-read visibility gate, so this does not weaken their policy.
-    let exists = if !auth.has_scope(CoreScope::Read)
-        && auth.has_scope(CoreScope::Propose)
-        && auth.verified_slip().is_some()
-    {
+    // A verified slip is already admitted by the transport. The host checks
+    // existence without disclosing the target. This unscoped writer refuses
+    // narrower record/channel capabilities in `require` above. Development
+    // callers without a slip retain the scoped-read fallback.
+    let exists = if auth.verified_slip().is_some() {
         server
             .vault()
             .get(&subject)

@@ -63,6 +63,8 @@ async fn init_bootstrap_redeem_and_protected_read_need_no_preexisting_slip() {
             config_path.to_str().unwrap(),
             "--url",
             "http://127.0.0.1:3000",
+            "--lifetime-secs",
+            "600",
         ])
         .env("ONEIRON_AUTH_SECRET", SECRET)
         .output()
@@ -130,6 +132,7 @@ async fn init_bootstrap_redeem_and_protected_read_need_no_preexisting_slip() {
     let token = paired["token"].as_str().unwrap();
     let slip = CapabilitySlip::from_token(token).unwrap();
     assert_eq!(slip.claims.holder_ref, owner);
+    assert_eq!(slip.claims.ttl_secs, 600);
     assert_eq!(
         app.clone().oneshot(redeem()).await.unwrap().status(),
         StatusCode::UNAUTHORIZED

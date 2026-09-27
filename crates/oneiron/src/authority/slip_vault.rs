@@ -366,6 +366,32 @@ impl Vault {
     }
 
     /// Appends a signed mint in the same transaction that checks its ancestry.
+    /// OAuth sign-in mints under the trusted manifest and JWT ceiling in one
+    /// transaction. The caller's requested lifetime can only narrow both.
+    pub fn mint_oauth_capability_slip(
+        &self,
+        issuer: &HostSlipIssuer,
+        mut claims: SlipClaims,
+        jwt_remaining_secs: u64,
+        requested_secs: Option<u64>,
+    ) -> Result<CapabilitySlip> {
+        if jwt_remaining_secs == 0 || requested_secs == Some(0) {
+            return Err(invalid_authority());
+        }
+        let mut txn = self.store.env.write_txn()?;
+        let ceiling = crate::gate::resolve_credential_lifetimes(&self.store, &txn)?;
+        let now = self.instant_in_txn(&txn)?.secs();
+        let ttl = jwt_remaining_secs
+            .min(ceiling.oauth_exchange_secs)
+            .min(requested_secs.unwrap_or(u64::MAX));
+        claims.issued_at = now;
+        claims.expires_at = now.checked_add(ttl).ok_or_else(invalid_authority)?;
+        claims.ttl_secs = ttl;
+        let slip = self.mint_slip_in_txn(&mut txn, issuer, claims)?;
+        txn.commit()?;
+        Ok(slip)
+    }
+
     pub fn mint_capability_slip(
         &self,
         issuer: &HostSlipIssuer,

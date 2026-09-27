@@ -85,6 +85,10 @@ pub struct TokenBootstrapArgs {
     #[arg(long, env = "ONEIRON_URL", default_value = "http://127.0.0.1:3000")]
     pub url: String,
 
+    /// Optional shrink-only lifetime for the first owner slip (seconds).
+    #[arg(long)]
+    pub lifetime_secs: Option<u64>,
+
     #[command(flatten)]
     pub serve: ServeArgs,
 }

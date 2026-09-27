@@ -44,6 +44,8 @@ pub(super) struct OAuthExchange {
     binding_key: String,
     nonce: String,
     signature: String,
+    /// Caller narrowing, never an override of the vault/JWT ceiling.
+    lifetime_secs: Option<u64>,
 }
 pub(super) async fn oauth_exchange(
     headers: HeaderMap,
@@ -83,15 +85,10 @@ pub(super) async fn oauth_exchange(
         .duration_since(std::time::UNIX_EPOCH)
         .map_err(|_| ApiError::unauthorized())?
         .as_secs();
-    let ttl = identity.expires_at.saturating_sub(wall_now).min(3600);
-    if ttl == 0 {
+    let jwt_remaining_secs = identity.expires_at.saturating_sub(wall_now);
+    if jwt_remaining_secs == 0 {
         return Err(ApiError::unauthorized().into());
     }
-    let now = server
-        .vault()
-        .capability_slip_now()
-        .map_err(|_| ApiError::unauthorized())?;
-    let expires_at = now.saturating_add(ttl);
     let slip = with_issuer(&server, |issuer| {
         let mut claims = server.vault().ensure_host_root_slip(issuer)?.claims;
         let mut seed = Vec::from(blake3::hash(raw.as_bytes()).as_bytes().as_slice());
@@ -113,10 +110,12 @@ pub(super) async fn oauth_exchange(
                 })
                 .collect(),
         );
-        claims.issued_at = now;
-        claims.expires_at = expires_at;
-        claims.ttl_secs = ttl;
-        server.vault().mint_capability_slip(issuer, claims)
+        server.vault().mint_oauth_capability_slip(
+            issuer,
+            claims,
+            jwt_remaining_secs,
+            request.lifetime_secs,
+        )
     })?;
     Ok(Json(Paired {
         token: slip.to_token().map_err(|_| ApiError::unauthorized())?,
