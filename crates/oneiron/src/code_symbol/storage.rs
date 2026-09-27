@@ -122,23 +122,18 @@ impl Vault {
             }
         }
         batch.apply(wtxn)?;
-        let encoded = encode_code_symbol_manifest(&graph.manifest)?;
+        MANIFEST.encode_value(&graph.manifest)?;
         delete_code_symbol_manifest_in_txn(&self.store, wtxn, code_artifact_id)?;
-        self.store
-            .vault_meta
-            .put(wtxn, &code_symbol_manifest_key(code_artifact_id), &encoded)?;
+        MANIFEST.put(&self.store, wtxn, code_artifact_id, &graph.manifest)?;
         for symbol in &graph.manifest.symbols {
-            self.store.vault_meta.put(
-                wtxn,
-                &code_symbol_revision_index_key(
-                    &graph.manifest.repo_ref,
-                    &symbol.path,
-                    &symbol.name,
-                    &symbol.fingerprint,
-                    code_artifact_id,
-                ),
-                &[],
-            )?;
+            let key = code_symbol_revision_index_key(
+                &graph.manifest.repo_ref,
+                &symbol.path,
+                &symbol.name,
+                &symbol.fingerprint,
+                code_artifact_id,
+            );
+            REVISION_INDEX.put(&self.store, wtxn, &key, &())?;
         }
         Ok(())
     }
