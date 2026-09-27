@@ -15,10 +15,36 @@ pub(super) fn persist_failed_send_receipt_and_retry(
     vault: &Vault,
     attempt: &crate::attempt_queue::AttemptRecord,
     task_ref: EntityId,
+    receipt: crate::receipt::ReceiptRecord,
+    reason: &str,
+    retry_at: u64,
+    now: u64,
+) -> Result<bool, Error> {
+    persist_send_receipt_and_retry(
+        vault,
+        attempt,
+        task_ref,
+        receipt,
+        reason,
+        retry_at,
+        now,
+        SendReceiptOutcome::Failed,
+        false,
+    )
+}
+
+/// Same atomic retry contract for a possibly-delivered, idempotent send.
+#[expect(clippy::too_many_arguments)]
+pub(super) fn persist_send_receipt_and_retry(
+    vault: &Vault,
+    attempt: &crate::attempt_queue::AttemptRecord,
+    task_ref: EntityId,
     mut receipt: crate::receipt::ReceiptRecord,
     reason: &str,
     retry_at: u64,
     now: u64,
+    outcome: SendReceiptOutcome,
+    transport_dispatched: bool,
 ) -> Result<bool, Error> {
     receipt
         .fields
@@ -30,8 +56,8 @@ pub(super) fn persist_failed_send_receipt_and_retry(
             wtxn,
             task_ref,
             receipt,
-            SendReceiptOutcome::Failed,
-            false,
+            outcome,
+            transport_dispatched,
             None,
         )? {
             queue.complete_in_txn(

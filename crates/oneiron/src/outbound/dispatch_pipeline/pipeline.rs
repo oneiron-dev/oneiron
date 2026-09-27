@@ -318,25 +318,11 @@ impl OutboundDispatchPipeline {
                     )));
                 }
             };
-            let outcome = match effect_result.dispatch.state {
-                Some(crate::outbound_intent_ledger::IntentState::Done) => {
-                    OutboundDispatchOutcome::DeliveredToChannel
-                }
-                Some(crate::outbound_intent_ledger::IntentState::Pending) => {
-                    if transport.execution.as_ref().is_some_and(|execution| {
-                        execution.kind == OutboundExecutionOutcomeKind::Failed
-                    }) {
-                        OutboundDispatchOutcome::Failed
-                    } else {
-                        OutboundDispatchOutcome::Held
-                    }
-                }
-                Some(crate::outbound_intent_ledger::IntentState::Abandoned) => {
-                    OutboundDispatchOutcome::Failed
-                }
-                None if gate_outcome_kind == GateOutcome::Pending => OutboundDispatchOutcome::Held,
-                None => OutboundDispatchOutcome::Suppressed,
-            };
+            let outcome = outbound_effect_outcome(
+                &effect_result.dispatch,
+                transport.execution.as_ref(),
+                gate_outcome_kind,
+            );
             (
                 // On a ledger replay the chokepoint returns no gate decision id
                 // (the gate ran, and was recorded, on the original send). Omit
@@ -606,6 +592,47 @@ impl OutboundDispatchPipeline {
             effector_budget,
             budget_ladder_events,
         })
+    }
+}
+
+/// Preserve the distinction between definite non-delivery, a pending
+/// maybe-delivered send, and a non-idempotent send abandoned to avoid a duplicate.
+fn outbound_effect_outcome(
+    dispatch: &crate::outbound_intent_ledger::IntentDispatchResult,
+    execution: Option<&crate::outbound::dispatch_types::OutboundExecutionOutcome>,
+    gate_outcome_kind: GateOutcome,
+) -> OutboundDispatchOutcome {
+    use crate::outbound_intent_ledger::{IntentEscalationReason, IntentState};
+
+    match dispatch.state {
+        Some(IntentState::Done) => OutboundDispatchOutcome::DeliveredToChannel,
+        Some(IntentState::Pending) => match execution {
+            Some(execution) if execution.kind == OutboundExecutionOutcomeKind::Failed => {
+                if execution.delivery_may_have_occurred {
+                    OutboundDispatchOutcome::Ambiguous
+                } else {
+                    OutboundDispatchOutcome::Failed
+                }
+            }
+            _ => OutboundDispatchOutcome::Held,
+        },
+        Some(IntentState::Abandoned) => {
+            // A revoked or invalid binding can abandon before transport, so
+            // only a maybe-delivered send or crash-uncertain Pending is ambiguous.
+            if matches!(
+                dispatch.escalation.as_ref().map(|e| e.reason),
+                Some(
+                    IntentEscalationReason::NonIdempotentAmbiguous
+                        | IntentEscalationReason::NonIdempotentPending
+                )
+            ) {
+                OutboundDispatchOutcome::Ambiguous
+            } else {
+                OutboundDispatchOutcome::Failed
+            }
+        }
+        None if gate_outcome_kind == GateOutcome::Pending => OutboundDispatchOutcome::Held,
+        None => OutboundDispatchOutcome::Suppressed,
     }
 }
 

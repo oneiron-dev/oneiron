@@ -1353,3 +1353,149 @@ fn conflicting_connector_actor_id_rejects_schedule_without_task() -> crate::Resu
     );
     Ok(())
 }
+
+#[test]
+fn maybe_delivered_non_idempotent_send_is_ambiguously_terminal() -> crate::Result<()> {
+    use crate::attempt_queue::{AttemptQueue, AttemptState, EnqueueAttempt};
+    use crate::memory::BRIDGE_OUTBOUND_ATTEMPT_KIND;
+    use crate::receipt::{ReceiptKind, ReceiptQuery};
+
+    let (_tmp, vault) = temp_vault();
+    let actor = entity(0xA7);
+    put_connector_task_actor(&vault, actor, 200)?;
+    put_policy_manifest_bytes(
+        &vault,
+        entity(0xA8),
+        &policy_manifest(&actor.to_hex(), "telegram", &["send"]),
+    )?;
+    let mut draft = connector_task_draft("ambiguous-send:test", "session:ambiguous", 200);
+    draft.channel = "telegram".to_owned();
+    vault
+        .memory(actor, EdgeActorClass::Agent)
+        .schedule_outbound(&draft)
+        .expect("schedule outbound");
+    let task_ref = vault.connector_send_tasks()?[0].task_ref;
+    let mut executor = RecordingExecutor {
+        outcome: OutboundExecutionOutcome::failed("provider_timeout").with_possible_delivery(),
+        ..Default::default()
+    };
+    assert_eq!(
+        vault
+            .run_connector_task_executor(&mut executor, 201)
+            .unwrap(),
+        0
+    );
+    assert_eq!(executor.calls.len(), 1);
+    assert_eq!(executor.idempotency_keys, vec![None]);
+    let task = vault.connector_send_task(&task_ref)?.expect("synced task");
+    assert!(task.attempt_started_node_id.is_some());
+    assert_eq!(task.outcome, Some(ConnectorSendTaskOutcome::Ambiguous));
+    let receipts = vault.receipts(ReceiptQuery::new(10).with_kind(ReceiptKind::Outbound))?;
+    assert_eq!(receipts.len(), 1);
+    assert_eq!(receipts[0].outcome, "ambiguous");
+    assert_eq!(
+        receipts[0]
+            .fields
+            .get("delivery_may_have_occurred")
+            .map(String::as_str),
+        Some("true")
+    );
+    assert!(!send_receipt_exists_for_task(&vault, task_ref)?);
+    assert_eq!(
+        vault
+            .store
+            .get_delivered_send_task_by_idempotency(&actor, "ambiguous-send:test")?,
+        None
+    );
+    let attempts = AttemptQueue::new(&vault).list()?;
+    assert_eq!(attempts.len(), 1);
+    assert_eq!(attempts[0].state, AttemptState::Failed);
+    assert_eq!(
+        crate::outbound_intent_ledger::intent_ledger_records(&vault).expect("ledger read")[0].state,
+        crate::outbound_intent_ledger::IntentState::Abandoned
+    );
+
+    // A duplicate queue row cannot turn the uncertain outcome into a send permit.
+    AttemptQueue::new(&vault).enqueue(EnqueueAttempt {
+        kind: BRIDGE_OUTBOUND_ATTEMPT_KIND.to_owned(),
+        payload: connector_send_attempt_payload(task_ref)?,
+        dedupe_key: None,
+        run_id: None,
+        now: 202,
+    })?;
+    assert_eq!(
+        vault
+            .run_connector_task_executor(&mut executor, 203)
+            .unwrap(),
+        0
+    );
+    assert_eq!(executor.calls.len(), 1);
+    assert_eq!(
+        vault.connector_send_task(&task_ref)?.unwrap().outcome,
+        Some(ConnectorSendTaskOutcome::Ambiguous)
+    );
+    assert_eq!(
+        vault
+            .receipts(ReceiptQuery::new(10).with_kind(ReceiptKind::Outbound))?
+            .len(),
+        1
+    );
+    Ok(())
+}
+
+#[test]
+fn maybe_delivered_idempotent_send_audits_ambiguity_until_reconciled() -> crate::Result<()> {
+    use crate::receipt::{ReceiptKind, ReceiptQuery};
+
+    let (_tmp, vault) = temp_vault();
+    let actor = entity(0xA9);
+    put_connector_task_actor(&vault, actor, 210)?;
+    put_policy_manifest_bytes(
+        &vault,
+        entity(0xAA),
+        &policy_manifest(&actor.to_hex(), "email", &["replace"]),
+    )?;
+    let mut draft = connector_task_draft("ambiguous-replace:test", "session:replace", 210);
+    draft.verb = "replace".to_owned();
+    vault
+        .memory(actor, EdgeActorClass::Agent)
+        .schedule_outbound(&draft)
+        .expect("schedule");
+    let task_ref = vault.connector_send_tasks()?[0].task_ref;
+    let mut executor = RecordingExecutor {
+        outcome: OutboundExecutionOutcome::failed("provider_timeout").with_possible_delivery(),
+        ..Default::default()
+    };
+    assert_eq!(
+        vault
+            .run_connector_task_executor(&mut executor, 211)
+            .unwrap(),
+        0
+    );
+    let receipts = vault.receipts(ReceiptQuery::new(10).with_kind(ReceiptKind::Outbound))?;
+    assert_eq!(receipts.len(), 1);
+    assert_eq!(receipts[0].outcome, "ambiguous");
+    assert_eq!(vault.connector_send_task(&task_ref)?.unwrap().outcome, None);
+    assert!(!send_receipt_exists_for_task(&vault, task_ref)?);
+    assert_eq!(
+        crate::outbound_intent_ledger::intent_ledger_records(&vault).expect("ledger read")[0].state,
+        crate::outbound_intent_ledger::IntentState::Pending
+    );
+    executor.outcome = OutboundExecutionOutcome::delivered_to_channel("provider:replace:ok");
+    assert_eq!(
+        vault
+            .run_connector_task_executor(&mut executor, 271)
+            .unwrap(),
+        1
+    );
+    assert_eq!(
+        vault.connector_send_task(&task_ref)?.unwrap().outcome,
+        Some(ConnectorSendTaskOutcome::Delivered)
+    );
+    let receipts = vault.receipts(ReceiptQuery::new(10).with_kind(ReceiptKind::Outbound))?;
+    assert_eq!(receipts.len(), 2);
+    assert_eq!(receipts[1].outcome, "ambiguous");
+    assert_eq!(receipts[0].outcome, "delivered_to_channel");
+    assert_eq!(executor.idempotency_keys[0], executor.idempotency_keys[1]);
+    Ok(())
+}

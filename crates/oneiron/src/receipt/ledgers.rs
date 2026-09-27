@@ -48,6 +48,7 @@ pub(super) struct DurableSendReceipt {
 pub(crate) enum SendReceiptOutcome {
     Delivered,
     Failed,
+    Ambiguous,
 }
 
 /// The stable `receipt_id` of one attempt's terminal PACK RECEIPT.
@@ -331,6 +332,7 @@ pub(super) fn decode_durable_send_receipt(
     let expected_receipt_outcome = match durable.outcome {
         SendReceiptOutcome::Delivered => "delivered_to_channel",
         SendReceiptOutcome::Failed => "failed",
+        SendReceiptOutcome::Ambiguous => "ambiguous",
     };
     if durable.version != SEND_RECEIPT_RECORD_VERSION
         || durable.task_ref != crate::entity_id::bytes_to_hex_lower(task_id)

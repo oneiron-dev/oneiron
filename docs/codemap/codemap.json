@@ -22673,11 +22673,11 @@
      "path": "src/outbound/retry_audit.rs",
      "purpose": "Atomic persistence of a failed send receipt and its retry",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 2
      }
     },
     {
-     "bucket": "L",
+     "bucket": "XL",
      "kind": "test",
      "notable": [],
      "path": "src/outbound/tests/connector_schedule.rs",

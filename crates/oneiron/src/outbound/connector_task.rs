@@ -89,6 +89,7 @@ pub(super) struct ConnectorSendTaskBody {
 pub enum ConnectorSendTaskOutcome {
     Delivered,
     Failed,
+    Ambiguous,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]

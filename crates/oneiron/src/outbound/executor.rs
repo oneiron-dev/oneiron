@@ -10,7 +10,7 @@ use super::dispatch_types::{
     OutboundDispatchRequest, OutboundDispatchResult, OutboundExecutionSink,
 };
 use super::receipt_fields::append_connector_task_window_receipt;
-use super::retry_audit::persist_failed_send_receipt_and_retry;
+use super::retry_audit::{persist_failed_send_receipt_and_retry, persist_send_receipt_and_retry};
 use super::window_door::local_minute_of_day_at;
 use crate::Vault;
 use crate::attempt_queue::{
@@ -122,6 +122,12 @@ impl Vault {
                     continue;
                 }
             };
+            if task.outcome == Some(ConnectorSendTaskOutcome::Ambiguous) {
+                // A terminal possibly-delivered send is not a fresh send permit,
+                // even if a duplicate queue row is scheduled later.
+                complete_connector_task_attempt(&queue, &attempt, now)?;
+                continue;
+            }
             let attempt_started_node_id = crate::identity::load_or_mint_client_id(self)?;
             mark_connector_send_task_attempt_started(self, task_ref, attempt_started_node_id, now)?;
             let actor = OutboundDispatchActor {
@@ -291,26 +297,28 @@ impl Vault {
                         now,
                     )?;
                 }
-                OutboundDispatchOutcome::Failed => {
+                OutboundDispatchOutcome::Failed | OutboundDispatchOutcome::Ambiguous => {
+                    let ambiguous = result.outcome == OutboundDispatchOutcome::Ambiguous;
+                    // A recovered non-idempotent Pending intent may be ambiguous
+                    // even though this attempt never reached the transport.
+                    let transport_dispatched = ambiguous
+                        && result
+                            .receipt
+                            .fields
+                            .get("delivery_may_have_occurred")
+                            .is_some_and(|value| value == "true");
                     let intent_pending = result
                         .receipt
                         .fields
                         .get("intent_state")
                         .map(String::as_str)
                         == Some("pending");
-                    let delivery_may_have_occurred = result
-                        .receipt
-                        .fields
-                        .get("delivery_may_have_occurred")
-                        .is_some_and(|value| value == "true");
                     let provider_retry_is_idempotent = result
                         .receipt
                         .fields
                         .get("retry_class")
                         .is_some_and(|value| value != "non_idempotent_interrupt");
-                    if intent_pending
-                        && (delivery_may_have_occurred || provider_retry_is_idempotent)
-                    {
+                    if intent_pending && (ambiguous || provider_retry_is_idempotent) {
                         // A provider that stated its own cool-down (a rate-limit
                         // `retry_after`) is obeyed exactly; without one the
                         // generic transport curve still applies. The instant is
@@ -334,29 +342,56 @@ impl Vault {
                             "dispatch_outcome".to_owned(),
                             result.outcome.as_str().to_owned(),
                         );
-                        persist_failed_send_receipt_and_retry(
+                        persist_send_receipt_and_retry(
                             self,
                             &attempt,
                             task_ref,
                             result.receipt,
-                            "transport_failed_pending",
+                            if ambiguous {
+                                "transport_ambiguous_pending"
+                            } else {
+                                "transport_failed_pending"
+                            },
                             retry_at,
                             now,
+                            if ambiguous {
+                                SendReceiptOutcome::Ambiguous
+                            } else {
+                                SendReceiptOutcome::Failed
+                            },
+                            transport_dispatched,
                         )?;
                     } else {
                         persist_send_receipt(
                             self,
                             task_ref,
                             result.receipt,
-                            SendReceiptOutcome::Failed,
-                            false,
+                            if ambiguous {
+                                SendReceiptOutcome::Ambiguous
+                            } else {
+                                SendReceiptOutcome::Failed
+                            },
+                            transport_dispatched,
                             None,
                         )?;
-                        fail_connector_task_attempt(&queue, &attempt, now, "transport_failed")?;
+                        fail_connector_task_attempt(
+                            &queue,
+                            &attempt,
+                            now,
+                            if ambiguous {
+                                "transport_ambiguous"
+                            } else {
+                                "transport_failed"
+                            },
+                        )?;
                         project_connector_send_task_outcome(
                             self,
                             task_ref,
-                            ConnectorSendTaskOutcome::Failed,
+                            if ambiguous {
+                                ConnectorSendTaskOutcome::Ambiguous
+                            } else {
+                                ConnectorSendTaskOutcome::Failed
+                            },
                             now,
                         )?;
                     }

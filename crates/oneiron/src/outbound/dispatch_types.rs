@@ -423,6 +423,7 @@ pub enum OutboundDispatchOutcome {
     Suppressed,
     LetGo,
     Failed,
+    Ambiguous,
 }
 
 impl OutboundDispatchOutcome {
@@ -435,6 +436,7 @@ impl OutboundDispatchOutcome {
             Self::Suppressed => "suppressed",
             Self::LetGo => "let_go",
             Self::Failed => "failed",
+            Self::Ambiguous => "ambiguous",
         }
     }
 }
