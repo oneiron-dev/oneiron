@@ -75,7 +75,8 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
             ),
             (
                 "tasks.ask",
-                crate::code_run::vault_read::request_schema::<crate::task_verb::TaskAskSpec>(),
+                crate::code_run::vault_read::request_schema::<crate::task_verb::sdk::TaskAskRequest>(
+                ),
             ),
             (
                 "tasks.wait",
@@ -309,7 +310,7 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
             let _input: crate::memory::KeyValueNamespaces = decode(value.clone())?;
         }
         "tasks.ask" => {
-            let _input: crate::task_verb::TaskAskSpec = decode(value.clone())?;
+            let _input: crate::task_verb::sdk::TaskAskRequest = decode(value.clone())?;
         }
         "tasks.wait" => {
             let _input: crate::task_verb::sdk::TaskWaitRequest = decode(value.clone())?;
@@ -516,9 +517,9 @@ pub fn key_value_namespaces(
 }
 pub fn tasks_ask(
     memory: &Memory<'_>,
-    input: crate::task_verb::TaskAskSpec,
+    input: crate::task_verb::sdk::TaskAskRequest,
 ) -> MemoryResult<crate::task_verb::TaskAskReceipt> {
-    memory.tasks_ask(&input)
+    memory.tasks_ask(&input.into_spec()?)
 }
 pub fn tasks_wait(
     memory: &Memory<'_>,
