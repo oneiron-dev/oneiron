@@ -154,6 +154,35 @@ pub(crate) fn insert_pending_in_txn(
             "only outcome-free Pending may be inserted",
         ));
     }
+    insert_intent_in_txn(vault, wtxn, pending)
+}
+
+/// A denied semantic duplicate is a terminal replayable attempt, without a
+/// Pending phase, budget debit, or transport. Only the exact typed reason may
+/// take this one additional admission shape.
+pub(crate) fn insert_suppressed_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    suppressed: &IntentLedgerRecord,
+) -> IntentLedgerResult<()> {
+    if suppressed.state != IntentState::Abandoned
+        || suppressed.recorded_outcome
+            != Some(RecordedOutboundOutcome::Abandoned(
+                IntentEscalationReason::DedupeSuppressed,
+            ))
+    {
+        return Err(IntentLedgerError::InvalidRecord(
+            "not a suppressed outbound attempt",
+        ));
+    }
+    insert_intent_in_txn(vault, wtxn, suppressed)
+}
+
+fn insert_intent_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    pending: &IntentLedgerRecord,
+) -> IntentLedgerResult<()> {
     if read_intent_for_attempt_in_txn(vault, wtxn, pending.attempt_id, pending.call_seq)?.is_some()
     {
         return Err(IntentLedgerError::InvalidRecord(
@@ -285,7 +314,19 @@ fn update_pending_recorded_outcome(
             "pending outcome transition is invalid",
         ));
     }
-    record.recorded_outcome = next;
+    if expected == Some(RecordedOutboundOutcome::DefiniteNonDelivery)
+        && next.is_none()
+        && !crate::outbound_chokepoint::dedupe::owns_retry(vault, &wtxn, &id)?
+    {
+        // A newer semantic attempt took over after the no-wire window. The
+        // old permit must never reopen that sender after the takeover.
+        record.state = IntentState::Abandoned;
+        record.recorded_outcome = Some(RecordedOutboundOutcome::Abandoned(
+            IntentEscalationReason::DedupeReservationReplaced,
+        ));
+    } else {
+        record.recorded_outcome = next;
+    }
     record.updated_ms = now_ms.max(record.created_ms);
     let encoded = encode_record(&record)?;
     vault.store.vault_meta.put(&mut wtxn, &key, &encoded)?;
@@ -331,6 +372,17 @@ fn transition_record_with_outcome(
     record.updated_ms = now_ms.max(record.created_ms);
     let encoded = encode_record(&record)?;
     vault.store.vault_meta.put(&mut wtxn, &key, &encoded)?;
+    if next == IntentState::Done
+        || (next == IntentState::Abandoned
+            && outcome
+                != RecordedOutboundOutcome::Abandoned(
+                    IntentEscalationReason::DedupeReservationReplaced,
+                ))
+    {
+        // Abandonment may follow a wire-started attempt whose delivery is
+        // unknown. Keep its conservative floor anchored to this transition.
+        crate::outbound_chokepoint::dedupe::delivered_in_txn(vault, &mut wtxn, &id)?;
+    }
     wtxn.commit().map_err(Error::from)?;
     force_sync(vault)?;
     Ok(record)

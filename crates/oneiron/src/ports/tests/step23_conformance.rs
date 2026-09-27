@@ -222,6 +222,37 @@ fn clock_is_injected_and_persisted_floor_survives_reopen() -> Result<()> {
 }
 
 #[test]
+fn authorization_clock_read_does_not_commit_unwritten_id_allocations() -> Result<()> {
+    let clock = ManualClock::new(100);
+    let vault_config = config(&clock);
+    let (dir, vault) = crate::test_util::open_test_vault_with(vault_config.clone());
+    let id_floor = |vault: &Vault| -> Result<Option<Vec<u8>>> {
+        let txn = vault.store.env.read_txn()?;
+        Ok(vault
+            .store
+            .vault_meta
+            .get(&txn, crate::ports::ID_FLOOR)?
+            .map(std::borrow::Cow::into_owned))
+    };
+    let before = id_floor(&vault)?;
+    vault.new_entity_id()?;
+    clock.set(210);
+    assert_eq!(vault.store.authorization_now()?, 210);
+    assert_eq!(id_floor(&vault)?, before);
+    let txn = vault.store.env.read_txn()?;
+    assert_eq!(
+        crate::ports::authorization_floor_in_txn(&vault.store, &txn)?,
+        210
+    );
+    drop(txn);
+    drop(vault);
+    clock.set(1);
+    let reopened = Vault::open(dir.path(), vault_config)?;
+    assert_eq!(reopened.store.authorization_now()?, 210);
+    Ok(())
+}
+
+#[test]
 fn production_mutations_audit_atomically_and_keep_world_time() -> Result<()> {
     let clock = ManualClock::new(700);
     let (_dir, vault) = crate::test_util::open_test_vault_with(config(&clock));

@@ -8,7 +8,7 @@ use crate::{
     EntityId, Vault,
     error::{Error, Result},
     ports::{EdgeDirection, EdgeStoreRead},
-    store::Store,
+    store::{ManifestDbs, Store},
 };
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
@@ -68,7 +68,7 @@ fn carries_birth_stamp(kind: u8) -> bool {
 /// The facet a NOTE or ASSET was born under: the target of its one stored
 /// `FacetOf` edge.
 pub(crate) fn birth_facet(
-    store: &Store,
+    store: &impl ManifestDbs,
     txn: &heed::RoTxn<'_>,
     id: EntityId,
 ) -> Result<Option<EntityId>> {
@@ -148,13 +148,13 @@ pub(crate) fn stamp_put(
     Ok(())
 }
 fn stored_scope(
-    store: &Store,
+    store: &impl ManifestDbs,
     txn: &heed::RoTxn<'_>,
     id: EntityId,
     kind: u8,
     data: &[u8],
 ) -> Result<Option<Scope>> {
-    let Some(bytes) = store.vault_meta.get(txn, &key(id))? else {
+    let Some(bytes) = store.vault_meta().get(txn, &key(id))? else {
         return Ok(None);
     };
     let stamp: Stamp =
@@ -190,7 +190,7 @@ pub(crate) fn restamp_document_pointer(
 /// Derive only an intrinsic current stamp or a digest-matched persisted stamp.
 /// This is the sync-export seam; arbitrary remote opaque rows remain unstamped.
 pub(crate) fn scope_for_blob(
-    store: &Store,
+    store: &impl ManifestDbs,
     txn: &heed::RoTxn<'_>,
     id: EntityId,
     raw: &[u8],
@@ -259,7 +259,6 @@ impl Vault {
         let mut out = Vec::new();
         for row in crate::ports::EntityStoreRead::port_entity_raw_records(&self.store, &txn)? {
             let (id, raw) = row?;
-
             let h =
                 EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("record header"))?;
             let scope = stored_scope(
@@ -295,7 +294,6 @@ impl Vault {
         let mut out = Vec::new();
         for row in crate::ports::EntityStoreRead::port_entity_raw_records(&self.store, &txn)? {
             let (id, raw) = row?;
-
             let h =
                 EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("record header"))?;
             if let Some(scope) = stored_scope(
@@ -328,7 +326,6 @@ impl Vault {
             let mut ids = Vec::new();
             for row in crate::ports::EntityStoreRead::port_entity_raw_records(&self.store, txn)? {
                 let (id, raw) = row?;
-
                 let h = EntityMetadataHeader::parse(&raw)
                     .ok_or(Error::CorruptedIndex("record header"))?;
                 if let Some(scope) = stored_scope(
