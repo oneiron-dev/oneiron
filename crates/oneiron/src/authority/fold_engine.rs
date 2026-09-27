@@ -388,6 +388,16 @@ fn fold_authority_log_once(
         })
         .copied()
         .collect::<BTreeSet<_>>();
+    // Signed restrictions have a separate lifetime from selected permissive
+    // branches. The proof evaluator never adds entries to the survivor roster.
+    let revoke_facts = super::revoke_proof::derive_revoke_facts(
+        &by_hash,
+        &entry_ancestors,
+        FoldContext {
+            entry_ancestors: Some(&entry_ancestors),
+            ..context
+        },
+    );
     let mut authority_forks = context.authority_forks.clone();
     let mut authority_fork_vault_ids = context.authority_fork_vault_ids.clone();
     let mut reported_authority_forks = BTreeMap::<(AuthorityKey, u64), AuthorityFork>::new();
@@ -482,7 +492,15 @@ fn fold_authority_log_once(
                 chain_validated_fork_candidates: Some(&chain_validated_fork_candidates),
                 ..context
             };
-            match fold_entry_state(entry, hash, &states, fold_context) {
+            match super::ancestry_evaluator::evaluate_entry(
+                entry,
+                hash,
+                &by_hash,
+                &states,
+                &pending,
+                fold_context,
+                super::ancestry_evaluator::EvaluationPhase::Normal,
+            ) {
                 EntryFold::Ready(state) => {
                     states.insert(hash, state);
                     pending.remove(&hash);
@@ -516,17 +534,16 @@ fn fold_authority_log_once(
                     chain_validated_fork_candidates: Some(&chain_validated_fork_candidates),
                     ..context
                 };
-                let Some(bypass_states) =
-                    revocation_bypass_states(entry, &by_hash, &states, &pending, fold_context)
-                else {
-                    continue;
-                };
-                // Ready only. A revocation the bypass cannot justify stays
-                // pending and is reported as `InvalidAncestry` below, exactly as
-                // before — the bypass may rescue a revocation, never admit one.
-                if let EntryFold::Ready(state) =
-                    fold_entry_state(entry, hash, &bypass_states, fold_context)
-                {
+                let empty_rejected = BTreeSet::new();
+                if let EntryFold::Ready(state) = super::ancestry_evaluator::evaluate_entry(
+                    entry,
+                    hash,
+                    &by_hash,
+                    &states,
+                    &pending,
+                    fold_context,
+                    super::ancestry_evaluator::EvaluationPhase::Stalled(&empty_rejected),
+                ) {
                     states.insert(hash, state);
                     pending.remove(&hash);
                     progressed = true;
@@ -538,15 +555,6 @@ fn fold_authority_log_once(
         issues.push(AuthorityFoldIssue::InvalidAncestry(hash));
     }
 
-    // Keep the proof that a revoke fully passed the ordinary transition before
-    // retroactive ancestry pruning. A conflicting confirmation can later remove
-    // the enrollment of its signer or cosigner; a re-check against the surviving
-    // roster would then erase an already verified restrictive floor.
-    let ready_revokes: BTreeMap<_, _> = states
-        .iter()
-        .filter(|(hash, _)| matches!(by_hash[*hash].op, AuthorityOp::RevokeActor { .. }))
-        .map(|(hash, state)| (*hash, state.vault_id))
-        .collect();
     reject_below_concurrent_tier_floors(&mut states, &by_hash, &entry_ancestors, &mut issues);
     // Confirmations are consumable across branches, not only in ancestry.
     // Only entries already proven against their live roster can contend.
@@ -620,7 +628,6 @@ fn fold_authority_log_once(
             state,
         );
     }
-    let authority_forks_for_revoke = authority_forks.clone();
     let authority_forks: Vec<_> = reported_authority_forks.into_values().collect();
     let fork_alarms = build_fork_alarms(&authority_forks);
     // Collision poison is part of the externally auditable fold result, not
@@ -638,22 +645,7 @@ fn fold_authority_log_once(
         );
     }
     if let Some(state) = &mut merged {
-        super::revoke_floor::retain_invalid_ancestry_revoke_floors(
-            state,
-            &states,
-            &by_hash,
-            &issues,
-            &ready_revokes,
-            FoldContext {
-                authority_forks: &authority_forks_for_revoke,
-                authority_fork_vault_ids: &authority_fork_vault_ids,
-                equivocation_groups: &equivocation_groups,
-                unresolved_equivocation_groups: &unresolved_equivocation_groups,
-                entry_ancestors: Some(&entry_ancestors),
-                chain_validated_fork_candidates: Some(&chain_validated_fork_candidates),
-                ..context
-            },
-        );
+        revoke_facts.apply_to(state);
     }
     let actor_bindings = merged.as_ref().map_or_else(BTreeMap::new, |state| {
         folded_actor_bindings(state, &authority_forks, context.consent_arm)

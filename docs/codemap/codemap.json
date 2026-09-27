@@ -1635,6 +1635,16 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [],
+     "path": "src/authority/ancestry_evaluator.rs",
+     "purpose": "Shared stalled-revocation ancestry evaluation for ordinary and proof folds",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [
       "CausalWriteDisposition"
      ],
@@ -1956,7 +1966,7 @@
      "path": "src/authority/op_apply.rs",
      "purpose": "Applies one [`super::AuthorityOp`] to a [`super::fold_state::FoldState`]",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 7
      }
     },
     {
@@ -1988,10 +1998,10 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
-     "path": "src/authority/revoke_floor.rs",
-     "purpose": "Verified actor-revocation floors that survive ancestry invalidation",
+     "path": "src/authority/revoke_proof.rs",
+     "purpose": "Log-derived, typed actor revocation facts, independent of roster survivors",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 3
      }
     },
     {
@@ -2307,6 +2317,14 @@
      "notable": [],
      "path": "src/authority/tests/revoke_freeze_bypass.rs",
      "purpose": "Pending-widen freeze with RevokeActor emergency bypass",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "src/authority/tests/revoke_proof_matrix.rs",
+     "purpose": "Composition of signed revoke proof across independent ancestry invalidations",
      "surface": {}
     },
     {
@@ -34501,7 +34519,7 @@
      "purpose": "Generic LMDB-backed background attempt queue"
     },
     "authority": {
-     "files": 69,
+     "files": 71,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -35742,8 +35760,8 @@
    },
    "over_bar": 10,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2108,
-   "test_files": 722
+   "source_files": 2109,
+   "test_files": 723
   },
   "oneiron-android": {
    "files": [
