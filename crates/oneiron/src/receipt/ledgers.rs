@@ -26,7 +26,7 @@ const ATTEMPT_PACK_RECEIPT_ID_PREFIX: &str = "attempt:";
 
 const OUTBOUND_RECEIPT_SCHEMA: &str = "outbound_receipt.v1";
 const OUTBOUND_ENGINE_REGISTER: &str = "neutral";
-const OUTBOUND_CARE_REGISTER: &str = "eirispec_care_register";
+const OUTBOUND_CARE_REGISTER: &str = "care_register";
 const OUTBOUND_AUDIT_REGISTER: &str = "dashboard_atom_kit_audit";
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -354,7 +354,7 @@ pub(super) fn scan_durable_send_receipts(vault: &Vault) -> Result<ReceiptScan> {
     durable_send_receipts(vault).map(ReceiptScan::from_complete_records)
 }
 
-pub(super) fn durable_send_receipts(vault: &Vault) -> Result<Vec<ReceiptRecord>> {
+pub(crate) fn durable_send_receipts(vault: &Vault) -> Result<Vec<ReceiptRecord>> {
     vault
         .store
         .send_receipt_rows()?

@@ -9,7 +9,15 @@ impl DocsSummaryModel for Summary {
         "fixture.summary.v1"
     }
     fn summarize(&self, segment: &DocsSegment) -> Result<String> {
-        Ok(segment.text.lines().next().unwrap_or_default().to_owned())
+        Ok(segment
+            .text
+            .lines()
+            .next()
+            .unwrap_or_default()
+            .split(" describes")
+            .next()
+            .unwrap_or_default()
+            .to_owned())
     }
 }
 struct Classifier;
@@ -236,6 +244,10 @@ fn one_bulk_consent_lands_refs_derived_labels_and_summary_first_expansion() -> R
     let annotation = vault.docs_annotation(&receipt.annotation_refs[0])?.unwrap();
     assert_eq!(annotation["derivation"]["source"], "imported");
     assert_eq!(annotation["annotation"]["label"], "suspected_injection");
+    let summary_id = EntityId::from_hex(&receipt.summary_refs[0])?;
+    let chunk_id = EntityId::from_hex(&receipt.chunk_refs[0])?;
+    vault.put_vector(&summary_id, &[1.0, 0.0, 0.0, 0.0])?;
+    vault.put_vector(&chunk_id, &[1.0, 0.0, 0.0, 0.0])?;
     grant_core_read(&vault, "owner")?;
     let reader = vault.scoped_read(crate::claim::ScopedReadActorKey::new("owner").unwrap());
     let source = reader
@@ -243,13 +255,47 @@ fn one_bulk_consent_lands_refs_derived_labels_and_summary_first_expansion() -> R
         .value
         .unwrap();
     assert_eq!(source["text"], document.pages[0].text);
+    let exact_hits = reader.search_docs_summaries("attraction", 4)?;
+    assert_eq!(
+        exact_hits.value[0].entity_type,
+        crate::registry::ENTITY_TYPE_ASSET_TEXT
+    );
+    assert!(exact_hits.value[0].summary.is_none());
     let hits = reader.search_docs_summaries("Gravity", 4)?;
     assert_eq!(
         hits.value[0].entity_type,
         crate::registry::ENTITY_TYPE_SUMMARY
     );
+    let conceptual =
+        reader.search_docs_summaries_with_vector("Gravity", Some(&[1.0, 0.0, 0.0, 0.0]), 4)?;
+    assert_eq!(
+        conceptual.value[0].entity_type,
+        crate::registry::ENTITY_TYPE_SUMMARY
+    );
+    assert!(conceptual.value[0].summary.is_some());
+    assert!(
+        hits.value
+            .iter()
+            .any(|hit| hit.entity_type == crate::registry::ENTITY_TYPE_SUMMARY)
+    );
+    assert!(
+        hits.receipt
+            .applied
+            .entity_types
+            .as_ref()
+            .unwrap()
+            .contains(&crate::registry::ENTITY_TYPE_ASSET_TEXT)
+    );
     let wire = serde_json::to_value(&hits.value).unwrap();
     assert!(wire[0].get("text").is_none());
+    assert!(
+        hits.value
+            .iter()
+            .any(|hit| hit.summary.as_deref() == Some("# Gravity"))
+    );
+    assert!(hits.value.iter().any(|hit| hit.entity_type
+        == crate::registry::ENTITY_TYPE_ASSET_TEXT
+        && hit.summary.is_none()));
     assert!(
         reader
             .expand_doc_ref(&hits.value[0].reference)?
@@ -257,6 +303,36 @@ fn one_bulk_consent_lands_refs_derived_labels_and_summary_first_expansion() -> R
             .unwrap()["text"]
             .is_string()
     );
+    let summary_ref = &hits
+        .value
+        .iter()
+        .find(|hit| hit.summary.as_deref() == Some("# Gravity"))
+        .unwrap()
+        .reference;
+    let mut next = summary_ref.clone();
+    for (level, expected) in [
+        (DocsExpansionLevel::Summary, "# Gravity"),
+        (DocsExpansionLevel::Span, "# Gravity"),
+        (
+            DocsExpansionLevel::Section,
+            "# Gravity\n\nGravity describes attraction.",
+        ),
+        (
+            DocsExpansionLevel::FullText,
+            document.pages[0].text.as_str(),
+        ),
+        (
+            DocsExpansionLevel::RawAsset,
+            document.pages[0].text.as_str(),
+        ),
+    ] {
+        let step = reader.expand_doc_ladder_ref(&next)?.value.unwrap();
+        assert_eq!(step.level, level);
+        assert_eq!(step.text, expected);
+        assert_eq!(step.asset.is_some(), level == DocsExpansionLevel::RawAsset);
+        next = step.next_ref.unwrap_or_default();
+    }
+    assert!(reader.expand_doc_ladder_ref(&person.to_hex()).is_err());
     let previous: Vec<_> = receipt
         .summary_refs
         .iter()
@@ -283,6 +359,213 @@ fn one_bulk_consent_lands_refs_derived_labels_and_summary_first_expansion() -> R
     for (reference, expected) in receipt.summary_refs.iter().zip(previous) {
         assert_eq!(reader.expand_doc_ref(reference)?.value, expected);
     }
+    Ok(())
+}
+
+fn searchable_docs(
+    docs: &DocsExport,
+) -> Result<(tempfile::TempDir, crate::Vault, DocsImportReceipt, EntityId)> {
+    let (dir, vault) =
+        crate::test_util::open_test_vault_with(crate::test_util::embedding_test_config());
+    let person = EntityId::now();
+    vault.put_entity(
+        &person,
+        crate::registry::ENTITY_TYPE_PERSON,
+        TimeRange { start: 1, end: 1 },
+        1,
+        b"owner",
+    )?;
+    let owner = vault.authenticate_owner(
+        person,
+        &person.to_hex(),
+        true,
+        crate::store::GateDecisionId::now(),
+    )?;
+    let request = EntityId::now();
+    let ceiling = DocsImportCeiling {
+        max_pages: 8,
+        max_bytes: 10_000,
+        allow_derivations: true,
+    };
+    vault.approve_once(
+        &owner,
+        vault
+            .docs_import_effect(&owner, request, docs, ceiling)?
+            .digest(),
+    )?;
+    let receipt =
+        vault.ingest_docs_export(&owner, request, docs, ceiling, Some(&Summary), None, 2)?;
+    grant_core_read(&vault, "owner")?;
+    Ok((dir, vault, receipt, person))
+}
+
+#[test]
+fn mixed_summary_producers_do_not_abort_or_starve_document_hits() -> Result<()> {
+    let (_dir, vault, docs, actor_id) = searchable_docs(&document())?;
+    let actor = crate::WriteActor::new(actor_id, crate::EdgeActorClass::Human);
+    let conv = EntityId::now();
+    vault.put_entity(
+        &conv,
+        crate::registry::ENTITY_TYPE_CONVERSATION,
+        TimeRange { start: 1, end: 1 },
+        1,
+        &crate::conversation_dag::fixtures::body("conversation"),
+    )?;
+    crate::conversation_dag::test_support::put_dag_test_policy(&vault, actor, true)?;
+    let turn = vault
+        .append_dag_record(&crate::conversation_dag::fixtures::input(
+            conv, None, true, actor,
+        ))?
+        .id;
+    let dag = vault.mint_dag_scope_summary(
+        &crate::conversation_dag::fixtures::scope(
+            conv,
+            crate::conversation_dag::ScopePath::Canonical,
+            false,
+        ),
+        "Gravity in the DAG",
+        actor,
+    )?;
+    // Promotion keeps the witness's MessagePack `content` body and matching
+    // text index entry; neither belongs to the document-summary schema.
+    let session = EntityId::now();
+    vault
+        .batch()
+        .put(
+            &session,
+            crate::registry::ENTITY_TYPE_SUMMARY,
+            TimeRange { start: 1, end: 1 },
+            1,
+            &rmp_serde::to_vec_named(&json!({"content": "Gravity in the session"})).unwrap(),
+        )
+        .text(&session, &[("content", "Gravity in the session")])
+        .commit()?;
+    assert!(vault.get(&turn)?.is_some());
+    assert!(vault.get(&dag)?.is_some());
+    assert!(vault.get(&session)?.is_some());
+    vault.put_vector(&session, &[1.0, 0.0, 0.0, 0.0])?;
+    vault.put_vector(&dag, &[1.0, 0.0, 0.0, 0.0])?;
+    grant_core_read(&vault, "owner")?;
+    let reader = vault.scoped_read(crate::claim::ScopedReadActorKey::new("owner").unwrap());
+    // Both alien summaries outrank a lexical-only doc hit with this vector.
+    // Filtering after `limit` would leave no document result.
+    let hits =
+        reader.search_docs_summaries_with_vector("Gravity", Some(&[1.0, 0.0, 0.0, 0.0]), 1)?;
+    assert_eq!(hits.value.len(), 1);
+    assert!(docs.summary_refs.contains(&hits.value[0].reference));
+    for hit in reader.search_docs_summaries("Gravity", 16)?.value {
+        if hit.entity_type == crate::registry::ENTITY_TYPE_SUMMARY {
+            assert!(docs.summary_refs.contains(&hit.reference));
+            assert_eq!(
+                reader
+                    .expand_doc_ladder_ref(&hit.reference)?
+                    .value
+                    .unwrap()
+                    .level,
+                DocsExpansionLevel::Summary
+            );
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn ocr_asset_text_cannot_fill_document_result_or_offer_an_unopenable_ref() -> Result<()> {
+    let (_dir, vault, docs, _) = searchable_docs(&document())?;
+    let ocr = EntityId::now();
+    let raw = NormalizedIngestEntity {
+        entity_type: crate::registry::ENTITY_TYPE_ASSET_TEXT,
+        body: "[PROVENANCE recognizer_locality=1]\n[OCR]\nGravity attraction\n".into(),
+        recognizer_locality: Some(LocalityRung::HostLocal),
+    };
+    admit_imported_entity(&vault, &ocr, &raw, TimeRange { start: 3, end: 3 }, 3)?;
+    vault
+        .batch()
+        .text(&ocr, &[("text", raw.body.as_str())])
+        .commit()?;
+    vault.put_vector(&ocr, &[1.0, 0.0, 0.0, 0.0])?;
+    assert_eq!(vault.get(&ocr)?, Some(raw.body.into_bytes()));
+    let reader = vault.scoped_read(crate::claim::ScopedReadActorKey::new("owner").unwrap());
+    for (query, expected_kind) in [
+        ("Gravity", crate::registry::ENTITY_TYPE_SUMMARY),
+        ("attraction", crate::registry::ENTITY_TYPE_ASSET_TEXT),
+    ] {
+        let hits =
+            reader.search_docs_summaries_with_vector(query, Some(&[1.0, 0.0, 0.0, 0.0]), 1)?;
+        assert_eq!(hits.value.len(), 1, "OCR must not starve {query}");
+        let hit = &hits.value[0];
+        assert_ne!(hit.reference, ocr.to_hex());
+        assert_eq!(hit.entity_type, expected_kind);
+        let expanded = reader.expand_doc_ladder_ref(&hit.reference)?.value.unwrap();
+        assert_eq!(
+            expanded.level,
+            if expected_kind == crate::registry::ENTITY_TYPE_SUMMARY {
+                DocsExpansionLevel::Summary
+            } else {
+                DocsExpansionLevel::Span
+            }
+        );
+        assert!(expanded.next_ref.is_some());
+        if expected_kind == crate::registry::ENTITY_TYPE_ASSET_TEXT {
+            assert!(docs.chunk_refs.contains(&hit.reference));
+            assert!(hit.summary.is_none());
+        }
+    }
+    assert!(
+        reader
+            .search_docs_summaries_with_vector(
+                "unmatched_query_xyz",
+                Some(&[1.0, 0.0, 0.0, 0.0]),
+                1,
+            )?
+            .value
+            .is_empty()
+    );
+    Ok(())
+}
+
+#[test]
+fn fused_receipt_adds_disjoint_lexical_and_vector_exclusions() -> Result<()> {
+    let mut pages = document();
+    pages.pages.push(DocsPage {
+        page_id: "other-page".into(),
+        path: "other.md".into(),
+        text: "# Orbit\n\nOrbit describes motion.".into(),
+    });
+    let (_dir, vault, docs, _) = searchable_docs(&pages)?;
+    let orbit = EntityId::from_hex(&docs.summary_refs[2])?;
+    vault.put_vector(&orbit, &[1.0, 0.0, 0.0, 0.0])?;
+    let reader = vault.scoped_read(crate::claim::ScopedReadActorKey::new("owner").unwrap());
+    let only = |kind| crate::gate::RetrievalFilter {
+        entity_types: Some(std::collections::BTreeSet::from([kind])),
+        ..Default::default()
+    };
+    let summary = only(crate::registry::ENTITY_TYPE_SUMMARY);
+    let chunk = only(crate::registry::ENTITY_TYPE_ASSET_TEXT);
+    let lexical_summary = reader
+        .search_text("Gravity", 16, Some(&summary))?
+        .receipt
+        .suppressed_count;
+    let lexical_chunk = reader
+        .search_text("Gravity", 16, Some(&chunk))?
+        .receipt
+        .suppressed_count;
+    let vector_summary = reader
+        .search_vector(&[1.0, 0.0, 0.0, 0.0], 16, Some(&summary))?
+        .receipt
+        .suppressed_count;
+    let vector_chunk = reader
+        .search_vector(&[1.0, 0.0, 0.0, 0.0], 16, Some(&chunk))?
+        .receipt
+        .suppressed_count;
+    assert!(lexical_chunk > 0 && vector_chunk > 0);
+    assert!(lexical_chunk + vector_chunk > lexical_chunk.max(vector_chunk));
+    let fused =
+        reader.search_docs_summaries_with_vector("Gravity", Some(&[1.0, 0.0, 0.0, 0.0]), 16)?;
+    assert_eq!(
+        fused.receipt.suppressed_count,
+        lexical_summary + lexical_chunk + vector_summary + vector_chunk
+    );
     Ok(())
 }
 
