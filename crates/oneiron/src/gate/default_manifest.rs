@@ -41,6 +41,10 @@ pub(crate) fn default_policy_manifest() -> Vec<u8> {
             Value::from(POLICY_SCHEMA_VERSION),
         ),
         (
+            Value::from(super::constants::POLICY_ASK_POLICY_KEY),
+            super::ask_policy::AskOperationalPolicy::default_manifest_value(),
+        ),
+        (
             Value::from(POLICY_PACK_ID_KEY),
             Value::from("oneiron-default-policy"),
         ),

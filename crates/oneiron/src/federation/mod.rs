@@ -35,8 +35,9 @@ pub use self::coreference::{
 };
 pub use self::grant::{
     FEDERATION_GRANT_BODY_KEYS, FEDERATION_GRANT_SCHEMA_VERSION, FederationGrant,
-    FederationGrantPreset, FederationGrantRole, FederationGrantScope, MAX_DELEGATE_TTL_SECS,
-    decode_federation_grant_body, encode_federation_grant_body,
+    FederationGrantGuestPayload, FederationGrantPreset, FederationGrantRole, FederationGrantScope,
+    MAX_DELEGATE_TTL_SECS, MAX_GUEST_DISCLOSED_REFS, decode_federation_grant_body,
+    encode_federation_grant_body,
 };
 pub use self::guest::{
     GUEST_SHARE_ENVELOPE_BODY_KEYS, GUEST_SHARE_ENVELOPE_KEYS, GUEST_SHARE_ENVELOPE_SCHEMA_VERSION,

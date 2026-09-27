@@ -5325,6 +5325,7 @@ fn document_peer_import_rechecks_pact_activation_ceiling_and_expiry_in_txn() {
         preset: FederationGrantPreset::Delegate,
         expires_at: Some(1),
         delegated_by: Some(entity_id(0x35)),
+        guest: None,
     };
     vault
         .batch()
@@ -5703,4 +5704,37 @@ fn federation_addressing_copy_requires_stamped_source_and_exact_edge_bytes() {
             .any(|(_, row)| row.container == QuarantineContainer::Edges
                 && row.reason_code == "ReservedEdgeKind")
     );
+}
+
+#[test]
+fn ask_guest_grant_cannot_authorize_sync_selector() {
+    let member = entity_id(0x70);
+    let group = entity_id(0x71);
+    let guest = FederationGrant::ask_guest(
+        group,
+        member,
+        entity_id(0x72),
+        entity_id(0x73),
+        std::collections::BTreeSet::from([entity_id(0x74)]),
+    )
+    .expect("valid guest grant");
+    let dir = tempfile::tempdir().unwrap();
+    let vault = Vault::open(dir.path(), crate::VaultConfig::device()).unwrap();
+    let grant_id = EntityId::now();
+    let body = encode_federation_grant_body(&guest).unwrap();
+    vault
+        .batch()
+        .put_replicated(
+            &grant_id,
+            ENTITY_TYPE_FEDERATION_GRANT,
+            TimeRange { start: 1, end: 1 },
+            1,
+            &body,
+        )
+        .commit()
+        .unwrap();
+    let selector = SyncSelector::new(grant_id, member, SyncSelectorWorld::All, vec![], vec![]);
+
+    assert!(authorize_sync_selector(&vault, FederationGrantScope::ask(group), &selector).is_err());
+    assert!(authorize_sync_selector(&vault, FederationGrantScope::vault(7), &selector).is_err());
 }

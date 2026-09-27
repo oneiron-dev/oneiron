@@ -83,6 +83,30 @@ pub(super) fn hash_policy_frontier_v0(
         hash_str(hasher, "weave_correction_policy");
         policy.hash_into(hasher);
     }
+    if let Some(ask) = &resolution.ask_policy {
+        hash_str(hasher, "ask_operational_policy.v1");
+        hash_u64(hasher, u64::from(ask.guest_fact_limit));
+        hash_u64(hasher, u64::from(ask.retry_page_limit));
+        hash_str(hasher, ask.default_surface.token());
+        hash_str(hasher, ask.precedence.token());
+        hash_len(hasher, ask.allowed_surfaces.len());
+        for surface in &ask.allowed_surfaces {
+            hash_str(hasher, surface.token());
+        }
+        hash_len(hasher, ask.holder_overrides.len());
+        for (holder, override_row) in &ask.holder_overrides {
+            hash_bytes(hasher, holder.as_bytes());
+            hash_u64(
+                hasher,
+                u64::from(override_row.guest_fact_limit.unwrap_or(0)),
+            );
+            hash_u64(
+                hasher,
+                u64::from(override_row.retry_page_limit.unwrap_or(0)),
+            );
+            hash_opt_str(hasher, override_row.surface.map(|s| s.token()));
+        }
+    }
 
     hash_len(hasher, resolution.packs.len());
     for pack in &resolution.packs {
