@@ -1960,13 +1960,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/authority/readonly_fold.rs",
      "purpose": "One read-snapshot authority evaluator shared by Vault and the batch write door",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 8
      }
     },
     {
@@ -2110,7 +2110,7 @@
      "path": "src/authority/stale_roster.rs",
      "purpose": "Clock-free expiry of approvals resting on a subsequently revoked roster",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 2
      }
     },
     {
@@ -2266,12 +2266,14 @@
      "surface": {}
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "test",
      "notable": [],
      "path": "src/authority/tests/readonly_fold.rs",
      "purpose": "Readonly fold against full fold under clock skew and sidecars",
-     "surface": {}
+     "surface": {
+      "crate-vis": 1
+     }
     },
     {
      "bucket": "s",
@@ -2334,13 +2336,13 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "src",
      "notable": [],
      "path": "src/authority/vault_api.rs",
      "purpose": "`impl Vault` — the AUTHORITY_LOG read/write door",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 3,
       "fn": 4
      }
     },
@@ -11350,7 +11352,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "test",
      "notable": [],
      "path": "src/context_pack/capability_tests.rs",
@@ -19996,12 +19998,39 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [
+      "DecisionInput",
+      "DecisionRule",
+      "DecisionSeat",
+      "LabelClassifier",
+      "LocalDecisionSeat",
+      "RuleExpression"
+     ],
+     "path": "src/llm/decision/local.rs",
+     "purpose": "Fixed-label local decision seat; runtime/model loading stays with the host",
+     "surface": {
+      "enum": 1,
+      "struct": 3,
+      "trait": 2
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "src/llm/decision/local/tests.rs",
+     "purpose": "—",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [],
      "path": "src/llm/decision/mod.rs",
      "purpose": "Typed question records and shared outcome projection",
      "surface": {
       "mod": 1,
-      "re-export": 4
+      "re-export": 5
      }
     },
     {
@@ -23861,7 +23890,7 @@
      "path": "src/pipeline/capabilities.rs",
      "purpose": "Capability candidates have a separate turn budget, never the memory budget",
      "surface": {
-      "crate-vis": 8
+      "crate-vis": 9
      }
     },
     {
@@ -29073,6 +29102,30 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "AxisArm",
+      "AxisScores",
+      "ConfidenceInterval",
+      "GoalAxisBandit",
+      "GoalAxisPlan",
+      "GoalAxisReport",
+      "GoalAxisScorer",
+      "OnlineAxisMeasurement",
+      "OnlineAxisOutcome",
+      "OnlineAxisSample"
+     ],
+     "path": "src/skill_optimize/goal_axes.rs",
+     "purpose": "Goal-axis measurements for the future goal-record admission door",
+     "surface": {
+      "enum": 2,
+      "fn": 1,
+      "struct": 6,
+      "trait": 2
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [
@@ -29095,7 +29148,7 @@
      "purpose": "SKILL-OPT-1 (ONE-1448, ARCH-0026 dreamer-v2 \"Optimize skills\"): the Dreamer maintenance job that keeps skill…",
      "surface": {
       "crate-vis": 2,
-      "re-export": 7
+      "re-export": 8
      }
     },
     {
@@ -29185,7 +29238,7 @@
      "path": "src/skill_reliability/mod.rs",
      "purpose": "ARCH-0053 §5 skill reliability (SK-05, ONE-1738): the Beta(α, β) posterior that decides which skills load…",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 3,
       "re-export": 6
      }
     },
@@ -29225,6 +29278,7 @@
      "path": "src/skill_reliability/provenance.rs",
      "purpose": "Classifying a stored skill for the prior table: the scan-clearance and hub-vouch reads behind the…",
      "surface": {
+      "crate-vis": 1,
       "fn": 2
      }
     },
@@ -29235,7 +29289,7 @@
      "path": "src/skill_reliability/read.rs",
      "purpose": "Reading reliability truth back: the resolved posterior, the selection score, and the confidence-cache rebuild",
      "surface": {
-      "crate-vis": 4,
+      "crate-vis": 6,
       "fn": 3
      }
     },
@@ -29713,6 +29767,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/store/retrieval_telemetry/end_outcome.rs",
+     "purpose": "Terminal attribution-gated retrieval outcome writer",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/store/retrieval_telemetry/mod.rs",
      "purpose": "Retrieval telemetry: run records, trace fork index, outcome rows, and reward-weighted blend-weight tuning",
      "surface": {
@@ -29727,7 +29791,7 @@
      "path": "src/store/retrieval_telemetry/run_store.rs",
      "purpose": "Retrieval-run, outcome, and trace-fork persistence: `Store` and `SessionStoreView` methods, staging bodies…",
      "surface": {
-      "crate-vis": 24,
+      "crate-vis": 26,
       "fn": 3
      }
     },
@@ -29774,8 +29838,10 @@
       "RetrievalBlendWeightDataWindow",
       "RetrievalBlendWeightTableEntry",
       "RetrievalBlendWeights",
+      "RetrievalEndOutcome",
       "RetrievalOutcome",
       "RetrievalOutcomeRecord",
+      "RetrievalRewardEvidence",
       "RetrievalRunId",
       "RetrievalRunRecord",
       "RetrievalScoreBreakdown",
@@ -29789,10 +29855,10 @@
      "path": "src/store/retrieval_telemetry/types.rs",
      "purpose": "Retrieval-telemetry record, trace, signal, and blend-weight types",
      "surface": {
-      "crate-vis": 11,
+      "crate-vis": 12,
       "enum": 4,
       "fn": 9,
-      "struct": 13,
+      "struct": 15,
       "type": 1
      }
     },
@@ -32587,7 +32653,7 @@
      "purpose": "Vault text and vector search, batch and query builders, and retrieval telemetry",
      "surface": {
       "crate-vis": 5,
-      "fn": 21
+      "fn": 22
      }
     },
     {
@@ -35031,7 +35097,7 @@
      "purpose": "Deterministic LinkedIn entity resolution and explicit runtime-path corpus preload"
     },
     "llm": {
-     "files": 73,
+     "files": 75,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -35388,7 +35454,7 @@
      "purpose": "Skill-hub records, provenance aliases, adapter contracts, and update gates"
     },
     "skill_optimize": {
-     "files": 15,
+     "files": 16,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -35423,7 +35489,7 @@
      "purpose": "EMB-5 speculative retrieval over ASR partials (ONE-EMBED E7)"
     },
     "store": {
-     "files": 49,
+     "files": 50,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -35586,8 +35652,8 @@
    },
    "over_bar": 10,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2100,
-   "test_files": 720
+   "source_files": 2103,
+   "test_files": 721
   },
   "oneiron-android": {
    "files": [
@@ -36126,6 +36192,16 @@
      "purpose": "ONE-218 eval-side driver for the telemetry-v0 retrieval-outcome loop",
      "surface": {
       "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/eval/outcome_ingest.rs",
+     "purpose": "JSONL terminal retrieval outcome ingest for the explicit eval command",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -36750,7 +36826,7 @@
      "purpose": "BEAM scaffold and fixed scorer for EVAL-001/EVAL-002"
     },
     "eval": {
-     "files": 2,
+     "files": 3,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "file+dir",
@@ -36808,7 +36884,7 @@
    },
    "over_bar": 0,
    "purpose": "oneiron-bench — benchmark harness skeleton",
-   "source_files": 98,
+   "source_files": 99,
    "test_files": 18
   },
   "oneiron-driver": {
