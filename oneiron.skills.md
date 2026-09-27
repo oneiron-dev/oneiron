@@ -562,7 +562,7 @@ Authentication: configured API bearer credential, unless the server explicitly a
 Path parameters:
 
 - `artifact` required: code project id or canonical lowercase hex blob entity id.
-- `path` optional: code snapshot file path, or the blob export name / stable `export` path. Root requests select `index.html` for code and the export for blobs.
+- `path` optional: code snapshot file path, or the blob export name / stable `export` path. Short entry URLs `/a/{artifact}/` and `/a/{artifact}/_t/{token}/` authorize first, then redirect to canonical `/a/{artifact}/_s/c/published/` or `/a/{artifact}/_t/{token}/_s/c/published/`. Preview uses `/_s/c/preview/`; immutable exports use `/_s/f/{forkHash}/` and `/_s/b/{blobVersion}/`, with the same optional token prefix. The fixed-position `_s` selector marker is never searched inside the artifact id or file suffix. Bundle paths after it may contain `c/`, `f/`, `b/`, `_s/`, or `_t/` as ordinary directories. Code roots select `index.html`; blob roots select the export. Every query-selected entry authorizes then redirects to its selector-bearing path so relative assets inherit both capability and selection. Names containing `#`, `?`, and `%` retain their encoded spelling across redirects.
 
 Query parameters:
 
@@ -572,10 +572,10 @@ Query parameters:
 
 Response behavior:
 
-- Resolves the channel pointer to a pinned code snapshot or blob version. Explicit `forkHash` and `blobVersion` select immutable exports directly. Codebase-class snapshots are not hostable.
-- Repointing published or preview changes future channel reads, not the pinned versions. Unpublish removes a channel, not direct version reads.
-- Returns `404` when the pointer, version, or file is absent, and `400` for malformed or mutually exclusive selector parameters.
-- Code channel responses use `Cache-Control: no-cache, max-age=0, must-revalidate`; direct code snapshots use `public, max-age=31536000, immutable`. Blob channels use `private, no-cache, max-age=0, must-revalidate` and direct blob versions use `private, max-age=31536000, immutable`. Code snapshots use content-hash ETags; blob exports use version-scoped ETags (including the content hash), so same-byte repoints with different pinned presentation revalidate. Both kinds send restrictive CSP. Blob responses render only passive allowlisted media types inline; active or unknown types download as `application/octet-stream` attachments with `X-Content-Type-Options: nosniff`. No public publishing tier is enabled.
+- Resolves only an authorized live channel pointer to a pinned code snapshot or blob version. Explicit `forkHash` and `blobVersion` require a matching live published or preview pin; unpinned versions and codebase-class snapshots are not hostable.
+- Serving tiers are private by default: an explicitly public pin serves anonymously; a link-token pin needs its 256-bit URL capability; a world-member pin needs a verified, unrestricted read credential and a live federation membership grant. Wrong or missing authority, absent files, and unpublished pointers return the same artifact `404`. Repointing and unpublishing revoke old direct-version serving, not the underlying immutable export.
+- Returns `400` for malformed or mutually exclusive selector parameters. No vault API is available to served bundles.
+- Public code channel responses use `Cache-Control: no-cache, max-age=0, must-revalidate`; pinned public code snapshots use `public, max-age=31536000, immutable`. Public blob channels use `private, no-cache, max-age=0, must-revalidate` and direct public blob versions use `private, max-age=31536000, immutable`. Token and member responses use `private, no-store`. All responses send `Referrer-Policy: no-referrer` to protect capability URLs. Code snapshots use content-hash ETags; blob exports use version-scoped ETags (including the content hash), so same-byte repoints with different pinned presentation revalidate. Both kinds send restrictive CSP. Blob responses render only passive allowlisted media types inline; active or unknown types download as `application/octet-stream` attachments with `X-Content-Type-Options: nosniff`.
 
 ### Core Discovery
 
