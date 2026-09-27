@@ -33,11 +33,11 @@ SUCCESS = {
         "items": [],
         "scope_honesty": {"out_of_scope_worlds": []},
         # The client decodes a recall into the engine's RetrievalMeta and
-        # re-encodes it, so `quality` and `confidenceAdjustment` are always
+        # re-encodes it, so `quality` and `confidence_adjustment` are always
         # present (engine defaults when the server omits them: passthrough,
         # -0.35) and `degradation` only when non-empty.
         "retrieval_meta": {
-            "quality": "passthrough", "confidenceAdjustment": -0.35,
+            "quality": "passthrough", "confidence_adjustment": -0.35,
             "sparse": True, "total_candidates": 0,
             "claims_returned": 0, "deep_pending": None,
             # A non-default deadline flag must survive the native DTO round-trip.
