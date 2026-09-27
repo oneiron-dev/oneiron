@@ -651,6 +651,8 @@ fn settlement_record_round_trips_through_msgpack() -> Result<()> {
         content_hash: Some([0xA5; BLOB_ARTIFACT_CONTENT_HASH_LEN]),
         manifest_ref: Some([0xB6; 32]),
         manifest_ops: 3,
+        pptx_slide_creation_id_mints: Vec::new(),
+        pptx_review_identities: Vec::new(),
         anchors: vec![
             SettledAnchor {
                 thread_id: EntityId::now(),
@@ -679,6 +681,8 @@ fn settlement_record_round_trips_through_msgpack() -> Result<()> {
         content_hash: None,
         manifest_ref: None,
         manifest_ops: 0,
+        pptx_slide_creation_id_mints: Vec::new(),
+        pptx_review_identities: Vec::new(),
         anchors: Vec::new(),
         reason: Some("not wanted".to_owned()),
     };

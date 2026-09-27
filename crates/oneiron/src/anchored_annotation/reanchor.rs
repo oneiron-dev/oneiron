@@ -21,6 +21,10 @@ use crate::write_envelope::WriteActor;
 impl From<&AnchorEffect> for ReanchorOp {
     fn from(effect: &AnchorEffect) -> Self {
         match effect {
+            AnchorEffect::PptxSlideCreationId { slide, creation_id } => Self::PptxSlideCreationId {
+                slide: *slide,
+                creation_id: *creation_id,
+            },
             AnchorEffect::Shift(shift) => shift_to_reanchor_op(shift),
             AnchorEffect::RangeMoved { sheet, from, to } => Self::MoveRange {
                 sheet: sheet.clone(),
@@ -127,6 +131,7 @@ pub fn replay_locator(locator: &Locator, ops: &[ReanchorOp]) -> ReanchorOutcome 
             continue;
         }
         match op {
+            ReanchorOp::PptxSlideCreationId { .. } => continue,
             ReanchorOp::InsertRows { at_row, count, .. } => {
                 if *count == 0 || *at_row == 0 {
                     continue;
@@ -346,11 +351,25 @@ impl Vault {
     ) -> Result<ReanchorSummary> {
         self.require_anchor_version(artifact_id, to_version)?;
         let mut summary = ReanchorSummary::default();
-        for thread in self.annotation_threads_for_artifact(artifact_id)? {
+        let threads = self.annotation_threads_for_artifact(artifact_id)?;
+        let pptx = {
+            let rtxn = self.store.env.read_txn()?;
+            super::pptx_reanchor::PptxReanchor::load(
+                self,
+                &rtxn,
+                artifact_id,
+                from_version,
+                to_version,
+                &threads,
+                ops,
+            )?
+        };
+        for thread in threads {
             if thread.is_drifted() || thread.anchor.version != from_version {
                 continue;
             }
-            let (head, drifted) = plan_reanchored_head(&thread, from_version, to_version, ops);
+            let (head, drifted) =
+                plan_reanchored_head(&thread, from_version, to_version, ops, pptx.as_ref());
             // Each thread's head write + old-head supersede share ONE txn, so a
             // rejected supersede leaves that thread's original head live.
             let new_head_id = self.with_write_txn(|wtxn| {
@@ -395,11 +414,21 @@ impl Vault {
         self.require_anchor_version_in_txn(&*wtxn, artifact_id, to_version)?;
         let mut summary = ReanchorSummary::default();
         let threads = self.annotation_threads_for_artifact_in_txn(&*wtxn, artifact_id)?;
+        let pptx = super::pptx_reanchor::PptxReanchor::load(
+            self,
+            wtxn,
+            artifact_id,
+            from_version,
+            to_version,
+            &threads,
+            ops,
+        )?;
         for thread in threads {
             if thread.is_drifted() || thread.anchor.version != from_version {
                 continue;
             }
-            let (head, drifted) = plan_reanchored_head(&thread, from_version, to_version, ops);
+            let (head, drifted) =
+                plan_reanchored_head(&thread, from_version, to_version, ops, pptx.as_ref());
             let new_head_id = self.apply_reanchor_head_in_txn(
                 wtxn,
                 artifact_id,
@@ -454,8 +483,14 @@ fn plan_reanchored_head(
     from_version: u64,
     to_version: u64,
     ops: &[ReanchorOp],
+    pptx: Option<&super::pptx_reanchor::PptxReanchor>,
 ) -> (ThreadHead, bool) {
-    match replay_locator(&thread.anchor.locator, ops) {
+    let outcome = if matches!(thread.anchor.locator, Locator::Pptx { .. }) {
+        pptx.map_or(ReanchorOutcome::Drifted, |context| context.rebind(thread))
+    } else {
+        replay_locator(&thread.anchor.locator, ops)
+    };
+    match outcome {
         ReanchorOutcome::Mapped(locator) => (
             ThreadHead {
                 thread_id: thread.thread_id,

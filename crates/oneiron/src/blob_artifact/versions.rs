@@ -248,7 +248,7 @@ impl Vault {
 
     /// Settle's append door, with the calculator that produced cached values.
     #[expect(clippy::too_many_arguments)]
-    pub(crate) fn append_blob_artifact_version_with_engine_in_txn(
+    pub(crate) fn append_blob_artifact_version_with_engine_and_parent_in_txn(
         &self,
         wtxn: &mut RwTxn<'_>,
         artifact_id: &EntityId,
@@ -258,6 +258,7 @@ impl Vault {
         actor: WriteActor,
         occurred: TimeRange,
         learned_at: u64,
+        fork_parent: Option<u64>,
     ) -> Result<BlobArtifactVersion> {
         self.append_blob_artifact_version_with_parent_and_engine_in_txn(
             wtxn,
@@ -267,7 +268,7 @@ impl Vault {
             actor,
             occurred,
             learned_at,
-            None,
+            fork_parent,
             calc_engine,
         )
     }

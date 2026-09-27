@@ -1138,6 +1138,34 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/anchored_annotation/pptx_reanchor.rs",
+     "purpose": "PPTX thread re-binding over actual version bytes, including unknown-anchor drift",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/anchored_annotation/pptx_settle.rs",
+     "purpose": "Atomic managed annotation writes accompanying verified modern-comment exports",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "src/anchored_annotation/pptx_tests.rs",
+     "purpose": "PPTX thread identity/drift and consume-once settlement using actual package bytes",
+     "surface": {}
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
@@ -14903,6 +14931,7 @@
      "path": "src/edit_roundtrip/mod.rs",
      "purpose": "ARTL-3 (OF-368 D5): agent edit round-trip — code-session pipeline",
      "surface": {
+      "mod": 1,
       "re-export": 6
      }
     },
@@ -14925,7 +14954,7 @@
      "surface": {}
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "AnchorEffect",
@@ -14956,6 +14985,124 @@
       "enum": 2,
       "fn": 3,
       "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/edit_roundtrip/pptx/archive.rs",
+     "purpose": "Retained ZIP records: unchanged entries keep compression, metadata and local bytes",
+     "surface": {
+      "crate-vis": 6
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/edit_roundtrip/pptx/comments.rs",
+     "purpose": "Modern threaded comments using retained XML surgery and a derived part allowlist",
+     "surface": {
+      "crate-vis": 2,
+      "fn": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/edit_roundtrip/pptx/identities.rs",
+     "purpose": "Imported slide/shape identities and conservative creation-ID re-binding",
+     "surface": {
+      "crate-vis": 7,
+      "fn": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/edit_roundtrip/pptx/links.rs",
+     "purpose": "OPC link additions and modern-comment part discovery; retained XML insertion only",
+     "surface": {
+      "crate-vis": 13
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/edit_roundtrip/pptx/mod.rs",
+     "purpose": "Narrow, byte-preserving modern PowerPoint comment edits",
+     "surface": {
+      "crate-vis": 2,
+      "re-export": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "PptxAnchorOutcome",
+      "PptxAuthor",
+      "PptxCommentAction",
+      "PptxCommentEffects",
+      "PptxCommentPatch",
+      "PptxCommentTarget",
+      "PptxDriftReason",
+      "PptxError",
+      "PptxInspection",
+      "PptxProposalError",
+      "PptxShapeIdentity",
+      "PptxSlideIdentity"
+     ],
+     "path": "src/edit_roundtrip/pptx/package.rs",
+     "purpose": "Public PowerPoint comment requests, inspection facts, and typed refusals",
+     "surface": {
+      "crate-vis": 19,
+      "enum": 5,
+      "struct": 7
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/edit_roundtrip/pptx/proposal.rs",
+     "purpose": "Modern comments use the existing retained-output proposal and consume-once settle",
+     "surface": {
+      "fn": 3
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "src/edit_roundtrip/pptx/tests.rs",
+     "purpose": "Returned bytes and typed refusals; no assertions of PowerPoint visibility",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/edit_roundtrip/pptx/tests/support.rs",
+     "purpose": "Small OPC fixtures, not PowerPoint application-oracle evidence",
+     "surface": {
+      "crate-vis": 7
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/edit_roundtrip/pptx/xml.rs",
+     "purpose": "Namespace-aware XML spans for surgical edits",
+     "surface": {
+      "crate-vis": 17
      }
     },
     {
@@ -14997,7 +15144,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/edit_settle/codec.rs",
@@ -15014,7 +15161,7 @@
      "purpose": "Pinned ledger keys and receipt fields",
      "surface": {
       "const": 4,
-      "crate-vis": 32
+      "crate-vis": 34
      }
     },
     {
@@ -15042,6 +15189,7 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
+      "PptxReviewIdentity",
       "SettleConsent",
       "SettleDiscardOutcome",
       "SettleOutcomeKind",
@@ -15056,7 +15204,7 @@
       "crate-vis": 1,
       "enum": 2,
       "fn": 2,
-      "struct": 5
+      "struct": 6
      }
     },
     {
@@ -34210,7 +34358,7 @@
      "purpose": "Multilingual analyzer subsystem"
     },
     "anchored_annotation": {
-     "files": 7,
+     "files": 10,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -34693,7 +34841,7 @@
      "purpose": "ED-00 (ARCH-0056 §2–3): the proposal-artifact substrate the edit-distance feedback loop replays, plus the…"
     },
     "edit_roundtrip": {
-     "files": 12,
+     "files": 22,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -35472,8 +35620,8 @@
    },
    "over_bar": 9,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2094,
-   "test_files": 718
+   "source_files": 2104,
+   "test_files": 721
   },
   "oneiron-android": {
    "files": [
