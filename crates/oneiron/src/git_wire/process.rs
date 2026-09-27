@@ -1,13 +1,10 @@
 //! The crate's single git child-process constructor plus its bounded IO and thread-pump helpers.
 
 use std::ffi::OsString;
-use std::fs;
 use std::io::{Read, Write};
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::process::{Child, Command, ExitStatus, Stdio};
 use std::time::{Duration, Instant};
-
-use tempfile::TempDir;
 
 use super::config::{GIT_WIRE_POLL_INTERVAL, GIT_WIRE_READ_CHUNK_BYTES};
 use super::{GIT_WIRE_CONFIG_POLICY, GIT_WIRE_FIXED_ENV, GitWireProcessEnv};
@@ -34,46 +31,38 @@ pub(crate) struct GitWireProcessOutput {
 /// shell is ever spawned.
 pub(super) fn spawn_git(
     process_env: &GitWireProcessEnv,
-    repo_root: &Path,
-    args: &[OsString],
-    stdin_payload: Option<&[u8]>,
+    command: &super::execution_context::GitCommandSpec<'_>,
 ) -> Result<GitWireProcessOutput> {
-    let repo_root = repo_root.canonicalize()?;
-    // `git init` has no repository configuration to inspect. The empty argv is
-    // used only by the test-only bounded-process probes; no production caller
-    // passes it. Every other git child must refuse executable filter drivers
-    // before the operation can read .gitattributes and run one.
-    if args.is_empty() {
-        // Only test-only process-bound probes use the empty argv.
-        return spawn_git_inner(process_env, &repo_root, args, stdin_payload, None);
+    let repo_root = command.context().root().canonicalize()?;
+    if !command.effect().needs_profile() {
+        return spawn_git_inner(
+            process_env,
+            &repo_root,
+            command.args(),
+            command.stdin(),
+            None,
+        );
     }
-    let verb_index = git_verb_index(process_env, args)?;
-    if args[verb_index].as_os_str() == std::ffi::OsStr::new("init") {
-        return spawn_git_inner(process_env, &repo_root, args, stdin_payload, None);
-    }
-    let prefix = &args[..verb_index];
-    reject_repository_filter_commands(process_env, &repo_root, prefix)?;
-    if !requires_attribute_scope(process_env, args, verb_index) {
-        return spawn_git_inner(process_env, &repo_root, args, stdin_payload, None);
-    }
-    // Include conditions are evaluated again in Git's child worktree, so a
-    // source-root probe cannot approve them. Refuse them before any effect.
-    reject_conditional_config(process_env, &repo_root, prefix)?;
-    let scope = TrustedAttributeScope::new(process_env, &repo_root, args, prefix)?;
-    // Close the source-probe-to-snapshot window too: a changed repository
-    // config is never certified even though the child only sees the sealed
-    // common dir. Changes after this point are checked again on return.
-    reject_repository_filter_commands(process_env, &repo_root, prefix)?;
-    reject_conditional_config(process_env, &repo_root, prefix)?;
-    if scope.source_config_changed()? {
+    let profile = super::repository_profile::AdmittedRepoProfile::admit(
+        process_env,
+        &repo_root,
+        command.prefix(),
+        command.effect().creates_worktree(),
+    )?;
+    let scope = super::execution_scope::PreparedGitExecution::prepare(
+        process_env,
+        profile,
+        command.effect().creates_worktree(),
+    )?;
+    if scope.source_changed()? {
         return Err(super::failure::invalid(
-            "repository configuration changed before git effect",
+            "repository profile changed before git effect",
         ));
     }
     #[cfg(test)]
     if let Some((path, bytes)) = &process_env.after_attribute_snapshot {
         use std::io::Write as _;
-        fs::OpenOptions::new()
+        std::fs::OpenOptions::new()
             .append(true)
             .open(path)?
             .write_all(bytes)?;
@@ -81,354 +70,38 @@ pub(super) fn spawn_git(
     let output = spawn_git_inner(
         process_env,
         &repo_root,
-        args,
-        stdin_payload,
-        Some(scope.shadow.path()),
+        command.args(),
+        command.stdin(),
+        Some(scope.common_dir()),
     )?;
-    // Git may write the temporary common-dir spelling into the linked
-    // worktree's .git file. Replace it with the real registered directory
-    // before the short-lived shadow is dropped, including on partial effects.
-    scope.rebind_created_worktree(args, output.success)?;
-    // A local config edit during the effect cannot reach the child, but the
-    // caller must not receive a success receipt for a changed repository.
-    if scope.source_config_changed()? {
+    if let Some(target) = command.worktree_target() {
+        scope.rebind_created_worktree(target, output.success)?;
+        if output.success
+            && let Some(expected) = command.expected_commit()
+        {
+            let verify = [
+                OsString::from("rev-parse"),
+                OsString::from("--verify"),
+                OsString::from("HEAD"),
+            ];
+            let observed = spawn_git_inner(process_env, target, &verify, None, None)?;
+            if !observed.success || observed.stdout != format!("{}\n", expected.as_str()).as_bytes()
+            {
+                return Err(super::failure::invalid(
+                    "worktree HEAD does not match the requested commit",
+                ));
+            }
+        }
+    }
+    if scope.source_changed()? {
         return Err(super::failure::invalid(
-            "repository configuration changed during git effect",
+            "repository profile changed during git effect",
         ));
     }
     Ok(output)
 }
 
-/// The hub's `--git-dir=repo` is a validated selector for its private bare
-/// scratch store, not the operation. Never drop it from a config/identity probe.
-fn git_verb_index(process_env: &GitWireProcessEnv, args: &[OsString]) -> Result<usize> {
-    let mut index = 0;
-    while let Some(arg) = args.get(index) {
-        if arg.as_os_str() == std::ffi::OsStr::new("-c") {
-            if args.get(index + 1).is_none() {
-                return Err(super::failure::invalid("git -c lacks a value"));
-            }
-            index += 2;
-        } else if arg.as_os_str() == std::ffi::OsStr::new("--git-dir=repo")
-            && process_env.hub_root.is_some()
-        {
-            index += 1;
-        } else {
-            break;
-        }
-    }
-    if args.get(index).is_none() {
-        return Err(super::failure::invalid("git argv has no verb"));
-    }
-    Ok(index)
-}
-
-fn prefixed_probe(prefix: &[OsString], command: &[&str]) -> Vec<OsString> {
-    prefix
-        .iter()
-        .cloned()
-        .chain(command.iter().map(|arg| OsString::from(*arg)))
-        .collect()
-}
-
-fn reject_repository_filter_commands(
-    process_env: &GitWireProcessEnv,
-    repo_root: &Path,
-    prefix: &[OsString],
-) -> Result<()> {
-    // `--includes` considers local and per-worktree includeIf entries;
-    // system/global config is already disabled by the pinned child baseline.
-    // Git has no wildcard override for filter.<driver>.process/clean/smudge,
-    // so an arbitrary driver must fail closed, not be enumerated from a
-    // possibly changing .gitattributes file.
-    let args = prefixed_probe(
-        prefix,
-        &[
-            "config",
-            "--includes",
-            "--null",
-            "--name-only",
-            "--get-regexp",
-            r"^filter\..*\.(clean|smudge|process)$",
-        ],
-    );
-    let probe = spawn_git_inner(process_env, repo_root, &args, None, None)?;
-    if probe.exit_code == Some(1) && !probe.timed_out && !probe.truncated && probe.stdout.is_empty()
-    {
-        return Ok(());
-    }
-    if probe.success && !probe.stdout.is_empty() {
-        return Err(super::failure::invalid(
-            "repository-configured git filter commands are forbidden",
-        ));
-    }
-    Err(super::failure::invalid(
-        "unable to verify repository git filter configuration",
-    ))
-}
-
-/// Only these verbs never consult working-tree attributes while executing.
-/// Unknown verbs go through the isolated common-dir boundary, not the other way
-/// around. `worktree add` is the one worktree subcommand that materializes files.
-fn requires_attribute_scope(
-    process_env: &GitWireProcessEnv,
-    args: &[OsString],
-    index: usize,
-) -> bool {
-    let Some(verb) = args.get(index).and_then(|arg| arg.to_str()) else {
-        return true;
-    };
-    let tail = &args[index + 1..];
-    match verb {
-        "rev-parse" | "for-each-ref" | "show-ref" | "update-ref" | "config" | "remote"
-        | "branch" | "mktree" | "commit-tree" | "notes" | "rev-list" | "merge-base" | "ls-tree"
-        | "ls-files" | "check-ref-format" | "symbolic-ref" | "fsck" | "count-objects"
-        | "pack-refs" | "prune" | "gc" | "version" => false,
-        "cat-file" => tail.iter().any(|arg| {
-            matches!(
-                arg.to_str(),
-                Some("--filters" | "--textconv" | "--batch-command")
-            )
-        }),
-        "hash-object" => tail
-            .iter()
-            .any(|arg| arg.to_string_lossy().starts_with("--path")),
-        // The validated hub profile fetches objects into a bare private repo.
-        // There is no checkout or working-tree attribute consumer, and its
-        // remote.origin config must persist in that repo between calls.
-        "fetch" if process_env.hub_root.is_some() => false,
-        "worktree" => !tail
-            .first()
-            .is_some_and(|arg| matches!(arg.to_str(), Some("list" | "prune" | "remove"))),
-        _ => true,
-    }
-}
-
-fn reject_conditional_config(
-    process_env: &GitWireProcessEnv,
-    repo_root: &Path,
-    prefix: &[OsString],
-) -> Result<()> {
-    let args = prefixed_probe(
-        prefix,
-        &[
-            "config",
-            "--null",
-            "--name-only",
-            "--get-regexp",
-            r"^(include\.path|includeif\..*\.path)$",
-        ],
-    );
-    let probe = spawn_git_inner(process_env, repo_root, &args, None, None)?;
-    if probe.exit_code == Some(1) && !probe.timed_out && !probe.truncated && probe.stdout.is_empty()
-    {
-        return Ok(());
-    }
-    if probe.success && !probe.stdout.is_empty() {
-        return Err(super::failure::invalid(
-            "conditional repository configuration is forbidden for git attribute effects",
-        ));
-    }
-    Err(super::failure::invalid(
-        "unable to verify repository include configuration",
-    ))
-}
-
-/// Read only the effective, normalized boolean. The selector survives for the
-/// validated hub context; linked worktrees contribute their worktree config.
-fn effective_filemode(
-    process_env: &GitWireProcessEnv,
-    repo_root: &Path,
-    prefix: &[OsString],
-) -> Result<bool> {
-    let args = prefixed_probe(prefix, &["config", "--bool", "--get", "core.filemode"]);
-    let probe = spawn_git_inner(process_env, repo_root, &args, None, None)?;
-    if probe.exit_code == Some(1) && !probe.timed_out && !probe.truncated && probe.stdout.is_empty()
-    {
-        return Ok(true); // Git's unset default.
-    }
-    if probe.success {
-        return match probe.stdout.as_slice() {
-            b"true\n" => Ok(true),
-            b"false\n" => Ok(false),
-            _ => Err(super::failure::invalid(
-                "git core.filemode is not a boolean",
-            )),
-        };
-    }
-    Err(super::failure::invalid(
-        "unable to verify git core.filemode configuration",
-    ))
-}
-
-/// A per-child trusted Git common directory. Refs and objects still point at
-/// the proven repository. Executable configuration and `info/attributes` are
-/// private, while harmless versioned `.gitattributes` remain in force.
-struct TrustedAttributeScope {
-    shadow: TempDir,
-    common: PathBuf,
-    original_config: PathBuf,
-    config_before: Option<Vec<u8>>,
-}
-
-impl TrustedAttributeScope {
-    fn new(
-        process_env: &GitWireProcessEnv,
-        repo_root: &Path,
-        args: &[OsString],
-        prefix: &[OsString],
-    ) -> Result<Self> {
-        let command = prefixed_probe(prefix, &["rev-parse", "--git-common-dir"]);
-        let observed = spawn_git_inner(process_env, repo_root, &command, None, None)?;
-        if !observed.success {
-            return Err(super::failure::invalid(
-                "git common directory cannot be verified",
-            ));
-        }
-        let text = std::str::from_utf8(&observed.stdout)
-            .map_err(|_| super::failure::invalid("git common directory must be UTF-8"))?;
-        let dir = Path::new(text.trim());
-        if dir.as_os_str().is_empty() {
-            return Err(super::failure::invalid("git common directory is empty"));
-        }
-        let common = if dir.is_absolute() {
-            dir.to_path_buf()
-        } else {
-            repo_root.join(dir)
-        }
-        .canonicalize()?;
-        let original_config = common.join("config");
-        let config_before = read_optional_config(&original_config)?;
-        let filemode = effective_filemode(process_env, repo_root, prefix)?;
-        let shadow = tempfile::Builder::new()
-            .prefix("oneiron-git-attributes-")
-            .tempdir_in(&process_env.tmpdir)?;
-        fs::create_dir(shadow.path().join("info"))?;
-        fs::write(shadow.path().join("info/attributes"), b"")?;
-        // `core.filemode` changes both cleanliness and the staged executable
-        // bit. Preserve its effective value, never arbitrary repository config.
-        let filemode = if filemode { "true" } else { "false" };
-        fs::write(
-            shadow.path().join("config"),
-            format!(
-                "[core]\n repositoryformatversion = 0\n bare = false\n filemode = {filemode}\n logallrefupdates = true\n"
-            ),
-        )?;
-        if let Ok(exclude) = fs::read(common.join("info/exclude")) {
-            fs::write(shadow.path().join("info/exclude"), exclude)?;
-        }
-        let worktree_add = args.windows(2).any(|pair| {
-            pair[0].as_os_str() == std::ffi::OsStr::new("worktree")
-                && pair[1].as_os_str() == std::ffi::OsStr::new("add")
-        });
-        if worktree_add {
-            fs::create_dir_all(common.join("worktrees"))?;
-        }
-        for entry in ["objects", "refs", "logs", "worktrees", "packed-refs"] {
-            let source = common.join(entry);
-            if source.exists() {
-                link_common_entry(&source, &shadow.path().join(entry))?;
-            }
-        }
-        if !shadow.path().join("objects").exists() || !shadow.path().join("refs").exists() {
-            return Err(super::failure::invalid(
-                "git object and ref stores are unavailable",
-            ));
-        }
-        Ok(Self {
-            shadow,
-            common,
-            original_config,
-            config_before,
-        })
-    }
-
-    fn rebind_created_worktree(&self, args: &[OsString], succeeded: bool) -> Result<()> {
-        let worktree_add = args.windows(2).any(|pair| {
-            pair[0].as_os_str() == std::ffi::OsStr::new("worktree")
-                && pair[1].as_os_str() == std::ffi::OsStr::new("add")
-        });
-        if !worktree_add {
-            return Ok(());
-        }
-        let target = args
-            .iter()
-            .position(|arg| arg.as_os_str() == std::ffi::OsStr::new("--"))
-            .and_then(|index| args.get(index + 1))
-            .ok_or_else(|| super::failure::invalid("worktree add path is missing"))?;
-        let git_file = Path::new(target).join(".git");
-        let meta = match fs::symlink_metadata(&git_file) {
-            Ok(meta) => meta,
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound && !succeeded => {
-                return Ok(());
-            }
-            Err(error) => return Err(error.into()),
-        };
-        if !meta.file_type().is_file() {
-            return Err(super::failure::invalid(
-                "worktree gitdir is not a regular file",
-            ));
-        }
-        let current = fs::read_to_string(&git_file)?;
-        let prefix = format!("gitdir: {}/worktrees/", self.shadow.path().display());
-        let Some(name) = current
-            .strip_prefix(&prefix)
-            .map(|text| text.trim_end_matches('\n'))
-        else {
-            // Some Git versions resolve the symlink themselves and write the
-            // real common-dir path. Never overwrite an unrelated .git file.
-            let real_prefix = format!("gitdir: {}/worktrees/", self.common.display());
-            if current.starts_with(&real_prefix) {
-                return Ok(());
-            }
-            return Err(super::failure::invalid(
-                "worktree gitdir has an unexpected owner",
-            ));
-        };
-        if name.is_empty() || name.contains('/') || name.contains('\\') {
-            return Err(super::failure::invalid(
-                "worktree registration name is malformed",
-            ));
-        }
-        let registered = self.common.join("worktrees").join(name);
-        if !registered.is_dir() {
-            return Err(super::failure::invalid("worktree registration is missing"));
-        }
-        let mut replacement = tempfile::NamedTempFile::new_in(Path::new(target))?;
-        writeln!(replacement, "gitdir: {}", registered.display())?;
-        replacement
-            .persist(&git_file)
-            .map_err(|error| error.error)?;
-        Ok(())
-    }
-
-    fn source_config_changed(&self) -> Result<bool> {
-        Ok(read_optional_config(&self.original_config)? != self.config_before)
-    }
-}
-
-fn read_optional_config(path: &Path) -> Result<Option<Vec<u8>>> {
-    match fs::read(path) {
-        Ok(bytes) => Ok(Some(bytes)),
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
-        Err(error) => Err(error.into()),
-    }
-}
-
-#[cfg(unix)]
-fn link_common_entry(source: &Path, target: &Path) -> Result<()> {
-    std::os::unix::fs::symlink(source, target)?;
-    Ok(())
-}
-
-#[cfg(not(unix))]
-fn link_common_entry(_source: &Path, _target: &Path) -> Result<()> {
-    Err(super::failure::invalid(
-        "isolated git attributes require a supported host",
-    ))
-}
-
-fn spawn_git_inner(
+pub(super) fn spawn_git_inner(
     process_env: &GitWireProcessEnv,
     repo_root: &Path,
     args: &[OsString],

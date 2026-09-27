@@ -75,6 +75,10 @@ pub(super) struct StoredGitWireRecord {
     pub(super) keep_refs: Vec<String>,
     /// Hash of the worktree handle this record owns, for worktree effects.
     pub(super) worktree_scope: Option<[u8; 32]>,
+    /// Commit the worktree add must resolve even after crash recovery. An
+    /// absent value on a legacy prepared row cannot certify an add.
+    #[serde(default)]
+    pub(super) worktree_commit: Option<String>,
     pub(super) failure: Option<String>,
     started_at: u64,
     finished_at: Option<u64>,
@@ -115,6 +119,10 @@ impl StoredGitWireRecord {
         for keep in &self.keep_refs {
             hash_field(&mut hasher, keep.as_bytes());
         }
+        hash_field(
+            &mut hasher,
+            self.worktree_commit.as_deref().unwrap_or("-").as_bytes(),
+        );
         hash_field(&mut hasher, &self.started_at.to_be_bytes());
         *hasher.finalize().as_bytes()
     }
@@ -296,6 +304,7 @@ pub(super) fn new_record(
         observed_after: Vec::new(),
         keep_refs: Vec::new(),
         worktree_scope: None,
+        worktree_commit: None,
         failure: None,
         started_at: now,
         finished_at: None,

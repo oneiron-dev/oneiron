@@ -17233,7 +17233,7 @@
      "path": "src/git_wire/argv.rs",
      "purpose": "Frozen typed argv: one constructor per git verb plus the token validators",
      "surface": {
-      "crate-vis": 25
+      "crate-vis": 26
      }
     },
     {
@@ -17243,7 +17243,7 @@
      "path": "src/git_wire/bridge.rs",
      "purpose": "`repo_mutation` migration bridge: validated arbitrary-argv entry plus failure redaction",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 4
      }
     },
     {
@@ -17290,6 +17290,26 @@
       "crate-vis": 2,
       "fn": 5,
       "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/git_wire/execution_context.rs",
+     "purpose": "Typed Git invocation context: repository selector and operation policy travel together",
+     "surface": {
+      "crate-vis": 17
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/git_wire/execution_scope.rs",
+     "purpose": "Private Git execution view, derived only from an admitted repository profile",
+     "surface": {
+      "crate-vis": 5
      }
     },
     {
@@ -17404,7 +17424,7 @@
      "path": "src/git_wire/process.rs",
      "purpose": "The crate's single git child-process constructor plus its bounded IO and thread-pump helpers",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 5
      }
     },
     {
@@ -17439,6 +17459,16 @@
       "crate-vis": 4,
       "fn": 6,
       "struct": 2
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/git_wire/repository_profile.rs",
+     "purpose": "Admission of immutable Git layout and worktree semantics before an attribute-consuming effect",
+     "surface": {
+      "crate-vis": 9
      }
     },
     {
@@ -34649,7 +34679,7 @@
      "purpose": "OF-336 generated-UI component contract"
     },
     "git_wire": {
-     "files": 22,
+     "files": 25,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -35323,7 +35353,7 @@
    },
    "over_bar": 9,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2084,
+   "source_files": 2087,
    "test_files": 716
   },
   "oneiron-android": {

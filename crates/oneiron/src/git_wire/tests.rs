@@ -2,6 +2,7 @@ use std::fs;
 
 use tempfile::TempDir;
 
+use super::execution_context::{GitCommandSpec, GitExecutionEffect};
 use super::*;
 use crate::VaultConfig;
 use crate::checkout::lease::{CheckoutId, CheckoutLeaseState, CheckoutTaskClass};
@@ -64,7 +65,15 @@ fn init_repo() -> TestRepo {
 }
 
 fn init_repo_at(dir: TempDir) -> TestRepo {
-    run_git(dir.path(), &["init"]);
+    init_repo_at_with_format(dir, None)
+}
+
+fn init_repo_at_with_format(dir: TempDir, ref_format: Option<&str>) -> TestRepo {
+    match ref_format {
+        Some("reftable") => run_git(dir.path(), &["init", "--ref-format=reftable"]),
+        None => run_git(dir.path(), &["init"]),
+        Some(_) => panic!("unsupported test ref format"),
+    };
     fs::write(dir.path().join("README.md"), "base\n").expect("write readme");
     run_git(dir.path(), &["add", "--", "README.md"]);
     let mut commit = TEST_IDENTITY.to_vec();
@@ -87,6 +96,24 @@ fn init_repo_at(dir: TempDir) -> TestRepo {
         tree: GitOid::parse_hex(tree).expect("tree oid"),
         branch: GitRefName::parse_full("refs/heads/work").expect("branch ref"),
     }
+}
+
+#[cfg(unix)]
+fn init_tracked_symlink_repo() -> TestRepo {
+    let mut repo = init_repo();
+    fs::write(repo.path().join("target.txt"), "target content\n").expect("target");
+    std::os::unix::fs::symlink("target.txt", repo.path().join("link")).expect("link");
+    run_git(repo.path(), &["add", "--", "target.txt", "link"]);
+    let mut commit = TEST_IDENTITY.to_vec();
+    commit.extend_from_slice(&["commit", "-m", "link"]);
+    run_git(repo.path(), &commit);
+    let head = trimmed(run_git(repo.path(), &["rev-parse", "--verify", "HEAD"]));
+    repo.repo_ref = RepoRef::LocalFolder {
+        path: repo.path().to_string_lossy().into_owned(),
+        commit: head.clone(),
+    };
+    repo.head = GitOid::parse_hex(head).expect("head");
+    repo
 }
 
 fn open(wire: &GitWire<'_>, repo: &TestRepo) -> GitWireRepo {
@@ -508,6 +535,104 @@ fn git_wire_staging_preserves_filemode_false_and_honors_true() {
 
 #[cfg(unix)]
 #[test]
+fn git_wire_preserves_symlinks_false_through_checkout_inspection_and_staging() {
+    let (_vault_dir, vault) = open_test_vault();
+    let repo = init_tracked_symlink_repo();
+    run_git(repo.path(), &["config", "core.symlinks", "false"]);
+    let wire = new_wire(&vault);
+    let lease = test_lease(&repo, 1);
+    wire.materialize(&lease).expect("materialize");
+    let tree = wire.checkout_worktree_path(&lease).expect("worktree path");
+    let metadata = fs::symlink_metadata(tree.join("link")).expect("materialized link");
+    let materialized_as_file = metadata.file_type().is_file();
+    let materialized_bytes = fs::read(tree.join("link")).expect("materialized bytes");
+    // A stock-Git symlinks=false checkout holds a regular link-target file.
+    fs::remove_file(tree.join("link")).expect("replace link");
+    fs::write(tree.join("link"), "target.txt").expect("stock Git bytes");
+    let receipt = PushedHeadReceipt {
+        receipt_ref: "receipt:symlinks-false".to_owned(),
+        observed_ref: repo.branch.as_str().to_owned(),
+        pushed_head: repo.head.as_str().to_owned(),
+        checkout_id: lease.checkout_id,
+        epoch: lease.epoch,
+    };
+    let clean = !wire
+        .inspect_teardown(&lease, &receipt)
+        .expect("inspect")
+        .dirty;
+
+    fs::remove_file(repo.path().join("link")).expect("replace source link");
+    fs::write(repo.path().join("link"), "target.txt").expect("link-target file");
+    run_git(repo.path(), &["add", "--", "link"]);
+    let staged = trimmed(run_git(repo.path(), &["ls-files", "--stage", "--", "link"]));
+    assert!(
+        materialized_as_file,
+        "symlinks=false must materialize a regular file"
+    );
+    assert_eq!(materialized_bytes, b"target.txt");
+    assert!(clean, "the stock-Git link-target file must remain clean");
+    assert!(
+        staged.starts_with("120000 "),
+        "index link mode changed: {staged}"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn git_wire_honors_worktree_level_symlinks_false_on_inspection() {
+    let (_vault_dir, vault) = open_test_vault();
+    let repo = init_tracked_symlink_repo();
+    run_git(
+        repo.path(),
+        &["config", "extensions.worktreeConfig", "true"],
+    );
+    let wire = new_wire(&vault);
+    let lease = test_lease(&repo, 1);
+    wire.materialize(&lease)
+        .expect("materialize linked worktree");
+    let tree = wire.checkout_worktree_path(&lease).expect("worktree path");
+    run_git(&tree, &["config", "--worktree", "core.symlinks", "false"]);
+    fs::remove_file(tree.join("link")).expect("replace symlink");
+    fs::write(tree.join("link"), "target.txt").expect("stock Git link-target file");
+    let receipt = PushedHeadReceipt {
+        receipt_ref: "receipt:worktree-symlinks".to_owned(),
+        observed_ref: repo.branch.as_str().to_owned(),
+        pushed_head: repo.head.as_str().to_owned(),
+        checkout_id: lease.checkout_id,
+        epoch: lease.epoch,
+    };
+    assert!(
+        !wire
+            .inspect_teardown(&lease, &receipt)
+            .expect("inspect")
+            .dirty,
+        "worktree core.symlinks=false must override the common default"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn git_wire_preserves_symlinks_true_materialization() {
+    let (_vault_dir, vault) = open_test_vault();
+    let repo = init_tracked_symlink_repo();
+    let wire = new_wire(&vault);
+    let lease = test_lease(&repo, 1);
+    wire.materialize(&lease).expect("materialize");
+    let tree = wire.checkout_worktree_path(&lease).expect("worktree path");
+    assert!(
+        fs::symlink_metadata(tree.join("link"))
+            .expect("materialized link")
+            .file_type()
+            .is_symlink()
+    );
+    assert_eq!(
+        fs::read_link(tree.join("link")).expect("link target"),
+        Path::new("target.txt")
+    );
+}
+
+#[cfg(unix)]
+#[test]
 fn git_wire_rejects_conditional_worktree_smudge_filter() {
     use std::io::Write;
 
@@ -589,11 +714,58 @@ fn git_wire_config_change_after_snapshot_cannot_execute_filter() {
         .with_config_change_for_test(repo.path().join(".git/config"), appended.into_bytes());
     let args = ["add", "--", "README.md"].map(OsString::from);
 
+    let command = GitCommandSpec::test_raw(repo.path(), &args, GitExecutionEffect::AttributeWrite);
     assert!(
-        spawn_git(&env, repo.path(), &args, None).is_err(),
+        spawn_git(&env, &command).is_err(),
         "an operation with changed config must not report success"
     );
     assert!(!marker.exists(), "late filter command must never execute");
+}
+
+#[cfg(unix)]
+#[test]
+fn git_wire_worktree_config_change_after_snapshot_cannot_execute_filter() {
+    let (_vault_dir, vault) = open_test_vault();
+    let repo = init_repo();
+    run_git(
+        repo.path(),
+        &["config", "extensions.worktreeConfig", "true"],
+    );
+    fs::write(
+        repo.path().join(".gitattributes"),
+        "README.md filter=late\n",
+    )
+    .expect("write attributes");
+    let wire = new_wire(&vault);
+    let lease = test_lease(&repo, 1);
+    wire.materialize(&lease)
+        .expect("materialize linked worktree");
+    let tree = wire.checkout_worktree_path(&lease).expect("tree");
+    run_git(&tree, &["config", "--worktree", "core.filemode", "false"]);
+    fs::write(tree.join("README.md"), "new content\n").expect("change input");
+
+    let fixture = tempfile::tempdir().expect("filter fixture");
+    let marker = fixture.path().join("worktree-filter-executed");
+    let filter = fixture.path().join("late-filter");
+    write_executable(
+        &filter,
+        &format!("#!/bin/sh\ntouch {}\ncat\n", marker.display()),
+    );
+    let appended = format!("\n[filter \"late\"]\n clean = {}\n", filter.display());
+    let git_dir = trimmed(run_git(&tree, &["rev-parse", "--absolute-git-dir"]));
+    let env = GitWireProcessEnv::capture()
+        .expect("process env")
+        .with_config_change_for_test(
+            Path::new(&git_dir).join("config.worktree"),
+            appended.into_bytes(),
+        );
+    let args = ["add", "--", "README.md"].map(OsString::from);
+    let command = GitCommandSpec::test_raw(&tree, &args, GitExecutionEffect::AttributeWrite);
+    assert!(
+        spawn_git(&env, &command).is_err(),
+        "changed worktree config must not certify an effect"
+    );
+    assert!(!marker.exists(), "late worktree filter must never execute");
 }
 
 #[cfg(unix)]
@@ -611,7 +783,8 @@ fn git_wire_bounds_child_runtime_and_output() {
         .with_binary_for_test(slow)
         .with_limits(Duration::from_millis(200), 4096)
         .expect("limits");
-    let timed_out = spawn_git(&slow_env, dir.path(), &args, None).expect("spawn slow git");
+    let command = GitCommandSpec::test_raw(dir.path(), &args, GitExecutionEffect::ContextOnly);
+    let timed_out = spawn_git(&slow_env, &command).expect("spawn slow git");
     assert!(timed_out.timed_out);
     assert!(!timed_out.success);
     assert_eq!(
@@ -624,7 +797,7 @@ fn git_wire_bounds_child_runtime_and_output() {
         .with_binary_for_test(loud)
         .with_limits(Duration::from_secs(30), 1024)
         .expect("limits");
-    let oversize = spawn_git(&loud_env, dir.path(), &args, None).expect("spawn loud git");
+    let oversize = spawn_git(&loud_env, &command).expect("spawn loud git");
     assert!(oversize.truncated);
     assert!(!oversize.success);
     assert!(oversize.stdout.len() <= 1024);
@@ -649,7 +822,8 @@ fn git_wire_redacts_credentials_and_paths_out_of_failures() {
         .expect("process env")
         .with_binary_for_test(leaky);
     let args: Vec<OsString> = Vec::new();
-    let output = spawn_git(&env, dir.path(), &args, None).expect("spawn leaky git");
+    let command = GitCommandSpec::test_raw(dir.path(), &args, GitExecutionEffect::ContextOnly);
+    let output = spawn_git(&env, &command).expect("spawn leaky git");
     let failure = classify_failure(&output);
     let error = failure.error(GitWireOperation::PublishRefs);
     let message = error.to_string();
@@ -1265,11 +1439,51 @@ fn git_wire_recovers_every_journaled_operation_class_after_a_crash() {
     let key = worktree_record_key(bound.identity(), GitWireOperation::WorktreeAdd, &scope);
     let mut record = new_record(&bound, key, GitWireOperation::WorktreeAdd, &[], &[], 40);
     record.worktree_scope = Some(scope);
+    record.worktree_commit = Some(target.as_str().to_owned());
     wire.put_record(&bound, &record).expect("journal worktree");
     let settled = wire.recover(&bound, 50).expect("recover worktree");
     assert_eq!(settled.len(), 1);
     assert_eq!(settled[0].state, GitWireRecordState::Applied);
     assert!(wire.recover(&bound, 60).expect("third recover").is_empty());
+}
+
+#[test]
+fn git_wire_recovery_cannot_certify_a_worktree_at_the_wrong_commit() {
+    let (_vault_dir, vault) = open_test_vault();
+    let repo = init_repo();
+    let wire = new_wire(&vault);
+    let bound = open(&wire, &repo);
+    let parent = tempfile::tempdir().expect("worktree parent");
+    let path = parent.path().join("journaled");
+    let rival = rival_commit(&repo);
+    run_git(
+        repo.path(),
+        &[
+            "worktree",
+            "add",
+            "--detach",
+            "--",
+            path.to_string_lossy().as_ref(),
+            repo.head.as_str(),
+        ],
+    );
+    let scope = worktree_scope(&path);
+    let key = worktree_record_key(bound.identity(), GitWireOperation::WorktreeAdd, &scope);
+    let mut record = new_record(&bound, key, GitWireOperation::WorktreeAdd, &[], &[], 100);
+    record.worktree_scope = Some(scope);
+    record.worktree_commit = Some(rival.as_str().to_owned());
+    wire.put_record(&bound, &record).expect("durable intent");
+    assert!(
+        wire.recover(&bound, 101).is_err(),
+        "wrong HEAD must not be Applied"
+    );
+    assert_eq!(
+        wire.receipt(&bound, &key)
+            .expect("record read")
+            .expect("prepared record")
+            .state,
+        GitWireRecordState::Prepared
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -1645,6 +1859,123 @@ fn git_wire_checkout_materializes_the_pinned_commit_not_a_moving_head() {
         Some(rival)
     );
     wire.materialize(&lease).expect("materialize is idempotent");
+}
+
+#[test]
+fn git_wire_refuses_unmodeled_config_before_index_or_worktree_effect() {
+    let (_vault_dir, vault) = open_test_vault();
+    let repo = init_repo();
+    run_git(repo.path(), &["config", "core.splitIndex", "true"]);
+    fs::write(repo.path().join("README.md"), "uncommitted\n").expect("change content");
+    let wire = new_wire(&vault);
+    let bound = open(&wire, &repo);
+    let before = fs::read(repo.path().join(".git/index")).expect("index");
+    let parent = tempfile::tempdir().expect("worktree parent");
+    let target = parent.path().join("refused");
+    assert!(
+        run_bridged_git_argv(
+            repo.path(),
+            &["add".to_owned(), "--".to_owned(), "README.md".to_owned()]
+        )
+        .is_err(),
+        "unmodeled worktree config must refuse staging"
+    );
+    assert_eq!(
+        fs::read(repo.path().join(".git/index")).expect("index"),
+        before
+    );
+    assert!(wire.add_worktree(&bound, &target, &repo.head, 100).is_err());
+    let scope = worktree_scope(&target);
+    let key = worktree_record_key(bound.identity(), GitWireOperation::WorktreeAdd, &scope);
+    assert!(wire.receipt(&bound, &key).expect("record read").is_none());
+    assert!(
+        !target.exists(),
+        "unmodeled profile cannot create a worktree"
+    );
+    assert!(
+        !wire
+            .worktree_registered(&bound, &target)
+            .expect("registration")
+    );
+}
+
+#[test]
+fn git_wire_refuses_unmodeled_info_attributes_before_worktree_effect() {
+    let (_vault_dir, vault) = open_test_vault();
+    let repo = init_repo();
+    let wire = new_wire(&vault);
+    let bound = open(&wire, &repo);
+    fs::write(
+        repo.path().join(".git/info/attributes"),
+        "README.md text eol=crlf\n",
+    )
+    .expect("local attribute rule");
+    let parent = tempfile::tempdir().expect("worktree parent");
+    let target = parent.path().join("refused");
+    assert!(wire.add_worktree(&bound, &target, &repo.head, 100).is_err());
+    let scope = worktree_scope(&target);
+    let key = worktree_record_key(bound.identity(), GitWireOperation::WorktreeAdd, &scope);
+    assert!(wire.receipt(&bound, &key).expect("record read").is_none());
+    assert!(!target.exists());
+}
+
+#[test]
+fn git_wire_refuses_unsupported_ref_backend_before_worktree_effect() {
+    let (_vault_dir, vault) = open_test_vault();
+    let repo = init_repo();
+    let wire = new_wire(&vault);
+    let bound = open(&wire, &repo);
+    // A repository whose layout changed after handle proof must not be
+    // silently executed as files refs or acquire an Applied receipt.
+    run_git(
+        repo.path(),
+        &["config", "core.repositoryformatversion", "1"],
+    );
+    run_git(repo.path(), &["config", "extensions.refStorage", "unknown"]);
+    let parent = tempfile::tempdir().expect("worktree parent");
+    let target = parent.path().join("refused");
+    assert!(wire.add_worktree(&bound, &target, &repo.head, 100).is_err());
+    assert!(!target.exists());
+}
+
+#[test]
+fn git_wire_reftable_worktree_receipt_resolves_the_requested_head() {
+    // Linux build hosts still carry Git 2.43, before `init --ref-format`.
+    // Run the full matrix on hosts with reftable-capable Git; only this
+    // unsupported tool version skips the fixture, never a GitWire refusal.
+    let probe = tempfile::tempdir().expect("reftable probe");
+    let args = ["init", "--ref-format=reftable"].map(str::to_owned);
+    let support = run_bridged_git_argv(probe.path(), &args).expect("probe Git capability");
+    if !support.success {
+        assert!(
+            String::from_utf8_lossy(&support.stderr)
+                .contains("unknown option `ref-format=reftable'"),
+            "unexpected Git init failure: {}",
+            String::from_utf8_lossy(&support.stderr)
+        );
+        return;
+    }
+    let (_vault_dir, vault) = open_test_vault();
+    let repo = init_repo_at_with_format(tempfile::tempdir().expect("repo"), Some("reftable"));
+    let wire = new_wire(&vault);
+    let bound = open(&wire, &repo);
+    let parent = tempfile::tempdir().expect("checkout parent");
+    let tree = parent.path().join("tree");
+    let receipt = wire
+        .add_worktree(&bound, &tree, &repo.head, 100)
+        .expect("reftable worktree effect");
+    assert_eq!(receipt.state, GitWireRecordState::Applied);
+    let linked = wire
+        .open_repo(repo.repo_ref.clone(), &tree)
+        .expect("worktree binds to real reftable repository");
+    assert_eq!(
+        wire.resolve_commit(&linked, "HEAD").expect("HEAD"),
+        repo.head
+    );
+    assert_eq!(
+        trimmed(run_git(&tree, &["rev-parse", "--verify", "HEAD"])),
+        repo.head.as_str()
+    );
 }
 
 #[test]
