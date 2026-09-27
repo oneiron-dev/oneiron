@@ -189,6 +189,7 @@ fn sent_request() -> (
             meta: FieldMeta::Text { max_bytes: 50 },
         }],
         full_trail_appendix: false,
+        lifecycle: None,
     };
     vault
         .create_esign_document(
