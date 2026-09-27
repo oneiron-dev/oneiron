@@ -1038,13 +1038,8 @@ fn cli_binding_proof_authenticates_only_its_logged_holder() {
     let seed: String = key.to_bytes().iter().map(|b| format!("{b:02x}")).collect();
     let json = api::signed_binding_for_seed(&token, &seed).unwrap();
     let proof: crate::auth::BindingProof = serde_json::from_str(&json).unwrap();
-    let auth = crate::auth::CoreAuth::from_slip_token(
-        &token,
-        &proof,
-        &server.config,
-        server.vault().as_ref(),
-    )
-    .unwrap();
+    let auth =
+        crate::auth::CoreAuth::from_slip_token(&token, &proof, server.vault().as_ref()).unwrap();
     assert!(auth.is_owner_grade());
     assert!(api::signed_binding_for_seed(&token, &"00".repeat(32)).is_err());
 }
