@@ -16892,7 +16892,7 @@
      "path": "src/gate/ceiling.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 37
+      "crate-vis": 40
      }
     },
     {
@@ -16919,7 +16919,7 @@
      "path": "src/gate/constants.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 78
+      "crate-vis": 79
      }
     },
     {
@@ -17007,7 +17007,7 @@
      "path": "src/gate/default_manifest.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 5
      }
     },
     {
@@ -17202,18 +17202,19 @@
      "notable": [
       "PolicyRowAction",
       "PolicyRowChange",
-      "PolicyRowScope"
+      "PolicyRowScope",
+      "PolicyWhySource"
      ],
      "path": "src/gate/owner_policy_mutation.rs",
      "purpose": "Authenticated, exact-key edits to the owner-policy table in the default manifest",
      "surface": {
       "crate-vis": 1,
-      "enum": 3,
+      "enum": 4,
       "fn": 2
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "test",
      "notable": [],
      "path": "src/gate/owner_policy_mutation/tests.rs",
@@ -17255,13 +17256,13 @@
      "surface": {}
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/gate/resolution/accessors.rs",
      "purpose": "Read-only resolved-field accessors plus the frontier-hash entry",
      "surface": {
-      "crate-vis": 25
+      "crate-vis": 24
      }
     },
     {
@@ -25327,13 +25328,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/policy_model/owner_rows/authority.rs",
      "purpose": "Live policy-power holders from shared membership and owner-stamped action grants",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 2
      }
     },
     {
@@ -25363,8 +25364,9 @@
      "path": "src/policy_model/owner_rows/mod.rs",
      "purpose": "Holder-governed owner-policy row edits, proposals, events and change log",
      "surface": {
+      "crate-vis": 1,
       "enum": 1,
-      "fn": 4,
+      "fn": 5,
       "re-export": 2
      }
     },
@@ -25372,18 +25374,28 @@
      "bucket": "m",
      "kind": "src",
      "notable": [
+      "PolicyNotificationFailure",
       "PolicyNotificationMode",
       "PolicyNotificationRule",
+      "PolicyNotificationTarget",
       "PolicyQueuedNotification"
      ],
      "path": "src/policy_model/owner_rows/notifications.rs",
      "purpose": "Manifest-authored notification rules and recipient-owned delivery preferences",
      "surface": {
-      "crate-vis": 1,
-      "enum": 2,
-      "fn": 4,
-      "struct": 1
+      "crate-vis": 3,
+      "enum": 3,
+      "fn": 6,
+      "struct": 2
      }
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/policy_model/owner_rows/notify_tests.rs",
+     "purpose": "Notification queue fairness, failure isolation, and recipient digest cadence",
+     "surface": {}
     },
     {
      "bucket": "m",
@@ -25625,7 +25637,7 @@
      "path": "src/policy_model/tests/mod.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 21
+      "crate-vis": 20
      }
     },
     {
@@ -32958,7 +32970,7 @@
      "path": "src/task_verb/policy_change_followup.rs",
      "purpose": "Atomic, idempotent human TASK notification for one landed policy change",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 2
      }
     },
     {
@@ -36477,7 +36489,7 @@
      "purpose": "—"
     },
     "policy_model": {
-     "files": 39,
+     "files": 40,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -36921,7 +36933,7 @@
    "over_bar": 2,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
    "source_files": 2189,
-   "test_files": 743
+   "test_files": 744
   },
   "oneiron-android": {
    "files": [

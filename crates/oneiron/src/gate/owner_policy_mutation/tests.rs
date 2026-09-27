@@ -173,3 +173,157 @@ fn malformed_or_untrusted_manifest_cannot_be_reauthored_by_mutation() -> Result<
     assert_eq!(manifest(&vault)?, before);
     Ok(())
 }
+
+#[test]
+fn combined_scope_row_remains_editable_and_does_not_block_unrelated_rows() -> Result<()> {
+    let (_dir, vault, owner) = setup()?;
+    let mut current = manifest(&vault)?;
+    let Value::Map(entries) = &mut current else {
+        unreachable!()
+    };
+    let Value::Array(existing_rows) = &mut entries
+        .iter_mut()
+        .find(|(key, _)| key.as_str() == Some(POLICY_OWNER_POLICY_ROWS_KEY))
+        .expect("owner rows")
+        .1
+    else {
+        unreachable!()
+    };
+    let combined = PolicyRowScope::WorldProject {
+        world: "w1".into(),
+        project: "p1".into(),
+    };
+    existing_rows.push(row_value(
+        "combined",
+        &combined,
+        "Keep it private",
+        PolicyRowAction::Block,
+        None,
+    ));
+    let mut encoded = Vec::new();
+    rmpv::encode::write_value(&mut encoded, &current)
+        .map_err(|_| Error::InvariantViolation("fixture encode"))?;
+    vault.with_write_txn(|txn| {
+        vault.write_owner_policy_manifest_in_txn(
+            &owner,
+            txn,
+            default_policy_manifest_id()?,
+            encoded,
+            2,
+        )
+    })?;
+    apply(
+        &vault,
+        &owner,
+        &PolicyRowChange::Add {
+            row_ref: "unrelated".into(),
+            text: "Also private".into(),
+            action: PolicyRowAction::Warn,
+            scope: PolicyRowScope::Vault,
+        },
+    )?;
+    apply(
+        &vault,
+        &owner,
+        &PolicyRowChange::Edit {
+            row_ref: "combined".into(),
+            text: "Stricter text".into(),
+            action: PolicyRowAction::Block,
+            scope: combined.clone(),
+        },
+    )?;
+    assert_eq!(rows(&manifest(&vault)?).len(), 2);
+    apply(
+        &vault,
+        &owner,
+        &PolicyRowChange::Remove {
+            row_ref: "combined".into(),
+            scope: combined,
+        },
+    )?;
+    assert_eq!(rows(&manifest(&vault)?).len(), 1);
+    Ok(())
+}
+
+#[test]
+fn optional_why_is_stamped_and_draft_never_displaces_owner_reason() -> Result<()> {
+    let (_dir, vault, owner) = setup()?;
+    let scope = PolicyRowScope::Vault;
+    apply(
+        &vault,
+        &owner,
+        &PolicyRowChange::Add {
+            row_ref: "plain".into(),
+            text: "text".into(),
+            action: PolicyRowAction::Warn,
+            scope: scope.clone(),
+        },
+    )?;
+    let snapshot = manifest(&vault)?;
+    let Value::Map(plain) = &rows(&snapshot)[0] else {
+        unreachable!()
+    };
+    assert!(field(plain, "why")?.is_none());
+    apply(
+        &vault,
+        &owner,
+        &PolicyRowChange::DraftWhy {
+            row_ref: "plain".into(),
+            scope: scope.clone(),
+            why: "Suggested reason".into(),
+        },
+    )?;
+    let snapshot = manifest(&vault)?;
+    let Value::Map(drafted) = &rows(&snapshot)[0] else {
+        unreachable!()
+    };
+    assert_eq!(field(drafted, "why_source")?, Some(&Value::from("drafted")));
+    apply(
+        &vault,
+        &owner,
+        &PolicyRowChange::EditWithWhy {
+            row_ref: "plain".into(),
+            text: "text".into(),
+            action: PolicyRowAction::Block,
+            scope: scope.clone(),
+            why: "Owner's explicit reason".into(),
+        },
+    )?;
+    assert!(
+        apply(
+            &vault,
+            &owner,
+            &PolicyRowChange::DraftWhy {
+                row_ref: "plain".into(),
+                scope: scope.clone(),
+                why: "Replacement draft".into(),
+            }
+        )
+        .is_err()
+    );
+    let snapshot = manifest(&vault)?;
+    let Value::Map(owner_reason) = &rows(&snapshot)[0] else {
+        unreachable!()
+    };
+    assert_eq!(
+        field(owner_reason, "why")?,
+        Some(&Value::from("Owner's explicit reason"))
+    );
+    assert_eq!(
+        field(owner_reason, "why_source")?,
+        Some(&Value::from("owner"))
+    );
+    apply(
+        &vault,
+        &owner,
+        &PolicyRowChange::AddWithWhy {
+            row_ref: "direct".into(),
+            text: "text".into(),
+            action: PolicyRowAction::Warn,
+            scope,
+            why: "Written during add".into(),
+        },
+    )?;
+    assert_eq!(rows(&manifest(&vault)?).len(), 2);
+    Ok(())
+}

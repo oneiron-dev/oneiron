@@ -89,10 +89,11 @@ mod enforce;
 mod hold_queue;
 pub use hold_queue::{HeldPolicyItem, PolicyHoldResolution};
 mod owner_rows;
-pub use crate::gate::{PolicyRowAction, PolicyRowChange, PolicyRowScope};
+pub use crate::gate::{PolicyRowAction, PolicyRowChange, PolicyRowScope, PolicyWhySource};
 pub use owner_rows::{
-    PolicyChangedEvent, PolicyNotificationMode, PolicyNotificationRule, PolicyProposalStatus,
-    PolicyRowProposal, PolicyRowReceipt, PolicyRowSubmission,
+    PolicyChangedEvent, PolicyNotificationFailure, PolicyNotificationMode, PolicyNotificationRule,
+    PolicyNotificationTarget, PolicyProposalStatus, PolicyRowProposal, PolicyRowReceipt,
+    PolicyRowSubmission, policy_row_grant_target,
 };
 mod notice;
 mod pattern;

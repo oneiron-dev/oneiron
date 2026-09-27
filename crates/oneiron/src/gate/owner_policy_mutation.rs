@@ -25,6 +25,7 @@ pub enum PolicyRowScope {
     Vault,
     World(String),
     Project(String),
+    WorldProject { world: String, project: String },
 }
 
 /// The allowed row actions, with the same spellings as the manifest decoder.
@@ -42,6 +43,24 @@ impl PolicyRowAction {
             Self::Warn => "warn",
             Self::Block => "block",
             Self::RouteToHelp => "route_to_help",
+        }
+    }
+}
+
+/// Provenance of optional explanatory text. Model-authored drafts are never
+/// allowed to replace an owner's own reason.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PolicyWhySource {
+    Owner,
+    Drafted,
+}
+
+impl PolicyWhySource {
+    const fn as_str(self) -> &'static str {
+        match self {
+            Self::Owner => "owner",
+            Self::Drafted => "drafted",
         }
     }
 }
@@ -64,6 +83,27 @@ pub enum PolicyRowChange {
     Remove {
         row_ref: String,
         scope: PolicyRowScope,
+    },
+    /// An add/edit with an explicit owner reason in the same receipt.
+    AddWithWhy {
+        row_ref: String,
+        text: String,
+        action: PolicyRowAction,
+        scope: PolicyRowScope,
+        why: String,
+    },
+    EditWithWhy {
+        row_ref: String,
+        text: String,
+        action: PolicyRowAction,
+        scope: PolicyRowScope,
+        why: String,
+    },
+    /// A model suggestion is explicitly marked and never outranks an owner reason.
+    DraftWhy {
+        row_ref: String,
+        scope: PolicyRowScope,
+        why: String,
     },
 }
 
@@ -114,6 +154,8 @@ fn row_key(row: &Value) -> Result<(&str, PolicyRowScope)> {
                     | POLICY_ROW_WORLD_REF_KEY
                     | PROJECT_REF_KEY
                     | "human"
+                    | "why"
+                    | "why_source"
             )
         ) {
             return Err(invalid("malformed owner policy row"));
@@ -133,6 +175,15 @@ fn row_key(row: &Value) -> Result<(&str, PolicyRowScope)> {
         (None, Some(Value::String(project))) if project.as_str().is_some_and(|s| !s.is_empty()) => {
             PolicyRowScope::Project(project.as_str().expect("checked").to_owned())
         }
+        (Some(Value::String(world)), Some(Value::String(project)))
+            if world.as_str().is_some_and(|s| !s.is_empty())
+                && project.as_str().is_some_and(|s| !s.is_empty()) =>
+        {
+            PolicyRowScope::WorldProject {
+                world: world.as_str().expect("checked").to_owned(),
+                project: project.as_str().expect("checked").to_owned(),
+            }
+        }
         _ => return Err(invalid("ambiguous owner policy row scope")),
     };
     Ok((row_ref, scope))
@@ -142,13 +193,22 @@ fn target(change: &PolicyRowChange) -> (&str, &PolicyRowScope) {
     match change {
         PolicyRowChange::Add { row_ref, scope, .. }
         | PolicyRowChange::Edit { row_ref, scope, .. }
-        | PolicyRowChange::Remove { row_ref, scope } => (row_ref, scope),
+        | PolicyRowChange::Remove { row_ref, scope }
+        | PolicyRowChange::AddWithWhy { row_ref, scope, .. }
+        | PolicyRowChange::EditWithWhy { row_ref, scope, .. }
+        | PolicyRowChange::DraftWhy { row_ref, scope, .. } => (row_ref, scope),
     }
 }
 
 fn validate_target(row_ref: &str, scope: &PolicyRowScope) -> Result<()> {
     if row_ref.trim().is_empty()
-        || matches!(scope, PolicyRowScope::World(s) | PolicyRowScope::Project(s) if s.trim().is_empty())
+        || match scope {
+            PolicyRowScope::Vault => false,
+            PolicyRowScope::World(s) | PolicyRowScope::Project(s) => s.trim().is_empty(),
+            PolicyRowScope::WorldProject { world, project } => {
+                world.trim().is_empty() || project.trim().is_empty()
+            }
+        }
     {
         return Err(invalid("empty owner policy row key"));
     }
@@ -172,7 +232,13 @@ fn set_field(entries: &mut Vec<(Value, Value)>, key: &str, value: Value) -> Resu
     Ok(())
 }
 
-fn row_value(row_ref: &str, scope: &PolicyRowScope, text: &str, action: PolicyRowAction) -> Value {
+fn row_value(
+    row_ref: &str,
+    scope: &PolicyRowScope,
+    text: &str,
+    action: PolicyRowAction,
+    why: Option<(&str, PolicyWhySource)>,
+) -> Value {
     let mut entries = vec![
         (Value::from(POLICY_ROW_REF_KEY), Value::from(row_ref)),
         (Value::from(POLICY_ROW_TEXT_KEY), Value::from(text)),
@@ -182,6 +248,10 @@ fn row_value(row_ref: &str, scope: &PolicyRowScope, text: &str, action: PolicyRo
         ),
         (Value::from(POLICY_ROW_ACTIVE_KEY), Value::Boolean(true)),
     ];
+    if let Some((text, source)) = why {
+        entries.push((Value::from("why"), Value::from(text)));
+        entries.push((Value::from("why_source"), Value::from(source.as_str())));
+    }
     match scope {
         PolicyRowScope::Vault => {}
         PolicyRowScope::World(world) => {
@@ -193,8 +263,39 @@ fn row_value(row_ref: &str, scope: &PolicyRowScope, text: &str, action: PolicyRo
         PolicyRowScope::Project(project) => {
             entries.push((Value::from(PROJECT_REF_KEY), Value::from(project.as_str())));
         }
+        PolicyRowScope::WorldProject { world, project } => {
+            entries.push((
+                Value::from(POLICY_ROW_WORLD_REF_KEY),
+                Value::from(world.as_str()),
+            ));
+            entries.push((Value::from(PROJECT_REF_KEY), Value::from(project.as_str())));
+        }
     }
     Value::Map(entries)
+}
+
+fn set_why(fields: &mut Vec<(Value, Value)>, why: &str, source: PolicyWhySource) -> Result<()> {
+    if why.trim().is_empty() {
+        return Err(invalid("empty owner policy why"));
+    }
+    if source == PolicyWhySource::Drafted
+        && matches!(
+            field(fields, "why_source")?.and_then(Value::as_str),
+            Some("owner")
+        )
+    {
+        return Err(invalid("a draft cannot replace an owner-written why"));
+    }
+    // A plain why is owner-authored when the source field was omitted.
+    if source == PolicyWhySource::Drafted
+        && field(fields, "why")?.is_some()
+        && field(fields, "why_source")?.is_none()
+    {
+        return Err(invalid("a draft cannot replace an owner-written why"));
+    }
+    set_field(fields, "why", Value::from(why))?;
+    set_field(fields, "why_source", Value::from(source.as_str()))?;
+    Ok(())
 }
 
 /// Mutate inside the caller's transaction, without committing or issuing a receipt.
@@ -231,6 +332,12 @@ pub(crate) fn apply_owner_policy_row_change_in_txn(
     if !manifest_is_trusted(&vault.store, txn, &id, body)? {
         return Err(invalid("default policy manifest is not owner trusted"));
     }
+    // Trust is checked against the original bytes. Normalizing a historically
+    // omitted notification key uses the current shipped manifest DATA before
+    // mutation, so a schema-valid owner manifest remains editable.
+    let normalized =
+        super::default_manifest::with_default_owner_policy_notifications(body.to_vec())?;
+    let body = normalized.as_slice();
     let decoded = super::decode::decode_policy_manifest(body)
         .ok_or_else(|| invalid("malformed default policy manifest"))?;
     if decoded.owner_policy_rows_dropped
@@ -276,16 +383,27 @@ pub(crate) fn apply_owner_policy_row_change_in_txn(
         }
     }
     match change {
-        PolicyRowChange::Add { text, action, .. } => {
+        PolicyRowChange::Add { text, action, .. }
+        | PolicyRowChange::AddWithWhy { text, action, .. } => {
             if found.is_some() {
                 return Err(invalid("owner policy row already exists"));
             }
             if text.trim().is_empty() {
                 return Err(invalid("empty owner policy row text"));
             }
-            rows.push(row_value(row_ref, scope, text, *action));
+            let why = match change {
+                PolicyRowChange::AddWithWhy { why, .. } => {
+                    if why.trim().is_empty() {
+                        return Err(invalid("empty owner policy why"));
+                    }
+                    Some((why.as_str(), PolicyWhySource::Owner))
+                }
+                _ => None,
+            };
+            rows.push(row_value(row_ref, scope, text, *action, why));
         }
-        PolicyRowChange::Edit { text, action, .. } => {
+        PolicyRowChange::Edit { text, action, .. }
+        | PolicyRowChange::EditWithWhy { text, action, .. } => {
             let index = found.ok_or_else(|| invalid("owner policy row does not exist"))?;
             if text.trim().is_empty() {
                 return Err(invalid("empty owner policy row text"));
@@ -293,17 +411,29 @@ pub(crate) fn apply_owner_policy_row_change_in_txn(
             let Value::Map(fields) = &mut rows[index] else {
                 unreachable!("validated row map")
             };
-            // Keep owner-authored metadata such as `human`; only edit the
-            // requested content and reactivate the row.
+            // Keep owner-authored metadata such as `human` unless explicitly edited.
             set_field(fields, POLICY_ROW_TEXT_KEY, Value::from(text.as_str()))?;
             set_field(fields, POLICY_ROW_ACTION_KEY, Value::from(action.as_str()))?;
             set_field(fields, POLICY_ROW_ACTIVE_KEY, Value::Boolean(true))?;
+            if let PolicyRowChange::EditWithWhy { why, .. } = change {
+                set_why(fields, why, PolicyWhySource::Owner)?;
+            }
+        }
+        PolicyRowChange::DraftWhy { why, .. } => {
+            let index = found.ok_or_else(|| invalid("owner policy row does not exist"))?;
+            let Value::Map(fields) = &mut rows[index] else {
+                unreachable!("validated row map")
+            };
+            set_why(fields, why, PolicyWhySource::Drafted)?;
         }
         PolicyRowChange::Remove { .. } => {
             rows.remove(found.ok_or_else(|| invalid("owner policy row does not exist"))?);
         }
     }
-    if !matches!(change, PolicyRowChange::Remove { .. }) {
+    if !matches!(
+        change,
+        PolicyRowChange::Remove { .. } | PolicyRowChange::DraftWhy { .. }
+    ) {
         let enabled_index = entries
             .iter()
             .position(|(key, _)| key.as_str() == Some(POLICY_OWNER_POLICY_ENABLED_KEY))

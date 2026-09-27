@@ -263,7 +263,9 @@ pub(super) fn parse_owner_policy_rows(value: &Value) -> Option<Vec<PolicyOwnerPo
                 | POLICY_ROW_WORLD_REF_KEY
                 | "project_ref"
                 | POLICY_ROW_ACTION_KEY
-                | "human" => {}
+                | "human"
+                | "why"
+                | "why_source" => {}
                 _ => return None,
             }
         }
@@ -276,6 +278,22 @@ pub(super) fn parse_owner_policy_rows(value: &Value) -> Option<Vec<PolicyOwnerPo
         if human.as_ref().is_some_and(|name| name.trim().is_empty()) {
             return None;
         }
+        let why = match single_map_value(entries, "why") {
+            MapValue::Missing => None,
+            MapValue::Present(value) => Some(value.as_str().map(str::to_owned)?),
+            MapValue::Duplicate => return None,
+        };
+        let why = why.filter(|value| !value.trim().is_empty());
+        let why_source = match single_map_value(entries, "why_source") {
+            MapValue::Missing if why.is_some() => Some("owner".to_owned()),
+            MapValue::Missing => None,
+            MapValue::Present(value) if why.is_some() => match value.as_str()? {
+                "owner" => Some("owner".to_owned()),
+                "drafted" => Some("drafted".to_owned()),
+                _ => return None,
+            },
+            MapValue::Present(_) | MapValue::Duplicate => return None,
+        };
         let action = match optional_string(entries, POLICY_ROW_ACTION_KEY)? {
             // A row that names no action only wants to be told about, so the
             // gentlest arm is the default: content still ships unchanged.
@@ -304,6 +322,8 @@ pub(super) fn parse_owner_policy_rows(value: &Value) -> Option<Vec<PolicyOwnerPo
             world_ref,
             project_ref,
             human,
+            why,
+            why_source,
             action,
         });
     }

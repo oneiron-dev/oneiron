@@ -19,7 +19,8 @@ fn setup() -> Result<(tempfile::TempDir, Vault, AuthenticatedOwner, EntityId)> {
     let vault = Vault::open(dir.path(), VaultConfig::default())?;
     let id = crate::vault::embedded_owner_actor_id()?;
     let owner = vault.authenticate_owner(id, &id.to_hex(), true, GateDecisionId::now())?;
-    let recipient = resolve_or_create_comm_party(&vault, "notify@example.test")?;
+    let recipient = resolve_or_create_comm_party(&vault, "notify@example.test")
+        .map_err(|err| Error::InvalidConfig(format!("test contact: {err}")))?;
     vault.initialize_shared_vault(
         &owner,
         54,
@@ -90,6 +91,8 @@ fn skipped_positions_over_wake_limit_do_not_starve_following_notice() -> Result<
                 receipt_id: format!("000-{n:03}"),
                 recipient: recipient.to_hex(),
                 author: EntityId::from_bytes([0xec; 16])?.to_hex(),
+                scope: PolicyRowScope::Vault,
+                grant_target: super::policy_row_grant_target(&PolicyRowScope::Vault, "bad"),
                 mode: PolicyNotificationMode::PushAll,
                 followup_task: None,
                 digest_due_at: None,

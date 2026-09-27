@@ -131,15 +131,6 @@ impl PolicyManifestResolution {
         !self.diagnostics.loaded_manifest_forces_fail_closed() && self.owner_policy_enabled
     }
 
-    /// Legacy world-only selection. Project rows never answer this call.
-    #[must_use]
-    pub(crate) fn active_owner_policy_rows(
-        &self,
-        world_ref: Option<&str>,
-    ) -> Vec<PolicyOwnerPolicyRow> {
-        self.active_owner_policy_rows_for_scope(world_ref, None)
-    }
-
     /// Compose matching owner rows by the manifest's owner-authored policy.
     /// A vault row always remains in force. The optional most-specific mode
     /// can discard an intermediate world rule, but never the vault rule.
@@ -211,7 +202,9 @@ impl PolicyManifestResolution {
                             _ => OwnerRowAction::Warn,
                         }
                     });
-                effective.human = matching.iter().find_map(|row| row.human.clone());
+                // Named moderators select the most specific applicable scope;
+                // the presence of any human still imposes the Hold action.
+                effective.human = matching.iter().rev().find_map(|row| row.human.clone());
                 effective.why = Some(
                     matching
                         .iter()

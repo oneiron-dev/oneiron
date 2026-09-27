@@ -41,10 +41,7 @@ pub(super) fn content_binding(
     hash_binding_str(&mut hasher, "content", &request.content);
     hash_binding_opt_str(&mut hasher, "world_ref", request.world_ref.as_deref());
     // A project-scoped verdict must not be reusable in another project.
-    // Keep the no-project digest unchanged for existing callers.
-    if let Some(project_ref) = request.project_ref.as_deref() {
-        hash_binding_opt_str(&mut hasher, "project_ref", Some(project_ref));
-    }
+    hash_binding_opt_str(&mut hasher, "project_ref", request.project_ref.as_deref());
     hash_binding_str(
         &mut hasher,
         "safeguard_binding",

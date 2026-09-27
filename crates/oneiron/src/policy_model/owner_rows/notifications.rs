@@ -20,6 +20,8 @@ pub(super) const QUEUED: &[u8] = b"owner_policy:notification:queued:v1:";
 const QUEUE_CURSOR: &[u8] = b"owner_policy:notification:cursor:v1";
 const QUEUE_FAILURE: &[u8] = b"owner_policy:notification:failure:v1:";
 const DIGEST_WINDOW: &[u8] = b"owner_policy:notification:digest_window:v1:";
+const DIGEST_RECIPIENT: &[u8] = b"owner_policy:notification:digest_recipient:v1:";
+const DIGEST_BATCH_LIMIT: usize = 64;
 const MAX_DIGEST_INTERVAL: u64 = 31_536_000;
 const RULE_RECEIPT: &[u8] = b"owner_policy:notification:rule_receipt:v1:";
 
@@ -84,6 +86,9 @@ pub struct PolicyQueuedNotification {
     pub receipt_id: String,
     pub recipient: String,
     pub author: String,
+    /// Exact source policy scope and grant target, revalidated before delivery.
+    pub scope: PolicyRowScope,
+    pub grant_target: String,
     pub mode: PolicyNotificationMode,
     pub followup_task: Option<String>,
     /// Digest window shared by all pending changes for this recipient.
@@ -117,6 +122,18 @@ fn key(prefix: &[u8], suffix: &[u8]) -> Vec<u8> {
 }
 fn failure_key(queue_key: &[u8]) -> Vec<u8> {
     key(QUEUE_FAILURE, &queue_key[QUEUED.len()..])
+}
+fn digest_recipient_prefix(recipient: EntityId) -> Vec<u8> {
+    [DIGEST_RECIPIENT, recipient.as_bytes(), b":"].concat()
+}
+fn digest_recipient_key(recipient: EntityId, due: u64, receipt_id: &str) -> Vec<u8> {
+    [
+        digest_recipient_prefix(recipient).as_slice(),
+        &due.to_be_bytes(),
+        b":",
+        receipt_id.as_bytes(),
+    ]
+    .concat()
 }
 fn encode<T: Serialize>(value: &T) -> Result<Vec<u8>> {
     rmp_serde::to_vec_named(value)
@@ -260,6 +277,11 @@ pub(super) fn enqueue_change_in_txn(
             receipt_id: receipt.receipt_id.clone(),
             recipient: recipient.to_hex(),
             author: receipt.author.clone(),
+            scope: receipt.change.scope().clone(),
+            grant_target: super::policy_row_grant_target(
+                receipt.change.scope(),
+                receipt.change.row_ref(),
+            ),
             mode,
             followup_task: None,
             digest_due_at,
@@ -272,6 +294,13 @@ pub(super) fn enqueue_change_in_txn(
             .store
             .vault_meta
             .put(txn, &storage_key, &encode(&entry)?)?;
+        if let Some(due) = digest_due_at {
+            vault.store.vault_meta.put(
+                txn,
+                &digest_recipient_key(recipient, due, &entry.receipt_id),
+                &storage_key,
+            )?;
+        }
     }
     Ok(())
 }
@@ -357,24 +386,47 @@ impl Vault {
                 .vault_meta
                 .get(&txn, QUEUE_CURSOR)?
                 .map(|raw| raw.to_vec());
-            let mut keys = Vec::new();
-            for entry in self.store.vault_meta.prefix_iter(&txn, QUEUED)? {
+            // Seek from the durable cursor, reading only the next bounded
+            // page. A second bounded range wraps once when the end is reached.
+            // Never materialize the entire queue just to find page N.
+            use std::ops::Bound;
+            let mut upper = QUEUED.to_vec();
+            *upper.last_mut().expect("nonempty prefix") += 1;
+            let mut selected = Vec::with_capacity(limit.min(64));
+            let lower: Bound<&[u8]> = match cursor.as_deref() {
+                Some(key) if key.starts_with(QUEUED) => Bound::Excluded(key),
+                Some(_) => return Err(Error::CorruptedIndex("policy notification cursor")),
+                None => Bound::Included(QUEUED),
+            };
+            for entry in self
+                .store
+                .vault_meta
+                .range(&txn, &(lower, Bound::Excluded(upper.as_slice())))?
+            {
                 let (key, _) = entry?;
-                keys.push(key.to_vec());
+                selected.push(key.to_vec());
+                if selected.len() == limit {
+                    break;
+                }
             }
-            let start = cursor
-                .as_ref()
-                .and_then(|last| keys.iter().position(|key| key > last))
-                .unwrap_or(0);
-            let selected = (0..limit.min(keys.len()))
-                .map(|offset| keys[(start + offset) % keys.len()].clone())
-                .collect::<Vec<_>>();
+            if selected.len() < limit && cursor.is_some() {
+                let end = cursor.as_ref().expect("checked");
+                for entry in self.store.vault_meta.range(
+                    &txn,
+                    &(Bound::Included(QUEUED), Bound::Included(end.as_slice())),
+                )? {
+                    let (key, _) = entry?;
+                    selected.push(key.to_vec());
+                    if selected.len() == limit {
+                        break;
+                    }
+                }
+            }
             let mut failure_retry = BTreeMap::new();
             for key in &selected {
                 if let Some(raw) = self.store.vault_meta.get(&txn, &failure_key(key))? {
-                    if let Ok(state) = decode::<PolicyNotificationFailure>(&raw) {
-                        failure_retry.insert(key.clone(), state.next_retry_at);
-                    }
+                    let state: PolicyNotificationFailure = decode(&raw)?;
+                    failure_retry.insert(key.clone(), state.next_retry_at);
                 }
             }
             (selected, failure_retry)
@@ -403,10 +455,7 @@ impl Vault {
             let row = match row {
                 Ok(Some(row)) => row,
                 Ok(None) => continue,
-                Err(error) => {
-                    self.record_notification_failure(&key, None, now, &error)?;
-                    continue;
-                }
+                Err(error) => return Err(error),
             };
             if row.followup_task.is_some() || row.mode == PolicyNotificationMode::LogOnly {
                 continue;
@@ -420,6 +469,17 @@ impl Vault {
             }
             match self.link_notification_in_txn(&key, &row, now) {
                 Ok(count) => linked += count,
+                Err(error)
+                    if matches!(
+                        error,
+                        Error::Storage(_)
+                            | Error::CorruptedIndex(_)
+                            | Error::InvariantViolation(_)
+                            | Error::MapFull
+                    ) =>
+                {
+                    return Err(error);
+                }
                 Err(error) => self.record_notification_failure(&key, Some(&row), now, &error)?,
             }
         }
@@ -439,7 +499,8 @@ impl Vault {
                 .store
                 .vault_meta
                 .get(txn, &failure_key)?
-                .and_then(|raw| decode(&raw).ok());
+                .map(|raw| decode(&raw))
+                .transpose()?;
             let failure = PolicyNotificationFailure {
                 receipt_id: row
                     .map_or_else(|| String::from("undecodable"), |row| row.receipt_id.clone()),
@@ -465,7 +526,8 @@ impl Vault {
     ) -> Result<usize> {
         let mut txn = self.store.env.write_txn()?;
         let recipient = EntityId::from_hex(&row.recipient)?;
-        let live_holders = authority::holders_in_txn(self, &txn, now)?;
+        let live_holders =
+            authority::holders_for_in_txn(self, &txn, now, &row.scope, &row.grant_target)?;
         if !live_holders.contains(&recipient) {
             return Err(invalid());
         }
@@ -473,40 +535,84 @@ impl Vault {
             .map_err(|_| Error::InvalidConfig("policy notification route unavailable".into()))?;
         let count = if row.mode == PolicyNotificationMode::Digest {
             let mut group = Vec::new();
-            for entry in self.store.vault_meta.prefix_iter(&txn, QUEUED)? {
-                let (key, raw) = entry?;
-                // A different damaged entry has its own retry state; it
-                // cannot poison this recipient's otherwise valid digest.
-                let Ok(candidate) = decode::<PolicyQueuedNotification>(&raw) else {
-                    continue;
-                };
-                if candidate.recipient == row.recipient
-                    && candidate.mode == PolicyNotificationMode::Digest
-                    && candidate.followup_task.is_none()
-                    && candidate.digest_due_at.is_some_and(|due| due <= now)
+            let mut retired = Vec::new();
+            let prefix = digest_recipient_prefix(recipient);
+            for entry in self
+                .store
+                .vault_meta
+                .prefix_iter(&txn, &prefix)?
+                .take(DIGEST_BATCH_LIMIT)
+            {
+                let (index_key, queue_key) = entry?;
+                // Indexed by (recipient, due, receipt): future windows follow
+                // due windows, so a bounded read cannot miss an older due row.
+                let due_start = prefix.len();
+                let due: [u8; 8] = index_key
+                    .get(due_start..due_start + 8)
+                    .ok_or(Error::CorruptedIndex("policy digest recipient index"))?
+                    .try_into()
+                    .map_err(|_| Error::CorruptedIndex("policy digest recipient index"))?;
+                if u64::from_be_bytes(due) > now {
+                    break;
+                }
+                let raw = self
+                    .store
+                    .vault_meta
+                    .get(&txn, queue_key.as_ref())?
+                    .ok_or(Error::CorruptedIndex("policy digest recipient queue"))?;
+                let candidate: PolicyQueuedNotification = decode(&raw)?;
+                if candidate.recipient != row.recipient
+                    || candidate.mode != PolicyNotificationMode::Digest
+                    || candidate.followup_task.is_some()
+                    || candidate.digest_due_at != Some(u64::from_be_bytes(due))
                 {
-                    group.push((key.to_vec(), candidate));
+                    return Err(Error::CorruptedIndex("policy digest recipient binding"));
+                }
+                if authority::holders_for_in_txn(
+                    self,
+                    &txn,
+                    now,
+                    &candidate.scope,
+                    &candidate.grant_target,
+                )?
+                .contains(&recipient)
+                {
+                    group.push((queue_key.to_vec(), index_key.to_vec(), candidate));
+                } else {
+                    // Revoked recipients no longer receive this policy row.
+                    // Retire their pending digest entry so they do not block
+                    // a later eligible window at the front of the index.
+                    retired.push((queue_key.to_vec(), index_key.to_vec(), candidate));
                 }
             }
+            for (queue_key, index_key, mut item) in retired {
+                item.mode = PolicyNotificationMode::LogOnly;
+                self.store
+                    .vault_meta
+                    .put(&mut txn, &queue_key, &encode(&item)?)?;
+                self.store.vault_meta.delete(&mut txn, &index_key)?;
+            }
             if group.is_empty() {
+                txn.commit()?;
                 return Ok(0);
             }
             let sender = group
                 .iter()
-                .filter_map(|(_, item)| EntityId::from_hex(&item.author).ok())
+                .filter_map(|(_, _, item)| EntityId::from_hex(&item.author).ok())
                 .find(|author| live_holders.contains(author) && *author != recipient)
                 .ok_or_else(invalid)?;
             let receipts = group
                 .iter()
-                .map(|(_, item)| item.receipt_id.clone())
+                .map(|(_, _, item)| item.receipt_id.clone())
                 .collect::<Vec<_>>();
             let task = crate::task_verb::enqueue_policy_change_digest_followup_in_txn(
                 self, &mut txn, sender, recipient, &receipts, now,
             )?;
-            for (key, mut item) in group {
+            for (key, index_key, mut item) in group {
                 item.followup_task = Some(task.to_hex());
                 self.store.vault_meta.put(&mut txn, &key, &encode(&item)?)?;
                 self.store.vault_meta.delete(&mut txn, &failure_key(&key))?;
+                self.store.vault_meta.delete(&mut txn, &index_key)?;
             }
             self.store
                 .vault_meta
@@ -547,7 +653,6 @@ impl Vault {
         rule: PolicyNotificationRule,
         now: u64,
     ) -> Result<String> {
-        let vault_scope = target == PolicyNotificationTarget::VaultDefault;
         let mut txn = self.store.env.write_txn()?;
         holder.revalidate_in_txn(self, &txn)?;
         if !authority::holders_for_in_txn(

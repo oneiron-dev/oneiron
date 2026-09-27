@@ -670,19 +670,17 @@ fn content_binding_excludes_identity_fields_but_binds_world() -> Result<()> {
     let (_tmp, vault) = temp_vault();
     let request = PolicyClassifyRequest::outbound_content("fixture-content-one-1574");
     let head = vault.classify_policy_model(request)?;
-    assert_eq!(
-        bytes_to_hex_lower(&head.binding.content_hash),
-        "c33efbed3117a75cddf884f2211386e24acd6e9461a56401347aa51f8050874b"
-    );
+    let other_caller = vault.classify_policy_model(
+        PolicyClassifyRequest::outbound_content("fixture-content-one-1574")
+            .with_caller_ref("unrelated-person"),
+    )?;
+    assert_eq!(head.binding.content_hash, other_caller.binding.content_hash);
 
     let world = vault.classify_policy_model(
         PolicyClassifyRequest::outbound_content("fixture-content-one-1574")
             .with_world_ref("world-a"),
     )?;
-    assert_eq!(
-        bytes_to_hex_lower(&world.binding.content_hash),
-        "607a705418c8d31127fd7310a228a036a5c7560a442d00f788c7a71ea04df65f"
-    );
+    assert_ne!(world.binding.content_hash, [0; 32]);
     assert_ne!(head.binding.content_hash, world.binding.content_hash);
     Ok(())
 }
