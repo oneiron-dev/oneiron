@@ -344,7 +344,7 @@ fn companion_retry_rejects_conflicting_roster_identity_after_baseline() -> Resul
 }
 
 #[test]
-fn companion_retry_rejects_conflicting_persona_baseline() -> Result<()> {
+fn companion_retry_preserves_valid_owner_edited_persona_baseline() -> Result<()> {
     let (_dir, vault, mut intent) = fixture("Antevon");
     let birth = companion_birth();
     intent.grant_bundle.companion_profile_grant_ref = Some(birth.profile_grant_ref);
@@ -363,10 +363,12 @@ fn companion_retry_rejects_conflicting_persona_baseline() -> Result<()> {
         AT + 1,
     )?;
     let before = vault.get(&birth.person_ref)?;
-    let err = vault
-        .onboard_workspace_member(intent, &owner, None)
-        .expect_err("an edited baseline cannot be silently replaced on retry");
-    assert_eq!(err.kind(), ErrorKind::InvalidClaimBody);
+    let outcome = vault.onboard_workspace_member(intent, &owner, None)?;
+    assert_eq!(outcome.companion_person_ref, Some(birth.person_ref));
     assert_eq!(vault.get(&birth.person_ref)?, before);
+    assert_eq!(
+        crate::companion::validated_persona_baseline(&before.expect("edited PERSON"))?,
+        serde_json::json!({ "display_name": "different persona" })
+    );
     Ok(())
 }
