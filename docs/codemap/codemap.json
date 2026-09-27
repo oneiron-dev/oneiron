@@ -1986,7 +1986,7 @@
      "purpose": "Host-signed capability slips with holder-signed offline narrowing and proof",
      "surface": {
       "crate-vis": 7,
-      "fn": 13,
+      "fn": 14,
       "struct": 6
      }
     },
@@ -2732,7 +2732,7 @@
      "path": "src/batch/export/document_snapshot.rs",
      "purpose": "Snapshot enumeration for whole-vault export",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 3,
       "fn": 1
      }
     },
@@ -21452,6 +21452,20 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
+      "ExportOptions",
+      "MemoryExport"
+     ],
+     "path": "src/memory/export.rs",
+     "purpose": "Full-vault memory export through the existing five-format pack writers",
+     "surface": {
+      "fn": 3,
+      "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
       "ExpressionPreferenceInput",
       "ExpressionPreferenceReceipt",
       "ExpressionPreferenceView"
@@ -21583,7 +21597,7 @@
      "surface": {
       "crate-vis": 8,
       "mod": 2,
-      "re-export": 20
+      "re-export": 21
      }
     },
     {
@@ -21880,6 +21894,14 @@
      "notable": [],
      "path": "src/memory/tests/delete_tombstone.rs",
      "purpose": "Safe-delete receipts, crash recovery, tombstone publish boundary, and soft-erase edge cases",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "src/memory/tests/export.rs",
+     "purpose": "The public export verb renders the full vault and hydratable short refs",
      "surface": {}
     },
     {
@@ -32538,7 +32560,7 @@
      "path": "src/task_verb/sdk_generated.rs",
      "purpose": "—",
      "surface": {
-      "fn": 32
+      "fn": 33
      }
     },
     {
@@ -35805,7 +35827,7 @@
      "purpose": "—"
     },
     "memory": {
-     "files": 78,
+     "files": 80,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -36339,8 +36361,8 @@
    },
    "over_bar": 11,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2144,
-   "test_files": 733
+   "source_files": 2145,
+   "test_files": 734
   },
   "oneiron-android": {
    "files": [
@@ -38984,7 +39006,7 @@
      "path": "src/facade/client/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 23
+      "fn": 24
      }
     },
     {
@@ -39267,7 +39289,7 @@
      "path": "src/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 24
+      "fn": 25
      }
     },
     {
@@ -40666,7 +40688,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "test",
      "notable": [],
      "path": "src/api/facade/tests.rs",
@@ -43389,7 +43411,7 @@
      "surface": {}
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "test",
      "notable": [],
      "path": "tests/it/remote_pairing.rs",
