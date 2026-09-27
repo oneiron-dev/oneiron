@@ -481,7 +481,7 @@ impl ClaimCandidate {
                 if let Some(id) = id {
                     match key.as_str() {
                         Some("facet" | "facet_ref" | "facetRef") => body.scope_facet = id,
-                        Some("scopeProjectId" | "corpus_id") => body.scope_project = id,
+                        Some("scopeProjectId") => body.scope_project = id,
                         _ => {}
                     }
                 }

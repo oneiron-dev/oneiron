@@ -7662,11 +7662,11 @@
      "path": "src/claim/scope.rs",
      "purpose": "The engine-RECOGNIZED entries inside a claim's otherwise opaque `scope` map, and their fail-closed…",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 2
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/claim/scope_stamp.rs",
@@ -12345,21 +12345,17 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
-      "CorpusId",
       "CorpusScope"
      ],
      "path": "src/corpus.rs",
-     "purpose": "Corpus scope for CLAIM records (ONE-1914): the AUDIENCE a claim belongs to, carried as a typed nested entry…",
+     "purpose": "Project-axis selection for corpus queries",
      "surface": {
-      "const": 1,
       "crate-vis": 2,
-      "enum": 1,
-      "fn": 4,
-      "struct": 1
+      "enum": 1
      }
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "test",
      "notable": [],
      "path": "src/corpus/tests.rs",
@@ -18827,6 +18823,7 @@
      "path": "src/ingest/docs_import.rs",
      "purpose": "Atomic bulk consent and thin-star docs membership",
      "surface": {
+      "crate-vis": 1,
       "fn": 3,
       "struct": 3,
       "trait": 2
@@ -35928,7 +35925,7 @@
      "impl_vault": false,
      "largest_src_bucket": "s",
      "layout": "file+dir",
-     "purpose": "Corpus scope for CLAIM records (ONE-1914): the AUDIENCE a claim belongs to, carried as a typed nested entry…"
+     "purpose": "Project-axis selection for corpus queries"
     },
     "counterparty_contact": {
      "files": 7,
