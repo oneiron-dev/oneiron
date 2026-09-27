@@ -178,17 +178,17 @@ fn corpus_from_source(source: &Value) -> BeamResult<CitationCorpus> {
                 row.get(key)
                     .is_none_or(|v| v.is_null() || v.as_str() == Some("unknown"))
             });
-            let disposition = if named.contains("drop") || group == "dropped_or_unverifiable" {
+            let disposition = if named == "dropped" || group == "dropped_or_unverifiable" {
                 CitationDisposition::Dropped
             } else if !clears_publication_axes(&row)
                 || incomplete
                 || unpaired
                 || row["regime"] == "oracle"
                 || row["in_family_judge"] == true
-                || named.contains("wall")
+                || !matches!(named, "cite" | "cite-with-caveat")
             {
                 CitationDisposition::WalledAppendix
-            } else if named.contains("caveat") || row["provenance"] == "self" {
+            } else if named == "cite-with-caveat" || row["provenance"] == "self" {
                 CitationDisposition::CiteWithCaveat
             } else {
                 CitationDisposition::Cite
@@ -327,6 +327,7 @@ mod tests {
             ("regime", serde_json::json!("oracle")),
             ("in_family_judge", serde_json::json!(true)),
             ("judge", serde_json::json!("unknown (not named)")),
+            ("disposition", serde_json::json!("unreviewed")),
         ] {
             let mut source = fixture();
             source["beam_paper_baselines"][0][key] = value;
