@@ -69,6 +69,7 @@ mod scope_stamp;
 mod scoped_read;
 mod source_trust;
 mod status;
+pub(crate) mod supersession_diff;
 mod supersession_provenance;
 mod write_target;
 
