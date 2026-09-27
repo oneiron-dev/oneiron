@@ -208,7 +208,7 @@ impl<'a> ScopedRead<'a> {
         &self,
         requested: Option<&RetrievalFilter>,
     ) -> Result<(ResolvedRetrievalFilter, PolicyManifestResolution)> {
-        let txn = self.vault.store.env.read_txn()?;
+        let txn = self.grant_read_txn()?;
         self.resolve_retrieval_filter_in(&txn, requested)
     }
 
@@ -244,7 +244,7 @@ impl<'a> ScopedRead<'a> {
         previously_suppressed: usize,
         revisions: &std::collections::HashMap<EntityId, crate::vault::RevisionRef>,
     ) -> Result<ScopedReadResult<Vec<ScoredEntity>>> {
-        let txn = self.vault.store.env.read_txn()?;
+        let txn = self.grant_read_txn()?;
         // The scoring txn may have completed before a revocation. The final
         // read must satisfy BOTH the plan authority and this fresh snapshot.
         let (fresh_filter, fresh_policy) = self.resolve_retrieval_filter_in(&txn, requested)?;
@@ -327,7 +327,7 @@ impl<'a> ScopedRead<'a> {
             return Ok(0);
         }
 
-        let rtxn = self.vault.store.env.read_txn()?;
+        let rtxn = self.grant_read_txn()?;
         let policy = self.policy_manifest_in(&rtxn)?;
         let diagnostics = policy.diagnostics();
         if self.audience.is_none()
@@ -355,7 +355,7 @@ impl<'a> ScopedRead<'a> {
         requested: Option<&RetrievalFilter>,
     ) -> Result<ScopedReadResult<Vec<ScoredEntity>>> {
         let before = results.len();
-        let txn = self.vault.store.env.read_txn()?;
+        let txn = self.grant_read_txn()?;
         let (filter, policy) = self.resolve_retrieval_filter_in(&txn, requested)?;
         let mut value = Vec::with_capacity(before);
         let mut suppressed = 0;
@@ -371,7 +371,7 @@ impl<'a> ScopedRead<'a> {
     }
 
     pub fn filter_context_pack(&self, pack: &mut ContextPack) -> Result<ScopedReadReceipt> {
-        let rtxn = self.vault.store.env.read_txn()?;
+        let rtxn = self.grant_read_txn()?;
         let (filter, policy) = self.resolve_retrieval_filter_in(&rtxn, None)?;
         let had_l2_base = pack.l2_base.is_some();
         let mut auxiliary_suppressed = 0;
@@ -451,7 +451,7 @@ impl<'a> ScopedRead<'a> {
     }
 
     pub fn is_entity_readable(&self, id: &EntityId) -> Result<bool> {
-        let rtxn = self.vault.store.env.read_txn()?;
+        let rtxn = self.grant_read_txn()?;
         self.is_entity_readable_in(&rtxn, id)
     }
 
@@ -540,11 +540,7 @@ impl<'a> ScopedRead<'a> {
         {
             return Ok(false);
         }
-        if !self.relationship_raw_allowed_in(
-            rtxn,
-            header.entity_type,
-            &raw[ENTITY_METADATA_HEADER_LEN..],
-        )? {
+        if !self.relationship_raw_allowed_in(rtxn, id, raw)? {
             return Ok(false);
         }
         if !self.audience_readable_in(rtxn, id)? {

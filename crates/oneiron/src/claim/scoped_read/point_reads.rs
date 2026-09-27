@@ -50,7 +50,7 @@ impl ScopedRead<'_> {
         reads: &[(EntityId, ReadMode)],
         requested: Option<&RetrievalFilter>,
     ) -> Result<ScopedReadResult<Vec<Option<EntityParts>>>> {
-        let txn = self.vault.store.env.read_txn()?;
+        let txn = self.grant_read_txn()?;
         let (filter, policy) = self.resolve_retrieval_filter_in(&txn, requested)?;
         let mut value = Vec::with_capacity(reads.len());
         let mut suppressed = 0;
@@ -113,7 +113,7 @@ impl ScopedRead<'_> {
         &self,
         refs: &[(&str, u8, ReadMode)],
     ) -> Result<ScopedReadResult<Vec<Option<crate::HydratedShortId>>>> {
-        let txn = self.vault.store.env.read_txn()?;
+        let txn = self.grant_read_txn()?;
         let (filter, policy) = self.resolve_retrieval_filter_in(&txn, None)?;
         let mut value = Vec::with_capacity(refs.len());
         let mut suppressed = 0;

@@ -134,6 +134,17 @@ impl ScopedRead<'_> {
         })
     }
 
+    /// Same-snapshot, live, policy-gated source for callers that must settle
+    /// against the exact bytes supplied to an external answerer.
+    pub(crate) fn entity_raw_live_in(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        id: &EntityId,
+    ) -> Result<Option<Vec<u8>>> {
+        let (filter, policy) = self.resolve_retrieval_filter_in(txn, None)?;
+        self.entity_raw_with_mode_in(txn, &policy, &filter, id, ReadMode::Live)
+    }
+
     /// Historical bytes never inherit a later live body's authority, or vice versa.
     pub(super) fn entity_raw_with_mode_in(
         &self,
