@@ -216,7 +216,8 @@ impl RoomThreadPolicy {
         self.fresh_for = self.fresh_for.min(settings.fresh_for);
         self.rows_per_list = self.rows_per_list.min(settings.rows_per_list);
         self.tokens_per_list = self.tokens_per_list.min(settings.tokens_per_list);
-        self.fill = self.fill.min(settings.fill);
+        // Ranking is selected by trusted policy, not an ordinal minimum.
+        self.fill = settings.fill;
         self.waits_per_thread = self.waits_per_thread.min(settings.waits_per_thread);
         self
     }
@@ -224,12 +225,26 @@ impl RoomThreadPolicy {
 
 /// Fold indexed turns and already-validated TASK facts into a room working set.
 /// Resolve reply chains rather than trusting the caller to label a thread's root.
+#[cfg(test)]
 pub(super) fn project(
     turns: &[RoomTurn],
     tasks: &[RoomThreadTask],
     policy: RoomThreadPolicy,
 ) -> Result<RoomThreads> {
-    project_inner(turns, tasks, policy, None)
+    let room_hex = turns
+        .first()
+        .map_or_else(|| "0".repeat(32), |turn| turn.room_id.clone());
+    project_inner(turns, tasks, policy, None, &room_hex)
+}
+
+/// The public room read supplies its exact room id even for an empty history.
+pub(super) fn project_in_room(
+    turns: &[RoomTurn],
+    tasks: &[RoomThreadTask],
+    policy: RoomThreadPolicy,
+    room: EntityId,
+) -> Result<RoomThreads> {
+    project_inner(turns, tasks, policy, None, &room.to_hex())
 }
 
 /// Direct-by-handle fold: no render cap and no unrelated thread rows built.
@@ -248,6 +263,9 @@ pub(super) fn project_target(
             ..Default::default()
         },
         Some(handle),
+        &turns
+            .first()
+            .map_or_else(|| "0".repeat(32), |turn| turn.room_id.clone()),
     )?;
     Ok(projection
         .active
@@ -263,19 +281,19 @@ fn project_inner(
     tasks: &[RoomThreadTask],
     policy: RoomThreadPolicy,
     target: Option<EntityId>,
+    room_hex: &str,
 ) -> Result<RoomThreads> {
     const MAX_ROWS: usize = 100_000;
     if turns.len() > MAX_ROWS
         || tasks.len() > MAX_ROWS
-        || policy.rows_per_list > 64 && policy.rows_per_list != usize::MAX
-        || !(64..=2_048).contains(&policy.tokens_per_list)
-        || !(1..=8).contains(&policy.waits_per_thread)
+        || policy.rows_per_list > MAX_ROWS && policy.rows_per_list != usize::MAX
+        || policy.tokens_per_list == 0
+        || policy.tokens_per_list > 1_000_000
+        || policy.waits_per_thread == 0
+        || policy.waits_per_thread > MAX_ROWS
     {
         return Err(invalid());
     }
-    let room_hex = turns
-        .first()
-        .map_or_else(|| "0".repeat(32), |turn| turn.room_id.clone());
     let mut by_id = BTreeMap::new();
     for turn in turns {
         if turn.room_id != room_hex {
@@ -415,41 +433,47 @@ fn project_inner(
         });
     }
     quiet.sort_by_key(|row| (std::cmp::Reverse(row.last_message_at), row.handle));
-    let list = |mut rows: Vec<RoomThread>, lane: &str| {
+    let list = |mut rows: Vec<RoomThread>, lane: &str| -> Result<RoomThreadList> {
         let total = rows.len();
-        let heading = format!("threads {lane}: {total}");
-        let id = "f".repeat(32);
-        let footer = format!(
-            "threads {lane}: +{total} more; find=rooms.find(room_ref={id}) get=rooms.get(room_ref={id},turn_ref=<handle>)"
-        );
-        let mut used = crate::tokenizer::count_context_pack_tokens(&heading)
-            + crate::tokenizer::count_context_pack_tokens(&footer);
-        let mut selected = 0;
-        for row in &rows {
-            if policy.rows_per_list == usize::MAX {
-                selected += 1;
-                continue;
-            }
-            if selected == policy.rows_per_list {
-                break;
-            }
-            let cost = crate::tokenizer::count_context_pack_tokens(&row.line(lane));
-            if used + cost > policy.tokens_per_list {
-                break;
-            }
-            used += cost;
-            selected += 1;
+        if policy.rows_per_list == usize::MAX {
+            return Ok(RoomThreadList { rows, more: 0 });
         }
+        let heading = format!("threads {lane}: {total}");
+        let heading_tok = crate::tokenizer::count_context_pack_tokens(&heading);
+        let mut row_tok = 0;
+        let mut selected = None;
+        for count in 0..=total.min(policy.rows_per_list) {
+            if count > 0 {
+                row_tok += crate::tokenizer::count_context_pack_tokens(&rows[count - 1].line(lane));
+            }
+            let more = total - count;
+            let footer_tok = if more > 0 || lane == "quiet" {
+                let footer = format!(
+                    "threads {lane}: +{more} more; find=rooms.find(room_ref={room_hex}) get=rooms.get(room_ref={room_hex},turn_ref=<handle>)"
+                );
+                crate::tokenizer::count_context_pack_tokens(&footer)
+            } else {
+                0
+            };
+            if heading_tok
+                .saturating_add(row_tok)
+                .saturating_add(footer_tok)
+                <= policy.tokens_per_list
+            {
+                selected = Some(count);
+            }
+        }
+        let selected = selected.ok_or(crate::Error::IndexOverflow("room thread render floor"))?;
         rows.truncate(selected);
-        RoomThreadList {
+        Ok(RoomThreadList {
             rows,
             more: total - selected,
-        }
+        })
     };
     Ok(RoomThreads {
-        active: list(active, "active"),
-        waiting: list(waiting, "waiting"),
-        quiet: list(quiet, "quiet"),
+        active: list(active, "active")?,
+        waiting: list(waiting, "waiting")?,
+        quiet: list(quiet, "quiet")?,
     })
 }
 

@@ -28,7 +28,7 @@ mod resolution;
 mod retrieval_filter;
 mod room_thread;
 pub use room_thread::RoomThreadFill;
-pub(crate) use room_thread::RoomThreadSettings;
+pub(crate) use room_thread::{RoomThreadManifest, RoomThreadSettings};
 mod share;
 mod witness_message;
 

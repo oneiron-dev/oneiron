@@ -262,3 +262,70 @@ fn policy_fill_switches_due_first_to_recent_wait_with_one_row_budget() {
         id(2)
     );
 }
+
+#[test]
+fn exact_room_footer_budget_refuses_floor_and_honors_row_boundary() {
+    let room = EntityId::from_hex("b7bef252b4d019b6516847f69b71cb42").unwrap();
+    let mut policy = RoomThreadPolicy {
+        now: 1000,
+        fresh_for: 1,
+        rows_per_list: 2,
+        tokens_per_list: 64,
+        fill: RoomThreadFill::Recency,
+        waits_per_thread: 8,
+    };
+    assert!(project_in_room(&[], &[], policy, room).is_err());
+    policy.tokens_per_list = 128;
+    let empty = project_in_room(&[], &[], policy, room).unwrap();
+    let lines = empty.render_rows(room);
+    let quiet = lines
+        .iter()
+        .filter(|line| line.starts_with("threads quiet:"))
+        .collect::<Vec<_>>();
+    assert!(
+        quiet
+            .iter()
+            .map(|line| crate::tokenizer::count_context_pack_tokens(line))
+            .sum::<usize>()
+            <= 128
+    );
+    let turns = vec![
+        RoomTurn {
+            room_id: room.to_hex(),
+            ..turn(240, None, None, 1)
+        },
+        RoomTurn {
+            room_id: room.to_hex(),
+            ..turn(1, Some(id(240)), None, 2)
+        },
+    ];
+    let full = project_in_room(&turns, &[], policy, room).unwrap();
+    let exact_lines = full.render_rows(room);
+    let exact = exact_lines
+        .iter()
+        .filter(|line| line.starts_with("threads quiet:") || line.starts_with("quiet "))
+        .map(|line| crate::tokenizer::count_context_pack_tokens(line))
+        .sum::<usize>();
+    assert!(exact <= 128);
+    policy.tokens_per_list = exact;
+    assert_eq!(
+        project_in_room(&turns, &[], policy, room)
+            .unwrap()
+            .quiet
+            .rows
+            .len(),
+        1
+    );
+    policy.tokens_per_list = exact - 1;
+    let below = project_in_room(&turns, &[], policy, room);
+    if let Ok(projected) = below {
+        assert!(projected.quiet.rows.is_empty());
+        let spent = projected
+            .render_rows(room)
+            .iter()
+            .filter(|line| line.starts_with("threads quiet:"))
+            .map(|line| crate::tokenizer::count_context_pack_tokens(line))
+            .sum::<usize>();
+        assert!(spent <= exact - 1);
+    }
+}

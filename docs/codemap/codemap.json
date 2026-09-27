@@ -17248,8 +17248,8 @@
      "path": "src/gate/mod.rs",
      "purpose": "DEC-0005 Gate policy manifest resolver",
      "surface": {
-      "crate-vis": 27,
-      "re-export": 4
+      "crate-vis": 26,
+      "re-export": 3
      }
     },
     {
@@ -17293,7 +17293,7 @@
      "path": "src/gate/resolution/accessors.rs",
      "purpose": "Read-only resolved-field accessors plus the frontier-hash entry",
      "surface": {
-      "crate-vis": 25
+      "crate-vis": 24
      }
     },
     {
@@ -17367,20 +17367,6 @@
      "path": "src/gate/retrieval_filter/tests.rs",
      "purpose": "—",
      "surface": {}
-    },
-    {
-     "bucket": "s",
-     "kind": "src",
-     "notable": [
-      "RoomThreadFill"
-     ],
-     "path": "src/gate/room_thread.rs",
-     "purpose": "Manifest-owned room working-set policy with restrictive composition",
-     "surface": {
-      "crate-vis": 3,
-      "enum": 1,
-      "fn": 1
-     }
     },
     {
      "bucket": "s",
@@ -33076,7 +33062,7 @@
      "path": "src/task_verb/mod.rs",
      "purpose": "Typed, actor-bound verbs over the Context Board TASKS section",
      "surface": {
-      "crate-vis": 12,
+      "crate-vis": 11,
       "mod": 1,
       "re-export": 16
      }
@@ -33164,16 +33150,6 @@
     {
      "bucket": "s",
      "kind": "src",
-     "notable": [],
-     "path": "src/task_verb/room_thread.rs",
-     "purpose": "Existing TASK intent and follow-up facts projected onto a room thread",
-     "surface": {
-      "crate-vis": 1
-     }
-    },
-    {
-     "bucket": "s",
-     "kind": "src",
      "notable": [
       "TaskCancelMode",
       "TaskCancelReceipt",
@@ -33219,9 +33195,7 @@
       "ReceiptsRequest",
       "RoomClaimRequest",
       "RoomEntry",
-      "RoomRefRequest",
       "RoomRequest",
-      "RoomTurnRequest",
       "TaskAnswerRequest",
       "TaskAskRequest",
       "TaskAskShort",
@@ -33234,7 +33208,7 @@
      "purpose": "Shared typed agent-verb inputs and generated transport dispatch",
      "surface": {
       "enum": 1,
-      "struct": 18
+      "struct": 16
      }
     },
     {
@@ -33244,7 +33218,7 @@
      "path": "src/task_verb/sdk_generated.rs",
      "purpose": "—",
      "surface": {
-      "fn": 37
+      "fn": 33
      }
     },
     {
@@ -34812,8 +34786,8 @@
      "path": "src/workspace_roster/mod.rs",
      "purpose": "Workspace roster preset + member onboarding (ONEIRON-ARCH-0065)",
      "surface": {
-      "crate-vis": 4,
-      "re-export": 5
+      "crate-vis": 2,
+      "re-export": 4
      }
     },
     {
@@ -34893,68 +34867,36 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "src",
      "notable": [],
      "path": "src/workspace_roster/rooms/history.rs",
      "purpose": "Bounded room-local history and transactional auxiliary-row cleanup",
      "surface": {
-      "crate-vis": 3,
-      "fn": 9
-     }
-    },
-    {
-     "bucket": "m",
-     "kind": "src",
-     "notable": [
-      "RoomThread",
-      "RoomThreadList",
-      "RoomThreadPolicy",
-      "RoomThreadWait",
-      "RoomThreads",
-      "RoomWaitKind"
-     ],
-     "path": "src/workspace_roster/rooms/liveness.rs",
-     "purpose": "Read-time room thread liveness; the room history and TASK rows remain truth",
-     "surface": {
-      "crate-vis": 6,
-      "enum": 1,
-      "fn": 3,
-      "struct": 5
+      "crate-vis": 2,
+      "fn": 3
      }
     },
     {
      "bucket": "s",
-     "kind": "test",
-     "notable": [],
-     "path": "src/workspace_roster/rooms/liveness/tests.rs",
-     "purpose": "Read-time room thread liveness acceptance fixtures",
-     "surface": {}
-    },
-    {
-     "bucket": "m",
      "kind": "src",
      "notable": [
       "RoomClaimOutcome",
       "RoomClaimReceipt",
       "RoomPage",
-      "RoomThreadPage",
-      "RoomTrunk",
-      "RoomTrunkHeader",
       "RoomTurn"
      ],
      "path": "src/workspace_roster/rooms/mod.rs",
      "purpose": "Room participation and addressed turn claims",
      "surface": {
-      "crate-vis": 4,
+      "crate-vis": 2,
       "enum": 1,
       "fn": 5,
-      "re-export": 1,
-      "struct": 6
+      "struct": 3
      }
     },
     {
-     "bucket": "L",
+     "bucket": "s",
      "kind": "test",
      "notable": [],
      "path": "src/workspace_roster/rooms/tests.rs",
@@ -36407,7 +36349,7 @@
      "purpose": "—"
     },
     "gate": {
-     "files": 76,
+     "files": 75,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -36974,7 +36916,7 @@
      "purpose": "Replicated TASK authority: owner proof, cancellation, and acknowledgement as immutable companion TASK entities"
     },
     "task_verb": {
-     "files": 61,
+     "files": 60,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -37079,7 +37021,7 @@
      "purpose": "OF-444 web acquisition primitive: one HTTP(S) URL in, one fixed six-field [`FetchResult`] out, produced by a…"
     },
     "workspace_roster": {
-     "files": 22,
+     "files": 20,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -37095,8 +37037,8 @@
    },
    "over_bar": 2,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2198,
-   "test_files": 752
+   "source_files": 2195,
+   "test_files": 751
   },
   "oneiron-android": {
    "files": [
@@ -39883,7 +39825,7 @@
      "path": "src/facade/client/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 28
+      "fn": 24
      }
     },
     {
@@ -40166,7 +40108,7 @@
      "path": "src/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 29
+      "fn": 25
      }
     },
     {

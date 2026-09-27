@@ -407,7 +407,7 @@ async fn rooms_render(
     payload: Result<Json<serde_json::Value>, JsonRejection>,
 ) -> Result<Json<serde_json::Value>, FacadeApiError> {
     auth.require(CoreScope::Read)?;
-
+    auth.require_unrestricted_record_scope()?;
     let value = facade_json(payload)?;
     let (actor, class) = facade_actor(&auth)?;
     Ok(Json(oneiron::task_verb::sdk::invoke(
@@ -422,7 +422,7 @@ async fn rooms_find(
     payload: Result<Json<serde_json::Value>, JsonRejection>,
 ) -> Result<Json<serde_json::Value>, FacadeApiError> {
     auth.require(CoreScope::Read)?;
-
+    auth.require_unrestricted_record_scope()?;
     let value = facade_json(payload)?;
     let (actor, class) = facade_actor(&auth)?;
     Ok(Json(oneiron::task_verb::sdk::invoke(
@@ -437,7 +437,7 @@ async fn rooms_get(
     payload: Result<Json<serde_json::Value>, JsonRejection>,
 ) -> Result<Json<serde_json::Value>, FacadeApiError> {
     auth.require(CoreScope::Read)?;
-
+    auth.require_unrestricted_record_scope()?;
     let value = facade_json(payload)?;
     let (actor, class) = facade_actor(&auth)?;
     Ok(Json(oneiron::task_verb::sdk::invoke(
@@ -452,7 +452,7 @@ async fn rooms_trunk(
     payload: Result<Json<serde_json::Value>, JsonRejection>,
 ) -> Result<Json<serde_json::Value>, FacadeApiError> {
     auth.require(CoreScope::Read)?;
-
+    auth.require_unrestricted_record_scope()?;
     let value = facade_json(payload)?;
     let (actor, class) = facade_actor(&auth)?;
     Ok(Json(oneiron::task_verb::sdk::invoke(

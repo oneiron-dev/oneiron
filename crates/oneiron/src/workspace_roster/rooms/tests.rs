@@ -923,7 +923,7 @@ fn room_manifest_changes_selected_rows_and_cannot_be_widened_by_caller() -> Resu
     );
     let mut manifest: serde_json::Value =
         rmp_serde::from_slice(&crate::gate::default_policy_manifest()).unwrap();
-    manifest["room_thread"] = serde_json::json!({"fresh_for_secs":1,
+    manifest["room_thread"]["base"] = serde_json::json!({"fresh_for_secs":1,
         "rows_per_list":1, "tokens_per_list":256, "fill":"recency","waits_per_thread":4});
     crate::test_util::put_policy_manifest_bytes(
         &vault,
@@ -949,6 +949,28 @@ fn room_manifest_changes_selected_rows_and_cannot_be_widened_by_caller() -> Resu
     .unwrap();
     assert_eq!(last["rows"].as_array().unwrap().len(), 1);
     assert!(last["next_after"].is_null());
+    // The owner can choose fourteen-day freshness above the shipped seven-day
+    // working-set default; only the manifest's vault ceiling caps it.
+    manifest["room_thread"]["base"]["fresh_for_secs"] = serde_json::json!(14 * 86_400);
+    crate::test_util::put_policy_manifest_bytes(
+        &vault,
+        crate::gate::default_policy_manifest_id()?,
+        &rmp_serde::to_vec_named(&manifest).unwrap(),
+    )?;
+    let longer = RoomThreadPolicy {
+        now: 10 * 86_400,
+        fresh_for: 14 * 86_400,
+        ..caller
+    };
+    assert_eq!(
+        memory
+            .rooms_threads(room, longer)
+            .unwrap()
+            .active
+            .rows
+            .len(),
+        1
+    );
     Ok(())
 }
 

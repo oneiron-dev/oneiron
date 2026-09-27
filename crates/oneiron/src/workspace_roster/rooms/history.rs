@@ -190,7 +190,7 @@ impl Memory<'_> {
         }
         let txn = self.vault().store.env.read_txn().map_err(Error::from)?;
         let settings = crate::gate::resolve_policy_manifest(&self.vault().store, &txn)?
-            .room_thread_settings()?;
+            .room_thread_settings(self.actor())?;
         drop(txn);
         let policy = policy.narrowed(settings);
         let turns = self.room_turn_snapshot(room)?;
@@ -203,7 +203,9 @@ impl Memory<'_> {
             .into_iter()
             .collect();
         let tasks = crate::task_verb::room_thread_tasks(self, &roots, &members, policy.now)?;
-        Ok(super::liveness::project(&turns, &tasks, policy)?)
+        Ok(super::liveness::project_in_room(
+            &turns, &tasks, policy, room,
+        )?)
     }
 
     /// Standalone room view. The Context Board ROOM section retains its four
