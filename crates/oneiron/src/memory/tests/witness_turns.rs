@@ -624,6 +624,103 @@ fn witness_concurrent_same_type_turn_creation_routes_through_validation() {
     );
 }
 
+/// The advisory "absent conversation" lookup must not turn a competing
+/// PERSON put into a successful transcript whose ChildOf/BelongsTo target is
+/// not a CONVERSATION. This is the same pre-transaction seam as the TURN race.
+#[test]
+fn witness_concurrent_wrong_type_conversation_refuses_without_rows_or_edges() {
+    let (_dir, vault) = open_vault();
+    let actor = put_person(&vault, 0x71);
+    let facade = facade_for(&vault, actor);
+    let conversation = EntityId::from_bytes([0x72; 16]).expect("conversation id");
+    let turn_id = EntityId::from_bytes([0x73; 16]).expect("turn id");
+    let message_id = EntityId::from_bytes([0x74; 16]).expect("message id");
+    let person_body = b"competing person";
+    let mut message = witness_message(0, WitnessAuthor::User, "raced transcript");
+    message.id = Some(message_id.to_hex());
+    let error = facade
+        .witness_with_pre_txn_hook(
+            &WitnessTurn {
+                conversation_ref: conversation.to_hex(),
+                turn_ref: Some(turn_id.to_hex()),
+                messages: vec![message],
+                occurred_at: 750,
+            },
+            || {
+                vault
+                    .put_entity(
+                        &conversation,
+                        ENTITY_TYPE_PERSON,
+                        test_time(700),
+                        700,
+                        person_body,
+                    )
+                    .expect("PERSON wins before witness writer");
+            },
+        )
+        .expect_err("wrong-kind conversation must fail");
+    assert_eq!(error.code, MEMORY_CODE_BAD_REQUEST);
+    let person = vault
+        .get_raw(&conversation)
+        .expect("raw")
+        .expect("person persists");
+    assert_eq!(
+        EntityMetadataHeader::parse(&person)
+            .expect("header")
+            .entity_type,
+        ENTITY_TYPE_PERSON
+    );
+    assert_eq!(&person[ENTITY_METADATA_HEADER_LEN..], person_body);
+    assert!(vault.get_raw(&turn_id).expect("turn read").is_none());
+    assert!(vault.get_raw(&message_id).expect("message read").is_none());
+    assert!(vault.edges_out(&turn_id).expect("turn edges").is_empty());
+    assert!(
+        vault
+            .edges_out(&message_id)
+            .expect("message edges")
+            .is_empty()
+    );
+}
+
+#[test]
+fn witness_concurrent_soft_erased_conversation_refuses_without_a_turn() {
+    let (_dir, vault) = open_vault();
+    let actor = put_person(&vault, 0x75);
+    let facade = facade_for(&vault, actor);
+    let conversation = EntityId::from_bytes([0x76; 16]).expect("conversation id");
+    let turn_id = EntityId::from_bytes([0x77; 16]).expect("turn id");
+    let empty_body = encode_rmpv(&Value::Map(Vec::new())).expect("conversation body");
+    vault
+        .batch()
+        .put(
+            &conversation,
+            ENTITY_TYPE_CONVERSATION,
+            test_time(500),
+            500,
+            &empty_body,
+        )
+        .commit()
+        .expect("initial live conversation");
+    let error = facade
+        .witness_with_pre_txn_hook(
+            &WitnessTurn {
+                conversation_ref: conversation.to_hex(),
+                turn_ref: Some(turn_id.to_hex()),
+                messages: vec![witness_message(0, WitnessAuthor::User, "after erasure")],
+                occurred_at: 750,
+            },
+            || {
+                vault
+                    .delete_entity_with_reason(&conversation, crate::DeleteReason::UserDelete)
+                    .expect("concurrent erasure");
+            },
+        )
+        .expect_err("a soft-erased conversation cannot hold a new turn");
+    assert_eq!(error.code, MEMORY_CODE_NOT_FOUND);
+    assert!(vault.get_raw(&turn_id).expect("turn read").is_none());
+    assert!(vault.edges_out(&turn_id).expect("turn edges").is_empty());
+}
+
 /// An append landing AFTER the watermark passed the turn RE-DIRTIES it: the
 /// next dirty scan returns the SAME turn id with a strictly greater
 /// `learned_at`, and the re-put leaves no stale temporal-learned key behind.
