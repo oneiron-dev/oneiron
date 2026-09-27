@@ -227,6 +227,8 @@ impl DecisionLadder<'_> {
                 providers: pins,
                 band: row.band,
                 band_version: row.version,
+                evidence_versions: Vec::new(),
+                cost_per_thousand: None,
             },
         })
     }
