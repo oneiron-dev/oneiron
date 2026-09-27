@@ -1063,3 +1063,55 @@ fn lens_uses_caller_supplied_copy_and_contains_source_backing() {
     };
     assert!(render_prep_lens(&pack, &blank).is_err());
 }
+
+#[test]
+fn prep_keeps_ranked_owner_claim_when_l2_base_is_implicit() {
+    let (_dir, vault) = temp_vault();
+    let owner = vault.ensure_embedded_owner_actor().expect("owner person");
+    let event_ref = put_event(&vault, EVENT_SEED, EVENT_START, EVENT_END);
+    put_attendee(&vault, 0, event_ref, "mailto:owner@example.com");
+    let claim_ref = claim_id(PERSON_SEED, 0xD0);
+    put_claim(
+        &vault,
+        claim_ref,
+        "prep.commitment",
+        owner,
+        Value::from("owner prep obligation"),
+        COMMITMENT_AT,
+    );
+    vault
+        .batch()
+        .edge(&event_ref, EdgeKind::ParticipatesIn, &owner, 1.0)
+        .edge(&owner, EdgeKind::About, &claim_ref, 1.0)
+        .commit()
+        .expect("prep edges");
+    let event = PrepEvent {
+        event_ref,
+        start_utc: EVENT_START,
+        end_utc: EVENT_END,
+        attendee_refs: vec![owner],
+        external_attendee_count: 1,
+        has_campaign_linkage: false,
+        has_commitment_linkage: false,
+        internal_meeting_opt_in: false,
+    };
+    let pack = build_prep_pack(
+        &vault,
+        &PrepBuildRequest {
+            event,
+            fired_at: FIRE_AT,
+            policy: PrepPolicy::default(),
+        },
+    )
+    .expect("prep assembly")
+    .expect("owner commitment is retained");
+    assert!(
+        pack.sections
+            .iter()
+            .flat_map(|section| &section.items)
+            .any(|item| {
+                item.source_refs.contains(&claim_ref.to_hex())
+                    && item.text.contains("owner prep obligation")
+            })
+    );
+}
