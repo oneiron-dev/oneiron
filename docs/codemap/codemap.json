@@ -37883,6 +37883,16 @@
      "bucket": "m",
      "kind": "src",
      "notable": [],
+     "path": "src/oneironer_shadow.rs",
+     "purpose": "Checkpoint-backed NER shadow proof beside an indexed fixture turn",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
      "path": "src/perf/acceptance.rs",
      "purpose": "ONE-1579 acceptance evidence: structured support for the five ONE-1578 lifecycle knobs, and the exact…",
      "surface": {
@@ -38339,6 +38349,13 @@
      "layout": "dir",
      "purpose": "Campaign #5 interface bench task generation and smoke harness"
     },
+    "oneironer_shadow": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "m",
+     "layout": "file",
+     "purpose": "Checkpoint-backed NER shadow proof beside an indexed fixture turn"
+    },
     "perf": {
      "files": 37,
      "impl_vault": false,
@@ -38377,7 +38394,7 @@
    },
    "over_bar": 0,
    "purpose": "oneiron-bench — benchmark harness skeleton",
-   "source_files": 99,
+   "source_files": 100,
    "test_files": 18
   },
   "oneiron-driver": {
@@ -42793,6 +42810,7 @@
      "bucket": "m",
      "kind": "src",
      "notable": [
+      "AutoDevicePrecedence",
       "EmbedderArgs",
       "EmbedderConfig",
       "EmbedderConfigOverride",
@@ -42801,6 +42819,7 @@
       "EmbedderProvider",
       "EmbedderQuant",
       "EndpointEmbedderConfig",
+      "LocalDevicePolicy",
       "LocalEmbedderConfig"
      ],
      "path": "src/config/embedder.rs",
@@ -42808,13 +42827,13 @@
      "surface": {
       "const": 6,
       "crate-vis": 2,
-      "enum": 4,
+      "enum": 5,
       "fn": 7,
-      "struct": 5
+      "struct": 6
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "test",
      "notable": [],
      "path": "src/config/embedder_tests.rs",
@@ -42840,6 +42859,7 @@
      "path": "src/config/merge.rs",
      "purpose": "Layered merge: file, environment, and argv values into `ServeConfig`",
      "surface": {
+      "crate-vis": 1,
       "fn": 5,
       "struct": 1
      }
