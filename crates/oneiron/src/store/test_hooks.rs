@@ -60,9 +60,32 @@ pub(crate) struct TestHooks {
     after_graph_ask_preflight: Mutex<Option<GraphAskPreflightHook>>,
     /// One-shot local-repo ingest boundary before its writer transaction.
     pub(crate) before_codebase_ingest_writer: Mutex<Option<Box<dyn FnOnce() + Send>>>,
+    /// One vault-scoped pause before correction obtains its write lock.
+    before_weave_correction_writer: Mutex<Option<Box<dyn FnOnce() + Send>>>,
 }
 
 impl TestHooks {
+    pub(crate) fn install_before_weave_correction_writer(
+        &self,
+        hook: impl FnOnce() + Send + 'static,
+    ) {
+        *self
+            .before_weave_correction_writer
+            .lock()
+            .expect("correction hook lock") = Some(Box::new(hook));
+    }
+
+    pub(crate) fn signal_before_weave_correction_writer(&self) {
+        let hook = self
+            .before_weave_correction_writer
+            .lock()
+            .expect("correction hook lock")
+            .take();
+        if let Some(hook) = hook {
+            hook();
+        }
+    }
+
     pub(crate) fn install_graph_ask_preflight(
         &self,
         unit: EntityId,

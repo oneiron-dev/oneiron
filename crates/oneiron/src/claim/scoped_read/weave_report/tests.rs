@@ -560,6 +560,85 @@ fn session_weave_uses_composed_claim_and_project_candidates_without_changing_bas
 }
 
 #[test]
+fn authenticated_wrong_link_tap_persists_label_and_rejects_unknown_link() -> Result<()> {
+    use crate::provenance::EdgeRef;
+    let (_tmp, vault) = open_test_vault_with(embedding_test_config());
+    let person = entity(0xb1);
+    let peer = entity(0xb2);
+    for id in [person, peer] {
+        vault.put_entity(
+            &id,
+            crate::registry::ENTITY_TYPE_PERSON,
+            TimeRange { start: 1, end: 1 },
+            1,
+            b"reader",
+        )?;
+    }
+    vault.put_edge(&person, EdgeKind::Mentions, &peer, 0.5)?;
+    crate::test_util::authorize_readers(&vault, &[&person.to_hex()]);
+    let auth = vault.authenticate_owner(
+        person,
+        &person.to_hex(),
+        true,
+        crate::store::GateDecisionId::now(),
+    )?;
+    let read = vault.scoped_read(ScopedReadActorKey::new(person.to_hex()).unwrap());
+    let link = EdgeRef::new(person, EdgeKind::Mentions, peer);
+    let filed = read.report_wrong_link(&auth, WeaveReader::Person(person), link)?;
+    assert_eq!(filed.link, link);
+    assert_eq!(filed.actor, person);
+    assert_eq!(
+        read.weave_link_corrections(WeaveReader::Person(person), link)?,
+        vec![filed]
+    );
+    assert_eq!(
+        vault.weave_link_correction_labels_in_txn(&vault.store.env.read_txn()?, link)?,
+        vec![filed]
+    );
+    let unknown = EdgeRef::new(peer, EdgeKind::Mentions, person);
+    assert!(matches!(
+        read.report_wrong_link(&auth, WeaveReader::Person(person), unknown),
+        Err(Error::EntityNotFound)
+    ));
+    assert!(matches!(
+        read.weave_link_corrections(WeaveReader::Person(person), unknown),
+        Err(Error::EntityNotFound)
+    ));
+    let stranger = entity(0xb3);
+    vault.put_entity(
+        &stranger,
+        crate::registry::ENTITY_TYPE_PERSON,
+        TimeRange { start: 1, end: 1 },
+        1,
+        b"stranger",
+    )?;
+    let other_auth = vault.authenticate_owner(
+        stranger,
+        &stranger.to_hex(),
+        true,
+        crate::store::GateDecisionId::now(),
+    )?;
+    assert!(
+        read.report_wrong_link(&other_auth, WeaveReader::Person(person), link)
+            .is_err()
+    );
+    assert_eq!(
+        read.weave_link_corrections(WeaveReader::Person(person), link)?,
+        vec![filed]
+    );
+    assert!(vault.delete_edge(&person, EdgeKind::Mentions, &peer)?);
+    assert_eq!(
+        vault.weave_link_correction_labels_in_txn(&vault.store.env.read_txn()?, link)?,
+        vec![filed]
+    );
+    assert!(matches!(
+        read.weave_link_corrections(WeaveReader::Person(person), link),
+        Err(Error::EntityNotFound)
+    ));
+    Ok(())
+}
+
+#[test]
 fn weave_exact_pair_admission_keeps_independent_link_to_same_target() -> Result<()> {
     use crate::edge::EdgeActorClass;
     use crate::note::{NoteKind, NoteScope, NoteWriteEnvelope};

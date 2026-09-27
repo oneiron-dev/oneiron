@@ -24,8 +24,10 @@ mod point_reads;
 mod receipt;
 mod retrieval_visibility;
 mod versions;
+mod weave_correction;
 mod weave_report;
 pub use receipt::{ReadScope, ScopedReadReceipt, ScopedReadResult};
+pub use weave_correction::WeaveLinkCorrection;
 pub use weave_report::{
     WeaveItem, WeaveReader, WeaveReport, WeaveSection, WeaveSectionKind, WeaveSectionSpec,
 };
