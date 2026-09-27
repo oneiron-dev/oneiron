@@ -182,6 +182,11 @@ pub(crate) fn put_connector_send_task_in_txn(
 ) -> Result<(), Error> {
     if let Some(party) = counterparty_ref {
         crate::comm::validate_comm_party_key(party)?;
+        if !super::capability::is_canonical_outbound_verb(&intent.channel, &intent.verb) {
+            return Err(Error::Record(RecordError::InvalidTaskBody(
+                "noncanonical counterparty-bound connector verb",
+            )));
+        }
     }
     let connector_class = normalize_key(&intent.channel);
     let assignee_ref = connector_actor_id(&connector_class)?;
@@ -326,6 +331,13 @@ impl Vault {
         {
             return Err(Error::Record(RecordError::InvalidTaskBody(
                 "invalid connector send counterparty",
+            )));
+        }
+        if body.counterparty_ref.is_some()
+            && !super::capability::is_canonical_outbound_verb(&body.channel, &body.verb)
+        {
+            return Err(Error::Record(RecordError::InvalidTaskBody(
+                "noncanonical counterparty-bound connector verb",
             )));
         }
         let assignee_ref = connector_actor_id(&body.channel)?;

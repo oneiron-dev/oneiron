@@ -205,7 +205,9 @@ fn is_delivered_message(channel: &str, verb: &str) -> bool {
     verb == "send"
         || matches!(
             (channel, verb),
-            ("line", "reply" | "push") | ("telegram", "send_media") | ("linkedin", "send_dm")
+            ("line", "reply" | "push" | "send_media")
+                | ("telegram" | "imessage_bridge", "send_media")
+                | ("linkedin", "send_dm")
         )
 }
 

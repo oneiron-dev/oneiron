@@ -8,6 +8,62 @@ fn connector_send_schedule_is_additive_and_executor_is_idempotent() -> crate::Re
 }
 
 #[test]
+fn bound_send_rejects_noncanonical_channel_or_verb_before_unrelated_stop() -> crate::Result<()> {
+    let dir = tempfile::tempdir().expect("vault root");
+    let vault = Vault::open_unseeded_for_test(dir.path(), crate::VaultConfig::default())?;
+    let actor = entity(0xA8);
+    put_connector_task_actor(&vault, actor, 100)?;
+    let facade = vault.memory(actor, EdgeActorClass::Agent);
+    let mut draft = connector_task_draft("noncanonical-bound", "session:noncanonical", 100);
+    for (channel, verb) in [(" email ", "send"), ("email", " SEND ")] {
+        draft.channel = channel.to_owned();
+        draft.verb = verb.to_owned();
+        assert!(
+            outbound_verb_contract(channel, verb).is_ok(),
+            "capability lookup accepts this spelling"
+        );
+        let error = facade
+            .schedule_outbound_for_counterparty(&draft, "party:bound")
+            .expect_err("noncanonical projector source refused before admission");
+        assert_eq!(error.code, crate::memory::MEMORY_CODE_BAD_REQUEST);
+        assert!(vault.connector_send_tasks()?.is_empty());
+        assert!(
+            vault
+                .receipts(
+                    crate::receipt::ReceiptQuery::new(10)
+                        .with_kind(crate::receipt::ReceiptKind::Outbound)
+                )?
+                .is_empty()
+        );
+    }
+    crate::comm::record_comm_inbound_stop(&vault, "party:unrelated-stop", "email", 110)
+        .expect("record independent stop");
+    crate::comm::run_comm_projector(&vault).expect("project stop after rejected sends");
+    assert_eq!(
+        crate::comm::count_active_comm_claims(
+            &vault,
+            crate::comm::PREDICATE_COMM_OPT_OUT,
+            "party:unrelated-stop",
+            "email",
+        )
+        .expect("opt-out claim query"),
+        1,
+    );
+    crate::comm::run_comm_projector(&vault).expect("replayed stop projector pass");
+    assert_eq!(
+        crate::comm::count_total_comm_claim_rows(
+            &vault,
+            crate::comm::PREDICATE_COMM_OPT_OUT,
+            "party:unrelated-stop",
+            "email",
+        )
+        .expect("opt-out history query"),
+        1,
+    );
+    Ok(())
+}
+
+#[test]
 pub(super) fn delivered_send_idempotency_survives_attempt_completion() -> crate::Result<()> {
     use crate::attempt_queue::{AttemptQueue, AttemptState};
     use crate::memory::{BRIDGE_OUTBOUND_ATTEMPT_KIND, OutboundDraftInput};

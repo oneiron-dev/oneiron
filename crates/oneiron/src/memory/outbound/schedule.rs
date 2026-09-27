@@ -90,6 +90,17 @@ impl Memory<'_> {
             crate::comm::validate_comm_party_key(party).map_err(|_| {
                 MemoryError::bad_request("counterparty_ref is not a valid comm party key")
             })?;
+            // A capability lookup accepts aliases such as " email ", but a
+            // counterparty-bound receipt is a projector source. Refuse those
+            // aliases before any gate, TASK, or provider delivery can persist
+            // a channel/verb the comm projector cannot decode.
+            if outbound_verb_contract(&draft.channel, &draft.verb).is_ok()
+                && !crate::outbound::is_canonical_outbound_verb(&draft.channel, &draft.verb)
+            {
+                return Err(MemoryError::bad_request(
+                    "counterparty-bound channel and verb must use manifest spellings",
+                ));
+            }
         }
         if schedule_context.apns_interruption_level.is_some()
             && !(draft.channel == "apns" && draft.verb == "push")

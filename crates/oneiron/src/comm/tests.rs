@@ -3645,6 +3645,8 @@ fn durable_message_verbs_project_party_not_destination_and_other_verbs_do_not() 
         (0x83, "line", "push"),
         (0x84, "telegram", "send_media"),
         (0x85, "linkedin", "send_dm"),
+        (0x8A, "line", "send_media"),
+        (0x8B, "imessage_bridge", "send_media"),
     ] {
         let party = format!("party-{seed}");
         let target = format!("transport-channel-{seed}");
