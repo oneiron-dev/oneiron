@@ -126,13 +126,33 @@ impl crate::Vault {
         data: Vec<u8>,
         proof: HubAdmissionProof,
     ) -> Result<()> {
+        self.admit_hub_skill_record_with_refinement_in_txn(
+            txn, occurred, learned_at, data, proof, None,
+        )
+    }
+
+    pub(in crate::skill_hub) fn admit_hub_skill_record_with_refinement_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        occurred: crate::TimeRange,
+        learned_at: u64,
+        data: Vec<u8>,
+        proof: HubAdmissionProof,
+        refinement: Option<super::refinement_admission::RefinementAdmissionProof>,
+    ) -> Result<()> {
+        let candidate = proof.id();
+        let mode = crate::batch::ApplyOpsGateMode::new(false, true).with_hub_admission(proof);
+        let mode = match refinement {
+            Some(refinement) => mode.with_refinement_admission(refinement),
+            None => mode,
+        };
         crate::batch::apply_ops_with_gate_mode(
             &self.store,
             &self.config,
             &self.analyzer,
             txn,
             vec![crate::batch::BatchOp::Put {
-                id: proof.id(),
+                id: candidate,
                 entity_type: crate::registry::ENTITY_TYPE_SKILL,
                 occurred,
                 learned_at,
@@ -143,7 +163,7 @@ impl crate::Vault {
             }],
             self.text_index_trusted
                 .load(std::sync::atomic::Ordering::Acquire),
-            crate::batch::ApplyOpsGateMode::new(false, true).with_hub_admission(proof),
+            mode,
         )
     }
 }

@@ -250,7 +250,7 @@ async fn bind_requires_a_mac_verified_slip_then_returns_terminal_reply() {
     let fixture = fixture().await;
     let valid = credential(&fixture);
     let mut forged_json = serde_json::to_value(&valid.slip).unwrap();
-    forged_json["mac"][0] = json!(forged_json["mac"][0].as_u64().unwrap() ^ 1);
+    forged_json["signature"][0] = json!(forged_json["signature"][0].as_u64().unwrap() ^ 1);
     let forged: oneiron::authority::CapabilitySlip = serde_json::from_value(forged_json).unwrap();
     let forged_credential = Credential {
         slip: forged,
