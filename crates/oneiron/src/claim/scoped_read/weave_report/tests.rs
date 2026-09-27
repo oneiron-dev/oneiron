@@ -332,3 +332,218 @@ fn report_cannot_widen_world_scoped_grant_or_count_hidden_rows() -> Result<()> {
     assert_eq!(report.receipt.suppressed_count, 0);
     Ok(())
 }
+
+#[test]
+fn retracted_provenance_excludes_direct_and_edge_claim_links_for_person_and_owner() -> Result<()> {
+    use crate::edge::{EdgeActorClass, EdgeConfirmationStatus};
+    use crate::provenance::{EdgeProvenanceClaimBody, EdgeRef, SupersessionStatus};
+    let (_tmp, vault) = open_test_vault_with(embedding_test_config());
+    let person = entity(0x81);
+    let peer = entity(0x82);
+    for id in [person, peer] {
+        vault.put_entity(
+            &id,
+            crate::registry::ENTITY_TYPE_PERSON,
+            TimeRange { start: 1, end: 1 },
+            1,
+            b"reader",
+        )?;
+    }
+    let owner = vault.authenticate_owner(
+        person,
+        &person.to_hex(),
+        true,
+        crate::store::GateDecisionId::now(),
+    )?;
+    vault.put_edge(&person, EdgeKind::Mentions, &peer, 0.5)?;
+    let provenance_id = entity(0x83);
+    vault.put_edge_provenance(
+        &provenance_id,
+        &EdgeRef::new(person, EdgeKind::Mentions, peer),
+        &EdgeProvenanceClaimBody::new(person, 0.5, SupersessionStatus::Proposed),
+        EdgeActorClass::Human,
+        100,
+    )?;
+    let claim = put(
+        &vault,
+        0x84,
+        "report.link",
+        ClaimSubject::Edge {
+            source: person,
+            kind: EdgeKind::Mentions,
+            target: peer,
+        },
+    )?;
+    crate::test_util::authorize_readers(&vault, &[&person.to_hex()]);
+    let read = vault.scoped_read(ScopedReadActorKey::new(person.to_hex()).unwrap());
+    let mut recipe = [section(WeaveSectionKind::Links, &["report.link"])];
+    recipe[0].edge_kinds = vec![EdgeKind::Mentions];
+    let person_view = read.weave_report(WeaveReader::Person(person), &recipe)?;
+    assert_eq!(claim_ids(&person_view.value.sections[0].items), vec![claim]);
+    assert!(
+        person_view.value.sections[0]
+            .items
+            .contains(&WeaveItem::Link {
+                source: person,
+                kind: EdgeKind::Mentions,
+                target: peer,
+            })
+    );
+    vault.retract_edge_provenance(&provenance_id, 200)?;
+    let edge = read
+        .edges_out(&person)?
+        .value
+        .unwrap()
+        .into_iter()
+        .find(|edge| edge.kind == EdgeKind::Mentions && edge.target == peer)
+        .expect("retracted edge is retained");
+    assert_eq!(
+        edge.provenance.unwrap().confirmation_status,
+        EdgeConfirmationStatus::Retracted
+    );
+    for reader in [WeaveReader::Person(person), WeaveReader::Owner(&owner)] {
+        let report = read.weave_report(reader, &recipe)?;
+        assert!(
+            report.value.sections[0].items.is_empty(),
+            "retained retracted edge and active edge claim cannot appear live"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn session_weave_uses_composed_claim_and_project_candidates_without_changing_base() -> Result<()> {
+    use crate::session_overlay::{OverlayKeyspace, SessionOverlay};
+    use crate::store::Store;
+    let (_tmp, vault) = open_test_vault_with(embedding_test_config());
+    let person = entity(0x90);
+    vault.put_entity(
+        &person,
+        crate::registry::ENTITY_TYPE_PERSON,
+        TimeRange { start: 1, end: 1 },
+        1,
+        b"reader",
+    )?;
+    let shadowed = put(&vault, 0x91, "report.change", ClaimSubject::Entity(person))?;
+    let removed = put(&vault, 0x92, "report.change", ClaimSubject::Entity(person))?;
+    let project = entity(0x93);
+    let added = entity(0x94);
+    let project_change = entity(0x95);
+    let root = vault.root_project()?;
+    let leader = EntityId::from_hex(&vault.project(root)?.unwrap().leader)?;
+    let mut project_record = ProjectRecord::new(project, Some(root), root, leader);
+    project_record.roster.push(person.to_hex());
+    let kind = vault.project_type_byte()?;
+    let project_body = rmp_serde::to_vec_named(&project_record).expect("project encodes");
+    let scope_key = [b"scope:record:v1:".as_slice(), project.as_bytes()].concat();
+    // Derive the ordinary digest-bound project stamp, but keep it in the
+    // overlay only: a base read must not be able to resolve this project.
+    let scope_stamp = vault.with_write_txn(|txn| {
+        crate::federation::record_scope::stamp_put(
+            &vault.store,
+            txn,
+            project,
+            kind,
+            &project_body,
+            false,
+        )?;
+        let stamp = vault
+            .store
+            .vault_meta
+            .get(txn, &scope_key)?
+            .unwrap()
+            .to_vec();
+        vault.store.vault_meta.delete(txn, &scope_key)?;
+        Ok(stamp)
+    })?;
+    let overlay = SessionOverlay::new(128 * 1024);
+    let segment = overlay.install_txn_segment()?;
+    let at = TimeRange { start: 1, end: 1 };
+    overlay.put(
+        OverlayKeyspace::Entities,
+        project.as_bytes(),
+        &crate::test_util::entity_record(kind, at, 1, &project_body),
+    )?;
+    overlay.put(
+        OverlayKeyspace::TypeIndex,
+        &Store::encode_type_key(kind, &project),
+        &[],
+    )?;
+    overlay.put(OverlayKeyspace::VaultMeta, &scope_key, &scope_stamp)?;
+    let stage_claim = |id: EntityId, predicate: &str, subject: ClaimSubject| -> Result<()> {
+        let body = ClaimBody::new(
+            predicate,
+            subject,
+            Value::from("session"),
+            1.0,
+            ClaimApprovalStatus::Approved,
+            ClaimLifecycleStatus::Active,
+        );
+        overlay.put(
+            OverlayKeyspace::Entities,
+            id.as_bytes(),
+            &crate::test_util::entity_record(
+                crate::registry::ENTITY_TYPE_CLAIM,
+                at,
+                1,
+                &crate::claim::encode_claim_body(&body)?,
+            ),
+        )?;
+        overlay.put(
+            OverlayKeyspace::TypeIndex,
+            &Store::encode_type_key(crate::registry::ENTITY_TYPE_CLAIM, &id),
+            &[],
+        )?;
+        Ok(())
+    };
+    stage_claim(shadowed, "report.ask", ClaimSubject::Entity(person))?;
+    stage_claim(added, "report.change", ClaimSubject::Entity(person))?;
+    stage_claim(
+        project_change,
+        "report.change",
+        ClaimSubject::Entity(project),
+    )?;
+    overlay.delete(OverlayKeyspace::Entities, removed.as_bytes())?;
+    overlay.delete(
+        OverlayKeyspace::TypeIndex,
+        &Store::encode_type_key(crate::registry::ENTITY_TYPE_CLAIM, &removed),
+    )?;
+    segment.commit()?;
+    crate::test_util::authorize_readers(&vault, &[&person.to_hex()]);
+    let key = ScopedReadActorKey::new(person.to_hex()).unwrap();
+    let recipe = [
+        section(WeaveSectionKind::Changes, &["report.change"]),
+        section(WeaveSectionKind::OpenAsks, &["report.ask"]),
+        section(WeaveSectionKind::Projects, &[]),
+    ];
+    let base = vault
+        .scoped_read(key.clone())
+        .weave_report(WeaveReader::Person(person), &recipe)?;
+    assert_eq!(
+        claim_ids(&base.value.sections[0].items),
+        vec![shadowed, removed]
+    );
+    assert!(base.value.sections[1].items.is_empty());
+    assert!(base.value.sections[2].items.is_empty());
+    let view = vault.store.session_view(overlay)?;
+    let session = vault
+        .scoped_read_in_session(key, &view)
+        .weave_report(WeaveReader::Person(person), &recipe)?;
+    assert_eq!(
+        claim_ids(&session.value.sections[0].items),
+        vec![added, project_change]
+    );
+    assert_eq!(claim_ids(&session.value.sections[1].items), vec![shadowed]);
+    assert_eq!(
+        session.value.sections[2].items,
+        vec![WeaveItem::Project {
+            id: project,
+            goal: None
+        }]
+    );
+    let still_base = vault
+        .scoped_read(ScopedReadActorKey::new(person.to_hex()).unwrap())
+        .weave_report(WeaveReader::Person(person), &recipe)?;
+    assert_eq!(still_base.value, base.value);
+    Ok(())
+}

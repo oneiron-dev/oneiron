@@ -586,9 +586,18 @@ impl<'a> ScopedRead<'a> {
         if header.entity_type == ENTITY_TYPE_CLAIM {
             self.is_claim_raw_readable_with_policy_in(rtxn, policy, id, raw, filter)
         } else {
-            let Some(scope) =
-                crate::federation::record_scope::scope_for_blob(&self.vault.store, rtxn, *id, raw)?
-            else {
+            let scope = match self.session_view {
+                Some(view) => {
+                    crate::federation::record_scope::scope_for_blob(view, rtxn, *id, raw)?
+                }
+                None => crate::federation::record_scope::scope_for_blob(
+                    &self.vault.store,
+                    rtxn,
+                    *id,
+                    raw,
+                )?,
+            };
+            let Some(scope) = scope else {
                 return Ok(false);
             };
             Ok(crate::gate::scoped_read_record_allowed(

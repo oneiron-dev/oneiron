@@ -139,7 +139,11 @@ impl ScopedRead<'_> {
             && let Ok(kind) = self.vault.project_type_byte()
         {
             let mut scanned = 0;
-            for row in self.vault.store.port_entity_ids_by_type(&txn, kind, None)? {
+            let project_rows = match self.session_view {
+                Some(view) => view.port_entity_ids_by_type(&txn, kind, None)?,
+                None => self.vault.port_entity_ids_by_type(&txn, kind, None)?,
+            };
+            for row in project_rows {
                 let id = row?;
                 scanned += 1;
                 if scanned > MAX_ROWS {
@@ -210,11 +214,7 @@ impl ScopedRead<'_> {
             } else {
                 let mut seen = BTreeSet::new();
                 for predicate in &spec.predicates {
-                    for id in crate::claim::claim_ids_for_predicate_in_txn(
-                        &self.vault.store,
-                        &txn,
-                        predicate,
-                    )? {
+                    for id in self.weave_claim_ids_in(&txn, predicate)? {
                         if !seen.insert(id) {
                             continue;
                         }
@@ -299,6 +299,35 @@ impl ScopedRead<'_> {
 }
 
 impl ScopedRead<'_> {
+    /// The base predicate index is not part of a session's write overlay.
+    /// A composed type scan sees overlay-only, shadowed and removed rows under
+    /// the same snapshot as hydration. Refuse an oversized scan, never page it.
+    fn weave_claim_ids_in(&self, txn: &heed::RoTxn<'_>, predicate: &str) -> Result<Vec<EntityId>> {
+        let Some(view) = self.session_view else {
+            return crate::claim::claim_ids_for_predicate_in_txn(&self.vault.store, txn, predicate);
+        };
+        let mut matches = Vec::new();
+        let mut scanned = 0;
+        for row in view.port_entity_ids_by_type(txn, ENTITY_TYPE_CLAIM, None)? {
+            let id = row?;
+            scanned += 1;
+            if scanned > MAX_ROWS {
+                return Err(Error::IndexOverflow("weave session claims"));
+            }
+            let Some(record) = self.entity_record_in(txn, &id)? else {
+                continue;
+            };
+            if record.entity_type != ENTITY_TYPE_CLAIM || record.body.is_empty() {
+                continue;
+            }
+            let body = decode_claim_body(&record.body, true)?;
+            if body.predicate == predicate {
+                matches.push(id);
+            }
+        }
+        Ok(matches)
+    }
+
     fn weave_links_in(
         &self,
         txn: &heed::RoTxn<'_>,
@@ -338,7 +367,7 @@ impl ScopedRead<'_> {
                         if scanned > MAX_ROWS {
                             return Err(Error::IndexOverflow("weave link rows"));
                         }
-                        if !kinds.contains(&edge.kind) {
+                        if !kinds.contains(&edge.kind) || !weave_edge_live(edge.provenance) {
                             continue;
                         }
                         let (source, target) = match direction {
@@ -367,7 +396,7 @@ impl ScopedRead<'_> {
                     return Err(Error::IndexOverflow("weave link rows"));
                 }
                 let edge = crate::edge::parse_strict_edge_record(&key, &value)?;
-                if kinds.contains(&edge.kind) {
+                if kinds.contains(&edge.kind) && weave_edge_live(edge.decoded.provenance) {
                     add(edge.source, edge.kind, edge.target)?;
                 }
             }
@@ -388,12 +417,19 @@ impl ScopedRead<'_> {
             if count > crate::vault::MAX_EDGE_QUERY_RESULTS {
                 return Err(Error::IndexOverflow("weave link edges"));
             }
-            if edge?.target == target {
-                return Ok(true);
+            let edge = edge?;
+            if edge.target == target {
+                return Ok(weave_edge_live(edge.provenance));
             }
         }
         Ok(false)
     }
+}
+
+fn weave_edge_live(flags: Option<crate::edge::EdgeProvenanceFlags>) -> bool {
+    !flags.is_some_and(|flags| {
+        flags.confirmation_status == crate::edge::EdgeConfirmationStatus::Retracted
+    })
 }
 
 impl WeaveSectionKind {
