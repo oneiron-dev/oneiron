@@ -242,6 +242,96 @@ pub(crate) fn encode_consolidation_evidence_with_locators(
     Value::Map(fields)
 }
 
+/// Strictly decodes the parent-verified locator set on an attachment. The
+/// ordinary evidence-envelope decoder ignores this additive key for readers.
+pub(crate) fn decode_verified_locators(
+    evidence: &Value,
+) -> Result<Vec<(super::SwarmEvidenceRef, [u8; 32])>> {
+    let Value::Map(fields) = evidence else {
+        return Err(invalid_consolidation("verified evidence must be a map"));
+    };
+    let Value::Array(items) = fields
+        .iter()
+        .find(|(key, _)| key.as_str() == Some("locators"))
+        .map(|(_, value)| value)
+        .ok_or_else(|| invalid_consolidation("attachment locators are missing"))?
+    else {
+        return Err(invalid_consolidation(
+            "attachment locators must be an array",
+        ));
+    };
+    if items.is_empty() {
+        return Err(invalid_consolidation("attachment locators are empty"));
+    }
+    items
+        .iter()
+        .map(|row| {
+            let Value::Map(fields) = row else {
+                return Err(invalid_consolidation("attachment locator must be a map"));
+            };
+            let mut source_id = None;
+            let mut claim_id = None;
+            let mut byte_range = None;
+            let mut hash = None;
+            for (key, value) in fields {
+                match key.as_str() {
+                    Some("source_id") if source_id.is_none() => {
+                        source_id = Some(
+                            entity_ref_from_value(value)
+                                .ok_or_else(|| invalid_consolidation("invalid locator source"))?,
+                        );
+                    }
+                    Some("claim_id") if claim_id.is_none() => {
+                        claim_id = Some(
+                            entity_ref_from_value(value)
+                                .ok_or_else(|| invalid_consolidation("invalid locator claim"))?,
+                        );
+                    }
+                    Some("byte_range") if byte_range.is_none() => {
+                        let Value::Array(pair) = value else {
+                            return Err(invalid_consolidation("invalid locator range"));
+                        };
+                        let [start, end] = pair.as_slice() else {
+                            return Err(invalid_consolidation("invalid locator range"));
+                        };
+                        byte_range = Some((
+                            usize::try_from(
+                                start.as_u64().ok_or_else(|| {
+                                    invalid_consolidation("invalid locator start")
+                                })?,
+                            )
+                            .map_err(|_| invalid_consolidation("locator start overflow"))?,
+                            usize::try_from(
+                                end.as_u64()
+                                    .ok_or_else(|| invalid_consolidation("invalid locator end"))?,
+                            )
+                            .map_err(|_| invalid_consolidation("locator end overflow"))?,
+                        ));
+                    }
+                    Some("content_hash") if hash.is_none() => {
+                        let Value::Binary(bytes) = value else {
+                            return Err(invalid_consolidation("invalid locator hash"));
+                        };
+                        hash = Some(bytes.as_slice().try_into().map_err(|_| {
+                            invalid_consolidation("locator hash must have 32 bytes")
+                        })?);
+                    }
+                    _ => return Err(invalid_consolidation("unknown or duplicate locator key")),
+                }
+            }
+            Ok((
+                super::SwarmEvidenceRef {
+                    source_id: source_id
+                        .ok_or_else(|| invalid_consolidation("missing locator source"))?,
+                    claim_id,
+                    byte_range,
+                },
+                hash.ok_or_else(|| invalid_consolidation("missing locator hash"))?,
+            ))
+        })
+        .collect()
+}
+
 /// Reads back a stored consolidation evidence envelope. `Ok(None)` when the
 /// payload is not one (a legacy bare-array evidence stamp, say); a structural
 /// break inside a well-keyed envelope is a typed error, never a silent drop.

@@ -335,13 +335,12 @@ fn wake_pins_retry_expansion_before_admission() -> Result<()> {
         evidence_minimum: 2,
         ..Default::default()
     })?;
-    let response =
-        |ids: &[EntityId]| {
-            text_response(serde_json::json!({"candidates":[{
+    let response = |ids: &[EntityId]| {
+        text_response(serde_json::json!({"candidates":[{
         "subject": conversation.to_hex(), "predicate":"profile.name", "value":"supported",
-        "evidence_turn_refs": ids.iter().map(EntityId::to_hex).collect::<Vec<_>>()
+        "evidence_refs": ids.iter().map(|id| serde_json::json!({"source_id":id.to_hex(), "byte_range":[0,1]})).collect::<Vec<_>>()
     }]}).to_string())
-        };
+    };
     let backend = ScriptedBackend::new(vec![Ok(response(&[first]))]);
     let guard = crate::BudgetGuard::with_reserve_units(
         "wake",
@@ -402,5 +401,132 @@ fn wake_pins_retry_expansion_before_admission() -> Result<()> {
     drop(executor);
     assert_eq!(sink.accepted.len(), 1);
     assert_eq!(sink.accepted[0].evidence_turn_refs, vec![first, next_turn]);
+    Ok(())
+}
+
+#[test]
+fn broken_retry_parks_without_poisoning_healthy_wake_work() -> Result<()> {
+    let (_dir, vault) = open_vault();
+    let store = DreamerRunnerStore::new(&vault);
+    let node = crate::identity::load_or_mint_client_id(&vault)?;
+    let bad_parent = seed_session(&vault, 0x7c, 1);
+    let bad_turn = seed_turn(&vault, &bad_parent, "user", "original", 10);
+    let watermark = read_watermark(&vault, DreamerConsolidationScope::Micro)?;
+    let dirty = scan_dirty_turns(&vault, DreamerConsolidationScope::Micro, &watermark, 10)?;
+    enqueue_partition_attempts(
+        &vault,
+        DreamerConsolidationScope::Micro,
+        &dirty,
+        &watermark,
+        "poisoned-retry",
+        20,
+    )?;
+    let admitted = match store.admit_next_consolidation(AdmitDreamerConsolidationAttempt {
+        scope: DreamerConsolidationScope::Micro,
+        local_node_id: node,
+        claim_authoring_tier: DreamerClaimAuthoringBatchTier::batch(),
+        claim_authoring: DreamerClaimAuthoringAdmission::single_pass(),
+        admission: AdmitDreamerAttempt {
+            lease_owner: "initial".into(),
+            now: 21,
+            budget_id: "first-wake".into(),
+            budget_total_units: 10_000,
+            reserve_units: 100,
+            started_milestone: None,
+        },
+    })? {
+        DreamerConsolidationAdmissionOutcome::Admission(DreamerAdmissionOutcome::Admitted(row)) => {
+            row
+        }
+        other => panic!("{other:?}"),
+    };
+    store.defer_selection(
+        &admitted,
+        crate::dreamer_runner::SettleDreamerBudget {
+            budget_id: "first-wake".into(),
+            child_attempt: admitted.status.attempt.id,
+            actual_units: 0,
+            now: 21,
+        },
+        30,
+    )?;
+    let retry = AttemptQueue::new(&vault)
+        .list()?
+        .into_iter()
+        .find(|row| row.retry_of == Some(admitted.status.attempt.id))
+        .expect("scheduled retry");
+    // The original still has a ChildOf edge, but its role is no longer
+    // extraction-admissible at the next frozen wake revision.
+    vault.put_entity(
+        &bad_turn,
+        ENTITY_TYPE_TURN,
+        occurred(10),
+        10,
+        &turn_body("tool", "no longer admissible", None),
+    )?;
+    let good_parent = seed_session(&vault, 0x7d, 1);
+    let good_turn = seed_turn(&vault, &good_parent, "user", "healthy", 22);
+    let watermark = read_watermark(&vault, DreamerConsolidationScope::Micro)?;
+    let dirty = scan_dirty_turns(&vault, DreamerConsolidationScope::Micro, &watermark, 10)?;
+    enqueue_partition_attempts(
+        &vault,
+        DreamerConsolidationScope::Micro,
+        &dirty,
+        &watermark,
+        "healthy",
+        25,
+    )?;
+    vault.set_consolidation_selection(&selection::SelectionConfig {
+        soak_ms: 0,
+        evidence_minimum: 1,
+        ..Default::default()
+    })?;
+    let response = text_response(
+        serde_json::json!({"candidates":[{
+            "subject":good_parent.to_hex(), "predicate":"profile.name", "value":"healthy",
+            "evidence_refs":[{"source_id":good_turn.to_hex(), "byte_range":[0,1]}]
+        }]})
+        .to_string(),
+    );
+    let backend = ScriptedBackend::new(vec![Ok(response)]);
+    let guard = crate::BudgetGuard::with_reserve_units(
+        "wake",
+        10_000,
+        100,
+        BudgetExhaustionPolicy::Suspend,
+    );
+    let mut sink = CapturingSink::default();
+    let mut executor = ConsolidationExecutor {
+        backend: &backend,
+        guard: &guard,
+        strategy: DreamerClaimAuthoringStrategy::SinglePass,
+        actor: vault.dreamer_authority()?,
+        model: crate::ModelId::new("test/model@r1").expect("model"),
+        sink: &mut sink,
+        scope: None,
+    };
+    let deadline = WakePassDeadline::with_clock(180_000, std::sync::Arc::new(|| 0));
+    let mut driver = DreamerWakeDriver::new(&vault, "wake", deadline);
+    let report = ready(driver.run_wake_pass(
+        wake_input(node, 100),
+        &mut executor,
+        &WakeCancellation::new(),
+    ))?;
+    assert_eq!(report.parked, 1);
+    assert_eq!(report.completed, 1);
+    assert_eq!(report.stop, WakePassStop::QueueEmpty);
+    assert_eq!(
+        backend.calls.load(Ordering::SeqCst),
+        1,
+        "the poisoned retry must not call the extraction model"
+    );
+    assert!(store.parked_attempt(retry.id)?.is_some());
+    drop(executor);
+    assert_eq!(sink.accepted.len(), 1);
+    assert_eq!(sink.accepted[0].evidence_turn_refs, vec![good_turn]);
+    assert_eq!(
+        store.budget("wake")?.expect("wake budget").reserved_units,
+        0
+    );
     Ok(())
 }

@@ -143,7 +143,7 @@ fn extraction_keeps_same_answers_for_different_topics_distinct_on_replay() -> Re
             serde_json::json!({
                 "subject": subject.to_hex(), "predicate": "preference.food",
                 "value": "yes", "topic_key": topic, "rel": rel.to_hex(), "confidence": 0.9,
-                "evidence_turn_refs": [turns[0].to_hex()]
+                "evidence_refs": [{"source_id":turns[0].to_hex(), "byte_range":[0,1]}]
             })
         })
         .collect();

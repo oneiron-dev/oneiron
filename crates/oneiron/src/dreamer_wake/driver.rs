@@ -465,6 +465,11 @@ impl<'a> DreamerWakeDriver<'a> {
                     completed_units: 0,
                     retry_at: input.now.saturating_add(1),
                 })
+            } else if let Some(reason) = ledger_pin.retry_failure(attempt_id) {
+                // Park and refund only this retry; healthy sibling work continues.
+                Ok(DreamerAttemptExecution::Park {
+                    reason: reason.to_owned(),
+                })
             } else {
                 let mut ctx = WakeAttemptContext {
                     vault: self.vault,

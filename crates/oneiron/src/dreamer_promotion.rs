@@ -46,7 +46,7 @@ use crate::claim::{
     claim_evidence_taint, claim_source_widens_beyond,
 };
 use crate::dreamer_consolidation::{
-    ConsolidationEvidenceEnvelope, ConsolidationProvenanceHop, encode_consolidation_evidence,
+    ConsolidationEvidenceEnvelope, ConsolidationProvenanceHop,
     encode_consolidation_evidence_with_locators, source_meet,
 };
 use crate::dreamer_runner::DREAMER_RUNNER_ATTEMPT_KIND;

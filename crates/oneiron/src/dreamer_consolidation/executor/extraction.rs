@@ -11,7 +11,7 @@ impl ConsolidationExecutor<'_> {
     ) -> LlmRequest {
         let system = r#"Extract durable memory claims from the conversation transcript.
 Respond with JSON: {"candidates":[{"subject":"<32-hex entity id>","predicate":"<dotted.predicate>","value":<json>,"confidence":<0..1>,"evidence_refs":[{"source_id":"<32-hex id>","byte_range":[start,end]}]}]}.
-Each evidence ref names a source id and either a byte_range or claim_id. Use evidence_turn_refs only for legacy whole-turn citations. Only claims stated by the user or assistant; never invent evidence refs."#;
+Each evidence ref names a source id and either a UTF-8 byte range in the displayed turn text (start inclusive, end exclusive) or claim_id. Only claims stated by the user or assistant; never invent evidence refs."#;
         LlmRequest {
             model: self.model.clone(),
             envelope: CallEnvelope {
@@ -83,7 +83,7 @@ Each evidence ref names a source id and either a byte_range or claim_id. Use evi
         // A child hash is not part of the return contract. If a model still
         // reports one, compare it with our pinned source reread only to flag
         // an integrity failure. It never enters dedup or the write envelope.
-        for source_id in disagreeing_child_hashes(resources, items)? {
+        for source_id in disagreeing_child_hashes(resources, items) {
             tracing::warn!(
                 target: "oneiron::dreamer",
                 child_integrity = "evidence_hash_mismatch",
@@ -123,40 +123,14 @@ Each evidence ref names a source id and either a byte_range or claim_id. Use evi
                     "extraction relationship crossed branch scope",
                 ));
             }
-            let legacy_turns: Vec<EntityId> = item
-                .get("evidence_turn_refs")
-                .and_then(|value| value.as_array())
-                .map(|refs| {
-                    refs.iter()
-                        .filter_map(|entry| entry.as_str().and_then(entity_id_from_hex))
-                        .collect()
-                })
-                .unwrap_or_default();
-            let locators = if let Some(value) = item.get("evidence_refs") {
-                let refs = value
-                    .as_array()
-                    .ok_or_else(|| invalid_consolidation("evidence refs must be an array"))?;
-                let locators: Vec<_> = refs
-                    .iter()
-                    .map(decode_model_locator)
-                    .collect::<Result<_>>()?;
-                if !legacy_turns.is_empty() {
-                    let old: BTreeSet<_> = legacy_turns.iter().copied().collect();
-                    let typed: BTreeSet<_> = locators.iter().map(|entry| entry.source_id).collect();
-                    if old != typed {
-                        return Err(invalid_consolidation(
-                            "conflicting child evidence citations",
-                        ));
-                    }
-                }
-                locators
-            } else {
-                legacy_turns
-                    .iter()
-                    .copied()
-                    .map(SwarmEvidenceRef::whole_turn)
-                    .collect()
-            };
+            let refs = item
+                .get("evidence_refs")
+                .and_then(serde_json::Value::as_array)
+                .ok_or_else(|| invalid_consolidation("candidate evidence_refs must be an array"))?;
+            let locators: Vec<_> = refs
+                .iter()
+                .map(decode_model_locator)
+                .collect::<Result<_>>()?;
             let mut evidence_turn_refs: Vec<_> =
                 locators.iter().map(|entry| entry.source_id).collect();
             evidence_turn_refs.sort_unstable();
@@ -244,36 +218,49 @@ const fn hex_nibble(byte: u8) -> Option<u8> {
 pub(in crate::dreamer_consolidation) fn disagreeing_child_hashes(
     resources: &BranchResources<'_>,
     items: &[serde_json::Value],
-) -> Result<Vec<EntityId>> {
-    let mut reported = Vec::new();
+) -> Vec<EntityId> {
+    let mut disagreements = Vec::new();
     for item in items {
         let Some(hashes) = item
             .get("evidence_hashes")
-            .and_then(|value| value.as_object())
+            .and_then(serde_json::Value::as_object)
         else {
             continue;
         };
-        for (id, value) in hashes {
-            let id = entity_id_from_hex(id)
-                .ok_or_else(|| invalid_consolidation("invalid child evidence hash source"))?;
-            let hash = value
-                .as_str()
-                .ok_or_else(|| invalid_consolidation("invalid child evidence hash"))?;
-            reported.push((id, hash));
+        let locators: Vec<_> = item
+            .get("evidence_refs")
+            .and_then(serde_json::Value::as_array)
+            .into_iter()
+            .flatten()
+            .filter_map(|value| decode_model_locator(value).ok())
+            .collect();
+        for (raw_id, value) in hashes {
+            let (Some(id), Some(reported)) = (entity_id_from_hex(raw_id), value.as_str()) else {
+                continue;
+            };
+            // A diagnostic is never a new citation and cannot veto a valid
+            // judgement. Match only typed citations that the parent can read
+            // at its ledger pin; CLAIMs and TURN ranges retain their kind.
+            let cited: Vec<_> = locators
+                .iter()
+                .copied()
+                .filter(|locator| locator.source_id == id)
+                .collect();
+            let Ok(verified) = resources.verify_evidence_refs(&cited) else {
+                continue;
+            };
+            if !verified.is_empty()
+                && verified.iter().all(|entry| {
+                    !reported.eq_ignore_ascii_case(&bytes_to_hex_lower(&entry.content_hash))
+                })
+            {
+                disagreements.push(id);
+            }
         }
     }
-    let refs: Vec<_> = reported
-        .iter()
-        .map(|(id, _)| super::super::SwarmEvidenceRef::whole_turn(*id))
-        .collect();
-    let verified = resources.verify_evidence_refs(&refs)?;
-    Ok(reported
-        .into_iter()
-        .zip(verified)
-        .filter_map(|((id, claimed), actual)| {
-            (!claimed.eq_ignore_ascii_case(&bytes_to_hex_lower(&actual.content_hash))).then_some(id)
-        })
-        .collect())
+    disagreements.sort_unstable();
+    disagreements.dedup();
+    disagreements
 }
 
 fn decode_model_locator(value: &serde_json::Value) -> Result<SwarmEvidenceRef> {

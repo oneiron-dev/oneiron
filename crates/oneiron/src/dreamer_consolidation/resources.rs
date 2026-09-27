@@ -38,6 +38,7 @@ pub struct WakeEvidenceSnapshot {
     sources: BTreeMap<EntityId, (u8, u64, Vec<u8>)>,
     attempts: BTreeSet<[u8; 16]>,
     retry_turns: BTreeMap<[u8; 16], Vec<super::WorkingSetTurn>>,
+    retry_failures: BTreeMap<[u8; 16], &'static str>,
 }
 
 impl WakeEvidenceSnapshot {
@@ -60,6 +61,7 @@ impl WakeEvidenceSnapshot {
         let mut ids = BTreeSet::new();
         let mut attempts = BTreeSet::new();
         let mut retries = Vec::new();
+        let mut retry_failures = BTreeMap::new();
         for attempt in records {
             if attempt.kind != scope.attempt_kind() || attempt.state.is_terminal() {
                 continue;
@@ -79,25 +81,52 @@ impl WakeEvidenceSnapshot {
             };
             ids.insert(partition.conversation_ref);
             ids.extend(turns.iter().copied());
+            let queued_scope = match super::branch_scope::decode_branch_scope(&payload.input) {
+                Ok(scope) => scope,
+                Err(_) => {
+                    retry_failures.insert(*attempt.id.as_bytes(), "invalid queued branch scope");
+                    continue;
+                }
+            };
+            let durable_scope = if attempt.retry_of.is_some() {
+                match super::branch_scope::has_execution_scope_in(vault, &txn, attempt.id) {
+                    Ok(value) => value,
+                    Err(_) => {
+                        retry_failures
+                            .insert(*attempt.id.as_bytes(), "invalid retry execution scope");
+                        continue;
+                    }
+                }
+            } else {
+                false
+            };
             if attempt.retry_of.is_some()
-                && super::branch_scope::decode_branch_scope(&payload.input)?.is_none()
+                && queued_scope.is_none()
+                && !durable_scope
+                && caller_scope.is_none()
             {
-                // The retry enumerator is bounded by the normal graph query
-                // ceiling; unlike a live per-attempt read these ids and bodies
-                // now come from this ONE wake revision.
-                let peers = vault.filtered_edge_peers(
+                let peers = match vault.filtered_edge_peers(
                     &txn,
                     EdgeDirection::In,
                     &partition.conversation_ref,
                     EdgeKind::ChildOf,
                     Some(ENTITY_TYPE_TURN),
                     "selection retry wake source scan",
-                )?;
+                ) {
+                    Ok(peers) => peers,
+                    Err(crate::Error::IndexOverflow(_)) => {
+                        retry_failures.insert(
+                            *attempt.id.as_bytes(),
+                            "selection retry graph limit exceeded",
+                        );
+                        continue;
+                    }
+                    Err(error) => return Err(error),
+                };
                 ids.extend(peers.iter().copied());
                 retries.push((*attempt.id.as_bytes(), partition, turns, watermark, peers));
             }
-            // Exact queued claim grants can cite admitted prior CLAIMs.
-            if let Some(bound) = super::branch_scope::decode_branch_scope(&payload.input)? {
+            if let Some(bound) = queued_scope {
                 for resource in &bound.readable {
                     if let ScopeResource::DocumentVersion { document, .. } = resource
                         && vault.get_entity_type_in_txn(&txn, document)? == Some(ENTITY_TYPE_CLAIM)
@@ -122,6 +151,7 @@ impl WakeEvidenceSnapshot {
         if ids.is_empty() {
             return Ok(Self {
                 attempts,
+                retry_failures,
                 ..Self::default()
             });
         }
@@ -141,9 +171,10 @@ impl WakeEvidenceSnapshot {
             .collect();
         let mut retry_turns = BTreeMap::new();
         for (attempt, partition, original, watermark, peers) in retries {
-            let parent = sources
-                .get(&partition.conversation_ref)
-                .ok_or_else(|| invalid_consolidation("selection retry parent not readable"))?;
+            let Some(parent) = sources.get(&partition.conversation_ref) else {
+                retry_failures.insert(attempt, "selection retry parent not readable");
+                continue;
+            };
             let parent = decode_turn_body(&parent.2);
             let original: BTreeSet<_> = original.into_iter().collect();
             let mut turns = Vec::new();
@@ -173,9 +204,11 @@ impl WakeEvidenceSnapshot {
                     .iter()
                     .all(|id| turns.iter().any(|(_, got)| got == id))
             {
-                return Err(invalid_consolidation(
+                retry_failures.insert(
+                    attempt,
                     "selection retry source limit or membership changed",
-                ));
+                );
+                continue;
             }
             retry_turns.insert(
                 attempt,
@@ -200,12 +233,18 @@ impl WakeEvidenceSnapshot {
             sources,
             attempts,
             retry_turns,
+            retry_failures,
         })
     }
 
     /// Only work known at the wake's single revision may execute on it.
     pub(crate) fn contains_attempt(&self, id: AttemptId) -> bool {
         self.attempts.contains(id.as_bytes())
+    }
+
+    /// A source-admission failure is local to one scheduled retry.
+    pub(crate) fn retry_failure(&self, id: AttemptId) -> Option<&'static str> {
+        self.retry_failures.get(id.as_bytes()).copied()
     }
 
     pub(in crate::dreamer_consolidation) fn retry_turns(
@@ -537,15 +576,10 @@ impl<'a> BranchResources<'a> {
                     turn_trust_class(role, false)
                         .ok_or_else(|| invalid_consolidation("inadmissible branch evidence role"))?
                 };
-                let bytes = if let Some((start, end)) = entry.byte_range {
-                    body.get(start..end)
-                        .ok_or_else(|| invalid_consolidation("invalid evidence byte range"))?
-                } else {
-                    &body
-                };
+                let bytes = cited_evidence_bytes(*entry, &body)?;
                 Ok(VerifiedSwarmEvidence {
                     source_id: entry.source_id,
-                    content_hash: swarm_evidence_content_hash(bytes),
+                    content_hash: swarm_evidence_content_hash(&bytes),
                     trust_class,
                 })
             })
@@ -641,6 +675,41 @@ impl<'a> BranchResources<'a> {
         let write = self.prepare_write(scope, candidates)?;
         sink.accept_scoped(write)
     }
+}
+
+/// A byte range is measured over the exact UTF-8 TURN text the child saw in
+/// the transcript, never over its MessagePack storage framing. Whole TURNs
+/// retain their existing body-hash identity; CLAIM ids name the stored body.
+pub(crate) fn cited_evidence_bytes(locator: SwarmEvidenceRef, body: &[u8]) -> Result<Vec<u8>> {
+    if let Some((start, end)) = locator.byte_range {
+        let text = decode_turn_body(body)
+            .text
+            .ok_or_else(|| invalid_consolidation("cited turn has no text"))?;
+        if start >= end {
+            return Err(invalid_consolidation("empty evidence byte range"));
+        }
+        let bytes = text
+            .as_bytes()
+            .get(start..end)
+            .ok_or_else(|| invalid_consolidation("invalid evidence byte range"))?;
+        std::str::from_utf8(bytes)
+            .map_err(|_| invalid_consolidation("evidence range splits UTF-8 text"))?;
+        Ok(bytes.to_vec())
+    } else {
+        Ok(body.to_vec())
+    }
+}
+
+/// Native TURN source classification at the same bytes the orchestrator
+/// pinned; a generated assistant turn never upgrades the Dreamer floor.
+pub(crate) fn native_turn_source(vault: &Vault, body: &[u8]) -> Result<crate::claim::ClaimSource> {
+    let facts = decode_turn_body(body);
+    let role = dreamer_turn_role(
+        facts.speaker.as_deref(),
+        &vault.config.assistant_display_names,
+    );
+    turn_trust_class(role, false)
+        .ok_or_else(|| invalid_consolidation("inadmissible evidence turn role"))
 }
 
 fn read_source(read: &ScopedRead<'_>, id: &EntityId) -> Result<(u8, u64, Vec<u8>)> {

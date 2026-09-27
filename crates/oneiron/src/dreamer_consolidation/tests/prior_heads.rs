@@ -189,6 +189,17 @@ fn execute(
     sink: &mut dyn ConsolidationSink,
     scope: Scope,
 ) -> Result<DreamerAttemptExecution> {
+    execute_at_pin(vault, fx, backend, sink, scope, None)
+}
+
+fn execute_at_pin<'a>(
+    vault: &'a Vault,
+    fx: &Fixture,
+    backend: &dyn LlmBackend,
+    sink: &mut dyn ConsolidationSink,
+    scope: Scope,
+    pin: Option<&'a WakeEvidenceSnapshot>,
+) -> Result<DreamerAttemptExecution> {
     let guard = crate::BudgetGuard::with_reserve_units(
         "wake",
         10_000,
@@ -212,7 +223,7 @@ fn execute(
             deadline: &deadline,
             budget_id: "wake",
             now_ms: 21_000,
-            ledger_pin: None,
+            ledger_pin: pin,
         },
     ))
 }
@@ -221,7 +232,7 @@ fn extract(fx: &Fixture, value: &str) -> crate::LlmResponse {
     text_response(
         serde_json::json!({"candidates": [{
             "subject": fx.subject.to_hex(), "predicate": "profile.name", "value": value,
-            "evidence_turn_refs": [fx.turn.to_hex()], "confidence": 0.8,
+            "evidence_refs": [{"source_id":fx.turn.to_hex(), "byte_range":[0,1]}], "confidence": 0.8,
         }]})
         .to_string(),
     )
@@ -290,7 +301,15 @@ fn parent_classifies_admitted_claim_from_stored_body() -> Result<()> {
 #[test]
 fn pinned_extraction_persists_parent_verified_locators_taint_and_integrity_marker() -> Result<()> {
     let (_dir, vault) = open_vault();
-    let fx = fixture(&vault)?;
+    let mut fx = fixture(&vault)?;
+    let text = "my name is Oleksii ☕";
+    let body = turn_body("user", text, None);
+    let old = document_version(fx.turn, &vault.get(&fx.turn)?.expect("old turn"));
+    vault.put_entity(&fx.turn, ENTITY_TYPE_TURN, occurred(10), 10, &body)?;
+    fx.scope.readable.remove(&old);
+    fx.scope.readable.insert(document_version(fx.turn, &body));
+    let range_start = text.find('☕').expect("visible multibyte span");
+    let range_end = range_start + "☕".len();
     let store = DreamerRunnerStore::new(&vault);
     let (partition, _, _) = decode_partition_payload(&fx.attempt.status.payload.input)?;
     let plan = ConsolidationPartitionPlan {
@@ -331,18 +350,20 @@ fn pinned_extraction_persists_parent_verified_locators_taint_and_integrity_marke
         )) => next,
         other => panic!("{other:?}"),
     };
-    let body = vault.get(&fx.turn)?.expect("turn body");
-    let expected_hash = swarm_evidence_content_hash(&body[0..1]);
+    let expected_hash = swarm_evidence_content_hash(&text.as_bytes()[range_start..range_end]);
     let reply = text_response(
         serde_json::json!({"candidates":[{
             "subject": fx.subject.to_hex(), "predicate":"profile.nickname",
             "value":"Lex", "confidence":0.8,
             "evidence_refs":[
-                {"source_id":fx.turn.to_hex(),"byte_range":[0,1]},
-                {"source_id":fx.turn.to_hex(),"byte_range":[0,1]},
+                {"source_id":fx.turn.to_hex(),"byte_range":[range_start,range_end]},
+                {"source_id":fx.turn.to_hex(),"byte_range":[range_start,range_end]},
                 {"source_id":fx.head.to_hex(),"claim_id":fx.head.to_hex()}
             ],
-            "evidence_hashes":{fx.turn.to_hex():"00".repeat(32)}
+            "evidence_hashes":{
+                fx.turn.to_hex():"00".repeat(32),
+                fx.head.to_hex():"11".repeat(32)
+            }
         }]})
         .to_string(),
     );
@@ -410,11 +431,14 @@ fn pinned_extraction_persists_parent_verified_locators_taint_and_integrity_marke
         DreamerAttemptExecution::Completed { .. }
     ));
     drop(executor);
-    assert!(
+    assert_eq!(
         markers
             .markers()
             .iter()
-            .any(|value| value.contains("evidence_hash_mismatch"))
+            .filter(|value| value.contains("evidence_hash_mismatch"))
+            .count(),
+        4,
+        "both TURN and admitted CLAIM mismatches survive both executions"
     );
     let [claim_id] = sink.outcome.landed.as_slice() else {
         panic!("one stored claim")
@@ -599,6 +623,227 @@ fn fast_path_and_judge_merge_share_deferred_closure() -> Result<()> {
                 .any(|edge| edge.kind == EdgeKind::Supersedes && edge.target == fx.head)
         );
     }
+    Ok(())
+}
+
+fn attachment_wrapper(vault: &Vault, source: EntityId, head: EntityId) -> Result<ClaimBody> {
+    let edge = crate::provenance::EdgeRef {
+        source,
+        kind: EdgeKind::Supports,
+        target: head,
+    };
+    let mut matches = Vec::new();
+    for id in vault.entities_by_type(crate::registry::ENTITY_TYPE_CLAIM)? {
+        if let Some(body) = vault.get_claim(&id)?
+            && body.predicate == crate::provenance::PREDICATE_EDGE_PROVENANCE
+            && body.subject == ClaimSubject::from(edge)
+        {
+            matches.push(body);
+        }
+    }
+    let [wrapper] = matches.as_slice() else {
+        panic!("one support provenance wrapper")
+    };
+    Ok(wrapper.clone())
+}
+
+fn attached_evidence(wrapper: &ClaimBody) -> Value {
+    let Some(Value::Map(scope)) = &wrapper.scope else {
+        panic!("wrapper scope")
+    };
+    scope
+        .iter()
+        .find(|(key, _)| key.as_str() == Some("derived_evidence"))
+        .map(|(_, value)| value.clone())
+        .expect("durable derived evidence")
+}
+
+#[test]
+fn pinned_exact_head_attachment_retains_visible_range_and_original_head() -> Result<()> {
+    let (dir, vault) = open_vault();
+    let fx = fixture(&vault)?;
+    let raw = vault.get_raw(&fx.head)?.expect("original head");
+    let text = "my name is Oleksii";
+    let start = text.find("Oleksii").expect("quote");
+    let end = start + "Oleksii".len();
+    let digest = swarm_evidence_content_hash(&text.as_bytes()[start..end]);
+    let pin = WakeEvidenceSnapshot::capture_with_grants(
+        &vault,
+        DreamerConsolidationScope::Micro,
+        Some(&fx.scope),
+    )?;
+    let response = text_response(
+        serde_json::json!({"candidates":[{
+            "subject":fx.subject.to_hex(), "predicate":"profile.name", "value":"Oleksii",
+            "confidence":0.8,
+            "evidence_refs":[{"source_id":fx.turn.to_hex(), "byte_range":[start,end]}]
+        }]})
+        .to_string(),
+    );
+    let backend = ScriptedBackend::new(vec![Ok(response)]);
+    let mut sink = PromotionWriterSink::new(&vault, fx.run.clone());
+    assert!(matches!(
+        execute_at_pin(
+            &vault,
+            &fx,
+            &backend,
+            &mut sink,
+            fx.scope.clone(),
+            Some(&pin)
+        )?,
+        DreamerAttemptExecution::Completed { .. }
+    ));
+    assert_eq!(sink.outcome.landed, vec![fx.head]);
+    assert_eq!(vault.get_raw(&fx.head)?.as_ref(), Some(&raw));
+    let wrapper = attachment_wrapper(&vault, fx.turn, fx.head)?;
+    assert_eq!(wrapper.source, Some(ClaimSource::Generated));
+    assert_eq!(
+        crate::claim::claim_evidence_taint(&wrapper),
+        Some(ClaimSource::Generated)
+    );
+    let evidence = attached_evidence(&wrapper);
+    let locators = super::super::decode_verified_locators(&evidence)?;
+    assert_eq!(
+        locators,
+        vec![(
+            SwarmEvidenceRef {
+                source_id: fx.turn,
+                claim_id: None,
+                byte_range: Some((start, end))
+            },
+            digest
+        )]
+    );
+    // A memoized retry neither duplicates the support edge nor drops its
+    // verified locator from the replay-bound provenance row.
+    assert!(matches!(
+        execute_at_pin(
+            &vault,
+            &fx,
+            &backend,
+            &mut sink,
+            fx.scope.clone(),
+            Some(&pin)
+        )?,
+        DreamerAttemptExecution::Completed { .. }
+    ));
+    drop(sink);
+    drop(vault);
+    let reopened = Vault::open(dir.path(), VaultConfig::device())?;
+    assert_eq!(reopened.get_raw(&fx.head)?.as_ref(), Some(&raw));
+    assert_eq!(
+        super::super::decode_verified_locators(&attached_evidence(&attachment_wrapper(
+            &reopened, fx.turn, fx.head
+        )?))?,
+        locators
+    );
+    Ok(())
+}
+
+#[test]
+fn pinned_exact_head_attachment_accepts_other_claim_with_restrictive_meet() -> Result<()> {
+    let (dir, vault) = open_vault();
+    let fx = fixture(&vault)?;
+    let raw = vault.get_raw(&fx.head)?.expect("original head");
+    let actor = EntityId::now();
+    vault.put_entity(&actor, ENTITY_TYPE_PERSON, occurred(1), 1, b"actor")?;
+    let cited = EntityId::now();
+    let envelope = WriteEnvelope::new(
+        WriteActor::new(actor, EdgeActorClass::Human),
+        ClaimSource::Imported,
+        WriteProvenance::new("outside citation".into())?,
+        ClaimApprovalStatus::Approved,
+    );
+    vault
+        .batch()
+        .claim_candidate(
+            &cited,
+            ClaimCandidate::new(
+                "profile.employer",
+                ClaimSubject::Entity(fx.subject),
+                "Elsewhere".into(),
+                0.8,
+            ),
+            &envelope,
+            occurred(2),
+            2,
+        )
+        .commit()?;
+    let mut scope = fx.scope.clone();
+    scope.readable.insert(document_version(
+        cited,
+        &vault.get(&cited)?.expect("claim body"),
+    ));
+    let body = vault.get(&cited)?.expect("claim source body");
+    let digest = swarm_evidence_content_hash(&body);
+    let pin = WakeEvidenceSnapshot::capture_with_grants(
+        &vault,
+        DreamerConsolidationScope::Micro,
+        Some(&scope),
+    )?;
+    let response = text_response(
+        serde_json::json!({"candidates":[{
+            "subject":fx.subject.to_hex(), "predicate":"profile.name", "value":"Oleksii",
+            "confidence":0.8,
+            "evidence_refs":[{"source_id":cited.to_hex(),"claim_id":cited.to_hex()}],
+            "evidence_hashes":{cited.to_hex():"00".repeat(32)}
+        }]})
+        .to_string(),
+    );
+    let backend = ScriptedBackend::new(vec![Ok(response)]);
+    let mut sink = PromotionWriterSink::new(&vault, fx.run.clone());
+    let markers = super::support::IntegrityCapture::default();
+    assert!(matches!(
+        markers.with_default(|| execute_at_pin(
+            &vault,
+            &fx,
+            &backend,
+            &mut sink,
+            scope,
+            Some(&pin)
+        ))?,
+        DreamerAttemptExecution::Completed { .. }
+    ));
+    assert!(
+        sink.outcome.rejected.is_empty(),
+        "CLAIM citation must attach"
+    );
+    assert_eq!(sink.outcome.landed, vec![fx.head]);
+    assert!(
+        markers
+            .markers()
+            .iter()
+            .any(|marker| marker.contains("evidence_hash_mismatch"))
+    );
+    assert_eq!(vault.get_raw(&fx.head)?.as_ref(), Some(&raw));
+    let wrapper = attachment_wrapper(&vault, cited, fx.head)?;
+    assert_eq!(wrapper.source, Some(ClaimSource::Imported));
+    assert_eq!(
+        crate::claim::claim_evidence_taint(&wrapper),
+        Some(ClaimSource::Imported)
+    );
+    let locators = super::super::decode_verified_locators(&attached_evidence(&wrapper))?;
+    assert_eq!(
+        locators,
+        vec![(
+            SwarmEvidenceRef {
+                source_id: cited,
+                claim_id: Some(cited),
+                byte_range: None
+            },
+            digest
+        )]
+    );
+    drop(sink);
+    drop(vault);
+    let reopened = Vault::open(dir.path(), VaultConfig::device())?;
+    assert_eq!(reopened.get_raw(&fx.head)?.as_ref(), Some(&raw));
+    assert_eq!(
+        super::super::decode_verified_locators(&attached_evidence(&attachment_wrapper(
+            &reopened, cited, fx.head
+        )?))?,
+        locators
+    );
     Ok(())
 }
 

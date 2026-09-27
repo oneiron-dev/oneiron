@@ -24,6 +24,9 @@ pub(super) fn refreshed_input(
     }
     let (partition, original, watermark) = decode_partition_payload(&status.payload.input)?;
     if let Some(pin) = pin {
+        if let Some(reason) = pin.retry_failure(status.attempt.id) {
+            return Err(super::invalid_consolidation(reason));
+        }
         let turns = pin
             .retry_turns(status.attempt.id)
             .ok_or_else(|| super::invalid_consolidation("selection retry not in wake snapshot"))?;

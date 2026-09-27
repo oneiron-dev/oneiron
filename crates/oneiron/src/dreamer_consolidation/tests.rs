@@ -1489,7 +1489,7 @@ impl LlmBackend for ScriptedBackend {
 fn extraction_response(subject: &EntityId, turn: &EntityId) -> crate::LlmResponse {
     let json = format!(
         "{{\"candidates\": [{{\"subject\": \"{}\", \"predicate\": \"profile.name\", \
-         \"value\": \"Oleksii\", \"confidence\": 0.8, \"evidence_turn_refs\": [\"{}\"]}}]}}",
+         \"value\": \"Oleksii\", \"confidence\": 0.8, \"evidence_refs\": [{{\"source_id\":\"{}\",\"byte_range\":[0,1]}}]}}]}}",
         bytes_to_hex_lower(subject.as_bytes()),
         bytes_to_hex_lower(turn.as_bytes()),
     );
@@ -1770,9 +1770,9 @@ fn two_candidate_extraction(
     let json = format!(
         "{{\"candidates\": [\
          {{\"subject\": \"{s}\", \"predicate\": \"profile.name\", \"value\": \"Oleksii\", \
-          \"confidence\": 0.8, \"evidence_turn_refs\": [\"{a}\"]}},\
+          \"confidence\": 0.8, \"evidence_refs\": [{{\"source_id\":\"{a}\",\"byte_range\":[0,1]}}]}},\
          {{\"subject\": \"{s}\", \"predicate\": \"profile.name\", \"value\": \"Alex\", \
-          \"confidence\": 0.6, \"evidence_turn_refs\": [\"{b}\"]}}]}}",
+          \"confidence\": 0.6, \"evidence_refs\": [{{\"source_id\":\"{b}\",\"byte_range\":[0,1]}}]}}]}}",
         s = bytes_to_hex_lower(subject.as_bytes()),
         a = bytes_to_hex_lower(turn_a.as_bytes()),
         b = bytes_to_hex_lower(turn_b.as_bytes()),
@@ -2151,6 +2151,16 @@ fn child_returns_refs_only_and_ranges_are_parent_checked() -> Result<()> {
             }])
             .is_err()
     );
+    assert!(
+        resources
+            .verify_evidence_refs(&[SwarmEvidenceRef {
+                source_id: turn,
+                claim_id: None,
+                byte_range: Some((0, 0)),
+            }])
+            .is_err(),
+        "empty in-bounds text ranges are invalid"
+    );
     Ok(())
 }
 
@@ -2170,6 +2180,11 @@ fn most_restrictive_trust() {
         ClaimSource::Generated
     );
     assert_eq!(evidence_trust_meet([].iter()), ClaimSource::Generated);
+    assert_eq!(
+        evidence_trust_meet([entry(ClaimSource::Inferred), entry(ClaimSource::Generated)].iter()),
+        ClaimSource::Generated,
+        "equal-rank inferred evidence cannot raise the Dreamer floor"
+    );
     assert_eq!(
         evidence_trust_meet([entry(ClaimSource::UserStated)].iter()),
         ClaimSource::Generated
@@ -2245,8 +2260,11 @@ fn disagreed_child_hash_is_integrity_only() -> Result<()> {
         crate::attempt_queue::AttemptId::now(),
         None,
     )?;
-    let fake = serde_json::json!({"evidence_hashes": {turn.to_hex(): "00".repeat(32)}});
-    let markers = super::executor::extraction::disagreeing_child_hashes(&resources, &[fake])?;
+    let fake = serde_json::json!({
+        "evidence_refs":[{"source_id":turn.to_hex(),"byte_range":[0,1]}],
+        "evidence_hashes": {turn.to_hex(): "00".repeat(32)}
+    });
+    let markers = super::executor::extraction::disagreeing_child_hashes(&resources, &[fake]);
     assert_eq!(markers, vec![turn]);
     // Even a deliberately wrong report cannot change the parent hash/trust.
     let collapsed = collapse_sibling_evidence(

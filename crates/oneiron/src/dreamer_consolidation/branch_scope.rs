@@ -142,6 +142,24 @@ fn stored_parent_scope(
     Ok(bound)
 }
 
+/// A retry with a durable caller bound cannot expand its queued source slice.
+pub(super) fn has_execution_scope_in(
+    vault: &crate::Vault,
+    txn: &heed::RoTxn<'_>,
+    attempt: crate::attempt_queue::AttemptId,
+) -> Result<bool> {
+    let Some(raw) = vault
+        .store
+        .vault_meta
+        .get(txn, &execution_scope_key(attempt))?
+    else {
+        return Ok(false);
+    };
+    let scope: Option<Scope> = serde_json::from_slice(&raw)
+        .map_err(|_| invalid_consolidation("invalid execution scope"))?;
+    Ok(scope.is_some())
+}
+
 fn execution_scope_key(attempt: crate::attempt_queue::AttemptId) -> Vec<u8> {
     [
         b"dreamer:selection_scope:v1:".as_slice(),

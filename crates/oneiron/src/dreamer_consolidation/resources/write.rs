@@ -208,16 +208,10 @@ impl ConsolidationFence {
                 {
                     return Err(invalid_consolidation("unadmitted turn locator"));
                 }
-                let bytes = if let Some((start, end)) = locator.byte_range {
-                    pin.body
-                        .get(start..end)
-                        .ok_or_else(|| invalid_consolidation("invalid evidence byte range"))?
-                } else {
-                    pin.body.as_slice()
-                };
+                let bytes = super::cited_evidence_bytes(locator, &pin.body)?;
                 Ok((
                     locator,
-                    crate::dreamer_consolidation::swarm_evidence_content_hash(bytes),
+                    crate::dreamer_consolidation::swarm_evidence_content_hash(&bytes),
                 ))
             })
             .collect::<Result<_>>()?;
