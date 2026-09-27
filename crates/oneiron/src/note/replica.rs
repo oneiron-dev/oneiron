@@ -3,7 +3,7 @@
 //! This is not a public raw import door. Only the sync client's explicit
 //! authenticated-authority lane calls it. Upstream peers send NoteOperation.
 use super::document::{NoteDocument, invalid};
-use super::document_store::{load, persist};
+use super::document_store::{load, persist_replica};
 use super::{NotePin, NoteSpanResolution};
 use crate::sync::transport::document_sub_tags;
 use crate::sync::{SyncSelector, SyncSelectorWorld};
@@ -139,7 +139,7 @@ pub(crate) fn import_note_from_authority(
             for pin in &next.view()?.pins {
                 pin.validate()?;
             }
-            return persist(vault, txn, &next);
+            return persist_replica(vault, txn, &next);
         }
         let floor_key = super::citation_scrub::authority_floor_key(id);
         let authority_floor = vault.store.vault_meta.get(txn, floor_key.as_bytes())?;
@@ -207,7 +207,7 @@ pub(crate) fn import_note_from_authority(
         for pin in &new.pins {
             pin.validate()?;
         }
-        persist(vault, txn, &next)
+        persist_replica(vault, txn, &next)
     })?;
     vault.notify_note_document(id);
     Ok(())
