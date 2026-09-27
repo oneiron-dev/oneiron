@@ -8,7 +8,7 @@ fn observes_queue_commit_and_not_rollback() -> Result<()> {
     let queue = AttemptQueue::new(&vault);
     let mut receiver = queue.subscribe();
     let result: Result<()> = vault.with_write_txn(|txn| {
-        queue.enqueue_in_txn(txn, enqueue("test", None, 1))?;
+        crate::ports::JobQueue::port_job_enqueue(&vault, txn, enqueue("test", None, 1))?;
         Err(Error::InvalidConfig("fixture rollback".into()))
     });
     assert!(result.is_err());
@@ -16,7 +16,9 @@ fn observes_queue_commit_and_not_rollback() -> Result<()> {
         receiver.try_recv(),
         Err(tokio::sync::broadcast::error::TryRecvError::Empty)
     ));
-    vault.with_write_txn(|txn| queue.enqueue_in_txn(txn, enqueue("test", None, 2)))?;
+    vault.with_write_txn(|txn| {
+        crate::ports::JobQueue::port_job_enqueue(&vault, txn, enqueue("test", None, 2))
+    })?;
     assert_eq!(receiver.try_recv().unwrap(), ());
     let rows = queue.list_run("run-2")?;
     assert_eq!(rows.len(), 1);

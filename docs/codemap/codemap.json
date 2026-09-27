@@ -1329,7 +1329,7 @@
      "path": "src/attempt_queue/engine/enqueue_claim.rs",
      "purpose": "Enqueue doors plus kind-scoped claim machinery and read-repair scans",
      "surface": {
-      "crate-vis": 8,
+      "crate-vis": 5,
       "fn": 5
      }
     },
@@ -1395,7 +1395,7 @@
      "path": "src/attempt_queue/mod.rs",
      "purpose": "Generic LMDB-backed background attempt queue",
      "surface": {
-      "crate-vis": 9,
+      "crate-vis": 10,
       "re-export": 4
      }
     },
@@ -1630,7 +1630,7 @@
      "path": "src/attempt_queue/validate/mod.rs",
      "purpose": "Input validators and in-place record mutators guarding the attempt-queue doors",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 4
      }
     },
     {
@@ -25701,7 +25701,7 @@
      "path": "src/ports/memory.rs",
      "purpose": "In-memory transactional conformance adapter",
      "surface": {
-      "crate-vis": 8
+      "crate-vis": 11
      }
     },
     {
@@ -32727,7 +32727,7 @@
      "path": "src/task_verb/mod.rs",
      "purpose": "Typed, actor-bound verbs over the Context Board TASKS section",
      "surface": {
-      "crate-vis": 10,
+      "crate-vis": 11,
       "mod": 1,
       "re-export": 16
      }
@@ -32844,7 +32844,7 @@
      "path": "src/task_verb/scheduling.rs",
      "purpose": "Live TASK dependency and symbol readiness at every attempt-claim door",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 4
      }
     },
     {
@@ -32896,7 +32896,7 @@
      "path": "src/task_verb/symbol_lease.rs",
      "purpose": "Node-local time-held symbol declarations and atomic queue ordering",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 4,
       "enum": 1,
       "fn": 4,
       "struct": 1
@@ -33069,7 +33069,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "VaultWaveTaskPort"

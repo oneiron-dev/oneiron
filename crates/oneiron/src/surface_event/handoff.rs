@@ -243,13 +243,17 @@ impl Vault {
         dispatcher: &dyn SurfaceEventDispatcher,
     ) -> Result<SurfaceEventWorkerOutcome> {
         let queue = AttemptQueue::new(self);
-        let ClaimOutcome::Claimed(attempt) = queue.claim_kind(
-            SURFACE_EVENT_ATTEMPT_KIND,
-            ClaimAttempt {
-                lease_owner: lease_owner.to_owned(),
-                now,
-            },
-        )?
+        let ClaimOutcome::Claimed(attempt) = self.with_write_txn(|txn| {
+            crate::ports::JobQueue::port_job_claim(
+                self,
+                txn,
+                Some(SURFACE_EVENT_ATTEMPT_KIND),
+                ClaimAttempt {
+                    lease_owner: lease_owner.to_owned(),
+                    now,
+                },
+            )
+        })?
         else {
             return Ok(SurfaceEventWorkerOutcome::Empty);
         };
@@ -267,11 +271,17 @@ impl Vault {
         let correlation_id = payload.event.correlation_id.as_str();
         match disposition {
             SurfaceEventDispatchDisposition::Complete => {
-                let outcome = queue.complete(CompleteAttempt {
-                    id: attempt.id,
-                    lease_owner: lease_owner.to_owned(),
-                    attempt_count: attempt.attempt_count,
-                    now,
+                let outcome = self.with_write_txn(|txn| {
+                    crate::ports::JobQueue::port_job_complete(
+                        self,
+                        txn,
+                        CompleteAttempt {
+                            id: attempt.id,
+                            lease_owner: lease_owner.to_owned(),
+                            attempt_count: attempt.attempt_count,
+                            now,
+                        },
+                    )
                 })?;
                 let (CompleteOutcome::Completed(record)
                 | CompleteOutcome::AlreadyCompleted(record)) = outcome;
@@ -298,12 +308,18 @@ impl Vault {
                 )))
             }
             SurfaceEventDispatchDisposition::Fail { reason } => {
-                let outcome = queue.fail(FailAttempt {
-                    id: attempt.id,
-                    lease_owner: lease_owner.to_owned(),
-                    attempt_count: attempt.attempt_count,
-                    reason,
-                    now,
+                let outcome = self.with_write_txn(|txn| {
+                    crate::ports::JobQueue::port_job_fail(
+                        self,
+                        txn,
+                        FailAttempt {
+                            id: attempt.id,
+                            lease_owner: lease_owner.to_owned(),
+                            attempt_count: attempt.attempt_count,
+                            reason,
+                            now,
+                        },
+                    )
                 })?;
                 let (FailOutcome::Failed(record) | FailOutcome::AlreadyFailed(record)) = outcome;
                 Ok(SurfaceEventWorkerOutcome::Failed(handoff_status(
@@ -387,7 +403,8 @@ pub(super) fn admit_surface_event_once_in_txn(
         });
     }
 
-    let outcome = queue.enqueue_in_txn(
+    let outcome = crate::ports::JobQueue::port_job_enqueue(
+        vault,
         wtxn,
         EnqueueAttempt {
             kind: SURFACE_EVENT_ATTEMPT_KIND.to_owned(),

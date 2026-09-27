@@ -148,7 +148,7 @@ impl Vault {
             self,
             &txn,
             &task_create_rate_key(actor, window_seconds),
-            crate::unix_seconds_now() / window_seconds,
+            self.now_recorded_at() / window_seconds,
         )
     }
 }

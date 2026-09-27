@@ -10,7 +10,7 @@ use super::seat::{
     calendar_sync_attempt_kind, seat_identity,
 };
 
-use crate::attempt_queue::{AttemptQueue, EnqueueAttempt};
+use crate::attempt_queue::EnqueueAttempt;
 use crate::calendar::CalendarError;
 use crate::calendar::claims::CalendarPassportPresence;
 use crate::calendar::ingest::admit_calendar_import_claim;
@@ -288,12 +288,18 @@ fn enqueue_next_sync(
     })
     .map_err(|_| ingest_error("connector sync payload did not encode"))?;
     let dedupe_key = format!("{}:due:{not_before}", seat_identity(provider, &seat.config));
-    AttemptQueue::new(vault).enqueue(EnqueueAttempt {
-        kind: calendar_sync_attempt_kind(provider),
-        payload,
-        dedupe_key: Some(dedupe_key),
-        run_id: None,
-        now,
+    vault.with_write_txn(|txn| {
+        crate::ports::JobQueue::port_job_enqueue(
+            vault,
+            txn,
+            EnqueueAttempt {
+                kind: calendar_sync_attempt_kind(provider),
+                payload,
+                dedupe_key: Some(dedupe_key),
+                run_id: None,
+                now,
+            },
+        )
     })?;
     Ok(())
 }

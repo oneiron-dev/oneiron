@@ -61,7 +61,8 @@ pub(super) fn enqueue_seal(
     } else {
         0
     };
-    crate::attempt_queue::AttemptQueue::new(vault).enqueue_in_txn(
+    crate::ports::JobQueue::port_job_enqueue(
+        vault,
         txn,
         crate::attempt_queue::EnqueueAttempt {
             kind: ESIGN_SEAL_ATTEMPT_KIND.into(),
@@ -84,7 +85,7 @@ impl Vault {
         ip: Option<String>,
         user_agent: Option<String>,
     ) -> Result<SigningOutcome> {
-        let now = crate::unix_seconds_now();
+        let now = self.now_recorded_at();
         // Observe independently, including refused mutation attempts. A failed
         // observation transaction cannot turn a valid ceremony into a refusal.
         let _ = self.with_write_txn(|txn| {

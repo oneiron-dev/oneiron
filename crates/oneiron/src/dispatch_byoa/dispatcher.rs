@@ -153,17 +153,23 @@ where
             parent_attempt: request.parent_attempt_id.map(|id| *id.as_bytes()),
         })?;
 
-        let queue = AttemptQueue::new(self.vault);
-        let outcome = queue.enqueue_with_task_ref(
-            EnqueueAttempt {
-                kind: BYOA_ATTEMPT_KIND.to_owned(),
-                payload,
-                dedupe_key: request.dedupe_key,
-                run_id: request.run_id,
-                now: request.now,
-            },
-            request.task_ref.map(|task_ref| task_ref.to_hex()),
-        )?;
+        let outcome = self.vault.with_write_txn(|txn| {
+            crate::ports::JobQueue::port_job_enqueue_scoped(
+                self.vault,
+                txn,
+                EnqueueAttempt {
+                    kind: BYOA_ATTEMPT_KIND.to_owned(),
+                    payload,
+                    dedupe_key: request.dedupe_key,
+                    run_id: request.run_id,
+                    now: request.now,
+                },
+                crate::ports::JobScope {
+                    task_ref: request.task_ref.map(|task_ref| task_ref.to_hex()),
+                    dedupe_actor_ref: None,
+                },
+            )
+        })?;
 
         let status = |attempt: AttemptRecord| -> ByoaResult<ByoaDispatchStatus> {
             let connector_kind = decode_byoa_record(&attempt)?.connector.kind();
@@ -516,7 +522,8 @@ where
             },
         )?;
         let attempt = match envelope.disposition {
-            ByoaTerminalDisposition::Completed => match queue.complete_in_txn(
+            ByoaTerminalDisposition::Completed => match crate::ports::JobQueue::port_job_complete(
+                self.vault,
                 wtxn,
                 CompleteAttempt {
                     id: request.attempt_id,
@@ -528,7 +535,8 @@ where
                 CompleteOutcome::Completed(attempt)
                 | CompleteOutcome::AlreadyCompleted(attempt) => attempt,
             },
-            ByoaTerminalDisposition::Failed => match queue.fail_in_txn(
+            ByoaTerminalDisposition::Failed => match crate::ports::JobQueue::port_job_fail(
+                self.vault,
                 wtxn,
                 FailAttempt {
                     id: request.attempt_id,

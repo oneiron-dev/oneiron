@@ -388,7 +388,7 @@ pub(in crate::attempt_queue) fn validate_optional_intervention_note(
     Ok(())
 }
 
-pub(in crate::attempt_queue) fn validate_lease_owner(lease_owner: &str) -> Result<()> {
+pub(crate) fn validate_lease_owner(lease_owner: &str) -> Result<()> {
     if lease_owner.is_empty() {
         return Err(Error::Artifact(ArtifactError::InvalidAttemptQueueRecord(
             ERR_LEASE_OWNER_EMPTY,

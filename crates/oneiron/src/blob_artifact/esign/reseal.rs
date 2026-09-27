@@ -16,7 +16,7 @@ impl Vault {
         ip: Option<String>,
         user_agent: Option<String>,
     ) -> Result<()> {
-        let now = crate::unix_seconds_now();
+        let now = self.now_recorded_at();
         self.with_write_txn(|txn| {
             verify_owner(self, txn, owner)?;
             let required = GrantBound::action(

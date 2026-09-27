@@ -7,7 +7,7 @@ use super::errors::{
     dispatch_outcome_str, facade_error_from_calendar, facade_error_from_outbound_dispatch,
 };
 use super::types::{OutboundDraftInput, OutboundIntentReceipt, OutboundScheduleContext};
-use crate::attempt_queue::{AttemptQueue, EnqueueAttempt, EnqueueOutcome};
+use crate::attempt_queue::{EnqueueAttempt, EnqueueOutcome};
 
 use crate::entity_id::EntityId;
 use crate::error::Error;
@@ -227,7 +227,6 @@ impl Memory<'_> {
         }
         let intent = OutboundIntent::from_trigger(intent_draft, trigger);
 
-        let queue = AttemptQueue::new(self.vault);
         let task_ref = self.vault.store.clock.entity_id()?;
         let payload = connector_send_attempt_payload(task_ref)?;
         // The queue's live-schedule dedupe is scoped by the BOUND EFFECT ACTOR
@@ -243,7 +242,8 @@ impl Memory<'_> {
         // therefore neither durable nor claimable.
         let mut preflight_txn = self.vault.store.env.write_txn().map_err(Error::from)?;
         verify_actor_binding_in_txn(self.vault, &preflight_txn, self.actor, self.actor_class)?;
-        let preflight = queue.enqueue_with_task_ref_and_dedupe_actor_in_txn(
+        let preflight = crate::ports::JobQueue::port_job_enqueue_scoped(
+            self.vault,
             &mut preflight_txn,
             EnqueueAttempt {
                 kind: BRIDGE_OUTBOUND_ATTEMPT_KIND.to_owned(),
@@ -252,8 +252,10 @@ impl Memory<'_> {
                 run_id: draft.job_ref.clone(),
                 now,
             },
-            None,
-            Some(dedupe_actor_ref.as_str()),
+            crate::ports::JobScope {
+                task_ref: None,
+                dedupe_actor_ref: Some(dedupe_actor_ref.as_str()),
+            },
         )?;
         drop(preflight_txn);
         if let EnqueueOutcome::Existing(attempt) = preflight {
@@ -338,7 +340,8 @@ impl Memory<'_> {
         }
 
         let outcome = self.with_verified_actor_write_txn(|wtxn| {
-            let outcome = queue.enqueue_with_task_ref_and_dedupe_actor_in_txn(
+            let outcome = crate::ports::JobQueue::port_job_enqueue_scoped(
+                self.vault,
                 wtxn,
                 EnqueueAttempt {
                     kind: BRIDGE_OUTBOUND_ATTEMPT_KIND.to_owned(),
@@ -347,8 +350,10 @@ impl Memory<'_> {
                     run_id: draft.job_ref.clone(),
                     now,
                 },
-                Some(task_ref.to_hex()),
-                Some(dedupe_actor_ref.as_str()),
+                crate::ports::JobScope {
+                    task_ref: Some(task_ref.to_hex()),
+                    dedupe_actor_ref: Some(dedupe_actor_ref.as_str()),
+                },
             )?;
             if matches!(&outcome, EnqueueOutcome::Enqueued(_)) {
                 put_connector_send_task_in_txn(

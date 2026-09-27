@@ -34,7 +34,8 @@ pub(super) fn persist_failed_send_receipt_and_retry(
             false,
             None,
         )? {
-            queue.complete_in_txn(
+            crate::ports::JobQueue::port_job_complete(
+                vault,
                 wtxn,
                 CompleteAttempt {
                     id: attempt.id,

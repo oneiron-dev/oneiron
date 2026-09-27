@@ -72,7 +72,7 @@ impl Vault {
             ]))?,
             ClaimApprovalStatus::Approved,
         );
-        let id = EntityId::now();
+        let id = self.new_entity_id()?;
         self.with_write_txn(|txn| {
             self.batch_in()
                 .claim_candidate(
