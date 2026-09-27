@@ -142,10 +142,7 @@ impl ChangedLine {
             lines.extend(self.install_rows.iter().map(|receipt| {
                 let source = receipt.ref_string.chars().take(128).collect::<String>();
                 let pin = receipt.pin_value.as_deref().unwrap_or("none");
-                let ask = if matches!(
-                    receipt.outcome.as_deref(),
-                    Some("ask_permissions" | "scan_review")
-                ) {
+                let ask = if receipt.disposition.is_pending() {
                     let requested = receipt
                         .requested_permissions
                         .iter()
@@ -178,8 +175,8 @@ impl ChangedLine {
                         pin.chars().take(128).collect::<String>()
                     ))
                     .expect("string serializes"),
-                    receipt.installed_as.as_deref().unwrap_or("candidate"),
-                    receipt.outcome.as_deref().unwrap_or("imported"),
+                    receipt.installed_as.as_str(),
+                    receipt.disposition.as_str(),
                     ask
                 )
             }));

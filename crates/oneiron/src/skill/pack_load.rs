@@ -12,6 +12,16 @@ pub struct LoadedSkillPack {
     pub source_files: Option<Vec<crate::skill_hub::HubFile>>,
 }
 
+/// The one runtime admission invariant used by the load door and hub installs.
+#[must_use]
+pub(crate) fn skill_loadable(record: &SkillRecord) -> bool {
+    record.lifecycle_status == SkillLifecycle::Active
+        && matches!(
+            record.approval_status,
+            ClaimApprovalStatus::Auto | ClaimApprovalStatus::Approved
+        )
+}
+
 impl Vault {
     /// Mid-run tier-2 record load. Merely listing a skill at tier 1 is not evidence of body use.
     pub fn load_attempt_skill(
@@ -36,12 +46,7 @@ impl Vault {
                 return Err(Error::EntityNotFound);
             }
             let record = self.read_skill_record_in_txn(txn, skill)?;
-            if record.lifecycle_status != SkillLifecycle::Active
-                || !matches!(
-                    record.approval_status,
-                    ClaimApprovalStatus::Auto | ClaimApprovalStatus::Approved
-                )
-            {
+            if !skill_loadable(&record) {
                 return Err(Error::InvalidClaimBody(
                     "pack load requires an active approved skill",
                 ));

@@ -18,23 +18,56 @@ use std::{
 
 struct ReadyFit;
 impl MarketplaceFitEvaluator for ReadyFit {
-    fn evaluate(&self, source: &HubRef, package: &HubPackage) -> Result<MarketplaceFitDecision> {
-        MarketplaceFitDecision::new(source, package, MarketplaceFit::Ready, "fixture fit")
+    fn evaluate(
+        &self,
+        source: &HubRef,
+        package: &HubPackage,
+        static_scan: &SkillScanReceipt,
+    ) -> Result<MarketplaceFitDecision> {
+        MarketplaceFitDecision::new(
+            source,
+            package,
+            MarketplaceFit::Ready,
+            "fixture fit",
+            static_scan,
+        )
     }
 }
 
 struct FixedFit(MarketplaceFit);
 impl MarketplaceFitEvaluator for FixedFit {
-    fn evaluate(&self, source: &HubRef, package: &HubPackage) -> Result<MarketplaceFitDecision> {
-        MarketplaceFitDecision::new(source, package, self.0, "fixture permission review")
+    fn evaluate(
+        &self,
+        source: &HubRef,
+        package: &HubPackage,
+        static_scan: &SkillScanReceipt,
+    ) -> Result<MarketplaceFitDecision> {
+        MarketplaceFitDecision::new(
+            source,
+            package,
+            self.0,
+            "fixture permission review",
+            static_scan,
+        )
     }
 }
 
 struct WrongSourceFit;
 impl MarketplaceFitEvaluator for WrongSourceFit {
-    fn evaluate(&self, source: &HubRef, package: &HubPackage) -> Result<MarketplaceFitDecision> {
+    fn evaluate(
+        &self,
+        source: &HubRef,
+        package: &HubPackage,
+        static_scan: &SkillScanReceipt,
+    ) -> Result<MarketplaceFitDecision> {
         let other = HubRef::new(EntityId::now(), &source.ref_string, source.pin.clone())?;
-        MarketplaceFitDecision::new(&other, package, MarketplaceFit::Ready, "mismatched source")
+        MarketplaceFitDecision::new(
+            &other,
+            package,
+            MarketplaceFit::Ready,
+            "mismatched source",
+            static_scan,
+        )
     }
 }
 
@@ -375,7 +408,7 @@ fn real_http_ingress_stamps_admitted_publisher_and_dedups_two_source_receipts() 
         assert_eq!(receipt.content_hash, index[0].content_hash.to_hex());
         assert_eq!(receipt.hub_id, hub_id.to_hex());
         assert_eq!(receipt.ref_string, source.ref_string);
-        assert_eq!(receipt.installed_as, Some("active".to_owned()));
+        assert_eq!(receipt.installed_as, InstallLifecycle::Active);
         assert_eq!(
             vault
                 .get_skill_record(&entity)?
@@ -489,7 +522,7 @@ fn marketplace_code_and_rules_hits_remain_candidate_until_policy_allows() -> Res
             .hub_import_receipt(&id, &source)?
             .unwrap()
             .installed_as,
-        Some("candidate".to_owned())
+        InstallLifecycle::Candidate
     );
     crate::test_util::authorize_readers(&vault, &["viewer"]);
     let read = vault.scoped_read(crate::claim::ScopedReadActorKey::new("viewer").unwrap());
@@ -541,9 +574,9 @@ fn marketplace_code_and_rules_hits_remain_candidate_until_policy_allows() -> Res
             vault
                 .hub_import_receipt(&id, &source)?
                 .unwrap()
-                .outcome
-                .as_deref(),
-            Some(outcome)
+                .disposition
+                .as_str(),
+            outcome
         );
         if fit == MarketplaceFit::Ask {
             let ask = vault.hub_import_receipt(&id, &source)?.expect("fit ask");
@@ -573,13 +606,12 @@ fn marketplace_code_and_rules_hits_remain_candidate_until_policy_allows() -> Res
         vault
             .hub_import_receipt(&id, &source)?
             .unwrap()
-            .outcome
-            .as_deref(),
-        Some("blocked_hash")
+            .disposition
+            .as_str(),
+        "rules_hit"
     );
     vault.set_marketplace_blocked_hash(&owner, hash, false)?;
-    // Advisory scan escalation is a pending review, not Active/Proposed with
-    // a false "installed" receipt; lowering the risk dial is never a hash rule.
+    // A scanner signal at Low is advisory once the host's exact fit is Ready.
     crate::skill_scan::set_skill_scan_activation_risk_threshold(&vault, ScanRiskLevel::Low)?;
     assert_eq!(
         vault.import_marketplace_skill_from_adapter(
@@ -587,35 +619,27 @@ fn marketplace_code_and_rules_hits_remain_candidate_until_policy_allows() -> Res
         )?,
         id
     );
-    let pending = vault.get_skill_record(&id)?.expect("pending scan review");
-    assert_eq!(pending.lifecycle_status, SkillLifecycle::Candidate);
+    let installed = vault.get_skill_record(&id)?.expect("fit-ready install");
+    assert_eq!(installed.lifecycle_status, SkillLifecycle::Active);
     assert_eq!(
-        pending.approval_status,
+        installed.approval_status,
         crate::claim::ClaimApprovalStatus::Auto
     );
     let receipt = vault
         .hub_import_receipt(&id, &source)?
-        .expect("scan review receipt");
-    assert_eq!(receipt.outcome.as_deref(), Some("scan_review"));
-    assert_eq!(receipt.installed_as.as_deref(), Some("candidate"));
+        .expect("installed receipt");
+    assert_eq!(receipt.disposition, InstallDisposition::Installed);
+    assert_eq!(receipt.installed_as, InstallLifecycle::Active);
     crate::skill_scan::set_skill_scan_activation_risk_threshold(&vault, ScanRiskLevel::High)?;
-
     assert_eq!(
         vault.import_marketplace_skill_from_adapter(
-            &adapter, &source, &publisher, &ReadyFit, at, 13
+            &adapter, &source, &publisher, &ReadyFit, at, 15,
         )?,
         id
     );
     assert_eq!(
-        vault.get_skill_record(&id)?.unwrap().lifecycle_status,
-        SkillLifecycle::Active
-    );
-    assert_eq!(
-        vault
-            .hub_import_receipt(&id, &source)?
-            .unwrap()
-            .installed_as,
-        Some("active".to_owned())
+        vault.hub_import_receipt(&id, &source)?.unwrap().disposition,
+        InstallDisposition::AlreadyInstalled
     );
     let queue = AttemptQueue::new(&vault);
     let EnqueueOutcome::Enqueued(attempt) = queue.enqueue(EnqueueAttempt {
@@ -707,8 +731,8 @@ fn rejected_marketplace_candidate_cannot_be_activated_by_reimport_from_another_h
                 .hub_import_receipt(&id, source)?
                 .expect("source receipt")
                 .installed_as
-                .as_deref(),
-            Some("candidate")
+                .as_str(),
+            "candidate"
         );
     }
     assert_eq!(vault.skill_hub_provenance_count(&id)?, 2);
@@ -865,9 +889,9 @@ fn permission_ask_requires_current_rule_and_one_exact_owner_decision() -> Result
         vault
             .hub_import_receipt(&id, &source)?
             .unwrap()
-            .outcome
-            .as_deref(),
-        Some("installed_with_permission_consent")
+            .disposition
+            .as_str(),
+        "installed"
     );
     assert!(
         vault
@@ -878,7 +902,7 @@ fn permission_ask_requires_current_rule_and_one_exact_owner_decision() -> Result
 }
 
 #[test]
-fn scan_review_is_candidate_until_owner_answers_and_runtime_loads() -> Result<()> {
+fn fit_ready_scanner_signal_does_not_create_a_second_admission_gate() -> Result<()> {
     use crate::skill::SkillLifecycle;
     let mut tree = files("fixture.scan-review", "1", "Check the result.");
     tree[0].content = b"---\nname: fixture.scan-review\ndescription: fixture\nversion: 1\nrequires-bins: [\"rg\"]\n---\nCheck the result.\n".to_vec();
@@ -920,14 +944,18 @@ fn scan_review_is_candidate_until_owner_answers_and_runtime_loads() -> Result<()
     crate::skill_scan::set_skill_scan_activation_risk_threshold(&vault, ScanRiskLevel::Low)?;
     let id = vault
         .import_marketplace_skill_from_adapter(&adapter, &source, &publisher, &ReadyFit, at, 10)?;
+    let record = vault.get_skill_record(&id)?.expect("fit-ready skill");
+    assert_eq!(record.lifecycle_status, SkillLifecycle::Active);
     assert_eq!(
-        vault.get_skill_record(&id)?.unwrap().lifecycle_status,
-        SkillLifecycle::Candidate
+        record.approval_status,
+        crate::claim::ClaimApprovalStatus::Auto
     );
-    let ask = vault.hub_import_receipt(&id, &source)?.expect("ask");
-    assert_eq!(ask.requested_permissions, ["bin:rg"]);
-    assert_eq!(ask.outcome.as_deref(), Some("scan_review"));
-    assert_eq!(ask.installed_as.as_deref(), Some("candidate"));
+    let receipt = vault
+        .hub_import_receipt(&id, &source)?
+        .expect("install receipt");
+    assert_eq!(receipt.requested_permissions, ["bin:rg"]);
+    assert_eq!(receipt.disposition, InstallDisposition::Installed);
+    assert_eq!(receipt.installed_as, InstallLifecycle::Active);
     let queue = AttemptQueue::new(&vault);
     let EnqueueOutcome::Enqueued(attempt) = queue.enqueue(EnqueueAttempt {
         kind: "marketplace.scan-review".into(),
@@ -939,40 +967,34 @@ fn scan_review_is_candidate_until_owner_answers_and_runtime_loads() -> Result<()
     else {
         panic!("fresh attempt");
     };
-    assert!(vault.load_attempt_skill_pack(attempt.id, &id, 30).is_err());
-    vault.set_marketplace_blocked_hash(&owner, hash, true)?;
-    assert!(
-        vault
-            .approve_marketplace_permission_ask(&owner, &id, &source, at, 11)
-            .is_err()
-    );
-    assert_eq!(
-        vault.get_skill_record(&id)?.unwrap().lifecycle_status,
-        SkillLifecycle::Candidate
-    );
-    vault.set_marketplace_blocked_hash(&owner, hash, false)?;
-    vault.approve_marketplace_permission_ask(&owner, &id, &source, at, 12)?;
-    assert_eq!(
-        vault.get_skill_record(&id)?.unwrap().lifecycle_status,
-        SkillLifecycle::Active
-    );
-    assert_eq!(
-        vault
-            .hub_import_receipt(&id, &source)?
-            .unwrap()
-            .outcome
-            .as_deref(),
-        Some("installed_with_permission_consent")
-    );
-    let loaded = vault.load_attempt_skill_pack(attempt.id, &id, 31)?;
+    let loaded = vault.load_attempt_skill_pack(attempt.id, &id, 30)?;
     assert_eq!(
         loaded.record.approval_status,
-        crate::claim::ClaimApprovalStatus::Approved
+        crate::claim::ClaimApprovalStatus::Auto
+    );
+    vault.set_marketplace_blocked_hash(&owner, hash, true)?;
+    assert_eq!(
+        vault.import_marketplace_skill_from_adapter(
+            &adapter, &source, &publisher, &ReadyFit, at, 11,
+        )?,
+        id
+    );
+    assert_eq!(
+        vault.hub_import_receipt(&id, &source)?.unwrap().disposition,
+        InstallDisposition::AlreadyInstalled
     );
     assert!(
         vault
-            .approve_marketplace_permission_ask(&owner, &id, &source, at, 13)
+            .approve_marketplace_permission_ask(&owner, &id, &source, at, 12)
             .is_err()
+    );
+    vault.set_marketplace_blocked_hash(&owner, hash, false)?;
+    assert_eq!(
+        vault
+            .load_attempt_skill_pack(attempt.id, &id, 31)?
+            .record
+            .lifecycle_status,
+        SkillLifecycle::Active
     );
     Ok(())
 }
@@ -1202,11 +1224,8 @@ fn local_git_pack_installs_with_pinned_receipt_and_skill_remains_separate() -> R
         skill_receipt.content_hash,
         skill_record.content_hash.unwrap().to_hex()
     );
-    assert_eq!(skill_receipt.installed_as.as_deref(), Some("active"));
-    assert_eq!(
-        skill_receipt.outcome.as_deref(),
-        Some("pack_bundled_installed")
-    );
+    assert_eq!(skill_receipt.installed_as.as_str(), "active");
+    assert_eq!(skill_receipt.disposition.as_str(), "installed");
     let standalone = files("alice.plain", "1", "plain knowledge");
     for file in &standalone {
         let path = repository.path().join("skills/plain").join(&file.path);

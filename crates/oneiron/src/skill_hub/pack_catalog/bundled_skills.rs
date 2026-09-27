@@ -2,7 +2,6 @@
 use super::{PackInstallReceipt, PackSource, invalid};
 use crate::{
     Vault,
-    claim::ClaimApprovalStatus,
     entity_id::EntityId,
     error::Result,
     skill::{SkillContentHash, SkillLifecycle},
@@ -158,39 +157,6 @@ impl Vault {
                     next_id,
                     TimeRange { start: at, end: at },
                     at,
-                )?;
-            }
-        }
-        Ok(())
-    }
-    pub(super) fn activate_pack_skills_in_txn(
-        &self,
-        txn: &mut heed::RwTxn<'_>,
-        ids: &[EntityId],
-        at: u64,
-    ) -> Result<()> {
-        for id in ids {
-            let mut record = self.read_skill_record_in_txn(txn, id)?;
-            if record.lifecycle_status == SkillLifecycle::Candidate {
-                if record.approval_status == ClaimApprovalStatus::Rejected
-                    || self
-                        .hub_admission_receipt_in_txn(txn, id)?
-                        .is_some_and(|receipt| !receipt.accepted)
-                {
-                    return Err(invalid("locally rejected bundled skill cannot reactivate"));
-                }
-                // Installation is not human consent. The scanner may still
-                // escalate `auto` if a verdict moves before this write.
-                record.approval_status = ClaimApprovalStatus::Auto;
-                record.lifecycle_status = SkillLifecycle::Active;
-                let data = crate::skill::encode_skill_record(&record)?;
-                let proof = super::super::HubAdmissionProof::post_fit(*id, &data);
-                self.admit_hub_skill_record_in_txn(
-                    txn,
-                    TimeRange { start: at, end: at },
-                    at,
-                    data,
-                    proof,
                 )?;
             }
         }

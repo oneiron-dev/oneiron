@@ -1,5 +1,4 @@
 //! Imported and hub-derived instruction authority at the single SKILL materialization door.
-use super::HubAdmissionProof;
 use super::package_codec::invalid;
 use crate::{
     batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader},
@@ -9,6 +8,114 @@ use crate::{
     skill::{SkillLifecycle, SkillRecord},
     store::Store,
 };
+
+/// An exact-body activation authorization. Post-fit proof alone may suppress
+/// the advisory scan's independent approval rewrite; other doors keep it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum HubAdmissionKind {
+    MarketplacePostFit(crate::skill::SkillContentHash),
+    PackPostFit(crate::skill::SkillContentHash),
+    OwnerConsent,
+    HeldOut,
+    Bootstrap,
+    Optimized,
+}
+#[derive(Debug)]
+pub(crate) struct HubAdmissionProof {
+    id: EntityId,
+    binding: blake3::Hash,
+    kind: HubAdmissionKind,
+}
+impl HubAdmissionProof {
+    fn new(id: EntityId, data: &[u8], kind: HubAdmissionKind) -> Self {
+        Self {
+            id,
+            binding: blake3::hash(data),
+            kind,
+        }
+    }
+    pub(in crate::skill_hub) fn marketplace(
+        id: EntityId,
+        data: &[u8],
+        hash: crate::skill::SkillContentHash,
+    ) -> Self {
+        Self::new(id, data, HubAdmissionKind::MarketplacePostFit(hash))
+    }
+    pub(in crate::skill_hub) fn post_fit(
+        id: EntityId,
+        data: &[u8],
+        hash: crate::skill::SkillContentHash,
+    ) -> Self {
+        Self::new(id, data, HubAdmissionKind::PackPostFit(hash))
+    }
+    pub(in crate::skill_hub) fn bootstrap(id: EntityId, data: &[u8]) -> Self {
+        Self::new(id, data, HubAdmissionKind::Bootstrap)
+    }
+    pub(in crate::skill_hub) fn optimized(id: EntityId, data: &[u8]) -> Self {
+        Self::new(id, data, HubAdmissionKind::Optimized)
+    }
+    pub(in crate::skill_hub) fn consent(
+        store: &Store,
+        txn: &mut heed::RwTxn<'_>,
+        id: EntityId,
+        data: &[u8],
+        authorization: &crate::consent::ApproveOnceAuthorization,
+    ) -> Result<Self> {
+        crate::consent::spend_approve_once_in_txn(store, txn, authorization)?;
+        Ok(Self::new(id, data, HubAdmissionKind::OwnerConsent))
+    }
+    pub(in crate::skill_hub) fn held_out(
+        store: &Store,
+        txn: &mut heed::RwTxn<'_>,
+        id: EntityId,
+        data: &[u8],
+        authorization: &crate::consent::ApproveOnceAuthorization,
+    ) -> Result<Self> {
+        crate::consent::spend_approve_once_in_txn(store, txn, authorization)?;
+        Ok(Self::new(id, data, HubAdmissionKind::HeldOut))
+    }
+    pub(in crate::skill_hub) fn id(&self) -> EntityId {
+        self.id
+    }
+    pub(crate) fn binds(&self, id: &EntityId, data: &[u8]) -> bool {
+        self.id == *id && self.binding == blake3::hash(data)
+    }
+    /// Called after the SKILL materialization guard verified this exact proof.
+    /// A post-fit signal was already resolved by the host; scan is not consent.
+    pub(crate) fn resolved_post_fit(
+        &self,
+        id: &EntityId,
+        data: &[u8],
+        record: &SkillRecord,
+    ) -> bool {
+        let hash = match self.kind {
+            HubAdmissionKind::MarketplacePostFit(hash) | HubAdmissionKind::PackPostFit(hash) => {
+                hash
+            }
+            _ => return false,
+        };
+        self.binds(id, data)
+            && record.content_hash == Some(hash)
+            && record.source == ClaimSource::Imported
+    }
+}
+
+/// Post-fit proof has already resolved advisory signals; all other writes
+/// retain the existing scan consent escalation at the batch chokepoint.
+pub(crate) fn scan_skill_admission(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    id: &EntityId,
+    record: &mut SkillRecord,
+    proof: Option<&HubAdmissionProof>,
+) -> Result<bool> {
+    let encoded = crate::skill::encode_skill_record(record)?;
+    if proof.is_some_and(|proof| proof.resolved_post_fit(id, &encoded, record)) {
+        Ok(false)
+    } else {
+        crate::skill_scan::escalate_activation_approval_in_txn(store, txn, id, record)
+    }
+}
 
 impl crate::Vault {
     pub(in crate::skill_hub) fn admit_hub_skill_record_in_txn(

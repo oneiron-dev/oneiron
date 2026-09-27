@@ -1,4 +1,5 @@
 //! Post-fit installation of pinned pack source; requested powers stay inert.
+use super::super::install_transition::{InstallBinding, InstallDisposition, InstallPlan};
 use super::{
     BundledSkillPermissions, PackCandidateReason, PackFitPolicy, PackFitVerdict, PackInstallAsk,
     PackInstallDisposition, PackInstallReceipt, PackInstallStatus, PackPermissions, PackSource,
@@ -61,50 +62,63 @@ impl Vault {
         self.with_write_txn(|txn| {
             let source = self.check_pack_install_ask(txn, ask)?;
             let at = crate::unix_seconds_now();
-            let (skills, skill_sources) = self.import_pack_skills_in_txn(
-                txn, &source, &ask.hub, at,
-            )?;
-            let mut candidate_reason = if ask.verdict.rules_hit {
+            let (skills, skill_sources) =
+                self.import_pack_skills_in_txn(txn, &source, &ask.hub, at)?;
+            let candidate_reason = if ask.verdict.rules_hit {
                 Some(PackCandidateReason::RulesHit)
             } else if source.has_code() && !ask.verdict.code_auto_install {
                 Some(PackCandidateReason::CodeAutoInstallOff)
-            } else { None };
-            if candidate_reason.is_none() {
-                for id in &skills {
-                    let record = self.read_skill_record_in_txn(txn, id)?;
-                    let hash = record.content_hash.ok_or_else(|| invalid("bundled skill hash missing"))?;
-                    if matches!(crate::skill_scan::scan_gate_for_activation_in_txn(
-                        &self.store, txn, hash,
-                    )?, crate::skill_scan::ActivationPosture::ProposedRequired { .. }) {
-                        candidate_reason = Some(PackCandidateReason::RulesHit);
-                        break;
-                    }
-                }
-            }
+            } else {
+                None
+            };
             let status = if candidate_reason.is_some() {
                 PackInstallStatus::Candidate
-            } else { PackInstallStatus::Active };
-            if status == PackInstallStatus::Active {
-                self.activate_pack_skills_in_txn(txn, &skills, at)?;
-                if let Some(prior) = self.installed_pack_in_txn(txn, &source.manifest.name)? {
-                    self.supersede_pack_skills_in_txn(txn, &prior, &skills, at)?;
-                }
-            }
-            // The source receipt is an install outcome, not the intermediate
-            // import step. Both its state and the pack verdict commit together.
+            } else {
+                PackInstallStatus::Active
+            };
+            // One transition owns each bundled skill's admission and final receipt.
+            // No intermediate Candidate label can escape this transaction.
             for source in &skill_sources {
-                let skill = self.read_skill_record_in_txn(txn, &source.entity)?;
-                let outcome = match (status, skill.lifecycle_status, candidate_reason) {
-                    (PackInstallStatus::Active, crate::skill::SkillLifecycle::Active, _) => "pack_bundled_installed",
-                    (PackInstallStatus::Candidate, crate::skill::SkillLifecycle::Candidate, Some(PackCandidateReason::RulesHit)) => "pack_bundled_rules_hit",
-                    (PackInstallStatus::Candidate, crate::skill::SkillLifecycle::Candidate, Some(PackCandidateReason::CodeAutoInstallOff)) => "pack_bundled_code_auto_install_off",
-                    (PackInstallStatus::Candidate, crate::skill::SkillLifecycle::Active, _) => "pack_bundled_already_active",
-                    _ => return Err(invalid("pack skill lifecycle differs from install verdict")),
-                };
-                self.write_hub_import_receipt_in_txn(
-                    txn, &source.entity, source.hash, &source.reference,
-                    Some((&ask.publisher, outcome, "")), at,
+                let record = self.read_skill_record_in_txn(txn, &source.entity)?;
+                let capabilities = self
+                    .read_admitted_capability_surface_in_txn(txn, &source.entity)?
+                    .ok_or_else(|| invalid("bundled skill capability surface missing"))?;
+                let plan = InstallPlan::pack(
+                    &record,
+                    InstallBinding::new(&source.reference, source.hash, &capabilities),
+                    status == PackInstallStatus::Active,
+                    candidate_reason == Some(PackCandidateReason::RulesHit),
+                    candidate_reason != Some(PackCandidateReason::CodeAutoInstallOff),
+                );
+                let result = self.execute_hub_install_plan_in_txn(
+                    txn,
+                    &source.entity,
+                    &plan,
+                    crate::TimeRange { start: at, end: at },
+                    at,
+                    None,
                 )?;
+                if status == PackInstallStatus::Active
+                    && !matches!(
+                        result.disposition,
+                        InstallDisposition::Installed | InstallDisposition::AlreadyInstalled
+                    )
+                {
+                    return Err(invalid("pack cannot install an unloadable bundled skill"));
+                }
+                self.write_hub_import_receipt_in_txn(
+                    txn,
+                    &source.entity,
+                    source.hash,
+                    &source.reference,
+                    Some((&ask.publisher, result, "")),
+                    at,
+                )?;
+            }
+            if status == PackInstallStatus::Active
+                && let Some(prior) = self.installed_pack_in_txn(txn, &source.manifest.name)?
+            {
+                self.supersede_pack_skills_in_txn(txn, &prior, &skills, at)?;
             }
             let receipt = PackInstallReceipt {
                 source_id: ask.source_id.to_hex(),
@@ -116,9 +130,13 @@ impl Vault {
                 hub_ref: ask.hub.ref_string.clone(),
                 pin_type: ask.hub.pin.pin_type().to_owned(),
                 pin_value: match &ask.hub.pin {
-                    HubPin::Semver(value) | HubPin::Tag(value) | HubPin::Commit(value)
+                    HubPin::Semver(value)
+                    | HubPin::Tag(value)
+                    | HubPin::Commit(value)
                     | HubPin::ContentHash(value) => value.clone(),
-                    HubPin::None => return Err(invalid("pack install requires a pinned hub reference")),
+                    HubPin::None => {
+                        return Err(invalid("pack install requires a pinned hub reference"));
+                    }
                 },
                 publisher: ask.publisher.identity().to_owned(),
                 permissions: ask.permissions.clone(),

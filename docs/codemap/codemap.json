@@ -28616,7 +28616,7 @@
      "path": "src/skill/mod.rs",
      "purpose": "SKILL entity: lifecycle machine, governance tier, canonical identity, codec, and Vault doors",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 3,
       "re-export": 5
      }
     },
@@ -28629,6 +28629,7 @@
      "path": "src/skill/pack_load.rs",
      "purpose": "Attempt-bound pack reads stamp their actual revision in the same transaction",
      "surface": {
+      "crate-vis": 1,
       "fn": 3,
       "struct": 1
      }
@@ -28908,7 +28909,7 @@
      "path": "src/skill_hub/admission_guard.rs",
      "purpose": "Imported and hub-derived instruction authority at the single SKILL materialization door",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 14
      }
     },
     {
@@ -28952,7 +28953,7 @@
      "path": "src/skill_hub/bootstrap.rs",
      "purpose": "Build-embedded bootstrap skills; import and activation commit together on first open",
      "surface": {
-      "crate-vis": 8
+      "crate-vis": 2
      }
     },
     {
@@ -29086,6 +29087,22 @@
      }
     },
     {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "InstallDisposition",
+      "InstallHoldReason",
+      "InstallLifecycle"
+     ],
+     "path": "src/skill_hub/install_transition.rs",
+     "purpose": "One transaction-local skill install plan and its finalized, loadable result",
+     "surface": {
+      "crate-vis": 11,
+      "enum": 3,
+      "fn": 4
+     }
+    },
+    {
      "bucket": "s",
      "kind": "src",
      "notable": [],
@@ -29094,7 +29111,7 @@
      "surface": {
       "crate-vis": 14,
       "mod": 2,
-      "re-export": 16
+      "re-export": 17
      }
     },
     {
@@ -29188,7 +29205,7 @@
      "path": "src/skill_hub/pack_catalog/bundled_skills.rs",
      "purpose": "Bundled skills traverse the same pinned hub import, scanner and provenance doors",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 4
      }
     },
     {
@@ -36063,7 +36080,7 @@
      "purpose": "Message-to-skill conversion — the user-initiated middle road into the skill library (ARCH-0017, registry…"
     },
     "skill_hub": {
-     "files": 50,
+     "files": 51,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -36268,7 +36285,7 @@
    },
    "over_bar": 11,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2141,
+   "source_files": 2142,
    "test_files": 729
   },
   "oneiron-android": {

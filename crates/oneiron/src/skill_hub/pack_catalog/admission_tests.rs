@@ -39,8 +39,8 @@ fn assert_bundled_source_line(
     let receipt = vault
         .hub_import_receipt(skill, &reference)?
         .expect("source receipt");
-    assert_eq!(receipt.installed_as.as_deref(), Some(lifecycle));
-    assert_eq!(receipt.outcome.as_deref(), Some(outcome));
+    assert_eq!(receipt.installed_as.as_str(), lifecycle);
+    assert_eq!(receipt.disposition.as_str(), outcome);
     assert_eq!(receipt.hub_id, pack_ref.hub_id.to_hex());
     assert_eq!(receipt.ref_string, reference.ref_string);
     crate::test_util::authorize_readers(vault, &["pack-reader"]);
@@ -309,13 +309,7 @@ fn code_free_pack_installs_active_without_qualification_or_consent() -> Result<(
             vault.get_skill_record(&skill)?.unwrap().lifecycle_status,
             crate::skill::SkillLifecycle::Active
         );
-        assert_bundled_source_line(
-            &vault,
-            &reference,
-            &skill,
-            "active",
-            "pack_bundled_installed",
-        )?;
+        assert_bundled_source_line(&vault, &reference, &skill, "active", "installed")?;
         // The resident can load and attribute the pack's exact authored skill
         // through the ordinary attempt door, not only inspect Active metadata.
         let queue = crate::attempt_queue::AttemptQueue::new(&vault);
@@ -456,9 +450,9 @@ fn code_flag_and_rule_hits_keep_candidate_inert() -> Result<()> {
             &skill,
             "candidate",
             if rules_hit {
-                "pack_bundled_rules_hit"
+                "rules_hit"
             } else {
-                "pack_bundled_code_auto_install_off"
+                "code_auto_install_off"
             },
         )?;
         let resumed = vault.prepare_pack_install(id, &reference, &publisher, &policy())?;

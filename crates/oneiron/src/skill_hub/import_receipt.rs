@@ -1,6 +1,10 @@
 //! Source receipts and admitted-publisher ingress beside content dedup, never in place of it.
 use super::{
     ForeignSkillPublisher, HubPackage, HubRef, SkillCapabilitySurface, SkillHubAdapter,
+    install_transition::{
+        InstallBinding, InstallDisposition, InstallHoldReason, InstallLifecycle, InstallPlan,
+        InstallResult,
+    },
     package_codec::invalid,
 };
 use crate::claim::ClaimApprovalStatus;
@@ -33,6 +37,7 @@ pub struct MarketplaceFitDecision {
     capabilities: SkillCapabilitySurface,
     outcome: MarketplaceFit,
     analysis: String,
+    static_scan: crate::skill_hub::SkillScanReceipt,
 }
 impl MarketplaceFitDecision {
     pub fn new(
@@ -40,6 +45,7 @@ impl MarketplaceFitDecision {
         package: &HubPackage,
         outcome: MarketplaceFit,
         analysis: impl Into<String>,
+        static_scan: &crate::skill_hub::SkillScanReceipt,
     ) -> Result<Self> {
         let analysis = analysis.into();
         if analysis.len() > 512 || (outcome != MarketplaceFit::Ready && analysis.trim().is_empty())
@@ -52,12 +58,18 @@ impl MarketplaceFitDecision {
             capabilities: package.capabilities.clone(),
             outcome,
             analysis,
+            static_scan: static_scan.clone(),
         })
     }
 }
 
 pub trait MarketplaceFitEvaluator {
-    fn evaluate(&self, source: &HubRef, package: &HubPackage) -> Result<MarketplaceFitDecision>;
+    fn evaluate(
+        &self,
+        source: &HubRef,
+        package: &HubPackage,
+        static_scan: &crate::skill_hub::SkillScanReceipt,
+    ) -> Result<MarketplaceFitDecision>;
 }
 
 fn rule_key(hash: SkillContentHash) -> Vec<u8> {
@@ -95,12 +107,9 @@ pub struct HubImportReceipt {
     pub pin_value: Option<String>,
     pub publisher: Option<String>,
     pub publisher_grant: Option<String>,
-    /// Lifecycle on this source's install line, not a promise about later updates.
-    #[serde(default)]
-    pub installed_as: Option<String>,
-    /// Exact install disposition for a card/changed-line projection.
-    #[serde(default)]
-    pub outcome: Option<String>,
+    /// Typed lifecycle and result at this transaction's committed frontier.
+    pub installed_as: InstallLifecycle,
+    pub disposition: InstallDisposition,
     /// Host fit analysis and exact source-derived permission requests.
     #[serde(default)]
     pub fit_analysis: Option<String>,
@@ -217,14 +226,18 @@ impl Vault {
         };
         let package = adapter.fetch_package(source)?;
         let parsed = super::folder::package_from_files(package.files)?;
-        let fit = fit.evaluate(source, &parsed)?;
+        let static_scan = crate::skill_scan::run_static_skill_scan(&parsed, learned_at)?;
+        let fit = fit.evaluate(source, &parsed, &static_scan)?;
         self.with_write_txn(|txn| {
             self.check_publisher_in_txn(txn, publisher)?;
             if self.hub_record_in_txn(txn, &source.hub_id)? != configured {
                 return Err(invalid("configured hub moved while fetching"));
             }
             let hash = parsed.content_hash()?;
-            if fit.source != *source || fit.hash != hash || fit.capabilities != parsed.capabilities
+            if fit.source != *source
+                || fit.hash != hash
+                || fit.capabilities != parsed.capabilities
+                || fit.static_scan != crate::skill_scan::run_static_skill_scan(&parsed, learned_at)?
             {
                 return Err(invalid(
                     "marketplace fit does not bind fetched source and permissions",
@@ -239,8 +252,6 @@ impl Vault {
                 learned_at,
             )?;
             let rule_blocked = marketplace_hash_blocked_in_txn(&self.store, txn, hash)?;
-            let scan_posture =
-                crate::skill_scan::scan_gate_for_activation_in_txn(&self.store, txn, hash)?;
             let code_bearing = parsed
                 .files
                 .iter()
@@ -259,41 +270,22 @@ impl Vault {
                     ));
                 }
             };
-            let mut record = self.read_skill_record_in_txn(txn, &entity)?;
-            let outcome = if record.lifecycle_status == SkillLifecycle::Active {
-                "already_installed"
-            } else if rule_blocked {
-                "blocked_hash"
-            } else if record.approval_status != ClaimApprovalStatus::Auto {
-                "local_decision"
-            } else if fit.outcome == MarketplaceFit::NoFit {
-                "not_fit"
-            } else if fit.outcome == MarketplaceFit::Ask {
-                "ask_permissions"
-            } else if code_bearing && !code_enabled {
-                "code_auto_install_disabled"
-            } else if matches!(
-                scan_posture,
-                crate::skill_scan::ActivationPosture::ProposedRequired { .. }
-            ) {
-                // Do not write Active/Auto: batch escalation would persist Active/Proposed,
-                // which the runtime cannot load. This is an actionable review, not a rule hit.
-                "scan_review"
-            } else {
-                "installed"
-            };
-            if record.lifecycle_status == SkillLifecycle::Candidate && outcome == "installed" {
-                record.lifecycle_status = SkillLifecycle::Active;
-                let data = crate::skill::encode_skill_record(&record)?;
-                let proof = super::HubAdmissionProof::marketplace(entity, &data);
-                self.admit_hub_skill_record_in_txn(txn, occurred, learned_at, data, proof)?;
-            }
+            let record = self.read_skill_record_in_txn(txn, &entity)?;
+            let plan = InstallPlan::marketplace(
+                &record,
+                InstallBinding::new(source, hash, &parsed.capabilities),
+                fit.outcome,
+                rule_blocked,
+                !code_bearing || code_enabled,
+            );
+            let result = self
+                .execute_hub_install_plan_in_txn(txn, &entity, &plan, occurred, learned_at, None)?;
             self.write_hub_import_receipt_in_txn(
                 txn,
                 &entity,
                 hash,
                 source,
-                Some((publisher, outcome, fit.analysis.as_str())),
+                Some((publisher, result, fit.analysis.as_str())),
                 learned_at,
             )?;
             Ok(entity)
@@ -305,9 +297,21 @@ impl Vault {
         entity: &EntityId,
         hash: SkillContentHash,
         source: &HubRef,
-        publisher_and_outcome: Option<(&ForeignSkillPublisher, &str, &str)>,
+        publisher_and_result: Option<(&ForeignSkillPublisher, InstallResult, &str)>,
         at: u64,
     ) -> Result<()> {
+        let result = publisher_and_result.map_or_else(
+            || {
+                self.read_skill_record_in_txn(txn, entity)
+                    .and_then(|record| {
+                        InstallResult::finalized(
+                            &record,
+                            InstallDisposition::NotInstalled(InstallHoldReason::SourceOnly),
+                        )
+                    })
+            },
+            |(_, result, _)| Ok(result),
+        )?;
         let receipt = HubImportReceipt {
             entity: entity.to_hex(),
             content_hash: hash.to_hex(),
@@ -315,24 +319,19 @@ impl Vault {
             ref_string: source.ref_string.clone(),
             pin_type: source.pin.pin_type().to_owned(),
             pin_value: pin_value(&source.pin),
-            publisher: publisher_and_outcome.map(|(p, _, _)| p.identity.clone()),
-            publisher_grant: publisher_and_outcome.map(|(p, _, _)| p.grant_ref.clone()),
-            outcome: publisher_and_outcome.map(|(_, outcome, _)| outcome.to_owned()),
-            fit_analysis: publisher_and_outcome.map(|(_, _, analysis)| analysis.to_owned()),
+            publisher: publisher_and_result.map(|(p, _, _)| p.identity.clone()),
+            publisher_grant: publisher_and_result.map(|(p, _, _)| p.grant_ref.clone()),
+            installed_as: result.lifecycle,
+            disposition: result.disposition,
+            fit_analysis: publisher_and_result.map(|(_, _, analysis)| analysis.to_owned()),
             requested_permissions: self
                 .read_admitted_capability_surface_in_txn(txn, entity)?
                 .map(|surface| permission_labels(&surface))
                 .unwrap_or_default(),
-            installed_as: Some(
-                self.read_skill_record_in_txn(txn, entity)?
-                    .lifecycle_status
-                    .as_str()
-                    .to_owned(),
-            ),
             at,
         };
         let key = import_receipt_key(entity, source);
-        if publisher_and_outcome.is_none() && self.store.vault_meta.get(txn, &key)?.is_some() {
+        if publisher_and_result.is_none() && self.store.vault_meta.get(txn, &key)?.is_some() {
             return Ok(());
         }
         self.store.vault_meta.put(
@@ -363,10 +362,8 @@ impl Vault {
                 .ok_or_else(|| invalid("marketplace permission ask missing"))?;
             let mut receipt: HubImportReceipt =
                 serde_json::from_slice(&raw).map_err(|_| invalid("invalid hub import receipt"))?;
-            if !matches!(
-                receipt.outcome.as_deref(),
-                Some("ask_permissions" | "scan_review")
-            ) || receipt.hub_id != source.hub_id.to_hex()
+            if receipt.disposition != InstallDisposition::PendingPermission
+                || receipt.hub_id != source.hub_id.to_hex()
                 || receipt.ref_string != source.ref_string
                 || receipt.pin_type != source.pin.pin_type()
                 || receipt.pin_value != pin_value(&source.pin)
@@ -429,20 +426,23 @@ impl Vault {
             let authorization =
                 crate::consent::approve_once_authorization_in_txn(&self.store, txn, &effect)?
                     .ok_or_else(|| invalid("marketplace permission consent missing"))?;
-            let mut admitted = record;
-            admitted.lifecycle_status = SkillLifecycle::Active;
-            admitted.approval_status = ClaimApprovalStatus::Approved;
-            let data = crate::skill::encode_skill_record(&admitted)?;
-            let proof = super::HubAdmissionProof::consent(
-                &self.store,
+            let plan = InstallPlan::owner_answer(
+                &record,
+                InstallBinding::new(source, hash, &package.capabilities),
+            );
+            if !plan.is_owner_answerable() {
+                return Err(invalid("marketplace permission ask no longer answerable"));
+            }
+            let result = self.execute_hub_install_plan_in_txn(
                 txn,
-                *entity,
-                &data,
-                &authorization,
+                entity,
+                &plan,
+                occurred,
+                learned_at,
+                Some(&authorization),
             )?;
-            self.admit_hub_skill_record_in_txn(txn, occurred, learned_at, data, proof)?;
-            receipt.outcome = Some("installed_with_permission_consent".to_owned());
-            receipt.installed_as = Some("active".to_owned());
+            receipt.disposition = result.disposition;
+            receipt.installed_as = result.lifecycle;
             receipt.at = learned_at;
             self.store.vault_meta.put(
                 txn,
