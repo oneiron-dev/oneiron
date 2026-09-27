@@ -15,7 +15,7 @@ use rmpv::Value;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[non_exhaustive]
 pub enum CompanionRecordKind {
-    /// A persona record for neutral @Oneiron or a scoped companion.
+    /// PERSON-targeted expression/task key; not a companion record body.
     Persona,
     /// A relationship record between two entities in a companion scope.
     Relationship,
@@ -91,11 +91,12 @@ impl CompanionScope {
     }
 }
 
-/// Persona or relationship subject addressed by a companion record.
+/// PERSON or relationship subject addressed by an expression or task key.
+/// Companion record bodies admit relationship subjects only.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[non_exhaustive]
 pub enum CompanionSubject {
-    /// Persona record subject.
+    /// PERSON identity target for expression and task keys.
     Persona { persona_ref: EntityId },
     /// Relationship record subject.
     Relationship {
@@ -332,14 +333,29 @@ impl CompanionProvenance {
     }
 }
 
-/// Transient persona/relationship projection over PERSON + FACET rows.
-/// This is not a separate identity record or authority principal.
+/// Companion relationship projection. Persona identity lives on core PERSON;
+/// an explicit scenario mask is a FACET, not a companion record.
+///
+/// A persona record constructor must not return: this compile-fail convention
+/// guards the public API while relationship records remain supported.
+///
+/// ```compile_fail
+/// use oneiron::{ClaimApprovalStatus, ClaimSource, CompanionProvenance, CompanionRecord,
+///     CompanionScope, EdgeActorClass, EntityId};
+/// use oneiron::federation::Sensitivity;
+/// let id = EntityId::now();
+/// let provenance = CompanionProvenance::new(id, EdgeActorClass::Human,
+///     ClaimSource::UserStated, ClaimApprovalStatus::Approved, "fixture".into());
+/// type Record = CompanionRecord;
+/// let _ = Record::persona(CompanionScope::neutral(), id,
+///     "identity".into(), provenance, Sensitivity::Public);
+/// ```
 #[derive(Debug, Clone, PartialEq)]
 #[non_exhaustive]
 pub struct CompanionRecord {
-    /// Scope boundary for this record.
+    /// Scope boundary for this relationship record.
     pub scope: CompanionScope,
-    /// Persona or relationship subject.
+    /// Relationship subject.
     pub subject: CompanionSubject,
     /// Opaque record payload.
     pub value: Value,
@@ -354,25 +370,6 @@ pub struct CompanionRecord {
 }
 
 impl CompanionRecord {
-    /// Constructs a persona record with active lifecycle.
-    #[must_use]
-    pub fn persona(
-        scope: CompanionScope,
-        persona_ref: EntityId,
-        value: Value,
-        provenance: CompanionProvenance,
-        sensitivity: crate::federation::Sensitivity,
-    ) -> Self {
-        Self::new(
-            scope,
-            CompanionSubject::persona(persona_ref),
-            value,
-            provenance,
-            ClaimLifecycleStatus::Active,
-            sensitivity,
-        )
-    }
-
     /// Constructs a relationship record with active lifecycle.
     #[must_use]
     pub fn relationship(
@@ -431,6 +428,11 @@ impl CompanionRecord {
 
     /// Validates the typed record before encoding/registering.
     pub fn validate(&self) -> Result<()> {
+        if matches!(&self.subject, CompanionSubject::Persona { .. }) {
+            return Err(invalid_companion(
+                "persona identity belongs on PERSON; companion records hold relationships only",
+            ));
+        }
         self.scope.validate()?;
         self.provenance.validate()?;
         if matches!(self.value, Value::Nil) {
@@ -530,17 +532,17 @@ impl CompanionRecord {
     }
 }
 
-/// Stable lookup key for companion records.
+/// Stable key for companion relationship records and expression/task targets.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct CompanionRecordKey {
     /// Scope boundary.
     pub scope: CompanionScope,
-    /// Persona or relationship subject.
+    /// Relationship or PERSON target.
     pub subject: CompanionSubject,
 }
 
 impl CompanionRecordKey {
-    /// Constructs a persona lookup key.
+    /// Constructs a PERSON-targeted expression or task key.
     #[must_use]
     pub const fn persona(scope: CompanionScope, persona_ref: EntityId) -> Self {
         Self {

@@ -11,8 +11,8 @@ use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;
 use crate::error::{Result, SyncSelectorValidation as SelectorError};
 use crate::federation::{
-    FederationDirectionScope, FederationGrantScope, FederationScopeBands, FederationScopeFacets,
-    FederationScopeWorlds, decode_federation_grant_body,
+    Ceiling, FederationDirectionScope, FederationGrantScope, FederationScopeBands,
+    FederationScopeFacets, FederationScopeWorlds, Position, decode_federation_grant_body,
 };
 use crate::registry::{ENTITY_TYPE_AUTHORITY_LOG, ENTITY_TYPE_FEDERATION_GRANT};
 use crate::sync::bridge::parse_edge_key;
@@ -65,7 +65,7 @@ pub(super) fn authorize_selector_export(
     grant_scope: FederationGrantScope,
     selector: &SyncSelector,
     now_secs: u64,
-) -> Result<FederationDirectionScope> {
+) -> Result<Position> {
     let raw = vault
         .get_raw(&selector.grant_id)?
         .ok_or_else(|| selector_err(SelectorError::GrantNotFound))?;
@@ -117,38 +117,39 @@ pub(super) fn authorize_selector_export(
 /// is refused, never clamped.
 pub(super) fn resolve_selector_position(
     selector: &SyncSelector,
-    ceiling: &FederationDirectionScope,
-) -> Result<FederationDirectionScope> {
+    ceiling: &Ceiling,
+) -> Result<Position> {
     let worlds = match selector.world {
         SyncSelectorWorld::All => FederationScopeWorlds::All,
         SyncSelectorWorld::Base => FederationScopeWorlds::Base,
         SyncSelectorWorld::World(id) => FederationScopeWorlds::Worlds(vec![id.entity_id()]),
     };
-    if !worlds.is_narrowing_of(&ceiling.worlds)
-        || !selector.facets.within(&ceiling.facets)
-        || !selector.bands.within(&ceiling.bands)
+    if !worlds.is_narrowing_of(&ceiling.as_scope().worlds)
+        || !selector.facets.within(&ceiling.as_scope().facets)
+        || !selector.bands.within(&ceiling.as_scope().bands)
     {
         return Err(selector_err(SelectorError::GrantScopeMismatch));
     }
-    Ok(FederationDirectionScope {
+    let position = Position::new(FederationDirectionScope {
         worlds,
-        facets: selector.facets.resolve(&ceiling.facets),
-        bands: selector.bands.resolve(&ceiling.bands),
-    })
+        facets: selector.facets.resolve(&ceiling.as_scope().facets),
+        bands: selector.bands.resolve(&ceiling.as_scope().bands),
+    });
+    if !position.is_narrowing_of(ceiling) {
+        return Err(selector_err(SelectorError::GrantScopeMismatch));
+    }
+    Ok(position)
 }
 
 /// The facet and band ceiling of `grant_id`: the meet of its bound pacts, or
 /// every axis open when it is unpacted. The grant's `authority_scope` still
 /// bounds each exported record.
-pub(super) fn ceiling_for_grant(
-    fold: &AuthorityFold,
-    grant_id: &EntityId,
-) -> FederationDirectionScope {
-    effective_scope_for_grant(fold, grant_id).unwrap_or(FederationDirectionScope {
+pub(super) fn ceiling_for_grant(fold: &AuthorityFold, grant_id: &EntityId) -> Ceiling {
+    effective_scope_for_grant(fold, grant_id).unwrap_or(Ceiling::new(FederationDirectionScope {
         worlds: FederationScopeWorlds::All,
         facets: FederationScopeFacets::All,
         bands: FederationScopeBands::All,
-    })
+    }))
 }
 
 /// Axis-wise meet of the effective scope of every pact bound to `grant_id`, or
@@ -163,12 +164,13 @@ pub(super) fn ceiling_for_grant(
 pub(super) fn effective_scope_for_grant(
     fold: &AuthorityFold,
     grant_id: &EntityId,
-) -> Option<FederationDirectionScope> {
+) -> Option<Ceiling> {
     fold.federation_pacts
         .values()
         .filter(|pact| pact.grant_ref == *grant_id)
         .map(|pact| pact.effective_scope.clone())
         .reduce(|left, right| left.intersect(&right))
+        .map(Ceiling::new)
 }
 
 pub(super) fn strip_guest_share_metadata(
@@ -245,8 +247,9 @@ pub(super) fn filter_window_doc(
     key: &WindowKey,
     grant_scope: FederationGrantScope,
     selector: &SyncSelector,
-    position: &FederationDirectionScope,
+    position: &Position,
 ) -> Result<LoroDoc> {
+    let position = position.as_scope();
     // A selector must not trigger Observer A with unselected NOTE sidecars.
     // Refresh a detached window, then copy only owners that pass this filter.
     let source_bytes = crate::sync::loro_support::export_snapshot(source)?;
