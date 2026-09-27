@@ -2009,17 +2009,18 @@
      "kind": "src",
      "notable": [
       "CapabilitySlip",
+      "SignedCaveat",
       "SlipCaveat",
       "SlipClaims",
       "SlipMintAction",
       "VerifiedSlip"
      ],
      "path": "src/authority/slip.rs",
-     "purpose": "Host-signed, log-backed capability slips with MAC-checked offline narrowing and holder proof",
+     "purpose": "Host-signed capability slips with holder-signed offline narrowing and proof",
      "surface": {
       "crate-vis": 7,
-      "fn": 12,
-      "struct": 5
+      "fn": 13,
+      "struct": 6
      }
     },
     {
@@ -2089,7 +2090,7 @@
      "purpose": "Host-root bootstrap and atomic authority-log capability issuance",
      "surface": {
       "crate-vis": 8,
-      "fn": 17,
+      "fn": 21,
       "struct": 1
      }
     },
@@ -6932,16 +6933,32 @@
       "GmailDelegatedProvision",
       "GmailInboxPage",
       "GmailInboxPollConfig",
+      "GmailMailboxRunOutcome",
       "GmailMessageMetadata",
       "GmailReadWire"
      ],
-     "path": "src/channel_identity_provider/gmail.rs",
+     "path": "src/channel_identity_provider/gmail/mod.rs",
      "purpose": "Gmail/Workspace read-side adapter for `delegated_grant` rows",
      "surface": {
       "const": 5,
-      "fn": 18,
-      "struct": 6,
+      "fn": 20,
+      "re-export": 1,
+      "struct": 7,
       "trait": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "GmailReadAuthority"
+     ],
+     "path": "src/channel_identity_provider/gmail/run.rs",
+     "purpose": "Page admission and persisted mailbox progress for a delegated read",
+     "surface": {
+      "crate-vis": 1,
+      "fn": 3,
+      "struct": 1
      }
     },
     {
@@ -6983,11 +7000,40 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [
+      "MailPlacement",
+      "PlacementPolicy"
+     ],
+     "path": "src/channel_identity_provider/mail_placement.rs",
+     "purpose": "Provider-neutral mailbox placement and read policy",
+     "surface": {
+      "enum": 2,
+      "fn": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "MailboxCursor",
+      "MailboxPageToken"
+     ],
+     "path": "src/channel_identity_provider/mailbox_cursor.rs",
+     "purpose": "Node-local Gmail mailbox progress, keyed by delegated identity",
+     "surface": {
+      "crate-vis": 2,
+      "fn": 5,
+      "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [],
      "path": "src/channel_identity_provider/mod.rs",
      "purpose": "Provider-adapter seam for ChannelIdentity fulfillment (OF-347 CID-3)",
      "surface": {
-      "mod": 2,
+      "mod": 4,
       "re-export": 5
      }
     },
@@ -7415,7 +7461,7 @@
      "path": "src/claim/mod.rs",
      "purpose": "CLAIM body ABI + typed Claim API (ARCH-0003, pinned decisions D11/D17/D18)",
      "surface": {
-      "crate-vis": 6,
+      "crate-vis": 7,
       "re-export": 9
      }
     },
@@ -7561,19 +7607,19 @@
      "path": "src/claim/scoped_read/actor_key.rs",
      "purpose": "Authenticated identity carried by a scoped read",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 2,
       "fn": 6,
       "struct": 1
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/claim/scoped_read/graph_reads.rs",
      "purpose": "Receipted graph and timeline reads under the resolved actor floor",
      "surface": {
-      "fn": 2
+      "fn": 4
      }
     },
     {
@@ -7657,7 +7703,7 @@
      "path": "src/claim/scoped_read/versions.rs",
      "purpose": "Explicit read frontiers keep the scoped lane's current and historic gates",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 6
      }
     },
     {
@@ -7688,6 +7734,16 @@
       "crate-vis": 4,
       "enum": 3,
       "fn": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/claim/supersession_diff.rs",
+     "purpose": "Immutable before/after revision bindings for accepted supersession edges",
+     "surface": {
+      "crate-vis": 4
      }
     },
     {
@@ -11396,7 +11452,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "L2BaseSummary"
@@ -11404,13 +11460,13 @@
      "path": "src/context_pack/l2_base.rs",
      "purpose": "Content-addressed persona/user evidence prefix",
      "surface": {
-      "crate-vis": 5,
+      "crate-vis": 6,
       "fn": 1,
       "struct": 1
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "test",
      "notable": [],
      "path": "src/context_pack/l2_base/tests.rs",
@@ -15402,7 +15458,7 @@
      "path": "src/entity_doc/storage.rs",
      "purpose": "Transactional entity-document storage and row-pointer migration",
      "surface": {
-      "crate-vis": 16,
+      "crate-vis": 17,
       "enum": 1,
       "fn": 1
      }
@@ -17170,7 +17226,7 @@
      "purpose": "OF-336 generated-UI component contract",
      "surface": {
       "crate-vis": 1,
-      "re-export": 6
+      "re-export": 7
      }
     },
     {
@@ -17251,6 +17307,19 @@
      "path": "src/genui/tests/project_proposal.rs",
      "purpose": "—",
      "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "VoiceGrantOffer"
+     ],
+     "path": "src/genui/voice_offer.rs",
+     "purpose": "Voice-only disclosure widening is an offer, not an authorization",
+     "surface": {
+      "fn": 3,
+      "struct": 1
+     }
     },
     {
      "bucket": "s",
@@ -20012,12 +20081,39 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [
+      "DecisionInput",
+      "DecisionRule",
+      "DecisionSeat",
+      "LabelClassifier",
+      "LocalDecisionSeat",
+      "RuleExpression"
+     ],
+     "path": "src/llm/decision/local.rs",
+     "purpose": "Fixed-label local decision seat; runtime/model loading stays with the host",
+     "surface": {
+      "enum": 1,
+      "struct": 3,
+      "trait": 2
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "src/llm/decision/local/tests.rs",
+     "purpose": "—",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [],
      "path": "src/llm/decision/mod.rs",
      "purpose": "Typed question records and shared outcome projection",
      "surface": {
       "mod": 1,
-      "re-export": 4
+      "re-export": 5
      }
     },
     {
@@ -20044,7 +20140,7 @@
      "path": "src/llm/decision/questions/arrival.rs",
      "purpose": "Outcome arrival projection in the materializing transaction",
      "surface": {
-      "crate-vis": 7
+      "crate-vis": 10
      }
     },
     {
@@ -20055,7 +20151,7 @@
      "purpose": "Versioned questions, scoped answer receipts, and bound outcome labels",
      "surface": {
       "crate-vis": 2,
-      "re-export": 3
+      "re-export": 4
      }
     },
     {
@@ -20072,6 +20168,7 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
+      "AnswerProposal",
       "AnswerRecord",
       "CalibrationPair",
       "OutcomeBinding",
@@ -20088,8 +20185,30 @@
       "crate-vis": 1,
       "enum": 2,
       "fn": 2,
-      "struct": 7
+      "struct": 8
      }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "RefreshBatch",
+      "RefreshFailure"
+     ],
+     "path": "src/llm/decision/questions/refresh.rs",
+     "purpose": "Host-driven answer work: observe under principal, invoke provider outside a write transaction, then…",
+     "surface": {
+      "fn": 3,
+      "struct": 2
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "src/llm/decision/questions/refresh/tests.rs",
+     "purpose": "—",
+     "surface": {}
     },
     {
      "bucket": "s",
@@ -20297,7 +20416,7 @@
      "purpose": "Engine-facing LLM invocation seam",
      "surface": {
       "crate-vis": 6,
-      "mod": 7,
+      "mod": 8,
       "re-export": 18
      }
     },
@@ -20368,6 +20487,41 @@
      "kind": "test",
      "notable": [],
      "path": "src/llm/registry/tests.rs",
+     "purpose": "—",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "DescriptionJudge",
+      "DescriptionJudgment",
+      "DescriptionPolicy",
+      "DescriptionReask",
+      "MeasuredDescription",
+      "ModelDescription",
+      "OwnerModelLine",
+      "ReaskTrigger",
+      "RoutedSeat",
+      "SeatBirth",
+      "SeatSettings",
+      "VerdictExecution",
+      "VerdictPayload"
+     ],
+     "path": "src/llm/routing.rs",
+     "purpose": "Vault-owned description routing above the raw LLM call seam",
+     "surface": {
+      "enum": 1,
+      "fn": 13,
+      "struct": 11,
+      "trait": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "src/llm/routing/tests.rs",
      "purpose": "—",
      "surface": {}
     },
@@ -21479,6 +21633,14 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/memory/tests_regressions/recall_l2.rs",
+     "purpose": "Typed recall retains a ranked owner claim even when L2 also caches it",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/memory/tests_regressions/recall_revision.rs",
      "purpose": "Exact revision consistency across facade recall, hydration, and document chat",
      "surface": {}
@@ -21785,7 +21947,7 @@
      "purpose": "Attributed NOTE records with built-in, plugin and registered PACK kinds",
      "surface": {
       "const": 1,
-      "crate-vis": 20,
+      "crate-vis": 21,
       "enum": 3,
       "fn": 4,
       "re-export": 7,
@@ -26853,11 +27015,25 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [
+      "MemoryWatch"
+     ],
+     "path": "src/saved_query/memory_watch.rs",
+     "purpose": "Owner-bound per-claim watches stored as SAVED_QUERY definitions",
+     "surface": {
+      "crate-vis": 1,
+      "fn": 3,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [],
      "path": "src/saved_query/mod.rs",
      "purpose": "SAVED_QUERY — durable standing queries with staged evaluation (CA-02)",
      "surface": {
-      "re-export": 7
+      "re-export": 8
      }
     },
     {
@@ -27611,7 +27787,7 @@
      "path": "src/serialize/mod.rs",
      "purpose": "Context-pack serialization",
      "surface": {
-      "crate-vis": 5,
+      "crate-vis": 7,
       "re-export": 4
      }
     },
@@ -27660,7 +27836,7 @@
      "path": "src/serialize/provider_codecs.rs",
      "purpose": "Provider read formats share prepared rows and always null credential-bearing fields",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 3
      }
     },
     {
@@ -29731,6 +29907,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/store/retrieval_telemetry/end_outcome.rs",
+     "purpose": "Terminal attribution-gated retrieval outcome writer",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/store/retrieval_telemetry/mod.rs",
      "purpose": "Retrieval telemetry: run records, trace fork index, outcome rows, and reward-weighted blend-weight tuning",
      "surface": {
@@ -29745,7 +29931,7 @@
      "path": "src/store/retrieval_telemetry/run_store.rs",
      "purpose": "Retrieval-run, outcome, and trace-fork persistence: `Store` and `SessionStoreView` methods, staging bodies…",
      "surface": {
-      "crate-vis": 24,
+      "crate-vis": 26,
       "fn": 3
      }
     },
@@ -29792,8 +29978,10 @@
       "RetrievalBlendWeightDataWindow",
       "RetrievalBlendWeightTableEntry",
       "RetrievalBlendWeights",
+      "RetrievalEndOutcome",
       "RetrievalOutcome",
       "RetrievalOutcomeRecord",
+      "RetrievalRewardEvidence",
       "RetrievalRunId",
       "RetrievalRunRecord",
       "RetrievalScoreBreakdown",
@@ -29807,10 +29995,10 @@
      "path": "src/store/retrieval_telemetry/types.rs",
      "purpose": "Retrieval-telemetry record, trace, signal, and blend-weight types",
      "surface": {
-      "crate-vis": 11,
+      "crate-vis": 12,
       "enum": 4,
       "fn": 9,
-      "struct": 13,
+      "struct": 15,
       "type": 1
      }
     },
@@ -32605,7 +32793,7 @@
      "purpose": "Vault text and vector search, batch and query builders, and retrieval telemetry",
      "surface": {
       "crate-vis": 5,
-      "fn": 21
+      "fn": 22
      }
     },
     {
@@ -33224,7 +33412,7 @@
      "path": "src/voice_identity/vault.rs",
      "purpose": "Vault surface for consent, enrollment, segment matching, roster reads, withdrawal, and pruning",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 3,
       "fn": 7
      }
     },
@@ -34468,7 +34656,7 @@
      "purpose": "Channel identity capability manifests (OF-347 CID-4)"
     },
     "channel_identity_provider": {
-     "files": 10,
+     "files": 13,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -34489,7 +34677,7 @@
      "purpose": "—"
     },
     "claim": {
-     "files": 36,
+     "files": 37,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -34923,8 +35111,8 @@
      "purpose": "DEC-0005 Gate policy manifest resolver"
     },
     "genui": {
-     "files": 11,
-     "impl_vault": false,
+     "files": 12,
+     "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
      "purpose": "OF-336 generated-UI component contract"
@@ -35049,7 +35237,7 @@
      "purpose": "Deterministic LinkedIn entity resolution and explicit runtime-path corpus preload"
     },
     "llm": {
-     "files": 71,
+     "files": 77,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -35070,7 +35258,7 @@
      "purpose": "—"
     },
     "memory": {
-     "files": 75,
+     "files": 76,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -35287,7 +35475,7 @@
      "purpose": "Run tree projection and control adapter over generic AttemptQueue rows"
     },
     "saved_query": {
-     "files": 11,
+     "files": 12,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -35441,7 +35629,7 @@
      "purpose": "EMB-5 speculative retrieval over ASR partials (ONE-EMBED E7)"
     },
     "store": {
-     "files": 49,
+     "files": 50,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -35604,8 +35792,8 @@
    },
    "over_bar": 10,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2101,
-   "test_files": 719
+   "source_files": 2112,
+   "test_files": 722
   },
   "oneiron-android": {
    "files": [
@@ -36144,6 +36332,16 @@
      "purpose": "ONE-218 eval-side driver for the telemetry-v0 retrieval-outcome loop",
      "surface": {
       "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/eval/outcome_ingest.rs",
+     "purpose": "JSONL terminal retrieval outcome ingest for the explicit eval command",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -36768,7 +36966,7 @@
      "purpose": "BEAM scaffold and fixed scorer for EVAL-001/EVAL-002"
     },
     "eval": {
-     "files": 2,
+     "files": 3,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "file+dir",
@@ -36826,7 +37024,7 @@
    },
    "over_bar": 0,
    "purpose": "oneiron-bench — benchmark harness skeleton",
-   "source_files": 98,
+   "source_files": 99,
    "test_files": 18
   },
   "oneiron-driver": {
@@ -39824,7 +40022,7 @@
      "path": "src/api/facade.rs",
      "purpose": "ONE-1441 WIRE-P1: the bounded HTTP projection of the engine memory surface",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 2
      }
     },
     {
@@ -40118,13 +40316,13 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [],
      "path": "src/api/memory.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 15
+      "crate-vis": 20
      }
     },
     {
@@ -40188,7 +40386,7 @@
      "path": "src/api/mod.rs",
      "purpose": "HTTP query routes for web dashboard access",
      "surface": {
-      "crate-vis": 26
+      "crate-vis": 27
      }
     },
     {
@@ -41484,13 +41682,13 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [],
      "path": "src/livequery/subscriptions.rs",
      "purpose": "Coarse derivation, retained rings and cumulative cursor acknowledgements",
      "surface": {
-      "crate-vis": 19
+      "crate-vis": 20
      }
     },
     {
@@ -42310,7 +42508,7 @@
      "path": "src/test_credentials.rs",
      "purpose": "Request fixtures mint real logged slips before crossing the production router",
      "surface": {
-      "crate-vis": 8
+      "crate-vis": 9
      }
     },
     {
@@ -42712,7 +42910,7 @@
     "livequery": {
      "files": 17,
      "impl_vault": false,
-     "largest_src_bucket": "m",
+     "largest_src_bucket": "L",
      "layout": "file+dir",
      "purpose": "App-tier framing and coarse live-query state, separate from WindowSync"
     },
@@ -42801,7 +42999,7 @@
      "purpose": "RC42 observation-only wire counters"
     }
    },
-   "over_bar": 1,
+   "over_bar": 3,
    "purpose": "Oneiron CRDT sync server library",
    "source_files": 231,
    "test_files": 97
