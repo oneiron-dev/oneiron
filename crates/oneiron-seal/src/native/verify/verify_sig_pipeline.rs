@@ -7,12 +7,15 @@ use crate::api::{
 };
 use crate::error::SealError;
 
-use super::super::{cms, pdf, tsp};
+use super::super::{cms, pdf};
+use super::timestamp_evidence::{TimestampEvidence, TimestampKind, TimestampResult};
 use super::verify_chain_gates::{VerifyCtx, malformed_input};
 use super::verify_dss_core::EmbeddedCert;
+use super::verify_evidence::CadesEvidence;
 pub(super) use super::verify_evidence::evaluate_envelope;
-use super::verify_evidence::{CadesEvidence, ValidatedTimeToken};
-use super::verify_revocation::gen_time_beyond_skew;
+#[cfg(test)]
+#[path = "verify_tests_timestamp_evidence.rs"]
+mod verify_tests_timestamp_evidence;
 
 #[derive(Debug)]
 pub(super) struct SigEntry {
@@ -295,10 +298,17 @@ impl Checks {
     }
 
     pub(super) fn not_run(&mut self, kind: VerifyCheckKind) {
+        self.not_run_with_reason(kind, None);
+    }
+    pub(super) fn not_run_with_reason(
+        &mut self,
+        kind: VerifyCheckKind,
+        reason: Option<VerifyFindingCode>,
+    ) {
         self.list.push(VerifyCheck {
             kind,
             status: VerifyCheckStatus::NotRun,
-            finding: None,
+            finding: reason,
         });
     }
 
@@ -381,7 +391,7 @@ pub(super) fn check_byte_range(bytes: &[u8], e: &SigEntry) -> bool {
 }
 
 /// Strip the zero padding after the leading CMS DER; reject nonzero padding.
-fn unpadded_cms(contents: &[u8]) -> Option<&[u8]> {
+pub(super) fn unpadded_cms(contents: &[u8]) -> Option<&[u8]> {
     let mut r = cms::DerReader::new(contents);
     let first = r.read().ok()?;
     let used = first.full.len();
@@ -460,10 +470,11 @@ pub(super) fn verify_cades_sig(
             false,
             VerifyFindingCode::CertificatePathInvalid,
         );
-        checks.absent(VerifyCheckKind::SignatureTimestamp);
+        let timestamp =
+            TimestampEvidence::NotEvaluated.project(TimestampKind::Signature, checks, covered);
         return CadesEvidence {
             signer_chain: None,
-            timestamp: None,
+            timestamp,
         };
     };
     covered.extend(
@@ -526,10 +537,14 @@ fn verify_signer(
             false,
             VerifyFindingCode::CertificatePathInvalid,
         );
-        checks.absent(VerifyCheckKind::SignatureTimestamp);
+        let timestamp = TimestampEvidence::for_signature(ctx.clock_ms, signer, anchors).project(
+            TimestampKind::Signature,
+            checks,
+            covered,
+        );
         return CadesEvidence {
             signer_chain: None,
-            timestamp: None,
+            timestamp,
         };
     };
     let cert_der = &parsed.certificates[idx];
@@ -581,77 +596,12 @@ fn verify_ts_token(
     anchors: &[pkix_chain::TrustAnchor],
     checks: &mut Checks,
     covered: &mut Vec<EmbeddedCert>,
-) -> Option<ValidatedTimeToken> {
-    let mut token_der = None;
-    for attr in &signer.unsigned_attrs {
-        let Ok((oid, value)) = cms::parse_attribute(attr) else {
-            checks.record(
-                VerifyCheckKind::SignatureTimestamp,
-                false,
-                VerifyFindingCode::TimestampInvalid,
-            );
-            return None;
-        };
-        if oid == cms::OID_ATTR_TS_TOKEN.as_bytes() {
-            if token_der.is_some() {
-                checks.record(
-                    VerifyCheckKind::SignatureTimestamp,
-                    false,
-                    VerifyFindingCode::TimestampInvalid,
-                );
-                return None;
-            }
-            token_der = Some(value.full.to_vec());
-        }
-    }
-    let Some(token) = token_der else {
-        checks.absent(VerifyCheckKind::SignatureTimestamp);
-        return None;
-    };
-    let imprint = cms::sha256(&signer.signature);
-    match tsp::validate_token_for_verify(&token, &imprint, anchors) {
-        Ok(token) => {
-            if gen_time_beyond_skew(token.gen_time_unix, clock_ms) {
-                checks.record(
-                    VerifyCheckKind::SignatureTimestamp,
-                    false,
-                    VerifyFindingCode::TimestampInvalid,
-                );
-                return None;
-            }
-            checks.record(
-                VerifyCheckKind::SignatureTimestamp,
-                true,
-                VerifyFindingCode::TimestampInvalid,
-            );
-            checks.record_status(
-                VerifyCheckKind::TimestampCertificatePath,
-                token.trust,
-                VerifyFindingCode::CertificatePathInvalid,
-            );
-            if token.trust != VerifyCheckStatus::Pass {
-                return None;
-            }
-            covered.extend(
-                token
-                    .tsa_chain_ders
-                    .iter()
-                    .filter_map(|d| EmbeddedCert::from_der(d)),
-            );
-            Some(ValidatedTimeToken {
-                gen_time: token.gen_time_unix,
-                tsa_chain_ders: token.tsa_chain_ders,
-            })
-        }
-        Err(_) => {
-            checks.record(
-                VerifyCheckKind::SignatureTimestamp,
-                false,
-                VerifyFindingCode::TimestampInvalid,
-            );
-            None
-        }
-    }
+) -> TimestampResult {
+    TimestampEvidence::for_signature(clock_ms, signer, anchors).project(
+        TimestampKind::Signature,
+        checks,
+        covered,
+    )
 }
 
 /// Verify one DocTimeStamp dictionary (§7.6/§7.7): ByteRange coverage and
@@ -671,7 +621,7 @@ pub(super) fn verify_doc_ts(
     is_last: bool,
     covered: &mut Vec<EmbeddedCert>,
     clock_ms: u64,
-) -> Option<ValidatedTimeToken> {
+) -> TimestampResult {
     let br_ok = check_byte_range(bytes, e);
     checks.record(
         VerifyCheckKind::ByteRange,
@@ -695,39 +645,9 @@ pub(super) fn verify_doc_ts(
                 }
                 tail.is_empty()
             });
-    let token = unpadded_cms(&e.contents).and_then(|der| {
-        let imprint = pdf::hash_byte_range(bytes, e.byte_range).ok()?;
-        tsp::validate_token_for_verify(der, &imprint, anchors).ok()
-    });
-    let future_dated = token
-        .as_ref()
-        .is_some_and(|t| gen_time_beyond_skew(t.gen_time_unix, clock_ms));
-    let ok = br_ok && covers_end && token.is_some() && !future_dated;
-    checks.record(
-        VerifyCheckKind::DocumentTimestamp,
-        ok,
-        VerifyFindingCode::DocumentTimestampInvalid,
-    );
-    if !ok {
-        return None;
-    }
-    let token = token?;
-    checks.record_status(
-        VerifyCheckKind::TimestampCertificatePath,
-        token.trust,
-        VerifyFindingCode::CertificatePathInvalid,
-    );
-    if token.trust != VerifyCheckStatus::Pass {
-        return None;
-    }
-    covered.extend(
-        token
-            .tsa_chain_ders
-            .iter()
-            .filter_map(|d| EmbeddedCert::from_der(d)),
-    );
-    Some(ValidatedTimeToken {
-        gen_time: token.gen_time_unix,
-        tsa_chain_ders: token.tsa_chain_ders,
-    })
+    TimestampEvidence::for_document(bytes, e, anchors, clock_ms, br_ok && covers_end).project(
+        TimestampKind::Document,
+        checks,
+        covered,
+    )
 }
