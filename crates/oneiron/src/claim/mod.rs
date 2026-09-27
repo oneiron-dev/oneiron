@@ -58,8 +58,8 @@ mod predicate_grammar;
 mod predicate_validators;
 mod projection_index;
 pub(crate) use projection_index::{
-    claim_ids_for_predicate_in_txn, maintain_claim_projection_index,
-    pending_claim_ids_for_producer_in_txn, remove_claim_projection_index,
+    PENDING_PRODUCER, claim_ids_for_predicate_in_txn, maintain_claim_projection_index,
+    remove_claim_projection_index,
 };
 mod put;
 mod read;

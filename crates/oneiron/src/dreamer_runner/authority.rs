@@ -34,7 +34,7 @@ impl Vault {
     /// Resolves the single principal. First use creates an ordinary actor,
     /// granting it NO ceiling, consent grant, or privilege.
     pub fn dreamer_authority(&self) -> Result<WriteActor> {
-        self.with_write_txn(|txn| self.dreamer_authority_in_txn(txn, crate::unix_seconds_now()))
+        self.with_write_txn(|txn| self.dreamer_authority_in_txn(txn, self.now_recorded_at()))
     }
     pub(super) fn dreamer_authority_in_txn(
         &self,
@@ -193,7 +193,7 @@ pub(crate) fn stamp_attempt(
         }
         return Ok(());
     }
-    let receipt_id = GateDecisionId::now();
+    let receipt_id = GateDecisionId::from_bytes(*vault.new_entity_id()?.as_bytes());
     let receipt = GateDecisionRecord {
         version: GATE_DECISION_LEDGER_VERSION,
         decision_id: receipt_id,

@@ -96,3 +96,137 @@ impl ScopedRead<'_> {
         result
     }
 }
+
+impl ScopedRead<'_> {
+    fn filter_context_entities(
+        &self,
+        rtxn: &heed::RoTxn<'_>,
+        policy: &PolicyManifestResolution,
+        filter: &ResolvedRetrievalFilter,
+        entities: Vec<ContextEntity>,
+    ) -> Result<(Vec<ContextEntity>, usize, usize)> {
+        let mut kept = Vec::with_capacity(entities.len());
+        let mut claims_suppressed = 0;
+        let mut suppressed = 0;
+        for mut entity in entities {
+            if self.is_entity_retrievable_with_policy_in(rtxn, policy, filter, &entity.id)?
+                && self.context_entity_revision_is_readable_in(rtxn, policy, filter, &entity)?
+            {
+                self.filter_context_entity_edges(rtxn, policy, filter, &mut entity)?;
+                kept.push(entity);
+            } else if self.entity_record_in(rtxn, &entity.id)?.is_some() {
+                suppressed += 1;
+                if entity.entity_type == ENTITY_TYPE_CLAIM {
+                    claims_suppressed += 1;
+                }
+            }
+        }
+        Ok((kept, claims_suppressed, suppressed))
+    }
+
+    fn retain_neighbors_reachable_from_results(
+        &self,
+        rtxn: &heed::RoTxn<'_>,
+        neighbors: &mut Vec<ContextEntity>,
+        results: &[ContextEntity],
+    ) -> Result<usize> {
+        let mut reachable_ids = HashSet::new();
+        for entity in results {
+            if let Some(edges) = entity.edges.as_ref() {
+                reachable_ids.extend(
+                    edges
+                        .iter()
+                        .filter(|edge| context_pack_edge_can_reach_neighbor(edge))
+                        .map(|edge| edge.target),
+                );
+                continue;
+            }
+            for edge in self.edges_out_in(rtxn, &entity.id)? {
+                if context_pack_edge_can_reach_neighbor(&edge) {
+                    reachable_ids.insert(edge.target);
+                }
+            }
+        }
+        let mut claims_suppressed = 0;
+        neighbors.retain(|entity| {
+            let keep = reachable_ids.contains(&entity.id);
+            if !keep && entity.entity_type == ENTITY_TYPE_CLAIM {
+                claims_suppressed += 1;
+            }
+            keep
+        });
+        Ok(claims_suppressed)
+    }
+
+    /// The claim's `FacetOf` targets, read through the same accessor as every
+    /// other edge scan in this type.
+    ///
+    /// A facet-scoped `core:read` grant matches on the facets a claim carries,
+    /// so those facets ARE the grant's subject matter. Scanning base
+    /// `edges_out` directly is right for the canonical handle and wrong inside
+    /// a session: a `FacetOf` edge staged in the room would not authorize, and
+    /// one the room tombstoned would go on authorizing — the session's own
+    /// view of who may read what, decided against a graph that is not the
+    /// session's.
+    ///
+    /// Composes through the same session-aware edge port as reachability.
+    pub(super) fn claim_facet_refs_in(
+        &self,
+        rtxn: &heed::RoTxn<'_>,
+        id: &EntityId,
+    ) -> Result<Vec<EntityId>> {
+        let mut facets = Vec::new();
+        for entry in self.out_edges_in(rtxn, id, Some(EdgeKind::FacetOf))? {
+            if facets.len() >= crate::vault::MAX_EDGE_QUERY_RESULTS {
+                return Err(Error::IndexOverflow("claim_facet_refs"));
+            }
+            facets.push(entry?.target);
+        }
+        Ok(facets)
+    }
+
+    pub(super) fn edges_out_in(
+        &self,
+        rtxn: &heed::RoTxn<'_>,
+        id: &EntityId,
+    ) -> Result<Vec<EdgeInfo>> {
+        const MAX_SCOPED_READ_EDGE_REACHABILITY_ROWS: usize = 100_000;
+
+        let mut edges = Vec::new();
+        for entry in self.out_edges_in(rtxn, id, None)? {
+            let edge = entry?;
+            if edges.len() >= MAX_SCOPED_READ_EDGE_REACHABILITY_ROWS {
+                return Err(Error::IndexOverflow("scoped read edge reachability"));
+            }
+            edges.push(edge);
+        }
+        Ok(edges)
+    }
+
+    fn filter_context_entity_edges(
+        &self,
+        rtxn: &heed::RoTxn<'_>,
+        policy: &PolicyManifestResolution,
+        filter: &ResolvedRetrievalFilter,
+        entity: &mut ContextEntity,
+    ) -> Result<()> {
+        let Some(edges) = entity.edges.as_mut() else {
+            return Ok(());
+        };
+        let mut kept = Vec::with_capacity(edges.len());
+        for edge in edges.drain(..) {
+            if self.is_entity_retrievable_with_policy_in(rtxn, policy, filter, &edge.target)? {
+                kept.push(edge);
+            }
+        }
+        *edges = kept;
+        Ok(())
+    }
+}
+
+fn context_pack_edge_can_reach_neighbor(edge: &EdgeInfo) -> bool {
+    !matches!(edge.kind, EdgeKind::ChildOf | EdgeKind::AssignedTo)
+        && !edge
+            .provenance
+            .is_some_and(|flags| flags.confirmation_status == EdgeConfirmationStatus::Retracted)
+}

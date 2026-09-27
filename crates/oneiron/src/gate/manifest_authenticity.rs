@@ -183,6 +183,25 @@ impl Vault {
         )
     }
 
+    /// Installs a locally authored policy manifest through the authenticated
+    /// owner door. Hosts can grant connector effects without bypassing origin
+    /// attestation or writing a reserved maintenance type through `put_entity`.
+    ///
+    /// # Errors
+    /// Refuses unauthenticated owners, malformed manifests or IDs owned by another type.
+    pub fn install_owner_policy_manifest(
+        &self,
+        owner: &AuthenticatedOwner,
+        id: EntityId,
+        data: Vec<u8>,
+        now: u64,
+    ) -> Result<()> {
+        let mut txn = self.store.env.write_txn()?;
+        self.write_owner_policy_manifest_in_txn(owner, &mut txn, id, data, now)?;
+        txn.commit()?;
+        Ok(())
+    }
+
     /// Explicit owner re-authoring, never grandfathering a product-band permit.
     /// The legacy carrier remains inert; the mapping records the re-key provenance.
     pub fn reauthor_legacy_policy_manifest(

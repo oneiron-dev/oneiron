@@ -338,7 +338,7 @@ fn propose_claim(
 ) -> MemoryResult<CommitReceipt> {
     use crate::claim::{ClaimApprovalStatus, ClaimSource, ClaimSubject};
     use crate::{ClaimCandidate, WriteEnvelope, WriteProvenance};
-    let id = EntityId::now();
+    let id = memory.vault().new_entity_id()?;
     let claim_value =
         rmpv::Value::from(serde_json::to_string(op).map_err(|_| invalid("NOTE proposal encode"))?);
     let candidate = ClaimCandidate::new(
@@ -358,7 +358,7 @@ fn propose_claim(
         WriteProvenance::new(rmpv::Value::from("note.propose_claim"))?,
         ClaimApprovalStatus::Proposed,
     );
-    let now = crate::unix_seconds_now();
+    let now = memory.vault().now_recorded_at();
     memory
         .vault()
         .batch_in()

@@ -486,12 +486,18 @@ fn enqueue_poll_attempt(
         not_before,
     })
     .map_err(|_| ingest("poll payload did not encode"))?;
-    Ok(AttemptQueue::new(vault).enqueue(EnqueueAttempt {
-        kind: ICS_POLL_ATTEMPT_KIND.to_owned(),
-        payload,
-        dedupe_key: Some(dedupe_key),
-        run_id: None,
-        now,
+    Ok(vault.with_write_txn(|txn| {
+        crate::ports::JobQueue::port_job_enqueue(
+            vault,
+            txn,
+            EnqueueAttempt {
+                kind: ICS_POLL_ATTEMPT_KIND.to_owned(),
+                payload,
+                dedupe_key: Some(dedupe_key),
+                run_id: None,
+                now,
+            },
+        )
     })?)
 }
 

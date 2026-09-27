@@ -164,7 +164,8 @@ pub(super) fn notify(
             "generation": seal_generation,
         }))
         .map_err(|_| invalid("delivery encoding"))?;
-        crate::attempt_queue::AttemptQueue::new(vault).enqueue_in_txn(
+        crate::ports::JobQueue::port_job_enqueue(
+            vault,
             txn,
             crate::attempt_queue::EnqueueAttempt {
                 kind: if dispatch_ref.is_some() {

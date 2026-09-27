@@ -414,6 +414,18 @@ pub struct TaskMirrorSnapshot {
 
 /// Cursor-paged source of normalized inbound changes.
 pub trait LinearChangeSource {
+    /// Reads one linked issue immediately before an outbound update. A source
+    /// that cannot fetch it must fail closed rather than publish a stale full
+    /// TASK snapshot over remote edits not yet seen in the cursor stream.
+    ///
+    /// # Errors
+    /// Returns a transport error when the current issue is unavailable.
+    fn current_issue(&mut self, _issue: &LinearIssueRef) -> LinearSyncResult<LinearIssueChange> {
+        Err(LinearSyncError::Transport(
+            "linear source cannot preflight a linked issue".to_owned(),
+        ))
+    }
+
     /// Returns the page that starts at `cursor`.
     ///
     /// # Errors

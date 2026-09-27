@@ -99,7 +99,8 @@ impl OutboundExecutionSink for NoticeSink<'_> {
                     return Err(invalid("superseded sealed notice"));
                 }
             }
-            queue.enqueue_in_txn(
+            crate::ports::JobQueue::port_job_enqueue(
+                self.vault,
                 txn,
                 EnqueueAttempt {
                     kind: "esign.delivery".into(),

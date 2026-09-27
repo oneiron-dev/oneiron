@@ -361,9 +361,10 @@ impl DreamerRunnerStore<'_> {
             });
         }
 
-        let claim = self.attempts.claim_kind_in_txn(
+        let claim = crate::ports::JobQueue::port_job_claim(
+            self.vault,
             wtxn,
-            queue_kind,
+            Some(queue_kind),
             ClaimAttempt {
                 lease_owner: input.lease_owner,
                 now: input.now,

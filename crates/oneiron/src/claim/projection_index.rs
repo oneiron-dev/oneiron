@@ -11,7 +11,7 @@ const PREDICATE_INDEX: SideTable<([u8; 32], EntityId), String, Raw> =
 
 /// Posting-list row of one pending session-generated claim under its producing actor.
 /// Key: id16 (producer) + id16.
-const PENDING_PRODUCER: SideTable<(EntityId, EntityId), (), Raw> =
+pub(crate) const PENDING_PRODUCER: SideTable<(EntityId, EntityId), (), Raw> =
     SideTable::new(&side_table::CLAIM_PENDING_PRODUCER);
 
 /// Catalog marker recording that at least one claim uses this predicate. Key: string.
@@ -129,21 +129,6 @@ fn predicate_ids_in_txn(
     }
     Ok(ids)
 }
-fn producer_ids_in_txn(
-    store: &Store,
-    txn: &heed::RoTxn<'_>,
-    producer: EntityId,
-) -> Result<Vec<EntityId>> {
-    let mut ids = Vec::new();
-    for row in PENDING_PRODUCER.iter_from(store, txn, producer.as_bytes())? {
-        let (key, _) = row?;
-        ids.push(key.1);
-        if ids.len() > 10_000 {
-            return Err(Error::IndexOverflow("claim projection query"));
-        }
-    }
-    Ok(ids)
-}
 pub(crate) fn claim_ids_for_predicate_in_txn(
     store: &Store,
     txn: &heed::RoTxn<'_>,
@@ -151,14 +136,6 @@ pub(crate) fn claim_ids_for_predicate_in_txn(
 ) -> Result<Vec<EntityId>> {
     predicate_ids_in_txn(store, txn, predicate_hash(predicate))
 }
-pub(crate) fn pending_claim_ids_for_producer_in_txn(
-    store: &Store,
-    txn: &heed::RoTxn<'_>,
-    producer: EntityId,
-) -> Result<Vec<EntityId>> {
-    producer_ids_in_txn(store, txn, producer)
-}
-
 /// Classify distinct stored predicates under live policy before reading any
 /// claim bodies. The catalog and its posting lists co-commit with claim writes.
 pub(super) fn pinned_claim_ids_in_txn(

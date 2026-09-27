@@ -17,7 +17,7 @@ pub(super) fn actor(
         }
         id
     } else {
-        let id = EntityId::now();
+        let id = vault.new_entity_id()?;
         vault
             .batch_in()
             .put_internal(

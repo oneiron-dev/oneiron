@@ -104,7 +104,10 @@ def test_only_by_path(rel):
     parts = rel.split("/")
     name = parts[-1]
     return (
-        "tests" in parts[:-1]
+        # T36 split a cfg(test)-only recall.rs into include!-mounted children.
+        # They inherit that test-only mount even though include! is not a mod edge.
+        rel.startswith("memory/tests_regressions/recall/")
+        or "tests" in parts[:-1]
         or name == "tests.rs"
         or name.endswith("_tests.rs")
         or name.startswith("tests_")

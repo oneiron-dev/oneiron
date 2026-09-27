@@ -47,6 +47,66 @@ pub enum HubAdmissionDisposition {
     Ruled(Box<HubAdmissionReceipt>),
 }
 impl Vault {
+    /// Restore is owner-only even for a no-op. Plain user delete retains a
+    /// PERSON shell; the generic registry-lifecycle check alone cannot see
+    /// its deletion tombstone.
+    pub(super) fn check_restore_owner_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        owner: &AuthenticatedOwner,
+    ) -> Result<()> {
+        owner.revalidate_in_txn(self, txn)?;
+        if crate::ports::TombstoneStoreRead::port_deletion_state(&self.store, txn, &owner.actor())?
+            .deleted
+        {
+            return Err(crate::error::Error::Gate(
+                crate::error::GateError::ConsentOwnerNotAuthenticated(
+                    "authenticated owner is deleted",
+                ),
+            ));
+        }
+        Ok(())
+    }
+
+    /// Single restore install/admission door. It checks the authenticated
+    /// owner inside the write transaction, then uses the ordinary import
+    /// scanner, source, and receipt path. Until the fit/readiness evaluator
+    /// (ONE-2114/ONE-2115) exists, it cannot pass; the only honest admission
+    /// result is Candidate. When fit is implemented, this is the one place
+    /// to decide whether a restored default may become Active with its own
+    /// admission proof. First-open genesis authority is never reused.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "owner-bound restore binds its exact source, fresh identity and write timing"
+    )]
+    pub(super) fn restore_default_skill_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        owner: &AuthenticatedOwner,
+        source: &super::HubRef,
+        package: &super::HubPackage,
+        preferred_id: EntityId,
+        occurred: TimeRange,
+        learned_at: u64,
+    ) -> Result<EntityId> {
+        self.check_restore_owner_in_txn(txn, owner)?;
+        let id = self.restore_skill_from_hub_in_txn(
+            txn,
+            source,
+            package,
+            preferred_id,
+            occurred,
+            learned_at,
+        )?;
+        // The import door stamps Candidate and the source receipt. No fit
+        // evaluator can produce a passing proof yet; code readiness and a
+        // rules hit must not be guessed from an absence of findings.
+        debug_assert_eq!(
+            self.read_skill_record_in_txn(txn, &id)?.lifecycle_status,
+            SkillLifecycle::Candidate,
+        );
+        Ok(id)
+    }
     /// The human answer, bound to the ask shown. A stale ask mints no consent.
     pub fn approve_marketplace_activation(
         &self,

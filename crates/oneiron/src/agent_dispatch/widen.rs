@@ -172,7 +172,7 @@ impl AgentDispatcher<'_> {
             &mut wtxn,
             &GateDecisionRecord {
                 version: GATE_DECISION_LEDGER_VERSION,
-                decision_id: GateDecisionId::now(),
+                decision_id: GateDecisionId::from_bytes(*self.vault.new_entity_id()?.as_bytes()),
                 created_at: input.now,
                 outcome: "pending".to_owned(),
                 reason_codes: vec!["gate.context.propose_widen".to_owned()],

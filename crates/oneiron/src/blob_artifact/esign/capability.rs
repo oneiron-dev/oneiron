@@ -121,7 +121,7 @@ impl Vault {
             if state.status != DocumentStatus::Draft {
                 return Err(invalid("tokens are minted before send"));
             }
-            let now = crate::unix_seconds_now();
+            let now = self.now_recorded_at();
             let mut issued = Vec::new();
             for recipient in &state.document.recipients {
                 let recipient_key = (document, recipient.id.clone());
@@ -165,7 +165,7 @@ impl Vault {
         self.with_write_txn(|txn| {
             verify_owner(self, txn, owner)?;
             let mut row = binding(self, txn, token)?;
-            row.revoked_at = Some(crate::unix_seconds_now());
+            row.revoked_at = Some(self.now_recorded_at());
             TOKENS.put(&self.store, txn, &token.digest(), &row)?;
             Ok(())
         })

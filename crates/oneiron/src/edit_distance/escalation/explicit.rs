@@ -10,7 +10,6 @@ use super::storage::{
 use super::{EscalationReceipt, EscalationRuling, EscalationTrigger};
 use crate::Vault;
 use crate::consent::AuthenticatedOwner;
-use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 
 pub(crate) fn record_explicit_ruling_in_txn(
@@ -37,7 +36,7 @@ pub(crate) fn record_explicit_ruling_in_txn(
     }
     let scope = normalized_scope(&receipt.scope)?.to_owned();
     let (ruling, delta) = ruling_parts(&receipt.ruling)?;
-    let id = EntityId::now();
+    let id = vault.new_entity_id()?;
     let row = StoredEscalation {
         v: ROW_VERSION,
         task_ref: receipt.task_ref.to_hex(),
@@ -59,7 +58,7 @@ pub(crate) fn record_explicit_ruling_in_txn(
     if remember {
         let policy = StoredStandingPolicy {
             v: ROW_VERSION,
-            row_ref: EntityId::now().to_hex(),
+            row_ref: vault.new_entity_id()?.to_hex(),
             scope: scope.clone(),
             trigger: receipt.trigger.as_str().to_owned(),
             ruling,
@@ -75,5 +74,7 @@ pub(crate) fn record_explicit_ruling_in_txn(
         };
         STANDING_POLICY.put(&vault.store, txn, &key, &policy)?;
     }
+    // The caller owns this writer. Persist both allocations' floor before it commits.
+    crate::ports::recorded_at_in_txn(&vault.store, txn)?;
     Ok(())
 }
