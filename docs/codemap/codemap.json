@@ -1171,6 +1171,7 @@
      "bucket": "m",
      "kind": "src",
      "notable": [
+      "ArtifactExportRef",
       "ArtifactPointer",
       "ArtifactPointerChannel",
       "ArtifactPublishVerbOutcome",
@@ -1181,12 +1182,12 @@
       "ArtifactSnapshotSelector"
      ],
      "path": "src/artifact_hosting.rs",
-     "purpose": "Local artifact hosting over pinned CODE_ARTIFACT snapshots",
+     "purpose": "Local artifact hosting over pinned code snapshots and blob exports",
      "surface": {
       "const": 1,
-      "crate-vis": 2,
-      "enum": 3,
-      "fn": 13,
+      "crate-vis": 3,
+      "enum": 4,
+      "fn": 16,
       "struct": 5
      }
     },
@@ -1201,7 +1202,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "test",
      "notable": [],
      "path": "src/artifact_hosting/tests.rs",
@@ -3137,7 +3138,7 @@
      "path": "src/batch/put_apply/put_staging.rs",
      "purpose": "Body/index/edge row staging helpers shared by the put and update paths",
      "surface": {
-      "crate-vis": 11
+      "crate-vis": 12
      }
     },
     {
@@ -3794,7 +3795,7 @@
      "purpose": "Blob vault_meta key builders and shared MessagePack scalar helpers",
      "surface": {
       "const": 2,
-      "crate-vis": 12
+      "crate-vis": 13
      }
     },
     {
@@ -3804,6 +3805,16 @@
      "path": "src/blob_artifact/tests.rs",
      "purpose": "—",
      "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/blob_artifact/version_codec.rs",
+     "purpose": "Strict MessagePack framing for blob version records",
+     "surface": {
+      "crate-vis": 2
+     }
     },
     {
      "bucket": "m",
@@ -3816,7 +3827,7 @@
      "purpose": "Blob version chain: version record codec and the Vault version-chain API",
      "surface": {
       "const": 1,
-      "crate-vis": 15,
+      "crate-vis": 20,
       "fn": 11,
       "struct": 2
      }
@@ -11884,13 +11895,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/conversation_dag/admission.rs",
      "purpose": "Close the legacy ChildOf-only append door after DAG adoption",
      "surface": {
-      "crate-vis": 9
+      "crate-vis": 12
      }
     },
     {
@@ -11920,7 +11931,7 @@
      "path": "src/conversation_dag/membership.rs",
      "purpose": "Replicated TURN session membership: body carrier and local index reconstruction",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 5
      }
     },
     {
@@ -11941,7 +11952,7 @@
      "path": "src/conversation_dag/mod.rs",
      "purpose": "Conversation DAG topology, local HEAD state and exact scope resolution",
      "surface": {
-      "crate-vis": 7,
+      "crate-vis": 9,
       "mod": 1,
       "re-export": 2
      }
@@ -12000,12 +12011,22 @@
      "surface": {}
     },
     {
-     "bucket": "m",
+     "bucket": "XL",
      "kind": "test",
      "notable": [],
      "path": "src/conversation_dag/tests/replay.rs",
      "purpose": "Observable session-carrier replay without exporting local membership indexes",
      "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/conversation_dag/topology.rs",
+     "purpose": "Shared DAG shape, session placement, and prospective Parent validation",
+     "surface": {
+      "crate-vis": 18
+     }
     },
     {
      "bucket": "s",
@@ -15430,7 +15451,7 @@
      "path": "src/entity_doc/mod.rs",
      "purpose": "Durable, bounded entity text documents, anchored edits, fork sets and owner purge",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 4,
       "re-export": 6
      }
     },
@@ -20207,7 +20228,7 @@
      "purpose": "Versioned questions, scoped answer receipts, and bound outcome labels",
      "surface": {
       "crate-vis": 2,
-      "re-export": 5
+      "re-export": 6
      }
     },
     {
@@ -20230,6 +20251,7 @@
       "OutcomeBinding",
       "OutcomeLabel",
       "OutcomeSource",
+      "QuestionActivation",
       "QuestionDefinition",
       "QuestionRecord",
       "RefreshPolicy",
@@ -20239,7 +20261,7 @@
      "purpose": "Immutable definitions and typed outcome bindings",
      "surface": {
       "crate-vis": 1,
-      "enum": 2,
+      "enum": 3,
       "fn": 2,
       "struct": 8
      }
@@ -20263,6 +20285,27 @@
      "kind": "test",
      "notable": [],
      "path": "src/llm/decision/questions/refresh/tests.rs",
+     "purpose": "—",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "StandingAnswer"
+     ],
+     "path": "src/llm/decision/questions/standing.rs",
+     "purpose": "Explicit graph-unit backfill with same-snapshot authority and source pins",
+     "surface": {
+      "fn": 2,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "L",
+     "kind": "test",
+     "notable": [],
+     "path": "src/llm/decision/questions/standing_tests.rs",
      "purpose": "—",
      "surface": {}
     },
@@ -23088,7 +23131,7 @@
      "purpose": "—",
      "surface": {
       "const": 1,
-      "crate-vis": 17,
+      "crate-vis": 18,
       "enum": 1,
       "fn": 4,
       "struct": 1
@@ -23326,7 +23369,7 @@
      "path": "src/outbound/receipt_fields.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 7
+      "crate-vis": 8
      }
     },
     {
@@ -23336,7 +23379,7 @@
      "path": "src/outbound/retry_audit.rs",
      "purpose": "Atomic persistence of a failed send receipt and its retry",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 2
      }
     },
     {
@@ -23390,7 +23433,7 @@
      "surface": {}
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "test",
      "notable": [],
      "path": "src/outbound/tests/pipeline_contract.rs",
@@ -23406,7 +23449,7 @@
      "surface": {}
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "test",
      "notable": [],
      "path": "src/outbound/tests/retry_audit.rs",
@@ -23474,6 +23517,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/outbound_chokepoint/dedupe.rs",
+     "purpose": "OF-327 mechanical semantic cooldown under the effect admission writer lock",
+     "surface": {
+      "crate-vis": 6
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [
@@ -23511,7 +23564,7 @@
      "path": "src/outbound_chokepoint/mod.rs",
      "purpose": "Replay-first outbound effect execution",
      "surface": {
-      "crate-vis": 4,
+      "crate-vis": 5,
       "re-export": 1
      }
     },
@@ -23522,7 +23575,7 @@
      "path": "src/outbound_chokepoint/replay.rs",
      "purpose": "Replay/send path: ledger-state dispatch, recovery governance, live-retry gate, transport outcomes",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 6
      }
     },
     {
@@ -23829,7 +23882,7 @@
      "path": "src/outbound_intent_ledger/store.rs",
      "purpose": "Storage-transaction reads, inserts, transitions, and the admission-gate validator",
      "surface": {
-      "crate-vis": 18
+      "crate-vis": 19
      }
     },
     {
@@ -25519,8 +25572,8 @@
      "path": "src/prompt.rs",
      "purpose": "—",
      "surface": {
-      "const": 4,
-      "fn": 6,
+      "const": 3,
+      "fn": 5,
       "struct": 5
      }
     },
@@ -26025,7 +26078,7 @@
      "path": "src/receipt/mod.rs",
      "purpose": "Unified receipt-family query surface over existing receipt emitters",
      "surface": {
-      "crate-vis": 10,
+      "crate-vis": 13,
       "re-export": 8
      }
     },
@@ -26048,13 +26101,23 @@
      }
     },
     {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/receipt/record.rs",
+     "purpose": "First-class, replicated immutable terminal outbound receipt record",
+     "surface": {
+      "crate-vis": 10
+     }
+    },
+    {
      "bucket": "s",
      "kind": "src",
      "notable": [],
      "path": "src/receipt/send_receipt_txn.rs",
      "purpose": "Send receipt persistence inside a caller-owned transaction",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 2
      }
     },
     {
@@ -26463,7 +26526,7 @@
      "path": "src/registry/type_bytes.rs",
      "purpose": "Entity type bytes: every statically allocated `ENTITY_TYPE_*` constant",
      "surface": {
-      "const": 46
+      "const": 47
      }
     },
     {
@@ -30536,7 +30599,7 @@
      "path": "src/sync/bridge/childof.rs",
      "purpose": "ChildOf replay set, component ordering, and ordered edge-op application",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 8
      }
     },
     {
@@ -30585,7 +30648,7 @@
      "path": "src/sync/bridge/mod.rs",
      "purpose": "Entity bridge: CRDT ↔ LMDB materialization observers",
      "surface": {
-      "crate-vis": 6,
+      "crate-vis": 9,
       "re-export": 3
      }
     },
@@ -30608,6 +30671,16 @@
       "fn": 13,
       "struct": 5,
       "trait": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/sync/bridge/parent_retry.rs",
+     "purpose": "Transactional Parent admission, exact pending work and dependency wake-up",
+     "surface": {
+      "crate-vis": 7
      }
     },
     {
@@ -31095,7 +31168,7 @@
      "path": "src/sync/mod.rs",
      "purpose": "CRDT sync layer for Oneiron",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 4,
       "mod": 18,
       "re-export": 14
      }
@@ -31347,6 +31420,16 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [],
+     "path": "src/sync/receipt_ingest.rs",
+     "purpose": "ONE-1881: one validated, writer-locked receive path for terminal receipts",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [
       "ReplicatedEntity"
      ],
@@ -31561,7 +31644,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/sync/window/forward.rs",
@@ -31582,7 +31665,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/sync/window/forward/edge_pass.rs",
@@ -34315,7 +34398,7 @@
      "surface": {}
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "test",
      "notable": [],
      "path": "tests/it/receipt_context.rs",
@@ -34690,7 +34773,7 @@
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "file+dir",
-     "purpose": "Local artifact hosting over pinned CODE_ARTIFACT snapshots"
+     "purpose": "Local artifact hosting over pinned code snapshots and blob exports"
     },
     "attempt_queue": {
      "files": 36,
@@ -34721,7 +34804,7 @@
      "purpose": "—"
     },
     "blob_artifact": {
-     "files": 38,
+     "files": 39,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -35029,7 +35112,7 @@
      "purpose": "Room bodies, membership windows, session presence and audience visibility"
     },
     "conversation_dag": {
-     "files": 14,
+     "files": 15,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -35386,7 +35469,7 @@
      "purpose": "Deterministic LinkedIn entity resolution and explicit runtime-path corpus preload"
     },
     "llm": {
-     "files": 79,
+     "files": 81,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -35449,7 +35532,7 @@
      "purpose": "Outbound action capability manifests and dispatch spine for OF-327"
     },
     "outbound_chokepoint": {
-     "files": 8,
+     "files": 9,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -35568,7 +35651,7 @@
      "purpose": "Host-injected HyDE query-expansion seam"
     },
     "receipt": {
-     "files": 17,
+     "files": 18,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -35806,7 +35889,7 @@
      "purpose": "ARCH-0038 historical-carrier sweep executor — ONE-1087 / ONE-1091 phase 1 (manual trigger via…"
     },
     "sync": {
-     "files": 101,
+     "files": 103,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -35941,8 +36024,8 @@
    },
    "over_bar": 11,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2120,
-   "test_files": 723
+   "source_files": 2127,
+   "test_files": 724
   },
   "oneiron-android": {
    "files": [
@@ -39552,13 +39635,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/api/artifacts.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 14
+      "crate-vis": 16
      }
     },
     {
@@ -41002,7 +41085,7 @@
      "surface": {}
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "test",
      "notable": [],
      "path": "src/api/tests/surface_routes.rs",
