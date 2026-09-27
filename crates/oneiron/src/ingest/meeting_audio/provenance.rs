@@ -6,8 +6,6 @@ use sha2::{Digest, Sha256};
 
 use super::{AudioError, AudioResult, InferenceExecution, InferenceProvenance, Pcm16};
 
-pub(super) const COMMUNITY1_MODEL: &str = "pyannote/speaker-diarization-community-1";
-
 pub(super) fn sha256(bytes: &[u8]) -> String {
     format!("{:x}", Sha256::digest(bytes))
 }

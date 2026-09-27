@@ -110,6 +110,7 @@ pub(super) fn apply_claim_candidate(
         false,
         false,
         None,
+        None,
         has_later_covering_text_op,
         write_policy,
         Some(envelope),

@@ -31,6 +31,25 @@ class AgentSdkProjectionTests(unittest.TestCase):
         # describe uses facade_input instead of invoke; it still needs admission.
         self.assertIn('sdk::validate_input("describe", &value)?;', server)
 
+    def test_export_owner_admission_is_generated_from_the_verb_row(self):
+        spec = importlib.util.spec_from_file_location("sdk_generator", ROOT / "scripts/sdk/generate.py")
+        generator = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(generator)
+        row = next(row for row in generator.ROWS if row["name"] == "export")
+        self.assertTrue(row["admission"]["owner_grade"])
+        server = generator.outputs()["crates/oneiron-server/src/api/facade/agent_verbs.rs"]
+        handler = server.split("async fn export(", 1)[1].split("async fn ", 1)[0]
+        self.assertIn("auth.is_owner_grade()", handler)
+        self.assertIn("auth.verified_slip()", handler)
+        self.assertIn("export_with_verified_owner", handler)
+        self.assertIn("export_with_verified_host_owner", handler)
+        self.assertNotIn('sdk::invoke(', handler)
+        row["admission"].pop("owner_grade")
+        server = generator.outputs()["crates/oneiron-server/src/api/facade/agent_verbs.rs"]
+        handler = server.split("async fn export(", 1)[1].split("async fn ", 1)[0]
+        self.assertIn('sdk::invoke(', handler)
+        self.assertNotIn('auth.is_owner_grade()', handler)
+
     def test_manifest_removal_suppresses_facade_bindings(self):
         spec = importlib.util.spec_from_file_location("sdk_generator", ROOT / "scripts/sdk/generate.py")
         generator = importlib.util.module_from_spec(spec)
