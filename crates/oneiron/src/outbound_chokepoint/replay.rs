@@ -48,6 +48,9 @@ pub(super) fn replay_record<T: OutboundTransport>(
             send_pending_with_gate(vault, authority, record, prepared, now_ms, true, transport)
         }
         (IntentState::Pending, None) if !record.idempotency_supported => {
+            // A previous node may have sent before crashing. The stop reason
+            // does not carry this delivery fact; store it independently.
+            record_possible_delivery(vault, record.id, now_ms)?;
             let abandoned = abandon_record(
                 vault,
                 record.id,
@@ -100,7 +103,7 @@ fn send_pending_with_gate<T: OutboundTransport>(
     if record.resolved_endpoint.is_some() && record.capability_provenance().is_none() {
         // Endpoint-bound rows are scoped rows. Never downgrade a reconstructed
         // one to ordinary governance when its typed discriminator is missing.
-        let reason = uncertainty_aware_stop_reason(&record, IntentEscalationReason::BindingInvalid);
+        let reason = IntentEscalationReason::BindingInvalid;
         let abandoned = abandon_record(vault, record.id, reason, now_ms)?;
         return Ok(effect_result(&abandoned, None, replayed, Some(reason)));
     }
@@ -115,7 +118,7 @@ fn send_pending_with_gate<T: OutboundTransport>(
             FrozenCallValidation::Valid
         )
     {
-        let reason = uncertainty_aware_stop_reason(&record, IntentEscalationReason::BindingInvalid);
+        let reason = IntentEscalationReason::BindingInvalid;
         let abandoned = abandon_record(vault, record.id, reason, now_ms)?;
         return Ok(effect_result(&abandoned, None, replayed, Some(reason)));
     }
@@ -128,8 +131,7 @@ fn send_pending_with_gate<T: OutboundTransport>(
             return Ok(result);
         }
         RecoveryGovernance::Revoke => {
-            let reason =
-                uncertainty_aware_stop_reason(&record, IntentEscalationReason::ConnectorRevoked);
+            let reason = IntentEscalationReason::ConnectorRevoked;
             let abandoned = abandon_record(vault, record.id, reason, now_ms)?;
             return Ok(effect_result(&abandoned, None, replayed, Some(reason)));
         }
@@ -176,7 +178,7 @@ fn send_pending_with_gate<T: OutboundTransport>(
             FrozenCallValidation::Valid
         )
     {
-        let reason = uncertainty_aware_stop_reason(&record, IntentEscalationReason::BindingInvalid);
+        let reason = IntentEscalationReason::BindingInvalid;
         let abandoned = abandon_record(vault, record.id, reason, now_ms)?;
         return Ok(effect_result(&abandoned, None, replayed, Some(reason)));
     }
@@ -249,29 +251,6 @@ fn send_pending_with_gate<T: OutboundTransport>(
     }
 }
 
-/// A stop forbids a future attempt, but it cannot undo a possibly completed
-/// earlier one. Pending without a definite-non-delivery record may have sent.
-fn uncertainty_aware_stop_reason(
-    record: &crate::outbound_intent_ledger::IntentLedgerRecord,
-    reason: IntentEscalationReason,
-) -> IntentEscalationReason {
-    if record.state == IntentState::Pending
-        && (record.recorded_outcome.is_none() || record.delivery_uncertain)
-    {
-        match reason {
-            IntentEscalationReason::ConnectorRevoked => {
-                IntentEscalationReason::ConnectorRevokedAfterUncertainty
-            }
-            IntentEscalationReason::BindingInvalid => {
-                IntentEscalationReason::BindingInvalidAfterUncertainty
-            }
-            _ => reason,
-        }
-    } else {
-        reason
-    }
-}
-
 pub(super) fn recovery_governance(
     vault: &Vault,
     record: &crate::outbound_intent_ledger::IntentLedgerRecord,
@@ -338,6 +317,10 @@ fn effect_result(
     escalation_reason: Option<IntentEscalationReason>,
 ) -> OutboundEffectResult {
     OutboundEffectResult {
+        resolution: Some(
+            crate::outbound_intent_ledger::IntentResolution::from_record(record)
+                .expect("validated outbound intent has a resolution"),
+        ),
         dispatch: IntentDispatchResult {
             class: OutboundCallClass::Effectful,
             intent_id: Some(record.id),
@@ -365,6 +348,7 @@ pub(super) fn gate_rejection(
     decision: gate::GateDecision,
 ) -> OutboundEffectResult {
     OutboundEffectResult {
+        resolution: None,
         dispatch: IntentDispatchResult {
             class: OutboundCallClass::Effectful,
             intent_id: Some(intent_id),

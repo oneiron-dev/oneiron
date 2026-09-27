@@ -10,6 +10,7 @@ use super::kernel::{
     FIELD_RECEIPT_SCHEMA, FIELD_TASK_REF, FIELD_TRANSPORT_DISPATCHED, MAX_RECEIPT_QUERY_SCAN,
     ReceiptKind, ReceiptRecord, ReceiptScan, hex_lower,
 };
+#[cfg(test)]
 use super::send_receipt_txn::persist_send_receipt_in_txn;
 use crate::Vault;
 use crate::attempt_queue::{AttemptId, AttemptRecord};
@@ -285,10 +286,8 @@ fn decode_attempt_pack_receipt(raw: &[u8]) -> Result<ReceiptRecord> {
     rmp_serde::from_slice(raw).map_err(|_| Error::CorruptedIndex("attempt pack receipt row"))
 }
 
-/// Appends one outbound attempt's audit receipt and updates its TASK summary.
-/// Delivered summaries are sticky and atomically install the actor-scoped client
-/// idempotency index. Failed receipts never authorize idempotency and remain in
-/// the history after a later attempt updates the summary.
+/// Test fixture for delivered/failed send receipt summary and idempotency.
+#[cfg(test)]
 pub(crate) fn persist_send_receipt(
     vault: &Vault,
     task_ref: EntityId,

@@ -297,6 +297,7 @@ pub(super) fn dispatch_result_receipt(
         gate_receipt_reasons,
         effector_charge,
         effect_state,
+        resolution,
         outcome,
         execution,
         suppression_receipt,
@@ -310,6 +311,7 @@ pub(super) fn dispatch_result_receipt(
             gate_outcome,
             gate_reason_codes,
             receipt,
+            resolution,
             effector_budget: None,
             budget_ladder_events: Vec::new(),
         };
@@ -509,6 +511,7 @@ pub(super) fn dispatch_result_receipt(
         gate_outcome,
         gate_reason_codes,
         receipt,
+        resolution,
         effector_budget,
         budget_ladder_events,
     }

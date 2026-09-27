@@ -15,6 +15,7 @@ use crate::outbound::dispatch_types::{
     OutboundDispatchError, OutboundDispatchRequest, OutboundDispatchResult, OutboundExecutionSink,
 };
 use crate::outbound_intent_ledger::{IntentLedgerError, read_intent_for_attempt_in_txn};
+use crate::ports::TombstoneStore;
 use std::collections::BTreeMap;
 /// Stateless O2 resolve -> gate -> window -> execute -> receipt pipeline.
 #[derive(Clone, Copy, Debug, Default)]
@@ -183,6 +184,9 @@ impl OutboundDispatchPipeline {
                 // name its bound actor, not borrow the original actor's authority.
                 if let Some((actor, actor_class)) = verified_actor {
                     let rtxn = vault.store.env.read_txn().map_err(Error::from)?;
+                    if vault.port_tombstone_is_deleted(&rtxn, &actor)? {
+                        return Err(OutboundDispatchError::InvalidBoundActor);
+                    }
                     let entity_type = vault
                         .get_entity_type_in_txn(&rtxn, &actor)?
                         .ok_or(OutboundDispatchError::InvalidBoundActor)?;

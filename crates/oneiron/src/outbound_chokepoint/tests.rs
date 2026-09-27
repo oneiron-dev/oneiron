@@ -162,7 +162,7 @@ fn recovery_rejects_reconstructed_capability_without_endpoint_before_transport()
     assert!(matches!(
         result.dispatch.escalation,
         Some(IntentEscalation {
-            reason: IntentEscalationReason::BindingInvalidAfterUncertainty,
+            reason: IntentEscalationReason::BindingInvalid,
             ..
         })
     ));
@@ -202,7 +202,7 @@ fn recovery_rejects_reconstructed_endpoint_row_without_provenance_before_transpo
     assert!(matches!(
         result.dispatch.escalation,
         Some(IntentEscalation {
-            reason: IntentEscalationReason::BindingInvalidAfterUncertainty,
+            reason: IntentEscalationReason::BindingInvalid,
             ..
         })
     ));

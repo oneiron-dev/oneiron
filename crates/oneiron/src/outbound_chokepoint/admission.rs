@@ -22,6 +22,7 @@ use crate::outbound_intent_ledger::{
     OutboundCallRequest, RecordedOutboundOutcome, force_sync, insert_pending_in_txn,
     insert_suppressed_in_txn, read_intent_for_attempt_in_txn, read_intent_record_in_txn,
 };
+use crate::ports::TombstoneStore;
 
 /// Executes every outbound effect in ledger-read → replay → gate → debit →
 /// durable-Pending → transport order.
@@ -48,6 +49,9 @@ pub(crate) fn execute_outbound_effect<T: OutboundTransport>(
     let mut wtxn = vault.store.env.write_txn().map_err(Error::from)?;
     if let OutboundEffectCommand::New(prepared) = &command {
         if let Some((actor, actor_class)) = prepared.verified_actor {
+            if vault.port_tombstone_is_deleted(&wtxn, &actor)? {
+                return Err(IntentLedgerError::InvalidBoundActor);
+            }
             let entity_type = vault
                 .get_entity_type_in_txn(&wtxn, &actor)?
                 .ok_or(IntentLedgerError::InvalidBoundActor)?;

@@ -452,6 +452,8 @@ pub struct OutboundDispatchResult {
     pub gate_outcome: String,
     pub gate_reason_codes: Vec<String>,
     pub receipt: ReceiptRecord,
+    /// Ledger-owned logical delivery result, independent of the attempt receipt.
+    pub(crate) resolution: Option<crate::outbound_intent_ledger::IntentResolution>,
     /// Echo of the post-debit effector meter when a connector key governed
     /// this dispatch (GOV-02, ONE-1418; A3: a host-call response may ECHO
     /// `self.budget()` — this is an echo of the meter read, not a second

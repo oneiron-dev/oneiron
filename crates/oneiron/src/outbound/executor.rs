@@ -4,7 +4,6 @@ use super::connector_task::{
     mark_connector_send_task_attempt_started, project_connector_send_task_outcome,
     project_connector_send_task_outcome_in_txn, send_receipt_exists_for_task,
 };
-use super::dispatch_attempt_id::outbound_dispatch_attempt_id;
 use super::dispatch_pipeline::{GATE_OUTCOME_PENDING, PROVIDER_RETRY_AFTER_FIELD};
 use super::dispatch_types::{
     OutboundDispatchActor, OutboundDispatchError, OutboundDispatchGate, OutboundDispatchOutcome,
@@ -12,8 +11,8 @@ use super::dispatch_types::{
 };
 use super::receipt_fields::append_connector_task_window_receipt;
 use super::retry_audit::{
-    TerminalSendSettlement, persist_failed_send_receipt_and_retry, persist_send_receipt_and_retry,
-    persist_terminal_send_receipt_and_fail, settle_suppressed_send,
+    persist_failed_send_receipt_and_retry, persist_send_receipt_and_retry,
+    reconcile_connector_task, settle_suppressed_send,
 };
 use super::window_door::local_minute_of_day_at;
 use crate::Vault;
@@ -23,10 +22,8 @@ use crate::attempt_queue::{
 };
 use crate::entity_id::EntityId;
 use crate::error::Error;
-use crate::outbound_intent_ledger::{
-    IntentState, RecordedOutboundOutcome, read_intent_for_attempt_in_txn,
-};
-use crate::receipt::{SendReceiptOutcome, outbound_intent_receipt, persist_send_receipt};
+use crate::outbound_intent_ledger::{IntentEscalationReason, IntentResolution, RetryDisposition};
+use crate::receipt::SendReceiptOutcome;
 
 pub(super) const CONNECTOR_TASK_EXECUTOR_LEASE_OWNER: &str = "connector-task-executor";
 /// First re-arm delay for a send the Gate parked on a human decision.
@@ -129,6 +126,27 @@ impl Vault {
                     continue;
                 }
             };
+            // Reconcile an already terminal local logical send before either
+            // the synced TASK fence or the live actor/permission checks. This
+            // path cannot call the provider.
+            let preflight_receipt = format!(
+                "outbound:task:{}:attempt:{}:lease:{}",
+                task_ref.to_hex(),
+                crate::receipt::hex_lower(attempt.id.as_bytes()),
+                attempt.attempt_count,
+            );
+            let reconciled = reconcile_connector_task(
+                self,
+                &attempt,
+                &task,
+                &preflight_receipt,
+                now,
+                None,
+                None,
+            )?;
+            if reconciled {
+                continue;
+            }
             if task.outcome == Some(ConnectorSendTaskOutcome::Ambiguous) {
                 // A terminal possibly-delivered send is not a fresh send permit,
                 // even if a duplicate queue row is scheduled later.
@@ -153,7 +171,6 @@ impl Vault {
                 actor_entity_ref: Some(task.actor_ref),
             };
             let originating_session_ref = task.originating_session_ref.clone();
-            let idempotency_key = task.intent.idempotency_key.clone();
             let logical_send_intent_ref = connector_logical_send_intent_ref(&task);
             let mut request = OutboundDispatchRequest::new(
                 // A reclaimed lease can execute under the same attempt id. Its
@@ -210,7 +227,6 @@ impl Vault {
                 request = request.calendar_invite(payload);
             }
             let receipt_id = request.receipt_id.clone();
-            let intent_ref = request.intent_ref.clone();
             let mut result = match self.dispatch_outbound_intent_with_verified_actor(
                 request,
                 sink,
@@ -219,55 +235,17 @@ impl Vault {
             ) {
                 Ok(result) => result,
                 Err(OutboundDispatchError::InvalidBoundActor) => {
-                    // A refusal proves only that THIS attempt did not send.
-                    // Earlier uncertain delivery belongs to the logical intent.
-                    let previous_may_have_delivered = {
-                        let rtxn = self.store.env.read_txn().map_err(Error::from)?;
-                        let attempt_id = outbound_dispatch_attempt_id(&logical_send_intent_ref)?;
-                        read_intent_for_attempt_in_txn(self, &rtxn, attempt_id, 0)
-                            .map_err(OutboundDispatchError::Chokepoint)?
-                            .is_some_and(|record| {
-                                record.delivery_uncertain
-                                    || (record.state == IntentState::Pending
-                                        && record.recorded_outcome.is_none())
-                                    || matches!(record.recorded_outcome,
-                                        Some(RecordedOutboundOutcome::Abandoned(
-                                            crate::outbound_intent_ledger::IntentEscalationReason::NonIdempotentAmbiguous
-                                            | crate::outbound_intent_ledger::IntentEscalationReason::NonIdempotentPending
-                                            | crate::outbound_intent_ledger::IntentEscalationReason::ConnectorRevokedAfterUncertainty
-                                            | crate::outbound_intent_ledger::IntentEscalationReason::BindingInvalidAfterUncertainty
-                                        )))
-                            })
-                    };
-                    if previous_may_have_delivered {
-                        let mut receipt = outbound_intent_receipt(
-                            receipt_id,
-                            intent_ref,
-                            &task.intent,
-                            now,
-                            "ambiguous",
-                        );
-                        receipt
-                            .fields
-                            .insert("delivery_may_have_occurred".to_owned(), "true".to_owned());
-                        receipt
-                            .fields
-                            .insert("retry_state".to_owned(), "invalid_bound_actor".to_owned());
-                        append_connector_task_window_receipt(&mut receipt, &task);
-                        persist_terminal_send_receipt_and_fail(
-                            self,
-                            TerminalSendSettlement {
-                                attempt: &attempt,
-                                task_ref,
-                                receipt,
-                                receipt_outcome: SendReceiptOutcome::Ambiguous,
-                                transport_dispatched: false,
-                                task_outcome: ConnectorSendTaskOutcome::Ambiguous,
-                                reason: "dispatch_rejected",
-                                now,
-                            },
-                        )?;
-                    } else {
+                    if !reconcile_connector_task(
+                        self,
+                        &attempt,
+                        &task,
+                        &receipt_id,
+                        now,
+                        Some(IntentEscalationReason::BindingInvalid),
+                        None,
+                    )? {
+                        // The actor disappeared before any logical send was
+                        // admitted. This attempt certainly did not cross.
                         fail_connector_task_attempt_and_project(
                             self,
                             &queue,
@@ -301,36 +279,19 @@ impl Vault {
             };
             match result.outcome {
                 OutboundDispatchOutcome::DeliveredToChannel => {
-                    append_connector_task_window_receipt(&mut result.receipt, &task);
-                    // Never let an adapter-supplied receipt field invent a
-                    // counterparty for a TASK that did not freeze one.
-                    if let Some(party) = task.counterparty_ref.as_ref() {
-                        result
-                            .receipt
-                            .fields
-                            .insert("counterparty_ref".to_owned(), party.clone());
-                    } else {
-                        result.receipt.fields.remove("counterparty_ref");
-                    }
-                    let delivered_idempotency =
-                        idempotency_key.as_deref().map(|key| (task.actor_ref, key));
-                    if persist_send_receipt(
+                    #[cfg(test)]
+                    run_before_delivered_receipt_hook();
+                    if reconcile_connector_task(
                         self,
-                        task_ref,
-                        result.receipt,
-                        SendReceiptOutcome::Delivered,
-                        true,
-                        delivered_idempotency,
+                        &attempt,
+                        &task,
+                        &receipt_id,
+                        now,
+                        None,
+                        Some(result.receipt),
                     )? {
                         executed = executed.saturating_add(1);
                     }
-                    project_connector_send_task_outcome(
-                        self,
-                        task_ref,
-                        ConnectorSendTaskOutcome::Delivered,
-                        now,
-                    )?;
-                    complete_connector_task_attempt(&queue, &attempt, now)?;
                 }
                 OutboundDispatchOutcome::Held | OutboundDispatchOutcome::Degraded => {
                     // The door supplies a window-edge retry_at when it knows one;
@@ -400,18 +361,14 @@ impl Vault {
                             .fields
                             .get("delivery_may_have_occurred")
                             .is_some_and(|value| value == "true");
-                    let intent_pending = result
-                        .receipt
-                        .fields
-                        .get("intent_state")
-                        .map(String::as_str)
-                        == Some("pending");
-                    let provider_retry_is_idempotent = result
-                        .receipt
-                        .fields
-                        .get("retry_class")
-                        .is_some_and(|value| value != "non_idempotent_interrupt");
-                    if intent_pending && (ambiguous || provider_retry_is_idempotent) {
+                    let retryable = matches!(
+                        result.resolution,
+                        Some(IntentResolution::Pending {
+                            retry: RetryDisposition::Idempotent,
+                            ..
+                        })
+                    );
+                    if retryable {
                         // A provider that stated its own cool-down (a rate-limit
                         // `retry_after`) is obeyed exactly; without one the
                         // generic transport curve still applies. The instant is
@@ -454,10 +411,23 @@ impl Vault {
                             },
                             transport_dispatched,
                         )?;
-                    } else {
-                        persist_terminal_send_receipt_and_fail(
+                    } else if matches!(result.resolution, Some(IntentResolution::Stopped { .. })) {
+                        reconcile_connector_task(
                             self,
-                            TerminalSendSettlement {
+                            &attempt,
+                            &task,
+                            &receipt_id,
+                            now,
+                            None,
+                            Some(result.receipt),
+                        )?;
+                    } else {
+                        // A non-idempotent definite no-wire attempt is terminal
+                        // for this queue row, but the logical ledger remains
+                        // Pending and may be manually retried under O6.
+                        super::retry_audit::persist_terminal_send_receipt_and_fail(
+                            self,
+                            super::retry_audit::TerminalSendSettlement {
                                 attempt: &attempt,
                                 task_ref,
                                 receipt: result.receipt,
@@ -488,7 +458,7 @@ impl Vault {
     }
 }
 
-fn connector_logical_send_intent_ref(task: &ConnectorSendTask) -> String {
+pub(super) fn connector_logical_send_intent_ref(task: &ConnectorSendTask) -> String {
     let mut hasher = blake3::Hasher::new();
     hasher.update(b"oneiron.connector.logical_send.v1");
     hasher.update(task.actor_ref.as_bytes());
@@ -701,6 +671,26 @@ fn run_before_attempt_start_hook(vault: &Vault) {
     BEFORE_ATTEMPT_START.with(|slot| {
         if let Some(hook) = slot.borrow_mut().take() {
             hook(vault);
+        }
+    });
+}
+
+#[cfg(test)]
+std::thread_local! {
+    static BEFORE_DELIVERED_RECEIPT: std::cell::RefCell<Option<Box<dyn FnOnce()>>> =
+        std::cell::RefCell::new(None);
+}
+
+#[cfg(test)]
+pub(super) fn set_before_delivered_receipt_hook(hook: impl FnOnce() + 'static) {
+    BEFORE_DELIVERED_RECEIPT.with(|slot| *slot.borrow_mut() = Some(Box::new(hook)));
+}
+
+#[cfg(test)]
+fn run_before_delivered_receipt_hook() {
+    BEFORE_DELIVERED_RECEIPT.with(|slot| {
+        if let Some(hook) = slot.borrow_mut().take() {
+            hook();
         }
     });
 }

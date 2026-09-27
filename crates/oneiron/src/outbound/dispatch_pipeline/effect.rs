@@ -12,9 +12,7 @@ use crate::outbound::dispatch_types::{
     OutboundDispatchError, OutboundDispatchOutcome, OutboundDispatchRequest,
     OutboundExecutionOutcome, OutboundExecutionOutcomeKind, OutboundExecutionSink,
 };
-use crate::outbound_intent_ledger::{
-    IntentDispatchResult, IntentEscalationReason, IntentState, read_intent_record_in_txn,
-};
+use crate::outbound_intent_ledger::{IntentResolution, UnconfirmedDelivery};
 use crate::receipt::ReceiptRecord;
 
 pub(super) struct EffectInput<'a, S> {
@@ -89,34 +87,11 @@ pub(super) fn execute_admitted<S: OutboundExecutionSink>(
             )));
         }
     };
-    // Stop reasons explain WHY retries stopped, not WHETHER an earlier send
-    // arrived. Read the cumulative fact from this exact logical intent.
-    let delivery_uncertain = if effect_result.dispatch.state == Some(IntentState::Abandoned) {
-        let id = effect_result
-            .dispatch
-            .intent_id
-            .ok_or(OutboundDispatchError::Engine(Error::InvariantViolation(
-                "abandoned outbound effect has no intent id",
-            )))?;
-        let txn = vault.store.env.read_txn().map_err(Error::from)?;
-        read_intent_record_in_txn(vault, &txn, &id)
-            .map_err(OutboundDispatchError::Chokepoint)?
-            .ok_or(OutboundDispatchError::Engine(Error::InvariantViolation(
-                "abandoned outbound intent row is missing",
-            )))?
-            .delivery_uncertain
-    } else {
-        false
-    };
+    let resolution = effect_result.resolution;
     let outcome = if effect_result.dedupe_suppressed {
         OutboundDispatchOutcome::Suppressed
     } else {
-        outbound_effect_outcome(
-            &effect_result.dispatch,
-            transport.execution.as_ref(),
-            gate_outcome_kind,
-            delivery_uncertain,
-        )
+        outbound_effect_outcome(resolution, transport.execution.as_ref(), gate_outcome_kind)
     };
     // A replay has no new decision id; never invent a non-queryable gate ref.
     Ok(DispatchVerdict {
@@ -126,22 +101,28 @@ pub(super) fn execute_admitted<S: OutboundExecutionSink>(
         gate_receipt_reasons: effect_result.gate_receipt_reasons,
         effector_charge: effect_result.budget_charge,
         effect_state: effect_result.dispatch.state,
+        resolution,
         outcome,
         execution: transport.execution,
         suppression_receipt: effect_result.suppression_receipt,
     })
 }
 
-/// A stop after uncertain delivery cannot turn the earlier send into failure.
+/// Outcome naming consumes one ledger resolution. The execution result is
+/// evidence about THIS attempt only while the logical send remains Pending.
 fn outbound_effect_outcome(
-    dispatch: &IntentDispatchResult,
+    resolution: Option<IntentResolution>,
     execution: Option<&OutboundExecutionOutcome>,
     gate_outcome_kind: GateOutcome,
-    delivery_uncertain: bool,
 ) -> OutboundDispatchOutcome {
-    match dispatch.state {
-        Some(IntentState::Done) => OutboundDispatchOutcome::DeliveredToChannel,
-        Some(IntentState::Pending) => match execution {
+    match resolution {
+        Some(IntentResolution::Delivered) => OutboundDispatchOutcome::DeliveredToChannel,
+        Some(IntentResolution::Stopped {
+            delivery: UnconfirmedDelivery::Unresolved,
+            ..
+        }) => OutboundDispatchOutcome::Ambiguous,
+        Some(IntentResolution::Stopped { .. }) => OutboundDispatchOutcome::Failed,
+        Some(IntentResolution::Pending { .. }) => match execution {
             Some(execution) if execution.kind == OutboundExecutionOutcomeKind::Failed => {
                 if execution.delivery_may_have_occurred {
                     OutboundDispatchOutcome::Ambiguous
@@ -151,23 +132,6 @@ fn outbound_effect_outcome(
             }
             _ => OutboundDispatchOutcome::Held,
         },
-        Some(IntentState::Abandoned) => {
-            if delivery_uncertain
-                || matches!(
-                    dispatch.escalation.as_ref().map(|e| e.reason),
-                    Some(
-                        IntentEscalationReason::NonIdempotentAmbiguous
-                            | IntentEscalationReason::NonIdempotentPending
-                            | IntentEscalationReason::ConnectorRevokedAfterUncertainty
-                            | IntentEscalationReason::BindingInvalidAfterUncertainty
-                    )
-                )
-            {
-                OutboundDispatchOutcome::Ambiguous
-            } else {
-                OutboundDispatchOutcome::Failed
-            }
-        }
         None if gate_outcome_kind == GateOutcome::Pending => OutboundDispatchOutcome::Held,
         None => OutboundDispatchOutcome::Suppressed,
     }

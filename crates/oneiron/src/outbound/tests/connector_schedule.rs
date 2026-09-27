@@ -1968,11 +1968,15 @@ fn earlier_uncertainty_survives_later_definite_non_delivery_and_revocation() -> 
     let receipts = vault.receipts(ReceiptQuery::new(10).with_kind(ReceiptKind::Outbound))?;
     assert_eq!(receipts.len(), 3);
     assert_eq!(receipts[0].outcome, "ambiguous");
-    assert_eq!(crate::outbound_intent_ledger::intent_ledger_records(&vault)
-        .expect("terminal ledger")[0].recorded_outcome,
-        Some(crate::outbound_intent_ledger::RecordedOutboundOutcome::Abandoned(
-            crate::outbound_intent_ledger::IntentEscalationReason::ConnectorRevokedAfterUncertainty
-        )));
+    assert_eq!(
+        crate::outbound_intent_ledger::intent_ledger_records(&vault).expect("terminal ledger")[0]
+            .recorded_outcome,
+        Some(
+            crate::outbound_intent_ledger::RecordedOutboundOutcome::Abandoned(
+                crate::outbound_intent_ledger::IntentEscalationReason::ConnectorRevoked
+            )
+        )
+    );
     assert_ambiguous_on_task_board(&vault, actor, task_ref);
     Ok(())
 }
@@ -2496,6 +2500,287 @@ fn post_send_crash_then_no_wire_retry_keeps_uncertainty() -> crate::Result<()> {
         receipts
             .iter()
             .any(|receipt| receipt.outcome == "ambiguous")
+    );
+    Ok(())
+}
+
+#[test]
+fn ack_before_receipt_then_actor_loss_reconciles_delivered_without_transport() -> crate::Result<()>
+{
+    use crate::attempt_queue::{AttemptQueue, EnqueueAttempt};
+    use crate::memory::BRIDGE_OUTBOUND_ATTEMPT_KIND;
+    use crate::outbound::executor::set_before_delivered_receipt_hook;
+    use crate::receipt::{ReceiptKind, ReceiptQuery};
+    let (tmp, vault) = temp_vault();
+    let actor = entity(0xD0);
+    let party = "party:reconciled-delivery";
+    put_connector_task_actor(&vault, actor, 2_000)?;
+    put_policy_manifest_bytes(
+        &vault,
+        entity(0xCE),
+        &policy_manifest(&actor.to_hex(), "email", &["replace"]),
+    )?;
+    crate::comm::record_comm_send_receipt(&vault, party, "email", 1_900)
+        .expect("earlier comm touch");
+    crate::comm::run_comm_projector(&vault).expect("project earlier touch");
+    let mut draft = connector_task_draft("acked-without-receipt:test", "session:ack", 2_000);
+    draft.verb = "replace".to_owned();
+    draft.target = "transport:shared-inbox".to_owned();
+    vault
+        .memory(actor, EdgeActorClass::Agent)
+        .schedule_outbound_for_counterparty(&draft, party)
+        .expect("schedule bound send");
+    let task_ref = vault.connector_send_tasks()?[0].task_ref;
+    let mut sink = RecordingExecutor {
+        outcome: OutboundExecutionOutcome::failed("provider_timeout").with_possible_delivery(),
+        ..Default::default()
+    };
+    vault.run_connector_task_executor(&mut sink, 2_001).unwrap();
+    let retry_at = next_connector_send_retry_at(&vault)?;
+    sink.outcome = OutboundExecutionOutcome::delivered_to_channel("provider:ack");
+    set_before_delivered_receipt_hook(|| panic!("cut after ACK before receipt"));
+    assert!(
+        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let _ = vault.run_connector_task_executor(&mut sink, retry_at);
+        }))
+        .is_err()
+    );
+    assert_eq!(sink.calls.len(), 2);
+    assert_eq!(
+        crate::outbound_intent_ledger::intent_ledger_records(&vault).expect("durable ACK")[0].state,
+        crate::outbound_intent_ledger::IntentState::Done
+    );
+    assert_eq!(vault.connector_send_task(&task_ref)?.unwrap().outcome, None);
+    assert!(!send_receipt_exists_for_task(&vault, task_ref)?);
+    drop(vault);
+    let clock = crate::ports::ManualClock::new(retry_at + 1);
+    let vault = Vault::open(
+        tmp.path(),
+        VaultConfig {
+            store_clock: clock.bundle(),
+            ..VaultConfig::default()
+        },
+    )?;
+    vault.delete_entity(&actor)?;
+    AttemptQueue::new(&vault).enqueue(EnqueueAttempt {
+        kind: BRIDGE_OUTBOUND_ATTEMPT_KIND.to_owned(),
+        payload: connector_send_attempt_payload(task_ref)?,
+        dedupe_key: None,
+        run_id: None,
+        now: retry_at + 1,
+    })?;
+    let mut no_transport = RecordingExecutor::default();
+    assert_eq!(
+        vault
+            .run_connector_task_executor(&mut no_transport, retry_at + 2)
+            .unwrap(),
+        0
+    );
+    assert!(no_transport.calls.is_empty());
+    assert_eq!(
+        vault.connector_send_task(&task_ref)?.unwrap().outcome,
+        Some(ConnectorSendTaskOutcome::Delivered)
+    );
+    let receipt = vault
+        .receipts(ReceiptQuery::new(10).with_kind(ReceiptKind::Outbound))?
+        .into_iter()
+        .find(|r| {
+            r.fields.get("task_ref") == Some(&task_ref.to_hex())
+                && r.outcome == "delivered_to_channel"
+        })
+        .expect("reconciled receipt");
+    assert_eq!(
+        receipt.fields.get("counterparty_ref").map(String::as_str),
+        Some(party)
+    );
+    assert_eq!(
+        vault.store.get_delivered_send_task_by_idempotency(
+            &actor,
+            draft.idempotency_key.as_deref().expect("key")
+        )?,
+        Some(task_ref)
+    );
+    crate::comm::run_comm_projector(&vault).expect("project reconciled delivery");
+    assert_eq!(
+        crate::comm::count_active_comm_claims(
+            &vault,
+            crate::comm::PREDICATE_COMM_LAST_TOUCH,
+            party,
+            "email"
+        )
+        .expect("touch"),
+        1
+    );
+    assert_delivered_on_task_board(&vault, actor, task_ref);
+    Ok(())
+}
+
+fn assert_delivered_on_task_board(vault: &Vault, actor: EntityId, task_ref: EntityId) {
+    use crate::task_verb::TaskDescription;
+    let TaskDescription::Section(section) = vault
+        .memory(actor, EdgeActorClass::Agent)
+        .describe(None)
+        .expect("task board")
+    else {
+        panic!("section");
+    };
+    let row = section
+        .rows
+        .iter()
+        .find(|row| row.id == task_ref.to_hex())
+        .expect("row");
+    assert_eq!(row.status, crate::context_board::TaskBoardStatus::Done);
+    assert_eq!(
+        row.connector_outcome,
+        Some(ConnectorSendTaskOutcome::Delivered)
+    );
+}
+
+#[test]
+fn terminal_reconciliation_rejects_foreign_frozen_binding_without_changing_ledger()
+-> crate::Result<()> {
+    use crate::outbound_intent_ledger::ConnectorIntentBinding;
+    let (_tmp, vault) = temp_vault();
+    let actor = entity(0xB6);
+    put_connector_task_actor(&vault, actor, 2_100)?;
+    put_policy_manifest_bytes(
+        &vault,
+        entity(0xB7),
+        &policy_manifest(&actor.to_hex(), "email", &["replace"]),
+    )?;
+    let mut draft = connector_task_draft("same-logical-key:test", "session:original", 2_100);
+    draft.verb = "replace".to_owned();
+    vault
+        .memory(actor, EdgeActorClass::Agent)
+        .schedule_outbound(&draft)
+        .expect("schedule original");
+    let task = vault.connector_send_tasks()?.remove(0);
+    let mut sink = RecordingExecutor {
+        outcome: OutboundExecutionOutcome::failed("provider_timeout").with_possible_delivery(),
+        ..Default::default()
+    };
+    vault.run_connector_task_executor(&mut sink, 2_101).unwrap();
+    let original = crate::outbound_intent_ledger::intent_ledger_records(&vault)
+        .expect("original ledger")[0]
+        .clone();
+    let mut forged = task.intent.clone();
+    forged.target = "transport:foreign".to_owned();
+    let binding = ConnectorIntentBinding {
+        intent: &forged,
+        actor_ref: actor,
+        actor_class: task.actor_class.gate_actor_class(),
+        counterparty_ref: task.counterparty_ref.as_deref(),
+        originating_session_ref: task.originating_session_ref.as_deref(),
+        calendar_invite: task.calendar_invite.as_ref(),
+    };
+    assert!(binding.verify(&original).is_err());
+    assert_eq!(
+        crate::outbound_intent_ledger::intent_ledger_records(&vault).expect("unchanged ledger")[0],
+        original
+    );
+    assert_eq!(sink.calls.len(), 1);
+    Ok(())
+}
+
+#[test]
+fn terminal_reconciliation_stale_lease_rolls_back_ledger_receipt_and_task() -> crate::Result<()> {
+    use crate::attempt_queue::{AttemptQueue, AttemptState, ClaimAttempt, ClaimOutcome};
+    use crate::outbound::retry_audit::reconcile_connector_task;
+    use crate::outbound_intent_ledger::IntentEscalationReason;
+    use crate::receipt::{ReceiptKind, ReceiptQuery};
+    let (_tmp, vault) = temp_vault();
+    let actor = entity(0xB8);
+    put_connector_task_actor(&vault, actor, 2_200)?;
+    put_policy_manifest_bytes(
+        &vault,
+        entity(0xB9),
+        &policy_manifest(&actor.to_hex(), "email", &["replace"]),
+    )?;
+    let mut draft = connector_task_draft("settlement-stale:test", "session:stale", 2_200);
+    draft.verb = "replace".to_owned();
+    vault
+        .memory(actor, EdgeActorClass::Agent)
+        .schedule_outbound(&draft)
+        .expect("schedule");
+    let task = vault.connector_send_tasks()?.remove(0);
+    let mut sink = RecordingExecutor {
+        outcome: OutboundExecutionOutcome::failed("provider_timeout").with_possible_delivery(),
+        ..Default::default()
+    };
+    vault.run_connector_task_executor(&mut sink, 2_201).unwrap();
+    let at = next_connector_send_retry_at(&vault)?;
+    vault.clock.set(at);
+    let queue = AttemptQueue::new(&vault);
+    let ClaimOutcome::Claimed(attempt) = queue.claim_kind(
+        crate::memory::BRIDGE_OUTBOUND_ATTEMPT_KIND,
+        ClaimAttempt {
+            lease_owner: super::super::executor::CONNECTOR_TASK_EXECUTOR_LEASE_OWNER.to_owned(),
+            now: at,
+        },
+    )?
+    else {
+        panic!("retry claim");
+    };
+    let before = crate::outbound_intent_ledger::intent_ledger_records(&vault).expect("ledger");
+    let receipts_before = vault.receipts(ReceiptQuery::new(10).with_kind(ReceiptKind::Outbound))?;
+    let mut stale = attempt.clone();
+    stale.attempt_count += 1;
+    assert!(
+        reconcile_connector_task(
+            &vault,
+            &stale,
+            &task,
+            "receipt:stale-reconcile",
+            at,
+            Some(IntentEscalationReason::BindingInvalid),
+            None,
+        )
+        .is_err()
+    );
+    assert_eq!(
+        crate::outbound_intent_ledger::intent_ledger_records(&vault)
+            .expect("ledger")
+            .records,
+        before.records
+    );
+    assert_eq!(
+        vault.receipts(ReceiptQuery::new(10).with_kind(ReceiptKind::Outbound))?,
+        receipts_before
+    );
+    assert_eq!(
+        vault.connector_send_task(&task.task_ref)?.unwrap().outcome,
+        None
+    );
+    assert_eq!(
+        queue
+            .list()?
+            .into_iter()
+            .find(|row| row.id == attempt.id)
+            .unwrap()
+            .state,
+        AttemptState::Leased
+    );
+    assert!(reconcile_connector_task(
+        &vault,
+        &attempt,
+        &task,
+        "receipt:valid-reconcile",
+        at,
+        Some(IntentEscalationReason::BindingInvalid),
+        None,
+    )?);
+    assert_eq!(
+        vault.connector_send_task(&task.task_ref)?.unwrap().outcome,
+        Some(ConnectorSendTaskOutcome::Ambiguous)
+    );
+    assert_eq!(
+        queue
+            .list()?
+            .into_iter()
+            .find(|row| row.id == attempt.id)
+            .unwrap()
+            .state,
+        AttemptState::Failed
     );
     Ok(())
 }

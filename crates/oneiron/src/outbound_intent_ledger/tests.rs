@@ -2471,3 +2471,54 @@ fn strict_targeted_reads_remain_strict() {
     assert_eq!(listing.corrupt.len(), 1);
     assert_eq!(&*listing.corrupt[0].key, key.as_slice());
 }
+
+#[test]
+fn logical_resolution_matrix_keeps_delivery_separate_from_retry_and_stop() {
+    use super::resolution::{IntentResolution, RetryDisposition, UnconfirmedDelivery};
+    let (_dir, vault) = open_vault();
+    let mut record = persist_pending(&vault, attempt(0x96), 0, b"resolution matrix", 100, true);
+    record.recorded_outcome = Some(RecordedOutboundOutcome::DefiniteNonDelivery);
+    assert_eq!(
+        IntentResolution::from_record(&record).unwrap(),
+        IntentResolution::Pending {
+            delivery: UnconfirmedDelivery::DefiniteNonDelivery,
+            retry: RetryDisposition::Idempotent,
+        }
+    );
+    record.delivery_uncertain = true;
+    assert_eq!(
+        IntentResolution::from_record(&record).unwrap(),
+        IntentResolution::Pending {
+            delivery: UnconfirmedDelivery::Unresolved,
+            retry: RetryDisposition::Idempotent,
+        }
+    );
+    record.state = IntentState::Abandoned;
+    record.recorded_outcome = Some(RecordedOutboundOutcome::Abandoned(
+        IntentEscalationReason::DedupeReservationReplaced,
+    ));
+    assert_eq!(
+        IntentResolution::from_record(&record).unwrap(),
+        IntentResolution::Stopped {
+            delivery: UnconfirmedDelivery::Unresolved,
+            reason: IntentEscalationReason::DedupeReservationReplaced,
+        }
+    );
+    record.delivery_uncertain = false;
+    assert_eq!(
+        IntentResolution::from_record(&record).unwrap(),
+        IntentResolution::Stopped {
+            delivery: UnconfirmedDelivery::DefiniteNonDelivery,
+            reason: IntentEscalationReason::DedupeReservationReplaced,
+        }
+    );
+    for historical_uncertainty in [false, true] {
+        record.state = IntentState::Done;
+        record.recorded_outcome = Some(RecordedOutboundOutcome::Acked);
+        record.delivery_uncertain = historical_uncertainty;
+        assert_eq!(
+            IntentResolution::from_record(&record).unwrap(),
+            IntentResolution::Delivered
+        );
+    }
+}

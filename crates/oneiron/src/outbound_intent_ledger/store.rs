@@ -305,6 +305,41 @@ pub(crate) fn record_possible_delivery(
     Ok(record)
 }
 
+/// Resolve a scheduled TASK's exact frozen logical send under the same writer
+/// that publishes its terminal receipt/TASK/queue. `stop` only forbids a
+/// future attempt; it never changes the meaning of a prior ACK.
+pub(crate) fn reconcile_connector_intent_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    attempt_id: AttemptId,
+    binding: &super::resolution::ConnectorIntentBinding<'_>,
+    stop: Option<IntentEscalationReason>,
+    now_ms: u64,
+) -> IntentLedgerResult<Option<super::resolution::IntentResolution>> {
+    let Some(mut record) = read_intent_for_attempt_in_txn(vault, &*wtxn, attempt_id, 0)? else {
+        return Ok(None);
+    };
+    binding.verify(&record)?;
+    if let Some(reason) = stop
+        && record.state == IntentState::Pending
+    {
+        // A pre-send authority refusal cannot negate a prior in-flight call.
+        // Pending/None is durable admission and may have crossed the wire.
+        record.delivery_uncertain |= record.recorded_outcome.is_none();
+        record.state = IntentState::Abandoned;
+        record.recorded_outcome = Some(RecordedOutboundOutcome::Abandoned(reason));
+        record.updated_ms = now_ms.max(record.created_ms);
+        vault.store.vault_meta.put(
+            wtxn,
+            &intent_ledger_key(&record.id),
+            &encode_record(&record)?,
+        )?;
+    }
+    Ok(Some(super::resolution::IntentResolution::from_record(
+        &record,
+    )?))
+}
+
 pub(crate) fn record_definite_non_delivery(
     vault: &Vault,
     id: [u8; 32],

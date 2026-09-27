@@ -568,6 +568,34 @@ fn update_connector_send_task_body(
     })
 }
 
+/// Read the synced terminal in the same writer that settles this attempt.
+pub(super) fn connector_send_task_outcome_in_txn(
+    vault: &Vault,
+    wtxn: &heed::RwTxn<'_>,
+    task_ref: EntityId,
+) -> Result<Option<ConnectorSendTaskOutcome>, Error> {
+    let raw = vault
+        .store
+        .port_entity_record(wtxn, &task_ref)?
+        .ok_or(Error::EntityNotFound)?;
+    if raw.entity_type != ENTITY_TYPE_TASK {
+        return Err(Error::Record(RecordError::InvalidTaskBody(
+            "connector send entity is not a TASK",
+        )));
+    }
+    let body: ConnectorSendTaskBody = rmp_serde::from_slice(&raw.body)
+        .map_err(|_| Error::Record(RecordError::InvalidTaskBody("invalid connector send body")))?;
+    if body.schema_version != CONNECTOR_SEND_TASK_SCHEMA_VERSION
+        || body.subkind != CONNECTOR_SEND_TASK_SUBKIND
+        || body.role != TaskRole::Task.role_byte()
+    {
+        return Err(Error::Record(RecordError::InvalidTaskBody(
+            "unsupported connector send body version",
+        )));
+    }
+    Ok(body.outcome)
+}
+
 pub(super) fn project_connector_send_task_outcome_in_txn(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
@@ -576,12 +604,19 @@ pub(super) fn project_connector_send_task_outcome_in_txn(
     now: u64,
 ) -> Result<(), Error> {
     #[cfg(test)]
-    if outcome == ConnectorSendTaskOutcome::Failed {
+    if matches!(
+        outcome,
+        ConnectorSendTaskOutcome::Delivered | ConnectorSendTaskOutcome::Failed
+    ) {
         let receipt_exists = vault
             .store
             .get_send_receipt_by_task_in_txn(wtxn, &task_ref)?
             .is_some();
-        FAILED_PROJECTION_SAW_RECEIPT.with(|observed| observed.set(Some(receipt_exists)));
+        if outcome == ConnectorSendTaskOutcome::Delivered {
+            DELIVERED_PROJECTION_SAW_RECEIPT.with(|observed| observed.set(Some(receipt_exists)));
+        } else {
+            FAILED_PROJECTION_SAW_RECEIPT.with(|observed| observed.set(Some(receipt_exists)));
+        }
     }
     update_connector_send_task_body_in_txn(vault, wtxn, task_ref, now, |body| {
         body.outcome = Some(outcome);
