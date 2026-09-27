@@ -1,16 +1,23 @@
 {
-  "scope": "fixture-only; real Chroma HTTP, synthetic model/judge; not a public BEAM accuracy, latency, or cost comparison",
-  "source_revision_at_run": "c4fe25644a4ea1a35c0ac0bdcbea7a995dcb195c",
-  "source_state": "ONE-2180 changes uncommitted during run; see this change for producing source",
-  "date_utc": "2026-09-26T21:53:46Z",
+  "scope": "retrieval-sensitive single-question fixture measurement; real Chroma HTTP, exact-match synthetic answerer/judge; not public BEAM accuracy or provider cost",
+  "date_utc": "2026-09-27",
+  "source_revision_at_run": "5c5f6cda05a5a5b5368e805d941d61c06d54e4b7",
+  "source_state": "ONE-2180 review fixes uncommitted while measuring; producing source is in the next PR commit",
   "runtime": {
-    "chroma": "1.4.4 via uvx chromadb",
-    "model": "synthetic local HTTP fixture, not GPT-4.1",
-    "model_script_sha256": "49ba0ad9e3d5b9785658da18e863a6f8b10ec20acae46cd3c4cb272bbd2a7719",
-    "fixture_sha256": "13fef8a23aea3427ef2d4580e1612110ec657c46165c9ea2c00223d2bf805833",
-    "plan_sha256": "33efeb28ed317a3edf8bbc3156c16b4b7629109ffac0477dc2aeb184a0f3bd5d",
-    "citation_corpus_sha256": "2d3c03c72d4a80d70544576f0b47595f721edcefe65efb53d55e4d424b1f11ea",
-    "raw_report_sha256": "0d19e27b3a52fb22af0eeadfcfb6ea0c526a03ce7f3666e3580697a939ed64e4"
+    "chroma_package": "chromadb==1.5.9 (uvx)",
+    "chroma_cli": "chroma 1.4.4",
+    "model": "local retrieval-sensitive rule answerer + exact-match scorer, NOT GPT-4.1",
+    "model_script_sha256": "04264e4165da35e8e9b27317bc8343f4760491becd7a72f2dd1e847e04163e2f",
+    "supported_fixture_sha256": "13fef8a23aea3427ef2d4580e1612110ec657c46165c9ea2c00223d2bf805833",
+    "supported_plan_sha256": "33efeb28ed317a3edf8bbc3156c16b4b7629109ffac0477dc2aeb184a0f3bd5d",
+    "no_evidence_fixture_sha256": "cf43ff0814e386795a3383bdb6f0b3822fd636c2f4f613b0c781cea8cccaa74f",
+    "no_evidence_plan_sha256": "c39a0d6825612767a9d085c5759ac974405ae74d44c989c1bf2d44aa50a2f49d",
+    "citation_corpus_sha256": "e2cce984e7724399f172d8bce19222856134f1b612f4121ad290378088908f3a",
+    "infra_cards_sha256": "7dd5d7e2ca39539181f2f10d84805649511d410913264cf2a19fda45b50f0bf3",
+    "supported_raw_report": "beam-chroma-supported.raw.json",
+    "supported_raw_report_sha256": "439d60bf913448c64b7b226774df3e9f62e1437867d5182dabdf030d6d4f6d24",
+    "no_evidence_raw_report": "beam-chroma-no-evidence.raw.json",
+    "no_evidence_raw_report_sha256": "8aec303108341f613fc775f0f754c234e862eb5dc606e76f10bb8ce56aff6f4e"
   },
   "retrieval_card_ids": [
     "deterministic-context-pack",
@@ -18,37 +25,88 @@
   ],
   "chroma_card_id": "vanilla-rag",
   "question_count": 1,
+  "scorer": "fixture-exact-match-v1: answerer extracts an explicitly updated contract launch code from retrieved context; judge awards 1 only for exact candidate/gold match, otherwise 0; 3 identical votes, no partial credit",
   "observed_fixture_points": [
     {
       "arm": "deterministic",
       "effort": "light",
-      "fixture_judge_score": 1.0,
-      "query_elapsed_us": 15221
+      "scorer_value": 1.0,
+      "answer": "tulip"
     },
     {
       "arm": "vanilla_rag",
       "effort": "light",
-      "fixture_judge_score": 1.0,
-      "query_elapsed_us": 7825
+      "scorer_value": 1.0,
+      "answer": "tulip"
+    },
+    {
+      "arm": "backbone_solo",
+      "effort": "light",
+      "scorer_value": 0.0,
+      "answer": "unknown"
     },
     {
       "arm": "deterministic",
       "effort": "medium",
-      "fixture_judge_score": 1.0,
-      "query_elapsed_us": 4630
+      "scorer_value": 1.0,
+      "answer": "tulip"
     },
     {
       "arm": "vanilla_rag",
       "effort": "medium",
-      "fixture_judge_score": 1.0,
-      "query_elapsed_us": 2115
+      "scorer_value": 1.0,
+      "answer": "tulip"
+    },
+    {
+      "arm": "backbone_solo",
+      "effort": "medium",
+      "scorer_value": 0.0,
+      "answer": "unknown"
     }
   ],
-  "warning": "All answers were constant tulip and all synthetic judge votes were 1; these scores cannot measure retrieval accuracy. Timings include local stub traffic and are not matched vector-DB benchmarks. Example prices are not real billing.",
+  "negative_control_points": [
+    {
+      "arm": "deterministic",
+      "effort": "light",
+      "scorer_value": 0.0,
+      "answer": "unknown"
+    },
+    {
+      "arm": "vanilla_rag",
+      "effort": "light",
+      "scorer_value": 0.0,
+      "answer": "unknown"
+    },
+    {
+      "arm": "backbone_solo",
+      "effort": "light",
+      "scorer_value": 0.0,
+      "answer": "unknown"
+    },
+    {
+      "arm": "deterministic",
+      "effort": "medium",
+      "scorer_value": 0.0,
+      "answer": "unknown"
+    },
+    {
+      "arm": "vanilla_rag",
+      "effort": "medium",
+      "scorer_value": 0.0,
+      "answer": "unknown"
+    },
+    {
+      "arm": "backbone_solo",
+      "effort": "medium",
+      "scorer_value": 0.0,
+      "answer": "unknown"
+    }
+  ],
+  "warning": "Single synthetic question; these scores test evidence sensitivity, not BEAM benchmark accuracy. Local run times and example tariff are not comparative latency or real cost. The infra rows are caveated external VDBBench measurements on a different corpus and host.",
   "cited_published_reference_rows": [
     {
       "card_id": "beam-paper-10m-rag-llama4-maverick-v1",
-      "disposition": "walled-appendix",
+      "disposition": "cite",
       "value": 0.249,
       "benchmark": "BEAM",
       "tier": "10M",
@@ -63,5 +121,34 @@
       "source": "honcho.dev/evals (Dec 2025), via ARCH corpus"
     }
   ],
-  "vector_infra_status": "No citable vector-DB recall/latency/cost rows exist in evidence: docs mirror has zero Chroma/Milvus/Qdrant/Weaviate/Pinecone/FAISS recall/latency numbers; engine perf harness measures Oneiron only. V1 ships the measured-triple schema with zero carded rows. Cost-framing-only when rows arrive; never folded into accuracy."
+  "infra_cost_framing_cards": [
+    {
+      "card_id": "vdbbench-2026-05-laion100m-zilliz-cloud-capacity-12cu",
+      "source": "https://zilliz.com/vdbbench-leaderboard-v2",
+      "measurement": {
+        "recall_at_k": 0.9723,
+        "latency_us": 299316,
+        "cost_usd": 2.198541e-06
+      }
+    },
+    {
+      "card_id": "vdbbench-2026-05-laion100m-turbopuffer-unpinned",
+      "source": "https://zilliz.com/vdbbench-leaderboard-v2",
+      "measurement": {
+        "recall_at_k": 0.9321,
+        "latency_us": 2339210,
+        "cost_usd": 5.232396e-05
+      }
+    },
+    {
+      "card_id": "vdbbench-2026-05-laion100m-pinecone-serverless",
+      "source": "https://zilliz.com/vdbbench-leaderboard-v2",
+      "measurement": {
+        "recall_at_k": 0.9609,
+        "latency_us": 4849571,
+        "cost_usd": 0.004928026817
+      }
+    }
+  ],
+  "vector_infra_status": "VDBBench May 2026 vendor-run infra cards live in vector_db_infra.v1.json; query costs are modeled from published hourly search cost and measured QPS. Cost-framing-only; not same-corpus Oneiron scores and never folded into accuracy."
 }
