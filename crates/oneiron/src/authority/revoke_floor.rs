@@ -7,10 +7,10 @@ use super::*;
 /// Only an ancestry-rejected RevokeActor may contribute outside the set of
 /// fully folded entries. A revoke that was Ready before retroactive pruning
 /// keeps its already verified proof. If an equivocation loser prevented it
-/// from becoming Ready, prove the entire signed branch in isolation, without
-/// admitting its losing grants into the output. An intrinsically invalid
-/// ancestor instead requires revalidation against nearest surviving ancestors.
-/// Every proof and floor is derived afresh from this entry set on every fold.
+/// from becoming Ready, prove its signed branch in isolation. Intrinsically
+/// invalid grants are skipped over within that same branch, never applied;
+/// the global surviving-ancestry check is a fallback, not a separate proof
+/// universe. Every proof and floor is derived afresh from this entry set.
 pub(super) fn retain_invalid_ancestry_revoke_floors(
     merged: &mut FoldState,
     states: &BTreeMap<AuthorityEntryHash, FoldState>,
@@ -46,8 +46,13 @@ pub(super) fn retain_invalid_ancestry_revoke_floors(
             let mut parent_states = BTreeMap::new();
             let mut complete = true;
             for parent in &entry.parent_hashes {
-                match nearest_surviving_ancestors(*parent, entries, states, context.entry_ancestors)
-                {
+                match nearest_surviving_ancestors(
+                    *parent,
+                    entries,
+                    states,
+                    context.entry_ancestors,
+                    None,
+                ) {
                     Some(state) => {
                         parent_states.insert(*parent, state);
                     }
@@ -87,6 +92,7 @@ fn nearest_surviving_ancestors(
     entries: &BTreeMap<AuthorityEntryHash, AuthorityLogEntry>,
     states: &BTreeMap<AuthorityEntryHash, FoldState>,
     ancestors: Option<&BTreeMap<AuthorityEntryHash, BTreeSet<AuthorityEntryHash>>>,
+    skippable: Option<&BTreeSet<AuthorityEntryHash>>,
 ) -> Option<FoldState> {
     let mut frontier = vec![start];
     let mut visited = BTreeSet::new();
@@ -104,7 +110,8 @@ fn nearest_surviving_ancestors(
             continue;
         }
         let entry = entries.get(&hash)?;
-        if entry.parent_hashes.is_empty()
+        if skippable.is_some_and(|allowed| !allowed.contains(&hash))
+            || entry.parent_hashes.is_empty()
             || ancestors
                 .and_then(|index| index.get(&hash))
                 .is_some_and(|past| past.contains(&hash))
@@ -173,6 +180,7 @@ fn revoke_folds_on_signed_branch(
         ..context
     };
     let mut states = BTreeMap::new();
+    let mut invalid = BTreeSet::new();
     while !pending.is_empty() {
         let mut progressed = false;
         for hash in pending.clone() {
@@ -182,15 +190,55 @@ fn revoke_folds_on_signed_branch(
                     pending.remove(&hash);
                     progressed = true;
                 }
+                EntryFold::Invalid(_) if hash != target => {
+                    // No permissive state enters this proof from an invalid
+                    // entry. Its valid prefix can still authorize the revoke.
+                    invalid.insert(hash);
+                    pending.remove(&hash);
+                    progressed = true;
+                }
                 EntryFold::Invalid(_) => return false,
                 EntryFold::Waiting => {}
             }
         }
         if !progressed {
-            return false;
+            break;
         }
     }
-    states
-        .get(&target)
-        .is_some_and(|state| state.vault_id == vault_id)
+    if let Some(state) = states.get(&target) {
+        return state.vault_id == vault_id;
+    }
+    if invalid.is_empty() {
+        return false;
+    }
+    // A child of an invalid entry also cannot contribute permissive state.
+    // Only unresolved descendants of an actual invalid ancestor may be
+    // crossed; another kind of wait must not turn into an ancestry bypass.
+    let skippable: BTreeSet<_> = invalid
+        .iter()
+        .copied()
+        .chain(pending.iter().copied().filter(|hash| {
+            *hash != target
+                && ancestors
+                    .get(hash)
+                    .is_some_and(|past| !past.is_disjoint(&invalid))
+        }))
+        .collect();
+    let mut parent_states = BTreeMap::new();
+    for parent in &entries[&target].parent_hashes {
+        let Some(state) = nearest_surviving_ancestors(
+            *parent,
+            entries,
+            &states,
+            context.entry_ancestors,
+            Some(&skippable),
+        ) else {
+            return false;
+        };
+        parent_states.insert(*parent, state);
+    }
+    matches!(
+        fold_entry_state(&entries[&target], target, &parent_states, branch_context),
+        EntryFold::Ready(proof) if proof.vault_id == vault_id
+    )
 }
