@@ -147,6 +147,8 @@ pub(crate) const FIELD_SKILL_EDIT_SKILL: &str = "skill_edit_skill";
 pub(crate) const FIELD_SKILL_EDIT_SCORE_BEFORE: &str = "skill_edit_score_before";
 /// Held-out replay score of the PROPOSED instructions, as a decimal numeral.
 pub(crate) const FIELD_SKILL_EDIT_SCORE_AFTER: &str = "skill_edit_score_after";
+/// JSON measurement of the two DecoEvo audits and per-axis world agreement.
+pub(crate) const FIELD_SKILL_EDIT_MEASUREMENTS: &str = "skill_edit_measurements";
 /// The Dreamer cycle the verdict counted against, for the per-cycle accept cap.
 pub(crate) const FIELD_SKILL_EDIT_CYCLE: &str = "skill_edit_cycle";
 /// Comma-joined reserved receipt ids the score pair was computed over.
