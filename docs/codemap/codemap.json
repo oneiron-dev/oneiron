@@ -1639,7 +1639,7 @@
      "path": "src/authority/ancestry_evaluator.rs",
      "purpose": "Shared stalled-revocation ancestry evaluation for ordinary and proof folds",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 4
      }
     },
     {
@@ -1830,7 +1830,7 @@
      "path": "src/authority/fork_resolution/ancestry_bypass.rs",
      "purpose": "Scheduling gates, stalled-revocation bypass with freeze classifier, and chain probe",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 6
      }
     },
     {
@@ -2312,7 +2312,7 @@
      "surface": {}
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "test",
      "notable": [],
      "path": "src/authority/tests/revoke_freeze_bypass.rs",

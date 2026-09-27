@@ -13,8 +13,8 @@ mod quarantine_gate;
 mod restore_rank;
 
 pub(super) use self::ancestry_bypass::{
-    entry_folds_on_available_ancestry, entry_waits_on_unresolved_equivocation,
-    revocation_bypass_states,
+    entry_folds_on_available_ancestry, entry_is_frozen_by_pending_widen,
+    entry_waits_on_unresolved_equivocation, revocation_bypass_states,
 };
 pub(super) use self::equivocation_core::{
     EntryFold, EquivocationResolution, build_fork_alarms, reconcile_reported_authority_forks,

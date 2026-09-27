@@ -122,7 +122,8 @@ fn verify_signed_branch(
                     progressed = true;
                 }
                 EntryFold::Invalid(_)
-                    if hash != target && skippable_permissive(&entries[&hash].op) =>
+                    if hash != target
+                        && super::ancestry_evaluator::skippable_permissive(&entries[&hash].op) =>
                 {
                     rejected.insert(hash);
                     pending.remove(&hash);
@@ -147,7 +148,7 @@ fn verify_signed_branch(
             .copied()
             .chain(pending.iter().copied().filter(|hash| {
                 *hash != target
-                    && skippable_permissive(&entries[hash].op)
+                    && super::ancestry_evaluator::skippable_permissive(&entries[hash].op)
                     && ancestors
                         .get(hash)
                         .is_some_and(|past| !past.is_disjoint(&rejected))
@@ -176,17 +177,4 @@ fn verify_signed_branch(
             return None;
         }
     }
-}
-
-/// Only operations that can add actor/roster permission may be skipped when
-/// their own transition fails. A restrictive or mixed-purpose ancestor must
-/// not be silently treated as a harmless grant.
-fn skippable_permissive(op: &AuthorityOp) -> bool {
-    matches!(
-        op,
-        AuthorityOp::BindActor { .. }
-            | AuthorityOp::RebindActor { .. }
-            | AuthorityOp::EnrollDevice { .. }
-            | AuthorityOp::FederationLifecycle(_)
-    )
 }
