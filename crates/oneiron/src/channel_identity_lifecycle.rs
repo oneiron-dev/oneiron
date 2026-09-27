@@ -3,9 +3,9 @@
 use crate::Vault;
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::channel_identity::{
-    ChannelIdentity, ChannelIdentityFulfillment, ChannelIdentityState, IdentityTransition,
-    admit_channel_identity_transition_in_txn, decode_channel_identity_body,
-    encode_channel_identity_body,
+    ChannelIdentity, ChannelIdentityFulfillment, ChannelIdentityState, ChannelIdentityStep,
+    IdentityTransition, InboundDisposition, admit_channel_identity_transition_in_txn,
+    decode_channel_identity_body, encode_channel_identity_body, step_channel_identity_in_txn,
 };
 use crate::entity_id::EntityId;
 use crate::error::{Error, RecordError, Result};
@@ -265,7 +265,7 @@ impl Vault {
             actor: request.actor.gate_actor(),
             provenance: request.actor.provenance(identity_id),
             verb: request.intent.verb().as_str().to_owned(),
-            channel: snapshot.channel.clone(),
+            channel: snapshot.channel().to_owned(),
             channel_identity_ref: Some(identity_id),
             counterparty: None,
             brief_ref: None,
@@ -322,16 +322,16 @@ impl Vault {
                 intent_kind: request.intent.verb().intent_kind().to_owned(),
                 outcome: applied.outcome.to_owned(),
                 gate_decision_id: Some(gate_decision_id),
-                channel: receipt_identity.channel.clone(),
-                address_or_handle: receipt_identity.address_or_handle.clone(),
-                state: receipt_identity.state.as_str().to_owned(),
+                channel: receipt_identity.channel().to_owned(),
+                address_or_handle: receipt_identity.address_or_handle().to_owned(),
+                state: receipt_identity.state().as_str().to_owned(),
                 fulfillment_mode: receipt_identity
-                    .pending_fulfillment
+                    .pending_fulfillment()
                     .map(|mode| mode.as_str().to_owned()),
                 owner_visible_state: applied.owner_visible_state.to_owned(),
                 outbound_closed: applied.outbound_closed,
                 identity_retiring: applied.identity_retiring,
-                quarantine_until: receipt_identity.quarantine_until,
+                quarantine_until: receipt_identity.quarantine_until(),
             },
         )?;
         wtxn.commit()?;
@@ -355,16 +355,27 @@ impl Vault {
     ) -> Result<ChannelIdentityLifecycleResult> {
         let mut wtxn = self.store.env.write_txn()?;
         let current = self.read_channel_identity_in_txn(&wtxn, &input.identity_id)?;
-        let next = match current.state {
-            ChannelIdentityState::PendingFulfillment | ChannelIdentityState::Rotating => {
-                current.transition(ChannelIdentityState::Active, None, input.fulfilled_at, None)?
-            }
-            _ => {
-                return Err(Error::Record(RecordError::InvalidChannelIdentityBody(
-                    "identity is not awaiting fulfillment",
-                )));
-            }
-        };
+        // The state check stays, because "is not awaiting fulfillment" is a
+        // DIFFERENT refusal from "that act is not on this row's table": ops
+        // marking an active row fulfilled has asked for nothing, and the
+        // lifecycle step would happily report a table miss for it. The step
+        // itself is the machine's, and a delegated row re-proves custody inside
+        // this write transaction before it goes live.
+        if !matches!(
+            current.state(),
+            ChannelIdentityState::PendingFulfillment | ChannelIdentityState::Rotating
+        ) {
+            return Err(Error::Record(RecordError::InvalidChannelIdentityBody(
+                "identity is not awaiting fulfillment",
+            )));
+        }
+        let next = step_channel_identity_in_txn(
+            &self.store,
+            &wtxn,
+            &current,
+            ChannelIdentityStep::Fulfill,
+            input.fulfilled_at,
+        )?;
         self.write_existing_channel_identity_in_txn(
             &mut wtxn,
             &input.identity_id,
@@ -382,9 +393,9 @@ impl Vault {
                 intent_kind: "FulfillmentReceipt".to_owned(),
                 outcome: ChannelIdentityState::Active.as_str().to_owned(),
                 gate_decision_id: None,
-                channel: next.channel.clone(),
-                address_or_handle: next.address_or_handle.clone(),
-                state: next.state.as_str().to_owned(),
+                channel: next.channel().to_owned(),
+                address_or_handle: next.address_or_handle().to_owned(),
+                state: next.state().as_str().to_owned(),
                 fulfillment_mode: None,
                 owner_visible_state: ChannelIdentityState::Active.as_str().to_owned(),
                 outbound_closed: false,
@@ -414,11 +425,12 @@ impl Vault {
     ) -> Result<AppliedLifecycle> {
         match intent {
             ChannelIdentityLifecycleIntent::Provision(intent) => {
-                let next = intent.identity.transition(
-                    ChannelIdentityState::PendingFulfillment,
-                    Some(intent.fulfillment_mode),
+                let next = step_channel_identity_in_txn(
+                    &self.store,
+                    wtxn,
+                    &intent.identity,
+                    ChannelIdentityStep::Bind(intent.fulfillment_mode),
                     at,
-                    None,
                 )?;
                 self.create_channel_identity_in_txn(wtxn, &intent.identity_id, &next)?;
                 Ok(AppliedLifecycle {
@@ -431,11 +443,12 @@ impl Vault {
             }
             ChannelIdentityLifecycleIntent::Bind(intent) => {
                 let current = self.read_channel_identity_in_txn(wtxn, &intent.identity_id)?;
-                let next = current.transition(
-                    ChannelIdentityState::PendingFulfillment,
-                    Some(intent.fulfillment_mode),
+                let next = step_channel_identity_in_txn(
+                    &self.store,
+                    wtxn,
+                    &current,
+                    ChannelIdentityStep::Bind(intent.fulfillment_mode),
                     at,
-                    None,
                 )?;
                 self.write_existing_channel_identity_in_txn(
                     wtxn,
@@ -453,7 +466,13 @@ impl Vault {
             }
             ChannelIdentityLifecycleIntent::Rotate(intent) => {
                 let current = self.read_channel_identity_in_txn(wtxn, &intent.identity_id)?;
-                let next = current.transition(ChannelIdentityState::Rotating, None, at, None)?;
+                let next = step_channel_identity_in_txn(
+                    &self.store,
+                    wtxn,
+                    &current,
+                    ChannelIdentityStep::Rotate,
+                    at,
+                )?;
                 self.write_existing_channel_identity_in_txn(
                     wtxn,
                     &intent.identity_id,
@@ -470,8 +489,13 @@ impl Vault {
             }
             ChannelIdentityLifecycleIntent::Release(intent) => {
                 let current = self.read_channel_identity_in_txn(wtxn, &intent.identity_id)?;
-                let released =
-                    current.transition(ChannelIdentityState::Released, None, at, None)?;
+                let released = step_channel_identity_in_txn(
+                    &self.store,
+                    wtxn,
+                    &current,
+                    ChannelIdentityStep::Release,
+                    at,
+                )?;
                 // A self-held release walks straight on into the never-recycle
                 // quarantine hold: we minted that address, so we keep holding
                 // it back. A DELEGATED release stops at Released and stays
@@ -482,14 +506,14 @@ impl Vault {
                 let next = if released.is_delegated() {
                     released
                 } else {
-                    released.transition(
-                        ChannelIdentityState::Quarantine,
-                        None,
+                    released.step(
+                        ChannelIdentityStep::Quarantine {
+                            until: intent.quarantine_until,
+                        },
                         at,
-                        Some(intent.quarantine_until),
                     )?
                 };
-                let outcome = next.state.as_str();
+                let outcome = next.state().as_str();
                 self.write_existing_channel_identity_in_txn(
                     wtxn,
                     &intent.identity_id,
@@ -506,19 +530,22 @@ impl Vault {
             }
             ChannelIdentityLifecycleIntent::RouteInbound(intent) => {
                 let current = self.read_channel_identity_in_txn(wtxn, &intent.identity_id)?;
-                // RELEASED is a retirement stop on BOTH machines — the only one
-                // a delegated row has — and the inbound router already routes
-                // it exactly as it routes QUARANTINE: still delivering, with
-                // outbound closed. Naming it here is what keeps this verb's
-                // answer and the router's answer to "what can this row do for a
-                // message arriving now" from disagreeing about the same row.
+                // This verb and the inbound router answer the same question —
+                // what can this row do for a message arriving now — so they ask
+                // ONE projection rather than each matching the row's state.
+                // That is what keeps them from disagreeing about the same row:
+                // RELEASED is a retirement stop on both machines (the only one
+                // a delegated row has), and it routes exactly as QUARANTINE
+                // does, still delivering with outbound closed.
                 let (outcome, owner_visible_state, outbound_closed, identity_retiring) =
-                    match current.state {
-                        ChannelIdentityState::Tombstone => ("closed", "tombstone", true, false),
-                        ChannelIdentityState::Released | ChannelIdentityState::Quarantine => {
+                    match current.inbound() {
+                        InboundDisposition::Closed => ("closed", "tombstone", true, false),
+                        InboundDisposition::DeliverRetiring => {
                             ("routable", "identity_retiring", true, true)
                         }
-                        _ => ("routable", "routable", false, false),
+                        InboundDisposition::Deliver | InboundDisposition::NotYetRoutable => {
+                            ("routable", "routable", false, false)
+                        }
                     };
                 Ok(AppliedLifecycle {
                     identity: Some(current),
@@ -547,7 +574,7 @@ impl Vault {
             id,
             IdentityTransition::Birth { next: identity },
         )?;
-        self.apply_channel_identity_body(wtxn, id, identity.state_changed_at, data)
+        self.apply_channel_identity_body(wtxn, id, identity.state_changed_at(), data)
     }
 
     fn write_existing_channel_identity_in_txn(
@@ -567,7 +594,7 @@ impl Vault {
             },
         )?;
         let data = encode_channel_identity_body(identity)?;
-        self.apply_channel_identity_body(wtxn, id, identity.state_changed_at, data)
+        self.apply_channel_identity_body(wtxn, id, identity.state_changed_at(), data)
     }
 
     fn read_channel_identity_in_txn(

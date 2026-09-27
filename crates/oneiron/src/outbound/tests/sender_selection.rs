@@ -5,7 +5,7 @@ use super::{
 use crate::Vault;
 use crate::attempt_queue::AttemptQueue;
 use crate::channel_identity::{
-    ChannelIdentity, ChannelIdentityBinding, ChannelIdentityState, SelfHeldShape,
+    ChannelIdentityBinding, ChannelIdentityState, ChannelIdentityStep, SelfHeldShape,
 };
 use crate::connector_key::{
     ConnectorKeyRecord, EffectorBudget, EffectorBudgetOnExhaust, EffectorBudgetWindow,
@@ -40,14 +40,14 @@ fn put_sending_identity(
     id: EntityId,
     binding: ChannelIdentityBinding,
 ) -> crate::Result<()> {
-    let mut identity = ChannelIdentity::requested(
+    let identity = crate::test_util::self_held_identity_in_state(
         "email",
-        format!("sender-{}@example.com", id.to_hex()),
+        &format!("sender-{}@example.com", id.to_hex()),
         SelfHeldShape::DedicatedAddress,
         binding,
+        ChannelIdentityState::Active,
         1_000,
     );
-    identity.state = ChannelIdentityState::Active;
     vault.create_channel_identity(&id, &identity)
 }
 
@@ -155,13 +155,7 @@ fn ambiguous_automatic_sender_refuses_before_dispatch_effects()
         );
 
         // Removing only the competing sender makes automatic faceted sending valid.
-        vault.transition_channel_identity(
-            &second,
-            ChannelIdentityState::Released,
-            None,
-            1_001,
-            None,
-        )?;
+        vault.step_channel_identity(&second, ChannelIdentityStep::Release, 1_001)?;
         let automatic =
             vault.dispatch_outbound_intent(email_send_dispatch_request(actor, 2), &mut sink)?;
         assert_eq!(

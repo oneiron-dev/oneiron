@@ -12,7 +12,7 @@ use crate::error::{Error, Result};
 
 use super::binding::{ChannelIdentityBinding, ChannelIdentityFulfillment};
 
-use super::custody::{DelegatedGrant, DelegatedGrantScope};
+use super::custody::{Custody, DelegatedGrant, DelegatedGrantScope};
 
 use super::keys::{
     CHANNEL_IDENTITY_BODY_KEYS, CHANNEL_IDENTITY_CLAIM_PREDICATES,
@@ -52,57 +52,60 @@ pub fn encode_channel_identity_body(identity: &ChannelIdentity) -> Result<Vec<u8
             Value::from(KEY_SCHEMA_VERSION),
             Value::from(body_schema_version(identity)),
         ),
-        (
-            Value::from(KEY_CHANNEL),
-            Value::from(identity.channel.as_str()),
-        ),
+        (Value::from(KEY_CHANNEL), Value::from(identity.channel())),
         (
             Value::from(KEY_ADDRESS_OR_HANDLE),
-            Value::from(identity.address_or_handle.as_str()),
+            Value::from(identity.address_or_handle()),
         ),
-        (Value::from(KEY_SHAPE), Value::from(identity.shape.as_str())),
+        (
+            Value::from(KEY_SHAPE),
+            Value::from(identity.shape().as_str()),
+        ),
         (
             Value::from(KEY_BINDING_SCOPE),
-            Value::from(identity.binding.scope_str()),
+            Value::from(identity.binding().scope_str()),
         ),
         (
             Value::from(KEY_BINDING_TARGET),
-            encode_binding_target(identity.binding),
+            encode_binding_target(identity.binding()),
         ),
-        (Value::from(KEY_STATE), Value::from(identity.state.as_str())),
+        (
+            Value::from(KEY_STATE),
+            Value::from(identity.state().as_str()),
+        ),
         (
             Value::from(KEY_PENDING_FULFILLMENT),
             identity
-                .pending_fulfillment
+                .pending_fulfillment()
                 .map_or(Value::Nil, |fulfillment| Value::from(fulfillment.as_str())),
         ),
         (
             Value::from(KEY_STATE_CHANGED_AT),
-            Value::from(identity.state_changed_at),
+            Value::from(identity.state_changed_at()),
         ),
         (
             Value::from(KEY_QUARANTINE_UNTIL),
-            identity.quarantine_until.map_or(Value::Nil, Value::from),
+            identity.quarantine_until().map_or(Value::Nil, Value::from),
         ),
         (
             Value::from(KEY_REPUTATION_REF),
-            encode_optional_entity_ref(identity.reputation_ref),
+            encode_optional_entity_ref(identity.reputation_ref()),
         ),
         (
             Value::from(KEY_MANIFEST_REF),
-            encode_optional_entity_ref(identity.manifest_ref),
+            encode_optional_entity_ref(identity.manifest_ref()),
         ),
         (
             Value::from(KEY_BINDING_FACET_REF),
-            encode_optional_entity_ref(identity.binding.facet_ref()),
+            encode_optional_entity_ref(identity.binding().facet_ref()),
         ),
         (
             Value::from("auth_mode"),
-            Value::from(identity.auth_mode.as_str()),
+            Value::from(identity.auth_mode().as_str()),
         ),
     ];
 
-    if let Some(grant) = &identity.grant {
+    if let Some(grant) = identity.grant() {
         entries.push((
             Value::from(KEY_DELEGATED_GRANT_REF),
             Value::from(grant.custody_record_ref.as_str()),
@@ -126,7 +129,7 @@ pub fn encode_channel_identity_body(identity: &ChannelIdentity) -> Result<Vec<u8
 }
 
 pub(super) const fn body_schema_version(identity: &ChannelIdentity) -> u64 {
-    if identity.grant.is_some() {
+    if identity.grant().is_some() {
         CHANNEL_IDENTITY_DELEGATED_SCHEMA_VERSION
     } else {
         CHANNEL_IDENTITY_SCHEMA_VERSION
@@ -322,22 +325,24 @@ pub(super) fn decode_channel_identity_value(value: &Value) -> Result<ChannelIden
     let reputation_ref = decode_optional_entity_ref(required_value(entries, KEY_REPUTATION_REF)?)?;
     let manifest_ref = decode_optional_entity_ref(required_value(entries, KEY_MANIFEST_REF)?)?;
 
-    let identity = ChannelIdentity {
-        auth_mode: required_string(entries, "auth_mode")?.parse()?,
-        channel,
-        address_or_handle,
+    let custody = Custody::from_wire(
         shape,
-        binding,
         state,
         pending_fulfillment,
-        state_changed_at,
         quarantine_until,
+        delegated_grant,
+        state_changed_at,
+    )?;
+    ChannelIdentity::from_stored_parts(
+        required_string(entries, "auth_mode")?.parse()?,
+        channel,
+        address_or_handle,
+        binding,
+        custody,
+        state_changed_at,
         reputation_ref,
         manifest_ref,
-        grant: delegated_grant,
-    };
-    identity.validate()?;
-    Ok(identity)
+    )
 }
 
 pub(super) fn decode_delegated_grant(entries: &[(Value, Value)]) -> Result<DelegatedGrant> {

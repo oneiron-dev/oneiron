@@ -367,15 +367,15 @@ fn active_identity_address(
             continue;
         };
         if !identity.may_send()
-            || crate::counterparty_contact::normalize_channel_class(&identity.channel) != wanted
-            || identity.binding.actor_ref() != Some(actor)
+            || crate::counterparty_contact::normalize_channel_class(identity.channel()) != wanted
+            || identity.binding().actor_ref() != Some(actor)
         {
             continue;
         }
         if found.is_some() {
             return Err(refused("multiple sending identities on this channel"));
         }
-        found = Some(identity.address_or_handle.clone());
+        found = Some(identity.address_or_handle().to_owned());
     }
     Ok(found)
 }

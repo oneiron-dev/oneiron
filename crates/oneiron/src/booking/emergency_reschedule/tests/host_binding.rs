@@ -192,17 +192,15 @@ fn request_as(vault: &Vault, owner: u8) -> EmergencyRescheduleRequest {
 }
 
 fn bind_delivery(vault: &Vault, _event: EntityId, owner: u8) {
-    use crate::channel_identity::{
-        ChannelIdentity, ChannelIdentityBinding, ChannelIdentityState, SelfHeldShape,
-    };
-    let mut identity = ChannelIdentity::requested(
+    use crate::channel_identity::{ChannelIdentityBinding, ChannelIdentityState, SelfHeldShape};
+    let identity = crate::test_util::self_held_identity_in_state(
         "email",
         "host@example.test",
         SelfHeldShape::DedicatedAddress,
         ChannelIdentityBinding::agent(id(owner)),
+        ChannelIdentityState::Active,
         NOW,
     );
-    identity.state = ChannelIdentityState::Active;
     vault.create_channel_identity(&id(0x79), &identity).unwrap();
 }
 
@@ -539,7 +537,7 @@ fn ordinary_reschedule_rechecks_only_confirmation_bound_hosts() {
 #[test]
 fn both_secondary_owner_and_rotated_sender_keep_the_actual_initial_organizer() {
     use crate::channel_identity::{
-        ChannelIdentity, ChannelIdentityBinding, ChannelIdentityState, SelfHeldShape,
+        ChannelIdentityBinding, ChannelIdentityState, ChannelIdentityStep, SelfHeldShape,
     };
     let (_dir, vault) = open_test_vault_with(VaultConfig::default());
     two_host_page(&vault, RoutingMode::Both, true);
@@ -564,22 +562,16 @@ fn both_secondary_owner_and_rotated_sender_keep_the_actual_initial_organizer() {
     )
     .unwrap();
     vault
-        .transition_channel_identity(
-            &id(0x79),
-            ChannelIdentityState::Rotating,
-            None,
-            NOW + 1,
-            None,
-        )
+        .step_channel_identity(&id(0x79), ChannelIdentityStep::Rotate, NOW + 1)
         .unwrap();
-    let mut rotated = ChannelIdentity::requested(
+    let rotated = crate::test_util::self_held_identity_in_state(
         "email",
         "rotated@example.test",
         SelfHeldShape::DedicatedAddress,
         ChannelIdentityBinding::agent(id(OWNER)),
+        ChannelIdentityState::Active,
         NOW + 1,
     );
-    rotated.state = ChannelIdentityState::Active;
     vault.create_channel_identity(&id(0x7d), &rotated).unwrap();
     let batch = plan_emergency_reschedule(
         &vault,

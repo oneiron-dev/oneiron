@@ -15,17 +15,17 @@ use crate::temporal::TimeRange;
 
 use super::address::{AssignmentAddress, AssignmentKey, ChannelKey};
 
-use super::binding::ChannelIdentityFulfillment;
-
 use super::codec::{decode_channel_identity_body, encode_channel_identity_body};
 
 use super::custody::{DelegatedGrant, verify_delegated_custody_in_txn};
 
-use super::lifecycle::ChannelIdentityState;
+use super::lifecycle::ChannelIdentityStep;
 
 use super::record::ChannelIdentity;
 
-use super::transition::{IdentityTransition, admit_channel_identity_transition_in_txn};
+use super::transition::{
+    IdentityTransition, admit_channel_identity_transition_in_txn, step_channel_identity_in_txn,
+};
 
 use super::transition::DelegatedProvisionRequest;
 use crate::error::RecordError;
@@ -49,7 +49,7 @@ impl Vault {
             id,
             IdentityTransition::Birth { next: identity },
         )?;
-        self.apply_channel_identity_body(&mut wtxn, id, identity.state_changed_at, data)?;
+        self.apply_channel_identity_body(&mut wtxn, id, identity.state_changed_at(), data)?;
         wtxn.commit()?;
         Ok(())
     }
@@ -179,33 +179,39 @@ impl Vault {
         .map(|_| ())
     }
 
-    /// Applies a checked ChannelIdentity lifecycle transition in place.
-    pub fn transition_channel_identity(
+    /// Applies ONE checked lifecycle act to a stored ChannelIdentity.
+    ///
+    /// The act is the whole request: `(next_state, pending_fulfillment,
+    /// quarantine_until)` was three independent arguments whose lawful
+    /// combinations the record then had to re-derive — a caller could ask for
+    /// PENDING with no lane, or ACTIVE with a quarantine window, and the door's
+    /// job was to notice. [`ChannelIdentityStep`] carries the payload inside the
+    /// act that decides it, so those requests have no spelling.
+    ///
+    /// A delegated row's live acts re-prove custody in THIS write transaction:
+    /// the proof borrows `wtxn`, so a grant a member revoked between a caller's
+    /// check and this write cannot stand the row up.
+    ///
+    /// # Errors
+    ///
+    /// [`Error::EntityNotFound`] when `id` holds no row,
+    /// [`Error::InvalidEntityType`] when it holds another kind,
+    /// [`RecordError::InvalidChannelIdentityBody`](crate::error::RecordError::InvalidChannelIdentityBody)
+    /// when the act is not on this row's machine or its state's table, and the
+    /// custody arms of [`Self::provision_delegated_identity`] when a live
+    /// delegated act cannot re-prove custody.
+    pub fn step_channel_identity(
         &self,
         id: &EntityId,
-        next_state: ChannelIdentityState,
-        pending_fulfillment: Option<ChannelIdentityFulfillment>,
+        step: ChannelIdentityStep,
         state_changed_at: u64,
-        quarantine_until: Option<u64>,
     ) -> Result<ChannelIdentity> {
         let mut wtxn = self.store.env.write_txn()?;
-        let raw = self
-            .store
-            .port_entity_record(&wtxn, id)?
-            .map(|row| row.encode())
+        let current = self
+            .get_channel_identity_in_txn(&wtxn, id)?
             .ok_or(Error::EntityNotFound)?;
-        let header =
-            EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity header"))?;
-        if header.entity_type != ENTITY_TYPE_CHANNEL_IDENTITY {
-            return Err(Error::InvalidEntityType(header.entity_type));
-        }
-        let current = decode_channel_identity_body(&raw[ENTITY_METADATA_HEADER_LEN..])?;
-        let next = current.transition(
-            next_state,
-            pending_fulfillment,
-            state_changed_at,
-            quarantine_until,
-        )?;
+        let next =
+            step_channel_identity_in_txn(&self.store, &wtxn, &current, step, state_changed_at)?;
         admit_channel_identity_transition_in_txn(
             &self.store,
             &wtxn,

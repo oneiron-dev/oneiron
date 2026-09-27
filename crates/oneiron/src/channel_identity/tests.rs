@@ -47,17 +47,37 @@ fn register_delegated_custody(
     })
 }
 
+/// The stored row R1's accessors are read through: a requested self-held email
+/// mailbox already bound to its channel actor and provisioned against a
+/// manifest.
+///
+/// Built through the CODEC's door rather than by assigning fields, because
+/// after R1 there are no fields to assign — which is the property under test in
+/// half the cases below.
 fn sample_identity() -> ChannelIdentity {
-    let mut identity = ChannelIdentity::requested(
-        "email",
-        "agent@example.com",
+    sample_identity_stored(Custody::requested_self_held(
         SelfHeldShape::DedicatedAddress,
-        ChannelIdentityBinding::agent(entity(0x51)),
+    ))
+}
+
+/// [`sample_identity`] carrying a chosen custody value.
+fn sample_identity_stored(custody: Custody) -> ChannelIdentity {
+    sample_identity_bound(custody, ChannelIdentityBinding::agent(entity(0x51)))
+}
+
+/// [`sample_identity`] carrying a chosen custody value and binding.
+fn sample_identity_bound(custody: Custody, binding: ChannelIdentityBinding) -> ChannelIdentity {
+    ChannelIdentity::from_stored_parts(
+        ChannelAuthMode::ApiKey,
+        "email".to_owned(),
+        "agent@example.com".to_owned(),
+        binding,
+        custody,
         1_800_000_000,
-    );
-    identity.reputation_ref = Some(entity(0xB1));
-    identity.manifest_ref = Some(entity(0xC1));
-    identity
+        Some(entity(0xB1)),
+        Some(entity(0xC1)),
+    )
+    .expect("sample identity")
 }
 
 fn test_vault() -> (tempfile::TempDir, Vault) {
@@ -70,11 +90,9 @@ fn test_vault() -> (tempfile::TempDir, Vault) {
 
 #[test]
 fn channel_identity_codec_and_claim_family_round_trip() -> Result<()> {
-    let identity = sample_identity().transition(
-        ChannelIdentityState::PendingFulfillment,
-        Some(ChannelIdentityFulfillment::Manual),
+    let identity = sample_identity().step(
+        ChannelIdentityStep::Bind(ChannelIdentityFulfillment::Manual),
         1_800_000_010,
-        None,
     )?;
 
     let encoded = encode_channel_identity_body(&identity)?;
@@ -106,51 +124,59 @@ fn state_machine_rejects_skips_and_pins_quarantine_window() -> Result<()> {
     let requested = sample_identity();
     assert!(
         requested
-            .transition(ChannelIdentityState::Active, None, 1_800_000_010, None)
+            .step(ChannelIdentityStep::Fulfill, 1_800_000_010)
             .is_err()
     );
 
-    let pending = requested.transition(
-        ChannelIdentityState::PendingFulfillment,
-        Some(ChannelIdentityFulfillment::Api),
+    let pending = requested.step(
+        ChannelIdentityStep::Bind(ChannelIdentityFulfillment::Api),
         1_800_000_010,
-        None,
     )?;
-    let active = pending.transition(ChannelIdentityState::Active, None, 1_800_000_020, None)?;
+    assert_eq!(
+        pending.pending_fulfillment(),
+        Some(ChannelIdentityFulfillment::Api),
+        "the lane rides on the act, so a pending row always names one",
+    );
+    let active = pending.step(ChannelIdentityStep::Fulfill, 1_800_000_020)?;
     assert!(
         active
-            .transition(ChannelIdentityState::Tombstone, None, 1_800_000_030, None)
+            .step(ChannelIdentityStep::Close, 1_800_000_030)
             .is_err()
     );
 
-    let released = active.transition(ChannelIdentityState::Released, None, 1_800_000_030, None)?;
+    let released = active.step(ChannelIdentityStep::Release, 1_800_000_030)?;
     assert!(
         released
-            .transition(
-                ChannelIdentityState::Quarantine,
-                None,
+            .step(
+                ChannelIdentityStep::Quarantine {
+                    until: 1_800_000_020 + CHANNEL_IDENTITY_MIN_QUARANTINE_SECS,
+                },
                 1_800_000_020,
-                Some(1_800_000_020 + CHANNEL_IDENTITY_MIN_QUARANTINE_SECS),
             )
             .is_err()
     );
     assert!(
         released
-            .transition(
-                ChannelIdentityState::Quarantine,
-                None,
+            .step(
+                ChannelIdentityStep::Quarantine {
+                    until: 1_800_000_040 + CHANNEL_IDENTITY_MIN_QUARANTINE_SECS - 1,
+                },
                 1_800_000_040,
-                Some(1_800_000_040 + CHANNEL_IDENTITY_MIN_QUARANTINE_SECS - 1),
             )
             .is_err()
     );
-    let quarantine = released.transition(
-        ChannelIdentityState::Quarantine,
-        None,
+    let quarantine = released.step(
+        ChannelIdentityStep::Quarantine {
+            until: 1_800_000_040 + CHANNEL_IDENTITY_MIN_QUARANTINE_SECS,
+        },
         1_800_000_040,
-        Some(1_800_000_040 + CHANNEL_IDENTITY_MIN_QUARANTINE_SECS),
     )?;
-    quarantine.transition(ChannelIdentityState::Tombstone, None, 1_900_000_000, None)?;
+    assert_eq!(
+        quarantine.quarantine_until(),
+        Some(1_800_000_040 + CHANNEL_IDENTITY_MIN_QUARANTINE_SECS),
+        "a quarantined row always names the window it is held for",
+    );
+    quarantine.step(ChannelIdentityStep::Close, 1_900_000_000)?;
     Ok(())
 }
 
@@ -187,10 +213,10 @@ fn own_app_home_identity_is_constructible_active_agent_binding() -> Result<()> {
     let agent = entity(0x5E);
     let identity = ChannelIdentity::own_app_home(agent, 7);
     identity.validate()?;
-    assert_eq!(identity.channel, "own_app");
-    assert_eq!(identity.shape, ChannelIdentityShape::DedicatedHandle);
-    assert_eq!(identity.binding, ChannelIdentityBinding::agent(agent));
-    assert_eq!(identity.state, ChannelIdentityState::Active);
+    assert_eq!(identity.channel(), "own_app");
+    assert_eq!(identity.shape(), ChannelIdentityShape::DedicatedHandle);
+    assert_eq!(identity.binding(), ChannelIdentityBinding::agent(agent));
+    assert_eq!(identity.state(), ChannelIdentityState::Active);
     Ok(())
 }
 
@@ -206,10 +232,10 @@ fn vault_create_transition_and_never_recycle_invariant() -> Result<()> {
             &id,
             ENTITY_TYPE_CHANNEL_IDENTITY,
             TimeRange {
-                start: identity.state_changed_at,
-                end: identity.state_changed_at,
+                start: identity.state_changed_at(),
+                end: identity.state_changed_at(),
             },
-            identity.state_changed_at,
+            identity.state_changed_at(),
             &data,
         )
         .expect_err("generic public put must reject maintenance CID records");
@@ -218,42 +244,22 @@ fn vault_create_transition_and_never_recycle_invariant() -> Result<()> {
     vault.create_channel_identity(&id, &identity)?;
     assert_eq!(vault.get_channel_identity(&id)?, Some(identity));
 
-    vault.transition_channel_identity(
+    vault.step_channel_identity(
         &id,
-        ChannelIdentityState::PendingFulfillment,
-        Some(ChannelIdentityFulfillment::Api),
+        ChannelIdentityStep::Bind(ChannelIdentityFulfillment::Api),
         1_800_000_010,
-        None,
     )?;
-    vault.transition_channel_identity(
+    vault.step_channel_identity(&id, ChannelIdentityStep::Fulfill, 1_800_000_020)?;
+    vault.step_channel_identity(&id, ChannelIdentityStep::Release, 1_800_000_030)?;
+    vault.step_channel_identity(
         &id,
-        ChannelIdentityState::Active,
-        None,
-        1_800_000_020,
-        None,
-    )?;
-    vault.transition_channel_identity(
-        &id,
-        ChannelIdentityState::Released,
-        None,
-        1_800_000_030,
-        None,
-    )?;
-    vault.transition_channel_identity(
-        &id,
-        ChannelIdentityState::Quarantine,
-        None,
+        ChannelIdentityStep::Quarantine {
+            until: 1_800_000_040 + CHANNEL_IDENTITY_MIN_QUARANTINE_SECS,
+        },
         1_800_000_040,
-        Some(1_800_000_040 + CHANNEL_IDENTITY_MIN_QUARANTINE_SECS),
     )?;
-    let tombstone = vault.transition_channel_identity(
-        &id,
-        ChannelIdentityState::Tombstone,
-        None,
-        1_900_000_000,
-        None,
-    )?;
-    assert_eq!(tombstone.state, ChannelIdentityState::Tombstone);
+    let tombstone = vault.step_channel_identity(&id, ChannelIdentityStep::Close, 1_900_000_000)?;
+    assert_eq!(tombstone.state(), ChannelIdentityState::Tombstone);
 
     let duplicate = ChannelIdentity::requested(
         "email",
@@ -276,9 +282,19 @@ fn malformed_channel_identity_bodies_fail_closed() {
     let err = decode_channel_identity_body(&encoded).expect_err("trailing bytes rejected");
     assert_eq!(err.kind(), ErrorKind::InvalidChannelIdentityBody);
 
-    let mut blank = sample_identity();
-    blank.address_or_handle = " ".to_owned();
-    let err = encode_channel_identity_body(&blank).expect_err("blank address rejected");
+    // A blank address cannot be assigned onto a built row any more, so the
+    // refusal is proved at the door that can still present one: the decoder's.
+    let err = ChannelIdentity::from_stored_parts(
+        ChannelAuthMode::ApiKey,
+        "email".to_owned(),
+        " ".to_owned(),
+        ChannelIdentityBinding::agent(entity(0x51)),
+        Custody::requested_self_held(SelfHeldShape::DedicatedAddress),
+        1_800_000_000,
+        None,
+        None,
+    )
+    .expect_err("blank address rejected");
     assert_eq!(err.kind(), ErrorKind::InvalidChannelIdentityBody);
 }
 
@@ -363,10 +379,10 @@ fn self_held_requested_door_admits_no_delegated_shape() {
             1_800_000_000,
         );
         // No shape is silently rewritten on the way through.
-        assert_eq!(row.shape, wire);
-        assert_eq!(row.state, ChannelIdentityState::Requested);
+        assert_eq!(row.shape(), wire);
+        assert_eq!(row.state(), ChannelIdentityState::Requested);
         assert!(!row.is_delegated());
-        assert!(row.grant.is_none());
+        assert!(row.grant().is_none());
         row.validate().expect("self-held requested row validates");
     }
     assert_eq!(unspellable, vec![ChannelIdentityShape::DelegatedGrant]);
@@ -383,13 +399,11 @@ fn self_held_requested_door_admits_no_delegated_shape() {
         ChannelIdentityBinding::agent(entity(0x51)),
         1_800_000_000,
     )
-    .transition(
-        ChannelIdentityState::PendingFulfillment,
-        Some(ChannelIdentityFulfillment::Api),
+    .step(
+        ChannelIdentityStep::Bind(ChannelIdentityFulfillment::Api),
         1_800_000_010,
-        None,
     )
-    .and_then(|pending| pending.transition(ChannelIdentityState::Active, None, 1_800_000_020, None))
+    .and_then(|pending| pending.step(ChannelIdentityStep::Fulfill, 1_800_000_020))
     .expect("self-held row reaches Active");
     assert!(active.may_send());
 }
@@ -415,51 +429,53 @@ fn delegated_rows_are_read_only_and_free_their_key_when_retired() -> Result<()> 
         1_800_000_000,
     )?;
     // Birth is `Requested` and the mailbox is normalized once, at the door.
-    assert_eq!(requested.state, ChannelIdentityState::Requested);
-    assert_eq!(requested.address_or_handle, "member@member-owned.example");
+    assert_eq!(requested.state(), ChannelIdentityState::Requested);
+    assert_eq!(requested.address_or_handle(), "member@member-owned.example");
     assert!(requested.is_delegated());
     assert!(!requested.may_send());
 
     // A delegated row has no rotation and no quarantine to step into.
     for banned in [
-        ChannelIdentityState::Rotating,
-        ChannelIdentityState::Quarantine,
+        ChannelIdentityStep::Rotate,
+        ChannelIdentityStep::Quarantine {
+            until: 1_800_000_010 + CHANNEL_IDENTITY_MIN_QUARANTINE_SECS,
+        },
     ] {
         assert!(
             vault
-                .transition_channel_identity(&id, banned, None, 1_800_000_010, None)
+                .step_channel_identity(&id, banned, 1_800_000_010)
                 .is_err(),
             "{banned:?} is not on the delegated machine",
         );
     }
 
-    vault.transition_channel_identity(
+    // And the row itself refuses to step at all outside the vault door: a
+    // delegated act that asserts a live grant can only be proved in the
+    // transaction that writes it.
+    assert_eq!(
+        requested
+            .step(
+                ChannelIdentityStep::Bind(ChannelIdentityFulfillment::Api),
+                1_800_000_010
+            )
+            .expect_err("delegated rows step only through the vault")
+            .kind(),
+        ErrorKind::InvalidChannelIdentityBody,
+    );
+
+    vault.step_channel_identity(
         &id,
-        ChannelIdentityState::PendingFulfillment,
-        Some(ChannelIdentityFulfillment::Api),
+        ChannelIdentityStep::Bind(ChannelIdentityFulfillment::Api),
         1_800_000_010,
-        None,
     )?;
-    let active = vault.transition_channel_identity(
-        &id,
-        ChannelIdentityState::Active,
-        None,
-        1_800_000_020,
-        None,
-    )?;
+    let active = vault.step_channel_identity(&id, ChannelIdentityStep::Fulfill, 1_800_000_020)?;
     // Even live, a scoped-read grant over someone else's mailbox never sends.
     assert!(!active.may_send());
     assert!(active.occupies_assignment_key());
 
     // Retirement frees the key: the mailbox was never ours to hold back, so
     // lawful re-consent stays open after the close.
-    let released = vault.transition_channel_identity(
-        &id,
-        ChannelIdentityState::Released,
-        None,
-        1_800_000_030,
-        None,
-    )?;
+    let released = vault.step_channel_identity(&id, ChannelIdentityStep::Release, 1_800_000_030)?;
     assert!(!released.occupies_assignment_key());
     assert_eq!(
         vault
@@ -477,7 +493,7 @@ fn delegated_rows_are_read_only_and_free_their_key_when_retired() -> Result<()> 
         },
         1_800_000_040,
     )?;
-    assert_eq!(reconsented.state, ChannelIdentityState::Requested);
+    assert_eq!(reconsented.state(), ChannelIdentityState::Requested);
     Ok(())
 }
 
@@ -490,22 +506,24 @@ fn delegated_births_outside_requested_are_refused_at_the_store() -> Result<()> {
     );
     register_delegated_custody(&vault, &grant, "member@member-owned.example")?;
 
-    // An assembled body claiming ACTIVE asserts a provision decision, a bind
-    // edge, a fulfillment and a receipt that never happened.
-    let crafted = ChannelIdentity {
-        auth_mode: crate::channel_identity::ChannelAuthMode::OAuth,
-        channel: EMAIL_CHANNEL.to_owned(),
-        address_or_handle: "member@member-owned.example".to_owned(),
-        shape: ChannelIdentityShape::DelegatedGrant,
-        binding: ChannelIdentityBinding::agent(entity(0x51)),
-        state: ChannelIdentityState::Active,
-        pending_fulfillment: None,
-        state_changed_at: 1_800_000_000,
-        quarantine_until: None,
-        reputation_ref: None,
-        manifest_ref: None,
-        grant: Some(grant),
+    // A STORED body claiming ACTIVE asserts a provision decision, a bind edge,
+    // a fulfillment and a receipt that never happened. The decoder's door is
+    // now the only road that can present one — no caller assembles a row field
+    // by field any more — so the birth law is proved against exactly what a
+    // hostile replica can hand the store.
+    let delegated = |grant: DelegatedGrant, lifecycle: DelegatedLifecycle| {
+        ChannelIdentity::from_stored_parts(
+            ChannelAuthMode::OAuth,
+            EMAIL_CHANNEL.to_owned(),
+            "member@member-owned.example".to_owned(),
+            ChannelIdentityBinding::agent(entity(0x51)),
+            Custody::Delegated { grant, lifecycle },
+            1_800_000_000,
+            None,
+            None,
+        )
     };
+    let crafted = delegated(grant, DelegatedLifecycle::Active)?;
     let err = vault
         .create_channel_identity(&entity(0x72), &crafted)
         .expect_err("a delegated row is born Requested");
@@ -513,14 +531,13 @@ fn delegated_births_outside_requested_are_refused_at_the_store() -> Result<()> {
 
     // And a delegated body naming custody this vault does not hold is refused
     // whatever state it claims.
-    let unbacked = ChannelIdentity {
-        grant: Some(DelegatedGrant::new(
+    let unbacked = delegated(
+        DelegatedGrant::new(
             "oauth/gmail/stranger",
             vec![crate::channel_identity::DelegatedGrantScope::MailRead],
-        )),
-        state: ChannelIdentityState::Requested,
-        ..crafted
-    };
+        ),
+        DelegatedLifecycle::Requested,
+    )?;
     let err = vault
         .create_channel_identity(&entity(0x73), &unbacked)
         .expect_err("custody is verified, never asserted");
@@ -539,8 +556,8 @@ fn assignment_keys_are_canonical_on_every_road() -> Result<()> {
         ChannelIdentityBinding::agent(entity(0x51)),
         1_800_000_000,
     );
-    assert_eq!(identity.channel, "email");
-    assert_eq!(identity.address_or_handle, "agent@example.com");
+    assert_eq!(identity.channel(), "email");
+    assert_eq!(identity.address_or_handle(), "agent@example.com");
     vault.create_channel_identity(&id, &identity)?;
 
     // Every spelling of the one mailbox finds the one row...
@@ -596,14 +613,22 @@ fn channel_auth_modes_register_without_credential_material() -> Result<()> {
         ChannelAuthMode::OAuth,
     ] {
         let (_dir, vault) = test_vault();
-        let mut identity = sample_identity();
-        identity.auth_mode = mode;
+        let identity = ChannelIdentity::from_stored_parts(
+            mode,
+            "email".to_owned(),
+            "agent@example.com".to_owned(),
+            ChannelIdentityBinding::agent(entity(0x51)),
+            Custody::requested_self_held(SelfHeldShape::DedicatedAddress),
+            1_800_000_000,
+            None,
+            None,
+        )?;
         let id = entity(0xD1);
         vault.create_channel_identity(&id, &identity)?;
         assert_eq!(vault.get_channel_identity(&id)?, Some(identity.clone()));
         let bytes = encode_channel_identity_body(&identity)?;
         let decoded = decode_channel_identity_body(&bytes)?;
-        assert_eq!(decoded.auth_mode, mode);
+        assert_eq!(decoded.auth_mode(), mode);
         assert_eq!(mode.as_str().parse::<ChannelAuthMode>()?, mode);
         let claims = identity.claim_bodies(entity(0xD1));
         assert!(

@@ -54,10 +54,7 @@ use self::shared_validate::{
 // header items the tests name bare. After the directory split the seam
 // re-imports them so `tests.rs` resolves exactly as it did before.
 #[cfg(test)]
-use crate::channel_identity::{
-    ChannelIdentity, ChannelIdentityBinding, ChannelIdentityFulfillment, ChannelIdentityShape,
-    SelfHeldShape,
-};
+use crate::channel_identity::{ChannelIdentityFulfillment, ChannelIdentityShape};
 #[cfg(test)]
 use crate::channel_identity_lifecycle::{
     ChannelIdentityLifecycleActor, ChannelIdentityLifecycleVerb, ProvisionIntent,

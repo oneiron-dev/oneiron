@@ -1,8 +1,7 @@
 use super::handoff::{SurfaceEventKey, surface_event_dedupe_key};
 use super::*;
 use crate::channel_identity::{
-    CHANNEL_IDENTITY_MIN_QUARANTINE_SECS, ChannelIdentity, ChannelIdentityFulfillment,
-    SelfHeldShape,
+    ChannelIdentity, ChannelIdentityFulfillment, ChannelIdentityStep, SelfHeldShape,
 };
 use crate::config::VaultConfig;
 use crate::test_util::open_test_vault_with;
@@ -30,21 +29,35 @@ fn subject_owner(vault: &Vault) -> Result<crate::write_envelope::WriteActor> {
 }
 
 fn identity(address: &str, agent_ref: EntityId, state: ChannelIdentityState) -> ChannelIdentity {
-    let mut identity = ChannelIdentity::requested(
-        "email",
+    identity_bound(address, ChannelIdentityBinding::agent(agent_ref), state)
+}
+
+/// [`identity`] on an arbitrary binding: the masked, unmasked, and vault-bound
+/// cases the router answers differently.
+fn identity_bound(
+    address: &str,
+    binding: ChannelIdentityBinding,
+    state: ChannelIdentityState,
+) -> ChannelIdentity {
+    identity_on_channel("email", address, binding, state)
+}
+
+/// [`identity_bound`] on an arbitrary channel key, including one outside the
+/// ruled set.
+fn identity_on_channel(
+    channel: &str,
+    address: &str,
+    binding: ChannelIdentityBinding,
+    state: ChannelIdentityState,
+) -> ChannelIdentity {
+    crate::test_util::self_held_identity_in_state(
+        channel,
         address,
         SelfHeldShape::DedicatedAddress,
-        ChannelIdentityBinding::agent(agent_ref),
+        binding,
+        state,
         1_800_000_000,
-    );
-    identity.state = state;
-    identity.pending_fulfillment = None;
-    identity.quarantine_until = None;
-    if state == ChannelIdentityState::Quarantine {
-        identity.quarantine_until =
-            Some(identity.state_changed_at + CHANNEL_IDENTITY_MIN_QUARANTINE_SECS);
-    }
-    identity
+    )
 }
 
 fn input(address: &str, counterparty: SurfaceCounterpartyStamp) -> InboundSurfaceEventInput {
@@ -198,12 +211,19 @@ fn inbound_requested_and_pending_fulfillment_reject_as_inactive() -> Result<()> 
 
     let pending_ref = entity(0x16);
     let pending_agent = entity(0xD6);
-    let mut pending = identity(
+    // The MANUAL lane, not the helper's API default: the fulfillment mode rides
+    // on the bind act, so naming the lane is naming the step.
+    let pending = ChannelIdentity::requested(
+        "email",
         "pending@example.com",
-        pending_agent,
-        ChannelIdentityState::PendingFulfillment,
-    );
-    pending.pending_fulfillment = Some(ChannelIdentityFulfillment::Manual);
+        SelfHeldShape::DedicatedAddress,
+        ChannelIdentityBinding::agent(pending_agent),
+        1_800_000_000,
+    )
+    .step(
+        ChannelIdentityStep::Bind(ChannelIdentityFulfillment::Manual),
+        1_800_000_000,
+    )?;
     vault.create_channel_identity(&pending_ref, &pending)?;
 
     for (address, identity_ref, agent_ref) in [
@@ -444,14 +464,11 @@ fn blank_source_and_correlation_stamps_are_rejected() -> Result<()> {
 fn inbound_vault_bound_identity_rejects_as_non_agent_bound() -> Result<()> {
     let (_dir, vault) = test_vault();
     let identity_ref = entity(0x17);
-    let mut vault_bound = ChannelIdentity::requested(
-        "email",
+    let vault_bound = identity_bound(
         "vault-bound@example.com",
-        SelfHeldShape::DedicatedAddress,
         ChannelIdentityBinding::vault(7),
-        1_800_000_000,
+        ChannelIdentityState::Active,
     );
-    vault_bound.state = ChannelIdentityState::Active;
     vault.create_channel_identity(&identity_ref, &vault_bound)?;
 
     let receipt = vault.route_inbound_surface_event(input(
@@ -1122,15 +1139,12 @@ fn unruled_channel_key_is_refused_before_a_source_app_is_stamped() -> Result<()>
     let agent_ref = entity(0x66);
     // ChannelIdentity admits any nonempty channel string, so an ACTIVE identity
     // on a key outside the ruled nine is a reachable shape.
-    let mut unruled = ChannelIdentity::requested(
+    let unruled = identity_on_channel(
         "carrier-pigeon",
         "coop@example.com",
-        SelfHeldShape::DedicatedAddress,
         ChannelIdentityBinding::agent(agent_ref),
-        1_800_000_000,
+        ChannelIdentityState::Active,
     );
-    unruled.state = ChannelIdentityState::Active;
-    unruled.pending_fulfillment = None;
     vault.create_channel_identity(&identity_ref, &unruled)?;
 
     let inbound = InboundSurfaceEventInput::new(
@@ -1190,14 +1204,11 @@ fn identity_rejections_never_enqueue() -> Result<()> {
         ),
     )?;
     // Non-agent-bound identity.
-    let mut vault_bound = ChannelIdentity::requested(
-        "email",
+    let vault_bound = identity_bound(
         "vault-bound@example.com",
-        SelfHeldShape::DedicatedAddress,
         ChannelIdentityBinding::vault(7),
-        1_800_000_000,
+        ChannelIdentityState::Active,
     );
-    vault_bound.state = ChannelIdentityState::Active;
     vault.create_channel_identity(&entity(0x21), &vault_bound)?;
     // Inactive + tombstoned identities.
     vault.create_channel_identity(
@@ -1369,12 +1380,11 @@ fn routed_event_carries_actor_facet_and_subject_stamps() -> Result<()> {
     )?;
 
     let identity_ref = entity(0x95);
-    let mut record = identity(
+    let record = identity_bound(
         "masked@example.com",
-        actor_ref,
+        ChannelIdentityBinding::actor_with_facet(actor_ref, facet),
         ChannelIdentityState::Active,
     );
-    record.binding = ChannelIdentityBinding::actor_with_facet(actor_ref, facet);
     vault.create_channel_identity(&identity_ref, &record)?;
 
     let receipt = vault.route_inbound_surface_event(input(
@@ -1396,12 +1406,11 @@ fn routed_event_carries_actor_facet_and_subject_stamps() -> Result<()> {
 fn vault_bound_identity_still_rejects_with_the_stable_wire_string() -> Result<()> {
     let (_dir, vault) = test_vault();
     let identity_ref = entity(0x96);
-    let mut record = identity(
+    let record = identity_bound(
         "vaulted@example.com",
-        entity(0x97),
+        ChannelIdentityBinding::vault(7),
         ChannelIdentityState::Active,
     );
-    record.binding = ChannelIdentityBinding::vault(7);
     vault.create_channel_identity(&identity_ref, &record)?;
 
     let receipt = vault.route_inbound_surface_event(input(
@@ -1502,8 +1511,11 @@ fn routing_resolves_merge_and_omits_split_subject_without_rewriting_anchor() -> 
             1_800_000_000,
         )?;
         let historical = vault.get_claim(&anchor_id)?.expect("anchor");
-        let mut record = identity("redirect@example.com", actor, ChannelIdentityState::Active);
-        record.binding = ChannelIdentityBinding::actor_with_facet(actor, facet);
+        let record = identity_bound(
+            "redirect@example.com",
+            ChannelIdentityBinding::actor_with_facet(actor, facet),
+            ChannelIdentityState::Active,
+        );
         vault.create_channel_identity(&entity(0xC9), &record)?;
         let evidence = IdentityOpEvidence {
             refs: Vec::new(),
@@ -1639,8 +1651,11 @@ fn subject_stamp_uses_event_received_at_not_processing_time() -> Result<()> {
             )
         })?;
         let before = vault.get(&id)?;
-        let mut record = identity("timed@example.com", actor, state);
-        record.binding = ChannelIdentityBinding::actor_with_facet(actor, facet);
+        let record = identity_bound(
+            "timed@example.com",
+            ChannelIdentityBinding::actor_with_facet(actor, facet),
+            state,
+        );
         vault.create_channel_identity(&entity(0xD3), &record)?;
         for (at, present) in [
             (start + 2, false),

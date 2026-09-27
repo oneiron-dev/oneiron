@@ -130,7 +130,7 @@ fn lifecycle_verbs_gate_receipt_and_manual_fulfillment() -> Result<()> {
     assert_eq!(provision.outcome, "pending_fulfillment");
     assert!(provision.gate_receipt_id.is_some());
     assert_eq!(
-        provision.identity.as_ref().expect("identity").state,
+        provision.identity.as_ref().expect("identity").state(),
         ChannelIdentityState::PendingFulfillment
     );
 
@@ -141,7 +141,7 @@ fn lifecycle_verbs_gate_receipt_and_manual_fulfillment() -> Result<()> {
     })?;
     assert_eq!(fulfilled.outcome, "active");
     assert_eq!(
-        fulfilled.identity.as_ref().expect("identity").state,
+        fulfilled.identity.as_ref().expect("identity").state(),
         ChannelIdentityState::Active
     );
 
@@ -189,7 +189,7 @@ fn lifecycle_verbs_gate_receipt_and_manual_fulfillment() -> Result<()> {
     assert!(released.outbound_closed);
     assert!(released.identity_retiring);
     assert_eq!(
-        released.identity.as_ref().expect("identity").state,
+        released.identity.as_ref().expect("identity").state(),
         ChannelIdentityState::Quarantine
     );
 
@@ -357,8 +357,14 @@ fn route_inbound_against_tombstone_reports_closed() -> Result<()> {
     )?;
 
     let identity_id = entity(0xE2);
-    let mut tombstoned = requested_identity(agent, 4_000);
-    tombstoned.state = ChannelIdentityState::Tombstone;
+    let tombstoned = crate::test_util::self_held_identity_in_state(
+        "email",
+        &format!("agent-{}@example.test", agent.to_hex()),
+        crate::channel_identity::SelfHeldShape::DedicatedAddress,
+        crate::channel_identity::ChannelIdentityBinding::agent(agent),
+        ChannelIdentityState::Tombstone,
+        4_000,
+    );
     vault.create_channel_identity(&identity_id, &tombstoned)?;
 
     let routed = vault.apply_channel_identity_lifecycle_intent(request(
@@ -372,7 +378,7 @@ fn route_inbound_against_tombstone_reports_closed() -> Result<()> {
     assert!(routed.outbound_closed);
     assert!(!routed.identity_retiring);
     assert_eq!(
-        routed.identity.as_ref().expect("identity").state,
+        routed.identity.as_ref().expect("identity").state(),
         ChannelIdentityState::Tombstone
     );
     Ok(())

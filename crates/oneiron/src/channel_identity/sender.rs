@@ -56,8 +56,8 @@ pub(crate) fn resolve_channel_identity_ref_for_connector(
         // outbound effect would be sending AS the member on an authority we
         // were never given.
         if !identity.may_send()
-            || normalize_channel_class(&identity.channel) != channel_class
-            || identity.binding.actor_ref() != Some(bound_actor)
+            || normalize_channel_class(identity.channel()) != channel_class
+            || identity.binding().actor_ref() != Some(bound_actor)
         {
             continue;
         }

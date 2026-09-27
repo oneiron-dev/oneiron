@@ -3,7 +3,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::Vault;
-use crate::channel_identity::{ChannelIdentityBinding, ChannelIdentityState};
+use crate::channel_identity::{ChannelIdentityBinding, InboundDisposition};
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 
@@ -543,7 +543,7 @@ pub(super) fn route_inbound_surface_event(
     // wire string `non_agent_bound_identity`: adapters branch on it and the
     // `/v1/core` schema enumerates it, so it is receipt-stable and is NOT
     // renamed to follow the actor vocabulary.
-    let (actor_ref, facet_ref) = match identity.binding {
+    let (actor_ref, facet_ref) = match identity.binding() {
         ChannelIdentityBinding::Actor {
             actor_ref,
             facet_ref,
@@ -562,22 +562,28 @@ pub(super) fn route_inbound_surface_event(
 
     // Subject eligibility follows the adapter event, not queue processing time.
     let at = input.received_at;
-    match identity.state {
-        ChannelIdentityState::Active | ChannelIdentityState::Rotating => routed_receipt(
+    // ONE projection, asked of the row, rather than this router's own match on
+    // the row's state. The delegated machine has no ROTATING and no QUARANTINE,
+    // so a `(shape, state)` match here had to name states one of the two
+    // machines cannot be in and silently agree with the lifecycle verb about
+    // which of them retire. `inbound()` is where that answer lives now, and
+    // both callers read it.
+    match identity.inbound() {
+        InboundDisposition::Deliver => routed_receipt(
             input,
             identity_ref,
             ActorStamps::resolve(vault, actor_ref, facet_ref, at)?,
             false,
             claims_not_instructions,
         ),
-        ChannelIdentityState::Released | ChannelIdentityState::Quarantine => routed_receipt(
+        InboundDisposition::DeliverRetiring => routed_receipt(
             input,
             identity_ref,
             ActorStamps::resolve(vault, actor_ref, facet_ref, at)?,
             true,
             claims_not_instructions,
         ),
-        ChannelIdentityState::Tombstone => Ok(rejected_receipt(
+        InboundDisposition::Closed => Ok(rejected_receipt(
             input,
             Some(identity_ref),
             Some(actor_ref),
@@ -585,16 +591,14 @@ pub(super) fn route_inbound_surface_event(
             claims_not_instructions,
             InboundSurfaceRejectionReason::TombstonedReceivingIdentity,
         )),
-        ChannelIdentityState::Requested | ChannelIdentityState::PendingFulfillment => {
-            Ok(rejected_receipt(
-                input,
-                Some(identity_ref),
-                Some(actor_ref),
-                false,
-                claims_not_instructions,
-                InboundSurfaceRejectionReason::InactiveReceivingIdentity,
-            ))
-        }
+        InboundDisposition::NotYetRoutable => Ok(rejected_receipt(
+            input,
+            Some(identity_ref),
+            Some(actor_ref),
+            false,
+            claims_not_instructions,
+            InboundSurfaceRejectionReason::InactiveReceivingIdentity,
+        )),
     }
 }
 

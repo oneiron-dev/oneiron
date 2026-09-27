@@ -433,13 +433,13 @@ fn optional_delegated_mailbox_uses_custody_ref_only() -> Result<()> {
         .expect("delegated identity");
     assert!(identity.is_delegated());
     assert_eq!(
-        identity.binding,
+        identity.binding(),
         ChannelIdentityBinding::agent(entity(MEMBER_ACTOR)),
         "the member's actor holds the mailbox"
     );
-    assert_eq!(identity.state, ChannelIdentityState::Requested);
+    assert_eq!(identity.state(), ChannelIdentityState::Requested);
     assert!(!identity.may_send());
-    let grant = identity.grant.expect("custody handle");
+    let grant = identity.grant().expect("custody handle");
     assert_eq!(grant.custody_record_ref, requested.custody_name);
     assert_eq!(grant.scopes, requested.scopes);
 
@@ -641,7 +641,7 @@ fn bind_mailbox(vault: &Vault, identity: EntityId) -> Result<()> {
             .identity
             .as_ref()
             .expect("identity")
-            .pending_fulfillment,
+            .pending_fulfillment(),
         Some(crate::channel_identity::ChannelIdentityFulfillment::Manual)
     );
     assert_mailbox_lifecycle_receipt(vault, identity, &result, "bind", Some("allow"))
@@ -661,7 +661,7 @@ fn fulfill_mailbox(vault: &Vault, identity: EntityId) -> Result<()> {
             .identity
             .as_ref()
             .expect("identity")
-            .pending_fulfillment,
+            .pending_fulfillment(),
         None
     );
     assert_mailbox_lifecycle_receipt(vault, identity, &result, "fulfill", None)

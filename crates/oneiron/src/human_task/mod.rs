@@ -61,7 +61,6 @@ use self::{
 #[cfg(test)]
 use crate::Vault;
 #[cfg(test)]
-use crate::channel_identity::ChannelIdentityState;
 #[cfg(test)]
 use crate::edge::EdgeActorClass;
 #[cfg(test)]

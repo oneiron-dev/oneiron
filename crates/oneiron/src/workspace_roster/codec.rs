@@ -600,7 +600,7 @@ pub(super) fn verify_mailbox_revision(
     let txn = vault.store.env.read_txn()?;
     let identity = read_onboarding_mailbox_in_txn(vault, &txn, intent, mailbox)?
         .ok_or(Error::EntityNotFound)?;
-    require_active_mailbox(mailbox, identity.state)?;
+    require_active_mailbox(mailbox, identity.state())?;
     drop(txn);
     vault.verify_channel_identity_autonomy(&mailbox.autonomy, owner)?;
     Ok(Some(revision))

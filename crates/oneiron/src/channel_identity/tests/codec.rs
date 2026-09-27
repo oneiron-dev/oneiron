@@ -53,6 +53,31 @@ fn delegated_body_entries(shape: &str, version: u64) -> Vec<(Value, Value)> {
 const DELEGATED_GRANT_REF_IDX: usize = 14;
 const GRANT_SCOPES_IDX: usize = 15;
 
+/// A row carrying `custody` and `binding`, with the auth mode that custody
+/// requires. A delegated row is an OAuth grant by construction, so the pair is
+/// chosen here rather than left for the caller to get wrong.
+fn delegated_or_self_held_sample(
+    custody: Custody,
+    binding: ChannelIdentityBinding,
+) -> ChannelIdentity {
+    let (auth_mode, address) = if custody.is_delegated() {
+        (ChannelAuthMode::OAuth, "member@member-owned.example")
+    } else {
+        (ChannelAuthMode::ApiKey, "agent@example.com")
+    };
+    ChannelIdentity::from_stored_parts(
+        auth_mode,
+        "email".to_owned(),
+        address.to_owned(),
+        binding,
+        custody,
+        1_800_000_000,
+        None,
+        None,
+    )
+    .expect("codec fixture row")
+}
+
 fn encode_entries(entries: Vec<(Value, Value)>) -> Vec<u8> {
     let mut out = Vec::new();
     rmpv::encode::write_value(&mut out, &Value::Map(entries)).expect("fixture encodes");
@@ -67,8 +92,9 @@ fn canonical_self_held_bodies_carry_the_facet_key() -> Result<()> {
         ChannelIdentityShape::DedicatedHandle,
         ChannelIdentityShape::SharedPresence,
     ] {
-        let mut identity = sample_identity();
-        identity.shape = shape;
+        let identity = sample_identity_stored(Custody::requested_self_held(
+            SelfHeldShape::from_shape(shape).expect("self-held shape"),
+        ));
         let encoded = encode_channel_identity_body(&identity)?;
         assert_eq!(decode_channel_identity_body(&encoded)?, identity);
         let Value::Map(entries) =
@@ -233,60 +259,37 @@ fn unsupported_schema_versions_are_rejected() -> Result<()> {
 }
 
 #[test]
-fn delegated_rows_have_no_rotation_or_quarantine_state() -> Result<()> {
-    let identity = sample_delegated_identity();
-    let active = identity
-        .transition(
-            ChannelIdentityState::PendingFulfillment,
-            Some(ChannelIdentityFulfillment::Api),
-            1_800_000_010,
-            None,
-        )?
-        .transition(ChannelIdentityState::Active, None, 1_800_000_020, None)?;
-
+fn delegated_rows_have_no_rotation_or_quarantine_state() {
     // ROTATING and QUARANTINE both assert product custody of the underlying
-    // account. On a member's mailbox neither is ours to claim, at any layer.
-    let err = active
-        .transition(ChannelIdentityState::Rotating, None, 1_800_000_030, None)
-        .expect_err("delegated rows must not rotate");
-    assert_eq!(err.kind(), ErrorKind::InvalidChannelIdentityBody);
+    // account. On a member's mailbox neither is ours to claim — and after R1 the
+    // delegated machine has no variant to land either in, so the refusal is
+    // proved where a body can still name one: the stored-body decoder.
+    for state in ["rotating", "quarantine"] {
+        let mut claimed =
+            delegated_body_entries("delegated_grant", CHANNEL_IDENTITY_DELEGATED_SCHEMA_VERSION);
+        claimed[6].1 = Value::from(state);
+        if state == "quarantine" {
+            claimed[9].1 = Value::from(1_800_000_000 + CHANNEL_IDENTITY_MIN_QUARANTINE_SECS);
+        }
+        let err = decode_channel_identity_body(&encode_entries(claimed))
+            .expect_err("a delegated body is never rotated or quarantined");
+        assert_eq!(err.kind(), ErrorKind::InvalidChannelIdentityBody, "{state}");
+    }
 
-    let released = active.transition(ChannelIdentityState::Released, None, 1_800_000_030, None)?;
-    let err = released
-        .transition(
-            ChannelIdentityState::Quarantine,
-            None,
-            1_800_000_040,
-            Some(1_800_000_040 + CHANNEL_IDENTITY_MIN_QUARANTINE_SECS),
-        )
-        .expect_err("delegated rows must not quarantine");
-    assert_eq!(err.kind(), ErrorKind::InvalidChannelIdentityBody);
-
-    // The tie runs both ways: custody without the shape, and the shape
-    // without custody, are equally unconstructible.
-    let mut shape_without_custody = sample_delegated_identity();
-    shape_without_custody.grant = None;
-    assert_eq!(
-        shape_without_custody
-            .validate()
-            .expect_err("delegated shape requires custody")
-            .kind(),
-        ErrorKind::InvalidChannelIdentityBody
-    );
-
-    let mut custody_without_shape = sample_identity();
-    custody_without_shape.grant = Some(DelegatedGrant::new(
-        "gmail-delegated:stray",
-        vec![DelegatedGrantScope::MailMetadata],
-    ));
-    assert_eq!(
-        custody_without_shape
-            .validate()
-            .expect_err("self-held shape refuses custody")
-            .kind(),
-        ErrorKind::InvalidChannelIdentityBody
-    );
-    Ok(())
+    // The tie runs both ways, and both ways are now UNSPELLABLE rather than
+    // refused: custody and the lifecycle it runs travel in one `Custody` value,
+    // so "a delegated shape with no grant" and "a self-held shape carrying one"
+    // have no inhabitant to validate. What a stored body can still claim is a
+    // key set that disagrees with its shape, and that is what fails.
+    for (shape, custody_keys) in [("delegated_grant", false), ("dedicated_address", true)] {
+        let mut entries = delegated_body_entries(shape, CHANNEL_IDENTITY_DELEGATED_SCHEMA_VERSION);
+        if !custody_keys {
+            entries.truncate(DELEGATED_GRANT_REF_IDX);
+        }
+        let err = decode_channel_identity_body(&encode_entries(entries))
+            .expect_err("shape and custody keys must agree");
+        assert_eq!(err.kind(), ErrorKind::InvalidChannelIdentityBody, "{shape}");
+    }
 }
 
 #[test]
@@ -317,13 +320,16 @@ fn claim_binding_scope_accepts_only_current_spellings() -> Result<()> {
 
 #[test]
 fn current_bindings_round_trip_and_reject_obsolete_scope_or_missing_facet_key() -> Result<()> {
-    for mut identity in [sample_identity(), sample_delegated_identity()] {
+    for custody in [
+        Custody::requested_self_held(SelfHeldShape::DedicatedAddress),
+        sample_delegated_identity().custody().clone(),
+    ] {
         for binding in [
             ChannelIdentityBinding::actor(entity(0x51)),
             ChannelIdentityBinding::actor_with_facet(entity(0x51), entity(0x77)),
             ChannelIdentityBinding::vault(7),
         ] {
-            identity.binding = binding;
+            let identity = delegated_or_self_held_sample(custody.clone(), binding);
             let encoded = encode_channel_identity_body(&identity)?;
             let decoded = decode_channel_identity_body(&encoded)?;
             assert_eq!(decoded, identity);

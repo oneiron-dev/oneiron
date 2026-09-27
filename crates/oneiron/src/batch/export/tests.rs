@@ -3,7 +3,7 @@ use crate::authority::{
     AuthorityAttestation, AuthorityKey, AuthorityLogEntry, AuthorityOp, AuthoritySignature,
     AuthorityTier, DeviceAuthority, ROLE_OWNER, authority_transcript,
 };
-use crate::channel_identity::{ChannelIdentity, ChannelIdentityBinding, ChannelIdentityState};
+use crate::channel_identity::{ChannelIdentityBinding, ChannelIdentityState};
 use crate::claim::{ClaimApprovalStatus, ClaimSource};
 use crate::companion::CompanionProvenance;
 use crate::edge::EdgeActorClass;
@@ -194,11 +194,25 @@ fn companion_export_checks_channel_ceiling_scope_and_lifecycle() -> Result<()> {
             .all(|item| item.record() != &shared_public)
     );
 
-    let mut identity = ChannelIdentity::own_app_home(entity(0xB6), 1);
+    // One live self-held row per binding, because the binding is chosen at
+    // construction now rather than overwritten after it.
+    let live = |binding| {
+        crate::test_util::self_held_identity_in_state(
+            "own_app",
+            "own_app:export-fixture",
+            crate::channel_identity::SelfHeldShape::DedicatedHandle,
+            binding,
+            ChannelIdentityState::Active,
+            1,
+        )
+    };
     let mut channel = crate::federation::Scope::top();
     // Actor-bound and other-vault identities cannot carry shared-vault rows.
-    for binding in [identity.binding, ChannelIdentityBinding::vault(8)] {
-        identity.binding = binding;
+    for binding in [
+        ChannelIdentityBinding::agent(entity(0xB6)),
+        ChannelIdentityBinding::vault(8),
+    ] {
+        let identity = live(binding);
         let layer = companion_export_layer_for_channel(&records, &expressions, &channel, &identity);
         assert_eq!(layer.len(), 2);
         assert!(layer.relationships().is_empty());
@@ -209,7 +223,7 @@ fn companion_export_checks_channel_ceiling_scope_and_lifecycle() -> Result<()> {
                 .all(|item| item.record() != &shared_public)
         );
     }
-    identity.binding = ChannelIdentityBinding::vault(7);
+    let identity = live(ChannelIdentityBinding::vault(7));
     channel.sensitivity =
         crate::federation::SensitivityCeiling::AtMost(crate::federation::Sensitivity::Public);
     let public = companion_export_layer_for_channel(&records, &expressions, &channel, &identity);
@@ -241,21 +255,53 @@ fn companion_export_checks_channel_ceiling_scope_and_lifecycle() -> Result<()> {
         ChannelIdentityState::Released,
         ChannelIdentityState::Tombstone,
     ] {
-        identity.state = state;
+        let not_sending = crate::test_util::self_held_identity_in_state(
+            "own_app",
+            "own_app:export-fixture",
+            crate::channel_identity::SelfHeldShape::DedicatedHandle,
+            ChannelIdentityBinding::vault(7),
+            state,
+            1,
+        );
         assert!(
-            companion_export_layer_for_channel(&records, &expressions, &channel, &identity)
+            companion_export_layer_for_channel(&records, &expressions, &channel, &not_sending)
                 .is_empty()
         );
     }
-    identity.state = ChannelIdentityState::Active;
-    identity.shape = crate::channel_identity::ChannelIdentityShape::DelegatedGrant;
-    assert!(
-        companion_export_layer_for_channel(&records, &expressions, &channel, &identity).is_empty()
+    // A DELEGATED row and a ZERO-vault row are both rows no lawful road
+    // produces, which is exactly why the filter must still refuse them: the
+    // fixture door states that it skips the bounds checks.
+    let delegated = crate::channel_identity::ChannelIdentity::from_parts_unchecked(
+        crate::channel_identity::ChannelAuthMode::OAuth,
+        "email".to_owned(),
+        "member@member-owned.example".to_owned(),
+        ChannelIdentityBinding::vault(7),
+        crate::channel_identity::Custody::Delegated {
+            grant: crate::channel_identity::DelegatedGrant::new(
+                "oauth/gmail/member",
+                vec![crate::channel_identity::DelegatedGrantScope::MailRead],
+            ),
+            lifecycle: crate::channel_identity::DelegatedLifecycle::Active,
+        },
+        1,
     );
-    identity.shape = crate::channel_identity::ChannelIdentityShape::DedicatedHandle;
-    identity.binding = ChannelIdentityBinding::vault(0);
     assert!(
-        companion_export_layer_for_channel(&records, &expressions, &channel, &identity).is_empty()
+        companion_export_layer_for_channel(&records, &expressions, &channel, &delegated).is_empty()
+    );
+    let zero_vault = crate::channel_identity::ChannelIdentity::from_parts_unchecked(
+        crate::channel_identity::ChannelAuthMode::Local,
+        "own_app".to_owned(),
+        "own_app:export-fixture".to_owned(),
+        ChannelIdentityBinding::vault(0),
+        crate::channel_identity::Custody::SelfHeld {
+            shape: crate::channel_identity::SelfHeldShape::DedicatedHandle,
+            lifecycle: crate::channel_identity::SelfHeldLifecycle::Active,
+        },
+        1,
+    );
+    assert!(
+        companion_export_layer_for_channel(&records, &expressions, &channel, &zero_vault)
+            .is_empty()
     );
     Ok(())
 }

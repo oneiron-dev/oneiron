@@ -14,7 +14,7 @@ use crate::campaign::claims::{
     CommDoNotContactValue, DO_NOT_CONTACT_SCOPE_ALL, PREDICATE_COMM_DO_NOT_CONTACT,
     encode_do_not_contact_value,
 };
-use crate::channel_identity::{ChannelIdentity, SelfHeldShape};
+use crate::channel_identity::SelfHeldShape;
 use crate::claim::{ClaimApprovalStatus, ClaimBody, ClaimSource, ClaimSubject};
 use crate::config::VaultConfig;
 use crate::outbound_consent::DataClass;
@@ -245,14 +245,14 @@ fn put_booking_claims(
 }
 
 fn identity(vault: &Vault, seed: u8, actor: EntityId, channel: &str, address: &str) {
-    let mut identity = ChannelIdentity::requested(
+    let identity = crate::test_util::self_held_identity_in_state(
         channel,
         address,
         SelfHeldShape::DedicatedAddress,
         ChannelIdentityBinding::agent(actor),
+        ChannelIdentityState::Active,
         NOW,
     );
-    identity.state = ChannelIdentityState::Active;
     vault
         .create_channel_identity(&entity(seed), &identity)
         .expect("create sending identity");

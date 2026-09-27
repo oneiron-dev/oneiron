@@ -44,9 +44,10 @@ pub use address::{
     AssignmentAddress, AssignmentKey, ChannelKey, MailboxAddr, normalize_email_domain,
 };
 pub use custody::{
-    DelegatedGrant, DelegatedGrantScope, delegated_custody_effector, delegated_custody_scopes,
-    delegated_custody_subject_scope,
+    Custody, DelegatedGrant, DelegatedGrantScope, InboundDisposition, delegated_custody_effector,
+    delegated_custody_scopes, delegated_custody_subject_scope,
 };
+pub use lifecycle::{DelegatedLifecycle, SelfHeldLifecycle};
 
 pub use self::binding::{ChannelIdentityBinding, ChannelIdentityFulfillment};
 pub use self::codec::{
@@ -63,7 +64,7 @@ pub use self::keys::{
     PREDICATE_CHANNEL_IDENTITY_REPUTATION_REF, PREDICATE_CHANNEL_IDENTITY_SHAPE,
     PREDICATE_CHANNEL_IDENTITY_STATE, PREDICATE_CHANNEL_IDENTITY_STATE_CHANGED_AT,
 };
-pub use self::lifecycle::ChannelIdentityState;
+pub use self::lifecycle::{ChannelIdentityState, ChannelIdentityStep};
 pub use self::record::ChannelIdentity;
 pub use self::shape::{ChannelIdentityShape, SelfHeldShape};
 pub use self::transition::DelegatedProvisionRequest;
@@ -75,7 +76,9 @@ pub(crate) use self::codec::validate_channel_identity_claim_structure;
 pub(crate) use self::sender::enrich_dispatch_channel_identity;
 #[cfg(test)]
 pub(crate) use self::sender::resolve_channel_identity_ref_for_connector;
-pub(crate) use self::transition::{IdentityTransition, admit_channel_identity_transition_in_txn};
+pub(crate) use self::transition::{
+    IdentityTransition, admit_channel_identity_transition_in_txn, step_channel_identity_in_txn,
+};
 
 #[cfg(test)]
 mod tests;

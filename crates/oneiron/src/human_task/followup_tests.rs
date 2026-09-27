@@ -4,7 +4,8 @@ use super::*;
 
 use crate::attempt_queue::AttemptQueue;
 use crate::channel_identity::{
-    ChannelIdentity, ChannelIdentityBinding, ChannelIdentityFulfillment, SelfHeldShape,
+    ChannelIdentity, ChannelIdentityBinding, ChannelIdentityFulfillment, ChannelIdentityStep,
+    SelfHeldShape,
 };
 use crate::comm::{
     CommClaimValue, record_comm_inbound_stop, resolve_or_create_comm_party, run_comm_projector,
@@ -169,16 +170,14 @@ fn active_email_identity(vault: &Vault) -> EntityId {
         )
         .expect("create channel identity");
     vault
-        .transition_channel_identity(
+        .step_channel_identity(
             &identity_ref,
-            ChannelIdentityState::PendingFulfillment,
-            Some(ChannelIdentityFulfillment::Api),
+            ChannelIdentityStep::Bind(ChannelIdentityFulfillment::Api),
             NOW,
-            None,
         )
         .expect("enter fulfillment");
     vault
-        .transition_channel_identity(&identity_ref, ChannelIdentityState::Active, None, NOW, None)
+        .step_channel_identity(&identity_ref, ChannelIdentityStep::Fulfill, NOW)
         .expect("activate the identity");
     identity_ref
 }
