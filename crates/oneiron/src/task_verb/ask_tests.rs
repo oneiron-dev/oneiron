@@ -2321,9 +2321,11 @@ fn pending_soft_confirm_recovers_route_and_remains_gated_without_authorization()
         companion_for: Some(person),
         provenance_refs: Default::default(),
     };
-    let memory = fixture.vault.memory(companion, EdgeActorClass::Agent);
-    memory.tasks_answer(&handle, &word)?;
-    memory.tasks_answer(&handle, &word)?;
+    {
+        let memory = fixture.vault.memory(companion, EdgeActorClass::Agent);
+        memory.tasks_answer(&handle, &word)?;
+        memory.tasks_answer(&handle, &word)?;
+    }
     assert_eq!(
         fixture
             .vault
@@ -2331,7 +2333,6 @@ fn pending_soft_confirm_recovers_route_and_remains_gated_without_authorization()
         Some(TaskAskSoftConfirmDelivery::PendingRoute)
     );
     // A new vault handle recovers the pending work without replaying the answer.
-    drop(memory);
     let RuledAskFixture {
         vault: original,
         dir,
@@ -2658,7 +2659,7 @@ fn class_policy_narrows_guest_facts_and_selects_soft_confirm_surface() -> Result
     fixture.vault.create_standing_grant(&owner, bound)?;
     let mut spec = fixture.spec();
     spec.intent_key = "guest-class-limit".into();
-    spec.who = Some(TaskAskTarget::Guests([(person, guest.clone())].into()));
+    spec.who = Some(TaskAskTarget::Guests([(person, guest)].into()));
     spec.what.class_key = Some("meeting".into());
     spec.what.context_refs.push(extra);
     let mut class = fixture.policy(false);
