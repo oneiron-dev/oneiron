@@ -91,7 +91,19 @@ pub(crate) async fn serve_artifact_path(
     if let (Some(token), Some(selector)) = (token, query_selector) {
         // Canonicalize a query-selected bundle BEFORE navigation. A browser
         // drops a document's query when it requests relative JS/CSS/links.
-        return artifact_selection_redirect_response(&uri, token, selector, file_path);
+        return artifact_selection_redirect_response(&uri, token, selector);
+    }
+    if let Some(token) = token
+        && selected.is_none()
+        && file_path.is_empty()
+    {
+        // Even Published needs a selector namespace, or `c/`, `f/`, and
+        // `b/` inside the stored bundle would collide with selector tags.
+        return artifact_selection_redirect_response(
+            &uri,
+            token,
+            oneiron::ArtifactSnapshotSelector::default(),
+        );
     }
     if token.is_some() && file_path.is_empty() && !uri.path().ends_with('/') {
         return artifact_root_redirect_response(&uri);
@@ -189,9 +201,10 @@ pub(crate) fn artifact_token_route_path(
         return Ok((None, None, path));
     };
     let (token, path) = rest.split_once('/').unwrap_or((rest, ""));
-    let Some((kind, tail)) = path.split_once('/') else {
+    let Some(tagged) = path.strip_prefix("_s/") else {
         return Ok((Some(token), None, path));
     };
+    let (kind, tail) = tagged.split_once('/').unwrap_or((tagged, ""));
     let parsed = match kind {
         "c" => {
             let (channel, file) = tail.split_once('/').unwrap_or((tail, ""));
@@ -230,7 +243,6 @@ fn artifact_selection_redirect_response(
     uri: &Uri,
     token: &str,
     selector: oneiron::ArtifactSnapshotSelector,
-    file_path: &str,
 ) -> Result<Response, EnvelopedApiError> {
     let segment = match selector {
         oneiron::ArtifactSnapshotSelector::Channel(channel) => format!("c/{}", channel.as_str()),
@@ -240,12 +252,17 @@ fn artifact_selection_redirect_response(
         oneiron::ArtifactSnapshotSelector::BlobVersion(version) => format!("b/{version}"),
         _ => return Err(ApiError::not_found("artifact", None).into()),
     };
-    let prefix = uri
+    let (prefix, raw_token_path) = uri
         .path()
         .split_once("/_t/")
-        .map(|(before, _)| before)
         .ok_or_else(|| ApiError::not_found("artifact", None))?;
-    let target = format!("{prefix}/_t/{token}/{segment}/{file_path}");
+    // Axum's Path extractor percent-decodes the wildcard. Use OriginalUri's
+    // RAW suffix so a literal `#`, `?`, or `%20` in a stored file name cannot
+    // turn into a fragment, query, or a second decode on the redirect hop.
+    let encoded_file_path = raw_token_path
+        .split_once('/')
+        .map_or("", |(_, suffix)| suffix);
+    let target = format!("{prefix}/_t/{token}/_s/{segment}/{encoded_file_path}");
     let mut response = Response::new(Body::empty());
     *response.status_mut() = StatusCode::PERMANENT_REDIRECT;
     response

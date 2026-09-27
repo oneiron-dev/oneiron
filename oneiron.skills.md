@@ -562,7 +562,7 @@ Authentication: configured API bearer credential, unless the server explicitly a
 Path parameters:
 
 - `artifact` required: code project id or canonical lowercase hex blob entity id.
-- `path` optional: code snapshot file path, or the blob export name / stable `export` path. Root requests select `index.html` for code and the export for blobs. For a link-token pin, use `/a/{artifact}/_t/{token}/` for Published or `/a/{artifact}/_t/{token}/c/preview/` for Preview. Immutable exports use `/a/{artifact}/_t/{token}/f/{forkHash}/` or `/a/{artifact}/_t/{token}/b/{blobVersion}/`. Relative bundle assets inherit both capability and selector. A token URL with a `channel`, `forkHash`, or `blobVersion` query redirects to that canonical selector-bearing path after authorization.
+- `path` optional: code snapshot file path, or the blob export name / stable `export` path. Root requests select `index.html` for code and the export for blobs. For a link-token pin, open `/a/{artifact}/_t/{token}/` for Published (redirects to `/_s/c/published/`) or use `/a/{artifact}/_t/{token}/_s/c/preview/` for Preview. Immutable exports use `/a/{artifact}/_t/{token}/_s/f/{forkHash}/` or `/a/{artifact}/_t/{token}/_s/b/{blobVersion}/`. The reserved `_s` selector marker leaves ordinary bundle directories such as `c/`, `f/`, and `b/` untouched. Relative bundle assets inherit both capability and selector. A token URL with a `channel`, `forkHash`, or `blobVersion` query redirects to that canonical selector-bearing path after authorization.
 
 Query parameters:
 

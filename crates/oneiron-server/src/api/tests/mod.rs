@@ -276,7 +276,16 @@ pub(super) fn ingest_artifact_snapshot(
     learned_at: u64,
 ) -> oneiron::codebase::RepoIngestResult {
     let mut paths = vec!["index.html", "app.js"];
-    for extra in ["style.css", "next.html"] {
+    for extra in [
+        "style.css",
+        "next.html",
+        "c/app.js",
+        "f/style.css",
+        "b/next.html",
+        "report#1.js",
+        "report?2.js",
+        "literal%20.js",
+    ] {
         if repo_dir.join(extra).is_file() {
             paths.push(extra);
         }

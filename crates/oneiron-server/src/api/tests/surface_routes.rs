@@ -1390,7 +1390,18 @@ async fn artifact_tiers_bind_tokens_and_live_world_grants_without_an_existence_o
         (missing.0, stable_error(&missing.2)),
         "a query token cannot carry into relative resources"
     );
-    let link_root = format!("/a/site/_t/{token}/");
+    let requested_root = format!("/a/site/_t/{token}/");
+    let redirect = route_bytes(
+        server.clone(),
+        Request::builder()
+            .uri(&requested_root)
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(redirect.0, StatusCode::PERMANENT_REDIRECT);
+    let link_root = format!("/a/site/_t/{token}/_s/c/published/");
+    assert_eq!(redirect.1.get(LOCATION).unwrap(), link_root.as_str());
     let linked = route_bytes(
         server.clone(),
         Request::builder()
@@ -1476,7 +1487,7 @@ async fn artifact_tiers_bind_tokens_and_live_world_grants_without_an_existence_o
     assert_eq!(
         direct_url,
         format!(
-            "/a/site/_t/{token}/f/{}/index.html",
+            "/a/site/_t/{token}/_s/f/{}/index.html",
             oneiron::artifact_hex(&hash)
         )
     );
@@ -1720,7 +1731,7 @@ async fn preview_link_bundle_keeps_its_selector_for_relative_assets_and_navigati
     .await;
     assert_eq!(landing.0, StatusCode::PERMANENT_REDIRECT);
     let target = landing.1.get(LOCATION).unwrap().to_str().unwrap();
-    assert_eq!(target, format!("/a/site/_t/{token}/c/preview/"));
+    assert_eq!(target, format!("/a/site/_t/{token}/_s/c/preview/"));
     let loaded = route_bytes(
         server.clone(),
         Request::builder().uri(target).body(Body::empty()).unwrap(),
@@ -1820,7 +1831,7 @@ async fn preview_link_bundle_keeps_its_selector_for_relative_assets_and_navigati
     assert_eq!(
         hash_root,
         format!(
-            "/a/site/_t/{token}/f/{}/",
+            "/a/site/_t/{token}/_s/f/{}/",
             oneiron::artifact_hex(&preview.snapshot.fork_hash)
         )
     );
@@ -1837,7 +1848,7 @@ async fn preview_link_bundle_keeps_its_selector_for_relative_assets_and_navigati
     let wrong = route_bytes(
         server.clone(),
         Request::builder()
-            .uri(format!("/a/site/_t/{}/c/preview/app.js", "0".repeat(64)))
+            .uri(format!("/a/site/_t/{}/_s/c/preview/app.js", "0".repeat(64)))
             .body(Body::empty())
             .unwrap(),
     )
@@ -2003,7 +2014,7 @@ async fn blob_link_and_member_tiers_follow_pact_revocation_and_pointer_death() {
     let blob_target = linked_blob.1.get(LOCATION).unwrap().to_str().unwrap();
     assert_eq!(
         blob_target,
-        format!("/a/{}/_t/{blob_token}/b/{version}/export", blob.to_hex())
+        format!("/a/{}/_t/{blob_token}/_s/b/{version}/export", blob.to_hex())
     );
     let linked_blob = route_bytes(
         server.clone(),
@@ -2097,4 +2108,210 @@ async fn blob_link_and_member_tiers_follow_pact_revocation_and_pointer_death() {
         (dead_blob.0, stable_error(&dead_blob.2)),
         (missing.0, stable_error(&missing.2))
     );
+}
+
+#[tokio::test]
+async fn published_token_root_keeps_reserved_directories_and_encoded_code_names() {
+    let (_dir, server) = test_server_with_config(SyncServerConfig {
+        auth_secret: Some("secret".into()),
+        allow_unauthenticated: false,
+        ..Default::default()
+    });
+    let repo = create_artifact_repo(
+        b"<script src=\"c/app.js\"></script><link rel=\"stylesheet\" href=\"f/style.css\"><a href=\"b/next.html\">next</a>",
+    );
+    for dir in ["c", "f", "b"] {
+        std::fs::create_dir(repo.path().join(dir)).unwrap();
+    }
+    for (path, bytes) in [
+        ("c/app.js", b"window.c = true;".as_slice()),
+        ("f/style.css", b"body { color: green; }".as_slice()),
+        ("b/next.html", b"<h1>next</h1>".as_slice()),
+        ("report#1.js", b"hash name".as_slice()),
+        ("report?2.js", b"query name".as_slice()),
+        ("literal%20.js", b"percent name".as_slice()),
+    ] {
+        std::fs::write(repo.path().join(path), bytes).unwrap();
+    }
+    run_artifact_git(repo.path(), &["add", "."]);
+    run_artifact_git(
+        repo.path(),
+        &["commit", "-m", "reserved path and encoded names"],
+    );
+    let snapshot = ingest_artifact_snapshot(&server, repo.path(), "site", 10);
+    let (tier, token) = oneiron::artifact_hosting::ArtifactServeTier::mint_link_token();
+    server
+        .vault
+        .publish_artifact_pointer_with_tier(
+            "site",
+            oneiron::ArtifactPointerChannel::Published,
+            &snapshot.snapshot.fork_hash,
+            tier,
+        )
+        .unwrap();
+    let root = route_bytes(
+        server.clone(),
+        Request::builder()
+            .uri(format!("/a/site/_t/{token}/"))
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(root.0, StatusCode::PERMANENT_REDIRECT);
+    let base = root.1.get(LOCATION).unwrap().to_str().unwrap().to_owned();
+    assert_eq!(base, format!("/a/site/_t/{token}/_s/c/published/"));
+    let html = route_bytes(
+        server.clone(),
+        Request::builder().uri(&base).body(Body::empty()).unwrap(),
+    )
+    .await;
+    assert_eq!(html.0, StatusCode::OK);
+    assert!(
+        std::str::from_utf8(&html.2)
+            .unwrap()
+            .contains("src=\"c/app.js\"")
+    );
+    for (relative, expected) in [
+        ("c/app.js", b"window.c = true;".as_slice()),
+        ("f/style.css", b"body { color: green; }".as_slice()),
+        ("b/next.html", b"<h1>next</h1>".as_slice()),
+    ] {
+        // These are the browser's normal relative URLs from the redirected HTML.
+        let asset = route_bytes(
+            server.clone(),
+            Request::builder()
+                .uri(format!("{base}{relative}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await;
+        assert_eq!(asset.0, StatusCode::OK, "{relative}");
+        assert_eq!(asset.2.as_ref(), expected, "{relative}");
+    }
+    // The unselected legacy prefix also treats c/f/b as stored file paths.
+    for relative in ["c/app.js", "f/style.css", "b/next.html"] {
+        let asset = route_bytes(
+            server.clone(),
+            Request::builder()
+                .uri(format!("/a/site/_t/{token}/{relative}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await;
+        assert_eq!(asset.0, StatusCode::OK, "{relative}");
+    }
+    let hash = oneiron::artifact_hex(&snapshot.snapshot.fork_hash);
+    for (encoded, expected) in [
+        ("report%231.js", b"hash name".as_slice()),
+        ("report%3F2.js", b"query name".as_slice()),
+        ("literal%2520.js", b"percent name".as_slice()),
+    ] {
+        let requested = format!("/a/site/_t/{token}/{encoded}?forkHash={hash}");
+        let first = route_bytes(
+            server.clone(),
+            Request::builder()
+                .uri(requested)
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await;
+        assert_eq!(first.0, StatusCode::PERMANENT_REDIRECT, "{encoded}");
+        let target = first.1.get(LOCATION).unwrap().to_str().unwrap();
+        assert_eq!(target, format!("/a/site/_t/{token}/_s/f/{hash}/{encoded}"));
+        let followed = route_bytes(
+            server.clone(),
+            Request::builder().uri(target).body(Body::empty()).unwrap(),
+        )
+        .await;
+        assert_eq!(followed.0, StatusCode::OK, "{encoded}");
+        assert_eq!(followed.2.as_ref(), expected, "{encoded}");
+    }
+}
+
+#[tokio::test]
+async fn blob_token_redirect_round_trips_escaped_export_names() {
+    let (_dir, server) = test_server_with_config(SyncServerConfig {
+        auth_secret: Some("secret".into()),
+        allow_unauthenticated: false,
+        ..Default::default()
+    });
+    let actor = oneiron::EntityId::now();
+    server
+        .vault
+        .put_entity(
+            &actor,
+            oneiron::registry::ENTITY_TYPE_PERSON,
+            oneiron::TimeRange { start: 1, end: 1 },
+            1,
+            b"publisher",
+        )
+        .unwrap();
+    for (name, encoded, bytes) in [
+        ("report#1.pdf", "report%231.pdf", b"hash blob".as_slice()),
+        ("report?2.pdf", "report%3F2.pdf", b"query blob".as_slice()),
+        (
+            "literal%20.pdf",
+            "literal%2520.pdf",
+            b"percent blob".as_slice(),
+        ),
+    ] {
+        let id = oneiron::EntityId::now();
+        server
+            .vault
+            .put_blob_artifact(
+                &id,
+                &oneiron::blob_artifact::BlobArtifactBody::new(name, "application/pdf"),
+                oneiron::TimeRange { start: 1, end: 1 },
+                1,
+            )
+            .unwrap();
+        let version = server
+            .vault
+            .append_blob_artifact_version(
+                &id,
+                bytes,
+                &oneiron::blob_artifact::BlobVersionProvenance::UserUpload,
+                oneiron::WriteActor::new(actor, oneiron::EdgeActorClass::Human),
+                oneiron::TimeRange { start: 2, end: 2 },
+                2,
+            )
+            .unwrap()
+            .version;
+        let (tier, token) = oneiron::artifact_hosting::ArtifactServeTier::mint_link_token();
+        server
+            .vault
+            .publish_blob_artifact_pointer_with_tier(
+                &id,
+                oneiron::ArtifactPointerChannel::Published,
+                version,
+                tier,
+            )
+            .unwrap();
+        let requested = format!(
+            "/a/{}/_t/{token}/{encoded}?blobVersion={version}",
+            id.to_hex()
+        );
+        let first = route_bytes(
+            server.clone(),
+            Request::builder()
+                .uri(requested)
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await;
+        assert_eq!(first.0, StatusCode::PERMANENT_REDIRECT, "{name}");
+        let target = first.1.get(LOCATION).unwrap().to_str().unwrap();
+        assert_eq!(
+            target,
+            format!("/a/{}/_t/{token}/_s/b/{version}/{encoded}", id.to_hex())
+        );
+        let followed = route_bytes(
+            server.clone(),
+            Request::builder().uri(target).body(Body::empty()).unwrap(),
+        )
+        .await;
+        assert_eq!(followed.0, StatusCode::OK, "{name}");
+        assert_eq!(followed.2.as_ref(), bytes, "{name}");
+        assert_eq!(followed.1.get(CACHE_CONTROL).unwrap(), "private, no-store");
+    }
 }
