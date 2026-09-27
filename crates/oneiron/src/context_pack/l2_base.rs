@@ -201,7 +201,10 @@ pub(super) fn produce_l2_base(
             };
             Ok(serde_json::json!({
                 "id": id.to_hex(), "subj": subject.to_hex(),
-                "pred": body.predicate, "val": super::hydration::rmpv_to_json(&body.value),
+                "pred": body.predicate,
+                "val": crate::serialize::null_credentials(
+                    "val", &super::hydration::rmpv_to_json(&body.value),
+                ),
                 "world": body.world.map(|world| world.to_hex()),
             }))
         })

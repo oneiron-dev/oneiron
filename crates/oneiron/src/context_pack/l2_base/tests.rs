@@ -666,3 +666,168 @@ fn implicit_base_shed_by_token_budget_restores_a_fitting_ranked_claim() -> Resul
     assert!(String::from_utf8_lossy(&bytes.bytes).contains("budget-visible"));
     Ok(())
 }
+
+#[test]
+fn implicit_l2_nulls_credentials_before_caching_and_in_every_output() -> Result<()> {
+    let (_dir, vault, _) = fixture();
+    let owner = vault.ensure_embedded_owner_actor().unwrap();
+    let id = crate::test_util::entity(0xC4);
+    let body = ClaimBody::new(
+        "profile.preference",
+        ClaimSubject::Entity(owner),
+        rmpv::Value::Map(vec![
+            (
+                rmpv::Value::from("accessToken"),
+                rmpv::Value::from("l2-private-material"),
+            ),
+            (
+                rmpv::Value::from("ordinary"),
+                rmpv::Value::from("safe-value"),
+            ),
+        ]),
+        0.9,
+        ClaimApprovalStatus::Auto,
+        ClaimLifecycleStatus::Active,
+    );
+    vault.put_claim(&id, &body, TimeRange { start: 1, end: 1 }, 1)?;
+    vault.batch().text(&id, &[("body", "l2needle")]).commit()?;
+    let builder = || vault.context_pack().search_text("l2needle", 10);
+    let first = builder().run()?.l2_base.expect("implicit prefix");
+    let rows: serde_json::Value = serde_json::from_str(&first.body).unwrap();
+    assert!(rows[0]["val"]["accessToken"].is_null());
+    assert_eq!(rows[0]["val"]["ordinary"], "safe-value");
+    assert!(!first.body.contains("l2-private-material"));
+    let again = builder().run()?.l2_base.unwrap();
+    assert!(Arc::ptr_eq(&first.body, &again.body));
+
+    let projected = crate::serialize::project_pack_for_json_response(
+        builder().run()?,
+        &crate::serialize::SerializeConfig {
+            format: PackFormat::Json,
+            profile: crate::context_pack::FieldProfile::Standard,
+            budget: 4000,
+            allocation: Default::default(),
+            include_stats: false,
+            merge_neighbors: true,
+            max_field_chars: crate::context_pack::DEFAULT_MAX_FIELD_CHARS,
+            max_item_tokens: 0,
+        },
+    );
+    assert!(
+        !projected
+            .l2_base
+            .as_ref()
+            .unwrap()
+            .body
+            .contains("l2-private-material")
+    );
+    assert!(
+        projected
+            .results
+            .iter()
+            .all(|row| row.fields.as_ref().is_none_or(|fields| {
+                !serde_json::to_string(fields)
+                    .unwrap()
+                    .contains("l2-private-material")
+            }))
+    );
+    for format in [
+        PackFormat::Json,
+        PackFormat::Yaml,
+        PackFormat::Toon,
+        PackFormat::Markdown,
+        PackFormat::Plaintext,
+        PackFormat::OpenaiCompat,
+        PackFormat::AnthropicMessages,
+        PackFormat::Gemini,
+    ] {
+        let output = builder().format(format).token_budget(0).run_serialized()?;
+        let text = String::from_utf8(output).unwrap();
+        assert!(!text.contains("l2-private-material"), "{format:?}");
+        assert!(text.contains("safe-value"), "{format:?}");
+    }
+    Ok(())
+}
+
+#[test]
+fn implicit_l2_preserves_provider_envelopes_and_ingest_roundtrip() -> Result<()> {
+    let (_dir, vault, _) = fixture();
+    let owner = vault.ensure_embedded_owner_actor().unwrap();
+    claim(
+        &vault,
+        crate::test_util::entity(0xC5),
+        owner,
+        "stable preference",
+    )?;
+    let fresh = crate::test_util::entity(0xC6);
+    let raw = rmp_serde::to_vec_named(&serde_json::json!({"txt":"fresh-delta"})).unwrap();
+    vault
+        .batch()
+        .put(
+            &fresh,
+            ENTITY_TYPE_TURN,
+            TimeRange { start: 2, end: 2 },
+            2,
+            &raw,
+        )
+        .text(&fresh, &[("body", "l2needle")])
+        .commit()?;
+    let summary = vault
+        .context_pack()
+        .search_text("l2needle", 10)
+        .run()?
+        .l2_base
+        .unwrap();
+    for (format, source, field) in [
+        (PackFormat::OpenaiCompat, "openai-compat", "messages"),
+        (
+            PackFormat::AnthropicMessages,
+            "anthropic-messages",
+            "messages",
+        ),
+        (PackFormat::Gemini, "gemini-api", "contents"),
+    ] {
+        let builder = || {
+            vault
+                .context_pack()
+                .search_text("l2needle", 10)
+                .format(format)
+                .token_budget(0)
+                .max_field_chars(0)
+        };
+        let wire = builder().run_serialized()?;
+        assert_eq!(
+            wire,
+            builder().run_serialized()?,
+            "{format:?} must be stable"
+        );
+        let root: serde_json::Value = serde_json::from_slice(&wire).unwrap();
+        assert!(root.get("l2_base").is_none());
+        assert!(root.get("delta").is_none());
+        assert_eq!(root["secrets_nulled"], true);
+        let messages = root[field]
+            .as_array()
+            .expect("provider's native message array");
+        assert!(messages.len() >= 2, "{format:?} keeps the read-time delta");
+        let prefix = match format {
+            PackFormat::OpenaiCompat => messages[0]["content"].as_str().unwrap(),
+            PackFormat::AnthropicMessages => messages[0]["content"][0]["text"].as_str().unwrap(),
+            PackFormat::Gemini => messages[0]["parts"][0]["text"].as_str().unwrap(),
+            _ => unreachable!(),
+        };
+        let prefix: serde_json::Value = serde_json::from_str(prefix).unwrap();
+        assert_eq!(prefix["body"], summary.body.as_ref());
+        let normalized = crate::ingest::INGEST_SOURCE_REGISTRY
+            .normalize(source, &String::from_utf8(wire).unwrap())
+            .expect("provider ingest");
+        assert_eq!(normalized.records.len(), messages.len());
+        assert!(
+            normalized
+                .records
+                .iter()
+                .skip(1)
+                .any(|row| row.text.contains("fresh-delta"))
+        );
+    }
+    Ok(())
+}
