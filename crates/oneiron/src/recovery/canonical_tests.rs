@@ -846,3 +846,202 @@ fn canonical_adapter_recovery_binds_merge_target_to_displayed_proposal() -> Resu
     assert!(orphan.validate().is_err());
     Ok(())
 }
+
+#[cfg(feature = "sync")]
+#[test]
+fn canonical_roundtrip_keeps_suppression_record_over_quarantined_tombstone() -> Result<()> {
+    use crate::receipt::{ReceiptKind, ReceiptQuery, ReceiptRecord};
+    use crate::registry::{ENTITY_TYPE_ASSET, ENTITY_TYPE_RECEIPT_RECORD};
+    use crate::sync::bridge::Materializer;
+    use crate::sync::loro_support::map_insert_bytes;
+    use crate::sync::schema::create_window_doc;
+    use crate::sync::types::WindowKey;
+    use crate::sync::window::forward_rematerialize;
+    use std::collections::BTreeMap;
+
+    #[derive(serde::Serialize)]
+    struct Envelope<'a> {
+        intent_id: [u8; 32],
+        receipt: &'a ReceiptRecord,
+    }
+
+    let dir = tempfile::tempdir()?;
+    let source = Vault::open(dir.path(), VaultConfig::default())?;
+    let at = 1_788_220_800_u64; // 2026-09-01, within the canonical window.
+    let intent_id = [0x92_u8; 32];
+    let mut hash = blake3::Hasher::new();
+    hash.update(b"oneiron.outbound.receipt_record.v1\0");
+    hash.update(&intent_id);
+    let mut id_bytes = [0_u8; 16];
+    id_bytes.copy_from_slice(&hash.finalize().as_bytes()[..16]);
+    id_bytes[6] = (id_bytes[6] & 0x0f) | 0x70;
+    id_bytes[8] = (id_bytes[8] & 0x3f) | 0x80;
+    let receipt_id = EntityId::from_bytes(id_bytes)?;
+    let receipt = ReceiptRecord {
+        receipt_id: format!(
+            "outbound:suppression:{}",
+            crate::entity_id::bytes_to_hex_lower(&intent_id)
+        ),
+        receipt_kind: ReceiptKind::Outbound,
+        occurred_at: at,
+        actor: Some("agent".to_owned()),
+        on_behalf_of: None,
+        outcome: "suppressed".to_owned(),
+        job_ref: None,
+        trigger_ref: None,
+        policy_trace: Vec::new(),
+        fields: BTreeMap::from([
+            ("suppression".to_owned(), "dedupe".to_owned()),
+            ("dedupe_key".to_owned(), "one-followup".to_owned()),
+        ]),
+    };
+    let body = rmp_serde::to_vec_named(&Envelope {
+        intent_id,
+        receipt: &receipt,
+    })
+    .map_err(|_| Error::InvariantViolation("test receipt envelope"))?;
+    source.with_write_txn(|txn| {
+        source
+            .batch_in()
+            .put_replicated(
+                &receipt_id,
+                ENTITY_TYPE_RECEIPT_RECORD,
+                TimeRange { start: at, end: at },
+                at,
+                &body,
+            )
+            .apply(txn)
+    })?;
+    let sibling = EntityId::now();
+    source.put_entity(
+        &sibling,
+        ENTITY_TYPE_ASSET,
+        TimeRange { start: at, end: at },
+        at,
+        b"unrelated asset",
+    )?;
+
+    let window = WindowKey::new("2026-09");
+    let doc = create_window_doc("canonical-suppression", &window);
+    canonical::insert(
+        &doc,
+        "entities",
+        &receipt_id.to_hex(),
+        &source.get_raw(&receipt_id)?.ok_or(Error::EntityNotFound)?,
+    )?;
+    canonical::insert(
+        &doc,
+        "entities",
+        &sibling.to_hex(),
+        &source.get_raw(&sibling)?.ok_or(Error::EntityNotFound)?,
+    )?;
+    let tombstone = crate::deletion::TombstoneValueV2 {
+        reason: crate::deletion::TombstoneReason::UserHardDelete,
+        deleted_at: at,
+        request_id: *EntityId::now().as_bytes(),
+    }
+    .encode();
+    map_insert_bytes(&doc.get_map("tombstones"), &receipt_id.to_hex(), &tombstone)?;
+    doc.commit();
+    forward_rematerialize(&source, &doc, &Materializer::new(), &window)?;
+    assert!(
+        source
+            .receipts(ReceiptQuery::new(10).with_kind(ReceiptKind::Outbound))?
+            .iter()
+            .any(|row| row.receipt_id == receipt.receipt_id)
+    );
+    assert!(
+        crate::sync::quarantine::quarantined_records(&source)?
+            .iter()
+            .any(
+                |(_, row)| row.container == crate::sync::QuarantineContainer::Tombstones
+                    && row.reason_code == "MaintenanceKindNotWritable"
+            )
+    );
+
+    let captured = capture_canonical_window(&source, "2026-09", &doc)?;
+    assert!(
+        captured
+            .entity_blobs
+            .iter()
+            .any(|row| row.id == *receipt_id.as_bytes())
+    );
+    assert!(
+        !captured
+            .tombstones
+            .iter()
+            .any(|row| row.id == *receipt_id.as_bytes())
+    );
+    let encoded = captured.encode()?;
+    let decoded = CanonicalSnapshot::decode(&encoded)?;
+    let restored_doc = rebuild_vault_window_from_canonical(&decoded)?;
+    let receiver_dir = tempfile::tempdir()?;
+    let receiver = Vault::open(receiver_dir.path(), VaultConfig::default())?;
+    forward_rematerialize(&receiver, &restored_doc, &Materializer::new(), &window)?;
+    assert_eq!(
+        receiver.get(&sibling)?.as_deref(),
+        Some(b"unrelated asset".as_slice())
+    );
+    assert!(
+        receiver
+            .receipts(ReceiptQuery::new(10).with_kind(ReceiptKind::Outbound))?
+            .iter()
+            .any(|row| row.receipt_id == receipt.receipt_id)
+    );
+
+    // A hostile type-change remains in the CRDT map after the shared write
+    // door quarantines it. It must not become a successful canonical artifact.
+    crate::sync::loro_support::map_delete(&doc.get_map("tombstones"), &receipt_id.to_hex())?;
+    let original = source.get_raw(&receipt_id)?.ok_or(Error::EntityNotFound)?;
+    let mut rejected_asset = original.clone();
+    rejected_asset[0] = ENTITY_TYPE_ASSET;
+    map_insert_bytes(
+        &doc.get_map("entities"),
+        &receipt_id.to_hex(),
+        &rejected_asset,
+    )?;
+    doc.commit();
+    forward_rematerialize(&source, &doc, &Materializer::new(), &window)?;
+    assert_eq!(source.get_raw(&receipt_id)?, Some(original.clone()));
+    assert!(
+        crate::sync::quarantine::quarantined_records(&source)?
+            .iter()
+            .any(
+                |(_, row)| row.container == crate::sync::QuarantineContainer::Entities
+                    && row.reason_code == "SuppressionReceiptDivergence"
+            )
+    );
+    assert!(
+        capture_canonical_window(&source, "2026-09", &doc).is_err(),
+        "a rejected ASSET at a receipt ID cannot become an audit-free snapshot"
+    );
+
+    // Removal without a tombstone also lacks delete authority. Capture names
+    // the source vault's validated receipt index, restores its absent CRDT
+    // carrier, then rebuilds that one event on a fresh vault.
+    crate::sync::loro_support::map_delete(&doc.get_map("entities"), &receipt_id.to_hex())?;
+    doc.commit();
+    let removed = capture_canonical_window(&source, "2026-09", &doc)?;
+    assert!(
+        removed
+            .entity_blobs
+            .iter()
+            .any(|row| row.id == *receipt_id.as_bytes() && row.blob == original)
+    );
+    let rebuilt =
+        rebuild_vault_window_from_canonical(&CanonicalSnapshot::decode(&removed.encode()?)?)?;
+    let missing_dir = tempfile::tempdir()?;
+    let fresh = Vault::open(missing_dir.path(), VaultConfig::default())?;
+    forward_rematerialize(&fresh, &rebuilt, &Materializer::new(), &window)?;
+    assert_eq!(
+        fresh.get(&sibling)?.as_deref(),
+        Some(b"unrelated asset".as_slice())
+    );
+    assert!(
+        fresh
+            .receipts(ReceiptQuery::new(10).with_kind(ReceiptKind::Outbound))?
+            .iter()
+            .any(|row| row.receipt_id == receipt.receipt_id)
+    );
+    Ok(())
+}

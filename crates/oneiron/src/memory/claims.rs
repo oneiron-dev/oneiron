@@ -27,7 +27,7 @@ use crate::write_envelope::{
 /// Predicates with declared multi-cardinality supersession keys (B1c,
 /// RATIFY-20260710 R0): the prior-claim match extends
 /// `subject+scope+predicate` with `value.question_id`.
-pub const MULTI_CARDINALITY_PREDICATES: [&str; 1] = ["eiri.onboarding.answer"];
+pub const MULTI_CARDINALITY_PREDICATES: [&str; 1] = ["companion.onboarding.answer"];
 
 const MULTI_CARDINALITY_VALUE_KEY: &str = "question_id";
 
