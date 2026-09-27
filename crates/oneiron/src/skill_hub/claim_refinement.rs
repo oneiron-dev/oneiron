@@ -1,9 +1,15 @@
 //! Session-branch claim edits: typed usefulness, owner-held reserve, and atomic admission.
 //! A branch proposal is inert source in vault_meta, never an ordinary live CLAIM.
 
+use super::refinement_admission::{
+    RefinementAdmissionProof, RefinementControl, RefinementState, RefinementTarget, put_control,
+    read_control,
+};
+use super::refinement_custody::RefinementReceipt;
 use super::{package_codec::invalid, shared_gate::checked_useful_decision};
 use crate::{
     Vault,
+    batch::{BatchOp, ClaimMaterialization, ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader},
     claim::{
         ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSource, decode_claim_body,
         encode_claim_body,
@@ -11,20 +17,18 @@ use crate::{
     consent::{
         AuthenticatedOwner, ComposedEffect, ConsentReceipt, EffectDigest, EffectFacts, UndoFidelity,
     },
+    edge::EdgeActorClass,
     entity_id::EntityId,
     error::{Error, Result},
     llm::decision::{AnswerContract, DecisionClass, DecisionQuestion, TypedDecision},
     skill_optimize::held_out_receipt_set_digest,
     store::Store,
     temporal::TimeRange,
+    write_envelope::{ClaimCandidate, WriteActor, WriteEnvelope, WriteProvenance},
 };
 use serde::{Deserialize, Serialize};
 
-const DELTA: &[u8] = b"skill_hub/claim-refinement/v1\0";
 const RESERVE: &[u8] = b"skill_hub/claim-refinement-reserve/v1\0";
-const RECEIPT: &[u8] = b"skill_hub/claim-refinement-receipt/v1\0";
-// Content-free permanent ID fence. Raw batch delete has no dt: marker.
-const RETIRED: &[u8] = b"skill_hub/claim-refinement-retired/v1\0";
 
 fn key(prefix: &[u8], id: &EntityId) -> Vec<u8> {
     let mut key = prefix.to_vec();
@@ -96,6 +100,7 @@ impl ClaimRefinementMergeAsk {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ClaimRefinementMergeReceipt {
+    pub receipt_id: String,
     pub candidate: String,
     pub base: String,
     pub resident: String,
@@ -125,59 +130,26 @@ struct Snapshot {
     binding: String,
 }
 
-/// The deletion scope includes headerless branch proposals and their receipts.
-/// It is checked before a delete emits a tombstone, and again in the purge txn.
+/// The control row survives as an identifier-only erased fence. The native
+/// Proposed CLAIM owns all branch payload bytes; ASSET custody owns rulings.
 pub(crate) fn claim_refinement_scope_exists_in_txn(
     store: &Store,
     txn: &heed::RoTxn<'_>,
     id: &EntityId,
 ) -> Result<bool> {
-    Ok(store.vault_meta.get(txn, &key(DELTA, id))?.is_some()
-        || store.vault_meta.get(txn, &key(RECEIPT, id))?.is_some()
-        || store.vault_meta.get(txn, &key(RESERVE, id))?.is_some())
+    Ok(
+        super::refinement_admission::refinement_control_scope_exists(store, txn, id)?
+            || store.vault_meta.get(txn, &key(RESERVE, id))?.is_some(),
+    )
 }
-
-/// Erase every claim-refinement byte carrier for this entity. Content-free
-/// deletion markers belong to the ordinary deletion engine, not this module.
 pub(crate) fn erase_claim_refinement_in_txn(
     store: &Store,
     txn: &mut heed::RwTxn<'_>,
     id: &EntityId,
 ) -> Result<bool> {
-    let had_delta = store.vault_meta.delete(txn, &key(DELTA, id))?;
-    let had_receipt = store.vault_meta.delete(txn, &key(RECEIPT, id))?;
+    let had_control = super::refinement_admission::retire_refinement_control(store, txn, id)?;
     let had_reserve = store.vault_meta.delete(txn, &key(RESERVE, id))?;
-    if had_delta || had_receipt {
-        // A raw batch delete does not create a hard-delete marker. Never let
-        // that content purge turn this known refinement id into a free CLAIM id.
-        store.vault_meta.put(txn, &key(RETIRED, id), &[1])?;
-    }
-    Ok(had_delta || had_receipt || had_reserve)
-}
-
-/// Generic/raw/replay writes cannot use a pending branch candidate's id. The
-/// only release is the accepted merge transaction, which removes DELTA before
-/// the ordinary claim put and restores it with the immutable ruling at commit.
-pub(crate) fn claim_refinement_pending_in_txn(
-    store: &Store,
-    txn: &heed::RoTxn<'_>,
-    id: &EntityId,
-) -> Result<bool> {
-    if store.vault_meta.get(txn, &key(RETIRED, id))?.is_some() {
-        return Ok(true);
-    }
-    if store.vault_meta.get(txn, &key(DELTA, id))?.is_none() {
-        return Ok(false);
-    }
-    let Some(raw) = store.vault_meta.get(txn, &key(RECEIPT, id))? else {
-        return Ok(true);
-    };
-    let receipt: ClaimRefinementMergeReceipt = serde_json::from_slice(&raw)
-        .map_err(|_| Error::CorruptedIndex("claim refinement receipt"))?;
-    if receipt.candidate != id.to_hex() {
-        return Err(Error::CorruptedIndex("claim refinement receipt candidate"));
-    }
-    Ok(!receipt.accepted)
+    Ok(had_control || had_reserve)
 }
 
 impl Vault {
@@ -253,9 +225,43 @@ impl Vault {
                 "local refinement must be a proposed session-branch claim",
             ));
         }
-        let encoded = encode_claim_body(body)?;
-        decode_claim_body(&encoded, false)?;
-        crate::batch::secret_scan::scan_staged_payload(&encoded)?;
+        // The caller describes content; the engine stamps actor, source and
+        // session through the ordinary candidate door, never by trusting the
+        // body's proposed provenance as a persisted assertion.
+        let source = body
+            .source
+            .ok_or_else(|| invalid("claim refinement source is missing"))?;
+        let mut candidate = ClaimCandidate::new(
+            &body.predicate,
+            body.subject,
+            body.value.clone(),
+            body.confidence,
+        )
+        .with_validity(body.valid_from, body.valid_to)
+        .with_stale(body.stale)
+        .with_scope_stamps(body.scope_facet, body.scope_project);
+        if let Some(salience) = body.salience {
+            candidate = candidate.with_salience(salience);
+        }
+        if let Some(evidence) = &body.evidence {
+            candidate = candidate.with_evidence(evidence.clone());
+        }
+        if let Some(world) = body.world {
+            candidate = candidate.with_world(world);
+        }
+        if let Some(rel) = body.rel {
+            candidate = candidate.with_relationship(rel);
+        }
+        if let Some(scope) = &body.scope {
+            candidate = candidate.with_scope(scope.clone());
+        }
+        let envelope = WriteEnvelope::new(
+            WriteActor::new(resident, EdgeActorClass::Agent),
+            source,
+            WriteProvenance::new(rmpv::Value::from("claim-refinement"))?,
+            ClaimApprovalStatus::Proposed,
+        )
+        .with_session_tag(session_tag);
         crate::batch::secret_scan::scan_metadata_field(session_tag)?;
         let id = EntityId::now();
         self.with_write_txn(|txn| {
@@ -268,21 +274,31 @@ impl Vault {
             {
                 return Err(invalid("claim edit no longer revises its active base"));
             }
-            let delta = LocalClaimRefinement {
-                candidate: id.to_hex(),
-                base: base.to_hex(),
-                resident: resident.to_hex(),
-                session_tag: session_tag.to_owned(),
-                body: encoded,
-                base_binding: claim_binding(&original)?,
-                occurred_start: occurred.start,
-                occurred_end: occurred.end,
-                learned_at,
-            };
-            let bytes =
-                serde_json::to_vec(&delta).map_err(|_| invalid("claim delta encode failed"))?;
-            crate::batch::secret_scan::scan_staged_payload(&bytes)?;
-            self.store.vault_meta.put(txn, &key(DELTA, &id), &bytes)?;
+            self.batch_in()
+                .claim_candidate(&id, candidate, &envelope, occurred, learned_at)
+                .apply(txn)?;
+            let stored = self
+                .get_claim_in_txn(txn, &id)?
+                .ok_or(Error::EntityNotFound)?;
+            if stored.approval != ClaimApprovalStatus::Proposed
+                || stored.session_tag.as_deref() != Some(session_tag)
+                || !same_claim_target(&original, &stored)
+                || crate::claim::session_claim_producer(&stored) != Some(resident)
+            {
+                return Err(invalid("stamped branch claim disagrees with its base"));
+            }
+            put_control(
+                &self.store,
+                txn,
+                &id,
+                &RefinementControl::claim(
+                    base,
+                    id,
+                    resident,
+                    claim_binding(&original)?,
+                    claim_binding(&stored)?,
+                ),
+            )?;
             Ok(id)
         })
     }
@@ -399,6 +415,7 @@ impl Vault {
         };
         let accepted = matches!((before, after), (Some(a), Some(b)) if b > a);
         let receipt = ClaimRefinementMergeReceipt {
+            receipt_id: EntityId::now().to_hex(),
             candidate: ask.candidate.to_hex(),
             base: snapshot.base_id.to_hex(),
             resident: ask.resident.to_hex(),
@@ -414,11 +431,6 @@ impl Vault {
             accepted,
             at,
         };
-        // Provider/model metadata also enters the durable receipt. Scan it
-        // before the first transactional CLAIM or metadata write.
-        let receipt_bytes = serde_json::to_vec(&receipt)
-            .map_err(|_| invalid("claim merge receipt encode failed"))?;
-        crate::batch::secret_scan::scan_staged_payload(&receipt_bytes)?;
         self.with_write_txn(|txn| {
             self.check_claim_refinement_ask(txn, ask)?;
             let authorization =
@@ -427,37 +439,52 @@ impl Vault {
             if accepted {
                 let mut admitted = snapshot.candidate.clone();
                 admitted.approval = ClaimApprovalStatus::Approved;
-                // `sess` on an ordinary CLAIM requires a write-envelope producer
-                // stamp. The branch row and merge receipt retain that identity;
-                // do not forge an agent-authored envelope for an owner admission.
-                admitted.session_tag = None;
-                self.store
-                    .vault_meta
-                    .delete(txn, &key(DELTA, &ask.candidate))?;
-                self.put_claim_in_txn(
+                let data = encode_claim_body(&admitted)?;
+                let proof = RefinementAdmissionProof::for_claim(
+                    self,
                     txn,
-                    &ask.candidate,
-                    &admitted,
-                    TimeRange {
-                        start: snapshot.delta.occurred_start,
-                        end: snapshot.delta.occurred_end,
+                    &data,
+                    &claim_binding(&snapshot.candidate)?,
+                    &receipt,
+                    &authorization,
+                )?;
+                ClaimMaterialization::apply_refinement_approval(
+                    self,
+                    txn,
+                    BatchOp::Put {
+                        id: ask.candidate,
+                        entity_type: crate::registry::ENTITY_TYPE_CLAIM,
+                        occurred: TimeRange {
+                            start: snapshot.delta.occurred_start,
+                            end: snapshot.delta.occurred_end,
+                        },
+                        learned_at: snapshot.delta.learned_at,
+                        data,
+                        allow_maintenance: false,
+                        allow_reserved_predicate: false,
+                        hub_sync_imported: false,
                     },
-                    snapshot.delta.learned_at,
+                    proof,
                 )?;
                 self.supersede_claim_in_txn(txn, &ask.candidate, &snapshot.base_id, at)?;
-                self.store.vault_meta.put(
-                    txn,
-                    &key(DELTA, &ask.candidate),
-                    &serde_json::to_vec(&snapshot.delta)
-                        .map_err(|_| invalid("claim delta encode failed"))?,
-                )?;
-                crate::consent::spend_approve_once_in_txn(&self.store, txn, &authorization)?;
             } else {
                 crate::consent::spend_approve_once_in_txn(&self.store, txn, &authorization)?;
             }
-            self.store
-                .vault_meta
-                .put(txn, &key(RECEIPT, &ask.candidate), &receipt_bytes)?;
+            let mut control = read_control(&self.store, txn, &ask.candidate)?
+                .ok_or_else(|| invalid("claim refinement control is missing"))?;
+            control.state = if accepted {
+                RefinementState::Admitted
+            } else {
+                RefinementState::Refused
+            };
+            put_control(&self.store, txn, &ask.candidate, &control)?;
+            self.put_refinement_receipt_in_txn(
+                txn,
+                ask.candidate,
+                RefinementReceipt::Claim(receipt.clone()),
+                TimeRange { start: at, end: at },
+                at,
+            )?;
             Ok(ClaimRefinementMergeDisposition::Ruled(Box::new(receipt)))
         })
     }
@@ -466,13 +493,11 @@ impl Vault {
         candidate: EntityId,
     ) -> Result<Option<ClaimRefinementMergeReceipt>> {
         let txn = self.store.env.read_txn()?;
-        self.store
-            .vault_meta
-            .get(&txn, &key(RECEIPT, &candidate))?
-            .map(|raw| {
-                serde_json::from_slice(&raw).map_err(|_| invalid("invalid claim merge receipt"))
-            })
-            .transpose()
+        match self.latest_refinement_receipt_in_txn(&txn, candidate)? {
+            Some(RefinementReceipt::Claim(receipt)) => Ok(Some(receipt)),
+            Some(RefinementReceipt::Skill(_)) => Err(invalid("wrong refinement receipt target")),
+            None => Ok(None),
+        }
     }
     fn check_claim_refinement_ask(
         &self,
@@ -486,16 +511,16 @@ impl Vault {
         Ok(snapshot)
     }
     fn claim_refinement_snapshot(&self, txn: &heed::RoTxn<'_>, id: EntityId) -> Result<Snapshot> {
+        let control = read_control(&self.store, txn, &id)?
+            .ok_or_else(|| invalid("claim refinement control is missing"))?;
+        if control.state != RefinementState::Pending
+            || !matches!(control.target, RefinementTarget::Claim { .. })
+            || self.latest_refinement_receipt_in_txn(txn, id)?.is_some()
+        {
+            return Err(invalid("claim refinement already ruled or erased"));
+        }
         let delta =
             read_delta(self, txn, id)?.ok_or_else(|| invalid("claim branch edit is missing"))?;
-        if self
-            .store
-            .vault_meta
-            .get(txn, &key(RECEIPT, &id))?
-            .is_some()
-        {
-            return Err(invalid("claim refinement already ruled"));
-        }
         let base_id = EntityId::from_hex(&delta.base)?;
         let resident = EntityId::from_hex(&delta.resident)?;
         require_resident(self, txn, resident)?;
@@ -509,7 +534,8 @@ impl Vault {
             || candidate.approval != ClaimApprovalStatus::Proposed
             || candidate.lifecycle != ClaimLifecycleStatus::Active
             || candidate.session_tag.as_deref() != Some(&delta.session_tag)
-            || self.store.entities.get(txn, id.as_bytes())?.is_some()
+            || crate::claim::session_claim_producer(&candidate) != Some(resident)
+            || claim_binding(&candidate)? != control.proposal_binding
         {
             return Err(invalid("claim branch edit no longer revises its base"));
         }
@@ -591,13 +617,38 @@ fn read_delta(
     txn: &heed::RoTxn<'_>,
     id: EntityId,
 ) -> Result<Option<LocalClaimRefinement>> {
-    vault
-        .store
-        .vault_meta
-        .get(txn, &key(DELTA, &id))?
-        .map(|raw| {
-            serde_json::from_slice(&raw)
-                .map_err(|_| Error::CorruptedIndex("claim refinement delta"))
-        })
-        .transpose()
+    let Some(control) = read_control(&vault.store, txn, &id)? else {
+        return Ok(None);
+    };
+    let RefinementTarget::Claim { base, proposal } = &control.target else {
+        return Ok(None);
+    };
+    if control.state == RefinementState::Erased || *proposal != id.to_hex() {
+        return Ok(None);
+    }
+    let Some(raw) = vault.store.entities.get(txn, id.as_bytes())? else {
+        return Err(Error::CorruptedIndex("refinement candidate without claim"));
+    };
+    let header = EntityMetadataHeader::parse(&raw)
+        .ok_or(Error::CorruptedIndex("refinement claim header"))?;
+    if header.entity_type != crate::registry::ENTITY_TYPE_CLAIM {
+        return Err(Error::CorruptedIndex("refinement claim kind"));
+    }
+    let body = decode_claim_body(&raw[ENTITY_METADATA_HEADER_LEN..], false)?;
+    let session_tag = body
+        .session_tag
+        .ok_or_else(|| invalid("refinement claim lost session provenance"))?;
+    Ok(Some(LocalClaimRefinement {
+        candidate: id.to_hex(),
+        base: base.clone(),
+        resident: control
+            .resident
+            .ok_or_else(|| invalid("refinement resident missing"))?,
+        session_tag,
+        body: raw[ENTITY_METADATA_HEADER_LEN..].to_vec(),
+        base_binding: control.base_binding,
+        occurred_start: header.occurred_start,
+        occurred_end: header.occurred_end,
+        learned_at: header.learned_at,
+    }))
 }

@@ -45,7 +45,8 @@ pub(crate) fn deindex_entity(
     crate::receipt::remove_receipt_archive_custody(store, wtxn, id)?;
     crate::skill_hub::remove_hub_package_in_txn(store, wtxn, id)?;
     crate::skill_hub::erase_claim_refinement_in_txn(store, wtxn, id)?;
-    crate::skill_hub::erase_shared_merge_receipts_in_txn(store, wtxn, id)?;
+    crate::skill_hub::erase_refinement_custody_in_txn(store, wtxn, id)?;
+    crate::skill_hub::remove_refinement_carrier_in_txn(store, wtxn, id)?;
     let (mut had_vector, mut had_graph_mutation, mut neighbors) =
         deindex_lexical_query_hints_for_target(store, wtxn, id)?;
 

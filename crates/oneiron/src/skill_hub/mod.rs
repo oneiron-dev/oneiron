@@ -15,6 +15,8 @@ mod import_receipt;
 mod package_codec;
 mod publisher;
 pub use import_receipt::HubImportReceipt;
+mod refinement_admission;
+mod refinement_custody;
 mod shared_delta;
 mod shared_gate;
 
@@ -28,20 +30,26 @@ pub use claim_refinement::{
     UsefulUpstreamClaimJudge,
 };
 pub(crate) use claim_refinement::{
-    claim_refinement_pending_in_txn, claim_refinement_scope_exists_in_txn,
-    erase_claim_refinement_in_txn,
+    claim_refinement_scope_exists_in_txn, erase_claim_refinement_in_txn,
 };
 pub use git_fetch::GitEndpointSkillHubAdapter;
 pub use http_fetch::HttpEndpointSkillHubAdapter;
 pub(crate) use package_codec::remove_hub_package_in_txn;
 pub use package_codec::{decode_hub_package, encode_hub_package};
 pub use publisher::ForeignSkillPublisher;
+pub(crate) use refinement_admission::{RefinementAdmissionProof, validate_refinement_admission};
+#[cfg(test)]
+pub(crate) use refinement_custody::refinement_carriers_for_holder_in_txn;
+pub(crate) use refinement_custody::{
+    erase_refinement_custody_in_txn, refinement_custody_exists_in_txn,
+    remove_refinement_carrier_in_txn, retire_refinement_holder_in_txn,
+    stage_refinement_carrier_put, validate_refinement_carrier_put,
+};
+#[cfg(feature = "sync")]
+pub(crate) use refinement_custody::{refinement_carrier_holder, refinement_carrier_matches_id};
 pub use shared_delta::{SharedSkillDelta, SharedSkillLane};
 pub use shared_gate::{
     SharedSkillMergeAsk, SharedSkillMergeDisposition, SharedSkillMergeReceipt, UsefulUpstreamJudge,
-};
-pub(crate) use shared_gate::{
-    erase_shared_merge_receipts_in_txn, shared_merge_receipt_scope_exists_in_txn,
 };
 
 #[cfg(test)]

@@ -47,6 +47,7 @@ pub(in crate::batch) fn apply_put(
     replicated: bool,
     hub_sync_imported: bool,
     hub_admission: Option<&crate::skill_hub::HubAdmissionProof>,
+    refinement_admission: Option<&crate::skill_hub::RefinementAdmissionProof>,
     has_later_covering_text_op: bool,
     write_policy: Option<&crate::gate::PolicyManifestResolution>,
     write_envelope: Option<&WriteEnvelope>,
@@ -76,6 +77,7 @@ pub(in crate::batch) fn apply_put(
     let mutation_recorded_at = crate::ports::recorded_at_in_txn(store, wtxn)?;
     crate::skill_hub::pack_catalog::validate_pack_source_put(store, wtxn, &id, entity_type, data)?;
     crate::skill_hub::validate_hub_source_carrier_put(store, wtxn, &id, entity_type, data)?;
+    crate::skill_hub::validate_refinement_carrier_put(store, wtxn, &id, entity_type, data)?;
     crate::agent_def::validate_birth_source_put(store, wtxn, &id, entity_type, data)?;
     crate::receipt::validate_receipt_archive_put(store, wtxn, &id, entity_type, data)?;
     let mut portable_agent_source = None;
@@ -105,6 +107,14 @@ pub(in crate::batch) fn apply_put(
     // transaction rematerializing its OWN session's closure, carried on the
     // same write origin the K4 decode-point guard reads.
     reject_overlay_member_base_write(store, &id, origin)?;
+    crate::skill_hub::validate_refinement_admission(
+        store,
+        wtxn,
+        &id,
+        entity_type,
+        data,
+        refinement_admission,
+    )?;
     crate::claim::validate_claim_write_target_in_txn(store, wtxn, &id, allow_reserved_predicate)?;
     // Type-byte validation runs in `apply_ops` (public-vs-maintenance gate:
     // public writes reject engine-authored system kinds, the sync
@@ -168,6 +178,7 @@ pub(in crate::batch) fn apply_put(
         if body.session_tag.is_some()
             && !replicated
             && !claim_gate_prechecked
+            && !refinement_admission.is_some_and(|proof| proof.binds_claim(&id, data))
             && !write_envelope.is_some_and(|envelope| {
                 crate::claim::session_claim_producer(&body) == Some(envelope.actor().entity_ref())
             })
@@ -614,6 +625,7 @@ pub(in crate::batch) fn apply_put(
         previous_skill_record.as_ref(),
         new_skill_record.as_ref(),
     )?;
+    crate::skill_hub::stage_refinement_carrier_put(store, wtxn, &id, entity_type, data)?;
     stage_entity_body_row(store, wtxn, &id, entity_type, occurred, learned_at, data)?;
     if entity_type == ENTITY_TYPE_TASK {
         crate::task_verb::index_owner_fact(store, wtxn, &id, Some(data))?;

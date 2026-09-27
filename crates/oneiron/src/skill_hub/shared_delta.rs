@@ -181,6 +181,17 @@ impl Vault {
                 &delta_key(&candidate),
                 &serde_json::to_vec(&delta).map_err(|_| invalid("shared delta encode failed"))?,
             )?;
+            super::refinement_admission::put_control(
+                &self.store,
+                txn,
+                &candidate,
+                &super::refinement_admission::RefinementControl::skill(
+                    *base,
+                    *submitted_fork,
+                    delta.base_binding,
+                    delta.content_hash,
+                ),
+            )?;
             Ok(candidate)
         })
     }
@@ -237,7 +248,7 @@ impl Vault {
             .transpose()
     }
 }
-fn delta_key(candidate: &EntityId) -> Vec<u8> {
+pub(super) fn delta_key(candidate: &EntityId) -> Vec<u8> {
     let mut key = b"skill_hub/shared-delta/v1\0".to_vec();
     key.extend_from_slice(candidate.as_bytes());
     key

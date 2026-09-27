@@ -1,4 +1,8 @@
 //! Useful-upstream and held-out merge gate for submitted shared-skill deltas.
+use super::refinement_admission::{
+    RefinementAdmissionProof, RefinementState, RefinementTarget, put_control, read_control,
+};
+use super::refinement_custody::RefinementReceipt;
 use super::{HubPackage, SharedSkillDelta, package_codec::invalid};
 use crate::{
     Vault,
@@ -194,14 +198,27 @@ impl Vault {
             let authorization =
                 crate::consent::approve_once_authorization_in_txn(&self.store, txn, &ask.effect)?
                     .ok_or_else(|| invalid("human merge consent is missing"))?;
+            let mut control = read_control(&self.store, txn, &ask.candidate)?
+                .ok_or_else(|| invalid("shared refinement control is missing"))?;
             if accepted {
-                self.activate_scored_hub_record_in_txn(
+                let mut admitted = snapshot.record.clone();
+                admitted.approval_status = crate::claim::ClaimApprovalStatus::Approved;
+                admitted.lifecycle_status = SkillLifecycle::Active;
+                let data = crate::skill::encode_skill_record(&admitted)?;
+                let refinement = RefinementAdmissionProof::for_skill(
+                    ask.candidate,
+                    snapshot.base_id,
+                    &data,
+                    &control.proposal_binding,
+                    &receipt,
+                )?;
+                self.activate_refined_hub_record_in_txn(
                     txn,
-                    &ask.candidate,
                     &snapshot.record,
                     occurred,
                     learned_at,
                     &authorization,
+                    refinement,
                 )?;
                 self.supersede_skill_record_in_txn(
                     txn,
@@ -214,14 +231,19 @@ impl Vault {
             if !accepted {
                 crate::consent::spend_approve_once_in_txn(&self.store, txn, &authorization)?;
             }
-            let mut history_key = MERGE_HISTORY_PREFIX.to_vec();
-            history_key.extend_from_slice(receipt.receipt_id.as_bytes());
-            self.store
-                .vault_meta
-                .put(txn, &history_key, &encoded_receipt)?;
-            self.store
-                .vault_meta
-                .put(txn, &merge_receipt_key(&ask.candidate), &encoded_receipt)?;
+            control.state = if accepted {
+                RefinementState::Admitted
+            } else {
+                RefinementState::Refused
+            };
+            put_control(&self.store, txn, &ask.candidate, &control)?;
+            self.put_refinement_receipt_in_txn(
+                txn,
+                ask.candidate,
+                RefinementReceipt::Skill(receipt.clone()),
+                occurred,
+                learned_at,
+            )?;
             Ok(SharedSkillMergeDisposition::Ruled(Box::new(receipt)))
         })
     }
@@ -230,11 +252,11 @@ impl Vault {
         candidate: &EntityId,
     ) -> Result<Option<SharedSkillMergeReceipt>> {
         let txn = self.store.env.read_txn()?;
-        self.store
-            .vault_meta
-            .get(&txn, &merge_receipt_key(candidate))?
-            .map(|raw| serde_json::from_slice(&raw).map_err(|_| invalid("invalid merge receipt")))
-            .transpose()
+        match self.latest_refinement_receipt_in_txn(&txn, *candidate)? {
+            Some(RefinementReceipt::Skill(receipt)) => Ok(Some(receipt)),
+            Some(RefinementReceipt::Claim(_)) => Err(invalid("wrong refinement receipt target")),
+            None => Ok(None),
+        }
     }
     fn check_merge_ask(
         &self,
@@ -266,6 +288,18 @@ impl Vault {
         let delta = self
             .delta_in_txn(txn, candidate)?
             .ok_or_else(|| invalid("no submitted delta"))?;
+        let control = read_control(&self.store, txn, candidate)?
+            .ok_or_else(|| invalid("shared refinement control is missing"))?;
+        if !matches!(
+            control.state,
+            RefinementState::Pending | RefinementState::Refused
+        ) || !matches!(&control.target, RefinementTarget::Skill { base, fork }
+                if base == &delta.base && fork == &delta.submitted_fork)
+            || control.base_binding != delta.base_binding
+            || control.proposal_binding != delta.content_hash
+        {
+            return Err(invalid("shared refinement control moved"));
+        }
         let base_id = EntityId::from_hex(&delta.base)?;
         let base = super::admission_view::read_skill(self, txn, &base_id)?;
         let record = super::admission_view::read_skill(self, txn, candidate)?;
@@ -359,60 +393,6 @@ fn replay(
         Some(evaluate(&snapshot.record.version, instructions)?),
     ))
 }
-fn merge_receipt_key(id: &EntityId) -> Vec<u8> {
-    let mut key = b"skill_hub/shared-merge-receipt/v1\0".to_vec();
-    key.extend_from_slice(id.as_bytes());
-    key
-}
-
-const MERGE_HISTORY_PREFIX: &[u8] = b"skill_hub/shared-merge-history/v1\0";
-
-/// A headerless candidate can still have a receipt left by older raw deletes.
-pub(crate) fn shared_merge_receipt_scope_exists_in_txn(
-    store: &crate::store::Store,
-    txn: &heed::RoTxn<'_>,
-    id: &EntityId,
-) -> Result<bool> {
-    Ok(store.vault_meta.get(txn, &merge_receipt_key(id))?.is_some())
-}
-
-/// Remove both the latest ruling and every prior ruling for this candidate.
-/// History is keyed by receipt id, so select by the candidate bound inside each
-/// row; this runs only for a candidate carrying a current ruling.
-pub(crate) fn erase_shared_merge_receipts_in_txn(
-    store: &crate::store::Store,
-    txn: &mut heed::RwTxn<'_>,
-    id: &EntityId,
-) -> Result<bool> {
-    if !shared_merge_receipt_scope_exists_in_txn(store, txn, id)? {
-        return Ok(false);
-    }
-    let candidate = id.to_hex();
-    let mut history_keys = Vec::new();
-    for (scanned, entry) in store
-        .vault_meta
-        .prefix_iter(&*txn, MERGE_HISTORY_PREFIX)?
-        .enumerate()
-    {
-        if scanned >= 100_000 {
-            return Err(crate::error::Error::IndexOverflow(
-                "shared skill merge history",
-            ));
-        }
-        let (key, raw) = entry?;
-        let receipt: SharedSkillMergeReceipt = serde_json::from_slice(&raw)
-            .map_err(|_| crate::error::Error::CorruptedIndex("shared skill merge history"))?;
-        if receipt.delta.candidate == candidate {
-            history_keys.push(key.to_vec());
-        }
-    }
-    for key in history_keys {
-        store.vault_meta.delete(txn, &key)?;
-    }
-    store.vault_meta.delete(txn, &merge_receipt_key(id))?;
-    Ok(true)
-}
-
 /// Do not turn a host-provided bool or a different question's verdict into
 /// authority. Abstention and malformed provenance leave the branch untouched.
 pub(super) fn checked_useful_decision(

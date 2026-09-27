@@ -1001,14 +1001,8 @@ fn shared_merge_scans_questions_and_provider_receipts_before_any_ruling() -> Res
         assert!(fixture.vault.shared_skill_merge_receipt(&id)?.is_none());
         let txn = fixture.vault.store.env.read_txn()?;
         assert!(
-            fixture
-                .vault
-                .store
-                .vault_meta
-                .prefix_iter(&txn, b"skill_hub/shared-merge-history/v1\0")?
-                .next()
-                .is_none(),
-            "no historical receipt may hold rejected provider metadata"
+            !super::refinement_custody_exists_in_txn(&fixture.vault.store, &txn, &id)?,
+            "no receipt carrier may hold rejected provider metadata"
         );
         drop(txn);
         assert_eq!(
@@ -1077,17 +1071,13 @@ fn shared_skill_merge_deletion_purges_current_and_every_historical_question() ->
             history.push(receipt.receipt_id.clone());
         }
         assert!(fixture.vault.shared_skill_merge_receipt(&id)?.is_some());
-        for receipt_id in &history {
-            let txn = fixture.vault.store.env.read_txn()?;
-            let key = format!("skill_hub/shared-merge-history/v1\0{receipt_id}");
-            assert!(
-                fixture
-                    .vault
-                    .store
-                    .vault_meta
-                    .get(&txn, key.as_bytes())?
-                    .is_some()
-            );
+        let txn = fixture.vault.store.env.read_txn()?;
+        let carriers =
+            super::refinement_carriers_for_holder_in_txn(&fixture.vault.store, &txn, &id)?;
+        assert_eq!(carriers.len(), history.len());
+        drop(txn);
+        for carrier in &carriers {
+            assert!(fixture.vault.get_raw(carrier)?.is_some());
         }
         assert!(fixture.vault.delete_entity(&id)?);
         assert!(fixture.vault.shared_skill_merge_receipt(&id)?.is_none());
@@ -1097,16 +1087,8 @@ fn shared_skill_merge_deletion_purges_current_and_every_historical_question() ->
         drop(vault);
         let reopened = Vault::open(dir.path(), crate::VaultConfig::default())?;
         assert!(reopened.shared_skill_merge_receipt(&id)?.is_none());
-        for receipt_id in history {
-            let txn = reopened.store.env.read_txn()?;
-            let key = format!("skill_hub/shared-merge-history/v1\0{receipt_id}");
-            assert!(
-                reopened
-                    .store
-                    .vault_meta
-                    .get(&txn, key.as_bytes())?
-                    .is_none()
-            );
+        for carrier in carriers {
+            assert!(reopened.get_raw(&carrier)?.is_none());
         }
     }
     Ok(())
@@ -1149,7 +1131,12 @@ fn replayed_shared_skill_delete_purges_merge_questions_for_both_outcomes() -> Re
             else {
                 panic!("consented")
             };
-            let key = format!("skill_hub/shared-merge-history/v1\0{}", receipt.receipt_id);
+            let txn = fixture.vault.store.env.read_txn()?;
+            let carriers =
+                super::refinement_carriers_for_holder_in_txn(&fixture.vault.store, &txn, &id)?;
+            assert_eq!(carriers.len(), 1);
+            assert_eq!(receipt.delta.candidate, id.to_hex());
+            drop(txn);
             let tombstone = crate::deletion::TombstoneValueV2 {
                 reason,
                 deleted_at: 23,
@@ -1158,14 +1145,96 @@ fn replayed_shared_skill_delete_purges_merge_questions_for_both_outcomes() -> Re
             .encode();
             fixture.vault.apply_replayed_tombstone(&id, &tombstone)?;
             assert!(fixture.vault.shared_skill_merge_receipt(&id)?.is_none());
-            let txn = fixture.vault.store.env.read_txn()?;
+            for carrier in carriers {
+                assert!(fixture.vault.get_raw(&carrier)?.is_none());
+            }
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn shared_skill_erase_matrix_retains_denial_after_raw_local_and_replayed_delete() -> Result<()> {
+    for state in ["pending", "refused", "admitted"] {
+        for mode in ["raw", "local", "replayed"] {
+            let fixture = Fixture::new();
+            let submitted = encode_hub_package(&package("fixture.base", "2", "check result"))?;
+            let candidate = fixture.vault.submit_shared_skill_delta(
+                &fixture.baseline,
+                &submitted,
+                SharedSkillLane::FederationMergeBack,
+                "member:fixture",
+                &EntityId::now(),
+                at(20),
+                20,
+            )?;
+            if state != "pending" {
+                let ask = fixture.vault.prepare_shared_skill_merge(
+                    candidate,
+                    fixture.resident,
+                    useful_question(candidate),
+                )?;
+                fixture
+                    .vault
+                    .approve_shared_skill_merge(&ask, &fixture.owner)?;
+                fixture.vault.merge_shared_skill_delta(
+                    &ask,
+                    &Useful(state == "admitted"),
+                    &Replay::new(true),
+                    at(21),
+                    21,
+                )?;
+            }
+            let mut attempted = fixture
+                .vault
+                .get_skill_record(&candidate)?
+                .expect("candidate");
+            attempted.lifecycle_status = SkillLifecycle::Active;
+            attempted.approval_status = ClaimApprovalStatus::Approved;
+            match mode {
+                "raw" => {
+                    fixture.vault.batch().delete(&candidate).commit()?;
+                }
+                "local" => {
+                    assert!(fixture.vault.delete_entity(&candidate)?);
+                }
+                _ => {
+                    let tombstone = crate::deletion::TombstoneValueV2 {
+                        reason: crate::deletion::TombstoneReason::GdprDelete,
+                        deleted_at: 23,
+                        request_id: *EntityId::now().as_bytes(),
+                    }
+                    .encode();
+                    fixture
+                        .vault
+                        .apply_replayed_tombstone(&candidate, &tombstone)?;
+                }
+            }
             assert!(
                 fixture
                     .vault
-                    .store
-                    .vault_meta
-                    .get(&txn, key.as_bytes())?
+                    .shared_skill_merge_receipt(&candidate)?
                     .is_none()
+            );
+            let Fixture {
+                vault, _temp: dir, ..
+            } = fixture;
+            drop(vault);
+            let reopened = Vault::open(dir.path(), crate::VaultConfig::default())?;
+            assert!(reopened.shared_skill_merge_receipt(&candidate)?.is_none());
+            assert!(
+                reopened
+                    .batch()
+                    .put_replicated(
+                        &candidate,
+                        crate::registry::ENTITY_TYPE_SKILL,
+                        at(30),
+                        30,
+                        &crate::skill::encode_skill_record(&attempted)?
+                    )
+                    .commit()
+                    .is_err(),
+                "{state}/{mode}: erased refinement id cannot become active"
             );
         }
     }

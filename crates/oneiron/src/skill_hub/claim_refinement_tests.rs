@@ -185,14 +185,18 @@ fn rejected_branch_claim_stays_local_and_cannot_use_the_generic_claim_door() -> 
     assert!(!receipt.accepted);
     assert_eq!(receipt.before, None);
     assert_eq!(receipt.resident, f.resident.to_hex());
+    let staged = f
+        .vault
+        .local_claim_refinement(candidate)?
+        .unwrap()
+        .claim_body()?;
+    assert_eq!(staged.value, f.proposal("improved").value);
+    assert_eq!(staged.approval, ClaimApprovalStatus::Proposed);
     assert_eq!(
-        f.vault
-            .local_claim_refinement(candidate)?
-            .unwrap()
-            .claim_body()?,
-        f.proposal("improved")
+        crate::claim::session_claim_producer(&staged),
+        Some(f.resident)
     );
-    assert!(f.vault.get_claim(&candidate)?.is_none());
+    assert_eq!(f.vault.get_claim(&candidate)?, Some(staged));
     assert!(
         f.vault
             .put_claim(&candidate, &f.proposal("improved"), at(7), 7)
@@ -267,7 +271,10 @@ fn claim_tie_keeps_the_branch_and_base() -> Result<()> {
         matches!(f.vault.merge_local_claim_refinement(&ask, &Useful(true), &Tie, 8)?,
         ClaimRefinementMergeDisposition::Ruled(receipt) if !receipt.accepted)
     );
-    assert!(f.vault.get_claim(&candidate)?.is_none());
+    assert_eq!(
+        f.vault.get_claim(&candidate)?.unwrap().approval,
+        ClaimApprovalStatus::Proposed
+    );
     assert!(f.vault.local_claim_refinement(candidate)?.is_some());
     assert_eq!(
         f.vault.get_claim(&f.base)?.unwrap().lifecycle,
@@ -317,7 +324,7 @@ fn staged_claim_scans_private_keys_sensitive_fields_and_session_metadata_before_
         f.vault
             .store
             .vault_meta
-            .prefix_iter(&txn, b"skill_hub/claim-refinement/v1\0")?
+            .prefix_iter(&txn, b"skill_hub/refinement-control/v1\0")?
             .next()
             .is_none(),
         "no recoverable branch body entered vault_meta"
@@ -505,5 +512,145 @@ fn raw_batch_delete_keeps_content_free_guard_against_same_id_claim_reput() -> Re
             .is_err()
     );
     assert!(f.vault.get_claim(&candidate)?.is_none());
+    Ok(())
+}
+
+#[test]
+fn native_claim_erase_matrix_keeps_the_id_fenced_after_reopen() -> Result<()> {
+    for state in ["pending", "refused", "admitted"] {
+        for mode in ["raw", "local", "replayed"] {
+            let f = Fixture::new()?;
+            let candidate = f.submit("improved")?;
+            if state != "pending" {
+                let ask = f.vault.prepare_claim_refinement_merge(
+                    candidate,
+                    f.resident,
+                    question(candidate),
+                )?;
+                f.vault.approve_claim_refinement_merge(&ask, &f.owner)?;
+                let scorer: &dyn HeldOutClaimReplayScorer = if state == "admitted" {
+                    &Replay
+                } else {
+                    &NoReplay
+                };
+                f.vault.merge_local_claim_refinement(
+                    &ask,
+                    &Useful(state == "admitted"),
+                    scorer,
+                    8,
+                )?;
+            }
+            let mut attempted = f
+                .vault
+                .get_claim(&candidate)?
+                .expect("native claim before deletion");
+            attempted.approval = ClaimApprovalStatus::Approved;
+            attempted.session_tag = None;
+            match mode {
+                "raw" => {
+                    f.vault.batch().delete(&candidate).commit()?;
+                }
+                "local" => {
+                    assert!(f.vault.delete_entity(&candidate)?);
+                }
+                _ => {
+                    let tombstone = TombstoneValueV2 {
+                        reason: TombstoneReason::GdprDelete,
+                        deleted_at: 10,
+                        request_id: *EntityId::now().as_bytes(),
+                    }
+                    .encode();
+                    f.vault.apply_replayed_tombstone(&candidate, &tombstone)?;
+                }
+            }
+            assert!(
+                f.vault.local_claim_refinement(candidate)?.is_none(),
+                "{state}/{mode}"
+            );
+            assert!(
+                f.vault.claim_refinement_merge_receipt(candidate)?.is_none(),
+                "{state}/{mode}"
+            );
+            let Fixture {
+                vault, _dir: dir, ..
+            } = f;
+            drop(vault);
+            let reopened = Vault::open(dir.path(), VaultConfig::default())?;
+            assert!(reopened.local_claim_refinement(candidate)?.is_none());
+            assert!(
+                reopened
+                    .claim_refinement_merge_receipt(candidate)?
+                    .is_none()
+            );
+            assert!(
+                reopened
+                    .batch()
+                    .put_replicated(
+                        &candidate,
+                        crate::registry::ENTITY_TYPE_CLAIM,
+                        at(11),
+                        11,
+                        &encode_claim_body(&attempted)?
+                    )
+                    .commit()
+                    .is_err(),
+                "{state}/{mode}: erased id must stay fenced"
+            );
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn replicated_refinement_origin_without_control_cannot_publish_approved_claim() -> Result<()> {
+    let f = Fixture::new()?;
+    let proposed = f.submit("improved")?;
+    let mut forged = f
+        .vault
+        .get_claim(&proposed)?
+        .expect("native proposed claim");
+    forged.approval = ClaimApprovalStatus::Approved;
+    let unrelated_id = EntityId::now();
+    assert!(
+        f.vault
+            .batch()
+            .put_replicated(
+                &unrelated_id,
+                crate::registry::ENTITY_TYPE_CLAIM,
+                at(10),
+                10,
+                &encode_claim_body(&forged)?
+            )
+            .commit()
+            .is_err()
+    );
+    assert!(f.vault.get_claim(&unrelated_id)?.is_none());
+    assert_eq!(
+        f.vault.get_claim(&proposed)?.unwrap().approval,
+        ClaimApprovalStatus::Proposed
+    );
+    Ok(())
+}
+
+#[test]
+fn native_proposed_refinement_is_absent_from_canonical_context_pack() -> Result<()> {
+    let f = Fixture::new()?;
+    let candidate = f.submit("improved")?;
+    assert_eq!(
+        f.vault.get_claim(&candidate)?.unwrap().approval,
+        ClaimApprovalStatus::Proposed
+    );
+    // Force a matching lexical index entry so absence is the admission gate,
+    // not merely missing retrieval data for the staged native claim.
+    f.vault
+        .batch()
+        .text(&candidate, &[("body", "unique-refinement-proposal-term")])
+        .commit()?;
+    let pack = f
+        .vault
+        .context_pack()
+        .search_text("unique-refinement-proposal-term", 10)
+        .run()?;
+    assert!(!pack.results.iter().any(|result| result.id == candidate));
     Ok(())
 }

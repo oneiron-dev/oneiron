@@ -386,7 +386,7 @@ impl Vault {
         let had_refinement =
             crate::skill_hub::erase_claim_refinement_in_txn(&self.store, wtxn, id)?;
         let had_merge_receipt =
-            crate::skill_hub::erase_shared_merge_receipts_in_txn(&self.store, wtxn, id)?;
+            crate::skill_hub::erase_refinement_custody_in_txn(&self.store, wtxn, id)?;
         let (existed, had_vector, had_graph_mutation, neighbors) =
             deindex_entity(&self.store, wtxn, id)?;
         crate::codebase::delete_codebase_snapshot_in_txn(&self.store, wtxn, id)?;
@@ -454,7 +454,8 @@ impl Vault {
         let had_refinement =
             crate::skill_hub::erase_claim_refinement_in_txn(&self.store, wtxn, id)?;
         let had_merge_receipt =
-            crate::skill_hub::erase_shared_merge_receipts_in_txn(&self.store, wtxn, id)?;
+            crate::skill_hub::erase_refinement_custody_in_txn(&self.store, wtxn, id)?;
+        crate::skill_hub::retire_refinement_holder_in_txn(&self.store, wtxn, id)?;
         crate::agent_def::remove_birth_custody_in_txn(&self.store, wtxn, id)?;
         let Some(entity_record) = self.store.entities.get(wtxn, id.as_bytes())? else {
             let cleanup = delete_vad_annotation_metadata_in_txn(&self.store, wtxn, id)?;
@@ -608,10 +609,11 @@ impl Vault {
             let had_refinement =
                 crate::skill_hub::claim_refinement_scope_exists_in_txn(&self.store, wtxn, id)?;
             let had_merge_receipt =
-                crate::skill_hub::shared_merge_receipt_scope_exists_in_txn(&self.store, wtxn, id)?;
+                crate::skill_hub::refinement_custody_exists_in_txn(&self.store, wtxn, id)?;
             let had_sources =
                 crate::skill_hub::source_custody_exists_in_txn(&self.store, wtxn, id)?;
             crate::skill_hub::retire_source_holder_in_txn(&self.store, wtxn, id)?;
+            crate::skill_hub::retire_refinement_holder_in_txn(&self.store, wtxn, id)?;
             let had_receipt_sources =
                 crate::receipt::receipt_archive_custody_exists(&self.store, wtxn, id)?;
             let had_birth_sources =
@@ -651,6 +653,7 @@ impl Vault {
         // `delete_entity_without_header` semantics.
         if !self.active_delete_scope_exists_in_txn(wtxn, id)? {
             crate::skill_hub::retire_source_holder_in_txn(&self.store, wtxn, id)?;
+            crate::skill_hub::retire_refinement_holder_in_txn(&self.store, wtxn, id)?;
             crate::agent_def::retire_birth_sources_for_entity_in_txn(&self.store, wtxn, id)?;
             crate::receipt::retire_receipt_archives_for_erased_id(&self.store, wtxn, id)?;
             // Hard-once-seen is durable LOCAL truth even when nothing local
@@ -825,7 +828,7 @@ impl Vault {
         if crate::note::citation_delete_scope_exists(&self.store, txn, id)?
             || crate::skill_hub::source_custody_exists_in_txn(&self.store, txn, id)?
             || crate::skill_hub::claim_refinement_scope_exists_in_txn(&self.store, txn, id)?
-            || crate::skill_hub::shared_merge_receipt_scope_exists_in_txn(&self.store, txn, id)?
+            || crate::skill_hub::refinement_custody_exists_in_txn(&self.store, txn, id)?
             || crate::agent_def::birth_custody_exists_in_txn(&self.store, txn, id)?
             || crate::receipt::receipt_archive_custody_exists(&self.store, txn, id)?
             || self.store.entities.get(txn, id.as_bytes())?.is_some()
