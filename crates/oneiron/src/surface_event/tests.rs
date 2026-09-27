@@ -1025,7 +1025,7 @@ fn surface_event_retry_mints_a_fresh_attempt() -> Result<()> {
         row.dedupe_key.as_deref(),
         Some(expected_dedupe_key.as_str())
     );
-    assert_eq!(decoded.dispatch_idempotency_key, "evt-retry@example.com");
+    assert_eq!(decoded.dispatch_idempotency_key, expected_dedupe_key);
     assert_eq!(decoded.event.correlation_id, "evt-retry@example.com");
 
     // The source row is terminal and carries the retry's reason.
@@ -1183,8 +1183,8 @@ fn correlation_id_beyond_the_dedupe_cap_is_admitted_and_replays_once() -> Result
     assert!(expected_run_id.len() <= 128);
     assert_eq!(row.run_id.as_deref(), Some(expected_run_id.as_str()));
 
-    // The raw provider id survives verbatim on the durable envelope and on the
-    // downstream idempotency key.
+    // The raw provider id survives verbatim on the durable envelope; the
+    // downstream idempotency key remains bounded and receiving-identity scoped.
     let decoded = decode_surface_event_attempt_payload(&row.payload)?;
     let expected_dedupe_key = surface_event_dedupe_key(SurfaceEventKey {
         channel: &decoded.event.channel,
@@ -1197,7 +1197,7 @@ fn correlation_id_beyond_the_dedupe_cap_is_admitted_and_replays_once() -> Result
     );
     assert_ne!(row.dedupe_key.as_deref(), Some(expected_run_id.as_str()));
     assert_eq!(decoded.event.correlation_id, correlation_id);
-    assert_eq!(decoded.dispatch_idempotency_key, correlation_id);
+    assert_eq!(decoded.dispatch_idempotency_key, expected_dedupe_key);
 
     // A duplicate submission observes exactly one admission.
     let replayed = accepted(submit(1_800_010_100)?);
