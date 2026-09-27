@@ -29744,6 +29744,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/store/retrieval_telemetry/end_outcome.rs",
+     "purpose": "Terminal attribution-gated retrieval outcome writer",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/store/retrieval_telemetry/mod.rs",
      "purpose": "Retrieval telemetry: run records, trace fork index, outcome rows, and reward-weighted blend-weight tuning",
      "surface": {
@@ -29758,7 +29768,7 @@
      "path": "src/store/retrieval_telemetry/run_store.rs",
      "purpose": "Retrieval-run, outcome, and trace-fork persistence: `Store` and `SessionStoreView` methods, staging bodies…",
      "surface": {
-      "crate-vis": 24,
+      "crate-vis": 26,
       "fn": 3
      }
     },
@@ -29805,8 +29815,10 @@
       "RetrievalBlendWeightDataWindow",
       "RetrievalBlendWeightTableEntry",
       "RetrievalBlendWeights",
+      "RetrievalEndOutcome",
       "RetrievalOutcome",
       "RetrievalOutcomeRecord",
+      "RetrievalRewardEvidence",
       "RetrievalRunId",
       "RetrievalRunRecord",
       "RetrievalScoreBreakdown",
@@ -29820,10 +29832,10 @@
      "path": "src/store/retrieval_telemetry/types.rs",
      "purpose": "Retrieval-telemetry record, trace, signal, and blend-weight types",
      "surface": {
-      "crate-vis": 11,
+      "crate-vis": 12,
       "enum": 4,
       "fn": 9,
-      "struct": 13,
+      "struct": 15,
       "type": 1
      }
     },
@@ -32618,7 +32630,7 @@
      "purpose": "Vault text and vector search, batch and query builders, and retrieval telemetry",
      "surface": {
       "crate-vis": 5,
-      "fn": 21
+      "fn": 22
      }
     },
     {
@@ -35454,7 +35466,7 @@
      "purpose": "EMB-5 speculative retrieval over ASR partials (ONE-EMBED E7)"
     },
     "store": {
-     "files": 49,
+     "files": 50,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -35617,7 +35629,7 @@
    },
    "over_bar": 10,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2101,
+   "source_files": 2102,
    "test_files": 720
   },
   "oneiron-android": {
@@ -36157,6 +36169,16 @@
      "purpose": "ONE-218 eval-side driver for the telemetry-v0 retrieval-outcome loop",
      "surface": {
       "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/eval/outcome_ingest.rs",
+     "purpose": "JSONL terminal retrieval outcome ingest for the explicit eval command",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -36781,7 +36803,7 @@
      "purpose": "BEAM scaffold and fixed scorer for EVAL-001/EVAL-002"
     },
     "eval": {
-     "files": 2,
+     "files": 3,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "file+dir",
@@ -36839,7 +36861,7 @@
    },
    "over_bar": 0,
    "purpose": "oneiron-bench — benchmark harness skeleton",
-   "source_files": 98,
+   "source_files": 99,
    "test_files": 18
   },
   "oneiron-driver": {

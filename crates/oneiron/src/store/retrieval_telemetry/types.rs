@@ -454,6 +454,64 @@ pub struct RetrievalOutcome {
     pub metadata: BTreeMap<String, String>,
 }
 
+/// End-of-turn judgement supplied by the ARCH-0053 attribution gate. The
+/// engine checks that the judged memory surfaced in this run and that the
+/// turn matches; it never infers retrieval credit from a raw outcome reward.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct RetrievalEndOutcome {
+    pub run_id: RetrievalRunId,
+    pub key: String,
+    pub turn_id: [u8; 16],
+    pub activated_memory_id: [u8; 16],
+    pub gate_score: f32,
+    pub confirmed_fact_hit: bool,
+    pub latency_scale_us: u64,
+    pub cost_weight: f32,
+    pub metadata: BTreeMap<String, String>,
+}
+
+/// Stored evidence for the shaped reward. Only the end-outcome door mints this;
+/// an arbitrary `RetrievalOutcome.reward` remains telemetry, not a label.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct RetrievalRewardEvidence {
+    pub turn_id: [u8; 16],
+    pub activated_memory_id: [u8; 16],
+    pub gate_score: f32,
+    pub confirmed_fact_hit: bool,
+    pub latency_scale_us: u64,
+    pub cost_weight: f32,
+}
+
+impl RetrievalRewardEvidence {
+    pub(super) fn reward(&self, run: &RetrievalRunRecord) -> Result<f32> {
+        if run.turn.is_none_or(|turn| turn.turn_id != self.turn_id)
+            || !run.result_ids.contains(&self.activated_memory_id)
+            || !self.gate_score.is_finite()
+            || self.gate_score <= 0.0
+            || self.gate_score > 1.0
+            || self.latency_scale_us == 0
+            || !self.cost_weight.is_finite()
+            || self.cost_weight < 0.0
+        {
+            return Err(Error::InvalidConfig(
+                "invalid gated retrieval end outcome".to_owned(),
+            ));
+        }
+        let hit = if self.confirmed_fact_hit { 1.0 } else { 0.0 };
+        let latency_norm = (run.elapsed_us as f64 / self.latency_scale_us as f64) as f32;
+        let reward = self.gate_score.mul_add(
+            hit,
+            -self.cost_weight * (latency_norm + f32::from(run.state.hops)),
+        );
+        if !reward.is_finite() {
+            return Err(Error::InvalidConfig(
+                "non-finite shaped retrieval reward".to_owned(),
+            ));
+        }
+        Ok(reward)
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct RetrievalOutcomeRecord {
     pub version: u8,
@@ -463,4 +521,6 @@ pub struct RetrievalOutcomeRecord {
     pub accepted: Option<bool>,
     pub metadata: BTreeMap<String, String>,
     pub updated_at: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reward_evidence: Option<RetrievalRewardEvidence>,
 }
