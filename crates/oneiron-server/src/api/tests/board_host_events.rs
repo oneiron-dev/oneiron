@@ -689,6 +689,15 @@ async fn board_host_pack_install_is_changed_line_and_live_section_next_render() 
         HubPin::ContentHash(source.content_hash().to_hex()),
     )
     .unwrap();
+    let mut healthy_files = source.files().to_vec();
+    for file in &mut healthy_files {
+        file.path = file.path.replace("alice.board", "alice.healthy");
+        file.content = String::from_utf8(file.content.clone())
+            .expect("fixture UTF-8")
+            .replace("alice.board", "alice.healthy")
+            .into_bytes();
+    }
+    let healthy_source = PackSource::from_files(healthy_files).unwrap();
     let PackInstallDisposition::Installed(receipt) = server
         .vault
         .install_pack_from_adapter(
@@ -746,4 +755,76 @@ async fn board_host_pack_install_is_changed_line_and_live_section_next_render() 
                 .unwrap_or_default()
                 .contains("alice.board: installed:"))
     );
+    // Delete one installed source through the ordinary door. Only that pack
+    // disappears; board hydration and unrelated sections stay readable.
+    let healthy_ref = HubRef::new(
+        hub,
+        "packs/alice.healthy",
+        HubPin::ContentHash(healthy_source.content_hash().to_hex()),
+    )
+    .unwrap();
+    let PackInstallDisposition::Installed(healthy) = server
+        .vault
+        .install_pack_from_adapter(
+            &Adapter {
+                hub,
+                source: healthy_source,
+            },
+            &healthy_ref,
+            &publisher,
+            &Fit,
+            occurred,
+            6,
+        )
+        .unwrap()
+    else {
+        panic!("healthy pack")
+    };
+    let healthy_row = seeded_test_entity_id(0x2477_9113);
+    server
+        .vault
+        .put_claim(
+            &healthy_row,
+            &oneiron::ClaimBody::new(
+                "alice.healthy.topic",
+                oneiron::ClaimSubject::Entity(actor),
+                rmpv::Value::from("healthy topic"),
+                0.9,
+                oneiron::ClaimApprovalStatus::Auto,
+                oneiron::ClaimLifecycleStatus::Active,
+            ),
+            oneiron::TimeRange { start: 7, end: 7 },
+            7,
+        )
+        .unwrap();
+    server
+        .vault
+        .delete_entity(&oneiron::EntityId::from_hex(&receipt.source_id).unwrap())
+        .unwrap();
+    let core = core_board(&server, &actor.to_hex(), "pack-session").await;
+    let changed = core["changed"].as_array().unwrap();
+    assert!(
+        changed.iter().any(|line| line
+            .as_str()
+            .unwrap_or_default()
+            .contains("alice.healthy: installed:")),
+        "{core}"
+    );
+    assert!(
+        !changed.iter().any(|line| line
+            .as_str()
+            .unwrap_or_default()
+            .contains("alice.board: installed:")),
+        "{core}"
+    );
+    let latest = board_mcp_call(&server, "pack-main", actor, "setup_oneiron", json!({})).await;
+    let board = latest["result"]["structuredContent"]["board"]["keyframe"]
+        .as_str()
+        .unwrap();
+    assert!(board.contains("alice.healthy.panel"), "{board}");
+    assert!(board.contains("alice.healthy.topic"), "{board}");
+    assert!(board.contains(&healthy.content_hash), "{board}");
+    assert!(!board.contains("alice.board.panel"), "{board}");
+    assert!(!board.contains("alice.board.topic"), "{board}");
+    assert!(!board.contains(&receipt.content_hash), "{board}");
 }

@@ -94,10 +94,23 @@ impl Vault {
                     .ok_or_else(|| invalid("bundled skill provenance missing hub ref"))?;
                 let reference = HubRef::from_value(value)?;
                 let marker = pack_skill_alias_key(&old_id, &reference)?;
-                if self.store.vault_meta.get(txn, &marker)?.as_deref()
-                    != Some(prior.pack_name.as_bytes())
-                {
-                    shared = true;
+                match self.store.vault_meta.get(txn, &marker)? {
+                    // A standalone or unmarked alias is a separate holder.
+                    None => shared = true,
+                    Some(owner) => {
+                        let owner = std::str::from_utf8(&owner)
+                            .map_err(|_| invalid("pack skill alias owner corrupt"))?;
+                        // This marker describes where the alias was minted,
+                        // not who owns the SKILL today. Only a live receipt
+                        // still listing the old ID keeps the revision Active.
+                        if owner != prior.pack_name
+                            && self
+                                .mounted_pack_in_txn(txn, owner)?
+                                .is_some_and(|pack| pack.skills.contains(old_hex))
+                        {
+                            shared = true;
+                        }
+                    }
                 }
             }
             for entry in self
@@ -113,7 +126,10 @@ impl Vault {
                 }
                 let other: PackInstallReceipt = serde_json::from_slice(&bytes)
                     .map_err(|_| invalid("pack install catalog corrupt"))?;
-                if other.skills.contains(old_hex) {
+                if self
+                    .mounted_pack_in_txn(txn, &other.pack_name)?
+                    .is_some_and(|pack| pack.skills.contains(old_hex))
+                {
                     shared = true;
                     break;
                 }

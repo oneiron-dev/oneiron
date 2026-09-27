@@ -161,20 +161,23 @@ impl Vault {
     pub fn installed_packs(&self) -> Result<Vec<PackInstallReceipt>> {
         let txn = self.store.env.read_txn()?;
         let mut rows = Vec::new();
-        for entry in self
+        for (seen, entry) in self
             .store
             .vault_meta
             .prefix_iter(&txn, b"pack.install.v1/")?
+            .enumerate()
         {
-            if rows.len() >= 4096 {
+            if seen >= 4096 {
                 return Err(invalid("installed pack catalog exceeds bound"));
             }
             let (key, _) = entry?;
             let name = std::str::from_utf8(&key[b"pack.install.v1/".len()..])
                 .map_err(|_| invalid("pack install catalog name corrupt"))?;
-            let receipt = self
-                .installed_pack_in_txn(&txn, name)?
-                .ok_or_else(|| invalid("pack install catalog missing"))?;
+            // The lens uses the same snapshot to distinguish a deleted source
+            // (not live) from a malformed receipt or a drifting live source.
+            let Some(receipt) = self.mounted_pack_in_txn(&txn, name)? else {
+                continue;
+            };
             let source_id = EntityId::from_hex(&receipt.source_id)?;
             let source = self
                 .pack_source_in_txn(&txn, &source_id)?

@@ -101,6 +101,53 @@ fn fetched_fixture(
     Ok(id)
 }
 #[test]
+fn installed_inventory_skips_deleted_source_but_refuses_corrupt_receipt() -> Result<()> {
+    let first = source(false)?;
+    let (_dir, vault, _owner, first_ref, publisher) = fixture(SkillHubTrustTier::Verified, &first)?;
+    let second = PackSource::from_files(
+        first
+            .files()
+            .iter()
+            .cloned()
+            .map(|mut file| {
+                file.path = file.path.replace("alice.tools", "alice.other");
+                file.content = String::from_utf8(file.content)
+                    .expect("fixture UTF-8")
+                    .replace("alice.tools", "alice.other")
+                    .into_bytes();
+                file
+            })
+            .collect(),
+    )?;
+    let install = |source: &PackSource, reference: &HubRef, at| -> Result<PackInstallReceipt> {
+        let id = fetched_fixture(&vault, source, reference, &publisher, at)?;
+        let ask = vault.prepare_pack_install(id, reference, &publisher, &policy())?;
+        let PackInstallDisposition::Installed(receipt) = vault.install_pack(&ask)? else {
+            panic!("post-fit install")
+        };
+        Ok(*receipt)
+    };
+    let old = install(&first, &first_ref, 3)?;
+    let next_ref = HubRef::new(
+        first_ref.hub_id,
+        "other",
+        HubPin::ContentHash(second.content_hash().to_hex()),
+    )?;
+    let next = install(&second, &next_ref, 4)?;
+    assert_eq!(vault.installed_packs()?.len(), 2);
+    assert!(vault.delete_entity(&EntityId::from_hex(&old.source_id)?)?);
+    assert_eq!(vault.installed_packs()?, vec![next]);
+    vault.with_write_txn(|txn| {
+        vault
+            .store
+            .vault_meta
+            .put(txn, b"pack.install.v1/alice.other", b"invalid receipt")?;
+        Ok(())
+    })?;
+    assert!(vault.installed_packs().is_err());
+    Ok(())
+}
+#[test]
 fn locally_staged_bytes_cannot_claim_a_hub_origin() -> Result<()> {
     let source = source(false)?;
     let (_dir, vault, _owner, reference, publisher) =
@@ -704,6 +751,118 @@ fn same_pack_historical_alias_does_not_prevent_next_supersession() -> Result<()>
             .edges_out(&next)?
             .iter()
             .any(|edge| edge.kind == crate::edge::EdgeKind::Supersedes && edge.target == old)
+    );
+    Ok(())
+}
+#[test]
+fn last_shared_pack_owner_supersedes_old_revision() -> Result<()> {
+    let mut files = source(false)?.files().to_vec();
+    files.retain(|file| !file.path.starts_with("knowledge/kinds/"));
+    let manifest = files
+        .iter_mut()
+        .find(|file| file.path == "PACK.md")
+        .unwrap();
+    manifest.content = String::from_utf8(manifest.content.clone())
+        .expect("fixture UTF-8")
+        .lines()
+        .filter(|line| !line.starts_with("kinds:"))
+        .collect::<Vec<_>>()
+        .join("\n")
+        .into_bytes();
+    let first = PackSource::from_files(files.clone())?;
+    let (_dir, vault, _owner, hub, publisher) = fixture(SkillHubTrustTier::Verified, &first)?;
+    let second_files = |files: &[HubFile]| -> Vec<HubFile> {
+        files
+            .iter()
+            .cloned()
+            .map(|mut file| {
+                if file.path == "PACK.md" {
+                    file.content = String::from_utf8(file.content)
+                        .expect("fixture UTF-8")
+                        .replace("alice.tools", "alice.other")
+                        .into_bytes();
+                }
+                file
+            })
+            .collect()
+    };
+    let install = |source: &PackSource, label: &str, at: u64| -> Result<PackInstallReceipt> {
+        let reference = HubRef::new(
+            hub.hub_id,
+            label,
+            HubPin::ContentHash(source.content_hash().to_hex()),
+        )?;
+        let id = fetched_fixture(&vault, source, &reference, &publisher, at)?;
+        let ask = vault.prepare_pack_install(id, &reference, &publisher, &policy())?;
+        let PackInstallDisposition::Installed(receipt) = vault.install_pack(&ask)? else {
+            panic!("post-fit install")
+        };
+        Ok(*receipt)
+    };
+    let second = PackSource::from_files(second_files(&files))?;
+    let a1 = install(&first, "a/v1", 3)?;
+    let b1 = install(&second, "b/v1", 4)?;
+    assert_eq!(a1.skills, b1.skills); // one shared holder by content hash
+    let old_id = EntityId::from_hex(&a1.skills[0])?;
+    let manifest = files
+        .iter_mut()
+        .find(|file| file.path == "PACK.md")
+        .unwrap();
+    manifest.content = String::from_utf8(manifest.content.clone())
+        .expect("fixture UTF-8")
+        .replace("version: 1", "version: 2")
+        .into_bytes();
+    let skill = files
+        .iter_mut()
+        .find(|file| file.path == "skills/format/SKILL.md")
+        .unwrap();
+    skill.content =
+        b"---\nname: alice.format\ndescription: format\nversion: 2\n---\nKeep new facts exact.\n"
+            .to_vec();
+    let first_v2 = PackSource::from_files(files.clone())?;
+    let second_v2 = PackSource::from_files(second_files(&files))?;
+    let a2 = install(&first_v2, "a/v2", 5)?;
+    let new_id = EntityId::from_hex(&a2.skills[0])?;
+    assert_ne!(old_id, new_id);
+    assert_eq!(
+        vault.get_skill_record(&old_id)?.unwrap().lifecycle_status,
+        crate::skill::SkillLifecycle::Active
+    ); // B still owns v1
+    let b2 = install(&second_v2, "b/v2", 6)?;
+    assert_eq!(a2.skills, b2.skills);
+    assert_eq!(
+        vault.get_skill_record(&old_id)?.unwrap().lifecycle_status,
+        crate::skill::SkillLifecycle::Superseded
+    );
+    assert_eq!(
+        vault
+            .edges_out(&new_id)?
+            .iter()
+            .filter(|edge| edge.kind == crate::edge::EdgeKind::Supersedes && edge.target == old_id)
+            .count(),
+        1
+    );
+    let queue = crate::attempt_queue::AttemptQueue::new(&vault);
+    let crate::attempt_queue::EnqueueOutcome::Enqueued(attempt) =
+        queue.enqueue(crate::attempt_queue::EnqueueAttempt {
+            kind: "pack.runtime".into(),
+            payload: vec![],
+            dedupe_key: None,
+            run_id: None,
+            now: 7,
+        })?
+    else {
+        panic!("attempt")
+    };
+    assert!(
+        vault
+            .load_attempt_skill_pack(attempt.id, &old_id, 8)
+            .is_err()
+    );
+    assert!(
+        vault
+            .load_attempt_skill_pack(attempt.id, &new_id, 8)
+            .is_ok()
     );
     Ok(())
 }
