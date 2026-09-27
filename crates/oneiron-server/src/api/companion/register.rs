@@ -65,20 +65,21 @@ pub(crate) struct CompanionRegisterRelationshipRefPayload {
     pub(super) target_ref: String,
 }
 
-/// Persona or relationship subject for a companion register record.
+/// Relationship subject for companion register records.
 #[derive(Clone, Debug, Deserialize, Serialize, ToSchema)]
+#[serde(deny_unknown_fields)]
 #[schema(example = json!({
-    "kind": "persona",
-    "persona_ref": "22222222222222222222222222222222"
+    "kind": "relationship",
+    "relationship_ref": {
+        "source_ref": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "target_ref": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+    }
 }))]
 pub(crate) struct CompanionRegisterSubjectPayload {
-    /// Subject discriminator: `persona` or `relationship`.
-    #[schema(example = "persona")]
+    /// Subject discriminator. Companion register records require `relationship`.
+    #[schema(example = "relationship")]
     pub(super) kind: String,
-    /// Persona entity for `persona` records.
-    #[schema(example = "22222222222222222222222222222222")]
-    pub(super) persona_ref: Option<String>,
-    /// Source/target pair for `relationship` records.
+    /// Source/target pair for the relationship record.
     pub(super) relationship_ref: Option<CompanionRegisterRelationshipRefPayload>,
 }
 
@@ -111,9 +112,15 @@ pub(crate) struct CompanionRegisterProvenancePayload {
 /// Typed companion register record envelope.
 #[derive(Clone, Debug, Deserialize, Serialize, ToSchema)]
 #[schema(example = json!({
-    "kind": "persona",
+    "kind": "relationship",
     "scope": { "kind": "personal", "person_ref": "11111111111111111111111111111111" },
-    "subject": { "kind": "persona", "persona_ref": "22222222222222222222222222222222" },
+    "subject": {
+        "kind": "relationship",
+        "relationship_ref": {
+            "source_ref": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "target_ref": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+        }
+    },
     "value": { "note": "private relationship tuning" },
     "provenance": {
         "actor_ref": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
@@ -126,12 +133,12 @@ pub(crate) struct CompanionRegisterProvenancePayload {
     "sensitivity": "restricted"
 }))]
 pub(crate) struct CompanionRegisterRecordPayload {
-    /// Record discriminator: `persona` or `relationship`.
-    #[schema(example = "persona")]
+    /// Record discriminator. Companion register records require `relationship`.
+    #[schema(example = "relationship")]
     pub(super) kind: String,
     /// Visibility/privacy scope.
     pub(super) scope: CompanionRegisterScopePayload,
-    /// Persona or relationship subject.
+    /// Relationship subject.
     pub(super) subject: CompanionRegisterSubjectPayload,
     /// Opaque companion tuning/private note payload.
     pub(super) value: Value,
@@ -151,9 +158,15 @@ pub(crate) struct CompanionRegisterRecordPayload {
     "id": "33333333333333333333333333333333",
     "learned_at": 1700000000,
     "record": {
-        "kind": "persona",
+        "kind": "relationship",
         "scope": { "kind": "neutral" },
-        "subject": { "kind": "persona", "persona_ref": "22222222222222222222222222222222" },
+        "subject": {
+            "kind": "relationship",
+            "relationship_ref": {
+                "source_ref": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                "target_ref": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+            }
+        },
         "value": { "style": "warm" },
         "provenance": {
             "actor_ref": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
@@ -181,9 +194,15 @@ pub(crate) struct CompanionRegisterCreateRecordRequest {
 #[schema(example = json!({
     "learned_at": 1700000300,
     "record": {
-        "kind": "persona",
+        "kind": "relationship",
         "scope": { "kind": "personal", "person_ref": "11111111111111111111111111111111" },
-        "subject": { "kind": "persona", "persona_ref": "22222222222222222222222222222222" },
+        "subject": {
+            "kind": "relationship",
+            "relationship_ref": {
+                "source_ref": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                "target_ref": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+            }
+        },
         "value": { "note": "updated private tuning" },
         "provenance": {
             "actor_ref": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
@@ -432,9 +451,9 @@ pub(crate) async fn end_companion_register_relationship(
 pub(crate) fn companion_register_record_from_payload(
     payload: &CompanionRegisterRecordPayload,
 ) -> Result<oneiron::CompanionRecord, ApiError> {
+    let kind = companion_register_kind_from_wire(&payload.kind, "record.kind")?;
     let scope = companion_register_scope_from_payload(&payload.scope)?;
     let subject = companion_register_subject_from_payload(&payload.subject)?;
-    let kind = companion_register_kind_from_wire(&payload.kind, "record.kind")?;
     if kind != subject.kind() {
         return Err(ApiError::bad_request(
             "record.kind must match subject.kind",
@@ -513,19 +532,7 @@ pub(crate) fn companion_register_subject_from_payload(
     payload: &CompanionRegisterSubjectPayload,
 ) -> Result<oneiron::CompanionSubject, ApiError> {
     match payload.kind.as_str() {
-        "persona" if payload.relationship_ref.is_none() => {
-            let Some(persona_ref) = payload.persona_ref.as_deref() else {
-                return Err(ApiError::bad_request(
-                    "persona subject requires persona_ref",
-                    Some("record.subject.persona_ref"),
-                ));
-            };
-            Ok(oneiron::CompanionSubject::persona(parse_entity_id_param(
-                persona_ref,
-                "record.subject.persona_ref",
-            )?))
-        }
-        "relationship" if payload.persona_ref.is_none() => {
+        "relationship" => {
             let Some(relationship_ref) = payload.relationship_ref.as_ref() else {
                 return Err(ApiError::bad_request(
                     "relationship subject requires relationship_ref",
@@ -543,8 +550,12 @@ pub(crate) fn companion_register_subject_from_payload(
                 )?,
             ))
         }
+        "persona" => Err(ApiError::bad_request(
+            "persona identity must be stored as a PERSON entity, not a companion record",
+            Some("record.subject.kind"),
+        )),
         _ => Err(ApiError::bad_request(
-            "subject shape must match subject.kind",
+            "subject.kind must be relationship",
             Some("record.subject.kind"),
         )),
     }
