@@ -1,10 +1,14 @@
-//! Config-driven benchmark scraping. Fetch transport is injected; results only nominate.
+//! Config-driven benchmark scraping. External scores only nominate candidates.
+mod http;
+mod worker;
 use super::{
     ModelId,
     registry::{ModelScoreDiff, ScoreObservation, ScoreSnapshot, invalid},
 };
 use crate::{Vault, error::Result};
+pub use http::HttpScoreFetch;
 use serde::{Deserialize, Serialize};
+pub use worker::ScoreScraperWorker;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ScoreSourceConfig {
@@ -62,6 +66,16 @@ impl<F: ScoreFetch> ScoreScraper<F> {
             last_fetch: None,
         })
     }
+    /// Start the configured background refresh loop with an immediate first fetch.
+    /// The host can pass `HttpScoreFetch::new()?` as the fetcher and must drain
+    /// the worker's result receiver to observe errors; dropping it stops the loop.
+    pub fn start(self, vault: std::sync::Arc<Vault>) -> ScoreScraperWorker
+    where
+        F: Send + 'static,
+    {
+        ScoreScraperWorker::start(self, vault)
+    }
+
     pub fn refresh(&mut self, vault: &Vault, now: u64) -> Result<Vec<ModelScoreDiff>> {
         if self
             .last_fetch
