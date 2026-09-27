@@ -1075,3 +1075,73 @@ def test_base_declared_directory_child_is_plumbing(tmp_path):
     r = run_check(path, sha)
     assert fails(r) == [f"FAIL extra mod fresh in {NEW}/mod.rs"]
 
+
+
+# --- same-scope literal includes preserve `tests_regressions::recall::<test>` ---
+
+INCLUDED_BASE = textwrap.dedent('''\
+    //! Scope docs.
+
+    fn marker() -> u8 {
+        7
+    }
+
+    #[test]
+    fn remains_at_parent_scope() {
+        assert_eq!(marker(), 7);
+    }
+''')
+INCLUDED_MOD = '//! Scope docs.\n\ninclude!("fixture.rs");\ninclude!("cases.rs");\n'
+INCLUDED_FIXTURE = 'fn marker() -> u8 {\n    7\n}\n'
+INCLUDED_CASES = '#[test]\nfn remains_at_parent_scope() {\n    assert_eq!(marker(), 7);\n}\n'
+
+
+def included_repo(tmp_path, mod=INCLUDED_MOD, fixture=INCLUDED_FIXTURE, cases=INCLUDED_CASES):
+    path, sha = make_repo(tmp_path, INCLUDED_BASE)
+    apply_split(path, {"mod.rs": mod, "fixture.rs": fixture, "cases.rs": cases})
+    return run_check(path, sha)
+
+
+def test_same_scope_literal_include_matches_items_without_module_scope(tmp_path):
+    r = included_repo(tmp_path)
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert r.stdout.splitlines()[-1] == f"SPLIT-CHECK OK {OLD} -> 3 children (2 items)"
+
+
+def test_same_scope_include_checks_moved_body(tmp_path):
+    r = included_repo(tmp_path, cases=INCLUDED_CASES.replace('marker(), 7', 'marker(), 8'))
+    assert r.returncode == 1
+    assert fails(r) == ['FAIL body fn remains_at_parent_scope differs:']
+
+
+def test_same_scope_include_rejects_missing_target(tmp_path):
+    r = included_repo(tmp_path, mod=INCLUDED_MOD.replace('fixture.rs', 'absent.rs'))
+    assert r.returncode == 1
+    assert f'FAIL missing include target absent.rs in {NEW}/mod.rs' in fails(r)
+
+
+def test_same_scope_include_rejects_duplicate_target(tmp_path):
+    r = included_repo(tmp_path, mod=INCLUDED_MOD + 'include!("cases.rs");\n')
+    assert r.returncode == 1
+    assert f'FAIL duplicate or self-include cases.rs in {NEW}/mod.rs' in fails(r)
+
+
+def test_same_scope_include_rejects_path_traversal(tmp_path):
+    r = included_repo(tmp_path, mod=INCLUDED_MOD.replace('fixture.rs', '../fixture.rs'))
+    assert r.returncode == 1
+    assert f'FAIL {NEW}/mod.rs does not declare `mod fixture;`' in fails(r)
+    assert any('extra unrecognised block' in problem for problem in fails(r))
+
+
+def test_same_scope_include_rejects_module_declaration_of_target(tmp_path):
+    r = included_repo(tmp_path, mod=INCLUDED_MOD + 'mod fixture;\n')
+    assert r.returncode == 1
+    assert any('is both included and declared as a module' in problem for problem in fails(r))
+
+
+def test_same_scope_include_ignores_raw_string_lookalike(tmp_path):
+    mod = '//! Scope docs.\nconst EXAMPLE: &str = r#"\ninclude!("fixture.rs");\n"#;\ninclude!("cases.rs");\n'
+    r = included_repo(tmp_path, mod=mod)
+    assert r.returncode == 1
+    assert f'FAIL {NEW}/mod.rs does not declare `mod fixture;`' in fails(r)
+    assert f'FAIL extra const EXAMPLE in {NEW}/mod.rs' in fails(r)
