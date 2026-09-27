@@ -7589,7 +7589,7 @@
      "path": "src/claim/mod.rs",
      "purpose": "CLAIM body ABI + typed Claim API (ARCH-0003, pinned decisions D11/D17/D18)",
      "surface": {
-      "crate-vis": 7,
+      "crate-vis": 8,
       "re-export": 9
      }
     },
@@ -7732,7 +7732,7 @@
      "path": "src/claim/scoped_read/admission.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 6,
+      "crate-vis": 15,
       "fn": 5
      }
     },
@@ -7743,7 +7743,7 @@
      "path": "src/claim/scoped_read/context_filter.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 1,
       "fn": 1
      }
     },
@@ -7758,13 +7758,23 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/claim/scoped_read/edge_admission.rs",
+     "purpose": "The one scoped graph projection: exact relation + both endpoints, then limits",
+     "surface": {
+      "crate-vis": 6
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/claim/scoped_read/graph_reads.rs",
      "purpose": "Receipted graph and timeline reads under the resolved actor floor",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 2,
       "fn": 4
      }
     },
@@ -7787,6 +7797,7 @@
      "path": "src/claim/scoped_read/mod.rs",
      "purpose": "The policy-gated read lane: [`ScopedReadActorKey`], [`ScopedRead`], and the admission/filtering surface that…",
      "surface": {
+      "crate-vis": 2,
       "re-export": 3,
       "struct": 1
      }
@@ -7798,7 +7809,7 @@
      "path": "src/claim/scoped_read/note_visibility.rs",
      "purpose": "Actor and class checks for private NOTE bodies in scoped reads",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 2
      }
     },
     {
@@ -16485,7 +16496,7 @@
      "purpose": "Cross-vault same_as links and per-pact share consent (FED-07)",
      "surface": {
       "const": 1,
-      "crate-vis": 1,
+      "crate-vis": 2,
       "enum": 1,
       "fn": 3
      }
@@ -20771,7 +20782,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "test",
      "notable": [],
      "path": "src/llm/decision/questions/graph_ask_tests.rs",
@@ -22274,6 +22285,14 @@
      "surface": {}
     },
     {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/memory/tests/diary_admission_matrix.rs",
+     "purpose": "One fixture, multiple phases and caller-observable diary admission doors",
+     "surface": {}
+    },
+    {
      "bucket": "m",
      "kind": "test",
      "notable": [],
@@ -22318,7 +22337,7 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "XL",
      "kind": "test",
      "notable": [],
      "path": "src/memory/tests/takes_notes.rs",
@@ -22763,7 +22782,7 @@
      "purpose": "Attributed NOTE records with built-in, plugin and registered PACK kinds",
      "surface": {
       "const": 1,
-      "crate-vis": 22,
+      "crate-vis": 24,
       "enum": 3,
       "fn": 4,
       "re-export": 7,
@@ -22820,6 +22839,46 @@
      "purpose": "Pin-only live-state rebuild",
      "surface": {
       "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/note/coreference/access.rs",
+     "purpose": "One transaction-bound answer for node and exact-relation diary access",
+     "surface": {
+      "crate-vis": 7
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/note/coreference/commands.rs",
+     "purpose": "Resident submissions and revocation",
+     "surface": {
+      "fn": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/note/coreference/mod.rs",
+     "purpose": "Transaction-bound resident diary coreference over NOTE, edge and grant rows",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/note/coreference/pair.rs",
+     "purpose": "Canonical pair identity and resident-owned submission witnesses",
+     "surface": {
+      "crate-vis": 7
      }
     },
     {
@@ -24867,7 +24926,7 @@
      "path": "src/pipeline/builder/mod.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 8,
+      "crate-vis": 9,
       "fn": 38,
       "struct": 1
      }
@@ -25311,7 +25370,7 @@
      "purpose": "—",
      "surface": {
       "const": 5,
-      "crate-vis": 32,
+      "crate-vis": 33,
       "enum": 5,
       "fn": 12,
       "struct": 10
@@ -25819,7 +25878,9 @@
      "notable": [],
      "path": "src/ports/lmdb_index.rs",
      "purpose": "Search, short-id and deletion-ledger adapters",
-     "surface": {}
+     "surface": {
+      "crate-vis": 1
+     }
     },
     {
      "bucket": "s",
@@ -35994,7 +36055,7 @@
      "purpose": "—"
     },
     "claim": {
-     "files": 44,
+     "files": 45,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -36575,7 +36636,7 @@
      "purpose": "—"
     },
     "memory": {
-     "files": 91,
+     "files": 92,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -36589,7 +36650,7 @@
      "purpose": "Durable batched speculation over real detached worktrees"
     },
     "note": {
-     "files": 29,
+     "files": 33,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "file+dir",
@@ -36674,7 +36735,7 @@
     },
     "ports": {
      "files": 33,
-     "impl_vault": false,
+     "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
      "purpose": "Transaction-composable storage ports"
@@ -37109,8 +37170,8 @@
    },
    "over_bar": 2,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2198,
-   "test_files": 754
+   "source_files": 2203,
+   "test_files": 755
   },
   "oneiron-android": {
    "files": [
