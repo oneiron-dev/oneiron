@@ -135,7 +135,10 @@ fn search_vector_skips_deleted_nodes() -> Result<()> {
     vault.put_vector(&deleted, &[0.98_f32, 0.05, 0.0, 0.0])?;
     vault.put_vector(&live, &[0.0_f32, 1.0, 0.0, 0.0])?;
 
-    assert!(vault.delete_entity(&deleted)?);
+    assert!(vault.delete_entity_with_options(
+        &deleted,
+        crate::deletion::DeleteEntityOptions { purge: true }
+    )?);
 
     let results = vault.search_vector(&[0.98_f32, 0.05, 0.0, 0.0], 3)?;
     assert!(!results.iter().any(|item| item.id == deleted));
@@ -182,7 +185,10 @@ fn search_after_entry_point_deleted() -> Result<()> {
     vault.put_vector(&survivor, &[0.0_f32, 1.0, 0.0, 0.0])?;
 
     assert_eq!(vault.search_vector(&[1.0_f32, 0.0, 0.0, 0.0], 5)?.len(), 2);
-    assert!(vault.delete_entity(&entry)?);
+    assert!(vault.delete_entity_with_options(
+        &entry,
+        crate::deletion::DeleteEntityOptions { purge: true }
+    )?);
 
     let results = vault.search_vector(&[0.0_f32, 1.0, 0.0, 0.0], 5)?;
     assert_eq!(results.len(), 1);

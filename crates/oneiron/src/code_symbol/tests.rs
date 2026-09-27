@@ -507,7 +507,12 @@ fn symbol_blame_lookup_skips_orphaned_index_after_code_artifact_delete() -> Resu
     )?;
     vault.put_code_symbol_manifest(&id, &manifest)?;
 
-    assert!(vault.delete_entity(&id)?);
+    assert!(
+        vault.delete_entity_with_options(
+            &id,
+            crate::deletion::DeleteEntityOptions { purge: true }
+        )?
+    );
 
     assert!(
         vault

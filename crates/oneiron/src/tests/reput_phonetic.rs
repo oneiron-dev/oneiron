@@ -220,7 +220,12 @@ fn reput_range_to_point_deindexes_stale_end_key() -> Result<()> {
         );
     }
 
-    assert!(vault.delete_entity(&id)?);
+    assert!(
+        vault.delete_entity_with_options(
+            &id,
+            crate::deletion::DeleteEntityOptions { purge: true }
+        )?
+    );
     Ok(())
 }
 
@@ -449,7 +454,12 @@ fn phonetic_reindex_repairs_missing_forward_codes() -> Result<()> {
     );
     drop(rtxn);
 
-    assert!(vault.delete_entity(&id)?);
+    assert!(
+        vault.delete_entity_with_options(
+            &id,
+            crate::deletion::DeleteEntityOptions { purge: true }
+        )?
+    );
 
     let rtxn = vault.store.env.read_txn()?;
     for code in ["ABC", "DEF"] {
@@ -532,7 +542,12 @@ fn full_delete_deindexes_everything() -> Result<()> {
         assert!(vault.store.type_index.get(&rtxn, &type_key)?.is_some());
     }
 
-    assert!(vault.delete_entity(&id)?);
+    assert!(
+        vault.delete_entity_with_options(
+            &id,
+            crate::deletion::DeleteEntityOptions { purge: true }
+        )?
+    );
     assert!(vault.get(&id)?.is_none());
     assert!(vault.get_vector(&id)?.is_none());
     assert!(vault.edges_out(&id)?.is_empty());
@@ -678,7 +693,10 @@ fn delete_entity_phonetic_fallback_variants() -> Result<()> {
         wtxn.commit()?;
 
         assert!(
-            vault.delete_entity(&id)?,
+            vault.delete_entity_with_options(
+                &id,
+                crate::deletion::DeleteEntityOptions { purge: true }
+            )?,
             "case {name}: delete_entity should return true"
         );
 
@@ -739,7 +757,7 @@ fn delete_entity_corrupted_edge_record_returns_error_not_panic() -> Result<()> {
     })?;
 
     let err = vault
-        .delete_entity(&id)
+        .delete_entity_with_options(&id, crate::deletion::DeleteEntityOptions { purge: true })
         .expect_err("corrupted edge record should fail loud");
     assert_matches!(err, Error::CorruptedIndex(_));
     Ok(())
@@ -754,7 +772,12 @@ fn delete_entity_cleans_edge_only_nodes_and_bumps_graph_version() -> Result<()> 
     vault.put_edge(&src, EdgeKind::Supports, &tgt, 0.9)?;
     let before = read_hnsw_meta_u64(&vault, GRAPH_VERSION_KEY)?;
 
-    assert!(!vault.delete_entity(&src)?);
+    assert!(
+        !vault.delete_entity_with_options(
+            &src,
+            crate::deletion::DeleteEntityOptions { purge: true }
+        )?
+    );
     assert!(vault.edges_out(&src)?.is_empty());
     assert!(vault.edges_in(&tgt)?.is_empty());
 

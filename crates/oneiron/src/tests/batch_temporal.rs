@@ -307,7 +307,10 @@ fn batch_put_and_deindex_pin_temporal_boundary_comparisons() -> Result<()> {
         );
     }
 
-    assert!(vault.delete_entity(&over_id)?);
+    assert!(vault.delete_entity_with_options(
+        &over_id,
+        crate::deletion::DeleteEntityOptions { purge: true }
+    )?);
     {
         let rtxn = vault.store.env.read_txn()?;
         assert!(
@@ -320,7 +323,10 @@ fn batch_put_and_deindex_pin_temporal_boundary_comparisons() -> Result<()> {
         );
     }
 
-    assert!(vault.delete_entity(&exact_id)?);
+    assert!(vault.delete_entity_with_options(
+        &exact_id,
+        crate::deletion::DeleteEntityOptions { purge: true }
+    )?);
     {
         let rtxn = vault.store.env.read_txn()?;
         assert_eq!(

@@ -442,7 +442,10 @@ fn a_same_count_delete_and_insert_race_defers_the_whole_round_by_identity() {
 
     assert!(
         vault
-            .delete_entity(&deleted)
+            .delete_entity_with_options(
+                &deleted,
+                crate::deletion::DeleteEntityOptions { purge: true }
+            )
             .expect("hard-delete planned turn")
     );
     let inserted = seed_dirty_turn(&vault, &conversation, 900);
@@ -930,7 +933,7 @@ fn a_vanished_dirty_snapshot_enqueues_none_of_the_stale_round() {
     // The whole planned snapshot vanishes before the close runs.
     assert!(
         vault
-            .delete_entity(&turn)
+            .delete_entity_with_options(&turn, crate::deletion::DeleteEntityOptions { purge: true })
             .expect("hard-delete planned turn")
     );
 

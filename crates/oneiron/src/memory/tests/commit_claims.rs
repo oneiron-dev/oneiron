@@ -960,6 +960,7 @@ fn persona_baseline_and_scenario_do_not_register_companion_persona() {
         vault.get_entity_type(&facet).expect("FACET type"),
         Some(crate::registry::ENTITY_TYPE_FACET)
     );
+
     assert!(
         vault
             .companion_register()

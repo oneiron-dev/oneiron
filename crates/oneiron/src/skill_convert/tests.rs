@@ -778,7 +778,13 @@ fn a_deleted_source_stales_the_skill_it_grounded_without_losing_it() -> Result<(
     assert_eq!(before.lifecycle_status, SkillLifecycle::Active);
     assert_eq!(skills_dependent_on_message(&vault, &sources[0])?, [skill]);
 
-    assert!(vault.delete_entity(&sources[0])?, "the source existed");
+    assert!(
+        vault.delete_entity_with_options(
+            &sources[0],
+            crate::deletion::DeleteEntityOptions { purge: true }
+        )?,
+        "the source existed"
+    );
 
     let after = vault
         .get_skill_record(&skill)?
@@ -807,7 +813,10 @@ fn one_lost_source_of_two_is_enough_and_the_survivor_stays_indexed() -> Result<(
     let (_tmp, vault) = temp_vault();
     let (skill, sources) = converted_and_admitted(&vault, &["blinds, kettle", "then priorities"]);
 
-    vault.delete_entity(&sources[0])?;
+    vault.delete_entity_with_options(
+        &sources[0],
+        crate::deletion::DeleteEntityOptions { purge: true },
+    )?;
 
     assert_eq!(
         vault.get_skill_record(&skill)?.map(|r| r.lifecycle_status),
@@ -835,7 +844,10 @@ fn deleting_a_message_the_skill_never_cited_leaves_it_active() -> Result<()> {
         .target;
 
     assert!(skills_dependent_on_message(&vault, &stranger)?.is_empty());
-    vault.delete_entity(&stranger)?;
+    vault.delete_entity_with_options(
+        &stranger,
+        crate::deletion::DeleteEntityOptions { purge: true },
+    )?;
 
     assert_eq!(
         vault.get_skill_record(&skill)?.map(|r| r.lifecycle_status),
@@ -852,7 +864,10 @@ fn deleting_a_message_the_skill_never_cited_leaves_it_active() -> Result<()> {
 fn the_owner_reverses_the_fold_and_a_later_loss_re_stales() -> Result<()> {
     let (_tmp, vault) = temp_vault();
     let (skill, sources) = converted_and_admitted(&vault, &["blinds, kettle", "then priorities"]);
-    vault.delete_entity(&sources[0])?;
+    vault.delete_entity_with_options(
+        &sources[0],
+        crate::deletion::DeleteEntityOptions { purge: true },
+    )?;
 
     let mut revived = vault.get_skill_record(&skill)?.expect("stale record");
     revived.lifecycle_status = SkillLifecycle::Active;
@@ -863,7 +878,10 @@ fn the_owner_reverses_the_fold_and_a_later_loss_re_stales() -> Result<()> {
         "the reversal ends the episode the note described"
     );
 
-    vault.delete_entity(&sources[1])?;
+    vault.delete_entity_with_options(
+        &sources[1],
+        crate::deletion::DeleteEntityOptions { purge: true },
+    )?;
 
     assert_eq!(
         vault.get_skill_record(&skill)?.map(|r| r.lifecycle_status),
@@ -886,8 +904,14 @@ fn a_second_loss_in_one_episode_grows_the_note() -> Result<()> {
     let (_tmp, vault) = temp_vault();
     let (skill, sources) = converted_and_admitted(&vault, &["blinds, kettle", "then priorities"]);
 
-    vault.delete_entity(&sources[0])?;
-    vault.delete_entity(&sources[1])?;
+    vault.delete_entity_with_options(
+        &sources[0],
+        crate::deletion::DeleteEntityOptions { purge: true },
+    )?;
+    vault.delete_entity_with_options(
+        &sources[1],
+        crate::deletion::DeleteEntityOptions { purge: true },
+    )?;
 
     let note = skill_stale_note(&vault, &skill)?.expect("still stale");
     assert_eq!(note.deleted_refs, vec![sources[0], sources[1]]);
@@ -910,7 +934,10 @@ fn a_candidate_conversion_is_left_to_the_admission_gate() -> Result<()> {
     };
     let sources = source_message_refs(&vault.get_skill_record(&skill)?.expect("landed"))?;
 
-    vault.delete_entity(&sources[0])?;
+    vault.delete_entity_with_options(
+        &sources[0],
+        crate::deletion::DeleteEntityOptions { purge: true },
+    )?;
 
     assert_eq!(
         vault.get_skill_record(&skill)?.map(|r| r.lifecycle_status),
@@ -976,7 +1003,10 @@ fn the_source_index_rebuilds_to_identity_and_the_delete_path_survives_it() -> Re
         "and it is idempotent"
     );
 
-    vault.delete_entity(&sources[0])?;
+    vault.delete_entity_with_options(
+        &sources[0],
+        crate::deletion::DeleteEntityOptions { purge: true },
+    )?;
     assert_eq!(
         vault.get_skill_record(&skill)?.map(|r| r.lifecycle_status),
         Some(SkillLifecycle::Stale)
@@ -990,14 +1020,18 @@ fn the_source_index_rebuilds_to_identity_and_the_delete_path_survives_it() -> Re
 fn a_citation_row_outliving_its_skill_is_pruned_by_the_sweep() -> Result<()> {
     let (_tmp, vault) = temp_vault();
     let (skill, sources) = converted_and_admitted(&vault, &["blinds, kettle"]);
-    vault.delete_entity(&skill)?;
+    vault
+        .delete_entity_with_options(&skill, crate::deletion::DeleteEntityOptions { purge: true })?;
     assert_eq!(
         skills_dependent_on_message(&vault, &sources[0])?,
         [skill],
         "the skill's own delete leaves the citation row behind"
     );
 
-    vault.delete_entity(&sources[0])?;
+    vault.delete_entity_with_options(
+        &sources[0],
+        crate::deletion::DeleteEntityOptions { purge: true },
+    )?;
 
     assert!(
         skills_dependent_on_message(&vault, &sources[0])?.is_empty(),

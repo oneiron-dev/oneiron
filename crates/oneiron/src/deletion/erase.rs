@@ -490,6 +490,7 @@ impl Vault {
         crate::claim::remove_claim_projection_index(&self.store, wtxn, *id)?;
         crate::dreamer_runner::deindex_dreamer_milestone_claim(&self.store, wtxn, id)?;
         crate::llm::deindex_dreamer_step_claim(&self.store, wtxn, id)?;
+        crate::federation::record_scope::retire_stamp(&self.store, wtxn, *id)?;
         self.store.entities.put(wtxn, id.as_bytes(), &payload)?;
         if changed {
             crate::ports::audit_mutation_in_txn(

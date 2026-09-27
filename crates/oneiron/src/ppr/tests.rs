@@ -953,7 +953,7 @@ fn ppr_cache_invalidated_on_entity_delete() -> Result<()> {
     assert_eq!(cache_before[CACHE_STALE_OFFSET], 0);
 
     // Delete entity b — removes a->b and b->c edges.
-    vault.delete_entity(&b)?;
+    vault.delete_entity_with_options(&b, crate::deletion::DeleteEntityOptions { purge: true })?;
 
     // Cache for seeds [a] must now be stale because a's edge to b was removed.
     let cache_after = cache_row(&vault, &[a], 3, 0.15)?;
@@ -1062,7 +1062,10 @@ fn delete_entity_increments_graph_version_once_when_edges_removed() -> Result<()
     let old_scores = ppr_query(&vault.store, &vault.config, &[a], 3, 0.15)?;
     assert!(score_for(&old_scores, b) > 0.0);
     assert!(score_for(&old_scores, c) > 0.0);
-    assert!(vault.delete_entity(&b)?);
+    assert!(
+        vault
+            .delete_entity_with_options(&b, crate::deletion::DeleteEntityOptions { purge: true })?
+    );
 
     // Restore an unflagged pre-delete row without dependency rows so that
     // the graph-version gate, not stale-byte invalidation, must reject it.
@@ -1189,7 +1192,10 @@ fn delete_isolated_entity_increments_graph_version_once() -> Result<()> {
         match path {
             Path::Direct => {
                 assert!(
-                    vault.delete_entity(&a)?,
+                    vault.delete_entity_with_options(
+                        &a,
+                        crate::deletion::DeleteEntityOptions { purge: true }
+                    )?,
                     "case {case_name}: first direct delete should report found",
                 );
             }
@@ -1217,7 +1223,10 @@ fn delete_isolated_entity_increments_graph_version_once() -> Result<()> {
         match path {
             Path::Direct => {
                 assert!(
-                    !vault.delete_entity(&a)?,
+                    !vault.delete_entity_with_options(
+                        &a,
+                        crate::deletion::DeleteEntityOptions { purge: true }
+                    )?,
                     "case {case_name}: second direct delete should report missing",
                 );
             }

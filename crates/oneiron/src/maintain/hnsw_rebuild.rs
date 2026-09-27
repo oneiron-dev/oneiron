@@ -254,7 +254,10 @@ mod slim_rebuild_tests {
         let prepared =
             prepare_rebuild_hnsw_with_discipline(&vault, false, RebuildDiscipline::Persisted)?;
         // Deterministically place a production delete between prepare/commit.
-        assert!(vault.delete_entity(&entity(51))?);
+        assert!(vault.delete_entity_with_options(
+            &entity(51),
+            crate::deletion::DeleteEntityOptions { purge: true }
+        )?);
         assert!(hnsw_marker_is_dropped(&vault)?);
         let revision = vault.store.env.info().last_txn_id;
         assert!(matches!(

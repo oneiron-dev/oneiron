@@ -331,7 +331,13 @@ fn malformed_or_replaced_carrier_fails_reads_and_reopen_closed() -> Result<()> {
         ErrorKind::InvalidPackByteMap
     );
     assert_eq!(
-        vault.delete_entity(&carrier).unwrap_err().kind(),
+        vault
+            .delete_entity_with_options(
+                &carrier,
+                crate::deletion::DeleteEntityOptions { purge: true }
+            )
+            .unwrap_err()
+            .kind(),
         ErrorKind::InvalidPackByteMap
     );
     assert_eq!(vault.pack_byte_map_snapshot()?, Some(snapshot));

@@ -521,7 +521,9 @@ fn source_bridge_refuses_retained_stale_asset_text() {
     vault
         .put_edge(&text, EdgeKind::DerivedFrom, &asset, 1.0)
         .unwrap();
-    vault.delete_entity(&asset).unwrap();
+    vault
+        .delete_entity_with_options(&asset, crate::deletion::DeleteEntityOptions { purge: true })
+        .unwrap();
     assert!(vault.get_raw(&text).unwrap().is_some());
     assert!(vault.create_from_entity(text, "research", actor).is_err());
     assert!(

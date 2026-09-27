@@ -36,6 +36,7 @@ pub mod caps;
 mod chat;
 mod claims;
 mod dreamer;
+mod entity_delete;
 mod error;
 mod expression_preference;
 pub mod extraction;

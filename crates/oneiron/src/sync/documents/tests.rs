@@ -315,7 +315,12 @@ fn peer_import_rechecks_role_selector_and_grant_in_the_committing_writer() {
         doc.import_from_peer(document_sub_tags::STATE, &next, scope, &selector)
             .unwrap_err(),
     );
-    vault.delete_entity(&grant_id).unwrap();
+    vault
+        .delete_entity_with_options(
+            &grant_id,
+            crate::deletion::DeleteEntityOptions { purge: true },
+        )
+        .unwrap();
     let error = doc
         .import_from_peer(document_sub_tags::UPDATE, &next, scope, &selector)
         .unwrap_err();

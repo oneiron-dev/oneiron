@@ -281,7 +281,12 @@ fn native_seal_verifies_before_atomic_terminal_and_retries_from_pristine_origina
     );
     let audit = vault.esign_audit(id)?;
     let canonical = vault.esign_pdf_for_capability(&capabilities[0].1, 0, None, None)?;
-    assert!(vault.delete_entity(&id)?);
+    assert!(
+        vault.delete_entity_with_options(
+            &id,
+            crate::deletion::DeleteEntityOptions { purge: true }
+        )?
+    );
     // The separately stored sealed artifact still exists; deletion revokes its
     // public route, not the independent audit or owner-side storage read.
     assert_eq!(

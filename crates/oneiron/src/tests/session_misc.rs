@@ -126,9 +126,19 @@ fn open_put_get_delete_entities() -> Result<()> {
     let got = vault.get(&id)?.ok_or(Error::EntityNotFound)?;
     assert_eq!(got, data);
 
-    assert!(vault.delete_entity(&id)?);
+    assert!(
+        vault.delete_entity_with_options(
+            &id,
+            crate::deletion::DeleteEntityOptions { purge: true }
+        )?
+    );
     assert!(vault.get(&id)?.is_none());
-    assert!(!vault.delete_entity(&id)?);
+    assert!(
+        !vault.delete_entity_with_options(
+            &id,
+            crate::deletion::DeleteEntityOptions { purge: true }
+        )?
+    );
 
     Ok(())
 }

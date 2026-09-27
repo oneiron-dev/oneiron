@@ -318,7 +318,10 @@ fn blob_artifact_delete_cleans_chain_and_orphaned_assets() -> Result<()> {
     );
 
     // Deleting the LAST referencing artifact removes the shared bytes.
-    vault.delete_entity(&artifact_b)?;
+    vault.delete_entity_with_options(
+        &artifact_b,
+        crate::deletion::DeleteEntityOptions { purge: true },
+    )?;
     assert!(vault.blob_artifact_versions(&artifact_b)?.is_empty());
     assert!(vault.get_raw(&shared_asset)?.is_none());
     Ok(())
@@ -428,7 +431,10 @@ fn blob_birth_four_rungs_only_normalize_transport_and_are_purged() -> Result<()>
         assert_eq!(Some(value), changed.blocks.get(key));
     }
     assert_eq!(append(b"# Page\n\nTEXT\n\n# Another\n\nMore")?.version, 4);
-    vault.delete_entity(&artifact)?;
+    vault.delete_entity_with_options(
+        &artifact,
+        crate::deletion::DeleteEntityOptions { purge: true },
+    )?;
     assert!(vault.blob_fingerprint(&artifact)?.is_none());
     Ok(())
 }

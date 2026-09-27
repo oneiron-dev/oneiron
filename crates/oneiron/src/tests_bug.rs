@@ -381,7 +381,14 @@ fn non_finite_edge_payload_rejected_by_all_read_paths() {
                     .unwrap();
                 src
             },
-            |vault, src| vault.delete_entity(&src).map(|_| ()),
+            |vault, src| {
+                vault
+                    .delete_entity_with_options(
+                        &src,
+                        crate::deletion::DeleteEntityOptions { purge: true },
+                    )
+                    .map(|_| ())
+            },
         ),
     ];
 

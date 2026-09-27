@@ -12408,8 +12408,8 @@
      "path": "src/deletion/delete/facade.rs",
      "purpose": "Public and gated delete entry points plus the headerful orchestration state machine",
      "surface": {
-      "crate-vis": 1,
-      "fn": 2
+      "crate-vis": 2,
+      "fn": 3
      }
     },
     {
@@ -12439,19 +12439,34 @@
      "path": "src/deletion/delete/mod.rs",
      "purpose": "—",
      "surface": {
-      "re-export": 1
+      "re-export": 2
      }
     },
     {
      "bucket": "s",
      "kind": "src",
      "notable": [
+      "DeleteEntityOptions",
       "DeleteEntityOutcome"
      ],
      "path": "src/deletion/delete/outcome.rs",
      "purpose": "Reason-aware delete result type and its missing() constructor",
      "surface": {
       "crate-vis": 1,
+      "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "DeleteEntityPreview"
+     ],
+     "path": "src/deletion/delete/preview.rs",
+     "purpose": "Snapshot-bound impact preview for the one-action, confirmed delete door",
+     "surface": {
+      "crate-vis": 3,
+      "fn": 3,
       "struct": 1
      }
     },
@@ -12472,7 +12487,7 @@
      "path": "src/deletion/gate.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 8
+      "crate-vis": 10
      }
     },
     {
@@ -16238,7 +16253,7 @@
      "path": "src/federation/record_scope.rs",
      "purpose": "Digest-bound record-position stamps and scoped read/delete/export doors",
      "surface": {
-      "crate-vis": 4,
+      "crate-vis": 5,
       "enum": 1,
       "fn": 4,
       "struct": 1
@@ -21244,7 +21259,7 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "ClaimInput",
@@ -21255,12 +21270,12 @@
       "SafeDeleteReason"
      ],
      "path": "src/memory/claims.rs",
-     "purpose": "Claim lifecycle verbs: commit/upsert/retract, safe delete, and the internal commit-decision plumbing (gate…",
+     "purpose": "Claim lifecycle verbs: commit/upsert/retract and the internal commit-decision plumbing (gate…",
      "surface": {
       "const": 1,
-      "crate-vis": 6,
+      "crate-vis": 7,
       "enum": 1,
-      "fn": 7,
+      "fn": 6,
       "struct": 5
      }
     },
@@ -21277,6 +21292,17 @@
      "surface": {
       "fn": 3,
       "struct": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/memory/entity_delete.rs",
+     "purpose": "Owner-bound preview and one-call unshare-before-delete confirmation",
+     "surface": {
+      "crate-vis": 3,
+      "fn": 3
      }
     },
     {
@@ -21715,7 +21741,7 @@
      "surface": {}
     },
     {
-     "bucket": "L",
+     "bucket": "XL",
      "kind": "test",
      "notable": [],
      "path": "src/memory/tests/commit_claims.rs",
@@ -22437,7 +22463,7 @@
      "path": "src/note/storage.rs",
      "purpose": "Canonical entity-document carriers shared by local NOTE edits and sync",
      "surface": {
-      "crate-vis": 7
+      "crate-vis": 8
      }
     },
     {
@@ -28438,13 +28464,13 @@
      "path": "src/share.rs",
      "purpose": "Revocable brief read grants",
      "surface": {
-      "crate-vis": 10,
+      "crate-vis": 12,
       "fn": 5,
       "struct": 3
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "test",
      "notable": [],
      "path": "src/share/tests.rs",
@@ -35251,7 +35277,7 @@
      "purpose": "Multi-critic review node primitives"
     },
     "deletion": {
-     "files": 16,
+     "files": 17,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -35594,7 +35620,7 @@
      "purpose": "—"
     },
     "memory": {
-     "files": 77,
+     "files": 78,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -36126,9 +36152,9 @@
      "purpose": "Write-path stamping: `WriteActor`/`WriteProvenance`/`WriteEnvelope`/`ClaimCandidate` + evidence stamping"
     }
    },
-   "over_bar": 11,
+   "over_bar": 10,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2134,
+   "source_files": 2136,
    "test_files": 726
   },
   "oneiron-android": {

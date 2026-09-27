@@ -242,7 +242,10 @@ fn vault_delete_invalidates_and_enqueues_only_indexed_dependents() -> Result<()>
     vault.commit(txn)?;
 
     // Exercise the real deletion door, not a direct tombstone adapter call.
-    vault.delete_entity(&source)?;
+    vault.delete_entity_with_options(
+        &source,
+        crate::deletion::DeleteEntityOptions { purge: true },
+    )?;
     assert!(vault.get(&source)?.is_none());
     let mut txn = vault.write()?;
     for dependent in [first, second] {
