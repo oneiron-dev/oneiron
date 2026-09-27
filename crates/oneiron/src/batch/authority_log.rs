@@ -4,9 +4,6 @@ use std::collections::BTreeSet;
 
 use heed::RwTxn;
 
-use crate::claim::ClaimLifecycleStatus;
-use crate::companion::CompanionLifecycleEventKind;
-use crate::companion::decode_companion_record_body;
 use crate::entity_id::{ENTITY_ID_LEN, EntityId};
 use crate::error::{Error, RecordError, Result};
 use crate::ppr;
@@ -241,103 +238,4 @@ pub(super) fn authority_type_index_entity_id(key: &[u8]) -> Result<EntityId> {
         .try_into()
         .map_err(|_| Error::CorruptedIndex("type index entity id"))?;
     EntityId::from_bytes(raw).map_err(|_| Error::CorruptedIndex("type index entity id"))
-}
-
-pub(super) fn validate_companion_register_put(
-    store: &Store,
-    wtxn: &mut RwTxn<'_>,
-    id: &EntityId,
-    data: &[u8],
-    companion_retired_histories: Option<&CompanionRetiredHistoryOverlay>,
-) -> Result<()> {
-    let record = decode_companion_record_body(data)?;
-    record.validate_current_schema_lifecycle_events()?;
-    let key = record.key();
-
-    if let Some(existing_raw) = store.entities.get(&*wtxn, id.as_bytes())? {
-        let header = EntityMetadataHeader::parse(&existing_raw)
-            .ok_or(Error::CorruptedIndex("entity header"))?;
-        if header.entity_type == crate::registry::ENTITY_TYPE_FACET {
-            let existing =
-                decode_companion_record_body(&existing_raw[ENTITY_METADATA_HEADER_LEN..])?;
-            if existing.key() != key {
-                return Err(Error::InvalidClaimBody(
-                    "companion record key cannot change",
-                ));
-            }
-            if existing.lifecycle != ClaimLifecycleStatus::Active
-                && &existing_raw[ENTITY_METADATA_HEADER_LEN..] != data
-                && !is_retired_relationship_end_rescrub(&existing, &record)
-            {
-                return Err(Error::InvalidClaimBody("companion record is retired"));
-            }
-            if existing.lifecycle == ClaimLifecycleStatus::Active {
-                if record.lifecycle == ClaimLifecycleStatus::Active {
-                    if !existing.lifecycle_events.is_empty()
-                        && record.lifecycle_events != existing.lifecycle_events
-                    {
-                        return Err(Error::InvalidClaimBody(
-                            "companion lifecycle events cannot change through update",
-                        ));
-                    }
-                } else if !existing.lifecycle_events.is_empty()
-                    && !record
-                        .lifecycle_events
-                        .as_slice()
-                        .starts_with(existing.lifecycle_events.as_slice())
-                {
-                    return Err(Error::InvalidClaimBody(
-                        "companion lifecycle events must preserve history",
-                    ));
-                }
-            }
-        }
-    }
-
-    if record.lifecycle == ClaimLifecycleStatus::Active {
-        let terminal_lifecycle_event_kind = record.terminal_lifecycle_event_kind();
-        let prior_lifecycle_events =
-            if terminal_lifecycle_event_kind == Some(CompanionLifecycleEventKind::Revived) {
-                Some(&record.lifecycle_events[..record.lifecycle_events.len() - 1])
-            } else {
-                None
-            };
-        let lookup = crate::companion::companion_record_key_lookup_in_txn(
-            store,
-            &*wtxn,
-            &key,
-            prior_lifecycle_events,
-        )?;
-        if let Some(existing_id) = lookup.active_id
-            && existing_id != *id
-        {
-            return Err(Error::Record(RecordError::CompanionRecordAlreadyExists));
-        }
-        if let Some(prior_lifecycle_events) = prior_lifecycle_events {
-            let persisted_retired = lookup.retired_history_id.is_some();
-            let same_batch_retired = companion_retired_histories.is_some_and(|histories| {
-                histories.contains(&(key.clone(), prior_lifecycle_events.to_vec()))
-            });
-            if !(persisted_retired || same_batch_retired) {
-                return Err(Error::InvalidClaimBody(
-                    "companion record revive requires retired history",
-                ));
-            }
-        } else {
-            if terminal_lifecycle_event_kind != Some(CompanionLifecycleEventKind::Created)
-                || record.lifecycle_events.len() != 1
-            {
-                return Err(Error::InvalidClaimBody(
-                    "companion create lifecycle history must be canonical",
-                ));
-            }
-            if let Some(existing_id) = lookup.any_id
-                && existing_id != *id
-            {
-                return Err(Error::Record(RecordError::CompanionRecordAlreadyExists));
-            }
-        }
-    }
-
-    Ok(())
 }
