@@ -19,6 +19,7 @@ use crate::llm::{BudgetGuard, BudgetLease, LlmBackend, LlmRequest};
 use crate::store::GateSystemNoticeRecord;
 
 use super::binding::{PolicyContentBinding, content_binding};
+use super::classifier_lease::ClassifierLease;
 use super::contract::PolicyOutputContract;
 use super::notice::{policy_model_rationale_notice, policy_notice};
 use super::pattern::{
@@ -372,14 +373,15 @@ impl Vault {
                 // policy retry. A denied admission is a skipped sovereign
                 // classifier pass, not a free invocation on an old lease.
                 if let Ok(admission) = budget.admit_for_request(&llm_request) {
-                    let response = backend.generate(llm_request, &admission.lease).await;
+                    let lease = ClassifierLease::new(budget, admission.lease);
+                    let response = backend.generate(llm_request, lease.lease()).await;
                     match &response {
                         Ok(answer) => budget
-                            .settle_per_call(&admission.lease, &answer.usage)
+                            .settle_per_call(lease.lease(), &answer.usage)
                             .map_err(|_| {
                                 Error::InvariantViolation("classifier budget settlement")
                             })?,
-                        Err(_) => budget.settle_reserved(&admission.lease).map_err(|_| {
+                        Err(_) => budget.settle_reserved(lease.lease()).map_err(|_| {
                             Error::InvariantViolation("classifier budget settlement")
                         })?,
                     };

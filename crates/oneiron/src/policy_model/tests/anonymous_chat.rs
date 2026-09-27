@@ -482,3 +482,100 @@ fn anonymous_human_hold_refuses_without_promising_a_queue() -> Result<()> {
     assert_eq!(base_rows(&vault)?, before);
     Ok(())
 }
+
+struct PendingPolicyBackend {
+    calls: AtomicUsize,
+    pending_on: usize,
+}
+
+impl LlmBackend for PendingPolicyBackend {
+    fn generate<'a>(
+        &'a self,
+        _request: LlmRequest,
+        _lease: &'a BudgetLease,
+    ) -> LlmGenerateFuture<'a> {
+        let call = self.calls.fetch_add(1, Ordering::SeqCst) + 1;
+        if call == self.pending_on {
+            return Box::pin(std::future::pending());
+        }
+        let mut response = text_response(r#"{"violation":0,"policy_category":null}"#.to_owned());
+        response.usage.input.total = 3;
+        response.usage.output.total = 3;
+        Box::pin(async move { Ok(response) })
+    }
+
+    fn stream<'a>(&'a self, _request: LlmRequest, _lease: &'a BudgetLease) -> LlmStreamResult<'a> {
+        Err(FatalLlmError::InvalidRequest.into())
+    }
+}
+
+#[test]
+fn cancelling_input_or_output_classification_settles_private_reservation() -> Result<()> {
+    for pending_on in [1, 2] {
+        let (_tmp, vault) = temp_vault();
+        put_policy_manifest_bytes(
+            &vault,
+            crate::entity_id::EntityId::now(),
+            &documented_owner_manifest(
+                vec![owner_row_with_action(
+                    "owner:policy",
+                    "Check content",
+                    "block",
+                )],
+                Vec::new(),
+            ),
+        )?;
+        let before = base_rows(&vault)?;
+        let budget =
+            BudgetGuard::with_reserve_units("anon-cancel", 12, 6, BudgetExhaustionPolicy::Suspend);
+        let backend = PendingPolicyBackend {
+            calls: AtomicUsize::new(0),
+            pending_on,
+        };
+        let responder = Responder::new("clean answer");
+        let session = vault.open_anonymous_chat(
+            &format!("cancel-{pending_on}"),
+            OffRecordBackendClass::Local,
+        )?;
+        let config = PolicyModelConfig::default();
+        let mut chat = Box::pin(session.chat(
+            "clean question",
+            AnonymousChatTarget::PlainModel,
+            &responder,
+            &backend,
+            &budget,
+            &config,
+        ));
+        let waker = noop_waker();
+        let mut cx = Context::from_waker(&waker);
+        assert!(matches!(chat.as_mut().poll(&mut cx), Poll::Pending));
+        assert_eq!(backend.calls.load(Ordering::SeqCst), pending_on);
+        assert_eq!(budget.read().reserved_units, 6);
+        assert_eq!(
+            budget.read().used_units,
+            if pending_on == 1 { 0 } else { 6 }
+        );
+        assert_eq!(
+            responder.calls.lock().expect("calls mutex").len(),
+            pending_on - 1
+        );
+        drop(chat);
+        assert_eq!(
+            budget.read().reserved_units,
+            0,
+            "no cancelled call may orphan a lease"
+        );
+        assert_eq!(
+            budget.read().used_units,
+            6 * pending_on as u64,
+            "a started call with no terminal usage charges its estimate"
+        );
+        session.close()?;
+        assert_eq!(
+            base_rows(&vault)?,
+            before,
+            "budget cleanup is in memory only"
+        );
+    }
+    Ok(())
+}
