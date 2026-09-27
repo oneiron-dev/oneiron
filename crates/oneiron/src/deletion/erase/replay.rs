@@ -97,9 +97,8 @@ impl Vault {
                 crate::agent_def::birth_custody_exists_in_txn(&self.store, wtxn, id)?;
             crate::agent_def::retire_birth_sources_for_entity_in_txn(&self.store, wtxn, id)?;
             crate::receipt::retire_receipt_archives_for_erased_id(&self.store, wtxn, id)?;
-            let had_body =
-                crate::ports::EntityStoreRead::port_entity_raw(&self.store, &*wtxn, &id)?
-                    .is_some_and(|raw| raw.len() > ENTITY_METADATA_HEADER_LEN);
+            let had_body = crate::ports::EntityStoreRead::port_entity_raw(&self.store, &*wtxn, id)?
+                .is_some_and(|raw| raw.len() > ENTITY_METADATA_HEADER_LEN);
             let (existed, had_vector) = self.soft_erase_active_store_in_txn(wtxn, id)?;
             if had_vector {
                 crate::hnsw::increment_vector_version(&self.store, wtxn)?;
@@ -244,7 +243,7 @@ impl Vault {
         rtxn: &heed::RoTxn<'_>,
         id: &EntityId,
     ) -> Result<Option<EntityMetadataHeader>> {
-        let Some(raw) = crate::ports::EntityStoreRead::port_entity_raw(&self.store, rtxn, &id)?
+        let Some(raw) = crate::ports::EntityStoreRead::port_entity_raw(&self.store, rtxn, id)?
         else {
             return Ok(None);
         };

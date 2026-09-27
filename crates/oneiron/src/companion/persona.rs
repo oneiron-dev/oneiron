@@ -266,9 +266,8 @@ impl Vault {
         at: u64,
     ) -> Result<()> {
         object(baseline)?;
-        let raw = crate::ports::EntityStoreRead::port_entity_raw(&self.store, &*txn, &person)?
-            .ok_or(Error::EntityNotFound)?
-            .into_owned();
+        let raw = crate::ports::EntityStoreRead::port_entity_raw(&self.store, &*txn, person)?
+            .ok_or(Error::EntityNotFound)?;
         let header = EntityMetadataHeader::parse(&raw)
             .ok_or(Error::CorruptedIndex("persona PERSON header"))?;
         if header.entity_type != ENTITY_TYPE_PERSON {
@@ -310,16 +309,15 @@ impl Vault {
     ) -> Result<()> {
         object(patch)?;
         let mut txn = self.store.env.write_txn()?;
-        let person_raw =
-            crate::ports::EntityStoreRead::port_entity_raw(&self.store, &txn, &person)?
-                .ok_or(Error::EntityNotFound)?;
+        let person_raw = crate::ports::EntityStoreRead::port_entity_raw(&self.store, &txn, person)?
+            .ok_or(Error::EntityNotFound)?;
         let header = EntityMetadataHeader::parse(&person_raw)
             .ok_or(Error::CorruptedIndex("persona PERSON header"))?;
         if header.entity_type != ENTITY_TYPE_PERSON {
             return Err(Error::InvalidEntityType(header.entity_type));
         }
         let mut entries = if let Some(raw) =
-            crate::ports::EntityStoreRead::port_entity_raw(&self.store, &txn, &facet)?
+            crate::ports::EntityStoreRead::port_entity_raw(&self.store, &txn, facet)?
         {
             let header = EntityMetadataHeader::parse(&raw)
                 .ok_or(Error::CorruptedIndex("persona FACET header"))?;

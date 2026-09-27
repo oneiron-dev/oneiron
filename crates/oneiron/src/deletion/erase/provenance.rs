@@ -34,7 +34,7 @@ impl Vault {
         rtxn: &heed::RoTxn<'_>,
         id: &EntityId,
     ) -> Result<Option<CapturedProvenanceDelete>> {
-        let Some(raw) = crate::ports::EntityStoreRead::port_entity_raw(&self.store, rtxn, &id)?
+        let Some(raw) = crate::ports::EntityStoreRead::port_entity_raw(&self.store, rtxn, id)?
         else {
             return Ok(None);
         };

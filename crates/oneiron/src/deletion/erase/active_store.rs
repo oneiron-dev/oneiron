@@ -84,7 +84,7 @@ impl Vault {
         crate::skill_hub::remove_hub_package_in_txn(&self.store, wtxn, id)?;
         crate::agent_def::remove_birth_custody_in_txn(&self.store, wtxn, id)?;
         let Some(entity_record) =
-            crate::ports::EntityStoreRead::port_entity_raw(&self.store, wtxn, &id)?
+            crate::ports::EntityStoreRead::port_entity_raw(&self.store, wtxn, id)?
         else {
             let cleanup = delete_vad_annotation_metadata_in_txn(&self.store, wtxn, id)?;
             had_vector |= cleanup.had_vector;

@@ -42,7 +42,7 @@ pub(super) fn check_authority_log_store_key(
             id: *id,
         }));
     }
-    let Some(existing) = crate::ports::EntityStoreRead::port_entity_raw(store, wtxn, &id)? else {
+    let Some(existing) = crate::ports::EntityStoreRead::port_entity_raw(store, wtxn, id)? else {
         return Ok(AuthorityLogKeyOccupant::Admissible);
     };
     let existing_type = EntityMetadataHeader::parse(&existing)
