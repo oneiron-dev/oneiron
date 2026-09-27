@@ -67,6 +67,223 @@ fn span_fixture() -> Result<SpanFixture> {
 }
 
 #[cfg(feature = "sync")]
+fn quote_fixture() -> Result<SpanFixture> {
+    use crate::memory::{WitnessAuthor, WitnessMessage, WitnessTurn};
+
+    let tmp = tempfile::tempdir()?;
+    // The production witness door supplies a canonical MESSAGE envelope.
+    let vault = crate::Vault::open(tmp.path(), crate::config::VaultConfig::default())?;
+    let actor_id = test_entity_id(99);
+    put_person(&vault, &actor_id)?;
+    let receipt = vault
+        .memory(actor_id, crate::edge::EdgeActorClass::Human)
+        .witness(&WitnessTurn {
+            conversation_ref: test_entity_id(55).to_hex(),
+            turn_ref: None,
+            messages: vec![WitnessMessage {
+                id: None,
+                author: WitnessAuthor::User,
+                message_type: "dialogue".into(),
+                content: "A🦊日本B".into(),
+                metadata: None,
+                is_visible: true,
+                order: 0,
+            }],
+            occurred_at: 500,
+        })
+        .expect("witness canonical MESSAGE");
+    let message = vault
+        .memory(actor_id, crate::edge::EdgeActorClass::Human)
+        .get_entity(&receipt.message_short_ids[0])
+        .expect("message read")
+        .expect("message exists");
+    let target = crate::EntityId::from_hex(&message.id_hex)?;
+    let actor =
+        crate::write_envelope::WriteActor::new(actor_id, crate::edge::EdgeActorClass::Human);
+    let owner = vault.authenticate_owner(
+        actor_id,
+        "principal:quote-test",
+        true,
+        crate::store::GateDecisionId::now(),
+    )?;
+    vault.migrate_entity_text(
+        &target,
+        &crate::entity_doc::TextField::MapField("content".into()),
+        actor,
+        &crate::entity_doc::DocAuthorization::Owner(&owner),
+    )?;
+    install_viewer_base_grant(&vault)?;
+    let (key, mut frame) = viewer_frame("card-1")?;
+    let read = vault.scoped_read(key.clone());
+    frame.mint_backing_ref(
+        &read,
+        handle("visible-set"),
+        LensHandleRole::EntitySet,
+        backing_target_for(&vault, &target, LensBackingTargetKind::Entity)?,
+    )?;
+    let render = selectable_render(
+        "card-1",
+        "message",
+        vec![binding("visible-set", LensHandleRole::EntitySet)],
+    )?;
+    Ok(SpanFixture {
+        _tmp: tmp,
+        vault,
+        target,
+        actor,
+        owner,
+        key,
+        frame,
+        render,
+    })
+}
+
+#[cfg(feature = "sync")]
+#[test]
+fn quote_triple_round_trips_from_message_span_without_copying_text() -> Result<()> {
+    let SpanFixture {
+        _tmp,
+        vault,
+        target,
+        key,
+        frame,
+        render,
+        ..
+    } = quote_fixture()?;
+    let read = vault.scoped_read(key);
+    let request = LensSpanSelectionRequest {
+        card_id: render_id("card-1"),
+        atom_id: id("message"),
+        handle: handle("visible-set"),
+        start: 1,
+        end: 4,
+    };
+    let quote = frame.select_quote(&read, &render, &request)?;
+    frame.prove_quote(&read, &render, &quote)?;
+    assert_eq!(quote.reply_to_message_id(), target);
+    assert_eq!(quote.reply_to_range(), LensQuoteRange { start: 1, end: 4 });
+    let wire = serde_json::to_value(&quote).expect("serialize pointer");
+    assert_eq!(wire.as_object().expect("object").len(), 3);
+    assert_eq!(wire["replyToMessageId"], json!(target));
+    assert_eq!(wire["replyToRange"], json!({ "start": 1, "end": 4 }));
+    assert_eq!(
+        wire["replyToRevisionId"],
+        json!(quote.reply_to_revision_id())
+    );
+    assert!(!wire.to_string().contains("🦊日本"), "no text copy");
+    let frontier = vault.entity_text_frontier(&target)?;
+    assert_eq!(
+        quote.reply_to_revision_id(),
+        frontier
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect::<String>()
+    );
+    assert!(!quote.reply_to_revision_id().is_empty());
+    let pinned = vault.entity_text_at(&target, &frontier)?;
+    assert_eq!(pinned.chars().skip(1).take(3).collect::<String>(), "🦊日本");
+    Ok(())
+}
+
+#[cfg(feature = "sync")]
+#[test]
+fn quote_refuses_copies_missing_revision_non_scalar_offsets_and_stale_selection() -> Result<()> {
+    let SpanFixture {
+        _tmp,
+        vault,
+        target,
+        actor,
+        owner,
+        key,
+        frame,
+        render,
+    } = quote_fixture()?;
+    let read = vault.scoped_read(key);
+    let request = LensSpanSelectionRequest {
+        card_id: render_id("card-1"),
+        atom_id: id("message"),
+        handle: handle("visible-set"),
+        start: 1,
+        end: 4,
+    };
+    let quote = frame.select_quote(&read, &render, &request)?;
+    // Only a selection request crosses the client boundary. It cannot smuggle
+    // text, a missing or chosen revision, or its own message/range pointer.
+    let honest = json!({
+        "cardId": "card-1", "atomId": "message", "handle": "visible-set",
+        "start": 1, "end": 4,
+    });
+    for (name, value) in [
+        ("text", json!("🦊日本")),
+        ("replyToText", json!("🦊日本")),
+        ("replyToMessageId", json!(target)),
+        ("replyToRevisionId", serde_json::Value::Null),
+        ("replyToRange", json!({ "start": 1, "end": 4 })),
+    ] {
+        let mut forged = honest.clone();
+        forged
+            .as_object_mut()
+            .expect("object")
+            .insert(name.into(), value);
+        assert!(
+            serde_json::from_value::<LensSpanSelectionRequest>(forged).is_err(),
+            "client cannot supply {name}"
+        );
+    }
+    // Offsets refer to scalar positions; UTF-8 byte or UTF-16 unit offsets
+    // beyond the scalar length cannot be smuggled into a selection.
+    assert!(
+        frame
+            .select_quote(
+                &read,
+                &render,
+                &LensSpanSelectionRequest {
+                    start: 1,
+                    end: 9,
+                    ..request.clone()
+                }
+            )
+            .is_err()
+    );
+    assert!(
+        frame
+            .select_quote(
+                &read,
+                &render,
+                &LensSpanSelectionRequest {
+                    start: 1,
+                    end: 1,
+                    ..request
+                }
+            )
+            .is_err()
+    );
+    let before = vault.entity_text_frontier(&target)?;
+    let append = vault.entity_text_anchor(&target, 5, 5)?;
+    vault.edit_entity_text(
+        &target,
+        &[crate::entity_doc::AnchoredEdit {
+            actor: Some(actor),
+            verb: crate::entity_doc::EditVerb::InsertAfterAnchor {
+                anchor: append,
+                text: "!".into(),
+            },
+        }],
+        &crate::entity_doc::DocAuthorization::Owner(&owner),
+        510,
+    )?;
+    assert!(
+        frame.prove_quote(&read, &render, &quote).is_err(),
+        "old selection must not re-prove at new head"
+    );
+    assert_eq!(
+        vault.entity_text_at(&target, &before)?,
+        "A🦊日本B",
+        "the pinned revision stays readable"
+    );
+    Ok(())
+}
+#[cfg(feature = "sync")]
 #[test]
 fn span_handle_resolves_loro_cursors_at_its_version_and_rejects_stale_head() -> Result<()> {
     let SpanFixture {
@@ -284,6 +501,21 @@ fn span_rejects_out_of_bounds_and_claim_backing() -> Result<()> {
                 .is_err()
         );
     }
+    let valid_span = frame.select_span(
+        &read,
+        &render,
+        &LensSpanSelectionRequest {
+            card_id: render_id("card-1"),
+            atom_id: id("people"),
+            handle: handle("visible-set"),
+            start: 1,
+            end: 4,
+        },
+    )?;
+    assert!(
+        frame.quote_from_span(&read, &render, &valid_span).is_err(),
+        "a non-MESSAGE span cannot become a quote pointer"
+    );
     // A claim row is readable, but it is not an entity text document.
     let (_other_tmp, other_vault) = test_vault();
     let (claim_key, claim_frame, _) = result_set_fixture(&other_vault)?;
