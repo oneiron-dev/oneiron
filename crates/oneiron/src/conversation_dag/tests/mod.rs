@@ -181,6 +181,107 @@ proptest! {
 }
 
 #[test]
+fn addressing_is_stamped_and_validated_atomically() {
+    let (_dir, vault, conv, actor) = fixture();
+    let recipient = EntityId::now();
+    let another = EntityId::now();
+    for id in [recipient, another] {
+        vault
+            .put_entity(
+                &id,
+                crate::registry::ENTITY_TYPE_PERSON,
+                time(1),
+                1,
+                &body("person"),
+            )
+            .unwrap();
+    }
+    let mut direct_input = input(conv, None, true, actor);
+    direct_input.address = AddressMode::Direct;
+    for recipients in [
+        vec![],
+        vec![recipient, recipient],
+        vec![EntityId::now()],
+        vec![conv],
+    ] {
+        direct_input.recipients = recipients;
+        assert_eq!(
+            vault.append_dag_record(&direct_input).unwrap_err().kind(),
+            if direct_input.recipients.len() == 1 && direct_input.recipients[0] != conv {
+                ErrorKind::EntityNotFound
+            } else {
+                ErrorKind::InvalidConversationDag
+            }
+        );
+        assert!(
+            vault
+                .sources(&conv, EdgeKind::ChildOf, None)
+                .unwrap()
+                .is_empty()
+        );
+    }
+    direct_input.recipients = vec![recipient, another];
+    let direct = vault.append_dag_record(&direct_input).unwrap().id;
+    let txn = vault.store.env.read_txn().unwrap();
+    let body = super::graph::require_type(&vault.store, &txn, &direct, ENTITY_TYPE_TURN).unwrap();
+    let decoded: serde_json::Value = rmp_serde::from_slice(&body).unwrap();
+    assert_eq!(decoded["addr"], "direct");
+    assert_eq!(
+        decoded["to"],
+        serde_json::json!([recipient.to_hex(), another.to_hex()])
+    );
+    drop(txn);
+    assert_eq!(
+        vault
+            .targets(&direct, EdgeKind::AddressedTo, None)
+            .unwrap()
+            .into_iter()
+            .collect::<std::collections::BTreeSet<_>>(),
+        [recipient, another].into()
+    );
+    let mut reply = input(conv, Some(direct), true, actor);
+    reply.reply_to = Some(direct);
+    reply.recipients = vec![recipient];
+    let reply_id = vault.append_dag_record(&reply).unwrap().id;
+    let txn = vault.store.env.read_txn().unwrap();
+    let body = super::graph::require_type(&vault.store, &txn, &reply_id, ENTITY_TYPE_TURN).unwrap();
+    let decoded: serde_json::Value = rmp_serde::from_slice(&body).unwrap();
+    assert_eq!(decoded["addr"], "reply");
+    assert_eq!(decoded["to"], serde_json::json!([recipient.to_hex()]));
+    drop(txn);
+    assert_eq!(
+        vault
+            .targets(&reply_id, EdgeKind::AddressedTo, None)
+            .unwrap(),
+        [recipient]
+    );
+    assert_eq!(
+        vault.targets(&reply_id, EdgeKind::RepliesTo, None).unwrap(),
+        [direct]
+    );
+    let mut broadcast = input(conv, Some(reply_id), true, actor);
+    broadcast.recipients = vec![recipient];
+    assert_eq!(
+        vault.append_dag_record(&broadcast).unwrap_err().kind(),
+        ErrorKind::InvalidConversationDag
+    );
+    broadcast.recipients.clear();
+    let next = vault.append_dag_record(&broadcast).unwrap().id;
+    let txn = vault.store.env.read_txn().unwrap();
+    let body = super::graph::require_type(&vault.store, &txn, &next, ENTITY_TYPE_TURN).unwrap();
+    let decoded: serde_json::Value = rmp_serde::from_slice(&body).unwrap();
+    assert_eq!(decoded["addr"], "broadcast");
+    assert_eq!(decoded["to"], serde_json::json!([]));
+    drop(txn);
+    assert!(
+        vault
+            .targets(&next, EdgeKind::AddressedTo, None)
+            .unwrap()
+            .is_empty()
+    );
+}
+
+#[test]
 fn append_refuses_cross_conversation_off_trunk_actor_and_policy_without_writes() {
     let (_dir, vault, conv, actor) = fixture();
     let root = vault
@@ -1256,4 +1357,242 @@ fn bounded_thread_allows_ordinary_sitting_transition() {
     assert_eq!(vault.scope_summary_covers(&summary).unwrap(), [record]);
     assert_eq!(vault.drill(&header.claim).unwrap(), [record]);
     assert_eq!(vault.head(&conv).unwrap(), Some(trunk));
+}
+
+#[test]
+fn retained_preview_refuses_wrong_type_owner_cycle_and_canonical_mark() {
+    let (_dir, vault, conversation, actor) = fixture();
+    let root = vault
+        .append_dag_record(&input(conversation, None, true, actor))
+        .unwrap()
+        .id;
+    let child = vault
+        .append_dag_record(&input(conversation, Some(root), true, actor))
+        .unwrap()
+        .id;
+    assert_eq!(
+        vault
+            .conversation_last_message_snippet(&conversation)
+            .unwrap(),
+        Some("record".into())
+    );
+    vault
+        .with_write_txn(|txn| {
+            vault.store.vault_meta.put(
+                txn,
+                &super::graph::key(super::graph::HEAD, &conversation),
+                actor.entity_ref().as_bytes(),
+            )?;
+            Ok(())
+        })
+        .unwrap();
+    assert_eq!(
+        vault
+            .conversation_last_message_snippet(&conversation)
+            .unwrap_err()
+            .kind(),
+        ErrorKind::InvalidConversationDag
+    );
+    vault
+        .with_write_txn(|txn| {
+            vault.store.vault_meta.put(
+                txn,
+                &super::graph::key(super::graph::HEAD, &conversation),
+                child.as_bytes(),
+            )?;
+            Ok(())
+        })
+        .unwrap();
+    let foreign = EntityId::now();
+    vault
+        .put_entity(
+            &foreign,
+            ENTITY_TYPE_CONVERSATION,
+            time(1),
+            1,
+            &body("other room"),
+        )
+        .unwrap();
+    let other_root = vault
+        .append_dag_record(&input(foreign, None, true, actor))
+        .unwrap()
+        .id;
+    vault
+        .with_write_txn(|txn| {
+            vault.store.vault_meta.put(
+                txn,
+                &super::graph::key(super::graph::HEAD, &conversation),
+                other_root.as_bytes(),
+            )?;
+            Ok(())
+        })
+        .unwrap();
+    assert_eq!(
+        vault
+            .conversation_last_message_snippet(&conversation)
+            .unwrap_err()
+            .kind(),
+        ErrorKind::InvalidConversationDag
+    );
+    vault
+        .with_write_txn(|txn| {
+            vault.store.vault_meta.put(
+                txn,
+                &super::graph::key(super::graph::HEAD, &conversation),
+                child.as_bytes(),
+            )?;
+            vault.store.vault_meta.put(
+                txn,
+                &super::graph::key(super::graph::CANONICAL, &root),
+                root.as_bytes(),
+            )?;
+            Ok(())
+        })
+        .unwrap();
+    assert_eq!(
+        vault
+            .conversation_last_message_snippet(&conversation)
+            .unwrap_err()
+            .kind(),
+        ErrorKind::CorruptedIndex
+    );
+    vault
+        .with_write_txn(|txn| {
+            vault.store.vault_meta.put(
+                txn,
+                &super::graph::key(super::graph::CANONICAL, &root),
+                child.as_bytes(),
+            )?;
+            Ok(())
+        })
+        .unwrap();
+    vault
+        .batch()
+        .edge_with_value_fields(&root, EdgeKind::Parent, &child, super::writes::value(1))
+        .commit()
+        .unwrap();
+    assert_eq!(
+        vault
+            .conversation_last_message_snippet(&conversation)
+            .unwrap_err()
+            .kind(),
+        ErrorKind::CycleDetected
+    );
+}
+
+#[test]
+fn retained_preview_refuses_unresolved_spawn_but_not_live_empty_legacy_turn() {
+    let (_dir, vault, conversation, _actor) = fixture();
+    let legacy = EntityId::now();
+    vault
+        .batch()
+        .put(&legacy, ENTITY_TYPE_TURN, time(20), 20, b"")
+        .edge_checked(&legacy, &conversation, 1.0)
+        .commit()
+        .unwrap();
+    assert!(!vault.is_deleted_shell(&legacy).unwrap());
+    assert_eq!(
+        vault
+            .conversation_last_message_snippet(&conversation)
+            .unwrap(),
+        None
+    );
+    // A separate room keeps the valid zero-byte legacy row from being
+    // adopted as the next DAG append's selected HEAD.
+    let (_dir, vault, conversation, actor) = fixture();
+    let session = match vault.mint_session(100).unwrap() {
+        crate::session_lifecycle::SessionMintOutcome::Minted(id) => id,
+        other => panic!("expected ordinary session, got {other:?}"),
+    };
+    let root = vault
+        .append_dag_record(&AppendRecord {
+            session: Some(session),
+            ..input(conversation, None, true, actor)
+        })
+        .unwrap()
+        .id;
+    // An injected live session declaration without its SpawnedBy edge is not
+    // ordinary. The preview must refuse rather than quietly broaden the path.
+    vault
+        .with_write_txn(|txn| {
+            let mut raw = vault
+                .store
+                .entities
+                .get(txn, session.as_bytes())?
+                .unwrap()
+                .to_vec();
+            raw.truncate(crate::batch::ENTITY_METADATA_HEADER_LEN);
+            raw.extend(
+                rmp_serde::to_vec_named(&serde_json::json!({"dag_spawning_turn": root.to_hex()}))
+                    .unwrap(),
+            );
+            vault.store.entities.put(txn, session.as_bytes(), &raw)?;
+            Ok(())
+        })
+        .unwrap();
+    assert_eq!(
+        vault
+            .conversation_last_message_snippet(&conversation)
+            .unwrap_err()
+            .kind(),
+        ErrorKind::InvalidConversationDag
+    );
+}
+
+#[test]
+fn headless_adopted_room_refuses_childof_preview_even_with_newer_thread() {
+    let (_dir, vault, conversation, actor) = fixture();
+    let root = vault
+        .append_dag_record(&input(conversation, None, false, actor))
+        .unwrap()
+        .id;
+    assert_eq!(
+        vault
+            .conversation_last_message_snippet(&conversation)
+            .unwrap_err()
+            .kind(),
+        ErrorKind::InvalidConversationDag
+    );
+    let thread = vault
+        .reply_in_thread(root, &input(conversation, Some(root), false, actor))
+        .unwrap();
+    assert!(thread.head.is_none());
+    assert_eq!(
+        vault
+            .conversation_last_message_snippet(&conversation)
+            .unwrap_err()
+            .kind(),
+        ErrorKind::InvalidConversationDag,
+        "an off-line thread must not become an unselected room's preview"
+    );
+}
+
+#[test]
+fn migrated_room_with_only_deleted_childof_shells_has_no_preview() {
+    let (_dir, vault, conversation, _actor) = fixture();
+    let turn = EntityId::now();
+    vault
+        .batch()
+        .put(&turn, ENTITY_TYPE_TURN, time(20), 20, &body("deleted text"))
+        .edge_checked(&turn, &conversation, 1.0)
+        .commit()
+        .unwrap();
+    vault
+        .delete_entity_with_reason(&turn, crate::DeleteReason::UserDelete)
+        .unwrap();
+    assert!(vault.is_deleted_shell(&turn).unwrap());
+    let page = vault
+        .main_line(
+            &conversation,
+            crate::conversation_dag::DagPageRequest::default(),
+        )
+        .unwrap();
+    assert!(page.head.is_none());
+    assert!(page.main_line.is_empty());
+    assert_eq!(
+        vault
+            .conversation_last_message_snippet(&conversation)
+            .unwrap(),
+        None
+    );
 }
