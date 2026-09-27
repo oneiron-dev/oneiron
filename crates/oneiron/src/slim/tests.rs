@@ -346,7 +346,12 @@ fn hnsw_write_routes_while_dropped() -> Result<()> {
     assert!(!dropped(&vault)?);
     assert_canonical_graph(&vault)?;
     drop_graph(&vault)?;
-    assert!(vault.delete_entity(&id)?);
+    assert!(
+        vault.delete_entity_with_options(
+            &id,
+            crate::deletion::DeleteEntityOptions { purge: true }
+        )?
+    );
     assert!(dropped(&vault)?);
     assert!(
         probes(&vault)?

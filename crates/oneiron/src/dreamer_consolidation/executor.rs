@@ -1,7 +1,10 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 pub(super) mod extraction;
+mod merge_resolution;
 mod retry;
+
+use merge_resolution::{MergeResolution, decode_merge_resolution};
 
 use super::resources::BranchResources;
 use super::value_projection::{json_to_rmpv, rmpv_to_json};
@@ -10,6 +13,7 @@ use rmpv::Value;
 use super::conflict::{
     ConflictIdentity, ConflictSet, SwarmEvidenceRef, candidate_facts, deterministic_claim_id,
 };
+use super::failure_rules::{self, FailureRules, Stage};
 use super::gap::{ReflectionGap, ReflectionGapKind, scan_reflection_gaps, upsert_gap_queue};
 use super::partition::{ConsolidationPartitionKey, decode_partition_payload};
 use super::provenance::{
@@ -106,11 +110,15 @@ impl ConsolidationExecutor<'_> {
             deadline: Some(ctx.deadline),
             now_ms: ctx.now_ms,
         };
+        let rules = failure_rules::load(ctx.vault)?;
         let mut request = self.extraction_request(&partition, &transcript, resources.scope());
         ctx.vault.bind_model_role(
             crate::llm::manifest::ModelRole::ExtractionTeacher,
             &mut request,
         )?;
+        if let Some(rules) = &rules {
+            rules.bind(Stage::Extraction, &mut request);
+        }
         let step_hash = request.canonical_hash()?;
         let outcome = call_as_step(&step_ctx, self.backend, self.guard, request).await;
         let response = match outcome {
@@ -134,27 +142,39 @@ impl ConsolidationExecutor<'_> {
         if ctx.deadline.expired() {
             return Ok(PartitionRun::Checkpoint);
         }
-        let candidates = self.decode_candidates(
-            &partition,
-            &response,
-            resources,
-            resources.scope(),
-            attempt_id,
-            ctx.now_ms,
-        )?;
+        let accepted = rules
+            .as_ref()
+            .is_none_or(|rules| rules.accepts(Stage::Extraction, &response));
+        let candidates = if accepted {
+            self.decode_candidates(
+                &partition,
+                &response,
+                resources,
+                resources.scope(),
+                attempt_id,
+                ctx.now_ms,
+            )?
+        } else {
+            Vec::new()
+        };
         resources.validate_candidates(resources.scope(), &candidates)?;
         resources.require_output(resources.scope())?;
         if ctx.deadline.expired() {
             return Ok(PartitionRun::Checkpoint);
         }
-        let mint = super::extracted_people::mint_extracted_people(
-            ctx.vault,
-            &response,
-            &turn_ids,
-            resources.scope(),
-            ctx.now_ms,
-            Some(ctx.deadline),
-        );
+        let mint = if accepted {
+            super::extracted_people::mint_extracted_people(
+                ctx.vault,
+                &response,
+                &turn_ids,
+                resources.scope(),
+                ctx.now_ms,
+                Some(ctx.deadline),
+            )
+            .map(|_| ())
+        } else {
+            Ok(())
+        };
         if let Err(error) = mint {
             if ctx.deadline.expired() {
                 return Ok(PartitionRun::Checkpoint);
@@ -166,6 +186,7 @@ impl ConsolidationExecutor<'_> {
             resources,
             ctx,
             attempt_id_for_steps(attempt_id, run_id_ref),
+            rules.as_ref(),
             charges,
         )
         .await
@@ -183,6 +204,7 @@ impl ConsolidationExecutor<'_> {
         resources: &BranchResources<'_>,
         ctx: &WakeAttemptContext<'_>,
         step_identity: (crate::attempt_queue::AttemptId, Option<String>),
+        rules: Option<&FailureRules>,
         charges: &mut StepChargeTally,
     ) -> DurableStepResult<PartitionRun> {
         let assembled = super::assembly::assemble(ctx.vault, resources, candidates, ctx.now_ms)?;
@@ -248,6 +270,9 @@ impl ConsolidationExecutor<'_> {
                 deadline: Some(ctx.deadline),
                 now_ms: ctx.now_ms,
             };
+            if let Some(rules) = rules {
+                rules.bind(Stage::Conflict, &mut request);
+            }
             let step_hash = request.canonical_hash()?;
             let outcome = call_as_step(&step_ctx, self.backend, self.guard, request).await;
             let response = match outcome {
@@ -299,7 +324,13 @@ impl ConsolidationExecutor<'_> {
             if ctx.deadline.expired() {
                 return Ok(PartitionRun::Checkpoint);
             }
-            match decode_merge_resolution(&response).unwrap_or(MergeResolution::Escalate) {
+            let resolution =
+                if rules.is_some_and(|rules| !rules.accepts(Stage::Conflict, &response)) {
+                    MergeResolution::Escalate
+                } else {
+                    decode_merge_resolution(&response).unwrap_or(MergeResolution::Escalate)
+                };
+            match resolution {
                 MergeResolution::Accumulate => {} // keep every member
                 MergeResolution::Merge {
                     value,
@@ -464,48 +495,6 @@ impl ConsolidationExecutor<'_> {
             params: BTreeMap::new(),
             provider_options: BTreeMap::new(),
         })
-    }
-}
-
-enum MergeResolution {
-    Merge {
-        value: Value,
-        candidate_ref: Option<EntityId>,
-    },
-    Accumulate,
-    Escalate,
-}
-
-fn decode_merge_resolution(response: &LlmResponse) -> Result<MergeResolution> {
-    let text: String = response
-        .message
-        .content
-        .iter()
-        .filter_map(|part| match part {
-            ContentPart::Text { text } => Some(text.as_str()),
-            _ => None,
-        })
-        .collect();
-    let parsed: serde_json::Value = serde_json::from_str(text.trim())
-        .map_err(|_| invalid_consolidation("merge response must be JSON"))?;
-    match parsed.get("resolution").and_then(|value| value.as_str()) {
-        // With no prior head in scope, supersede degrades to merge (D7: at
-        // most one prior head; the promotion writer owns the supersession).
-        Some("merge" | "supersede") => Ok(MergeResolution::Merge {
-            candidate_ref: parsed
-                .get("candidate_ref")
-                .map(|value| {
-                    value
-                        .as_str()
-                        .and_then(|id| EntityId::from_hex(id).ok())
-                        .ok_or_else(|| invalid_consolidation("invalid merge candidate identity"))
-                })
-                .transpose()?,
-            value: json_to_rmpv(parsed.get("value").unwrap_or(&serde_json::Value::Null)),
-        }),
-        Some("accumulate") => Ok(MergeResolution::Accumulate),
-        Some("escalate") => Ok(MergeResolution::Escalate),
-        _ => Err(invalid_consolidation("unknown merge resolution")),
     }
 }
 

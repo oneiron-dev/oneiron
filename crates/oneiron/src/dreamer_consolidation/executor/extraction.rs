@@ -21,7 +21,7 @@ Each evidence ref names a source id and either a UTF-8 byte range in the display
                     fallback: crate::llm::DeterministicFallback {
                         name: "json_rules_v1".into(),
                         config: Some(
-                            serde_json::json!({"version":1,"rows":[{"failure":"fatal","value":{"candidates":[],"people":[],"fallback":"model_unavailable"}}]}),
+                            serde_json::json!({"version":1,"rows":[{"failure":"fatal","value":{"candidates":[],"persons":[],"fallback":"model_unavailable"}}]}),
                         ),
                     },
                 },

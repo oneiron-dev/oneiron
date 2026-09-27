@@ -78,7 +78,7 @@ fn commit_imported_lands_proposed_and_appears_in_pending_writes() {
 
     let receipt = facade
         .claim_upsert(&claim_input(
-            "eiri.onboarding.answer",
+            "companion.onboarding.answer",
             &subject,
             "imported",
             serde_json::json!({"question_id": "q-1", "selected_option_id": "a"}),
@@ -389,7 +389,7 @@ fn multi_cardinality_supersede_matches_on_question_id() {
 
     let answer = |question: &str, option: &str, at: u64| {
         let mut input = claim_input(
-            "eiri.onboarding.answer",
+            "companion.onboarding.answer",
             &subject,
             "imported",
             serde_json::json!({"question_id": question, "selected_option_id": option}),
@@ -421,7 +421,7 @@ fn multi_cardinality_supersede_matches_on_question_id() {
     let claims = facade
         .claim_list(&ClaimListFilter {
             subject_ref: Some(subject.to_hex()),
-            predicate: Some("eiri.onboarding.answer".to_owned()),
+            predicate: Some("companion.onboarding.answer".to_owned()),
             lifecycle: Some("active".to_owned()),
             limit: 10,
         })
@@ -960,6 +960,7 @@ fn persona_baseline_and_scenario_do_not_register_companion_persona() {
         vault.get_entity_type(&facet).expect("FACET type"),
         Some(crate::registry::ENTITY_TYPE_FACET)
     );
+
     assert!(
         vault
             .companion_register()
@@ -984,7 +985,7 @@ fn admit_imported_claim_rides_the_ingest_trust_ceiling() {
             source_record_id: "row-42".to_owned(),
             id: None,
             subject_ref: subject.to_hex(),
-            predicate: "eiri.onboarding.answer".to_owned(),
+            predicate: "companion.onboarding.answer".to_owned(),
             value: serde_json::json!({"question_id": "q-9", "selected_option_id": "b"}),
             occurred_at: 1000,
             learned_at: None,
@@ -1002,7 +1003,7 @@ fn admit_imported_claim_rides_the_ingest_trust_ceiling() {
             source_record_id: "row-1".to_owned(),
             id: None,
             subject_ref: subject.to_hex(),
-            predicate: "eiri.onboarding.answer".to_owned(),
+            predicate: "companion.onboarding.answer".to_owned(),
             value: serde_json::json!({"question_id": "q-1"}),
             occurred_at: 1001,
             learned_at: None,
