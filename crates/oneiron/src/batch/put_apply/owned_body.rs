@@ -23,6 +23,9 @@ pub(super) fn guard_storage_owned_body(
         data,
         replicated,
     )?;
+    if crate::workspace_roster::is_project_type(store, entity_type) {
+        crate::workspace_roster::guard_goal_pointer_put(store, wtxn, *id, data, replicated)?;
+    }
     crate::scope_summary::validate_summary_put(store, wtxn, id, entity_type, data)?;
     crate::origin::lfs::guard_lfs_asset_put(store, wtxn, id, entity_type, data)?;
     #[cfg(feature = "sync")]
