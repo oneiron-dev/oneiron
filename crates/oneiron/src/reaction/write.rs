@@ -74,19 +74,26 @@ pub(super) fn live_for_message(
         else {
             continue;
         };
+        if body.is_empty() {
+            continue;
+        } // Replayed soft tombstone shell.
         let reaction = ReactionBody::from_bytes(&body)
             .map_err(|_| Error::CorruptedIndex("reaction stored body"))?;
-        require_type(&vault.store, txn, &reaction.by, ENTITY_TYPE_PERSON)?;
-        if !AudienceCache::default().readable(vault, txn, message, &[reaction.by])? {
-            return Err(invalid("reactor could not read target message"));
-        }
-        if reaction.msg != message {
-            return Err(invalid("About edge differs from body"));
+        if !matches!(
+            live_entity_row_in_txn(&vault.store, txn, &reaction.by)?,
+            LiveEntityRow::Live {
+                entity_type: ENTITY_TYPE_PERSON,
+                ..
+            }
+        ) || !AudienceCache::default().readable(vault, txn, message, &[reaction.by])?
+            || reaction.msg != message
+        {
+            continue; // Incomplete or invalid remote rows never poison the page.
         }
         let author = edge_ids(&vault.store, txn, &id, EdgeKind::AuthoredBy, false, 2)?;
         let target = edge_ids(&vault.store, txn, &id, EdgeKind::About, false, 2)?;
         if author.as_slice() != [reaction.by] || target.as_slice() != [message] {
-            return Err(invalid("reaction edges differ from body"));
+            continue;
         }
         let raw = vault
             .store
@@ -111,7 +118,7 @@ pub(super) fn external_binding(id: EntityId, body: &ReactionBody) -> Vec<u8> {
 
 enum Effect {
     Put(ReactionChange),
-    Revoke(ReactionRevocation),
+    Revoke(Vec<ReactionRevocation>),
 }
 
 impl Vault {
@@ -131,6 +138,9 @@ impl Vault {
             return Err(invalid("reactor must be the actor"));
         }
         let effect = self.with_write_txn(|txn| {
+            if body.at > self.store.clock.now_recorded_at() {
+                return Err(invalid("reaction occurrence is in the future"));
+            }
             actor_in_txn(&self.store, txn, input.actor)?;
             match live_entity_row_in_txn(&self.store, txn, &body.msg)? {
                 LiveEntityRow::Live {
@@ -186,29 +196,31 @@ impl Vault {
                     state: ReactionState::Replayed,
                 }));
             }
-            let mut matching = live_for_message(self, txn, body.msg)?
+            let mut matching: Vec<_> = live_for_message(self, txn, body.msg)?
                 .into_iter()
-                .filter(|(_, row, _)| row.by == body.by && row.glyph == body.glyph);
-            let found = matching.next();
-            if matching.next().is_some() {
-                return Err(invalid("duplicate live triple"));
-            }
-            if let Some((id, _, _)) = found {
+                .filter(|(_, row, _)| row.by == body.by && row.glyph == body.glyph)
+                .collect();
+            matching.sort_by_key(|(id, _, recorded_at)| (*recorded_at, *id));
+            if let Some((canonical, _, _)) = matching.first() {
                 if let Some(key) = &external {
-                    // A connector echo of a first-party reaction aliases the
-                    // same live record; it must not toggle it away.
+                    // Connector echo of a first-party put is an ack, not a
+                    // new toggle. The replicated identity repair is separate.
                     self.store
                         .vault_meta
-                        .put(txn, key, &external_binding(id, &body))?;
+                        .put(txn, key, &external_binding(*canonical, &body))?;
                     return Ok(Effect::Put(ReactionChange {
-                        id,
+                        id: *canonical,
                         state: ReactionState::Replayed,
                     }));
                 }
-                return Ok(Effect::Revoke(
-                    self.revoke_reaction_in_txn(txn, id, true)?
-                        .ok_or(invalid("reaction vanished during toggle"))?,
-                ));
+                let mut commits = Vec::with_capacity(matching.len());
+                for (index, (id, _, _)) in matching.into_iter().enumerate() {
+                    commits.push(
+                        self.revoke_reaction_in_txn(txn, id, index == 0)?
+                            .ok_or(invalid("reaction vanished during toggle"))?,
+                    );
+                }
+                return Ok(Effect::Revoke(commits));
             }
             let id = self.store.clock.entity_id()?;
             super::admission::permit(&self.store, txn, &id)?;
@@ -240,10 +252,12 @@ impl Vault {
         })?;
         match effect {
             Effect::Put(change) => Ok(change),
-            Effect::Revoke(commit) => {
-                self.publish_reaction_revocation(&commit)?;
+            Effect::Revoke(commits) => {
+                for commit in &commits {
+                    self.publish_reaction_revocation(commit)?;
+                }
                 Ok(ReactionChange {
-                    id: commit.id,
+                    id: commits[0].id,
                     state: ReactionState::Revoked,
                 })
             }

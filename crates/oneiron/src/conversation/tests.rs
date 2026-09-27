@@ -372,6 +372,52 @@ fn audience_all_of_rechecks_ledger_after_kick() {
 }
 
 #[test]
+fn reactions_inherit_target_visibility_on_scoped_point_and_candidate_reads() {
+    let (_dir, vault, actor, room, bob) = fixture();
+    vault
+        .join_member(room, actor.entity_ref(), actor, 1, HistoryChoice::None)
+        .unwrap();
+    let message = vault
+        .append_dag_record(&record(&vault, room, actor, 2))
+        .unwrap()
+        .id;
+    let reaction = vault
+        .react(crate::reaction::ReactionInput {
+            message,
+            by: actor.entity_ref(),
+            glyph: "👀".into(),
+            occurred_at: 3,
+            external_id: None,
+            actor,
+        })
+        .unwrap();
+    vault
+        .join_member(room, bob, actor, 4, HistoryChoice::None)
+        .unwrap();
+    permit_reads(&vault, &[actor.entity_ref()]);
+    let key = crate::claim::ScopedReadActorKey::new(actor.entity_ref().to_hex()).unwrap();
+    let late = vault.scoped_read(key.clone()).for_audience(&[bob]);
+    assert!(late.get(&message).unwrap().is_none());
+    assert!(late.get(&reaction.id).unwrap().is_none());
+    assert!(
+        late.filter_scored_entities(vec![crate::pipeline::ScoredEntity {
+            id: reaction.id,
+            score: 1.0,
+        }])
+        .unwrap()
+        .is_empty()
+    );
+    assert!(
+        vault
+            .scoped_read(key)
+            .for_audience(&[actor.entity_ref()])
+            .get(&reaction.id)
+            .unwrap()
+            .is_some()
+    );
+}
+
+#[test]
 fn assembled_context_and_edge_peers_share_the_audience_predicate() {
     let (_dir, vault, actor, room, bob) = fixture();
     vault

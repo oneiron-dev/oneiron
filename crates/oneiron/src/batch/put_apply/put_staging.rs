@@ -58,6 +58,7 @@ pub(in crate::batch) fn stage_entity_body_row(
     crate::reaction::index_triple(store, wtxn, *id, entity_type, data)?;
     crate::reaction::index_external(store, wtxn, *id, entity_type, data)?;
     crate::conversation_dag::pin_typed_record(store, wtxn, id, entity_type, data)?;
+    crate::reaction::flush_pending_after_dependency(store, wtxn, *id, entity_type)?;
     Ok(())
 }
 
@@ -169,7 +170,7 @@ pub(in crate::batch) fn stage_edge_rows(
     let key_in = Store::encode_edge_key(tgt, kind, src);
     store.edges_out().put(wtxn, &key_out, value)?;
     store.edges_in().put(wtxn, &key_in, value)?;
-    crate::reaction::flush_pending_for_author_edge(store, wtxn, *src, kind, *tgt)?;
+    crate::reaction::flush_pending_after_edge(store, wtxn, *src, kind, *tgt)?;
     crate::conversation_dag::pin_membership(store, wtxn, src, kind, tgt)?;
     if kind == EdgeKind::DerivedFrom {
         crate::ports::record_derived_edge_in_txn(store, wtxn, src, tgt)?;

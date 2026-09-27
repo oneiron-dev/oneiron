@@ -1,6 +1,6 @@
 //! Mirrored reaction ingress through the normalized SurfaceEvent contract.
 use super::write::external_key;
-use super::{ReactionChange, ReactionExternalId, ReactionInput, ReactionState};
+use super::{ReactionBody, ReactionChange, ReactionExternalId, ReactionInput, ReactionState};
 use crate::conversation::{AudienceCache, member_at_in, room_for_record_in};
 use crate::conversation_dag::{actor_in_txn, require_type};
 use crate::error::{Error, RecordError, Result};
@@ -79,7 +79,6 @@ impl Vault {
                     .and_then(|id| id.split_once(':'))
                     .is_none_or(|(connector, _)| connector != event.channel)
                 || !AudienceCache::default().readable(self, txn, message, &[person])?
-                || !member_at_in(self, txn, room, person, event.received_at)?
             {
                 return Err(invalid("external removal is outside the room audience"));
             }
@@ -100,6 +99,28 @@ impl Vault {
                     .try_into()
                     .map_err(|_| invalid("external index"))?,
             )?;
+            match live_entity_row_in_txn(&self.store, txn, &id)? {
+                LiveEntityRow::Live {
+                    entity_type: crate::registry::ENTITY_TYPE_REACTION,
+                    body,
+                } => {
+                    let original = ReactionBody::from_bytes(&body)
+                        .map_err(|_| Error::CorruptedIndex("external reaction body"))?;
+                    if original.msg != message
+                        || original.by != person
+                        || original.glyph != *glyph
+                        || original
+                            .ext
+                            .as_ref()
+                            .is_some_and(|recorded| recorded != &ext)
+                        || !member_at_in(self, txn, room, person, original.at)?
+                    {
+                        return Err(invalid("external removal differs from original reaction"));
+                    }
+                }
+                LiveEntityRow::DeletedShell => {} // An exact removal retry is a no-op.
+                _ => return Err(invalid("external reaction no longer exists")),
+            }
             Ok((id, self.revoke_reaction_in_txn(txn, id, false)?))
         })?;
         if let Some(commit) = commit {

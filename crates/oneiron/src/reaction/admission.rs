@@ -90,7 +90,9 @@ pub(crate) fn guard_put(
             if existing.msg != body.msg || existing.by != body.by || existing.glyph != body.glyph {
                 return Err(Error::CorruptedIndex("reaction triple hash collision"));
             }
-            return Err(invalid("duplicate live triple"));
+            // Concurrent offline adds are distinct audit records of one
+            // logical OR-set element. Projection chooses one stable pill and
+            // a local toggle removes every add this vault has observed.
         }
     }
     // Edges can precede a replicated body. Check everything already bound to
@@ -162,9 +164,19 @@ pub(crate) fn index_triple(
         return Ok(());
     }
     let body = ReactionBody::from_bytes(data)?;
-    store
-        .vault_meta()
-        .put(txn, &triple_key(&body), id.as_bytes())?;
+    let key = triple_key(&body);
+    if let Some(prior) = store.vault_meta().get(txn, &key)? {
+        let prior = EntityId::from_bytes(
+            prior
+                .as_ref()
+                .try_into()
+                .map_err(|_| Error::CorruptedIndex("reaction triple index"))?,
+        )?;
+        if prior <= id {
+            return Ok(());
+        }
+    }
+    store.vault_meta().put(txn, &key, id.as_bytes())?;
     Ok(())
 }
 
@@ -175,10 +187,9 @@ pub(super) fn clear_triple(
     body: &ReactionBody,
 ) -> Result<()> {
     let key = triple_key(body);
-    if let Some(prior) = store.vault_meta.get(txn, &key)? {
-        if prior.as_ref() != id.as_bytes() {
-            return Err(Error::CorruptedIndex("reaction triple index"));
-        }
+    if let Some(prior) = store.vault_meta.get(txn, &key)?
+        && prior.as_ref() == id.as_bytes()
+    {
         store.vault_meta.delete(txn, &key)?;
     }
     Ok(())

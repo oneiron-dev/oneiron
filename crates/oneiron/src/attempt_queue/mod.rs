@@ -18,6 +18,7 @@ mod encoding;
 mod engine;
 mod observe;
 mod ports;
+mod reaction_purge;
 mod result;
 mod settlement;
 mod telemetry;
@@ -56,6 +57,7 @@ pub use types::{
 
 pub(crate) use encoding::{decode_record, rebuild_checkpoint_indexes};
 pub(crate) use engine::dreamer_run_root_id_in_txn;
+pub(crate) use reaction_purge::purge_reaction_attempts_in_txn;
 /// Storage-ABI pin re-exported for `crate::store`; its only consumer outside
 /// this module is `store`'s row-header test.
 #[cfg_attr(not(test), allow(unused_imports))]

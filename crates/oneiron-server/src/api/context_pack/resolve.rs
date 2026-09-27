@@ -215,6 +215,12 @@ pub(crate) async fn run_context_pack(
             *observed = staged;
         }
     }
+    if req.signals_since.is_none() && (req.signals_after.is_some() || req.signals_limit.is_some()) {
+        return Err(ApiError::bad_request(
+            "signals_since is required for signal paging",
+            Some("signals_since"),
+        ));
+    }
     if let Some(since) = req.signals_since {
         let person = req
             .signals_person
@@ -232,11 +238,17 @@ pub(crate) async fn run_context_pack(
             .as_deref()
             .map(|id| super::super::parse_entity_id_param(id, "conversation_id"))
             .transpose()?;
-        for row in server
+        let page = server
             .vault
-            .reactions_since(person, since)
-            .map_err(|e| core_engine_error("reaction signal read failed", e))?
-        {
+            .reactions_since_page(
+                person,
+                since,
+                req.signals_after.as_deref(),
+                req.signals_limit.unwrap_or(1000),
+            )
+            .map_err(|e| core_engine_error("reaction signal read failed", e))?;
+        response.signals_next = page.next;
+        for row in page.signals {
             // An owner-only request has no actor-scoped retrieval floor; its
             // author-window predicate is the audience door. Delegated and
             // multi-party packs still pass their scoped retrieval policy.

@@ -242,6 +242,12 @@ pub(crate) struct CoreContextPackRequest {
     /// Separate, bounded agent signal cursor; not a retrieval-time filter.
     #[serde(default)]
     pub(super) signals_since: Option<u64>,
+    /// Exclusive full-key continuation from a prior reaction signal page.
+    #[serde(default)]
+    pub(super) signals_after: Option<String>,
+    /// Physical rows examined per page, bounded to 1..=1000.
+    #[serde(default)]
+    pub(super) signals_limit: Option<usize>,
     /// Required for owner credentials without a bound person. Delegated
     /// credentials may only name their own bound PERSON.
     #[serde(default)]

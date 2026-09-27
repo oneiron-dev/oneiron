@@ -429,46 +429,6 @@ fn late_member_cannot_react_or_read_prejoin_message_pills() {
     );
 }
 
-#[cfg(feature = "sync")]
-#[test]
-fn replicated_put_cannot_create_a_second_live_triple() {
-    let (_dir, vault, alice, _, message) = fixture();
-    let input = ReactionInput {
-        message,
-        by: alice,
-        glyph: "👀".into(),
-        occurred_at: 20,
-        external_id: None,
-        actor: crate::WriteActor::new(alice, crate::EdgeActorClass::Human),
-    };
-    vault.react(input).unwrap();
-    let id = EntityId::now();
-    let body = ReactionBody {
-        v: 1,
-        msg: message,
-        by: alice,
-        glyph: "👀".into(),
-        at: 21,
-        ext: None,
-    };
-    let err = vault
-        .with_write_txn(|txn| {
-            vault
-                .batch_in()
-                .put_replicated(
-                    &id,
-                    ENTITY_TYPE_REACTION,
-                    crate::TimeRange { start: 21, end: 21 },
-                    21,
-                    &body.to_bytes()?,
-                )
-                .apply(txn)
-        })
-        .unwrap_err();
-    assert_eq!(err.kind(), ErrorKind::InvalidReactionBody);
-    assert!(vault.get(&id).unwrap().is_none());
-}
-
 #[test]
 fn provider_echo_aliases_first_party_reaction_instead_of_toggling_it() {
     use crate::attempt_queue::{AttemptQueue, ClaimAttempt, ClaimOutcome};
@@ -683,6 +643,13 @@ fn replicated_put_and_tombstone_feed_the_authors_signal_index() {
                 .apply(txn)
         })
         .unwrap();
+    assert!(vault.reactions_since(alice, 0).unwrap().is_empty());
+    vault
+        .put_edge(&id, crate::EdgeKind::About, &message, 1.0)
+        .unwrap();
+    vault
+        .put_edge(&id, crate::EdgeKind::AuthoredBy, &alice, 1.0)
+        .unwrap();
     assert!(
         vault
             .reactions_since(alice, 0)
@@ -770,6 +737,13 @@ fn reaction_signal_survives_body_and_tombstone_before_author_edge() {
                 .apply(txn)
         })
         .unwrap();
+    vault
+        .put_edge(&id, crate::EdgeKind::About, &message, 1.0)
+        .unwrap();
+    vault
+        .put_edge(&id, crate::EdgeKind::AuthoredBy, &alice, 1.0)
+        .unwrap();
+    assert!(vault.reactions_since(alice, 0).unwrap().is_empty());
     let tombstone = crate::deletion::TombstoneValueV2 {
         reason: crate::deletion::TombstoneReason::UserDelete,
         deleted_at: 30,
@@ -946,4 +920,761 @@ fn agent_person_uses_the_same_reaction_primitive() {
         .unwrap();
     assert_eq!(change.state, ReactionState::Put);
     assert!(vault.reaction_pills(&[message], alice).unwrap()[&message][0].mine);
+}
+
+#[test]
+fn future_reaction_time_is_refused_before_a_leave_can_poison_pills() {
+    let (_dir, vault, alice, bob, message) = fixture();
+    let room = vault
+        .targets(&message, crate::EdgeKind::BelongsTo, None)
+        .unwrap()[0];
+    let future = vault.store.clock.now_recorded_at().saturating_add(3_600);
+    let rejected = vault
+        .react(ReactionInput {
+            message,
+            by: alice,
+            glyph: "👀".into(),
+            occurred_at: future,
+            external_id: None,
+            actor: crate::WriteActor::new(alice, crate::EdgeActorClass::Human),
+        })
+        .unwrap_err();
+    assert_eq!(rejected.kind(), ErrorKind::InvalidReactionBody);
+    vault
+        .leave_member(
+            room,
+            alice,
+            crate::WriteActor::new(alice, crate::EdgeActorClass::Human),
+            future - 1,
+        )
+        .unwrap();
+    assert!(vault.reaction_pills(&[message], bob).unwrap()[&message].is_empty());
+}
+
+#[test]
+fn delayed_provider_removal_revokes_a_pre_leave_reaction() {
+    let (_dir, vault, alice, bob, message) = mirror_fixture();
+    let actor = crate::WriteActor::new(alice, crate::EdgeActorClass::Human);
+    let ext = ReactionExternalId {
+        connector: "slack".into(),
+        id: "provider-r2".into(),
+    };
+    let put = vault
+        .react(ReactionInput {
+            message,
+            by: alice,
+            glyph: "👍".into(),
+            occurred_at: 20,
+            external_id: Some(ext),
+            actor,
+        })
+        .unwrap();
+    let room = vault
+        .targets(&message, crate::EdgeKind::BelongsTo, None)
+        .unwrap()[0];
+    vault.leave_member(room, alice, actor, 30).unwrap();
+    assert_eq!(
+        vault.reaction_pills(&[message], bob).unwrap()[&message][0].count,
+        1
+    );
+    let removal: crate::surface_event::SurfaceEvent = serde_json::from_value(serde_json::json!({
+        "schema_version": crate::surface_event::SURFACE_EVENT_SCHEMA_VERSION,
+        "event_id": "delivery-after-leave", "channel": "slack",
+        "receiving_address_or_handle": "room-1",
+        "receiving_identity_ref": alice.to_hex(), "actor_ref": alice.to_hex(),
+        "counterparty": {"state":"known", "counterparty_ref":alice.to_hex()},
+        "source": {"app":"slack", "user_ref":"U1"},
+        "action": {"kind":"interaction", "interaction":"reaction",
+            "target_ref":message.to_hex(), "glyph":"👍",
+            "external_reaction_id":"provider-r2", "revoked":true},
+        "correlation_id":"delivery-after-leave", "received_at":40,
+        "foreign_inbound":true, "claims_not_instructions":true, "identity_retiring":false
+    }))
+    .unwrap();
+    let removed = vault
+        .ingest_surface_reaction(&removal, alice, actor)
+        .unwrap();
+    assert_eq!(removed.id, put.id);
+    assert_eq!(removed.state, ReactionState::Revoked);
+    assert!(vault.reaction_pills(&[message], bob).unwrap()[&message].is_empty());
+}
+
+#[test]
+fn hard_erase_removes_signal_and_outbound_reaction_content() {
+    for soft_first in [false, true] {
+        let (_dir, vault, alice, _, message) = mirror_fixture();
+        let actor = crate::WriteActor::new(alice, crate::EdgeActorClass::Human);
+        let glyph = "sensitive🫶";
+        let input = || ReactionInput {
+            message,
+            by: alice,
+            glyph: glyph.into(),
+            occurred_at: 20,
+            external_id: None,
+            actor,
+        };
+        let put = vault.react(input()).unwrap();
+        assert!(
+            vault
+                .reactions_since(alice, 0)
+                .unwrap()
+                .iter()
+                .any(|row| row.reaction == put.id && row.glyph == glyph)
+        );
+        if soft_first {
+            assert_eq!(vault.react(input()).unwrap().state, ReactionState::Revoked);
+        }
+        vault
+            .delete_entity_with_reason(&put.id, crate::deletion::DeleteReason::UserHardDelete)
+            .unwrap();
+        assert!(
+            vault
+                .reactions_since(alice, 0)
+                .unwrap()
+                .iter()
+                .all(|row| row.reaction != put.id)
+        );
+        assert!(
+            crate::attempt_queue::AttemptQueue::new(&vault)
+                .list()
+                .unwrap()
+                .iter()
+                .filter(|row| row.kind == REACTION_OUTBOUND_ATTEMPT_KIND)
+                .all(|row| !row
+                    .payload
+                    .windows(glyph.len())
+                    .any(|window| window == glyph.as_bytes()))
+        );
+    }
+}
+
+#[cfg(feature = "sync")]
+#[test]
+fn replayed_hard_erase_discards_pending_signal_and_outbound_payload() {
+    let (_dir, vault, alice, _, message) = mirror_fixture();
+    vault
+        .delete_edge(&message, crate::EdgeKind::AuthoredBy, &alice)
+        .unwrap();
+    let glyph = "pending🫶";
+    let put = vault
+        .react(ReactionInput {
+            message,
+            by: alice,
+            glyph: glyph.into(),
+            occurred_at: 20,
+            external_id: None,
+            actor: crate::WriteActor::new(alice, crate::EdgeActorClass::Human),
+        })
+        .unwrap();
+    assert!(vault.reactions_since(alice, 0).unwrap().is_empty());
+    let tombstone = crate::deletion::TombstoneValueV2 {
+        reason: crate::deletion::TombstoneReason::UserHardDelete,
+        deleted_at: 30,
+        request_id: [42; 16],
+    };
+    vault
+        .apply_replayed_tombstone(&put.id, &tombstone.encode())
+        .unwrap();
+    vault
+        .put_edge(&message, crate::EdgeKind::AuthoredBy, &alice, 1.0)
+        .unwrap();
+    assert!(vault.reactions_since(alice, 0).unwrap().is_empty());
+    assert!(
+        crate::attempt_queue::AttemptQueue::new(&vault)
+            .list()
+            .unwrap()
+            .iter()
+            .filter(|row| row.kind == REACTION_OUTBOUND_ATTEMPT_KIND)
+            .all(|row| !row
+                .payload
+                .windows(glyph.len())
+                .any(|window| window == glyph.as_bytes()))
+    );
+}
+
+#[cfg(feature = "sync")]
+#[test]
+fn replicated_reaction_stays_pending_until_both_edges_arrive() {
+    let (_dir, vault, alice, _, message) = fixture();
+    let id = EntityId::now();
+    let row = ReactionBody {
+        v: 1,
+        msg: message,
+        by: alice,
+        glyph: "👀".into(),
+        at: 20,
+        ext: None,
+    };
+    vault
+        .with_write_txn(|txn| {
+            vault
+                .batch_in()
+                .put_replicated(
+                    &id,
+                    ENTITY_TYPE_REACTION,
+                    crate::TimeRange { start: 20, end: 20 },
+                    22,
+                    &row.to_bytes()?,
+                )
+                .apply(txn)
+        })
+        .unwrap();
+    assert!(
+        vault.reactions_since(alice, 0).unwrap().is_empty(),
+        "a body without its reaction bindings is not an event"
+    );
+    vault
+        .put_edge(&id, crate::EdgeKind::About, &message, 1.0)
+        .unwrap();
+    assert!(vault.reaction_pills(&[message], alice).unwrap()[&message].is_empty());
+    assert!(vault.reactions_since(alice, 0).unwrap().is_empty());
+    vault
+        .put_edge(&id, crate::EdgeKind::AuthoredBy, &alice, 1.0)
+        .unwrap();
+    assert_eq!(
+        vault.reaction_pills(&[message], alice).unwrap()[&message][0].by,
+        vec![alice]
+    );
+    assert!(
+        vault
+            .reactions_since(alice, 0)
+            .unwrap()
+            .iter()
+            .any(|signal| signal.reaction == id && !signal.revoked)
+    );
+}
+
+#[cfg(feature = "sync")]
+#[test]
+fn replicated_reaction_completes_when_author_edge_precedes_about() {
+    let (_dir, vault, alice, _, message) = fixture();
+    let id = EntityId::now();
+    let row = ReactionBody {
+        v: 1,
+        msg: message,
+        by: alice,
+        glyph: "👍".into(),
+        at: 20,
+        ext: None,
+    };
+    vault
+        .with_write_txn(|txn| {
+            vault
+                .batch_in()
+                .put_replicated(
+                    &id,
+                    ENTITY_TYPE_REACTION,
+                    crate::TimeRange { start: 20, end: 20 },
+                    22,
+                    &row.to_bytes()?,
+                )
+                .apply(txn)
+        })
+        .unwrap();
+    vault
+        .put_edge(&id, crate::EdgeKind::AuthoredBy, &alice, 1.0)
+        .unwrap();
+    assert!(vault.reactions_since(alice, 0).unwrap().is_empty());
+    vault
+        .put_edge(&id, crate::EdgeKind::About, &message, 1.0)
+        .unwrap();
+    assert!(
+        vault
+            .reactions_since(alice, 0)
+            .unwrap()
+            .iter()
+            .any(|signal| signal.reaction == id && !signal.revoked)
+    );
+}
+
+#[cfg(feature = "sync")]
+#[test]
+fn missing_or_wrong_kind_remote_reactor_never_poison_pills() {
+    let (_dir, vault, alice, _, message) = fixture();
+    let bad = EntityId::now();
+    let id = EntityId::now();
+    let row = ReactionBody {
+        v: 1,
+        msg: message,
+        by: bad,
+        glyph: "👀".into(),
+        at: 20,
+        ext: None,
+    };
+    vault
+        .with_write_txn(|txn| {
+            vault
+                .batch_in()
+                .put_replicated(
+                    &id,
+                    ENTITY_TYPE_REACTION,
+                    crate::TimeRange { start: 20, end: 20 },
+                    22,
+                    &row.to_bytes()?,
+                )
+                .apply(txn)
+        })
+        .unwrap();
+    vault
+        .put_edge(&id, crate::EdgeKind::About, &message, 1.0)
+        .unwrap();
+    vault
+        .put_edge(&id, crate::EdgeKind::AuthoredBy, &bad, 1.0)
+        .unwrap();
+    assert!(vault.reaction_pills(&[message], alice).unwrap()[&message].is_empty());
+    assert!(vault.reactions_since(alice, 0).unwrap().is_empty());
+    vault
+        .put_entity(
+            &bad,
+            crate::registry::ENTITY_TYPE_MACHINE,
+            crate::TimeRange { start: 1, end: 1 },
+            1,
+            b"machine",
+        )
+        .unwrap();
+    assert!(vault.reaction_pills(&[message], alice).unwrap()[&message].is_empty());
+    assert!(vault.reactions_since(alice, 0).unwrap().is_empty());
+}
+
+#[cfg(feature = "sync")]
+#[test]
+fn nonmember_remote_reaction_does_not_poison_other_pills() {
+    let (_dir, vault, alice, bob, message) = fixture();
+    let id = EntityId::now();
+    // Bob joined at 3, so his claimed reaction at 2 predates membership.
+    let row = ReactionBody {
+        v: 1,
+        msg: message,
+        by: bob,
+        glyph: "👀".into(),
+        at: 2,
+        ext: None,
+    };
+    vault
+        .with_write_txn(|txn| {
+            vault
+                .batch_in()
+                .put_replicated(
+                    &id,
+                    ENTITY_TYPE_REACTION,
+                    crate::TimeRange { start: 2, end: 2 },
+                    22,
+                    &row.to_bytes()?,
+                )
+                .apply(txn)
+        })
+        .unwrap();
+    vault
+        .put_edge(&id, crate::EdgeKind::About, &message, 1.0)
+        .unwrap();
+    vault
+        .put_edge(&id, crate::EdgeKind::AuthoredBy, &bob, 1.0)
+        .unwrap();
+    let valid = vault
+        .react(ReactionInput {
+            message,
+            by: alice,
+            glyph: "👍".into(),
+            occurred_at: 20,
+            external_id: None,
+            actor: crate::WriteActor::new(alice, crate::EdgeActorClass::Human),
+        })
+        .unwrap();
+    assert_eq!(valid.state, ReactionState::Put);
+    assert_eq!(
+        vault.reaction_pills(&[message], alice).unwrap()[&message][0].by,
+        vec![alice]
+    );
+    assert!(
+        vault
+            .reactions_since(alice, 0)
+            .unwrap()
+            .iter()
+            .all(|signal| signal.reaction != id)
+    );
+}
+
+#[cfg(feature = "sync")]
+#[test]
+fn reaction_inbox_over_1000_equal_time_events_remains_consumable() {
+    let (_dir, vault, alice, _, message) = fixture();
+    let mut batch = vault.batch_in();
+    for n in 0..1001 {
+        let id = vault.store.clock.entity_id().unwrap();
+        let body = ReactionBody {
+            v: 1,
+            msg: message,
+            by: alice,
+            glyph: format!("glyph-{n}"),
+            at: 20,
+            ext: None,
+        };
+        batch = batch
+            .put_replicated(
+                &id,
+                ENTITY_TYPE_REACTION,
+                crate::TimeRange { start: 20, end: 20 },
+                22,
+                &body.to_bytes().unwrap(),
+            )
+            .edge(&id, crate::EdgeKind::About, &message, 1.0)
+            .edge(&id, crate::EdgeKind::AuthoredBy, &alice, 1.0);
+    }
+    vault.with_write_txn(|txn| batch.apply(txn)).unwrap();
+    let first = vault
+        .reactions_since(alice, 0)
+        .expect("first page must not overflow");
+    assert_eq!(first.len(), 1000);
+    assert!(first.iter().all(|row| row.recorded_at == 22));
+    let after = first.next.as_deref().expect("continuation after 1000");
+    let second = vault
+        .reactions_since_page(alice, 0, Some(after), 1000)
+        .unwrap();
+    assert_eq!(second.len(), 1);
+    assert!(second.next.is_none());
+    assert_eq!(second[0].recorded_at, 22);
+    assert!(!first.iter().any(|row| row.reaction == second[0].reaction));
+}
+
+#[cfg(feature = "sync")]
+#[test]
+fn concurrent_replica_adds_project_one_pill_and_toggle_all_known_adds() {
+    let (_dir, vault, alice, _, message) = fixture();
+    let actor = crate::WriteActor::new(alice, crate::EdgeActorClass::Human);
+    let local = vault
+        .react(ReactionInput {
+            message,
+            by: alice,
+            glyph: "👀".into(),
+            occurred_at: 20,
+            external_id: None,
+            actor,
+        })
+        .unwrap();
+    let peer = EntityId::now();
+    let body = ReactionBody {
+        v: 1,
+        msg: message,
+        by: alice,
+        glyph: "👀".into(),
+        at: 21,
+        ext: None,
+    };
+    vault
+        .with_write_txn(|txn| {
+            vault
+                .batch_in()
+                .put_replicated(
+                    &peer,
+                    ENTITY_TYPE_REACTION,
+                    crate::TimeRange { start: 21, end: 21 },
+                    22,
+                    &body.to_bytes()?,
+                )
+                .edge(&peer, crate::EdgeKind::About, &message, 1.0)
+                .edge(&peer, crate::EdgeKind::AuthoredBy, &alice, 1.0)
+                .apply(txn)
+        })
+        .unwrap();
+    let pills = vault.reaction_pills(&[message], alice).unwrap();
+    assert_eq!(pills[&message][0].count, 1);
+    assert_eq!(pills[&message][0].by, vec![alice]);
+    let changed = vault
+        .react(ReactionInput {
+            message,
+            by: alice,
+            glyph: "👀".into(),
+            occurred_at: 23,
+            external_id: None,
+            actor,
+        })
+        .unwrap();
+    assert_eq!(changed.state, ReactionState::Revoked);
+    assert!(vault.is_deleted_shell(&local.id).unwrap());
+    assert!(vault.is_deleted_shell(&peer).unwrap());
+    assert!(vault.reaction_pills(&[message], alice).unwrap()[&message].is_empty());
+}
+
+#[cfg(feature = "sync")]
+#[test]
+fn two_peers_accept_opposite_order_adds_then_converge_after_toggle_replay() {
+    use crate::conversation::{ConversationBody, HistoryChoice};
+    use crate::memory::{WitnessAuthor, WitnessMessage, WitnessTurn};
+    use crate::{EdgeActorClass, Vault, VaultConfig, WriteActor};
+    fn peer(
+        person: EntityId,
+        room: EntityId,
+        turn: EntityId,
+        message: EntityId,
+    ) -> (tempfile::TempDir, Vault) {
+        let dir = tempfile::tempdir().unwrap();
+        let vault = Vault::open(dir.path(), VaultConfig::default()).unwrap();
+        vault
+            .put_entity(
+                &person,
+                crate::registry::ENTITY_TYPE_PERSON,
+                crate::TimeRange { start: 1, end: 1 },
+                1,
+                b"person",
+            )
+            .unwrap();
+        let actor = WriteActor::new(person, EdgeActorClass::Human);
+        vault
+            .create_conversation(room, &ConversationBody::default(), actor, 1)
+            .unwrap();
+        vault
+            .join_member(room, person, actor, 2, HistoryChoice::None)
+            .unwrap();
+        vault
+            .memory(person, EdgeActorClass::Human)
+            .witness(&WitnessTurn {
+                conversation_ref: room.to_hex(),
+                turn_ref: Some(turn.to_hex()),
+                occurred_at: 10,
+                messages: vec![WitnessMessage {
+                    id: Some(message.to_hex()),
+                    author: WitnessAuthor::User,
+                    message_type: "dialogue".into(),
+                    content: "shared".into(),
+                    metadata: None,
+                    is_visible: true,
+                    order: 0,
+                }],
+            })
+            .unwrap();
+        (dir, vault)
+    }
+    fn carry(source: &Vault, target: &Vault, id: EntityId, person: EntityId, msg: EntityId) {
+        let raw = source.get_raw(&id).unwrap().unwrap();
+        let header = crate::batch::EntityMetadataHeader::parse(&raw).unwrap();
+        target
+            .with_write_txn(|txn| {
+                target
+                    .batch_in()
+                    .put_replicated(
+                        &id,
+                        ENTITY_TYPE_REACTION,
+                        crate::TimeRange {
+                            start: header.occurred_start,
+                            end: header.occurred_end,
+                        },
+                        header.learned_at,
+                        &raw[crate::batch::ENTITY_METADATA_HEADER_LEN..],
+                    )
+                    .edge(&id, crate::EdgeKind::About, &msg, 1.0)
+                    .edge(&id, crate::EdgeKind::AuthoredBy, &person, 1.0)
+                    .apply(txn)
+            })
+            .unwrap();
+    }
+    let person = EntityId::now();
+    let room = EntityId::now();
+    let turn = EntityId::now();
+    let message = EntityId::now();
+    let (_ad, a) = peer(person, room, turn, message);
+    let (_bd, b) = peer(person, room, turn, message);
+    let actor = WriteActor::new(person, EdgeActorClass::Human);
+    let first = a
+        .react(ReactionInput {
+            message,
+            by: person,
+            glyph: "👀".into(),
+            occurred_at: 20,
+            external_id: None,
+            actor,
+        })
+        .unwrap()
+        .id;
+    let second = b
+        .react(ReactionInput {
+            message,
+            by: person,
+            glyph: "👀".into(),
+            occurred_at: 21,
+            external_id: None,
+            actor,
+        })
+        .unwrap()
+        .id;
+    assert_ne!(first, second);
+    carry(&a, &b, first, person, message);
+    carry(&b, &a, second, person, message);
+    assert_eq!(
+        a.reaction_pills(&[message], person).unwrap()[&message][0].count,
+        1
+    );
+    assert_eq!(
+        b.reaction_pills(&[message], person).unwrap()[&message][0].count,
+        1
+    );
+    assert_eq!(
+        a.react(ReactionInput {
+            message,
+            by: person,
+            glyph: "👀".into(),
+            occurred_at: 22,
+            external_id: None,
+            actor
+        })
+        .unwrap()
+        .state,
+        ReactionState::Revoked
+    );
+    for id in [first, second] {
+        assert!(a.is_deleted_shell(&id).unwrap());
+        let value = crate::deletion::TombstoneValueV2 {
+            reason: crate::deletion::TombstoneReason::UserDelete,
+            deleted_at: 30,
+            request_id: [9; 16],
+        };
+        b.apply_replayed_tombstone(&id, &value.encode()).unwrap();
+    }
+    assert!(a.reaction_pills(&[message], person).unwrap()[&message].is_empty());
+    assert!(b.reaction_pills(&[message], person).unwrap()[&message].is_empty());
+}
+
+#[cfg(feature = "sync")]
+#[test]
+fn target_body_arriving_after_both_binding_edges_flushes_pending_signal() {
+    let (_dir, vault, alice, _, original) = fixture();
+    let source_turn = vault
+        .edges_out(&original)
+        .unwrap()
+        .into_iter()
+        .find(|edge| edge.kind == crate::EdgeKind::PartOf)
+        .unwrap()
+        .target;
+    let message = EntityId::now();
+    for edge in vault.edges_out(&source_turn).unwrap() {
+        vault
+            .put_edge(&message, edge.kind, &edge.target, edge.weight)
+            .unwrap();
+    }
+    vault
+        .put_edge(&message, crate::EdgeKind::AuthoredBy, &alice, 1.0)
+        .unwrap();
+    let id = EntityId::now();
+    let row = ReactionBody {
+        v: 1,
+        msg: message,
+        by: alice,
+        glyph: "👀".into(),
+        at: 20,
+        ext: None,
+    };
+    vault
+        .with_write_txn(|txn| {
+            vault
+                .batch_in()
+                .put_replicated(
+                    &id,
+                    ENTITY_TYPE_REACTION,
+                    crate::TimeRange { start: 20, end: 20 },
+                    22,
+                    &row.to_bytes()?,
+                )
+                .edge(&id, crate::EdgeKind::About, &message, 1.0)
+                .edge(&id, crate::EdgeKind::AuthoredBy, &alice, 1.0)
+                .apply(txn)
+        })
+        .unwrap();
+    assert!(vault.reactions_since(alice, 0).unwrap().is_empty());
+    let raw = vault.get_raw(&source_turn).unwrap().unwrap();
+    let h = crate::batch::EntityMetadataHeader::parse(&raw).unwrap();
+    vault
+        .with_write_txn(|txn| {
+            vault
+                .batch_in()
+                .put_replicated(
+                    &message,
+                    crate::registry::ENTITY_TYPE_TURN,
+                    crate::TimeRange {
+                        start: h.occurred_start,
+                        end: h.occurred_end,
+                    },
+                    h.learned_at,
+                    &raw[crate::batch::ENTITY_METADATA_HEADER_LEN..],
+                )
+                .apply(txn)
+        })
+        .unwrap();
+    assert!(
+        vault
+            .reactions_since(alice, 0)
+            .unwrap()
+            .iter()
+            .any(|event| event.reaction == id)
+    );
+}
+
+#[cfg(feature = "sync")]
+#[test]
+fn reactor_person_arriving_after_reaction_edges_flushes_pending_signal() {
+    let (_dir, vault, alice, _, message) = fixture();
+    let turn = vault
+        .edges_out(&message)
+        .unwrap()
+        .into_iter()
+        .find(|e| e.kind == crate::EdgeKind::PartOf)
+        .unwrap()
+        .target;
+    let room = vault
+        .edges_out(&turn)
+        .unwrap()
+        .into_iter()
+        .find(|e| e.kind == crate::EdgeKind::ChildOf)
+        .unwrap()
+        .target;
+    let reactor = EntityId::now();
+    let id = EntityId::now();
+    let row = ReactionBody {
+        v: 1,
+        msg: message,
+        by: reactor,
+        glyph: "👀".into(),
+        at: 20,
+        ext: None,
+    };
+    vault
+        .with_write_txn(|txn| {
+            vault
+                .batch_in()
+                .put_replicated(
+                    &id,
+                    ENTITY_TYPE_REACTION,
+                    crate::TimeRange { start: 20, end: 20 },
+                    22,
+                    &row.to_bytes()?,
+                )
+                .edge(&id, crate::EdgeKind::About, &message, 1.0)
+                .edge(&id, crate::EdgeKind::AuthoredBy, &reactor, 1.0)
+                .apply(txn)
+        })
+        .unwrap();
+    assert!(vault.reactions_since(alice, 0).unwrap().is_empty());
+    vault
+        .put_entity(
+            &reactor,
+            crate::registry::ENTITY_TYPE_PERSON,
+            crate::TimeRange { start: 5, end: 5 },
+            5,
+            b"person",
+        )
+        .unwrap();
+    vault
+        .join_member(
+            room,
+            reactor,
+            crate::WriteActor::new(alice, crate::EdgeActorClass::Human),
+            10,
+            crate::conversation::HistoryChoice::None,
+        )
+        .unwrap();
+    assert!(
+        vault
+            .reactions_since(alice, 0)
+            .unwrap()
+            .iter()
+            .any(|event| event.reaction == id)
+    );
 }

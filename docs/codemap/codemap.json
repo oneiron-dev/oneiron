@@ -1383,7 +1383,7 @@
      "path": "src/attempt_queue/mod.rs",
      "purpose": "Generic LMDB-backed background attempt queue",
      "surface": {
-      "crate-vis": 5,
+      "crate-vis": 6,
       "re-export": 4
      }
     },
@@ -1405,6 +1405,16 @@
      "path": "src/attempt_queue/ports.rs",
      "purpose": "JobQueue adapter over the existing lease state machine",
      "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/attempt_queue/reaction_purge.rs",
+     "purpose": "Remove reaction outbound attempts when the owning record is hard-erased",
+     "surface": {
+      "crate-vis": 1
+     }
     },
     {
      "bucket": "s",
@@ -11818,7 +11828,7 @@
      "surface": {}
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/conversation/visibility.rs",
@@ -25567,8 +25577,8 @@
      "path": "src/reaction/mod.rs",
      "purpose": "Immutable message reactions and their live, audience-bound projections",
      "surface": {
-      "crate-vis": 2,
-      "re-export": 4
+      "crate-vis": 3,
+      "re-export": 5
      }
     },
     {
@@ -25589,6 +25599,16 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [],
+     "path": "src/reaction/purge.rs",
+     "purpose": "Hard-erase cleanup for every derived reaction carrier, including sidecars",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [
       "ReactionPill",
       "ReactionSignal"
@@ -25601,14 +25621,17 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
-     "notable": [],
+     "notable": [
+      "ReactionSignalPage"
+     ],
      "path": "src/reaction/signal.rs",
      "purpose": "Derived per-author event index",
      "surface": {
-      "crate-vis": 4,
-      "fn": 1
+      "crate-vis": 5,
+      "fn": 2,
+      "struct": 1
      }
     },
     {
@@ -25622,7 +25645,7 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "XL",
      "kind": "test",
      "notable": [],
      "path": "src/reaction/tests.rs",
@@ -34350,7 +34373,7 @@
      "purpose": "Local artifact hosting over pinned CODE_ARTIFACT snapshots"
     },
     "attempt_queue": {
-     "files": 36,
+     "files": 37,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -35225,9 +35248,9 @@
      "purpose": "Host-injected HyDE query-expansion seam"
     },
     "reaction": {
-     "files": 9,
+     "files": 10,
      "impl_vault": true,
-     "largest_src_bucket": "s",
+     "largest_src_bucket": "m",
      "layout": "dir",
      "purpose": "Immutable message reactions and their live, audience-bound projections"
     },
@@ -35605,7 +35628,7 @@
    },
    "over_bar": 10,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2103,
+   "source_files": 2105,
    "test_files": 719
   },
   "oneiron-android": {

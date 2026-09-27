@@ -196,6 +196,10 @@ pub(crate) struct CoreContextPackResponse {
     /// Witness signals since the caller's last turn, separate from retrieval.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub(super) signals: Vec<CoreReactionSignal>,
+    /// Exact continuation when further signal rows remain, including
+    /// equal-timestamp events after the final item on this page.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(super) signals_next: Option<String>,
     /// Separately budgeted turn-local capability discoveries.
     #[schema(value_type = Vec<Object>)]
     pub(crate) capabilities: Vec<oneiron::context_board::CapabilityHit>,
@@ -422,6 +426,7 @@ pub(crate) fn core_context_pack_response(
     let state = core_context_pack_state(pack.empty.as_ref());
     CoreContextPackResponse {
         signals: Vec::new(),
+        signals_next: None,
         capabilities: pack.capabilities,
         l2_base: pack.l2_base,
         pin_narrowing: Vec::new(),

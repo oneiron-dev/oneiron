@@ -1,7 +1,7 @@
 //! One-snapshot, batched reaction pills and agent-facing reaction signal rows.
 use super::write::live_for_message;
 use crate::conversation::{AudienceCache, member_at_in, room_for_record_in, visible_at_in};
-use crate::error::{Error, RecordError, Result};
+use crate::error::{Error, Result};
 use crate::{EntityId, Vault};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
@@ -49,17 +49,13 @@ impl Vault {
             let mut seen = BTreeSet::new();
             for (_, row, _) in entries {
                 if !member_at_in(self, &txn, room, row.by, row.at)? {
-                    return Err(Error::Record(RecordError::InvalidReactionBody(
-                        "reactor was outside room",
-                    )));
+                    continue; // An invalid peer row cannot take down the page.
                 }
                 if !visible_at_in(self, &txn, room, viewer, row.at)? {
                     continue;
                 }
                 if !seen.insert((row.by, row.glyph.clone())) {
-                    return Err(Error::Record(RecordError::InvalidReactionBody(
-                        "duplicate live triple",
-                    )));
+                    continue; // Same logical add from independent peers.
                 }
                 if let Some(pill) = groups.iter_mut().find(|pill| pill.glyph == row.glyph) {
                     pill.by.push(row.by);

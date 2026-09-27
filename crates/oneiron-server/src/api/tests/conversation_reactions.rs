@@ -86,6 +86,28 @@ async fn reaction_route_groups_in_one_listing_and_revocation_removes_pill() {
     let (status, removed) = route_json(server.clone(), json_request("POST", &path, request)).await;
     assert_eq!(status, StatusCode::OK, "{removed}");
     assert_eq!(removed["event"], "reaction.revoked");
+    let query = json!({"query":"hello", "limit":10, "signals_since":0,
+        "signals_person":alice.to_hex(), "signals_limit":1});
+    let (status, first_signals) = route_json(
+        server.clone(),
+        json_request("POST", "/v1/core/context-pack", query.clone()),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{first_signals}");
+    assert_eq!(first_signals["signals"][0]["event"], "reaction.put");
+    let after = first_signals["signals_next"]
+        .as_str()
+        .expect("more signal events");
+    let mut next_query = query;
+    next_query["signals_after"] = json!(after);
+    let (status, second_signals) = route_json(
+        server.clone(),
+        json_request("POST", "/v1/core/context-pack", next_query),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{second_signals}");
+    assert_eq!(second_signals["signals"][0]["event"], "reaction.revoked");
+    assert!(second_signals["signals_next"].is_null());
     let (status, page) = route_json(
         server.clone(),
         Request::builder().uri(&list).body(Body::empty()).unwrap(),

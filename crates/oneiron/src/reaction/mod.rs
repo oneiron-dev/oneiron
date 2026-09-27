@@ -2,6 +2,7 @@
 mod admission;
 mod body;
 mod outbound;
+mod purge;
 mod read;
 mod signal;
 mod surface;
@@ -12,9 +13,12 @@ pub(crate) use admission::{
 };
 pub use body::{ReactionBody, ReactionExternalId};
 pub use outbound::{REACTION_OUTBOUND_ATTEMPT_KIND, ReactionOutboundAttempt};
+pub(crate) use purge::purge_derived_in_txn;
 pub use read::{ReactionPill, ReactionSignal};
+pub use signal::ReactionSignalPage;
 pub(crate) use signal::{
-    flush_pending_for_author_edge, record_put_in_store, record_replayed_revoke, record_revoke,
+    flush_pending_after_dependency, flush_pending_after_edge, record_put_in_store,
+    record_replayed_revoke, record_revoke,
 };
 pub use write::{ReactionChange, ReactionInput, ReactionState};
 
