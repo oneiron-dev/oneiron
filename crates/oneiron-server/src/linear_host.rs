@@ -445,6 +445,10 @@ impl LinearPort {
     }
 }
 impl LinearChangeSource for LinearPort {
+    fn current_issue(&mut self, issue: &LinearIssueRef) -> LinearSyncResult<LinearIssueChange> {
+        self.http.issue(&issue.issue_id)?.ok_or_else(transport)
+    }
+
     fn changes_since(&mut self, cursor: Option<&str>) -> LinearSyncResult<LinearChangePage> {
         // Persist the GraphQL cursor after a successful page. A stopped worker
         // resumes from that position; echo suppression lives in the TASK link.
