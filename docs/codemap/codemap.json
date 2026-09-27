@@ -1171,6 +1171,7 @@
      "bucket": "m",
      "kind": "src",
      "notable": [
+      "ArtifactExportRef",
       "ArtifactPointer",
       "ArtifactPointerChannel",
       "ArtifactPublishVerbOutcome",
@@ -1181,12 +1182,12 @@
       "ArtifactSnapshotSelector"
      ],
      "path": "src/artifact_hosting.rs",
-     "purpose": "Local artifact hosting over pinned CODE_ARTIFACT snapshots",
+     "purpose": "Local artifact hosting over pinned code snapshots and blob exports",
      "surface": {
       "const": 1,
-      "crate-vis": 2,
-      "enum": 3,
-      "fn": 13,
+      "crate-vis": 3,
+      "enum": 4,
+      "fn": 16,
       "struct": 5
      }
     },
@@ -1201,7 +1202,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "test",
      "notable": [],
      "path": "src/artifact_hosting/tests.rs",
@@ -3794,7 +3795,7 @@
      "purpose": "Blob vault_meta key builders and shared MessagePack scalar helpers",
      "surface": {
       "const": 2,
-      "crate-vis": 12
+      "crate-vis": 13
      }
     },
     {
@@ -3804,6 +3805,16 @@
      "path": "src/blob_artifact/tests.rs",
      "purpose": "—",
      "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/blob_artifact/version_codec.rs",
+     "purpose": "Strict MessagePack framing for blob version records",
+     "surface": {
+      "crate-vis": 2
+     }
     },
     {
      "bucket": "m",
@@ -3816,7 +3827,7 @@
      "purpose": "Blob version chain: version record codec and the Vault version-chain API",
      "surface": {
       "const": 1,
-      "crate-vis": 15,
+      "crate-vis": 20,
       "fn": 11,
       "struct": 2
      }
@@ -34720,7 +34731,7 @@
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "file+dir",
-     "purpose": "Local artifact hosting over pinned CODE_ARTIFACT snapshots"
+     "purpose": "Local artifact hosting over pinned code snapshots and blob exports"
     },
     "attempt_queue": {
      "files": 36,
@@ -34751,7 +34762,7 @@
      "purpose": "—"
     },
     "blob_artifact": {
-     "files": 38,
+     "files": 39,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -35971,7 +35982,7 @@
    },
    "over_bar": 11,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2124,
+   "source_files": 2125,
    "test_files": 723
   },
   "oneiron-android": {
@@ -39560,13 +39571,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/api/artifacts.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 14
+      "crate-vis": 16
      }
     },
     {
@@ -41010,7 +41021,7 @@
      "surface": {}
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "test",
      "notable": [],
      "path": "src/api/tests/surface_routes.rs",
