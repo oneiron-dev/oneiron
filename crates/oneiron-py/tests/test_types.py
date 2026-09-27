@@ -23,3 +23,10 @@ def test_retrieval_metadata_requires_a_boolean_partial_flag() -> None:
         if isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name)
     }
     assert fields["partial"] == "bool"
+    assert fields["quality"] == "Literal['full', 'degraded', 'passthrough']"
+    assert fields["confidence_adjustment"] == "float"
+    assert fields["degradation"] == (
+        "NotRequired[list[Literal['ppr_cache_miss', 'embedding_timeout', "
+        "'bm25_stale', 'temporal_signal_skipped']]]"
+    )
+    assert "confidenceAdjustment" not in fields
