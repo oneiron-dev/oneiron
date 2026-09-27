@@ -15,9 +15,6 @@ use crate::claim::{
     ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSource, ClaimSubject,
     decode_claim_body, encode_claim_body,
 };
-use crate::companion::{
-    CompanionProvenance, CompanionRecord, CompanionScope, encode_companion_record_body,
-};
 use crate::edge::EdgeActorClass;
 use crate::federation::{
     FederationGrant, FederationGrantPreset, FederationGrantRole, FederationGrantScope,
@@ -155,62 +152,6 @@ fn edge_provenance_claim_blob() -> Vec<u8> {
         rmpv::Value::from("public"),
     )]));
     entity_blob(ENTITY_TYPE_CLAIM, &encode_claim_body(&claim).unwrap())
-}
-
-fn companion_record_body(
-    persona_ref: EntityId,
-    sensitivity: crate::federation::Sensitivity,
-) -> Vec<u8> {
-    companion_record_body_in_scope(persona_ref, CompanionScope::neutral(), sensitivity)
-}
-
-fn companion_record_body_in_scope(
-    persona_ref: EntityId,
-    scope: CompanionScope,
-    sensitivity: crate::federation::Sensitivity,
-) -> Vec<u8> {
-    companion_record_body_in_scope_with_lifecycle(
-        persona_ref,
-        scope,
-        sensitivity,
-        ClaimLifecycleStatus::Active,
-    )
-}
-
-fn companion_record_body_in_scope_with_lifecycle(
-    persona_ref: EntityId,
-    scope: CompanionScope,
-    sensitivity: Sensitivity,
-    lifecycle: ClaimLifecycleStatus,
-) -> Vec<u8> {
-    let mut record = CompanionRecord::persona(
-        scope,
-        persona_ref,
-        Value::from("private companion tuning"),
-        CompanionProvenance::new(
-            entity_id(0xB8),
-            EdgeActorClass::Agent,
-            ClaimSource::UserStated,
-            ClaimApprovalStatus::Approved,
-            Value::from("private provenance"),
-        ),
-        sensitivity,
-    );
-    record.lifecycle = lifecycle;
-    match lifecycle {
-        ClaimLifecycleStatus::Active => {
-            record = record.created_at(1_772_400_000).unwrap();
-        }
-        ClaimLifecycleStatus::Superseded => {
-            let ev = crate::companion::CompanionLifecycleEvent::superseded(1_772_400_000);
-            record.lifecycle_events.push(ev);
-        }
-        ClaimLifecycleStatus::Retracted => {
-            let ev = crate::companion::CompanionLifecycleEvent::retired(1_772_400_000);
-            record.lifecycle_events.push(ev);
-        }
-    }
-    encode_companion_record_body(&record).unwrap()
 }
 
 fn encode_policy_manifest(extra_entries: Vec<(Value, Value)>) -> Vec<u8> {
@@ -1292,144 +1233,6 @@ fn strip_happens_before_sign() {
     assert!(!ids.contains(&membership));
     assert!(!ids.contains(&authority_id));
     assert_eq!(imported_tombstone_count(&envelope.body.update), 0);
-}
-
-#[test]
-fn companion_register_api_selector_suppresses_local_only_records() {
-    let member = entity_id(0x39);
-    let (_dir, vault, grant_id) = test_vault_with_grant(member);
-    let window_key = WindowKey::new("2026-03");
-    let doc = create_window_doc("source", &window_key);
-
-    let local_id = entity_id(0x3A);
-    let portable_id = entity_id(0x3B);
-    let shared_id = entity_id(0x3C);
-    let other_shared_id = entity_id(0x3D);
-    let retired_portable_id = entity_id(0x3E);
-    // Distinct persona subjects: the FACET id and its PERSON subject must
-    // differ, otherwise the write door mints PERSON at the same id and fails
-    // with `EntityTypeImmutable` (PERSON/FACET retirement).
-    let local_persona = entity_id(0x4A);
-    let portable_persona = entity_id(0x4B);
-    let shared_persona = entity_id(0x4C);
-    let other_persona = entity_id(0x4D);
-    let retired_persona = entity_id(0x4E);
-    let local_body =
-        companion_record_body(local_persona, crate::federation::Sensitivity::Restricted);
-    let portable_body =
-        companion_record_body(portable_persona, crate::federation::Sensitivity::Public);
-    let shared_body = companion_record_body_in_scope(
-        shared_persona,
-        CompanionScope::shared_vault(7),
-        crate::federation::Sensitivity::Private,
-    );
-    // Same sensitivity as the admitted shared row: only the destination vault
-    // binding can distinguish these records, never the sensitivity ceiling.
-    let other_body = companion_record_body_in_scope(
-        other_persona,
-        CompanionScope::shared_vault(8),
-        crate::federation::Sensitivity::Private,
-    );
-    let retired_body = companion_record_body_in_scope_with_lifecycle(
-        retired_persona,
-        CompanionScope::neutral(),
-        crate::federation::Sensitivity::Public,
-        ClaimLifecycleStatus::Retracted,
-    );
-    for (id, body) in [
-        (&local_id, &local_body),
-        (&portable_id, &portable_body),
-        (&shared_id, &shared_body),
-        (&other_shared_id, &other_body),
-        (&retired_portable_id, &retired_body),
-    ] {
-        insert_entity(&doc, *id, ENTITY_TYPE_FACET, body);
-    }
-    doc.commit();
-    // Mandatory record stamps: the export filter withholds unstamped
-    // non-CLAIM rows, so the same bodies are stored locally first. Digest
-    // matches because the bytes are identical.
-    vault
-        .batch()
-        .put(
-            &local_id,
-            ENTITY_TYPE_FACET,
-            TimeRange { start: 1, end: 1 },
-            1,
-            &local_body,
-        )
-        .put(
-            &portable_id,
-            ENTITY_TYPE_FACET,
-            TimeRange { start: 1, end: 1 },
-            1,
-            &portable_body,
-        )
-        .put(
-            &shared_id,
-            ENTITY_TYPE_FACET,
-            TimeRange { start: 1, end: 1 },
-            1,
-            &shared_body,
-        )
-        .put(
-            &other_shared_id,
-            ENTITY_TYPE_FACET,
-            TimeRange { start: 1, end: 1 },
-            1,
-            &other_body,
-        )
-        .put(
-            &retired_portable_id,
-            ENTITY_TYPE_FACET,
-            TimeRange { start: 1, end: 1 },
-            1,
-            &retired_body,
-        )
-        .commit()
-        .unwrap();
-
-    // All five FACET rows are named, so the sensitivity and destination doors
-    // — not the facet door — decide. Restricted content and content bound to
-    // another vault stay withheld.
-    let selector = SyncSelector::new(
-        grant_id,
-        member,
-        SyncSelectorWorld::All,
-        vec![
-            local_id,
-            portable_id,
-            shared_id,
-            other_shared_id,
-            retired_portable_id,
-        ],
-        // FACET(13) lives in the Core range (1-63), not Companion (64-79):
-        // the retired type-78 band no longer carries companion rows.
-        vec![SelectorRange::Core],
-    );
-    let filtered =
-        filtered_window_doc(&vault, &doc, &window_key, test_selector_scope(), &selector).unwrap();
-    let entities = filtered.get_map("entities");
-    assert!(
-        map_get_bytes(&entities, &local_id.to_hex()).is_none(),
-        "selector export must not include local-only companion register records"
-    );
-    assert!(
-        map_get_bytes(&entities, &portable_id.to_hex()).is_some(),
-        "selector export should keep syncable companion register records"
-    );
-    assert!(
-        map_get_bytes(&entities, &shared_id.to_hex()).is_some(),
-        "selector export should keep companion records for the authorized shared vault"
-    );
-    assert!(
-        map_get_bytes(&entities, &other_shared_id.to_hex()).is_none(),
-        "selector export must not include another shared vault's companion register records"
-    );
-    assert!(
-        map_get_bytes(&entities, &retired_portable_id.to_hex()).is_some(),
-        "selector export should propagate portable companion retirement records"
-    );
 }
 
 #[test]
@@ -4352,12 +4155,12 @@ fn disjoint_concurrent_narrows_meet_at_bottom_and_deny_content() {
     let ceiling =
         effective_scope_for_grant(&fold, &grant_id).expect("a pact-bound grant has a ceiling");
     assert_eq!(
-        ceiling.facets,
+        ceiling.as_scope().facets,
         FederationScopeFacets::Bottom,
         "disjoint facet narrows must meet at ⊥, not widen"
     );
     assert_eq!(
-        ceiling.bands,
+        ceiling.as_scope().bands,
         FederationScopeBands::Bottom,
         "disjoint band narrows must meet at ⊥, not widen"
     );
@@ -4379,7 +4182,10 @@ fn disjoint_concurrent_narrows_meet_at_bottom_and_deny_content() {
     // `bottom_ceiling_exports_nothing_to_an_unnarrowed_request`.
     let silent = SyncSelector::new(grant_id, member, SyncSelectorWorld::All, vec![], vec![]);
     assert_eq!(
-        resolve_selector_position(&silent, &ceiling).unwrap().facets,
+        resolve_selector_position(&silent, &ceiling)
+            .unwrap()
+            .as_scope()
+            .facets,
         FederationScopeFacets::Bottom
     );
     authorize_sync_selector(&vault, test_selector_scope(), &silent)
@@ -4519,7 +4325,7 @@ fn multiple_active_pacts_intersect_into_one_ceiling() {
     let ceiling =
         effective_scope_for_grant(&fold, &grant_id).expect("a pact-bound grant has a ceiling");
     assert_eq!(
-        ceiling.facets,
+        ceiling.as_scope().facets,
         FederationScopeFacets::Some(vec![facet_b]),
         "the ceiling is the meet of every bound pact, not one arbitrary pact"
     );

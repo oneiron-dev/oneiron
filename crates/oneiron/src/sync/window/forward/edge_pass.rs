@@ -78,6 +78,39 @@ pub(super) fn run(ctx: &RematCtx<'_>, ledger: &mut RematLedger) -> Result<()> {
                 return;
             };
 
+            // The Parent coordinator owns envelope, deletion policy,
+            // admission, pending work and terminal evidence for this key.
+            // Do not let a generic early exit strand an older obligation.
+            if kind == crate::edge::EdgeKind::Parent {
+                let tombstoned = tombstone_map_contains_id(tombstones_map, &src)
+                    || tombstone_map_contains_id(tombstones_map, &tgt);
+                match vault.with_write_txn(|wtxn| {
+                    bridge::submit_parent_in_txn(
+                        vault,
+                        wtxn,
+                        window_key.as_str(),
+                        src,
+                        tgt,
+                        buf,
+                        tombstoned,
+                    )
+                }) {
+                    Ok(bridge::ParentOutcome::Written) => {
+                        count += 1;
+                        if marked.contains(&src.to_hex()) {
+                            healed.push(src);
+                        }
+                    }
+                    Ok(bridge::ParentOutcome::Waiting) => {
+                        ledger.pending_dag_parent_sources.insert(src);
+                    }
+                    Ok(bridge::ParentOutcome::Rejected) => terminal_quarantines.push(src),
+                    Ok(bridge::ParentOutcome::Unchanged | bridge::ParentOutcome::Ignored) => {}
+                    Err(local) => edge_error = Some(local),
+                }
+                return;
+            }
+
             // Decode BEFORE the tombstone/endpoint gates (mirrors Observer
             // B's ordering in bridge.rs): a malformed value is a remote
             // rejection regardless of endpoint state, and decode has no side
@@ -160,8 +193,14 @@ pub(super) fn run(ctx: &RematCtx<'_>, ledger: &mut RematLedger) -> Result<()> {
                         return Ok(EdgeRematOutcome::Deferred);
                     }
                 }
-                if kind != crate::edge::EdgeKind::AddressedTo
-                    && let Err(reserved) = crate::edge::validate_public_edge_kind(kind)
+                if let Err(reserved) = crate::edge::validate_public_edge_kind(kind)
+                    && !matches!(
+                        kind,
+                        crate::edge::EdgeKind::Parent
+                            | crate::edge::EdgeKind::SpawnedBy
+                            | crate::edge::EdgeKind::RepliesTo
+                            | crate::edge::EdgeKind::AddressedTo
+                    )
                 {
                     let mandated_at = vault
                         .identity_topology_mandated_shell_edge_in_txn(&*wtxn, &src, kind, &tgt)?;
@@ -185,7 +224,32 @@ pub(super) fn run(ctx: &RematCtx<'_>, ledger: &mut RematLedger) -> Result<()> {
                 let src_exists = vault.store.entities.get(&*wtxn, src.as_bytes())?.is_some();
                 let tgt_exists = vault.store.entities.get(&*wtxn, tgt.as_bytes())?.is_some();
                 if !src_exists || !tgt_exists {
+                    if kind == crate::edge::EdgeKind::SpawnedBy {
+                        bridge::defer_spawned_by(
+                            vault,
+                            wtxn,
+                            window_key.as_str(),
+                            &src,
+                            &tgt,
+                            buf,
+                        )?;
+                    } else if kind == crate::edge::EdgeKind::ChildOf {
+                        bridge::defer_child_of(vault, wtxn, window_key.as_str(), &src, &tgt, buf)?;
+                    }
                     return Ok(EdgeRematOutcome::Deferred);
+                }
+                if matches!(
+                    kind,
+                    crate::edge::EdgeKind::SpawnedBy | crate::edge::EdgeKind::RepliesTo
+                ) {
+                    crate::conversation_dag::validate_received_edge(
+                        &vault.store,
+                        &*wtxn,
+                        src,
+                        kind,
+                        tgt,
+                        decoded,
+                    )?;
                 }
 
                 if kind == crate::edge::EdgeKind::AddressedTo
@@ -272,6 +336,9 @@ pub(super) fn run(ctx: &RematCtx<'_>, ledger: &mut RematLedger) -> Result<()> {
                     .get(&*wtxn, &in_key)?
                     .is_some_and(|value| value == buf);
                 if out_matches && in_matches {
+                    if kind == crate::edge::EdgeKind::ChildOf {
+                        bridge::settle_child_of(vault, wtxn, window_key.as_str(), &src, &tgt)?;
+                    }
                     return Ok(EdgeRematOutcome::Unchanged);
                 }
 
@@ -284,6 +351,9 @@ pub(super) fn run(ctx: &RematCtx<'_>, ledger: &mut RematLedger) -> Result<()> {
                         EdgeValueFields::from_decoded(decoded),
                     )
                     .apply(wtxn)?;
+                if kind == crate::edge::EdgeKind::ChildOf {
+                    bridge::settle_child_of(vault, wtxn, window_key.as_str(), &src, &tgt)?;
+                }
                 Ok(EdgeRematOutcome::Written)
             });
             match result {

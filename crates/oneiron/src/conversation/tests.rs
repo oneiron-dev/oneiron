@@ -202,6 +202,25 @@ fn direct_addressing_never_restricts_room_visibility() {
 }
 
 #[test]
+fn hard_deleted_empty_room_id_cannot_be_recreated() {
+    let (_dir, vault, actor, room, _bob) = fixture();
+    vault
+        .delete_entity_with_reason(&room, crate::DeleteReason::UserHardDelete)
+        .unwrap();
+    let err = vault
+        .create_conversation(room, &ConversationBody::default(), actor, 2)
+        .unwrap_err();
+    assert_eq!(err.kind(), ErrorKind::ConversationState);
+    assert!(vault.get(&room).unwrap().is_none());
+    let txn = vault.store.env.read_txn().unwrap();
+    assert!(
+        membership::rows_in(&vault.store, &txn, room)
+            .unwrap()
+            .is_empty()
+    );
+}
+
+#[test]
 fn membership_windows_survive_kick_rejoin_and_history_revoke() {
     let (_dir, vault, actor, room, bob) = fixture();
     let before = record(&vault, room, actor, 2);

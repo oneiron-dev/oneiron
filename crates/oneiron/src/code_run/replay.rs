@@ -116,6 +116,27 @@ impl CodeRunBridgeCall {
         };
 
         match outcome {
+            SelfDispatchOutcome::WakePolicyWritten(_)
+                if self.effect == SelfEffect::WakePolicyWrite =>
+            {
+                Ok(())
+            }
+            SelfDispatchOutcome::WakePolicyWritten(_) => Err(invalid_code_run_replay(
+                "wake policy result belongs to another effect",
+            )),
+            SelfDispatchOutcome::Denied(result)
+                if self.effect == SelfEffect::WakePolicyWrite && result.effect == self.effect =>
+            {
+                Ok(())
+            }
+            SelfDispatchOutcome::Failed(result)
+                if self.effect == SelfEffect::WakePolicyWrite && result.effect == self.effect =>
+            {
+                Ok(())
+            }
+            _ if self.effect == SelfEffect::WakePolicyWrite => Err(invalid_code_run_replay(
+                "wake policy effect carries another success outcome",
+            )),
             SelfDispatchOutcome::Speech(result) => {
                 let Some(expected_order) = expected_order else {
                     return Err(invalid_code_run_replay(

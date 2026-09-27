@@ -304,19 +304,6 @@ pub(crate) fn api_routes(server: Arc<SyncServer>) -> Router {
     // clients keep the plain REST verb/batch surface and bring their own runner.
     let companion_mutation_routes = Router::new()
         .route("/access-grants", post(create_companion_access_grant))
-        .route("/register/records", post(create_companion_register_record))
-        .route(
-            "/register/records/{record_id}",
-            post(update_companion_register_record),
-        )
-        .route(
-            "/register/records/{record_id}/retire",
-            post(retire_companion_register_record),
-        )
-        .route(
-            "/register/records/{record_id}/end-relationship",
-            post(end_companion_register_relationship),
-        )
         .route(
             "/access-grants/{grant_id}/revoke",
             post(revoke_companion_access_grant),
@@ -329,10 +316,6 @@ pub(crate) fn api_routes(server: Arc<SyncServer>) -> Router {
         .route(
             "/profiles/{persona_ref}",
             get(get_companion_profile).post(refresh_companion_profile),
-        )
-        .route(
-            "/register/records/{record_id}",
-            get(get_companion_register_record),
         )
         // ONE-207: the depth-dialed reasoning read. A POST that WRITES
         // NOTHING, so it stays off `companion_mutation_routes` and out of the
@@ -405,6 +388,9 @@ pub(crate) fn api_routes(server: Arc<SyncServer>) -> Router {
         // Config-only CIMD documents must be public before OAuth/lease bootstrap.
         .route("/oauth/client/native.json", get(client_metadata::native))
         .route("/oauth/client/web.json", get(client_metadata::web))
+        // The public ceremony bypasses the hosted device lease but retains
+        // matched-route wire receipts and threshold questions.
+        .merge(self::esign::public_routes())
         .layer(middleware::from_fn_with_state(
             server.clone(),
             crate::wire_telemetry::observe_http,
@@ -413,7 +399,6 @@ pub(crate) fn api_routes(server: Arc<SyncServer>) -> Router {
         // Their closed router validates a live owner publication and scoped tokens;
         // keep it outside the tenant lease layer, never a generic path exemption.
         .merge(self::booking::public_booking_router())
-        .merge(self::esign::public_routes())
         .with_state(server.clone())
         .layer(middleware::from_fn_with_state(
             server,
