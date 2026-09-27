@@ -636,7 +636,10 @@ fn resident_fork_delta_without_held_out_gain_cannot_merge_upstream() -> Result<(
         at(20),
         20,
     )?;
-    let ask = company.vault.prepare_shared_skill_merge(id)?;
+    let ask =
+        company
+            .vault
+            .prepare_shared_skill_merge(id, company.resident, useful_question(id))?;
     company
         .vault
         .approve_shared_skill_merge(&ask, &company.owner)?;
