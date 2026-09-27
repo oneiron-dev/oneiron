@@ -1587,6 +1587,28 @@ fn consent_grant_row_round_trips_and_rejects_malformed_bodies() {
 }
 
 #[test]
+fn bound_digest_separates_audience_class_selectors_and_optional_budget() {
+    // These bounds used to hash the identical field sequence
+    // [audience, alice, health, health, records] across different axes.
+    let offered = disclosure_bound(&["alice"], "health", &["health", "records"]);
+    let substituted = disclosure_bound(&["alice", "health"], "health", &["records"]);
+    assert_ne!(offered, substituted);
+    assert!(!offered.contains(&substituted));
+    assert_ne!(offered.digest(), substituted.digest());
+
+    let unbudgeted = action_bound("agent", "send", &["channel:email"]);
+    let zero_budget = GrantBound::action(
+        ActorBound::new("agent").expect("actor"),
+        ActionClass::new("send").expect("class"),
+        ActionEnvelope::new(["channel:email".to_owned()])
+            .expect("envelope")
+            .with_budget(0),
+    )
+    .expect("bound");
+    assert_ne!(unbudgeted.digest(), zero_budget.digest());
+}
+
+#[test]
 fn consent_bound_containment_is_deterministic_and_monotone() {
     let wide = action_bound("agent-a", "send", &["channel:email", "channel:sms"]);
     let narrow = action_bound("agent-a", "send", &["channel:email"]);

@@ -364,6 +364,7 @@ pub(super) struct VoiceMatchCandidate {
     space_id: String,
     centroid: Vec<f32>,
     pub(super) calibration: VoicePrintCalibration,
+    pub(super) print_generation: EntityId,
 }
 
 /// Validates a match request and returns its segments in canonical order,
@@ -446,6 +447,7 @@ pub(super) fn load_match_candidates(
             space_id: record.space.space_id.clone(),
             centroid: l2_normalize(&record.centroid, record.space.dimension)?,
             calibration: record.calibration,
+            print_generation: record.print_generation,
         });
     }
     // Deterministic subject-id tie-break for equal scores.

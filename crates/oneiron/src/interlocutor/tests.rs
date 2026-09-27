@@ -54,6 +54,7 @@ fn enrolled_owner_segment(segment_id: &str, subject_ref: EntityId) -> VoiceResol
             subject_ref,
             score: 0.9,
             calibration: VoicePrintCalibration::Calibrated,
+            print_generation: test_id(0xF1),
         },
     )
 }
@@ -73,6 +74,7 @@ fn enrolled_contact_segment(
             subject_ref,
             score: 0.8,
             calibration: VoicePrintCalibration::Collecting,
+            print_generation: test_id(0xF2),
         },
     )
 }
