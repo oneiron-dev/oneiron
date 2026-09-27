@@ -386,7 +386,7 @@ pub(crate) fn encode_claim_body(body: &ClaimBody) -> Result<Vec<u8>> {
 /// Decodes and structurally validates a type-0 (CLAIM) body (D18).
 ///
 /// This is the single validator: every write path validates through it (via
-/// [`validate_claim_body_bytes`]) and `Vault::get_claim` decodes through it.
+/// `validate_claim_body_bytes`) and `Vault::get_claim` decodes through it.
 /// Fail-closed rules:
 ///
 /// * the body must be exactly one MessagePack map (no trailing bytes);
