@@ -177,6 +177,33 @@ impl Vault {
         )
     }
 
+    /// A fresh local structural Put may materialize a typed projection after
+    /// its first stamp (TASK streak fields are one example). Bind the final
+    /// staged bytes before testing the same row's scope in this writer.
+    pub(crate) fn authorize_shared_local_put_content_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        id: crate::EntityId,
+        kind: u8,
+        writer: &WriteActor,
+    ) -> Result<()> {
+        if self.shared_vault_creation_in_txn(txn)?.is_some() {
+            let raw = self.get_raw_in(txn, &id)?.ok_or_else(denied)?;
+            if EntityMetadataHeader::parse(&raw).is_none_or(|header| header.entity_type != kind) {
+                return Err(denied());
+            }
+            super::record_scope::stamp_put(
+                &self.store,
+                txn,
+                id,
+                kind,
+                &raw[ENTITY_METADATA_HEADER_LEN..],
+                false,
+            )?;
+        }
+        self.authorize_shared_content_write_in_txn(txn, id, writer)
+    }
+
     /// NOTE-specific spelling for the actor-bound editor doors.
     pub(crate) fn authorize_shared_note_write_in_txn(
         &self,

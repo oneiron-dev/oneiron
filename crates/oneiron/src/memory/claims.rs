@@ -259,6 +259,11 @@ impl Memory<'_> {
                 .vault
                 .get_claim_in_txn(wtxn, &id)?
                 .ok_or(Error::EntityNotFound)?;
+            self.vault.authorize_shared_content_write_in_txn(
+                wtxn,
+                id,
+                &WriteActor::new(self.actor, self.actor_class),
+            )?;
             // This door does not own `companion.expression.*`, whoever is
             // asking. Closing one of those heads means restoring the
             // predecessor it superseded, and the general retraction below
@@ -633,11 +638,26 @@ impl Memory<'_> {
                     envelope.actor(),
                     id,
                 )?;
+                // A same-ID replacement needs authority over BOTH positions.
+                // Check the current row before the candidate overwrites it;
+                // the post-Put check below gates the resolved replacement.
+                if self.vault.get_raw_in(wtxn, &id)?.is_some() {
+                    self.vault.authorize_shared_content_write_in_txn(
+                        wtxn,
+                        id,
+                        &envelope.actor(),
+                    )?;
+                }
                 if let Some(old_id) = prior {
                     let old = self
                         .vault
                         .get_claim_in_txn(wtxn, &old_id)?
                         .ok_or(Error::EntityNotFound)?;
+                    self.vault.authorize_shared_content_write_in_txn(
+                        wtxn,
+                        old_id,
+                        &envelope.actor(),
+                    )?;
                     super::authorship::require_claim_self_grant_in_txn(
                         self.vault,
                         wtxn,

@@ -197,25 +197,10 @@ impl Memory<'_> {
                 batch = batch.edge(&id, *kind, target, *weight);
             }
             batch.apply(wtxn)?;
-            if self.vault.shared_vault_creation_in_txn(wtxn)?.is_some() {
-                // Typed local projections can change a fresh row's body after
-                // its initial scope stamp. Pin the final bytes before gating.
-                let raw = self
-                    .vault
-                    .get_raw_in(wtxn, &id)?
-                    .ok_or(crate::Error::EntityNotFound)?;
-                crate::federation::record_scope::stamp_put(
-                    &self.vault.store,
-                    wtxn,
-                    id,
-                    type_byte,
-                    &raw[crate::batch::ENTITY_METADATA_HEADER_LEN..],
-                    false,
-                )?;
-            }
-            self.vault.authorize_shared_content_write_in_txn(
+            self.vault.authorize_shared_local_put_content_in_txn(
                 wtxn,
                 id,
+                type_byte,
                 &WriteActor::new(self.actor, self.actor_class),
             )?;
             if !text_fields.is_empty() {
@@ -280,10 +265,19 @@ impl Memory<'_> {
             {
                 return Ok(true);
             }
+            let writer = WriteActor::new(self.actor, self.actor_class);
+            self.vault
+                .authorize_shared_content_write_in_txn(wtxn, habit_id, &writer)?;
             self.vault
                 .batch_in()
                 .put_habit_checkin(&habit_id, &checkin_id, occurred, learned_at, &data)
                 .apply(wtxn)?;
+            self.vault.authorize_shared_local_put_content_in_txn(
+                wtxn,
+                checkin_id,
+                crate::registry::ENTITY_TYPE_TASK,
+                &writer,
+            )?;
             Ok(false)
         })?;
         if refused {
