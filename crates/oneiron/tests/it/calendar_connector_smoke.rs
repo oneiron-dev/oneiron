@@ -521,7 +521,10 @@ impl CalendarRemoteTransport for DeleteEventAfterUpsert<'_> {
         if *delete {
             *delete = false;
             self.vault
-                .delete_entity(&self.event_ref)
+                .delete_entity_with_options(
+                    &self.event_ref,
+                    oneiron::deletion::DeleteEntityOptions { purge: true },
+                )
                 .expect("remove event after provider success");
         }
         let mut receipt =

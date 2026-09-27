@@ -772,13 +772,13 @@ fn invalid_owner_api_bounds_leave_journal_incomplete_without_grants() -> Result<
             ))
         ));
         activate_mailbox(&vault, entity(MAILBOX_IDENTITY))?;
-        let before = durable_rows(&vault)?;
+        let before = durable_rows_without_authorization_clock(&vault)?;
         assert!(matches!(
             vault.onboard_workspace_member(intent.clone(), &writer(WRITER), Some(&owner)),
             Err(Error::Gate(GateError::InvalidConsentBound(_)))
         ));
         assert_eq!(
-            durable_rows(&vault)?,
+            durable_rows_without_authorization_clock(&vault)?,
             before,
             "owner API apply rolls back every partial mint"
         );

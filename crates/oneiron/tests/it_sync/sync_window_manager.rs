@@ -514,7 +514,12 @@ fn unload_refuses_with_outstanding_handles_and_keeps_delete_routing_live() {
     // delete still routes through the registry-owned LIVE doc — tombstone
     // visible through the held handle, entities copy removed in the same
     // commit — never the transient path.
-    assert!(vault.delete_entity(&id).unwrap());
+    assert!(vault
+        .delete_entity_with_options(
+            &id,
+            oneiron::deletion::DeleteEntityOptions { purge: true },
+        )
+        .unwrap());
     assert!(
         map_get_bytes(&win.doc.get_map("tombstones"), &id.to_hex()).is_some(),
         "delete must still route through the registry-owned live doc"
