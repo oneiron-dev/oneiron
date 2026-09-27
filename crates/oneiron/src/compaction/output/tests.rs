@@ -51,3 +51,34 @@ fn decay_and_summaries_never_lose_source_or_write_claims() -> Result<()> {
     assert!(restore_output(&vault, wrong).is_err());
     Ok(())
 }
+
+#[test]
+fn restored_working_context_enforces_same_turn_order_as_record() -> Result<()> {
+    let dir = tempfile::tempdir()?;
+    let vault = Vault::open(dir.path(), crate::VaultConfig::device())?;
+    let mut working = OutputWorkingContext::default();
+    working.record(&vault, 1, b"first", "first overview")?;
+    working.record(&vault, 1, b"second", "second overview")?;
+    working.record(&vault, 3, b"third", "third overview")?;
+    let mut restored: OutputWorkingContext =
+        serde_json::from_value(serde_json::to_value(&working).unwrap()).unwrap();
+    restored.record(&vault, 3, b"fourth", "fourth overview")?;
+    assert_eq!(
+        restored
+            .assemble(
+                &vault,
+                3,
+                OutputDecayPolicy {
+                    overview_after_turns: 5,
+                    stub_after_turns: 10,
+                }
+            )?
+            .len(),
+        4
+    );
+    let mut reversed = serde_json::to_value(&working).unwrap();
+    reversed["entries"].as_array_mut().unwrap().swap(0, 2);
+    assert!(serde_json::from_value::<OutputWorkingContext>(reversed).is_err());
+    assert!(restored.record(&vault, 2, b"out of order", "no").is_err());
+    Ok(())
+}

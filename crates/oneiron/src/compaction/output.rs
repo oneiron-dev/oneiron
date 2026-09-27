@@ -2,9 +2,9 @@
 //! The durable bytes never enter a decay operation. Only the context view changes.
 
 use crate::{Error, Result, Vault};
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize, de};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct OutputRef {
     pub hash: [u8; 32],
@@ -46,10 +46,9 @@ pub struct OutputContextView {
     pub affordances: [OutputAffordance; 2],
 }
 
-/// Host-owned working output span. Raw bytes live only in the vault side store;
+/// Host-owned working output span. Raw bytes live in the owning routed side store;
 /// entries keep source references across context assembly and compaction.
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
+#[derive(Debug, Clone, Default, Serialize)]
 pub struct OutputWorkingContext {
     entries: Vec<WorkingOutput>,
 }
@@ -59,6 +58,45 @@ pub struct OutputWorkingContext {
 struct WorkingOutput {
     entry: OutputContextEntry,
     recoverable_only: bool,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct OutputWorkingContextWire {
+    entries: Vec<WorkingOutput>,
+}
+
+impl<'de> Deserialize<'de> for OutputWorkingContext {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> std::result::Result<Self, D::Error> {
+        let wire = OutputWorkingContextWire::deserialize(deserializer)?;
+        if wire
+            .entries
+            .windows(2)
+            .any(|pair| pair[0].entry.created_turn > pair[1].entry.created_turn)
+        {
+            return Err(de::Error::custom("output turns must be ordered"));
+        }
+        Ok(Self {
+            entries: wire.entries,
+        })
+    }
+}
+
+impl OutputRef {
+    #[must_use]
+    pub fn from_bytes(bytes: &[u8]) -> Self {
+        Self {
+            hash: *blake3::hash(bytes).as_bytes(),
+            byte_len: bytes.len() as u64,
+        }
+    }
+
+    pub fn verify(self, bytes: &[u8]) -> Result<()> {
+        if Self::from_bytes(bytes) != self {
+            return Err(Error::CorruptedIndex("recoverable output integrity"));
+        }
+        Ok(())
+    }
 }
 
 impl OutputWorkingContext {
@@ -79,6 +117,25 @@ impl OutputWorkingContext {
             return Err(Error::InvalidConfig("output turns must be ordered".into()));
         }
         let source = store_output(vault, bytes)?;
+        self.record_referenced(turn, source, overview)?;
+        Ok(source)
+    }
+
+    /// Register a reference already durably stored by the owning host route.
+    /// The assembler verifies source bytes whenever it expands a full view.
+    pub fn record_referenced(
+        &mut self,
+        turn: u64,
+        source: OutputRef,
+        overview: impl Into<String>,
+    ) -> Result<()> {
+        if self
+            .entries
+            .last()
+            .is_some_and(|last| turn < last.entry.created_turn)
+        {
+            return Err(Error::InvalidConfig("output turns must be ordered".into()));
+        }
         self.entries.push(WorkingOutput {
             entry: OutputContextEntry {
                 source,
@@ -87,7 +144,17 @@ impl OutputWorkingContext {
             },
             recoverable_only: false,
         });
-        Ok(source)
+        Ok(())
+    }
+
+    #[must_use]
+    pub fn len(&self) -> usize {
+        self.entries.len()
+    }
+
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.entries.is_empty()
     }
 
     /// Assemble the ordered working-context output views at the current turn.
@@ -97,6 +164,17 @@ impl OutputWorkingContext {
         vault: &Vault,
         turn: u64,
         policy: OutputDecayPolicy,
+    ) -> Result<Vec<OutputContextView>> {
+        self.assemble_with(turn, policy, |source| restore_output(vault, source))
+    }
+
+    /// Assemble through the owner's own routed raw-output store. The callback
+    /// is invoked for full views only; overview and stub never read raw bytes.
+    pub fn assemble_with(
+        &self,
+        turn: u64,
+        policy: OutputDecayPolicy,
+        mut restore: impl FnMut(OutputRef) -> Result<Vec<u8>>,
     ) -> Result<Vec<OutputContextView>> {
         if policy.overview_after_turns > policy.stub_after_turns {
             return Err(Error::InvalidConfig(
@@ -110,7 +188,7 @@ impl OutputWorkingContext {
                 if item.recoverable_only {
                     Ok(item.entry.stub_view())
                 } else {
-                    item.entry.view(vault, turn, policy)
+                    item.entry.view_with(turn, policy, &mut restore)
                 }
             })
             .collect()
@@ -118,7 +196,7 @@ impl OutputWorkingContext {
 
     /// Move exactly the committed turn span to recoverable references.
     /// Does not remove entries or mutate the side-store bytes.
-    pub(super) fn compact_span(&mut self, first: u64, last: u64) {
+    pub(crate) fn compact_span(&mut self, first: u64, last: u64) {
         for item in &mut self.entries {
             if (first..=last).contains(&item.entry.created_turn) {
                 item.recoverable_only = true;
@@ -146,6 +224,15 @@ impl OutputContextEntry {
         turn: u64,
         policy: OutputDecayPolicy,
     ) -> Result<OutputContextView> {
+        self.view_with(turn, policy, &mut |source| restore_output(vault, source))
+    }
+
+    fn view_with(
+        &self,
+        turn: u64,
+        policy: OutputDecayPolicy,
+        restore: &mut impl FnMut(OutputRef) -> Result<Vec<u8>>,
+    ) -> Result<OutputContextView> {
         if policy.overview_after_turns > policy.stub_after_turns {
             return Err(Error::InvalidConfig(
                 "output decay tiers are reversed".into(),
@@ -157,7 +244,9 @@ impl OutputContextEntry {
         } else if age >= policy.overview_after_turns {
             (OutputTier::Overview, self.overview.as_bytes().to_vec())
         } else {
-            (OutputTier::Full, restore_output(vault, self.source)?)
+            let bytes = restore(self.source)?;
+            self.source.verify(&bytes)?;
+            (OutputTier::Full, bytes)
         };
         Ok(OutputContextView {
             source: self.source,
@@ -177,10 +266,7 @@ fn output_key(source: OutputRef) -> Vec<u8> {
 
 /// Vault-local content-addressed side store. No interpretation or claim write.
 pub fn store_output(vault: &Vault, bytes: &[u8]) -> Result<OutputRef> {
-    let source = OutputRef {
-        hash: *blake3::hash(bytes).as_bytes(),
-        byte_len: bytes.len() as u64,
-    };
+    let source = OutputRef::from_bytes(bytes);
     let key = output_key(source);
     vault.with_write_txn(|txn| {
         if let Some(existing) = vault.store.vault_meta.get(txn, &key)? {
@@ -202,9 +288,7 @@ pub fn restore_output(vault: &Vault, source: OutputRef) -> Result<Vec<u8>> {
         .vault_meta
         .get(&txn, &output_key(source))?
         .ok_or(Error::CorruptedIndex("missing recoverable output"))?;
-    if bytes.len() as u64 != source.byte_len || blake3::hash(&bytes).as_bytes() != &source.hash {
-        return Err(Error::CorruptedIndex("recoverable output integrity"));
-    }
+    source.verify(&bytes)?;
     Ok(bytes.to_vec())
 }
 

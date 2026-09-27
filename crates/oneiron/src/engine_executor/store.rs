@@ -132,6 +132,38 @@ fn fallback_speech_marker_path(seq: u64) -> String {
     format!("{SCRIPT_OUTPUT_DIR}/{seq:06}{FALLBACK_SPEECH_MARKER_SUFFIX}")
 }
 
+/// Recoverable reference marker for a committed executor compaction. Its
+/// run and sequence are in the BYTES as well as the path: the routed raw
+/// store indexes by content hash, not path, so one constant body for every
+/// step would falsely mark all steps after the first.
+fn compacted_output_marker(
+    run_id: EntityId,
+    seq: u64,
+) -> crate::Result<(CodeRunRawOutput, Vec<u8>)> {
+    let path = format!("{SCRIPT_OUTPUT_DIR}/compacted/{}/{seq}", run_id.to_hex());
+    let bytes = format!("oneiron-executor-compacted-output-v1\n{path}\n").into_bytes();
+    Ok((CodeRunRawOutput::from_bytes(path, &bytes)?, bytes))
+}
+
+pub(super) fn store_compacted_output_marker(
+    storage: &ExecutorStorage<'_>,
+    run_id: EntityId,
+    seq: u64,
+) -> EngineExecutorResult<()> {
+    let (marker, bytes) = compacted_output_marker(run_id, seq)?;
+    storage.put_code_run_raw_output(&marker, &bytes)?;
+    Ok(())
+}
+
+pub(super) fn output_was_compacted(
+    storage: &ExecutorStorage<'_>,
+    run_id: EntityId,
+    seq: u64,
+) -> EngineExecutorResult<bool> {
+    let (marker, _) = compacted_output_marker(run_id, seq)?;
+    Ok(storage.get_code_run_raw_output(&marker)?.is_some())
+}
+
 pub(super) fn script_output_path(seq: u64) -> String {
     format!("{SCRIPT_OUTPUT_DIR}/{seq:06}.generated.js")
 }

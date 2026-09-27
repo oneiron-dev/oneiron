@@ -1,7 +1,9 @@
 //! Executor driver: struct, constructors, and the witness-turn doors.
 
+use super::store::store_compacted_output_marker;
 use super::types::{EngineExecutorResult, ExecutorLegibility, JsCodeModeRuntime};
 use crate::code_run::{ExecutorStorage, GatedActorWrite};
+use crate::compaction::output::{OutputDecayPolicy, OutputWorkingContext};
 use crate::entity_id::EntityId;
 use crate::memory::WitnessReceipt;
 use crate::off_record::{ExecutorUtterance, OffRecordSession};
@@ -16,6 +18,9 @@ pub struct EngineNativeExecutor<'a> {
     pub(super) runtime: &'a mut dyn JsCodeModeRuntime,
     pub(super) gated_write: &'a GatedActorWrite<'a>,
     pub(super) legibility: Option<ExecutorLegibility<'a>>,
+    pub(super) output_context: OutputWorkingContext,
+    pub(super) output_run: Option<EntityId>,
+    pub(super) output_decay: OutputDecayPolicy,
     /// Next order for the public compatibility witness door, whose callers do
     /// not have an [`EngineExecutorConfig`] run id. Explicit-order witnesses
     /// bypass this allocator and retain their exact order.
@@ -43,6 +48,12 @@ impl<'a> EngineNativeExecutor<'a> {
             runtime,
             gated_write,
             legibility: None,
+            output_context: OutputWorkingContext::default(),
+            output_run: None,
+            output_decay: OutputDecayPolicy {
+                overview_after_turns: 2,
+                stub_after_turns: 5,
+            },
             next_witness_order: AtomicU32::new(0),
             #[cfg(test)]
             fail_before_implicit_speak_once: false,
@@ -76,6 +87,12 @@ impl<'a> EngineNativeExecutor<'a> {
             runtime,
             gated_write,
             legibility: None,
+            output_context: OutputWorkingContext::default(),
+            output_run: None,
+            output_decay: OutputDecayPolicy {
+                overview_after_turns: 2,
+                stub_after_turns: 5,
+            },
             next_witness_order: AtomicU32::new(0),
             #[cfg(test)]
             fail_before_implicit_speak_once: false,
@@ -88,6 +105,60 @@ impl<'a> EngineNativeExecutor<'a> {
     pub fn with_legibility(mut self, legibility: ExecutorLegibility<'a>) -> Self {
         self.legibility = Some(legibility);
         self
+    }
+
+    /// Host policy for code-run console context. The default keeps the most
+    /// recent observations full, then a bounded overview, then a reference.
+    #[must_use]
+    pub fn with_output_decay(mut self, policy: OutputDecayPolicy) -> Self {
+        self.output_decay = policy;
+        self
+    }
+
+    /// Land a native compaction in the SAME output context used to build this
+    /// executor's next model request. A rejected mint changes no output views.
+    pub fn integrate_compaction(
+        &mut self,
+        driver: &mut crate::compaction::CompactionDriver,
+        byline: crate::WriteActor,
+        request: &crate::compaction::CompactionRequest,
+        product: crate::compaction::CompactionProduct,
+        accumulated: &[crate::compaction::CompactionWindowMessage],
+    ) -> EngineExecutorResult<crate::compaction::SwapPlan> {
+        self.verify_storage_dispatcher_binding()?;
+        let run_id = self.output_run.ok_or(crate::Error::InvalidConfig(
+            "executor output context has not assembled".into(),
+        ))?;
+        let Self {
+            storage,
+            output_context,
+            ..
+        } = self;
+        let ExecutorStorage::Canonical(vault) = storage else {
+            return Err(crate::Error::InvalidConfig(
+                "native compaction requires canonical executor storage".into(),
+            )
+            .into());
+        };
+        let plan = driver.integrate_with_outputs(
+            vault,
+            byline,
+            request,
+            product,
+            accumulated,
+            output_context,
+        )?;
+        let last = request
+            .window
+            .last()
+            .expect("integrated window is nonempty")
+            .turn;
+        if !output_context.is_empty() {
+            for seq in request.turn_start..=last.min(output_context.len() as u64 - 1) {
+                store_compacted_output_marker(storage, run_id, seq)?;
+            }
+        }
+        Ok(plan)
     }
 
     #[cfg(test)]
