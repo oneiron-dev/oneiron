@@ -178,7 +178,7 @@ impl Vault {
                 receipt.displaced_by_revision =
                     crate::skill_optimize::displaced_judge_revision_in_txn(
                         self,
-                        &txn,
+                        txn,
                         &receipt.judge_revision,
                     )?;
                 Ok(receipt)

@@ -276,7 +276,24 @@ fn code_free_pack_installs_active_without_qualification_or_consent() -> Result<(
         else {
             panic!("attempt")
         };
-        let loaded = vault.load_attempt_skill_pack(attempt.id, &skill, 8)?;
+        let crate::attempt_queue::ClaimOutcome::Claimed(leased) = queue.claim_kind(
+            "pack.runtime",
+            crate::attempt_queue::ClaimAttempt {
+                lease_owner: "worker".into(),
+                now: 8,
+            },
+        )?
+        else {
+            panic!("lease")
+        };
+        let loaded = vault.load_attempt_skill_pack(
+            attempt.id,
+            &skill,
+            "worker",
+            leased.attempt_count,
+            "fixture/model@1",
+            8,
+        )?;
         assert!(
             loaded
                 .source_files
@@ -337,15 +354,39 @@ fn resident_authored_skill_rides_installed_pack_in_one_attempt() -> Result<()> {
     else {
         panic!("attempt")
     };
+    let crate::attempt_queue::ClaimOutcome::Claimed(leased) = queue.claim_kind(
+        "pack.runtime",
+        crate::attempt_queue::ClaimAttempt {
+            lease_owner: "worker".into(),
+            now: 7,
+        },
+    )?
+    else {
+        panic!("lease")
+    };
     assert!(
         vault
-            .load_attempt_skill_pack(attempt.id, &bundled, 7)?
+            .load_attempt_skill_pack(
+                attempt.id,
+                &bundled,
+                "worker",
+                leased.attempt_count,
+                "fixture/model@1",
+                7
+            )?
             .source_files
             .is_some()
     );
     assert_eq!(
         vault
-            .load_attempt_skill_pack(attempt.id, &authored_id, 8)?
+            .load_attempt_skill_pack(
+                attempt.id,
+                &authored_id,
+                "worker",
+                leased.attempt_count,
+                "fixture/model@1",
+                8
+            )?
             .record
             .skill_id,
         "alice.workflow"
@@ -671,7 +712,14 @@ fn bundled_skill_revision_supersedes_old_and_widened_capability_reaches_fit() ->
     );
     assert!(
         vault
-            .load_attempt_skill_pack(crate::attempt_queue::AttemptId::now(), &old_id, 7)
+            .load_attempt_skill_pack(
+                crate::attempt_queue::AttemptId::now(),
+                &old_id,
+                "worker",
+                1,
+                "fixture/model@1",
+                7
+            )
             .is_err()
     );
     Ok(())
@@ -854,14 +902,38 @@ fn last_shared_pack_owner_supersedes_old_revision() -> Result<()> {
     else {
         panic!("attempt")
     };
+    let crate::attempt_queue::ClaimOutcome::Claimed(leased) = queue.claim_kind(
+        "pack.runtime",
+        crate::attempt_queue::ClaimAttempt {
+            lease_owner: "worker".into(),
+            now: 8,
+        },
+    )?
+    else {
+        panic!("lease")
+    };
     assert!(
         vault
-            .load_attempt_skill_pack(attempt.id, &old_id, 8)
+            .load_attempt_skill_pack(
+                attempt.id,
+                &old_id,
+                "worker",
+                leased.attempt_count,
+                "fixture/model@1",
+                8
+            )
             .is_err()
     );
     assert!(
         vault
-            .load_attempt_skill_pack(attempt.id, &new_id, 8)
+            .load_attempt_skill_pack(
+                attempt.id,
+                &new_id,
+                "worker",
+                leased.attempt_count,
+                "fixture/model@1",
+                8
+            )
             .is_ok()
     );
     Ok(())
