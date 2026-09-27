@@ -183,7 +183,22 @@ pub(crate) fn artifact_file_response(
             false,
         ),
     };
-    let etag = format!("\"{}\"", oneiron::artifact_hex(&file.content_hash));
+    // A blob version pins its export presentation as well as its bytes.
+    // Same-byte forks can change MIME/attachment policy, so the blob ETag
+    // must name the immutable version, not only the shared content hash.
+    let etag = match file.export {
+        oneiron::artifact_hosting::ArtifactExportRef::BlobVersion {
+            artifact_id,
+            version,
+        } => {
+            format!(
+                "\"blob-{}-{version}-{}\"",
+                artifact_id.to_hex(),
+                oneiron::artifact_hex(&file.content_hash)
+            )
+        }
+        _ => format!("\"{}\"", oneiron::artifact_hex(&file.content_hash)),
+    };
     if request_etag_matches(request_headers, &etag) {
         let mut response = Response::new(Body::empty());
         *response.status_mut() = StatusCode::NOT_MODIFIED;

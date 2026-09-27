@@ -61,6 +61,29 @@ fn put_workbook(vault: &Vault, actor: WriteActor, at: u64) -> EntityId {
     artifact_id
 }
 
+fn recreate_workbook(vault: &Vault, artifact_id: EntityId, actor: WriteActor) -> Result<u64> {
+    assert!(vault.delete_entity(&artifact_id)?);
+    vault.put_blob_artifact(
+        &artifact_id,
+        &BlobArtifactBody::new(
+            "forecast.xlsx",
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        ),
+        test_time(11),
+        11,
+    )?;
+    Ok(vault
+        .append_blob_artifact_version(
+            &artifact_id,
+            b"recreated workbook bytes",
+            &BlobVersionProvenance::UserUpload,
+            actor,
+            test_time(12),
+            12,
+        )?
+        .version)
+}
+
 fn xlsx_anchor(artifact_id: EntityId, version: u64, sheet: &str, range: &str) -> Anchor {
     Anchor::new(
         artifact_id,
@@ -580,6 +603,125 @@ fn open_thread_rejects_bad_anchor_version() {
         )
         .expect_err("anchor beyond head must fail");
     assert_eq!(err.kind(), crate::error::ErrorKind::InvalidAnchor);
+}
+
+#[test]
+fn recreated_blob_rejects_deleted_anchor_version_and_admits_new_root() -> Result<()> {
+    let (_dir, vault) = crate::test_util::open_test_vault_with(embedding_test_config());
+    let actor = put_actor(&vault, 10);
+    let artifact_id = put_workbook(&vault, actor, 10);
+    let new_version = recreate_workbook(&vault, artifact_id, actor)?;
+    assert_eq!(new_version, 2);
+    assert!(
+        vault
+            .blob_artifact_version_metadata(&artifact_id, 1)?
+            .is_none()
+    );
+    let error = vault
+        .open_annotation_thread(
+            &xlsx_anchor(artifact_id, 1, "Sheet1", "A1"),
+            actor,
+            "must not anchor a deleted version",
+            test_time(13),
+            13,
+        )
+        .expect_err("deleted version must refuse thread opening");
+    assert_eq!(error.kind(), crate::error::ErrorKind::InvalidAnchor);
+    assert!(
+        vault
+            .annotation_threads_for_artifact(&artifact_id)?
+            .is_empty()
+    );
+    assert!(live_thread_head_claim_ids(&vault, &artifact_id).is_empty());
+    let current = vault.open_annotation_thread(
+        &xlsx_anchor(artifact_id, new_version, "Sheet1", "A1"),
+        actor,
+        "new root exists",
+        test_time(13),
+        13,
+    )?;
+    assert_eq!(current.anchor.version, new_version);
+    assert_eq!(
+        vault
+            .annotation_thread_comments(&artifact_id, &current.thread_id)?
+            .len(),
+        1
+    );
+    Ok(())
+}
+
+#[test]
+fn reanchor_refuses_deleted_prefix_in_both_write_doors() -> Result<()> {
+    let (_dir, vault) = crate::test_util::open_test_vault_with(embedding_test_config());
+    let actor = put_actor(&vault, 10);
+    let artifact_id = put_workbook(&vault, actor, 10);
+    let new_version = recreate_workbook(&vault, artifact_id, actor)?;
+    let thread = vault.open_annotation_thread(
+        &xlsx_anchor(artifact_id, new_version, "Sheet1", "B2"),
+        actor,
+        "anchored to new root",
+        test_time(13),
+        13,
+    )?;
+    let before = live_thread_head_claim_ids(&vault, &artifact_id);
+    let ops = [ReanchorOp::InsertRows {
+        sheet: "Sheet1".into(),
+        at_row: 1,
+        count: 1,
+    }];
+    let error = vault
+        .reanchor_annotation_threads(&artifact_id, new_version, 1, &ops, actor, test_time(14), 14)
+        .expect_err("public reanchor cannot target deleted version");
+    assert_eq!(error.kind(), crate::error::ErrorKind::InvalidAnchor);
+    let error = vault
+        .with_write_txn(|wtxn| {
+            vault.reanchor_annotation_threads_in_txn(
+                wtxn,
+                &artifact_id,
+                new_version,
+                1,
+                &ops,
+                actor,
+                test_time(14),
+                14,
+            )
+        })
+        .expect_err("transactional reanchor cannot target deleted version");
+    assert_eq!(error.kind(), crate::error::ErrorKind::InvalidAnchor);
+    assert_eq!(live_thread_head_claim_ids(&vault, &artifact_id), before);
+    assert_eq!(
+        vault
+            .get_annotation_thread(&artifact_id, &thread.thread_id)?
+            .expect("original thread head")
+            .anchor
+            .version,
+        new_version
+    );
+    let next = vault.append_blob_artifact_version(
+        &artifact_id,
+        b"next workbook bytes",
+        &BlobVersionProvenance::UserUpload,
+        actor,
+        test_time(15),
+        15,
+    )?;
+    assert_eq!(next.version, new_version + 1);
+    assert_eq!(
+        vault
+            .reanchor_annotation_threads(
+                &artifact_id,
+                new_version,
+                next.version,
+                &ops,
+                actor,
+                test_time(16),
+                16,
+            )?
+            .remapped
+            .len(),
+        1
+    );
+    Ok(())
 }
 
 #[test]

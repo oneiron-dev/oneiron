@@ -415,11 +415,11 @@ async fn core_context_pack_owner_absent_happy_path_clamps_to_scope() {
         "kenji@example.com",
     );
     let party = seed_text_turn(&server, "hanami party planning needle17");
-    let diary = seed_text_turn(&server, "private diary entry needle17");
+    let diary = seed_text_asset(&server, "private diary entry needle17");
     seed_disclosure_scope(&server, contact_principal, vec![party]);
 
     // Scoped bearer whose principal IS the contact row; no block (N13 shape
-    // with a real scope). AbsenceClamp admits only the allowlisted party.
+    // with a real scope). AbsenceClamp admits the TURN band, not the ASSET_TEXT diary.
     let request = json!({ "query": "needle17", "limit": 10 });
     let (status, body) = route_json(
         server,
@@ -580,7 +580,7 @@ async fn core_context_pack_n9_scope_smuggling_members_are_ignored() {
     let contact_id = seeded_test_entity_id(0x1517_0022);
     seed_counterparty_contact(&server, contact_id, identity_ref, "kenji@example.com");
     let party = seed_text_turn(&server, "party event needle21");
-    let diary = seed_text_turn(&server, "private diary needle21");
+    let diary = seed_text_asset(&server, "private diary needle21");
     seed_disclosure_scope(&server, contact_id, vec![party]);
 
     let clean = json!({
@@ -628,7 +628,7 @@ async fn core_context_pack_n9_scope_smuggling_members_are_ignored() {
             results
                 .iter()
                 .any(|entity| entity["id"].as_str() == Some(party_id.as_str())),
-            "stored scope admits the party memory",
+            "TURN-band scope admits the party memory",
         );
         assert!(
             results
@@ -715,6 +715,27 @@ async fn core_context_pack_n14_wider_scoped_contact_cannot_widen_scoped_token() 
             "third_parties": [{ "contact_ref": wider_contact.to_hex() }]
         }
     });
+    let (wide_status, wide_body) = route_json(
+        server.clone(),
+        core_request_with_principal_ref(
+            "POST",
+            "/v1/core/context-pack",
+            "core:read",
+            &wider_contact.to_hex(),
+            Some(&request),
+        ),
+    )
+    .await;
+    assert_eq!(wide_status, StatusCode::OK);
+    assert!(
+        wide_body["results"]
+            .as_array()
+            .expect("wider results")
+            .iter()
+            .any(|row| row["id"] == party.to_hex()),
+        "contact clearance alone must admit the party, so X ∩ Y is asymmetric: {wide_body:?}"
+    );
+
     let (status, body) = route_json(
         server,
         core_request_with_principal_ref(

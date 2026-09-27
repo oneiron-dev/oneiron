@@ -874,6 +874,7 @@ async fn local_blob_artifact_route_serves_pinned_and_direct_versions() {
     assert_eq!(headers[CONTENT_DISPOSITION], "attachment");
     assert_eq!(headers[X_CONTENT_TYPE_OPTIONS], "nosniff");
     assert_eq!(headers[CACHE_CONTROL], BLOB_POINTER_CACHE_CONTROL);
+    let attachment_etag = headers[ETAG].clone();
 
     // The blob body is mutable, but this URL and its response headers are not.
     server
@@ -900,17 +901,20 @@ async fn local_blob_artifact_route_serves_pinned_and_direct_versions() {
     assert_eq!(
         headers[ETAG],
         format!(
-            "\"{}\"",
+            "\"blob-{}-{}-{}\"",
+            artifact_id.to_hex(),
+            first.version,
             oneiron::artifact_hex(blake3::hash(b"%PDF-1.7\nfirst version").as_bytes())
         )
     );
+    let old_pdf_etag = headers[ETAG].clone();
     let renamed_direct = format!(
         "/a/{}/renamed.txt?blobVersion={}",
         artifact_id.to_hex(),
         first.version
     );
     let (status, _, _) = route_bytes(
-        server,
+        server.clone(),
         Request::builder()
             .uri(renamed_direct)
             .body(Body::empty())
@@ -918,6 +922,88 @@ async fn local_blob_artifact_route_serves_pinned_and_direct_versions() {
     )
     .await;
     assert_eq!(status, StatusCode::NOT_FOUND);
+
+    // A same-byte fork with a different pinned media type must revalidate as
+    // a new representation, not replay a stale 304 from the previous version.
+    let plain = server
+        .vault
+        .fork_blob_artifact_version(
+            &artifact_id,
+            first.version,
+            b"%PDF-1.7\nfirst version",
+            &oneiron::blob_artifact::BlobVersionProvenance::UserUpload,
+            actor,
+            oneiron::TimeRange { start: 31, end: 31 },
+            31,
+        )
+        .expect("same-byte plain-text fork");
+    server
+        .vault
+        .publish_blob_artifact_pointer(
+            &artifact_id,
+            oneiron::ArtifactPointerChannel::Published,
+            plain.version,
+        )
+        .expect("repoint to plain-text fork");
+    let (status, headers, body) = route_bytes(
+        server.clone(),
+        Request::builder()
+            .uri(format!("/a/{}/export", artifact_id.to_hex()))
+            .header(IF_NONE_MATCH, old_pdf_etag.clone())
+            .body(Body::empty())
+            .expect("conditional MIME repoint"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body.as_ref(), b"%PDF-1.7\nfirst version");
+    assert_eq!(headers[CONTENT_TYPE], "text/plain; charset=utf-8");
+    assert_ne!(headers[ETAG], old_pdf_etag);
+
+    // Moving from an attachment to inline PDF with identical bytes must also
+    // return 200, so an old Content-Disposition cannot stick in a cache.
+    server
+        .vault
+        .put_blob_artifact(
+            &active_id,
+            &oneiron::blob_artifact::BlobArtifactBody::new("report.pdf", "application/pdf"),
+            oneiron::TimeRange { start: 32, end: 32 },
+            32,
+        )
+        .expect("re-put active blob presentation");
+    let inline = server
+        .vault
+        .fork_blob_artifact_version(
+            &active_id,
+            1,
+            b"<script>alert(1)</script>",
+            &oneiron::blob_artifact::BlobVersionProvenance::UserUpload,
+            actor,
+            oneiron::TimeRange { start: 33, end: 33 },
+            33,
+        )
+        .expect("same-byte inline fork");
+    server
+        .vault
+        .publish_blob_artifact_pointer(
+            &active_id,
+            oneiron::ArtifactPointerChannel::Published,
+            inline.version,
+        )
+        .expect("repoint from attachment to inline");
+    let (status, headers, body) = route_bytes(
+        server,
+        Request::builder()
+            .uri(format!("/a/{}/export", active_id.to_hex()))
+            .header(IF_NONE_MATCH, attachment_etag.clone())
+            .body(Body::empty())
+            .expect("conditional attachment repoint"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body.as_ref(), b"<script>alert(1)</script>");
+    assert_eq!(headers[CONTENT_TYPE], "application/pdf");
+    assert!(!headers.contains_key(CONTENT_DISPOSITION));
+    assert_ne!(headers[ETAG], attachment_etag);
 }
 
 #[tokio::test]

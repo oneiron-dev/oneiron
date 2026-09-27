@@ -824,6 +824,34 @@ pub(super) fn seed_counterparty_contact(
 
 // ─── OF-365 disclosure clamp HTTP red-team suite (ONE-1517) ─────────────────
 
+/// A searchable out-of-band record: the contact's TURN clearance must not
+/// admit it merely because its words match the same query.
+pub(super) fn seed_text_asset(server: &SyncServer, text: &str) -> oneiron::EntityId {
+    let id = oneiron::EntityId::now();
+    let body = rmp_serde::to_vec_named(&json!({
+        "txt": text,
+        "source_asset_ref": format!("fixture:{}", id.to_hex()),
+    }))
+    .expect("encode ASSET_TEXT body");
+    server
+        .vault
+        .batch()
+        .put(
+            &id,
+            oneiron::registry::ENTITY_TYPE_ASSET_TEXT,
+            oneiron::TimeRange {
+                start: 100,
+                end: 100,
+            },
+            100,
+            &body,
+        )
+        .text(&id, &[("body", text)])
+        .commit()
+        .expect("seed ASSET_TEXT");
+    id
+}
+
 pub(super) fn seed_text_turn(server: &SyncServer, text: &str) -> oneiron::EntityId {
     let turn = oneiron::EntityId::now();
     let body = rmp_serde::to_vec_named(&json!({
@@ -856,16 +884,25 @@ pub(super) fn seed_disclosure_scope(
     contact_id: oneiron::EntityId,
     entities: Vec<oneiron::EntityId>,
 ) {
-    // The six-axis clearance cannot express a per-entity allowlist. Do not
-    // widen this old fixture silently; its caller tests must be rewritten
-    // under the owning disclosure change to assert six-axis outcomes.
-    let _ = entities;
-    let scope = oneiron::disclosure::DisclosureScope::new(
-        oneiron::federation::Scope::default(),
-        "party planning",
-        100,
-    )
-    .expect("disclosure scope");
+    // Six-axis clearance uses record-kind bands, not entity-id allowlists.
+    // The selected rows supply their actual bands; an empty fixture is bottom.
+    let mut clearance = oneiron::federation::Scope::default();
+    if !entities.is_empty() {
+        let bands = entities
+            .into_iter()
+            .map(|id| {
+                server
+                    .vault
+                    .get_entity_type(&id)
+                    .expect("record kind")
+                    .expect("scoped fixture entity must exist")
+            })
+            .collect();
+        clearance = oneiron::federation::Scope::top();
+        clearance.bands = oneiron::federation::ScopeAxis::Some(bands);
+    }
+    let scope = oneiron::disclosure::DisclosureScope::new(clearance, "party planning", 100)
+        .expect("disclosure scope");
     server
         .vault
         .set_counterparty_disclosure_scope(&contact_id, &scope)
