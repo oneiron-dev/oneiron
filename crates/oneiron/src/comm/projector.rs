@@ -20,9 +20,11 @@ use super::{
     ProjectorRule,
 };
 use crate::Vault;
+use crate::counterparty_contact::normalize_channel_class;
 use crate::entity_id::EntityId;
 use crate::error::Error;
-use crate::ports::EntityStoreRead;
+use crate::ports::{EntityStoreRead, TombstoneStore};
+use crate::receipt::FIELD_TASK_REF;
 use crate::registry::ENTITY_TYPE_COMM_RECORD;
 
 #[derive(Debug, Clone, Copy)]
@@ -75,6 +77,7 @@ const PROJECTOR_RULES: [ProjectorRule; 5] = [
 /// RECORDED after this pass's snapshot are not observed at all; they are the
 /// next pass's business.
 pub fn run_comm_projector(vault: &Vault) -> CommResult<()> {
+    import_delivered_send_receipts(vault)?;
     let records = {
         let rtxn = vault.store.env.read_txn()?;
         comm_records_in_txn(vault, &rtxn)?
@@ -97,6 +100,117 @@ pub fn run_comm_projector(vault: &Vault) -> CommResult<()> {
     }
     reconcile_comm_party_twins(vault, vault.store.clock.now_recorded_at())?;
     Ok(())
+}
+
+/// Folds durable connector receipts into this projector. TASK identity fixes the
+/// source event; its original PERSON subject is never changed by later party
+/// merges or deletion. A new delivery without an explicit counterparty is not
+/// a communication fact: transport destinations can be group channels.
+fn import_delivered_send_receipts(vault: &Vault) -> CommResult<()> {
+    for receipt in crate::receipt::durable_send_receipts(vault)? {
+        if receipt.outcome != "delivered_to_channel" {
+            continue;
+        }
+        let channel = receipt
+            .fields
+            .get("channel")
+            .ok_or(CommError::InvalidRecord)?;
+        let verb = receipt.fields.get("verb").ok_or(CommError::InvalidRecord)?;
+        if !is_delivered_message(channel, verb) {
+            continue;
+        }
+        let Some(party) = receipt.fields.get("counterparty_ref") else {
+            continue;
+        };
+        validate_channel_class(channel).map_err(|_| CommError::InvalidRecord)?;
+        validate_key_string(party).map_err(|_| CommError::InvalidRecord)?;
+        let task_ref = EntityId::from_hex(
+            receipt
+                .fields
+                .get(FIELD_TASK_REF)
+                .ok_or(CommError::InvalidRecord)?,
+        )
+        .map_err(|_| CommError::InvalidRecord)?;
+        let mut hash = blake3::Hasher::new();
+        hash.update(b"oneiron.comm.connector_send_event.v1\0");
+        hash.update(task_ref.as_bytes());
+        let mut bytes = [0_u8; 16];
+        bytes.copy_from_slice(&hash.finalize().as_bytes()[..16]);
+        bytes[6] = (bytes[6] & 0x0f) | 0x70;
+        bytes[8] = (bytes[8] & 0x3f) | 0x80;
+        let event_id = EntityId::from_bytes(bytes).map_err(|_| CommError::InvalidRecord)?;
+        vault.try_with_write_txn(|txn| {
+            // Check the immutable source event BEFORE resolving today's party.
+            // A merged shell keeps its original body, and a deleted subject has
+            // no body at all. Neither should remint a PERSON or block STOPs.
+            if let Some(raw) = vault.store.port_entity_record(&*txn, &event_id)? {
+                if raw.entity_type != ENTITY_TYPE_COMM_RECORD {
+                    return Err(CommError::InvalidRecord);
+                }
+                match decode_comm_record(&raw.body)? {
+                    CommRecord::Event {
+                        kind: CommEventKind::SendSucceeded,
+                        party_ref: original_party,
+                        channel_class: Some(resident_channel),
+                        thread_ref: None,
+                        occurred_at,
+                        ..
+                    } if resident_channel == *channel && occurred_at == receipt.occurred_at => {
+                        // A soft delete keeps a headerful PERSON shell with
+                        // scrubbed body bytes. It is not a live party to
+                        // compare against the frozen receipt; the already
+                        // imported event must remain replay-idempotent.
+                        if !vault.port_tombstone_is_deleted(&*txn, &original_party)?
+                            && let Some(original) =
+                                vault.store.port_entity_record(&*txn, &original_party)?
+                        {
+                            if original.entity_type != crate::registry::ENTITY_TYPE_PERSON {
+                                return Err(CommError::InvalidRecord);
+                            }
+                            let value = rmpv::decode::read_value(&mut original.body.as_slice())
+                                .map_err(|_| CommError::InvalidRecord)?;
+                            let key = super::records::required_string(
+                                super::records::value_map(&value)
+                                    .map_err(|_| CommError::InvalidRecord)?,
+                                super::claims::KEY_PARTY_KEY,
+                            )
+                            .map_err(|_| CommError::InvalidRecord)?;
+                            if key != party {
+                                return Err(CommError::InvalidRecord);
+                            }
+                        }
+                        return Ok(());
+                    }
+                    _ => return Err(CommError::InvalidRecord),
+                }
+            }
+            let party_ref = resolve_or_create_party_in_txn(vault, txn, party)?;
+            let sequence = next_event_sequence_in_txn(vault, txn)?;
+            put_comm_record_in_txn(
+                vault,
+                txn,
+                event_id,
+                &CommRecord::Event {
+                    sequence,
+                    kind: CommEventKind::SendSucceeded,
+                    party_ref,
+                    channel_class: Some(channel.clone()),
+                    thread_ref: None,
+                    occurred_at: receipt.occurred_at,
+                    projected: false,
+                },
+            )
+        })?;
+    }
+    Ok(())
+}
+
+/// A message operation projects one delivered receipt into comm history.
+/// The connector manifest declares the eligible verbs; edits, reactions,
+/// invitations and presence never become touches just because they delivered.
+fn is_delivered_message(channel: &str, verb: &str) -> bool {
+    crate::outbound::outbound_capability_manifest(channel)
+        .is_some_and(|manifest| manifest.message_verbs.iter().any(|kind| kind == verb))
 }
 
 /// Records a successful send receipt without directly writing standing-state claims.
@@ -219,7 +333,7 @@ fn record_event(
             sequence,
             kind,
             party_ref,
-            channel_class: channel_class.map(str::to_owned),
+            channel_class: channel_class.map(normalize_channel_class),
             thread_ref,
             occurred_at,
             projected: false,
@@ -285,6 +399,10 @@ pub(super) fn project_event(
             .iter()
             .find(|rule| rule.event_kind == kind)
             .ok_or(CommError::InvalidRecord)?;
+        // Decode can read provider-spelled events already accepted by this
+        // build; project their recipient class through the same rule as new
+        // events, without changing the original audit event bytes.
+        let recipient_class = channel_class.as_deref().map(normalize_channel_class);
         let delta = apply_projector_rule_in_txn(
             vault,
             wtxn,
@@ -293,7 +411,7 @@ pub(super) fn project_event(
                 rule: *rule,
                 source_event_id: event_id,
                 party_ref,
-                channel_class: channel_class.as_deref(),
+                channel_class: recipient_class.as_deref(),
                 thread_ref: thread_ref.as_deref(),
                 occurred_at,
             },
@@ -438,7 +556,8 @@ fn apply_projector_rule_in_txn(
                     };
                     if !pending
                         || gate_party_ref != party_ref
-                        || gate_channel != channel
+                        || normalize_channel_class(&gate_channel)
+                            != normalize_channel_class(channel)
                         || claim_ref != candidate.claim_ref
                         || created_at > occurred_at
                     {

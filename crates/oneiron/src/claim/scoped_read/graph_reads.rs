@@ -9,34 +9,103 @@ use crate::vault::ReadMode;
 use crate::{EdgeInfo, EntityId, Error, Result};
 use std::collections::HashSet;
 
+type GraphAskNeighbors = Vec<(EntityId, u8, Vec<u8>)>;
 type TimelineEntityParts = (u8, u64, Vec<u8>);
 type SupersessionParts = (TimelineEntityParts, TimelineEntityParts);
 
 impl ScopedRead<'_> {
+    /// The graph-ask recipe reads at most `limit` usable outgoing neighbors.
+    /// Its semantic scan cap applies after admission, so Empty relations cannot
+    /// consume a slot or create a raw-degree error. One read snapshot binds all.
+    pub(crate) fn graph_ask_neighbors(
+        &self,
+        unit: &EntityId,
+        limit: usize,
+        scan_limit: usize,
+        max_body_bytes: usize,
+    ) -> Result<Option<GraphAskNeighbors>> {
+        let txn = self.grant_read_txn()?;
+        self.graph_ask_neighbors_in_txn(&txn, unit, limit, scan_limit, max_body_bytes)
+    }
+
+    /// Recheck the exact adjacency in an already-held write/read snapshot.
+    pub(crate) fn graph_ask_neighbors_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        unit: &EntityId,
+        limit: usize,
+        scan_limit: usize,
+        max_body_bytes: usize,
+    ) -> Result<Option<GraphAskNeighbors>> {
+        let (filter, policy) = self.resolve_retrieval_filter_in(txn, None)?;
+        let admitted = self.admitted_edges_in(
+            txn,
+            &policy,
+            &filter,
+            unit,
+            EdgeDirection::Out,
+            None,
+            scan_limit,
+            scan_limit,
+            true,
+        )?;
+        if !admitted.source.visible() {
+            return Ok(None);
+        }
+        let mut kept = Vec::new();
+        for edge in admitted.edges {
+            let edge = edge.info();
+            let Some(raw) = self.entity_raw_with_mode_in(
+                txn,
+                &policy,
+                &filter,
+                &edge.target,
+                crate::vault::ReadMode::Live,
+            )?
+            else {
+                continue;
+            };
+            let header = EntityMetadataHeader::parse(&raw)
+                .ok_or(Error::CorruptedIndex("graph ask neighbor header"))?;
+            let body = &raw[ENTITY_METADATA_HEADER_LEN..];
+            if (header.entity_type != crate::registry::ENTITY_TYPE_CLAIM
+                && (64..100).contains(&header.entity_type))
+                || body.is_empty()
+                || body.len() > max_body_bytes
+            {
+                continue;
+            }
+            kept.push((edge.target, header.entity_type, body.to_vec()));
+            if kept.len() >= limit {
+                break;
+            }
+        }
+        Ok(Some(kept))
+    }
+
     /// Edges and both endpoints share one authority snapshot and a mandatory receipt.
     pub fn edges_out(&self, id: &EntityId) -> Result<ScopedReadResult<Option<Vec<EdgeInfo>>>> {
-        let txn = self.vault.store.env.read_txn()?;
+        let txn = self.grant_read_txn()?;
         let (filter, policy) = self.resolve_retrieval_filter_in(&txn, None)?;
-        let mut suppressed = 0;
-        let value = if self.is_entity_retrievable_with_policy_in(&txn, &policy, &filter, id)? {
-            let mut kept = Vec::new();
-            for edge in self.edges_out_in(&txn, id)? {
-                if self.is_entity_retrievable_with_policy_in(
-                    &txn,
-                    &policy,
-                    &filter,
-                    &edge.target,
-                )? {
-                    kept.push(edge);
-                } else if self.entity_record_in(&txn, &edge.target)?.is_some() {
-                    suppressed += 1;
-                }
-            }
-            Some(kept)
-        } else {
-            suppressed += usize::from(self.entity_record_in(&txn, id)?.is_some());
-            None
-        };
+        let admitted = self.admitted_edges_in(
+            &txn,
+            &policy,
+            &filter,
+            id,
+            EdgeDirection::Out,
+            None,
+            usize::MAX,
+            usize::MAX,
+            false,
+        )?;
+        let suppressed = admitted.source.suppression() + admitted.suppressed;
+        let value = admitted.source.visible().then(|| {
+            admitted
+                .edges
+                .into_iter()
+                .map(super::edge_admission::AdmittedEdge::info)
+                .collect()
+        });
         Ok(ScopedReadResult {
             value,
             receipt: self.receipt_for(None, &policy, &filter, suppressed),
@@ -46,10 +115,14 @@ impl ScopedRead<'_> {
     /// Timeline metadata is rechecked against both the initial and final authority.
     pub fn memory_timeline(&self, anchor: &EntityId) -> Result<ScopedReadResult<MemoryTimeline>> {
         let (filter, policy) = {
-            let txn = self.vault.store.env.read_txn()?;
+            let txn = self.grant_read_txn()?;
             let (filter, policy) = self.resolve_retrieval_filter_in(&txn, None)?;
-            if !self.timeline_anchor_allowed_in(&txn, &policy, &filter, anchor)? {
-                let suppressed = usize::from(self.entity_record_in(&txn, anchor)?.is_some());
+            let admitted = self.admit_in(&txn, anchor, || {
+                self.timeline_anchor_allowed_in(&txn, &policy, &filter, anchor)
+                    .map(|visible| visible.then_some(()))
+            })?;
+            if !admitted.visible() {
+                let suppressed = admitted.suppression();
                 return Ok(ScopedReadResult {
                     value: MemoryTimeline {
                         anchor: *anchor,
@@ -61,20 +134,27 @@ impl ScopedRead<'_> {
             (filter, policy)
         };
         let mut timeline = self.vault.memory_timeline(anchor)?;
-        let txn = self.vault.store.env.read_txn()?;
+        let txn = self.grant_read_txn()?;
         let (fresh_filter, fresh_policy) = self.resolve_retrieval_filter_in(&txn, None)?;
         let anchor_allowed = self.timeline_anchor_allowed_in(&txn, &policy, &filter, anchor)?
             && self.timeline_anchor_allowed_in(&txn, &fresh_policy, &fresh_filter, anchor)?;
         let mut suppressed = 0;
         let mut kept = Vec::new();
         for record in timeline.records {
-            if anchor_allowed
-                && self.timeline_record_allowed_in(&txn, &policy, &filter, &record)?
-                && self.timeline_record_allowed_in(&txn, &fresh_policy, &fresh_filter, &record)?
-            {
+            let admitted = self.admit_in(&txn, &record.id, || {
+                Ok((anchor_allowed
+                    && self.timeline_record_allowed_in(&txn, &policy, &filter, &record)?
+                    && self.timeline_record_allowed_in(
+                        &txn,
+                        &fresh_policy,
+                        &fresh_filter,
+                        &record,
+                    )?)
+                .then_some(()))
+            })?;
+            suppressed += admitted.suppression();
+            if admitted.visible() {
                 kept.push(record);
-            } else if self.entity_record_in(&txn, &record.id)?.is_some() {
-                suppressed += 1;
             }
         }
         let ids: HashSet<_> = kept.iter().map(|record| record.id).collect();
@@ -110,8 +190,12 @@ impl ScopedRead<'_> {
                 value.push(None);
                 continue;
             }
-            if !self.timeline_record_allowed_in(&txn, &policy, &filter, record)? {
-                suppressed += usize::from(self.entity_record_in(&txn, &record.id)?.is_some());
+            let admitted = self.admit_in(&txn, &record.id, || {
+                self.timeline_record_allowed_in(&txn, &policy, &filter, record)
+                    .map(|visible| visible.then_some(()))
+            })?;
+            suppressed += admitted.suppression();
+            if !admitted.visible() {
                 value.push(None);
                 continue;
             }

@@ -326,6 +326,8 @@ pub struct ClaimCandidate {
     world: Option<EntityId>,
     relationship: Option<EntityId>,
     scope: Option<Value>,
+    facet_stamp: Option<EntityId>,
+    project_stamp: Option<EntityId>,
     stale: bool,
 }
 
@@ -351,6 +353,8 @@ impl ClaimCandidate {
             world: None,
             relationship: None,
             scope: None,
+            facet_stamp: None,
+            project_stamp: None,
             stale: false,
         }
     }
@@ -400,6 +404,14 @@ impl ClaimCandidate {
     #[must_use]
     pub fn with_scope(mut self, scope: Value) -> Self {
         self.scope = Some(scope);
+        self
+    }
+
+    /// Preserve an already-scoped claim's exact facet and audience on a
+    /// session-branch proposal. This internal door does not grant scope.
+    pub(crate) fn with_scope_stamps(mut self, facet: EntityId, project: EntityId) -> Self {
+        self.facet_stamp = Some(facet);
+        self.project_stamp = Some(project);
         self
     }
 
@@ -484,7 +496,10 @@ impl ClaimCandidate {
         body.source = Some(envelope.source());
         body.world = self.world;
         body.rel = self.relationship;
-        body.scope_facet = default_facet;
+        body.scope_facet = self.facet_stamp.unwrap_or(default_facet);
+        if let Some(project) = self.project_stamp {
+            body.scope_project = project;
+        }
         if let Some(Value::Map(entries)) = self.scope.as_ref() {
             for (key, value) in entries {
                 let id = match value {
@@ -500,7 +515,7 @@ impl ClaimCandidate {
                 if let Some(id) = id {
                     match key.as_str() {
                         Some("facet" | "facet_ref" | "facetRef") => body.scope_facet = id,
-                        Some("scopeProjectId" | "corpus_id") => body.scope_project = id,
+                        Some("scopeProjectId") => body.scope_project = id,
                         _ => {}
                     }
                 }

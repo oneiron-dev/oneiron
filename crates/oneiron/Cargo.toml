@@ -19,6 +19,7 @@ categories.workspace = true
 doctest = true
 
 [dependencies]
+oneiron-sandbox-contract = { path = "../oneiron-sandbox-contract" }
 oneiron-seal = { version = "0.1.0", path = "../oneiron-seal" }
 lopdf = { version = "=0.44.0", default-features = false }
 qrcode = { version = "=0.14.1", default-features = false }
@@ -39,8 +40,8 @@ xxhash-rust = { workspace = true }
 serde = { workspace = true }
 schemars = "=0.8.22"
 serde_json = { workspace = true }
-serde_path_to_error = "0.1"
 jsonschema = { version = "0.33", default-features = false }
+serde_path_to_error = "0.1"
 postcard = { workspace = true, optional = true }
 blake3 = { workspace = true }
 # SECRET-02 (ONE-1920): lease materialization returns the value wrapped in
@@ -68,6 +69,7 @@ fastcdc = "=3.2.1"
 tempfile = "3"
 tree-sitter = "0.26.10"
 tree-sitter-rust = "0.24.2"
+tree-sitter-python = "=0.25.0"
 icu_normalizer = { version = "2.2", default-features = false, features = ["compiled_data"] }
 icu_casemap = { version = "2.2", default-features = false, features = ["compiled_data"] }
 icu_segmenter = { version = "2.2", default-features = false, features = ["compiled_data", "auto"] }
@@ -75,7 +77,7 @@ icu_properties = { version = "2.2", default-features = false, features = ["compi
 unicode-script = "0.5"
 unicode-segmentation = "1"
 loro = "1.10"
-tokio = { version = "1", features = ["net", "sync", "time", "rt", "macros"], optional = true }
+tokio = { version = "1", features = ["sync"] }
 tokio-tungstenite = { version = "0.26", optional = true }
 futures-util = { version = "0.3", optional = true }
 zstd = "0.13"
@@ -189,7 +191,10 @@ microvm-firecracker = []
 # ever hand it to a release build when this feature is explicitly on.
 microvm-dev = []
 sync = [
-    "dep:tokio",
+    "tokio/net",
+    "tokio/time",
+    "tokio/rt",
+    "tokio/macros",
     "dep:tokio-tungstenite",
     "dep:futures-util",
     "dep:postcard",
@@ -207,6 +212,8 @@ test-hooks = []
 test-support = []
 
 [dev-dependencies]
+wat = "1"
+oneiron-guest = { path = "../oneiron-guest" }
 async-trait = "0.1"
 rcgen = "0.14"
 p256 = { workspace = true, features = ["pkcs8"] }

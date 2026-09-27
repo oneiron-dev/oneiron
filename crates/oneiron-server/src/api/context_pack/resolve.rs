@@ -67,8 +67,23 @@ pub(crate) async fn run_context_pack(
     ),
     ApiError,
 > {
-    let interlocutors =
-        resolve_core_interlocutor_set(&server.vault, auth, req.interlocutors.as_ref())?;
+    let room_members = req
+        .conversation_id
+        .as_deref()
+        .map(|room| {
+            let room = super::super::parse_entity_id_param(room, "conversation_id")?;
+            server
+                .vault
+                .room_audience_members(room)
+                .map_err(|error| core_engine_error("room audience failed", error))
+        })
+        .transpose()?;
+    let interlocutors = resolve_core_interlocutor_set(
+        &server.vault,
+        auth,
+        req.interlocutors.as_ref(),
+        room_members.as_deref(),
+    )?;
     let query = non_empty_query(req.query.as_deref());
     validate_core_query_seeds(query, req.query_vector.as_deref())?;
     let (edge_hop, edge_hop_field, max_neighbors, max_neighbors_field) =
@@ -97,13 +112,8 @@ pub(crate) async fn run_context_pack(
         .unwrap_or(View::Standard);
     let projection = context_pack_json_projection_config(view, req.budget.as_ref());
     let scoped_read = scoped_read_for_core_auth(&server.vault, auth)?;
-    let scoped_read = if let Some(room) = req.conversation_id.as_deref() {
-        let room = super::super::parse_entity_id_param(room, "conversation_id")?;
-        let members = server
-            .vault
-            .members(room)
-            .map_err(|e| core_engine_error("room audience failed", e))?;
-        scoped_read.for_audience(&members)
+    let scoped_read = if let Some(members) = room_members.as_deref() {
+        scoped_read.for_audience(members)
     } else if let Some(set) = interlocutors.as_ref().filter(|set| set.has_non_owner()) {
         // Contact records are not PERSON identities. Only a unique explicit
         // person link may resolve one; unresolved participants fail closed.
@@ -152,7 +162,13 @@ pub(crate) async fn run_context_pack(
     // the one applied (design §11 rule 6).
     let disclosure = interlocutors
         .as_ref()
-        .map(|set| oneiron::DisclosureContext::resolve(&server.vault, set.clone()))
+        .map(|set| {
+            if room_members.is_some() {
+                oneiron::DisclosureContext::resolve_room(&server.vault, set.clone())
+            } else {
+                oneiron::DisclosureContext::resolve(&server.vault, set.clone())
+            }
+        })
         .transpose()
         .map_err(|error| {
             tracing::error!(error = %error, "core context-pack disclosure resolution failed");
@@ -169,6 +185,11 @@ pub(crate) async fn run_context_pack(
         .max_neighbors(max_neighbors)
         .include_vectors(include_vectors)
         .field_profile(projection.profile);
+    if let Some(model) = req.executor_model.as_deref() {
+        builder = builder
+            .skill_executor(model)
+            .map_err(|error| core_engine_error("invalid context-pack executor model", error))?;
+    }
     if let Some(query) = query {
         builder = builder.search_text(query, candidate_limit);
     }

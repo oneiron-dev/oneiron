@@ -16,7 +16,6 @@ use super::super::test_hooks;
 use super::{RematCtx, RematLedger};
 
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
-use crate::companion::decode_companion_record_body;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result, SyncError};
 use crate::registry::ENTITY_TYPE_AUTHORITY_LOG;
@@ -206,6 +205,7 @@ pub(super) fn run(ctx: &RematCtx<'_>, ledger: &mut RematLedger) -> Result<()> {
                     | crate::registry::ENTITY_TYPE_IDENTITY_TOPOLOGY_EVENT
                     | crate::registry::ENTITY_TYPE_DIAGNOSTIC
                     | ENTITY_TYPE_AUTHORITY_LOG
+                    | crate::registry::ENTITY_TYPE_RECEIPT_RECORD
             );
             if !byte_compare_in_door {
                 if let Some(latest) = materialized_blobs.get(&id) {
@@ -261,24 +261,10 @@ pub(super) fn run(ctx: &RematCtx<'_>, ledger: &mut RematLedger) -> Result<()> {
             } else {
                 &[]
             };
-            if header.entity_type == crate::registry::ENTITY_TYPE_FACET
-                && crate::companion::is_identity_facet_body(data)
-            {
-                match decode_companion_record_body(data) {
-                    Ok(record)
-                        if record.sensitivity == crate::federation::Sensitivity::Restricted =>
-                    {
-                        local_only_companion_entity_keys.push(key.to_owned());
-                        local_only_companion_entity_ids.insert(id);
-                        return;
-                    }
-                    Ok(_) | Err(_) => {
-                        if let Err(err) = vault.ensure_companion_register_kind() {
-                            entity_error = Some(err);
-                            return;
-                        }
-                    }
-                }
+            if crate::companion::is_retired_identity_carrier(header.entity_type, data) {
+                local_only_companion_entity_keys.push(key.to_owned());
+                local_only_companion_entity_ids.insert(id);
+                return;
             }
             // ONE-1134 + ONE-1140: the REDACTION_AUDIT replay door
             // #2. Receipts are immutable audit records (contracts.ts
@@ -344,7 +330,18 @@ pub(super) fn run(ctx: &RematCtx<'_>, ledger: &mut RematLedger) -> Result<()> {
             // engine-authored bands while still running full structural
             // validation (unknown type bytes, ungrammatical predicates, and
             // malformed CLAIM bodies all still fail typed).
-            let result = if header.entity_type == crate::registry::ENTITY_TYPE_DIAGNOSTIC {
+            let result = if header.entity_type == crate::registry::ENTITY_TYPE_RECEIPT_RECORD {
+                vault.with_write_txn(|wtxn| {
+                    crate::sync::receipt_ingest::ingest_in_txn(
+                        vault,
+                        wtxn,
+                        tombstones_map,
+                        window_key.as_str(),
+                        &id,
+                        blob,
+                    )
+                })
+            } else if header.entity_type == crate::registry::ENTITY_TYPE_DIAGNOSTIC {
                 // Replay may not revive a remote detector's local observations.
                 Ok(false)
             } else if header.entity_type == crate::registry::ENTITY_TYPE_REDACTION_AUDIT {
@@ -534,7 +531,12 @@ pub(super) fn run(ctx: &RematCtx<'_>, ledger: &mut RematLedger) -> Result<()> {
                 Err(err) if quarantine::remote_rejection_reason(&err).is_some() => {
                     let dependency_pending =
                         crate::subject_model::subject_model_dependency_pending(&err)
-                            || err.kind() == crate::error::ErrorKind::ProjectDependencyPending;
+                            || matches!(
+                                err.kind(),
+                                crate::error::ErrorKind::ProjectDependencyPending
+                                    | crate::error::ErrorKind::ResidentOwnerDependencyPending
+                                    | crate::error::ErrorKind::RemoteMachineHistoryPending
+                            );
                     if dependency_pending {
                         pending_entity_dependencies.insert(id);
                     }

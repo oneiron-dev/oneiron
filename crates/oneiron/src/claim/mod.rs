@@ -24,7 +24,7 @@
 //! full structural validation. Well-formed UNKNOWN predicates are accepted — the crate is
 //! predicate-agnostic for semantics (ARCH-0003 §G.1). Crate-owned
 //! well-known predicates are listed in [`CLAIM_PREDICATE_REGISTRY`] and carry
-//! the first-segment layer prefix `core`, `companion`, `eiri`, or `commitment`; that is a
+//! the first-segment layer prefix `core`, `companion`, `persona`, or `commitment`; that is a
 //! schema/code-review convention, not a package split, plugin runtime,
 //! consent matrix, or semantic dispatch registry.
 //!
@@ -63,8 +63,8 @@ mod predicate_grammar;
 mod predicate_validators;
 mod projection_index;
 pub(crate) use projection_index::{
-    claim_ids_for_predicate_in_txn, maintain_claim_projection_index,
-    pending_claim_ids_for_producer_in_txn, remove_claim_projection_index,
+    claim_ids_for_predicate_in_txn, maintain_claim_projection_index, producer_prefix,
+    remove_claim_projection_index,
 };
 mod put;
 mod read;
@@ -93,6 +93,7 @@ pub use scope_stamp::{
 };
 pub(crate) use scope_stamp::{default_facet_in, upgrade_pre_scope_body};
 pub use scoped_read::*;
+pub(crate) use scoped_read::{ReadAdmission, admit_stored_edge_in};
 pub use source_trust::*;
 pub use status::*;
 pub(crate) use write_target::validate_claim_write_target_in_txn;

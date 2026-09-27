@@ -8,7 +8,7 @@ use crate::claim::{ClaimBody, ClaimSubject};
 use crate::{
     EntityId, Vault,
     error::{Error, Result},
-    store::Store,
+    store::{ManifestDbs, Store},
 };
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
@@ -39,6 +39,12 @@ fn key(id: EntityId) -> Vec<u8> {
     key.extend_from_slice(id.as_bytes());
     key
 }
+/// Retire an id's scope sidecar in the same transaction that erases its body.
+/// A later same-id, same-bytes write must not inherit the old scope.
+pub(crate) fn retire_stamp(store: &Store, txn: &mut heed::RwTxn<'_>, id: EntityId) -> Result<()> {
+    store.vault_meta.delete(txn, &key(id))?;
+    Ok(())
+}
 fn digest(kind: u8, data: &[u8]) -> [u8; 32] {
     let mut h = blake3::Hasher::new_derive_key("oneiron/record-scope/v1");
     h.update(&[kind]);
@@ -68,12 +74,12 @@ fn carries_birth_stamp(kind: u8) -> bool {
 /// The facet a NOTE or ASSET was born under: the target of its one stored
 /// `FacetOf` edge.
 pub(crate) fn birth_facet(
-    store: &Store,
+    store: &impl ManifestDbs,
     txn: &heed::RoTxn<'_>,
     id: EntityId,
 ) -> Result<Option<EntityId>> {
     let prefix = crate::vault::edge_kind_prefix(&id, crate::edge::EdgeKind::FacetOf);
-    let Some(row) = store.edges_out.prefix_iter(txn, &prefix)?.next() else {
+    let Some(row) = store.edges_out().prefix_iter(txn, &prefix)?.next() else {
         return Ok(None);
     };
     let (key, value) = row?;
@@ -90,10 +96,7 @@ pub(crate) fn stamp_put(
     let mut scope = if kind == crate::registry::ENTITY_TYPE_CLAIM {
         let body = crate::claim::decode_claim_body(data, true)?;
         body.record_scope("read")
-    } else if replicated
-        && !(kind == crate::registry::ENTITY_TYPE_FACET
-            && crate::companion::is_identity_facet_body(data))
-    {
+    } else if replicated {
         // Same bytes may retain their locally authored stamp. A changed opaque
         // replay must not inherit one from an earlier row at the same id.
         if stored_scope(store, txn, id, kind, data)?.is_none() {
@@ -111,8 +114,14 @@ pub(crate) fn stamp_put(
     } else {
         default_stamp(kind, crate::claim::substrate_facet_id(id))
     };
-    if kind == crate::registry::ENTITY_TYPE_FACET
-        && let Ok(rmpv::Value::Map(entries)) = rmpv::decode::read_value(&mut &data[..])
+    // A locally authored RELATIONSHIP may declare its sensitivity just as a
+    // FACET does. The resulting digest-bound record position, not a raw body
+    // string read at export time, is the portable disclosure ceiling. Replayed
+    // opaque rows above remain unstamped and cannot become public here.
+    if matches!(
+        kind,
+        crate::registry::ENTITY_TYPE_FACET | crate::registry::ENTITY_TYPE_RELATIONSHIP
+    ) && let Ok(rmpv::Value::Map(entries)) = rmpv::decode::read_value(&mut &data[..])
     {
         let bands: Vec<_> = entries
             .iter()
@@ -124,10 +133,16 @@ pub(crate) fn stamp_put(
                 Some("private") => Sensitivity::Private,
                 Some("sensitive") => Sensitivity::Sensitive,
                 Some("restricted") => Sensitivity::Restricted,
-                _ => return Err(Error::InvalidClaimBody("invalid facet sensitivity")),
+                _ => {
+                    return Err(Error::InvalidClaimBody(
+                        "invalid facet or relationship sensitivity",
+                    ));
+                }
             });
         } else if !bands.is_empty() {
-            return Err(Error::InvalidClaimBody("duplicate facet sensitivity"));
+            return Err(Error::InvalidClaimBody(
+                "duplicate facet or relationship sensitivity",
+            ));
         }
     }
     scope.verbs = ScopeAxis::Bottom;
@@ -141,13 +156,13 @@ pub(crate) fn stamp_put(
     Ok(())
 }
 fn stored_scope(
-    store: &Store,
+    store: &impl ManifestDbs,
     txn: &heed::RoTxn<'_>,
     id: EntityId,
     kind: u8,
     data: &[u8],
 ) -> Result<Option<Scope>> {
-    let Some(bytes) = store.vault_meta.get(txn, &key(id))? else {
+    let Some(bytes) = store.vault_meta().get(txn, &key(id))? else {
         return Ok(None);
     };
     let stamp: Stamp =
@@ -183,7 +198,7 @@ pub(crate) fn restamp_document_pointer(
 /// Derive only an intrinsic current stamp or a digest-matched persisted stamp.
 /// This is the sync-export seam; arbitrary remote opaque rows remain unstamped.
 pub(crate) fn scope_for_blob(
-    store: &Store,
+    store: &(impl ManifestDbs + MachineHistoryScope),
     txn: &heed::RoTxn<'_>,
     id: EntityId,
     raw: &[u8],
@@ -194,7 +209,7 @@ pub(crate) fn scope_for_blob(
         let Ok(body) = crate::claim::decode_claim_body(data, true) else {
             return Ok(None);
         };
-        if let Some(effective) = machine_history_disclosure_scope(store, txn, &body)? {
+        if let Some(effective) = store.machine_history_scope(txn, &body)? {
             return Ok(effective);
         }
         return Ok(Some(body.record_scope("read")));
@@ -215,6 +230,37 @@ pub(crate) fn scope_for_blob(
 /// Control bytes inherit the CURRENT projected claim's effective audience,
 /// including signed sensitivity demotion. Immutable birth scope can never be
 /// used to disclose an older, less restricted copy after narrowing.
+/// Signed MACHINE history resolves against the base vault's authority fold.
+pub(crate) trait MachineHistoryScope {
+    /// `None` for an ordinary claim; `Some(None)` withholds a history control.
+    fn machine_history_scope(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        body: &ClaimBody,
+    ) -> Result<Option<Option<Scope>>>;
+}
+
+impl MachineHistoryScope for Store {
+    fn machine_history_scope(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        body: &ClaimBody,
+    ) -> Result<Option<Option<Scope>>> {
+        machine_history_disclosure_scope(self, txn, body)
+    }
+}
+
+/// A session overlay never stages signed history; its controls stay withheld.
+impl MachineHistoryScope for crate::store::SessionStoreView<'_> {
+    fn machine_history_scope(
+        &self,
+        _txn: &heed::RoTxn<'_>,
+        body: &ClaimBody,
+    ) -> Result<Option<Option<Scope>>> {
+        Ok(crate::claim::history_store::machine_history_kind(&body.predicate).map(|_| None))
+    }
+}
+
 fn machine_history_disclosure_scope(
     store: &Store,
     txn: &heed::RoTxn<'_>,
@@ -407,7 +453,7 @@ impl Vault {
             }
             batch.apply(txn)?;
             for id in &ids {
-                self.store.vault_meta.delete(txn, &key(*id))?;
+                retire_stamp(&self.store, txn, *id)?;
             }
             Ok(ids)
         })

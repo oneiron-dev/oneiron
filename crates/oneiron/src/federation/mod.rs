@@ -9,7 +9,7 @@ mod codec;
 mod coreference;
 pub mod derivation;
 #[cfg(feature = "sync")]
-pub(crate) use coreference::coreference_shared_for_pact_in_txn;
+pub(crate) use coreference::{coreference_shared_for_pact_in_txn, person_pair_in_txn};
 mod grant;
 pub(crate) mod grant_scope;
 mod ruling_integrity;
@@ -44,8 +44,8 @@ pub use self::guest::{
     encode_guest_share_envelope_body, sign_guest_share_envelope,
 };
 pub use self::pact_scope::{
-    FEDERATION_PACT_SCOPE_SCHEMA_VERSION, FederationDirectionScope, FederationPactScope,
-    FederationScopeBands, FederationScopeFacets, FederationScopeWorlds, SelectorRange,
+    Ceiling, FEDERATION_PACT_SCOPE_SCHEMA_VERSION, FederationDirectionScope, FederationPactScope,
+    FederationScopeBands, FederationScopeFacets, FederationScopeWorlds, Position, SelectorRange,
     decode_federation_pact_scope, encode_federation_pact_scope, selector_range_of,
 };
 pub use self::peer_authority::{

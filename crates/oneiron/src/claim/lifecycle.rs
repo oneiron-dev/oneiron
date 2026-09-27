@@ -21,12 +21,32 @@ use crate::store::GateDecisionRecord;
 use crate::temporal::TimeRange;
 use crate::vault::{MAX_EDGE_QUERY_RESULTS, SUPERSEDES_DEFAULT_WEIGHT};
 
+mod materialization;
+
 /// Bound on the supersession-chain walk behind the write-verb validity guard
 /// (ONE-1936). Cycles are caught by the walk's visited set; this caps the WORK
 /// a single corrupt-but-acyclic chain can demand. Real revision chains are
 /// short, so a walk this deep is evidence of a damaged graph, not of long
 /// history, and it ends in a typed refusal rather than an unbounded traversal.
 const MAX_SUPERSESSION_CHAIN_WALK: usize = 64;
+
+/// How a supersession closes its old head: directly, attributed to a typed
+/// door's actor when the old head is MACHINE-born, or through the validated
+/// deferred settlement with its bounded checker.
+#[derive(Clone, Copy)]
+enum SupersedeClose<'a> {
+    Direct(Option<crate::WriteActor>),
+    Granted(Option<&'a crate::llm::BoundedAutoChecker>),
+}
+
+impl SupersedeClose<'_> {
+    fn actor(self) -> Option<crate::WriteActor> {
+        match self {
+            Self::Direct(actor) => actor,
+            Self::Granted(_) => None,
+        }
+    }
+}
 
 impl Vault {
     /// Reads, decodes, and gates a claim for a generic lifecycle transition
@@ -387,21 +407,12 @@ impl Vault {
         old_id: &EntityId,
         now: u64,
     ) -> Result<()> {
-        self.supersede_claim_in_txn_with_actor(wtxn, new_id, old_id, now, None)
+        self.supersede_claim_in_txn_as(wtxn, new_id, old_id, now, None)
     }
 
+    /// [`Vault::supersede_claim_in_txn`] for a typed door: `actor` attributes
+    /// a MACHINE-born old head's signed SupersedeClose transition.
     pub(crate) fn supersede_claim_in_txn_as(
-        &self,
-        wtxn: &mut heed::RwTxn<'_>,
-        new_id: &EntityId,
-        old_id: &EntityId,
-        now: u64,
-        actor: crate::WriteActor,
-    ) -> Result<()> {
-        self.supersede_claim_in_txn_with_actor(wtxn, new_id, old_id, now, Some(actor))
-    }
-
-    fn supersede_claim_in_txn_with_actor(
         &self,
         wtxn: &mut heed::RwTxn<'_>,
         new_id: &EntityId,
@@ -409,12 +420,65 @@ impl Vault {
         now: u64,
         actor: Option<crate::WriteActor>,
     ) -> Result<()> {
+        let close = SupersedeClose::Direct(actor);
+        self.supersede_claim_with_closure_grant_in_txn(wtxn, new_id, old_id, now, close)
+            .map(|_| ())
+    }
+
+    /// Only the validated deferred settlement may invoke this variant.
+    pub(in crate::claim) fn supersede_granted_deferred_claim_in_txn(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+        new_id: &EntityId,
+        old_id: &EntityId,
+        now: u64,
+        checker: Option<&crate::llm::BoundedAutoChecker>,
+    ) -> Result<Option<crate::gate::RecordedClaimGateDecision>> {
+        let close = SupersedeClose::Granted(checker);
+        self.supersede_claim_with_closure_grant_in_txn(wtxn, new_id, old_id, now, close)
+    }
+
+    fn supersede_claim_with_closure_grant_in_txn(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+        new_id: &EntityId,
+        old_id: &EntityId,
+        now: u64,
+        close: SupersedeClose<'_>,
+    ) -> Result<Option<crate::gate::RecordedClaimGateDecision>> {
         if new_id == old_id {
             return Err(Error::Claim(ClaimError::ClaimSelfSupersession));
         }
 
         let (new_body, _new_header) = self.claim_for_lifecycle_in(&*wtxn, new_id)?;
         Self::require_active_claim(&new_body)?;
+        let staged = super::deferred::load(self, &*wtxn, new_id)?;
+        if matches!(close, SupersedeClose::Granted(_)) {
+            let Some(super::deferred::DeferredAction::Supersede { old, .. }) =
+                staged.map(|row| row.action)
+            else {
+                return Err(Error::InvalidClaimBody("deferred closure has no binding"));
+            };
+            if old != *old_id.as_bytes()
+                || !matches!(
+                    new_body.approval,
+                    ClaimApprovalStatus::Auto | ClaimApprovalStatus::Approved
+                )
+            {
+                return Err(Error::InvalidClaimBody(
+                    "deferred closure has no matching grant",
+                ));
+            }
+        } else if staged.is_some_and(|row| {
+            matches!(
+                row.action,
+                super::deferred::DeferredAction::Supersede { .. }
+            )
+        }) {
+            return Err(Error::InvalidClaimBody(
+                "deferred supersession requires a closure grant",
+            ));
+        }
         // The NAMED target: stale here means the caller decided against a view
         // the store has replaced, and the guard runs in the caller's txn so a
         // replacement staged earlier in the same txn rolls back with it.
@@ -430,27 +494,15 @@ impl Vault {
         let revisions = super::supersession_diff::capture_in_txn(self, &*wtxn, *old_id, *new_id)?;
         old_body.lifecycle = ClaimLifecycleStatus::Superseded;
         old_body.valid_to = Some(now);
-        if crate::authority::machine_claim_needs_history(&self.store, wtxn, &old_body)? {
-            old_body = match actor {
-                Some(writer) => super::transition::stage_machine_transition_as(
-                    self,
-                    wtxn,
-                    *old_id,
-                    super::transition::ClaimTransitionKind::SupersedeClose,
-                    super::transition::TransitionDelta::ValidTo(now),
-                    writer,
-                    now,
-                )?,
-                None => super::transition::stage_owner_machine_transition(
-                    self,
-                    wtxn,
-                    *old_id,
-                    super::transition::ClaimTransitionKind::SupersedeClose,
-                    super::transition::TransitionDelta::ValidTo(now),
-                    now,
-                )?,
-            };
-        }
+        let old_body = super::transition::close_machine_claim_in_txn(
+            self,
+            wtxn,
+            *old_id,
+            old_body,
+            super::transition::ClaimTransitionKind::SupersedeClose,
+            now,
+            close.actor(),
+        )?;
         let data = encode_claim_body(&old_body)?;
 
         let ops = vec![
@@ -478,9 +530,17 @@ impl Vault {
             },
         ];
         let binding = crate::batch::ClaimMaterialization::lifecycle(&self.store, &*wtxn, &ops[0])?;
-        self.apply_lifecycle_materialization(wtxn, ops, binding, true)?;
+        let decision = match (close, binding) {
+            (SupersedeClose::Granted(Some(checker)), Some(binding)) => {
+                self.apply_checked_deferred_closure_in_txn(wtxn, ops, binding, &old_body, checker)?
+            }
+            (_, binding) => {
+                self.apply_lifecycle_materialization(wtxn, ops, binding, true)?;
+                None
+            }
+        };
         super::supersession_diff::store_in_txn(self, wtxn, *old_id, *new_id, revisions)?;
-        Ok(())
+        Ok(decision)
     }
 
     /// Supersedes an engine-owned `skill.*` / `actor.*` Claim inside the
@@ -597,20 +657,12 @@ impl Vault {
         id: &EntityId,
         now: u64,
     ) -> Result<Option<GateDecisionRecord>> {
-        self.retract_claim_in_txn_with_actor(wtxn, id, now, None)
+        self.retract_claim_in_txn_as(wtxn, id, now, None)
     }
 
+    /// [`Vault::retract_claim_in_txn`] for a typed door: `actor` attributes
+    /// a MACHINE-born claim's signed Retract transition.
     pub(crate) fn retract_claim_in_txn_as(
-        &self,
-        wtxn: &mut heed::RwTxn<'_>,
-        id: &EntityId,
-        now: u64,
-        actor: crate::WriteActor,
-    ) -> Result<Option<GateDecisionRecord>> {
-        self.retract_claim_in_txn_with_actor(wtxn, id, now, Some(actor))
-    }
-
-    fn retract_claim_in_txn_with_actor(
         &self,
         wtxn: &mut heed::RwTxn<'_>,
         id: &EntityId,
@@ -637,27 +689,15 @@ impl Vault {
         )?;
         body.lifecycle = ClaimLifecycleStatus::Retracted;
         body.valid_to = Some(now);
-        if crate::authority::machine_claim_needs_history(&self.store, wtxn, &body)? {
-            body = match actor {
-                Some(writer) => super::transition::stage_machine_transition_as(
-                    self,
-                    wtxn,
-                    *id,
-                    super::transition::ClaimTransitionKind::Retract,
-                    super::transition::TransitionDelta::ValidTo(now),
-                    writer,
-                    now,
-                )?,
-                None => super::transition::stage_owner_machine_transition(
-                    self,
-                    wtxn,
-                    *id,
-                    super::transition::ClaimTransitionKind::Retract,
-                    super::transition::TransitionDelta::ValidTo(now),
-                    now,
-                )?,
-            };
-        }
+        let body = super::transition::close_machine_claim_in_txn(
+            self,
+            wtxn,
+            *id,
+            body,
+            super::transition::ClaimTransitionKind::Retract,
+            now,
+            actor,
+        )?;
         let data = encode_claim_body(&body)?;
 
         let ops = vec![BatchOp::Put {
@@ -707,39 +747,5 @@ impl Vault {
         self.apply_lifecycle_materialization(wtxn, ops, binding, false)?;
         Ok(consent_receipt
             .or(write_receipt.map(crate::gate::RecordedClaimGateDecision::into_record)))
-    }
-}
-
-impl Vault {
-    fn apply_lifecycle_materialization(
-        &self,
-        wtxn: &mut heed::RwTxn<'_>,
-        ops: Vec<BatchOp>,
-        binding: Option<crate::batch::ClaimMaterialization>,
-        persist_pending: bool,
-    ) -> Result<()> {
-        if let Some(binding) = binding {
-            crate::batch::apply_owner_bound_claim_puts(
-                self,
-                wtxn,
-                ops,
-                vec![binding],
-                persist_pending,
-            )
-        } else {
-            // Legacy/raw claims have no host-authored actor authority. Keep the
-            // unattributed gate path; never infer authority from their evidence.
-            apply_ops(
-                &self.store,
-                &self.config,
-                &self.analyzer,
-                wtxn,
-                ops,
-                self.text_index_trusted
-                    .load(std::sync::atomic::Ordering::Acquire),
-                false,
-                persist_pending,
-            )
-        }
     }
 }

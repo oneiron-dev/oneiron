@@ -18,6 +18,12 @@ pub(crate) struct HubAdmissionProof {
     binding: blake3::Hash,
 }
 impl HubAdmissionProof {
+    pub(in crate::skill_hub) fn post_fit(id: EntityId, data: &[u8]) -> Self {
+        Self {
+            id,
+            binding: blake3::hash(data),
+        }
+    }
     pub(super) fn id(&self) -> EntityId {
         self.id
     }
@@ -221,6 +227,83 @@ pub(crate) fn seed_bootstrap_skills(vault: &Vault) -> Result<()> {
         .put(&mut wtxn, SEED_KEY, env!("CARGO_PKG_VERSION").as_bytes())?;
     wtxn.commit()?;
     Ok(())
+}
+
+impl Vault {
+    pub(super) fn default_skill_present_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        source: &HubRef,
+        hash: crate::skill::SkillContentHash,
+        name: &str,
+    ) -> Result<Option<EntityId>> {
+        for (id, record) in self.structured_skills_for_content_hash_in_txn(txn, hash)? {
+            if record.skill_id != name
+                || !matches!(
+                    record.lifecycle_status,
+                    SkillLifecycle::Candidate | SkillLifecycle::Active
+                )
+            {
+                continue;
+            }
+            if self.default_skill_present_for_entity_in_txn(txn, &id, source)? {
+                return Ok(Some(id));
+            }
+        }
+        Ok(None)
+    }
+
+    pub(super) fn default_skill_present_for_entity_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        id: &EntityId,
+        source: &HubRef,
+    ) -> Result<bool> {
+        for (_, claim, _) in
+            self.active_claims_for_predicate_in_txn(txn, id, super::PREDICATE_SKILL_HUB_PROVENANCE)?
+        {
+            if let Some(value) = super::support::map_value(&claim.value, "hubRef")
+                && HubRef::from_value(value)? == *source
+            {
+                return Ok(true);
+            }
+        }
+        Ok(false)
+    }
+
+    /// Explicitly re-imports missing or locally retired shipped bootstrap
+    /// skills from the bytes embedded in this engine build. An unchanged
+    /// default is left alone. Restored skills get new IDs and enter as
+    /// Candidates through the ordinary scanner/import door; unlike first-open
+    /// seeding, this verb never grants activation authority.
+    pub fn restore_default_skills(
+        &self,
+        owner: &crate::consent::AuthenticatedOwner,
+        occurred: TimeRange,
+        learned_at: u64,
+    ) -> Result<Vec<EntityId>> {
+        let mut txn = self.store.env.write_txn()?;
+        self.check_restore_owner_in_txn(&txn, owner)?;
+        let mut restored = Vec::new();
+        for (name, markdown) in FILES {
+            let package = package(name, markdown)?;
+            let hash = package.content_hash()?;
+            let source = HubRef::new(stable_id("hub")?, name, HubPin::ContentHash(hash.to_hex()))?;
+            if self
+                .default_skill_present_in_txn(&txn, &source, hash, name)?
+                .is_some()
+            {
+                continue;
+            }
+            let id = self.store.clock.entity_id()?;
+            self.restore_default_skill_in_txn(
+                &mut txn, owner, &source, &package, id, occurred, learned_at,
+            )?;
+            restored.push(id);
+        }
+        txn.commit()?;
+        Ok(restored)
+    }
 }
 
 #[cfg(test)]

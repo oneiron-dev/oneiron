@@ -55,10 +55,13 @@
 
 mod budget;
 mod cancellation;
+pub mod hosted_tts;
 mod protocol;
 mod retrieval;
 mod safeguard;
 mod session;
+mod stream;
+pub use stream::{VoiceStreamConfig, VoiceStreamFailure, drive_voice_stream};
 pub mod soniox;
 
 pub mod tts_spikes;

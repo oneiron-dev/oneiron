@@ -126,6 +126,7 @@ pub(super) fn apply_set_edge_weight(
     weight: f32,
 ) -> Result<()> {
     validate_edge_weight(weight)?;
+    crate::workspace_roster::validate_project_edge_put(store, wtxn, src, kind, tgt, weight)?;
     let key_out = Store::encode_edge_key(&src, kind, &tgt);
     let key_in = Store::encode_edge_key(&tgt, kind, &src);
     let mut value = read_edge_value_for_setter(store, wtxn, &key_out)?;
@@ -197,7 +198,11 @@ pub(super) fn apply_edge_with_created_at(
     }
 
     let value = encode_edge_value(kind, weight, created_at, vad, provenance)?;
-    stage_edge_rows(store, wtxn, &src, kind, &tgt, &value)
+    stage_edge_rows(store, wtxn, &src, kind, &tgt, &value)?;
+    if kind == EdgeKind::RepliesTo {
+        crate::conversation_dag::invalidate_thread_meta(store, wtxn, tgt)?;
+    }
+    Ok(())
 }
 
 /// Applies one edge removal (`BatchOp::DeleteEdge`), clearing both LMDB
@@ -228,8 +233,12 @@ pub(super) fn apply_delete_edge(
     if kind == EdgeKind::Blocks {
         return Err(Error::Registry(RegistryError::ReservedEdgeKind("blocks")));
     }
+    crate::workspace_roster::validate_project_edge_delete(store, wtxn, src, kind, tgt)?;
     let key_out = Store::encode_edge_key(&src, kind, &tgt);
     let key_in = Store::encode_edge_key(&tgt, kind, &src);
+    if kind == EdgeKind::RepliesTo {
+        crate::conversation_dag::invalidate_thread_meta(store, wtxn, tgt)?;
+    }
     let deleted_out = store.edges_out.delete(wtxn, &key_out)?;
     let _deleted_in = store.edges_in.delete(wtxn, &key_in)?;
     Ok(deleted_out)

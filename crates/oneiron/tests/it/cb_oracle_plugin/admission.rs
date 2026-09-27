@@ -118,6 +118,9 @@ impl Admission {
 }
 struct Replay;
 impl HeldOutReplayScorer for Replay {
+    fn judge_revision(&self) -> &str {
+        "fixture-judge@1"
+    }
     fn score(&self, case: &HeldOutReplayCase<'_>) -> oneiron::error::Result<f32> {
         assert!(!case.held_out_receipts.is_empty());
         Ok(if case.instructions.contains("CRM contact") {
@@ -188,6 +191,14 @@ fn reserve(vault: &Vault, skill: &EntityId, skill_id: &str) {
         else {
             panic!("claimable attempt");
         };
+        queue
+            .set_executor_model(
+                attempt.id,
+                "fixture",
+                leased.attempt_count,
+                "fixture/model@1",
+            )
+            .expect("stamp executor");
         assert!(matches!(
             queue
                 .complete(CompleteAttempt {

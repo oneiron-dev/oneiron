@@ -6,6 +6,28 @@ use crate::{EntityId, Error, Result};
 type EntityParts = (u8, u64, Vec<u8>);
 
 impl ScopedRead<'_> {
+    /// Recheck a graph-ask source against the current write transaction's
+    /// authority, deletion, NOTE privacy and live-body projection. It cannot
+    /// turn an earlier scoped read into a permission after grants change.
+    pub(crate) fn graph_ask_parts_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        id: &EntityId,
+    ) -> Result<Option<EntityParts>> {
+        let (filter, policy) = self.resolve_retrieval_filter_in(txn, None)?;
+        let Some(raw) = self.entity_raw_with_mode_in(txn, &policy, &filter, id, ReadMode::Live)?
+        else {
+            return Ok(None);
+        };
+        let header = EntityMetadataHeader::parse(&raw)
+            .ok_or(Error::CorruptedIndex("graph ask entity header"))?;
+        Ok(Some((
+            header.entity_type,
+            header.learned_at,
+            raw[ENTITY_METADATA_HEADER_LEN..].to_vec(),
+        )))
+    }
+
     pub fn get(&self, id: &EntityId) -> Result<ScopedReadResult<Option<Vec<u8>>>> {
         let result = self.get_entity_parts_with_receipt(id, None)?;
         Ok(ScopedReadResult {
@@ -50,24 +72,27 @@ impl ScopedRead<'_> {
         reads: &[(EntityId, ReadMode)],
         requested: Option<&RetrievalFilter>,
     ) -> Result<ScopedReadResult<Vec<Option<EntityParts>>>> {
-        let txn = self.vault.store.env.read_txn()?;
+        let txn = self.grant_read_txn()?;
         let (filter, policy) = self.resolve_retrieval_filter_in(&txn, requested)?;
         let mut value = Vec::with_capacity(reads.len());
         let mut suppressed = 0;
         for (id, mode) in reads {
-            let raw = self.entity_raw_with_mode_in(&txn, &policy, &filter, id, *mode)?;
-            let parts = if let Some(raw) = raw {
-                let header = EntityMetadataHeader::parse(&raw)
-                    .ok_or(Error::CorruptedIndex("entity header"))?;
-                Some((
-                    header.entity_type,
-                    header.learned_at,
-                    raw[ENTITY_METADATA_HEADER_LEN..].to_vec(),
-                ))
-            } else {
-                suppressed += usize::from(self.entity_record_in(&txn, id)?.is_some());
-                None
-            };
+            let admitted = self.admit_in(&txn, id, || {
+                self.entity_raw_with_mode_in(&txn, &policy, &filter, id, *mode)
+            })?;
+            suppressed += admitted.suppression();
+            let parts = admitted
+                .into_option()
+                .map(|raw| -> Result<EntityParts> {
+                    let header = EntityMetadataHeader::parse(&raw)
+                        .ok_or(Error::CorruptedIndex("entity header"))?;
+                    Ok((
+                        header.entity_type,
+                        header.learned_at,
+                        raw[ENTITY_METADATA_HEADER_LEN..].to_vec(),
+                    ))
+                })
+                .transpose()?;
             value.push(parts);
         }
         Ok(ScopedReadResult {
@@ -113,7 +138,7 @@ impl ScopedRead<'_> {
         &self,
         refs: &[(&str, u8, ReadMode)],
     ) -> Result<ScopedReadResult<Vec<Option<crate::HydratedShortId>>>> {
-        let txn = self.vault.store.env.read_txn()?;
+        let txn = self.grant_read_txn()?;
         let (filter, policy) = self.resolve_retrieval_filter_in(&txn, None)?;
         let mut value = Vec::with_capacity(refs.len());
         let mut suppressed = 0;
@@ -127,23 +152,24 @@ impl ScopedRead<'_> {
                     )?;
                     match id {
                         Some(id) => {
-                            let raw =
-                                self.entity_raw_with_mode_in(&txn, &policy, &filter, &id, *mode)?;
-                            if let Some(raw) = raw {
-                                let header = EntityMetadataHeader::parse(&raw)
-                                    .ok_or(Error::CorruptedIndex("entity header"))?;
-                                Some(crate::HydratedShortId {
-                                    id,
-                                    entity_type: header.entity_type,
-                                    learned_at: header.learned_at,
-                                    deletion: None,
-                                    body: Some(raw[ENTITY_METADATA_HEADER_LEN..].to_vec()),
+                            let admitted = self.admit_in(&txn, &id, || {
+                                self.entity_raw_with_mode_in(&txn, &policy, &filter, &id, *mode)
+                            })?;
+                            suppressed += admitted.suppression();
+                            admitted
+                                .into_option()
+                                .map(|raw| -> Result<crate::HydratedShortId> {
+                                    let header = EntityMetadataHeader::parse(&raw)
+                                        .ok_or(Error::CorruptedIndex("entity header"))?;
+                                    Ok(crate::HydratedShortId {
+                                        id,
+                                        entity_type: header.entity_type,
+                                        learned_at: header.learned_at,
+                                        deletion: None,
+                                        body: Some(raw[ENTITY_METADATA_HEADER_LEN..].to_vec()),
+                                    })
                                 })
-                            } else {
-                                suppressed +=
-                                    usize::from(self.entity_record_in(&txn, &id)?.is_some());
-                                None
-                            }
+                                .transpose()?
                         }
                         None => None,
                     }
@@ -154,49 +180,42 @@ impl ScopedRead<'_> {
                 }
             };
             if let Some(row) = &mut hydrated {
-                let allowed = if row.body.is_some() {
-                    // Resolve the requested frontier in this same transaction.
-                    if let Some(raw) =
-                        self.entity_raw_with_mode_in(&txn, &policy, &filter, &row.id, *mode)?
-                    {
+                let admitted = self.admit_in(&txn, &row.id, || {
+                    if row.body.is_some() {
+                        return self
+                            .entity_raw_with_mode_in(&txn, &policy, &filter, &row.id, *mode);
+                    }
+                    // Erased relationship/private bodies cannot prove a scope.
+                    let allowed = row.deletion.is_some()
+                        && self.audience_readable_in(&txn, &row.id)?
+                        && row.entity_type != crate::registry::ENTITY_TYPE_NOTE
+                        && !(self.actor_key.enforce_access_grants
+                            && matches!(row.entity_type,
+                                crate::registry::ENTITY_TYPE_CLAIM
+                                | crate::registry::ENTITY_TYPE_MESSAGE
+                                | crate::registry::ENTITY_TYPE_SUMMARY))
+                        && !filter.deny_all
+                        && filter.entity_types.as_ref()
+                            .is_none_or(|types| types.contains(&row.entity_type))
+                        // Only authority covering every possible old position
+                        // may reveal deletion metadata, never a narrow grant.
+                        && self.credential_allows_id(&row.id)
+                        && crate::gate::scoped_read_record_allowed(
+                            &policy, &self.actor_key,
+                            &crate::federation::scope_codec::read_preset(),
+                        );
+                    Ok(allowed.then_some(Vec::new()))
+                })?;
+                suppressed += admitted.suppression();
+                if let Some(raw) = admitted.into_option() {
+                    if row.body.is_some() {
                         let header = EntityMetadataHeader::parse(&raw)
                             .ok_or(Error::CorruptedIndex("entity header"))?;
                         row.entity_type = header.entity_type;
                         row.learned_at = header.learned_at;
                         row.body = Some(raw[ENTITY_METADATA_HEADER_LEN..].to_vec());
-                        true
-                    } else {
-                        false
                     }
                 } else {
-                    // Erased relationship/private bodies cannot prove a scope.
-                    row.deletion.is_some()
-                        && self.audience_readable_in(&txn, &row.id)?
-                        && row.entity_type != crate::registry::ENTITY_TYPE_NOTE
-                        && !(self.actor_key.enforce_access_grants
-                            && matches!(
-                                row.entity_type,
-                                crate::registry::ENTITY_TYPE_CLAIM
-                                    | crate::registry::ENTITY_TYPE_MESSAGE
-                                    | crate::registry::ENTITY_TYPE_SUMMARY
-                            ))
-                        && !filter.deny_all
-                        && filter
-                            .entity_types
-                            .as_ref()
-                            .is_none_or(|types| types.contains(&row.entity_type))
-                        // The row's old position cannot be proved. Only authority
-                        // covering every possible position may reveal deletion
-                        // metadata, never a narrow grant.
-                        && self.credential_allows_id(&row.id)
-                        && crate::gate::scoped_read_record_allowed(
-                            &policy,
-                            &self.actor_key,
-                            &crate::federation::scope_codec::read_preset(),
-                        )
-                };
-                if !allowed {
-                    suppressed += usize::from(self.entity_record_in(&txn, &row.id)?.is_some());
                     hydrated = None;
                 }
             }

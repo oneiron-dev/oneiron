@@ -18,17 +18,17 @@
 //! | `fold_state` | folded-state data model and the two-state merge |
 //! | `first_seen_clock` | first-seen sidecar keys and the per-vault clock |
 //! | `fold_engine` | top-level fold orchestration |
-//! | `fork_resolution` | equivocation/fork detection, ranking, quarantine |
+//! | `ancestor_index` / `ancestry_bypass` | fold ancestry and revocation bypass |
 //! | `entry_transition` | per-entry transition and consent/quorum predicates |
 //! | `op_apply` | applies one op to a fold state |
 //! | `wire_encode` / `wire_decode` | the `rmpv` codec, edited in lockstep |
 //! | `vault_api` | `impl Vault` read/write doors |
-//!
-//! `fork_resolution` and `entry_transition` are mutually recursive and must be
-//! read together for any fork or quorum correctness work.
 
 pub use crate::gate::manifest_authenticity::ManifestContribution;
 
+mod ancestor_index;
+mod ancestry_bypass;
+mod ancestry_evaluator;
 mod causal_write;
 mod checkpoint;
 mod claim_write;
@@ -41,7 +41,6 @@ mod federation_pact;
 mod first_seen_clock;
 mod fold_engine;
 mod fold_state;
-mod fork_resolution;
 mod history_transfer;
 mod ingest_observation;
 mod log_entry_op;
@@ -51,6 +50,7 @@ mod observation_policy;
 mod op_apply;
 mod readonly_fold;
 mod recovery_ceremony;
+mod revoke_proof;
 mod sequence_ancestry;
 mod sequence_observation;
 mod slip;
@@ -115,8 +115,9 @@ use readonly_fold::{AuthorityView, authority_view_readonly_for_store_in_txn};
 pub(crate) use sequence_observation::record_authority_sequence_observation_in_txn;
 
 // Module-internal only: nothing here leaves `authority`.
+use ancestor_index::*;
+use ancestry_bypass::*;
 use entry_transition::*;
-use fork_resolution::*;
 pub(crate) use machine_write::{
     machine_claim_needs_history, machine_claim_read_admitted, machine_history_authority_descends,
     machine_history_host_context, verify_machine_claim_in_txn,

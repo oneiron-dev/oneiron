@@ -87,6 +87,28 @@ pub(crate) fn stage_owner_machine_transition(
     )
 }
 
+/// Close a MACHINE-born claim through its signed history; any other claim is
+/// returned unchanged. `actor` is the typed door's authenticated writer, and
+/// `None` attributes the close to the vault's embedded owner.
+pub(crate) fn close_machine_claim_in_txn(
+    vault: &crate::Vault,
+    txn: &mut heed::RwTxn<'_>,
+    id: crate::EntityId,
+    closed: crate::ClaimBody,
+    kind: ClaimTransitionKind,
+    now: u64,
+    actor: Option<crate::WriteActor>,
+) -> crate::Result<crate::ClaimBody> {
+    if !crate::authority::machine_claim_needs_history(&vault.store, txn, &closed)? {
+        return Ok(closed);
+    }
+    let delta = TransitionDelta::ValidTo(now);
+    match actor {
+        Some(writer) => stage_machine_transition_as(vault, txn, id, kind, delta, writer, now),
+        None => stage_owner_machine_transition(vault, txn, id, kind, delta, now),
+    }
+}
+
 /// Owner-bound approval of a proposed MACHINE claim. The original MACHINE
 /// signature stays on its immutable birth; the host signs a distinct Approve
 /// event, and the existing typed materialization/Gate still decides consent.

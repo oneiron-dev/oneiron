@@ -53,6 +53,11 @@ pub struct ContextPackBuilder<'a> {
 }
 
 impl<'a> ContextPackBuilder<'a> {
+    /// Bind skill discovery to the model revision that will execute this pack.
+    pub fn skill_executor(mut self, model: impl Into<String>) -> crate::Result<Self> {
+        self.pipeline = self.pipeline.skill_executor(model)?;
+        Ok(self)
+    }
     pub fn retrieval_effort(mut self, effort: crate::memory::Effort, seeds: &[EntityId]) -> Self {
         self.pipeline = self.pipeline.retrieval_effort(effort, seeds);
         self
@@ -323,6 +328,25 @@ impl<'a> ContextPackBuilder<'a> {
     /// freeze the timestamp.
     pub fn with_temporal_now(mut self, now: u64) -> Self {
         self.pipeline = self.pipeline.with_temporal_now(now);
+        self
+    }
+
+    /// Associates the retrieval run with a caller turn for ordered lookup.
+    pub fn retrieval_turn(mut self, turn: crate::store::RetrievalTurn) -> Self {
+        self.pipeline = self.pipeline.retrieval_turn(turn);
+        self
+    }
+
+    /// Binds capture to a host-owned query packet or session message without
+    /// persisting its query text in telemetry.
+    pub fn replay_query_ref(mut self, query_ref: impl Into<String>) -> Self {
+        self.pipeline = self.pipeline.replay_query_ref(query_ref);
+        self
+    }
+
+    /// Binds captured retrieval inputs to an immutable host-owned corpus snapshot.
+    pub fn corpus_snapshot_ref(mut self, snapshot_ref: impl Into<String>) -> Self {
+        self.pipeline = self.pipeline.corpus_snapshot_ref(snapshot_ref);
         self
     }
 

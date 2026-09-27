@@ -102,7 +102,7 @@ impl Memory<'_> {
                         &["Keep the true source. Store generated output under a separate key. Only a genuine new user statement may be submitted as user_stated; never relabel generated output."],
                     ))?;
                 self.vault.supersede_claim_in_txn_as(txn, &id, &prior_id, now,
-                    WriteActor::new(self.actor, self.actor_class))?;
+                    Some(WriteActor::new(self.actor, self.actor_class)))?;
             }
             Ok((self.key_value_item(txn, id, stored)?, false))
         })?;
@@ -135,7 +135,7 @@ impl Memory<'_> {
                 txn,
                 &id,
                 crate::unix_seconds_now(),
-                WriteActor::new(self.actor, self.actor_class),
+                Some(WriteActor::new(self.actor, self.actor_class)),
             )?;
             Ok(KeyValueDeleteReceipt {
                 existed: true,
