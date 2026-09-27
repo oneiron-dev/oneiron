@@ -1524,6 +1524,75 @@ fn dreamer_home_node_election_order_persists_and_reelects() -> Result<()> {
 }
 
 #[test]
+fn dreamer_sync_topology_change_reelects_and_gates_macro() -> Result<()> {
+    let (_dir, vault) = open_vault();
+    let runner = DreamerRunnerStore::new(&vault);
+    let local = runner.local_home_node_candidate(true, true, false)?;
+    let cloud = DreamerHomeNodeCandidate::cloud(different_node_id(local.node_id), true);
+    let queued = enqueue_consolidation_attempt(
+        &runner,
+        DreamerConsolidationScope::Macro,
+        Some("topology-change"),
+        1,
+    )?;
+
+    let home = runner.sync_topology_changed(&[local, cloud], 10)?.unwrap();
+    assert_eq!(home.node_id, cloud.node_id);
+    assert_eq!(home.class, DreamerHomeNodeClass::CloudAttached);
+    assert_eq!(runner.home_node_designation()?, Some(home));
+    assert_eq!(
+        admit_consolidation(
+            &runner,
+            DreamerConsolidationScope::Macro,
+            local.node_id,
+            "local",
+            12
+        )?,
+        DreamerConsolidationAdmissionOutcome::NotHomeNode(home)
+    );
+    assert_eq!(
+        runner.status(queued.attempt.id)?.unwrap().attempt.state,
+        AttemptState::Queued
+    );
+
+    // Only a host-authorized change to this cloud's attachment may promote
+    // the local node. A socket interruption is not such a change.
+    let detached = DreamerHomeNodeCandidate::cloud(cloud.node_id, false);
+    let home = runner
+        .sync_topology_changed(&[local, detached], 13)?
+        .unwrap();
+    assert_eq!(home.node_id, local.node_id);
+    assert_eq!(runner.home_node_designation()?, Some(home));
+    assert!(matches!(
+        admit_consolidation(
+            &runner,
+            DreamerConsolidationScope::Macro,
+            local.node_id,
+            "local",
+            14
+        )?,
+        DreamerConsolidationAdmissionOutcome::Admission(DreamerAdmissionOutcome::Admitted(_))
+    ));
+    Ok(())
+}
+
+#[test]
+fn dreamer_topology_change_preserves_each_cloud_attachment() -> Result<()> {
+    let (_dir, vault) = open_vault();
+    let runner = DreamerRunnerStore::new(&vault);
+    let lower_detached = DreamerHomeNodeCandidate::cloud(10, false);
+    let higher_attached = DreamerHomeNodeCandidate::cloud(20, true);
+    let local = DreamerHomeNodeCandidate::always_on_local(30);
+    let home = runner
+        .sync_topology_changed(&[lower_detached, higher_attached, local], 1)?
+        .expect("attached cloud beats local");
+    assert_eq!(home.node_id, 20, "detached cloud must not win by lower ID");
+    assert_eq!(home.class, DreamerHomeNodeClass::CloudAttached);
+    assert_eq!(runner.home_node_designation()?, Some(home));
+    Ok(())
+}
+
+#[test]
 fn dreamer_micro_meso_consolidation_uses_advisory_per_device_dedupe() -> Result<()> {
     let (_dir, vault) = open_vault();
     let runner = DreamerRunnerStore::new(&vault);
@@ -2318,6 +2387,72 @@ fn dreamer_settle_reconciles_actual_usage_and_refund() -> Result<()> {
     assert_eq!(over.budget.remaining_units, 5);
     assert_eq!(over.budget.reserved_units, 0);
 
+    Ok(())
+}
+
+#[test]
+fn checkpoint_charge_and_park_are_atomic_and_receipt_retires_on_completion() -> Result<()> {
+    let (_dir, vault) = open_vault();
+    let runner = DreamerRunnerStore::new(&vault);
+    let queued = enqueue_attempt(&runner, "charged-checkpoint", 10)?;
+    let DreamerAdmissionOutcome::Admitted(admitted) = runner.admit_next(AdmitDreamerAttempt {
+        lease_owner: "dreamer-worker".to_owned(),
+        now: 20,
+        budget_id: "wake".to_owned(),
+        budget_total_units: 20,
+        reserve_units: 8,
+        started_milestone: None,
+    })?
+    else {
+        panic!("admitted attempt");
+    };
+    let hash = [0x53; 32];
+    let settlement = SettleDreamerBudget {
+        budget_id: "wake".to_owned(),
+        child_attempt: queued.attempt.id,
+        actual_units: 5,
+        now: 30,
+    };
+    let park = ParkDreamerAttempt {
+        attempt_id: queued.attempt.id,
+        reason: "late terminal".to_owned(),
+        park_owner: "dreamer-worker".to_owned(),
+        now: 30,
+    };
+    let mut invalid = park.clone();
+    invalid.park_owner.clear();
+    assert!(
+        runner
+            .settle_checkpoint_budget(settlement.clone(), &[hash], invalid)
+            .is_err()
+    );
+    assert_eq!(runner.budget("wake")?.expect("budget").remaining_units, 12);
+    assert!(
+        runner
+            .budget_reservation("wake", queued.attempt.id)?
+            .is_some()
+    );
+    assert!(runner.parked_attempt(queued.attempt.id)?.is_none());
+    assert!(!runner.checkpoint_step_charged(queued.attempt.id, &hash)?);
+
+    runner.settle_checkpoint_budget(settlement, &[hash], park)?;
+    assert_eq!(runner.budget("wake")?.expect("budget").remaining_units, 15);
+    assert!(
+        runner
+            .budget_reservation("wake", queued.attempt.id)?
+            .is_none()
+    );
+    assert!(runner.parked_attempt(queued.attempt.id)?.is_some());
+    assert!(runner.checkpoint_step_charged(queued.attempt.id, &hash)?);
+
+    runner.resume_parked(queued.attempt.id, "dreamer-worker", 40)?;
+    runner.complete(CompleteDreamerAttempt {
+        id: queued.attempt.id,
+        lease_owner: "dreamer-worker".to_owned(),
+        attempt_count: admitted.status.attempt.attempt_count,
+        now: 50,
+    })?;
+    assert!(!runner.checkpoint_step_charged(queued.attempt.id, &hash)?);
     Ok(())
 }
 

@@ -126,6 +126,32 @@ async fn v2_http_tamper_and_token_without_private_binding_refuse_401() {
     )
     .await;
     assert_eq!(status, StatusCode::OK);
+    // A different host signs the same claims; a holder proof cannot lend that
+    // foreign signature the authority of this logged mint.
+    let mut foreign_wire = serde_json::to_value(&slip).unwrap();
+    let mut mint_transcript = b"oneiron/capability-slip/v0/mint\0".to_vec();
+    mint_transcript.extend_from_slice(&serde_json::to_vec(&slip.claims).unwrap());
+    foreign_wire["signature"] = json!(
+        SigningKey::from_bytes(&[19; 32])
+            .sign(&mint_transcript)
+            .to_bytes()
+            .to_vec()
+    );
+    let foreign: CapabilitySlip = serde_json::from_value(foreign_wire).unwrap();
+    let (status, _) = route_json(
+        server.clone(),
+        Request::builder()
+            .uri("/v1/core/conversations")
+            .header(
+                AUTHORIZATION,
+                format!("Bearer {}", foreign.to_token().unwrap()),
+            )
+            .header("x-oneiron-binding", proof(&foreign, &holder))
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
     let used_proof = proof(&slip, &holder);
     for expected in [StatusCode::OK, StatusCode::UNAUTHORIZED] {
         let (status, _) = route_json(
@@ -271,7 +297,12 @@ async fn managed_pairing_revoke_and_org_setup_use_the_logged_host_root() {
     assert!(
         server
             .vault()
-            .verify_capability_slip(issuer, &slip, b"managed-proof", &binding.to_bytes())
+            .verify_capability_slip(
+                &issuer.public_key(),
+                &slip,
+                b"managed-proof",
+                &binding.to_bytes()
+            )
             .is_ok()
     );
     let response = app
@@ -292,7 +323,12 @@ async fn managed_pairing_revoke_and_org_setup_use_the_logged_host_root() {
     assert!(
         server
             .vault()
-            .verify_capability_slip(issuer, &slip, b"managed-proof", &binding.to_bytes())
+            .verify_capability_slip(
+                &issuer.public_key(),
+                &slip,
+                b"managed-proof",
+                &binding.to_bytes()
+            )
             .is_err()
     );
 
@@ -313,6 +349,138 @@ async fn managed_pairing_revoke_and_org_setup_use_the_logged_host_root() {
         assert_eq!(response.status(), expected);
     }
     assert_eq!(server.vault().org_admin_policy(org).unwrap(), policy);
+}
+
+#[tokio::test]
+async fn managed_public_pairing_binds_an_existing_machine_to_a_mesh_grant() {
+    use crate::managed::{ManagedState, WakeLedger, build_managed_app};
+    use oneiron::{TimeRange, authority::MeshMachineAddress, registry::ENTITY_TYPE_MACHINE};
+    use oneiron_vault_contract::{DEK_LEN, TOKEN_LEN, read_credentials, write_credentials};
+
+    let (dir, mut server) = test_server();
+    let issuer = HostSlipIssuer::from_secret(b"managed-mesh-pairing-root").unwrap();
+    server.vault().ensure_host_root_slip(&issuer).unwrap();
+    let mutable = Arc::get_mut(&mut server).unwrap();
+    mutable.managed_issuer = Some(issuer);
+    mutable.config.auth_secret = Some("supervisor-transport-not-root".into());
+    mutable.config.allow_unauthenticated = false;
+    let machine = oneiron::EntityId::now();
+    server
+        .vault()
+        .put_entity(
+            &machine,
+            ENTITY_TYPE_MACHINE,
+            TimeRange { start: 1, end: 1 },
+            1,
+            b"registered machine actor",
+        )
+        .unwrap();
+    assert!(server.vault().get(&machine).unwrap().is_some());
+
+    let mut frame = Vec::new();
+    write_credentials(&mut frame, &[0x71; DEK_LEN], &[0x72; TOKEN_LEN]).unwrap();
+    let credentials = read_credentials(&frame[..]).unwrap();
+    let ledger = WakeLedger::load(
+        server.vault().clone(),
+        "managed-test".into(),
+        dir.path().join("supervisor.sock"),
+        &credentials,
+    )
+    .unwrap();
+    let state = Arc::new(ManagedState::new(
+        "managed-test".into(),
+        server.clone(),
+        ledger,
+    ));
+    let app = build_managed_app(server.clone(), state);
+    let request = |path: &str, data: Value| {
+        Request::builder()
+            .method("POST")
+            .uri(path)
+            .header(CONTENT_TYPE, "application/json")
+            .header(AUTHORIZATION, "Bearer not-a-host-credential")
+            .header("x-oneiron-binding", "not-a-binding")
+            .body(Body::from(serde_json::to_vec(&data).unwrap()))
+            .unwrap()
+    };
+    let response = app
+        .clone()
+        .oneshot(request(
+            "/v1/core/pairing/links",
+            json!({
+                "scope": Scope::top(), "lifetime_secs": 3600,
+                "principal": {"holder_ref": machine.to_hex()}
+            }),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let bytes = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+    let link: oneiron::authority::PairingLink = serde_json::from_slice(&bytes).unwrap();
+    let device = SigningKey::from_bytes(&[84; 32]);
+    let device_key = device.verifying_key().to_bytes();
+    let proof = device
+        .sign(&pairing_binding_transcript(&link.code, &device_key, &machine.to_hex()).unwrap());
+    let hex = |bytes: &[u8]| bytes.iter().map(|b| format!("{b:02x}")).collect::<String>();
+    let response = app
+        .clone()
+        .oneshot(request(
+            "/v1/core/pairing/redeem",
+            json!({
+                "code": link.code, "holder_ref": machine.to_hex(),
+                "binding_key": hex(&device_key), "signature": hex(&proof.to_bytes())
+            }),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let bytes = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+    let body: Value = serde_json::from_slice(&bytes).unwrap();
+    let paired = CapabilitySlip::from_token(body["token"].as_str().unwrap()).unwrap();
+
+    let transport = SigningKey::from_bytes(&blake3::derive_key(
+        "oneiron/mesh-transport-ed25519/v1",
+        device.as_bytes(),
+    ));
+    let endpoint_key = transport.verifying_key().to_bytes();
+    let mut transcript = b"oneiron/mesh-machine-binding/v1\0".to_vec();
+    transcript.extend_from_slice(machine.as_bytes());
+    transcript.extend_from_slice(&endpoint_key);
+    let issuer = server.managed_issuer.as_ref().unwrap();
+    server
+        .vault()
+        .bind_mesh_machine(
+            issuer,
+            machine,
+            MeshMachineAddress {
+                endpoint_key,
+                direct_addrs: vec![],
+                relay_url: None,
+            },
+            device_key,
+            paired.claims.slip_id,
+            [
+                &device.sign(&transcript).to_bytes(),
+                &transport.sign(&transcript).to_bytes(),
+            ],
+        )
+        .unwrap();
+    assert!(
+        !server
+            .vault()
+            .mesh_grant_permits(machine, endpoint_key, b"mesh/test")
+            .unwrap()
+    );
+    server
+        .vault()
+        .set_mesh_alpn_grant(issuer, machine, endpoint_key, b"mesh/test", true)
+        .unwrap();
+    assert!(
+        server
+            .vault()
+            .mesh_grant_permits(machine, endpoint_key, b"mesh/test")
+            .unwrap()
+    );
 }
 
 #[tokio::test]
@@ -344,7 +512,28 @@ async fn relay_server_with_transport_secret_never_bootstraps_owner_authority() {
 
 #[tokio::test]
 async fn vault_clock_owns_http_proof_freshness_and_replay_admission() {
-    let (_dir, server) = server();
+    let wall = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs();
+    let floor = wall + 300;
+    let clock = oneiron::store::ports::ManualClock::new(floor);
+    let dir = tempfile::tempdir().unwrap();
+    let mut vault_config = oneiron::VaultConfig::device();
+    vault_config.retrieval_telemetry_capture = true;
+    vault_config.store_clock = clock.bundle();
+    let vault = Arc::new(oneiron::Vault::open(dir.path(), vault_config).unwrap());
+    assert_default_policy_manifest_fixture(vault.as_ref());
+    let server = Arc::new(
+        SyncServer::new(
+            vault,
+            SyncServerConfig {
+                auth_secret: Some(SLIP_SECRET.into()),
+                ..Default::default()
+            },
+        )
+        .unwrap(),
+    );
     let issuer = HostSlipIssuer::from_secret(SLIP_SECRET.as_bytes()).unwrap();
     let holder = SigningKey::from_bytes(&[89; 32]);
     let mut claims = server
@@ -360,17 +549,9 @@ async fn vault_clock_owns_http_proof_freshness_and_replay_admission() {
         .vault()
         .mint_capability_slip(&issuer, claims)
         .unwrap();
-    // Persisted authority time ahead of raw wall time models a backward clock
-    // step without changing the process clock or another test's vault.
-    let wall = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap()
-        .as_secs();
-    let floor = wall + 300;
-    server
-        .vault()
-        .sync_state_put("authlog:first_seen:clock_floor", &floor.to_be_bytes())
-        .unwrap();
+    // Roll back the source after minting. The vault's observed clock stays at
+    // its prior floor; proof admission uses that floor, not raw wall time.
+    clock.set(wall);
     let token = slip.to_token().unwrap();
     let request = |proof: &str| {
         Request::builder()
@@ -441,13 +622,16 @@ async fn narrowed_read_slips_can_read_static_capabilities_but_not_unscoped_recor
     assert_eq!(status, StatusCode::FORBIDDEN);
     let mut no_read = slip.clone();
     no_read
-        .attenuate(oneiron::authority::SlipCaveat {
-            scope: Some(Scope {
-                verbs: ScopeAxis::Bottom,
-                ..Scope::top()
-            }),
-            ..Default::default()
-        })
+        .attenuate(
+            oneiron::authority::SlipCaveat {
+                scope: Some(Scope {
+                    verbs: ScopeAxis::Bottom,
+                    ..Scope::top()
+                }),
+                ..Default::default()
+            },
+            &holder,
+        )
         .unwrap();
     for path in paths {
         let (status, _) = route_json(server.clone(), request(&no_read, path)).await;

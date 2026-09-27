@@ -19,6 +19,9 @@ impl GuestImports for Host {
         }
         Ok(vec![7; n as usize])
     }
+    fn json_validate(&mut self, _: String, _: String) -> Result<bool, String> {
+        Err("validator uses the shared host import".into())
+    }
     fn memory_search(&mut self, _: SearchInput) -> Result<SearchOutput, String> {
         Ok(SearchOutput { results: vec![] })
     }
@@ -33,6 +36,11 @@ impl GuestImports for Host {
             src: input.src,
             kind: input.kind,
             tgt: input.tgt,
+        })
+    }
+    fn report_blocked(&mut self, _: String, _: String) -> Result<BlockedOutput, String> {
+        Ok(BlockedOutput {
+            receipt: "receipt".into(),
         })
     }
     fn ask_human(&mut self, _: PromptInput) -> Result<WaitOutput, String> {
@@ -89,6 +97,10 @@ fn per_tier_import_inventory_equals_boundary_contract() {
             .map(|import| import.name())
             .collect();
         assert_eq!(actual, expected);
+        assert_eq!(
+            linked_imports(tier).contains(&("report-blocked", "self.report_blocked")),
+            tier == SandboxGuestTier::FirstPartyDreamer
+        );
         if tier.requires_zero_write_imports() {
             assert!(actual.iter().all(|name| !name.starts_with("self.")));
         }

@@ -8,6 +8,7 @@ declare namespace OneironCodeRun {
   interface EdgeOutput { src: string; kind: string; tgt: string; }
   interface WaitOutput { waitId: string; }
   interface SpeechOutput { order: number; isVisible: boolean; }
+  interface BlockedOutput { receipt: string; }
   interface SupersedeInput { newId: string; oldId: string; now: number; }
   interface EdgeInput { src: string; kind: string; tgt: string; weight?: number | undefined; }
   interface PromptInput { prompt: string; }
@@ -34,12 +35,16 @@ declare namespace oneiron {
   }
 }
 declare namespace self {
+  namespace json {
+    function validate(schema: unknown, value: unknown): Promise<boolean>;
+  }
   namespace memory {
     function search(input: OneironCodeRun.SearchInput): Promise<OneironCodeRun.SearchOutput>;
     function put_claim(input: OneironCodeRun.ClaimInput): Promise<OneironCodeRun.ClaimOutput>;
     function supersede_claim(input: OneironCodeRun.SupersedeInput): Promise<OneironCodeRun.ClaimOutput>;
     function put_edge(input: OneironCodeRun.EdgeInput): Promise<OneironCodeRun.EdgeOutput>;
   }
+  function report_blocked(category: string, detail: string): Promise<OneironCodeRun.BlockedOutput>;
   function ask_human(input: OneironCodeRun.PromptInput): Promise<OneironCodeRun.WaitOutput>;
   function askHuman(input: OneironCodeRun.PromptInput): Promise<OneironCodeRun.WaitOutput>;
   function speak(input: OneironCodeRun.TextInput): Promise<OneironCodeRun.SpeechOutput>;

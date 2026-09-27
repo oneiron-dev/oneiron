@@ -6,6 +6,7 @@ use super::ingest::{
     scan_codebase_snapshot_metadata, validate_project_id,
 };
 use super::repo_ref::RepoRef;
+use super::residue::{CODEBASE_SNAPSHOT_KEY_PREFIX, reclaimable_asset_hashes};
 use super::snapshot::{
     CODEBASE_CONTENT_HASH_LEN, CodebaseFileEntry, CodebaseForkHash, CodebaseScopeKey,
     CodebaseSnapshot, CodebaseSnapshotMount, decode_codebase_snapshot, encode_codebase_snapshot,
@@ -13,7 +14,7 @@ use super::snapshot::{
 };
 use crate::Vault;
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
-use crate::code_artifact::{CodeArtifactBody, decode_code_artifact_body};
+use crate::code_artifact::{CodeArtifactBody, CodeArtifactClass, decode_code_artifact_body};
 use crate::code_symbol::{CodeSymbolSource, derive_code_symbol_graph_from_sources};
 use crate::entity_id::{ENTITY_ID_LEN, EntityId};
 use crate::error::{ArtifactError, CodeError, Error, Result};
@@ -23,8 +24,6 @@ use crate::secret_snapshot::{SnapshotCustodyReport, custody_key, encode_report};
 use crate::store::Store;
 use crate::temporal::TimeRange;
 use heed::{RoTxn, RwTxn};
-
-const CODEBASE_SNAPSHOT_KEY_PREFIX: &[u8] = b"codebase:snapshot:v1:";
 
 const CODEBASE_REPO_INDEX_KEY_PREFIX: &[u8] = b"codebase:repo:v1:";
 
@@ -71,6 +70,32 @@ pub(crate) fn codebase_candidate_matches_scope_key(
         .vault_meta
         .get(rtxn, &codebase_scope_index_key(scope_key, id))?
         .is_some())
+}
+
+/// Rechecks a hostable snapshot against the current writer view. Publish must
+/// not trust a snapshot resolved before it acquired LMDB's write lock.
+pub(crate) fn codebase_artifact_snapshot_matches_in_txn(
+    store: &Store,
+    txn: &RoTxn<'_>,
+    id: &EntityId,
+    project_id: &str,
+    fork_hash: &CodebaseForkHash,
+) -> Result<bool> {
+    let Some(raw_snapshot) = store.vault_meta.get(txn, &codebase_snapshot_key(id))? else {
+        return Ok(false);
+    };
+    let snapshot = decode_codebase_snapshot(&raw_snapshot)?;
+    if snapshot.project_id != project_id || &snapshot.fork_hash != fork_hash {
+        return Ok(false);
+    }
+    let Some(raw_artifact) = store.port_entity_record(txn, id)? else {
+        return Ok(false);
+    };
+    if raw_artifact.entity_type != ENTITY_TYPE_CODE_ARTIFACT {
+        return Ok(false);
+    }
+    let artifact = decode_code_artifact_body(&raw_artifact.body)?;
+    Ok(artifact.class == CodeArtifactClass::Artifact)
 }
 
 pub(crate) fn delete_codebase_snapshot_in_txn(
@@ -166,6 +191,26 @@ impl Vault {
         learned_at: u64,
         hash_match_provider: &(impl HostedMediaHashMatchProvider + ?Sized),
     ) -> Result<RepoIngestResult> {
+        self.ingest_local_repo_with_after_first_pass(
+            project_id,
+            config,
+            commit_ref,
+            (occurred, learned_at),
+            hash_match_provider,
+            || Ok(()),
+        )
+    }
+
+    pub(super) fn ingest_local_repo_with_after_first_pass(
+        &self,
+        project_id: impl Into<String>,
+        config: &RepoIngestConfig,
+        commit_ref: &str,
+        timing: (TimeRange, u64),
+        hash_match_provider: &(impl HostedMediaHashMatchProvider + ?Sized),
+        after_first_pass: impl FnOnce() -> Result<()>,
+    ) -> Result<RepoIngestResult> {
+        let (occurred, learned_at) = timing;
         let project_id = project_id.into();
         validate_project_id(&project_id)?;
         if commit_ref.trim().is_empty() || commit_ref.chars().any(char::is_control) {
@@ -231,88 +276,139 @@ impl Vault {
             Some(commit_hash.clone()),
             files,
         )?;
-        // Filter from a read transaction before the artifact identity is committed.
+        // The read pass is useful for early quarantine but does not authorize
+        // any writes: a declaration can arrive after it releases its snapshot.
         scan_codebase_snapshot_metadata(&snapshot)?;
+        let contents = |path: &str| {
+            blobs
+                .binary_search_by_key(&path, |blob| blob.path.as_str())
+                .ok()
+                .map(|index| blobs[index].data.clone())
+        };
         let rtxn = self.store.env.read_txn()?;
-        let (files, custody_report) =
-            self.apply_custody_to_snapshot(&rtxn, &snapshot, &|path| {
-                // `blobs` is sorted by path above, so preserve logarithmic lookup here.
-                blobs
-                    .binary_search_by_key(&path, |blob| blob.path.as_str())
-                    .ok()
-                    .map(|index| blobs[index].data.clone())
-            })?;
+        self.apply_custody_to_snapshot(&rtxn, &snapshot, &contents)?;
         drop(rtxn);
-        let snapshot = CodebaseSnapshot::new(
-            snapshot.project_id.clone(),
-            snapshot.repo_ref.clone(),
-            snapshot.commit_hash,
-            files,
-        )?;
-        // Custody filtering rebuilt the manifest above, so every downstream
-        // write derives from the retained snapshot rather than the ingested
-        // tree: excluded and quarantined blobs must not survive as raw ASSET
-        // bodies or as symbols derived from their contents. Reclaiming blobs
-        // persisted by earlier, unfiltered ingests is follow-up ONE-1946.
-        let retained_paths = snapshot
-            .files
-            .iter()
-            .map(|entry| entry.path.as_str())
-            .collect::<std::collections::BTreeSet<_>>();
-        let code_artifact_id = codebase_snapshot_entity_id(&snapshot)?;
-        let code_body = CodeArtifactBody::new(
-            "Summarize the repository snapshot.",
-            snapshot.fork_hash,
-            repo_ref.canonical(),
-        );
-        let code_body = crate::code_artifact::encode_code_artifact_body(&code_body)?;
-
-        let mut batch = self.batch();
-        for blob in &blobs {
-            if !retained_paths.contains(blob.path.as_str()) {
-                continue;
-            }
-            let asset_id = codebase_asset_entity_id(&blob.content_hash)?;
-            batch = batch.put(
-                &asset_id,
-                ENTITY_TYPE_ASSET,
-                occurred,
-                learned_at,
-                &blob.data,
-            );
+        after_first_pass()?;
+        // Keep main's vault-scoped, test-only writer rendezvous: a registration
+        // committed here must be visible to the final writer.
+        #[cfg(test)]
+        if let Some(hook) = self
+            .test_hooks()
+            .before_codebase_ingest_writer
+            .lock()
+            .expect("codebase ingest hook poisoned")
+            .take()
+        {
+            hook();
         }
-        batch
-            .put(
+
+        // The final writer view decides every derived write, not merely the
+        // manifest. A registration committed between passes excludes its blob
+        // from ASSET, CODE_SYMBOL and snapshot in one transaction.
+        self.with_write_txn(|wtxn| {
+            let (files, custody_report) =
+                self.apply_custody_to_snapshot(wtxn, &snapshot, &contents)?;
+            let filtered_snapshot = CodebaseSnapshot::new(
+                snapshot.project_id.clone(),
+                snapshot.repo_ref.clone(),
+                snapshot.commit_hash.clone(),
+                files,
+            )?;
+            let retained_paths = filtered_snapshot
+                .files
+                .iter()
+                .map(|entry| entry.path.as_str())
+                .collect::<std::collections::BTreeSet<_>>();
+            let retained_hashes = filtered_snapshot
+                .files
+                .iter()
+                .map(|entry| entry.content_hash)
+                .collect::<std::collections::BTreeSet<_>>();
+            let excluded_hashes = blobs
+                .iter()
+                .filter(|blob| !retained_hashes.contains(&blob.content_hash))
+                .map(|blob| blob.content_hash)
+                .collect::<std::collections::BTreeSet<_>>();
+            let reclaimable = reclaimable_asset_hashes(
+                self,
+                wtxn,
+                &snapshot,
+                &custody_report,
+                &retained_hashes,
+                &excluded_hashes,
+            )?;
+            let code_artifact_id = codebase_snapshot_entity_id(&filtered_snapshot)?;
+            let code_body = CodeArtifactBody::new(
+                "Summarize the repository snapshot.",
+                filtered_snapshot.fork_hash,
+                repo_ref.canonical(),
+            );
+            let code_body = crate::code_artifact::encode_code_artifact_body(&code_body)?;
+
+            let mut batch = self.batch_in();
+            for blob in &blobs {
+                if retained_paths.contains(blob.path.as_str()) {
+                    let asset_id = codebase_asset_entity_id(&blob.content_hash)?;
+                    batch = batch.put(
+                        &asset_id,
+                        ENTITY_TYPE_ASSET,
+                        occurred,
+                        learned_at,
+                        &blob.data,
+                    );
+                }
+            }
+            for hash in reclaimable {
+                // The final writer view owns both cleanup and all derived puts.
+                // Never remove a hash retained by another path or repository.
+                let asset_id = codebase_asset_entity_id(&hash)?;
+                if self
+                    .store
+                    .port_entity_record(wtxn, &asset_id)?
+                    .is_some_and(|row| row.entity_type == ENTITY_TYPE_ASSET)
+                {
+                    batch = batch.delete(&asset_id);
+                }
+            }
+            batch
+                .put(
+                    &code_artifact_id,
+                    ENTITY_TYPE_CODE_ARTIFACT,
+                    occurred,
+                    learned_at,
+                    &code_body,
+                )
+                .apply(wtxn)?;
+            self.put_filtered_codebase_snapshot_in_txn(
+                wtxn,
                 &code_artifact_id,
-                ENTITY_TYPE_CODE_ARTIFACT,
+                &filtered_snapshot,
+                custody_report,
+            )?;
+            let symbol_sources = blobs
+                .iter()
+                .filter(|blob| retained_paths.contains(blob.path.as_str()))
+                .filter_map(|blob| {
+                    let text = std::str::from_utf8(&blob.data).ok()?;
+                    Some(CodeSymbolSource::new(blob.path.as_str(), text))
+                })
+                .collect::<Vec<_>>();
+            let symbol_graph = derive_code_symbol_graph_from_sources(
+                repo_ref.clone(),
+                Some(commit_hash.clone()),
+                symbol_sources,
+            )?;
+            self.put_code_symbol_graph_in_txn(
+                wtxn,
+                &code_artifact_id,
+                &symbol_graph,
                 occurred,
                 learned_at,
-                &code_body,
-            )
-            .commit()?;
-        let mut wtxn = self.store.env.write_txn()?;
-        self.put_filtered_codebase_snapshot_in_txn(
-            &mut wtxn,
-            &code_artifact_id,
-            &snapshot,
-            custody_report,
-        )?;
-        wtxn.commit()?;
-        let symbol_sources = blobs
-            .iter()
-            .filter(|blob| retained_paths.contains(blob.path.as_str()))
-            .filter_map(|blob| {
-                let text = std::str::from_utf8(&blob.data).ok()?;
-                Some(CodeSymbolSource::new(blob.path.as_str(), text))
+            )?;
+            Ok(RepoIngestResult {
+                code_artifact_id,
+                snapshot: filtered_snapshot,
             })
-            .collect::<Vec<_>>();
-        let symbol_graph =
-            derive_code_symbol_graph_from_sources(repo_ref, Some(commit_hash), symbol_sources)?;
-        self.put_code_symbol_graph(&code_artifact_id, &symbol_graph, occurred, learned_at)?;
-
-        Ok(RepoIngestResult {
-            code_artifact_id,
-            snapshot,
         })
     }
 

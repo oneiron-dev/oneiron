@@ -158,6 +158,7 @@ pub mod dreamer_tournament;
 pub mod dreamer_wake;
 pub mod fanout_auto;
 pub mod inbox;
+pub mod posterior;
 pub mod skill;
 pub mod skill_attribution;
 pub mod skill_convert;
@@ -234,14 +235,17 @@ pub use crate::attempt_queue::{
 pub use crate::autoreason_campaign::{
     AUTOREASON_CAMPAIGN_ID, AUTOREASON_CAMPAIGN_SCHEMA_VERSION, BlindCampaignJudgeInput,
     CampaignArmConfig, CampaignArmExecution, CampaignArmId, CampaignArmReport, CampaignBudgetLine,
-    CampaignComparisonReport, CampaignConfig, CampaignCorpusFilter, CampaignCost,
-    CampaignCriticTier, CampaignDatasetRef, CampaignError, CampaignEvaluationSplit,
-    CampaignExecutableArm, CampaignGoldAnchor, CampaignHeldOutDecision, CampaignMetricPin,
-    CampaignResult, CampaignSmokeOutcome, CampaignSplitReport, CampaignTasteJudgment,
-    CampaignTournamentConfig, CampaignVerdict, CampaignVerdictReason, EXPERIMENT_VERDICT_DISCARD,
-    EXPERIMENT_VERDICT_KEEP, ExperimentVerdict, build_campaign_held_out_decision,
-    build_campaign_split_report, compare_campaign, merge_campaign_arm_report,
+    CampaignComparisonReport, CampaignCorpusFilter, CampaignCost, CampaignCriticTier,
+    CampaignDatasetRef, CampaignError, CampaignEvaluationSplit, CampaignExecutableArm,
+    CampaignGoldAnchor, CampaignHeldOutDecision, CampaignMetricPin, CampaignResult,
+    CampaignSmokeOutcome, CampaignSplitReport, CampaignTasteJudgment, CampaignTournamentConfig,
+    CampaignVerdict, CampaignVerdictReason, EXPERIMENT_VERDICT_DISCARD, EXPERIMENT_VERDICT_KEEP,
+    ExperimentVerdict, build_campaign_held_out_decision, build_campaign_split_report,
+    compare_campaign, merge_campaign_arm_report,
 };
+// CampaignConfig at the crate root is the reusable skill-driven schema.
+// The fixed OF-366 type remains at autoreason_campaign::CampaignConfig.
+pub use crate::autoreason_campaign::general::CampaignConfig;
 pub use crate::batch::BatchBuilder;
 // Kept by the compiler, not by a consumer: `bm25` and `gate` are non-`pub` modules,
 // so dropping these would make their own items `unreachable_pub` (denied workspace-wide).
@@ -430,12 +434,12 @@ pub use crate::memory::{
     AdmitImportedClaimInput, BlobArtifactInput, CalendarInviteSurfaceInput,
     CalendarInviteSurfaceMethod, ChatAbstentionReason, ChatComposeRequest, ChatComposer, ChatDepth,
     ChatOptions, ChatResponse, ChatScope, ClaimInput, ClaimListFilter, ClaimView, CommitReceipt,
-    CompanionRecordInput, ComposedChatAnswer, ConsolidationAttemptInput, Effort, EntityRefReceipt,
-    EntityView, ExpressionPreferenceInput, HabitCheckinInput, MEMORY_CODE_BAD_REQUEST,
-    MEMORY_CODE_FORBIDDEN, MEMORY_CODE_INTERNAL, MEMORY_CODE_INVALID_STATE, MEMORY_CODE_NOT_FOUND,
-    MEMORY_PACK_VERSION, Memory, MemoryError, NeighborOpts, OutboundDraftInput, RecallScope,
-    SafeDeleteReason, StructuralEdgeSpec, StructuralPutInput, TextIndexField, WitnessAuthor,
-    WitnessMessage, WitnessTurn, parse_actor_key,
+    ComposedChatAnswer, ConsolidationAttemptInput, Effort, EntityRefReceipt, EntityView,
+    ExpressionPreferenceInput, HabitCheckinInput, MEMORY_CODE_BAD_REQUEST, MEMORY_CODE_FORBIDDEN,
+    MEMORY_CODE_INTERNAL, MEMORY_CODE_INVALID_STATE, MEMORY_CODE_NOT_FOUND, MEMORY_PACK_VERSION,
+    Memory, MemoryError, NeighborOpts, OutboundDraftInput, RecallScope, SafeDeleteReason,
+    StructuralEdgeSpec, StructuralPutInput, TextIndexField, WitnessAuthor, WitnessMessage,
+    WitnessTurn, parse_actor_key,
 };
 pub use crate::outbound::{
     COMMON_OUTBOUND_VERB_KINDS, OUTBOUND_CAPABILITY_MANIFEST_VERSION, OUTBOUND_VERB_FIELD_CONTRACT,

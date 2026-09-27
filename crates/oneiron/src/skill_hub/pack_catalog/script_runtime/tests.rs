@@ -23,7 +23,7 @@ use crate::{TimeRange, VaultConfig, test_util::entity};
 use std::{path::PathBuf, sync::Mutex};
 
 const JS: &str = include_str!("../../../../tests/fixtures/echo_pack/scripts/adapter.js");
-struct Qualified(String);
+struct Qualified(String, bool);
 impl super::super::PackQualifier for Qualified {
     fn qualify(&self, source: &PackSource) -> Result<super::super::PackQualification> {
         Ok(super::super::PackQualification {
@@ -38,6 +38,25 @@ impl super::super::PackQualifier for Qualified {
                 runtime_hash: self.0.clone(),
             }),
         })
+    }
+}
+impl super::super::PackFitPolicy for Qualified {
+    fn evaluate(
+        &self,
+        _source: &PackSource,
+        _card: &super::super::PackPermissions,
+    ) -> Result<super::super::PackFitVerdict> {
+        Ok(super::super::PackFitVerdict {
+            fits: true,
+            rules_hit: false,
+            code_auto_install: self.1,
+        })
+    }
+    fn qualify_script(
+        &self,
+        source: &PackSource,
+    ) -> Result<Option<super::super::PackQualification>> {
+        Ok(Some(super::super::PackQualifier::qualify(self, source)?))
     }
 }
 fn source() -> Result<PackSource> {
@@ -163,48 +182,50 @@ fn setup_with_secret(
         vault.admit_skill_publisher(&owner, "publisher:script-fixture", hub)?;
     let source = source()?;
     let source_id = vault.stage_pack_source(&source, TimeRange { start: 2, end: 2 }, 2)?;
+    let reference = HubRef::new(
+        hub,
+        "pack",
+        HubPin::ContentHash(source.content_hash().to_hex()),
+    )?;
+    vault.with_write_txn(|txn| {
+        vault.record_pack_fetch_in_txn(txn, &source_id, &reference, &publisher)
+    })?;
     let component = dir.path().join("component");
     std::fs::write(&component, b"pinned mock component")?;
     let digest = blake3::hash(b"pinned mock component").to_hex().to_string();
     let ask = vault.prepare_pack_install(
         source_id,
-        &HubRef::new(
-            hub,
-            "pack",
-            HubPin::ContentHash(source.content_hash().to_hex()),
-        )?,
+        &reference,
         &publisher,
-        &Qualified(digest),
+        &Qualified(digest, auto_install),
     )?;
-    let code = if auto_install {
-        super::super::PackCodeAutoInstall::EnabledAfterSandboxTests
-    } else {
-        super::super::PackCodeAutoInstall::Disabled
-    };
+    let disposition = vault.install_pack(&ask)?;
     if auto_install {
-        assert_eq!(
-            vault.auto_install_pack(&ask, code)?,
-            super::super::PackInstallDisposition::PendingConsent
-        );
+        let super::super::PackInstallDisposition::Installed(receipt) = disposition else {
+            panic!("qualified fit installs Active")
+        };
+        assert!(receipt.runtime.is_some());
     } else {
+        let super::super::PackInstallDisposition::Candidate(receipt) = disposition else {
+            panic!("code flag off keeps Candidate")
+        };
         assert_eq!(
-            vault.auto_install_pack(&ask, code)?,
-            super::super::PackInstallDisposition::CodeCandidate(Box::new(ask.clone()))
+            receipt.candidate_reason,
+            Some(super::super::PackCandidateReason::CodeAutoInstallOff)
         );
+        assert_eq!(receipt.permissions, ask.permissions().clone());
+        assert!(vault.installed_pack("fixture.echo")?.is_none());
+        assert!(receipt.runtime.is_none());
     }
-    vault.approve_pack_install(&ask, &owner)?;
-    let disposition = if auto_install {
-        vault.auto_install_pack(&ask, code)?
-    } else {
-        vault.install_pack(&ask)?
-    };
-    assert!(matches!(
-        disposition,
-        super::super::PackInstallDisposition::Installed(_)
-    ));
-    let wake_ids =
-        vault.subscribe_pack_wakes("fixture.echo", &owner, agent, std::slice::from_ref(&grant))?;
-    assert_eq!(wake_ids.len(), 1);
+    if auto_install {
+        let wake_ids = vault.subscribe_pack_wakes(
+            "fixture.echo",
+            &owner,
+            agent,
+            std::slice::from_ref(&grant),
+        )?;
+        assert_eq!(wake_ids.len(), 1);
+    }
     let image = GuestImage::new(
         dir.path().join("kernel"),
         dir.path().join("rootfs"),
@@ -331,7 +352,7 @@ fn output() -> Vec<u8> {
 }
 #[test]
 fn installed_script_uses_key_custody_surface_verbs_and_subscription_wake() -> Result<()> {
-    let (_dir, vault, agent, grant, image) = setup(false)?;
+    let (_dir, vault, agent, grant, image) = setup(true)?;
     let seen_secret = Arc::new(Mutex::new(Vec::new()));
     let scratch = tempfile::tempdir()?;
     let result = vault.run_script_pack_in_vm(
@@ -368,7 +389,7 @@ fn installed_script_uses_key_custody_surface_verbs_and_subscription_wake() -> Re
 }
 #[test]
 fn out_of_manifest_grant_and_output_are_refused_before_any_event() -> Result<()> {
-    let (_dir, vault, agent, mut grant, image) = setup(false)?;
+    let (_dir, vault, agent, mut grant, image) = setup(true)?;
     grant.requested = "other".into();
     let scratch = tempfile::tempdir()?;
     let seen_secret = Arc::new(Mutex::new(Vec::new()));
@@ -401,15 +422,32 @@ fn out_of_manifest_grant_and_output_are_refused_before_any_event() -> Result<()>
 }
 
 #[test]
-fn host_enabled_code_switch_keeps_the_irreversible_consent_gate() -> Result<()> {
-    let (_dir, vault, _agent, _grant, _image) = setup(true)?;
-    assert!(vault.installed_pack("fixture.echo")?.is_some());
+fn host_code_switch_keeps_candidate_inert_and_fit_install_active() -> Result<()> {
+    let (_off_dir, off, agent, grant, _image) = setup(false)?;
+    assert!(off.installed_pack("fixture.echo")?.is_none());
+    assert!(off.candidate_pack(&source()?)?.is_some());
+    assert!(
+        off.subscribe_pack_wakes(
+            "fixture.echo",
+            &off.authenticate_owner(
+                entity(0xB1),
+                "principal:script-owner",
+                true,
+                crate::store::GateDecisionId::now()
+            )?,
+            agent,
+            std::slice::from_ref(&grant)
+        )
+        .is_err()
+    );
+    let (_on_dir, on, _agent, _grant, _image) = setup(true)?;
+    assert!(on.installed_pack("fixture.echo")?.is_some());
     Ok(())
 }
 
 #[test]
 fn revoked_custody_refuses_a_script_before_any_inbound_handoff() -> Result<()> {
-    let (_dir, vault, agent, grant, image) = setup(false)?;
+    let (_dir, vault, agent, grant, image) = setup(true)?;
     vault.revoke_secret("email-token", 1_800_000_100)?;
     let scratch = tempfile::tempdir()?;
     let secret = Arc::new(Mutex::new(Vec::new()));
@@ -439,7 +477,7 @@ fn revoked_custody_refuses_a_script_before_any_inbound_handoff() -> Result<()> {
 }
 #[test]
 fn foreign_script_cannot_route_to_a_different_channel_agent() -> Result<()> {
-    let (_dir, vault, agent, grant, image) = setup(false)?;
+    let (_dir, vault, agent, grant, image) = setup(true)?;
     let other = entity(0xB5);
     vault.put_entity(
         &other,
@@ -516,7 +554,7 @@ fn same_pack_receives_run_local_grants_for_two_vault_custody_names() -> Result<(
 #[test]
 fn malformed_wake_cannot_commit_preceding_inbound_or_wake() -> Result<()> {
     for malformed_position in [0, 1] {
-        let (_dir, vault, agent, grant, image) = setup(false)?;
+        let (_dir, vault, agent, grant, image) = setup(true)?;
         let mut output: serde_json::Value = serde_json::from_slice(&output()).unwrap();
         let valid = output["events"][0].clone();
         output["events"].as_array_mut().unwrap().push(valid);
@@ -558,7 +596,7 @@ fn malformed_wake_cannot_commit_preceding_inbound_or_wake() -> Result<()> {
 #[test]
 fn pack_wake_never_fans_out_to_another_agents_matching_subscription() -> Result<()> {
     use crate::connector_key::{ConnectorDispatchTelemetry, ConnectorKeyRecord, EffectorBudget};
-    let (_dir, vault, agent, grant, image) = setup(false)?;
+    let (_dir, vault, agent, grant, image) = setup(true)?;
     let other = entity(0xB7);
     vault.put_entity(
         &other,
@@ -622,7 +660,7 @@ fn pack_wake_never_fans_out_to_another_agents_matching_subscription() -> Result<
 
 #[test]
 fn key_revocation_between_guest_run_and_admission_refuses_all_output() -> Result<()> {
-    let (_dir, vault, agent, grant, image) = setup(false)?;
+    let (_dir, vault, agent, grant, image) = setup(true)?;
     let scratch = tempfile::tempdir()?;
     let key_id = grant.key_id;
     let to_revoke = Arc::clone(&vault);
@@ -660,7 +698,7 @@ fn key_revocation_between_guest_run_and_admission_refuses_all_output() -> Result
 
 #[test]
 fn stored_wake_id_conflict_rolls_back_new_inbound() -> Result<()> {
-    let (_dir, vault, agent, grant, image) = setup(false)?;
+    let (_dir, vault, agent, grant, image) = setup(true)?;
     vault.ingest_connector_event(&crate::connector_key::events::ConnectorEvent {
         event_id: "arrival-1".into(),
         connector: "email".into(),
@@ -696,7 +734,7 @@ fn delegated_mailbox_reassignment_after_guest_run_cannot_route_to_new_agent() ->
         ChannelIdentityFulfillment, DelegatedGrant, DelegatedGrantScope, DelegatedProvisionRequest,
         delegated_custody_scopes,
     };
-    let (_dir, vault, agent, grant, image) = setup(false)?;
+    let (_dir, vault, agent, grant, image) = setup(true)?;
     let mailbox = "member@member-owned.example";
     let delegated = DelegatedGrant::new("member-oauth", vec![DelegatedGrantScope::MailRead]);
     vault.register_secret(SecretCustodyRecord {
@@ -819,7 +857,7 @@ fn delegated_mailbox_reassignment_after_guest_run_cannot_route_to_new_agent() ->
 
 #[test]
 fn replaced_install_after_source_selection_refuses_old_program_and_wake() -> Result<()> {
-    let (_dir, vault, agent, grant, image) = setup(false)?;
+    let (_dir, vault, agent, grant, image) = setup(true)?;
     // Capture exactly the source/receipt pair the runtime will execute. A
     // newer, separately consented install removes the declared wake before
     // the runner reaches the sandbox; the old script must not run as B.
@@ -851,8 +889,8 @@ fn replaced_install_after_source_selection_refuses_old_program_and_wake() -> Res
         HubPin::ContentHash(replacement.content_hash().to_hex()),
     )?;
     let digest = blake3::hash(b"pinned mock component").to_hex().to_string();
-    let ask = vault.prepare_pack_install(id, &reference, &publisher, &Qualified(digest))?;
-    vault.approve_pack_install(&ask, &owner)?;
+    vault.with_write_txn(|txn| vault.record_pack_fetch_in_txn(txn, &id, &reference, &publisher))?;
+    let ask = vault.prepare_pack_install(id, &reference, &publisher, &Qualified(digest, true))?;
     assert!(matches!(
         vault.install_pack(&ask)?,
         super::super::PackInstallDisposition::Installed(_)

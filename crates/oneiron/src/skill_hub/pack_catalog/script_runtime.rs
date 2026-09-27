@@ -7,7 +7,7 @@ use std::{collections::BTreeSet, sync::Arc};
 
 #[cfg(any(test, feature = "microvm-firecracker"))]
 use super::script_plan::ScriptExecutionPlan;
-use super::{PackAdapter, PackInstallReceipt, PackSource, invalid};
+use super::{PackAdapter, PackInstallReceipt, PackInstallStatus, PackSource, invalid};
 use crate::{
     EntityId, Result, Vault,
     code_sandbox::microvm::{
@@ -168,6 +168,9 @@ impl Vault {
         let receipt = self
             .installed_pack(name)?
             .ok_or_else(|| invalid("pack not installed"))?;
+        if receipt.status != PackInstallStatus::Active {
+            return Err(invalid("script pack is not Active"));
+        }
         let source_id = EntityId::from_hex(&receipt.source_id)?;
         let source = self
             .get_pack_source(&source_id)?

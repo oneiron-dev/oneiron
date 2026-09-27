@@ -1,4 +1,5 @@
 use crate::error::Result;
+use crate::federation::{Scope, ScopeAxis, Sensitivity, SensitivityCeiling};
 
 use super::effect::{ComposedEffect, ConsentDecision, EffectDigest};
 use super::grant::StandingConsentGrant;
@@ -11,7 +12,7 @@ const DOMAIN_DISCLOSURE: &str = "disclosure";
 pub(super) const DOMAIN_ACTION: &str = "action";
 
 /// Domain-separated BLAKE3 label for a normalized bound digest.
-const BOUND_DIGEST_DOMAIN: &[u8] = b"oneiron.consent.bound_digest.v1\0";
+const BOUND_DIGEST_DOMAIN: &[u8] = b"oneiron.consent.bound_digest.v2\0";
 
 /// Upper bound on selectors in one envelope. A bound is a bound, not a
 /// standing blanket assembled out of thousands of clauses.
@@ -238,30 +239,62 @@ impl BoundClass {
     }
 }
 
-/// The data envelope of a disclosure bound: WHICH entities/topics/purposes.
+/// The data envelope of a disclosure bound: legacy selectors or a typed
+/// contact Scope. The two forms never authorize each other by string matching.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct DisclosureEnvelope {
     pub(super) selectors: Vec<String>,
+    pub(super) scope: Option<Box<Scope>>,
 }
 
 impl DisclosureEnvelope {
-    /// Builds a data envelope from its selectors.
+    /// Builds a selector-based data envelope.
     pub fn new(selectors: impl IntoIterator<Item = String>) -> Result<Self> {
         let selectors = normalized_selectors(selectors)?;
-        Ok(Self { selectors })
+        Ok(Self {
+            selectors,
+            scope: None,
+        })
     }
 
-    /// The sorted, deduped selectors.
+    /// Builds a Scope-valued contact clearance envelope. Facets are masks,
+    /// not authorization axes; they are normalized out of consent authority.
+    pub(super) fn from_scope(mut scope: Scope) -> Result<Self> {
+        scope.facets = ScopeAxis::All;
+        if !scope.admits("read", &scope, &Scope::top()) {
+            return Err(invalid_bound("contact Scope grants no readable records"));
+        }
+        Ok(Self {
+            selectors: vec!["scope:clearance".to_owned()],
+            scope: Some(Box::new(scope)),
+        })
+    }
+
+    /// The sorted, deduped selectors. A typed envelope uses one fixed marker;
+    /// its Scope, not that marker, determines containment.
     #[must_use]
     pub fn selectors(&self) -> &[String] {
         &self.selectors
     }
 
-    /// Envelope containment: every candidate selector must be inside the
-    /// bound's selector set.
+    /// The typed Scope when this envelope represents contact clearance.
+    #[must_use]
+    pub(super) fn scope(&self) -> Option<&Scope> {
+        self.scope.as_deref()
+    }
+
+    /// Typed clearances use Scope admission; selector-only envelopes keep
+    /// their existing exact selector containment. Mixed forms never cover.
     #[must_use]
     fn contains(&self, candidate: &Self) -> bool {
-        selectors_contain(&self.selectors, &candidate.selectors)
+        match (self.scope.as_deref(), candidate.scope.as_deref()) {
+            (Some(bound), Some(request)) => {
+                selectors_contain(&self.selectors, &candidate.selectors)
+                    && bound.admits("read", request, &Scope::top())
+            }
+            (None, None) => selectors_contain(&self.selectors, &candidate.selectors),
+            _ => false,
+        }
     }
 }
 
@@ -434,6 +467,47 @@ pub struct GrantBound {
     envelope: BoundEnvelope,
 }
 
+// Hash each normalized authorization axis without a fallible serializer.
+// Scope is persisted in standing-grant rows; this digest must be stable after
+// decode and must distinguish two scopes with the same selector marker.
+fn hash_scope_axis<T: Ord>(
+    hasher: &mut blake3::Hasher,
+    axis: &ScopeAxis<T>,
+    bytes: impl Fn(&T) -> Vec<u8>,
+) {
+    match axis {
+        ScopeAxis::Bottom => {
+            hasher.update(&[0]);
+        }
+        ScopeAxis::All => {
+            hasher.update(&[1]);
+        }
+        ScopeAxis::Some(values) => {
+            hasher.update(&[2]);
+            hasher.update(&(values.len() as u64).to_be_bytes());
+            for value in values {
+                hash_field(hasher, &bytes(value));
+            }
+        }
+    }
+}
+
+fn hash_scope(hasher: &mut blake3::Hasher, scope: &Scope) {
+    hash_field(hasher, b"contact-scope-v1");
+    hash_scope_axis(hasher, &scope.worlds, |id| id.0.as_bytes().to_vec());
+    hash_scope_axis(hasher, &scope.bands, |band| vec![*band]);
+    hash_scope_axis(hasher, &scope.audience, |id| id.0.as_bytes().to_vec());
+    hash_scope_axis(hasher, &scope.verbs, |verb| verb.as_bytes().to_vec());
+    let sensitivity = match scope.sensitivity {
+        SensitivityCeiling::Bottom => 0,
+        SensitivityCeiling::AtMost(Sensitivity::Public) => 1,
+        SensitivityCeiling::AtMost(Sensitivity::Private) => 2,
+        SensitivityCeiling::AtMost(Sensitivity::Sensitive) => 3,
+        SensitivityCeiling::AtMost(Sensitivity::Restricted) => 4,
+    };
+    hasher.update(&[sensitivity]);
+}
+
 impl GrantBound {
     /// Builds a bound from matching domain triples.
     ///
@@ -523,39 +597,72 @@ impl GrantBound {
     pub fn digest(&self) -> EffectDigest {
         let mut hasher = blake3::Hasher::new();
         hasher.update(BOUND_DIGEST_DOMAIN);
-        hasher.update(self.domain().as_str().as_bytes());
+        hash_field(&mut hasher, self.domain().as_str().as_bytes());
         match &self.subject {
             BoundSubject::Actor(actor) => {
                 hash_field(&mut hasher, SUBJECT_KIND_ACTOR.as_bytes());
                 hash_field(&mut hasher, actor.actor_ref.as_bytes());
-                hash_field(
-                    &mut hasher,
-                    actor.actor_class.as_deref().unwrap_or_default().as_bytes(),
-                );
+                match actor.actor_class.as_deref() {
+                    None => {
+                        hasher.update(&[0]);
+                    }
+                    Some(class) => {
+                        hasher.update(&[1]);
+                        hash_field(&mut hasher, class.as_bytes());
+                    }
+                }
             }
             BoundSubject::Audience(audience) => {
                 hash_field(&mut hasher, SUBJECT_KIND_AUDIENCE.as_bytes());
+                hasher.update(&(audience.members.len() as u64).to_be_bytes());
                 for member in &audience.members {
                     hash_field(&mut hasher, member.as_bytes());
                 }
             }
         }
+        hash_field(&mut hasher, b"class");
         hash_field(&mut hasher, self.class.as_str().as_bytes());
         match &self.envelope {
             BoundEnvelope::Disclosure(envelope) => {
+                hash_field(&mut hasher, b"envelope:disclosure");
+                hasher.update(&(envelope.selectors.len() as u64).to_be_bytes());
                 for selector in &envelope.selectors {
                     hash_field(&mut hasher, selector.as_bytes());
+                }
+                match &envelope.scope {
+                    None => {
+                        hasher.update(&[0]);
+                    }
+                    Some(scope) => {
+                        hasher.update(&[1]);
+                        hash_scope(&mut hasher, scope);
+                    }
                 }
             }
             BoundEnvelope::Action(envelope) => {
+                hash_field(&mut hasher, b"envelope:action");
+                hasher.update(&(envelope.selectors.len() as u64).to_be_bytes());
                 for selector in &envelope.selectors {
                     hash_field(&mut hasher, selector.as_bytes());
                 }
-                hash_field(
-                    &mut hasher,
-                    envelope.target.as_deref().unwrap_or_default().as_bytes(),
-                );
-                hasher.update(&envelope.budget.unwrap_or(0).to_be_bytes());
+                match envelope.target.as_deref() {
+                    None => {
+                        hasher.update(&[0]);
+                    }
+                    Some(target) => {
+                        hasher.update(&[1]);
+                        hash_field(&mut hasher, target.as_bytes());
+                    }
+                }
+                match envelope.budget {
+                    None => {
+                        hasher.update(&[0]);
+                    }
+                    Some(budget) => {
+                        hasher.update(&[1]);
+                        hasher.update(&budget.to_be_bytes());
+                    }
+                }
                 hasher.update(&[u8::from(envelope.receipt_required)]);
             }
         }

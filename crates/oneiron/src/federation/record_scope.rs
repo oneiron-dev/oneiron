@@ -7,7 +7,7 @@ use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::{
     EntityId, Vault,
     error::{Error, Result},
-    store::Store,
+    store::{ManifestDbs, Store},
 };
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
@@ -38,6 +38,12 @@ fn key(id: EntityId) -> Vec<u8> {
     key.extend_from_slice(id.as_bytes());
     key
 }
+/// Retire an id's scope sidecar in the same transaction that erases its body.
+/// A later same-id, same-bytes write must not inherit the old scope.
+pub(crate) fn retire_stamp(store: &Store, txn: &mut heed::RwTxn<'_>, id: EntityId) -> Result<()> {
+    store.vault_meta.delete(txn, &key(id))?;
+    Ok(())
+}
 fn digest(kind: u8, data: &[u8]) -> [u8; 32] {
     let mut h = blake3::Hasher::new_derive_key("oneiron/record-scope/v1");
     h.update(&[kind]);
@@ -67,12 +73,12 @@ fn carries_birth_stamp(kind: u8) -> bool {
 /// The facet a NOTE or ASSET was born under: the target of its one stored
 /// `FacetOf` edge.
 pub(crate) fn birth_facet(
-    store: &Store,
+    store: &impl ManifestDbs,
     txn: &heed::RoTxn<'_>,
     id: EntityId,
 ) -> Result<Option<EntityId>> {
     let prefix = crate::vault::edge_kind_prefix(&id, crate::edge::EdgeKind::FacetOf);
-    let Some(row) = store.edges_out.prefix_iter(txn, &prefix)?.next() else {
+    let Some(row) = store.edges_out().prefix_iter(txn, &prefix)?.next() else {
         return Ok(None);
     };
     let (key, value) = row?;
@@ -140,13 +146,13 @@ pub(crate) fn stamp_put(
     Ok(())
 }
 fn stored_scope(
-    store: &Store,
+    store: &impl ManifestDbs,
     txn: &heed::RoTxn<'_>,
     id: EntityId,
     kind: u8,
     data: &[u8],
 ) -> Result<Option<Scope>> {
-    let Some(bytes) = store.vault_meta.get(txn, &key(id))? else {
+    let Some(bytes) = store.vault_meta().get(txn, &key(id))? else {
         return Ok(None);
     };
     let stamp: Stamp =
@@ -156,10 +162,33 @@ fn stored_scope(
     }
     Ok(Some(stamp.scope))
 }
+/// Preserve an existing, digest-proved scope when a text document replaces only
+/// its row body with a pointer. Do not mint reach for an unstamped or stale row.
+#[cfg(feature = "sync")]
+pub(crate) fn restamp_document_pointer(
+    store: &Store,
+    txn: &mut heed::RwTxn<'_>,
+    id: EntityId,
+    kind: u8,
+    original: &[u8],
+    pointer: &[u8],
+) -> Result<()> {
+    let Some(scope) = stored_scope(store, txn, id, kind, original)? else {
+        return Ok(());
+    };
+    let bytes = serde_json::to_vec(&Stamp {
+        version: 1,
+        digest: digest(kind, pointer),
+        scope,
+    })
+    .map_err(|_| Error::InvariantViolation("scope stamp encode"))?;
+    store.vault_meta.put(txn, &key(id), &bytes)?;
+    Ok(())
+}
 /// Derive only an intrinsic current stamp or a digest-matched persisted stamp.
 /// This is the sync-export seam; arbitrary remote opaque rows remain unstamped.
 pub(crate) fn scope_for_blob(
-    store: &Store,
+    store: &impl ManifestDbs,
     txn: &heed::RoTxn<'_>,
     id: EntityId,
     raw: &[u8],
@@ -328,7 +357,7 @@ impl Vault {
             }
             batch.apply(txn)?;
             for id in &ids {
-                self.store.vault_meta.delete(txn, &key(*id))?;
+                retire_stamp(&self.store, txn, *id)?;
             }
             Ok(ids)
         })

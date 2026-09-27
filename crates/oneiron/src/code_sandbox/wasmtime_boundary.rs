@@ -169,12 +169,34 @@ fn link<H: bindings::GuestImports + 'static>(
                 },
             )?,
             "oneiron.random.bytes" => unary!(root, wit, random_bytes, u32),
+            "self.json.validate" => root.func_wrap(
+                wit,
+                |_cx: StoreContextMut<'_, RequestState<H>>, (schema, value): (String, String)| {
+                    let verdict = serde_json::from_str(&schema)
+                        .map_err(|_| "invalid schema JSON".to_owned())
+                        .and_then(|schema| {
+                            serde_json::from_str(&value)
+                                .map_err(|_| "invalid value JSON".to_owned())
+                                .map(|value| {
+                                    crate::llm::validate_json_schema(&schema, &value).is_ok()
+                                })
+                        });
+                    Ok((verdict,))
+                },
+            )?,
             "self.memory.search" => unary!(root, wit, memory_search, SearchInput),
             "self.memory.put_claim" => unary!(root, wit, memory_put_claim, ClaimInput),
             "self.memory.supersede_claim" => {
                 unary!(root, wit, memory_supersede_claim, SupersedeInput);
             }
             "self.memory.put_edge" => unary!(root, wit, memory_put_edge, EdgeInput),
+            "self.report_blocked" => root.func_wrap(
+                wit,
+                |mut cx: StoreContextMut<'_, RequestState<H>>,
+                 (category, detail): (String, String)| {
+                    Ok((cx.data_mut().host.report_blocked(category, detail),))
+                },
+            )?,
             "self.ask_human" => unary!(root, wit, ask_human, PromptInput),
             "self.askHuman" => unary!(root, wit, ask_human_camel, PromptInput),
             "self.speak" => unary!(root, wit, speak, TextInput),

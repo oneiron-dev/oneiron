@@ -138,6 +138,17 @@ pub(super) fn link_imports(
                         .and_then(|value| field(&value,"bytes"));
                     Ok((reply,))
                 }),
+            "self.json.validate" => root.func_wrap(wit,
+                |mut cx: StoreContextMut<'_, State>, (schema, value): (String, String)| {
+                    cx.data_mut().begin_call()?;
+                    let reply: Reply<bool> = (|| {
+                        let schema: Value = serde_json::from_str(&schema).map_err(|_| "invalid schema JSON")?;
+                        let value: Value = serde_json::from_str(&value).map_err(|_| "invalid value JSON")?;
+                        cx.data_mut().call("self.json.validate", json!({"schema":schema,"value":value}))
+                            .and_then(|result| field(&result,"valid"))
+                    })();
+                    Ok((reply,))
+                }),
             "self.memory.search" => root.func_wrap(wit,
                 |mut cx: StoreContextMut<'_, State>, (input,): (SearchInput,)| {
                     cx.data_mut().begin_call()?;
@@ -172,6 +183,15 @@ pub(super) fn link_imports(
                             json!({"src":input.src,"kind":input.kind,"tgt":input.tgt,"weight":input.weight}))?;
                         Ok(EdgeOutput { src: field(&result,"src")?, kind: input.kind, tgt: field(&result,"tgt")? })
                     })();
+                    Ok((reply,))
+                }),
+            "self.report_blocked" => root.func_wrap(wit,
+                |mut cx: StoreContextMut<'_, State>, (category, detail): (String, String)| {
+                    cx.data_mut().begin_call()?;
+                    let reply: Reply<BlockedOutput> = cx.data_mut().call("self.report_blocked",
+                        json!({"category":category,"detail":detail}))
+                        .and_then(|value| field(&value,"receipt"))
+                        .map(|receipt| BlockedOutput { receipt });
                     Ok((reply,))
                 }),
             "self.ask_human" | "self.askHuman" => root.func_wrap(wit,
