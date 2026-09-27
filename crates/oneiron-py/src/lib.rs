@@ -4,10 +4,11 @@
 //! # Why the boundary is JSON
 //!
 //! Every DTO crosses as a JSON string. That is not a shortcut: the engine's
-//! facade DTOs already derive `serde` with snake_case field names, which IS
-//! the Python naming convention, so a JSON boundary gives the Python package
-//! the exact §HEAD-CONTRACT field spelling with NO translation layer to get
-//! wrong. The alternative — hand-written `#[pyclass]` mirrors of every DTO —
+//! facade DTOs largely derive `serde` with snake_case field names, which IS
+//! the Python naming convention. The one exception is retrieval metadata's
+//! `confidenceAdjustment`: the engine/server wire uses camelCase, so recall
+//! projects that key to `confidence_adjustment` before returning the Python
+//! JSON dict. The alternative — hand-written `#[pyclass]` mirrors of every DTO —
 //! would be a second domain model maintained by hand, which is the thing the
 //! shared backend exists to prevent.
 //!
@@ -17,7 +18,9 @@
 //! `NativeClient` and exports `Oneiron` and `OneironError` only; the export
 //! census asserts `not hasattr(oneiron, "NativeClient")`.
 
-use oneiron::memory::{ClaimInput, MemoryError, WitnessAuthor, WitnessMessage, WitnessTurn};
+use oneiron::memory::{
+    ClaimInput, MemoryError, MemoryPack, WitnessAuthor, WitnessMessage, WitnessTurn,
+};
 use pyo3::exceptions::PyRuntimeError;
 use pyo3::prelude::*;
 use serde::Deserialize;
@@ -110,17 +113,32 @@ fn decode<'de, T: Deserialize<'de>>(json: &'de str, what: &str) -> PyResult<T> {
     })
 }
 
+/// Reports a serialization failure as a typed SDK error.
+fn encode_error(error: serde_json::Error) -> PyErr {
+    raise(MemoryError {
+        code: oneiron::memory::MEMORY_CODE_INTERNAL.to_owned(),
+        message: format!("could not serialize the response: {error}"),
+        suggestions: vec!["This is an Oneiron SDK bug; please report it.".to_owned()],
+        successor_short_id: None,
+        gate_denial: None,
+    })
+}
+
 /// Serializes a success DTO back to the Python side.
 fn encode<T: serde::Serialize>(value: &T) -> PyResult<String> {
-    serde_json::to_string(value).map_err(|error| {
-        raise(MemoryError {
-            code: oneiron::memory::MEMORY_CODE_INTERNAL.to_owned(),
-            message: format!("could not serialize the response: {error}"),
-            suggestions: vec!["This is an Oneiron SDK bug; please report it.".to_owned()],
-            successor_short_id: None,
-            gate_denial: None,
-        })
-    })
+    serde_json::to_string(value).map_err(encode_error)
+}
+
+/// Projects the engine/server's sole camelCase retrieval field for Python.
+fn encode_recall(pack: &MemoryPack) -> PyResult<String> {
+    let mut value = serde_json::to_value(pack).map_err(encode_error)?;
+    let meta = value["retrieval_meta"]
+        .as_object_mut()
+        .expect("MemoryPack always serializes retrieval_meta as an object");
+    if let Some(adjustment) = meta.remove("confidenceAdjustment") {
+        meta.insert("confidence_adjustment".to_owned(), adjustment);
+    }
+    encode(&value)
 }
 
 /// The private native handle behind the `oneiron` Python package.
@@ -239,7 +257,7 @@ impl NativeClient {
                     .recall(&query, effort, &scope_json, limit, format.as_deref())
             })
             .map_err(raise)?;
-        encode(&output)
+        encode_recall(&output)
     }
     #[pyo3(signature = (limit=None))]
     fn receipts(&self, py: Python<'_>, limit: Option<usize>) -> PyResult<String> {
@@ -279,6 +297,20 @@ impl NativeClient {
         let input: serde_json::Value = decode(request_json, "key_value_namespaces")?;
         let output = py
             .detach(|| self.inner.agent_verb("key_value_namespaces", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn can(&self, py: Python<'_>, request_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(request_json, "can")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("can", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn peek(&self, py: Python<'_>, request_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(request_json, "peek")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("peek", input))
             .map_err(raise)?;
         encode(&output)
     }

@@ -215,3 +215,160 @@ fn every_completed_step_resumes_with_identical_stable_refs() -> Result<()> {
     }
     Ok(())
 }
+
+/// CompanionBorn contains several commits; the journal advances only after
+/// all of them. A retry must accept a PERSON whose baseline already landed.
+#[test]
+fn companion_birth_retries_after_baseline_commit_and_grant_failure() -> Result<()> {
+    for fail_grant in [false, true] {
+        let (_dir, vault, mut intent) = fixture("Antevon");
+        let birth = companion_birth();
+        intent.grant_bundle.companion_profile_grant_ref = Some(birth.profile_grant_ref);
+        intent.companion_birth = Some(birth.clone());
+        let owner = writer(WRITER);
+        vault.onboard_workspace_member_halting_after(
+            intent.clone(),
+            &owner,
+            None,
+            MemberOnboardingStep::ActorLinked,
+        )?;
+        let expected_grant = AccessGrant::companion_profile_read(
+            intent.person_ref,
+            intent.person_ref,
+            birth.person_ref,
+            intent.occurred_at,
+        );
+        if fail_grant {
+            // The wrong grant occupies the requested id: the birth step gets
+            // past its baseline write, then fails before the journal moves.
+            let wrong = AccessGrant::companion_profile_read(
+                entity(OUTSIDER),
+                intent.person_ref,
+                birth.person_ref,
+                intent.occurred_at,
+            );
+            vault.put_access_grant(&birth.profile_grant_ref, &wrong)?;
+            let err = vault
+                .onboard_workspace_member(intent.clone(), &owner, None)
+                .expect_err("conflicting profile grant refuses this attempt");
+            assert_eq!(err.kind(), ErrorKind::InvalidClaimBody);
+            assert_eq!(
+                vault.get_access_grant(&birth.profile_grant_ref)?,
+                Some(wrong)
+            );
+            // Repair only the failed dependency; the PERSON must not be erased.
+            vault.put_access_grant(&birth.profile_grant_ref, &expected_grant)?;
+        } else {
+            // Model a crash after the complete birth write but before the
+            // separate CompanionBorn journal write.
+            birth_companion(&vault, &intent, &birth, &owner)?;
+        }
+        let journal = read_journal(&vault, &onboarding_key(&intent.onboarding_id))?
+            .expect("the birth step did not advance its journal");
+        assert_eq!(
+            journal.step,
+            if fail_grant {
+                MemberOnboardingStep::MemberGranted
+            } else {
+                MemberOnboardingStep::ActorLinked
+            }
+        );
+        let before = vault
+            .get(&birth.person_ref)?
+            .expect("baseline committed on PERSON");
+        let fields = decode_map(&before)?;
+        assert!(
+            fields
+                .iter()
+                .any(|(key, _)| key.as_str() == Some("persona_definition"))
+        );
+
+        let outcome = vault.onboard_workspace_member(intent.clone(), &owner, None)?;
+        assert_eq!(outcome.companion_person_ref, Some(birth.person_ref));
+        assert_eq!(vault.get(&birth.person_ref)?, Some(before));
+        assert_eq!(
+            vault.get_access_grant(&birth.profile_grant_ref)?,
+            Some(expected_grant)
+        );
+        assert_eq!(
+            read_journal(&vault, &onboarding_key(&intent.onboarding_id))?
+                .expect("completed journal")
+                .step,
+            MemberOnboardingStep::Complete
+        );
+        assert_eq!(
+            vault.onboard_workspace_member(intent, &owner, None)?,
+            outcome
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn companion_retry_rejects_conflicting_roster_identity_after_baseline() -> Result<()> {
+    let (_dir, vault, mut intent) = fixture("Antevon");
+    let birth = companion_birth();
+    intent.grant_bundle.companion_profile_grant_ref = Some(birth.profile_grant_ref);
+    intent.companion_birth = Some(birth.clone());
+    let owner = writer(WRITER);
+    vault.onboard_workspace_member_halting_after(
+        intent.clone(),
+        &owner,
+        None,
+        MemberOnboardingStep::ActorLinked,
+    )?;
+    birth_companion(&vault, &intent, &birth, &owner)?;
+    let mut fields = decode_map(&vault.get(&birth.person_ref)?.expect("PERSON"))?;
+    let name = fields
+        .iter_mut()
+        .find(|(key, _)| key.as_str() == Some("display_name"))
+        .expect("roster name");
+    name.1 = Value::from("different person");
+    let conflicting = encode_value(&Value::Map(fields))?;
+    vault
+        .batch()
+        .put(
+            &birth.person_ref,
+            ENTITY_TYPE_PERSON,
+            TimeRange { start: AT, end: AT },
+            AT + 1,
+            &conflicting,
+        )
+        .commit()?;
+    let err = vault
+        .onboard_workspace_member(intent, &owner, None)
+        .expect_err("a conflicting roster identity cannot be adopted");
+    assert_eq!(err.kind(), ErrorKind::InvalidClaimBody);
+    assert_eq!(vault.get(&birth.person_ref)?, Some(conflicting));
+    Ok(())
+}
+
+#[test]
+fn companion_retry_preserves_valid_owner_edited_persona_baseline() -> Result<()> {
+    let (_dir, vault, mut intent) = fixture("Antevon");
+    let birth = companion_birth();
+    intent.grant_bundle.companion_profile_grant_ref = Some(birth.profile_grant_ref);
+    intent.companion_birth = Some(birth.clone());
+    let owner = writer(WRITER);
+    vault.onboard_workspace_member_halting_after(
+        intent.clone(),
+        &owner,
+        None,
+        MemberOnboardingStep::ActorLinked,
+    )?;
+    birth_companion(&vault, &intent, &birth, &owner)?;
+    vault.put_persona_baseline(
+        &birth.person_ref,
+        &serde_json::json!({ "display_name": "different persona" }),
+        AT + 1,
+    )?;
+    let before = vault.get(&birth.person_ref)?;
+    let outcome = vault.onboard_workspace_member(intent, &owner, None)?;
+    assert_eq!(outcome.companion_person_ref, Some(birth.person_ref));
+    assert_eq!(vault.get(&birth.person_ref)?, before);
+    assert_eq!(
+        crate::companion::validated_persona_baseline(&before.expect("edited PERSON"))?,
+        serde_json::json!({ "display_name": "different persona" })
+    );
+    Ok(())
+}

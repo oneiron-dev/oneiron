@@ -17,7 +17,7 @@ use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;
 use crate::error::{ArtifactError, Error, Result};
 use crate::habit::TaskRole;
-use crate::registry::ENTITY_TYPE_TASK;
+use crate::registry::{ArtifactFamilyKindId, ENTITY_TYPE_TASK, artifact_family_kind_of};
 use crate::temporal::TimeRange;
 use crate::write_envelope::{ClaimCandidate, WriteActor};
 
@@ -42,7 +42,6 @@ impl Vault {
         occurred: TimeRange,
         learned_at: u64,
     ) -> Result<AnnotationThread> {
-        self.require_anchor_version(&anchor.artifact_id, anchor.version)?;
         validate_comment_text(first_comment)?;
 
         let thread_id = self.store.clock.entity_id()?;
@@ -61,6 +60,7 @@ impl Vault {
         let author_id = author.entity_ref();
 
         self.with_write_txn(|wtxn| {
+            self.require_anchor_version_in_txn(&*wtxn, &anchor.artifact_id, anchor.version)?;
             self.batch_in()
                 .claim_candidate(
                     &head_claim_id,
@@ -440,7 +440,7 @@ impl Vault {
     }
 
     /// Transaction-composable [`Vault::require_anchor_version`]: validates the
-    /// target version against the artifact head read through the caller's txn,
+    /// exact target version record read through the caller's txn,
     /// so settle sees the version it just appended in the same write txn.
     pub(super) fn require_anchor_version_in_txn(
         &self,
@@ -453,14 +453,20 @@ impl Vault {
                 "anchor version must be at least 1",
             )));
         }
-        let head =
-            crate::blob_artifact::read_blob_artifact_head_in_txn(&self.store, rtxn, artifact_id)?
-                .ok_or(Error::Artifact(ArtifactError::InvalidAnchor(
-                "anchor artifact has no versions",
-            )))?;
-        if version > head.version {
+        // The family identifies eligible entities; each body's version adapter
+        // remains kind-specific. Code revisions do not use blob's u64 chain.
+        let kind = self
+            .get_entity_type_in_txn(rtxn, artifact_id)?
+            .and_then(artifact_family_kind_of);
+        let exists = match kind {
+            Some(ArtifactFamilyKindId::Blob) => self
+                .blob_artifact_version_metadata_in_txn(rtxn, artifact_id, version)?
+                .is_some(),
+            Some(ArtifactFamilyKindId::Code) | None => false,
+        };
+        if !exists {
             return Err(Error::Artifact(ArtifactError::InvalidAnchor(
-                "anchor version is beyond the artifact head",
+                "anchor version does not exist",
             )));
         }
         Ok(())

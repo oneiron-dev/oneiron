@@ -6,6 +6,7 @@ mod admission_guard;
 mod admission_view;
 mod bootstrap;
 mod claim_refinement;
+mod default_hub;
 mod doors;
 mod folder;
 mod git_fetch;
@@ -32,6 +33,8 @@ pub use claim_refinement::{
 pub(crate) use claim_refinement::{
     claim_refinement_scope_exists_in_txn, erase_claim_refinement_in_txn,
 };
+pub(crate) use default_hub::seed_default_skill_hub;
+pub use default_hub::{default_skill_hub_commit, default_skill_hub_id};
 pub use git_fetch::GitEndpointSkillHubAdapter;
 pub use http_fetch::HttpEndpointSkillHubAdapter;
 pub(crate) use package_codec::remove_hub_package_in_txn;

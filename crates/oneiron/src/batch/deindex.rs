@@ -39,6 +39,7 @@ pub(crate) fn deindex_entity(
     wtxn: &mut RwTxn<'_>,
     id: &EntityId,
 ) -> Result<(bool, bool, bool, Vec<EntityId>)> {
+    crate::config::failure_signals::purge_tier2_for_source_in_txn(store, wtxn, id)?;
     crate::ports::invalidate_source_in_txn(store, wtxn, id)?;
     store.guard_pack_map_carrier_delete_in_txn(wtxn, id)?;
     crate::agent_def::remove_birth_custody_in_txn(store, wtxn, id)?;
@@ -154,6 +155,7 @@ pub(super) fn deindex_entity_without_lexical_query_hint_cascade(
     neighbors.extend(related_neighbors);
 
     delete_short_id_rows_for_id(store, wtxn, id)?;
+    crate::federation::record_scope::retire_stamp(store, wtxn, *id)?;
 
     let Some(entity_record) = store.entities.get(wtxn, id.as_bytes())? else {
         let cleanup = crate::affect::delete_vad_annotation_metadata_in_txn(store, wtxn, id)?;

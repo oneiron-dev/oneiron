@@ -166,13 +166,8 @@ CompactionWindowMessage
 CompanionAssembly
 CompanionBirthIntent
 CompanionExpression
-CompanionExpressionRegister
-CompanionProvenance
-CompanionRecord
-CompanionRecordInput
 CompanionRecordKind
 CompanionScope
-CompanionScopeResolutionSource
 CompanionSubject
 CompanionTaskKind
 ComposedChatAnswer
@@ -250,7 +245,6 @@ Effort
 EmailProviderInbound
 EmptyContext
 EmptyReason
-EndCompanionRelationship
 EndedSession
 EnqueueCompanionTaskOutcome
 EnqueueDreamerAttemptOutcome
