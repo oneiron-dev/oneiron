@@ -77,7 +77,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/agent_dispatch/workflow.rs` | src | s | 4 crate-vis | — | Atomic saved-workflow admission |
 | `src/agent_dispatch/workflow_host.rs` | src | s | 2 fn | — | Typed headless host door for running the one ready workflow leaf |
 | `src/agent_dispatch/workflow_pump.rs` | src | s | 1 fn | — | Ordered workflow host pump |
-| `src/agent_dispatch/workflow_record.rs` | src | s | 2 struct · 1 enum · 1 fn · 10 crate-vis | WorkflowDispatchStatus, WorkflowProgress, WorkflowStepResult | Durable, inert workflow admission and result provenance |
+| `src/agent_dispatch/workflow_record.rs` | src | s | 2 struct · 1 enum · 1 fn · 11 crate-vis | WorkflowDispatchStatus, WorkflowProgress, WorkflowStepResult | Durable, inert workflow admission and result provenance |
 | `src/agent_dispatch/workflow_tests.rs` | test | m | — | — | Headless saved-workflow execution and authority regressions |
 | `src/agent_inbox_lens.rs` | src | s | 3 struct · 1 enum · 3 fn · 1 const | AgentInboxItemKind, AgentInboxLensItem, AgentInboxLensQuery, InboxImpact | Renderer-neutral inbox query |
 | `src/agent_inbox_lens/inbound.rs` | src | s | 1 crate-vis | — | Identity-stamped conversation and membership projections; no writes or index repairs |
@@ -925,7 +925,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/context_projection/mod.rs` | src | s | 4 re-export | — | Typed context projection (`ContextSpec`) and the referenced panel-spec codec/planner a recursive task lead… |
 | `src/context_projection/narrowing.rs` | src | s | 2 fn | — | The narrowing law: declared bounds against declared bounds, and a request against the resolved parent |
 | `src/context_projection/panel_spec.rs` | src | m | 6 struct · 1 enum · 6 fn · 3 const · 2 crate-vis | LeadPanelExecutionPlan, LeadPanelSpec, LeadPanelTaskInputSpec, PanelJudgeSpec, PanelMemberSpec, PanelResultInputs, PanelSynthesisSpec | The referenced lead-panel spec: typed shape, codec, durable persistence, and task-input planner |
-| `src/context_projection/resolution.rs` | src | m | 2 struct · 2 fn · 2 const · 1 crate-vis | ContextResolutionRequest, ResolvedContextProjection | Dispatch-time resolution of a `ContextSpec` against live vault state |
+| `src/context_projection/resolution.rs` | src | m | 3 struct · 2 fn · 2 const · 1 crate-vis | ContextResolutionRequest, ResolvedContextProjection, WorkflowOutputContextRef | Dispatch-time resolution of a `ContextSpec` against live vault state |
 | `src/context_projection/spec.rs` | src | s | 1 struct · 2 enum · 5 fn · 8 const · 2 crate-vis | ChatProjection, ContextSpec, MemoryProjection | The `ContextSpec` descriptor, its bounds, normalization, and structural validation |
 | `src/context_projection/tests.rs` | test | m | — | — | Descriptor, narrowing, resolution-order, and scan-behaviour contract tests |
 | `src/context_projection/tests/panel.rs` | test | m | — | — | Lead-panel codec, planner, blindness ordering, and `contextFrom` admission tests |

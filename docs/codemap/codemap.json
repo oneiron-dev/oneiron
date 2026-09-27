@@ -780,7 +780,7 @@
      "path": "src/agent_dispatch/workflow_record.rs",
      "purpose": "Durable, inert workflow admission and result provenance",
      "surface": {
-      "crate-vis": 10,
+      "crate-vis": 11,
       "enum": 1,
       "fn": 1,
       "struct": 2
@@ -11545,7 +11545,8 @@
      "kind": "src",
      "notable": [
       "ContextResolutionRequest",
-      "ResolvedContextProjection"
+      "ResolvedContextProjection",
+      "WorkflowOutputContextRef"
      ],
      "path": "src/context_projection/resolution.rs",
      "purpose": "Dispatch-time resolution of a `ContextSpec` against live vault state",
@@ -11553,7 +11554,7 @@
       "const": 2,
       "crate-vis": 1,
       "fn": 2,
-      "struct": 2
+      "struct": 3
      }
     },
     {
