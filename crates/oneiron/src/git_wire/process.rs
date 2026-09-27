@@ -234,6 +234,33 @@ fn reject_conditional_config(
     ))
 }
 
+/// Read only the effective, normalized boolean. The selector survives for the
+/// validated hub context; linked worktrees contribute their worktree config.
+fn effective_filemode(
+    process_env: &GitWireProcessEnv,
+    repo_root: &Path,
+    prefix: &[OsString],
+) -> Result<bool> {
+    let args = prefixed_probe(prefix, &["config", "--bool", "--get", "core.filemode"]);
+    let probe = spawn_git_inner(process_env, repo_root, &args, None, None)?;
+    if probe.exit_code == Some(1) && !probe.timed_out && !probe.truncated && probe.stdout.is_empty()
+    {
+        return Ok(true); // Git's unset default.
+    }
+    if probe.success {
+        return match probe.stdout.as_slice() {
+            b"true\n" => Ok(true),
+            b"false\n" => Ok(false),
+            _ => Err(super::failure::invalid(
+                "git core.filemode is not a boolean",
+            )),
+        };
+    }
+    Err(super::failure::invalid(
+        "unable to verify git core.filemode configuration",
+    ))
+}
+
 /// A per-child trusted Git common directory. Refs and objects still point at
 /// the proven repository. Executable configuration and `info/attributes` are
 /// private, while harmless versioned `.gitattributes` remain in force.
@@ -272,14 +299,20 @@ impl TrustedAttributeScope {
         .canonicalize()?;
         let original_config = common.join("config");
         let config_before = read_optional_config(&original_config)?;
+        let filemode = effective_filemode(process_env, repo_root, prefix)?;
         let shadow = tempfile::Builder::new()
             .prefix("oneiron-git-attributes-")
             .tempdir_in(&process_env.tmpdir)?;
         fs::create_dir(shadow.path().join("info"))?;
         fs::write(shadow.path().join("info/attributes"), b"")?;
+        // `core.filemode` changes both cleanliness and the staged executable
+        // bit. Preserve its effective value, never arbitrary repository config.
+        let filemode = if filemode { "true" } else { "false" };
         fs::write(
             shadow.path().join("config"),
-            b"[core]\n repositoryformatversion = 0\n bare = false\n filemode = true\n logallrefupdates = true\n",
+            format!(
+                "[core]\n repositoryformatversion = 0\n bare = false\n filemode = {filemode}\n logallrefupdates = true\n"
+            ),
         )?;
         if let Ok(exclude) = fs::read(common.join("info/exclude")) {
             fs::write(shadow.path().join("info/exclude"), exclude)?;

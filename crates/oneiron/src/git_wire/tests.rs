@@ -400,6 +400,114 @@ fn git_wire_preserves_harmless_eol_attributes_for_checkout_and_status() {
 
 #[cfg(unix)]
 #[test]
+fn git_wire_checkout_filemode_false_ignores_mode_only_difference() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let (_vault_dir, vault) = open_test_vault();
+    let repo = init_repo();
+    run_git(repo.path(), &["config", "core.filemode", "false"]);
+    let wire = new_wire(&vault);
+    let lease = test_lease(&repo, 1);
+    wire.materialize(&lease).expect("materialize");
+    let tree = wire.checkout_worktree_path(&lease).expect("worktree path");
+    fs::set_permissions(tree.join("README.md"), fs::Permissions::from_mode(0o755))
+        .expect("mode-only change");
+    let receipt = PushedHeadReceipt {
+        receipt_ref: "receipt:mode".to_owned(),
+        observed_ref: repo.branch.as_str().to_owned(),
+        pushed_head: repo.head.as_str().to_owned(),
+        checkout_id: lease.checkout_id,
+        epoch: lease.epoch,
+    };
+    assert!(
+        !wire
+            .inspect_teardown(&lease, &receipt)
+            .expect("inspect")
+            .dirty,
+        "core.filemode=false must treat a mode-only difference as clean"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn git_wire_checkout_honors_worktree_level_filemode_false() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let (_vault_dir, vault) = open_test_vault();
+    let repo = init_repo();
+    run_git(
+        repo.path(),
+        &["config", "extensions.worktreeConfig", "true"],
+    );
+    let wire = new_wire(&vault);
+    let lease = test_lease(&repo, 1);
+    wire.materialize(&lease).expect("materialize");
+    let tree = wire.checkout_worktree_path(&lease).expect("worktree path");
+    run_git(&tree, &["config", "--worktree", "core.filemode", "false"]);
+    fs::set_permissions(tree.join("README.md"), fs::Permissions::from_mode(0o755))
+        .expect("mode-only change");
+    let receipt = PushedHeadReceipt {
+        receipt_ref: "receipt:worktree-mode".to_owned(),
+        observed_ref: repo.branch.as_str().to_owned(),
+        pushed_head: repo.head.as_str().to_owned(),
+        checkout_id: lease.checkout_id,
+        epoch: lease.epoch,
+    };
+    assert!(
+        !wire
+            .inspect_teardown(&lease, &receipt)
+            .expect("inspect")
+            .dirty,
+        "worktree core.filemode=false must override the common default"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn git_wire_staging_preserves_filemode_false_and_honors_true() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let repo = init_repo();
+    run_git(repo.path(), &["config", "core.filemode", "false"]);
+    fs::set_permissions(
+        repo.path().join("README.md"),
+        fs::Permissions::from_mode(0o755),
+    )
+    .expect("change mode");
+    run_git(repo.path(), &["add", "--", "README.md"]);
+    let staged = trimmed(run_git(
+        repo.path(),
+        &["ls-files", "--stage", "--", "README.md"],
+    ));
+    assert!(
+        staged.starts_with("100644 "),
+        "false must retain mode: {staged}"
+    );
+
+    let enabled = init_repo();
+    fs::set_permissions(
+        enabled.path().join("README.md"),
+        fs::Permissions::from_mode(0o755),
+    )
+    .expect("change mode");
+    let status = run_git(enabled.path(), &["status", "--porcelain", "-z"]);
+    assert!(
+        !status.is_empty(),
+        "core.filemode=true must observe mode changes"
+    );
+    run_git(enabled.path(), &["add", "--", "README.md"]);
+    let staged = trimmed(run_git(
+        enabled.path(),
+        &["ls-files", "--stage", "--", "README.md"],
+    ));
+    assert!(
+        staged.starts_with("100755 "),
+        "true must stage mode: {staged}"
+    );
+}
+
+#[cfg(unix)]
+#[test]
 fn git_wire_rejects_conditional_worktree_smudge_filter() {
     use std::io::Write;
 
