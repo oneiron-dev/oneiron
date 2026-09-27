@@ -67,6 +67,8 @@ pub(in crate::gate) struct DecodedPolicyManifest {
     pub(in crate::gate) hosted_tts: HostedTtsPolicy,
 
     pub(in crate::gate) diagnostic_bounds: Option<crate::self_heal::tripwires::TripwireBounds>,
+    pub(in crate::gate) livequery_tracker_limits:
+        Option<crate::gate::tracker_limits::PolicyTrackerLimits>,
     pub(in crate::gate) proposal_check_threshold: Option<u64>,
     pub(in crate::gate) weave_correction_policy: Option<crate::gate::WeaveCorrectionPolicy>,
     pub(in crate::gate) ask_policy: Option<crate::gate::ask_policy::AskOperationalPolicy>,
@@ -118,6 +120,7 @@ pub(in crate::gate) fn decode_policy_manifest(data: &[u8]) -> Option<DecodedPoli
                 | POLICY_HOSTED_TTS_KEY
 
                 | "diagnostic_bounds"
+                | "livequery_tracker_limits"
                 | "proposal_check_threshold"
                 | POLICY_WEAVE_CORRECTION_POLICY_KEY
                 | POLICY_ASK_POLICY_KEY
@@ -258,6 +261,13 @@ pub(in crate::gate) fn decode_policy_manifest(data: &[u8]) -> Option<DecodedPoli
         MapValue::Duplicate => return None,
         MapValue::Present(value) => HostedTtsPolicy::parse(value)?,
     };
+    let livequery_tracker_limits = match single_map_value(&entries, "livequery_tracker_limits") {
+        MapValue::Missing => None,
+        MapValue::Duplicate => return None,
+        MapValue::Present(value) => Some(crate::gate::tracker_limits::PolicyTrackerLimits::decode(
+            value,
+        )?),
+    };
     let diagnostic_bounds = match single_map_value(&entries, "diagnostic_bounds") {
         MapValue::Missing => None,
         MapValue::Duplicate => return None,
@@ -320,6 +330,7 @@ pub(in crate::gate) fn decode_policy_manifest(data: &[u8]) -> Option<DecodedPoli
         hosted_tts,
 
         diagnostic_bounds,
+        livequery_tracker_limits,
         proposal_check_threshold,
         weave_correction_policy,
         ask_policy,
