@@ -335,6 +335,8 @@ fn measure(mode: Mode, agents: usize, ops: usize, seed: u64) -> Result<Report, S
     let write_ids: Vec<_> = (0..ops).map(|_| id(&mut rng)).collect();
     let dir = tempfile::tempdir().map_err(|e| e.to_string())?;
     let mut config = VaultConfig::device();
+    // This diagnostic measures the telemetry writer, so opt in explicitly.
+    config.retrieval_telemetry_capture = true;
     config.dimensions = 4;
     config.embedding_model = Some("bench/swarm-baseline@v1".into());
     config.map_size = 1024 * 1024 * 1024;
