@@ -264,7 +264,6 @@ pub(crate) fn with_optimized_skill_admission(
     admitted.lifecycle_status = SkillLifecycle::Active;
     validate_skill_update(&staged, &admitted)?;
     let data = crate::skill::encode_skill_record(&admitted)?;
-    bind_successor_goal_in_txn(vault, wtxn, proposal, &target)?;
     apply(wtxn, data)?;
     Ok(None)
 }
@@ -344,6 +343,7 @@ fn admission_refusal_in_txn(
         &outcomes,
         proposal_tier,
         goal_definition_in_txn(vault, wtxn, target)?.revision,
+        goal_definition_in_txn(vault, wtxn, target)?.goal_id,
     )?
     .matches(accepted)
     {
@@ -394,12 +394,13 @@ fn record_refusal_in_txn(
 /// is what makes the admission floor apply at all, the target entity and
 /// version are what "this revises that revision" means, and the cycle is what
 /// the accept cap is counted against.
-const OPTIMIZER_ORIGIN_KEYS: [&str; 5] = [
+const OPTIMIZER_ORIGIN_KEYS: [&str; 6] = [
     PROVENANCE_BIRTH_KEY,
     PROVENANCE_OPTIMIZE_OF_KEY,
     PROVENANCE_OPTIMIZE_OF_ENTITY_KEY,
     PROVENANCE_OPTIMIZE_OF_VERSION_KEY,
     PROVENANCE_OPTIMIZE_CYCLE_KEY,
+    GOAL_ID_KEY,
 ];
 
 /// The `vault_meta` key the optimizer-birth marker for one entity lives at.
@@ -410,7 +411,7 @@ pub(in crate::skill_optimize) fn optimizer_origin_marker_key(id: &EntityId) -> V
     key
 }
 
-/// The five origin values a record carries, in the pinned key order.
+/// The six origin values a record carries, in the pinned key order.
 fn optimizer_origin_values(record: &SkillRecord) -> Vec<Option<String>> {
     OPTIMIZER_ORIGIN_KEYS
         .iter()
@@ -475,7 +476,7 @@ fn decode_origin_marker(raw: &[u8]) -> Result<Vec<Option<String>>> {
 /// create at that id must present byte-identical origin provenance. The answer
 /// is one of four:
 ///
-/// - marked, and the create carries the same five values → allowed, and the
+/// - marked, and the create carries the same six values → allowed, and the
 ///   record is optimizer-born again, so every update-door rule applies to it
 ///   unchanged;
 /// - marked, and the create carries different or absent origin → refused: that
@@ -509,7 +510,9 @@ pub(crate) fn optimizer_birth_marker_for_create_in_txn(
     txn: &heed::RoTxn<'_>,
     id: &EntityId,
     created: &SkillRecord,
+    replicated: bool,
 ) -> Result<Option<(Vec<u8>, Vec<u8>)>> {
+    validate_goal_birth_in_txn(store, txn, id, created, replicated)?;
     let key = optimizer_origin_marker_key(id);
     let origin = optimizer_origin_values(created);
     let Some(marked) = store
@@ -546,7 +549,7 @@ pub(crate) fn optimizer_birth_marker_for_create_in_txn(
 /// asks for changes, because the two roads can prove different things.
 ///
 /// - Origin immutability is absolute, whatever the road. A lawful peer never
-///   edits these five values (its own door forbids it, this same function),
+///   edits these six values (its own door forbids it, this same function),
 ///   so refusing a row that does costs convergence nothing and closes the
 ///   laundering loop the create-side marker opens the other end of: strip the
 ///   birth path on one replica and the stripped body used to travel back and
@@ -607,6 +610,16 @@ pub(crate) fn check_optimizer_admission_in_txn(
     replicated: bool,
     proof: Option<&crate::skill_hub::HubAdmissionProof>,
 ) -> Result<()> {
+    // The portable identity is a birth fact, not a first-match text field.
+    // Parse both maps strictly so a duplicate `goal_id` cannot hide behind
+    // the older `provenance_str` origin comparison.
+    let prior_goal = SkillGoalId::of(id, prior)?;
+    let updated_goal = SkillGoalId::of(id, updated)?;
+    if prior_goal != updated_goal {
+        return Err(invalid(
+            "an optimizer goal identity cannot change on update",
+        ));
+    }
     if !born_on_optimize_road(prior) {
         return if born_on_optimize_road(updated) {
             Err(invalid(

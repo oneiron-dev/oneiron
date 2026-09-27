@@ -106,9 +106,10 @@ use rmpv::Value;
 use sha2::{Digest, Sha256};
 
 use super::{
-    PROVENANCE_OPTIMIZE_CYCLE_KEY, PROVENANCE_OPTIMIZE_OF_ENTITY_KEY, PROVENANCE_OPTIMIZE_OF_KEY,
-    PROVENANCE_OPTIMIZE_OF_VERSION_KEY, SKILL_OPTIMIZE_BIRTH_PATH,
-    SKILL_OPTIMIZE_MAX_BRIEF_EVIDENCE, invalid, proven_cycle, tier_verdict_in_txn,
+    GOAL_ID_KEY, PROVENANCE_OPTIMIZE_CYCLE_KEY, PROVENANCE_OPTIMIZE_OF_ENTITY_KEY,
+    PROVENANCE_OPTIMIZE_OF_KEY, PROVENANCE_OPTIMIZE_OF_VERSION_KEY, SKILL_OPTIMIZE_BIRTH_PATH,
+    SKILL_OPTIMIZE_MAX_BRIEF_EVIDENCE, SkillGoalId, invalid, proven_cycle, tier_verdict_in_txn,
+    validate_goal_birth_in_txn,
 };
 use crate::Vault;
 use crate::attempt_queue::AttemptId;
@@ -189,8 +190,8 @@ use decision::{
     standing_verdict_in_txn,
 };
 use goal_axis::{
-    GoalDefinition, bind_successor_goal_in_txn, dominates, floor_regressed, goal_definition_in_txn,
-    is_tradeoff, score_goal_axes, validate_goal_vector,
+    GoalDefinition, dominates, floor_regressed, goal_definition_in_txn, is_tradeoff,
+    score_goal_axes, validate_goal_vector,
 };
 use ledger::{record_verdict_in_txn, verdict_rows_in_txn};
 use measurement::{measure, validate_measurements, world_labels_digest};
@@ -235,7 +236,7 @@ const SPLIT_DOMAIN: &[u8] = b"skill_optimize:heldout:v1\0";
 /// data rather than ordering (the `edit_distance::escalation` posture).
 pub(super) const VERDICT_PREFIX: &[u8] = b"skill_optimize/verdict/v1\0";
 
-/// Bumped for review (v5 → v6: authenticated goal revision and tradeoff resolution).
+/// Bumped for the portable goal binding (v6 → v7: explicit goal identity).
 /// ONE-2114 introduced v5 goal vectors and dominance.
 /// OF-214 introduced v4 audited measurements and bound world labels.
 /// Earlier repairs: MATERIAL-10 (v1 → v2: a v1 row carries no binding
@@ -246,9 +247,9 @@ pub(super) const VERDICT_PREFIX: &[u8] = b"skill_optimize/verdict/v1\0";
 /// `deferred_evidence_changed` disposition).
 ///
 /// Prerelease, and the honest answer to an unbindable row is to refuse it
-/// rather than to grow a second code path for it: every v1/v2/v3/v4/v5 row decodes as
+/// rather than to grow a second code path for it: every v1/v2/v3/v4/v5/v6 row decodes as
 /// [`Error::CorruptedIndex`]. There is no shim and no migration.
-const VERDICT_SCHEMA_VERSION: u64 = 6;
+const VERDICT_SCHEMA_VERSION: u64 = 7;
 const KEY_SCHEMA_VERSION: &str = "v";
 const KEY_PROPOSAL: &str = "proposal";
 const KEY_SKILL: &str = "skill";
@@ -269,6 +270,7 @@ const KEY_AT: &str = "at";
 const KEY_MEASUREMENTS: &str = "measurements";
 const KEY_GOAL_AXES: &str = "goal_axes";
 const KEY_GOAL_REVISION: &str = "goal_revision";
+const KEY_GOAL_ID: &str = "goal_id";
 const KEY_TRADEOFF_RESOLUTION: &str = "tradeoff_resolution";
 
 /// Domain separator of the canonical SKILL-body content digest.

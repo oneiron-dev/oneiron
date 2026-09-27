@@ -133,6 +133,7 @@ mod ask_band;
 mod brief;
 mod dials;
 mod gate;
+mod goal_binding;
 mod job;
 mod selection;
 mod tier;
@@ -176,6 +177,8 @@ pub(crate) use gate::{
     skill_edit_verdict_receipts, with_optimized_skill_admission,
 };
 
+pub(crate) use self::goal_binding::validate_goal_birth_in_txn;
+use self::goal_binding::{GOAL_ID_KEY, SkillGoalId};
 pub(crate) use self::job::{SKILL_EDIT_CYCLE_RUN_PREFIX, proven_cycle};
 
 use self::dials::invalid;

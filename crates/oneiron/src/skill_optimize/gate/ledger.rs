@@ -58,7 +58,7 @@ pub(super) fn record_verdict_in_txn(
     verdict: &HeldOutVerdict,
 ) -> Result<()> {
     if verdict.measurements.is_some() {
-        if verdict.goal_revision.is_empty() {
+        if verdict.goal_revision.is_empty() || verdict.goal_id.is_none() {
             return Err(invalid("judged verdict has no goal revision"));
         }
         validate_goal_vector(&verdict.goal_axes)?;
@@ -69,6 +69,7 @@ pub(super) fn record_verdict_in_txn(
         )?;
     } else if !verdict.goal_axes.is_empty()
         || !verdict.goal_revision.is_empty()
+        || verdict.goal_id.is_some()
         || verdict.tradeoff_resolution.is_some()
     {
         return Err(invalid("an unscored verdict cannot carry goal axes"));
@@ -97,6 +98,12 @@ pub(super) fn record_verdict_in_txn(
         (
             Value::from(KEY_GOAL_REVISION),
             Value::from(verdict.goal_revision.as_str()),
+        ),
+        (
+            Value::from(KEY_GOAL_ID),
+            verdict
+                .goal_id
+                .map_or(Value::Nil, |id| Value::from(id.to_hex())),
         ),
         (
             Value::from(KEY_TRADEOFF_RESOLUTION),
@@ -302,6 +309,16 @@ fn decode_verdict(key: &[u8], raw: &[u8]) -> Result<HeldOutVerdict> {
     {
         return Err(Error::CorruptedIndex(VERDICT_ROW_LABEL));
     }
+    let goal_id = match field(KEY_GOAL_ID) {
+        Some(Value::Nil) if measurements.is_none() => None,
+        Some(value) if measurements.is_some() => Some(
+            value
+                .as_str()
+                .and_then(|hex| EntityId::from_hex(hex).ok())
+                .ok_or(Error::CorruptedIndex(VERDICT_ROW_LABEL))?,
+        ),
+        _ => return Err(Error::CorruptedIndex(VERDICT_ROW_LABEL)),
+    };
     let tradeoff_resolution: Option<TradeoffResolution> = match field(KEY_TRADEOFF_RESOLUTION) {
         Some(Value::Nil) => None,
         Some(value) => Some(
@@ -321,6 +338,7 @@ fn decode_verdict(key: &[u8], raw: &[u8]) -> Result<HeldOutVerdict> {
         return Err(Error::CorruptedIndex(VERDICT_ROW_LABEL));
     }
     Ok(HeldOutVerdict {
+        goal_id,
         tradeoff_resolution,
         goal_axes,
         goal_revision: text(KEY_GOAL_REVISION)?,

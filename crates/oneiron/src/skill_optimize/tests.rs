@@ -1734,6 +1734,15 @@ fn optimizer_proposal_record_citing(
             Value::from(target.to_hex()),
         ),
         (
+            Value::from(GOAL_ID_KEY),
+            Value::from(
+                SkillGoalId::of(target, &target_record)
+                    .expect("valid target goal")
+                    .entity()
+                    .to_hex(),
+            ),
+        ),
+        (
             Value::from(PROVENANCE_OPTIMIZE_OF_VERSION_KEY),
             Value::from(target_record.version.as_str()),
         ),
@@ -3715,7 +3724,7 @@ fn set_row_field(entries: &mut [(Value, Value)], key: &str, value: &Value) {
 }
 
 #[test]
-fn a_verdict_row_is_schema_v6_and_every_older_row_fails_closed() -> Result<()> {
+fn a_verdict_row_is_schema_v7_and_every_older_row_fails_closed() -> Result<()> {
     let (_tmp, vault) = temp_vault();
     let (_, proposal) = losing_skill_with_proposal(&vault, "oneiron.skill.losing");
     let scorer = StubScorer::improving();
@@ -3729,7 +3738,7 @@ fn a_verdict_row_is_schema_v6_and_every_older_row_fails_closed() -> Result<()> {
     assert_eq!(
         skill_edit_verdict(&vault, &proposal)?.expect("a standing verdict"),
         accepted,
-        "a v6 row round-trips with measurements, goal axes and bound tier"
+        "a v7 row round-trips with measurements, goal identity and tier"
     );
     assert_eq!(accepted.proposal_tier, Some(SkillGovernanceTier::Standard));
 
@@ -3778,9 +3787,19 @@ fn a_verdict_row_is_schema_v6_and_every_older_row_fails_closed() -> Result<()> {
         ErrorKind::CorruptedIndex
     );
 
+    rewrite_verdict_row(&vault, |entries| {
+        set_row_field(entries, "v", &Value::from(6u64));
+    });
+    assert_eq!(
+        skill_edit_verdicts(&vault)
+            .expect_err("v6 lacks portable goal identity")
+            .kind(),
+        ErrorKind::CorruptedIndex
+    );
+
     // …and so is the retired disposition, whatever schema claims to carry it.
     rewrite_verdict_row(&vault, |entries: &mut [(Value, Value)]| {
-        set_row_field(entries, "v", &Value::from(6u64));
+        set_row_field(entries, "v", &Value::from(7u64));
         set_row_field(
             entries,
             "disposition",
@@ -3796,9 +3815,9 @@ fn a_verdict_row_is_schema_v6_and_every_older_row_fails_closed() -> Result<()> {
     rewrite_verdict_row(&vault, |entries: &mut [(Value, Value)]| {
         set_row_field(entries, "disposition", &Value::from("accepted"));
     });
-    // A judged v6 verdict cannot carry an absent or nil audit pair.
+    // A judged v7 verdict cannot carry an absent or nil audit pair.
     rewrite_verdict_row(&vault, |entries: &mut [(Value, Value)]| {
-        set_row_field(entries, "v", &Value::from(6u64));
+        set_row_field(entries, "v", &Value::from(7u64));
         set_row_field(entries, "measurements", &Value::Nil);
     });
     assert_eq!(
@@ -5482,5 +5501,287 @@ fn inherited_policy_floor_change_revokes_a_cached_acceptance_and_scores_fresh() 
     assert_eq!(new.disposition, SkillEditDisposition::Rejected);
     assert_ne!(new.goal_revision, old.goal_revision);
     assert!(new.goal_axes["safety"].after < new.goal_axes["safety"].before);
+    Ok(())
+}
+
+fn seed_successor_outcome(vault: &Vault, skill: &EntityId) -> Result<()> {
+    let receipt = (0u64..)
+        .map(|n| format!("portable-goal-reserve:{n}"))
+        .find(|id| receipt_is_held_out(skill, id))
+        .expect("held-out id exists");
+    let mut encoded = Vec::new();
+    rmpv::encode::write_value(
+        &mut encoded,
+        &Value::Map(vec![
+            (Value::from("schema_version"), Value::from(1u64)),
+            (Value::from("win"), Value::Boolean(false)),
+            (Value::from("at"), Value::from(500u64)),
+        ]),
+    )
+    .expect("encode outcome");
+    vault.with_write_txn(|txn| {
+        let mut key = b"skill_reliability:outcome:v1:".to_vec();
+        key.extend_from_slice(skill.as_bytes());
+        key.extend_from_slice(receipt.as_bytes());
+        vault.store.vault_meta.put(txn, &key, &encoded)?;
+        Ok(())
+    })
+}
+
+#[test]
+fn portable_goal_survives_replayed_activation_and_first_active_rematerialization() -> Result<()> {
+    for first_active in [false, true] {
+        let (_origin_tmp, origin) = temp_vault();
+        let (a, b) = losing_skill_with_proposal(&origin, "oneiron.skill.portable_goal");
+        let candidate = stored(&origin, &b);
+        let mut active = candidate.clone();
+        active.approval_status = ClaimApprovalStatus::Approved;
+        active.lifecycle_status = SkillLifecycle::Active;
+        let (_receiver_tmp, receiver) = temp_vault();
+        let a_body = crate::skill::encode_skill_record(&stored(&origin, &a))?;
+        receiver
+            .batch()
+            .put_replicated(&a, ENTITY_TYPE_SKILL, t(400), 401, &a_body)
+            .commit()?;
+        let owner = vector_owner(&receiver);
+        let original = set_skill_edit_goal_axes(&receiver, &owner, &a, vector_axes())?;
+        if !first_active {
+            let candidate_body = crate::skill::encode_skill_record(&candidate)?;
+            receiver
+                .batch()
+                .put_replicated(&b, ENTITY_TYPE_SKILL, t(402), 403, &candidate_body)
+                .commit()?;
+            let active_body = crate::skill::encode_skill_record(&active)?;
+            receiver
+                .batch()
+                .put_replicated(&b, ENTITY_TYPE_SKILL, t(404), 405, &active_body)
+                .commit()?;
+            assert!(receiver.delete_entity(&a)?);
+        } else {
+            // The receiver never saw B before and A has already been erased.
+            assert!(receiver.delete_entity(&a)?);
+            let active_body = crate::skill::encode_skill_record(&active)?;
+            receiver
+                .batch()
+                .put_replicated(&b, ENTITY_TYPE_SKILL, t(404), 405, &active_body)
+                .commit()?;
+            receiver
+                .batch()
+                .put_replicated(&b, ENTITY_TYPE_SKILL, t(406), 407, &active_body)
+                .commit()?;
+        }
+        assert_eq!(
+            stored(&receiver, &b).lifecycle_status,
+            SkillLifecycle::Active
+        );
+        seed_successor_outcome(&receiver, &b)?;
+        let c = successor_goal_proposal(&receiver, &b);
+        let lost_floor = score_gate_skill_edit_in_cycle(
+            &receiver,
+            &c,
+            &VectorScorer::new((0.4, 0.9), (0.8, 0.7), (0.5, 0.6)).with_baseline(DRAFTED_DESC),
+            wake(&receiver, "portable-c", 10),
+            900,
+        )?;
+        assert_eq!(lost_floor.disposition, SkillEditDisposition::Rejected);
+        assert!(lost_floor.goal_axes["safety"].after < lost_floor.goal_axes["safety"].before);
+        let d = successor_goal_proposal(&receiver, &b);
+        let pending = score_gate_skill_edit_in_cycle(
+            &receiver,
+            &d,
+            &VectorScorer::new((0.4, 0.9), (0.8, 0.8), (0.6, 0.5)).with_baseline(DRAFTED_DESC),
+            wake(&receiver, "portable-d", 20),
+            901,
+        )?;
+        assert_eq!(
+            pending.disposition,
+            SkillEditDisposition::NeedsTradeoffDecision
+        );
+        let changed = set_skill_edit_goal_axes(&receiver, &owner, &b, vector_axes())?;
+        assert_ne!(original, changed);
+        assert_eq!(
+            resolve_skill_edit_tradeoff(
+                &receiver,
+                &d,
+                pending.id,
+                &owner,
+                "pick:stale",
+                TradeoffChoice::Approve,
+                902
+            )
+            .expect_err("goal change revokes pending tradeoff")
+            .kind(),
+            ErrorKind::InvalidSkillBody
+        );
+        let e = successor_goal_proposal(&receiver, &b);
+        let accepted = score_gate_skill_edit_in_cycle(
+            &receiver,
+            &e,
+            &VectorScorer::new((0.4, 0.8), (0.8, 0.8), (0.5, 0.6)).with_baseline(DRAFTED_DESC),
+            wake(&receiver, "portable-e", 30),
+            903,
+        )?;
+        assert_eq!(accepted.disposition, SkillEditDisposition::Accepted);
+        set_skill_edit_goal_axes(&receiver, &owner, &b, vector_axes())?;
+        assert_eq!(
+            admit_optimized_skill_revision(&receiver, &e, t(410), 411)
+                .expect_err("goal change revokes acceptance")
+                .kind(),
+            ErrorKind::InvalidSkillBody
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn optimizer_goal_identity_is_strict_on_birth_update_and_same_id_recreate() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    let (a, b) = losing_skill_with_proposal(&vault, "oneiron.skill.goal_guard");
+    let born = stored(&vault, &b);
+    let mut missing = born.clone();
+    missing.provenance = without_provenance(&missing, GOAL_ID_KEY);
+    let mut malformed = born.clone();
+    let Value::Map(entries) = &mut malformed.provenance else {
+        panic!("provenance")
+    };
+    for (name, value) in entries {
+        if name.as_str() == Some(GOAL_ID_KEY) {
+            *value = Value::from("not-an-id");
+        }
+    }
+    let mut conflicting = born.clone();
+    let Value::Map(entries) = &mut conflicting.provenance else {
+        panic!("provenance")
+    };
+    for (name, value) in entries {
+        if name.as_str() == Some(GOAL_ID_KEY) {
+            *value = Value::from(EntityId::now().to_hex());
+        }
+    }
+    let mut duplicate = born.clone();
+    let Value::Map(entries) = &mut duplicate.provenance else {
+        panic!("provenance")
+    };
+    entries.push((Value::from(GOAL_ID_KEY), Value::from(a.to_hex())));
+    // The public codec itself refuses duplicate provenance keys before a body
+    // can reach any write door. The other cases exercise the shared guard.
+    assert_eq!(
+        crate::skill::encode_skill_record(&duplicate)
+            .expect_err("duplicate goal identity cannot encode")
+            .kind(),
+        ErrorKind::InvalidSkillBody
+    );
+    for row in [&missing, &malformed, &conflicting] {
+        let fresh = EntityId::now();
+        let body = crate::skill::encode_skill_record(row)?;
+        assert_eq!(
+            vault
+                .batch()
+                .put(&fresh, ENTITY_TYPE_SKILL, t(400), 401, &body)
+                .commit()
+                .expect_err("local birth must bind the parent goal")
+                .kind(),
+            ErrorKind::InvalidSkillBody
+        );
+        assert_eq!(
+            vault
+                .batch()
+                .put_replicated(&fresh, ENTITY_TYPE_SKILL, t(400), 401, &body)
+                .commit()
+                .expect_err("known predecessor constrains replay")
+                .kind(),
+            ErrorKind::InvalidSkillBody
+        );
+        assert!(vault.get_skill_record(&fresh)?.is_none());
+        assert_eq!(
+            vault
+                .update_skill_record(&b, row, t(402), 403)
+                .expect_err("goal identity is immutable on update")
+                .kind(),
+            ErrorKind::InvalidSkillBody
+        );
+    }
+    let saved = crate::skill::encode_skill_record(&born)?;
+    assert!(vault.delete_entity(&b)?);
+    assert_eq!(
+        vault
+            .batch()
+            .put(
+                &b,
+                ENTITY_TYPE_SKILL,
+                t(404),
+                405,
+                &crate::skill::encode_skill_record(&conflicting)?
+            )
+            .commit()
+            .expect_err("delete and recreate cannot rebind goal")
+            .kind(),
+        ErrorKind::InvalidSkillBody
+    );
+    vault
+        .batch()
+        .put(&b, ENTITY_TYPE_SKILL, t(406), 407, &saved)
+        .commit()?;
+    assert_eq!(SkillGoalId::of(&b, &stored(&vault, &b))?.entity(), a);
+    Ok(())
+}
+
+#[test]
+fn second_generation_materializes_after_both_predecessors_were_erased() -> Result<()> {
+    let (_origin_tmp, origin) = temp_vault();
+    let (a, b) = losing_skill_with_proposal(&origin, "oneiron.skill.three_generations");
+    let a_body = crate::skill::encode_skill_record(&stored(&origin, &a))?;
+    let owner = vector_owner(&origin);
+    set_skill_edit_goal_axes(&origin, &owner, &a, vector_axes())?;
+    score_gate_skill_edit_in_cycle(
+        &origin,
+        &b,
+        &VectorScorer::new((0.4, 0.8), (0.8, 0.8), (0.5, 0.6)),
+        wake(&origin, "gen-1", 10),
+        900,
+    )?;
+    admit_optimized_skill_revision(&origin, &b, t(400), 401)?;
+    origin.supersede_skill_record(&a, &b, t(402), 403)?;
+    seed_successor_outcome(&origin, &b)?;
+    let c = successor_goal_proposal(&origin, &b);
+    score_gate_skill_edit_in_cycle(
+        &origin,
+        &c,
+        &VectorScorer::new((0.4, 0.9), (0.8, 0.8), (0.5, 0.6)).with_baseline(DRAFTED_DESC),
+        wake(&origin, "gen-2", 20),
+        901,
+    )?;
+    admit_optimized_skill_revision(&origin, &c, t(404), 405)?;
+    origin.supersede_skill_record(&b, &c, t(406), 407)?;
+    let c_body = crate::skill::encode_skill_record(&stored(&origin, &c))?;
+    assert!(origin.delete_entity(&a)?);
+    assert!(origin.delete_entity(&b)?);
+    assert_eq!(SkillGoalId::of(&c, &stored(&origin, &c))?.entity(), a);
+
+    let (_receiver_tmp, receiver) = temp_vault();
+    receiver
+        .batch()
+        .put_replicated(&a, ENTITY_TYPE_SKILL, t(410), 411, &a_body)
+        .commit()?;
+    let receiver_owner = vector_owner(&receiver);
+    set_skill_edit_goal_axes(&receiver, &receiver_owner, &a, vector_axes())?;
+    assert!(receiver.delete_entity(&a)?);
+    receiver
+        .batch()
+        .put_replicated(&c, ENTITY_TYPE_SKILL, t(412), 413, &c_body)
+        .commit()?;
+    seed_successor_outcome(&receiver, &c)?;
+    let d = successor_goal_proposal(&receiver, &c);
+    let verdict = score_gate_skill_edit_in_cycle(
+        &receiver,
+        &d,
+        &VectorScorer::new((0.4, 0.9), (0.8, 0.7), (0.5, 0.6))
+            .with_baseline("Next generation instructions."),
+        wake(&receiver, "gen-3", 30),
+        902,
+    )?;
+    assert_eq!(verdict.disposition, SkillEditDisposition::Rejected);
+    assert_eq!(verdict.goal_id, Some(a));
+    set_skill_edit_goal_axes(&receiver, &receiver_owner, &c, vector_axes())?;
     Ok(())
 }

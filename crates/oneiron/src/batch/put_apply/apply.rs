@@ -567,7 +567,7 @@ pub(in crate::batch) fn apply_put(
         // same rule a local recreate is, which is a remote rejection the sync
         // door quarantines rather than a divergence it hides.
         optimizer_birth_marker = crate::skill_optimize::optimizer_birth_marker_for_create_in_txn(
-            store, &*wtxn, &id, created,
+            store, &*wtxn, &id, created, replicated,
         )?;
         // The birth law itself is LOCAL-only, and stays that way: sync remat
         // keeps writing already-lifecycled records.

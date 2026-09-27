@@ -203,6 +203,8 @@ pub struct HeldOutVerdict {
     pub goal_axes: BTreeMap<String, GoalAxisScore>,
     /// Authenticated goal-definition revision this vector was scored against.
     pub goal_revision: String,
+    /// Portable goal identity; absent only on an unscored refusal.
+    pub goal_id: Option<EntityId>,
     /// Decision evidence only on an owner-resolved tradeoff.
     pub tradeoff_resolution: Option<TradeoffResolution>,
     /// Both receipt-only audits and judge agreement with available world labels.

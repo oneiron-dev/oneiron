@@ -189,6 +189,7 @@ fn rule_on_proposal(
                     &outcomes,
                     tier_verdict_in_txn(vault, &*wtxn, proposal, &staged)?.tier(),
                     goal_definition_in_txn(vault, wtxn, &target)?.revision,
+                    goal_definition_in_txn(vault, wtxn, &target)?.goal_id,
                 )?;
                 // Idempotence, before the LLM tier rather than after it. A gate
                 // call is a DELIVERY, and deliveries are retried; asking the
@@ -272,7 +273,9 @@ fn rule_on_proposal(
         let current = readable_target(vault.read_skill_record_in_txn(&*wtxn, &target).map(Some))?;
         // A changed goal cannot return an old standing acceptance even if the
         // bodies and evidence stayed fixed while the judge was thinking.
-        if goal_definition_in_txn(vault, wtxn, &target)?.revision != basis.goal_revision {
+        if goal_definition_in_txn(vault, wtxn, &target)?.revision != basis.goal_revision
+            || goal_definition_in_txn(vault, wtxn, &target)?.goal_id != basis.goal_id
+        {
             return Err(retry("goal definition moved while the scorer was thinking"));
         }
         // The concurrent duplicate: two deliveries that both got past the read
@@ -285,6 +288,7 @@ fn rule_on_proposal(
             after,
             goal_axes: goal_axes.clone(),
             goal_revision: basis.goal_revision.clone(),
+            goal_id: Some(basis.goal_id),
             tradeoff_resolution: None,
             measurements: Some(measurements),
             accepted: false,
@@ -517,7 +521,9 @@ fn decide_in_txn(
             "world outcome labels moved while the judge was measuring",
         ));
     }
-    if goal_definition_in_txn(vault, wtxn, &target_of(staged)?)?.revision != basis.goal_revision {
+    if goal_definition_in_txn(vault, wtxn, &target_of(staged)?)?.revision != basis.goal_revision
+        || goal_definition_in_txn(vault, wtxn, &target_of(staged)?)?.goal_id != basis.goal_id
+    {
         return Err(retry("goal definition moved while the scorer was thinking"));
     }
     // A floor regression never votes as a tradeoff, regardless of gains on
@@ -674,6 +680,7 @@ fn refusal(
         after: 0.0,
         goal_axes: BTreeMap::new(),
         goal_revision: String::new(),
+        goal_id: None,
         tradeoff_resolution: None,
         measurements: None,
         accepted: false,
