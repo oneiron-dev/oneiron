@@ -281,7 +281,7 @@ fn chain_in_txn(
     Ok(replies)
 }
 
-pub(crate) fn thread_in_txn(vault: &Vault, txn: &RoTxn<'_>, trunk: EntityId) -> Result<Thread> {
+fn thread_in_txn(vault: &Vault, txn: &RoTxn<'_>, trunk: EntityId) -> Result<Thread> {
     let conversation = conversation_of(&vault.store, txn, &trunk)?;
     let replies = chain_in_txn(vault, txn, conversation, trunk, None)?;
     let mut last_at = None;
