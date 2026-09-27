@@ -4,7 +4,7 @@ use std::num::NonZeroU16;
 
 use crate::Vault;
 use crate::agent_dispatch::{AGENT_DISPATCH_ATTEMPT_TYPE, decode_agent_dispatch_input};
-use crate::attempt_queue::{AttemptQueue, AttemptRecord, FailAttempt, FailOutcome, RetryAttempt};
+use crate::attempt_queue::{AttemptRecord, FailAttempt, FailOutcome, RetryAttempt};
 use crate::dreamer_runner::{DREAMER_RUNNER_ATTEMPT_KIND, decode_dreamer_attempt_payload};
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
@@ -105,13 +105,9 @@ pub(crate) fn verified_blocked_reports(
 /// The single terminal transition. `AlreadyFailed` means a concurrent failure
 /// input won it, so the loser routes NOTHING — no healer dispatch, no card, no
 /// surface — and returns the existing typed transition error.
-pub(super) fn fail_once(
-    vault: &Vault,
-    queue: &AttemptQueue<'_>,
-    input: &HandleAttemptFailure,
-) -> Result<AttemptRecord> {
+pub(super) fn fail_once(vault: &Vault, input: &HandleAttemptFailure) -> Result<AttemptRecord> {
     let mut txn = vault.store.env.write_txn()?;
-    let failed = fail_once_in_txn(vault, queue, &mut txn, input)?;
+    let failed = fail_once_in_txn(vault, &mut txn, input)?;
     txn.commit()?;
     vault.store.notify_attempt_observers();
     Ok(failed)
@@ -119,11 +115,14 @@ pub(super) fn fail_once(
 
 pub(super) fn fail_once_in_txn(
     vault: &Vault,
-    queue: &AttemptQueue<'_>,
     txn: &mut heed::RwTxn<'_>,
     input: &HandleAttemptFailure,
 ) -> Result<AttemptRecord> {
-    let failed = new_failure(queue.fail_in_txn(txn, fail_request(input))?)?;
+    let failed = new_failure(crate::ports::JobQueue::port_job_fail(
+        vault,
+        txn,
+        fail_request(input),
+    )?)?;
     crate::dreamer_runner::DreamerRunnerStore::new(vault)
         .cleanup_step_receipts_in_txn(txn, failed.id)?;
     Ok(failed)
