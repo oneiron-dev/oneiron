@@ -344,6 +344,73 @@ fn gdpr_delete_after_user_delete_purges_a_dag_record() {
     assert!(vault.get(&id).unwrap().is_none());
 }
 
+#[test]
+fn replayed_thread_edges_and_late_turn_body_rebuild_cached_meta() {
+    let (_dir, source, conv, actor) = fixture();
+    let trunk = source
+        .append_dag_record(&input(conv, None, true, actor))
+        .unwrap()
+        .id;
+    let reply = source
+        .reply_in_thread(trunk, &input(conv, None, false, actor))
+        .unwrap()
+        .id;
+    let dir = tempfile::tempdir().unwrap();
+    let peer = crate::Vault::open(dir.path(), crate::VaultConfig::default()).unwrap();
+    for id in [conv, actor.entity_ref(), trunk] {
+        let raw = source.get_raw_unsealed(&id).unwrap().unwrap();
+        let h = crate::batch::EntityMetadataHeader::parse(&raw).unwrap();
+        peer.batch()
+            .put_replicated(
+                &id,
+                h.entity_type,
+                crate::TimeRange {
+                    start: h.occurred_start,
+                    end: h.occurred_end,
+                },
+                h.learned_at,
+                &raw[crate::batch::ENTITY_METADATA_HEADER_LEN..],
+            )
+            .commit()
+            .unwrap();
+    }
+    peer.batch()
+        .edge_checked(&trunk, &conv, 1.0)
+        .commit()
+        .unwrap();
+    assert_eq!(peer.thread_meta(trunk).unwrap(), None);
+    let raw = source.get_raw_unsealed(&reply).unwrap().unwrap();
+    let h = crate::batch::EntityMetadataHeader::parse(&raw).unwrap();
+    peer.batch()
+        .put_replicated(
+            &reply,
+            h.entity_type,
+            crate::TimeRange {
+                start: h.occurred_start,
+                end: h.occurred_end,
+            },
+            h.learned_at,
+            &raw[crate::batch::ENTITY_METADATA_HEADER_LEN..],
+        )
+        .commit()
+        .unwrap();
+    peer.batch()
+        .edge_checked(&reply, &conv, 1.0)
+        .edge_with_value_fields(&reply, EdgeKind::Parent, &trunk, super::writes::value(20))
+        .edge_with_value_fields(
+            &reply,
+            EdgeKind::RepliesTo,
+            &trunk,
+            super::writes::value(20),
+        )
+        .commit()
+        .unwrap();
+    assert_eq!(peer.thread(trunk).unwrap().replies, [reply]);
+    let meta = peer.thread_meta(trunk).unwrap().unwrap();
+    assert_eq!((meta.root, meta.count), (reply, 1));
+    assert_eq!(peer.thread_meta(trunk).unwrap(), Some(meta));
+}
+
 #[cfg(feature = "sync")]
 #[test]
 fn received_parent_survives_public_window_replay_and_adoption() {
