@@ -53,7 +53,10 @@ where
     P: FnMut(ProgressSnapshot),
 {
     let VoiceStreamConfig { generation, policy } = config;
-    let mut chunker = VoiceChunker::with_policy(policy).ok_or(VoiceStreamFailure::InvalidPolicy)?;
+    let Some(mut chunker) = VoiceChunker::with_policy(policy) else {
+        bus.close_without_terminal();
+        return Err(VoiceStreamFailure::InvalidPolicy);
+    };
     let mut progress = ProgressSubscriber::default();
     progress.start(now_ms());
     if let Err(error) = submit(TtsCommand::Start { generation }) {

@@ -344,6 +344,62 @@ fn initial_model_silence_emits_zero_byte_progress_without_writes() {
 }
 
 #[test]
+fn invalid_resident_cadence_closes_raw_subscribers_without_tts_or_terminal() {
+    for policy in [
+        VoiceChunkPolicy {
+            min_words: 0,
+            ..VoiceChunkPolicy::default()
+        },
+        VoiceChunkPolicy {
+            max_wait_ms: 0,
+            ..VoiceChunkPolicy::default()
+        },
+    ] {
+        let generation = GenerationEpoch {
+            session: uuid::Uuid::new_v4(),
+            value: 1,
+        };
+        let ledger = Arc::new(Mutex::new(Vec::new()));
+        let mut bus = LlmEventBus::new(Box::new(Sink(ledger.clone())));
+        let mut raw = bus.subscribe();
+        let mut output = Output::default();
+        {
+            let source = LlmStream::new(Source {
+                events: vec![LlmStreamEvent::TextStart {
+                    part_id: "t".into(),
+                }],
+                position: Arc::new(AtomicUsize::new(0)),
+                time: Arc::new(AtomicU64::new(0)),
+            });
+            let mut work = std::pin::pin!(drive_voice_stream(
+                &mut bus,
+                source,
+                Ticks {
+                    position: Arc::new(AtomicUsize::new(0)),
+                    time: Arc::new(AtomicU64::new(0))
+                },
+                || 0,
+                VoiceStreamConfig { generation, policy },
+                |command| output.submit(command),
+                |_| {},
+            ));
+            assert!(matches!(
+                work.as_mut().poll(&mut Context::from_waker(Waker::noop())),
+                Poll::Ready(Err(VoiceStreamFailure::InvalidPolicy))
+            ));
+        }
+        assert!(output.0.is_empty());
+        assert!(matches!(
+            Pin::new(&mut raw).poll_next(&mut Context::from_waker(Waker::noop())),
+            Poll::Ready(None)
+        ));
+        assert!(ledger.lock().unwrap().is_empty());
+        drop(bus);
+        assert!(ledger.lock().unwrap().is_empty());
+    }
+}
+
+#[test]
 fn rejected_start_closes_raw_subscribers_without_terminal_write() {
     struct RejectStart(Vec<TtsCommand>);
     impl TtsSeamClient for RejectStart {
