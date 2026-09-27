@@ -15390,7 +15390,7 @@
      "path": "src/entity_doc/mod.rs",
      "purpose": "Durable, bounded entity text documents, anchored edits, fork sets and owner purge",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 4,
       "re-export": 6
      }
     },
@@ -20167,7 +20167,7 @@
      "purpose": "Versioned questions, scoped answer receipts, and bound outcome labels",
      "surface": {
       "crate-vis": 2,
-      "re-export": 5
+      "re-export": 6
      }
     },
     {
@@ -20190,6 +20190,7 @@
       "OutcomeBinding",
       "OutcomeLabel",
       "OutcomeSource",
+      "QuestionActivation",
       "QuestionDefinition",
       "QuestionRecord",
       "RefreshPolicy",
@@ -20199,7 +20200,7 @@
      "purpose": "Immutable definitions and typed outcome bindings",
      "surface": {
       "crate-vis": 1,
-      "enum": 2,
+      "enum": 3,
       "fn": 2,
       "struct": 8
      }
@@ -20223,6 +20224,27 @@
      "kind": "test",
      "notable": [],
      "path": "src/llm/decision/questions/refresh/tests.rs",
+     "purpose": "—",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "StandingAnswer"
+     ],
+     "path": "src/llm/decision/questions/standing.rs",
+     "purpose": "Explicit graph-unit backfill with same-snapshot authority and source pins",
+     "surface": {
+      "fn": 2,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "L",
+     "kind": "test",
+     "notable": [],
+     "path": "src/llm/decision/questions/standing_tests.rs",
      "purpose": "—",
      "surface": {}
     },
@@ -35374,7 +35396,7 @@
      "purpose": "Deterministic LinkedIn entity resolution and explicit runtime-path corpus preload"
     },
     "llm": {
-     "files": 79,
+     "files": 81,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -35929,8 +35951,8 @@
    },
    "over_bar": 11,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2121,
-   "test_files": 722
+   "source_files": 2122,
+   "test_files": 723
   },
   "oneiron-android": {
    "files": [

@@ -13,6 +13,9 @@ pub fn create_question(
     mut definition: QuestionDefinition,
     now: u64,
 ) -> Result<QuestionRecord> {
+    if definition.activation != QuestionActivation::Standing {
+        return Err(invalid("one-off questions only save receipts"));
+    }
     definition.question.id = EntityId::now();
     definition.question.version = 1;
     definition.validate()?;
@@ -90,6 +93,9 @@ pub fn edit_question(
             .version
             .checked_add(1)
             .ok_or(Error::ArithmeticOverflow("question version"))?;
+        if definition.activation != QuestionActivation::Standing {
+            return Err(invalid("one-off questions only save receipts"));
+        }
         definition.question.id = id;
         definition.question.version = version;
         definition.validate()?;
