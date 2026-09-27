@@ -10,6 +10,7 @@ pub(crate) mod manifest_authenticity;
 #[cfg(test)]
 pub(crate) use manifest_authenticity::stamp_manifest_origin;
 pub(crate) use manifest_authenticity::trusted_manifest_key;
+mod carry_forward_policy;
 mod confirm;
 mod constants;
 mod decision;

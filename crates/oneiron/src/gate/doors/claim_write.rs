@@ -270,7 +270,11 @@ fn check_claim_policy_for_write_with_record_inner(
                 crate::write_envelope::carry_forward::CarryForwardKind::from_predicate(
                     &body.predicate,
                 )
-            && body.confidence < kind.auto_floor()
+            && body.confidence
+                < policy.carry_forward_floor(
+                    kind,
+                    envelope.map(|envelope| envelope.actor().entity_ref()),
+                )
             && (body.approval == ClaimApprovalStatus::Proposed
                 || body.approval == ClaimApprovalStatus::Auto
                     && !crate::write_envelope::carry_forward::allows_auto_demotion(

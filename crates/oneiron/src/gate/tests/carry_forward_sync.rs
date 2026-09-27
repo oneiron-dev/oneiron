@@ -1,10 +1,9 @@
 //! Current-head CRDT replay does not depend on a receiver's local lifecycle history.
 use super::*;
 use crate::Vault;
+use crate::gate::carry_forward_policy::DEFAULT_CARE as CARE_CONFIDENCE_FLOOR;
 use crate::sync::{bridge, loro_support, quarantine, schema, types::WindowKey, window};
-use crate::write_envelope::carry_forward::{
-    CARE_CONFIDENCE_FLOOR, CarryForwardClaim, CarryForwardKind,
-};
+use crate::write_envelope::carry_forward::{CarryForwardClaim, CarryForwardKind};
 use std::sync::Arc;
 
 // Every body below was authored and resolved by THIS build, not hand-crafted

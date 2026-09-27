@@ -42,7 +42,13 @@ pub(super) fn admit_claim_put(
         // consent/demotion transition. Structural validation above still runs;
         // local confidence admission needs a predecessor only on local writes.
         if !input.replicated {
-            crate::write_envelope::carry_forward::validate_admission(store, txn, &id, body)?;
+            crate::write_envelope::carry_forward::validate_admission(
+                store,
+                txn,
+                &id,
+                body,
+                input.write_envelope,
+            )?;
         }
         crate::scope_summary::merge_summary_ref(body)?;
         crate::federation::validate_ruling_claim(

@@ -16610,6 +16610,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/gate/carry_forward_policy.rs",
+     "purpose": "Vault-resident confidence floors for carry-forward Auto admission",
+     "surface": {
+      "crate-vis": 12
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
@@ -16961,7 +16971,7 @@
      "path": "src/gate/resolution/accessors.rs",
      "purpose": "Read-only resolved-field accessors plus the frontier-hash entry",
      "surface": {
-      "crate-vis": 24
+      "crate-vis": 25
      }
     },
     {
@@ -34240,7 +34250,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "CarryForwardClaim",
@@ -34249,10 +34259,9 @@
      "path": "src/write_envelope/carry_forward.rs",
      "purpose": "Confidence-gated forward commitments, separate from belief consolidation and the commitment ledger",
      "surface": {
-      "const": 2,
       "crate-vis": 3,
       "enum": 1,
-      "fn": 5,
+      "fn": 4,
       "struct": 1
      }
     },
@@ -35603,7 +35612,7 @@
      "purpose": "—"
     },
     "gate": {
-     "files": 77,
+     "files": 78,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -36291,7 +36300,7 @@
    },
    "over_bar": 11,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2140,
+   "source_files": 2141,
    "test_files": 733
   },
   "oneiron-android": {

@@ -49,6 +49,25 @@ pub(crate) fn default_policy_manifest() -> Vec<u8> {
             Value::from(env!("CARGO_PKG_VERSION")),
         ),
         (
+            Value::from(super::carry_forward_policy::KEY),
+            Value::Map(vec![
+                (Value::from("precedence"), Value::from("nested_narrowing")),
+                (
+                    Value::from("vault"),
+                    Value::Map(vec![
+                        (
+                            Value::from("ordinary"),
+                            Value::F32(super::carry_forward_policy::DEFAULT_ORDINARY),
+                        ),
+                        (
+                            Value::from("care"),
+                            Value::F32(super::carry_forward_policy::DEFAULT_CARE),
+                        ),
+                    ]),
+                ),
+            ]),
+        ),
+        (
             Value::from(POLICY_DEFAULTS_KEY),
             Value::Map(vec![
                 (Value::from(AXIS_CRITICALITY_KEY), Value::from("critical")),

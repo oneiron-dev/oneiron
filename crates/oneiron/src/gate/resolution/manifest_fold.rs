@@ -155,6 +155,23 @@ pub(crate) fn resolve_policy_manifest(
                             .map_or(threshold, |old| old.min(threshold)),
                     );
                 }
+                if let Some(confidence) = decoded.carry_forward_confidence {
+                    // The shipped row is a starting value, not a permanent
+                    // minimum. The first trusted vault-authored row can choose
+                    // either direction; additional authored packs intersect
+                    // restrictively. Scan order cannot let the shipped row
+                    // veto an owner's choice or erase a holder override.
+                    let shipped = id == crate::gate::default_policy_manifest_id()?
+                        && decoded.pack._pack_id == "oneiron-default-policy";
+                    if shipped && resolution.carry_forward_precedence_configured {
+                        // The explicit vault row already owns this decision.
+                    } else if !shipped && !resolution.carry_forward_precedence_configured {
+                        resolution.carry_forward_confidence = confidence;
+                        resolution.carry_forward_precedence_configured = true;
+                    } else if !resolution.carry_forward_confidence.restrict(confidence) {
+                        resolution.diagnostics.malformed_manifest_seen = true;
+                    }
+                }
                 resolution.packs.push(decoded.pack);
             }
             None => {

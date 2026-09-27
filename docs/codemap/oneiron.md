@@ -1323,6 +1323,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/fusion/tests.rs` | test | m | — | — | — |
 | `src/gate/auto_signals.rs` | src | s | 1 crate-vis | — | Receipt-derived rate and failure streak supplied to the existing auto checker |
 | `src/gate/bundle.rs` | src | m | 4 fn · 5 const | — | — |
+| `src/gate/carry_forward_policy.rs` | src | s | 12 crate-vis | — | Vault-resident confidence floors for carry-forward Auto admission |
 | `src/gate/ceiling.rs` | src | m | 37 crate-vis | — | — |
 | `src/gate/confirm.rs` | src | m | 1 struct · 1 enum · 2 fn · 4 const · 10 crate-vis | CriticalWriteConfirmBinding, CriticalWriteConfirmResolution | — |
 | `src/gate/constants.rs` | src | s | 77 crate-vis | — | — |
@@ -1356,7 +1357,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/gate/proposal_observation.rs` | src | s | 2 struct · 3 fn · 1 const · 2 crate-vis | ProposalSubmissionCheck, ProposalSubmissionReceipt | Actor-scoped, receipt-backed proposal observation; crossing only asks a question |
 | `src/gate/repair.rs` | src | s | 3 crate-vis | — | Pure, per-proposal consent recomputation |
 | `src/gate/repair_tests.rs` | test | m | — | — | ONE-1395 repair-only tests, kept separate from the existing Gate write-door tests |
-| `src/gate/resolution/accessors.rs` | src | s | 24 crate-vis | — | Read-only resolved-field accessors plus the frontier-hash entry |
+| `src/gate/resolution/accessors.rs` | src | s | 25 crate-vis | — | Read-only resolved-field accessors plus the frontier-hash entry |
 | `src/gate/resolution/evaluation.rs` | src | m | 6 crate-vis | — | Decision core: ceilings, source-trust, and gate evaluation |
 | `src/gate/resolution/frontier_hash.rs` | src | m | 5 crate-vis | — | Read-frontier hash worker plus byte-level hash encoders |
 | `src/gate/resolution/manifest_fold.rs` | src | m | 1 fn · 2 crate-vis | — | Store-scanning manifest fold plus budget-guard and trust adapters |
@@ -2796,7 +2797,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/workspace_roster/tests/current_architecture.rs` | test | m | 2 crate-vis | — | — |
 | `src/workspace_roster/tests/onboarding_replay.rs` | test | m | — | — | — |
 | `src/write_envelope.rs` | src | m | 5 struct · 28 fn · 1 mod · 17 crate-vis | ClaimCandidate, SourceLineage, WriteActor, WriteEnvelope, WriteProvenance | Write-path stamping: `WriteActor`/`WriteProvenance`/`WriteEnvelope`/`ClaimCandidate` + evidence stamping |
-| `src/write_envelope/carry_forward.rs` | src | s | 1 struct · 1 enum · 5 fn · 2 const · 3 crate-vis | CarryForwardClaim, CarryForwardKind | Confidence-gated forward commitments, separate from belief consolidation and the commitment ledger |
+| `src/write_envelope/carry_forward.rs` | src | m | 1 struct · 1 enum · 4 fn · 3 crate-vis | CarryForwardClaim, CarryForwardKind | Confidence-gated forward commitments, separate from belief consolidation and the commitment ledger |
 | `src/write_envelope/tests.rs` | test | m | — | — | ONE-1314 · the source-lineage axis on the write envelope |
 | `tests/build_cache.rs` | test | s | — | — | Public cache boundary: real vaults and BLOB_ARTIFACT versions only |
 | `tests/cb_oracle_common/mod.rs` | test | s | — | — | Shared fixtures for the split Context Board oracle files |

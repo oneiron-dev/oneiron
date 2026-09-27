@@ -12,11 +12,6 @@ use crate::error::{Error, Result};
 use crate::temporal::TimeRange;
 use crate::write_envelope::{ClaimCandidate, WriteEnvelope};
 
-/// Minimum confidence for an automatic forward claim (an engine policy choice).
-pub const FORWARD_CONFIDENCE_FLOOR: f32 = 0.7;
-/// Care check-ins require stronger evidence than ordinary forward claims.
-pub const CARE_CONFIDENCE_FLOOR: f32 = 0.9;
-
 /// The pinned four kinds of carry-forward claims.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CarryForwardKind {
@@ -51,15 +46,6 @@ impl CarryForwardKind {
             "core.carry_forward.care_check_in" => Some(Self::CareCheckIn),
             "core.carry_forward.open_loop" => Some(Self::OpenLoop),
             _ => None,
-        }
-    }
-
-    /// The minimum confidence before an automatic write can be attempted.
-    #[must_use]
-    pub const fn auto_floor(self) -> f32 {
-        match self {
-            Self::CareCheckIn => CARE_CONFIDENCE_FLOOR,
-            _ => FORWARD_CONFIDENCE_FLOOR,
         }
     }
 }
@@ -129,14 +115,26 @@ pub(crate) fn validate_admission(
     txn: &heed::RoTxn<'_>,
     id: &EntityId,
     body: &ClaimBody,
+    envelope: Option<&WriteEnvelope>,
 ) -> Result<()> {
     let Some(kind) = CarryForwardKind::from_predicate(&body.predicate) else {
         return Ok(());
     };
-    if body.confidence >= kind.auto_floor() || body.approval == ClaimApprovalStatus::Proposed {
+    let prior = prior_claim(store, txn, id)?;
+    let actor = envelope
+        .map(|envelope| envelope.actor().entity_ref())
+        .or_else(|| {
+            prior
+                .as_ref()
+                .and_then(|prior| prior.evidence.as_ref())
+                .and_then(actor_from_evidence)
+        });
+    let policy = crate::gate::resolve_policy_manifest(store, txn)?;
+    if body.confidence >= policy.carry_forward_floor(kind, actor)
+        || body.approval == ClaimApprovalStatus::Proposed
+    {
         return Ok(());
     }
-    let prior = prior_claim(store, txn, id)?;
     let valid = match body.approval {
         ClaimApprovalStatus::Auto => prior
             .as_ref()
@@ -178,6 +176,19 @@ pub(crate) fn allows_auto_demotion(
     Ok(prior_claim(store, txn, id)?
         .as_ref()
         .is_some_and(|prior| valid_auto_transition(prior, body)))
+}
+
+fn actor_from_evidence(evidence: &Value) -> Option<EntityId> {
+    let Value::Map(entries) = evidence else {
+        return None;
+    };
+    let Value::Binary(bytes) = entries
+        .iter()
+        .find_map(|(key, value)| (key.as_str() == Some("actor_entity_ref")).then_some(value))?
+    else {
+        return None;
+    };
+    EntityId::from_bytes(bytes.as_slice().try_into().ok()?).ok()
 }
 
 fn prior_claim(
@@ -276,17 +287,21 @@ impl Vault {
                 "carry-forward consent must use the authenticated resolution door",
             ));
         }
-        let held = claim.confidence < claim.kind.auto_floor();
-        let candidate = claim.into_candidate()?;
-        let envelope = if held && envelope.approval() == ClaimApprovalStatus::Auto {
-            envelope
-                .clone()
-                .with_approval(ClaimApprovalStatus::Proposed)
-        } else {
-            envelope.clone()
-        };
-        self.batch()
-            .claim_candidate(id, candidate, &envelope, occurred, learned_at)
-            .commit()
+        let candidate = claim.clone().into_candidate()?;
+        self.with_write_txn(|txn| {
+            let policy = crate::gate::resolve_policy_manifest(&self.store, txn)?;
+            let held = claim.confidence
+                < policy.carry_forward_floor(claim.kind, Some(envelope.actor().entity_ref()));
+            let envelope = if held && envelope.approval() == ClaimApprovalStatus::Auto {
+                envelope
+                    .clone()
+                    .with_approval(ClaimApprovalStatus::Proposed)
+            } else {
+                envelope.clone()
+            };
+            self.batch_in()
+                .claim_candidate(id, candidate, &envelope, occurred, learned_at)
+                .apply_recording_gate_decisions(txn)
+        })
     }
 }
