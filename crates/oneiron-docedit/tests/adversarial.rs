@@ -6,10 +6,12 @@ fn edit_must_refuse(bytes: &[u8], prior: &str) {
     let mut package = Package::open(bytes, Limits::default()).expect("well-formed ZIP");
     assert_eq!(package.export().expect("no-op"), bytes);
     let before = package.part(PART).expect("part read");
-    assert!(matches!(
-        package.replace_text(PART, PATH, prior, "changed"),
-        Err(Error::Edit(_))
-    ));
+    let result = package.replace_text(PART, PATH, prior, "changed");
+    assert!(
+        matches!(result, Err(Error::Edit(_))),
+        "XML={:?}, result={result:?}",
+        String::from_utf8_lossy(before.as_deref().unwrap_or_default())
+    );
     assert_eq!(package.part(PART).expect("part read after refusal"), before);
     assert_eq!(package.export().expect("unchanged archive"), bytes);
 }
@@ -116,5 +118,51 @@ fn malformed_signature_metadata_makes_package_read_only() {
         include_bytes!("fixtures/adversarial/case-rels.zip").as_slice(),
     ] {
         edit_must_refuse(bytes, "old");
+    }
+}
+
+#[test]
+fn complete_xml_grammar_refuses_malformed_siblings_without_mutation() {
+    for bytes in [
+        include_bytes!("fixtures/xml-grammar/forbidden_cdata_terminator.zip").as_slice(),
+        include_bytes!("fixtures/xml-grammar/empty_qname_prefix.zip").as_slice(),
+        include_bytes!("fixtures/xml-grammar/empty_attribute_prefix.zip").as_slice(),
+        include_bytes!("fixtures/xml-grammar/invalid_pi_target.zip").as_slice(),
+        include_bytes!("fixtures/xml-grammar/duplicate_decl_version.zip").as_slice(),
+        include_bytes!("fixtures/xml-grammar/invalid_decl_standalone.zip").as_slice(),
+        include_bytes!("fixtures/xml-grammar/unexpected_decl_attribute.zip").as_slice(),
+        include_bytes!("fixtures/xml-grammar/missing_attribute_separator.zip").as_slice(),
+        include_bytes!("fixtures/xml-grammar/stray_ampersand.zip").as_slice(),
+        include_bytes!("fixtures/xml-grammar/empty-dtd.zip").as_slice(),
+    ] {
+        edit_must_refuse(bytes, "old");
+    }
+}
+
+#[test]
+fn valid_declarations_namespaces_and_cdata_siblings_stay_in_place() {
+    for bytes in [
+        include_bytes!("fixtures/xml-grammar/valid_decl_and_pi.zip").as_slice(),
+        include_bytes!("fixtures/xml-grammar/valid_namespaced_sibling.zip").as_slice(),
+        include_bytes!("fixtures/xml-grammar/valid_cdata_sibling.zip").as_slice(),
+    ] {
+        let mut package = Package::open(bytes, Limits::default()).expect("valid ZIP");
+        let original = package
+            .part(PART)
+            .expect("part read")
+            .expect("document part");
+        package
+            .replace_text(PART, PATH, "old", "changed")
+            .expect("valid XML edit");
+        let edited = package.part(PART).expect("part read").expect("edited part");
+        let at = original
+            .windows(3)
+            .position(|window| window == b"old")
+            .expect("unique old text");
+        let mut expected = original[..at].to_vec();
+        expected.extend_from_slice(b"changed");
+        expected.extend_from_slice(&original[at + 3..]);
+        assert_eq!(edited, expected, "only intended leaf changed");
+        assert!(Package::open(&package.export().expect("write"), Limits::default()).is_ok());
     }
 }

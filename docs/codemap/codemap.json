@@ -36367,7 +36367,7 @@
      "kind": "src",
      "notable": [],
      "path": "src/retained_opc/xml.rs",
-     "purpose": "Byte-span XML patcher",
+     "purpose": "Validate a touched XML part with a complete XML 1.0 parser, then patch exactly one lexical text span",
      "surface": {
       "crate-vis": 2
      }

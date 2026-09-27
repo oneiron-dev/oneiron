@@ -14,6 +14,6 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/lib.rs` | src | s | 1 mod | — | Native document editing organ crate and retained OPC substrate |
 | `src/retained_opc/mod.rs` | src | s | 1 enum · 1 type · 1 re-export | Error | Bounded, retained OPC archives |
 | `src/retained_opc/package.rs` | src | m | 2 struct · 5 fn | Limits, Package | ZIP central-directory reader and copy-through writer |
-| `src/retained_opc/xml.rs` | src | m | 2 crate-vis | — | Byte-span XML patcher |
+| `src/retained_opc/xml.rs` | src | m | 2 crate-vis | — | Validate a touched XML part with a complete XML 1.0 parser, then patch exactly one lexical text span |
 | `tests/adversarial.rs` | test | s | — | — | — |
 | `tests/identity.rs` | test | m | — | — | — |
