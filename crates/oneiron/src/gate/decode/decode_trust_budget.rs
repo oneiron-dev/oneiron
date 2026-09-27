@@ -7,10 +7,12 @@ use crate::entity_id::EntityId;
 use crate::gate::ceiling::{SourceTrustCeiling, SourceTrustRow};
 use crate::gate::constants::{
     ACTOR_REF_KEY, BUDGET_POLICY_ACTOR_KEY, BUDGET_POLICY_CAP_KEY, BUDGET_POLICY_FLOOR_KEY,
-    BUDGET_POLICY_PURPOSE_KEY, SOURCE_TRUST_AUTO_KEY, SOURCE_TRUST_MAX_AUTO_SENSITIVITY_KEY,
-    SOURCE_TRUST_RECEIPTED_KEY, SOURCE_TRUST_WARNED_KEY,
+    BUDGET_POLICY_PURPOSE_KEY, GATE_RETENTION_HOLDER_OVERRIDE_CEILING_KEY,
+    GATE_RETENTION_HORIZON_SECS_KEY, GATE_RETENTION_MAX_SWEEP_ROWS_KEY,
+    GATE_RETENTION_PRECEDENCE_KEY, SOURCE_TRUST_AUTO_KEY,
+    SOURCE_TRUST_MAX_AUTO_SENSITIVITY_KEY, SOURCE_TRUST_RECEIPTED_KEY, SOURCE_TRUST_WARNED_KEY,
 };
-use crate::gate::resolution::CommOptOutPosture;
+use crate::gate::resolution::{CommOptOutPosture, GateDecisionRetentionPolicy};
 use crate::llm::{
     BudgetExhaustionPolicy, BudgetPolicyRow, BudgetPolicySelector, BudgetPolicyTable, CallPurpose,
 };
@@ -92,6 +94,45 @@ pub(super) fn parse_source_trust_row(value: &Value) -> Option<SourceTrustRow> {
         }
         _ => None,
     }
+}
+
+/// Refuse unknown, missing, duplicated, zero, and wrongly typed values. A
+/// malformed retention row drops the whole manifest, not merely this option.
+pub(super) fn parse_gate_decision_retention(value: &Value) -> Option<GateDecisionRetentionPolicy> {
+    let Value::Map(entries) = value else {
+        return None;
+    };
+    for (key, _) in entries {
+        if !matches!(
+            key.as_str()?,
+            GATE_RETENTION_HORIZON_SECS_KEY
+                | GATE_RETENTION_MAX_SWEEP_ROWS_KEY
+                | GATE_RETENTION_PRECEDENCE_KEY
+                | GATE_RETENTION_HOLDER_OVERRIDE_CEILING_KEY
+        ) {
+            return None;
+        }
+    }
+    if required_value(entries, GATE_RETENTION_PRECEDENCE_KEY)?.as_str()?
+        != "nested_narrowing"
+        || required_value(entries, GATE_RETENTION_HOLDER_OVERRIDE_CEILING_KEY)?.as_str()?
+            != "vault"
+    {
+        return None;
+    }
+    let horizon_secs = match required_value(entries, GATE_RETENTION_HORIZON_SECS_KEY)? {
+        Value::Nil => None,
+        value => Some(value.as_u64().filter(|seconds| *seconds > 0)?),
+    };
+    let max_sweep_rows = usize::try_from(
+        required_value(entries, GATE_RETENTION_MAX_SWEEP_ROWS_KEY)?.as_u64()?,
+    )
+    .ok()
+    .filter(|rows| *rows > 0)?;
+    Some(GateDecisionRetentionPolicy {
+        horizon_secs,
+        max_sweep_rows,
+    })
 }
 
 pub(super) fn parse_budget_exhaustion_policy(value: &Value) -> Option<BudgetExhaustionPolicy> {

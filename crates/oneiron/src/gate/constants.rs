@@ -67,6 +67,14 @@ pub(super) const POLICY_AUTO_CHECKER_KEY: &str = "auto_checker";
 /// { actor: "<canonical-actor-ref>", floor: 50_000, cap: 150_000 }
 /// ```
 pub(super) const POLICY_BUDGET_POLICY_KEY: &str = "budget_policy";
+/// Optional trusted DEC-0005 manifest setting for gate-decision age pruning.
+/// The seeded default has a null horizon (no pruning), and an owner-authored
+/// row overrides it. Conflicting owner rows are ambiguous and fail closed.
+pub(super) const POLICY_GATE_DECISION_RETENTION_KEY: &str = "gate_decision_retention";
+pub(super) const GATE_RETENTION_HORIZON_SECS_KEY: &str = "horizon_secs";
+pub(super) const GATE_RETENTION_MAX_SWEEP_ROWS_KEY: &str = "max_sweep_rows";
+pub(super) const GATE_RETENTION_PRECEDENCE_KEY: &str = "precedence";
+pub(super) const GATE_RETENTION_HOLDER_OVERRIDE_CEILING_KEY: &str = "holder_override_ceiling";
 pub(super) const BUDGET_POLICY_PURPOSE_KEY: &str = "purpose";
 pub(super) const BUDGET_POLICY_ACTOR_KEY: &str = "actor";
 pub(super) const BUDGET_POLICY_FLOOR_KEY: &str = "floor";

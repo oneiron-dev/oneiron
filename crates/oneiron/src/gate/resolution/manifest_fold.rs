@@ -11,7 +11,7 @@ use crate::store::Store;
 use crate::vault::Vault;
 use crate::write_envelope::{SourceLineage, WriteActor};
 
-use super::manifest_types::PolicyManifestResolution;
+use super::manifest_types::{GateDecisionRetentionPolicy, PolicyManifestResolution};
 use crate::gate::ceiling::{
     DelegationFoldCache, DelegationGrantRecord, PolicyOwnerPolicyRow, check_source_trust,
     fold_delegated_grants,
@@ -25,6 +25,9 @@ pub(crate) fn resolve_policy_manifest(
     let mut resolution = PolicyManifestResolution::default();
     let mut untrusted_source_rows = Vec::new();
     let mut delegated_rows: Vec<DelegationGrantRecord> = Vec::new();
+    let mut default_retention = None;
+    let mut owner_retention = None;
+    let default_manifest_id = crate::gate::default_manifest::default_policy_manifest_id()?;
 
     for index_entry in store.port_entity_ids_by_type(txn, ENTITY_TYPE_POLICY_MANIFEST, None)? {
         let id = match index_entry {
@@ -103,6 +106,23 @@ pub(crate) fn resolve_policy_manifest(
                     &mut resolution.diagnostics.malformed_manifest_seen,
                 );
                 resolution.signatures.extend(decoded.signatures);
+                if let Some(retention) = decoded.gate_decision_retention {
+                    // The seeded D7 row is a FALLBACK, not an owner vote.
+                    // Byte-exact matching avoids treating a later owner update
+                    // at that same ID as another copy of the seeded default.
+                    if id == default_manifest_id
+                        && body.as_slice()
+                            == crate::gate::default_manifest::default_policy_manifest().as_slice()
+                    {
+                        default_retention = Some(retention);
+                    } else {
+                        match owner_retention {
+                            None => owner_retention = Some(retention),
+                            Some(existing) if existing == retention => {}
+                            Some(_) => resolution.diagnostics.malformed_manifest_seen = true,
+                        }
+                    }
+                }
                 if let Some(on_budget_exhausted) = decoded.on_budget_exhausted {
                     match resolution.on_budget_exhausted {
                         None => resolution.on_budget_exhausted = Some(on_budget_exhausted),
@@ -163,6 +183,10 @@ pub(crate) fn resolve_policy_manifest(
         }
     }
 
+    // A trusted owner-authored row wins over the immutable shipped fallback.
+    // A conflict among owner rows never silently picks a pruning horizon.
+    resolution.gate_decision_retention = owner_retention.or(default_retention);
+
     for contribution in untrusted_source_rows {
         resolution.source_trust.restrict_only(contribution);
     }
@@ -203,6 +227,23 @@ pub(crate) fn resolve_policy_manifest(
     }
 
     Ok(resolution)
+}
+
+/// Resolve the trusted retention setting in the caller's transaction, so a
+/// sweep observes the same committed owner setting as the rows it examines.
+/// A missing setting never authorizes age pruning; a malformed or ambiguous
+/// manifest is an error, not a silent fallback to a different horizon.
+pub(crate) fn resolve_gate_decision_retention(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+) -> Result<Option<GateDecisionRetentionPolicy>> {
+    let resolution = resolve_policy_manifest(store, txn)?;
+    if resolution.diagnostics.is_fail_closed() {
+        return Err(Error::InvalidConfig(
+            "gate decision retention policy manifest is fail-closed".into(),
+        ));
+    }
+    Ok(resolution.gate_decision_retention)
 }
 
 /// Folds a once-per-vault owner string across manifests. A second manifest

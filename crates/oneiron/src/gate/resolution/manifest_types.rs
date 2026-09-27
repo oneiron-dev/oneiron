@@ -72,6 +72,13 @@ impl CommOptOutPosture {
     }
 }
 
+/// Owner-authored age sweep settings. `None` never authorizes pruning.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct GateDecisionRetentionPolicy {
+    pub(crate) horizon_secs: Option<u64>,
+    pub(crate) max_sweep_rows: usize,
+}
+
 #[derive(Debug, Clone, Default, PartialEq)]
 pub(crate) struct PolicyManifestResolution {
     pub(crate) diagnostics: PolicyManifestDiagnostics,
@@ -99,4 +106,5 @@ pub(crate) struct PolicyManifestResolution {
     /// from a resolved manifest.
     pub(super) auto_checker: Option<String>,
     pub(super) budget_policy: BudgetPolicyTable,
+    pub(super) gate_decision_retention: Option<GateDecisionRetentionPolicy>,
 }
