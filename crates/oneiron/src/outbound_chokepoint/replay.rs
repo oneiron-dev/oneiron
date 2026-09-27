@@ -13,7 +13,7 @@ use crate::outbound_intent_ledger::{
     FrozenOutboundCall, IntentDispatchResult, IntentEscalation, IntentEscalationReason, IntentId,
     IntentLedgerError, IntentState, OutboundCallClass, OutboundSendOutcome,
     RecordedOutboundOutcome, abandon_record, begin_definite_non_delivery_retry, complete_record,
-    record_definite_non_delivery,
+    record_definite_non_delivery, record_possible_delivery,
 };
 
 pub(super) enum RecoveryGovernance {
@@ -204,9 +204,11 @@ fn send_pending_with_gate<T: OutboundTransport>(
             Ok(effect_result(&done, Some(outcome), replayed, None))
         }
         OutboundSendOutcome::Ambiguous if record.idempotency_supported => {
-            Ok(effect_result(&record, Some(outcome), replayed, None))
+            let uncertain = record_possible_delivery(vault, record.id, now_ms)?;
+            Ok(effect_result(&uncertain, Some(outcome), replayed, None))
         }
         OutboundSendOutcome::Ambiguous => {
+            record_possible_delivery(vault, record.id, now_ms)?;
             let abandoned = abandon_record(
                 vault,
                 record.id,
@@ -233,7 +235,9 @@ fn uncertainty_aware_stop_reason(
     record: &crate::outbound_intent_ledger::IntentLedgerRecord,
     reason: IntentEscalationReason,
 ) -> IntentEscalationReason {
-    if record.state == IntentState::Pending && record.recorded_outcome.is_none() {
+    if record.state == IntentState::Pending
+        && (record.recorded_outcome.is_none() || record.delivery_uncertain)
+    {
         match reason {
             IntentEscalationReason::ConnectorRevoked => {
                 IntentEscalationReason::ConnectorRevokedAfterUncertainty

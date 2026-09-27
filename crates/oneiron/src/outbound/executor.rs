@@ -4,6 +4,7 @@ use super::connector_task::{
     mark_connector_send_task_attempt_started, project_connector_send_task_outcome,
     project_connector_send_task_outcome_in_txn, send_receipt_exists_for_task,
 };
+use super::dispatch_attempt_id::outbound_dispatch_attempt_id;
 use super::dispatch_pipeline::{GATE_OUTCOME_PENDING, PROVIDER_RETRY_AFTER_FIELD};
 use super::dispatch_types::{
     OutboundDispatchActor, OutboundDispatchError, OutboundDispatchGate, OutboundDispatchOutcome,
@@ -22,7 +23,10 @@ use crate::attempt_queue::{
 };
 use crate::entity_id::EntityId;
 use crate::error::Error;
-use crate::receipt::{SendReceiptOutcome, persist_send_receipt};
+use crate::outbound_intent_ledger::{
+    IntentState, RecordedOutboundOutcome, read_intent_for_attempt_in_txn,
+};
+use crate::receipt::{SendReceiptOutcome, outbound_intent_receipt, persist_send_receipt};
 
 pub(super) const CONNECTOR_TASK_EXECUTOR_LEASE_OWNER: &str = "connector-task-executor";
 /// First re-arm delay for a send the Gate parked on a human decision.
@@ -173,7 +177,7 @@ impl Vault {
             );
             // Ledger identity is the logical-send id (derived from the task
             // idempotency key) so fresh retry attempts stay the same paid intent.
-            request.ledger_identity_ref = Some(logical_send_intent_ref);
+            request.ledger_identity_ref = Some(logical_send_intent_ref.clone());
             // Local wall-clock time is derived from the FROZEN offset at THIS
             // attempt's `now`, never from schedule time. No offset ⇒ no local
             // minute ⇒ the door fails closed instead of guessing midnight.
@@ -200,6 +204,8 @@ impl Vault {
             if let Some(payload) = task.calendar_invite.clone() {
                 request = request.calendar_invite(payload);
             }
+            let receipt_id = request.receipt_id.clone();
+            let intent_ref = request.intent_ref.clone();
             let mut result = match self.dispatch_outbound_intent_with_verified_actor(
                 request,
                 sink,
@@ -208,18 +214,65 @@ impl Vault {
             ) {
                 Ok(result) => result,
                 Err(OutboundDispatchError::InvalidBoundActor) => {
-                    // Bound-actor validation fails before the chokepoint admits,
-                    // charges, or sends the effect, so this is a definite
-                    // non-delivery: fail the attempt terminally and project it.
-                    fail_connector_task_attempt_and_project(
-                        self,
-                        &queue,
-                        &attempt,
-                        task_ref,
-                        now,
-                        "dispatch_rejected",
-                        ConnectorSendTaskOutcome::Failed,
-                    )?;
+                    // A refusal proves only that THIS attempt did not send.
+                    // Earlier uncertain delivery belongs to the logical intent.
+                    let previous_may_have_delivered = {
+                        let rtxn = self.store.env.read_txn().map_err(Error::from)?;
+                        let attempt_id = outbound_dispatch_attempt_id(&logical_send_intent_ref)?;
+                        read_intent_for_attempt_in_txn(self, &rtxn, attempt_id, 0)
+                            .map_err(OutboundDispatchError::Chokepoint)?
+                            .is_some_and(|record| {
+                                record.delivery_uncertain
+                                    || (record.state == IntentState::Pending
+                                        && record.recorded_outcome.is_none())
+                                    || matches!(record.recorded_outcome,
+                                        Some(RecordedOutboundOutcome::Abandoned(
+                                            crate::outbound_intent_ledger::IntentEscalationReason::NonIdempotentAmbiguous
+                                            | crate::outbound_intent_ledger::IntentEscalationReason::NonIdempotentPending
+                                            | crate::outbound_intent_ledger::IntentEscalationReason::ConnectorRevokedAfterUncertainty
+                                            | crate::outbound_intent_ledger::IntentEscalationReason::BindingInvalidAfterUncertainty
+                                        )))
+                            })
+                    };
+                    if previous_may_have_delivered {
+                        let mut receipt = outbound_intent_receipt(
+                            receipt_id,
+                            intent_ref,
+                            &task.intent,
+                            now,
+                            "ambiguous",
+                        );
+                        receipt
+                            .fields
+                            .insert("delivery_may_have_occurred".to_owned(), "true".to_owned());
+                        receipt
+                            .fields
+                            .insert("retry_state".to_owned(), "invalid_bound_actor".to_owned());
+                        append_connector_task_window_receipt(&mut receipt, &task);
+                        persist_terminal_send_receipt_and_fail(
+                            self,
+                            TerminalSendSettlement {
+                                attempt: &attempt,
+                                task_ref,
+                                receipt,
+                                receipt_outcome: SendReceiptOutcome::Ambiguous,
+                                transport_dispatched: false,
+                                task_outcome: ConnectorSendTaskOutcome::Ambiguous,
+                                reason: "dispatch_rejected",
+                                now,
+                            },
+                        )?;
+                    } else {
+                        fail_connector_task_attempt_and_project(
+                            self,
+                            &queue,
+                            &attempt,
+                            task_ref,
+                            now,
+                            "dispatch_rejected",
+                            ConnectorSendTaskOutcome::Failed,
+                        )?;
+                    }
                     continue;
                 }
                 Err(_) => {

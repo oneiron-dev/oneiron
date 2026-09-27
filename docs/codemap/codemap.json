@@ -23665,7 +23665,7 @@
      "purpose": "Pinned key sets, content digest, and MessagePack encode/decode",
      "surface": {
       "const": 1,
-      "crate-vis": 28
+      "crate-vis": 29
      }
     },
     {
@@ -23697,7 +23697,7 @@
      "path": "src/outbound_intent_ledger/store.rs",
      "purpose": "Storage-transaction reads, inserts, transitions, and the admission-gate validator",
      "surface": {
-      "crate-vis": 18
+      "crate-vis": 19
      }
     },
     {

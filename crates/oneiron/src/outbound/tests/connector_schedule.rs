@@ -1756,3 +1756,162 @@ fn revocation_after_definite_non_delivery_remains_failed() -> crate::Result<()> 
     assert!(receipts.iter().all(|receipt| receipt.outcome == "failed"));
     Ok(())
 }
+
+fn next_connector_send_retry_at(vault: &Vault) -> crate::Result<u64> {
+    use crate::attempt_queue::{AttemptQueue, AttemptState};
+    Ok(AttemptQueue::new(vault)
+        .list()?
+        .into_iter()
+        .filter(|row| row.state == AttemptState::Scheduled)
+        .filter_map(|row| row.scheduled_at)
+        .max()
+        .expect("scheduled connector retry"))
+}
+
+#[test]
+fn earlier_uncertainty_survives_later_definite_non_delivery_and_revocation() -> crate::Result<()> {
+    use crate::receipt::{ReceiptKind, ReceiptQuery};
+    let (tmp, vault) = temp_vault();
+    let actor = entity(0xC2);
+    let key_ref = entity(0xC3);
+    put_connector_task_actor(&vault, actor, 1_400)?;
+    put_policy_manifest_bytes(
+        &vault,
+        entity(0xC4),
+        &policy_manifest(&actor.to_hex(), "email", &["replace"]),
+    )?;
+    vault.register_connector_key(&key_ref, sends_per_day_key(5))?;
+    let mut draft =
+        connector_task_draft("uncertain-then-not-started:test", "session:history", 1_400);
+    draft.verb = "replace".to_owned();
+    vault
+        .memory(actor, EdgeActorClass::Agent)
+        .schedule_outbound(&draft)
+        .expect("schedule");
+    let task_ref = vault.connector_send_tasks()?[0].task_ref;
+    let mut sink = RecordingExecutor {
+        outcome: OutboundExecutionOutcome::failed("provider_timeout").with_possible_delivery(),
+        ..Default::default()
+    };
+    vault.run_connector_task_executor(&mut sink, 1_401).unwrap();
+    assert_eq!(sink.calls.len(), 1);
+    assert!(
+        crate::outbound_intent_ledger::intent_ledger_records(&vault).expect("first ledger")[0]
+            .delivery_uncertain
+    );
+    let second_at = next_connector_send_retry_at(&vault)?;
+    sink.outcome = OutboundExecutionOutcome::failed("transport_not_started");
+    vault
+        .run_connector_task_executor(&mut sink, second_at)
+        .unwrap();
+    assert_eq!(sink.calls.len(), 2);
+    let prior = crate::outbound_intent_ledger::intent_ledger_records(&vault).expect("ledger");
+    assert_eq!(
+        prior[0].recorded_outcome,
+        Some(crate::outbound_intent_ledger::RecordedOutboundOutcome::DefiniteNonDelivery)
+    );
+    assert!(
+        prior[0].delivery_uncertain,
+        "later non-delivery cannot erase history"
+    );
+    drop(vault);
+    let vault = Vault::open(tmp.path(), crate::config::VaultConfig::default())?;
+    assert!(
+        crate::outbound_intent_ledger::intent_ledger_records(&vault).expect("reopened ledger")[0]
+            .delivery_uncertain
+    );
+    vault.revoke_connector_key(&key_ref, second_at + 1)?;
+    vault
+        .run_connector_task_executor(&mut sink, next_connector_send_retry_at(&vault)?)
+        .unwrap();
+    assert_eq!(sink.calls.len(), 2, "revocation must not reach transport");
+    assert_eq!(
+        vault.connector_send_task(&task_ref)?.unwrap().outcome,
+        Some(ConnectorSendTaskOutcome::Ambiguous)
+    );
+    let receipts = vault.receipts(ReceiptQuery::new(10).with_kind(ReceiptKind::Outbound))?;
+    assert_eq!(receipts.len(), 3);
+    assert_eq!(receipts[0].outcome, "ambiguous");
+    assert_eq!(crate::outbound_intent_ledger::intent_ledger_records(&vault)
+        .expect("terminal ledger")[0].recorded_outcome,
+        Some(crate::outbound_intent_ledger::RecordedOutboundOutcome::Abandoned(
+            crate::outbound_intent_ledger::IntentEscalationReason::ConnectorRevokedAfterUncertainty
+        )));
+    assert_ambiguous_on_task_board(&vault, actor, task_ref);
+    Ok(())
+}
+
+#[test]
+fn lost_originating_actor_does_not_erase_prior_uncertain_delivery() -> crate::Result<()> {
+    use crate::receipt::{ReceiptKind, ReceiptQuery};
+    let (_tmp, vault) = temp_vault();
+    let actor = entity(0xC5);
+    put_connector_task_actor(&vault, actor, 1_500)?;
+    put_policy_manifest_bytes(
+        &vault,
+        entity(0xC6),
+        &policy_manifest(&actor.to_hex(), "email", &["replace"]),
+    )?;
+    let mut draft = connector_task_draft("lost-actor-uncertain:test", "session:actor", 1_500);
+    draft.verb = "replace".to_owned();
+    vault
+        .memory(actor, EdgeActorClass::Agent)
+        .schedule_outbound(&draft)
+        .expect("schedule");
+    let task_ref = vault.connector_send_tasks()?[0].task_ref;
+    let mut sink = RecordingExecutor {
+        outcome: OutboundExecutionOutcome::failed("provider_timeout").with_possible_delivery(),
+        ..Default::default()
+    };
+    vault.run_connector_task_executor(&mut sink, 1_501).unwrap();
+    let retry_at = next_connector_send_retry_at(&vault)?;
+    vault.delete_entity(&actor)?;
+    assert!(
+        vault.connector_send_task(&task_ref)?.is_some(),
+        "connector assignee remains"
+    );
+    vault
+        .run_connector_task_executor(&mut sink, retry_at)
+        .unwrap();
+    assert_eq!(
+        sink.calls.len(),
+        1,
+        "invalid actor cannot make a second send"
+    );
+    assert_eq!(
+        vault.connector_send_task(&task_ref)?.unwrap().outcome,
+        Some(ConnectorSendTaskOutcome::Ambiguous)
+    );
+    let receipts = vault.receipts(ReceiptQuery::new(10).with_kind(ReceiptKind::Outbound))?;
+    assert_eq!(receipts.len(), 2);
+    assert_eq!(receipts[0].outcome, "ambiguous");
+    Ok(())
+}
+
+#[test]
+fn lost_originating_actor_before_first_send_is_definite_failure() -> crate::Result<()> {
+    let (_tmp, vault) = temp_vault();
+    let actor = entity(0xC7);
+    put_connector_task_actor(&vault, actor, 1_600)?;
+    put_policy_manifest_bytes(
+        &vault,
+        entity(0xC8),
+        &policy_manifest(&actor.to_hex(), "email", &["replace"]),
+    )?;
+    let mut draft = connector_task_draft("lost-actor-fresh:test", "session:fresh", 1_600);
+    draft.verb = "replace".to_owned();
+    vault
+        .memory(actor, EdgeActorClass::Agent)
+        .schedule_outbound(&draft)
+        .expect("schedule");
+    let task_ref = vault.connector_send_tasks()?[0].task_ref;
+    vault.delete_entity(&actor)?;
+    let mut sink = RecordingExecutor::default();
+    vault.run_connector_task_executor(&mut sink, 1_601).unwrap();
+    assert!(sink.calls.is_empty());
+    assert_eq!(
+        vault.connector_send_task(&task_ref)?.unwrap().outcome,
+        Some(ConnectorSendTaskOutcome::Failed)
+    );
+    Ok(())
+}

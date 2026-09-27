@@ -86,6 +86,7 @@ fn persist_pending(
             accounted_at_ms: now_ms,
         },
         recorded_outcome: None,
+        delivery_uncertain: false,
         state: IntentState::Pending,
         created_ms: now_ms,
         updated_ms: now_ms,
@@ -969,6 +970,7 @@ fn greenfield_row_rejects_every_missing_chokepoint_field() {
         KEY_CAPABILITY_PROVENANCE,
         KEY_BUDGET_ACCOUNTING,
         KEY_RECORDED_OUTCOME,
+        KEY_DELIVERY_UNCERTAIN,
     ] {
         let Value::Map(mut entries) =
             rmpv::decode::read_value(&mut std::io::Cursor::new(&original))
@@ -1503,6 +1505,22 @@ fn row_with_content_digest(encoded: &[u8], digest: [u8; 32]) -> Vec<u8> {
 }
 
 #[test]
+fn greenfield_row_rejects_non_boolean_delivery_uncertainty() {
+    let (_dir, vault) = open_vault();
+    let record = persist_pending(&vault, attempt(40), 0, b"uncertainty shape", 100, true);
+    let key = intent_ledger_key(&record.id);
+    let mut entries = row_entries(&raw_row(&vault, &key));
+    let (_, value) = entries
+        .iter_mut()
+        .find(|(candidate, _)| candidate.as_str() == Some(KEY_DELIVERY_UNCERTAIN))
+        .expect("pinned uncertainty key");
+    *value = Value::from("true");
+    let error = decode_record(&key, &encode_entries(entries))
+        .expect_err("only a typed boolean can carry uncertainty");
+    assert!(matches!(error, IntentLedgerError::InvalidRecord(_)));
+}
+
+#[test]
 fn content_digest_is_hash_of_msgpack_minus_digest_key() {
     // The preimage IS the stored body minus one key. Rebuilding it here from
     // the persisted bytes — without calling the production digest — is what
@@ -1525,11 +1543,11 @@ fn content_digest_is_hash_of_msgpack_minus_digest_key() {
         panic!("the stored content digest must be binary");
     };
     assert_eq!(stored_digest.len(), 32);
-    assert_eq!(entries.len(), 19);
+    assert_eq!(entries.len(), 20);
 
     let preimage = encode_entries(entries);
-    // A 19-entry map is `map16`: the map header itself is inside the preimage.
-    assert_eq!(preimage[..3], [0xde, 0x00, 0x13]);
+    // A 20-entry map is `map16`: the map header itself is inside the preimage.
+    assert_eq!(preimage[..3], [0xde, 0x00, 0x14]);
     let width = payload.len();
     assert!(
         preimage.windows(width).any(|window| window == payload),
@@ -1551,7 +1569,7 @@ fn content_digest_is_hash_of_msgpack_minus_digest_key() {
 /// encoder: producer and expectation must be able to disagree, or a co-drifting
 /// change would rewrite both sides at once. Pre-launch, a deliberate ABI change
 /// re-pins them with a stated rationale.
-const GOLDEN_ROW_KEYS: [&str; 20] = [
+const GOLDEN_ROW_KEYS: [&str; 21] = [
     "schema_version",
     "id",
     "attempt_id",
@@ -1568,6 +1586,7 @@ const GOLDEN_ROW_KEYS: [&str; 20] = [
     "capability_provenance",
     "budget_accounting",
     "recorded_outcome",
+    "delivery_uncertain",
     "state",
     "created_ms",
     "updated_ms",
@@ -1581,9 +1600,9 @@ const GOLDEN_NOW_MS: u64 = 1_700_000_000_000;
 /// hash derive, in lowercase hex.
 const GOLDEN_INTENT_ID_HEX: &str =
     "311135d83a39aeef442248566c71583daf41968a7e78ca7688da8119259086d3";
-/// BLAKE3 of the 19-entry MessagePack body of that row at schema version 3.
+/// BLAKE3 of the 20-entry MessagePack body of that row at schema version 3.
 const GOLDEN_CONTENT_DIGEST_HEX: &str =
-    "770b0b4308af5fa80600143e4620adb0d5e5360c345905b404f38343bb0084c0";
+    "7cfb2aa7e3e334234dc21936153a53264149f9ae981f148edcd65a269585d5d0";
 
 #[test]
 fn storage_abi_golden_fixture() {
@@ -1776,6 +1795,12 @@ fn every_body_field_is_digest_bound() {
             }),
         ),
         (
+            "delivery_uncertain",
+            vec![KEY_DELIVERY_UNCERTAIN],
+            base.clone(),
+            mutated(&base, |record| record.delivery_uncertain = true),
+        ),
+        (
             "state and recorded_outcome",
             vec![KEY_STATE, KEY_RECORDED_OUTCOME],
             base.clone(),
@@ -1822,7 +1847,7 @@ fn every_body_field_is_digest_bound() {
     for (label, keys, case_base, case_mutated) in cases {
         for key in keys {
             assert!(
-                INTENT_LEDGER_VALUE_KEYS[..19].contains(&key),
+                INTENT_LEDGER_VALUE_KEYS[..20].contains(&key),
                 "{label} names a key outside the digest preimage"
             );
             covered.insert(key);
@@ -1870,13 +1895,13 @@ fn every_body_field_is_digest_bound() {
         );
     }
 
-    let expected: HashSet<&str> = INTENT_LEDGER_VALUE_KEYS[..19]
+    let expected: HashSet<&str> = INTENT_LEDGER_VALUE_KEYS[..20]
         .iter()
         .copied()
         .filter(|key| *key != KEY_SCHEMA_VERSION && *key != KEY_BINDING_VERSION)
         .collect();
     assert_eq!(covered, expected, "every body key needs a mutation case");
-    assert_eq!(covered.len(), 17, "19 body keys minus 2 structural ones");
+    assert_eq!(covered.len(), 18, "20 body keys minus 2 structural ones");
 }
 
 /// The FORMER canonical-JSON content digest, reconstructed locally. Production

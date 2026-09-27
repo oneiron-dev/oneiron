@@ -149,7 +149,10 @@ pub(crate) fn insert_pending_in_txn(
     wtxn: &mut heed::RwTxn<'_>,
     pending: &IntentLedgerRecord,
 ) -> IntentLedgerResult<()> {
-    if pending.state != IntentState::Pending || pending.recorded_outcome.is_some() {
+    if pending.state != IntentState::Pending
+        || pending.recorded_outcome.is_some()
+        || pending.delivery_uncertain
+    {
         return Err(IntentLedgerError::InvalidRecord(
             "only outcome-free Pending may be inserted",
         ));
@@ -233,6 +236,44 @@ pub(crate) fn abandon_record(
         RecordedOutboundOutcome::Abandoned(reason),
         now_ms,
     )
+}
+
+/// Persist positive uncertainty before a later attempt can replace the
+/// current attempt's outcome with definite non-delivery. Never reset this bit
+/// on retry; only confirmed Done or an explicit reconciliation can resolve it.
+pub(crate) fn record_possible_delivery(
+    vault: &Vault,
+    id: [u8; 32],
+    now_ms: u64,
+) -> IntentLedgerResult<IntentLedgerRecord> {
+    let key = intent_ledger_key(&id);
+    let mut wtxn = vault.store.env.write_txn().map_err(Error::from)?;
+    let raw = vault
+        .store
+        .vault_meta
+        .get(&wtxn, &key)?
+        .ok_or(IntentLedgerError::InvalidRecord(
+            "possible delivery target is missing",
+        ))?;
+    let mut record = decode_record(&key, &raw)?;
+    if record.state != IntentState::Pending || record.recorded_outcome.is_some() {
+        return Err(IntentLedgerError::InvalidRecord(
+            "possible delivery requires outcome-free Pending",
+        ));
+    }
+    if !record.delivery_uncertain {
+        record.delivery_uncertain = true;
+        record.updated_ms = now_ms.max(record.created_ms);
+        vault
+            .store
+            .vault_meta
+            .put(&mut wtxn, &key, &encode_record(&record)?)?;
+        wtxn.commit().map_err(Error::from)?;
+    } else {
+        drop(wtxn);
+    }
+    force_sync(vault)?;
+    Ok(record)
 }
 
 pub(crate) fn record_definite_non_delivery(
