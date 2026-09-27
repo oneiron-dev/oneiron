@@ -48,7 +48,7 @@ use super::{
     validate_email_inbound_metadata, validate_max_bytes, validate_non_blank,
 };
 use crate::Vault;
-use crate::attempt_queue::{AttemptQueue, EnqueueAttempt, EnqueueOutcome};
+use crate::attempt_queue::{EnqueueAttempt, EnqueueOutcome};
 use crate::channel_identity::{
     AssignmentAddress, ChannelIdentity, ChannelIdentityBinding, ChannelIdentityFulfillment,
     ChannelIdentityState, DelegatedGrant, DelegatedGrantScope, DelegatedProvisionRequest,
@@ -541,12 +541,18 @@ impl GmailDelegatedAdapter {
         let payload = serde_json::to_vec(&config).map_err(|err| {
             Error::InvalidConfig(format!("gmail inbox poll config did not encode: {err}"))
         })?;
-        AttemptQueue::new(vault).enqueue(EnqueueAttempt {
-            kind: GMAIL_INBOX_POLL_ATTEMPT_KIND.to_owned(),
-            payload,
-            dedupe_key: Some(gmail_inbox_poll_dedupe_key(identity_id)),
-            run_id: None,
-            now,
+        vault.with_write_txn(|txn| {
+            crate::ports::JobQueue::port_job_enqueue(
+                vault,
+                txn,
+                EnqueueAttempt {
+                    kind: GMAIL_INBOX_POLL_ATTEMPT_KIND.to_owned(),
+                    payload,
+                    dedupe_key: Some(gmail_inbox_poll_dedupe_key(identity_id)),
+                    run_id: None,
+                    now,
+                },
+            )
         })
     }
 
