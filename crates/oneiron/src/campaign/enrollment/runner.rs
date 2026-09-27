@@ -14,8 +14,7 @@ use super::storage::{
 };
 use crate::Vault;
 use crate::attempt_queue::{
-    AttemptId, AttemptQueue, AttemptRecord, ClaimAttempt, ClaimOutcome, EnqueueAttempt,
-    EnqueueOutcome,
+    AttemptId, AttemptRecord, ClaimAttempt, ClaimOutcome, EnqueueAttempt, EnqueueOutcome,
 };
 use crate::campaign::claims::CampaignMemberState;
 use crate::entity_id::{EntityId, bytes_to_hex_lower};
@@ -170,17 +169,13 @@ pub enum EnrollmentExecution {
 /// Leader-only enrollment runner over the existing attempt queue.
 pub struct CampaignEnrollmentRunner<'a> {
     vault: &'a Vault,
-    attempts: AttemptQueue<'a>,
 }
 
 impl<'a> CampaignEnrollmentRunner<'a> {
     /// Opens a runner over an already-open vault.
     #[must_use]
     pub fn new(vault: &'a Vault) -> Self {
-        Self {
-            vault,
-            attempts: AttemptQueue::new(vault),
-        }
+        Self { vault }
     }
 
     /// Enqueues one enrollment attempt.
@@ -199,12 +194,18 @@ impl<'a> CampaignEnrollmentRunner<'a> {
         now: u64,
     ) -> Result<EnqueueOutcome> {
         let dedupe_key = enrollment_dedupe_key(self.vault, payload)?;
-        self.attempts.enqueue(EnqueueAttempt {
-            kind: CAMPAIGN_ENROLLMENT_MACRO_ATTEMPT_KIND.to_owned(),
-            payload: encode_enrollment_attempt_payload(payload)?,
-            dedupe_key: Some(dedupe_key),
-            run_id,
-            now,
+        self.vault.with_write_txn(|txn| {
+            crate::ports::JobQueue::port_job_enqueue(
+                self.vault,
+                txn,
+                EnqueueAttempt {
+                    kind: CAMPAIGN_ENROLLMENT_MACRO_ATTEMPT_KIND.to_owned(),
+                    payload: encode_enrollment_attempt_payload(payload)?,
+                    dedupe_key: Some(dedupe_key),
+                    run_id,
+                    now,
+                },
+            )
         })
     }
 
@@ -228,11 +229,15 @@ impl<'a> CampaignEnrollmentRunner<'a> {
                 Ok(CampaignEnrollmentClaim::NotHomeNode(designation))
             }
             CampaignHomeNodeAdmission::Designated(_) => self
-                .attempts
-                .claim_kind(
-                    CAMPAIGN_ENROLLMENT_MACRO_ATTEMPT_KIND,
-                    ClaimAttempt { lease_owner, now },
-                )
+                .vault
+                .with_write_txn(|txn| {
+                    crate::ports::JobQueue::port_job_claim(
+                        self.vault,
+                        txn,
+                        Some(CAMPAIGN_ENROLLMENT_MACRO_ATTEMPT_KIND),
+                        ClaimAttempt { lease_owner, now },
+                    )
+                })
                 .map(CampaignEnrollmentClaim::Queue),
         }
     }
