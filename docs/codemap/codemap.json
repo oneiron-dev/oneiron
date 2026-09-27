@@ -2657,7 +2657,7 @@
      "path": "src/batch/claim_materialization.rs",
      "purpose": "Exact-operation envelope handoff",
      "surface": {
-      "crate-vis": 15
+      "crate-vis": 16
      }
     },
     {
@@ -3041,7 +3041,7 @@
      "path": "src/batch/gate_mode.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 8
+      "crate-vis": 9
      }
     },
     {
@@ -3211,7 +3211,7 @@
      "path": "src/batch/put_apply/put_staging.rs",
      "purpose": "Body/index/edge row staging helpers shared by the put and update paths",
      "surface": {
-      "crate-vis": 15
+      "crate-vis": 20
      }
     },
     {
@@ -3231,7 +3231,7 @@
      "path": "src/batch/secret_scan.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 7
      }
     },
     {
@@ -29370,7 +29370,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "HubAdmissionDisposition",
@@ -29379,7 +29379,7 @@
      "path": "src/skill_hub/admission.rs",
      "purpose": "Consent-bound held-out admission, using the existing host scorer and lifecycle write door",
      "surface": {
-      "crate-vis": 5,
+      "crate-vis": 6,
       "enum": 1,
       "fn": 3,
       "struct": 1
@@ -29392,11 +29392,11 @@
      "path": "src/skill_hub/admission_guard.rs",
      "purpose": "Imported and hub-derived instruction authority at the single SKILL materialization door",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 3
      }
     },
     {
-     "bucket": "L",
+     "bucket": "XL",
      "kind": "test",
      "notable": [],
      "path": "src/skill_hub/admission_tests.rs",
@@ -29446,6 +29446,36 @@
      "notable": [],
      "path": "src/skill_hub/bootstrap/tests.rs",
      "purpose": "—",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "ClaimRefinementMergeAsk",
+      "ClaimRefinementMergeDisposition",
+      "ClaimRefinementMergeReceipt",
+      "HeldOutClaimReplayCase",
+      "HeldOutClaimReplayScorer",
+      "LocalClaimRefinement",
+      "UsefulUpstreamClaimJudge"
+     ],
+     "path": "src/skill_hub/claim_refinement.rs",
+     "purpose": "Session-branch claim edits: typed usefulness, owner-held reserve, and atomic admission",
+     "surface": {
+      "crate-vis": 2,
+      "enum": 1,
+      "fn": 10,
+      "struct": 4,
+      "trait": 2
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "src/skill_hub/claim_refinement_tests.rs",
+     "purpose": "Claim refinements use the same typed question and independent held-out rule",
      "surface": {}
     },
     {
@@ -29572,9 +29602,9 @@
      "path": "src/skill_hub/mod.rs",
      "purpose": "Skill-hub records, provenance aliases, adapter contracts, and update gates",
      "surface": {
-      "crate-vis": 14,
+      "crate-vis": 19,
       "mod": 2,
-      "re-export": 16
+      "re-export": 17
      }
     },
     {
@@ -29871,6 +29901,34 @@
      }
     },
     {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/skill_hub/refinement_admission.rs",
+     "purpose": "Content-free refinement identity and the transaction-local exact-admission capability",
+     "surface": {
+      "crate-vis": 17
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/skill_hub/refinement_custody.rs",
+     "purpose": "Candidate-owned custody for inert refinement rulings",
+     "surface": {
+      "crate-vis": 12
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "src/skill_hub/refinement_custody/tests.rs",
+     "purpose": "The same source custody laws for claim and skill refinement receipts",
+     "surface": {}
+    },
+    {
      "bucket": "s",
      "kind": "src",
      "notable": [
@@ -29880,9 +29938,9 @@
      "path": "src/skill_hub/shared_delta.rs",
      "purpose": "Submitted-byte federation merge-back and company PR staging",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 2,
       "enum": 1,
-      "fn": 3,
+      "fn": 4,
       "struct": 1
      }
     },
@@ -29898,6 +29956,7 @@
      "path": "src/skill_hub/shared_gate.rs",
      "purpose": "Useful-upstream and held-out merge gate for submitted shared-skill deltas",
      "surface": {
+      "crate-vis": 1,
       "enum": 1,
       "fn": 6,
       "struct": 2,
@@ -34776,7 +34835,7 @@
      "path": "src/write_envelope.rs",
      "purpose": "Write-path stamping: `WriteActor`/`WriteProvenance`/`WriteEnvelope`/`ClaimCandidate` + evidence stamping",
      "surface": {
-      "crate-vis": 16,
+      "crate-vis": 17,
       "fn": 28,
       "struct": 5
      }
@@ -36619,7 +36678,7 @@
      "purpose": "Message-to-skill conversion — the user-initiated middle road into the skill library (ARCH-0017, registry…"
     },
     "skill_hub": {
-     "files": 53,
+     "files": 58,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -36824,8 +36883,8 @@
    },
    "over_bar": 2,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2184,
-   "test_files": 740
+   "source_files": 2187,
+   "test_files": 742
   },
   "oneiron-android": {
    "files": [
