@@ -35,10 +35,6 @@ mod claim;
 use self::authority::observe_authority_put;
 use self::claim::reconcile_replicated_critical_confirm;
 
-#[expect(
-    clippy::too_many_arguments,
-    reason = "decomposing would obscure direct LMDB write logic"
-)]
 fn normalized_policy_scope(entity_type: u8, data: &[u8]) -> Option<Vec<u8>> {
     if entity_type == crate::registry::ENTITY_TYPE_POLICY_MANIFEST {
         crate::gate::normalize_policy_manifest_scope(data)
