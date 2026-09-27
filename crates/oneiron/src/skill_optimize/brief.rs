@@ -241,16 +241,15 @@ pub(super) fn optimize_brief_bound_at(
     // exact target, then join their proposal text and author rationale. A
     // removed or since-mutated proposal cannot truthfully describe the body
     // the gate scored; do not display it as that body's edit.
-    let mut rejected_verdicts: Vec<_> = skill_edit_verdicts(vault)?
-        .into_iter()
-        .filter(|verdict| {
-            verdict.skill == candidate.skill
-                && verdict.disposition == SkillEditDisposition::Rejected
-        })
-        .collect();
-    truncate_oldest(&mut rejected_verdicts);
     let mut rejected_edits = Vec::new();
-    for verdict in rejected_verdicts {
+    // Newest first: the cap counts only entries that actually survive the
+    // proposal, digest, and audience joins. Otherwise 64 other principals'
+    // verdicts could evict the one rejection this author may learn from.
+    for verdict in skill_edit_verdicts(vault)?.into_iter().rev() {
+        if verdict.skill != candidate.skill || verdict.disposition != SkillEditDisposition::Rejected
+        {
+            continue;
+        }
         let Some(proposal) = vault.get_skill_record(&verdict.proposal)? else {
             continue;
         };
@@ -267,7 +266,9 @@ pub(super) fn optimize_brief_bound_at(
             .iter()
             .find(|(key, _)| key.as_str() == Some(PROVENANCE_OPTIMIZE_PRINCIPAL_KEY))
             .map(|(_, value)| value.as_str().and_then(|hex| EntityId::from_hex(hex).ok()));
-        if bound_to.is_some_and(|owner| owner != principal) {
+        // Absent is public; present but unreadable is NOT unbound. Treat any
+        // malformed stamp as ineligible, including for an unbound author.
+        if bound_to.is_some_and(|owner| owner.is_none() || owner != principal) {
             continue;
         }
         let Some(author_rationale) = provenance.iter().find_map(|(key, value)| {
@@ -287,7 +288,11 @@ pub(super) fn optimize_brief_bound_at(
                 RejectedSkillEditReason::Regression
             },
         });
+        if rejected_edits.len() == SKILL_OPTIMIZE_MAX_BRIEF_EVIDENCE {
+            break;
+        }
     }
+    rejected_edits.reverse();
 
     Ok(SkillOptimizeBrief {
         skill: candidate.skill,
