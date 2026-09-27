@@ -700,7 +700,7 @@ fn resolved_refs_composition_deception_and_actual_mismatch_block_install() -> Re
     });
     let resolved = serde_json::json!({
         "$defs":{"limit":{"type":"integer","description":"Maximum items"}},
-        "type":"object","properties":{"limit":{"type":"integer","description":"Maximum items"}}
+        "allOf":[{"type":"object","properties":{"limit":{"type":"integer","description":"Maximum items"}}}]
     });
     let cases = [
         (
@@ -986,6 +986,20 @@ fn composition_keeps_branch_constraints_and_accepts_matching_branches() -> Resul
         restrictive,
         None,
     )?;
+    let single = serde_json::json!({"type":"object","properties":{"x":{"type":"string"}},"allOf":[{"additionalProperties":false}]});
+    let widened = serde_json::json!({"type":"object","properties":{"x":{"type":"string"}},"additionalProperties":false});
+    assert_screen_result(
+        &connector_with_schema(single.clone())?,
+        widened.clone(),
+        Some("declared-vs-actual"),
+    )?;
+    assert_screen_result(&connector_with_schema(single.clone())?, single, None)?;
+    let ref_sibling = serde_json::json!({"$defs":{"restricted":{"additionalProperties":false}},"type":"object","properties":{"x":{"type":"string"}},"$ref":"#/$defs/restricted"});
+    assert_screen_result(
+        &connector_with_schema(ref_sibling)?,
+        widened,
+        Some("declared-vs-actual"),
+    )?;
     let repeated = serde_json::json!({"allOf":[
         {"type":"object","properties":{"x":{"type":"string"}}},
         {"type":"object","properties":{"x":{"type":"string"}}}
@@ -1004,6 +1018,12 @@ fn omitted_cyrillic_confusable_refuses_a_matching_observed_schema() -> Result<()
         &connector_with_schema(deceptive.clone())?,
         deceptive,
         Some("mixed-script homoglyph"),
+    )?;
+    let fullwidth = serde_json::json!({"type":"object","properties":{"query":{"type":"string","description":"\u{ff53}ystem prompt"}}});
+    assert_screen_result(
+        &connector_with_schema(fullwidth.clone())?,
+        fullwidth,
+        Some("compatibility homoglyph"),
     )
 }
 #[test]
@@ -1076,6 +1096,8 @@ fn script_calls_are_tokenized_and_local_helpers_are_allowed() -> Result<()> {
         ("from os import system as call; call('id')", true),
         ("__import__('os').system('id')", true),
         ("import importlib; importlib.import_module('os')", true),
+        ("run = eval; run(\"__import__('os').system('id')\")", true),
+        ("reader = open; reader('/etc/passwd')", true),
     ] {
         let mut files = source(true)?.files().to_vec();
         files.push(HubFile::new(
@@ -1154,5 +1176,111 @@ fn rule_changed_before_approval_returns_typed_card_reason_without_spend() -> Res
         vault.install_pack(&ask)?,
         PackInstallDisposition::Installed(_)
     ));
+    Ok(())
+}
+
+#[test]
+fn escaped_pack_license_and_grant_patterns_block_with_reasons() -> Result<()> {
+    for (field, old, replacement) in [
+        (
+            "license",
+            "description: fixture",
+            r#"description: fixture
+license: "\u0062an_marker""#,
+        ),
+        (
+            "grants",
+            r#"grants: ["mail.read"]"#,
+            r#"grants: ["mail.read", "\u0062an_marker"]"#,
+        ),
+    ] {
+        let mut files = source(true)?.files().to_vec();
+        let pack = files.iter_mut().find(|f| f.path == "PACK.md").unwrap();
+        pack.content = String::from_utf8(pack.content.clone())
+            .unwrap()
+            .replace(old, replacement)
+            .into_bytes();
+        let source = PackSource::from_files(files)?;
+        let (_dir, vault, owner, reference, publisher) =
+            fixture(SkillHubTrustTier::Verified, &source)?;
+        vault.set_pack_install_rules(
+            &owner,
+            &PackInstallRules {
+                removed_hashes: vec![],
+                known_bad_patterns: vec!["ban_marker".into()],
+            },
+        )?;
+        let id = vault.stage_pack_source(&source, TimeRange { start: 3, end: 3 }, 3)?;
+        let ask = vault.prepare_pack_install(
+            id,
+            &reference,
+            &publisher,
+            &Qualification {
+                runtime: true,
+                passed: true,
+            },
+        )?;
+        let reason = ask.blocked_reason().expect("decoded owner rule");
+        assert!(
+            reason.contains(field) && reason.contains("known-bad pattern"),
+            "{reason}"
+        );
+        assert!(matches!(
+            vault.approve_pack_install(&ask, &owner),
+            Err(crate::error::Error::Registry(
+                crate::error::RegistryError::PackInstallRuleBlocked { .. }
+            ))
+        ));
+        assert_eq!(
+            vault.install_pack(&ask)?,
+            PackInstallDisposition::Blocked {
+                reason: reason.into()
+            }
+        );
+        assert!(vault.installed_pack("alice.tools")?.is_none());
+    }
+    Ok(())
+}
+#[test]
+fn escaped_pack_description_secret_blocks_without_consent_spend() -> Result<()> {
+    let mut files = source(true)?.files().to_vec();
+    let pack = files.iter_mut().find(|f| f.path == "PACK.md").unwrap();
+    pack.content = String::from_utf8(pack.content.clone())
+        .unwrap()
+        .replace(
+            "description: fixture",
+            r#"description: "\u0067hp_0123456789abcdefghijklmnopqrstuvwxyz""#,
+        )
+        .into_bytes();
+    let source = PackSource::from_files(files)?;
+    let (_dir, vault, owner, reference, publisher) = fixture(SkillHubTrustTier::Verified, &source)?;
+    let id = vault.stage_pack_source(&source, TimeRange { start: 3, end: 3 }, 3)?;
+    let ask = vault.prepare_pack_install(
+        id,
+        &reference,
+        &publisher,
+        &Qualification {
+            runtime: true,
+            passed: true,
+        },
+    )?;
+    let reason = ask.blocked_reason().expect("decoded secret rule");
+    assert!(
+        reason.contains("PACK.md description: secret-shaped string"),
+        "{reason}"
+    );
+    assert!(matches!(
+        vault.approve_pack_install(&ask, &owner),
+        Err(crate::error::Error::Registry(
+            crate::error::RegistryError::PackInstallRuleBlocked { .. }
+        ))
+    ));
+    assert_eq!(
+        vault.install_pack(&ask)?,
+        PackInstallDisposition::Blocked {
+            reason: reason.into()
+        }
+    );
+    assert!(vault.installed_pack("alice.tools")?.is_none());
     Ok(())
 }

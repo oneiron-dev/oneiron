@@ -1,6 +1,7 @@
 //! Bounded, source-bound install rules for connector tool manifests.
 use super::{PackKind, PackObservedTool, PackQualification, PackSource, invalid};
 use crate::{Vault, consent::AuthenticatedOwner, error::Result, skill::SkillContentHash};
+use icu_normalizer::ComposingNormalizer;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 use std::collections::{BTreeMap, BTreeSet};
@@ -107,12 +108,32 @@ impl Vault {
         if source.manifest().kind != PackKind::Connector {
             return Ok(None);
         }
-        for (field, text) in [
-            ("name", source.manifest().name.as_str()),
-            ("description", source.manifest().description.as_str()),
-            ("version", source.manifest().version.as_str()),
+        let manifest = source.manifest();
+        let mut decoded = vec![
+            ("name", manifest.name.as_str()),
+            ("description", manifest.description.as_str()),
+            ("version", manifest.version.as_str()),
+        ];
+        if let Some(license) = &manifest.license {
+            decoded.push(("license", license));
+        }
+        if let Some(adapter) = &manifest.adapter {
+            match adapter {
+                super::PackAdapter::Builtin(value) | super::PackAdapter::Script(value) => {
+                    decoded.push(("adapter", value));
+                }
+            }
+        }
+        for (field, values) in [
+            ("predicates", &manifest.predicates),
+            ("kinds", &manifest.kinds),
+            ("grants", &manifest.requested_grants),
+            ("wakes", &manifest.wake_subscriptions),
         ] {
-            if let Some(reason) = screen_text(text).or_else(|| known_bad(text, &rules)) {
+            decoded.extend(values.iter().map(|value| (field, value.as_str())));
+        }
+        for (field, text) in decoded {
+            if let Some(reason) = decoded_rule(text, &rules) {
                 return Ok(Some(format!("PACK.md {field}: {reason}")));
             }
         }
@@ -232,18 +253,21 @@ fn resolve(
     match value {
         Value::Object(fields) => {
             let mut result = Map::new();
-            if let Some(reference) = fields.get("$ref") {
+            let reference_target = if let Some(reference) = fields.get("$ref") {
                 let pointer = reference
                     .as_str()
                     .and_then(|s| s.strip_prefix('#'))
                     .filter(|p| p.is_empty() || p.starts_with('/'))
                     .ok_or("external or invalid schema ref")?;
                 let target = root.pointer(pointer).ok_or("unresolved schema ref")?;
-                let Value::Object(resolved) = resolve(target, root, depth + 1, budget)? else {
+                let resolved = resolve(target, root, depth + 1, budget)?;
+                if !resolved.is_object() {
                     return Err("ref must resolve to an object");
-                };
-                result.extend(resolved);
-            }
+                }
+                Some(resolved)
+            } else {
+                None
+            };
             for (key, child) in fields {
                 if key == "$ref" {
                     continue;
@@ -294,19 +318,14 @@ fn resolve(
                     }
                 }
             }
-            if let Some(Value::Array(branches)) = result.remove("allOf") {
-                if branches.len() == 1 {
-                    let Value::Object(branch) = &branches[0] else {
-                        return Err("composition must contain objects");
-                    };
-                    if branch.keys().all(|key| !result.contains_key(key)) {
-                        result.extend(branch.clone());
-                    } else {
-                        result.insert("allOf".into(), Value::Array(branches));
-                    }
-                } else {
-                    result.insert("allOf".into(), Value::Array(branches));
+            // A ref plus sibling keywords is an intersection, not a map union.
+            // Even one allOf branch must keep its own evaluation scope:
+            // additionalProperties in that branch cannot see parent properties.
+            if let Some(target) = reference_target {
+                if result.is_empty() {
+                    return Ok(target);
                 }
+                return Ok(serde_json::json!({"allOf": [target, Value::Object(result)]}));
             }
             Ok(Value::Object(result))
         }
@@ -337,8 +356,17 @@ fn screen_schema(value: &Value, parameter: bool) -> Option<&'static str> {
         _ => None,
     }
 }
+fn decoded_rule(text: &str, rules: &PackInstallRules) -> Option<&'static str> {
+    let normalized = ComposingNormalizer::new_nfkc().normalize(text);
+    if crate::batch::secret_scan::scan_file_content("", normalized.as_bytes()).is_some() {
+        return Some("secret-shaped string");
+    }
+    screen_text(text).or_else(|| known_bad(text, rules))
+}
 fn known_bad(text: &str, rules: &PackInstallRules) -> Option<&'static str> {
-    let lower = text.to_lowercase();
+    let lower = ComposingNormalizer::new_nfkc()
+        .normalize(text)
+        .to_lowercase();
     rules
         .known_bad_patterns
         .iter()
@@ -356,7 +384,9 @@ fn known_bad_value(value: &Value, rules: &PackInstallRules) -> Option<&'static s
     }
 }
 fn screen_parameter(text: &str) -> Option<&'static str> {
-    let lower = text.to_lowercase();
+    let lower = ComposingNormalizer::new_nfkc()
+        .normalize(text)
+        .to_lowercase();
     [
         "ignore",
         "instruction",
@@ -387,7 +417,17 @@ fn screen_text(text: &str) -> Option<&'static str> {
             return Some("mixed-script homoglyph deception");
         }
     }
-    let lower = text.to_lowercase();
+    let normalized = ComposingNormalizer::new_nfkc().normalize(text);
+    if text.chars().any(|c| {
+        !c.is_ascii()
+            && ComposingNormalizer::new_nfkc()
+                .normalize(&c.to_string())
+                .chars()
+                .any(|normalized| normalized.is_ascii_alphabetic())
+    }) {
+        return Some("compatibility homoglyph deception");
+    }
+    let lower = normalized.to_lowercase();
     [
         "ignore previous",
         "ignore all",

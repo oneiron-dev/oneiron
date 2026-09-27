@@ -55,8 +55,11 @@ pub(super) fn screen_script(path: &str, source: &str) -> Option<&'static str> {
         {
             return Some("call outside the sandbox");
         }
+        // Treat dynamic/host-facing callables as unsafe *values* too. A bare
+        // reference can be assigned and called under an arbitrary local name.
         if [
             "__import__",
+            "__builtins__",
             "eval",
             "exec",
             "compile",
@@ -69,7 +72,6 @@ pub(super) fn screen_script(path: &str, source: &str) -> Option<&'static str> {
             "system",
         ]
         .contains(&lower.as_str())
-            && tokens.get(index + 1) == Some(&Token::Symbol('('))
         {
             return Some("call outside the sandbox");
         }
