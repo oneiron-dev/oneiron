@@ -113,6 +113,19 @@ pub(super) fn hash_policy_frontier_v0(
         hash_bool(hasher, grant.receipt_required);
     }
 
+    // Default grant rows change future authority, so they move the same
+    // policy frontier as the other resolved capability rows.
+    if !resolution.federation_grant_rows.is_empty() {
+        hash_str(hasher, crate::federation::grant_policy::ROWS_KEY);
+        hash_len(hasher, resolution.federation_grant_rows.len());
+        for row in &resolution.federation_grant_rows {
+            hash_opt_value(
+                hasher,
+                Some(&crate::federation::grant_policy::encode_row(row)?),
+            )?;
+        }
+    }
+
     hash_bool(hasher, resolution.owner_policy_enabled);
     hash_bool(hasher, resolution.owner_policy_rows_dropped);
     hash_len(hasher, resolution.owner_policy_rows.len());

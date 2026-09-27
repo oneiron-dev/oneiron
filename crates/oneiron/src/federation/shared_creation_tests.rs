@@ -8,8 +8,10 @@ fn fixture() -> (
     AuthenticatedOwner,
     AuthenticatedOwner,
 ) {
-    let (dir, vault) =
-        crate::test_util::open_test_vault_with(crate::test_util::embedding_test_config());
+    // Membership defaults are manifest policy. Keep the seeded manifest
+    // rather than using the legacy test opener that removes every policy row.
+    let dir = tempfile::tempdir().unwrap();
+    let vault = Vault::open(dir.path(), crate::test_util::embedding_test_config()).unwrap();
     let mut owners = Vec::new();
     for _ in 0..2 {
         let id = EntityId::now();

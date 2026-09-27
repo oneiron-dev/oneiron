@@ -27,7 +27,7 @@ use crate::edge::EdgeActorClass;
 use crate::error::{ErrorKind, RecordError};
 use crate::receipt::{ReceiptKind, ReceiptQuery};
 use crate::registry::ENTITY_TYPE_ACCESS_GRANT;
-use crate::test_util::{entity, open_test_vault_with};
+use crate::test_util::entity;
 
 const VAULT_ID: u64 = 7;
 const AT: u64 = 1_700_000_000;
@@ -52,7 +52,9 @@ fn test_vault() -> (tempfile::TempDir, Vault) {
     cfg.map_size = 32 * 1024 * 1024;
     cfg.dimensions = 4;
     cfg.embedding_model = None;
-    open_test_vault_with(cfg)
+    let dir = tempfile::tempdir().unwrap();
+    let vault = Vault::open(dir.path(), cfg).unwrap();
+    (dir, vault)
 }
 
 fn writer(seed: u8) -> WriteActor {
@@ -606,6 +608,25 @@ fn seed_mailbox_bind_policy(vault: &Vault) -> Result<()> {
         }]
     });
     let bytes = rmp_serde::to_vec_named(&manifest).expect("fixture policy");
+    let rmpv::Value::Map(mut entries) =
+        rmpv::decode::read_value(&mut bytes.as_slice()).expect("fixture manifest map")
+    else {
+        panic!("fixture policy must be a map")
+    };
+    let default = crate::gate::default_policy_manifest();
+    let rmpv::Value::Map(default_entries) =
+        rmpv::decode::read_value(&mut default.as_slice()).expect("seeded manifest")
+    else {
+        panic!("seeded policy must be a map")
+    };
+    let rows = default_entries
+        .into_iter()
+        .find(|(key, _)| key.as_str() == Some(crate::federation::grant_policy::ROWS_KEY))
+        .expect("seeded grant rows");
+    entries.push(rows);
+    let mut bytes = Vec::new();
+    rmpv::encode::write_value(&mut bytes, &rmpv::Value::Map(entries))
+        .expect("fixture policy with grant rows");
     crate::test_util::put_policy_manifest_bytes(
         vault,
         crate::gate::default_policy_manifest_id()?,

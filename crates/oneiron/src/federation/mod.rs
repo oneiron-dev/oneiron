@@ -13,6 +13,7 @@ pub mod derivation;
 #[cfg(feature = "sync")]
 pub(crate) use coreference::coreference_shared_for_pact_in_txn;
 mod grant;
+pub(crate) mod grant_policy;
 mod membership_gate;
 pub use membership_gate::SharedVaultWrite;
 #[cfg(feature = "sync")]

@@ -332,9 +332,10 @@ impl FederationGrant {
         // `pub` fields make any construction-time invariant unenforceable
         // anyway. Encode and decode remain the validating doors.
         Ok(Self {
-            authority_scope: parent
-                .authority_scope
-                .meet(&super::scope_codec::read_preset()),
+            // Bare construction carries no DEFAULT authority. The vault
+            // writer resolves a manifest row and meets the live parent before
+            // persisting; encoding this envelope alone stores an inert grant.
+            authority_scope: crate::federation::Scope::default(),
             scope: parent.scope,
             member_ref,
             role: FederationGrantRole::Delegate,
@@ -489,7 +490,11 @@ fn decode_federation_grant_value(value: &Value) -> Result<FederationGrant> {
 
     let grant = FederationGrant {
         authority_scope: if legacy {
-            super::grant_scope::membership_preset(role)
+            if role == FederationGrantRole::Delegate {
+                super::scope_codec::read_preset()
+            } else {
+                super::grant_scope::membership_preset(role)
+            }
         } else {
             super::scope_codec::decode_scope_value(required_value(entries, "authority_scope")?)
                 .map_err(|_| invalid_grant())?

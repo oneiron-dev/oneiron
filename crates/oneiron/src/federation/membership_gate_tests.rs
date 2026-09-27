@@ -212,13 +212,64 @@ fn legacy_auditor_bytes_map_to_viewer_and_guest_cannot_enter_the_roster() {
 
 #[test]
 fn default_delegate_does_not_inherit_parent_write_or_admin_verbs() {
-    let parent = FederationGrant::new(
-        FederationGrantScope::vault(42),
-        EntityId::now(),
-        FederationGrantRole::Admin,
-        FederationGrantPreset::Admin,
-    );
-    let delegate = FederationGrant::attenuated_delegate(&parent, EntityId::now(), 1, 10).unwrap();
+    let dir = tempfile::tempdir().unwrap();
+    let vault = Vault::open(dir.path(), crate::VaultConfig::default()).unwrap();
+    let owner = person(&vault);
+    let admin = person(&vault);
+    let delegate_member = person(&vault);
+    let owner_proof = vault
+        .authenticate_owner(
+            owner,
+            &owner.to_hex(),
+            true,
+            crate::store::GateDecisionId::now(),
+        )
+        .unwrap();
+    let admin_proof = vault
+        .authenticate_owner(
+            admin,
+            &admin.to_hex(),
+            true,
+            crate::store::GateDecisionId::now(),
+        )
+        .unwrap();
+    let created = vault
+        .initialize_shared_vault(
+            &owner_proof,
+            42,
+            Some(super::SharedVaultPreset::Team),
+            &[super::InitialSharedMember {
+                member_ref: admin,
+                role: Some(FederationGrantRole::Admin),
+            }],
+            1,
+        )
+        .unwrap();
+    let parent_id = created
+        .grant_refs
+        .iter()
+        .find_map(|hex| {
+            let id = EntityId::from_hex(hex).unwrap();
+            let raw = vault.get_raw(&id).unwrap().unwrap();
+            (decode_federation_grant_body(&raw[crate::batch::ENTITY_METADATA_HEADER_LEN..])
+                .unwrap()
+                .member_ref
+                == admin)
+                .then_some(id)
+        })
+        .unwrap();
+    let parent_raw = vault.get_raw(&parent_id).unwrap().unwrap();
+    let parent =
+        decode_federation_grant_body(&parent_raw[crate::batch::ENTITY_METADATA_HEADER_LEN..])
+            .unwrap();
+    let bare = FederationGrant::attenuated_delegate(&parent, delegate_member, 2, 10).unwrap();
+    assert!(bare.authority_scope.verbs.is_bottom());
+    let id = vault
+        .create_federation_delegate(&admin_proof, parent_id, delegate_member, 2, 10)
+        .unwrap();
+    let raw = vault.get_raw(&id).unwrap().unwrap();
+    let delegate =
+        decode_federation_grant_body(&raw[crate::batch::ENTITY_METADATA_HEADER_LEN..]).unwrap();
     assert!(!super::membership_gate::grant_allows_content_write(
         &delegate,
         &Scope::top()

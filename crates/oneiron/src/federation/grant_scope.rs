@@ -16,19 +16,12 @@ pub(crate) fn admits_preset(scope: &Scope, verb: &str) -> bool {
 pub(crate) fn membership_preset(role: super::FederationGrantRole) -> Scope {
     match role {
         super::FederationGrantRole::Owner => Scope::top(),
-        super::FederationGrantRole::Admin => {
-            let mut scope = Scope::top();
-            scope.verbs = ScopeAxis::Some(BTreeSet::from([
-                "read".to_owned(),
-                "write".to_owned(),
-                "admin".to_owned(),
-                "org:add-member".to_owned(),
-                "org:remove-member".to_owned(),
-                "org:assign-role".to_owned(),
-                "org:reset-shared-project-access".to_owned(),
-            ]));
-            scope
-        }
+        // The ADMIN ceiling is structural. Which named powers it starts with
+        // is chosen by vault-resident manifest rows at the minting writer.
+        super::FederationGrantRole::Admin => Scope::top(),
+        // The non-vault Delegate constructor keeps its historical narrow
+        // ceiling; the vault minting writer resolves the policy row instead.
+        super::FederationGrantRole::Delegate => super::scope_codec::read_preset(),
         super::FederationGrantRole::Member => {
             let mut scope = Scope::top();
             scope.verbs = ScopeAxis::Some(BTreeSet::from(["read".to_owned(), "write".to_owned()]));

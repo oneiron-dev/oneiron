@@ -200,7 +200,7 @@ pub(super) fn grant_member_bundle(
     writer: &WriteActor,
 ) -> Result<()> {
     let id = intent.grant_bundle.federation_grant_ref;
-    let expected = FederationGrant::new(
+    let mut expected = FederationGrant::new(
         FederationGrantScope::vault(intent.workspace.workspace_vault_id),
         intent.person_ref,
         intent.grant_bundle.role,
@@ -215,12 +215,18 @@ pub(super) fn grant_member_bundle(
     // them on the way in. Moving this behind a future public
     // `Vault::create_federation_grant` is a pure refactor: the bytes do not
     // change.
-    let data = encode_federation_grant_body(&expected)?;
     let occurred = TimeRange {
         start: intent.occurred_at,
         end: intent.occurred_at,
     };
     with_workspace_authority(vault, intent.workspace.workspace_vault_id, writer, |wtxn| {
+        expected.authority_scope = vault.grant_default_scope_in_txn(
+            wtxn,
+            expected.role,
+            intent.workspace.workspace_vault_id,
+            expected.member_ref,
+        )?;
+        let data = encode_federation_grant_body(&expected)?;
         if let Some(existing) = read_federation_grant_in_txn(vault, wtxn, &id)? {
             if existing != expected {
                 return Err(invalid(

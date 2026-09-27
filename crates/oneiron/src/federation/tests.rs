@@ -200,13 +200,17 @@ fn delegate_member_ref() -> EntityId {
 }
 
 fn test_delegate() -> FederationGrant {
-    FederationGrant::attenuated_delegate(
+    let mut delegate = FederationGrant::attenuated_delegate(
         &test_grant(),
         delegate_member_ref(),
         DELEGATE_NOW,
         DELEGATE_EXPIRES_AT,
     )
-    .expect("an admin parent mints a delegate")
+    .expect("an admin parent mints a delegate");
+    // The fixture chooses read explicitly; production resolves it from the
+    // vault's policy manifest in the writer that stores the grant.
+    delegate.authority_scope = super::scope_codec::read_preset();
+    delegate
 }
 
 fn non_delegate_grant(role: FederationGrantRole, preset: FederationGrantPreset) -> FederationGrant {
