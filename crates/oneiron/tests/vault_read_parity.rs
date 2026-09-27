@@ -184,17 +184,21 @@ fn base_read_key(vault: &Vault) -> ScopedReadActorKey {
     let mut slip = vault
         .ensure_host_root_slip(&issuer)
         .expect("host root slip");
-    slip.attenuate(SlipCaveat {
-        scope: Some(base_read_scope()),
-        ..Default::default()
-    })
-    .expect("narrow root to base read");
+    issuer
+        .attenuate(
+            &mut slip,
+            SlipCaveat {
+                scope: Some(base_read_scope()),
+                ..Default::default()
+            },
+        )
+        .expect("narrow root to base read");
     let challenge = b"vault-read-parity";
     let proof_bytes = issuer
         .binding_proof(&slip, challenge)
         .expect("binding proof");
     let verified = vault
-        .verify_capability_slip(&issuer, &slip, challenge, &proof_bytes)
+        .verify_capability_slip(&issuer.public_key(), &slip, challenge, &proof_bytes)
         .expect("verified base-read slip");
     ScopedReadActorKey::from_verified_slip(&verified).expect("read key")
 }

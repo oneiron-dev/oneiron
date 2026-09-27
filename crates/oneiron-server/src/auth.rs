@@ -65,7 +65,6 @@ pub(crate) trait RevokedTokenJtis {
     }
     fn verify_slip(
         &self,
-        _secret: &str,
         _slip: &oneiron::authority::CapabilitySlip,
         _timestamp: u64,
         _nonce: &[u8],
@@ -85,15 +84,12 @@ impl RevokedTokenJtis for oneiron::Vault {
     }
     fn verify_slip(
         &self,
-        secret: &str,
         slip: &oneiron::authority::CapabilitySlip,
         timestamp: u64,
         nonce: &[u8],
         signature: &[u8],
     ) -> Result<oneiron::authority::VerifiedSlip, ()> {
-        let issuer =
-            oneiron::authority::HostSlipIssuer::from_secret(secret.as_bytes()).map_err(drop)?;
-        self.verify_capability_slip_request(&issuer, slip, timestamp, signature, nonce)
+        self.verify_logged_capability_slip_request(slip, timestamp, signature, nonce)
             .map_err(drop)
     }
 
@@ -285,7 +281,6 @@ impl CoreAuth {
                 return Self::from_slip_token(
                     token,
                     &BindingProof::from_headers(headers)?,
-                    config,
                     revoked,
                 );
             }

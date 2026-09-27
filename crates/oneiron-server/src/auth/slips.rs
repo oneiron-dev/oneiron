@@ -46,18 +46,11 @@ impl CoreAuth {
     pub(crate) fn from_slip_token(
         token: &str,
         proof: &BindingProof,
-        config: &SyncServerConfig,
         vault: &dyn RevokedTokenJtis,
     ) -> Result<Self, ApiError> {
-        let secret = config
-            .auth_secret
-            .as_deref()
-            .filter(|s| !s.is_empty())
-            .ok_or_else(ApiError::unauthorized)?;
         let slip = CapabilitySlip::from_token(token).map_err(|_| ApiError::unauthorized())?;
         let verified = vault
             .verify_slip(
-                secret,
                 &slip,
                 proof.timestamp,
                 proof.nonce.as_bytes(),
@@ -78,21 +71,13 @@ impl CoreAuth {
     pub(crate) fn bind_transport_once(
         token: &str,
         proof: &BindingProof,
-        config: &SyncServerConfig,
         vault: &oneiron::Vault,
     ) -> Result<Self, ApiError> {
         // This also refuses one-shot instruments before a consuming operation.
-        let auth = Self::from_slip_token(token, proof, config, vault)?;
-        let secret = config
-            .auth_secret
-            .as_deref()
-            .ok_or_else(ApiError::unauthorized)?;
-        let issuer = oneiron::authority::HostSlipIssuer::from_secret(secret.as_bytes())
-            .map_err(|_| ApiError::unauthorized())?;
+        let auth = Self::from_slip_token(token, proof, vault)?;
         let slip = CapabilitySlip::from_token(token).map_err(|_| ApiError::unauthorized())?;
         vault
-            .authenticate_capability_slip(
-                &issuer,
+            .admit_capability_slip_request(
                 &slip,
                 proof.timestamp,
                 &proof.signature()?,

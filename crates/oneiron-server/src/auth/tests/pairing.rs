@@ -359,10 +359,13 @@ async fn paired_mcp_enrollment_requires_holder_proof_and_consumes_both_header_no
     let mut narrow_scope = Scope::top();
     narrow_scope.worlds = ScopeAxis::Some(BTreeSet::from([ScopeId(oneiron::EntityId::now())]));
     narrow
-        .attenuate(SlipCaveat {
-            scope: Some(narrow_scope),
-            ..Default::default()
-        })
+        .attenuate(
+            SlipCaveat {
+                scope: Some(narrow_scope),
+                ..Default::default()
+            },
+            &fixture.holder,
+        )
         .unwrap();
     let narrow_token = narrow.to_token().unwrap();
     server
