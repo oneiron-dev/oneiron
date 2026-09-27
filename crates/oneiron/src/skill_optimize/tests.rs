@@ -123,6 +123,16 @@ fn stamped_receipt(vault: &Vault, skill_id: &str, now: u64) -> String {
 }
 
 fn stamped_receipt_version(vault: &Vault, skill_id: &str, version: &str, now: u64) -> String {
+    stamped_receipt_version_as(vault, skill_id, version, now, None)
+}
+
+fn stamped_receipt_version_as(
+    vault: &Vault,
+    skill_id: &str,
+    version: &str,
+    now: u64,
+    actor: Option<EntityId>,
+) -> String {
     let queue = AttemptQueue::new(vault);
     let EnqueueOutcome::Enqueued(attempt) = queue
         .enqueue(EnqueueAttempt {
@@ -136,6 +146,11 @@ fn stamped_receipt_version(vault: &Vault, skill_id: &str, version: &str, now: u6
     else {
         panic!("a fresh dedupe-free enqueue is never Existing");
     };
+    if let Some(actor) = actor {
+        vault
+            .bind_actor_attempt(attempt.id, &actor)
+            .expect("bind executor");
+    }
     queue
         .append_manifest_entry(
             attempt.id,
@@ -208,7 +223,7 @@ fn attribute_defects(vault: &Vault, skill: &EntityId, skill_id: &str, count: u32
             "a four-in-five dev draw reaches {count} long before {minted} attempts"
         );
         let at = 100 + u64::from(minted) * 10;
-        let receipt = stamped_receipt(vault, skill_id, at);
+        let receipt = stamped_receipt_version_as(vault, skill_id, FIXTURE_VERSION, at, Some(actor));
         minted += 1;
         attribute(&receipt, at);
         receipts.push(receipt);
@@ -222,7 +237,7 @@ fn attribute_defects(vault: &Vault, skill: &EntityId, skill_id: &str, count: u32
             "one receipt in five is reserved, so {minted} draws is not a near miss"
         );
         let at = 100 + u64::from(minted) * 10;
-        let receipt = stamped_receipt(vault, skill_id, at);
+        let receipt = stamped_receipt_version_as(vault, skill_id, FIXTURE_VERSION, at, Some(actor));
         minted += 1;
         if !receipt_is_held_out(skill, &receipt) {
             continue;
@@ -2011,12 +2026,18 @@ fn a_skill_with_no_reserved_evidence_is_never_drafted_for_and_never_closed() -> 
     let mut dev_only = 0u32;
     for index in 0..80u64 {
         let at = 20_000 + index * 10;
-        let receipt = stamped_receipt(&vault, "oneiron.skill.bare", at);
+        let actor = EntityId::now();
+        put_actor(&vault, &actor);
+        let receipt = stamped_receipt_version_as(
+            &vault,
+            "oneiron.skill.bare",
+            FIXTURE_VERSION,
+            at,
+            Some(actor),
+        );
         if receipt_is_held_out(&bare, &receipt) {
             continue;
         }
-        let actor = EntityId::now();
-        put_actor(&vault, &actor);
         record_attribution_evidence(
             &vault,
             &OutcomeEvidence::new(&receipt, actor, AttemptOutcome::Failed, at + 5)
@@ -2103,8 +2124,9 @@ fn stamped_receipt_in_partition(
     skill_id: &str,
     reserved: bool,
     at: u64,
+    actor: Option<EntityId>,
 ) -> String {
-    let template_id = stamped_receipt(vault, skill_id, at);
+    let template_id = stamped_receipt_version_as(vault, skill_id, FIXTURE_VERSION, at, actor);
     let mut receipt = crate::receipt::attempt_pack_receipt(vault, &template_id)
         .expect("read pack receipt")
         .expect("stamped pack receipt");
@@ -2120,6 +2142,13 @@ fn stamped_receipt_in_partition(
     receipt.receipt_id.clone_from(&receipt_id);
     crate::receipt::overwrite_attempt_pack_receipt_for_test(vault, &receipt)
         .expect("seed partitioned pack receipt");
+    if let Some(actor) = actor {
+        vault
+            .with_write_txn(|txn| {
+                crate::skill::resident::bind_receipt_in_txn(vault, txn, &receipt_id, &actor)
+            })
+            .expect("bind synthetic fixture's executor");
+    }
     receipt_id
 }
 
@@ -2129,7 +2158,7 @@ fn reserve_one_more_held_out_receipt(
     skill_id: &str,
     at: u64,
 ) -> String {
-    let receipt = stamped_receipt_in_partition(vault, skill, skill_id, true, at);
+    let receipt = stamped_receipt_in_partition(vault, skill, skill_id, true, at, None);
     record_skill_contributing_win(vault, skill, &receipt, at + 5).expect("credit win");
     receipt
 }
@@ -3533,7 +3562,12 @@ fn the_birth_marker_leaves_ordinary_and_replicated_writes_alone() -> Result<()> 
         .batch()
         .put_replicated(&proposal, ENTITY_TYPE_SKILL, t(400), 401, &remote)
         .commit()?;
-    assert_eq!(stored(&vault, &proposal), born);
+    assert!(
+        vault
+            .get_skill_record(&proposal)?
+            .is_none_or(|record| record == born)
+    );
+    assert!(origin_marked(&vault, &proposal));
     Ok(())
 }
 
@@ -4214,12 +4248,19 @@ fn a_rematerialized_optimizer_born_id_is_marked_and_cannot_be_laundered() -> Res
     );
     assert!(replica.get_skill_record(&proposal)?.is_none());
 
-    // The honest remat of the same body still lands, so convergence is intact.
+    // The same-origin replay is admitted, but a local hard delete still
+    // dominates its older body. The immutable origin marker survives either
+    // outcome; accepting a replay is not authority to resurrect an ID.
     replica
         .batch()
         .put_replicated(&proposal, ENTITY_TYPE_SKILL, t(404), 405, &proposal_body)
         .commit()?;
-    assert_eq!(stored(&replica, &proposal), born);
+    assert!(
+        replica
+            .get_skill_record(&proposal)?
+            .is_none_or(|record| record == born)
+    );
+    assert!(origin_marked(&replica, &proposal));
     Ok(())
 }
 
@@ -4309,7 +4350,7 @@ fn discovery_proposal_receipt(
 ) -> String {
     let actor = EntityId::now();
     put_actor(vault, &actor);
-    let receipt = stamped_receipt_in_partition(vault, skill, skill_id, reserved, at);
+    let receipt = stamped_receipt_in_partition(vault, skill, skill_id, reserved, at, Some(actor));
     record_attribution_evidence(
         vault,
         &OutcomeEvidence::new(&receipt, actor, AttemptOutcome::Failed, at + 5)
@@ -5042,6 +5083,7 @@ fn goal_axes_refuse_another_skills_evidence_before_any_measurement() {
     assert!(judge.events.borrow().is_empty());
     assert!(bandit.events.borrow().is_empty());
 }
+mod resident;
 
 // ONE-2115: goal-axis tradeoffs climb rule → Jev band → responsible A/B.
 fn tradeoff_owner(vault: &Vault) -> crate::consent::AuthenticatedOwner {
