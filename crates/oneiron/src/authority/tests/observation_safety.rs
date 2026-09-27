@@ -293,12 +293,22 @@ fn warm_authority_cache_rechecks_changed_observation_policy() {
     let dir = tempfile::tempdir().unwrap();
     let vault = open_vault_at(dir.path(), 1_000);
     let (entries, _revoked_key, actor) = stale_approval_fixture();
-    for entry in &entries {
+    for entry in &entries[..2] {
         vault
             .put_authority_log_entry(entry, TimeRange { start: 1, end: 1 }, 0)
             .unwrap();
     }
-    authority_observation_secs(&vault.store, 1_100, 0);
+    mature_observed_widen(&vault, &entries[1]);
+    vault
+        .put_authority_log_entry(&entries[2], TimeRange { start: 1, end: 1 }, 0)
+        .unwrap();
+    let now = mature_observed_widen(&vault, &entries[2]);
+    for entry in &entries[3..] {
+        vault
+            .put_authority_log_entry(entry, TimeRange { start: 1, end: 1 }, 0)
+            .unwrap();
+    }
+    authority_observation_secs(&vault.store, now + 100, 0);
     let txn = vault.store.env.read_txn().unwrap();
     let warm = vault.authority_view_readonly_in_txn(&txn).unwrap();
     assert!(actor_binding_is_active(&warm, &actor, "human"));
