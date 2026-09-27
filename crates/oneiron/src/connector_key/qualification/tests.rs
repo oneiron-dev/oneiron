@@ -1,3 +1,4 @@
+pub(crate) mod support;
 use super::*;
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
@@ -529,6 +530,32 @@ fn read_only_key_qualifies_and_revision_expansion_needs_graded_consent() -> crat
         SlateDataClass, SlateToolManifest, draft_connector_slate,
     };
     use crate::{EntityId, Vault, VaultConfig};
+    struct Triggered<'a> {
+        inner: &'a dyn QualificationConnector,
+    }
+    struct TriggerConnection<'a> {
+        inner: Box<dyn QualificationConnection + 'a>,
+    }
+    impl QualificationConnection for TriggerConnection<'_> {
+        fn tools_list(&mut self) -> Result<Vec<ProbeTool>, QualificationFailure> {
+            let mut tools = self.inner.tools_list()?;
+            tools[0].trigger = Some("automatic".into());
+            Ok(tools)
+        }
+        fn call(&mut self, request: &ProbeRequest) -> Result<ProbeReply, QualificationFailure> {
+            self.inner.call(request)
+        }
+    }
+    impl QualificationConnector for Triggered<'_> {
+        fn connect(&self) -> Result<Box<dyn QualificationConnection + '_>, QualificationFailure> {
+            Ok(Box::new(TriggerConnection {
+                inner: self.inner.connect()?,
+            }))
+        }
+        fn effect_state(&self) -> Result<Vec<u8>, QualificationFailure> {
+            self.inner.effect_state()
+        }
+    }
     let tmp = tempfile::tempdir()?;
     let vault = Vault::open(tmp.path(), VaultConfig::default())?;
     let read_tool = SlateToolManifest {
@@ -656,7 +683,7 @@ fn read_only_key_qualifies_and_revision_expansion_needs_graded_consent() -> crat
     let mut narrowed_rows = draft_connector_slate(std::slice::from_ref(&read_tool));
     narrowed_rows[0].disposition = crate::connector_key::SlateDisposition::ConfirmFirst;
     let narrower_declaration = vault.store_connector_slate(
-        &[read_tool],
+        std::slice::from_ref(&read_tool),
         &serde_json::to_string(&narrowed_rows).unwrap(),
     )?;
     let pending = vault.revise_connector_protocol(&id, "D", narrower_declaration, 107)?;
@@ -664,6 +691,43 @@ fn read_only_key_qualifies_and_revision_expansion_needs_graded_consent() -> crat
     assert_eq!(
         vault
             .qualify_connector_key(&id, "D", &read_only(), &read_plan, &Oracle, 108)
+            .unwrap()
+            .0
+            .status,
+        ConnectorKeyStatus::Active
+    );
+    // Trigger-only admission is an expansion even with unchanged names,
+    // schema, data class and disposition.
+    let mut triggered_tool = read_tool;
+    triggered_tool.trigger = Some("automatic".into());
+    let mut triggered_rows = draft_connector_slate(std::slice::from_ref(&triggered_tool));
+    triggered_rows[0].disposition = crate::connector_key::SlateDisposition::ConfirmFirst;
+    let triggered_slate = vault.store_connector_slate(
+        std::slice::from_ref(&triggered_tool),
+        &serde_json::to_string(&triggered_rows).unwrap(),
+    )?;
+    let pending = vault.revise_connector_protocol(&id, "E", triggered_slate, 109)?;
+    assert!(pending.consent_required);
+    let inner = read_only();
+    let triggered = Triggered { inner: &inner };
+    assert!(
+        vault
+            .qualify_connector_key(&id, "E", &triggered, &read_plan, &Oracle, 110)
+            .is_err()
+    );
+    assert_eq!(
+        inner.connections.get(),
+        0,
+        "unapproved trigger runs no probes"
+    );
+    assert_eq!(
+        vault.get_connector_key(&id)?.unwrap().status,
+        ConnectorKeyStatus::Pending
+    );
+    vault.override_connector_slate(&auth, triggered_slate, 0, &BTreeMap::new())?;
+    assert_eq!(
+        vault
+            .qualify_connector_key(&id, "E", &triggered, &read_plan, &Oracle, 111)
             .unwrap()
             .0
             .status,

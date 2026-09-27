@@ -241,6 +241,7 @@ pub(in crate::connector_key) fn slate_expands(
             || tool.spends && !old_tool.spends
             || tool.sends_outward && !old_tool.sends_outward
             || tool.legacy_ask && !old_tool.legacy_ask
+            || tool.trigger != old_tool.trigger
             || !schema_narrows(
                 old_tool.resolved_input_schema.as_ref(),
                 tool.resolved_input_schema.as_ref(),
@@ -341,15 +342,62 @@ fn schema_narrows(old: Option<&serde_json::Value>, next: Option<&serde_json::Val
 }
 
 fn is_resolved_schema(value: &serde_json::Value) -> bool {
-    match value {
-        serde_json::Value::Object(map) => {
-            !map.keys()
-                .any(|key| matches!(key.as_str(), "$ref" | "allOf" | "anyOf" | "oneOf"))
-                && map.values().all(is_resolved_schema)
-        }
-        serde_json::Value::Array(values) => values.iter().all(is_resolved_schema),
-        _ => true,
+    let Some(schema) = value.as_object() else {
+        return false;
+    };
+    if schema
+        .keys()
+        .any(|key| matches!(key.as_str(), "$ref" | "allOf" | "anyOf" | "oneOf"))
+    {
+        return false;
     }
+    // Names under `properties` are caller-chosen parameter names, not schema
+    // operators. Values in defaults/const/enums are instance data; never
+    // interpret their object keys as `$ref` or composition keywords.
+    for key in [
+        "properties",
+        "patternProperties",
+        "$defs",
+        "definitions",
+        "dependentSchemas",
+    ] {
+        if let Some(value) = schema.get(key) {
+            let Some(entries) = value.as_object() else {
+                return false;
+            };
+            if !entries.values().all(is_resolved_schema) {
+                return false;
+            }
+        }
+    }
+    for key in [
+        "items",
+        "additionalProperties",
+        "unevaluatedProperties",
+        "contains",
+        "not",
+        "if",
+        "then",
+        "else",
+        "propertyNames",
+    ] {
+        if let Some(value) = schema.get(key) {
+            if value.is_boolean() {
+                continue;
+            }
+            if key == "items" && value.is_array() {
+                if !value
+                    .as_array()
+                    .is_some_and(|items| items.iter().all(is_resolved_schema))
+                {
+                    return false;
+                }
+            } else if !is_resolved_schema(value) {
+                return false;
+            }
+        }
+    }
+    true
 }
 
 /// A stamped slate is an admission for one connector, not a reusable grant.
@@ -536,6 +584,21 @@ mod tests {
                 )
                 .is_err()
         );
+        let mut keyword_names = manifest.clone();
+        keyword_names[0].resolved_input_schema = Some(serde_json::json!({
+            "type":"object", "properties":{
+                "oneOf":{"type":"string"}, "$ref":{"type":"string"},
+                "allOf":{"type":"object","default":{"$ref":"ordinary data"}}
+            }, "default":{"anyOf":"ordinary data"}
+        }));
+        assert!(
+            vault
+                .store_connector_slate(
+                    &keyword_names,
+                    &serde_json::to_string(&draft_connector_slate(&keyword_names)).unwrap()
+                )
+                .is_ok()
+        );
         let mut missing = manifest.clone();
         missing[0].resolved_input_schema = None;
         assert!(
@@ -697,6 +760,14 @@ mod revision_tests {
             rmpv::Value::from("connector_class_carry"),
             rmpv::Value::Array(vec![]),
         );
+        *entries
+            .iter_mut()
+            .find(|(k, _)| k.as_str() == Some("connector_class_role"))
+            .expect("role row") = (
+            rmpv::Value::from("connector_class_role"),
+            rmpv::Value::from("holder"),
+        );
+        entries.retain(|(key, _)| key.as_str() != Some("connector_class_precedence"));
         let mut encoded = Vec::new();
         rmpv::encode::write_value(&mut encoded, &rmpv::Value::Map(entries)).expect("encode policy");
         crate::test_util::put_policy_manifest_bytes(&vault, EntityId::now(), &encoded)?;
@@ -705,6 +776,129 @@ mod revision_tests {
             crate::gate::resolve_policy_manifest(&vault.store, &txn)?.connector_class_carry();
         assert!(narrowed.is_empty());
         assert!(slate_expands(&old, &new, &narrowed));
+        Ok(())
+    }
+    fn write_class_policy(
+        vault: &Vault,
+        id: EntityId,
+        role: &str,
+        precedence: Option<&str>,
+        rows: &[(&str, &str)],
+    ) -> Result<()> {
+        let data = crate::gate::default_policy_manifest();
+        let mut cursor = std::io::Cursor::new(data);
+        let rmpv::Value::Map(mut entries) =
+            rmpv::decode::read_value(&mut cursor).expect("default policy map")
+        else {
+            panic!("default policy map");
+        };
+        fn set_row(entries: &mut [(rmpv::Value, rmpv::Value)], key: &str, value: rmpv::Value) {
+            entries
+                .iter_mut()
+                .find(|(name, _)| name.as_str() == Some(key))
+                .expect("default policy class row")
+                .1 = value;
+        }
+        set_row(
+            &mut entries,
+            "connector_class_carry",
+            rmpv::Value::Array(
+                rows.iter()
+                    .map(|(from, to)| {
+                        rmpv::Value::Array(vec![rmpv::Value::from(*from), rmpv::Value::from(*to)])
+                    })
+                    .collect(),
+            ),
+        );
+        set_row(
+            &mut entries,
+            "connector_class_role",
+            rmpv::Value::from(role),
+        );
+        if let Some(precedence) = precedence {
+            set_row(
+                &mut entries,
+                "connector_class_precedence",
+                rmpv::Value::from(precedence),
+            );
+        } else {
+            entries.retain(|(key, _)| key.as_str() != Some("connector_class_precedence"));
+        }
+        let mut encoded = Vec::new();
+        rmpv::encode::write_value(&mut encoded, &rmpv::Value::Map(entries)).expect("encode policy");
+        crate::test_util::put_policy_manifest_bytes(vault, id, &encoded)
+    }
+
+    #[test]
+    fn vault_class_ceiling_is_configurable_holder_capped_and_frontier_bound() -> Result<()> {
+        let dir = tempfile::tempdir()?;
+        let vault = Vault::open(dir.path(), crate::VaultConfig::default())?;
+        let default_id = crate::gate::default_policy_manifest_id()?;
+        let frontier = |vault: &Vault| -> Result<([u8; 32], BTreeSet<(String, String)>, bool)> {
+            let txn = vault.store.env.read_txn()?;
+            let policy = crate::gate::resolve_policy_manifest(&vault.store, &txn)?;
+            Ok((
+                policy.read_frontier_hash()?,
+                policy.connector_class_carry(),
+                policy.is_fail_closed(),
+            ))
+        };
+        let original = frontier(&vault)?;
+        assert!(!original.1.contains(&("header".into(), "secret".into())));
+        // The vault owner can author a relation absent from the shipped row.
+        write_class_policy(
+            &vault,
+            default_id,
+            "vault",
+            Some("nested"),
+            &[("header", "secret"), ("public", "personal")],
+        )?;
+        let revised = frontier(&vault)?;
+        assert!(!revised.2);
+        assert_ne!(
+            original.0, revised.0,
+            "class-only owner edit moves policy frontier"
+        );
+        assert!(revised.1.contains(&("header".into(), "secret".into())));
+        // A holder row can narrow the vault ceiling; a pair outside it is
+        // parsed but cannot authorize anything the vault never granted.
+        write_class_policy(
+            &vault,
+            EntityId::now(),
+            "holder",
+            None,
+            &[("header", "secret"), ("secret", "header")],
+        )?;
+        let nested = frontier(&vault)?;
+        assert_eq!(
+            nested.1,
+            BTreeSet::from([("header".into(), "secret".into())])
+        );
+        assert_ne!(nested.0, revised.0);
+        write_class_policy(
+            &vault,
+            default_id,
+            "vault",
+            Some("holder_override"),
+            &[("header", "secret"), ("public", "personal")],
+        )?;
+        let overridden = frontier(&vault)?;
+        assert!(!overridden.2);
+        assert_eq!(overridden.1, nested.1);
+        assert_ne!(
+            nested.0, overridden.0,
+            "precedence-only edit moves policy frontier"
+        );
+        // A second holder under single-holder override is ambiguous, not a
+        // license to select an arbitrary widening row.
+        write_class_policy(
+            &vault,
+            EntityId::now(),
+            "holder",
+            None,
+            &[("public", "personal")],
+        )?;
+        assert!(frontier(&vault)?.2);
         Ok(())
     }
 }

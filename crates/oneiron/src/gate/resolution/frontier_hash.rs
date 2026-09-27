@@ -26,6 +26,16 @@ pub(super) fn hash_policy_frontier_v0(
     for predicate in &resolution.single_valued_predicates {
         hash_str(hasher, predicate);
     }
+    hash_str(hasher, "connector_class_policy.v1");
+    hash_str(hasher, resolution.connector_class_precedence.as_str());
+    let carry = resolution.connector_class_carry.as_ref();
+    hash_len(hasher, carry.map_or(0, std::collections::BTreeSet::len));
+    if let Some(carry) = carry {
+        for (from, to) in carry {
+            hash_str(hasher, from);
+            hash_str(hasher, to);
+        }
+    }
     hash_budget_exhaustion_policy(hasher, resolution.on_budget_exhausted());
     // The RESOLVED posture, beside its budget sibling: it decides whether an
     // opted-out send holds or ships, so flipping it must move the frontier and

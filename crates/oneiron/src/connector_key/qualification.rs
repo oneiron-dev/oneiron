@@ -522,4 +522,4 @@ fn validate_trace(reply: &ProbeReply, request_id: &str) -> Result<(), Qualificat
 }
 
 #[cfg(test)]
-mod tests;
+pub(crate) mod tests;

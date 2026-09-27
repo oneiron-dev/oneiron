@@ -72,6 +72,30 @@ impl CommOptOutPosture {
     }
 }
 
+/// Policy-authored fold order for holder class-carry rows. Every holder is
+/// still capped by the trusted vault relation.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub(crate) enum ConnectorClassPrecedence {
+    #[default]
+    Nested,
+    HolderOverride,
+}
+impl ConnectorClassPrecedence {
+    pub(crate) fn parse(value: &str) -> Option<Self> {
+        match value {
+            "nested" => Some(Self::Nested),
+            "holder_override" => Some(Self::HolderOverride),
+            _ => None,
+        }
+    }
+    pub(crate) fn as_str(self) -> &'static str {
+        match self {
+            Self::Nested => "nested",
+            Self::HolderOverride => "holder_override",
+        }
+    }
+}
+
 #[derive(Debug, Clone, Default, PartialEq)]
 pub(crate) struct PolicyManifestResolution {
     pub(crate) diagnostics: PolicyManifestDiagnostics,
@@ -100,4 +124,5 @@ pub(crate) struct PolicyManifestResolution {
     pub(super) auto_checker: Option<String>,
     pub(super) budget_policy: BudgetPolicyTable,
     pub(crate) connector_class_carry: Option<std::collections::BTreeSet<(String, String)>>,
+    pub(crate) connector_class_precedence: ConnectorClassPrecedence,
 }
