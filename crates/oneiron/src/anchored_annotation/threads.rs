@@ -42,7 +42,6 @@ impl Vault {
         occurred: TimeRange,
         learned_at: u64,
     ) -> Result<AnnotationThread> {
-        self.require_anchor_version(&anchor.artifact_id, anchor.version)?;
         validate_comment_text(first_comment)?;
 
         let thread_id = self.store.clock.entity_id()?;
@@ -61,6 +60,7 @@ impl Vault {
         let author_id = author.entity_ref();
 
         self.with_write_txn(|wtxn| {
+            self.require_anchor_version_in_txn(&*wtxn, &anchor.artifact_id, anchor.version)?;
             self.batch_in()
                 .claim_candidate(
                     &head_claim_id,
@@ -440,7 +440,7 @@ impl Vault {
     }
 
     /// Transaction-composable [`Vault::require_anchor_version`]: validates the
-    /// target version against the artifact head read through the caller's txn,
+    /// exact target version record read through the caller's txn,
     /// so settle sees the version it just appended in the same write txn.
     pub(super) fn require_anchor_version_in_txn(
         &self,
@@ -458,22 +458,15 @@ impl Vault {
         let kind = self
             .get_entity_type_in_txn(rtxn, artifact_id)?
             .and_then(artifact_family_kind_of);
-        let head = match kind {
-            Some(ArtifactFamilyKindId::Blob) => {
-                crate::blob_artifact::read_blob_artifact_head_in_txn(
-                    &self.store,
-                    rtxn,
-                    artifact_id,
-                )?
-            }
-            Some(ArtifactFamilyKindId::Code) | None => None,
-        }
-        .ok_or(Error::Artifact(ArtifactError::InvalidAnchor(
-            "anchor artifact has no versions",
-        )))?;
-        if version > head.version {
+        let exists = match kind {
+            Some(ArtifactFamilyKindId::Blob) => self
+                .blob_artifact_version_metadata_in_txn(rtxn, artifact_id, version)?
+                .is_some(),
+            Some(ArtifactFamilyKindId::Code) | None => false,
+        };
+        if !exists {
             return Err(Error::Artifact(ArtifactError::InvalidAnchor(
-                "anchor version is beyond the artifact head",
+                "anchor version does not exist",
             )));
         }
         Ok(())

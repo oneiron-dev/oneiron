@@ -919,7 +919,10 @@ fn publish_refuses_stale_tainted_exhaust_then_stamps_the_pointer_when_the_dial_o
         read_back.stale_taint_override,
         "the override is durable on the row, not merely remembered in process"
     );
-    assert_eq!(read_back.fork_hash, fork_hash);
+    assert_eq!(
+        read_back.export,
+        crate::artifact_hosting::ArtifactExportRef::ForkHash(fork_hash)
+    );
 
     // The unstamped pointer still decodes exactly as before.
     let unstamped = vault
@@ -927,7 +930,89 @@ fn publish_refuses_stale_tainted_exhaust_then_stamps_the_pointer_when_the_dial_o
         .expect("read published")
         .expect("pointer present");
     assert!(!unstamped.stale_taint_override);
-    assert_eq!(unstamped.fork_hash, fork_hash);
+    assert_eq!(
+        unstamped.export,
+        crate::artifact_hosting::ArtifactExportRef::ForkHash(fork_hash)
+    );
+}
+
+#[test]
+fn blob_pointer_publish_checks_stale_taint_and_stamps_override() {
+    use crate::blob_artifact::BlobVersionProvenance;
+    use crate::edge::EdgeActorClass;
+    use crate::registry::ENTITY_TYPE_PERSON;
+    use crate::write_envelope::WriteActor;
+
+    let (_tmp, vault) = temp_vault();
+    register(&vault, SECRET, VALUE_V1);
+    let blob_id = artifact_id(0x71);
+    put_artifact(
+        &vault,
+        &blob_id,
+        &BlobArtifactBody::new("report.pdf", "application/pdf")
+            .with_secret_taint_refs(vec![taint(SECRET, 0)]),
+    );
+    let actor_id = artifact_id(0x72);
+    vault
+        .put_entity(
+            &actor_id,
+            ENTITY_TYPE_PERSON,
+            TimeRange {
+                start: AT_REGISTERED,
+                end: AT_REGISTERED,
+            },
+            AT_REGISTERED,
+            b"publisher",
+        )
+        .expect("actor");
+    vault
+        .append_blob_artifact_version(
+            &blob_id,
+            b"report bytes",
+            &BlobVersionProvenance::UserUpload,
+            WriteActor::new(actor_id, EdgeActorClass::Human),
+            TimeRange {
+                start: AT_REGISTERED,
+                end: AT_REGISTERED,
+            },
+            AT_REGISTERED,
+        )
+        .expect("blob export");
+    vault
+        .rotate_secret(SECRET, VALUE_V2, AT_ROTATED)
+        .expect("rotate");
+    let error = vault
+        .publish_blob_artifact_pointer(&blob_id, ArtifactPointerChannel::Preview, 1)
+        .expect_err("stale blob export must not publish silently");
+    assert!(matches!(
+        error,
+        Error::Secret(SecretError::TaintedArtifactStale { .. })
+    ));
+    assert!(
+        vault
+            .artifact_pointer(&blob_id.to_hex(), ArtifactPointerChannel::Preview)
+            .expect("read pointer")
+            .is_none()
+    );
+    put_policy_manifest(
+        &vault,
+        0x94,
+        vec![(
+            Value::from(POLICY_TAINT_ALLOW_STALE_PUBLISH_KEY),
+            Value::from(true),
+        )],
+    );
+    let pointer = vault
+        .publish_blob_artifact_pointer(&blob_id, ArtifactPointerChannel::Preview, 1)
+        .expect("override permits blob export");
+    assert!(pointer.stale_taint_override);
+    assert!(
+        vault
+            .artifact_pointer(&blob_id.to_hex(), ArtifactPointerChannel::Preview)
+            .expect("read pointer")
+            .expect("stored pointer")
+            .stale_taint_override
+    );
 }
 
 // ---------------------------------------------------------------------------
