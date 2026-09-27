@@ -88,6 +88,8 @@ pub(crate) fn bind_task_answer_in_txn(
                 principal: input.principal,
                 providers: Vec::new(),
                 band,
+                evidence_versions: Vec::new(),
+                cost_per_thousand: None,
             },
             human_ask: None,
         },

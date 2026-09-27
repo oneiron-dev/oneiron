@@ -7555,6 +7555,7 @@
      "path": "src/claim/scoped_read/point_reads.rs",
      "purpose": "Same-snapshot, receipted point and short-reference hydration doors",
      "surface": {
+      "crate-vis": 1,
       "fn": 9
      }
     },
@@ -19751,6 +19752,33 @@
      }
     },
     {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "GraphAnswerer",
+      "GraphAskResult",
+      "GraphContextSource",
+      "GraphPrediction",
+      "GraphTypeSelection",
+      "GraphUnitContext"
+     ],
+     "path": "src/llm/decision/questions/graph_ask.rs",
+     "purpose": "One-off graph judgment: scoped context, injected answerer, and proposed claims",
+     "surface": {
+      "fn": 3,
+      "struct": 5,
+      "trait": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "src/llm/decision/questions/graph_ask_tests.rs",
+     "purpose": "—",
+     "surface": {}
+    },
+    {
      "bucket": "s",
      "kind": "src",
      "notable": [],
@@ -19758,7 +19786,7 @@
      "purpose": "Versioned questions, scoped answer receipts, and bound outcome labels",
      "surface": {
       "crate-vis": 2,
-      "re-export": 3
+      "re-export": 4
      }
     },
     {
@@ -19827,6 +19855,7 @@
       "DecisionQuestion",
       "DecisionReceipt",
       "DecisionRung",
+      "EvidenceVersion",
       "HumanAskReason",
       "ProviderPin",
       "TypedDecision"
@@ -19837,7 +19866,7 @@
       "crate-vis": 1,
       "enum": 5,
       "fn": 6,
-      "struct": 6
+      "struct": 7
      }
     },
     {
@@ -34484,7 +34513,7 @@
      "purpose": "Deterministic LinkedIn entity resolution and explicit runtime-path corpus preload"
     },
     "llm": {
-     "files": 64,
+     "files": 66,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -35039,8 +35068,8 @@
    },
    "over_bar": 9,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2069,
-   "test_files": 710
+   "source_files": 2070,
+   "test_files": 711
   },
   "oneiron-android": {
    "files": [
