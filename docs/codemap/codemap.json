@@ -7293,7 +7293,7 @@
      "purpose": "Local, content-bound destructive proposals",
      "surface": {
       "crate-vis": 11,
-      "fn": 3
+      "fn": 4
      }
     },
     {
@@ -7346,7 +7346,7 @@
      "path": "src/claim/lifecycle.rs",
      "purpose": "Claim lifecycle transitions: the supersession-chain walk, the write-verb validity guard, `supersede_claim` /…",
      "surface": {
-      "crate-vis": 8,
+      "crate-vis": 9,
       "fn": 4
      }
     },
@@ -21110,7 +21110,7 @@
      "surface": {}
     },
     {
-     "bucket": "L",
+     "bucket": "XL",
      "kind": "test",
      "notable": [],
      "path": "src/memory/tests/commit_claims.rs",

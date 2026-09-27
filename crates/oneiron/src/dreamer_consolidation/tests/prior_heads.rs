@@ -346,6 +346,22 @@ fn fast_path_and_judge_merge_share_deferred_closure() -> Result<()> {
                 .iter()
                 .any(|edge| edge.kind == EdgeKind::Supersedes)
         );
+        assert!(
+            vault
+                .supersede_claim(new, &fx.head, fx.run.now_ms + 1)
+                .is_err()
+        );
+        assert_eq!(vault.pending_claim_supersession(new)?, Some(fx.head));
+        assert_eq!(
+            vault.get_claim(&fx.head)?.expect("old").lifecycle,
+            crate::ClaimLifecycleStatus::Active
+        );
+        assert!(
+            !vault
+                .edges_out(new)?
+                .iter()
+                .any(|edge| edge.kind == EdgeKind::Supersedes)
+        );
         vault.grant_deferred_claim_auto(new, fx.run.now_ms + 1)?;
         assert_eq!(
             vault.get_claim(&fx.head)?.expect("closed").lifecycle,

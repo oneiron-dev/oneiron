@@ -179,7 +179,18 @@ impl Vault {
     /// prior only after that grant, in the same write transaction. Critical
     /// or attributed truth still needs the owner-confirmation door.
     pub fn grant_deferred_claim_auto(&self, id: &EntityId, now: u64) -> Result<()> {
-        self.with_write_txn(|txn| {
+        self.grant_deferred_claim_auto_with_checker(id, now, None)
+    }
+
+    /// The same content-bound Auto grant with the host's bounded checker.
+    /// The ordinary claim gate decides whether this particular write needs it.
+    pub fn grant_deferred_claim_auto_with_checker(
+        &self,
+        id: &EntityId,
+        now: u64,
+        checker: Option<&crate::llm::BoundedAutoChecker>,
+    ) -> Result<()> {
+        let decision = self.with_write_txn(|txn| {
             let proposal = load(self, txn, id)?.ok_or(Error::EntityNotFound)?;
             let DeferredAction::Supersede { old, old_hash } = proposal.action else {
                 return Err(Error::InvalidClaimBody("not a deferred supersession"));
@@ -205,19 +216,16 @@ impl Vault {
                     reason_codes: vec![GateReasonCode::PendingCriticalityFloor.as_str()],
                 }));
             }
-            // The standard materialization gate has no injected host checker.
-            // Never silently skip one that the manifest requires.
-            if policy.auto_checker().is_some()
-                || crate::llm::manifest::read_manifest(&self.store, txn)?
-                    .is_some_and(|manifest| manifest.verdict.is_some())
-            {
-                return Err(Error::InvalidConfig(
-                    "deferred Auto grant requires the configured host checker".into(),
-                ));
-            }
-            crate::batch::ClaimMaterialization::apply_deferred_auto_grant(self, txn, id)?;
-            self.complete_deferred_claim_in_txn(txn, id, false, now)
-        })
+            let decision = crate::batch::ClaimMaterialization::apply_deferred_auto_grant(
+                self, txn, id, checker,
+            )?;
+            self.complete_deferred_claim_in_txn(txn, id, false, now)?;
+            Ok(decision)
+        })?;
+        if let Some(decision) = decision {
+            decision.record_metrics(&self.store.diagnostics.gate);
+        }
+        Ok(())
     }
 
     /// Called only by explicit local approval/authority settlement doors, never reads/replay.
@@ -277,7 +285,7 @@ impl Vault {
                 ) {
                     return Err(Error::InvalidClaimBody("closure has no approval grant"));
                 }
-                self.supersede_claim_in_txn(txn, id, &old, now)?;
+                self.supersede_granted_deferred_claim_in_txn(txn, id, &old, now)?;
                 self.store.close_pending_gate_consent_in_txn(
                     txn,
                     id,

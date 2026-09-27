@@ -209,7 +209,8 @@ impl ClaimMaterialization {
         vault: &Vault,
         txn: &mut heed::RwTxn<'_>,
         id: &EntityId,
-    ) -> Result<()> {
+        checker: Option<&crate::llm::BoundedAutoChecker>,
+    ) -> Result<Option<crate::gate::RecordedClaimGateDecision>> {
         let raw = vault
             .store
             .entities
@@ -250,6 +251,34 @@ impl ClaimMaterialization {
             approval: false,
         };
         binding.validate_actor(&vault.store, txn)?;
+        let policy = crate::gate::resolve_policy_manifest(&vault.store, txn)?;
+        let mut decision = None;
+        crate::gate::check_claim_policy_for_write_with_record(
+            &vault.store,
+            txn,
+            id,
+            crate::gate::ClaimGateWrite {
+                body: &next,
+                envelope: Some(&binding.envelope),
+                auto_checker: checker,
+                defer_metrics_until_commit: true,
+            },
+            &policy,
+            crate::gate::GateWriteMode {
+                record_decision: true,
+                persist_pending_consent: false,
+                resolve_pending: false,
+                can_resolve_pending_consent: true,
+                include_source_in_gate_input: false,
+            },
+            &mut decision,
+        )?;
+        let preflight_ids = std::collections::HashMap::from([(
+            *id,
+            VecDeque::from([decision
+                .as_ref()
+                .map(crate::gate::RecordedClaimGateDecision::decision_id)]),
+        )]);
         super::apply_ops_with_gate_mode(
             &vault.store,
             &vault.config,
@@ -268,8 +297,11 @@ impl ClaimMaterialization {
             vault
                 .text_index_trusted
                 .load(std::sync::atomic::Ordering::Acquire),
-            ApplyOpsGateMode::new(true, false).with_claim_materializations(vec![binding]),
-        )
+            ApplyOpsGateMode::new(false, false)
+                .with_claim_materializations(vec![binding])
+                .with_preflight_gate_decision_ids(preflight_ids),
+        )?;
+        Ok(decision)
     }
 
     /// Admit only the current row's unamended approval: the stored body with

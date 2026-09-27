@@ -479,6 +479,22 @@ fn ordinary_dreamer_replacement_stages_before_closure() -> Result<()> {
             .iter()
             .any(|edge| edge.kind == EdgeKind::Supersedes)
     );
+    assert!(
+        vault
+            .supersede_claim(&new, &old, fixture.run.now_ms + 1)
+            .is_err()
+    );
+    assert_eq!(
+        vault.get_claim(&old)?.expect("old").lifecycle,
+        crate::claim::ClaimLifecycleStatus::Active
+    );
+    assert_eq!(vault.pending_claim_supersession(&new)?, Some(old));
+    assert!(
+        !vault
+            .edges_out(&new)?
+            .iter()
+            .any(|edge| edge.kind == EdgeKind::Supersedes)
+    );
     vault.grant_deferred_claim_auto(&new, fixture.run.now_ms + 1)?;
     assert_eq!(
         vault.get_claim(&new)?.expect("granted").approval,
@@ -1384,6 +1400,96 @@ fn assert_checker_rejection_receipt(
     assert!(vault.get_claim(claim_id)?.is_none());
     assert!(vault.pending_gate_consents(10)?.is_empty());
     Ok(record)
+}
+
+#[test]
+fn deferred_dreamer_grant_consults_checker_and_closes_only_on_allow() -> Result<()> {
+    for hold in [false, true] {
+        let (_dir, vault) = open_auto_checker_vault();
+        let fixture = fixture(&vault)?;
+        let first = candidate(&fixture, "profile.name", "Ada", vec![fixture.turn]);
+        let old = first.claim_id;
+        let host = CountingAutoChecker::new(AutoCheckOutcome::Allow);
+        let checker = BoundedAutoChecker::new(host.clone());
+        assert_eq!(
+            promote_consolidated_claims_with_checker(
+                &vault,
+                &fixture.run,
+                vec![first],
+                Some(&checker)
+            )?
+            .landed,
+            vec![old],
+        );
+        let mut second = candidate(&fixture, "profile.name", "Ada Lovelace", vec![fixture.turn]);
+        second.supersedes = Some(old);
+        let new = second.claim_id;
+        assert_eq!(
+            promote_consolidated_claims_with_checker(
+                &vault,
+                &fixture.run,
+                vec![second],
+                Some(&checker)
+            )?
+            .pended,
+            vec![new],
+        );
+        assert_eq!(host.calls(), 1, "a Proposed write has no checker consult");
+        assert_eq!(vault.pending_claim_supersession(&new)?, Some(old));
+        let closure_host = CountingAutoChecker::new(if hold {
+            AutoCheckOutcome::Hold {
+                reasons: vec!["checker: hedged verdict".to_owned()],
+            }
+        } else {
+            AutoCheckOutcome::Allow
+        });
+        let closure_checker = BoundedAutoChecker::new(closure_host.clone());
+        let result = vault.grant_deferred_claim_auto_with_checker(
+            &new,
+            fixture.run.now_ms + 1,
+            Some(&closure_checker),
+        );
+        assert_eq!(closure_host.calls(), 1);
+        if hold {
+            assert_eq!(
+                result.expect_err("checker holds the closure").kind(),
+                crate::ErrorKind::GateWriteRejected
+            );
+            assert_eq!(
+                vault.get_claim(&new)?.expect("still proposed").approval,
+                ClaimApprovalStatus::Proposed
+            );
+            assert_eq!(
+                vault.get_claim(&old)?.expect("still active").lifecycle,
+                crate::ClaimLifecycleStatus::Active
+            );
+            assert_eq!(vault.pending_claim_supersession(&new)?, Some(old));
+            assert!(
+                !vault
+                    .edges_out(&new)?
+                    .iter()
+                    .any(|edge| edge.kind == EdgeKind::Supersedes)
+            );
+        } else {
+            result?;
+            assert_eq!(
+                vault.get_claim(&new)?.expect("Auto granted").approval,
+                ClaimApprovalStatus::Auto
+            );
+            assert_eq!(
+                vault.get_claim(&old)?.expect("closed").lifecycle,
+                crate::ClaimLifecycleStatus::Superseded
+            );
+            assert_eq!(vault.pending_claim_supersession(&new)?, None);
+            assert!(
+                vault
+                    .edges_out(&new)?
+                    .iter()
+                    .any(|edge| edge.kind == EdgeKind::Supersedes && edge.target == old)
+            );
+        }
+    }
+    Ok(())
 }
 
 #[test]

@@ -289,6 +289,23 @@ fn auto_eligible_upsert_stages_before_closing_prior() {
             .iter()
             .any(|edge| edge.kind == EdgeKind::Supersedes)
     );
+    assert!(vault.supersede_claim(&new, &old, 201).is_err());
+    assert_eq!(
+        vault.get_claim(&new).unwrap().unwrap().approval,
+        ClaimApprovalStatus::Proposed
+    );
+    assert_eq!(
+        vault.get_claim(&old).unwrap().unwrap().lifecycle,
+        ClaimLifecycleStatus::Active
+    );
+    assert_eq!(vault.pending_claim_supersession(&new).unwrap(), Some(old));
+    assert!(
+        !vault
+            .edges_out(&new)
+            .unwrap()
+            .iter()
+            .any(|edge| edge.kind == EdgeKind::Supersedes)
+    );
     vault
         .grant_deferred_claim_auto(&new, 201)
         .expect("later Auto grant");
@@ -307,6 +324,59 @@ fn auto_eligible_upsert_stages_before_closing_prior() {
             .unwrap()
             .iter()
             .any(|edge| edge.kind == EdgeKind::Supersedes && edge.target == old)
+    );
+}
+
+#[test]
+fn human_observed_auto_closure_ignores_unrelated_checker_knob() {
+    let (_dir, vault) = open_vault();
+    let id = crate::gate::default_policy_manifest_id().unwrap();
+    let raw = vault.get_raw(&id).unwrap().expect("manifest");
+    let mut cursor = std::io::Cursor::new(&raw[crate::batch::ENTITY_METADATA_HEADER_LEN..]);
+    let Value::Map(mut entries) = rmpv::decode::read_value(&mut cursor).unwrap() else {
+        panic!("policy manifest map");
+    };
+    entries.push((
+        Value::from("auto_checker"),
+        Value::from("unused-host-checker"),
+    ));
+    let mut encoded = Vec::new();
+    rmpv::encode::write_value(&mut encoded, &Value::Map(entries)).unwrap();
+    crate::test_util::put_policy_manifest_bytes(&vault, id, &encoded).unwrap();
+    let actor = put_person(&vault, 0x75);
+    let subject = put_person(&vault, 0x76);
+    let memory = facade_for(&vault, actor);
+    let first = memory
+        .claim_upsert(&claim_input(
+            "profile.name",
+            &subject,
+            "observed",
+            serde_json::json!("Ada"),
+        ))
+        .unwrap();
+    assert_eq!(first.approval, "auto");
+    let mut revision = claim_input(
+        "profile.name",
+        &subject,
+        "observed",
+        serde_json::json!("Ada Lovelace"),
+    );
+    revision.learned_at = Some(200);
+    revision.occurred_at = Some(200);
+    let second = memory.claim_upsert(&revision).unwrap();
+    let old = memory.resolve_ref(&first.claim_short_id).unwrap();
+    let new = memory.resolve_ref(&second.claim_short_id).unwrap();
+    assert_eq!(second.approval, "proposed");
+    vault
+        .grant_deferred_claim_auto(&new, 201)
+        .expect("human write needs no Dreamer checker");
+    assert_eq!(
+        vault.get_claim(&new).unwrap().unwrap().approval,
+        ClaimApprovalStatus::Auto
+    );
+    assert_eq!(
+        vault.get_claim(&old).unwrap().unwrap().lifecycle,
+        ClaimLifecycleStatus::Superseded
     );
 }
 

@@ -387,12 +387,61 @@ impl Vault {
         old_id: &EntityId,
         now: u64,
     ) -> Result<()> {
+        self.supersede_claim_with_closure_grant_in_txn(wtxn, new_id, old_id, now, false)
+    }
+
+    /// Only the validated deferred settlement may invoke this variant.
+    pub(in crate::claim) fn supersede_granted_deferred_claim_in_txn(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+        new_id: &EntityId,
+        old_id: &EntityId,
+        now: u64,
+    ) -> Result<()> {
+        self.supersede_claim_with_closure_grant_in_txn(wtxn, new_id, old_id, now, true)
+    }
+
+    fn supersede_claim_with_closure_grant_in_txn(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+        new_id: &EntityId,
+        old_id: &EntityId,
+        now: u64,
+        closure_granted: bool,
+    ) -> Result<()> {
         if new_id == old_id {
             return Err(Error::Claim(ClaimError::ClaimSelfSupersession));
         }
 
         let (new_body, _new_header) = self.claim_for_lifecycle_in(&*wtxn, new_id)?;
         Self::require_active_claim(&new_body)?;
+        let staged = super::deferred::load(self, &*wtxn, new_id)?;
+        if closure_granted {
+            let Some(super::deferred::DeferredAction::Supersede { old, .. }) =
+                staged.map(|row| row.action)
+            else {
+                return Err(Error::InvalidClaimBody("deferred closure has no binding"));
+            };
+            if old != *old_id.as_bytes()
+                || !matches!(
+                    new_body.approval,
+                    ClaimApprovalStatus::Auto | ClaimApprovalStatus::Approved
+                )
+            {
+                return Err(Error::InvalidClaimBody(
+                    "deferred closure has no matching grant",
+                ));
+            }
+        } else if staged.is_some_and(|row| {
+            matches!(
+                row.action,
+                super::deferred::DeferredAction::Supersede { .. }
+            )
+        }) {
+            return Err(Error::InvalidClaimBody(
+                "deferred supersession requires a closure grant",
+            ));
+        }
         // The NAMED target: stale here means the caller decided against a view
         // the store has replaced, and the guard runs in the caller's txn so a
         // replacement staged earlier in the same txn rolls back with it.
