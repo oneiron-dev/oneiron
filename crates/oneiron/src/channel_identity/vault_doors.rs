@@ -265,16 +265,27 @@ impl Vault {
         channel: &str,
         address_or_handle: &str,
     ) -> Result<Option<(EntityId, ChannelIdentity)>> {
-        let wanted = AssignmentKey::of(channel, address_or_handle);
         let rtxn = self.store.env.read_txn()?;
-        for entry in
-            self.store
-                .port_entity_ids_by_type(&rtxn, ENTITY_TYPE_CHANNEL_IDENTITY, None)?
+        self.channel_identity_by_assignment_in_txn(&rtxn, channel, address_or_handle)
+    }
+
+    /// One-snapshot assignment lookup for a caller that also commits its
+    /// routed event under this transaction.
+    pub(crate) fn channel_identity_by_assignment_in_txn(
+        &self,
+        rtxn: &heed::RoTxn<'_>,
+        channel: &str,
+        address_or_handle: &str,
+    ) -> Result<Option<(EntityId, ChannelIdentity)>> {
+        let wanted = AssignmentKey::of(channel, address_or_handle);
+        for entry in self
+            .store
+            .port_entity_ids_by_type(rtxn, ENTITY_TYPE_CHANNEL_IDENTITY, None)?
         {
             let id = entry?;
             let raw = self
                 .store
-                .port_entity_record(&rtxn, &id)?
+                .port_entity_record(rtxn, &id)?
                 .map(|row| row.encode())
                 .ok_or(Error::CorruptedIndex("type index row without entity"))?;
             let header =

@@ -214,6 +214,39 @@ impl Vault {
         }))
     }
 
+    /// Foreign pack intake: resolve and enforce the acting agent under the
+    /// SAME writer transaction that creates the durable event handoff.
+    #[cfg(any(test, feature = "microvm-firecracker"))]
+    pub(crate) fn enqueue_pack_surface_event_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        input: InboundSurfaceEventInput,
+        expected_agent: crate::EntityId,
+        now: u64,
+    ) -> Result<SurfaceEventAdmission> {
+        let receipt = super::inbound::route_inbound_surface_event_in_txn(self, txn, input)?;
+        if receipt.agent_ref.as_deref() != Some(expected_agent.to_hex().as_str()) {
+            return Err(crate::Error::InvalidConfig(
+                "pack surface event outside acting agent".into(),
+            ));
+        }
+        let event = receipt.surface_event.ok_or_else(|| {
+            crate::Error::InvalidConfig("pack surface event did not route".into())
+        })?;
+        let record = admit_surface_event_once_in_txn(self, txn, &event, None, now)?;
+        Ok(SurfaceEventAdmission::Accepted(SurfaceEventAck {
+            status_path: surface_event_status_path(&event.correlation_id),
+            correlation_id: event.correlation_id,
+            attempt_ref: SurfaceEventAttemptRef::from_attempt_id(record.attempt.id),
+            state: SurfaceEventHandoffState::from_attempt_state(record.attempt.state),
+            replayed: record.replayed,
+            // The row's own stamp, not this call's clock: a replay admitted
+            // nothing, and dating the ack `now` would contradict the
+            // `created_at` the status snapshot reads off the same attempt.
+            accepted_at: record.attempt.created_at,
+        }))
+    }
+
     /// Reads the durable handoff snapshot for one public correlation id.
     pub fn surface_event_handoff_status(
         &self,

@@ -12,6 +12,9 @@ use crate::{
         },
     },
 };
+use oneiron_sandbox_contract::{
+    MAX_COMPONENT_BYTES, MAX_PROGRAM_BYTES, WorkspacePath, WorkspaceShape,
+};
 use serde::{Deserialize, Serialize};
 use std::{
     collections::BTreeMap,
@@ -20,11 +23,8 @@ use std::{
     time::Instant,
 };
 
-const MAX_FRAME: usize = 8 * 1024 * 1024;
-const MAX_FILE: usize = 1024 * 1024;
-const MAX_TOTAL: usize = 16 * 1024 * 1024;
-const MAX_FILES: usize = 8192;
-const MAX_REQUESTS: usize = 16_384;
+const MAX_FRAME: usize = oneiron_sandbox_contract::MAX_FRAME_BYTES;
+const MAX_REQUESTS: usize = oneiron_sandbox_contract::MAX_REQUESTS;
 
 #[derive(Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
@@ -87,8 +87,11 @@ pub(super) fn exchange(
     transport: Option<&dyn CredentialReadTransport>,
 ) -> Result<(MicroVmExit, Vec<SandboxProposalWrite>)> {
     let GuestProgram { component, source } = program;
-    if source.len() > MAX_FILE {
+    if source.len() > MAX_PROGRAM_BYTES {
         return Err(refused("guest source exceeds message budget"));
+    }
+    if component.is_empty() || component.len() > MAX_COMPONENT_BYTES {
+        return Err(refused("guest component size refused"));
     }
     if !matches!(
         read_frame(&mut stream, deadline)?,
@@ -132,7 +135,7 @@ pub(super) fn exchange(
         )?;
     }
     write_frame(&mut stream, &HostFrame::Ready, deadline)?;
-    let (mut exit, writes) = receive_proposals(stream, vm, deadline, proxy, transport)?;
+    let (mut exit, writes) = receive_proposals(stream, vm, &base, deadline, proxy, transport)?;
     let mut edits = Vec::new();
     for write in writes {
         let SandboxProposalWrite::FileWrite(file) = write else {
@@ -153,12 +156,20 @@ pub(super) fn exchange(
 fn receive_proposals(
     mut stream: UnixStream,
     vm: &MicroVmHandle,
+    base: &[SandboxFileWriteProposal],
     deadline: Instant,
     proxy: &CredentialEgressProxy,
     transport: Option<&dyn CredentialReadTransport>,
 ) -> Result<(MicroVmExit, Vec<SandboxProposalWrite>)> {
     let mut writes = BTreeMap::new();
-    let mut total = 0_usize;
+    let mut shape = WorkspaceShape::new();
+    for file in base {
+        let path =
+            WorkspacePath::parse(file.path.as_str()).map_err(|error| refused(error.reason()))?;
+        shape
+            .add_file(&path, file.bytes.len())
+            .map_err(|error| refused(error.reason()))?;
+    }
     for _ in 0..MAX_REQUESTS {
         match read_frame(&mut stream, deadline)? {
             GuestFrame::Hello { .. } => return Err(refused("duplicate guest hello")),
@@ -184,20 +195,14 @@ fn receive_proposals(
             }
             GuestFrame::Write { path, bytes } => {
                 let path = SandboxVirtualPath::try_new(path)?;
-                if path.mount() != SandboxMount::Workspace
-                    || path.relative_path().is_empty()
-                    || writes.contains_key(path.as_str())
-                    || writes.len() >= MAX_FILES
-                    || bytes.len() > MAX_FILE
-                {
-                    return Err(refused("guest proposal path, count or size refused"));
+                if path.mount() != SandboxMount::Workspace || writes.contains_key(path.as_str()) {
+                    return Err(refused("guest proposal path or duplicate refused"));
                 }
-                total = total
-                    .checked_add(bytes.len())
-                    .ok_or_else(|| refused("proposal byte overflow"))?;
-                if total > MAX_TOTAL {
-                    return Err(refused("guest proposal aggregate budget exceeded"));
-                }
+                let checked =
+                    WorkspacePath::parse(path.as_str()).map_err(|error| refused(error.reason()))?;
+                shape
+                    .replace_file(&checked, bytes.len())
+                    .map_err(|error| refused(error.reason()))?;
                 writes.insert(
                     path.as_str().to_owned(),
                     SandboxProposalWrite::FileWrite(SandboxFileWriteProposal::new(path, bytes)),

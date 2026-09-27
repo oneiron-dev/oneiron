@@ -9,6 +9,7 @@ description = "Bounded Linux PID-1 agent for Oneiron Firecracker guests"
 publish = false
 
 [dependencies]
+oneiron-sandbox-contract = { path = "../oneiron-sandbox-contract" }
 blake3 = "1"
 libc = "0.2"
 serde.workspace = true

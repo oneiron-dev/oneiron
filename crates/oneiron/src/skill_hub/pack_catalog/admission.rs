@@ -1,8 +1,8 @@
 //! Post-fit installation of pinned pack source; requested powers stay inert.
 use super::{
-    BundledSkillPermissions, PackCandidateReason, PackFitPolicy, PackFitVerdict, PackInstallAsk,
-    PackInstallDisposition, PackInstallReceipt, PackInstallStatus, PackPermissions, PackSource,
-    invalid,
+    BundledSkillPermissions, PackAdapter, PackCandidateReason, PackFitPolicy, PackFitVerdict,
+    PackInstallAsk, PackInstallDisposition, PackInstallReceipt, PackInstallStatus, PackPermissions,
+    PackQualification, PackRuntimeRecipe, PackSource, invalid,
 };
 use crate::{
     Vault,
@@ -41,9 +41,38 @@ impl Vault {
         if !verdict.fits {
             return Err(invalid("pack did not pass fit"));
         }
+        // Even a flag-off Candidate has a qualified *shape*. Running code
+        // also needs the host's source-bound sandbox suite and runtime pin.
+        let qualification = if let Some(adapter @ PackAdapter::Script(_)) = &source.manifest.adapter
+        {
+            let shape_recipe = PackRuntimeRecipe {
+                adapter: adapter.clone(),
+                runtime_id: crate::code_sandbox::SANDBOX_JS_COMPONENT_NAME.to_owned(),
+                runtime_hash: String::new(),
+            };
+            super::script_plan::ScriptExecutionPlan::from_source(&source, &shape_recipe)?
+                .qualified_shape()?;
+            if verdict.code_auto_install && !verdict.rules_hit {
+                let qualified = policy
+                    .qualify_script(&source)?
+                    .ok_or_else(|| invalid("script pack requires a qualified runtime"))?;
+                validate_qualification(&source, &qualified)?;
+                Some(qualified)
+            } else {
+                None
+            }
+        } else {
+            None
+        };
         let txn = self.store.env.read_txn()?;
-        let (binding, surface) =
-            self.pack_install_binding(&txn, source_id, hub, publisher, verdict)?;
+        let (binding, surface) = self.pack_install_binding(
+            &txn,
+            source_id,
+            hub,
+            publisher,
+            verdict,
+            qualification.as_ref(),
+        )?;
         Ok(PackInstallAsk {
             source_id,
             hub: hub.clone(),
@@ -53,6 +82,7 @@ impl Vault {
             surface,
             manifest: source.manifest().clone(),
             permissions,
+            qualification,
         })
     }
     /// The copied object is not a grant. Requested powers remain on its card;
@@ -106,6 +136,10 @@ impl Vault {
                 },
                 publisher: ask.publisher.identity().to_owned(),
                 permissions: ask.permissions.clone(),
+                qualification_report_hash: ask.qualification.as_ref().map(|q| q.report_hash.clone()),
+                runtime: if status == PackInstallStatus::Active {
+                    ask.qualification.as_ref().and_then(|q| q.runtime.clone())
+                } else { None },
                 sections: source.sections().to_vec(),
                 predicates: source.manifest.predicates.iter().cloned().collect(),
                 kinds: source.manifest.kinds.iter().cloned().collect(),
@@ -252,6 +286,17 @@ impl Vault {
         }
         Ok(Some(installed))
     }
+    /// A script run compares the exact selected receipt in its own writer
+    /// transaction; Candidates are never runnable installations.
+    #[cfg(any(test, feature = "microvm-firecracker"))]
+    pub(crate) fn installed_pack_for_script_in_txn(
+        &self,
+        txn: &RoTxn<'_>,
+        name: &str,
+    ) -> Result<Option<PackInstallReceipt>> {
+        self.installed_pack_in_txn(txn, name)
+    }
+
     /// A lens treats a deleted source as an absent installation. Parse the
     /// receipt first so a malformed catalog still fails closed, and use one
     /// snapshot for both this deletion check and normal source validation.
@@ -302,8 +347,14 @@ impl Vault {
             .transpose()
     }
     fn check_pack_install_ask(&self, txn: &RoTxn<'_>, ask: &PackInstallAsk) -> Result<PackSource> {
-        let (binding, _) =
-            self.pack_install_binding(txn, ask.source_id, &ask.hub, &ask.publisher, ask.verdict)?;
+        let (binding, _) = self.pack_install_binding(
+            txn,
+            ask.source_id,
+            &ask.hub,
+            &ask.publisher,
+            ask.verdict,
+            ask.qualification.as_ref(),
+        )?;
         if binding != ask.binding {
             return Err(invalid(
                 "pack source, publisher, hub or installation changed",
@@ -316,6 +367,24 @@ impl Vault {
         if pack_permissions(&source, prior.as_ref())? != ask.permissions {
             return Err(invalid("pack permission card drift"));
         }
+        if let Some(qualified) = ask.qualification.as_ref() {
+            validate_qualification(&source, qualified)?;
+        } else if matches!(source.manifest.adapter, Some(PackAdapter::Script(_))) {
+            let shape_recipe = PackRuntimeRecipe {
+                adapter: source
+                    .manifest
+                    .adapter
+                    .clone()
+                    .ok_or_else(|| invalid("missing adapter"))?,
+                runtime_id: crate::code_sandbox::SANDBOX_JS_COMPONENT_NAME.to_owned(),
+                runtime_hash: String::new(),
+            };
+            super::script_plan::ScriptExecutionPlan::from_source(&source, &shape_recipe)?
+                .qualified_shape()?;
+            if ask.verdict.code_auto_install && !ask.verdict.rules_hit {
+                return Err(invalid("active script pack needs qualified runtime"));
+            }
+        }
         Ok(source)
     }
     fn pack_install_binding(
@@ -325,6 +394,7 @@ impl Vault {
         hub: &HubRef,
         publisher: &ForeignSkillPublisher,
         verdict: PackFitVerdict,
+        qualification: Option<&PackQualification>,
     ) -> Result<(String, HubAskSurface)> {
         self.check_publisher_in_txn(txn, publisher)?;
         if publisher.hub != hub.hub_id {
@@ -352,7 +422,7 @@ impl Vault {
         source.kind_identities()?;
         let config = self.hub_record_in_txn(txn, &hub.hub_id)?;
         let prior = self.installed_pack_in_txn(txn, &source.manifest.name)?;
-        let binding = blake3::hash(format!("pack-install-v2:{source_id:?}:{hub:?}:{publisher:?}:{config:?}:{verdict:?}:{prior:?}").as_bytes()).to_hex().to_string();
+        let binding = blake3::hash(format!("pack-install-v2:{source_id:?}:{hub:?}:{publisher:?}:{config:?}:{verdict:?}:{qualification:?}:{prior:?}").as_bytes()).to_hex().to_string();
         let surface = match config.trust_tier {
             SkillHubTrustTier::Verified => HubAskSurface::OneTap,
             SkillHubTrustTier::Community => HubAskSurface::SummarizedReview,
@@ -467,4 +537,34 @@ fn pack_permissions(
         section_verbs,
         section_authorities,
     })
+}
+
+fn validate_qualification(source: &PackSource, result: &PackQualification) -> Result<()> {
+    if !result.passed
+        || !result.advisory_accepted
+        || result.suite.is_empty()
+        || result.suite.len() > 256
+        || result.advisory.is_empty()
+        || result.advisory.len() > 16384
+    {
+        return Err(invalid("pack qualification or advisory refused"));
+    }
+    crate::skill::SkillContentHash::parse_hex(&result.report_hash)?;
+    for text in [&result.suite, &result.advisory] {
+        crate::batch::secret_scan::scan_metadata_field(text)?;
+    }
+    let runtime = result
+        .runtime
+        .as_ref()
+        .ok_or_else(|| invalid("script pack requires qualified runtime recipe"))?;
+    if Some(&runtime.adapter) != source.manifest.adapter.as_ref()
+        || runtime.runtime_id.is_empty()
+        || runtime.runtime_id.len() > 1024
+    {
+        return Err(invalid("runtime recipe does not bind declared adapter"));
+    }
+    crate::skill::SkillContentHash::parse_hex(&runtime.runtime_hash)?;
+    super::script_plan::ScriptExecutionPlan::from_source(source, runtime)?.qualified_shape()?;
+    crate::batch::secret_scan::scan_metadata_field(&runtime.runtime_id)?;
+    Ok(())
 }

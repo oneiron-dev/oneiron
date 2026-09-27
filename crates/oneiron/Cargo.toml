@@ -19,6 +19,7 @@ categories.workspace = true
 doctest = true
 
 [dependencies]
+oneiron-sandbox-contract = { path = "../oneiron-sandbox-contract" }
 oneiron-seal = { version = "0.1.0", path = "../oneiron-seal" }
 lopdf = { version = "=0.44.0", default-features = false }
 qrcode = { version = "=0.14.1", default-features = false }
@@ -209,6 +210,8 @@ test-hooks = []
 test-support = []
 
 [dev-dependencies]
+wat = "1"
+oneiron-guest = { path = "../oneiron-guest" }
 async-trait = "0.1"
 rcgen = "0.14"
 p256 = { workspace = true, features = ["pkcs8"] }
