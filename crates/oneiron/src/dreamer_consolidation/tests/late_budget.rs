@@ -312,3 +312,95 @@ fn finalize_window_refusal_charges_extraction_and_only_new_work_on_resume() -> R
     run_case(LateCall::FinalizeInvalidJson)?;
     run_case(LateCall::FinalizeMergeInvalidJson)
 }
+
+#[test]
+fn wake_pins_retry_expansion_before_admission() -> Result<()> {
+    let (_dir, vault) = open_vault();
+    let store = DreamerRunnerStore::new(&vault);
+    let node_id = crate::identity::load_or_mint_client_id(&vault)?;
+    let conversation = seed_session(&vault, 0x7b, 1);
+    let first = seed_turn(&vault, &conversation, "user", "initial evidence", 10);
+    let watermark = read_watermark(&vault, DreamerConsolidationScope::Micro)?;
+    let dirty = scan_dirty_turns(&vault, DreamerConsolidationScope::Micro, &watermark, 10)?;
+    enqueue_partition_attempts(
+        &vault,
+        DreamerConsolidationScope::Micro,
+        &dirty,
+        &watermark,
+        "pinned-retry",
+        20,
+    )?;
+    vault.set_consolidation_selection(&selection::SelectionConfig {
+        soak_ms: 0,
+        evidence_minimum: 2,
+        ..Default::default()
+    })?;
+    let response =
+        |ids: &[EntityId]| {
+            text_response(serde_json::json!({"candidates":[{
+        "subject": conversation.to_hex(), "predicate":"profile.name", "value":"supported",
+        "evidence_turn_refs": ids.iter().map(EntityId::to_hex).collect::<Vec<_>>()
+    }]}).to_string())
+        };
+    let backend = ScriptedBackend::new(vec![Ok(response(&[first]))]);
+    let guard = crate::BudgetGuard::with_reserve_units(
+        "wake",
+        10_000,
+        100,
+        BudgetExhaustionPolicy::Suspend,
+    );
+    let mut sink = CapturingSink::default();
+    let mut executor = ConsolidationExecutor {
+        backend: &backend,
+        guard: &guard,
+        strategy: DreamerClaimAuthoringStrategy::SinglePass,
+        actor: vault.dreamer_authority()?,
+        model: crate::ModelId::new("test/model@r1").expect("model"),
+        sink: &mut sink,
+        scope: None,
+    };
+    let deadline = WakePassDeadline::with_clock(180_000, std::sync::Arc::new(|| 0));
+    let mut driver = DreamerWakeDriver::new(&vault, "wake", deadline);
+    let report = ready(driver.run_wake_pass(
+        wake_input(node_id, 21),
+        &mut executor,
+        &WakeCancellation::new(),
+    ))?;
+    assert_eq!(report.deferred, 1);
+    drop(executor);
+    assert!(sink.accepted.is_empty());
+    let retry = AttemptQueue::new(&vault)
+        .list()?
+        .into_iter()
+        .find(|row| row.retry_of.is_some() && row.state == AttemptState::Scheduled)
+        .expect("scheduled selection retry");
+    let next_turn = seed_turn(&vault, &conversation, "assistant", "new before wake", 22);
+    // A fresh backend for the fresh retry identity gives the model exactly
+    // what the second wake's frozen source expansion must include.
+    let backend = ScriptedBackend::new(vec![Ok(response(&[first, next_turn]))]);
+    let mut executor = ConsolidationExecutor {
+        backend: &backend,
+        guard: &guard,
+        strategy: DreamerClaimAuthoringStrategy::SinglePass,
+        actor: vault.dreamer_authority()?,
+        model: crate::ModelId::new("test/model@r1").expect("model"),
+        sink: &mut sink,
+        scope: None,
+    };
+    let deadline = WakePassDeadline::with_clock(180_000, std::sync::Arc::new(|| 0));
+    let mut driver = DreamerWakeDriver::new(&vault, "wake-next", deadline);
+    let report = ready(driver.run_wake_pass(
+        wake_input(node_id, 100),
+        &mut executor,
+        &WakeCancellation::new(),
+    ))?;
+    assert_eq!(report.completed, 1);
+    assert_eq!(
+        store.status(retry.id)?.expect("retry").attempt.state,
+        AttemptState::Completed
+    );
+    drop(executor);
+    assert_eq!(sink.accepted.len(), 1);
+    assert_eq!(sink.accepted[0].evidence_turn_refs, vec![first, next_turn]);
+    Ok(())
+}

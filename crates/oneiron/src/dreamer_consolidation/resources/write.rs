@@ -60,6 +60,11 @@ impl BranchResources<'_> {
             }
             if let [(id, true)] = matches.as_slice() {
                 let id = *id;
+                if candidate.evidence_turn_refs.contains(&id) {
+                    return Err(invalid_consolidation(
+                        "claim evidence cannot support itself",
+                    ));
+                }
                 self.require_prior_write(scope, id)?;
                 attachments.push((id, candidate));
             } else {
@@ -168,25 +173,69 @@ impl ConsolidationFence {
         Ok(())
     }
 
-    pub(crate) fn evidence_source(&self, candidate: &PromotionCandidate) -> Result<ClaimSource> {
-        if candidate.evidence_turn_refs.is_empty()
-            || !candidate.provenance_chain.is_empty()
-            || candidate
-                .evidence_turn_refs
-                .iter()
-                .any(|id| !self.turns.contains(id))
-        {
+    /// The pinned body is the only hash/trust input; the candidate supplies
+    /// locators and judgement, not content hashes or source classification.
+    pub(crate) fn verified_locators(
+        &self,
+        candidate: &PromotionCandidate,
+    ) -> Result<Vec<(crate::dreamer_consolidation::SwarmEvidenceRef, [u8; 32])>> {
+        let locators = crate::dreamer_consolidation::conflict::candidate_locators(candidate)?;
+        let cited: BTreeSet<_> = locators.iter().map(|entry| entry.source_id).collect();
+        let projected: BTreeSet<_> = candidate.evidence_turn_refs.iter().copied().collect();
+        if cited != projected || cited.is_empty() {
             return Err(invalid_consolidation("unadmitted consolidation evidence"));
         }
-        // The candidate's label is never a source of authority. The sealed
-        // snapshot recorded the source class for each admitted TURN; a lower
-        // candidate meet may carry an additional (e.g. prior) taint, but an
-        // inflated meet cannot erase the stored source's restriction.
+        let mut verified: Vec<_> = locators
+            .into_iter()
+            .map(|locator| {
+                let pin = self
+                    .sources
+                    .get(&locator.source_id)
+                    .ok_or_else(|| invalid_consolidation("unadmitted consolidation evidence"))?;
+                if locator.claim_id.is_some() {
+                    if locator.claim_id != Some(locator.source_id)
+                        || locator.byte_range.is_some()
+                        || pin.entity_type != crate::registry::ENTITY_TYPE_CLAIM
+                    {
+                        return Err(invalid_consolidation("unadmitted claim locator"));
+                    }
+                    let body = crate::claim::decode_claim_body(&pin.body, true)?;
+                    if !crate::claim::claim_evidence_admissible(&body) {
+                        return Err(invalid_consolidation("generated claim cannot corroborate"));
+                    }
+                } else if !self.turns.contains(&locator.source_id)
+                    || pin.entity_type != crate::registry::ENTITY_TYPE_TURN
+                {
+                    return Err(invalid_consolidation("unadmitted turn locator"));
+                }
+                let bytes = if let Some((start, end)) = locator.byte_range {
+                    pin.body
+                        .get(start..end)
+                        .ok_or_else(|| invalid_consolidation("invalid evidence byte range"))?
+                } else {
+                    pin.body.as_slice()
+                };
+                Ok((
+                    locator,
+                    crate::dreamer_consolidation::swarm_evidence_content_hash(bytes),
+                ))
+            })
+            .collect::<Result<_>>()?;
+        verified.sort_by_key(|(locator, hash)| (locator.source_id, *hash, *locator));
+        verified.dedup_by_key(|(locator, hash)| (locator.source_id, *hash));
+        Ok(verified)
+    }
+
+    pub(crate) fn evidence_source(&self, candidate: &PromotionCandidate) -> Result<ClaimSource> {
+        if !candidate.provenance_chain.is_empty() {
+            return Err(invalid_consolidation("unadmitted consolidation evidence"));
+        }
+        let locators = self.verified_locators(candidate)?;
         let mut stored_meet = ClaimSource::Generated;
-        for id in &candidate.evidence_turn_refs {
+        for (locator, _) in locators {
             let trust = self
                 .sources
-                .get(id)
+                .get(&locator.source_id)
                 .and_then(|pin| pin.trust_class)
                 .ok_or_else(|| invalid_consolidation("unclassified consolidation evidence"))?;
             stored_meet = crate::dreamer_consolidation::provenance::source_meet(stored_meet, trust);

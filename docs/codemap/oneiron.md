@@ -119,7 +119,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/attempt_queue/engine/enqueue_claim.rs` | src | m | 5 fn · 8 crate-vis | — | Enqueue doors plus kind-scoped claim machinery and read-repair scans |
 | `src/attempt_queue/engine/mod.rs` | src | s | 1 struct · 4 crate-vis | AttemptQueue | The [`AttemptQueue`] handle and its lease state machine |
 | `src/attempt_queue/engine/mutate.rs` | src | m | 4 fn · 4 crate-vis | — | Retry/intervene/manifest append plus lease-cleanup mutation doors |
-| `src/attempt_queue/engine/reads.rs` | src | m | 4 fn · 15 crate-vis | — | Point/list/dedupe reads plus retry-chain and dreamer-root walks |
+| `src/attempt_queue/engine/reads.rs` | src | m | 4 fn · 16 crate-vis | — | Point/list/dedupe reads plus retry-chain and dreamer-root walks |
 | `src/attempt_queue/engine/redirect.rs` | src | s | 1 fn | — | Atomic operator placement changes with lease fencing and cycle refusal |
 | `src/attempt_queue/engine/workflow.rs` | src | s | 2 crate-vis | — | Transactional point-claim and retry lineage reads for ordered host composition |
 | `src/attempt_queue/mod.rs` | src | s | 4 re-export · 5 crate-vis | — | Generic LMDB-backed background attempt queue |
@@ -1032,22 +1032,22 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/distance/tests.rs` | test | m | — | — | — |
 | `src/dreamer_consolidation/assembly.rs` | src | s | 2 crate-vis | — | Store-backed mechanical inputs for the consolidation executor |
 | `src/dreamer_consolidation/branch_scope.rs` | src | s | 4 fn · 6 crate-vis | — | Durable branch restriction alongside a partition payload, not a partition or consolidation identity axis |
-| `src/dreamer_consolidation/conflict.rs` | src | m | 9 struct · 9 fn · 6 crate-vis | CollapsedEvidence, ConflictIdentity, ConflictSet, ConsolidationBucketKey, ConsolidationBucketPlan, PriorHead, SwarmChildReturn, SwarmEvidenceRef +1 | — |
+| `src/dreamer_consolidation/conflict.rs` | src | m | 9 struct · 9 fn · 8 crate-vis | CollapsedEvidence, ConflictIdentity, ConflictSet, ConsolidationBucketKey, ConsolidationBucketPlan, PriorHead, SwarmChildReturn, SwarmEvidenceRef +1 | — |
 | `src/dreamer_consolidation/executor.rs` | src | m | 1 struct · 1 crate-vis | ConsolidationExecutor | — |
-| `src/dreamer_consolidation/executor/extraction.rs` | src | s | 3 crate-vis | — | Extraction request/response projection for one admitted branch |
+| `src/dreamer_consolidation/executor/extraction.rs` | src | m | 3 crate-vis | — | Extraction request/response projection for one admitted branch |
 | `src/dreamer_consolidation/executor/retry.rs` | src | s | 1 crate-vis | — | Fresh source reads for scheduled selection retries, within the original partition |
 | `src/dreamer_consolidation/extracted_people.rs` | src | s | 2 crate-vis | — | Explicit PERSON outputs from the production extraction response |
 | `src/dreamer_consolidation/gap.rs` | src | m | 2 struct · 1 enum · 4 fn · 2 crate-vis | GapQueueDelta, ReflectionGap, ReflectionGapKind | — |
 | `src/dreamer_consolidation/judge_context.rs` | src | s | 1 crate-vis | — | Deterministic single-value resolution over an explicitly admitted prior |
-| `src/dreamer_consolidation/mod.rs` | src | s | 2 mod · 9 re-export · 2 crate-vis | — | Dreamer consolidation algorithm + reflection gap scan (ONE-1289, DREAM-002; DESIGN-PIN-20260710 Part A) |
+| `src/dreamer_consolidation/mod.rs` | src | s | 2 mod · 9 re-export · 3 crate-vis | — | Dreamer consolidation algorithm + reflection gap scan (ONE-1289, DREAM-002; DESIGN-PIN-20260710 Part A) |
 | `src/dreamer_consolidation/open_conflict.rs` | src | s | 1 crate-vis | — | A judge outage is an open question, persisted through the shared write gate |
 | `src/dreamer_consolidation/partition.rs` | src | m | 3 struct · 6 fn · 6 crate-vis | ConsolidationCursor, ConsolidationPartitionKey, ConsolidationPartitionPlan | — |
 | `src/dreamer_consolidation/persistence.rs` | src | s | 1 fn · 2 crate-vis | — | Persistent contradiction markers and prior-head context for consolidation |
-| `src/dreamer_consolidation/provenance.rs` | src | m | 5 struct · 1 enum · 2 trait · 7 fn · 1 crate-vis | ConsolidationEvidenceEnvelope, ConsolidationProvenanceHop, ConsolidationProvenanceHopKind, ConsolidationSink, PeerAnswerLineage, PeerTrustDigestLine, PeerTrustDigestSink, PromotionCandidate | — |
-| `src/dreamer_consolidation/resources.rs` | src | m | 1 struct · 1 re-export · 18 crate-vis | WakeEvidenceSnapshot | Exact resource bounds for a consolidation partition |
+| `src/dreamer_consolidation/provenance.rs` | src | m | 5 struct · 1 enum · 2 trait · 7 fn · 2 crate-vis | ConsolidationEvidenceEnvelope, ConsolidationProvenanceHop, ConsolidationProvenanceHopKind, ConsolidationSink, PeerAnswerLineage, PeerTrustDigestLine, PeerTrustDigestSink, PromotionCandidate | — |
+| `src/dreamer_consolidation/resources.rs` | src | m | 1 struct · 1 re-export · 21 crate-vis | WakeEvidenceSnapshot | Exact resource bounds for a consolidation partition |
 | `src/dreamer_consolidation/resources/prior.rs` | src | s | 5 crate-vis | — | Exact stored-head admission and question routing |
 | `src/dreamer_consolidation/resources/signals.rs` | src | s | 3 crate-vis | — | Actor- and branch-filtered graph/vector inputs for mechanical selection |
-| `src/dreamer_consolidation/resources/write.rs` | src | s | 1 struct · 1 fn · 6 crate-vis | ScopedConsolidationWrite | Sealed resource handoff |
+| `src/dreamer_consolidation/resources/write.rs` | src | s | 1 struct · 1 fn · 7 crate-vis | ScopedConsolidationWrite | Sealed resource handoff |
 | `src/dreamer_consolidation/routing.rs` | src | s | 2 struct · 5 fn · 1 type | CandidateKeys, PredicateKeyRule | Three consolidation lanes: free keyed equality, scoped conflicts, cosine nominations |
 | `src/dreamer_consolidation/routing/tests.rs` | test | s | — | — | — |
 | `src/dreamer_consolidation/selection.rs` | src | s | 5 struct · 1 enum · 6 fn | SelectionCandidate, SelectionConfig, SelectionHold, SelectionPlan, StrengthSignals, StrengthWeights | Mechanical candidate selection |
@@ -1061,7 +1061,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/dreamer_consolidation/tests/person_extraction.rs` | test | s | — | — | — |
 | `src/dreamer_consolidation/tests/prior_heads.rs` | test | m | — | — | Real executor -> sealed sink -> durable evidence/provenance fixture |
 | `src/dreamer_consolidation/tests/scope_enforcement.rs` | test | L | — | — | — |
-| `src/dreamer_consolidation/tests/support.rs` | test | s | 1 crate-vis | — | Shared backend fixture for deadline-driven consolidation tests |
+| `src/dreamer_consolidation/tests/support.rs` | test | s | 4 crate-vis | — | Shared backend fixture for deadline-driven consolidation tests |
 | `src/dreamer_consolidation/value_projection.rs` | src | s | 2 crate-vis | — | Data projection between extraction/merge JSON and claim MessagePack values |
 | `src/dreamer_consolidation/watermark.rs` | src | m | 2 struct · 5 fn · 14 crate-vis | ConsolidationWatermark, WorkingSetTurn | — |
 | `src/dreamer_consolidation/watermark/rescan_tests.rs` | test | s | — | — | — |
@@ -1112,7 +1112,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/dreamer_tournament/types.rs` | src | m | 14 struct · 3 enum · 12 fn · 4 const · 11 crate-vis | DreamerTournamentAuthorFork, DreamerTournamentBlindJudgeContext, DreamerTournamentBordaBallot, DreamerTournamentBranch, DreamerTournamentBranchEvidence, DreamerTournamentBranchVerdict, DreamerTournamentCandidate, DreamerTournamentCandidateIdentity +9 | Tournament wire types, their validating constructors, and the pinned bounds |
 | `src/dreamer_tournament/validate.rs` | src | m | 19 crate-vis | — | Every structural predicate the tournament refuses on, and the one error constructor |
 | `src/dreamer_wake/deadline.rs` | src | s | 2 struct · 9 fn · 3 const | WakeCancellation, WakePassDeadline | Monotonic wake-pass clock and cooperative cancellation flag |
-| `src/dreamer_wake/driver.rs` | src | m | 1 struct · 8 fn · 4 const · 2 crate-vis | DreamerWakeDriver | The wake loop: admit, warn, dispatch under panic containment, stop conditions |
+| `src/dreamer_wake/driver.rs` | src | L | 1 struct · 8 fn · 4 const · 2 crate-vis | DreamerWakeDriver | The wake loop: admit, warn, dispatch under panic containment, stop conditions |
 | `src/dreamer_wake/legibility.rs` | src | s | 1 struct · 2 fn | BudgetLegibilityEnvelope | Budget legibility envelope derived from one BudgetGuard read |
 | `src/dreamer_wake/mod.rs` | src | s | 5 re-export · 1 crate-vis | — | Dreamer wake-pass driver (ONE-1288, DREAM-001 residual) |
 | `src/dreamer_wake/scheduling.rs` | src | s | 2 fn · 1 crate-vis | — | The host-facing enqueue doors; the engine owns no timer |
@@ -2723,7 +2723,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/workspace_roster/tests/companion_requirement.rs` | test | s | — | — | — |
 | `src/workspace_roster/tests/current_architecture.rs` | test | m | 2 crate-vis | — | — |
 | `src/workspace_roster/tests/onboarding_replay.rs` | test | s | — | — | — |
-| `src/write_envelope.rs` | src | m | 5 struct · 28 fn · 16 crate-vis | ClaimCandidate, SourceLineage, WriteActor, WriteEnvelope, WriteProvenance | Write-path stamping: `WriteActor`/`WriteProvenance`/`WriteEnvelope`/`ClaimCandidate` + evidence stamping |
+| `src/write_envelope.rs` | src | m | 5 struct · 28 fn · 17 crate-vis | ClaimCandidate, SourceLineage, WriteActor, WriteEnvelope, WriteProvenance | Write-path stamping: `WriteActor`/`WriteProvenance`/`WriteEnvelope`/`ClaimCandidate` + evidence stamping |
 | `src/write_envelope/tests.rs` | test | m | — | — | ONE-1314 · the source-lineage axis on the write envelope |
 | `tests/build_cache.rs` | test | s | — | — | Public cache boundary: real vaults and BLOB_ARTIFACT versions only |
 | `tests/cb_oracle_common/mod.rs` | test | s | — | — | Shared fixtures for the split Context Board oracle files |

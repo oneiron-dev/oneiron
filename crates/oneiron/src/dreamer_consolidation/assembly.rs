@@ -32,21 +32,31 @@ pub(super) fn assemble(
     // independent signals or the write can inherit a trust class.
     let children: Vec<_> = candidates
         .iter()
-        .map(|candidate| SwarmChildReturn {
-            evidence: candidate
-                .evidence_turn_refs
-                .iter()
-                .copied()
-                .map(SwarmEvidenceRef::whole_turn)
-                .collect(),
-            candidates: Vec::new(),
+        .map(|candidate| {
+            Ok(SwarmChildReturn {
+                evidence: super::conflict::candidate_locators(candidate)?,
+                candidates: Vec::new(),
+            })
         })
+        .collect::<Result<_>>()?;
+    let all_refs: Vec<_> = children
+        .iter()
+        .flat_map(|child| child.evidence.iter().copied())
         .collect();
     let collapsed = collapse_sibling_evidence(resources, &children)?;
-    let verified: BTreeMap<_, _> = collapsed
+    let identities: BTreeMap<_, _> = collapsed
         .independent
         .iter()
-        .map(|entry| (entry.source_id, *entry))
+        .map(|entry| ((entry.source_id, entry.content_hash), *entry))
+        .collect();
+    let verified_rows = resources.verify_evidence_refs(&all_refs)?;
+    let verified: BTreeMap<_, _> = all_refs
+        .into_iter()
+        .zip(verified_rows)
+        .map(|(locator, entry)| {
+            let canonical = identities[&(entry.source_id, entry.content_hash)];
+            (locator, canonical)
+        })
         .collect();
     for candidate in &mut candidates {
         candidate.evidence_turn_refs.sort_unstable();
@@ -54,10 +64,9 @@ pub(super) fn assemble(
         candidate.evidence_meet = super::provenance::source_meet(
             candidate.evidence_meet,
             evidence_trust_meet(
-                candidate
-                    .evidence_turn_refs
+                super::conflict::candidate_locators(candidate)?
                     .iter()
-                    .filter_map(|id| verified.get(id)),
+                    .filter_map(|locator| verified.get(locator)),
             ),
         );
     }
@@ -111,7 +120,7 @@ pub(super) fn assemble(
 fn selection_input(
     resources: &BranchResources<'_>,
     candidate: &PromotionCandidate,
-    verified: &BTreeMap<EntityId, VerifiedSwarmEvidence>,
+    verified: &BTreeMap<SwarmEvidenceRef, VerifiedSwarmEvidence>,
     now: u64,
     config: &SelectionConfig,
     fan_in: u64,
@@ -123,22 +132,23 @@ fn selection_input(
     let mut latest = 0;
     let mut count = 0;
     let mut sessions = BTreeSet::new();
-    for &id in &candidate.evidence_turn_refs {
+    for locator in super::conflict::candidate_locators(candidate)? {
         let entry = verified
-            .get(&id)
+            .get(&locator)
             .ok_or_else(|| super::support::invalid_consolidation("unverified evidence signal"))?;
         if !seen.insert((entry.source_id, entry.content_hash)) {
             continue;
         }
+        let id = locator.source_id;
         let learned_at = resources
             .evidence_time(resources.scope(), &id)?
             .saturating_mul(1_000);
         earliest = Some(earliest.map_or(learned_at, |at: u64| at.min(learned_at)));
         latest = latest.max(learned_at);
         count += 1;
-        // A partition has one conversation, but its evidence can come from
-        // distinct speakers. Count those store-backed sources, not the partition.
-        if let Some(speaker) = resources.turn(resources.scope(), &id)?.speaker {
+        if locator.claim_id.is_some() {
+            sessions.insert(id.to_hex());
+        } else if let Some(speaker) = resources.turn(resources.scope(), &id)?.speaker {
             sessions.insert(speaker.trim().to_lowercase());
         }
     }

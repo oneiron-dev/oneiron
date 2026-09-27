@@ -194,6 +194,54 @@ pub fn encode_consolidation_evidence(evidence: &ConsolidationEvidenceEnvelope) -
     ])
 }
 
+/// Adds parent-computed source+range/claim hashes to the persisted evidence
+/// envelope without changing the established refs/chain/source-meet fields.
+#[must_use]
+pub(crate) fn encode_consolidation_evidence_with_locators(
+    evidence: &ConsolidationEvidenceEnvelope,
+    locators: &[(super::SwarmEvidenceRef, [u8; 32])],
+) -> Value {
+    let Value::Map(mut fields) = encode_consolidation_evidence(evidence) else {
+        unreachable!("evidence envelope is a map")
+    };
+    if !locators.is_empty() {
+        fields.push((
+            Value::from("locators"),
+            Value::Array(
+                locators
+                    .iter()
+                    .map(|(locator, hash)| {
+                        let mut row = vec![
+                            (
+                                Value::from("source_id"),
+                                Value::Binary(locator.source_id.as_bytes().to_vec()),
+                            ),
+                            (Value::from("content_hash"), Value::Binary(hash.to_vec())),
+                        ];
+                        if let Some(claim) = locator.claim_id {
+                            row.push((
+                                Value::from("claim_id"),
+                                Value::Binary(claim.as_bytes().to_vec()),
+                            ));
+                        }
+                        if let Some((start, end)) = locator.byte_range {
+                            row.push((
+                                Value::from("byte_range"),
+                                Value::Array(vec![
+                                    Value::from(start as u64),
+                                    Value::from(end as u64),
+                                ]),
+                            ));
+                        }
+                        Value::Map(row)
+                    })
+                    .collect(),
+            ),
+        ));
+    }
+    Value::Map(fields)
+}
+
 /// Reads back a stored consolidation evidence envelope. `Ok(None)` when the
 /// payload is not one (a legacy bare-array evidence stamp, say); a structural
 /// break inside a well-keyed envelope is a typed error, never a silent drop.

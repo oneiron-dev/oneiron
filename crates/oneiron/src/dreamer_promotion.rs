@@ -47,7 +47,7 @@ use crate::claim::{
 };
 use crate::dreamer_consolidation::{
     ConsolidationEvidenceEnvelope, ConsolidationProvenanceHop, encode_consolidation_evidence,
-    source_meet,
+    encode_consolidation_evidence_with_locators, source_meet,
 };
 use crate::dreamer_runner::DREAMER_RUNNER_ATTEMPT_KIND;
 use crate::entity_id::{EntityId, bytes_to_hex_lower};
@@ -274,11 +274,19 @@ fn promote_one(
     // candidate_evidence entry that GATE-12's evidence floor reads, and the
     // machine-readable record of WHICH answer TURN and consult TASK the
     // claim descends from. `refs` is exactly the post-admission survivors.
-    let evidence_value = encode_consolidation_evidence(&ConsolidationEvidenceEnvelope {
-        refs: surviving,
-        chain: candidate.provenance_chain,
-        source_meet: source,
-    });
+    let locators = fence
+        .map(|fence| fence.verified_locators(&candidate))
+        .transpose()
+        .map_err(|error| error.to_string())?
+        .unwrap_or_default();
+    let evidence_value = encode_consolidation_evidence_with_locators(
+        &ConsolidationEvidenceEnvelope {
+            refs: surviving,
+            chain: candidate.provenance_chain,
+            source_meet: source,
+        },
+        &locators,
+    );
 
     // `ClaimCandidate` exposes no scope accessor, so the probe body is how
     // the writer reads the candidate's own scope before re-stamping it.

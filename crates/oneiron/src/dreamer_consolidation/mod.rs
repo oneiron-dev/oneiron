@@ -53,6 +53,7 @@ pub use executor::*;
 pub use gap::*;
 pub use partition::*;
 pub use persistence::close_persistent_conflict;
+pub(crate) use provenance::encode_consolidation_evidence_with_locators;
 pub use provenance::*;
 pub use resources::{ScopedConsolidationWrite, WakeEvidenceSnapshot};
 pub use support::*;

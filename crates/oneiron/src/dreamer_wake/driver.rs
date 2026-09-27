@@ -270,8 +270,11 @@ impl<'a> DreamerWakeDriver<'a> {
 
         // Keep one MVCC revision for the wake's evidence accounting. Any source
         // changed before commit is rejected by the existing write fence.
-        let ledger_pin =
-            crate::dreamer_consolidation::WakeEvidenceSnapshot::capture(self.vault, input.scope)?;
+        let ledger_pin = crate::dreamer_consolidation::WakeEvidenceSnapshot::capture_with_grants(
+            self.vault,
+            input.scope,
+            exec.wake_ledger_scope(),
+        )?;
         loop {
             // Attempt-boundary yield (ONE-1683): one Pending poll with a
             // self-wake per iteration, so a supervisor selecting over this
@@ -453,6 +456,15 @@ impl<'a> DreamerWakeDriver<'a> {
                 // propagating it directly would leave the admitted attempt
                 // leased and its reservation held.
                 Err(publish_error)
+            } else if admitted.status.attempt.kind == input.scope.attempt_kind()
+                && !ledger_pin.contains_attempt(attempt_id)
+            {
+                // Enqueued after the frozen wake revision: never admit it to
+                // this snapshot or fall back to a newer per-attempt read.
+                Ok(DreamerAttemptExecution::Deferred {
+                    completed_units: 0,
+                    retry_at: input.now.saturating_add(1),
+                })
             } else {
                 let mut ctx = WakeAttemptContext {
                     vault: self.vault,

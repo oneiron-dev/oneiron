@@ -7,7 +7,9 @@ use super::resources::BranchResources;
 use super::value_projection::{json_to_rmpv, rmpv_to_json};
 use rmpv::Value;
 
-use super::conflict::{ConflictIdentity, ConflictSet, candidate_facts, deterministic_claim_id};
+use super::conflict::{
+    ConflictIdentity, ConflictSet, SwarmEvidenceRef, candidate_facts, deterministic_claim_id,
+};
 use super::gap::{ReflectionGap, ReflectionGapKind, scan_reflection_gaps, upsert_gap_queue};
 use super::partition::{ConsolidationPartitionKey, decode_partition_payload};
 use super::provenance::{
@@ -516,10 +518,12 @@ fn merged_candidate(
     now_ms: u64,
 ) -> Result<PromotionCandidate> {
     let mut evidence: Vec<EntityId> = Vec::new();
+    let mut locators = Vec::new();
     let mut chain: Vec<ConsolidationProvenanceHop> = Vec::new();
     let mut meet = ClaimSource::UserStated;
     let mut confidence = 0.0_f32;
     for member in members {
+        locators.extend(super::conflict::candidate_locators(member)?);
         for turn in &member.evidence_turn_refs {
             if !evidence.contains(turn) {
                 evidence.push(*turn);
@@ -537,6 +541,8 @@ fn merged_candidate(
     }
     evidence.sort();
     evidence.dedup();
+    locators.sort_unstable();
+    locators.dedup();
     for prior in priors
         .iter()
         .filter(|p| conflict.prior_heads.contains(&p.claim_id))
@@ -571,6 +577,7 @@ fn merged_candidate(
         candidate = candidate.with_world(world);
     }
     candidate = candidate.with_scope(super::persistence::identity_scope(&conflict.identity)?);
+    candidate = super::conflict::with_candidate_locators(candidate, &locators);
     Ok(PromotionCandidate {
         claim_id,
         candidate,
@@ -618,6 +625,10 @@ fn attempt_id_for_steps(
 }
 
 impl DreamerAttemptExecutor for ConsolidationExecutor<'_> {
+    fn wake_ledger_scope(&self) -> Option<&crate::llm::Scope> {
+        self.scope.as_ref()
+    }
+
     async fn execute(
         &mut self,
         attempt: &crate::dreamer_runner::DreamerAdmittedAttempt,
@@ -714,6 +725,7 @@ impl DreamerAttemptExecutor for ConsolidationExecutor<'_> {
             self.actor,
             &attempt.status,
             branch_scope.as_ref(),
+            ctx.ledger_pin,
         )?;
         let (partition, turns, _) = decode_partition_payload(&payload)?;
         let resources = BranchResources::open_at_pin(

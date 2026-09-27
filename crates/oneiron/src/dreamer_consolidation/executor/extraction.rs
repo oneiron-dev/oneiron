@@ -9,11 +9,9 @@ impl ConsolidationExecutor<'_> {
         transcript: &str,
         scope: &crate::llm::Scope,
     ) -> LlmRequest {
-        let system = "Extract durable memory claims from the conversation transcript. \
-             Respond with JSON: {\"candidates\": [{\"subject\": \"<32-hex entity id>\", \
-             \"predicate\": \"<dotted.predicate>\", \"value\": <json>, \"confidence\": <0..1>, \
-             \"evidence_turn_refs\": [\"<32-hex turn id>\"]}]}. Only claims stated by the \
-             user or assistant; never invent evidence refs.";
+        let system = r#"Extract durable memory claims from the conversation transcript.
+Respond with JSON: {"candidates":[{"subject":"<32-hex entity id>","predicate":"<dotted.predicate>","value":<json>,"confidence":<0..1>,"evidence_refs":[{"source_id":"<32-hex id>","byte_range":[start,end]}]}]}.
+Each evidence ref names a source id and either a byte_range or claim_id. Use evidence_turn_refs only for legacy whole-turn citations. Only claims stated by the user or assistant; never invent evidence refs."#;
         LlmRequest {
             model: self.model.clone(),
             envelope: CallEnvelope {
@@ -125,7 +123,7 @@ impl ConsolidationExecutor<'_> {
                     "extraction relationship crossed branch scope",
                 ));
             }
-            let evidence_turn_refs: Vec<EntityId> = item
+            let legacy_turns: Vec<EntityId> = item
                 .get("evidence_turn_refs")
                 .and_then(|value| value.as_array())
                 .map(|refs| {
@@ -134,6 +132,35 @@ impl ConsolidationExecutor<'_> {
                         .collect()
                 })
                 .unwrap_or_default();
+            let locators = if let Some(value) = item.get("evidence_refs") {
+                let refs = value
+                    .as_array()
+                    .ok_or_else(|| invalid_consolidation("evidence refs must be an array"))?;
+                let locators: Vec<_> = refs
+                    .iter()
+                    .map(decode_model_locator)
+                    .collect::<Result<_>>()?;
+                if !legacy_turns.is_empty() {
+                    let old: BTreeSet<_> = legacy_turns.iter().copied().collect();
+                    let typed: BTreeSet<_> = locators.iter().map(|entry| entry.source_id).collect();
+                    if old != typed {
+                        return Err(invalid_consolidation(
+                            "conflicting child evidence citations",
+                        ));
+                    }
+                }
+                locators
+            } else {
+                legacy_turns
+                    .iter()
+                    .copied()
+                    .map(SwarmEvidenceRef::whole_turn)
+                    .collect()
+            };
+            let mut evidence_turn_refs: Vec<_> =
+                locators.iter().map(|entry| entry.source_id).collect();
+            evidence_turn_refs.sort_unstable();
+            evidence_turn_refs.dedup();
 
             let mut candidate =
                 ClaimCandidate::new(predicate, ClaimSubject::Entity(subject), value, confidence);
@@ -156,6 +183,7 @@ impl ConsolidationExecutor<'_> {
             if !fields.is_empty() {
                 candidate = candidate.with_scope(Value::Map(fields));
             }
+            let candidate = super::super::conflict::with_candidate_locators(candidate, &locators);
             let facts = candidate_facts(&candidate)?;
             let claim_id = deterministic_claim_id(
                 attempt_id,
@@ -246,4 +274,58 @@ pub(in crate::dreamer_consolidation) fn disagreeing_child_hashes(
             (!claimed.eq_ignore_ascii_case(&bytes_to_hex_lower(&actual.content_hash))).then_some(id)
         })
         .collect())
+}
+
+fn decode_model_locator(value: &serde_json::Value) -> Result<SwarmEvidenceRef> {
+    let object = value
+        .as_object()
+        .ok_or_else(|| invalid_consolidation("evidence locator must be an object"))?;
+    let source_id = object
+        .get("source_id")
+        .and_then(serde_json::Value::as_str)
+        .and_then(entity_id_from_hex)
+        .ok_or_else(|| invalid_consolidation("invalid evidence source id"))?;
+    let claim_id = object
+        .get("claim_id")
+        .map(|value| {
+            value
+                .as_str()
+                .and_then(entity_id_from_hex)
+                .ok_or_else(|| invalid_consolidation("invalid evidence claim id"))
+        })
+        .transpose()?;
+    let byte_range = object
+        .get("byte_range")
+        .map(|value| {
+            let pair = value
+                .as_array()
+                .ok_or_else(|| invalid_consolidation("invalid evidence byte range"))?;
+            let [start, end] = pair.as_slice() else {
+                return Err(invalid_consolidation("invalid evidence byte range"));
+            };
+            Ok((
+                usize::try_from(
+                    start
+                        .as_u64()
+                        .ok_or_else(|| invalid_consolidation("invalid range start"))?,
+                )
+                .map_err(|_| invalid_consolidation("range start overflow"))?,
+                usize::try_from(
+                    end.as_u64()
+                        .ok_or_else(|| invalid_consolidation("invalid range end"))?,
+                )
+                .map_err(|_| invalid_consolidation("range end overflow"))?,
+            ))
+        })
+        .transpose()?;
+    if claim_id.is_some() == byte_range.is_some() {
+        return Err(invalid_consolidation(
+            "evidence must cite a claim or a byte range",
+        ));
+    }
+    Ok(SwarmEvidenceRef {
+        source_id,
+        claim_id,
+        byte_range,
+    })
 }

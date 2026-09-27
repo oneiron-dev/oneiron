@@ -243,6 +243,12 @@ fn landing_request_notice(record: &AttemptRecord) -> Option<LandingRequestNotice
 /// never parking a second time.
 #[allow(async_fn_in_trait)]
 pub trait DreamerAttemptExecutor {
+    /// Exact host-supplied claim documents to include at the same wake pin;
+    /// admission still requires the queued/host scope and actor read policy.
+    fn wake_ledger_scope(&self) -> Option<&crate::llm::Scope> {
+        None
+    }
+
     async fn execute(
         &mut self,
         attempt: &DreamerAdmittedAttempt,

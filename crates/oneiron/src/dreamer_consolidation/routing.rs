@@ -99,6 +99,12 @@ pub fn attach_duplicate_evidence(
             }
             std::collections::btree_map::Entry::Occupied(mut slot) => {
                 let existing = slot.get_mut();
+                let mut locators = super::conflict::candidate_locators(existing)?;
+                locators.extend(super::conflict::candidate_locators(&candidate)?);
+                locators.sort_unstable();
+                locators.dedup();
+                existing.candidate =
+                    super::conflict::with_candidate_locators(existing.candidate.clone(), &locators);
                 existing
                     .evidence_turn_refs
                     .extend(candidate.evidence_turn_refs);

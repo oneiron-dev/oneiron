@@ -240,13 +240,21 @@ fn parent_classifies_admitted_claim_from_stored_body() -> Result<()> {
     let (_dir, vault) = open_vault();
     let fx = fixture(&vault)?;
     let (partition, turns, _) = decode_partition_payload(&fx.attempt.status.payload.input)?;
-    let resources = BranchResources::open(
+    // The head grant is supplied at execution, not in the queued payload.
+    // The driver must capture that CLAIM at the SAME wake ledger revision.
+    let snapshot = WakeEvidenceSnapshot::capture_with_grants(
+        &vault,
+        DreamerConsolidationScope::Micro,
+        Some(&fx.scope),
+    )?;
+    let resources = BranchResources::open_at_pin(
         &vault,
         fx.run.agent_actor,
         partition,
         &turns,
         fx.run.attempt_id,
         Some(&fx.scope),
+        Some(&snapshot),
     )?;
     let claim = SwarmEvidenceRef {
         source_id: fx.head,
@@ -272,6 +280,182 @@ fn parent_classifies_admitted_claim_from_stored_body() -> Result<()> {
         byte_range: None,
     };
     assert!(resources.verify_evidence_refs(&[unbound]).is_err());
+    Ok(())
+}
+
+#[test]
+fn pinned_extraction_persists_parent_verified_locators_taint_and_integrity_marker() -> Result<()> {
+    let (_dir, vault) = open_vault();
+    let fx = fixture(&vault)?;
+    let store = DreamerRunnerStore::new(&vault);
+    let (partition, _, _) = decode_partition_payload(&fx.attempt.status.payload.input)?;
+    let plan = ConsolidationPartitionPlan {
+        key: partition,
+        turns: vec![WorkingSetTurn {
+            turn_id: fx.turn,
+            role: DreamerTurnRole::User,
+            learned_at: 10,
+            conversation: Some(partition.conversation_ref),
+        }],
+        watermark_last_learned_at: 0,
+    };
+    store.enqueue_consolidation(crate::dreamer_runner::EnqueueDreamerConsolidationAttempt {
+        scope: DreamerConsolidationScope::Micro,
+        input: plan.scoped_input(&fx.scope)?,
+        parent_attempt: None,
+        dedupe_key: Some("pinned-locator-test".into()),
+        run_id: Some("pinned-locator-test".into()),
+        now: 22,
+    })?;
+    let pin = WakeEvidenceSnapshot::capture(&vault, DreamerConsolidationScope::Micro)?;
+    let next = match store.admit_next_consolidation(AdmitDreamerConsolidationAttempt {
+        scope: DreamerConsolidationScope::Micro,
+        local_node_id: crate::identity::load_or_mint_client_id(&vault)?,
+        claim_authoring_tier: DreamerClaimAuthoringBatchTier::batch(),
+        claim_authoring: DreamerClaimAuthoringAdmission::single_pass(),
+        admission: AdmitDreamerAttempt {
+            lease_owner: "pinned-worker".into(),
+            now: 23,
+            budget_id: "wake".into(),
+            budget_total_units: 10_000,
+            reserve_units: 100,
+            started_milestone: None,
+        },
+    })? {
+        DreamerConsolidationAdmissionOutcome::Admission(DreamerAdmissionOutcome::Admitted(
+            next,
+        )) => next,
+        other => panic!("{other:?}"),
+    };
+    let body = vault.get(&fx.turn)?.expect("turn body");
+    let expected_hash = swarm_evidence_content_hash(&body[0..1]);
+    let reply = text_response(
+        serde_json::json!({"candidates":[{
+            "subject": fx.subject.to_hex(), "predicate":"profile.nickname",
+            "value":"Lex", "confidence":0.8,
+            "evidence_refs":[
+                {"source_id":fx.turn.to_hex(),"byte_range":[0,1]},
+                {"source_id":fx.turn.to_hex(),"byte_range":[0,1]},
+                {"source_id":fx.head.to_hex(),"claim_id":fx.head.to_hex()}
+            ],
+            "evidence_hashes":{fx.turn.to_hex():"00".repeat(32)}
+        }]})
+        .to_string(),
+    );
+    let backend = ScriptedBackend::new(vec![Ok(reply)]);
+    let guard = crate::BudgetGuard::with_reserve_units(
+        "wake",
+        10_000,
+        100,
+        BudgetExhaustionPolicy::Suspend,
+    );
+    let deadline = WakePassDeadline::with_clock(180_000, std::sync::Arc::new(|| 0));
+    let run = DreamerRunContext {
+        run_id: "pinned-locator-test".into(),
+        attempt_id: next.status.attempt.id,
+        agent_actor: vault.dreamer_authority()?,
+        now_ms: 23_000,
+    };
+    let mut sink = PromotionWriterSink::new(&vault, run);
+    let markers = super::support::IntegrityCapture::default();
+    let mut ctx = WakeAttemptContext {
+        vault: &vault,
+        deadline: &deadline,
+        budget_id: "wake",
+        now_ms: 23_000,
+        ledger_pin: Some(&pin),
+    };
+    let mut executor = ConsolidationExecutor {
+        backend: &backend,
+        guard: &guard,
+        strategy: DreamerClaimAuthoringStrategy::SinglePass,
+        actor: vault.dreamer_authority()?,
+        model: crate::ModelId::new("test/model@r1").expect("model"),
+        sink: &mut sink,
+        scope: None,
+    };
+    vault.set_consolidation_selection(&selection::SelectionConfig {
+        soak_ms: 0,
+        evidence_minimum: 3,
+        ..Default::default()
+    })?;
+    assert!(
+        matches!(
+            markers.with_default(|| block_on_ready(executor.execute(&next, &mut ctx)))?,
+            DreamerAttemptExecution::Deferred { .. }
+        ),
+        "a duplicate citation is not a third signal"
+    );
+    assert!(
+        vault
+            .claims_for_subject(&fx.subject)?
+            .into_iter()
+            .map(|id| vault.get_claim(&id))
+            .collect::<Result<Vec<_>>>()?
+            .into_iter()
+            .flatten()
+            .all(|body| body.predicate != "profile.nickname")
+    );
+    vault.set_consolidation_selection(&selection::SelectionConfig {
+        soak_ms: 0,
+        evidence_minimum: 2,
+        ..Default::default()
+    })?;
+    assert!(matches!(
+        markers.with_default(|| block_on_ready(executor.execute(&next, &mut ctx)))?,
+        DreamerAttemptExecution::Completed { .. }
+    ));
+    drop(executor);
+    assert!(
+        markers
+            .markers()
+            .iter()
+            .any(|value| value.contains("evidence_hash_mismatch"))
+    );
+    let [claim_id] = sink.outcome.landed.as_slice() else {
+        panic!("one stored claim")
+    };
+    let stored = vault.get_claim(claim_id)?.expect("landed claim");
+    assert_eq!(stored.source, Some(ClaimSource::Generated));
+    assert_eq!(
+        crate::claim::claim_evidence_taint(&stored),
+        Some(ClaimSource::Generated)
+    );
+    let Value::Map(evidence) = stored.evidence.as_ref().expect("stored evidence") else {
+        panic!("claim evidence map")
+    };
+    let candidate_evidence = evidence
+        .iter()
+        .find(|(key, _)| key.as_str() == Some("candidate_evidence"))
+        .map(|(_, value)| value)
+        .expect("candidate evidence");
+    let envelope =
+        super::super::decode_consolidation_evidence(candidate_evidence)?.expect("typed evidence");
+    assert_eq!(envelope.source_meet, ClaimSource::Generated);
+    assert_eq!(
+        envelope.refs.into_iter().collect::<BTreeSet<_>>(),
+        BTreeSet::from([fx.turn, fx.head])
+    );
+    let Value::Map(entries) = candidate_evidence else {
+        panic!("candidate evidence map")
+    };
+    let Value::Array(locators) = entries
+        .iter()
+        .find(|(key, _)| key.as_str() == Some("locators"))
+        .map(|(_, value)| value)
+        .expect("verified locators")
+    else {
+        panic!("locator array")
+    };
+    assert_eq!(locators.len(), 2);
+    assert!(locators.iter().any(|locator| {
+        let Value::Map(fields) = locator else {
+            return false;
+        };
+        fields.iter().any(|(key, value)| {
+            key.as_str() == Some("content_hash") && value == &Value::Binary(expected_hash.to_vec())
+        })
+    }));
     Ok(())
 }
 

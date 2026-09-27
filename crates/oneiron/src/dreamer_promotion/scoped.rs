@@ -67,16 +67,18 @@ fn attach_evidence(
         // Copy the head's complete scope so sensitivity/persona policy cannot be
         // lowered by a minimally scoped extraction. Keep the normal Dreamer
         // validity, source/lineage, isolation, checker and receipt machinery.
+        let locators = fence.verified_locators(candidate)?;
         let gate_candidate = candidate
             .candidate
             .clone()
             .with_scope(scope_with_taint(original.scope.clone(), source))
-            .with_evidence(encode_consolidation_evidence(
+            .with_evidence(encode_consolidation_evidence_with_locators(
                 &ConsolidationEvidenceEnvelope {
                     refs: refs.iter().copied().collect(),
                     chain: Vec::new(),
                     source_meet: source,
                 },
+                &locators,
             ));
         let gate_body = gate_candidate.into_claim_body(&envelope, vault.default_facet_in_txn(txn)?);
         let policy = crate::gate::resolve_policy_manifest(&vault.store, txn)?;

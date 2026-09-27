@@ -15,6 +15,7 @@ pub(super) fn refreshed_input(
     actor: WriteActor,
     status: &DreamerAttemptStatus,
     scope: Option<&Scope>,
+    pin: Option<&super::super::WakeEvidenceSnapshot>,
 ) -> Result<rmpv::Value> {
     // Exact queued/caller grants are never widened by retry scheduling. They
     // can release by age or policy, but cannot read newly unlisted documents.
@@ -22,6 +23,16 @@ pub(super) fn refreshed_input(
         return Ok(status.payload.input.clone());
     }
     let (partition, original, watermark) = decode_partition_payload(&status.payload.input)?;
+    if let Some(pin) = pin {
+        let turns = pin
+            .retry_turns(status.attempt.id)
+            .ok_or_else(|| super::invalid_consolidation("selection retry not in wake snapshot"))?;
+        return Ok(encode_partition_payload(&ConsolidationPartitionPlan {
+            key: partition,
+            turns: turns.to_vec(),
+            watermark_last_learned_at: watermark,
+        }));
+    }
     let read = vault.scoped_read(
         crate::claim::ScopedReadActorKey::with_actor_class(
             actor.entity_ref().to_hex(),

@@ -66,7 +66,12 @@ impl BranchResources<'_> {
                     resource,
                     entity_type: kind,
                     learned_at,
-                    trust_class: None,
+                    trust_class: Some(crate::dreamer_consolidation::provenance::source_meet(
+                        prior.body.source.unwrap_or(crate::ClaimSource::Imported),
+                        crate::claim::claim_evidence_taint(&prior.body)
+                            .unwrap_or(prior.body.source.unwrap_or(crate::ClaimSource::Imported)),
+                    )),
+                    body: bytes,
                 },
             );
             self.priors.insert(id, prior);

@@ -179,6 +179,115 @@ impl SwarmEvidenceRef {
     }
 }
 
+const LOCATOR_KEY: &str = "dreamer_refs";
+
+/// The extractor's locators travel as candidate data until the promotion
+/// writer replaces this provisional evidence with the verified envelope.
+pub(crate) fn with_candidate_locators(
+    candidate: ClaimCandidate,
+    refs: &[SwarmEvidenceRef],
+) -> ClaimCandidate {
+    candidate.with_evidence(Value::Map(vec![(
+        Value::from(LOCATOR_KEY),
+        Value::Array(
+            refs.iter()
+                .map(|entry| {
+                    let mut fields = vec![(
+                        Value::from("source_id"),
+                        Value::Binary(entry.source_id.as_bytes().to_vec()),
+                    )];
+                    if let Some(claim) = entry.claim_id {
+                        fields.push((
+                            Value::from("claim_id"),
+                            Value::Binary(claim.as_bytes().to_vec()),
+                        ));
+                    }
+                    if let Some((start, end)) = entry.byte_range {
+                        fields.push((
+                            Value::from("byte_range"),
+                            Value::Array(vec![Value::from(start as u64), Value::from(end as u64)]),
+                        ));
+                    }
+                    Value::Map(fields)
+                })
+                .collect(),
+        ),
+    )]))
+}
+
+pub(crate) fn candidate_locators(candidate: &PromotionCandidate) -> Result<Vec<SwarmEvidenceRef>> {
+    let Some(value) = candidate.candidate.evidence() else {
+        return Ok(candidate
+            .evidence_turn_refs
+            .iter()
+            .copied()
+            .map(SwarmEvidenceRef::whole_turn)
+            .collect());
+    };
+    let Value::Map(fields) = value else {
+        return Err(invalid_consolidation(
+            "candidate evidence locators must be a map",
+        ));
+    };
+    let [(_, Value::Array(items))] = fields.as_slice() else {
+        return Err(invalid_consolidation(
+            "candidate evidence locators must be an array",
+        ));
+    };
+    if fields[0].0.as_str() != Some(LOCATOR_KEY) {
+        return Err(invalid_consolidation("unknown candidate evidence locators"));
+    }
+    items
+        .iter()
+        .map(|value| {
+            let Value::Map(fields) = value else {
+                return Err(invalid_consolidation("evidence locator must be a map"));
+            };
+            let mut source_id = None;
+            let mut claim_id = None;
+            let mut byte_range = None;
+            for (key, value) in fields {
+                match key.as_str() {
+                    Some("source_id") if source_id.is_none() => {
+                        source_id = super::watermark::entity_ref_from_value(value);
+                    }
+                    Some("claim_id") if claim_id.is_none() => {
+                        claim_id = Some(
+                            super::watermark::entity_ref_from_value(value)
+                                .ok_or_else(|| invalid_consolidation("invalid locator claim id"))?,
+                        );
+                    }
+                    Some("byte_range") if byte_range.is_none() => {
+                        let Value::Array(pair) = value else {
+                            return Err(invalid_consolidation("invalid locator byte range"));
+                        };
+                        let [start, end] = pair.as_slice() else {
+                            return Err(invalid_consolidation("invalid locator byte range"));
+                        };
+                        byte_range = Some((
+                            usize::try_from(start.as_u64().ok_or_else(|| {
+                                invalid_consolidation("invalid locator byte range")
+                            })?)
+                            .map_err(|_| invalid_consolidation("locator range overflow"))?,
+                            usize::try_from(end.as_u64().ok_or_else(|| {
+                                invalid_consolidation("invalid locator byte range")
+                            })?)
+                            .map_err(|_| invalid_consolidation("locator range overflow"))?,
+                        ));
+                    }
+                    _ => return Err(invalid_consolidation("duplicate or unknown locator key")),
+                }
+            }
+            Ok(SwarmEvidenceRef {
+                source_id: source_id
+                    .ok_or_else(|| invalid_consolidation("missing locator source"))?,
+                claim_id,
+                byte_range,
+            })
+        })
+        .collect()
+}
+
 /// A child's judgement and citations, never its own read pin or evidence
 /// classification. The parent owns the ledger snapshot.
 #[derive(Debug, Clone, PartialEq)]
@@ -245,7 +354,10 @@ pub(in crate::dreamer_consolidation) fn collapse_sibling_evidence(
 
 /// Most-restrictive trust meet over verified source classes. Generated is
 /// the Dreamer's own floor; only a stored source can lower it.
-#[allow(single_use_lifetimes)] // pinned public signature (brief ONE-1385)
+#[allow(
+    single_use_lifetimes,
+    reason = "ONE-1385 pins the public signature; anonymous impl-Trait lifetimes are unstable"
+)]
 pub fn evidence_trust_meet<'a>(
     refs: impl Iterator<Item = &'a VerifiedSwarmEvidence>,
 ) -> ClaimSource {

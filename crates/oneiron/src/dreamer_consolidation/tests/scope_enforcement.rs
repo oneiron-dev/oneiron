@@ -1098,6 +1098,8 @@ fn scheduled_selection_retry_reextracts_new_admitted_evidence() -> Result<()> {
             "independent new evidence",
             22,
         );
+        // The next wake freezes the retry-expanded TURN set BEFORE admission.
+        let retry_pin = WakeEvidenceSnapshot::capture(&vault, DreamerConsolidationScope::Micro)?;
         let next = match store.admit_next_consolidation(AdmitDreamerConsolidationAttempt {
             scope: DreamerConsolidationScope::Micro,
             local_node_id: crate::identity::load_or_mint_client_id(&vault)?,
@@ -1119,6 +1121,7 @@ fn scheduled_selection_retry_reextracts_new_admitted_evidence() -> Result<()> {
         };
         let backend = ScriptedBackend::new(vec![Ok(response(&[turns[0], next_turn]))]);
         ctx.now_ms = retry_at * 1_000;
+        ctx.ledger_pin = Some(&retry_pin);
         let mut executor = ConsolidationExecutor {
             backend: &backend,
             guard: &guard,

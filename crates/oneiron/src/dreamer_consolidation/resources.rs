@@ -22,7 +22,9 @@ use crate::dreamer_runner::{dreamer_extraction_role_admissible, dreamer_turn_rol
 use crate::edge::EdgeKind;
 use crate::entity_id::{EntityId, bytes_to_hex_lower};
 use crate::llm::{Scope, ScopeResource};
-use crate::registry::{ENTITY_TYPE_CONVERSATION, ENTITY_TYPE_SESSION, ENTITY_TYPE_TURN};
+use crate::registry::{
+    ENTITY_TYPE_CLAIM, ENTITY_TYPE_CONVERSATION, ENTITY_TYPE_SESSION, ENTITY_TYPE_TURN,
+};
 use crate::write_envelope::WriteActor;
 use crate::{Result, Vault};
 pub(crate) use write::ConsolidationFence;
@@ -34,39 +36,94 @@ pub use write::ScopedConsolidationWrite;
 #[derive(Debug, Default)]
 pub struct WakeEvidenceSnapshot {
     sources: BTreeMap<EntityId, (u8, u64, Vec<u8>)>,
+    attempts: BTreeSet<[u8; 16]>,
+    retry_turns: BTreeMap<[u8; 16], Vec<super::WorkingSetTurn>>,
 }
 
 impl WakeEvidenceSnapshot {
+    #[cfg(test)]
     pub(crate) fn capture(
         vault: &Vault,
         scope: crate::dreamer_runner::DreamerConsolidationScope,
     ) -> Result<Self> {
-        let mut ids = BTreeSet::new();
-        for attempt in crate::attempt_queue::AttemptQueue::new(vault).list()? {
-            if attempt.kind == scope.attempt_kind() && !attempt.state.is_terminal() {
-                // A malformed queued row is not a source grant. The normal
-                // admission/executor door still rejects it; do not abort an
-                // unrelated wake before that row is even selected.
-                let Ok(payload) =
-                    crate::dreamer_runner::decode_dreamer_attempt_payload(&attempt.payload)
-                else {
-                    continue;
-                };
-                let Ok((partition, turns, _)) =
-                    super::partition::decode_partition_payload(&payload.input)
-                else {
-                    continue;
-                };
-                ids.insert(partition.conversation_ref);
-                ids.extend(turns);
-            }
-        }
-        Self::capture_ids(vault, &ids.into_iter().collect::<Vec<_>>())
+        Self::capture_with_grants(vault, scope, None)
     }
 
-    fn capture_ids(vault: &Vault, ids: &[EntityId]) -> Result<Self> {
+    pub(crate) fn capture_with_grants(
+        vault: &Vault,
+        scope: crate::dreamer_runner::DreamerConsolidationScope,
+        caller_scope: Option<&Scope>,
+    ) -> Result<Self> {
+        use crate::ports::EdgeDirection;
+        let txn = vault.store.env.read_txn()?;
+        let records = crate::attempt_queue::AttemptQueue::new(vault).list_in_txn(&txn)?;
+        let mut ids = BTreeSet::new();
+        let mut attempts = BTreeSet::new();
+        let mut retries = Vec::new();
+        for attempt in records {
+            if attempt.kind != scope.attempt_kind() || attempt.state.is_terminal() {
+                continue;
+            }
+            attempts.insert(*attempt.id.as_bytes());
+            // A malformed queued row is not a source grant. Its own executor
+            // still refuses it, without failing unrelated wake work here.
+            let Ok(payload) =
+                crate::dreamer_runner::decode_dreamer_attempt_payload(&attempt.payload)
+            else {
+                continue;
+            };
+            let Ok((partition, turns, watermark)) =
+                super::partition::decode_partition_payload(&payload.input)
+            else {
+                continue;
+            };
+            ids.insert(partition.conversation_ref);
+            ids.extend(turns.iter().copied());
+            if attempt.retry_of.is_some()
+                && super::branch_scope::decode_branch_scope(&payload.input)?.is_none()
+            {
+                // The retry enumerator is bounded by the normal graph query
+                // ceiling; unlike a live per-attempt read these ids and bodies
+                // now come from this ONE wake revision.
+                let peers = vault.filtered_edge_peers(
+                    &txn,
+                    EdgeDirection::In,
+                    &partition.conversation_ref,
+                    EdgeKind::ChildOf,
+                    Some(ENTITY_TYPE_TURN),
+                    "selection retry wake source scan",
+                )?;
+                ids.extend(peers.iter().copied());
+                retries.push((*attempt.id.as_bytes(), partition, turns, watermark, peers));
+            }
+            // Exact queued claim grants can cite admitted prior CLAIMs.
+            if let Some(bound) = super::branch_scope::decode_branch_scope(&payload.input)? {
+                for resource in &bound.readable {
+                    if let ScopeResource::DocumentVersion { document, .. } = resource
+                        && vault.get_entity_type_in_txn(&txn, document)? == Some(ENTITY_TYPE_CLAIM)
+                    {
+                        ids.insert(*document);
+                    }
+                }
+            }
+        }
+        // A host-supplied attenuation may carry additional exact prior CLAIM
+        // grants not serialized into queued input. Pin them at this SAME txn;
+        // BranchResources still admits only the effective exact scope.
+        if let Some(bound) = caller_scope {
+            for resource in &bound.readable {
+                if let ScopeResource::DocumentVersion { document, .. } = resource
+                    && vault.get_entity_type_in_txn(&txn, document)? == Some(ENTITY_TYPE_CLAIM)
+                {
+                    ids.insert(*document);
+                }
+            }
+        }
         if ids.is_empty() {
-            return Ok(Self::default());
+            return Ok(Self {
+                attempts,
+                ..Self::default()
+            });
         }
         let actor = vault.dreamer_authority()?;
         let key = ScopedReadActorKey::with_actor_class(
@@ -75,15 +132,87 @@ impl WakeEvidenceSnapshot {
         )
         .ok_or_else(|| invalid_consolidation("invalid consolidation read actor"))?;
         let read = vault.scoped_read(key);
-        let txn = vault.store.env.read_txn()?;
-        let rows = read.get_entities_parts_in_txn(&txn, ids)?;
-        let sources = ids
-            .iter()
-            .copied()
+        let source_ids: Vec<_> = ids.into_iter().collect();
+        let rows = read.get_entities_parts_in_txn(&txn, &source_ids)?;
+        let sources: BTreeMap<_, _> = source_ids
+            .into_iter()
             .zip(rows)
             .filter_map(|(id, row)| row.map(|body| (id, body)))
             .collect();
-        Ok(Self { sources })
+        let mut retry_turns = BTreeMap::new();
+        for (attempt, partition, original, watermark, peers) in retries {
+            let parent = sources
+                .get(&partition.conversation_ref)
+                .ok_or_else(|| invalid_consolidation("selection retry parent not readable"))?;
+            let parent = decode_turn_body(&parent.2);
+            let original: BTreeSet<_> = original.into_iter().collect();
+            let mut turns = Vec::new();
+            for id in peers {
+                let Some((kind, learned_at, bytes)) = sources.get(&id) else {
+                    continue;
+                };
+                if *kind != ENTITY_TYPE_TURN {
+                    continue;
+                }
+                let facts = decode_turn_body(bytes);
+                let role = dreamer_turn_role(
+                    facts.speaker.as_deref(),
+                    &vault.config.assistant_display_names,
+                );
+                if dreamer_extraction_role_admissible(role)
+                    && facts.world_ref.or(parent.world_ref) == partition.world_ref
+                    && facts.facet_ref.or(parent.facet_ref) == partition.facet_ref
+                    && (original.contains(&id) || *learned_at >= watermark)
+                {
+                    turns.push((*learned_at, id));
+                }
+            }
+            turns.sort_unstable();
+            if turns.len() > 1_024
+                || !original
+                    .iter()
+                    .all(|id| turns.iter().any(|(_, got)| got == id))
+            {
+                return Err(invalid_consolidation(
+                    "selection retry source limit or membership changed",
+                ));
+            }
+            retry_turns.insert(
+                attempt,
+                turns
+                    .into_iter()
+                    .map(|(learned_at, turn_id)| {
+                        let facts = decode_turn_body(&sources[&turn_id].2);
+                        super::WorkingSetTurn {
+                            turn_id,
+                            role: dreamer_turn_role(
+                                facts.speaker.as_deref(),
+                                &vault.config.assistant_display_names,
+                            ),
+                            learned_at,
+                            conversation: Some(partition.conversation_ref),
+                        }
+                    })
+                    .collect(),
+            );
+        }
+        Ok(Self {
+            sources,
+            attempts,
+            retry_turns,
+        })
+    }
+
+    /// Only work known at the wake's single revision may execute on it.
+    pub(crate) fn contains_attempt(&self, id: AttemptId) -> bool {
+        self.attempts.contains(id.as_bytes())
+    }
+
+    pub(in crate::dreamer_consolidation) fn retry_turns(
+        &self,
+        id: AttemptId,
+    ) -> Option<&[super::WorkingSetTurn]> {
+        self.retry_turns.get(id.as_bytes()).map(Vec::as_slice)
     }
 
     fn source(&self, id: &EntityId) -> Option<(u8, u64, Vec<u8>)> {
@@ -97,6 +226,7 @@ struct SourcePin {
     entity_type: u8,
     learned_at: u64,
     trust_class: Option<crate::claim::ClaimSource>,
+    body: Vec<u8>,
 }
 
 pub(super) struct BranchResources<'a> {
@@ -194,6 +324,7 @@ impl<'a> BranchResources<'a> {
                     entity_type,
                     learned_at,
                     trust_class,
+                    body,
                 },
             );
         }
@@ -271,7 +402,15 @@ impl<'a> BranchResources<'a> {
         if !scope.allows_read(&self.bucket) || !scope.allows_read(&pin.resource) {
             return Err(invalid_consolidation("branch document read refused"));
         }
-        let (entity_type, learned_at, body) = read_source(&self.read, id)?;
+        let (entity_type, learned_at, body) = if pin.entity_type == ENTITY_TYPE_CLAIM {
+            self.prior(*id)?;
+            self.read
+                .get_entity_parts_with_receipt(id, None)?
+                .value
+                .ok_or_else(|| invalid_consolidation("admitted prior not readable"))?
+        } else {
+            read_source(&self.read, id)?
+        };
         if entity_type != pin.entity_type
             || learned_at != pin.learned_at
             || document_version(*id, &body) != pin.resource
@@ -414,7 +553,11 @@ impl<'a> BranchResources<'a> {
     }
 
     pub(super) fn evidence_time(&self, scope: &Scope, id: &EntityId) -> Result<u64> {
-        self.turn(scope, id)?;
+        if self.turns.contains(id) {
+            self.turn(scope, id)?;
+        } else {
+            self.prior(*id)?;
+        }
         Ok(self.source(scope, id)?.0)
     }
 
@@ -453,9 +596,23 @@ impl<'a> BranchResources<'a> {
             {
                 return Err(invalid_consolidation("candidate crossed its branch scope"));
             }
-            for id in &candidate.evidence_turn_refs {
-                self.turn(scope, id)?;
+            let locators = super::conflict::candidate_locators(candidate)?;
+            let cited: BTreeSet<_> = locators.iter().map(|entry| entry.source_id).collect();
+            let projected: BTreeSet<_> = candidate.evidence_turn_refs.iter().copied().collect();
+            if cited != projected {
+                return Err(invalid_consolidation(
+                    "evidence locator projection mismatch",
+                ));
             }
+            for id in &candidate.evidence_turn_refs {
+                if self.turns.contains(id) {
+                    self.turn(scope, id)?;
+                } else {
+                    self.prior(*id)?;
+                    self.source(scope, id)?;
+                }
+            }
+            self.verify_evidence_refs(&locators)?;
         }
         Ok(())
     }

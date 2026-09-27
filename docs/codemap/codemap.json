@@ -1342,7 +1342,7 @@
      "path": "src/attempt_queue/engine/reads.rs",
      "purpose": "Point/list/dedupe reads plus retry-chain and dreamer-root walks",
      "surface": {
-      "crate-vis": 15,
+      "crate-vis": 16,
       "fn": 4
      }
     },
@@ -12861,7 +12861,7 @@
      "path": "src/dreamer_consolidation/conflict.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 6,
+      "crate-vis": 8,
       "fn": 9,
       "struct": 9
      }
@@ -12880,7 +12880,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/dreamer_consolidation/executor/extraction.rs",
@@ -12943,7 +12943,7 @@
      "path": "src/dreamer_consolidation/mod.rs",
      "purpose": "Dreamer consolidation algorithm + reflection gap scan (ONE-1289, DREAM-002; DESIGN-PIN-20260710 Part A)",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 3,
       "mod": 2,
       "re-export": 9
      }
@@ -13001,7 +13001,7 @@
      "path": "src/dreamer_consolidation/provenance.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 2,
       "enum": 1,
       "fn": 7,
       "struct": 5,
@@ -13017,7 +13017,7 @@
      "path": "src/dreamer_consolidation/resources.rs",
      "purpose": "Exact resource bounds for a consolidation partition",
      "surface": {
-      "crate-vis": 18,
+      "crate-vis": 21,
       "re-export": 1,
       "struct": 1
      }
@@ -13051,7 +13051,7 @@
      "path": "src/dreamer_consolidation/resources/write.rs",
      "purpose": "Sealed resource handoff",
      "surface": {
-      "crate-vis": 6,
+      "crate-vis": 7,
       "fn": 1,
       "struct": 1
      }
@@ -13192,7 +13192,7 @@
      "path": "src/dreamer_consolidation/tests/support.rs",
      "purpose": "Shared backend fixture for deadline-driven consolidation tests",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 4
      }
     },
     {
@@ -13884,7 +13884,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [
       "DreamerWakeDriver"
@@ -33289,7 +33289,7 @@
      "path": "src/write_envelope.rs",
      "purpose": "Write-path stamping: `WriteActor`/`WriteProvenance`/`WriteEnvelope`/`ClaimCandidate` + evidence stamping",
      "surface": {
-      "crate-vis": 16,
+      "crate-vis": 17,
       "fn": 28,
       "struct": 5
      }
@@ -34531,7 +34531,7 @@
     "dreamer_wake": {
      "files": 9,
      "impl_vault": false,
-     "largest_src_bucket": "m",
+     "largest_src_bucket": "L",
      "layout": "dir",
      "purpose": "Dreamer wake-pass driver (ONE-1288, DREAM-001 residual)"
     },
@@ -35327,7 +35327,7 @@
      "purpose": "Write-path stamping: `WriteActor`/`WriteProvenance`/`WriteEnvelope`/`ClaimCandidate` + evidence stamping"
     }
    },
-   "over_bar": 9,
+   "over_bar": 10,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
    "source_files": 2084,
    "test_files": 716
