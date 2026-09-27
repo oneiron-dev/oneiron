@@ -106,7 +106,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/mcp_gateway/facade_verbs/ask.rs` | src | s | 2 crate-vis | — | — |
 | `src/api/mcp_gateway/facade_verbs/calendar.rs` | src | s | 1 crate-vis | — | — |
 | `src/api/mcp_gateway/facade_verbs/mod.rs` | src | m | 22 crate-vis | — | Facade-backed MCP verb executors |
-| `src/api/mcp_gateway/facade_verbs/nav.rs` | src | s | 1 crate-vis | — | — |
+| `src/api/mcp_gateway/facade_verbs/nav.rs` | src | s | 2 crate-vis | — | — |
 | `src/api/mcp_gateway/facade_verbs/read.rs` | src | s | 1 crate-vis | — | — |
 | `src/api/mcp_gateway/facade_verbs/tests.rs` | test | s | — | — | — |
 | `src/api/mcp_gateway/memory_response.rs` | src | s | 1 crate-vis | — | Tool-first projections of the engine-owned typed read table |

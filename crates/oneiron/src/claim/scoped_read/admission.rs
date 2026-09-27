@@ -71,7 +71,7 @@ impl<'a> ScopedRead<'a> {
             .readable(self.vault, txn, *id, audience)
     }
 
-    fn credential_allows_id(&self, id: &EntityId) -> bool {
+    pub(super) fn credential_allows_id(&self, id: &EntityId) -> bool {
         self.actor_key.proof.as_ref().is_none_or(|proof| {
             let claims = proof.claims();
             // Generic records have no proved channel context. Channel-bound
@@ -81,7 +81,7 @@ impl<'a> ScopedRead<'a> {
         })
     }
 
-    fn proof_live_in(&self, txn: &heed::RoTxn<'_>) -> Result<bool> {
+    pub(super) fn proof_live_in(&self, txn: &heed::RoTxn<'_>) -> Result<bool> {
         let Some(proof) = &self.actor_key.proof else {
             return Ok(true);
         };

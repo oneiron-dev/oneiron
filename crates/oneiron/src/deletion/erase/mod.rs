@@ -35,6 +35,7 @@ use crate::store::{GateDecisionId, Store};
 
 use super::receipt::{RedactionReceiptInput, RedactionScope};
 use super::sweep_queue::HardEraseSweepExtras;
+use super::tombstone;
 use super::tombstone::{ReplayedTombstoneOutcome, decode_tombstone_value, local_hard_delete_key};
 use crate::error::{ClaimError, RegistryError};
 

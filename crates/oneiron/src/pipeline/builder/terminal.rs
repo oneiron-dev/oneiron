@@ -12,7 +12,7 @@ use crate::pipeline::types::{
     RetrievalWithTelemetry,
 };
 
-impl<'a> PipelineBuilder<'a> {
+impl PipelineBuilder<'_> {
     pub fn prior_successful_coping_strategies(
         self,
         affected_person: &EntityId,

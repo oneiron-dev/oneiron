@@ -856,7 +856,15 @@ pub(super) fn seed_disclosure_scope(
     contact_id: oneiron::EntityId,
     entities: Vec<oneiron::EntityId>,
 ) {
-    let scope = oneiron::disclosure::DisclosureScope::task_scoped("party planning", entities, 100)
+    // Clearance is now six-axis, not an entity-id allowlist. Empty fixtures
+    // deny reads; nonempty fixtures grant the scope, while record admission
+    // still applies the separate access-grant and disclosure-tier gates.
+    let clearance = if entities.is_empty() {
+        oneiron::federation::Scope::default()
+    } else {
+        oneiron::federation::Scope::top()
+    };
+    let scope = oneiron::disclosure::DisclosureScope::new(clearance, "party planning", 100)
         .expect("disclosure scope");
     server
         .vault

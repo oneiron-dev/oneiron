@@ -1,6 +1,6 @@
 use super::*;
 
-impl<'a> ScopedRead<'a> {
+impl ScopedRead<'_> {
     pub fn is_entity_readable(&self, id: &EntityId) -> Result<bool> {
         let rtxn = self.vault.store.env.read_txn()?;
         self.is_entity_readable_in(&rtxn, id)
@@ -24,7 +24,7 @@ impl<'a> ScopedRead<'a> {
         self.is_entity_retrievable_with_policy_in(rtxn, policy, &filter, id)
     }
 
-    fn is_entity_readable_with_filter_in(
+    pub(super) fn is_entity_readable_with_filter_in(
         &self,
         rtxn: &heed::RoTxn<'_>,
         policy: &PolicyManifestResolution,
@@ -37,7 +37,7 @@ impl<'a> ScopedRead<'a> {
         self.is_entity_raw_readable_with_filter_in(rtxn, policy, id, &raw, filter)
     }
 
-    fn is_entity_raw_readable_with_filter_in(
+    pub(super) fn is_entity_raw_readable_with_filter_in(
         &self,
         rtxn: &heed::RoTxn<'_>,
         policy: &PolicyManifestResolution,
@@ -217,7 +217,7 @@ impl<'a> ScopedRead<'a> {
 /// [`ScopedRead::filter_context_pack`]. That is why this is not
 /// `get_entity_parts_with_receipt`, which opens a transaction of its own.
 impl crate::ppr::PprNodeVisibility for ScopedRead<'_> {
-    pub(super) fn ppr_node_visible(&self, txn: &heed::RoTxn<'_>, id: &EntityId) -> Result<bool> {
+    fn ppr_node_visible(&self, txn: &heed::RoTxn<'_>, id: &EntityId) -> Result<bool> {
         let policy = self.policy_manifest_in(txn)?;
         self.is_entity_readable_with_policy_in(txn, &policy, id)
     }

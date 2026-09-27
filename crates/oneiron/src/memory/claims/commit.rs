@@ -40,7 +40,7 @@ impl Memory<'_> {
     /// outside the transaction may have moved by the time the transaction
     /// runs. The seam exists so a test can move it deliberately; production
     /// callers pass a no-op.
-    fn commit_one_with_before_txn(
+    pub(super) fn commit_one_with_before_txn(
         &self,
         input: &ClaimInput,
         auto_supersede: bool,
@@ -395,7 +395,7 @@ impl Memory<'_> {
 
 /// Extracts the write-envelope actor stamped into a claim's evidence
 /// (gated candidate path). `None` for claims written without an envelope.
-fn claim_envelope_actor(body: &ClaimBody) -> Option<EntityId> {
+pub(super) fn claim_envelope_actor(body: &ClaimBody) -> Option<EntityId> {
     let Value::Map(entries) = body.evidence.as_ref()? else {
         return None;
     };

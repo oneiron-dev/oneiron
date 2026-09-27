@@ -9,7 +9,6 @@ use crate::codebase::RepoRef;
 use crate::context_pack::ContextPackRetrievalBudget;
 use crate::corpus::CorpusScope;
 use crate::entity_id::EntityId;
-use crate::error::Error;
 use crate::query_expansion::{GroundingContext, HydeExpander, HydeOptions};
 use crate::rerank::{RerankOptions, Reranker};
 use crate::store::RetrievalAction;

@@ -1,6 +1,6 @@
 use super::*;
 
-impl<'a> ScopedRead<'a> {
+impl ScopedRead<'_> {
     /// Searches within this actor's resolved read authority. Unset means the floor.
     pub fn search(
         &self,
@@ -62,7 +62,7 @@ impl<'a> ScopedRead<'a> {
         })
     }
 
-    fn resolve_retrieval_filter(
+    pub(super) fn resolve_retrieval_filter(
         &self,
         requested: Option<&RetrievalFilter>,
     ) -> Result<(ResolvedRetrievalFilter, PolicyManifestResolution)> {

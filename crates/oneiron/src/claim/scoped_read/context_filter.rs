@@ -1,6 +1,6 @@
 use super::*;
 
-impl<'a> ScopedRead<'a> {
+impl ScopedRead<'_> {
     pub fn filter_context_pack(&self, pack: &mut ContextPack) -> Result<ScopedReadReceipt> {
         let rtxn = self.vault.store.env.read_txn()?;
         let (filter, policy) = self.resolve_retrieval_filter_in(&rtxn, None)?;

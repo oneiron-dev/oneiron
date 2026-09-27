@@ -44,7 +44,7 @@ pub(crate) fn execute_mcp_nav(
     }
 }
 
-fn project_nav_results(
+pub(super) fn project_nav_results(
     scoped_read: &oneiron::claim::ScopedRead<'_>,
     results: oneiron::claim::ScopedReadResult<Vec<oneiron::ScoredEntity>>,
 ) -> Result<(Vec<Value>, oneiron::claim::ScopedReadReceipt), McpGatewayError> {
