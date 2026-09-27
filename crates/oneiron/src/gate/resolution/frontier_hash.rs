@@ -43,6 +43,20 @@ pub(super) fn hash_policy_frontier_v0(
     // manifest contributes no decoded rows at all and its malformed-ness is
     // already frontier-relevant through `hash_diagnostics`.
     hash_budget_policy_table(hasher, &resolution.budget_policy);
+    if let Some(limits) = resolution.pptx_comment_limits {
+        hash_str(hasher, "pptx_comment_limits:nested_narrowing");
+        for value in [
+            limits.max_patches,
+            limits.max_author_name_bytes,
+            limits.max_xml_bytes,
+            limits.max_xml_attributes,
+            limits.max_xml_namespaces,
+            limits.max_xml_depth,
+            limits.max_xml_nodes,
+        ] {
+            hash_u64(hasher, value as u64);
+        }
+    }
     if let Some(bounds) = resolution.diagnostic_bounds {
         hash_str(hasher, "diagnostic_bounds");
         hash_u64(hasher, bounds.window_secs);

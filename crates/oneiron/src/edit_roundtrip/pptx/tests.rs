@@ -616,3 +616,50 @@ fn clean_office_fixture_comment_declares_only_review_parts() {
         }
     }
 }
+
+#[test]
+fn policy_xml_budgets_are_enforced_instead_of_parser_literals() {
+    let xml = "<root xmlns:p=\"urn:p\" one=\"1\" two=\"2\"><p:child/></root>";
+    let defaults = PptxOperationalLimits::default();
+    assert!(Xml::parse_with_limits(xml, &defaults).is_ok());
+    for limits in [
+        PptxOperationalLimits {
+            max_xml_bytes: xml.len() - 1,
+            ..defaults
+        },
+        PptxOperationalLimits {
+            max_xml_attributes: 2,
+            ..defaults
+        },
+        PptxOperationalLimits {
+            max_xml_namespaces: 1,
+            ..defaults
+        },
+        PptxOperationalLimits {
+            max_xml_depth: 1,
+            ..defaults
+        },
+        PptxOperationalLimits {
+            max_xml_nodes: 1,
+            ..defaults
+        },
+    ] {
+        assert!(Xml::parse_with_limits(xml, &limits).is_err(), "{limits:?}");
+    }
+    let bytes = bytes(&parts(false));
+    let request = patch(false);
+    let bounded = PptxOperationalLimits {
+        max_xml_bytes: 64,
+        ..defaults
+    };
+    assert!(
+        super::proposal::run_comment_roundtrip_with_limits(
+            &bytes,
+            &[request],
+            "xml-limited",
+            bounded,
+            None
+        )
+        .is_err()
+    );
+}

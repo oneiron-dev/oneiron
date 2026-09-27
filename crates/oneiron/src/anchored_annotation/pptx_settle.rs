@@ -10,7 +10,8 @@ use super::{
 };
 use crate::claim::{ClaimSubject, claim_surfaceable};
 use crate::edit_roundtrip::pptx::{
-    PptxCommentAction, PptxCommentTarget, PptxInspection, inspect_pptx,
+    PptxCommentAction, PptxCommentTarget, PptxInspection, PptxOperationalLimits,
+    inspect_pptx_with_limits,
 };
 use crate::edit_roundtrip::{EditOp, EditProposal};
 use crate::entity_id::EntityId;
@@ -34,11 +35,12 @@ impl crate::Vault {
         actor: WriteActor,
         occurred: TimeRange,
         learned_at: u64,
+        limits: PptxOperationalLimits,
     ) -> Result<()> {
         let bytes = self
             .read_blob_artifact_version_in_txn(txn, artifact, base_version)?
             .ok_or(Error::EntityNotFound)?;
-        let inspection = inspect_pptx(&bytes).map_err(|_| invalid_anchor())?;
+        let inspection = inspect_pptx_with_limits(&bytes, &limits).map_err(|_| invalid_anchor())?;
         let mut threads: BTreeMap<_, _> = self
             .annotation_threads_for_artifact_in_txn(txn, artifact)?
             .into_iter()

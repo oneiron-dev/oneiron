@@ -2,7 +2,7 @@
 
 use super::{AnnotationThread, Locator, ReanchorOp, ReanchorOutcome};
 use crate::edit_roundtrip::pptx::{
-    PptxInspection, inspect_pptx, rebind_locator, unknown_anchor_threads,
+    PptxInspection, inspect_pptx_with_limits, rebind_locator, unknown_anchor_threads_with_limits,
 };
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
@@ -36,8 +36,15 @@ impl PptxReanchor {
         let after_bytes = vault
             .read_blob_artifact_version_in_txn(txn, artifact, to)?
             .ok_or(Error::EntityNotFound)?;
-        let mut before = inspect_pptx(&before_bytes).ok();
-        let after = inspect_pptx(&after_bytes).ok();
+        let limits = crate::gate::resolve_policy_manifest(&vault.store, txn)?
+            .pptx_comment_limits()
+            .ok_or(Error::Artifact(
+                crate::error::ArtifactError::InvalidEditManifest(
+                    "PowerPoint comment limits policy failed closed",
+                ),
+            ))?;
+        let mut before = inspect_pptx_with_limits(&before_bytes, &limits).ok();
+        let after = inspect_pptx_with_limits(&after_bytes, &limits).ok();
         // Missing or unsupported XML is unprovable: the sweep records drift,
         // never silently advances by slide number alone.
         if let (Some(before), Some(after)) = (&mut before, &after) {
@@ -69,7 +76,7 @@ impl PptxReanchor {
                 }
             }
         }
-        let unknown = unknown_anchor_threads(&after_bytes)
+        let unknown = unknown_anchor_threads_with_limits(&after_bytes, &limits)
             .unwrap_or_else(|_| threads.iter().map(|t| t.thread_id).collect());
         Ok(Some(Self {
             before,

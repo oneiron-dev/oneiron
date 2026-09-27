@@ -2,6 +2,7 @@
 
 use super::archive::{Archive, enforce_allowlist};
 use super::identities::{inspect_parts, resolve_anchor, text};
+use super::limits::PptxOperationalLimits;
 use super::links::{self, Parts, comment_part, put};
 use super::package::*;
 use super::xml::{Xml, escape, replace};
@@ -17,19 +18,28 @@ pub fn comment_patch(
     base: &[u8],
     patches: &[PptxCommentPatch],
 ) -> Result<PptxCommentEffects, PptxError> {
-    patch_with_mints(base, patches, None)
+    comment_patch_with_limits(base, patches, &PptxOperationalLimits::default())
+}
+
+pub(super) fn comment_patch_with_limits(
+    base: &[u8],
+    patches: &[PptxCommentPatch],
+    limits: &PptxOperationalLimits,
+) -> Result<PptxCommentEffects, PptxError> {
+    patch_with_mints(base, patches, None, limits)
 }
 
 pub(super) fn patch_with_mints(
     base: &[u8],
     patches: &[PptxCommentPatch],
     mints: Option<&[(u64, u32)]>,
+    limits: &PptxOperationalLimits,
 ) -> PatchResult<PptxCommentEffects> {
-    if patches.len() > 10_000 {
+    if !limits.valid() || patches.len() > limits.max_patches {
         return Err(PptxError::InvalidPatch);
     }
     let archive = Archive::read(base)?;
-    let mut inspection = inspect_parts(&archive.parts)?;
+    let mut inspection = inspect_parts(&archive.parts, limits)?;
     let mut parts = archive.parts.clone();
     let mut allowed = BTreeSet::new();
     let mut minted = Vec::new();
@@ -45,13 +55,13 @@ pub(super) fn patch_with_mints(
             anchors,
         });
     }
-    links::validate_links(&parts)?;
-    let derived_allowed = derive_allowed_parts(&parts, &inspection, patches)?;
+    links::validate_links(&parts, limits)?;
+    let derived_allowed = derive_allowed_parts(&parts, &inspection, patches, limits)?;
     for patch in patches {
         let author = canonical_guid(&patch.author.guid)?;
         let thread = guid(patch.thread_id);
         let comment = guid(patch.comment_id);
-        let index = comment_index(&parts, &inspection)?;
+        let index = comment_index(&parts, &inspection, limits)?;
         match &patch.action {
             PptxCommentAction::Add { target, text: body } => {
                 if patch.comment_id != patch.thread_id
@@ -106,22 +116,28 @@ pub(super) fn patch_with_mints(
                         &format!(
                             "<p:ext xmlns:p=\"{P}\" uri=\"{SLIDE_ID_EXT}\"><p14:creationId xmlns:p14=\"{P14}\" val=\"{id}\"/></p:ext>"
                         ),
+                        limits,
                     )?;
                     minted.push((slide.slide, id));
                     inspection.slides[slide_index].creation_id = Some(id);
                 }
                 let slide = &inspection.slides[slide_index];
                 let outcome = resolve_anchor(slide, target)?;
-                links::ensure_author(&mut parts, &mut allowed, &patch.author)?;
-                let part =
-                    links::ensure_comment_part(&mut parts, &mut allowed, slide, patch.thread_id)?;
+                links::ensure_author(&mut parts, &mut allowed, &patch.author, limits)?;
+                let part = links::ensure_comment_part(
+                    &mut parts,
+                    &mut allowed,
+                    slide,
+                    patch.thread_id,
+                    limits,
+                )?;
                 let fragment = format!(
                     "<p188:cm xmlns:p188=\"{P188}\" id=\"{comment}\" authorId=\"{author}\" created=\"{}\">{}{}</p188:cm>",
                     timestamp(patch.at)?,
                     anchor_xml(&outcome),
                     text_body(body)?
                 );
-                let xml = Xml::parse(text(&parts, &part)?)?;
+                let xml = Xml::parse_with_limits(text(&parts, &part)?, limits)?;
                 let root = xml.root(P188, "cmLst")?;
                 let output = xml.append(root, &fragment);
                 put(&mut parts, &mut allowed, &part, output);
@@ -135,13 +151,13 @@ pub(super) fn patch_with_mints(
                     .threads
                     .get(&thread)
                     .ok_or(PptxError::ThreadNotFound)?;
-                links::ensure_author(&mut parts, &mut allowed, &patch.author)?;
+                links::ensure_author(&mut parts, &mut allowed, &patch.author, limits)?;
                 let fragment = format!(
                     "<p188:reply xmlns:p188=\"{P188}\" id=\"{comment}\" authorId=\"{author}\" created=\"{}\">{}</p188:reply>",
                     timestamp(patch.at)?,
                     text_body(body)?
                 );
-                let xml = Xml::parse(text(&parts, part)?)?;
+                let xml = Xml::parse_with_limits(text(&parts, part)?, limits)?;
                 let node = find_thread(&xml, &thread)?;
                 let output = if let Some(list) = xml.child(node, P188, "replyLst")? {
                     xml.append(list, &fragment)
@@ -180,8 +196,8 @@ pub(super) fn patch_with_mints(
                 // Verify the selected display name against the imported author
                 // before the receipt may persist it. This is read-only for an
                 // existing GUID: Resolve never creates an author-part write.
-                links::ensure_author(&mut parts, &mut allowed, &patch.author)?;
-                let xml = Xml::parse(text(&parts, part)?)?;
+                links::ensure_author(&mut parts, &mut allowed, &patch.author, limits)?;
+                let xml = Xml::parse_with_limits(text(&parts, part)?, limits)?;
                 let node = find_thread(&xml, &thread)?;
                 let status = if *resolved { "resolved" } else { "active" };
                 if xml.nodes[node].attr("status").unwrap_or("active") != status {
@@ -198,10 +214,10 @@ pub(super) fn patch_with_mints(
     if !touched.is_empty() && !inspection.signature_parts.is_empty() {
         return Err(PptxError::SignedPackage);
     }
-    links::validate_links(&parts)?;
-    comment_index(&parts, &inspection)?;
+    links::validate_links(&parts, limits)?;
+    comment_index(&parts, &inspection, limits)?;
     for part in &touched {
-        Xml::parse(text(&parts, part)?)?;
+        Xml::parse_with_limits(text(&parts, part)?, limits)?;
     }
     let new_bytes = archive.write(&parts)?;
     let actual = Archive::read(&new_bytes)?;
@@ -220,7 +236,11 @@ struct CommentIndex {
     threads: BTreeMap<String, (String, String)>,
     ids: BTreeSet<String>,
 }
-fn comment_index(parts: &Parts, inspection: &PptxInspection) -> PatchResult<CommentIndex> {
+fn comment_index(
+    parts: &Parts,
+    inspection: &PptxInspection,
+    limits: &PptxOperationalLimits,
+) -> PatchResult<CommentIndex> {
     let mut index = CommentIndex {
         threads: BTreeMap::new(),
         ids: BTreeSet::new(),
@@ -228,14 +248,14 @@ fn comment_index(parts: &Parts, inspection: &PptxInspection) -> PatchResult<Comm
     let mut used_parts = BTreeSet::new();
     let mut authors = BTreeSet::new();
     if parts.contains_key(AUTHORS) {
-        let rels = super::identities::relationships(parts, PRESENTATION_RELS)?;
+        let rels = super::identities::relationships(parts, PRESENTATION_RELS, limits)?;
         let author_rels: Vec<_> = rels.iter().filter(|r| r.kind == AUTHOR_REL).collect();
         if !matches!(author_rels.as_slice(), [rel] if !rel.external && super::identities::resolve_target("ppt/presentation.xml", &rel.target)? == AUTHORS)
         {
             return Err(PptxError::InvalidReference);
         }
-        links::require_content_type(parts, AUTHORS, links::AUTHORS_TYPE)?;
-        let xml = Xml::parse(text(parts, AUTHORS)?)?;
+        links::require_content_type(parts, AUTHORS, links::AUTHORS_TYPE, limits)?;
+        let xml = Xml::parse_with_limits(text(parts, AUTHORS)?, limits)?;
         let root = xml.root(P188, "authorLst")?;
         for author in xml.children(root, P188, "author") {
             let author = &xml.nodes[author];
@@ -248,14 +268,14 @@ fn comment_index(parts: &Parts, inspection: &PptxInspection) -> PatchResult<Comm
         }
     }
     for slide in &inspection.slides {
-        let Some(part) = comment_part(parts, slide)? else {
+        let Some(part) = comment_part(parts, slide, limits)? else {
             continue;
         };
         if !used_parts.insert(part.clone()) {
             return Err(PptxError::InvalidReference);
         }
-        links::require_content_type(parts, &part, links::COMMENTS_TYPE)?;
-        let xml = Xml::parse(text(parts, &part)?)?;
+        links::require_content_type(parts, &part, links::COMMENTS_TYPE, limits)?;
+        let xml = Xml::parse_with_limits(text(parts, &part)?, limits)?;
         let root = xml.root(P188, "cmLst")?;
         for node in xml.children(root, P188, "cm") {
             let cm = &xml.nodes[node];
@@ -345,15 +365,23 @@ fn anchor_xml(anchor: &PptxAnchorOutcome) -> String {
 
 /// IDs of exported root comments that explicitly have no resolved anchor.
 /// The annotation sweep uses this actual-byte evidence to pin those threads.
+#[cfg(test)]
 pub(crate) fn unknown_anchor_threads(bytes: &[u8]) -> Result<BTreeSet<EntityId>, PptxError> {
+    unknown_anchor_threads_with_limits(bytes, &PptxOperationalLimits::default())
+}
+
+pub(crate) fn unknown_anchor_threads_with_limits(
+    bytes: &[u8],
+    limits: &PptxOperationalLimits,
+) -> Result<BTreeSet<EntityId>, PptxError> {
     let archive = Archive::read(bytes)?;
-    let inspection = inspect_parts(&archive.parts)?;
+    let inspection = inspect_parts(&archive.parts, limits)?;
     let mut result = BTreeSet::new();
     for slide in &inspection.slides {
-        let Some(part) = comment_part(&archive.parts, slide)? else {
+        let Some(part) = comment_part(&archive.parts, slide, limits)? else {
             continue;
         };
-        let xml = Xml::parse(archive.text(&part)?)?;
+        let xml = Xml::parse_with_limits(archive.text(&part)?, limits)?;
         for node in xml.children(0, P188, "cm") {
             if xml.child(node, P188, "unknownAnchor")?.is_some() {
                 let id = uuid::Uuid::parse_str(xml.nodes[node].required("id")?)
@@ -373,12 +401,13 @@ fn derive_allowed_parts(
     parts: &Parts,
     inspection: &PptxInspection,
     patches: &[PptxCommentPatch],
+    limits: &PptxOperationalLimits,
 ) -> PatchResult<BTreeSet<String>> {
     let mut allowed = BTreeSet::new();
-    let mut threads = comment_index(parts, inspection)?.threads;
+    let mut threads = comment_index(parts, inspection, limits)?.threads;
     let mut slides: BTreeMap<String, String> = BTreeMap::new();
     for slide in &inspection.slides {
-        if let Some(part) = comment_part(parts, slide)? {
+        if let Some(part) = comment_part(parts, slide, limits)? {
             slides.insert(slide.part.clone(), part);
         }
     }

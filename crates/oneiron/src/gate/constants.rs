@@ -67,6 +67,8 @@ pub(super) const POLICY_AUTO_CHECKER_KEY: &str = "auto_checker";
 /// { actor: "<canonical-actor-ref>", floor: 50_000, cap: 150_000 }
 /// ```
 pub(super) const POLICY_BUDGET_POLICY_KEY: &str = "budget_policy";
+/// Per-format edit resource budgets; precedence is a required manifest row.
+pub(crate) const POLICY_PPTX_COMMENT_LIMITS_KEY: &str = "pptx_comment_limits";
 pub(super) const BUDGET_POLICY_PURPOSE_KEY: &str = "purpose";
 pub(super) const BUDGET_POLICY_ACTOR_KEY: &str = "actor";
 pub(super) const BUDGET_POLICY_FLOOR_KEY: &str = "floor";

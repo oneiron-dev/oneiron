@@ -61,6 +61,7 @@ mod manifest_authenticity;
 mod manifest_auto;
 mod policy_inputs;
 mod posture_override;
+mod pptx_limits;
 mod scoped_read;
 mod special_doors;
 mod support;

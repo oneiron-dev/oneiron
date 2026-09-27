@@ -1,6 +1,7 @@
 //! Namespace-aware XML spans for surgical edits. Unknown markup stays byte-identical.
 //! DTDs/entities, excessive depth and malformed XML fail closed; no resource is fetched.
 
+use super::limits::PptxOperationalLimits;
 use super::package::{PatchResult, PptxError};
 use std::collections::{BTreeMap, BTreeSet};
 use std::ops::Range;
@@ -50,8 +51,16 @@ pub(super) struct Xml<'a> {
     pub nodes: Vec<Node>,
 }
 impl<'a> Xml<'a> {
+    #[cfg(test)]
     pub(super) fn parse(text: &'a str) -> PatchResult<Self> {
-        if text.len() > 32 * 1024 * 1024 || text.chars().any(|c| !valid_char(c)) {
+        Self::parse_with_limits(text, &PptxOperationalLimits::default())
+    }
+
+    pub(super) fn parse_with_limits(
+        text: &'a str,
+        limits: &PptxOperationalLimits,
+    ) -> PatchResult<Self> {
+        if text.len() > limits.max_xml_bytes || text.chars().any(|c| !valid_char(c)) {
             return Err(PptxError::InvalidXml);
         }
         let bytes = text.as_bytes();
@@ -94,7 +103,7 @@ impl<'a> Xml<'a> {
                         return Err(PptxError::InvalidXml);
                     }
                     let declaration = format!("<declaration{}/>", &text[target_end..end]);
-                    let parsed = Xml::parse(&declaration)?;
+                    let parsed = Xml::parse_with_limits(&declaration, limits)?;
                     let n = &parsed.nodes[0];
                     if n.attr("version") != Some("1.0")
                         || n.attrs.first().is_none_or(|a| a.name != "version")
@@ -169,7 +178,7 @@ impl<'a> Xml<'a> {
                 }
                 raw.push((name, unescape(&text[begin..pos])?, begin..pos));
                 pos += 1;
-                if raw.len() > 4096 {
+                if raw.len() > limits.max_xml_attributes {
                     return Err(PptxError::InvalidXml);
                 }
             }
@@ -208,7 +217,7 @@ impl<'a> Xml<'a> {
                     std::rc::Rc::make_mut(&mut namespaces).insert(prefix.into(), value.clone());
                 }
             }
-            if namespaces.len() > 256 {
+            if namespaces.len() > limits.max_xml_namespaces {
                 return Err(PptxError::InvalidXml);
             }
             let (ns, name) = expanded(&qname, &namespaces, false)?;
@@ -235,6 +244,11 @@ impl<'a> Xml<'a> {
                     return Err(PptxError::InvalidXml);
                 }
             }
+            // Count empty elements as a depth level too: an empty child is
+            // still nested even though it never enters the open-element stack.
+            if stack.len() >= limits.max_xml_depth || nodes.len() >= limits.max_xml_nodes {
+                return Err(PptxError::InvalidXml);
+            }
             let index = nodes.len();
             nodes.push(Node {
                 ns,
@@ -255,9 +269,6 @@ impl<'a> Xml<'a> {
             }
             if !empty {
                 stack.push(index);
-            }
-            if stack.len() > 256 || nodes.len() > 500_000 {
-                return Err(PptxError::InvalidXml);
             }
         }
         if !stack.is_empty() || roots != 1 {

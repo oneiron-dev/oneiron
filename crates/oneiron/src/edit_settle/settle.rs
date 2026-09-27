@@ -72,6 +72,18 @@ impl Vault {
             if let Some(raw) = self.store.vault_meta.get(wtxn, &key)? {
                 return Err(already_settled(&decode_settlement_record(&raw)?));
             }
+            // The stored artifact format, not public proposal tags, selects the
+            // verifier. Recheck inside the write transaction so a forged XLSX
+            // label can never bypass PowerPoint's semantic replay and write set.
+            let body = self
+                .get_blob_artifact_in_txn(wtxn, artifact_id)?
+                .ok_or(Error::EntityNotFound)?;
+            let format = OfficeFormat::from_media_type(&body.media_type)?;
+            if format != proposal.format || format != proposal.manifest.format {
+                return Err(Error::Artifact(ArtifactError::InvalidEditManifest(
+                    "proposal and manifest formats must match the artifact media type",
+                )));
+            }
             // Base head read in-txn, consistent with the append below.
             let base = read_blob_artifact_head_in_txn(&self.store, wtxn, artifact_id)?
                 .ok_or(Error::EntityNotFound)?;
@@ -112,28 +124,32 @@ impl Vault {
             }
             // Replay every PPTX comment operation against the pinned in-transaction
             // base. A public proposal/report cannot authorize XML changes on its own.
-            if proposal.format == OfficeFormat::Pptx {
-                let body = self
-                    .get_blob_artifact_in_txn(wtxn, artifact_id)?
-                    .ok_or(Error::EntityNotFound)?;
-                if OfficeFormat::from_media_type(&body.media_type)? != OfficeFormat::Pptx {
-                    return Err(Error::Artifact(ArtifactError::InvalidEditManifest(
-                        "PowerPoint comment proposal targets a non-PPTX artifact",
-                    )));
-                }
+            let pptx_limits = if format == OfficeFormat::Pptx {
+                Some(
+                    crate::gate::resolve_policy_manifest(&self.store, wtxn)?
+                        .pptx_comment_limits()
+                        .ok_or(Error::Artifact(ArtifactError::InvalidEditManifest(
+                            "PowerPoint comment limits policy failed closed",
+                        )))?,
+                )
+            } else {
+                None
+            };
+            if let Some(limits) = pptx_limits {
                 if proposal.base_version != Some(base.version) {
                     return Err(Error::Artifact(ArtifactError::EditProposalStale));
                 }
                 let bytes = self
                     .read_blob_artifact_version_in_txn(wtxn, artifact_id, base.version)?
                     .ok_or(Error::EntityNotFound)?;
-                crate::edit_roundtrip::pptx::verify_comment_proposal(&bytes, proposal).map_err(
-                    |_| {
-                        Error::Artifact(ArtifactError::InvalidEditManifest(
-                            "PowerPoint comment proposal does not replay over its pinned base",
-                        ))
-                    },
-                )?;
+                crate::edit_roundtrip::pptx::verify_comment_proposal_with_limits(
+                    &bytes, proposal, limits,
+                )
+                .map_err(|_| {
+                    Error::Artifact(ArtifactError::InvalidEditManifest(
+                        "PowerPoint comment proposal does not replay over its pinned base",
+                    ))
+                })?;
             }
             let version = self.append_blob_artifact_version_with_engine_and_parent_in_txn(
                 wtxn,
@@ -148,9 +164,9 @@ impl Vault {
                 actor,
                 occurred,
                 learned_at,
-                (proposal.format == OfficeFormat::Pptx).then_some(base.version),
+                (format == OfficeFormat::Pptx).then_some(base.version),
             )?;
-            if proposal.format == OfficeFormat::Pptx {
+            if let Some(limits) = pptx_limits {
                 self.apply_pptx_comment_annotations_in_txn(
                     wtxn,
                     artifact_id,
@@ -159,6 +175,7 @@ impl Vault {
                     actor,
                     occurred,
                     learned_at,
+                    limits,
                 )?;
             }
             // Replay the manifest anchor effects onto threads at the prior head.

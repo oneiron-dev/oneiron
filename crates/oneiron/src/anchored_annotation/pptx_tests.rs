@@ -666,3 +666,218 @@ fn slide_creation_id_mint_keeps_unchanged_slide_review_current() {
         2
     );
 }
+
+#[test]
+fn pptx_artifact_rejects_xlsx_relabel_that_would_skip_semantic_replay() {
+    let (_dir, vault, artifact, actor, _) = setup(false);
+    let patch = support::patch(false);
+    let mut forged = vault
+        .propose_pptx_comment_edit(&artifact, std::slice::from_ref(&patch), "forged-xlsx-tag")
+        .unwrap();
+    forged.format = crate::edit_roundtrip::OfficeFormat::Xlsx;
+    forged.manifest.format = crate::edit_roundtrip::OfficeFormat::Xlsx;
+    forged.manifest.ops.clear();
+    forged.manifest.touched_parts.clear();
+    let mut parts = support::unpack(&forged.new_bytes);
+    support::with_text(
+        &mut parts,
+        "ppt/slides/slide9.xml",
+        "Original text",
+        "Undeclared edit",
+    );
+    forged.new_bytes = support::bytes(&parts);
+    assert!(matches!(
+        vault.settle_select_edit_proposal(
+            &artifact,
+            &forged,
+            &SettleConsent::OwnerConsent { brief_ref: None },
+            actor,
+            at(4),
+            4
+        ),
+        Err(Error::Artifact(ArtifactError::InvalidEditManifest(_)))
+    ));
+    assert_eq!(
+        vault
+            .blob_artifact_head(&artifact)
+            .unwrap()
+            .unwrap()
+            .version,
+        1
+    );
+    assert!(
+        vault
+            .blob_artifact_settlement(&artifact, "forged-xlsx-tag")
+            .unwrap()
+            .is_none()
+    );
+    assert!(
+        vault
+            .get_annotation_thread(&artifact, &patch.thread_id)
+            .unwrap()
+            .is_none()
+    );
+}
+
+fn author_limits_policy(vault: &Vault, limits: crate::edit_roundtrip::pptx::PptxOperationalLimits) {
+    let mut cursor = std::io::Cursor::new(crate::gate::default_policy_manifest());
+    let mut manifest = rmpv::decode::read_value(&mut cursor).unwrap();
+    let rmpv::Value::Map(entries) = &mut manifest else {
+        unreachable!()
+    };
+    let (_, row) = entries
+        .iter_mut()
+        .find(|(key, _)| key.as_str() == Some("pptx_comment_limits"))
+        .unwrap();
+    *row = limits.policy_row();
+    let mut bytes = Vec::new();
+    rmpv::encode::write_value(&mut bytes, &manifest).unwrap();
+    crate::test_util::put_policy_manifest_bytes(vault, EntityId::now(), &bytes).unwrap();
+}
+
+#[test]
+fn vault_policy_limits_proposal_and_settlement_replay() {
+    use crate::edit_roundtrip::pptx::{PptxError, PptxOperationalLimits, PptxProposalError};
+    let (_dir, vault, artifact, actor, _) = setup(false);
+    let patch = support::patch(false);
+    let proposal = vault
+        .propose_pptx_comment_edit(
+            &artifact,
+            std::slice::from_ref(&patch),
+            "pre-policy-preview",
+        )
+        .unwrap();
+    let limits = PptxOperationalLimits {
+        max_author_name_bytes: 8,
+        ..PptxOperationalLimits::default()
+    };
+    author_limits_policy(&vault, limits);
+    assert!(matches!(
+        vault.propose_pptx_comment_edit(&artifact, std::slice::from_ref(&patch), "post-policy"),
+        Err(PptxProposalError::Patch(PptxError::InvalidPatch))
+    ));
+    assert!(matches!(
+        vault.settle_select_edit_proposal(
+            &artifact,
+            &proposal,
+            &SettleConsent::OwnerConsent { brief_ref: None },
+            actor,
+            at(5),
+            5
+        ),
+        Err(Error::Artifact(ArtifactError::InvalidEditManifest(_)))
+    ));
+    assert_eq!(vault.blob_artifact_versions(&artifact).unwrap().len(), 1);
+    assert!(
+        vault
+            .blob_artifact_settlement(&artifact, "pre-policy-preview")
+            .unwrap()
+            .is_none()
+    );
+}
+
+#[test]
+fn authorized_vault_and_holder_limits_adjust_without_widening() {
+    use crate::edit_roundtrip::pptx::{PptxError, PptxOperationalLimits, PptxProposalError};
+    let (_dir, vault, artifact, actor, _) = setup(false);
+    let wide = PptxOperationalLimits {
+        max_author_name_bytes: 5_000,
+        max_patches: 2,
+        ..PptxOperationalLimits::default()
+    };
+    author_limits_policy(&vault, wide);
+    let mut first = support::patch(false);
+    first.author.name = "A".repeat(4_097);
+    assert!(
+        vault
+            .propose_pptx_comment_edit(
+                &artifact,
+                std::slice::from_ref(&first),
+                "wider-than-default"
+            )
+            .is_ok()
+    );
+    first.author.name = "Selected Author".into();
+    let mut second = support::patch(true);
+    second.author = first.author.clone();
+    let batch = [first, second];
+    let holder = PptxOperationalLimits {
+        max_patches: 1,
+        ..wide
+    };
+    assert!(matches!(
+        vault.propose_pptx_comment_edit_with_holder_limits(
+            &artifact,
+            &batch,
+            "holder-narrower",
+            Some(holder)
+        ),
+        Err(PptxProposalError::Patch(PptxError::InvalidPatch))
+    ));
+    let holder_wider = PptxOperationalLimits {
+        max_patches: 3,
+        ..wide
+    };
+    let proposal = vault
+        .propose_pptx_comment_edit_with_holder_limits(
+            &artifact,
+            &batch,
+            "holder-capped",
+            Some(holder_wider),
+        )
+        .unwrap();
+    assert_eq!(
+        proposal.manifest.pptx_holder_limits,
+        Some(Box::new(holder_wider))
+    );
+    let decoded =
+        crate::edit_roundtrip::EditManifest::from_msgpack(&proposal.manifest.to_msgpack().unwrap())
+            .unwrap();
+    assert_eq!(decoded.pptx_holder_limits, Some(Box::new(holder_wider)));
+    let mut forged = proposal.clone();
+    forged.manifest.pptx_holder_limits = Some(Box::new(holder));
+    assert!(matches!(
+        vault.settle_select_edit_proposal(
+            &artifact,
+            &forged,
+            &SettleConsent::OwnerConsent { brief_ref: None },
+            actor,
+            at(5),
+            5
+        ),
+        Err(Error::Artifact(ArtifactError::InvalidEditManifest(_)))
+    ));
+    assert_eq!(vault.blob_artifact_versions(&artifact).unwrap().len(), 1);
+    assert!(
+        vault
+            .blob_artifact_settlement(&artifact, "holder-capped")
+            .unwrap()
+            .is_none()
+    );
+    let selected = vault
+        .settle_select_edit_proposal(
+            &artifact,
+            &proposal,
+            &SettleConsent::OwnerConsent { brief_ref: None },
+            actor,
+            at(6),
+            6,
+        )
+        .unwrap();
+    assert_eq!(selected.version.version, 2);
+    assert_eq!(vault.blob_artifact_versions(&artifact).unwrap().len(), 2);
+    let strict_vault = PptxOperationalLimits {
+        max_patches: 1,
+        ..wide
+    };
+    author_limits_policy(&vault, strict_vault);
+    assert!(matches!(
+        vault.propose_pptx_comment_edit_with_holder_limits(
+            &artifact,
+            &batch,
+            "holder-cannot-widen",
+            Some(holder_wider)
+        ),
+        Err(PptxProposalError::Patch(PptxError::InvalidPatch))
+    ));
+}

@@ -1,6 +1,7 @@
 //! Imported slide/shape identities and conservative creation-ID re-binding.
 
 use super::archive::Archive;
+use super::limits::PptxOperationalLimits;
 use super::package::*;
 use super::xml::Xml;
 use crate::anchored_annotation::{Locator, ReanchorOutcome};
@@ -8,19 +9,28 @@ use std::collections::{BTreeMap, BTreeSet};
 
 /// Reads identities without creating missing ones or changing any package byte.
 pub fn inspect_pptx(bytes: &[u8]) -> Result<PptxInspection, PptxError> {
-    inspect_parts(&Archive::read(bytes)?.parts)
+    inspect_pptx_with_limits(bytes, &PptxOperationalLimits::default())
+}
+pub(crate) fn inspect_pptx_with_limits(
+    bytes: &[u8],
+    limits: &PptxOperationalLimits,
+) -> Result<PptxInspection, PptxError> {
+    inspect_parts(&Archive::read(bytes)?.parts, limits)
 }
 pub(super) fn text<'a>(parts: &'a BTreeMap<String, Vec<u8>>, name: &str) -> PatchResult<&'a str> {
     std::str::from_utf8(parts.get(name).ok_or(PptxError::InvalidReference)?)
         .map_err(|_| PptxError::InvalidXml)
 }
-pub(super) fn inspect_parts(parts: &BTreeMap<String, Vec<u8>>) -> PatchResult<PptxInspection> {
-    let presentation = Xml::parse(text(parts, "ppt/presentation.xml")?)?;
+pub(super) fn inspect_parts(
+    parts: &BTreeMap<String, Vec<u8>>,
+    limits: &PptxOperationalLimits,
+) -> PatchResult<PptxInspection> {
+    let presentation = Xml::parse_with_limits(text(parts, "ppt/presentation.xml")?, limits)?;
     let root = presentation.root(P, "presentation")?;
     let list = presentation
         .child(root, P, "sldIdLst")?
         .ok_or(PptxError::InvalidXml)?;
-    let slide_relationships = relationships(parts, PRESENTATION_RELS)?;
+    let slide_relationships = relationships(parts, PRESENTATION_RELS, limits)?;
     let mut slides = Vec::new();
     let mut ids = BTreeSet::new();
     let mut native_ids = BTreeSet::new();
@@ -47,7 +57,7 @@ pub(super) fn inspect_parts(parts: &BTreeMap<String, Vec<u8>>) -> PatchResult<Pp
         if !used_parts.insert(part.clone()) || !native_ids.insert(sld_id) {
             return Err(PptxError::AmbiguousAnchor);
         }
-        let xml = Xml::parse(text(parts, &part)?)?;
+        let xml = Xml::parse_with_limits(text(parts, &part)?, limits)?;
         let slide_root = xml.root(P, "sld")?;
         let common = xml
             .child(slide_root, P, "cSld")?
@@ -112,7 +122,7 @@ pub(super) fn inspect_parts(parts: &BTreeMap<String, Vec<u8>>) -> PatchResult<Pp
         .cloned()
         .collect();
     for part in parts.keys().filter(|p| p.ends_with(".rels")) {
-        for relation in relationships(parts, part)? {
+        for relation in relationships(parts, part, limits)? {
             if relation.kind.starts_with(
                 "http://schemas.openxmlformats.org/package/2006/relationships/digital-signature/",
             ) {
@@ -345,11 +355,12 @@ pub(super) struct Relationship {
 pub(super) fn relationships(
     parts: &BTreeMap<String, Vec<u8>>,
     name: &str,
+    limits: &PptxOperationalLimits,
 ) -> PatchResult<Vec<Relationship>> {
     if !parts.contains_key(name) {
         return Ok(Vec::new());
     }
-    let xml = Xml::parse(text(parts, name)?)?;
+    let xml = Xml::parse_with_limits(text(parts, name)?, limits)?;
     let root = xml.root(REL, "Relationships")?;
     let mut ids = BTreeSet::new();
     let mut result = Vec::new();

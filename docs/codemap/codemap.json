@@ -1158,7 +1158,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "test",
      "notable": [],
      "path": "src/anchored_annotation/pptx_tests.rs",
@@ -15257,7 +15257,7 @@
      "path": "src/edit_roundtrip/pptx/comments.rs",
      "purpose": "Modern threaded comments using retained XML surgery and a derived part allowlist",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 4,
       "fn": 1
      }
     },
@@ -15268,12 +15268,26 @@
      "path": "src/edit_roundtrip/pptx/identities.rs",
      "purpose": "Imported slide/shape identities and conservative creation-ID re-binding",
      "surface": {
-      "crate-vis": 7,
+      "crate-vis": 8,
       "fn": 2
      }
     },
     {
      "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "PptxOperationalLimits"
+     ],
+     "path": "src/edit_roundtrip/pptx/limits.rs",
+     "purpose": "Policy-manifest budgets for the modern-comment writer",
+     "surface": {
+      "crate-vis": 2,
+      "fn": 2,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/edit_roundtrip/pptx/links.rs",
@@ -15289,8 +15303,8 @@
      "path": "src/edit_roundtrip/pptx/mod.rs",
      "purpose": "Narrow, byte-preserving modern PowerPoint comment edits",
      "surface": {
-      "crate-vis": 2,
-      "re-export": 4
+      "crate-vis": 5,
+      "re-export": 5
      }
     },
     {
@@ -15325,7 +15339,8 @@
      "path": "src/edit_roundtrip/pptx/proposal.rs",
      "purpose": "Modern comments use the existing retained-output proposal and consume-once settle",
      "surface": {
-      "fn": 3
+      "crate-vis": 2,
+      "fn": 4
      }
     },
     {
@@ -15355,7 +15370,7 @@
      "path": "src/edit_roundtrip/pptx/xml.rs",
      "purpose": "Namespace-aware XML spans for surgical edits",
      "surface": {
-      "crate-vis": 18
+      "crate-vis": 19
      }
     },
     {
@@ -16834,7 +16849,7 @@
      "path": "src/gate/constants.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 77
+      "crate-vis": 78
      }
     },
     {
@@ -17152,7 +17167,7 @@
      "path": "src/gate/resolution/accessors.rs",
      "purpose": "Read-only resolved-field accessors plus the frontier-hash entry",
      "surface": {
-      "crate-vis": 24
+      "crate-vis": 25
      }
     },
     {
@@ -17439,6 +17454,14 @@
      "notable": [],
      "path": "src/gate/tests/posture_override.rs",
      "purpose": "Opt-out posture, override receipts, and the posture dial",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/gate/tests/pptx_limits.rs",
+     "purpose": "Shipped PowerPoint limits and owner/holder policy precedence",
      "surface": {}
     },
     {
@@ -35710,7 +35733,7 @@
      "purpose": "ED-00 (ARCH-0056 §2–3): the proposal-artifact substrate the edit-distance feedback loop replays, plus the…"
     },
     "edit_roundtrip": {
-     "files": 22,
+     "files": 23,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -35801,7 +35824,7 @@
      "purpose": "—"
     },
     "gate": {
-     "files": 75,
+     "files": 76,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -36489,8 +36512,8 @@
    },
    "over_bar": 11,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2154,
-   "test_files": 736
+   "source_files": 2155,
+   "test_files": 737
   },
   "oneiron-android": {
    "files": [

@@ -88,6 +88,7 @@ fn proposal(run_ref: &str, new_bytes: &[u8], ops: Vec<EditOp>) -> EditProposal {
             touched_parts: BTreeSet::new(),
             mutation_mode: MutationMode::Full,
             warnings: Vec::new(),
+            pptx_holder_limits: None,
         },
         inspection: StructureSummary {
             format: OfficeFormat::Xlsx,
