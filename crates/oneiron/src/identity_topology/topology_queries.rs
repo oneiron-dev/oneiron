@@ -37,12 +37,12 @@ impl Vault {
         let events = self.fold_effective_identity_topology_events_in_txn(rtxn)?;
         let fold = fold_identity_topology_log(&events);
         let mut actor = false;
+        let mut survivor_role = false;
         for event in events {
-            let StoredIdentityOpAction::Merge { sources, survivor } = self
+            let record = self
                 .identity_topology_event_in_txn(rtxn, &event.event_id)?
-                .ok_or(Error::CorruptedIndex("identity topology event index"))?
-                .action
-            else {
+                .ok_or(Error::CorruptedIndex("identity topology event index"))?;
+            let StoredIdentityOpAction::Merge { sources, survivor } = &record.action else {
                 continue;
             };
             if !sources
@@ -51,20 +51,20 @@ impl Vault {
             {
                 continue;
             }
+            // A head of one merge may be a source in a later merge. Only a
+            // current source is a hard-delete refusal, so scan ALL current
+            // events before returning a lesser survivor/actor role.
             if sources.contains(id) {
                 return Ok(ActiveMergeDeleteRole::Source);
             }
-            if *id == survivor {
-                return Ok(ActiveMergeDeleteRole::Survivor);
-            }
-            let record = self
-                .identity_topology_event_in_txn(rtxn, &event.event_id)?
-                .ok_or(Error::CorruptedIndex("identity topology event index"))?;
+            survivor_role |= *id == *survivor;
             actor |= record
                 .actor
                 .is_some_and(|author| author.entity_ref() == *id);
         }
-        Ok(if actor {
+        Ok(if survivor_role {
+            ActiveMergeDeleteRole::Survivor
+        } else if actor {
             ActiveMergeDeleteRole::Actor
         } else {
             ActiveMergeDeleteRole::None

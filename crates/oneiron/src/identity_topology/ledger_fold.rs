@@ -15,8 +15,9 @@ use super::lifecycle_state::EntityLifecycleState;
 use super::op_apply::IdentityTopologyParticipantValidation;
 use super::op_vocabulary::IdentityTopologyOp;
 use super::store_entity_helpers::{
-    identity_event_validated_in_txn, identity_topology_entity_type_for_store_in_txn,
-    identity_topology_events_for_store_in_txn, validate_identity_op_participants_for_store_in_txn,
+    identity_event_actor_invalid_in_txn, identity_event_validated_in_txn,
+    identity_topology_entity_type_for_store_in_txn, identity_topology_events_for_store_in_txn,
+    validate_identity_op_participants_for_store_in_txn,
 };
 use super::transition_table::{IdentityTopologyRejection, ProposalOutcome, evaluate_transition};
 
@@ -212,6 +213,9 @@ pub(super) fn fold_effective_identity_topology_events_for_store_in_txn(
     let events = identity_topology_events_for_store_in_txn(store, rtxn)?;
     let mut effective = Vec::with_capacity(events.len());
     for event in events {
+        if identity_event_actor_invalid_in_txn(store, rtxn, &event.event_id)? {
+            continue;
+        }
         let record = super::store_entity_helpers::identity_topology_event_for_store_in_txn(
             store,
             rtxn,

@@ -18135,13 +18135,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/identity_topology/store_entity_helpers.rs",
      "purpose": "Store-level (pre-vault) readers for the type-76 entity kind: the helpers the batch write/materialize path…",
      "surface": {
-      "crate-vis": 11
+      "crate-vis": 14
      }
     },
     {

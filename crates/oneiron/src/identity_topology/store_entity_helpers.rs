@@ -17,12 +17,77 @@ use super::stored_event::{StoredIdentityOpAction, StoredIdentityOpEvent};
 use super::transition_table::IdentityTopologyRejection;
 
 const VALIDATED_EVENT_PREFIX: &[u8] = b"it:validated:";
+const INVALID_ACTOR_EVENT_PREFIX: &[u8] = b"it:invalid_actor:";
 
 fn validated_event_key(id: &EntityId) -> Vec<u8> {
     let mut key = Vec::with_capacity(VALIDATED_EVENT_PREFIX.len() + 16);
     key.extend_from_slice(VALIDATED_EVENT_PREFIX);
     key.extend_from_slice(id.as_bytes());
     key
+}
+
+fn invalid_actor_event_key(id: &EntityId) -> Vec<u8> {
+    let mut key = Vec::with_capacity(INVALID_ACTOR_EVENT_PREFIX.len() + 16);
+    key.extend_from_slice(INVALID_ACTOR_EVENT_PREFIX);
+    key.extend_from_slice(id.as_bytes());
+    key
+}
+
+pub(super) fn identity_event_actor_invalid_in_txn(
+    store: &Store,
+    rtxn: &heed::RoTxn<'_>,
+    id: &EntityId,
+) -> Result<bool> {
+    Ok(store
+        .vault_meta
+        .get(rtxn, &invalid_actor_event_key(id))?
+        .is_some())
+}
+
+/// Record the local refusal separately from erasable personal attribution.
+/// A valid author scrub cannot turn an event already invalid here into an
+/// unattributed effective op after its actor row disappears.
+pub(crate) fn mark_identity_event_actor_invalid_in_txn(
+    store: &Store,
+    wtxn: &mut heed::RwTxn<'_>,
+    id: &EntityId,
+) -> Result<()> {
+    store
+        .vault_meta
+        .put(wtxn, &invalid_actor_event_key(id), &[])?;
+    Ok(())
+}
+
+/// Decide BEFORE scrubbing whether the actor had actually passed validation
+/// here. A producer stamp plus a *missing* author hard-delete marker may
+/// retain already-authored history; a PRESENT wrong class cannot be excused
+/// by that marker. The caller owns the write transaction and stamps a local
+/// veto if this returns false.
+pub(crate) fn actor_valid_before_author_scrub_in_txn(
+    store: &Store,
+    rtxn: &heed::RoTxn<'_>,
+    event_id: &EntityId,
+    record: &StoredIdentityOpEvent,
+) -> Result<bool> {
+    if identity_event_validated_in_txn(store, rtxn, event_id)? {
+        return Ok(true);
+    }
+    let Some(actor) = record.actor else {
+        return Ok(true);
+    };
+    if let Some(kind) =
+        identity_topology_entity_type_for_store_in_txn(store, rtxn, &actor.entity_ref())?
+    {
+        return Ok(crate::provenance::validate_actor_class(kind, actor.actor_class()).is_ok());
+    }
+    Ok(record.validated_at_write
+        && store
+            .sync_state
+            .get(
+                rtxn,
+                &crate::deletion::local_hard_delete_key(&actor.entity_ref()),
+            )?
+            .is_some())
 }
 
 pub(super) fn identity_event_validated_in_txn(
@@ -51,6 +116,9 @@ pub(crate) fn forget_identity_event_validation_in_txn(
     id: &EntityId,
 ) -> Result<()> {
     store.vault_meta.delete(wtxn, &validated_event_key(id))?;
+    store
+        .vault_meta
+        .delete(wtxn, &invalid_actor_event_key(id))?;
     Ok(())
 }
 
@@ -62,7 +130,9 @@ pub(super) fn mark_complete_identity_events_in_txn(
     wtxn: &mut heed::RwTxn<'_>,
 ) -> Result<()> {
     for event in identity_topology_events_for_store_in_txn(store, &*wtxn)? {
-        if identity_event_validated_in_txn(store, wtxn, &event.event_id)? {
+        if identity_event_validated_in_txn(store, wtxn, &event.event_id)?
+            || identity_event_actor_invalid_in_txn(store, wtxn, &event.event_id)?
+        {
             continue;
         }
         if let super::ledger_fold::IdentityTopologyAction::Apply(op) = &event.action

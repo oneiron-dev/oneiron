@@ -86,7 +86,7 @@ impl Vault {
         wtxn: &mut heed::RwTxn<'_>,
         matches: impl Fn(&crate::identity_topology::StoredIdentityOpEvent) -> bool,
     ) -> Result<()> {
-        let mut scrubbed: Vec<(EntityId, Vec<u8>)> = Vec::new();
+        let mut scrubbed: Vec<(EntityId, Vec<u8>, bool)> = Vec::new();
         for entry in self
             .store
             .type_index
@@ -105,14 +105,28 @@ impl Vault {
             if !matches(&event) {
                 continue;
             }
+            let actor_was_invalid =
+                !crate::identity_topology::actor_valid_before_author_scrub_in_txn(
+                    &self.store,
+                    wtxn,
+                    &event_id,
+                    &event,
+                )?;
             let Some(event) = event.without_author_stamp() else {
                 continue;
             };
             let mut record = raw[..ENTITY_METADATA_HEADER_LEN].to_vec();
             record.extend_from_slice(&encode_identity_topology_event_body(&event)?);
-            scrubbed.push((event_id, record));
+            scrubbed.push((event_id, record, actor_was_invalid));
         }
-        for (event_id, record) in &scrubbed {
+        for (event_id, record, actor_was_invalid) in &scrubbed {
+            if *actor_was_invalid {
+                crate::identity_topology::mark_identity_event_actor_invalid_in_txn(
+                    &self.store,
+                    wtxn,
+                    event_id,
+                )?;
+            }
             // Erasure must remove the old author stamp from retained history too.
             crate::vault::entity_revision::remove_entity_revisions(&self.store, wtxn, event_id)?;
             self.store.entities.put(wtxn, event_id.as_bytes(), record)?;

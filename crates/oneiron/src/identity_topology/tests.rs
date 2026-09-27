@@ -5423,3 +5423,107 @@ fn headerless_soft_delete_moots_participant_proposal_with_one_receipt() {
         1
     );
 }
+
+/// Both the local and remote hard-delete doors must see B's current source
+/// role even when an earlier merge names B as its survivor.
+fn assert_chained_merge_middle_is_protected(
+    vault: &Vault,
+    a: EntityId,
+    b: EntityId,
+    c: EntityId,
+    first: EntityId,
+    second: EntityId,
+) {
+    assert_eq!(
+        vault.entity_lifecycle_state(&b).expect("B state"),
+        EntityLifecycleState::Merged
+    );
+    for reason in [
+        crate::deletion::DeleteReason::UserHardDelete,
+        crate::deletion::DeleteReason::GdprDelete,
+    ] {
+        let err = vault
+            .delete_entity_with_reason(&b, reason)
+            .expect_err("middle source must not be hard-deleted");
+        assert_eq!(
+            expect_rejection(err),
+            IdentityTopologyRejection::ActiveMergeParticipantDeletion { entity: b }
+        );
+    }
+    let err = vault
+        .apply_replayed_tombstone(&b, &[])
+        .expect_err("remote hard-delete must not deindex a current source");
+    assert_eq!(
+        expect_rejection(err),
+        IdentityTopologyRejection::ActiveMergeParticipantDeletion { entity: b }
+    );
+    assert!(
+        vault
+            .read_entity_header(&b)
+            .expect("retained B header")
+            .is_some()
+    );
+    for (from, to) in [(c, b), (b, a)] {
+        assert!(
+            vault
+                .edge_exists(&from, EdgeKind::MergedInto, &to)
+                .expect("retained canonical shell edge")
+        );
+    }
+    let write = IdentityOpWrite::auto(ClaimSource::Inferred);
+    vault
+        .undo_identity_topology_event(&second, &write, 300)
+        .expect("undo B to A remains live");
+    vault
+        .undo_identity_topology_event(&first, &write, 310)
+        .expect("undo C to B remains live");
+    assert_eq!(
+        vault.entity_lifecycle_state(&b).expect("restored B state"),
+        EntityLifecycleState::Active
+    );
+    assert_eq!(
+        vault.entity_lifecycle_state(&c).expect("restored C state"),
+        EntityLifecycleState::Active
+    );
+}
+
+#[test]
+fn chained_local_merges_protect_middle_source_before_tombstone_and_on_replay() {
+    let (_dir, vault) = open_vault();
+    let a = put_person(&vault, 0x61);
+    let b = put_person(&vault, 0x62);
+    let c = put_person(&vault, 0x63);
+    let write = IdentityOpWrite::auto(ClaimSource::Inferred);
+    let (first, _) = expect_applied(
+        vault
+            .apply_identity_topology_op(&merge_op(vec![c], b), &write, 200)
+            .expect("C to B"),
+    );
+    let (second, _) = expect_applied(
+        vault
+            .apply_identity_topology_op(&merge_op(vec![b], a), &write, 210)
+            .expect("B to A"),
+    );
+    assert!(first < second, "local first event enumerates before second");
+    assert_chained_merge_middle_is_protected(&vault, a, b, c, first, second);
+}
+
+#[test]
+fn reversed_event_ids_still_protect_middle_source_in_chained_merge() {
+    let (_dir, vault) = open_vault();
+    let a = put_person(&vault, 0x61);
+    let b = put_person(&vault, 0x62);
+    let c = put_person(&vault, 0x63);
+    let first = id(0x72);
+    let second = id(0x71);
+    assert!(second < first, "second event enumerates before first");
+    put_identity_event_record(&vault, first, &replicated_merge_record(vec![c], b, 1));
+    put_identity_event_record(&vault, second, &replicated_merge_record(vec![b], a, 2));
+    vault
+        .with_write_txn(|wtxn| {
+            vault.advance_identity_topology_seq_in_txn(wtxn, 2)?;
+            vault.reconcile_identity_topology_edges_in_txn(wtxn)
+        })
+        .expect("join replicated seq and reconcile both shells");
+    assert_chained_merge_middle_is_protected(&vault, a, b, c, first, second);
+}

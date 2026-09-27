@@ -4130,8 +4130,7 @@ fn deferred_cancellation_target_materializes_as_person_without_poisoning_deletes
     );
 }
 
-#[test]
-fn verified_deferred_merge_does_not_accept_late_mismatched_actor_class() {
+fn assert_deferred_merge_actor_mismatch_survives_erasure(validated_at_write: bool) {
     use crate::identity_topology::{StoredIdentityOpAction, StoredIdentityOpEvent};
     let vault = test_vault();
     let doc = LoroDoc::new();
@@ -4155,7 +4154,7 @@ fn verified_deferred_merge_does_not_accept_late_mismatched_actor_class() {
     }
     let record = StoredIdentityOpEvent {
         seq: 50,
-        validated_at_write: true,
+        validated_at_write,
         at: 200,
         actor: Some(crate::write_envelope::WriteActor::new(
             actor,
@@ -4219,4 +4218,46 @@ fn verified_deferred_merge_does_not_accept_late_mismatched_actor_class() {
         vault.entity_lifecycle_state(&source).unwrap(),
         crate::identity_topology::EntityLifecycleState::Active
     );
+    // Hard erasure removes personal attribution, not the fact that the
+    // observed PERSON failed the stamped System actor-class check.
+    vault
+        .delete_entity_with_reason(&actor, crate::deletion::DeleteReason::GdprDelete)
+        .expect("erase invalid actor");
+    assert_eq!(
+        vault
+            .identity_topology_event(&event_id)
+            .unwrap()
+            .unwrap()
+            .actor,
+        None
+    );
+    vault
+        .put_entity(
+            &source,
+            ENTITY_TYPE_TASK,
+            TimeRange {
+                start: 300,
+                end: 300,
+            },
+            300,
+            &task_body(),
+        )
+        .expect("refresh participant through the shared materialization hook");
+    assert!(
+        !vault
+            .edge_exists(&source, crate::edge::EdgeKind::MergedInto, &survivor)
+            .unwrap(),
+        "erasing an invalid actor must never authorize the merge"
+    );
+    assert_eq!(
+        vault.entity_lifecycle_state(&source).unwrap(),
+        crate::identity_topology::EntityLifecycleState::Active
+    );
+}
+
+#[test]
+fn deferred_merge_actor_mismatch_stays_invalid_after_erasure_with_or_without_producer_stamp() {
+    for validated_at_write in [false, true] {
+        assert_deferred_merge_actor_mismatch_survives_erasure(validated_at_write);
+    }
 }
