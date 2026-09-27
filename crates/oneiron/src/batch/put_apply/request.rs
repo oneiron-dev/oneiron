@@ -1,7 +1,7 @@
 //! The one typed request `apply_put` takes: the row, the options that govern
 //! how it is admitted, and the borrowed context it is judged against.
 
-use super::{BaseWriteOrigin, CompanionRetiredHistoryOverlay};
+use super::BaseWriteOrigin;
 use crate::batch::{ApplyOpsGateMode, BatchOp};
 use crate::entity_id::EntityId;
 use crate::store::GateDecisionId;
@@ -171,8 +171,6 @@ pub(in crate::batch) struct PutContext<'a> {
     pub(in crate::batch) write_envelope: Option<&'a WriteEnvelope>,
     /// The bootstrap proof a hub SKILL admission presents.
     pub(in crate::batch) hub_admission: Option<&'a crate::skill_hub::HubAdmissionProof>,
-    /// Companion histories this batch retracts, for the identity-facet check.
-    pub(in crate::batch) companion_retired_histories: Option<&'a CompanionRetiredHistoryOverlay>,
 }
 
 /// One claim candidate through `apply_claim_candidate`: the candidate and its

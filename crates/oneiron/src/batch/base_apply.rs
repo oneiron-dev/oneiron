@@ -321,7 +321,6 @@ pub(super) fn apply_ops_with_origin(
                                 .as_ref()
                                 .and_then(ClaimMaterialization::gate_envelope),
                             hub_admission: hub_admission.as_ref(),
-                            companion_retired_histories: Some(&companion_retired_histories),
                         },
                     },
                 )?;

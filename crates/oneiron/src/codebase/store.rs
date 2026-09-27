@@ -6,7 +6,7 @@ use super::ingest::{
     scan_codebase_snapshot_metadata, validate_project_id,
 };
 use super::repo_ref::RepoRef;
-use super::residue::{CODEBASE_SNAPSHOT_KEY_PREFIX, reclaimable_asset_hashes};
+use super::residue::reclaimable_asset_hashes;
 use super::snapshot::{
     CODEBASE_CONTENT_HASH_LEN, CodebaseFileEntry, CodebaseForkHash, CodebaseScopeKey,
     CodebaseSnapshot, CodebaseSnapshotMount, validate_codebase_snapshot, write_hash_len,

@@ -7,12 +7,11 @@ use heed::RwTxn;
 
 use super::request::{PutContext, PutRequest, PutRow, Replication};
 use super::{
-    AppliedPut, AuthorityLogKeyOccupant, BaseWriteOrigin, ENTITY_METADATA_HEADER_LEN,
-    apply_short_id_plan, authority_observation_secs_for_write, check_authority_log_store_key,
+    AppliedPut, AuthorityLogKeyOccupant, ENTITY_METADATA_HEADER_LEN, apply_short_id_plan,
+    authority_observation_secs_for_write, check_authority_log_store_key,
     delete_short_id_rows_for_id, evict_authority_log_store_key_squatter, parse_entity_metadata,
     plan_short_id_update, reject_overlay_member_base_write, stage_claim_projection,
-    stage_entity_body_row, stage_entity_index_rows, stage_optimizer_birth_marker_row,
-    stage_optional_side_row, validate_companion_register_put,
+    stage_entity_body_row, stage_entity_index_rows, stage_optional_side_row,
     validate_local_agent_definition_create, validate_local_skill_create,
     validate_replicated_authority_log_for_local_vault, validate_skill_body_overwrite,
     validate_task_checkin_immutable,
@@ -59,7 +58,6 @@ pub(in crate::batch) fn apply_put(
                 write_policy,
                 write_envelope,
                 hub_admission,
-                companion_retired_histories,
             },
     } = request;
     let Replication {
