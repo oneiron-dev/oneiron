@@ -566,7 +566,7 @@ fn finish_post_filter_propagates_finalize_failure_and_discards_trace() {
 
 #[test]
 fn in_process_context_pack_keeps_ranked_owner_claim_when_l2_is_implicit() {
-    let (_dir, vault) = open_test_vault_with(embedding_test_config());
+    let (_dir, vault) = open_test_vault_with(telemetry_config());
     let owner = vault.ensure_embedded_owner_actor().expect("owner person");
     let id = entity(0xC2);
     let body = ClaimBody::new(
