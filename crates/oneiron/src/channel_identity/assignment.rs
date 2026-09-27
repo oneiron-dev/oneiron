@@ -24,9 +24,12 @@ struct AssignmentSlot {
 
 fn index_key(key: &AssignmentKey) -> Vec<u8> {
     let mut hasher = blake3::Hasher::new();
-    hasher.update(key.channel().as_bytes());
-    hasher.update(&[0]);
-    hasher.update(key.address_or_handle().as_bytes());
+    let channel = key.channel().as_bytes();
+    let address = key.address_or_handle().as_bytes();
+    hasher.update(&(channel.len() as u64).to_be_bytes());
+    hasher.update(channel);
+    hasher.update(&(address.len() as u64).to_be_bytes());
+    hasher.update(address);
     let mut bytes = PREFIX.to_vec();
     bytes.extend_from_slice(hasher.finalize().as_bytes());
     bytes
@@ -258,6 +261,16 @@ pub(super) fn rebuild(store: &Store, txn: &mut heed::RwTxn<'_>) -> Result<()> {
             ))?;
         let header = EntityMetadataHeader::parse(&raw)
             .ok_or(Error::CorruptedIndex("channel identity header"))?;
+        if header.entity_type != ENTITY_TYPE_CHANNEL_IDENTITY {
+            return Err(Error::CorruptedIndex("channel identity type index kind"));
+        }
+        // Canonical UserDelete soft erasure keeps a header-only shell in the
+        // type index. It has no assignment and cannot be decoded as a body.
+        // Only the exact empty-body shell is skipped; malformed live rows
+        // remain a recovery error rather than silently disappearing.
+        if raw.len() == ENTITY_METADATA_HEADER_LEN {
+            continue;
+        }
         let row = decode_channel_identity_body(&raw[ENTITY_METADATA_HEADER_LEN..])?;
         rows.push((header.learned_at, id, row));
     }

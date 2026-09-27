@@ -23706,7 +23706,7 @@
      "surface": {}
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "test",
      "notable": [],
      "path": "src/outbound/tests/sender_selection.rs",

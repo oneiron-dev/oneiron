@@ -1,7 +1,6 @@
 //! Reverse rematerialization plus skip/policy predicates and carrier removal.
 
 use std::collections::HashSet;
-use std::io::Cursor;
 
 use super::bridge::{self, BRIDGE_ORIGIN, encode_edge_value_for_crdt, format_edge_key};
 use super::loro_support::{
@@ -22,7 +21,6 @@ use crate::error::{Error, RegistryError, Result};
 use crate::registry::{ENTITY_TYPE_AUTHORITY_LOG, ENTITY_TYPE_SECRET_CUSTODY};
 use crate::sync::local_claims::{claim_sync_allowed, local_claim_sync_allowed};
 use loro::{CommitOptions, LoroDoc, LoroMap};
-use rmpv::Value;
 
 /// Reverse re-materialization: LMDB→CRDT (insert-missing only).
 ///
@@ -39,30 +37,14 @@ pub(in crate::sync) fn is_delegated_channel_identity_carrier(raw: &[u8]) -> bool
     if header.entity_type != crate::registry::ENTITY_TYPE_CHANNEL_IDENTITY {
         return false;
     }
+    // A ChannelIdentity carrier is portable only after the strict body decoder
+    // positively establishes a valid self-held identity. Damage to a delegated
+    // map (including truncated MessagePack) must never open the export seal.
     let body = &raw[ENTITY_METADATA_HEADER_LEN..];
-    if crate::channel_identity::decode_channel_identity_body(body)
-        .is_ok_and(|identity| identity.is_delegated())
-    {
-        return true;
-    }
-
-    // The body is the authority for this seal, not its attacker-chosen CRDT
-    // key. Keep the seal fail-closed across a damaged delegated encoding too:
-    // schema 6, the delegated shape tag, and either custody extension field
-    // are all enough evidence to withhold this local-custody carrier.
-    let mut cursor = Cursor::new(body);
-    let Ok(Value::Map(entries)) = rmpv::decode::read_value(&mut cursor) else {
-        return false;
-    };
-    entries.iter().any(|(key, value)| match key.as_str() {
-        Some("schema_version") => {
-            value.as_u64()
-                == Some(crate::channel_identity::CHANNEL_IDENTITY_DELEGATED_SCHEMA_VERSION)
-        }
-        Some("shape") => value.as_str() == Some("delegated_grant"),
-        Some("delegated_grant_ref" | "grant_scopes") => true,
-        _ => false,
-    })
+    !matches!(
+        crate::channel_identity::decode_channel_identity_body(body),
+        Ok(identity) if !identity.is_delegated()
+    )
 }
 
 pub fn reverse_rematerialize(vault: &Vault, doc: &LoroDoc, window_key: &WindowKey) -> Result<u32> {

@@ -173,6 +173,56 @@ fn ambiguous_automatic_sender_refuses_before_dispatch_effects()
 }
 
 #[test]
+fn explicit_retired_self_held_sender_is_refused_before_effects()
+-> std::result::Result<(), Box<dyn std::error::Error>> {
+    let (_tmp, vault) = temp_vault();
+    let actor = auto_agent_actor(&vault)?;
+    let actor_ref = actor.actor_entity_ref.expect("actor entity");
+    put_policy_manifest_bytes(
+        &vault,
+        entity(0xD0),
+        &policy_manifest(&actor_ref.to_hex(), "email", &["send"]),
+    )?;
+    let sender = entity(0xBC);
+    let key_ref = entity(0xBD);
+    vault.register_connector_key(
+        &key_ref,
+        ConnectorKeyRecord::active("email", Some(actor_ref), Vec::new(), 1_000),
+    )?;
+    put_sending_identity(&vault, sender, ChannelIdentityBinding::actor(actor_ref))?;
+    let mut sink = SenderRecordingSink::default();
+    let active = vault.dispatch_outbound_intent(
+        email_send_dispatch_request(actor.clone(), 0).channel_identity_ref(sender),
+        &mut sink,
+    )?;
+    assert_eq!(active.outcome, OutboundDispatchOutcome::DeliveredToChannel);
+    assert_eq!(sink.senders, vec![Some(sender)]);
+
+    vault.step_channel_identity(&sender, ChannelIdentityStep::Release, 1_001)?;
+    let receipts_before = vault.receipts(ReceiptQuery::new(100))?;
+    let ledger_before = intent_ledger_records(&vault)?;
+    let error = vault
+        .dispatch_outbound_intent(
+            email_send_dispatch_request(actor, 1).channel_identity_ref(sender),
+            &mut sink,
+        )
+        .expect_err("an explicit retired identity cannot carry a send");
+    assert!(matches!(
+        error,
+        OutboundDispatchError::Engine(Error::Record(
+            crate::error::RecordError::InvalidChannelIdentityBody(_)
+        ))
+    ));
+    assert_eq!(sink.senders, vec![Some(sender)], "no second sink effect");
+    assert_eq!(vault.receipts(ReceiptQuery::new(100))?, receipts_before);
+    assert_eq!(
+        intent_ledger_records(&vault)?.records.len(),
+        ledger_before.records.len()
+    );
+    Ok(())
+}
+
+#[test]
 fn absent_optional_sender_still_dispatches_with_and_without_a_connector_key()
 -> std::result::Result<(), Box<dyn std::error::Error>> {
     for with_key in [false, true] {

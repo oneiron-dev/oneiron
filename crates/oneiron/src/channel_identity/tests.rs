@@ -799,6 +799,82 @@ fn deletion_clears_assignment_slots_in_the_same_transaction() -> Result<()> {
 }
 
 #[test]
+fn rebuild_skips_soft_deleted_identity_and_keeps_survivor() -> Result<()> {
+    let (_dir, vault) = test_vault();
+    let deleted = entity(0xE3);
+    let survivor = entity(0xE4);
+    for (id, address) in [
+        (deleted, "erased@example.test"),
+        (survivor, "survives@example.test"),
+    ] {
+        vault.create_channel_identity(
+            &id,
+            &ChannelIdentity::requested(
+                EMAIL_CHANNEL,
+                address,
+                SelfHeldShape::DedicatedAddress,
+                ChannelIdentityBinding::agent(entity(0x51)),
+                1_800_000_000,
+            ),
+        )?;
+    }
+    vault.delete_entity_with_reason(&deleted, crate::deletion::DeleteReason::UserDelete)?;
+    for _ in 0..2 {
+        vault.rebuild_channel_identity_assignment_index()?;
+        assert!(
+            vault
+                .channel_identity_by_assignment(EMAIL_CHANNEL, "erased@example.test")?
+                .is_none()
+        );
+        assert_eq!(
+            vault
+                .channel_identity_by_assignment(EMAIL_CHANNEL, "survives@example.test")?
+                .map(|(id, _)| id),
+            Some(survivor),
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn nul_containing_assignment_tuples_have_distinct_index_slots() -> Result<()> {
+    let (_dir, vault) = test_vault();
+    let first = entity(0xE5);
+    let second = entity(0xE6);
+    let tuples = [(first, "a", "b\0c"), (second, "a\0b", "c")];
+    for (id, channel, address) in tuples {
+        vault.create_channel_identity(
+            &id,
+            &ChannelIdentity::requested(
+                channel,
+                address,
+                SelfHeldShape::DedicatedHandle,
+                ChannelIdentityBinding::agent(entity(0x51)),
+                1_800_000_000,
+            ),
+        )?;
+    }
+    for (id, channel, address) in tuples {
+        assert_eq!(
+            vault
+                .channel_identity_by_assignment(channel, address)?
+                .map(|(found, _)| found),
+            Some(id),
+        );
+    }
+    vault.rebuild_channel_identity_assignment_index()?;
+    for (id, channel, address) in tuples {
+        assert_eq!(
+            vault
+                .channel_identity_by_assignment(channel, address)?
+                .map(|(found, _)| found),
+            Some(id),
+        );
+    }
+    Ok(())
+}
+
+#[test]
 fn deleting_a_retiring_predecessor_preserves_its_new_occupant() -> Result<()> {
     let (_dir, vault) = test_vault();
     let address = "reconsented@example.test";

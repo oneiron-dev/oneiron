@@ -24,6 +24,19 @@
 //! let _: Option<DelegatedCustodyProof<'static>> = None;
 //! ```
 
+//! Delegated lifecycle edges have no rotation or quarantine variant. Trying to
+//! construct either act on a delegated lifecycle is a compile-time error:
+//!
+//! ```compile_fail
+//! use oneiron::channel_identity::DelegatedLifecycle;
+//! let _ = DelegatedLifecycle::Rotating;
+//! ```
+//!
+//! ```compile_fail
+//! use oneiron::channel_identity::DelegatedLifecycle;
+//! let _ = DelegatedLifecycle::Quarantine { until: 123 };
+//! ```
+
 mod actors;
 mod address;
 mod assignment;

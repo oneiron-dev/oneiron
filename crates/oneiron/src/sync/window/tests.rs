@@ -1699,6 +1699,92 @@ fn replicated_delegated_channel_identity_is_rejected_after_local_retirement() ->
 }
 
 #[test]
+fn malformed_channel_identity_carriers_are_scrubbed_before_export() -> Result<()> {
+    use crate::channel_identity::{
+        ChannelIdentity, DelegatedGrant, DelegatedGrantScope, encode_channel_identity_body,
+    };
+    let (_dir, vault) = test_vault();
+    let window = WindowKey::new("2026-03");
+    let at = window.start_timestamp().expect("window") + 60;
+    let grant = DelegatedGrant::new("oauth/gmail/member", vec![DelegatedGrantScope::MailRead]);
+    let (grant, binding) =
+        delegated_identity_fixture(&vault, &grant.custody_record_ref, "member@example.test", at)?;
+    let id = EntityId::from_bytes([0xD8; 16])?;
+    let (_, active) =
+        release_local_delegated_identity(&vault, id, at, "member@example.test", grant, binding)?;
+    let valid_delegated = encode_channel_identity_body(&active)?;
+    let mut damaged = valid_delegated;
+    // MessagePack fixmap: claim one additional entry but leave all existing
+    // grant-ref/scope bytes intact. Neither strict nor fallback decode succeeds.
+    match damaged[0] {
+        0x80..=0x8e => damaged[0] += 1,
+        0xde => {
+            let count = u16::from_be_bytes([damaged[1], damaged[2]]) + 1;
+            damaged[1..3].copy_from_slice(&count.to_be_bytes());
+        }
+        0xdf => {
+            let count = u32::from_be_bytes(damaged[1..5].try_into().expect("map32 header")) + 1;
+            damaged[1..5].copy_from_slice(&count.to_be_bytes());
+        }
+        other => panic!("identity body is not a MessagePack map: {other:#x}"),
+    }
+    assert!(crate::channel_identity::decode_channel_identity_body(&damaged).is_err());
+    let damaged_blob =
+        make_entity_blob(crate::registry::ENTITY_TYPE_CHANNEL_IDENTITY, at, &damaged);
+    let healthy = ChannelIdentity::own_app_home(EntityId::from_bytes([0xD9; 16])?, at);
+    let healthy_blob = make_entity_blob(
+        crate::registry::ENTITY_TYPE_CHANNEL_IDENTITY,
+        at,
+        &encode_channel_identity_body(&healthy)?,
+    );
+    assert!(!is_delegated_channel_identity_carrier(&healthy_blob));
+    assert!(is_delegated_channel_identity_carrier(&damaged_blob));
+    for (label, key) in [
+        ("canonical", EntityId::from_bytes([0xDA; 16])?.to_hex()),
+        ("noncanonical", "not-an-entity-key".to_owned()),
+    ] {
+        let doc = create_window_doc(label, &window);
+        let entities = doc.get_map("entities");
+        let edges = doc.get_map("edges");
+        map_insert_bytes(&entities, &key, &damaged_blob)?;
+        let healthy_id = EntityId::from_bytes([0xDB; 16])?;
+        map_insert_bytes(&entities, &healthy_id.to_hex(), &healthy_blob)?;
+        let edge_key = format_edge_key(
+            &EntityId::from_bytes([0xDA; 16])?,
+            EdgeKind::Mentions,
+            &healthy_id,
+        );
+        if label == "canonical" {
+            map_insert_bytes(
+                &edges,
+                &edge_key,
+                &encode_edge_value_for_crdt(EdgeKind::Mentions, 1.0, at, None, None)?,
+            )?;
+        }
+        doc.commit();
+        let vv = doc.oplog_vv().encode();
+        let exported = export_window_updates_since(&vault, &window, &doc, &vv)?;
+        assert!(!exported.is_empty());
+        assert!(history_free_window_required(&vault, &window)?);
+        assert!(
+            map_get_bytes(&entities, &key).is_none(),
+            "{label} damaged identity removed"
+        );
+        assert!(
+            map_get_bytes(&entities, &healthy_id.to_hex()).is_some(),
+            "valid self-held identity stays portable"
+        );
+        if label == "canonical" {
+            assert!(
+                map_get_bytes(&edges, &edge_key).is_none(),
+                "incident edge removed"
+            );
+        }
+    }
+    Ok(())
+}
+
+#[test]
 fn forward_remat_quarantines_replicated_secret_custody_carrier() -> Result<()> {
     // C1 APPLY-TIME SEAL, end to end: a peer files a SECRET_CUSTODY body in
     // the window doc. The generic `put_replicated` arm used to admit byte 77
