@@ -404,7 +404,7 @@ async fn core_context_pack_rejects_malformed_interlocutor_parties() {
 }
 
 #[tokio::test]
-async fn core_context_pack_owner_absent_top_scope_does_not_invent_record_filter() {
+async fn core_context_pack_owner_absent_narrow_scope_filters_stamped_records() {
     let (_dir, server) = interlocutor_test_server();
     let identity_ref = seeded_test_entity_id(0x1517_0001);
     let contact_principal = seeded_test_entity_id(0x1517_0002);
@@ -414,13 +414,137 @@ async fn core_context_pack_owner_absent_top_scope_does_not_invent_record_filter(
         identity_ref,
         "kenji@example.com",
     );
-    let party = seed_text_turn(&server, "hanami party planning needle17");
-    let _diary = seed_text_turn(&server, "private diary entry needle17");
-    seed_disclosure_scope(&server, contact_principal, vec![party]);
 
-    // The six-axis top clearance does not retain the retired entity allowlist.
-    // A contact caller still takes the absence-clamp path without an invented
-    // per-record filter.
+    let subject = seeded_test_entity_id(0x1517_0003);
+    server
+        .vault
+        .put_entity(
+            &subject,
+            oneiron::registry::ENTITY_TYPE_PERSON,
+            oneiron::TimeRange {
+                start: 100,
+                end: 100,
+            },
+            100,
+            b"disclosure test subject",
+        )
+        .expect("seed claim subject");
+    let party = seeded_test_entity_id(0x1517_0004);
+    let diary = seeded_test_entity_id(0x1517_0005);
+    let foreign_world = seeded_test_entity_id(0x1517_0006);
+    let mut party_body = oneiron::ClaimBody::new(
+        "event.headcount",
+        oneiron::ClaimSubject::Entity(subject),
+        rmpv::Value::from("hanami party planning needle17"),
+        0.9,
+        oneiron::ClaimApprovalStatus::Auto,
+        oneiron::ClaimLifecycleStatus::Active,
+    );
+    party_body.scope = Some(rmpv::Value::Map(vec![(
+        rmpv::Value::from("sensitivity"),
+        rmpv::Value::from("public"),
+    )]));
+    let scope_facet = party_body.scope_facet;
+    let scope_project = party_body.scope_project;
+    let mut diary_body = oneiron::ClaimBody::new(
+        "event.headcount",
+        oneiron::ClaimSubject::Entity(subject),
+        rmpv::Value::from("private diary entry needle17"),
+        0.9,
+        oneiron::ClaimApprovalStatus::Auto,
+        oneiron::ClaimLifecycleStatus::Active,
+    );
+    diary_body.scope = Some(rmpv::Value::Map(vec![(
+        rmpv::Value::from("sensitivity"),
+        rmpv::Value::from("public"),
+    )]));
+    diary_body.scope_facet = scope_facet;
+    diary_body.scope_project = scope_project;
+    diary_body.world = Some(foreign_world);
+
+    for (id, claim, text) in [
+        (party, party_body, "hanami party planning needle17"),
+        (diary, diary_body, "private diary entry needle17"),
+    ] {
+        server
+            .vault
+            .put_claim(
+                &id,
+                &claim,
+                oneiron::TimeRange {
+                    start: 100,
+                    end: 100,
+                },
+                100,
+            )
+            .expect("seed stamped disclosure claim");
+        server
+            .vault
+            .batch()
+            .text(&id, &[("body", text)])
+            .commit()
+            .expect("index disclosure claim");
+    }
+
+    // This contact is constrained on all six scope axes. The party claim is
+    // stamped in the base world; the diary claim has the same facet, band,
+    // audience, verb, and sensitivity, but its stamped world is outside scope.
+    let clearance = oneiron::federation::Scope {
+        worlds: oneiron::federation::ScopeAxis::Some(std::collections::BTreeSet::from([
+            oneiron::federation::ScopeId(oneiron::claim::base_world_id()),
+        ])),
+        facets: oneiron::federation::ScopeAxis::Some(std::collections::BTreeSet::from([
+            oneiron::federation::ScopeId(scope_facet),
+        ])),
+        bands: oneiron::federation::ScopeAxis::Some(std::collections::BTreeSet::from([
+            oneiron::registry::ENTITY_TYPE_CLAIM,
+        ])),
+        audience: oneiron::federation::ScopeAxis::Some(std::collections::BTreeSet::from([
+            oneiron::federation::ScopeId(scope_project),
+        ])),
+        verbs: oneiron::federation::ScopeAxis::Some(std::collections::BTreeSet::from([
+            "read".to_owned()
+        ])),
+        sensitivity: oneiron::federation::SensitivityCeiling::AtMost(
+            oneiron::federation::Sensitivity::Private,
+        ),
+    };
+    let disclosure_scope =
+        oneiron::disclosure::DisclosureScope::new(clearance, "party planning", 100)
+            .expect("disclosure scope");
+    server
+        .vault
+        .set_counterparty_disclosure_scope(&contact_principal, &disclosure_scope)
+        .expect("set disclosure scope");
+
+    let party_stamp = server
+        .vault
+        .record_scope(&party)
+        .expect("read party record scope")
+        .expect("party record scope stamp");
+    let diary_stamp = server
+        .vault
+        .record_scope(&diary)
+        .expect("read diary record scope")
+        .expect("diary record scope stamp");
+    assert_eq!(
+        party_stamp.worlds,
+        oneiron::federation::ScopeAxis::Some(std::collections::BTreeSet::from([
+            oneiron::federation::ScopeId(oneiron::claim::base_world_id()),
+        ]))
+    );
+    assert_eq!(
+        diary_stamp.worlds,
+        oneiron::federation::ScopeAxis::Some(std::collections::BTreeSet::from([
+            oneiron::federation::ScopeId(foreign_world),
+        ]))
+    );
+    assert_eq!(party_stamp.facets, diary_stamp.facets);
+    assert_eq!(party_stamp.bands, diary_stamp.bands);
+    assert_eq!(party_stamp.audience, diary_stamp.audience);
+    assert_eq!(party_stamp.verbs, diary_stamp.verbs);
+    assert_eq!(party_stamp.sensitivity, diary_stamp.sensitivity);
+
     let request = json!({ "query": "needle17", "limit": 10 });
     let (status, body) = route_json(
         server,
@@ -439,14 +563,27 @@ async fn core_context_pack_owner_absent_top_scope_does_not_invent_record_filter(
         body["disclosure"]["notice"].is_null(),
         "notice is Some iff supervised"
     );
-    assert_eq!(body["disclosure"]["clamped_out"], Value::from(0));
-    let party_hex = party.to_hex();
     assert!(
-        body["results"]
-            .as_array()
-            .expect("results")
+        body["disclosure"]["clamped_out"]
+            .as_u64()
+            .unwrap_or_default()
+            > 0,
+        "the out-of-scope stamped diary claim is counted as clamped"
+    );
+    let results = body["results"].as_array().expect("results");
+    let party_hex = party.to_hex();
+    let diary_hex = diary.to_hex();
+    assert!(
+        results
             .iter()
-            .any(|entity| entity["id"].as_str() == Some(party_hex.as_str()))
+            .any(|entity| entity["id"].as_str() == Some(party_hex.as_str())),
+        "in-scope party record is retained"
+    );
+    assert!(
+        results
+            .iter()
+            .all(|entity| entity["id"].as_str() != Some(diary_hex.as_str())),
+        "out-of-scope diary record is excluded"
     );
     let neighbors = body["neighbors"].as_array().expect("neighbors");
     assert!(neighbors.is_empty());

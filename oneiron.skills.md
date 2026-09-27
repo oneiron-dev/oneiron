@@ -162,6 +162,20 @@ The configured issuer secret and device-lease keys are not bearer credentials.
   `oneiron-server token pair --scope core:read --principal-ref <hex32>` using an
   existing owner slip (`ONEIRON_TOKEN`) and its binding seed
   (`ONEIRON_BINDING_KEY`); redeem it once at `POST /v1/core/pairing/redeem`.
+  A fresh self-host has no client slip yet: stop the daemon and run
+  `ONEIRON_AUTH_SECRET=… oneiron token bootstrap --config <config> --url <origin>`
+  locally. This prints a one-time link for the existing embedded owner; it
+  never sends or prints the issuer secret. Start the daemon, then redeem the
+  link with a new holder key. Non-loopback origins must use HTTPS.
+  A configured OAuth JWT is valid only at `POST /v1/core/pairing/oauth` with
+  a signed holder-key exchange request. Send `Authorization: Bearer <JWT>` and
+  JSON `{ "binding_key": "<64 lowercase hex>", "nonce": "<32 hex>",
+  "signature": "<128 lowercase hex>" }`. Sign the byte transcript
+  `b"oneiron/oauth-slip-pair/v1" || BLAKE3(JWT bytes) || binding_key bytes || nonce UTF-8`
+  with the holder's Ed25519 key. The JWT subject must name an existing actor;
+  the returned logged slip carries only its `read`/`propose` verbs and no longer
+  than the JWT's remaining lifetime (at most one hour). The JWT itself is not
+  a data-route credential.
 
 A slip is verified against the issuing host's public key and the authority log.
 Every production authentication failure returns `UNAUTHORIZED`. The explicit

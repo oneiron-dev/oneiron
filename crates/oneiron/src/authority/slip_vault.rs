@@ -103,6 +103,15 @@ impl Vault {
             && fold.slip_is_live(&claims.slip_id)
             && verified.witness_pact(&fold).is_ok())
     }
+    /// Sample the authority plane's local monotonic clock before constructing
+    /// a slip mint. Using the wall/store recording clock for `issued_at` can
+    /// race one second ahead of the authority fold's observation and cause a
+    /// valid OAuth sign-in to be refused at mint.
+    pub fn capability_slip_now(&self) -> Result<u64> {
+        let txn = self.store.env.read_txn()?;
+        Ok(self.instant_in_txn(&txn)?.secs())
+    }
+
     /// A session already proved its uncaveated instrument. Its mint's lifetime
     /// and the current fold still bound every subsequent frame.
     pub fn capability_slip_id_is_live(&self, id: &[u8; 32]) -> Result<bool> {

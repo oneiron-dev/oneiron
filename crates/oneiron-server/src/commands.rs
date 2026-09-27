@@ -19,7 +19,8 @@ use crate::auth::revoke_token_jti;
 use crate::auth::{mint_identified_core_token_v2, validate_bearer_claims};
 use crate::build_app;
 use crate::cli::{
-    ProvenanceArgs, RevokeArgs, SkillsPackArgs, TokenPairArgs, TokenRevokeArgs, VaultArgs,
+    ProvenanceArgs, RevokeArgs, SkillsPackArgs, TokenBootstrapArgs, TokenPairArgs, TokenRevokeArgs,
+    VaultArgs,
 };
 use crate::config::{ServeArgs, ServeConfig, SyncServerConfig, resolve_serve_config};
 use crate::managed::{self, ServeListener};
@@ -102,6 +103,71 @@ pub fn provenance(args: ProvenanceArgs) -> anyhow::Result<()> {
     };
     println!("{}", serde_json::to_string_pretty(&output)?);
     Ok(())
+}
+
+/// First-owner pairing from the local vault, with the daemon stopped.
+/// The command is intentionally not an HTTP route: possession of the host's
+/// local vault and issuer key is the admission. No bearer-only credential is
+/// revived and no root slip or signing key is printed.
+pub fn token_bootstrap(args: TokenBootstrapArgs) -> anyhow::Result<()> {
+    let link = token_bootstrap_link(&args)?;
+    println!("{link}");
+    Ok(())
+}
+
+fn token_bootstrap_link(args: &TokenBootstrapArgs) -> anyhow::Result<String> {
+    anyhow::ensure!(
+        !args.serve.managed_by_hypnos,
+        "managed vaults pair through their supervisor; local bootstrap is self-host only"
+    );
+    anyhow::ensure!(
+        args.serve.auth_secret.is_none(),
+        "set ONEIRON_AUTH_SECRET or a protected config file; never pass the issuer key in argv"
+    );
+    let origin = api::normalized_base(&args.url)?;
+    let url = reqwest::Url::parse(&origin)?;
+    anyhow::ensure!(
+        url.username().is_empty() && url.password().is_none(),
+        "pairing origin cannot contain userinfo"
+    );
+    let loopback = url.host_str().is_some_and(|host| {
+        host == "localhost"
+            || host
+                .trim_matches(['[', ']'])
+                .parse::<IpAddr>()
+                .is_ok_and(|ip| ip.is_loopback())
+    });
+    anyhow::ensure!(
+        url.scheme() == "https" || loopback,
+        "non-loopback pairing origins must use HTTPS"
+    );
+    let config = resolve_serve_config(&args.serve)?;
+    ensure_existing_vault_for_revoke(&config.vault_path)?;
+    let secret = config
+        .sync_server_config()
+        .auth_secret
+        .ok_or_else(|| anyhow::anyhow!("configured host issuer secret is required"))?;
+    let issuer = oneiron::authority::HostSlipIssuer::from_secret(secret.as_bytes())?;
+    let vault = oneiron::Vault::open_owned(&config.vault_path, config.vault_config())?;
+    // Init seeds the embedded owner. Never accept a caller-chosen holder on
+    // this offline root link, and never re-create a deleted owner actor.
+    let owner = vault.ensure_embedded_owner_actor()?;
+    vault.ensure_host_root_slip(&issuer)?;
+    let link = vault.issue_pairing_link_for_principal(
+        &issuer,
+        oneiron::federation::Scope::top(),
+        365 * 24 * 60 * 60,
+        oneiron::authority::PairingPrincipal {
+            holder_ref: Some(owner.to_hex()),
+            actor_class: Some("human".into()),
+            org_ref: None,
+        },
+    )?;
+    Ok(oneiron::authority::format_pairing_link(
+        &origin,
+        &link.code,
+        &owner.to_hex(),
+    ))
 }
 
 /// Creates a pairing link on the running server and prints it.

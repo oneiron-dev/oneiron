@@ -69,10 +69,24 @@ pub struct HostInitArgs {
 
 #[derive(Subcommand)]
 pub enum TokenCommand {
+    /// Provision the first owner link while the self-host vault is stopped.
+    Bootstrap(Box<TokenBootstrapArgs>),
     /// Create a one-hour pairing link on the running server and print it.
     Pair(Box<TokenPairArgs>),
     /// Revoke one previously minted token by its id.
     Revoke(Box<TokenRevokeArgs>),
+}
+
+/// Local-only bootstrap: the vault is opened exclusively from the host's
+/// configured path. No issuer secret is sent over HTTP or printed.
+#[derive(Args, Clone, Debug)]
+pub struct TokenBootstrapArgs {
+    /// Origin clients will contact after `serve` starts.
+    #[arg(long, env = "ONEIRON_URL", default_value = "http://127.0.0.1:3000")]
+    pub url: String,
+
+    #[command(flatten)]
+    pub serve: ServeArgs,
 }
 
 /// Pairing is the only enrollment. The owner fixes the holder, the class and
@@ -348,6 +362,7 @@ pub async fn run_cli(cli: Cli) -> anyhow::Result<()> {
         Command::Init(args) => tokio::task::spawn_blocking(move || commands::init(args)).await?,
         Command::Doctor(args) => commands::doctor(args),
         Command::Provenance(args) => commands::provenance(*args),
+        Command::Token(TokenCommand::Bootstrap(args)) => commands::token_bootstrap(*args),
         Command::Token(TokenCommand::Pair(args)) => commands::token_pair(*args),
         Command::Token(TokenCommand::Revoke(args)) => commands::token_revoke(*args),
         Command::Api(args) => commands::api(args).await,

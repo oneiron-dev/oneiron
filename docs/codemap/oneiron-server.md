@@ -122,7 +122,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/openapi/security.rs` | src | s | 2 crate-vis | — | Security-scheme wiring and schema property-description helper |
 | `src/api/openapi_registry.rs` | src | m | 1 crate-vis | — | OpenAPI ApiDoc registration for the HTTP API |
 | `src/api/org_admin.rs` | src | s | 2 crate-vis | — | Owner-only setup and the Console's closed organization action list |
-| `src/api/pairing.rs` | src | s | 8 crate-vis | — | Pairing-only enrollment and unauthenticated liveness discovery |
+| `src/api/pairing.rs` | src | s | 10 crate-vis | — | Pairing-only enrollment and unauthenticated liveness discovery |
 | `src/api/params.rs` | src | s | 9 crate-vis | — | Shared query/body param extractors, hex-id parsing, and small scalar helpers |
 | `src/api/reactive.rs` | src | s | 11 crate-vis | — | Reactive local-first read contract (ONE-1437 — the on-device half of OF-241) |
 | `src/api/run_tree.rs` | src | m | 28 crate-vis | — | — |
@@ -175,10 +175,10 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/auth/tests/pairing.rs` | test | m | — | — | Owner-approved principal delivery through the actual pairing HTTP routes |
 | `src/bin/oneiron.rs` | src | s | — | — | — |
 | `src/broadcast.rs` | src | s | 8 crate-vis | — | Broadcast group for multi-device fan-out with echo suppression |
-| `src/cli.rs` | src | m | 10 struct · 4 enum · 2 fn | ApiArgs, ApiCommand, Cli, Command, HostCommand, HostInitArgs, InitArgs, ProvenanceArgs +6 | — |
+| `src/cli.rs` | src | m | 11 struct · 4 enum · 2 fn | ApiArgs, ApiCommand, Cli, Command, HostCommand, HostInitArgs, InitArgs, ProvenanceArgs +7 | — |
 | `src/cli/tests.rs` | test | m | — | — | — |
-| `src/commands.rs` | src | m | 1 struct · 9 fn · 1 const · 3 re-export | DictSearchResolution | The native serve listener is intentionally plain TCP: TLS terminates at a reverse proxy |
-| `src/commands/api.rs` | src | m | 1 fn · 14 crate-vis | — | `oneiron api …` — the bash/curl lane of the packaging ladder |
+| `src/commands.rs` | src | m | 1 struct · 10 fn · 1 const · 3 re-export | DictSearchResolution | The native serve listener is intentionally plain TCP: TLS terminates at a reverse proxy |
+| `src/commands/api.rs` | src | m | 1 fn · 15 crate-vis | — | `oneiron api …` — the bash/curl lane of the packaging ladder |
 | `src/commands/host_init.rs` | src | s | 1 fn | — | Reference deployment scaffolding and explicit encryption provisioning |
 | `src/commands/host_runtime_tests.rs` | test | s | — | — | — |
 | `src/commands/init.rs` | src | m | 1 fn | — | First-run embedder choice, using the same config and provider as serve |
@@ -284,7 +284,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/mcp/tool_catalog.rs` | src | m | 1 struct · 3 enum · 7 fn · 4 const · 6 crate-vis | McpToolName, McpToolSchema, McpToolValidationError, McpValidatedToolArgs | Retired MCP tool catalog: legacy names, schemas, and validation dispatch |
 | `src/mcp/validate.rs` | src | m | 1 fn · 3 crate-vis | — | Validation of MCP tool arguments, per-verb allow-lists, and metadata checks |
 | `src/mcp/validators.rs` | src | s | 12 crate-vis | — | Small field validators shared by every MCP argument type |
-| `src/oauth_relay.rs` | src | m | 4 crate-vis | — | ARCH-0028 host-trusted OAuth token-client verification half (ONE-1382 leg 1) |
+| `src/oauth_relay.rs` | src | m | 7 crate-vis | — | ARCH-0028 host-trusted OAuth token-client verification half (ONE-1382 leg 1) |
 | `src/projection.rs` | src | m | 1 struct · 1 enum · 7 fn · 1 crate-vis | InvalidView, View | — |
 | `src/projection/tests.rs` | test | s | — | — | — |
 | `src/protocol.rs` | src | m | 27 crate-vis | — | Custom Oneiron sync protocol — server-side extensions |
@@ -326,6 +326,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `tests/it/booking_agent_api.rs` | test | XL | — | — | ONE-1819 [BK-08] HTTP-side gates for the agent-readable booking surface |
 | `tests/it/campaign_surface_oracle.rs` | test | L | — | — | ONE-1778 (CA-07) surface oracle |
 | `tests/it/core_discover.rs` | test | L | — | — | — |
+| `tests/it/first_owner_bootstrap.rs` | test | s | — | — | Fresh self-host pairing through the shipped offline command and HTTP door |
 | `tests/it/main.rs` | test | s | — | — | Consolidated integration-test binary: five former standalone `tests/*.rs` Cargo targets compiled and linked… |
 | `tests/it/mcp_booking.rs` | test | m | — | — | ONE-1819 [BK-08] MCP-side gates for `oneiron.book` |
 | `tests/it/mcp_oracle.rs` | test | m | — | — | Context Board forward test oracle — MCP surface + packaging arms, epic ONE-1692, relocated from the engine… |

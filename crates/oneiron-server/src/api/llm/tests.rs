@@ -167,7 +167,7 @@ async fn raw_remote_transport_refuses_issuer_secret_without_a_holder_proof() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn a_paired_credential_streams_through_the_llm_route() {
+async fn a_paired_top_scope_credential_carries_llm_results_and_host_usage() {
     use oneiron::authority::{HostSlipIssuer, PairingPrincipal, format_pairing_link};
     use oneiron::federation::Scope;
     let dir = tempfile::tempdir().unwrap();
@@ -183,10 +183,10 @@ async fn a_paired_credential_streams_through_the_llm_route() {
         },
     )
     .unwrap()
-    .with_llm_backend(Arc::new(Backend), budget);
+    .with_llm_backend(Arc::new(Backend), budget.clone());
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let origin = format!("http://{}", listener.local_addr().unwrap());
-    tokio::spawn(async move {
+    let serving = tokio::spawn(async move {
         axum::serve(listener, crate::api::api_routes(Arc::new(server)))
             .await
             .unwrap();
@@ -207,22 +207,73 @@ async fn a_paired_credential_streams_through_the_llm_route() {
         .unwrap();
     let link = format_pairing_link(&origin, &link.code, &person);
     let runtime = tokio::runtime::Handle::current();
-    let events = tokio::task::spawn_blocking(move || {
+    let host_budget = budget.clone();
+    tokio::task::spawn_blocking(move || {
+        // Pair through the public SDK adapter; do not use the issuer secret as
+        // the LLM client's credential.
         let (origin, credential) = oneiron_remote::OneironClient::pair(&link).unwrap();
         let client = RemoteLlmClient::connect(&origin, &credential).unwrap();
         let guard =
             BudgetGuard::with_reserve_units("client", 100, 10, BudgetExhaustionPolicy::Suspend);
         let lease = guard.admit_for_request(&request()).unwrap().lease;
+
+        let generated = runtime
+            .block_on(client.generate(request(), &lease))
+            .unwrap();
+        assert_eq!(generated, response());
+        assert_eq!(host_budget.read().used_units, 5);
+        assert_eq!(host_budget.read().reserved_units, 0);
+
         let mut stream = client.stream(request(), &lease).unwrap();
         let mut events = Vec::new();
         while let Some(event) = runtime.block_on(stream.next()) {
             events.push(event.unwrap());
         }
-        events.len()
+        assert_eq!(events.len(), 4);
+        assert!(matches!(
+            events.last(),
+            Some(LlmStreamEvent::Done { usage, .. }) if usage == &response().usage
+        ));
+        assert_eq!(host_budget.read().used_units, 10);
+        assert_eq!(host_budget.read().reserved_units, 0);
+
+        for (index, name) in ["fail", "filtered", "empty", "unsupported"]
+            .into_iter()
+            .enumerate()
+        {
+            let mut bad = request();
+            bad.model = ModelId::new(format!("own/{name}@1")).unwrap();
+            let expected = backend_error(&bad.model).unwrap();
+            assert_eq!(
+                runtime.block_on(client.generate(bad, &lease)),
+                Err(expected.into())
+            );
+            assert_eq!(host_budget.read().used_units, 20 + 10 * index as u64);
+            assert_eq!(host_budget.read().reserved_units, 0);
+        }
+
+        let mut bad = request();
+        bad.model = ModelId::new("own/fail@1").unwrap();
+        let mut failed = client.stream(bad, &lease).unwrap();
+        assert_eq!(
+            runtime.block_on(failed.next()),
+            Some(Err(LlmError::Fatal(FatalLlmError::Auth)))
+        );
+        guard.abort(&lease).unwrap();
     })
     .await
     .unwrap();
-    assert_eq!(events, 4);
+    // A synchronous stream-start failure never starts provider work, so the
+    // server releases its reservation rather than charging the host.
+    for _ in 0..100 {
+        if budget.read().reserved_units == 0 {
+            break;
+        }
+        tokio::task::yield_now().await;
+    }
+    assert_eq!(budget.read().used_units, 50);
+    assert_eq!(budget.read().reserved_units, 0);
+    serving.abort();
 }
 
 #[tokio::test]

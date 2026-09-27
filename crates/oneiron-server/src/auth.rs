@@ -289,6 +289,7 @@ impl CoreAuth {
         })
     }
 
+    #[cfg(test)]
     pub(crate) fn from_oauth_relay(subject: String, scopes: BTreeSet<CoreScope>) -> Self {
         Self {
             principal: format!("oauth-relay:{subject}"),
@@ -538,13 +539,7 @@ fn bearer_auth(
     config: &SyncServerConfig,
     revoked: &dyn RevokedTokenJtis,
 ) -> Result<CoreAuth, ApiError> {
-    let relay_configured = config.oauth_issuer.is_some()
-        && config.oauth_jwks_uri.is_some()
-        && config.oauth_resource_indicator.is_some();
     let Some(issuer_key) = config.auth_secret.as_ref() else {
-        if relay_configured && !token.starts_with(CORE_TOKEN_V2_PREFIX) {
-            return crate::oauth_relay::verify_oauth_relay_token(token, config);
-        }
         if config.allow_unauthenticated {
             // No secret exists to verify against, so the MAC segment is
             // accepted unverified — but the v2 framing is still required, so
@@ -563,13 +558,6 @@ fn bearer_auth(
         return Err(ApiError::unauthorized());
     }
 
-    if config.oauth_issuer.is_some()
-        && config.oauth_jwks_uri.is_some()
-        && config.oauth_resource_indicator.is_some()
-        && !token.starts_with(CORE_TOKEN_V2_PREFIX)
-    {
-        return crate::oauth_relay::verify_oauth_relay_token(token, config);
-    }
     // String-claim tokens have neither a log mint nor a binding-key proof.
     Err(ApiError::unauthorized())
 }

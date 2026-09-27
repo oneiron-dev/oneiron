@@ -1,6 +1,8 @@
 //! ARCH-0028 host-trusted OAuth token-client verification half (ONE-1382 leg 1).
 //! This module deliberately does not redesign the OAuth surface or add authority types.
-use crate::auth::{CoreAuth, CoreScope};
+#[cfg(test)]
+use crate::auth::CoreAuth;
+use crate::auth::CoreScope;
 use crate::config::SyncServerConfig;
 use crate::error::ApiError;
 use jsonwebtoken::{Algorithm, DecodingKey, Validation, decode, decode_header};
@@ -52,7 +54,7 @@ fn cache() -> &'static Mutex<HashMap<String, CachedJwks>> {
     JWKS_CACHE.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
-fn unauthorized() -> Result<CoreAuth, ApiError> {
+fn unauthorized<T>() -> Result<T, ApiError> {
     Err(ApiError::unauthorized())
 }
 
@@ -199,10 +201,47 @@ pub(crate) fn warm_if_configured(config: &SyncServerConfig) -> Result<(), ApiErr
     }
 }
 
+/// One exchange binds the verified OAuth subject to the caller's throwaway
+/// signing key. The raw JWT only reaches the pairing door, never data routes.
+pub(crate) fn oauth_binding_transcript(
+    token: &str,
+    binding_key: &[u8; 32],
+    nonce: &str,
+) -> Result<Vec<u8>, ApiError> {
+    if nonce.len() != 32 || !nonce.bytes().all(|b| b.is_ascii_hexdigit()) {
+        return Err(ApiError::unauthorized());
+    }
+    let mut transcript = b"oneiron/oauth-slip-pair/v1".to_vec();
+    transcript.extend_from_slice(blake3::hash(token.as_bytes()).as_bytes());
+    transcript.extend_from_slice(binding_key);
+    transcript.extend_from_slice(nonce.as_bytes());
+    Ok(transcript)
+}
+
+/// Identity and ceiling from a verified OAuth JWT. This is bootstrap input,
+/// never direct HTTP authority; the exchange mints a logged holder-bound slip.
+pub(crate) struct OAuthRelayIdentity {
+    pub(crate) subject: String,
+    pub(crate) scopes: std::collections::BTreeSet<CoreScope>,
+    pub(crate) expires_at: u64,
+}
+
+#[cfg(test)]
 pub(crate) fn verify_oauth_relay_token(
     token: &str,
     config: &SyncServerConfig,
 ) -> Result<CoreAuth, ApiError> {
+    let identity = verify_oauth_relay_identity(token, config)?;
+    Ok(CoreAuth::from_oauth_relay(
+        identity.subject,
+        identity.scopes,
+    ))
+}
+
+pub(crate) fn verify_oauth_relay_identity(
+    token: &str,
+    config: &SyncServerConfig,
+) -> Result<OAuthRelayIdentity, ApiError> {
     let issuer = config
         .oauth_issuer
         .as_deref()
@@ -272,7 +311,11 @@ pub(crate) fn verify_oauth_relay_token(
         }
         None => data.claims.sub,
     };
-    Ok(CoreAuth::from_oauth_relay(subject, scopes))
+    Ok(OAuthRelayIdentity {
+        subject,
+        scopes,
+        expires_at: u64::try_from(data.claims.exp).map_err(|_| ApiError::unauthorized())?,
+    })
 }
 
 #[cfg(test)]
@@ -301,13 +344,16 @@ mod tests {
         }
     }
     fn token(iss: &str, aud: &str, scope: &str) -> String {
+        token_for_subject(iss, aud, scope, "relay-subject")
+    }
+    fn token_for_subject(iss: &str, aud: &str, scope: &str, subject: &str) -> String {
         let mut h = Header::new(Algorithm::RS256);
         h.kid = Some("test-kid".into());
         encode(
             &h,
             &OAuthRelayClaims {
                 act: None,
-                sub: "relay-subject".into(),
+                sub: subject.into(),
                 aud: aud.into(),
                 scope: scope.into(),
                 iss: iss.into(),
@@ -370,17 +416,26 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn signed_relay_can_only_create_proposed_claims_through_the_http_door() {
+    async fn signed_jwt_is_bootstrap_only_even_in_hosted_scope() {
         use axum::{
             body::{Body, to_bytes},
             http::{Request, StatusCode},
         };
+        use ed25519_dalek::{Signer, SigningKey};
+        use oneiron::authority::CapabilitySlip;
         use tower::ServiceExt;
-        let cfg = config();
+        let mut cfg = config();
+        cfg.lease_vault_id = 7;
         cache_jwks(&cfg);
         let dir = tempfile::tempdir().unwrap();
-        let vault =
-            Arc::new(oneiron::Vault::open(dir.path(), oneiron::VaultConfig::device()).unwrap());
+        let wall_start = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+        let clock = oneiron::store::ports::ManualClock::new(wall_start);
+        let mut vault_config = oneiron::VaultConfig::device();
+        vault_config.store_clock = clock.bundle();
+        let vault = Arc::new(oneiron::Vault::open(dir.path(), vault_config).unwrap());
         let subject = oneiron::EntityId::now();
         vault
             .put_entity(
@@ -388,79 +443,101 @@ mod tests {
                 oneiron::registry::ENTITY_TYPE_PERSON,
                 oneiron::TimeRange { start: 1, end: 1 },
                 1,
-                b"proposal target",
+                b"oauth actor",
             )
             .unwrap();
-        let server = Arc::new(crate::server::SyncServer::new(vault.clone(), cfg).unwrap());
-        // The relay's transport token is not authority: until the owner mints
-        // its Grant it cannot read the subject, so it cannot propose about it.
-        let mut minted = false;
-        for (granted, scope, path, payload, expected) in [
-            (
-                false,
-                "propose",
-                "/v1/core/propose",
-                serde_json::json!({"subject":subject.to_hex(),"predicate":"profile.name","value":"A"}),
-                StatusCode::FORBIDDEN,
-            ),
-            (
-                true,
-                "read",
-                "/v1/core/propose",
-                serde_json::json!({"subject":subject.to_hex(),"predicate":"profile.name","value":"A"}),
-                StatusCode::FORBIDDEN,
-            ),
-            (
-                true,
-                "propose",
-                "/v1/core/propose",
-                serde_json::json!({"subject":subject.to_hex(),"predicate":"profile.name","value":"A"}),
-                StatusCode::OK,
-            ),
-            (
-                true,
-                "propose",
-                "/v1/core/batch",
-                serde_json::json!({"entities":[]}),
-                StatusCode::FORBIDDEN,
-            ),
-            (
-                true,
-                "propose",
-                "/v1/core/propose",
-                serde_json::json!({"subject":subject.to_hex(),"predicate":"profile.name","value":"A","approval":"auto"}),
-                StatusCode::BAD_REQUEST,
-            ),
-        ] {
-            if granted && !minted {
-                vault
-                    .install_foreign_grant_for_test("oauth-relay:relay-subject")
-                    .unwrap();
-                minted = true;
-            }
-            let jwt = token("https://issuer.example", "https://api.example", scope);
-            let response = crate::api::api_routes(server.clone())
+        let server = Arc::new(crate::server::SyncServer::new(vault, cfg).unwrap());
+        let app = crate::api::api_routes(server.clone());
+        // The recording clock can move ahead of the authority plane's
+        // monotonic observation anchor. OAuth minting must use that anchor,
+        // not the raw recording clock, or this exchange fails as "future".
+        clock.set(wall_start + 120);
+        assert!(server.vault().now_recorded_at() > server.vault().capability_slip_now().unwrap());
+        let jwt = token_for_subject(
+            "https://issuer.example",
+            "https://api.example",
+            "read propose write core:auth",
+            &subject.to_hex(),
+        );
+        let header = format!("Bearer {jwt}");
+        for path in ["/v1/core/conversations", "/api/core/discover"] {
+            let response = app
+                .clone()
                 .oneshot(
                     Request::builder()
-                        .method("POST")
                         .uri(path)
-                        .header(AUTHORIZATION, format!("Bearer {jwt}"))
-                        .header("content-type", "application/json")
-                        .body(Body::from(payload.to_string()))
+                        .header(AUTHORIZATION, &header)
+                        .body(Body::empty())
                         .unwrap(),
                 )
                 .await
                 .unwrap();
-            assert_eq!(response.status(), expected);
-            if expected == StatusCode::OK {
-                let bytes = to_bytes(response.into_body(), 1024 * 1024).await.unwrap();
-                let wire: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
-                let id = oneiron::EntityId::from_hex(wire["id"].as_str().unwrap()).unwrap();
-                let claim = vault.get_claim(&id).unwrap().unwrap();
-                assert_eq!(claim.approval, oneiron::ClaimApprovalStatus::Proposed);
-                assert_eq!(claim.source, Some(oneiron::ClaimSource::ToolOutput));
-            }
+            assert_eq!(response.status(), StatusCode::UNAUTHORIZED, "{path}");
         }
+        // A signed login JWT only reaches this explicit exchange. The holder
+        // proves its chosen throwaway key and receives a logged, capped slip.
+        let holder = SigningKey::from_bytes(&[89; 32]);
+        let key = holder.verifying_key().to_bytes();
+        let hex = |bytes: &[u8]| bytes.iter().map(|b| format!("{b:02x}")).collect::<String>();
+        let mut issued = None;
+        for _ in 0..2 {
+            let nonce = oneiron::EntityId::now().to_hex();
+            let transcript = oauth_binding_transcript(&jwt, &key, &nonce).unwrap();
+            let payload = serde_json::json!({"binding_key":hex(&key), "nonce":nonce,
+                "signature":hex(&holder.sign(&transcript).to_bytes())});
+            let request = Request::builder()
+                .method("POST")
+                .uri("/v1/core/pairing/oauth")
+                .header(AUTHORIZATION, &header)
+                .header("content-type", "application/json")
+                .body(Body::from(payload.to_string()))
+                .unwrap();
+            let response = app.clone().oneshot(request).await.unwrap();
+            assert_eq!(response.status(), StatusCode::OK);
+            let bytes = to_bytes(response.into_body(), 100_000).await.unwrap();
+            let paired: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+            issued = Some(CapabilitySlip::from_token(paired["token"].as_str().unwrap()).unwrap());
+        }
+        let slip = issued.unwrap();
+        assert_eq!(slip.claims.holder_ref, subject.to_hex());
+        assert!(slip.claims.scope.verbs.contains(&"core:read".to_owned()));
+        assert!(slip.claims.scope.verbs.contains(&"core:propose".to_owned()));
+        assert!(!slip.claims.scope.verbs.contains(&"core:write".to_owned()));
+        assert!(slip.claims.expires_at <= server.vault().now_recorded_at() + 3600);
+        let token = slip.to_token().unwrap();
+        let bearer = format!("Bearer {token}");
+        let no_proof = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/v1/core/conversations")
+                    .header(AUTHORIZATION, &bearer)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(no_proof.status(), StatusCode::UNAUTHORIZED);
+        let timestamp = server.vault().capability_slip_now().unwrap();
+        let request_nonce = oneiron::EntityId::now().to_hex();
+        let challenge = format!("oneiron-request:{timestamp}:{request_nonce}");
+        let signature = hex(&holder
+            .sign(&slip.binding_transcript(challenge.as_bytes()).unwrap())
+            .to_bytes());
+        let proof =
+            serde_json::json!({"timestamp":timestamp,"nonce":request_nonce,"signature":signature});
+        let accepted = app
+            .oneshot(
+                Request::builder()
+                    .uri("/v1/core/conversations")
+                    .header(AUTHORIZATION, &bearer)
+                    .header("x-oneiron-binding", proof.to_string())
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(accepted.status(), StatusCode::OK);
     }
 
     #[test]

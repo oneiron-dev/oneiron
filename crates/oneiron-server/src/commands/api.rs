@@ -444,7 +444,7 @@ fn percent_encoded(value: &str) -> String {
 /// answer rather than stripping the prefix, because a caller who typed one
 /// meant something, and quietly sending the request somewhere else is the
 /// failure mode this whole module exists to avoid.
-fn normalized_base(base_url: &str) -> anyhow::Result<String> {
+pub(super) fn normalized_base(base_url: &str) -> anyhow::Result<String> {
     let base = base_url.trim_end_matches('/');
     anyhow::ensure!(
         base.starts_with("http://") || base.starts_with("https://"),
