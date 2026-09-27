@@ -304,3 +304,36 @@ fn a_claim_written_with_no_mask_carries_the_vault_default_facet() -> crate::Resu
     );
     Ok(())
 }
+
+#[test]
+fn candidate_project_stamp_ignores_legacy_corpus_entry() {
+    let project = EntityId::from_bytes([0x61; 16]).expect("project");
+    let candidate = ClaimCandidate::new(
+        "test.project_axis",
+        ClaimSubject::Entity(actor().entity_ref()),
+        Value::from("fact"),
+        1.0,
+    )
+    .with_scope(Value::Map(vec![
+        (Value::from("corpus_id"), Value::Binary([0x62; 16].to_vec())),
+        (
+            Value::from("scopeProjectId"),
+            Value::Binary(project.as_bytes().to_vec()),
+        ),
+    ]));
+    let envelope = WriteEnvelope::new(
+        actor(),
+        ClaimSource::Observed,
+        provenance(),
+        ClaimApprovalStatus::Proposed,
+    );
+    let body = candidate.into_claim_body(&envelope, actor().entity_ref());
+    assert_eq!(body.scope_project, project);
+    assert!(crate::corpus::CorpusScope::Corpus(project).matches(body.scope_project));
+    assert!(
+        !crate::corpus::CorpusScope::Corpus(
+            EntityId::from_bytes([0x62; 16]).expect("legacy entry")
+        )
+        .matches(body.scope_project)
+    );
+}

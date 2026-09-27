@@ -184,6 +184,44 @@ fn legacy_claim_scope_sweep_stamps_explicit_base_once() -> Result<()> {
     Ok(())
 }
 #[test]
+fn legacy_corpus_entry_restamps_onto_project_axis() -> Result<()> {
+    let project = entity(79);
+    let bytes = encode_claim_body(&body())?;
+    let Value::Map(mut entries) = rmpv::decode::read_value(&mut bytes.as_slice()).expect("fixture")
+    else {
+        panic!("map")
+    };
+    entries.retain(|(k, _)| {
+        ![
+            "worldId",
+            "scopeFacetId",
+            "scopeRelationshipId",
+            "scopeProjectId",
+            "scopeVersion",
+        ]
+        .contains(&k.as_str().expect("fixture"))
+    });
+    entries.push((
+        Value::from("scope"),
+        Value::Map(vec![(
+            Value::from("corpus_id"),
+            Value::Binary(project.as_bytes().to_vec()),
+        )]),
+    ));
+    let upgraded = upgrade_pre_scope_body(&encode(&Value::Map(entries))?)?;
+    let decoded = decode_claim_body(&upgraded, true)?;
+    assert_eq!(decoded.scope_project, project);
+    assert_eq!(
+        decoded.scope,
+        Some(Value::Map(vec![(
+            Value::from("corpus_id"),
+            Value::Binary(project.as_bytes().to_vec()),
+        )]))
+    );
+    Ok(())
+}
+
+#[test]
 fn unstamped_records_are_excluded_from_read_export_delete_and_debug_is_explicit() -> Result<()> {
     let (_dir, vault) = vault()?;
     let local = entity(35);

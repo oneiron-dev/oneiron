@@ -99,7 +99,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `contract_oracle` | dir | 6 | m | — | Persisted, deterministic Rust API, schema and command-output contracts |
 | `conversation` | dir | 7 | m | yes | Room bodies, membership windows, session presence and audience visibility |
 | `conversation_dag` | dir | 15 | m | yes | Conversation DAG topology, local HEAD state and exact scope resolution |
-| `corpus` | file+dir | 2 | s | — | Corpus scope for CLAIM records (ONE-1914): the AUDIENCE a claim belongs to, carried as a typed nested entry… |
+| `corpus` | file+dir | 2 | s | — | Project-axis selection for corpus queries |
 | `counterparty_contact` | dir | 7 | m | yes | Counterparty contact record substrate (OF-347 CID-7) |
 | `credential_door` | dir | 11 | m | — | Checkout receive-pack admission, catastrophe policy, and secret-shaped diff scanning |
 | `critic` | file+dir | 7 | m | — | Multi-critic review node primitives |
