@@ -142,6 +142,8 @@ impl Memory<'_> {
                     actor: actor.to_hex(),
                 });
             }
+            let policy_surface =
+                super::ask_policy::confirmation_surface(self.vault(), txn, &effective, &holders)?;
             let group = AskGroup {
                 base_policy_version: 1,
                 owner: self.actor().to_hex(),
@@ -154,6 +156,7 @@ impl Memory<'_> {
                 no_live_route,
                 created_at: now,
                 guest_grants,
+                policy_surface,
             };
             ask_record::put_group(self.vault(), txn, group_ref, &group)?;
             for (member, (entry, _)) in group.members.iter().zip(&validated) {
@@ -808,7 +811,7 @@ pub(crate) fn settle_waiting_asks(vault: &crate::Vault) -> crate::Result<()> {
     for group in groups {
         super::ask_settlement::settle_ask_if_due(vault, group)?;
     }
-    vault.retry_pending_ask_soft_confirms(64)?;
+    vault.retry_pending_ask_soft_confirms(usize::MAX)?;
     Ok(())
 }
 

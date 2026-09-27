@@ -173,6 +173,11 @@ impl Vault {
             return Ok(0);
         }
         let txn = self.store.env.read_txn()?;
+        let resolved = crate::gate::resolve_policy_manifest(&self.store, &txn)?;
+        let limit = resolved
+            .ask_operational_policy()
+            .ok_or_else(super::ask_record::invalid)?
+            .retry_limit(limit);
         let cursor = self
             .store
             .vault_meta

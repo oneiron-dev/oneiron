@@ -123,3 +123,59 @@ pub(crate) fn guard_ask_fact_put(
     }
     Ok(())
 }
+
+pub(in crate::task_verb) fn validate_notice_companion(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    group_ref: EntityId,
+    group: &AskGroup,
+    notice: &crate::task_verb::TaskAskSoftConfirmNotice,
+) -> Result<()> {
+    let fact = read_answer(vault, txn, notice.companion_answer_ref)?.ok_or_else(invalid)?;
+    let crate::task_verb::TaskAskTarget::Guests(guests) =
+        group.effective.who.as_ref().ok_or_else(invalid)?
+    else {
+        return Err(invalid());
+    };
+    let guest = guests.get(&notice.person_ref).ok_or_else(invalid)?;
+    let member = group
+        .members
+        .iter()
+        .find(|m| m.actor == notice.person_ref.to_hex())
+        .ok_or_else(invalid)?;
+    if fact.group != group_ref
+        || fact.source != TaskAskSource::Companion
+        || fact.actor != guest.companion_ref
+        || fact.task != entity(&member.task)?
+        || fact.word.companion_for != Some(notice.person_ref)
+        || fact.word.option != notice.option
+    {
+        return Err(invalid());
+    }
+    Ok(())
+}
+
+pub(super) fn validate_word(group: &AskGroup, word: &TaskAskWord) -> Result<()> {
+    if word.provenance_refs.len() > 64
+        || (word.companion_for.is_some() && word.inform_for.is_some())
+    {
+        return Err(invalid());
+    }
+    if word.confirmation.is_some() && (word.inform_for.is_some() || word.companion_for.is_some()) {
+        return Err(invalid());
+    }
+    if match &word.option {
+        Some(option) => !group.effective.what.options.contains_key(option),
+        None => {
+            !group.effective.what.options.is_empty()
+                && !word.confirmation.as_ref().is_some_and(|response| {
+                    response.decision == crate::task_verb::TaskAskConfirmationDecision::Reject
+                })
+        }
+    } {
+        return Err(Error::Record(RecordError::InvalidTaskBody(
+            "tasks.ask.option",
+        )));
+    }
+    Ok(())
+}

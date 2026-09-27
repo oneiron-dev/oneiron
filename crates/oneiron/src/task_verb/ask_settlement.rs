@@ -36,6 +36,7 @@ pub(super) fn read_result(
                 || result.settlement.effective != group.effective
                 || result.settlement.electorate != who
                 || result.settlement.question_digest != group.question_digest
+                || result.settlement.policy_surface != group.policy_surface
             {
                 return Err(ask_record::invalid());
             }
@@ -136,7 +137,14 @@ pub(super) fn settle_in(
     } else {
         decision
     };
-    let fallback = fallback(&group.effective, &coverage, &decision, stale, &evidence);
+    let fallback = fallback(
+        &group.effective,
+        &coverage,
+        &decision,
+        stale,
+        &evidence,
+        group.policy_surface,
+    );
     let reference = settlement_id(id)?;
     let cutoff_order = evidence.iter().map(|entry| entry.order).max().unwrap_or(0);
     let mut result = TaskAskResult {
@@ -159,6 +167,7 @@ pub(super) fn settle_in(
             question_digest: group.question_digest,
             unmet_sources,
             outcome_answer_ref: None,
+            policy_surface: group.policy_surface,
         },
     };
     if result.coverage.met
@@ -409,7 +418,13 @@ fn reduce(
     let decision = match &spec.decide {
         None => TaskAskDecision::Collected,
         Some(TaskAskDecide::First) => words.first().map_or(TaskAskDecision::Unknown, |entry| {
-            TaskAskDecision::First(entry.answer)
+            if entry.word.confirmation.as_ref().is_some_and(|response| {
+                response.decision == super::TaskAskConfirmationDecision::Reject
+            }) {
+                TaskAskDecision::No
+            } else {
+                TaskAskDecision::First(entry.answer)
+            }
         }),
         // A tied opposing electorate is surfaced, never broken by arrival order.
         Some(TaskAskDecide::All { answer, .. }) => {
@@ -462,6 +477,7 @@ fn fallback(
     decision: &TaskAskDecision,
     stale: bool,
     evidence: &[TaskAskEvidence],
+    policy_surface: TaskAskSurface,
 ) -> Option<TaskAskFallback> {
     if stale {
         return Some(TaskAskFallback {
@@ -481,11 +497,23 @@ fn fallback(
     {
         return Some(TaskAskFallback {
             branch: spec.default,
-            surface: spec
-                .class
-                .as_ref()
-                .and_then(|class| class.soft_confirm_surface)
-                .unwrap_or(spec.on_disagree.surface),
+            surface: policy_surface,
+        });
+    }
+    // An explicit human rejection is a veto, not silence. It never inherits
+    // a permissive deadline/disagreement branch from the original question.
+    if spec.what.commitment
+        && evidence.iter().any(|entry| {
+            entry.source == TaskAskSource::Human
+                && entry.reason == TaskAskEvidenceReason::Counted
+                && entry.word.confirmation.as_ref().is_some_and(|response| {
+                    response.decision == super::TaskAskConfirmationDecision::Reject
+                })
+        })
+    {
+        return Some(TaskAskFallback {
+            branch: TaskAskDefault::Hold,
+            surface: policy_surface,
         });
     }
     let choices: BTreeSet<_> = evidence
@@ -594,6 +622,7 @@ pub(super) fn validate_result(id: EntityId, result: &TaskAskResult) -> Result<()
             &decision,
             stale,
             &evidence,
+            settlement.policy_surface,
         ) != result.fallback
     {
         return Err(ask_record::invalid());

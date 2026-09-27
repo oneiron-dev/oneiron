@@ -89,3 +89,90 @@ pub(super) fn put_notice(
     )?;
     super::ask_soft_confirm_delivery::register(vault, txn, group, person)
 }
+
+/// Validate a human's typed response against the immutable effective notice.
+/// The original ask option remains the chosen slot, not an invented `no` id.
+pub(super) fn validate_confirmation(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    group: EntityId,
+    ask: &super::ask_record::AskGroup,
+    person: EntityId,
+    word: &TaskAskWord,
+) -> Result<()> {
+    let response = word
+        .confirmation
+        .as_ref()
+        .ok_or_else(super::ask_record::invalid)?;
+    let id = super::ask_record::derived_id(
+        b"oneiron.tasks.ask.soft_confirm.v1",
+        group,
+        person.as_bytes(),
+    )?;
+    let notice: super::TaskAskSoftConfirmNotice =
+        super::ask_record::read(vault, txn, id, SOFT_CONFIRM)?
+            .ok_or_else(super::ask_record::invalid)?;
+    if !ask.effective.what.commitment
+        || notice.group_ref != group
+        || notice.person_ref != person
+        || notice.revision != response.revision
+        || notice.revision != ask.effective.what.revision
+        || notice.companion_answer_ref != response.companion_answer_ref
+        || notice.deadline != ask.effective.until.ok_or_else(super::ask_record::invalid)?
+        || match response.decision {
+            super::TaskAskConfirmationDecision::Approve => word.option != notice.option,
+            super::TaskAskConfirmationDecision::Reject => word.option.is_some(),
+        }
+    {
+        return Err(super::ask_record::invalid());
+    }
+    super::ask_record::validate_notice_companion(vault, txn, group, ask, &notice)
+}
+
+/// Check the frozen send against the live ask at admission AND at the last
+/// transport boundary. Only the reserved dedupe namespace can address a
+/// confirmation; ordinary outbound intents retain their existing semantics.
+pub(crate) fn validate_dispatch(
+    vault: &Vault,
+    request: &crate::outbound::OutboundDispatchRequest,
+) -> Result<bool> {
+    let Some(idempotency) = request.intent.idempotency_key.as_deref() else {
+        return Ok(true);
+    };
+    let Some(ids) = idempotency.strip_prefix("ask-soft-confirm/") else {
+        return Ok(true);
+    };
+    let mut parts = ids.split('/');
+    let (Some(group), Some(person), None) = (parts.next(), parts.next(), parts.next()) else {
+        return Ok(false);
+    };
+    let (Ok(group), Ok(person)) = (EntityId::from_hex(group), EntityId::from_hex(person)) else {
+        return Ok(false);
+    };
+    let expected = super::ask_record::derived_id(
+        b"oneiron.tasks.ask.soft_confirm.v1",
+        group,
+        person.as_bytes(),
+    )?;
+    if request.intent.content_ref.as_deref() != Some(expected.to_hex().as_str()) {
+        return Ok(false);
+    }
+    let txn = vault.store.env.read_txn()?;
+    let Some(notice) = notice(vault, &txn, group, person)? else {
+        return Ok(false);
+    };
+    let ask = super::ask_record::read_group(vault, &txn, group)?
+        .ok_or_else(super::ask_record::invalid)?;
+    let super::TaskAskTarget::Guests(guests) =
+        ask.effective.who.ok_or_else(super::ask_record::invalid)?
+    else {
+        return Ok(false);
+    };
+    let companion = guests
+        .get(&person)
+        .ok_or_else(super::ask_record::invalid)?
+        .companion_ref;
+    Ok(request.intent.trigger_ref == notice.task_ref.to_hex()
+        && request.intent.actor == companion.to_hex()
+        && request.actor.actor_entity_ref == Some(companion))
+}

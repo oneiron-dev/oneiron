@@ -11,6 +11,8 @@ use crate::ports::EdgeStoreRead;
 use crate::registry::ENTITY_TYPE_TASK;
 use crate::{EntityId, Vault};
 pub(crate) use guard::guard_ask_fact_put;
+pub(super) use guard::validate_notice_companion;
+use guard::validate_word;
 use rmpv::Value;
 use serde::{Deserialize, Serialize};
 
@@ -41,6 +43,7 @@ pub(super) struct AskGroup {
     /// Disjoint FEDERATION_GRANT entity IDs, keyed by the guest's person.
     #[serde(default)]
     pub guest_grants: std::collections::BTreeMap<EntityId, EntityId>,
+    pub policy_surface: super::TaskAskSurface,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -369,6 +372,14 @@ pub(super) fn evidence_in(
             return Err(invalid());
         }
         validate_word(group, &fact.word).map_err(|_| Error::CorruptedIndex("tasks.ask.word"))?;
+        if fact.word.confirmation.is_some() {
+            if fact.source != TaskAskSource::Human {
+                return Err(invalid());
+            }
+            super::ask_soft_confirm::validate_confirmation(
+                vault, txn, id, group, fact.actor, &fact.word,
+            )?;
+        }
         if fact.source == TaskAskSource::Companion {
             super::ask_guest::validate_companion_fact(
                 vault, txn, id, group, fact.actor, &fact.word,
@@ -444,23 +455,6 @@ pub(super) fn person_evidence_in(
     Ok(answers)
 }
 
-fn validate_word(group: &AskGroup, word: &TaskAskWord) -> Result<()> {
-    if word.provenance_refs.len() > 64
-        || (word.companion_for.is_some() && word.inform_for.is_some())
-    {
-        return Err(invalid());
-    }
-    if match &word.option {
-        Some(option) => !group.effective.what.options.contains_key(option),
-        None => !group.effective.what.options.is_empty(),
-    } {
-        return Err(Error::Record(RecordError::InvalidTaskBody(
-            "tasks.ask.option",
-        )));
-    }
-    Ok(())
-}
-
 pub(super) fn admit_word(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
@@ -496,6 +490,12 @@ pub(super) fn admit_word(
     } else {
         TaskAskSource::Executor
     };
+    if word.confirmation.is_some() {
+        if source != TaskAskSource::Human {
+            return Err(invalid());
+        }
+        super::ask_soft_confirm::validate_confirmation(vault, txn, id, group, actor, word)?;
+    }
     let member = group
         .members
         .iter()
@@ -651,6 +651,7 @@ pub(super) fn replay_answer_option_matches(
         option: option.cloned(),
         inform_for: None,
         companion_for: None,
+        confirmation: None,
         provenance_refs: evidence_refs.iter().copied().collect(),
     };
     validate_word(&group, &word)?;
@@ -707,6 +708,7 @@ pub(super) fn record_answer(
                 option: option.cloned(),
                 inform_for: None,
                 companion_for: None,
+                confirmation: None,
                 provenance_refs: evidence_refs.iter().copied().collect(),
             },
             now,

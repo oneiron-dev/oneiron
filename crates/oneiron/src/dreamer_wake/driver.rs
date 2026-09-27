@@ -257,7 +257,7 @@ impl<'a> DreamerWakeDriver<'a> {
         // attempt is admitted and outside the budget/lease loop entirely.
         crate::llm::resume_peer_result_steps(self.vault, input.now.saturating_mul(1_000))?;
         crate::human_task::run_human_followups_on_wake(self.vault, input.now)?;
-        self.vault.retry_pending_ask_soft_confirms(64)?;
+        self.vault.retry_pending_ask_soft_confirms(usize::MAX)?;
 
         let mut report = WakePassReport {
             admitted: 0,

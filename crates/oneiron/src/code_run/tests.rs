@@ -3121,6 +3121,7 @@ fn coordination_effects_and_outcomes_round_trip_through_replay_wire() {
             question_digest: [0; 32],
             unmet_sources: Default::default(),
             outcome_answer_ref: None,
+            policy_surface: crate::task_verb::TaskAskSurface::Card,
         },
     };
     let outcomes = vec![

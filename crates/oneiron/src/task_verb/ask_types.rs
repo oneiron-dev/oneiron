@@ -579,6 +579,9 @@ pub struct TaskAskWord {
     /// An attributed companion answer for this person, never a human word.
     #[serde(default)]
     pub companion_for: Option<EntityId>,
+    /// Typed approve/reject response bound to the companion answer and ask revision.
+    #[serde(default)]
+    pub confirmation: Option<super::TaskAskConfirmation>,
     #[serde(default)]
     pub provenance_refs: BTreeSet<ConsultPayloadRef>,
 }
@@ -589,6 +592,7 @@ impl TaskAskWord {
             option: None,
             inform_for: None,
             companion_for: None,
+            confirmation: None,
             provenance_refs: BTreeSet::new(),
         }
     }
@@ -706,6 +710,7 @@ pub struct TaskAskSettlement {
     pub question_digest: [u8; 32],
     pub unmet_sources: BTreeSet<ConsultPayloadRef>,
     pub outcome_answer_ref: Option<EntityId>,
+    pub policy_surface: TaskAskSurface,
 }
 /// Ask settlement cannot grant or deny an external effect. Only the separate
 /// effect gate evaluates that authority against its own live inputs.
@@ -729,31 +734,6 @@ pub struct TaskAskResult {
 pub enum TaskAskStatus {
     Pending { hold: Option<TaskAskHoldReason> },
     Settled(Box<TaskAskResult>),
-}
-
-/// One durable, idempotent approve-or-no delivery instruction. A notice is
-/// an ask revision fact, not permission to book or commit anything.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct TaskAskSoftConfirmNotice {
-    pub group_ref: EntityId,
-    pub revision: u64,
-    pub person_ref: EntityId,
-    pub companion_answer_ref: EntityId,
-    pub option: Option<TaskAskOptionId>,
-    pub task_ref: EntityId,
-    pub deadline: u64,
-}
-
-/// Delivery is separate from approval; a pending state never authorizes an effect.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum TaskAskSoftConfirmDelivery {
-    PendingRoute,
-    PendingGate,
-    Failed,
-    Scheduled,
-    Closed,
 }
 
 /// This is a signal contract, not a blocking read or a polling loop.

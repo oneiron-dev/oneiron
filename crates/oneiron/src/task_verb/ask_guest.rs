@@ -27,14 +27,15 @@ pub(super) fn check_disclosure(
     let refs: BTreeSet<_> = std::iter::once(question.reference.entity_ref())
         .chain(question.context_refs.iter().map(|r| r.entity_ref()))
         .collect();
-    // The bound class can narrow the operational maximum; the codec enforces
-    // its independent wire-safety ceiling at mint and decode.
-    if spec
-        .class
-        .as_ref()
-        .and_then(|class| class.guest_fact_limit)
-        .is_some_and(|limit| refs.len() > usize::from(limit))
-    {
+    let policy = crate::gate::resolve_policy_manifest(&vault.store, txn)?;
+    let ask_policy = policy.ask_operational_policy().ok_or_else(invalid)?;
+    let cap = ask_policy
+        .guest_limit_for(
+            person,
+            spec.class.as_ref().and_then(|row| row.guest_fact_limit),
+        )
+        .ok_or_else(invalid)?;
+    if refs.len() > cap {
         return Err(invalid());
     }
     if refs.is_empty() || guest.companion_ref == person || guest.companion_ref == asker {
