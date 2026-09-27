@@ -357,6 +357,23 @@ pub(crate) fn default_policy_manifest() -> Vec<u8> {
                 ),
             ]),
         ),
+        // Shipped vault policy, not compiled admission logic. A trusted
+        // manifest may replace or narrow these values; holders remain capped
+        // by the resolved vault row. No lifetime cap on human learning.
+        (
+            Value::from(super::skill_tradeoff_policy::KEY),
+            Value::Array(vec![Value::Map(vec![
+                (Value::from("holder"), Value::from("vault")),
+                (Value::from("max_axes"), Value::from(32_u64)),
+                (Value::from("max_axis_name_bytes"), Value::from(128_u64)),
+                (Value::from("max_authored_rules"), Value::from(128_u64)),
+                (Value::from("max_learned_rules"), Value::Nil),
+                (
+                    Value::from("precedence"),
+                    Value::from("nested_narrowing_holder_override_capped_vault"),
+                ),
+            ])]),
+        ),
         (
             Value::from(POLICY_ON_BUDGET_EXHAUSTED_KEY),
             Value::from("suspend"),

@@ -16916,7 +16916,7 @@
      "path": "src/gate/mod.rs",
      "purpose": "DEC-0005 Gate policy manifest resolver",
      "surface": {
-      "crate-vis": 26,
+      "crate-vis": 27,
       "re-export": 3
      }
     },
@@ -17044,6 +17044,16 @@
      "purpose": "Narrow adapter for the audience-crossing creation of a brief read grant",
      "surface": {
       "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/gate/skill_tradeoff_policy.rs",
+     "purpose": "Vault-resident policy rows for the skill tradeoff ladder",
+     "surface": {
+      "crate-vis": 5
      }
     },
     {
@@ -29540,7 +29550,7 @@
      "path": "src/skill_optimize/gate/admission.rs",
      "purpose": "Admission, its pinned keys, and the record-shape questions both doors ask",
      "surface": {
-      "crate-vis": 9,
+      "crate-vis": 10,
       "fn": 1
      }
     },
@@ -35589,7 +35599,7 @@
      "purpose": "—"
     },
     "gate": {
-     "files": 75,
+     "files": 76,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -36277,7 +36287,7 @@
    },
    "over_bar": 11,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2140,
+   "source_files": 2141,
    "test_files": 731
   },
   "oneiron-android": {

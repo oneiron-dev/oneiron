@@ -2,9 +2,12 @@
 //!
 //! The host supplies held-out axis scores and a Jev verdict; the engine owns
 //! rule order, binding, the pending A/B question, and learned human picks.
+use super::admission::born_on_optimize_road;
 use super::*;
 use crate::consent::AuthenticatedOwner;
 use crate::error::ArtifactError;
+use crate::ports::EntityStoreRead;
+use crate::registry::ENTITY_TYPE_SKILL;
 
 const fn retry(reason: &'static str) -> Error {
     Error::Artifact(ArtifactError::SkillEditGateRetry(reason))
@@ -71,13 +74,7 @@ impl SkillTradeoffGoal {
     fn validate(&self) -> Result<()> {
         if self.version == 0
             || self.axes.is_empty()
-            || self.axes.len() > 32
-            || self
-                .axes
-                .keys()
-                .any(|key| key.trim().is_empty() || key.len() > 128)
-            || self.rules.len() > 128
-            || self.learned.len() > 128
+            || self.axes.keys().any(|key| key.trim().is_empty())
             || self.rules.iter().chain(&self.learned).any(|rule| {
                 rule.gains.is_empty()
                     || rule.losses.is_empty()
@@ -94,6 +91,20 @@ impl SkillTradeoffGoal {
         self.jev_band
             .validate()
             .map_err(|_| invalid("invalid skill tradeoff band"))
+    }
+    fn validate_config(&self, limits: crate::gate::SkillTradeoffLimits) -> Result<()> {
+        self.validate()?;
+        if u64::try_from(self.axes.len()).unwrap_or(u64::MAX) > limits.max_axes
+            || self.axes.keys().any(|name| {
+                u64::try_from(name.len()).unwrap_or(u64::MAX) > limits.max_axis_name_bytes
+            })
+            || u64::try_from(self.rules.len()).unwrap_or(u64::MAX) > limits.max_authored_rules
+        {
+            return Err(invalid(
+                "skill tradeoff goal exceeds resolved policy limits",
+            ));
+        }
+        Ok(())
     }
     fn preference(
         &self,
@@ -200,16 +211,91 @@ fn save<T: Serialize>(vault: &Vault, txn: &mut heed::RwTxn<'_>, key: &[u8], row:
     vault.store.vault_meta.put(txn, key, &bytes)?;
     Ok(())
 }
+/// Resolve a logical skill's goal through the immutable optimizer predecessor
+/// links in stored SKILL bodies. Vault-meta goal rows do not ride sync, but a
+/// replica holding the owner's incumbent goal and the peer's lawful successor
+/// bodies can still resolve the same ruler without trusting a remote verdict.
+/// Read every link in this transaction: no replica-side activation callback is
+/// needed, and a newer owner edit on the predecessor wins over a stale copy.
 pub(super) fn goal_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     skill: &EntityId,
 ) -> Result<Option<SkillTradeoffGoal>> {
-    let goal: Option<SkillTradeoffGoal> = load(vault, txn, &key(GOAL_PREFIX, skill))?;
-    if let Some(ref goal) = goal {
-        goal.validate().map_err(|_| Error::CorruptedIndex(LABEL))?;
+    let mut id = *skill;
+    let mut seen = BTreeSet::new();
+    let mut effective: Option<SkillTradeoffGoal> = None;
+    loop {
+        if !seen.insert(id) {
+            return Err(Error::CorruptedIndex("skill tradeoff lineage cycle"));
+        }
+        if let Some(goal) = load::<SkillTradeoffGoal>(vault, txn, &key(GOAL_PREFIX, &id))? {
+            goal.validate().map_err(|_| Error::CorruptedIndex(LABEL))?;
+            effective = Some(match effective {
+                None => goal,
+                Some(current) => choose_goal(goal, current)?,
+            });
+        }
+        let Some(row) = vault.store.port_entity_record(txn, &id)? else {
+            break;
+        };
+        if row.entity_type != ENTITY_TYPE_SKILL {
+            return Err(Error::CorruptedIndex("skill tradeoff lineage type"));
+        }
+        let record = crate::skill::decode_skill_record(&row.body)?;
+        if !born_on_optimize_road(&record) {
+            break;
+        }
+        let Some(parent_hex) = provenance_str(&record, PROVENANCE_OPTIMIZE_OF_ENTITY_KEY) else {
+            break;
+        };
+        let parent = EntityId::from_hex(&parent_hex)
+            .map_err(|_| Error::CorruptedIndex("skill tradeoff predecessor"))?;
+        let Some(parent_row) = vault.store.port_entity_record(txn, &parent)? else {
+            if effective.is_some() {
+                break;
+            } // local carry survives ancestor purge
+            return Err(Error::CorruptedIndex("skill tradeoff predecessor missing"));
+        };
+        if parent_row.entity_type != ENTITY_TYPE_SKILL {
+            return Err(Error::CorruptedIndex("skill tradeoff predecessor type"));
+        }
+        let predecessor = crate::skill::decode_skill_record(&parent_row.body)?;
+        if predecessor.skill_id != record.skill_id
+            || provenance_str(&record, PROVENANCE_OPTIMIZE_OF_VERSION_KEY).as_deref()
+                != Some(predecessor.version.as_str())
+        {
+            return Err(Error::CorruptedIndex("skill tradeoff predecessor identity"));
+        }
+        id = parent;
     }
-    Ok(goal)
+    Ok(effective)
+}
+
+/// Latest goal version wins. At one version, learned picks extend by prefix;
+/// divergent same-version rows cannot be silently selected by read order.
+fn choose_goal(source: SkillTradeoffGoal, dest: SkillTradeoffGoal) -> Result<SkillTradeoffGoal> {
+    if source == dest || dest.version > source.version {
+        return Ok(dest);
+    }
+    if source.version > dest.version {
+        return Ok(source);
+    }
+    if source.goal_ref != dest.goal_ref
+        || source.responsible != dest.responsible
+        || source.axes != dest.axes
+        || source.rules != dest.rules
+        || source.jev_band != dest.jev_band
+    {
+        return Err(invalid("conflicting same-version skill goals"));
+    }
+    if source.learned.starts_with(&dest.learned) {
+        Ok(source)
+    } else if dest.learned.starts_with(&source.learned) {
+        Ok(dest)
+    } else {
+        Err(invalid("conflicting learned skill picks"))
+    }
 }
 
 /// Carry the exact goal (including learned picks) into an admitted successor.
@@ -251,28 +337,7 @@ pub(crate) fn reconcile_goal_on_supersession_in_txn(
         (None, None) => return Ok(()),
         (None, Some(_)) => return Ok(()),
         (Some(source), None) => source,
-        (Some(source), Some(dest)) if source == dest => return Ok(()),
-        (Some(source), Some(dest)) if source.version > dest.version => source,
-        (Some(source), Some(dest)) if dest.version > source.version => dest,
-        (Some(source), Some(dest)) => {
-            if source.goal_ref != dest.goal_ref
-                || source.responsible != dest.responsible
-                || source.axes != dest.axes
-                || source.rules != dest.rules
-                || source.jev_band != dest.jev_band
-            {
-                return Err(invalid(
-                    "conflicting same-version skill goals at supersession",
-                ));
-            }
-            if source.learned.starts_with(&dest.learned) {
-                source
-            } else if dest.learned.starts_with(&source.learned) {
-                dest
-            } else {
-                return Err(invalid("conflicting learned skill picks at supersession"));
-            }
-        }
+        (Some(source), Some(dest)) => choose_goal(source, dest)?,
     };
     save(vault, txn, &key(GOAL_PREFIX, new), &winning)
 }
@@ -290,6 +355,16 @@ pub(super) fn ask_matches_verdict_in_txn(
         return Ok(false);
     };
     let question = &ask.question;
+    let goal = goal_in_txn(vault, txn, &verdict.skill)?;
+    let limits =
+        crate::gate::skill_tradeoff_limits_in_txn(&vault.store, txn, &question.responsible)?;
+    if goal.as_ref().is_some_and(|goal| {
+        limits
+            .max_learned_rules
+            .is_some_and(|cap| u64::try_from(goal.learned.len()).unwrap_or(u64::MAX) >= cap)
+    }) {
+        return Ok(false);
+    }
     Ok(question.proposal == verdict.proposal
         && question.proposal_digest == verdict.proposal_digest
         && question.target_digest == verdict.target_digest
@@ -312,12 +387,16 @@ pub fn set_skill_tradeoff_goal(
     skill: &EntityId,
     goal: SkillTradeoffGoal,
 ) -> Result<()> {
-    goal.validate()?;
     if goal.responsible != owner.actor() || !goal.learned.is_empty() {
         return Err(invalid("only the responsible human may configure a goal"));
     }
     vault.with_write_txn(|txn| {
         owner.revalidate_in_txn(vault, txn)?;
+        goal.validate_config(crate::gate::skill_tradeoff_limits_in_txn(
+            &vault.store,
+            txn,
+            &owner.actor(),
+        )?)?;
         let previous = goal_in_txn(vault, txn, skill)?;
         if previous
             .as_ref()
@@ -347,9 +426,16 @@ pub fn skill_tradeoff_ask(vault: &Vault, proposal: &EntityId) -> Result<Option<S
     let Some(ask): Option<SkillTradeoffAsk> = load(vault, &txn, &key(ASK_PREFIX, proposal))? else {
         return Ok(None);
     };
-    Ok(goal_in_txn(vault, &txn, &skill)?
+    let goal = goal_in_txn(vault, &txn, &skill)?;
+    let limits =
+        crate::gate::skill_tradeoff_limits_in_txn(&vault.store, &txn, &ask.question.responsible)?;
+    Ok(goal
         .filter(|goal| {
-            goal.goal_ref == ask.question.goal_ref && goal.version == ask.question.goal_version
+            goal.goal_ref == ask.question.goal_ref
+                && goal.version == ask.question.goal_version
+                && limits
+                    .max_learned_rules
+                    .is_none_or(|cap| u64::try_from(goal.learned.len()).unwrap_or(u64::MAX) < cap)
         })
         .map(|_| ask))
 }
@@ -402,8 +488,14 @@ pub fn settle_skill_tradeoff_ask(
         if goal.preference(&question.gains, &question.losses).is_some() {
             return Err(invalid("tradeoff already has a preference"));
         }
-        if goal.learned.len() >= 128 {
-            return Err(invalid("tradeoff preference limit reached"));
+        let limits = crate::gate::skill_tradeoff_limits_in_txn(&vault.store, txn, &owner.actor())?;
+        if limits
+            .max_learned_rules
+            .is_some_and(|cap| u64::try_from(goal.learned.len()).unwrap_or(u64::MAX) >= cap)
+        {
+            return Err(invalid(
+                "tradeoff learning capacity exhausted; revise policy before another ask",
+            ));
         }
         goal.learned.push(TradeoffRule {
             gains: question.gains.clone(),
@@ -520,6 +612,19 @@ pub(super) fn plan(
     }
     // A body, held-out outcome or goal may have moved since an older ask.
     // Only an exact match may skip Jev on re-delivery.
+    // A policy cap is admission to the ASK, not a trap sprung only when the
+    // person answers. An exhausted class has no pending question to display.
+    let txn = vault.store.env.read_txn()?;
+    let limits = crate::gate::skill_tradeoff_limits_in_txn(&vault.store, &txn, &goal.responsible)?;
+    if limits
+        .max_learned_rules
+        .is_some_and(|cap| u64::try_from(goal.learned.len()).unwrap_or(u64::MAX) >= cap)
+    {
+        return Err(invalid(
+            "tradeoff learning capacity exhausted; revise policy before another ask",
+        ));
+    }
+    drop(txn);
     if let Some(prior) = skill_tradeoff_ask(vault, proposal)?
         && prior.question == question
     {

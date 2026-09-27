@@ -502,7 +502,7 @@ pub(crate) fn check_optimizer_admission_in_txn(
 // ---------------------------------------------------------------------------
 
 /// True when this record's provenance says ONE-1448's job drafted it.
-fn born_on_optimize_road(record: &SkillRecord) -> bool {
+pub(super) fn born_on_optimize_road(record: &SkillRecord) -> bool {
     provenance_str(record, PROVENANCE_BIRTH_KEY).as_deref() == Some(SKILL_OPTIMIZE_BIRTH_PATH)
 }
 

@@ -103,6 +103,9 @@ pub(crate) fn resolve_policy_manifest(
                     &mut resolution.diagnostics.malformed_manifest_seen,
                 );
                 resolution.signatures.extend(decoded.signatures);
+                resolution
+                    .skill_tradeoff_rows
+                    .extend(decoded.skill_tradeoff_rows);
                 if let Some(on_budget_exhausted) = decoded.on_budget_exhausted {
                     match resolution.on_budget_exhausted {
                         None => resolution.on_budget_exhausted = Some(on_budget_exhausted),

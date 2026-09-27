@@ -27,6 +27,7 @@ mod repair;
 mod resolution;
 mod retrieval_filter;
 mod share;
+mod skill_tradeoff_policy;
 mod witness_message;
 
 #[cfg(test)]
@@ -101,6 +102,7 @@ pub(crate) use self::retrieval_filter::{
 pub(crate) use self::share::check_share_create_policy;
 #[cfg(test)]
 pub(crate) use self::share::share_create_effect;
+pub(crate) use self::skill_tradeoff_policy::{SkillTradeoffLimits, skill_tradeoff_limits_in_txn};
 #[cfg(test)]
 pub(crate) use self::witness_message::canonical_witness_message_body_for_test;
 pub(crate) use self::witness_message::{
