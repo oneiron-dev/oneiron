@@ -249,7 +249,12 @@ fn note_raw_import_writer_impersonation_revocation_and_birth_overwrite_are_refus
             .is_err()
     );
     assert_eq!(vault.note_document(note).unwrap(), after);
-    vault.delete_entity(&selectors.grant_id).unwrap();
+    vault
+        .delete_entity_with_options(
+            &selectors.grant_id,
+            crate::deletion::DeleteEntityOptions { purge: true },
+        )
+        .unwrap();
     assert!(
         memory
             .admit_note_operation(
@@ -262,7 +267,9 @@ fn note_raw_import_writer_impersonation_revocation_and_birth_overwrite_are_refus
             .is_err()
     );
     assert_eq!(vault.note_document(note).unwrap(), after);
-    vault.delete_entity(&note).unwrap();
+    vault
+        .delete_entity_with_options(&note, crate::deletion::DeleteEntityOptions { purge: true })
+        .unwrap();
     assert!(handle.text().is_err());
     assert!(handle.edit_text(0, 0, "resurrect").is_err());
     assert!(memory.apply_note_ops(note, &after.frontier, &[]).is_err());
@@ -511,7 +518,11 @@ fn note_receipts_require_coverage_replay_is_idempotent_and_erasure_does_not_rest
             .unwrap()
             .is_empty()
     );
-    a.delete_entity(&selector.grant_id).unwrap();
+    a.delete_entity_with_options(
+        &selector.grant_id,
+        crate::deletion::DeleteEntityOptions { purge: true },
+    )
+    .unwrap();
     assert!(
         a_manager
             .export_document(
@@ -530,7 +541,8 @@ fn note_receipts_require_coverage_replay_is_idempotent_and_erasure_does_not_rest
     );
     let pending = edit(&b, note, 0, 0, "pending ");
     b_manager.documents().submit_note(note, &pending).unwrap();
-    b.delete_entity(&note).unwrap();
+    b.delete_entity_with_options(&note, crate::deletion::DeleteEntityOptions { purge: true })
+        .unwrap();
     assert!(
         b_manager
             .documents()
@@ -877,7 +889,14 @@ mod program {
             })
             .unwrap();
         assert!(vault.get_raw(&note).unwrap().is_none());
-        assert!(vault.delete_entity(&note).unwrap());
+        assert!(
+            vault
+                .delete_entity_with_options(
+                    &note,
+                    crate::deletion::DeleteEntityOptions { purge: true }
+                )
+                .unwrap()
+        );
         assert_erased(&vault, note);
         let bundle = vault.note_proposal(bundle.id).unwrap();
         assert_eq!(
@@ -1121,7 +1140,12 @@ mod program {
             receive(&peer, &stale, &key);
             assert_erased(&peer, note);
             assert!(peer.note_proposal(bundle.id).is_err());
-            source.delete_entity(&note).unwrap();
+            source
+                .delete_entity_with_options(
+                    &note,
+                    crate::deletion::DeleteEntityOptions { purge: true },
+                )
+                .unwrap();
             let scrubbed = LoroDoc::from_snapshot(&send(&source, &doc, &key)).unwrap();
             assert_eq!(scrubbed.get_map("documents").len(), 1); // format tag only
             assert_eq!(scrubbed.get_map("document_heads").len(), 0);
