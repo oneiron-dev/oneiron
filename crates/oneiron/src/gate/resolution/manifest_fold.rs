@@ -16,7 +16,59 @@ use crate::gate::ceiling::{
     DelegationFoldCache, DelegationGrantRecord, PolicyOwnerPolicyRow, check_source_trust,
     fold_delegated_grants,
 };
-use crate::gate::decode::decode_policy_manifest;
+use crate::gate::decode::{DecodedManifestCarrier, decode_manifest_carrier};
+
+/// The seeded, vault-resident creation default and maximum for project depth.
+/// Missing/malformed policy never silently restores a compiled 10.
+pub(crate) fn resolve_project_depth_max(store: &Store, txn: &heed::RoTxn<'_>) -> Result<u8> {
+    let policy = resolve_policy_manifest(store, txn)?;
+    if policy.diagnostics.loaded_manifest_forces_fail_closed() {
+        return Err(Error::InvalidConfig(
+            "project-depth policy manifest is not valid".into(),
+        ));
+    }
+    let (id, expected) = crate::gate::project_depth::seeded_default_carrier()?;
+    let raw = store
+        .entities
+        .get(txn, id.as_bytes())?
+        .ok_or_else(|| Error::InvalidConfig("project-depth seed is missing".into()))?;
+    let header = crate::batch::EntityMetadataHeader::parse(&raw)
+        .ok_or(Error::CorruptedIndex("project-depth seed header"))?;
+    if header.entity_type != ENTITY_TYPE_POLICY_MANIFEST
+        || raw.get(crate::batch::ENTITY_METADATA_HEADER_LEN..) != Some(expected.as_slice())
+    {
+        return Err(Error::CorruptedIndex("project-depth seed body"));
+    }
+    let crate::gate::project_depth::ProjectDepthContribution::Default(default) =
+        crate::gate::project_depth::decode_contribution(&expected)?
+    else {
+        return Err(Error::CorruptedIndex("project-depth seed kind"));
+    };
+    Ok(policy
+        .project_depth_max
+        .unwrap_or(default.maximum)
+        .min(default.maximum))
+}
+
+pub(crate) fn resolve_project_depth_config(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    posture: crate::HostingPrivacyPosture,
+) -> Result<(u8, u8)> {
+    let maximum = resolve_project_depth_max(store, txn)?;
+    let default = crate::gate::project_depth::resolve_creation_default(store, txn, posture)?;
+    if default.disposition != crate::gate::project_depth::ProjectDepthDisposition::Authorized {
+        return Err(Error::InvalidConfig(
+            "project-depth default policy is unresolved".into(),
+        ));
+    }
+    if default.depth > maximum {
+        return Err(Error::InvalidConfig(
+            "project-depth default exceeds vault ceiling".into(),
+        ));
+    }
+    Ok((default.depth, maximum))
+}
 
 pub(crate) fn resolve_policy_manifest(
     store: &Store,
@@ -50,13 +102,26 @@ pub(crate) fn resolve_policy_manifest(
         }
 
         let body = &raw.body;
+        if crate::gate::project_depth::is_project_depth_id(&id)
+            || crate::gate::project_depth::is_project_depth_contribution(body)
+        {
+            match crate::gate::decode::decode_manifest_carrier(body) {
+                Some(crate::gate::decode::DecodedManifestCarrier::ProjectDepth(row)) => {
+                    // Its policy is resolved by the project-scoped causal fold,
+                    // not by a local manifest:trusted sidecar or a global pack.
+                    let _ = row;
+                }
+                _ => resolution.diagnostics.malformed_manifest_seen = true,
+            }
+            continue;
+        }
         if crate::gate::manifest_authenticity::manifest_is_quarantined(store, txn, &id, body)? {
             continue;
         }
         let trusted =
             crate::gate::manifest_authenticity::manifest_is_trusted(store, txn, &id, body)?;
-        match decode_policy_manifest(body) {
-            Some(decoded) => {
+        match decode_manifest_carrier(body) {
+            Some(DecodedManifestCarrier::Pack(decoded)) => {
                 resolution.diagnostics.manifest_count += 1;
                 if !trusted {
                     untrusted_source_rows.push(decoded.source_trust);
@@ -102,6 +167,17 @@ pub(crate) fn resolve_policy_manifest(
                     decoded.owner_policy_output_contract,
                     &mut resolution.diagnostics.malformed_manifest_seen,
                 );
+                for (slot, row) in [
+                    (
+                        &mut resolution.project_depth_default,
+                        decoded.project_depth_default,
+                    ),
+                    (&mut resolution.project_depth_max, decoded.project_depth_max),
+                ] {
+                    if let Some(value) = row {
+                        *slot = Some(slot.map_or(value, |current| current.min(value)));
+                    }
+                }
                 resolution.signatures.extend(decoded.signatures);
                 if let Some(on_budget_exhausted) = decoded.on_budget_exhausted {
                     match resolution.on_budget_exhausted {
@@ -147,6 +223,10 @@ pub(crate) fn resolve_policy_manifest(
                     }
                 }
                 resolution.packs.push(decoded.pack);
+            }
+            Some(DecodedManifestCarrier::ProjectDepth(_)) => {
+                // A project contribution never becomes a global policy pack.
+                continue;
             }
             None => {
                 resolution.diagnostics.malformed_manifest_seen = true;

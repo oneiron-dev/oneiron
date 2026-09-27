@@ -54,12 +54,31 @@ pub(in crate::gate) struct DecodedPolicyManifest {
     pub(in crate::gate) comm_opt_out_posture: Option<CommOptOutPosture>,
     /// The opaque host checker ref (ONE-1296), absent unless the manifest
     /// names one.
+    pub(in crate::gate) project_depth_default: Option<u8>,
+    pub(in crate::gate) project_depth_max: Option<u8>,
     pub(in crate::gate) auto_checker: Option<String>,
     pub(in crate::gate) budget_policy: BudgetPolicyTable,
     pub(in crate::gate) diagnostic_bounds: Option<crate::self_heal::tripwires::TripwireBounds>,
     pub(in crate::gate) unsupported_schema: bool,
     pub(in crate::gate) engine_version_floor: bool,
     pub(in crate::gate) unknown_axis_seen: bool,
+}
+
+/// A policy carrier is either a complete ordinary pack or one immutable
+/// project-scoped signed contribution. Signed rows never inherit a pack's
+/// local-only trusted marker or its unrelated gate defaults.
+pub(in crate::gate) enum DecodedManifestCarrier {
+    Pack(DecodedPolicyManifest),
+    ProjectDepth(crate::gate::project_depth::ProjectDepthContribution),
+}
+
+pub(in crate::gate) fn decode_manifest_carrier(data: &[u8]) -> Option<DecodedManifestCarrier> {
+    if crate::gate::project_depth::is_project_depth_contribution(data) {
+        return crate::gate::project_depth::decode_contribution(data)
+            .ok()
+            .map(DecodedManifestCarrier::ProjectDepth);
+    }
+    decode_policy_manifest(data).map(DecodedManifestCarrier::Pack)
 }
 
 pub(in crate::gate) fn decode_policy_manifest(data: &[u8]) -> Option<DecodedPolicyManifest> {
@@ -101,6 +120,8 @@ pub(in crate::gate) fn decode_policy_manifest(data: &[u8]) -> Option<DecodedPoli
                 | POLICY_AUTO_CHECKER_KEY
                 | POLICY_BUDGET_POLICY_KEY
                 | "diagnostic_bounds"
+                | "project_depth_default"
+                | "project_depth_max"
         ) {
             return None;
         }
@@ -230,6 +251,26 @@ pub(in crate::gate) fn decode_policy_manifest(data: &[u8]) -> Option<DecodedPoli
         }
     };
 
+    let project_depth_default = match single_map_value(&entries, "project_depth_default") {
+        MapValue::Missing => None,
+        MapValue::Duplicate => return None,
+        MapValue::Present(value) => Some(u8::try_from(value.as_u64()?).ok()?),
+    };
+    let project_depth_max = match single_map_value(&entries, "project_depth_max") {
+        MapValue::Missing => None,
+        MapValue::Duplicate => return None,
+        MapValue::Present(value) => Some(u8::try_from(value.as_u64()?).ok()?),
+    };
+    if project_depth_default.is_some_and(|depth| {
+        usize::from(depth) > crate::context_projection::CONTEXT_PROJECTION_MAX_ANCESTORS
+    }) || project_depth_max.is_some_and(|depth| {
+        usize::from(depth) > crate::context_projection::CONTEXT_PROJECTION_MAX_ANCESTORS
+    }) || project_depth_default
+        .zip(project_depth_max)
+        .is_some_and(|(start, max)| start > max)
+    {
+        return None;
+    }
     let unknown_axis_seen =
         defaults.unknown_axis_seen || rules.iter().any(|rule| rule.axes.unknown_axis_seen);
 
@@ -257,6 +298,8 @@ pub(in crate::gate) fn decode_policy_manifest(data: &[u8]) -> Option<DecodedPoli
         on_budget_exhausted,
         comm_opt_out_posture,
         auto_checker,
+        project_depth_default,
+        project_depth_max,
         budget_policy,
         diagnostic_bounds,
         unsupported_schema,

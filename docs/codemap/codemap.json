@@ -3145,7 +3145,7 @@
      "path": "src/batch/put_apply/put_staging.rs",
      "purpose": "Body/index/edge row staging helpers shared by the put and update paths",
      "surface": {
-      "crate-vis": 12
+      "crate-vis": 11
      }
     },
     {
@@ -16360,7 +16360,7 @@
      "path": "src/gate/decode/decode_manifest.rs",
      "purpose": "Manifest envelope plus DecodedPolicyManifest assembly",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 8
      }
     },
     {
@@ -16428,7 +16428,7 @@
      "path": "src/gate/default_manifest.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 6
      }
     },
     {
@@ -16613,8 +16613,59 @@
      "path": "src/gate/mod.rs",
      "purpose": "DEC-0005 Gate policy manifest resolver",
      "surface": {
-      "crate-vis": 25,
+      "crate-vis": 26,
       "re-export": 3
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/gate/project_depth/codec.rs",
+     "purpose": "Exact, content-addressed POLICY_MANIFEST carrier and signature grammar",
+     "surface": {
+      "crate-vis": 18
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/gate/project_depth/fold.rs",
+     "purpose": "Read-snapshot causal head fold for independently keyed project-depth policy facts",
+     "surface": {
+      "crate-vis": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/gate/project_depth/mod.rs",
+     "purpose": "Immutable project-scoped policy-manifest contributions",
+     "surface": {
+      "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "src/gate/project_depth/tests.rs",
+     "purpose": "—",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/gate/project_depth/write.rs",
+     "purpose": "Transaction-bound project-policy birth and owner edit doors",
+     "surface": {
+      "crate-vis": 4,
+      "fn": 1
      }
     },
     {
@@ -16666,13 +16717,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/gate/resolution/manifest_fold.rs",
      "purpose": "Store-scanning manifest fold plus budget-guard and trust adapters",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 4,
       "fn": 1
      }
     },
@@ -32987,7 +33038,6 @@
      "bucket": "m",
      "kind": "src",
      "notable": [
-      "ProjectDepthProof",
       "ProjectRecord",
       "ProjectRoom",
       "ProjectRoomChange"
@@ -32997,12 +33047,12 @@
      "surface": {
       "const": 1,
       "crate-vis": 12,
-      "fn": 8,
-      "struct": 4
+      "fn": 9,
+      "struct": 3
      }
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "src",
      "notable": [],
      "path": "src/workspace_roster/project/projection.rs",
@@ -33028,7 +33078,7 @@
      "path": "src/workspace_roster/project/tests/support.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 2
      }
     },
     {
@@ -34525,7 +34575,7 @@
      "purpose": "—"
     },
     "gate": {
-     "files": 74,
+     "files": 79,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -35213,8 +35263,8 @@
    },
    "over_bar": 9,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2077,
-   "test_files": 715
+   "source_files": 2081,
+   "test_files": 716
   },
   "oneiron-android": {
    "files": [

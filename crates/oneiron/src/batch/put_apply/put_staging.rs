@@ -280,12 +280,6 @@ pub(super) fn remove_prior_temporal_index_rows(
     Ok(())
 }
 
-/// Project replay context shared by the ordinary and replicated put doors.
-pub(super) struct ProjectPutContext {
-    pub(super) posture: crate::HostingPrivacyPosture,
-    pub(super) replicated: bool,
-}
-
 pub(super) fn validate_scope_carriers(
     store: &Store,
     wtxn: &mut RwTxn<'_>,
@@ -293,7 +287,6 @@ pub(super) fn validate_scope_carriers(
     entity_type: u8,
     data: &[u8],
     origin: super::BaseWriteOrigin<'_>,
-    project: ProjectPutContext,
 ) -> Result<()> {
     if entity_type == crate::registry::ENTITY_TYPE_FACET {
         super::super::facet_identity::validate_facet_overwrite(store, wtxn, id, data)?;
@@ -302,15 +295,6 @@ pub(super) fn validate_scope_carriers(
         for referenced in crate::workspace_roster::validate_project_body(id, data)? {
             super::reject_overlay_member_base_write(store, &referenced, origin)?;
         }
-        crate::workspace_roster::validate_project_depth_change(
-            store,
-            wtxn,
-            project.posture,
-            id,
-            entity_type,
-            data,
-            project.replicated,
-        )?;
     }
     if entity_type == crate::registry::ENTITY_TYPE_CONVERSATION {
         crate::workspace_roster::validate_room_body(store, wtxn, id, data)?;

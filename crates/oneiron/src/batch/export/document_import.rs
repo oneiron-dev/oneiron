@@ -78,12 +78,51 @@ impl Vault {
             .classify_vault_import_manifest(&document.manifest.storage.to_json_pretty()?, None)?;
         // Classification is advisory provenance, not an admission capability.
         // Even a forged same-chain manifest cannot enable replay or Auto here.
-        let omitted: BTreeSet<_> = document
+        let mut omitted: BTreeSet<_> = document
             .manifest
             .import_omissions
             .iter()
             .map(|entry| parse_id(&entry.entity_id))
             .collect::<Result<_>>()?;
+        // The archive records PROJECT rows as requiring their owning import
+        // adapter. Their derived home rooms must be withheld with the project:
+        // importing a room alone would name a project the target deliberately
+        // did not materialize and strand the whole import at the reciprocal
+        // projector. This does not turn foreign policy manifests into rights.
+        let refused_projects: BTreeSet<_> = document
+            .manifest
+            .import_refusals
+            .iter()
+            .filter_map(|refusal| match refusal {
+                super::ExportImportRefusal::Entity {
+                    entity_id,
+                    reason: super::ImportRefusalReason::OwningEntityAdapterRequired,
+                } => Some(entity_id.as_str()),
+                _ => None,
+            })
+            .map(parse_id)
+            .collect::<Result<_>>()?;
+        for row in document.entities() {
+            let id = parse_id(&row.id)?;
+            if refused_projects.contains(&id) && row.entity_type == self.project_type_byte()? {
+                omitted.insert(id);
+            }
+        }
+        let refused_project_hex: BTreeSet<_> = omitted
+            .iter()
+            .filter(|id| refused_projects.contains(id))
+            .map(EntityId::to_hex)
+            .collect();
+        for row in document.entities() {
+            if row.entity_type == crate::registry::ENTITY_TYPE_CONVERSATION
+                && let Ok(room) = rmp_serde::from_slice::<crate::workspace_roster::ProjectRoom>(
+                    &row.body.to_bytes()?,
+                )
+                && refused_project_hex.contains(&room.project_id)
+            {
+                omitted.insert(parse_id(&row.id)?);
+            }
+        }
         let mut wtxn = self.store.env.write_txn()?;
         if let Some(actor) = actor {
             super::expression_import::validate_local_actor(self, &wtxn, actor)?;

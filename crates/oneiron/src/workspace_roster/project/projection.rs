@@ -80,143 +80,24 @@ pub(crate) fn validate_project_body(id: EntityId, bytes: &[u8]) -> Result<Vec<En
     Ok(ids)
 }
 
-/// A signed depth revision travels with the project body. Both local edits
-/// and replicated materialization verify it against the stored authority log.
-fn verify_depth_proof(
+/// Project membership carries a birth-depth cache, not authority. Replacing
+/// members with an older view must not roll back the policy contribution set.
+pub(crate) fn normalize_project_body(
     store: &Store,
     txn: &heed::RoTxn<'_>,
-    posture: crate::HostingPrivacyPosture,
     id: EntityId,
-    body: &ProjectRecord,
-) -> Result<()> {
-    let proof = body.depth_proof.as_ref().ok_or_else(invalid)?;
-    if proof.schema_version != 1
-        || proof.project_id != id.to_hex()
-        || proof.depth != body.depth
-        || proof.revision == 0
-        || proof.signature.len() != 64
-    {
-        return Err(invalid());
-    }
-    let actor = EntityId::from_hex(&proof.actor_ref).map_err(|_| invalid())?;
-    let key = match proof.suite.as_str() {
-        "ed25519" => crate::authority::AuthorityKey::Ed25519(
-            proof
-                .public_key
-                .as_slice()
-                .try_into()
-                .map_err(|_| invalid())?,
-        ),
-        "p256" => crate::authority::AuthorityKey::P256(proof.public_key.clone()),
-        _ => return Err(invalid()),
-    };
-    let signature = crate::authority::AuthoritySignature {
-        suite: key.suite(),
-        public_key: key.clone(),
-        signature: proof.signature.clone(),
-    };
-    if !crate::authority::verify_authority_signature(&signature, &depth_transcript(proof)?) {
-        return Err(invalid());
-    }
-    let fold = crate::authority::authority_fold_readonly_for_store_in_txn(store, posture, txn)?;
-    if fold.vault_root_is_conflicted() || fold.vault_id.is_some_and(|vault| vault != proof.vault_id)
-    {
-        return Err(invalid());
-    }
-    // A signed fact may arrive before its owner BindActor. The project
-    // remains unmaterialized, but sync keeps its rematerialization marker;
-    // a known revoked/mismatched binding is a terminal rejection instead.
-    let Some(binding) = fold.actor_bindings.get(&key) else {
-        return Err(crate::error::RecordError::ProjectDependencyPending.into());
-    };
-    if binding.actor_ref != actor
-        || binding.actor_class != "human"
-        || binding.status != crate::authority::ActorBindingStatus::Active
-    {
-        return Err(invalid());
-    }
-    Ok(())
-}
-
-pub(crate) fn validate_project_depth_change(
-    store: &Store,
-    txn: &mut heed::RwTxn<'_>,
-    posture: crate::HostingPrivacyPosture,
-    id: EntityId,
-    kind: u8,
     bytes: &[u8],
-    replicated: bool,
-) -> Result<()> {
-    let body: ProjectRecord = rmp_serde::from_slice(bytes).map_err(|_| invalid())?;
-    if body
-        .depth_proof
-        .as_ref()
-        .is_some_and(|proof| proof.revision == 0)
-    {
+) -> Result<Vec<u8>> {
+    validate_project_body(id, bytes)?;
+    let mut body: ProjectRecord = rmp_serde::from_slice(bytes).map_err(|_| invalid())?;
+    if body.parent.as_deref() == Some(id.to_hex().as_str()) {
         return Err(invalid());
     }
-    let next = depth_history_of(&body);
-    let history_key = depth_history_key(id);
-    let history = store
-        .vault_meta
-        .get(txn, &history_key)?
-        .map(|raw| depth_history_decode(&raw))
-        .transpose()?;
-    let previous = store.entities.get(txn, id.as_bytes())?;
-    if let Some(raw) = previous.as_ref() {
-        let header = EntityMetadataHeader::parse(raw).ok_or_else(invalid)?;
-        if header.entity_type != kind || raw.len() == ENTITY_METADATA_HEADER_LEN {
-            return Err(invalid());
-        }
-        let old: ProjectRecord =
-            rmp_serde::from_slice(&raw[ENTITY_METADATA_HEADER_LEN..]).map_err(|_| invalid())?;
-        let prior = depth_history_of(&old);
-        if history.is_some_and(|history| history != prior) {
-            return Err(invalid());
-        }
-        if next == prior && body.depth_proof == old.depth_proof {
-            // An ordinary member update does not change the depth fact.
-        } else {
-            if next.revision < prior.revision
-                || (next.revision == prior.revision && (!replicated || next.revision == 0))
-            {
-                return Err(invalid());
-            }
-            // Equal positive revisions are concurrent signed owner acts. The
-            // Loro entity map selects the winning blob in either merge order;
-            // only that replicated winner reaches this materializer. Local
-            // generic writes cannot select another equal-revision winner.
-            verify_depth_proof(store, txn, posture, id, &body)?;
-            let marker = depth_edit_key(id);
-            if let Some(staged) = store.vault_meta.get(txn, &marker)? {
-                if staged.as_ref() != depth_edit_digest(raw, bytes) {
-                    return Err(invalid());
-                }
-                store.vault_meta.delete(txn, &marker)?;
-            }
-        }
-    } else if let Some(history) = history {
-        // The id was deleted. A same-id re-put cannot escape its last depth
-        // or revision. A trusted edit needs a LIVE project, never a new birth.
-        if next != history {
-            return Err(invalid());
-        }
-        if next.revision > 0 {
-            verify_depth_proof(store, txn, posture, id, &body)?;
-        }
-    } else if next
-        != (ProjectDepthHistory {
-            depth: DEFAULT_PROJECT_DEPTH,
-            revision: 0,
-        })
-    {
-        // First materialization after a signed owner edit may skip intermediates.
-        verify_depth_proof(store, txn, posture, id, &body)?;
-    }
-    store
-        .vault_meta
-        .put(txn, &history_key, &depth_history_encode(next))?;
-    Ok(())
+    let Some((_, birth)) = crate::gate::project_depth::birth_for_project(store, txn, id)? else {
+        return Err(RecordError::ProjectDependencyPending.into());
+    };
+    body.depth = birth.depth;
+    encode(&body)
 }
 
 pub(crate) fn reconcile_project_rooms(

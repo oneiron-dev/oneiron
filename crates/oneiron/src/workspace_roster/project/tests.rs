@@ -1,6 +1,9 @@
 mod support;
 use super::*;
-pub(crate) use support::signed_depth as set_project_depth_signed_for_test;
+pub(crate) use support::{
+    signed_birth as create_project_signed_for_test,
+    signed_depth as set_project_depth_signed_for_test,
+};
 #[test]
 fn project_root_child_members_and_home_room_are_atomic() -> Result<()> {
     let dir = tempfile::tempdir()?;
@@ -246,7 +249,10 @@ fn project_depth_is_person_editable_and_round_trips_with_member_refs() -> Result
     let dir = tempfile::tempdir()?;
     let vault = Vault::open(dir.path(), crate::VaultConfig::default())?;
     let root = vault.root_project()?;
-    assert_eq!(vault.project(root)?.unwrap().depth, DEFAULT_PROJECT_DEPTH);
+    assert_eq!(
+        vault.project(root)?.unwrap().depth,
+        crate::gate::seeded_project_depth_default()
+    );
     let leader = EntityId::from_hex(&vault.project(root)?.unwrap().leader)?;
     let child = EntityId::now();
     let mut body = ProjectRecord::new(child, Some(root), root, leader);
@@ -276,7 +282,7 @@ fn project_depth_is_person_editable_and_round_trips_with_member_refs() -> Result
     let edited = vault.project(child)?.unwrap();
     assert_eq!(edited.depth, 2);
     assert_eq!(edited.sessions, body.sessions);
-    assert_eq!(edited.depth_proof.as_ref().unwrap().revision, 1);
+    assert_eq!(edited.depth, 2);
     body = edited;
     crate::workspace_roster::set_project_depth_signed_for_test(
         &vault, child, 12, &writer, 3, 0xA3,
@@ -284,7 +290,7 @@ fn project_depth_is_person_editable_and_round_trips_with_member_refs() -> Result
     let edited = vault.project(child)?.unwrap();
     assert_eq!(edited.depth, 12);
     assert_eq!(edited.sessions, body.sessions);
-    assert_eq!(edited.depth_proof.as_ref().unwrap().revision, 2);
+    assert_eq!(edited.depth, 12);
     body = edited;
     assert!(
         crate::workspace_roster::set_project_depth_signed_for_test(
@@ -309,6 +315,7 @@ fn project_depth_is_person_editable_and_round_trips_with_member_refs() -> Result
         .kind(),
         crate::error::ErrorKind::WriteConcurrentWithRevocation
     );
+    body.depth = 0; // A revoked controlling signer cannot authorize a wider slice.
     assert_eq!(vault.project(child)?, Some(body.clone()));
     drop(vault);
     let reopened = Vault::open(dir.path(), crate::VaultConfig::default())?;
@@ -327,7 +334,10 @@ fn raw_project_depth_outside_projection_bound_is_rejected() -> Result<()> {
         vault.put_project(root, &body, 1).unwrap_err().kind(),
         crate::error::ErrorKind::InvalidProjectBody
     );
-    assert_eq!(vault.project(root)?.unwrap().depth, DEFAULT_PROJECT_DEPTH);
+    assert_eq!(
+        vault.project(root)?.unwrap().depth,
+        crate::gate::seeded_project_depth_default()
+    );
     Ok(())
 }
 
@@ -342,46 +352,28 @@ fn in_range_depth_cannot_be_changed_through_generic_or_replicated_puts() -> Resu
     forged.depth = 0;
     let bytes = encode(&forged)?;
     let range = TimeRange { start: 8, end: 8 };
-    assert_eq!(
-        vault.put_project(root, &forged, 8).unwrap_err().kind(),
-        crate::error::ErrorKind::InvalidProjectBody
-    );
-    assert_eq!(
-        vault
-            .batch()
-            .put(&root, kind, range, 8, &bytes)
-            .commit()
-            .unwrap_err()
-            .kind(),
-        crate::error::ErrorKind::InvalidProjectBody
-    );
+    vault.put_project(root, &forged, 8)?;
+    assert_eq!(vault.project(root)?, Some(original.clone()));
+    vault.batch().put(&root, kind, range, 8, &bytes).commit()?;
+    assert_eq!(vault.project(root)?, Some(original.clone()));
     #[cfg(feature = "sync")]
-    assert_eq!(
+    vault.with_write_txn(|txn| {
         vault
-            .with_write_txn(|txn| {
-                vault
-                    .batch_in()
-                    .put_replicated(&root, kind, range, 8, &bytes)
-                    .apply(txn)
-            })
-            .unwrap_err()
-            .kind(),
-        crate::error::ErrorKind::InvalidProjectBody
-    );
+            .batch_in()
+            .put_replicated(&root, kind, range, 8, &bytes)
+            .apply(txn)
+    })?;
     assert_eq!(vault.project(root)?, Some(original.clone()));
 
     let child = EntityId::now();
     let leader = EntityId::from_hex(&original.leader)?;
     let mut nondefault_birth = ProjectRecord::new(child, Some(root), root, leader);
     nondefault_birth.depth = 12;
+    vault.put_project(child, &nondefault_birth, 9)?;
     assert_eq!(
-        vault
-            .put_project(child, &nondefault_birth, 9)
-            .unwrap_err()
-            .kind(),
-        crate::error::ErrorKind::InvalidProjectBody
+        vault.project(child)?.unwrap().depth,
+        crate::gate::seeded_project_depth_default()
     );
-    assert!(vault.project(child)?.is_none());
 
     let person = EntityId::now();
     vault.put_entity(
@@ -414,23 +406,15 @@ fn in_range_depth_cannot_be_changed_through_generic_or_replicated_puts() -> Resu
         .kind(),
         crate::error::ErrorKind::WriteConcurrentWithRevocation
     );
-    assert_eq!(
-        vault.put_project(root, &forged, 11).unwrap_err().kind(),
-        crate::error::ErrorKind::InvalidProjectBody
-    );
+    vault.put_project(root, &forged, 11)?;
+    assert_eq!(vault.project(root)?.unwrap().depth, 0);
     #[cfg(feature = "sync")]
-    assert_eq!(
+    vault.with_write_txn(|txn| {
         vault
-            .with_write_txn(|txn| {
-                vault
-                    .batch_in()
-                    .put_replicated(&root, kind, range, 11, &bytes)
-                    .apply(txn)
-            })
-            .unwrap_err()
-            .kind(),
-        crate::error::ErrorKind::InvalidProjectBody
-    );
+            .batch_in()
+            .put_replicated(&root, kind, range, 11, &bytes)
+            .apply(txn)
+    })?;
     assert_eq!(vault.project(root)?.unwrap().depth, 0);
     Ok(())
 }
@@ -496,21 +480,17 @@ fn delete_recreate_cannot_reset_owner_depth_for_existing_attempt() -> Result<()>
     assert!(try_spawn().is_err());
     let kind = vault.project_type_byte()?;
     let range = TimeRange { start: 6, end: 6 };
-    let err = vault
+    vault
         .batch()
         .delete(&id)
         .put(&id, kind, range, 6, &encode(&born)?)
-        .commit()
-        .unwrap_err();
-    assert_eq!(err.kind(), crate::error::ErrorKind::InvalidProjectBody);
+        .commit()?;
     assert_eq!(vault.project(id)?, Some(stopped.clone()));
+    assert!(try_spawn().is_err());
     vault.batch().delete(&id).commit()?;
     assert!(vault.project(id)?.is_none());
-    assert_eq!(
-        vault.put_project(id, &born, 7).unwrap_err().kind(),
-        crate::error::ErrorKind::InvalidProjectBody
-    );
-    assert!(vault.project(id)?.is_none());
+    vault.put_project(id, &born, 7)?;
+    assert_eq!(vault.project(id)?, Some(stopped.clone()));
     vault.put_project(id, &stopped, 8)?;
     assert_eq!(vault.project(id)?, Some(stopped));
     assert!(try_spawn().is_err());

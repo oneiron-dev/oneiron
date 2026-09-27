@@ -504,6 +504,34 @@ pub(super) fn seed_default_policy_manifest_in_txn(
     )?;
     temporal_occurred_start.put(wtxn, &Store::encode_temporal_key(timestamp, id), &[])?;
     temporal_learned.put(wtxn, &Store::encode_temporal_key(timestamp, id), &[])?;
+    // The independent immutable policy seed remains if a legacy test fixture
+    // removes only the ordinary D7 pack. It is a POLICY_MANIFEST carrier but
+    // contributes no unrelated gate defaults or local trusted sidecar.
+    let (depth_id, depth_body) = crate::gate::project_depth::seeded_default_carrier()?;
+    let mut depth_payload = Vec::with_capacity(ENTITY_METADATA_HEADER_LEN + depth_body.len());
+    depth_payload.push(ENTITY_TYPE_POLICY_MANIFEST);
+    depth_payload.extend_from_slice(&timestamp.to_be_bytes());
+    depth_payload.extend_from_slice(&timestamp.to_be_bytes());
+    depth_payload.extend_from_slice(&timestamp.to_be_bytes());
+    depth_payload.extend_from_slice(&depth_body);
+    if let Some(old) = entities.get(wtxn, depth_id.as_bytes())? {
+        if old != depth_payload {
+            return Err(Error::CorruptedIndex("project-depth seed id occupied"));
+        }
+    } else {
+        entities.put(wtxn, depth_id.as_bytes(), &depth_payload)?;
+        type_index.put(
+            wtxn,
+            &Store::encode_type_key(ENTITY_TYPE_POLICY_MANIFEST, &depth_id),
+            &[],
+        )?;
+        temporal_occurred_start.put(
+            wtxn,
+            &Store::encode_temporal_key(timestamp, &depth_id),
+            &[],
+        )?;
+        temporal_learned.put(wtxn, &Store::encode_temporal_key(timestamp, &depth_id), &[])?;
+    }
     Ok(())
 }
 

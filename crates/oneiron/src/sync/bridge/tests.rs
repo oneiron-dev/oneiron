@@ -4036,19 +4036,29 @@ fn observer_b_quarantines_in_range_project_depth_edit_without_owner_proof() -> c
         },
         102,
     )?;
-    let mut forged = vault.project(root)?.unwrap();
-    forged.depth = 12;
+    let (edit, mut forged) = crate::gate::project_depth::contributions_for_test(&vault, root)?
+        .into_iter()
+        .find(|(_, bytes)| {
+            matches!(
+                crate::gate::project_depth::decode_contribution(bytes).ok(),
+                Some(crate::gate::project_depth::ProjectDepthContribution::Edit(
+                    _
+                ))
+            )
+        })
+        .expect("signed edit");
+    forged.push(0x01); // existing id no longer names these signed bytes
     let doc = LoroDoc::new();
     let materializer = Arc::new(Materializer::new());
     let _subscription = register_observer_b(&doc, &vault, &materializer, "2026-03");
     map_insert_bytes(
         &doc.get_map("entities"),
-        &root.to_hex(),
+        &edit.to_hex(),
         &entity_blob(
-            vault.project_type_byte()?,
+            crate::registry::ENTITY_TYPE_POLICY_MANIFEST,
             TimeRange { start: 3, end: 3 },
             3,
-            &rmp_serde::to_vec_named(&forged).unwrap(),
+            &forged,
         ),
     )?;
     doc.commit();
@@ -4056,7 +4066,7 @@ fn observer_b_quarantines_in_range_project_depth_edit_without_owner_proof() -> c
     assert!(
         crate::sync::quarantine::quarantined_records(&vault)?
             .iter()
-            .any(|(_, record)| record.reason_code == "InvalidProjectBody")
+            .any(|(_, row)| row.reason_code == "InvalidProjectBody")
     );
     Ok(())
 }
@@ -4084,6 +4094,17 @@ fn observer_b_replays_signed_owner_project_depth_and_rejects_tampering() -> crat
     crate::subject_model::tests::authorization::root_owner(&a, owner, 0xB7)?;
     crate::workspace_roster::set_project_depth_signed_for_test(&a, project, 2, &owner, 2, 0xB7)?;
     let signed = a.project(project)?.unwrap();
+    let (edit, edit_bytes) = crate::gate::project_depth::contributions_for_test(&a, project)?
+        .into_iter()
+        .find(|(_, bytes)| {
+            matches!(
+                crate::gate::project_depth::decode_contribution(bytes).ok(),
+                Some(crate::gate::project_depth::ProjectDepthContribution::Edit(
+                    _
+                ))
+            )
+        })
+        .expect("signed depth contribution");
 
     let b = test_vault();
     let root_b = b.root_project()?;
@@ -4111,27 +4132,36 @@ fn observer_b_replays_signed_owner_project_depth_and_rejects_tampering() -> crat
     let _subscription = register_observer_b(&doc, &b, &materializer, "2026-03");
     map_insert_bytes(
         &doc.get_map("entities"),
-        &project.to_hex(),
+        &edit.to_hex(),
         &entity_blob(
-            b.project_type_byte()?,
+            crate::registry::ENTITY_TYPE_POLICY_MANIFEST,
             TimeRange { start: 2, end: 2 },
             2,
-            &rmp_serde::to_vec_named(&signed).expect("signed project body"),
+            &edit_bytes,
         ),
     )?;
-    doc.commit();
-    assert_eq!(b.project(project)?.unwrap().depth, 2);
-
-    let mut forged = signed;
-    forged.depth = 12; // The owner signed depth 2, not 12.
     map_insert_bytes(
         &doc.get_map("entities"),
         &project.to_hex(),
         &entity_blob(
             b.project_type_byte()?,
+            TimeRange { start: 2, end: 2 },
+            2,
+            &rmp_serde::to_vec_named(&signed).expect("member body"),
+        ),
+    )?;
+    doc.commit();
+    assert_eq!(b.project(project)?.unwrap().depth, 2);
+    let mut forged = edit_bytes;
+    forged.push(0x01); // same id, different signed content
+    map_insert_bytes(
+        &doc.get_map("entities"),
+        &edit.to_hex(),
+        &entity_blob(
+            crate::registry::ENTITY_TYPE_POLICY_MANIFEST,
             TimeRange { start: 3, end: 3 },
             3,
-            &rmp_serde::to_vec_named(&forged).expect("forged project body"),
+            &forged,
         ),
     )?;
     doc.commit();
@@ -4139,7 +4169,7 @@ fn observer_b_replays_signed_owner_project_depth_and_rejects_tampering() -> crat
     assert!(
         crate::sync::quarantine::quarantined_records(&b)?
             .iter()
-            .any(|(_, record)| record.reason_code == "InvalidProjectBody")
+            .any(|(_, row)| row.reason_code == "InvalidProjectBody")
     );
     Ok(())
 }
@@ -4167,7 +4197,17 @@ fn observer_b_project_depth_authority_dependency_survives_retry_until_bind() -> 
     crate::subject_model::tests::authorization::root_owner(&source, writer, 0xBB)?;
     let history = source.export_signed_authority_history()?;
     crate::workspace_roster::set_project_depth_signed_for_test(&source, id, 2, &writer, 2, 0xBB)?;
-    let body = rmp_serde::to_vec_named(&source.project(id)?.unwrap()).expect("signed body");
+    let (edit, body) = crate::gate::project_depth::contributions_for_test(&source, id)?
+        .into_iter()
+        .find(|(_, bytes)| {
+            matches!(
+                crate::gate::project_depth::decode_contribution(bytes).ok(),
+                Some(crate::gate::project_depth::ProjectDepthContribution::Edit(
+                    _
+                ))
+            )
+        })
+        .expect("signed depth contribution");
 
     let target = test_vault();
     let target_root = target.root_project()?;
@@ -4202,35 +4242,125 @@ fn observer_b_project_depth_authority_dependency_survives_retry_until_bind() -> 
     let _subscription = register_observer_b(&doc, &target, &materializer, window);
     map_insert_bytes(
         &doc.get_map("entities"),
-        &id.to_hex(),
+        &edit.to_hex(),
         &entity_blob(
-            target.project_type_byte()?,
+            crate::registry::ENTITY_TYPE_POLICY_MANIFEST,
             TimeRange { start: 2, end: 2 },
             2,
             &body,
         ),
     )?;
     doc.commit();
-    assert_eq!(target.project(id)?.unwrap().depth, 10);
-    assert!(
-        crate::sync::quarantine::pending_remat_entities(&target, window)?.contains(&id.to_hex())
-    );
-    // No new project delta arrives between these retries.
     assert_eq!(
-        crate::sync::window::forward_rematerialize(&target, &doc, &materializer, &window_key,)?,
-        0
+        target.project(id)?.unwrap().depth,
+        0,
+        "pending signer cannot authorize a permissive depth"
     );
     assert!(
-        crate::sync::quarantine::pending_remat_entities(&target, window)?.contains(&id.to_hex())
+        target.get(&edit)?.is_some(),
+        "immutable fact survives missing authority"
     );
+    crate::sync::window::forward_rematerialize(&target, &doc, &materializer, &window_key)?;
+    assert_eq!(target.project(id)?.unwrap().depth, 0);
     target.import_signed_authority_history(&history[1..])?;
     assert_eq!(
-        crate::sync::window::forward_rematerialize(&target, &doc, &materializer, &window_key,)?,
-        1
+        target.project(id)?.unwrap().depth,
+        2,
+        "authority arrival activates already-stored contribution without resending it"
     );
-    assert_eq!(target.project(id)?.unwrap().depth, 2);
-    assert!(
-        !crate::sync::quarantine::pending_remat_entities(&target, window)?.contains(&id.to_hex())
+    Ok(())
+}
+
+#[test]
+fn observer_b_bootstraps_signed_default_birth_and_edit_on_fresh_replica() -> crate::Result<()> {
+    use ed25519_dalek::Signer;
+    let a = test_vault();
+    let root_a = a.root_project()?;
+    let leader = EntityId::from_hex(&a.project(root_a)?.unwrap().leader)?;
+    let person = EntityId::now();
+    a.put_entity(
+        &person,
+        crate::registry::ENTITY_TYPE_PERSON,
+        TimeRange { start: 1, end: 1 },
+        1,
+        b"owner",
+    )?;
+    let writer = crate::write_envelope::WriteActor::new(person, EdgeActorClass::Human);
+    crate::subject_model::tests::authorization::root_owner(&a, writer, 0xC1)?;
+    let signing = SigningKey::from_bytes(&[0xC1; 32]);
+    let key = crate::authority::AuthorityKey::Ed25519(signing.verifying_key().to_bytes());
+    a.set_project_creation_depth_default(8, &writer, 2, key, |message| {
+        Ok(signing.sign(message).to_bytes().to_vec())
+    })?;
+    let id = EntityId::now();
+    crate::workspace_roster::create_project_signed_for_test(
+        &a, id, root_a, leader, &writer, 3, 0xC1,
+    )?;
+    assert_eq!(a.project(id)?.unwrap().depth, 8);
+    crate::workspace_roster::set_project_depth_signed_for_test(&a, id, 2, &writer, 4, 0xC1)?;
+    let project_facts = crate::gate::project_depth::contributions_for_test(&a, id)?;
+    let default_id = crate::gate::project_depth::seeded_default_carrier()?.0;
+    let default_facts = crate::gate::project_depth::contributions_for_test(&a, default_id)?;
+    assert_eq!(default_facts.len(), 1);
+    assert_eq!(project_facts.len(), 2);
+
+    let b = test_vault();
+    let root_b = b.root_project()?;
+    let leader_b = EntityId::from_hex(&b.project(root_b)?.unwrap().leader)?;
+    b.put_project(
+        root_a,
+        &crate::workspace_roster::ProjectRecord::new(root_a, Some(root_b), root_b, leader_b),
+        1,
+    )?;
+    b.put_entity(
+        &person,
+        crate::registry::ENTITY_TYPE_PERSON,
+        TimeRange { start: 1, end: 1 },
+        1,
+        b"owner",
+    )?;
+    b.import_signed_authority_history(&a.export_signed_authority_history()?)?;
+    let doc = LoroDoc::new();
+    let materializer = Arc::new(Materializer::new());
+    let window = "2026-03";
+    let _subs = register_observer_b(&doc, &b, &materializer, window);
+    for (fact, body) in default_facts.iter().chain(project_facts.iter()) {
+        map_insert_bytes(
+            &doc.get_map("entities"),
+            &fact.to_hex(),
+            &entity_blob(
+                crate::registry::ENTITY_TYPE_POLICY_MANIFEST,
+                TimeRange { start: 4, end: 4 },
+                4,
+                body,
+            ),
+        )?;
+    }
+    let member = rmp_serde::to_vec_named(&a.project(id)?.unwrap()).expect("member view");
+    map_insert_bytes(
+        &doc.get_map("entities"),
+        &id.to_hex(),
+        &entity_blob(
+            b.project_type_byte()?,
+            TimeRange { start: 4, end: 4 },
+            4,
+            &member,
+        ),
+    )?;
+    doc.commit();
+    let key = crate::sync::types::WindowKey::new(window);
+    for _ in 0..2 {
+        crate::sync::window::forward_rematerialize(&b, &doc, &materializer, &key)?;
+    }
+    assert_eq!(b.project(id)?.unwrap().depth, 2);
+    assert_eq!(
+        crate::gate::resolve_project_depth_config(
+            &b.store,
+            &b.store.env.read_txn()?,
+            b.privacy_posture(),
+        )?
+        .0,
+        8
     );
     Ok(())
 }

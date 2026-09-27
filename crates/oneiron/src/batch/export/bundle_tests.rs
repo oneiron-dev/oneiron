@@ -182,9 +182,11 @@ fn assert_native_reimport(
     );
     assert!(!document.manifest.import_omissions.is_empty());
     let receipt = target.import_whole_vault_json(export.bytes())?;
+    // The two owning-adapter refusals for the source root PROJECT and its
+    // derived room are withheld in addition to archive-only omissions.
     assert_eq!(
         receipt.omitted_entities,
-        document.manifest.import_omissions.len()
+        document.manifest.import_omissions.len() + 2
     );
     let imported_skill = target.get_skill_record(&skill)?.expect("bundle fixture");
     assert_eq!(imported_skill.source, ClaimSource::Imported);

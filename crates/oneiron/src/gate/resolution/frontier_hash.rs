@@ -26,6 +26,13 @@ pub(super) fn hash_policy_frontier_v0(
     for predicate in &resolution.single_valued_predicates {
         hash_str(hasher, predicate);
     }
+    // A new project's birth and the vault ceiling read these resolved policy
+    // rows. A policy edit must move the frontier even if other gate axes agree.
+    if resolution.project_depth_default.is_some() || resolution.project_depth_max.is_some() {
+        hash_str(hasher, "project_depth_policy.v1");
+        hash_opt_u8(hasher, resolution.project_depth_default);
+        hash_opt_u8(hasher, resolution.project_depth_max);
+    }
     hash_budget_exhaustion_policy(hasher, resolution.on_budget_exhausted());
     // The RESOLVED posture, beside its budget sibling: it decides whether an
     // opted-out send holds or ships, so flipping it must move the frontier and

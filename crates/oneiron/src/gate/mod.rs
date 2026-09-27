@@ -22,6 +22,7 @@ mod effect;
 mod foreign_agent;
 mod grants;
 mod input;
+pub(crate) mod project_depth;
 mod repair;
 mod resolution;
 mod retrieval_filter;
@@ -60,6 +61,7 @@ pub(crate) use self::decision::{GateDecision, GateMetrics, GateOutcome, GateReas
 pub(crate) use self::decode::normalize_policy_manifest_scope;
 pub(crate) use self::default_manifest::{
     DEFAULT_POLICY_MANIFEST_TIMESTAMP, default_policy_manifest, default_policy_manifest_id,
+    seeded_project_depth_default,
 };
 pub(crate) use self::definition_ceiling::agent_definition_ceiling_for_actor;
 #[cfg(test)]
@@ -92,7 +94,10 @@ pub(crate) use self::input::{
     GateProvenanceHandles, consent_gate_reason_codes,
 };
 pub(crate) use self::repair::{evaluate_repair_consent, repair_criticality};
-pub(crate) use self::resolution::{PolicyManifestResolution, resolve_policy_manifest};
+pub(crate) use self::resolution::{
+    PolicyManifestResolution, resolve_policy_manifest, resolve_project_depth_config,
+    resolve_project_depth_max,
+};
 pub use self::retrieval_filter::RetrievalFilter;
 pub(crate) use self::retrieval_filter::{
     ResolvedRetrievalFilter, RetrievalPolicyFloor, narrow_retrieval_filter,

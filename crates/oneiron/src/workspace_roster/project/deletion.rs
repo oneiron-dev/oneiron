@@ -36,27 +36,6 @@ pub(crate) fn deindex_project_room(
             );
         }
     }
-    let body: ProjectRecord =
-        rmp_serde::from_slice(&raw[ENTITY_METADATA_HEADER_LEN..]).map_err(|_| {
-            crate::error::RecordError::InvalidProjectBody("deleted project has no body")
-        })?;
-    let key = depth_history_key(*id);
-    let old = depth_history_of(&body);
-    if store
-        .vault_meta
-        .get(txn, &key)?
-        .map(|raw| depth_history_decode(&raw))
-        .transpose()?
-        .is_some_and(|history| history != old)
-    {
-        return Err(crate::error::RecordError::InvalidProjectBody(
-            "project depth history disagrees",
-        )
-        .into());
-    }
-    store
-        .vault_meta
-        .put(txn, &key, &depth_history_encode(old))?;
     let room_id = home_room_id(*id);
     super::super::rooms::delete_room_metadata(store, txn, room_id)?;
     let room_key = [ROOM_PROJECT, room_id.as_bytes()].concat();
