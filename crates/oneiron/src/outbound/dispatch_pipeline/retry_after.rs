@@ -13,7 +13,9 @@ pub(super) const PROVIDER_RETRY_AFTER_EXECUTION_FIELD: &str = "retry_after";
 /// cool-down: it is dropped here so a malformed provider string can never
 /// become a re-arm instant. The connector's raw text still reaches the receipt
 /// unchanged, so the drop stays auditable.
-pub(super) fn provider_retry_after_secs(execution: &OutboundExecutionOutcome) -> Option<u64> {
+pub(in crate::outbound) fn provider_retry_after_secs(
+    execution: &OutboundExecutionOutcome,
+) -> Option<u64> {
     execution
         .receipt_fields
         .get(PROVIDER_RETRY_AFTER_EXECUTION_FIELD)
