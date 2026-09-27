@@ -280,7 +280,7 @@ pub fn admit_imported_entity(
     )
 }
 
-fn imported_evidence_value(source_id: &str, source_record_id: &str) -> MsgpackValue {
+pub(super) fn imported_evidence_value(source_id: &str, source_record_id: &str) -> MsgpackValue {
     MsgpackValue::Map(vec![
         (
             MsgpackValue::from("kind"),
