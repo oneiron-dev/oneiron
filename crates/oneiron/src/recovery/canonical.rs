@@ -281,49 +281,41 @@ pub fn capture_canonical_window(
             });
         }
     }
-    // A tombstone quarantined by the receipt ingest door has NO delete
-    // authority in a canonical artifact. Resolve that decision against the
-    // locally validated record and its family index before projecting hard
-    // or soft deletion. A header alone is never enough to protect a forged
-    // carrier. If the CRDT row is missing but the validated local event exists,
-    // restore it into the snapshot so a fresh vault can rebuild its index.
+    // Audit identity is the validated LOCAL receipt index, not the peer's
+    // entity header or tombstone inventory. A rejected type-change (e.g. an
+    // ASSET at this ID) must not become a canonical replacement, and removal
+    // of the CRDT map key must not hide a committed event from a fresh vault.
     let mut protected_receipts = std::collections::BTreeSet::new();
     let mut restored_receipts = Vec::new();
-    for row in &snapshot.entity_blobs {
-        let Some(header) = crate::batch::EntityMetadataHeader::parse(&row.blob) else {
-            continue;
-        };
-        if header.entity_type == crate::registry::ENTITY_TYPE_RECEIPT_RECORD {
-            let receipt_id = id(row.id)?;
-            crate::receipt::validated_local_record_for_canonical(
-                &vault.store,
-                &txn,
-                &receipt_id,
-                Some(&row.blob),
-            )?;
-            protected_receipts.insert(row.id);
-        }
-    }
-    for tombstone in &snapshot.tombstones {
-        if protected_receipts.contains(&tombstone.id) {
-            continue;
-        }
-        let receipt_id = id(tombstone.id)?;
-        if let Some(raw) = crate::receipt::validated_local_record_for_canonical(
-            &vault.store,
-            &txn,
-            &receipt_id,
-            None,
-        )? {
-            let header = crate::batch::EntityMetadataHeader::parse(&raw)
-                .ok_or(Error::CorruptedIndex("canonical receipt record header"))?;
-            if crate::deletion::window_label_from_timestamp(header.learned_at) == window {
-                protected_receipts.insert(tombstone.id);
-                restored_receipts.push(CanonicalEntity {
-                    id: tombstone.id,
-                    blob: raw,
-                });
+    for (receipt_id, local_blob) in
+        crate::receipt::canonical_records_in_window(&vault.store, &txn, window)?
+    {
+        let bytes = *receipt_id.as_bytes();
+        if let Some(candidate) = snapshot.entity_blobs.iter().find(|row| row.id == bytes) {
+            if candidate.blob != local_blob {
+                return Err(Error::CorruptedIndex(
+                    "canonical receipt record carrier diverged",
+                ));
             }
+        } else {
+            restored_receipts.push(CanonicalEntity {
+                id: bytes,
+                blob: local_blob,
+            });
+        }
+        protected_receipts.insert(bytes);
+    }
+    // A receipt-shaped CRDT row that never passed local audit admission is
+    // not a source of deletion immunity or an exportable receipt. Refuse the
+    // snapshot rather than shipping an artifact whose rebuild will discard it.
+    for row in &snapshot.entity_blobs {
+        if crate::batch::EntityMetadataHeader::parse(&row.blob)
+            .is_some_and(|header| header.entity_type == crate::registry::ENTITY_TYPE_RECEIPT_RECORD)
+            && !protected_receipts.contains(&row.id)
+        {
+            return Err(Error::CorruptedIndex(
+                "canonical receipt record not materialized",
+            ));
         }
     }
     snapshot.entity_blobs.extend(restored_receipts);

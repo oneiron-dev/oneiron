@@ -120,6 +120,45 @@ pub(crate) fn validated_local_record_for_canonical(
     Ok(Some(raw.into_owned()))
 }
 
+/// Enumerate the validated receipt family owned by this canonical window,
+/// rather than letting a peer-controlled entities map or tombstone set name
+/// which local audit events capture may see. The index is rebuildable from
+/// accepted records and contains no ordinary ASSET rows.
+pub(crate) fn canonical_records_in_window(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    window: &str,
+) -> Result<Vec<(EntityId, Vec<u8>)>> {
+    let mut records = Vec::new();
+    for (count, row) in store.vault_meta.prefix_iter(txn, INDEX_PREFIX)?.enumerate() {
+        if count >= MAX_RECEIPT_QUERY_SCAN {
+            return Err(Error::IndexOverflow("canonical receipt record scan"));
+        }
+        let (key, value) = row?;
+        let id_bytes: [u8; 16] = key
+            .get(INDEX_PREFIX.len()..)
+            .and_then(|suffix| suffix.try_into().ok())
+            .ok_or(Error::CorruptedIndex("canonical receipt index key"))?;
+        let id = EntityId::from_bytes(id_bytes)?;
+        let intent: IntentId = value
+            .as_ref()
+            .try_into()
+            .map_err(|_| Error::CorruptedIndex("canonical receipt index value"))?;
+        if record_id(&intent)? != id {
+            return Err(Error::CorruptedIndex("canonical receipt index identity"));
+        }
+        let raw = validated_local_record_for_canonical(store, txn, &id, None)?.ok_or(
+            Error::CorruptedIndex("canonical receipt index missing record"),
+        )?;
+        let header = EntityMetadataHeader::parse(&raw)
+            .ok_or(Error::CorruptedIndex("canonical receipt record header"))?;
+        if crate::deletion::window_label_from_timestamp(header.learned_at) == window {
+            records.push((id, raw));
+        }
+    }
+    Ok(records)
+}
+
 /// Incoming bytes have no store dependency. Relabel ONLY this untrusted
 /// decode failure as a remote rejection; the same decoder reading an already
 /// stored row still reports local `CorruptedIndex` and fails closed.

@@ -988,5 +988,60 @@ fn canonical_roundtrip_keeps_suppression_record_over_quarantined_tombstone() -> 
             .iter()
             .any(|row| row.receipt_id == receipt.receipt_id)
     );
+
+    // A hostile type-change remains in the CRDT map after the shared write
+    // door quarantines it. It must not become a successful canonical artifact.
+    crate::sync::loro_support::map_delete(&doc.get_map("tombstones"), &receipt_id.to_hex())?;
+    let original = source.get_raw(&receipt_id)?.ok_or(Error::EntityNotFound)?;
+    let mut rejected_asset = original.clone();
+    rejected_asset[0] = ENTITY_TYPE_ASSET;
+    map_insert_bytes(
+        &doc.get_map("entities"),
+        &receipt_id.to_hex(),
+        &rejected_asset,
+    )?;
+    doc.commit();
+    forward_rematerialize(&source, &doc, &Materializer::new(), &window)?;
+    assert_eq!(source.get_raw(&receipt_id)?, Some(original.clone()));
+    assert!(
+        crate::sync::quarantine::quarantined_records(&source)?
+            .iter()
+            .any(
+                |(_, row)| row.container == crate::sync::QuarantineContainer::Entities
+                    && row.reason_code == "SuppressionReceiptDivergence"
+            )
+    );
+    assert!(
+        capture_canonical_window(&source, "2026-09", &doc).is_err(),
+        "a rejected ASSET at a receipt ID cannot become an audit-free snapshot"
+    );
+
+    // Removal without a tombstone also lacks delete authority. Capture names
+    // the source vault's validated receipt index, restores its absent CRDT
+    // carrier, then rebuilds that one event on a fresh vault.
+    crate::sync::loro_support::map_delete(&doc.get_map("entities"), &receipt_id.to_hex())?;
+    doc.commit();
+    let removed = capture_canonical_window(&source, "2026-09", &doc)?;
+    assert!(
+        removed
+            .entity_blobs
+            .iter()
+            .any(|row| row.id == *receipt_id.as_bytes() && row.blob == original)
+    );
+    let rebuilt =
+        rebuild_vault_window_from_canonical(&CanonicalSnapshot::decode(&removed.encode()?)?)?;
+    let missing_dir = tempfile::tempdir()?;
+    let fresh = Vault::open(missing_dir.path(), VaultConfig::default())?;
+    forward_rematerialize(&fresh, &rebuilt, &Materializer::new(), &window)?;
+    assert_eq!(
+        fresh.get(&sibling)?.as_deref(),
+        Some(b"unrelated asset".as_slice())
+    );
+    assert!(
+        fresh
+            .receipts(ReceiptQuery::new(10).with_kind(ReceiptKind::Outbound))?
+            .iter()
+            .any(|row| row.receipt_id == receipt.receipt_id)
+    );
     Ok(())
 }

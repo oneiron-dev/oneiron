@@ -2047,7 +2047,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/receipt/ledgers.rs` | src | m | 3 fn · 14 crate-vis | — | — |
 | `src/receipt/mod.rs` | src | s | 8 re-export · 12 crate-vis | — | Unified receipt-family query surface over existing receipt emitters |
 | `src/receipt/projection.rs` | src | m | 5 struct · 3 fn · 8 crate-vis | BriefReceiptProjection, CounterpartyReceiptProjection, GrantReceiptProjection, ReceiptProjectionIntent, ReceiptProjectionRun | — |
-| `src/receipt/record.rs` | src | m | 9 crate-vis | — | First-class, replicated immutable terminal outbound receipt record |
+| `src/receipt/record.rs` | src | m | 10 crate-vis | — | First-class, replicated immutable terminal outbound receipt record |
 | `src/receipt/send_receipt_txn.rs` | src | s | 2 crate-vis | — | Send receipt persistence inside a caller-owned transaction |
 | `src/receipt/session.rs` | src | s | 2 struct · 7 fn | SessionLocalReceiptLog, SessionReceiptClose | — |
 | `src/receipt/tests.rs` | test | XL | — | — | — |
