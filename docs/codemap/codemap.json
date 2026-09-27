@@ -7584,7 +7584,7 @@
      "surface": {
       "crate-vis": 5,
       "fn": 14,
-      "re-export": 2,
+      "re-export": 3,
       "struct": 1
      }
     },
@@ -7705,6 +7705,33 @@
      "surface": {
       "crate-vis": 6
      }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "WeaveItem",
+      "WeaveReader",
+      "WeaveReport",
+      "WeaveSection",
+      "WeaveSectionKind",
+      "WeaveSectionSpec"
+     ],
+     "path": "src/claim/scoped_read/weave_report.rs",
+     "purpose": "Live weave data for a reader, not a saved digest or a rendered section recipe",
+     "surface": {
+      "enum": 3,
+      "fn": 1,
+      "struct": 3
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "src/claim/scoped_read/weave_report/tests.rs",
+     "purpose": "—",
+     "surface": {}
     },
     {
      "bucket": "m",
@@ -19312,7 +19339,7 @@
      "path": "src/lens/mod.rs",
      "purpose": "Closed generated-lens atom vocabulary",
      "surface": {
-      "re-export": 9
+      "re-export": 10
      }
     },
     {
@@ -19448,6 +19475,14 @@
      "notable": [],
      "path": "src/lens/tests/versioning.rs",
      "purpose": "Envelope-versioning and behavior-fingerprint tests: version stamps, canonical fingerprints, and diffs",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/lens/tests/weave_report.rs",
+     "purpose": "A host-authored section recipe can lower the live report into the lens kit",
      "surface": {}
     },
     {
@@ -22309,6 +22344,25 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "AnonymousChatBlockReason",
+      "AnonymousChatResponder",
+      "AnonymousChatSession",
+      "AnonymousChatTarget",
+      "AnonymousChatTurn"
+     ],
+     "path": "src/off_record/anonymous_chat.rs",
+     "purpose": "Stateless, memory-free chat beside (not inside) agent chat and off-record promote",
+     "surface": {
+      "enum": 3,
+      "fn": 3,
+      "struct": 1,
+      "trait": 1
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
@@ -22412,6 +22466,7 @@
      "purpose": "Off-record sessions — ARCH-0052 branch store, ONE-1725..ONE-1732",
      "surface": {
       "crate-vis": 5,
+      "mod": 1,
       "re-export": 2
      }
     },
@@ -24487,13 +24542,23 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/policy_model/classifier_lease.rs",
+     "purpose": "Cancellation-safe ownership of a stateless classifier's private reservation",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/policy_model/classify.rs",
      "purpose": "Vault-egress classification, which is the owner plane and nothing else",
      "surface": {
-      "crate-vis": 9,
+      "crate-vis": 11,
       "fn": 8
      }
     },
@@ -24565,6 +24630,7 @@
      "path": "src/policy_model/mod.rs",
      "purpose": "Policy classification over two planes",
      "surface": {
+      "crate-vis": 1,
       "re-export": 10
      }
     },
@@ -24746,6 +24812,14 @@
       "fn": 9,
       "struct": 3
      }
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "src/policy_model/tests/anonymous_chat.rs",
+     "purpose": "Stateless chat is not Memory::chat, agent chat, or an off-record room read",
+     "surface": {}
     },
     {
      "bucket": "L",
@@ -34719,7 +34793,7 @@
      "purpose": "—"
     },
     "claim": {
-     "files": 37,
+     "files": 39,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -35244,7 +35318,7 @@
      "purpose": "Interlocutor resolution substrate (OF-365 ILD-1)"
     },
     "lens": {
-     "files": 42,
+     "files": 43,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -35321,7 +35395,7 @@
      "purpose": "Attributed NOTE records with built-in, plugin and registered PACK kinds"
     },
     "off_record": {
-     "files": 11,
+     "files": 12,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -35391,7 +35465,7 @@
      "purpose": "—"
     },
     "policy_model": {
-     "files": 32,
+     "files": 34,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -35834,8 +35908,8 @@
    },
    "over_bar": 11,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2115,
-   "test_files": 722
+   "source_files": 2118,
+   "test_files": 725
   },
   "oneiron-android": {
    "files": [
