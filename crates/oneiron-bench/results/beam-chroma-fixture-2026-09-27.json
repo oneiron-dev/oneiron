@@ -1,0 +1,154 @@
+{
+  "scope": "retrieval-sensitive single-question fixture measurement; real Chroma HTTP, exact-match synthetic answerer/judge; not public BEAM accuracy or provider cost",
+  "date_utc": "2026-09-27",
+  "source_revision_at_run": "5c5f6cda05a5a5b5368e805d941d61c06d54e4b7",
+  "source_state": "ONE-2180 review fixes uncommitted while measuring; producing source is in the next PR commit",
+  "runtime": {
+    "chroma_package": "chromadb==1.5.9 (uvx)",
+    "chroma_cli": "chroma 1.4.4",
+    "model": "local retrieval-sensitive rule answerer + exact-match scorer, NOT GPT-4.1",
+    "model_script_sha256": "04264e4165da35e8e9b27317bc8343f4760491becd7a72f2dd1e847e04163e2f",
+    "supported_fixture_sha256": "13fef8a23aea3427ef2d4580e1612110ec657c46165c9ea2c00223d2bf805833",
+    "supported_plan_sha256": "33efeb28ed317a3edf8bbc3156c16b4b7629109ffac0477dc2aeb184a0f3bd5d",
+    "no_evidence_fixture_sha256": "cf43ff0814e386795a3383bdb6f0b3822fd636c2f4f613b0c781cea8cccaa74f",
+    "no_evidence_plan_sha256": "c39a0d6825612767a9d085c5759ac974405ae74d44c989c1bf2d44aa50a2f49d",
+    "citation_corpus_sha256": "e2cce984e7724399f172d8bce19222856134f1b612f4121ad290378088908f3a",
+    "infra_cards_sha256": "7dd5d7e2ca39539181f2f10d84805649511d410913264cf2a19fda45b50f0bf3",
+    "supported_raw_report": "beam-chroma-supported.raw.json",
+    "supported_raw_report_sha256": "439d60bf913448c64b7b226774df3e9f62e1437867d5182dabdf030d6d4f6d24",
+    "no_evidence_raw_report": "beam-chroma-no-evidence.raw.json",
+    "no_evidence_raw_report_sha256": "8aec303108341f613fc775f0f754c234e862eb5dc606e76f10bb8ce56aff6f4e"
+  },
+  "retrieval_card_ids": [
+    "deterministic-context-pack",
+    "vanilla-rag"
+  ],
+  "chroma_card_id": "vanilla-rag",
+  "question_count": 1,
+  "scorer": "fixture-exact-match-v1: answerer extracts an explicitly updated contract launch code from retrieved context; judge awards 1 only for exact candidate/gold match, otherwise 0; 3 identical votes, no partial credit",
+  "observed_fixture_points": [
+    {
+      "arm": "deterministic",
+      "effort": "light",
+      "scorer_value": 1.0,
+      "answer": "tulip"
+    },
+    {
+      "arm": "vanilla_rag",
+      "effort": "light",
+      "scorer_value": 1.0,
+      "answer": "tulip"
+    },
+    {
+      "arm": "backbone_solo",
+      "effort": "light",
+      "scorer_value": 0.0,
+      "answer": "unknown"
+    },
+    {
+      "arm": "deterministic",
+      "effort": "medium",
+      "scorer_value": 1.0,
+      "answer": "tulip"
+    },
+    {
+      "arm": "vanilla_rag",
+      "effort": "medium",
+      "scorer_value": 1.0,
+      "answer": "tulip"
+    },
+    {
+      "arm": "backbone_solo",
+      "effort": "medium",
+      "scorer_value": 0.0,
+      "answer": "unknown"
+    }
+  ],
+  "negative_control_points": [
+    {
+      "arm": "deterministic",
+      "effort": "light",
+      "scorer_value": 0.0,
+      "answer": "unknown"
+    },
+    {
+      "arm": "vanilla_rag",
+      "effort": "light",
+      "scorer_value": 0.0,
+      "answer": "unknown"
+    },
+    {
+      "arm": "backbone_solo",
+      "effort": "light",
+      "scorer_value": 0.0,
+      "answer": "unknown"
+    },
+    {
+      "arm": "deterministic",
+      "effort": "medium",
+      "scorer_value": 0.0,
+      "answer": "unknown"
+    },
+    {
+      "arm": "vanilla_rag",
+      "effort": "medium",
+      "scorer_value": 0.0,
+      "answer": "unknown"
+    },
+    {
+      "arm": "backbone_solo",
+      "effort": "medium",
+      "scorer_value": 0.0,
+      "answer": "unknown"
+    }
+  ],
+  "warning": "Single synthetic question; these scores test evidence sensitivity, not BEAM benchmark accuracy. Local run times and example tariff are not comparative latency or real cost. The infra rows are caveated external VDBBench measurements on a different corpus and host.",
+  "cited_published_reference_rows": [
+    {
+      "card_id": "beam-paper-10m-rag-llama4-maverick-v1",
+      "disposition": "cite",
+      "value": 0.249,
+      "benchmark": "BEAM",
+      "tier": "10M",
+      "source": "arXiv 2510.27246"
+    },
+    {
+      "card_id": "honcho-beam-100k-nugget-mean-v1",
+      "disposition": "walled-appendix",
+      "value": 0.63,
+      "benchmark": "BEAM",
+      "tier": "100K",
+      "source": "honcho.dev/evals (Dec 2025), via ARCH corpus"
+    }
+  ],
+  "infra_cost_framing_cards": [
+    {
+      "card_id": "vdbbench-2026-05-laion100m-zilliz-cloud-capacity-12cu",
+      "source": "https://zilliz.com/vdbbench-leaderboard-v2",
+      "measurement": {
+        "recall_at_k": 0.9723,
+        "latency_us": 299316,
+        "cost_usd": 2.198541e-06
+      }
+    },
+    {
+      "card_id": "vdbbench-2026-05-laion100m-turbopuffer-unpinned",
+      "source": "https://zilliz.com/vdbbench-leaderboard-v2",
+      "measurement": {
+        "recall_at_k": 0.9321,
+        "latency_us": 2339210,
+        "cost_usd": 5.232396e-05
+      }
+    },
+    {
+      "card_id": "vdbbench-2026-05-laion100m-pinecone-serverless",
+      "source": "https://zilliz.com/vdbbench-leaderboard-v2",
+      "measurement": {
+        "recall_at_k": 0.9609,
+        "latency_us": 4849571,
+        "cost_usd": 0.004928026817
+      }
+    }
+  ],
+  "vector_infra_status": "VDBBench May 2026 vendor-run infra cards live in vector_db_infra.v1.json; query costs are modeled from published hourly search cost and measured QPS. Cost-framing-only; not same-corpus Oneiron scores and never folded into accuracy."
+}

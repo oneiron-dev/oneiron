@@ -407,6 +407,9 @@ pub(crate) fn api_routes(server: Arc<SyncServer>) -> Router {
         // Config-only CIMD documents must be public before OAuth/lease bootstrap.
         .route("/oauth/client/native.json", get(client_metadata::native))
         .route("/oauth/client/web.json", get(client_metadata::web))
+        // The public ceremony bypasses the hosted device lease but retains
+        // matched-route wire receipts and threshold questions.
+        .merge(self::esign::public_routes())
         .layer(middleware::from_fn_with_state(
             server.clone(),
             crate::wire_telemetry::observe_http,
@@ -415,7 +418,6 @@ pub(crate) fn api_routes(server: Arc<SyncServer>) -> Router {
         // Their closed router validates a live owner publication and scoped tokens;
         // keep it outside the tenant lease layer, never a generic path exemption.
         .merge(self::booking::public_booking_router())
-        .merge(self::esign::public_routes())
         .with_state(server.clone())
         .layer(middleware::from_fn_with_state(
             server,
