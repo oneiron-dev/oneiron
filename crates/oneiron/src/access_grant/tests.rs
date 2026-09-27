@@ -776,6 +776,10 @@ fn channel_identity_scope_rejects_hybrid_capability_and_unknown_keys() -> Result
 
 #[test]
 fn relationship_scopes_and_expiry_fail_closed() -> Result<()> {
+    fn singleton<T: Ord>(value: T) -> crate::federation::ScopeAxis<T> {
+        crate::federation::ScopeAxis::Some(std::collections::BTreeSet::from([value]))
+    }
+
     let principal = entity(0x52);
     let space = entity(0xB1);
     for scope in [
@@ -797,19 +801,60 @@ fn relationship_scopes_and_expiry_fail_closed() -> Result<()> {
             decode_access_grant_body(&encode_access_grant_body(&grant)?)?,
             grant
         );
-        assert!(grant.allows_relationship_read(principal, space, grant.capability, 43));
-        assert!(!grant.allows_relationship_read(principal, entity(0xB2), grant.capability, 43));
+        let kind = match grant.capability {
+            AccessGrantCapability::MessagesRead => crate::registry::ENTITY_TYPE_MESSAGE,
+            AccessGrantCapability::SummariesRead => crate::registry::ENTITY_TYPE_SUMMARY,
+            AccessGrantCapability::RelationshipClaimsRead => crate::registry::ENTITY_TYPE_CLAIM,
+            _ => unreachable!("relationship fixture has three capabilities"),
+        };
+        let mut record = crate::federation::Scope::top();
+        record.worlds = singleton(crate::federation::ScopeId(crate::claim::base_world_id()));
+        record.bands = singleton(kind);
+        record.audience = singleton(crate::federation::ScopeId(
+            crate::claim::default_project_id(),
+        ));
+        record.verbs = singleton("read".to_owned());
+        record.sensitivity =
+            crate::federation::SensitivityCeiling::AtMost(crate::federation::Sensitivity::Private);
+        assert!(grant.allows_relationship_read(principal, space, grant.capability, &record, 43));
+        // A singleton kind and lower sensitivity still cover their actual
+        // record. The fabricated top-band/restricted preset used to deny this.
+        grant.authority_scope.bands = singleton(kind);
+        grant.authority_scope.sensitivity = record.sensitivity;
+        assert!(grant.allows_relationship_read(principal, space, grant.capability, &record, 43));
+        let mut other_project = record.clone();
+        other_project.audience = singleton(crate::federation::ScopeId(entity(0xB2)));
+        grant.authority_scope.audience = record.audience.clone();
+        assert!(!grant.allows_relationship_read(
+            principal,
+            space,
+            grant.capability,
+            &other_project,
+            43,
+        ));
+        // A matching legacy resource selector cannot grant beyond a bottom Scope.
+        grant.authority_scope = crate::federation::Scope::default();
+        assert!(!grant.allows_relationship_read(principal, space, grant.capability, &record, 43));
+        grant.authority_scope = crate::federation::scope_codec::read_preset();
+        assert!(!grant.allows_relationship_read(
+            principal,
+            entity(0xB2),
+            grant.capability,
+            &record,
+            43,
+        ));
         if grant.capability == AccessGrantCapability::MessagesRead {
             assert!(!grant.allows_relationship_read(
                 principal,
                 space,
                 AccessGrantCapability::SummariesRead,
-                43
+                &record,
+                43,
             ));
         }
         grant.expires_at = Some(2);
         assert_eq!(grant.effective_status_at(2), AccessGrantStatus::Expired);
-        assert!(!grant.allows_relationship_read(principal, space, grant.capability, 2));
+        assert!(!grant.allows_relationship_read(principal, space, grant.capability, &record, 2));
         let revoked = grant.revoked(3)?;
         assert_eq!(revoked.effective_status_at(4), AccessGrantStatus::Revoked);
     }
