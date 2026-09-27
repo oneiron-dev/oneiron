@@ -39,52 +39,179 @@ struct EsignSink<'a> {
     actor: EsignAuditActor,
     automated: bool,
     now: u64,
+    reminder: Option<(String, u32)>,
 }
 impl OutboundExecutionSink for EsignSink<'_> {
     fn execute(&mut self, request: &OutboundExecutionRequest<'_>) -> OutboundExecutionOutcome {
         let result = self.vault.with_write_txn(|txn| {
             let id = EntityId::from_hex(&self.command.document)?;
-            let marker = [b"esign.dispatch.v1/".as_slice(), blake3::hash(request.intent_ref.as_bytes()).as_bytes()].concat();
-            let binding = request.intent.content_ref.as_deref().ok_or_else(|| invalid("missing command binding"))?;
+            let marker = [
+                b"esign.dispatch.v1/".as_slice(),
+                blake3::hash(request.intent_ref.as_bytes()).as_bytes(),
+            ]
+            .concat();
+            let binding = request
+                .intent
+                .content_ref
+                .as_deref()
+                .ok_or_else(|| invalid("missing command binding"))?;
             if let Some(prior) = self.vault.store.vault_meta.get(txn, &marker)? {
-                if prior != binding.as_bytes() { return Err(invalid("dispatch replay binding changed")); }
+                if prior != binding.as_bytes() {
+                    return Err(invalid("dispatch replay binding changed"));
+                }
                 return Ok(id);
             }
-            if self.automated && !super::principals::automated_outbound_allowed(self.vault,txn,request.intent.on_behalf_of.as_deref())? {
+            if self.automated
+                && !super::principals::automated_outbound_allowed(
+                    self.vault,
+                    txn,
+                    request.intent.on_behalf_of.as_deref(),
+                )?
+            {
                 return Err(invalid("autonomous send is outside the principal envelope"));
             }
-            let state = state_in(self.vault, txn, id)?;
-            if state.document.recipients.len() != self.command.recipient_count { return Err(invalid("recipient count changed")); }
+            let mut state = state_in(self.vault, txn, id)?;
+            if state.document.recipients.len() != self.command.recipient_count {
+                return Err(invalid("recipient count changed"));
+            }
             for item in &state.document.items {
                 let item_id = EntityId::from_hex(&item.artifact_ref)?;
-                let original = super::super::read_blob_artifact_head_in_txn(&self.vault.store, txn, &item_id)?.ok_or_else(|| invalid("missing original"))?;
-                if original.version != item.original_version { return Err(invalid("original PDF changed after admission")); }
+                let original =
+                    super::super::read_blob_artifact_head_in_txn(&self.vault.store, txn, &item_id)?
+                        .ok_or_else(|| invalid("missing original"))?;
+                if original.version != item.original_version {
+                    return Err(invalid("original PDF changed after admission"));
+                }
             }
-            match self.command.verb {
+            let recipients = match self.command.verb {
                 EsignOutboundVerb::SendForSignature => {
-                    super::capability::require_recipient_capabilities(self.vault, txn, id, &state, self.now)?;
-                    append(self.vault, txn, id, EsignEvent::Sent, self.actor.clone(), self.now)?; }
+                    super::capability::require_recipient_capabilities(
+                        self.vault, txn, id, &state, self.now,
+                    )?;
+                    state = append(
+                        self.vault,
+                        txn,
+                        id,
+                        EsignEvent::Sent,
+                        self.actor.clone(),
+                        self.now,
+                    )?;
+                    state
+                        .document
+                        .recipients
+                        .iter()
+                        .map(|r| r.id.clone())
+                        .collect::<Vec<_>>()
+                }
                 EsignOutboundVerb::Remind => {
-                    if state.status != DocumentStatus::Pending || state.rejection.is_some() { return Err(invalid("document cannot be reminded")); }
+                    if state.status != DocumentStatus::Pending
+                        || state.rejection.is_some()
+                        || self.now >= state.document.expires_at
+                    {
+                        return Err(invalid("document cannot be reminded"));
+                    }
+                    if let Some((recipient, rung)) = &self.reminder {
+                        if super::lifecycle::reminder_due(self.vault, txn, id, recipient, self.now)?
+                            != Some(*rung)
+                        {
+                            return Err(invalid("reminder claim is no longer due"));
+                        }
+                        state = append(
+                            self.vault,
+                            txn,
+                            id,
+                            EsignEvent::Reminded {
+                                recipient: recipient.clone(),
+                                rung: *rung,
+                            },
+                            self.actor.clone(),
+                            self.now,
+                        )?;
+                        vec![recipient.clone()]
+                    } else {
+                        if let Some(rules) = super::lifecycle::rules_in(self.vault, txn, id)? {
+                            let sent = super::ledger::events_in(self.vault, txn, id)?
+                                .into_iter()
+                                .find(|row| matches!(row.event, EsignEvent::Sent))
+                                .ok_or_else(|| invalid("pending document has no send claim"))?;
+                            if self.now > sent.at.saturating_add(rules.reminder_cap_seconds) {
+                                return Err(invalid("reminder cap elapsed"));
+                            }
+                        }
+                        state
+                            .document
+                            .recipients
+                            .iter()
+                            .filter(|r| {
+                                state.recipients[&r.id].signing == SigningStatus::Ready
+                                    && self.now < state.recipients[&r.id].expires_at
+                            })
+                            .map(|r| r.id.clone())
+                            .collect()
+                    }
                 }
                 EsignOutboundVerb::Void => {
-                    append(self.vault, txn, id, EsignEvent::Voided { reason: self.command.reason.clone().ok_or_else(|| invalid("void reason required"))? }, self.actor.clone(), self.now)?;
-                    self.vault.store.vault_meta.put(txn, &marker, binding.as_bytes())?;
+                    state = append(
+                        self.vault,
+                        txn,
+                        id,
+                        EsignEvent::Voided {
+                            reason: self
+                                .command
+                                .reason
+                                .clone()
+                                .ok_or_else(|| invalid("void reason required"))?,
+                        },
+                        self.actor.clone(),
+                        self.now,
+                    )?;
+                    let recipients = state
+                        .document
+                        .recipients
+                        .iter()
+                        .map(|r| r.id.clone())
+                        .collect::<Vec<_>>();
+                    super::lifecycle::notify(
+                        self.vault,
+                        txn,
+                        id,
+                        &state,
+                        "void",
+                        &recipients,
+                        super::lifecycle::NoticeTrigger {
+                            dispatch_ref: Some(request.intent_ref),
+                            now: self.now,
+                        },
+                    )?;
+                    self.vault
+                        .store
+                        .vault_meta
+                        .put(txn, &marker, binding.as_bytes())?;
                     return Ok(id);
                 }
-            }
-            // Durable channel-adapter handoff. Enqueue is not email delivery.
-            for recipient in &state.document.recipients {
-                if self.command.verb == EsignOutboundVerb::Remind && state.recipients[&recipient.id].signing == SigningStatus::Completed { continue; }
-                let payload = serde_json::to_vec(&serde_json::json!({"document": id.to_hex(), "recipient": recipient.id, "dispatch_ref": request.intent_ref})).map_err(|_| invalid("delivery encoding"))?;
-                crate::ports::JobQueue::port_job_enqueue(self.vault, txn, crate::attempt_queue::EnqueueAttempt {
-                    kind: "esign.delivery".into(), payload,
-                    dedupe_key: Some(format!("{}:{}", request.intent_ref, recipient.id)),
-                    run_id: None, now: self.now,
-                })?;
-            }
+            };
+            let transition = if self.command.verb == EsignOutboundVerb::SendForSignature {
+                "invite"
+            } else {
+                "reminder"
+            };
+            super::lifecycle::notify(
+                self.vault,
+                txn,
+                id,
+                &state,
+                transition,
+                &recipients,
+                super::lifecycle::NoticeTrigger {
+                    dispatch_ref: Some(request.intent_ref),
+                    now: self.now,
+                },
+            )?;
             enqueue_seal(self.vault, txn, id, self.now)?;
-            self.vault.store.vault_meta.put(txn, &marker, binding.as_bytes())?;
+            self.vault
+                .store
+                .vault_meta
+                .put(txn, &marker, binding.as_bytes())?;
             Ok(id)
         });
         match result {
@@ -108,10 +235,35 @@ impl Vault {
     /// normal gate, window, grant, rate-accounting and retry receipts.
     pub fn dispatch_esign(
         &self,
+        request: OutboundDispatchRequest,
+        command: &EsignOutboundCommand,
+        ip: Option<String>,
+        user_agent: Option<String>,
+    ) -> std::result::Result<OutboundDispatchResult, OutboundDispatchError> {
+        self.dispatch_esign_inner(request, command, ip, user_agent, None)
+    }
+    pub(super) fn dispatch_esign_reminder(
+        &self,
+        request: OutboundDispatchRequest,
+        command: &EsignOutboundCommand,
+        recipient: &str,
+        rung: u32,
+    ) -> std::result::Result<OutboundDispatchResult, OutboundDispatchError> {
+        self.dispatch_esign_inner(
+            request,
+            command,
+            None,
+            None,
+            Some((recipient.to_owned(), rung)),
+        )
+    }
+    fn dispatch_esign_inner(
+        &self,
         mut request: OutboundDispatchRequest,
         command: &EsignOutboundCommand,
         ip: Option<String>,
         user_agent: Option<String>,
+        reminder: Option<(String, u32)>,
     ) -> std::result::Result<OutboundDispatchResult, OutboundDispatchError> {
         let document = EntityId::from_hex(&command.document)?;
         if request.intent.channel != "esign"
@@ -124,7 +276,7 @@ impl Vault {
         if state.document.recipients.len() != command.recipient_count {
             return Err(invalid("recipient count changed").into());
         }
-        let bytes = serde_json::to_vec(&(command, &state.document))
+        let bytes = serde_json::to_vec(&(command, &state.document, &reminder))
             .map_err(|_| invalid("command encoding"))?;
         request.intent.content_ref = Some(format!(
             "esign-command:{}",
@@ -146,32 +298,12 @@ impl Vault {
                 actor,
                 automated,
                 now,
+                reminder,
             },
         )
     }
     /// Expiry is an unsealed terminal and never queues a seal job.
     pub fn expire_esign_document(&self, document: EntityId, now: u64) -> Result<()> {
-        self.with_write_txn(|txn| {
-            let state = state_in(self, txn, document)?;
-            if matches!(
-                state.status,
-                DocumentStatus::Draft | DocumentStatus::Pending
-            ) && now >= state.document.expires_at
-            {
-                append(
-                    self,
-                    txn,
-                    document,
-                    EsignEvent::Expired,
-                    EsignAuditActor {
-                        actor: "engine:expiry".into(),
-                        ip: None,
-                        user_agent: None,
-                    },
-                    now,
-                )?;
-            }
-            Ok(())
-        })
+        self.sweep_esign_expiry(&[document], now).map(|_| ())
     }
 }
