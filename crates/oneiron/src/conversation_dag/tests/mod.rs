@@ -985,6 +985,89 @@ fn thread_depth_two_and_another_root_are_not_refused() {
     let second_root = vault.reply_in_thread(trunk, &other).unwrap().id;
     assert_eq!(vault.thread_roots(trunk).unwrap().len(), 2);
     assert!(vault.thread_roots(trunk).unwrap().contains(&second_root));
-    assert_eq!(vault.thread_meta(trunk).unwrap().unwrap().count, 3);
+    // Listing, cached meta and summary all select the first root's chain.
+    let selected = vault.thread(trunk).unwrap();
+    assert_eq!(selected.replies, [first, nested]);
+    assert_eq!(selected.count, 2);
+    assert_eq!(
+        vault.thread_meta(trunk).unwrap().unwrap().count,
+        selected.count
+    );
+    let second_descendant = vault.reply_in_thread(second_root, &other).unwrap().id;
+    assert_eq!(vault.thread_roots(trunk).unwrap().len(), 2);
+    assert_eq!(vault.thread(trunk).unwrap().replies, [first, nested]);
+    assert_eq!(vault.thread_meta(trunk).unwrap().unwrap().count, 2);
+    assert_eq!(
+        vault.thread(second_root).unwrap().replies,
+        [second_descendant]
+    );
+    let (summary, header) = vault
+        .mint_and_land_thread_summary(trunk, "first chain", actor)
+        .unwrap();
+    assert_eq!(
+        vault.scope_summary_covers(&summary).unwrap(),
+        [trunk, first, nested]
+    );
+    assert_eq!(vault.drill(&header.claim).unwrap(), [trunk, first, nested]);
     assert_eq!(vault.head(&conversation).unwrap(), Some(trunk));
+}
+
+#[test]
+fn nested_continuation_refreshes_its_actual_parent_and_delete_repairs_meta() {
+    let (_dir, vault, conv, actor) = fixture();
+    let trunk = vault
+        .append_dag_record(&input(conv, None, true, actor))
+        .unwrap()
+        .id;
+    let a = vault
+        .reply_in_thread(trunk, &input(conv, None, false, actor))
+        .unwrap()
+        .id;
+    let b = vault
+        .reply_in_thread(a, &input(conv, None, false, actor))
+        .unwrap()
+        .id;
+    assert_eq!(vault.thread_meta(a).unwrap().unwrap().count, 1);
+    let c = vault
+        .reply_in_thread(trunk, &input(conv, None, false, actor))
+        .unwrap()
+        .id;
+    assert_eq!(vault.thread(a).unwrap().replies, [b, c]);
+    assert_eq!(vault.thread_meta(a).unwrap().unwrap().count, 2);
+    assert_eq!(vault.thread_meta(trunk).unwrap().unwrap().count, 3);
+    vault.delete_entity(&c).unwrap();
+    assert_eq!(
+        vault.thread_meta(a).unwrap().unwrap().count,
+        vault.thread(a).unwrap().count
+    );
+    vault.delete_entity(&b).unwrap();
+    assert_eq!(vault.thread_meta(a).unwrap(), None);
+    vault.delete_entity(&a).unwrap();
+    assert!(vault.thread(trunk).unwrap().replies.is_empty());
+    assert_eq!(vault.thread_meta(trunk).unwrap(), None);
+}
+
+#[test]
+fn worker_root_summary_uses_its_session_without_changing_head() {
+    let (_dir, vault, conv, actor) = fixture();
+    let trunk = vault
+        .append_dag_record(&input(conv, None, true, actor))
+        .unwrap()
+        .id;
+    let session = vault.spawn_dag_sub_session(&trunk, actor).unwrap();
+    let mut input = input(conv, None, false, actor);
+    input.session = Some(session);
+    let root = vault.reply_in_thread(trunk, &input).unwrap().id;
+    let next = vault.reply_in_thread(trunk, &input).unwrap().id;
+    assert_eq!(vault.thread(trunk).unwrap().replies, [root, next]);
+    let (summary, header) = vault
+        .mint_and_land_thread_summary(trunk, "worker chain", actor)
+        .unwrap();
+    assert_eq!(vault.scope_summary_covers(&summary).unwrap(), [root, next]);
+    assert_eq!(vault.drill(&header.claim).unwrap(), [root, next]);
+    assert_eq!(
+        vault.get_claim(&header.claim).unwrap().unwrap().subject,
+        crate::claim::ClaimSubject::Entity(trunk)
+    );
+    assert_eq!(vault.head(&conv).unwrap(), Some(trunk));
 }

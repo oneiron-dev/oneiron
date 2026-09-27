@@ -23,8 +23,10 @@ mod writes;
 pub(crate) use graph::{
     actor_in_txn, conversation_of, edge_ids, is_sub_session_record, require_type,
 };
-pub(crate) use reply::thread_tip_in_txn;
 pub use reply::{ReplyStrip, Thread, ThreadMeta};
+pub(crate) use reply::{
+    invalidate_thread_meta, invalidate_thread_meta_for_turn_put, thread_tip_in_txn,
+};
 pub(crate) use scopes::resolve_in_txn;
 pub use types::{
     AppendRecord, AppendedRecord, DagPage, DagPageRequest, ResolvedScope, ScopePath, ScopeSelector,

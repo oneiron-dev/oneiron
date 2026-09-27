@@ -11866,7 +11866,7 @@
      "path": "src/conversation_dag/reply.rs",
      "purpose": "Revision-bound reply strips",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 4,
       "fn": 6,
       "struct": 3
      }

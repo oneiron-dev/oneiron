@@ -14,7 +14,7 @@ use crate::vault::{LiveEntityRow, live_entity_row_in_txn};
 use crate::{EntityId, Vault};
 use heed::{RoTxn, RwTxn};
 use rmpv::Value;
-use std::collections::{HashSet, VecDeque};
+use std::collections::HashSet;
 
 /// Renderer-neutral reply strip over an exact content revision.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -171,17 +171,21 @@ fn rebuild_thread_meta_in_txn(
         count: thread.count,
         last_at: thread.last_at.expect("nonempty thread has timestamp"),
     });
-    let key = key(THREAD_META, &trunk);
+    let meta_key = key(THREAD_META, &trunk);
     if let Some(ref meta) = meta {
         let mut value = Vec::with_capacity(33);
         value.push(1);
         value.extend_from_slice(meta.root.as_bytes());
         value.extend_from_slice(&meta.count.to_be_bytes());
         value.extend_from_slice(&meta.last_at.to_be_bytes());
-        vault.store.vault_meta.put(txn, &key, &value)?;
+        vault.store.vault_meta.put(txn, &meta_key, &value)?;
     } else {
-        vault.store.vault_meta.delete(txn, &key)?;
+        vault.store.vault_meta.delete(txn, &meta_key)?;
     }
+    vault
+        .store
+        .vault_meta
+        .delete(txn, &key(THREAD_DIRTY, &trunk))?;
     Ok(meta)
 }
 
@@ -222,28 +226,29 @@ pub struct Thread {
     pub last_at: Option<u64>,
 }
 
-pub(crate) fn thread_in_txn(
+fn chain_in_txn(
     vault: &Vault,
-    txn: &heed::RoTxn<'_>,
-    trunk: EntityId,
-) -> Result<Thread> {
-    let conversation = conversation_of(&vault.store, txn, &trunk)?;
-    let mut queue = VecDeque::from([trunk]);
-    let mut seen = HashSet::from([trunk]);
+    txn: &RoTxn<'_>,
+    conversation: EntityId,
+    anchor: EntityId,
+    session: Option<Option<EntityId>>,
+) -> Result<Vec<EntityId>> {
+    let mut current = anchor;
+    let mut seen = HashSet::from([anchor]);
     let mut replies = Vec::new();
     let mut examined = 0;
-    let mut last_at = None;
-    while let Some(target) = queue.pop_front() {
+    loop {
         let mut children = edge_ids(
             &vault.store,
             txn,
-            &target,
+            &current,
             EdgeKind::RepliesTo,
             true,
             MAX_ANCESTOR_DEPTH.saturating_sub(examined),
         )?;
         examined += children.len();
         children.sort_unstable();
+        let mut selected = None;
         for child in children {
             if !seen.insert(child) {
                 return Err(crate::error::RegistryError::CycleDetected.into());
@@ -252,20 +257,40 @@ pub(crate) fn thread_in_txn(
                 continue;
             }
             require_member(&vault.store, txn, &conversation, &child)?;
-            if edge_ids(&vault.store, txn, &child, EdgeKind::RepliesTo, false, 2)? != [target] {
+            if edge_ids(&vault.store, txn, &child, EdgeKind::RepliesTo, false, 2)? != [current] {
                 return Err(invalid("record needs exactly one reply target"));
             }
             if !super::graph::is_thread_record(&vault.store, txn, &child)? {
                 continue;
             }
-            let row = vault
-                .store
-                .port_entity_record(txn, &child)?
-                .ok_or(Error::EntityNotFound)?;
-            last_at = Some(last_at.unwrap_or(0).max(row.occurred.start));
-            replies.push(child);
-            queue.push_back(child);
+            if selected.is_none()
+                && (session.is_none()
+                    || crate::compaction::turn_session_membership_in_txn(
+                        &vault.store,
+                        txn,
+                        &child,
+                    )? == session.expect("checked above"))
+            {
+                selected = Some(child);
+            }
         }
+        let Some(next) = selected else { break };
+        replies.push(next);
+        current = next;
+    }
+    Ok(replies)
+}
+
+pub(crate) fn thread_in_txn(vault: &Vault, txn: &RoTxn<'_>, trunk: EntityId) -> Result<Thread> {
+    let conversation = conversation_of(&vault.store, txn, &trunk)?;
+    let replies = chain_in_txn(vault, txn, conversation, trunk, None)?;
+    let mut last_at = None;
+    for id in &replies {
+        let row = vault
+            .store
+            .port_entity_record(txn, id)?
+            .ok_or(Error::EntityNotFound)?;
+        last_at = Some(last_at.unwrap_or(0).max(row.occurred.start));
     }
     Ok(Thread {
         conversation,
@@ -276,23 +301,68 @@ pub(crate) fn thread_in_txn(
     })
 }
 
-/// Picks the first root's chain tip, not a sibling root's reply.
+/// The tip of the same selected no-forks chain that listing and metadata use.
 pub(crate) fn thread_tip_in_txn(
     vault: &Vault,
     txn: &RoTxn<'_>,
     trunk: EntityId,
 ) -> Result<EntityId> {
-    let root = roots_in_txn(vault, txn, trunk)?
-        .into_iter()
-        .next()
-        .ok_or_else(|| invalid("trunk has no thread"))?;
-    let thread = thread_in_txn(vault, txn, trunk)?;
-    for id in thread.replies.into_iter().rev() {
-        if super::graph::chain(&vault.store, txn, &thread.conversation, id)?.contains(&root) {
-            return Ok(id);
+    thread_in_txn(vault, txn, trunk)?
+        .replies
+        .last()
+        .copied()
+        .ok_or_else(|| invalid("trunk has no thread"))
+}
+
+const THREAD_DIRTY: &[u8] = b"conversation_dag:thread_meta_dirty:v1:";
+
+/// Invalidates the cached projection of a reply's target and every ancestor.
+/// Called before edge removal and after edge/body materialization, in the same transaction.
+pub(crate) fn invalidate_thread_meta(
+    store: &crate::store::Store,
+    txn: &mut RwTxn<'_>,
+    start: EntityId,
+) -> Result<()> {
+    let mut cursor = Some(start);
+    let mut seen = HashSet::new();
+    while let Some(id) = cursor {
+        if !seen.insert(id) {
+            break; // The read walk reports the malformed cycle; keep the cache dirty.
         }
+        if seen.len() > MAX_ANCESTOR_DEPTH {
+            return Err(Error::IndexOverflow("conversation_dag_walk"));
+        }
+        store.vault_meta.put(txn, &key(THREAD_DIRTY, &id), &[1])?;
+        let parents = edge_ids(store, txn, &id, EdgeKind::RepliesTo, false, 2)?;
+        cursor = match parents.as_slice() {
+            [] => None,
+            [parent] => Some(*parent),
+            _ => return Err(invalid("record needs exactly one reply target")),
+        };
     }
-    Err(invalid("thread root is missing"))
+    Ok(())
+}
+
+/// A replayed TURN body may arrive after its RepliesTo edge.
+pub(crate) fn invalidate_thread_meta_for_turn_put(
+    store: &crate::store::Store,
+    txn: &mut RwTxn<'_>,
+    id: EntityId,
+) -> Result<()> {
+    if !edge_ids(store, txn, &id, EdgeKind::RepliesTo, false, 2)?.is_empty()
+        || !edge_ids(
+            store,
+            txn,
+            &id,
+            EdgeKind::RepliesTo,
+            true,
+            MAX_ANCESTOR_DEPTH,
+        )?
+        .is_empty()
+    {
+        invalidate_thread_meta(store, txn, id)?;
+    }
+    Ok(())
 }
 
 impl Vault {
@@ -306,6 +376,15 @@ impl Vault {
     pub fn thread_meta(&self, trunk: EntityId) -> Result<Option<ThreadMeta>> {
         let txn = self.store.env.read_txn()?;
         conversation_of(&self.store, &txn, &trunk)?;
+        let dirty = self
+            .store
+            .vault_meta
+            .get(&txn, &key(THREAD_DIRTY, &trunk))?
+            .is_some();
+        if dirty {
+            drop(txn);
+            return self.with_write_txn(|txn| rebuild_thread_meta_in_txn(self, txn, trunk));
+        }
         meta_in_txn(self, &txn, &trunk)
     }
 
@@ -323,15 +402,11 @@ impl Vault {
     pub fn reply_in_thread(&self, trunk: EntityId, input: &AppendRecord) -> Result<AppendedRecord> {
         self.with_write_txn(|txn| {
             require_member(&self.store, txn, &input.conversation, &trunk)?;
-            let thread = thread_in_txn(self, txn, trunk)?;
             let mut target = trunk;
-            for reply in thread.replies.iter().rev() {
-                if crate::compaction::turn_session_membership_in_txn(&self.store, txn, reply)?
-                    == input.session
-                {
-                    target = *reply;
-                    break;
-                }
+            let conversation = conversation_of(&self.store, txn, &trunk)?;
+            let candidates = chain_in_txn(self, txn, conversation, trunk, Some(input.session))?;
+            if let Some(last) = candidates.last() {
+                target = *last;
             }
             let mut input = input.clone();
             input.parent = Some(target);
@@ -339,7 +414,7 @@ impl Vault {
             input.advance = false;
             let appended = super::append_in_txn(self, txn, &input, None, true)?;
             // A nested reply also changes the ancestor trunk's meta line.
-            let mut cursor = Some(trunk);
+            let mut cursor = Some(target);
             let mut visited = HashSet::new();
             while let Some(id) = cursor {
                 if !visited.insert(id) || visited.len() > MAX_ANCESTOR_DEPTH {
@@ -350,6 +425,10 @@ impl Vault {
                     break;
                 }
                 cursor = super::graph::parent(&self.store, txn, &id)?;
+            }
+            // The caller may have selected a higher trunk than the actual parent.
+            if !visited.contains(&trunk) {
+                rebuild_thread_meta_in_txn(self, txn, trunk)?;
             }
             Ok(appended)
         })

@@ -428,17 +428,25 @@ async fn thread_meta_and_summary_routes_roundtrip() {
         json!({"advance": true, "body": {"txt": "root"}, "actor": actor}),
     )
     .await;
+    let other = post(
+        &server,
+        &format!("{path}/records"),
+        json!({"parent": root["id"], "advance": true, "body": {"txt": "other"}, "actor": actor}),
+    )
+    .await;
     let thread_path = format!("{path}/records/{}/thread", root["id"].as_str().unwrap());
     let reply = post(
         &server,
         &thread_path,
-        json!({"advance": false, "body": {"txt": "reply"}, "actor": actor}),
+        json!({"advance": false, "body": {"txt": "reply"}, "occurred_start": 42, "actor": actor}),
     )
     .await;
     let page = get(&server, &format!("{path}/records?with=thread_meta")).await;
     let id = root["id"].as_str().unwrap();
     assert_eq!(page["thread_meta"][id]["root"], reply["id"]);
     assert_eq!(page["thread_meta"][id]["count"], 1);
+    assert_eq!(page["thread_meta"][id]["last_at"], 42);
+    assert!(page["thread_meta"][other["id"].as_str().unwrap()].is_null());
     assert_eq!(
         get(&server, &thread_path).await["roots"],
         json!([reply["id"]])

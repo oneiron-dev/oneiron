@@ -616,6 +616,9 @@ pub(in crate::batch) fn apply_put(
         new_skill_record.as_ref(),
     )?;
     stage_entity_body_row(store, wtxn, &id, entity_type, occurred, learned_at, data)?;
+    if entity_type == crate::registry::ENTITY_TYPE_TURN {
+        crate::conversation_dag::invalidate_thread_meta_for_turn_put(store, wtxn, id)?;
+    }
     if entity_type == ENTITY_TYPE_TASK {
         crate::task_verb::index_owner_fact(store, wtxn, &id, Some(data))?;
         if body_changed {

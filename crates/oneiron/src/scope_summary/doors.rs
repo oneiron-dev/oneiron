@@ -68,7 +68,7 @@ fn validate_covers_in_txn(vault: &Vault, txn: &RoTxn<'_>, body: &ScopeSummaryBod
         }
         ScopePath::Branch(anchor) => {
             if conversation_of(&vault.store, txn, &anchor)? != scope.conversation
-                || is_sub_session_record(&vault.store, txn, &anchor)?
+                || is_sub_session_record(&vault.store, txn, &anchor)? && scope.session.is_none()
             {
                 return Err(invalid("summary branch belongs to another scope"));
             }
@@ -90,7 +90,8 @@ fn validate_covers_in_txn(vault: &Vault, txn: &RoTxn<'_>, body: &ScopeSummaryBod
             return Err(invalid("summary cover belongs to another session"));
         }
         if is_sub_session_record(&vault.store, txn, covered)?
-            != matches!(scope.path, ScopePath::SubSession(_))
+            && !matches!(scope.path, ScopePath::SubSession(_))
+            && !(matches!(scope.path, ScopePath::Branch(_)) && scope.session.is_some())
         {
             return Err(invalid("summary cover belongs to another path"));
         }
@@ -430,9 +431,14 @@ impl Vault {
     ) -> Result<(EntityId, LandedHeader)> {
         self.with_write_txn(|txn| {
             let tip = thread_tip_in_txn(self, txn, trunk)?;
+            let session = if is_sub_session_record(&self.store, txn, &tip)? {
+                crate::compaction::turn_session_membership_in_txn(&self.store, txn, &tip)?
+            } else {
+                None
+            };
             let scope = ScopeSelector {
                 conversation: conversation_of(&self.store, txn, &trunk)?,
-                session: None,
+                session,
                 path: ScopePath::Branch(tip),
                 include_forks: false,
             };
