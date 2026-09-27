@@ -28835,7 +28835,7 @@
      "path": "src/store/gate_decision/keys.rs",
      "purpose": "Gate-decision ledger key prefixes, key constructors, and the id successor",
      "surface": {
-      "crate-vis": 18
+      "crate-vis": 23
      }
     },
     {
@@ -28845,7 +28845,7 @@
      "path": "src/store/gate_decision/ledger.rs",
      "purpose": "Gate-decision ledger Store methods plus the row append and record codec",
      "surface": {
-      "crate-vis": 19,
+      "crate-vis": 22,
       "fn": 1
      }
     },

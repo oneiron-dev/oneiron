@@ -9,7 +9,8 @@ use super::keys::{
     GATE_DECISION_CLAIM_INDEX_BACKFILL_COMPLETE_KEY,
     GATE_DECISION_CLAIM_INDEX_BACKFILL_COMPLETE_VALUE, GATE_DECISION_KEY_PREFIX,
     attempt_run_index_key, attempt_run_index_prefix, gate_decision_claim_index_key,
-    gate_decision_claim_index_prefix, gate_decision_grant_ref_index_key,
+    gate_decision_claim_index_prefix, gate_decision_claim_ref_key, gate_decision_claim_ref_prefix,
+    gate_decision_claim_refs_key, gate_decision_grant_ref_index_key,
     gate_decision_grant_ref_index_prefix, gate_decision_id_from_key, gate_decision_key,
     gate_decision_upper_bound, logical_uuid_v7_successor,
 };
@@ -119,6 +120,75 @@ impl Store {
         append_gate_decision_row_in_txn(self, wtxn, record)
     }
 
+    /// Appends an inbox bundle and its blind per-constituent claim references
+    /// atomically. A bundle has no singular claim_id; its content digest alone
+    /// cannot be reversed to find the claims it describes on deletion.
+    pub(crate) fn append_gate_decision_with_claim_refs_in_txn(
+        &self,
+        wtxn: &mut RwTxn<'_>,
+        record: &GateDecisionRecord,
+        claim_refs: &[[u8; 16]],
+    ) -> Result<()> {
+        if record.claim_id.is_some() || claim_refs.is_empty() {
+            return Err(Error::InvariantViolation("bundle claim references"));
+        }
+        let mut refs = claim_refs.to_vec();
+        refs.sort_unstable();
+        refs.dedup();
+        self.append_gate_decision_in_txn(wtxn, record)?;
+        self.vault_meta.put(
+            wtxn,
+            &gate_decision_claim_refs_key(record.decision_id),
+            &rmp_serde::to_vec(&refs)
+                .map_err(|_| Error::InvariantViolation("bundle claim references encode"))?,
+        )?;
+        for claim_id in &refs {
+            self.vault_meta.put(
+                wtxn,
+                &gate_decision_claim_ref_key(claim_id, record.decision_id),
+                b"",
+            )?;
+        }
+        Ok(())
+    }
+
+    /// Reads the complete association, independent of the secondary index.
+    fn gate_decision_claim_refs_in_txn(
+        &self,
+        txn: &RoTxn<'_>,
+        id: GateDecisionId,
+    ) -> Result<Vec<[u8; 16]>> {
+        let Some(raw) = self
+            .vault_meta
+            .get(txn, &gate_decision_claim_refs_key(id))?
+        else {
+            return Ok(Vec::new());
+        };
+        let refs: Vec<[u8; 16]> = rmp_serde::from_slice(&raw)
+            .map_err(|_| Error::CorruptedIndex("gate decision claim references"))?;
+        if refs.is_empty() || refs.windows(2).any(|pair| pair[0] >= pair[1]) {
+            return Err(Error::CorruptedIndex("gate decision claim references"));
+        }
+        Ok(refs)
+    }
+
+    /// Shreds all constituent refs with the primary. A redacted bundle keeps
+    /// its accountability skeleton but no pointer to any member claim.
+    fn delete_gate_decision_claim_refs_in_txn(
+        &self,
+        wtxn: &mut RwTxn<'_>,
+        id: GateDecisionId,
+    ) -> Result<()> {
+        let refs = self.gate_decision_claim_refs_in_txn(&*wtxn, id)?;
+        for claim_id in refs {
+            self.vault_meta
+                .delete(wtxn, &gate_decision_claim_ref_key(&claim_id, id))?;
+        }
+        self.vault_meta
+            .delete(wtxn, &gate_decision_claim_refs_key(id))?;
+        Ok(())
+    }
+
     /// Appends a collision-checked logical UUIDv7 successor. A fixed clock can
     /// reproduce a UUIDv7 seed after reopen, so collisions advance from the
     /// durable same-timestamp tail rather than replacing UUIDv7 bits with a hash.
@@ -163,6 +233,7 @@ impl Store {
     ) -> Result<()> {
         self.delete_gate_decision_grant_ref_index_in_txn(wtxn, record)?;
         self.delete_gate_decision_claim_index_in_txn(wtxn, record)?;
+        self.delete_gate_decision_claim_refs_in_txn(wtxn, record.decision_id)?;
         self.vault_meta
             .delete(wtxn, &gate_decision_key(record.decision_id))?;
         Ok(())
@@ -179,6 +250,63 @@ impl Store {
             ));
         };
         self.delete_gate_decision_record_in_txn(wtxn, &record)
+    }
+
+    /// Rewrites every live row for a deleted claim to its retention skeleton
+    /// inside the caller's destructive transaction. The claim index is retained
+    /// for discovery of skeletons; the grant-ref index is removed because its
+    /// source field is scrubbed. Discovery falls back to a full scan until the
+    /// durable claim-index backfill has completed.
+    pub(crate) fn redact_gate_decisions_for_claim_in_txn(
+        &self,
+        wtxn: &mut RwTxn<'_>,
+        claim_id: &[u8; 16],
+        redacted_at: u64,
+    ) -> Result<()> {
+        let mut records = self.gate_decisions_for_claim_in_txn(&*wtxn, claim_id)?;
+        records.extend(self.bundle_gate_decisions_for_claim_in_txn(&*wtxn, claim_id)?);
+        for mut record in records {
+            if record.redacted_at.is_some() {
+                if !self
+                    .gate_decision_claim_refs_in_txn(&*wtxn, record.decision_id)?
+                    .is_empty()
+                {
+                    return Err(Error::CorruptedIndex(
+                        "redacted gate decision claim references",
+                    ));
+                }
+                continue;
+            }
+            self.delete_gate_decision_grant_ref_index_in_txn(wtxn, &record)?;
+            self.delete_gate_decision_claim_refs_in_txn(wtxn, record.decision_id)?;
+            record.version = super::types::GATE_DECISION_LEDGER_VERSION_REDACTED;
+            // v0 records a caller's empty class on an auditable denial; v1
+            // requires a non-empty retention label.
+            if record.actor_class.is_empty() {
+                record.actor_class = "unspecified".to_owned();
+            }
+            record.reason_codes.clear();
+            record.receipt_reasons.clear();
+            record.system_notices.clear();
+            record.actor_ref = None;
+            record.grant_ref = None;
+            record.diff_handle.clear();
+            // An injected clock at epoch zero must still produce a valid v1 row.
+            record.redacted_at = Some(redacted_at.max(1));
+            super::vet::vet_gate_decision_record(&record)?;
+            self.vault_meta.put(
+                wtxn,
+                &gate_decision_key(record.decision_id),
+                &encode_gate_decision(&record)?,
+            )?;
+        }
+        if !self
+            .verify_claim_erasure_by_scan_in_txn(&*wtxn, claim_id)?
+            .is_empty()
+        {
+            return Err(Error::CorruptedIndex("gate decision claim erasure"));
+        }
+        Ok(())
     }
 
     /// Returns every gate decision carrying this grant reference, newest
@@ -214,8 +342,10 @@ impl Store {
         Ok(records)
     }
 
-    /// Per-claim discovery for the erase coupling (ONE-1638) and any per-claim
-    /// receipt read. Index-accelerated ONLY when the durable backfill flag is
+    /// Singular-claim decision discovery for erasure and per-claim receipt
+    /// reads. Bundle receipts are deliberately excluded: callers selecting the
+    /// latest claim verdict must never receive a multi-claim bundle instead.
+    /// Index-accelerated ONLY when the durable backfill flag is
     /// set; otherwise a full keyspace scan, so a vault mid-backfill can never
     /// hide rows from an erase. Both paths return records ascending by
     /// decision_id and are result-identical.
@@ -223,7 +353,6 @@ impl Store {
     /// Redacted (version 1) skeletons ARE returned — they retain `claim_id` by
     /// design. Completeness is decided by
     /// [`Store::verify_claim_erasure_by_scan_in_txn`], never by this reader.
-    #[cfg_attr(not(test), allow(dead_code))] // seam for the ONE-1638 erase coupling
     pub(crate) fn gate_decisions_for_claim_in_txn(
         &self,
         txn: &RoTxn<'_>,
@@ -252,9 +381,45 @@ impl Store {
         Ok(records)
     }
 
+    /// Per-constituent discovery used ONLY by erasure; ordinary claim
+    /// receipt readers must not mistake a bundle receipt for a claim verdict.
+    pub(crate) fn bundle_gate_decisions_for_claim_in_txn(
+        &self,
+        txn: &RoTxn<'_>,
+        claim_id: &[u8; 16],
+    ) -> Result<Vec<GateDecisionRecord>> {
+        let mut records = Vec::new();
+        // Bundle refs have a separate index because a decision may describe
+        // many claims. The primary's complete refs sidecar checks each hit.
+        let refs_prefix = gate_decision_claim_ref_prefix(claim_id);
+        for row in self.vault_meta.prefix_iter(txn, &refs_prefix)? {
+            let (key, value) = row?;
+            let decision_id = GateDecisionId::from_bytes(index_suffix_id(
+                &key,
+                &refs_prefix,
+                "gate decision claim ref index",
+            )?);
+            if !value.is_empty()
+                || !self
+                    .gate_decision_claim_refs_in_txn(txn, decision_id)?
+                    .contains(claim_id)
+            {
+                return Err(Error::CorruptedIndex("gate decision claim ref index"));
+            }
+            let Some(record) = self.gate_decision_in_txn(txn, decision_id)? else {
+                return Err(Error::CorruptedIndex("gate decision claim ref index"));
+            };
+            if record.redacted_at.is_some() {
+                return Err(Error::CorruptedIndex("gate decision claim ref index"));
+            }
+            records.push(record);
+        }
+        records.sort_by_key(|record| record.decision_id.as_bytes());
+        Ok(records)
+    }
+
     /// Full-keyspace per-claim discovery: the fallback path taken while the
     /// backfill flag is unset, and directly callable for parity checks.
-    #[cfg_attr(not(test), allow(dead_code))] // seam for the ONE-1638 erase coupling
     pub(in crate::store) fn scan_gate_decisions_for_claim_in_txn(
         &self,
         txn: &RoTxn<'_>,
@@ -276,15 +441,19 @@ impl Store {
     /// the erase cannot also certify it complete. An empty result means erasure
     /// is complete for this claim. Deliberately uncapped: a correctness scan
     /// takes no query-budget shortcut.
-    #[cfg_attr(not(test), allow(dead_code))] // seam for the ONE-1638 erase coupling
-    pub(in crate::store) fn verify_claim_erasure_by_scan_in_txn(
+    pub(crate) fn verify_claim_erasure_by_scan_in_txn(
         &self,
         txn: &RoTxn<'_>,
         claim_id: &[u8; 16],
     ) -> Result<Vec<GateDecisionId>> {
         let mut remaining = Vec::new();
         self.for_each_gate_decision_in_txn(txn, |record| {
-            if record.claim_id == Some(*claim_id) && record.redacted_at.is_none() {
+            if record.redacted_at.is_none()
+                && (record.claim_id == Some(*claim_id)
+                    || self
+                        .gate_decision_claim_refs_in_txn(txn, record.decision_id)?
+                        .contains(claim_id))
+            {
                 remaining.push(record.decision_id);
             }
             Ok(())

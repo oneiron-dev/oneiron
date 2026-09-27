@@ -372,6 +372,13 @@ impl Vault {
         id: &EntityId,
     ) -> Result<bool> {
         crate::blob_artifact::esign::reject_event_delete(&self.store, wtxn, id)?;
+        // The claim's decision payloads leave in the SAME transaction as the
+        // active-store tear, including replay and headerless-residue routes.
+        self.store.redact_gate_decisions_for_claim_in_txn(
+            wtxn,
+            id.as_bytes(),
+            self.store.clock.now_recorded_at(),
+        )?;
         #[cfg(feature = "sync")]
         crate::entity_doc::erase_in_txn(&self.store, wtxn, id)?;
         // The content-hash index row is dropped by `deindex_entity` below;
@@ -408,6 +415,11 @@ impl Vault {
         #[cfg(feature = "sync")]
         crate::entity_doc::erase_in_txn(&self.store, wtxn, id)?;
         self.store.guard_pack_map_carrier_delete_in_txn(wtxn, id)?;
+        self.store.redact_gate_decisions_for_claim_in_txn(
+            wtxn,
+            id.as_bytes(),
+            self.store.clock.now_recorded_at(),
+        )?;
         let (room_had_vector, room_had_graph, room_neighbors) =
             crate::workspace_roster::deindex_project_room(&self.store, wtxn, id)?;
         if room_had_graph {
@@ -844,7 +856,12 @@ impl Vault {
             return Ok(true);
         }
 
-        if crate::note::erase::scope_exists(self, txn, id)? {
+        if crate::note::erase::scope_exists(self, txn, id)?
+            || !self
+                .store
+                .verify_claim_erasure_by_scan_in_txn(txn, id.as_bytes())?
+                .is_empty()
+        {
             return Ok(true);
         }
         vad_annotation_delete_scope_exists_in_txn(&self.store, txn, id)
