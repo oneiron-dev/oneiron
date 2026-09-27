@@ -3,19 +3,12 @@
 use crate::Vault;
 use crate::error::{Error, Result};
 
-const GRAIN_KEY: &[u8] = b"dreamer:wake:grain:v1";
 const PROJECTION_KEY: &[u8] = b"dreamer:wake:projection:v1";
 
-/// Turns per cadence wake. An absent policy row means one wake per turn.
+/// Turns per cadence wake, read from the one Dreamer wake policy row.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct WakeGrain {
     pub turns_per_wake: u64,
-}
-
-impl Default for WakeGrain {
-    fn default() -> Self {
-        Self { turns_per_wake: 1 }
-    }
 }
 
 impl WakeGrain {
@@ -35,37 +28,9 @@ impl WakeGrain {
 }
 
 impl Vault {
-    /// Read the vault's own wake policy, refusing corrupt or unknown rows.
+    /// Read the authoritative per-vault rate from the host-used wake policy.
     pub fn wake_grain(&self) -> Result<WakeGrain> {
-        let txn = self.store.env.read_txn()?;
-        self.wake_grain_in_txn(&txn)
-    }
-
-    pub(super) fn wake_grain_in_txn(&self, txn: &heed::RoTxn<'_>) -> Result<WakeGrain> {
-        let Some(bytes) = self.store.vault_meta.get(txn, GRAIN_KEY)? else {
-            return Ok(WakeGrain::default());
-        };
-        if bytes.len() != 9 || bytes[0] != 1 {
-            return Err(Error::InvalidConfig("invalid wake grain row".into()));
-        }
-        let value = u64::from_be_bytes(
-            bytes[1..]
-                .try_into()
-                .map_err(|_| Error::InvalidConfig("invalid wake grain row".into()))?,
-        );
-        WakeGrain::new(value)
-    }
-
-    /// Change the policy without changing another vault's clock or projection.
-    pub fn set_wake_grain(&self, grain: WakeGrain) -> Result<()> {
-        let grain = WakeGrain::new(grain.turns_per_wake)?;
-        let mut bytes = [0_u8; 9];
-        bytes[0] = 1;
-        bytes[1..].copy_from_slice(&grain.turns_per_wake.to_be_bytes());
-        let mut txn = self.store.env.write_txn()?;
-        self.store.vault_meta.put(&mut txn, GRAIN_KEY, &bytes)?;
-        txn.commit()?;
-        Ok(())
+        WakeGrain::new(self.dreamer_wake_policy()?.wake_grain_turns)
     }
 
     pub(super) fn queued_wake_projection_in_txn(

@@ -376,39 +376,6 @@ pub enum AgentWakeCadence {
     Worker,
 }
 
-impl AgentWakeCadence {
-    /// The scheduler's one decision for an agent at a turn boundary.
-    #[must_use]
-    pub fn due(
-        self,
-        grain: crate::dreamer_wake::WakeGrain,
-        turn_ordinal: u64,
-        surprised: bool,
-        agency: bool,
-        event: bool,
-    ) -> bool {
-        if event {
-            return true;
-        }
-        match self {
-            Self::Worker => false,
-            Self::Companion { every_turns } => {
-                agency || surprised || cadence_due(every_turns, grain, turn_ordinal)
-            }
-            Self::Leader { every_turns } => agency || cadence_due(every_turns, grain, turn_ordinal),
-        }
-    }
-}
-
-fn cadence_due(
-    override_turns: Option<u64>,
-    grain: crate::dreamer_wake::WakeGrain,
-    ordinal: u64,
-) -> bool {
-    let turns = override_turns.unwrap_or(grain.turns_per_wake);
-    turns != 0 && ordinal != 0 && ordinal.is_multiple_of(turns)
-}
-
 /// Optional per-entity-class share of the window budget.
 ///
 /// Absent means the engine default split holds. Every fraction is validated
@@ -521,7 +488,7 @@ pub struct AgentDefinition {
     pub dreaming: Option<DreamingMode>,
     /// Optional per-resident model slot for `Own` dreaming. Host-resolved.
     pub dreaming_model: Option<ModelTierRef>,
-    /// Absent is the safe event-only worker dial; set an explicit resident role.
+    /// An absent role follows the owner-editable wake-policy absent-role row.
     pub wake_cadence: Option<AgentWakeCadence>,
 }
 
@@ -583,27 +550,18 @@ impl AgentDefinition {
         }
     }
 
-    /// Effective cadence for a definition without a role row is events only.
-    #[must_use]
-    pub fn wake_cadence(&self) -> AgentWakeCadence {
-        self.wake_cadence.unwrap_or(AgentWakeCadence::Worker)
-    }
-
-    /// The resident dial cannot revive a disabled definition or `Off` dreaming.
+    /// Resolve this definition's due decision against the live policy row.
+    /// Absence, role triggers and precedence are owner-editable policy data.
     #[must_use]
     pub fn dream_wake_due(
         &self,
-        grain: crate::dreamer_wake::WakeGrain,
+        policy: &crate::dreamer_wake::DreamerWakePolicy,
         turn_ordinal: u64,
-        surprised: bool,
-        agency: bool,
-        event: bool,
+        signals: crate::dreamer_wake::AgentWakeSignals,
     ) -> bool {
-        self.enabled
-            && self.dreaming_mode() != DreamingMode::Off
-            && self
-                .wake_cadence()
-                .due(grain, turn_ordinal, surprised, agency, event)
+        policy
+            .agent_cadence
+            .due(self, policy.wake_grain_turns, turn_ordinal, signals)
     }
 
     #[must_use]
