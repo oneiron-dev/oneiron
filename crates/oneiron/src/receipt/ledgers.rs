@@ -92,11 +92,16 @@ pub(crate) fn stamp_attempt_pack_receipt_in_txn(
     record: &AttemptRecord,
     actor: &str,
 ) -> Result<()> {
-    if record.manifest().is_empty() {
+    let receipt_id = attempt_pack_receipt_id(&record.id);
+    // A resident's terminal attempt has an attributable outcome even when it
+    // loaded no skill. Unbound legacy attempts keep their manifest-only rule.
+    if record.manifest().is_empty()
+        && crate::skill::resident::receipt_resident_in_txn(store, wtxn, &receipt_id)?.is_none()
+    {
         return Ok(());
     }
     let mut receipt = ReceiptRecord {
-        receipt_id: attempt_pack_receipt_id(&record.id),
+        receipt_id,
         receipt_kind: ReceiptKind::Outbound,
         occurred_at: record.updated_at,
         actor: Some(actor.to_owned()),
