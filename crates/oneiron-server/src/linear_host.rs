@@ -166,7 +166,7 @@ impl LinearEgress for LinearBridge {
         })))?).map_err(|error| LinearSyncError::Transport(format!("invalid Linear create receipt: {error}")))
     }
 
-    fn update_issue(
+    fn update_issue_conditional(
         &mut self,
         operation_id: [u8; 32],
         issue: &LinearIssueRef,

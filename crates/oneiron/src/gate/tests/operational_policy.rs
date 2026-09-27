@@ -318,7 +318,7 @@ fn changed_manifest_budget_changes_real_linear_pull_pass() -> Result<()> {
         ) -> LinearSyncResult<LinearIssueChange> {
             panic!("no task is dirty")
         }
-        fn update_issue(
+        fn update_issue_conditional(
             &mut self,
             _: [u8; 32],
             _: &LinearIssueRef,

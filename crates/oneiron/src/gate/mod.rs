@@ -21,6 +21,7 @@ mod dreamer_precommit;
 mod effect;
 mod foreign_agent;
 mod grants;
+mod hosted_tts_policy;
 mod input;
 mod operational_policy;
 pub(crate) mod proposal_observation;
@@ -89,6 +90,7 @@ pub(crate) use self::grants::{
     PolicyScopedGrant, companion_profile_access_grant, scoped_read_claim_allowed,
     scoped_read_record_allowed,
 };
+pub(crate) use self::hosted_tts_policy::{HostedTtsLimits, resolve_hosted_tts_limits};
 pub(crate) use self::input::{
     ConsentGateContext, ExternalEffectGateInput, ExternalEffectPolicyRisk, GateActor,
     GateProvenanceHandles, consent_gate_reason_codes,

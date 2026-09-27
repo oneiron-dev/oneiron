@@ -167,7 +167,7 @@ impl LinearEgress for FakeEgress {
         })
     }
 
-    fn update_issue(
+    fn update_issue_conditional(
         &mut self,
         operation_id: [u8; 32],
         issue: &LinearIssueRef,
@@ -937,7 +937,7 @@ impl LinearEgress for CasEgress {
         Ok(change("cas-created", 1_000, fields.clone()))
     }
 
-    fn update_issue(
+    fn update_issue_conditional(
         &mut self,
         _operation_id: [u8; 32],
         issue: &LinearIssueRef,

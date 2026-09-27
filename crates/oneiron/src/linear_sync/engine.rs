@@ -42,6 +42,11 @@ impl<T, I, O> LinearSyncAdapter<T, I, O> {
         &mut self.tasks
     }
 
+    /// Mutably borrows the inbound change source.
+    pub fn inbound_mut(&mut self) -> &mut I {
+        &mut self.inbound
+    }
+
     /// Unwraps the three ports.
     pub fn into_parts(self) -> (T, I, O) {
         (self.tasks, self.inbound, self.outbound)
@@ -373,7 +378,7 @@ impl<T: LinearTaskStore, I: LinearChangeSource, O: LinearEgress> LinearSyncAdapt
 
         let expected_link_revision = link.link_revision;
         let next_link_revision = link.next_revision()?;
-        let pushed = self.outbound.update_issue(
+        let pushed = self.outbound.update_issue_conditional(
             operation_id,
             &link.issue,
             &link.remote_field_hashes,

@@ -8,7 +8,7 @@ use crate::provenance::PREDICATE_EDGE_PROVENANCE;
 
 use super::constants::{
     ACTOR_CEILING_KEY, ACTOR_CLASS_KEY, ACTOR_REF_KEY, AXIS_CRITICALITY_KEY, AXIS_SENSITIVITY_KEY,
-    LOCAL_WRITE_ACTOR_CLASS, POLICY_ACTOR_CEILINGS_KEY, POLICY_DEFAULTS_KEY,
+    LOCAL_WRITE_ACTOR_CLASS, POLICY_ACTOR_CEILINGS_KEY, POLICY_DEFAULTS_KEY, POLICY_HOSTED_TTS_KEY,
     POLICY_MIN_ENGINE_VERSION_KEY, POLICY_ON_BUDGET_EXHAUSTED_KEY, POLICY_OWNER_POLICY_ENABLED_KEY,
     POLICY_OWNER_POLICY_ROWS_KEY, POLICY_PACK_ID_KEY, POLICY_PACK_VERSION_KEY, POLICY_RULES_KEY,
     POLICY_SCHEMA_VERSION, POLICY_SCHEMA_VERSION_KEY, POLICY_SIGNATURES_KEY,
@@ -381,6 +381,33 @@ pub(crate) fn default_policy_manifest() -> Vec<u8> {
                 (Value::from("scan_limit"), Value::from(256_u64)),
                 (Value::from("retry_floor_ms"), Value::from(500_u64)),
                 (Value::from("retry_cap_ms"), Value::from(60_000_u64)),
+            ]),
+        ),
+        // Hosted render resource limits are shipped POLICY rows, not adapter
+        // constants. Holder rows in other trusted manifests can narrow them.
+        (
+            Value::from(POLICY_HOSTED_TTS_KEY),
+            Value::Map(vec![
+                (Value::from("precedence"), Value::from("nested_narrowing")),
+                (
+                    Value::from("rows"),
+                    Value::Array(
+                        ["cartesia", "elevenlabs_flash"]
+                            .into_iter()
+                            .map(|provider| {
+                                Value::Map(vec![
+                                    (Value::from("provider"), Value::from(provider)),
+                                    (Value::from("scope"), Value::from("vault")),
+                                    (Value::from("max_text_bytes"), Value::from(8_192_u64)),
+                                    (
+                                        Value::from("max_pcm_fragment_bytes"),
+                                        Value::from(2_097_152_u64),
+                                    ),
+                                ])
+                            })
+                            .collect(),
+                    ),
+                ),
             ]),
         ),
         (

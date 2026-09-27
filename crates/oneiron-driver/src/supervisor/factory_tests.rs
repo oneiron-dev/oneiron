@@ -433,7 +433,7 @@ impl oneiron::LinearEgress for HostMirror {
         })
     }
 
-    fn update_issue(
+    fn update_issue_conditional(
         &mut self,
         _operation_id: [u8; 32],
         issue: &oneiron::LinearIssueRef,

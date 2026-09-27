@@ -431,6 +431,18 @@ pub struct TaskMirrorSnapshot {
 
 /// Cursor-paged source of normalized inbound changes.
 pub trait LinearChangeSource {
+    /// Reads one linked issue immediately before an outbound update. A source
+    /// that cannot fetch it must fail closed rather than publish a stale full
+    /// TASK snapshot over remote edits not yet seen in the cursor stream.
+    ///
+    /// # Errors
+    /// Returns a transport error when the current issue is unavailable.
+    fn current_issue(&mut self, _issue: &LinearIssueRef) -> LinearSyncResult<LinearIssueChange> {
+        Err(LinearSyncError::Transport(
+            "linear source cannot preflight a linked issue".to_owned(),
+        ))
+    }
+
     /// Returns the page that starts at `cursor`.
     ///
     /// # Errors
@@ -458,23 +470,39 @@ pub trait LinearEgress {
         fields: &MirroredTaskFields,
     ) -> LinearSyncResult<LinearIssueChange>;
 
-    /// Conditionally updates an already-linked issue. The host MUST atomically
-    /// compare the tracker's current five field hashes against `expected_base`
-    /// before publishing the whole snapshot. A read-then-write in the host is
-    /// not atomic, and a timestamp alone can collapse distinct events.
-    /// If the provider cannot guarantee this comparison, refuse the write.
+    /// Direct host mutation for a provider adapter with its own authority.
+    /// The engine mirror NEVER calls this unfenced door: it always uses
+    /// [`Self::update_issue_conditional`]. A host without a CAS-capable provider
+    /// must not present this raw mutation as proof of conflict-safe mirroring.
     ///
     /// # Errors
-    ///
-    /// Returns [`LinearSyncError::RemoteChanged`] without any remote write
-    /// when the remote values differ, or a transport error on failure.
+    /// Refuses when the host supplies no direct mutation implementation.
     fn update_issue(
         &mut self,
-        operation_id: [u8; 32],
-        issue: &LinearIssueRef,
-        expected_base: &BTreeMap<String, [u8; 32]>,
-        fields: &MirroredTaskFields,
-    ) -> LinearSyncResult<LinearIssueChange>;
+        _operation_id: [u8; 32],
+        _issue: &LinearIssueRef,
+        _fields: &MirroredTaskFields,
+    ) -> LinearSyncResult<LinearIssueChange> {
+        Err(LinearSyncError::RemoteChanged)
+    }
+
+    /// Conditionally updates an already-linked issue. The host MUST atomically
+    /// compare its current five remote field hashes against `expected_remote`
+    /// before publishing the whole snapshot. A read-then-write is not atomic;
+    /// when a provider cannot guarantee this comparison, refuse the write.
+    ///
+    /// # Errors
+    /// Returns [`LinearSyncError::RemoteChanged`] without any remote write on
+    /// mismatch or when the provider has no atomic conditional update rail.
+    fn update_issue_conditional(
+        &mut self,
+        _operation_id: [u8; 32],
+        _issue: &LinearIssueRef,
+        _expected_remote: &BTreeMap<String, [u8; 32]>,
+        _fields: &MirroredTaskFields,
+    ) -> LinearSyncResult<LinearIssueChange> {
+        Err(LinearSyncError::RemoteChanged)
+    }
 }
 
 /// Engine-side storage the mirror reads and writes.
