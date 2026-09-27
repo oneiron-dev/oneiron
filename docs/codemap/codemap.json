@@ -31795,7 +31795,7 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "WindowManager"
@@ -31803,7 +31803,7 @@
      "path": "src/sync/manager.rs",
      "purpose": "Production window manager: ARCH-0023b startup orchestration + registry",
      "surface": {
-      "crate-vis": 9,
+      "crate-vis": 7,
       "fn": 12,
       "struct": 1
      }
@@ -31817,6 +31817,16 @@
      "surface": {
       "crate-vis": 2,
       "fn": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/sync/manager/promotion.rs",
+     "purpose": "Opened-window promotion notices on the manager-owned connection lane",
+     "surface": {
+      "crate-vis": 2
      }
     },
     {
@@ -36647,9 +36657,9 @@
      "purpose": "ARCH-0038 historical-carrier sweep executor — ONE-1087 / ONE-1091 phase 1 (manual trigger via…"
     },
     "sync": {
-     "files": 106,
+     "files": 107,
      "impl_vault": true,
-     "largest_src_bucket": "L",
+     "largest_src_bucket": "m",
      "layout": "dir",
      "purpose": "CRDT sync layer for Oneiron"
     },
@@ -36780,9 +36790,9 @@
      "purpose": "Write-path stamping: `WriteActor`/`WriteProvenance`/`WriteEnvelope`/`ClaimCandidate` + evidence stamping"
     }
    },
-   "over_bar": 3,
+   "over_bar": 2,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2181,
+   "source_files": 2182,
    "test_files": 738
   },
   "oneiron-android": {

@@ -43,6 +43,7 @@
 //!   lock while holding the materializer lock.
 
 mod document_api;
+mod promotion;
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, MutexGuard, Weak};
@@ -146,16 +147,6 @@ impl WindowManager {
     /// detached, updates fall back to the durable `SyncQueue`.
     pub fn outbound(&self) -> &Arc<OutboundSink> {
         &self.outbound
-    }
-
-    pub(in crate::sync) fn subscribe_promotions(
-        &self,
-    ) -> tokio::sync::broadcast::Receiver<WindowKey> {
-        self.promotions.subscribe()
-    }
-
-    pub(in crate::sync) fn notify_promotion(&self, key: &WindowKey) {
-        let _ = self.promotions.send(key.clone());
     }
 
     /// Registers this manager as the vault's live-window delete router
