@@ -30,6 +30,16 @@ use crate::store::Store;
 use crate::temporal::TimeRange;
 use crate::write_envelope::WriteEnvelope;
 
+mod authority;
+mod claim;
+mod validation;
+
+use self::authority::observe_authority_put;
+use self::claim::reconcile_replicated_critical_confirm;
+use self::validation::{
+    decode_previous_skill_record, validate_note_birth_put, validate_witness_message_body,
+};
+
 #[expect(
     clippy::too_many_arguments,
     reason = "decomposing would obscure direct LMDB write logic"
@@ -723,148 +733,4 @@ pub(in crate::batch) fn apply_put(
         is_lexical_query_hint_claim,
         evicted_shell_sources,
     })
-}
-
-/// A sync replay deliberately bypasses the local claim gate. If it changes a
-/// claim with a persisted critical-confirm attachment, that attachment binds
-/// the old body and cannot authorize the new one. Delete it in this same write
-/// transaction and demote an inbound Auto status; notably, do not derive a
-/// replacement binding from the changed peer body. Returns the demoted body's
-/// bytes, which the put stores instead of `data`, and leaves
-/// `decoded_claim_body` holding the demoted body.
-fn reconcile_replicated_critical_confirm(
-    store: &Store,
-    wtxn: &mut RwTxn<'_>,
-    id: &EntityId,
-    data: &[u8],
-    decoded_claim_body: &mut Option<ClaimBody>,
-) -> Result<Option<Vec<u8>>> {
-    let body_changed = store
-        .entities
-        .get(wtxn, id.as_bytes())?
-        .map(|old| {
-            old.get(ENTITY_METADATA_HEADER_LEN..)
-                .ok_or(Error::CorruptedIndex("entity header"))
-                .map(|body| body != data)
-        })
-        .transpose()?
-        // A live attachment can outlast an entity row during deletion or
-        // rematerialization; recreating that row is an overwrite of the
-        // ceremony-bound state, not an authority restoration.
-        .unwrap_or(true);
-    if crate::gate::reconcile_critical_write_confirm_on_replicated_overwrite(
-        store,
-        wtxn,
-        id,
-        data,
-        body_changed,
-    )? {
-        let mut reconciled = decoded_claim_body
-            .as_ref()
-            .ok_or(Error::InvariantViolation("validated CLAIM body missing"))?
-            .clone();
-        if reconciled.approval == ClaimApprovalStatus::Auto {
-            reconciled.approval = ClaimApprovalStatus::Proposed;
-        }
-        *decoded_claim_body = Some(reconciled.clone());
-        Ok(Some(crate::claim::encode_claim_body(&reconciled)?))
-    } else {
-        Ok(None)
-    }
-}
-
-// The ledger is immutable birth identity, never a second text plane. This
-// shared guard covers local writes and replicated/window rematerialization.
-fn validate_note_birth_put(
-    store: &Store,
-    txn: &heed::RoTxn<'_>,
-    id: &EntityId,
-    data: &[u8],
-) -> Result<()> {
-    crate::note::decode_note_body_in_txn(store, txn, data)?;
-    if let Some(old) = store.entities.get(txn, id.as_bytes())?
-        && old.get(ENTITY_METADATA_HEADER_LEN..) != Some(data)
-    {
-        return Err(Error::Record(RecordError::InvalidNoteBody(
-            "NOTE birth body is immutable",
-        )));
-    }
-    Ok(())
-}
-
-fn validate_witness_message_body(data: &[u8], replicated: bool) -> Result<()> {
-    // ONE-1686 (RT-04): the witness ENVELOPE law, at the one arm every
-    // road to a MESSAGE body converges on — the witness door, promote
-    // replay, and sync rematerialization alike. The AUTHORITY half
-    // (which actor may write which author bucket) is answered before
-    // staging by `gate::check_witness_message_ceiling`, which is the only
-    // way to reach `TxnBatchBuilder::put_witness_message`; what is left
-    // for a chokepoint that holds bytes and no actor is proving the bytes
-    // ARE the canonical envelope those axes encode. A local row already
-    // is one by construction (the put consumes the door's own output), so
-    // this costs the witness path nothing and closes every other road.
-    //
-    // Placed BEFORE any store mutation in this function, so a refusal on
-    // either road leaves nothing partial behind for the caller's
-    // quarantine-and-continue to clean up.
-    if replicated {
-        // The REPLICATED road has no actor to run the ceiling against and
-        // the protocol carries no verified source actor or peer signer at
-        // this door, so it fails closed for every author bucket: see
-        // `gate::validate_replicated_witness_message_body`.
-        crate::gate::validate_replicated_witness_message_body(data)?;
-    } else {
-        crate::gate::validate_canonical_witness_message_body(data)?;
-    }
-    Ok(())
-}
-
-fn decode_previous_skill_record(
-    old_type: u8,
-    old_record: &[u8],
-) -> Result<Option<crate::skill::SkillRecord>> {
-    if old_type != ENTITY_TYPE_SKILL {
-        return Ok(None);
-    }
-    let prior_body = &old_record[ENTITY_METADATA_HEADER_LEN..];
-    match crate::skill::decode_skill_record(prior_body) {
-        Ok(record) => Ok(Some(record)),
-        Err(error)
-            if error.kind() == ErrorKind::InvalidSkillBody
-                && crate::skill::is_legacy_opaque_skill_body(prior_body) =>
-        {
-            Ok(None)
-        }
-        Err(error) => Err(error),
-    }
-}
-/// Keep first observation, signer maximum and replay advisory in the same put transaction.
-fn observe_authority_put(
-    store: &Store,
-    wtxn: &mut RwTxn<'_>,
-    key: &str,
-    entry: Option<&crate::authority::AuthorityLogEntry>,
-    hash: Option<&crate::authority::AuthorityEntryHash>,
-    replicated: bool,
-    mutation_recorded_at: u64,
-) -> Result<()> {
-    let observed_secs = authority_observation_secs_for_write(store, wtxn, mutation_recorded_at)?;
-    if store.sync_state.get(wtxn, key)?.is_none() {
-        let first_seen = crate::authority::encode_authority_first_seen_secs(observed_secs);
-        store.sync_state.put(wtxn, key, &first_seen)?;
-    }
-    if let (Some(entry), Some(hash)) = (entry, hash) {
-        let first_observation = crate::authority::record_authority_sequence_observation_in_txn(
-            store, wtxn, entry, hash,
-        )?;
-        if replicated && first_observation {
-            crate::authority::observe_authority_replay_in_txn(
-                store,
-                wtxn,
-                &entry.signer.public_key,
-                observed_secs,
-            )?;
-        }
-    }
-    Ok(())
 }
