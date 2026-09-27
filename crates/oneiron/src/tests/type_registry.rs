@@ -136,6 +136,7 @@ fn type_byte_zone_allocation_matches_contract() {
         (83, "OUTBOUND_GRANT"),
         (85, "PERSONA_SNAPSHOT_EXPORT"),
         (84, "COMM_RECORD"),
+        (86, "RECEIPT_RECORD"),
         (92, "SKILL_HUB"),
         (93, "SKILL_CONTENT_ANCHOR"),
     ] {
@@ -158,7 +159,7 @@ fn type_byte_zone_allocation_matches_contract() {
     // Unregistered bytes — including bytes INSIDE structural zones — are not
     // StructuralKinds, and the write-path gate still rejects them with the
     // same typed error.
-    for byte in [63_u8, 75, 91, 86, 99, 107, 125, 128, 247, 255] {
+    for byte in [63_u8, 75, 91, 87, 99, 107, 125, 128, 247, 255] {
         assert!(!is_structural_kind(byte), "unregistered byte {byte}");
         assert!(
             matches!(

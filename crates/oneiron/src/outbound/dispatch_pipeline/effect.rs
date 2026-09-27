@@ -13,6 +13,7 @@ use crate::outbound::dispatch_types::{
     OutboundExecutionOutcomeKind, OutboundExecutionSink,
 };
 use crate::outbound_intent_ledger::IntentState;
+use crate::receipt::ReceiptRecord;
 
 pub(super) struct EffectInput<'a, S> {
     pub(super) vault: &'a Vault,
@@ -24,6 +25,7 @@ pub(super) struct EffectInput<'a, S> {
     pub(super) attempt_id: AttemptId,
     pub(super) idempotency_supported: bool,
     pub(super) verified_actor: Option<(EntityId, EdgeActorClass)>,
+    pub(super) suppression_receipt: Option<ReceiptRecord>,
 }
 
 pub(super) fn execute_admitted<S: OutboundExecutionSink>(
@@ -39,6 +41,7 @@ pub(super) fn execute_admitted<S: OutboundExecutionSink>(
         attempt_id,
         idempotency_supported,
         verified_actor,
+        suppression_receipt,
     } = input;
     let prepared = crate::outbound_chokepoint::PreparedEffect {
         attempt_id,
@@ -52,6 +55,8 @@ pub(super) fn execute_admitted<S: OutboundExecutionSink>(
         budget_class: crate::outbound_intent_ledger::BudgetClass::Send,
         authorization: crate::outbound_chokepoint::PreparedAuthorization::None,
         verified_actor,
+        dedupe_key: request.intent.dedupe_key.clone(),
+        suppression_receipt,
     };
     let authority = crate::outbound_consent::OutboundBindingAuthority::for_vault(vault)?;
     let mut transport = DispatchChokepointTransport::new(vault, request, verb_contract, sink);
@@ -88,23 +93,26 @@ pub(super) fn execute_admitted<S: OutboundExecutionSink>(
             )));
         }
     };
-    let outcome = match effect_result.dispatch.state {
-        Some(IntentState::Done) => OutboundDispatchOutcome::DeliveredToChannel,
-        Some(IntentState::Pending) => {
-            if transport
-                .execution
-                .as_ref()
-                .is_some_and(|execution| execution.kind == OutboundExecutionOutcomeKind::Failed)
-            {
-                OutboundDispatchOutcome::Failed
-            } else {
-                OutboundDispatchOutcome::Held
+    let outcome =
+        if effect_result.dedupe_suppressed {
+            OutboundDispatchOutcome::Suppressed
+        } else {
+            match effect_result.dispatch.state {
+                Some(IntentState::Done) => OutboundDispatchOutcome::DeliveredToChannel,
+                Some(IntentState::Pending) => {
+                    if transport.execution.as_ref().is_some_and(|execution| {
+                        execution.kind == OutboundExecutionOutcomeKind::Failed
+                    }) {
+                        OutboundDispatchOutcome::Failed
+                    } else {
+                        OutboundDispatchOutcome::Held
+                    }
+                }
+                Some(IntentState::Abandoned) => OutboundDispatchOutcome::Failed,
+                None if gate_outcome_kind == GateOutcome::Pending => OutboundDispatchOutcome::Held,
+                None => OutboundDispatchOutcome::Suppressed,
             }
-        }
-        Some(IntentState::Abandoned) => OutboundDispatchOutcome::Failed,
-        None if gate_outcome_kind == GateOutcome::Pending => OutboundDispatchOutcome::Held,
-        None => OutboundDispatchOutcome::Suppressed,
-    };
+        };
     // A replay has no new decision id; never invent a non-queryable gate ref.
     Ok(DispatchVerdict {
         gate_decision_ref: effect_result.gate_decision_id,
@@ -115,5 +123,6 @@ pub(super) fn execute_admitted<S: OutboundExecutionSink>(
         effect_state: effect_result.dispatch.state,
         outcome,
         execution: transport.execution,
+        suppression_receipt: effect_result.suppression_receipt,
     })
 }

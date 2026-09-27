@@ -178,6 +178,8 @@ pub enum IntentEscalationReason {
     BindingInvalid,
     PreviouslyAbandoned,
     CorruptLedgerRow,
+    DedupeReservationReplaced,
+    DedupeSuppressed,
 }
 
 impl IntentEscalationReason {
@@ -189,6 +191,8 @@ impl IntentEscalationReason {
             Self::BindingInvalid => "binding_invalid",
             Self::PreviouslyAbandoned => "previously_abandoned",
             Self::CorruptLedgerRow => "corrupt_ledger_row",
+            Self::DedupeReservationReplaced => "dedupe_reservation_replaced",
+            Self::DedupeSuppressed => "dedupe_suppressed",
         }
     }
 
@@ -200,6 +204,8 @@ impl IntentEscalationReason {
             "binding_invalid" => Some(Self::BindingInvalid),
             "previously_abandoned" => Some(Self::PreviouslyAbandoned),
             "corrupt_ledger_row" => Some(Self::CorruptLedgerRow),
+            "dedupe_reservation_replaced" => Some(Self::DedupeReservationReplaced),
+            "dedupe_suppressed" => Some(Self::DedupeSuppressed),
             _ => None,
         }
     }
