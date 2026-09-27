@@ -624,7 +624,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/claim/scope.rs` | src | s | 3 crate-vis | — | The engine-RECOGNIZED entries inside a claim's otherwise opaque `scope` map, and their fail-closed… |
 | `src/claim/scope_stamp.rs` | src | s | 7 fn · 1 const · 5 crate-vis | — | Required record-position Scope stamps and the versioned CLAIM wire upgrade |
 | `src/claim/scope_stamp/tests.rs` | test | m | — | — | Observable Scope identity, codec, selector and replay acceptance |
-| `src/claim/scoped_read.rs` | src | L | 1 struct · 14 fn · 3 re-export · 5 crate-vis | ScopedRead | The policy-gated read lane: [`ScopedReadActorKey`], [`ScopedRead`], and the admission/filtering surface that… |
+| `src/claim/scoped_read.rs` | src | L | 1 struct · 14 fn · 3 re-export · 6 crate-vis | ScopedRead | The policy-gated read lane: [`ScopedReadActorKey`], [`ScopedRead`], and the admission/filtering surface that… |
 | `src/claim/scoped_read/access_gate.rs` | src | s | 4 crate-vis | — | Relationship access checks share the row read transaction with grant resolution |
 | `src/claim/scoped_read/actor_key.rs` | src | s | 1 struct · 6 fn · 2 crate-vis | ScopedReadActorKey | Authenticated identity carried by a scoped read |
 | `src/claim/scoped_read/graph_reads.rs` | src | m | 4 fn · 1 crate-vis | — | Receipted graph and timeline reads under the resolved actor floor |
@@ -813,7 +813,9 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/companion/tests.rs` | test | XL | — | — | — |
 | `src/companion/vault.rs` | src | m | 9 fn · 3 crate-vis | — | Vault record APIs for companion profiles, relationships, and register snapshots |
 | `src/config.rs` | src | m | 6 struct · 2 enum · 11 fn · 4 const · 1 mod · 1 re-export · 1 crate-vis | Bm25RankProfile, HnswConfig, HostingPrivacyPosture, TextAnalyzerConfig, TextIndexOptions, VaultConfig, VaultDataKeyCustody, VaultPrivacyConfig | Caller-facing runtime configuration: `VaultConfig` + `HnswConfig` + `TextAnalyzerConfig` +… |
-| `src/config/failure_signals.rs` | src | s | 1 struct · 1 enum · 2 fn | DeploymentTier, FailureSignalConfig | Deployment-tier participation is separate from permission to train |
+| `src/config/failure_signals.rs` | src | s | 1 struct · 1 enum · 2 fn · 1 re-export · 1 crate-vis | DeploymentTier, FailureSignalConfig | Deployment-tier participation is separate from permission to train |
+| `src/config/failure_signals/samples.rs` | src | m | 2 struct · 1 enum · 1 trait · 2 fn · 1 crate-vis | RedactionKind, RedactionSpan, Tier2Redactor, Tier2Sample | Vault-local tier-2 sampling |
+| `src/config/failure_signals/tests.rs` | test | m | — | — | — |
 | `src/config/tests.rs` | test | s | — | — | — |
 | `src/connector_key/accounting.rs` | src | m | 1 enum · 6 fn · 2 const · 2 crate-vis | ConnectorKeySendAdmission | — |
 | `src/connector_key/charter.rs` | src | m | 2 struct · 1 fn · 6 crate-vis | CompiledCharter, ConnectorCharterCompileIssue | — |
@@ -921,7 +923,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/context_pack/empty_pack.rs` | src | s | 1 struct · 1 enum · 1 fn · 6 crate-vis | EmptyContext, EmptyReason | Why a context pack came back empty, at each serialization stage |
 | `src/context_pack/hydration.rs` | src | m | 4 crate-vis | — | Turns raw store bytes into hydrated [`super::types::ContextEntity`] rows and JSON field payloads |
 | `src/context_pack/l2_base.rs` | src | m | 1 struct · 1 fn · 6 crate-vis | L2BaseSummary | Content-addressed persona/user evidence prefix |
-| `src/context_pack/l2_base/tests.rs` | test | L | — | — | — |
+| `src/context_pack/l2_base/tests.rs` | test | m | — | — | — |
 | `src/context_pack/mcp_ref.rs` | src | s | 1 struct · 1 enum · 1 fn · 1 const | McpContextPackRef, McpContextPackRefError | MCP protocol reference to a context pack, plus its validation |
 | `src/context_pack/mod.rs` | src | s | 1 mod · 7 re-export · 2 crate-vis | — | Context-pack assembly: retrieval results in, a hydrated, validated, budget-clamped pack out |
 | `src/context_pack/psych_mirror.rs` | src | s | 1 struct · 1 enum · 3 fn | PsychProfilePackSection, PsychProfilePackStaleReason | Psych-mirror salience and entropy scoring, plus the stored-profile pack section it feeds |
@@ -1487,12 +1489,13 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/inbox/projection.rs` | src | m | 2 fn · 3 crate-vis | — | Read-side inbox grouping projection, member classification, and dial surfacing |
 | `src/inbox/resolve.rs` | src | m | 10 fn · 2 crate-vis | — | Write-side inbox bulk bundle consent, approve-with-edit, and bundle-reopen doors |
 | `src/inbox/tests.rs` | test | XL | — | — | — |
-| `src/ingest/admission.rs` | src | m | 2 struct · 7 fn · 3 crate-vis | ImportedEvidenceAdmission, ImportedEvidenceEntityResolution | Imported-evidence admission: typed claim and entity intake with JSON-to-MessagePack bridging |
+| `src/ingest/admission.rs` | src | m | 2 struct · 7 fn · 4 crate-vis | ImportedEvidenceAdmission, ImportedEvidenceEntityResolution | Imported-evidence admission: typed claim and entity intake with JSON-to-MessagePack bridging |
 | `src/ingest/bulk_review.rs` | src | s | 3 struct · 2 fn | ImportedClaimBatch, ImportedClaimBatchEntry, ImportedClaimBatchReceipt | One import-time human act for the exact set of imported claim candidates |
 | `src/ingest/bulk_review_tests.rs` | test | s | — | — | — |
 | `src/ingest/docs.rs` | src | s | 4 struct · 3 fn · 1 const | DocsExport, DocsExportSource, DocsPage, DocsSegment | Export-seam docs normalization |
+| `src/ingest/docs_deep.rs` | src | m | 2 struct · 1 enum · 1 trait · 1 fn · 6 crate-vis | DocsDeepClaim, DocsDeepExtractor, DocsDeepReceipt, DocsDeepTrigger | On-demand docs NER: only a named trigger crosses the thin-star boundary |
 | `src/ingest/docs_import.rs` | src | m | 3 struct · 2 trait · 3 fn | DocsDerivationEnvelope, DocsImportCeiling, DocsImportReceipt, DocsInjectionClassifier, DocsSummaryModel | Atomic bulk consent and thin-star docs membership |
-| `src/ingest/docs_tests.rs` | test | m | — | — | — |
+| `src/ingest/docs_tests.rs` | test | L | — | — | — |
 | `src/ingest/exports.rs` | src | m | 1 struct · 1 enum | ExportLayout, ExportSource | Native export layouts with catalog-supplied platform identity (ARCH-0027) |
 | `src/ingest/exports/tests.rs` | test | s | — | — | — |
 | `src/ingest/fingerprint.rs` | src | s | 1 struct · 2 enum · 1 fn · 6 crate-vis | BlobBirthDecision, BlobFingerprintSnapshot, FingerprintRung | Entity-local four-rung birth fingerprints over the ingest pipeline's own segments |
@@ -1519,12 +1522,12 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/ingest/meeting_audio/tests/recorded_evaluation.rs` | test | s | — | — | Offline harness fixtures, not native model quality or host provisioning evidence |
 | `src/ingest/meeting_audio/tests/support.rs` | test | m | 9 crate-vis | — | Synthetic callback fixtures only: no decoder or model runs in these tests |
 | `src/ingest/meeting_audio/types.rs` | src | s | 21 struct · 4 enum · 2 trait · 2 fn | AsrOutput, AsrPackRequest, AsrRole, AsrRoute, AsrWord, AudioFile, BatchAsrRequest, BatchDefault +19 | Typed host ports for file decoding, inference, routing and explicit import consent |
-| `src/ingest/mod.rs` | src | s | 3 mod · 13 re-export · 3 crate-vis | — | Ingest source registry and source-local normalization |
+| `src/ingest/mod.rs` | src | s | 3 mod · 14 re-export · 4 crate-vis | — | Ingest source registry and source-local normalization |
 | `src/ingest/parsed.rs` | src | s | 2 struct · 2 crate-vis | ParsedImport, ParsedMessage | Shared pre-semantic import shape |
 | `src/ingest/provider.rs` | src | s | 2 crate-vis | — | Provider conversation decoders |
 | `src/ingest/registry.rs` | src | m | 6 struct · 1 enum · 1 trait · 18 fn · 5 const · 2 static | IngestAdapterSkillRef, IngestHarnessConfig, IngestSource, IngestSourceConfig, IngestSourceFormat, IngestSourceRegistration, IngestSourceRegistry, IngestTrustCeiling | Ingest source registry: source ids, configs, harness, registry map, and the ingest source trait |
 | `src/ingest/resolution.rs` | src | s | 3 struct · 1 enum · 1 fn · 1 crate-vis | EntityResolutionCandidate, EntityResolutionRoute, EntityResolutionWaterfallDecision, ScoredEntityResolutionCandidate | ARCH-0024 entity-resolution waterfall: candidate scoring, routing, and canonical subject |
-| `src/ingest/summary_ladder.rs` | src | s | 2 struct · 1 enum · 4 fn | DocsExpansion, DocsExpansionLevel, DocsSummaryHit | Read-only knowledge ladder |
+| `src/ingest/summary_ladder.rs` | src | m | 2 struct · 1 enum · 5 fn | DocsExpansion, DocsExpansionLevel, DocsSummaryHit | Read-only knowledge ladder |
 | `src/ingest/tests.rs` | test | L | — | — | — |
 | `src/ingest/transcripts.rs` | src | m | 2 struct | JsonlTranscriptSource, MeetingTranscriptSource | Transcript sources: JSONL, file-drop, and meeting normalization plus document helpers |
 | `src/ingest/types.rs` | src | s | 4 struct · 1 enum · 1 type | IngestError, NormalizedIngestBatch, NormalizedIngestClaim, NormalizedIngestNote, NormalizedIngestRecord | Normalized ingest types: batch, record, claim, and note plus the ingest result and error |
@@ -1612,7 +1615,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/llm/budget/types.rs` | src | s | 5 struct · 3 enum · 4 fn · 1 const | BudgetAdmission, BudgetExhaustionPolicy, BudgetLadderEvent, BudgetRead, BudgetSettlement, BudgetSignalDeliveryChannel, BudgetSteeringSignal, BudgetThreshold | Public budget DTOs and the exhaustion policy |
 | `src/llm/burst_inputs.rs` | src | s | 1 struct · 1 fn | NormalizedBurstInputs | Peer-relative write velocity and structural-failure streaks for automatic verdicts |
 | `src/llm/burst_inputs/tests.rs` | test | s | — | — | — |
-| `src/llm/bus.rs` | src | s | 2 struct · 1 trait · 5 fn | LlmEventBus, StreamSubscription, TerminalSink | Ephemeral one-producer fanout |
+| `src/llm/bus.rs` | src | s | 2 struct · 1 trait · 5 fn · 2 crate-vis | LlmEventBus, StreamSubscription, TerminalSink | Ephemeral one-producer fanout |
 | `src/llm/call.rs` | src | s | 6 struct · 6 enum · 11 fn | CallClass, CallEnvelope, CallPurpose, DeterministicFallback, LlmRole, ModelLocality, ModelTierRef, PinnedConfigViolation +4 | Per-call description: envelope, pin admission, role defaults, tier precedence, response format, and locality |
 | `src/llm/catalog.rs` | src | s | 2 struct · 2 enum · 4 fn | LlmCapability, LlmCatalogCost, LlmCatalogEntry, ReasoningEffort | Capability catalog: flags, entries with supports/require, costs, and reasoning effort |
 | `src/llm/decision/codec.rs` | src | s | 6 crate-vis | — | Canonical entity references for typed-decision wire records |
@@ -1673,7 +1676,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/llm/step/trap_binding.rs` | src | s | 7 crate-vis | — | Device-local trap-anchor binding rows (attempt/step-hash/park-owner ground truth for consume) |
 | `src/llm/step/types.rs` | src | m | 2 struct · 5 enum · 3 fn · 1 type · 8 const · 42 crate-vis | DreamerTrapKind, DreamerTrapState, DurableStepContext, DurableStepError, StepOutcome, StepProgression, TrapRef | Shared durable-step type layer: schema consts, error, progression/trap enums, step context, and outcome |
 | `src/llm/streaming_tests.rs` | test | s | — | — | — |
-| `src/llm/subscribers.rs` | src | s | 3 struct · 3 fn | ProgressSnapshot, ProgressSubscriber, VoiceChunker | Pure clock-injected progress and voice stages |
+| `src/llm/subscribers.rs` | src | s | 4 struct · 6 fn | ProgressSnapshot, ProgressSubscriber, VoiceChunkPolicy, VoiceChunker | Pure clock-injected progress and voice stages |
 | `src/llm/tagger.rs` | src | s | 8 struct · 1 trait · 4 fn | CoreferenceTag, GatedRender, InputDelta, MentionTag, OneironerTagger, PprSeed, RenderReceipt, RetrievalTags +1 | Host-injected retrieval tags and a write-free shadow comparison |
 | `src/llm/tagger/tests.rs` | test | s | — | — | — |
 | `src/llm/tests.rs` | test | L | — | — | — |
@@ -2732,7 +2735,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/vault_cleanup/tests.rs` | test | L | — | — | ARCH-0073 vault auto-cleanup fixtures (ONE-1931) |
 | `src/vault_cleanup/tripwire.rs` | src | m | 6 fn · 1 const · 6 crate-vis | — | Closed-form cleanup checks, the posture door, and the job body |
 | `src/vault_cleanup/visibility.rs` | src | s | 1 crate-vis | — | Local archive visibility |
-| `src/voice_cascade.rs` | src | s | 3 mod · 5 re-export | — | ONE-1807: the engine half of a transport-neutral text-brain voice cascade |
+| `src/voice_cascade.rs` | src | s | 3 mod · 6 re-export | — | ONE-1807: the engine half of a transport-neutral text-brain voice cascade |
 | `src/voice_cascade/budget.rs` | src | s | 1 crate-vis | — | Generation-owned budget reservation |
 | `src/voice_cascade/cancellation.rs` | src | s | 1 struct · 1 enum · 1 fn · 1 crate-vis | OutputStop, StopReason | One stop fan-out for interruption, policy enforcement and explicit teardown |
 | `src/voice_cascade/preparation.rs` | src | s | 1 struct · 5 fn · 1 crate-vis | PreparedAsr | Exact, single-use handoff across host async enrichment |
@@ -2741,11 +2744,13 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/voice_cascade/safeguard.rs` | src | s | 3 struct · 7 fn | SafeguardRequest, SentenceEnforcement, SentenceWork | Correlated sentence work |
 | `src/voice_cascade/session.rs` | src | m | 3 struct · 1 enum · 19 fn · 1 re-export | AsrUpdate, SafeguardUpdate, VoiceCascadeSession, VoiceSessionConfig | Session transitions only |
 | `src/voice_cascade/soniox.rs` | src | s | 1 struct · 1 trait · 3 fn | SonioxAsrClient, SonioxTransport | Soniox streaming ASR wire client |
+| `src/voice_cascade/stream.rs` | src | s | 1 struct · 1 enum · 1 fn | VoiceStreamConfig, VoiceStreamFailure | Live, ephemeral LLM-stream fanout to TTS |
 | `src/voice_cascade/tests.rs` | test | m | — | — | Authored source-only in the bounded phase |
 | `src/voice_cascade/tests/preparation.rs` | test | m | — | — | — |
 | `src/voice_cascade/tests/retrieval.rs` | test | s | — | — | — |
 | `src/voice_cascade/tests/safeguard.rs` | test | m | — | — | — |
 | `src/voice_cascade/tests/session.rs` | test | m | — | — | — |
+| `src/voice_cascade/tests/stream.rs` | test | m | — | — | — |
 | `src/voice_cascade/tts_spikes.rs` | src | L | 9 struct · 7 enum · 1 trait · 7 fn · 3 const | AudioDelivery, AudioEncoding, NormalizedPcm, Provider, ProviderAudio, ProviderConfig, ProviderFailure, ProviderMetadata +8 | Experimental Irodori/MOSS-local submission and PCM normalization only |
 | `src/voice_cascade/uds.rs` | src | s | 1 struct · 3 const · 2 re-export | BridgeLimits | Private, synchronous per-vault Unix socket adapter for the real retrieval bridge |
 | `src/voice_cascade/uds/codec.rs` | src | s | 6 crate-vis | — | — |
