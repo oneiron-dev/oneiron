@@ -127,8 +127,8 @@ impl Memory<'_> {
         let mut approval =
             forced_approval.unwrap_or_else(|| requested_approval(source, input.scope.as_ref()));
         // Every commit is ONE engine transaction: gate decision, claim
-        // write, and (with a prior revision) the supersession commit or
-        // roll back together. No phantom receipts (a decision can never
+        // write, and (with a prior revision) the deferred closure binding
+        // commit or roll back together. No phantom receipts (a decision can never
         // outlive a write that failed later validation) and no orphan
         // revisions behind a rejected receipt. The fail-closed trade: a
         // rolled-back write also drops its gate decision.
