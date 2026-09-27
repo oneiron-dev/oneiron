@@ -271,8 +271,16 @@ pub(crate) fn verified_step_effector_eligible_in_txn(
         return Err(Error::InvalidClaimBody("step-derived effect actor mismatch").into());
     }
     let response = load_step_response_in_txn(vault, txn, &decoded)?;
-    Ok(super::super::fallback_failure_class(&response)
-        .is_none_or(|class| policy.dreamer_failure_decision(class).effector_eligible))
+    let manifest_allows = super::super::fallback_failure_class(&response)
+        .is_none_or(|class| policy.dreamer_failure_decision(class).effector_eligible);
+    let stage_allows = crate::dreamer_consolidation::step_effector_eligible_in_txn(
+        vault,
+        txn,
+        &decoded.purpose,
+        &response,
+    )?
+    .unwrap_or(true);
+    Ok(manifest_allows && stage_allows)
 }
 
 fn failure_policy(

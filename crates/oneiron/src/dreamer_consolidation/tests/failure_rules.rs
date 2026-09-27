@@ -183,6 +183,26 @@ fn resident_failure_rules_route_fatal_extraction_and_clamp_promotion() -> Result
             execution,
             DreamerAttemptExecution::Completed { completed_units: 0 }
         ));
+        // Even a separate manifest effector permit cannot widen the resident
+        // consolidation stage row (whose only valid effector bit is false).
+        let txn = vault.store.env.read_txn()?;
+        let fallback = crate::LlmResponse {
+            message: crate::LlmMessage {
+                role: crate::LlmMessageRole::Assistant,
+                content: vec![crate::ContentPart::Text {
+                    text: "fallback".into(),
+                }],
+            },
+            usage: crate::LlmUsage::zero(),
+            finish_reason: crate::FinishReason::Other {
+                name: "fallback:json_rules_v1".into(),
+            },
+        };
+        assert_eq!(
+            super::super::step_effector_eligible_in_txn(&vault, &txn, "extraction", &fallback,)?,
+            Some(false),
+        );
+        drop(txn);
         let accepted = eligible && !manifest_denies;
         assert_eq!(sink.accepted.len(), usize::from(accepted));
         let person = EntityId::from_bytes([0x68; 16])?;

@@ -13284,7 +13284,7 @@
      "path": "src/dreamer_consolidation/failure_rules.rs",
      "purpose": "Resident-owned v1 failure rules for the two Dreamer consolidation call sites",
      "surface": {
-      "crate-vis": 10,
+      "crate-vis": 11,
       "fn": 1
      }
     },
