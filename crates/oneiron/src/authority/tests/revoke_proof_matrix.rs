@@ -246,9 +246,17 @@ fn restrictive_facts_compose_across_ancestry_matrix() {
                 );
                 entries.push(sibling);
                 let after = fold_authority_log_with_seen_times(&entries, &first_seen, now);
-                assert!(!after.valid_entries.contains(&loser_hash), "{label}");
+                assert_eq!(
+                    after.valid_entries.contains(&loser_hash),
+                    matches!(loss, Loss::Equivocation),
+                    "{label}"
+                );
                 assert!(!after.valid_entries.contains(&parent), "{label}");
-                assert!(!after.valid_entries.contains(&revoke_hash), "{label}");
+                assert_eq!(
+                    after.valid_entries.contains(&revoke_hash),
+                    matches!(loss, Loss::Equivocation) && !matches!(chain, Chain::Invalid),
+                    "{label}"
+                );
                 assert_eq!(
                     folded_status(&after, &consent_key),
                     Some(ActorBindingStatus::Revoked),
@@ -358,11 +366,16 @@ fn restrictive_facts_compose_across_ancestry_matrix() {
                         "matured {label}: {:?}",
                         later.issues
                     );
-                    assert!(
-                        !later.valid_entries.contains(&loser_hash),
+                    assert_eq!(
+                        later.valid_entries.contains(&loser_hash),
+                        matches!(loss, Loss::Equivocation),
                         "matured {label}"
                     );
-                    assert!(!later.valid_entries.contains(&parent), "matured {label}");
+                    assert_eq!(
+                        later.valid_entries.contains(&parent),
+                        matches!(loss, Loss::Equivocation) && matches!(chain, Chain::Frozen),
+                        "matured grant {label}"
+                    );
                     entries.reverse();
                     assert_eq!(
                         fold_authority_log_with_seen_times(&entries, &first_seen, matured),

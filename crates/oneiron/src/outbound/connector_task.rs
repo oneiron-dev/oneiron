@@ -44,6 +44,8 @@ pub(super) struct ConnectorSendTaskBody {
     pub(super) verb: String,
     pub(super) channel: String,
     pub(super) target: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(super) counterparty_ref: Option<String>,
     pub(super) on_behalf_of: Option<String>,
     pub(super) content_ref: Option<String>,
     pub(super) idempotency_key: Option<String>,
@@ -60,6 +62,9 @@ pub(super) struct ConnectorSendTaskBody {
     /// still in flight; device-local intent rows never enter this body.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(super) outcome: Option<ConnectorSendTaskOutcome>,
+    /// Synced terminal reason for a mechanically collapsed send.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(super) suppression: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(super) utc_offset_minutes: Option<i16>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -117,9 +122,13 @@ pub struct ConnectorSendTask {
     pub actor_ref: EntityId,
     pub actor_class: EdgeActorClass,
     pub intent: OutboundIntent,
+    /// Explicit comm party key, distinct from the transport destination.
+    pub counterparty_ref: Option<String>,
     pub originating_session_ref: Option<String>,
     pub attempt_started_node_id: Option<u64>,
     pub outcome: Option<ConnectorSendTaskOutcome>,
+    /// Synced terminal suppression reason, when the engine collapsed a send.
+    pub suppression: Option<String>,
     /// Frozen host UTC offset in minutes. `None` ⇒ hostless schedule: the
     /// executor cannot derive a local minute and fails closed.
     pub utc_offset_minutes: Option<i16>,
@@ -173,8 +182,17 @@ pub(crate) fn put_connector_send_task_in_txn(
     originating_session_ref: Option<&str>,
     schedule_context: &crate::memory::OutboundScheduleContext,
     calendar_invite: Option<&CalendarInvitePayload>,
+    counterparty_ref: Option<&str>,
     occurred_at: u64,
 ) -> Result<(), Error> {
+    if let Some(party) = counterparty_ref {
+        crate::comm::validate_comm_party_key(party)?;
+        if !super::capability::is_canonical_outbound_verb(&intent.channel, &intent.verb) {
+            return Err(Error::Record(RecordError::InvalidTaskBody(
+                "noncanonical counterparty-bound connector verb",
+            )));
+        }
+    }
     let connector_class = normalize_key(&intent.channel);
     let assignee_ref = connector_actor_id(&connector_class)?;
     let task_body = ConnectorSendTaskBody {
@@ -186,6 +204,7 @@ pub(crate) fn put_connector_send_task_in_txn(
         verb: intent.verb.clone(),
         channel: intent.channel.clone(),
         target: intent.target.clone(),
+        counterparty_ref: counterparty_ref.map(str::to_owned),
         on_behalf_of: intent.on_behalf_of.clone(),
         content_ref: intent.content_ref.clone(),
         idempotency_key: intent.idempotency_key.clone(),
@@ -196,6 +215,7 @@ pub(crate) fn put_connector_send_task_in_txn(
         originating_session_ref: originating_session_ref.map(str::to_owned),
         attempt_started_node_id: None,
         outcome: None,
+        suppression: None,
         utc_offset_minutes: schedule_context.utc_offset_minutes,
         iana_timezone: schedule_context.iana_timezone.clone(),
         human_explicit_instant: schedule_context.human_explicit_instant,
@@ -310,6 +330,22 @@ impl Vault {
                 )));
             }
         };
+        if body
+            .counterparty_ref
+            .as_deref()
+            .is_some_and(|party| crate::comm::validate_comm_party_key(party).is_err())
+        {
+            return Err(Error::Record(RecordError::InvalidTaskBody(
+                "invalid connector send counterparty",
+            )));
+        }
+        if body.counterparty_ref.is_some()
+            && !super::capability::is_canonical_outbound_verb(&body.channel, &body.verb)
+        {
+            return Err(Error::Record(RecordError::InvalidTaskBody(
+                "noncanonical counterparty-bound connector verb",
+            )));
+        }
         let assignee_ref = connector_actor_id(&body.channel)?;
         let assigned = self
             .edges_out(task_ref)?
@@ -336,9 +372,11 @@ impl Vault {
                 trigger_ref: body.trigger_ref,
                 job_ref: body.job_ref,
             },
+            counterparty_ref: body.counterparty_ref,
             originating_session_ref: body.originating_session_ref,
             attempt_started_node_id: body.attempt_started_node_id,
             outcome: body.outcome,
+            suppression: body.suppression,
             utc_offset_minutes: body.utc_offset_minutes,
             iana_timezone: body.iana_timezone,
             human_explicit_instant: body.human_explicit_instant,
@@ -437,8 +475,12 @@ pub(super) fn mark_connector_send_task_attempt_started(
     now: u64,
 ) -> Result<(), Error> {
     update_connector_send_task_body(vault, task_ref, now, |body| {
+        if body.outcome.is_some() {
+            return Ok(());
+        }
         body.attempt_started_node_id = Some(node_id);
         body.outcome = None;
+        body.suppression = None;
         Ok(())
     })
 }
@@ -461,6 +503,26 @@ pub(super) fn project_connector_send_task_outcome(
     }
     update_connector_send_task_body(vault, task_ref, now, |body| {
         body.outcome = Some(outcome);
+        body.suppression = None;
+        Ok(())
+    })
+}
+
+pub(super) fn project_connector_send_task_suppression_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    task_ref: EntityId,
+    now: u64,
+    delivered_won: bool,
+) -> Result<(), Error> {
+    update_connector_send_task_body_in_txn(vault, wtxn, task_ref, now, |body| {
+        if delivered_won || body.outcome == Some(ConnectorSendTaskOutcome::Delivered) {
+            body.outcome = Some(ConnectorSendTaskOutcome::Delivered);
+            body.suppression = None;
+        } else {
+            body.outcome = Some(ConnectorSendTaskOutcome::Failed);
+            body.suppression = Some("dedupe".to_owned());
+        }
         Ok(())
     })
 }
@@ -492,55 +554,64 @@ fn update_connector_send_task_body(
     update: impl FnOnce(&mut ConnectorSendTaskBody) -> Result<(), Error>,
 ) -> Result<(), Error> {
     vault.with_write_txn(|wtxn| {
-        let raw = vault
-            .store
-            .port_entity_record(&*wtxn, &task_ref)?
-            .ok_or(Error::EntityNotFound)?;
-        if raw.entity_type != ENTITY_TYPE_TASK {
-            return Err(Error::Record(RecordError::InvalidTaskBody(
-                "connector send entity is not a TASK",
-            )));
-        }
-        let mut body: ConnectorSendTaskBody = rmp_serde::from_slice(&raw.body).map_err(|_| {
-            Error::Record(RecordError::InvalidTaskBody("invalid connector send body"))
-        })?;
-        if body.schema_version != CONNECTOR_SEND_TASK_SCHEMA_VERSION
-            || body.subkind != CONNECTOR_SEND_TASK_SUBKIND
-            || body.role != TaskRole::Task.role_byte()
-        {
-            return Err(Error::Record(RecordError::InvalidTaskBody(
-                "unsupported connector send body version",
-            )));
-        }
-        update(&mut body)?;
-        let encoded = rmp_serde::to_vec_named(&body)
-            .map_err(|_| Error::InvariantViolation("connector task body encode failed"))?;
-        // A no-op update writes NOTHING. The executor re-marks the attempt on
-        // every claim, so a send that keeps parking (a gate hold waiting on a
-        // person, a window edge) would otherwise rewrite an identical body and
-        // bump the entity's learned time once per poll — a growing trail of
-        // writes that says the TASK changed when it did not. Comparing the
-        // encoded bytes against what is stored makes the retry loop leave the
-        // row byte-identical, while any real projection — the terminal
-        // outcome, a timezone refresh, a different node picking the attempt up
-        // — still differs in bytes and writes exactly once.
-        if raw.body == encoded[..] {
-            return Ok(());
-        }
-        vault
-            .batch_in()
-            .put(
-                &task_ref,
-                ENTITY_TYPE_TASK,
-                TimeRange {
-                    start: body.occurred_at,
-                    end: body.occurred_at,
-                },
-                now,
-                &encoded,
-            )
-            .apply(wtxn)
+        update_connector_send_task_body_in_txn(vault, wtxn, task_ref, now, update)
     })
+}
+
+fn update_connector_send_task_body_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    task_ref: EntityId,
+    now: u64,
+    update: impl FnOnce(&mut ConnectorSendTaskBody) -> Result<(), Error>,
+) -> Result<(), Error> {
+    let raw = vault
+        .store
+        .port_entity_record(&*wtxn, &task_ref)?
+        .ok_or(Error::EntityNotFound)?;
+    if raw.entity_type != ENTITY_TYPE_TASK {
+        return Err(Error::Record(RecordError::InvalidTaskBody(
+            "connector send entity is not a TASK",
+        )));
+    }
+    let mut body: ConnectorSendTaskBody = rmp_serde::from_slice(&raw.body)
+        .map_err(|_| Error::Record(RecordError::InvalidTaskBody("invalid connector send body")))?;
+    if body.schema_version != CONNECTOR_SEND_TASK_SCHEMA_VERSION
+        || body.subkind != CONNECTOR_SEND_TASK_SUBKIND
+        || body.role != TaskRole::Task.role_byte()
+    {
+        return Err(Error::Record(RecordError::InvalidTaskBody(
+            "unsupported connector send body version",
+        )));
+    }
+    update(&mut body)?;
+    let encoded = rmp_serde::to_vec_named(&body)
+        .map_err(|_| Error::InvariantViolation("connector task body encode failed"))?;
+    // A no-op update writes NOTHING. The executor re-marks the attempt on
+    // every claim, so a send that keeps parking (a gate hold waiting on a
+    // person, a window edge) would otherwise rewrite an identical body and
+    // bump the entity's learned time once per poll — a growing trail of
+    // writes that says the TASK changed when it did not. Comparing the
+    // encoded bytes against what is stored makes the retry loop leave the
+    // row byte-identical, while any real projection — the terminal
+    // outcome, a timezone refresh, a different node picking the attempt up
+    // — still differs in bytes and writes exactly once.
+    if raw.body == encoded[..] {
+        return Ok(());
+    }
+    vault
+        .batch_in()
+        .put(
+            &task_ref,
+            ENTITY_TYPE_TASK,
+            TimeRange {
+                start: body.occurred_at,
+                end: body.occurred_at,
+            },
+            now,
+            &encoded,
+        )
+        .apply(wtxn)
 }
 
 fn has_connector_send_subkind(body: &[u8]) -> Result<bool, Error> {

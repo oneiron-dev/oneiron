@@ -89,16 +89,7 @@ fn verify_signed_branch(
             return None;
         }
     }
-    let empty_forks = BTreeMap::new();
-    let empty_fork_vault_ids = BTreeMap::new();
-    let empty_groups = BTreeMap::new();
-    let empty_unresolved = BTreeSet::new();
     let branch_context = FoldContext {
-        authority_forks: &empty_forks,
-        authority_fork_vault_ids: &empty_fork_vault_ids,
-        equivocation_groups: &empty_groups,
-        unresolved_equivocation_groups: &empty_unresolved,
-        chain_validated_fork_candidates: None,
         entry_ancestors: Some(ancestors),
         ..context
     };

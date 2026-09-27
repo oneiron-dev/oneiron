@@ -198,6 +198,9 @@ class Oneiron:
         ``"json"``, ``"yaml"``, ``"toon"``, ``"md"``, ``"txt"``.
         """
         return json.loads(_translate(lambda: self._client.recall(query, effort, json.dumps(scope) if scope is not None else None, limit, format)))
+    def export(self, format: str | None = None) -> dict[str, Any]:
+        """Exports the live vault through the five-format serializer."""
+        return json.loads(_translate(lambda: self._client.export(json.dumps({"format": format}))))
     def receipts(self, limit: int = 100) -> list[dict[str, Any]]:
         """Governance receipts, newest first."""
         return json.loads(_translate(lambda: self._client.receipts(limit)))
@@ -216,6 +219,12 @@ class Oneiron:
     def key_value_namespaces(self, request: dict[str, Any]) -> list[list[str]]:
         """Exact actor-owned worldless keyed memory; typed engine errors pass through."""
         return json.loads(_translate(lambda: self._client.key_value_namespaces(json.dumps(request, allow_nan=False))))
+    def can(self, request: dict[str, Any]) -> dict[str, Any]:
+        """Read-only ask routing or attributed partial answers."""
+        return json.loads(_translate(lambda: self._client.can(json.dumps(request, allow_nan=False))))
+    def peek(self, request: dict[str, Any]) -> list[dict[str, Any]]:
+        """Read-only ask routing or attributed partial answers."""
+        return json.loads(_translate(lambda: self._client.peek(json.dumps(request, allow_nan=False))))
 
 # END GENERATED FACADE VERBS
 
