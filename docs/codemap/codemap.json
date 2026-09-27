@@ -33283,7 +33283,7 @@
      "path": "src/voice_cascade.rs",
      "purpose": "ONE-1807: the engine half of a transport-neutral text-brain voice cascade",
      "surface": {
-      "mod": 3,
+      "mod": 4,
       "re-export": 5
      }
     },
@@ -33567,6 +33567,53 @@
      "kind": "test",
      "notable": [],
      "path": "src/voice_cascade/uds/tests/socket_tests.rs",
+     "purpose": "—",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "RenderTarget",
+      "VoxCpm2Adapter",
+      "VoxCpm2Audio",
+      "VoxCpm2Operation",
+      "VoxCpm2Pcm",
+      "VoxCpm2Queue",
+      "VoxCpm2Work",
+      "WarmTarget"
+     ],
+     "path": "src/voice_cascade/voxcpm2.rs",
+     "purpose": "VoxCPM2's warm, host-owned rendering seam",
+     "surface": {
+      "const": 2,
+      "enum": 1,
+      "fn": 5,
+      "mod": 1,
+      "struct": 6,
+      "trait": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "VoxCpm2Event",
+      "VoxCpm2HttpQueue"
+     ],
+     "path": "src/voice_cascade/voxcpm2/http.rs",
+     "purpose": "Loopback wire to a separately deployed, always-warm CUDA worker",
+     "surface": {
+      "enum": 1,
+      "fn": 3,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/voice_cascade/voxcpm2/tests.rs",
      "purpose": "—",
      "surface": {}
     },
@@ -34750,6 +34797,14 @@
      "notable": [],
      "path": "tests/voice_segment_sync.rs",
      "purpose": "The recorder's engine contract (VOX-08)",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/voice_voxcpm2.rs",
+     "purpose": "Host-visible banked-ref → TTS seam → PCM harness (CPU fixture, not GPU proof)",
      "surface": {}
     },
     {
@@ -36030,7 +36085,7 @@
      "purpose": "ARCH-0073 vault auto-cleanup: the Dreamer ARCHIVE cron (ONE-1931)"
     },
     "voice_cascade": {
-     "files": 22,
+     "files": 25,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "file+dir",
@@ -36081,8 +36136,8 @@
    },
    "over_bar": 11,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2131,
-   "test_files": 725
+   "source_files": 2133,
+   "test_files": 727
   },
   "oneiron-android": {
    "files": [
