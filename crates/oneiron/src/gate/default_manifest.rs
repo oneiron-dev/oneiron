@@ -79,16 +79,7 @@ pub(crate) fn default_policy_manifest() -> Vec<u8> {
             Value::from("oneiron-default-policy"),
         ),
         (Value::from(POLICY_PACK_VERSION_KEY), Value::from("v1")),
-        (
-            Value::from(POLICY_SKILL_EDIT_GOAL_KEY),
-            rmpv::ext::to_value(
-                serde_json::from_str::<serde_json::Value>(include_str!(
-                    "skill_edit_goal_default.json"
-                ))
-                .expect("shipped skill edit goal policy parses"),
-            )
-            .expect("shipped skill edit goal policy encodes"),
-        ),
+        skill_edit_goal_entry(),
         (
             Value::from(POLICY_WEAVE_CORRECTION_POLICY_KEY),
             Value::Map(vec![
@@ -620,6 +611,16 @@ pub(crate) fn default_policy_manifest() -> Vec<u8> {
     let mut data = Vec::new();
     rmpv::encode::write_value(&mut data, &manifest).expect("encode default policy manifest");
     data
+}
+
+/// The shipped skill-edit goal policy row, kept as data beside this file.
+fn skill_edit_goal_entry() -> (Value, Value) {
+    let policy = rmpv::ext::to_value(
+        serde_json::from_str::<serde_json::Value>(include_str!("skill_edit_goal_default.json"))
+            .expect("shipped skill edit goal policy parses"),
+    )
+    .expect("shipped skill edit goal policy encodes");
+    (Value::from(POLICY_SKILL_EDIT_GOAL_KEY), policy)
 }
 
 /// Engine-authored vault policy DATA for grant creation. The grant codec and
