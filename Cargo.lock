@@ -7426,6 +7426,7 @@ dependencies = [
  "oneiron",
  "serde",
  "serde_json",
+ "tempfile",
  "thiserror 2.0.20",
 ]
 
@@ -7460,6 +7461,7 @@ dependencies = [
  "oneiron",
  "serde",
  "serde_json",
+ "tempfile",
  "thiserror 2.0.20",
 ]
 
