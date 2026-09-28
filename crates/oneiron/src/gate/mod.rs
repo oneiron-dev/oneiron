@@ -116,7 +116,10 @@ pub(crate) use self::input::{
     GateProvenanceHandles, consent_gate_reason_codes,
 };
 pub(crate) use self::repair::{evaluate_repair_consent, repair_criticality};
-pub(crate) use self::resolution::{PolicyManifestResolution, resolve_policy_manifest};
+pub(crate) use self::resolution::{
+    GateDecisionRetentionPolicy, GateRetentionContext, PolicyManifestResolution,
+    resolve_gate_decision_retention, resolve_policy_manifest, retention_edit_target,
+};
 pub use self::retrieval_filter::RetrievalFilter;
 pub(crate) use self::retrieval_filter::{
     ResolvedRetrievalFilter, RetrievalPolicyFloor, narrow_retrieval_filter,
