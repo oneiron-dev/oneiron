@@ -696,7 +696,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/code_revision/storage.rs` | src | m | 8 fn · 6 crate-vis | — | Vault CRUD for code revisions and forks, plus record/index reads, writes and deletes |
 | `src/code_revision/tests.rs` | test | XL | — | — | — |
 | `src/code_revision/types.rs` | src | s | 2 struct · 1 enum · 7 fn · 4 crate-vis | CodeRevision, CodeRevisionFork, CodeRevisionKind | Code-revision domain values and their constructors |
-| `src/code_run/actions.rs` | src | m | 4 struct · 2 enum · 8 fn · 1 type · 2 crate-vis | ActionArgKind, ActionArgument, ActionBuildContext, ActionRegistry, ActionVerbDefinition, AgentActionCall | One named verb registry for validated UI events and agent calls |
+| `src/code_run/actions.rs` | src | m | 4 struct · 2 enum · 9 fn · 1 type · 3 crate-vis | ActionArgKind, ActionArgument, ActionBuildContext, ActionRegistry, ActionVerbDefinition, AgentActionCall | One named verb registry for validated UI events and agent calls |
 | `src/code_run/actions/tests.rs` | test | m | — | — | — |
 | `src/code_run/blocked.rs` | src | s | 2 struct · 1 enum · 4 fn · 3 crate-vis | BlockedCategory, BlockedReceipt, SelfReportBlockedCall | Witnessed, reference-addressed self-reports |
 | `src/code_run/codec.rs` | src | m | 2 fn · 7 const · 2 crate-vis | — | — |
@@ -720,7 +720,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/code_run/storage/routing.rs` | src | m | 17 crate-vis | — | Where one run's reads and writes land: the canonical vault or a bound off-record session |
 | `src/code_run/storage/speech_identity.rs` | src | s | 6 crate-vis | — | Deterministic conversation, turn and message ids derived from a run's identity |
 | `src/code_run/support.rs` | src | s | 29 crate-vis | — | — |
-| `src/code_run/tests.rs` | test | XL | — | — | — |
+| `src/code_run/tests.rs` | test | XL | 1 crate-vis | — | — |
 | `src/code_run/types.rs` | src | m | 19 struct · 5 enum · 1 trait · 17 fn | SelfAgentSpawnCall, SelfAgentSpawnResult, SelfAskCall, SelfCall, SelfContextCall, SelfContextResult, SelfDeniedResult, SelfDispatchOutcome +17 | — |
 | `src/code_run/vault_read/context_pack.rs` | src | m | 16 struct · 3 enum · 1 fn | ContextPackBudgetControls, ContextPackDepthControls, ContextPackRetrievalBudgetControls, CoreContextPackAccounting, CoreContextPackAccountingReason, CoreContextPackEdgeProvenance, CoreContextPackEdgeRecord, CoreContextPackEmpty +11 | Context-pack request controls, record shapes, stats and projection types |
 | `src/code_run/vault_read/contract.rs` | src | m | 1 struct · 6 enum · 1 trait · 11 fn · 4 const · 2 crate-vis | VaultReadAdapterKind, VaultReadAvailability, VaultReadClient, VaultReadMethod, VaultReadMethodMapping, VaultReadRequest, VaultReadResponse, VaultReadWireOp | The one declarative contract table and every surface the macro generates from it |
@@ -1581,7 +1581,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/ingest/meeting_audio/tests/producer.rs` | test | m | — | — | — |
 | `src/ingest/meeting_audio/tests/recorded_evaluation.rs` | test | s | — | — | Offline harness fixtures, not native model quality or host provisioning evidence |
 | `src/ingest/meeting_audio/tests/support.rs` | test | m | 9 crate-vis | — | Synthetic callback fixtures only: no decoder or model runs in these tests |
-| `src/ingest/meeting_audio/types.rs` | src | s | 24 struct · 4 enum · 2 trait · 2 fn | AllowedWordCorrection, AsrOutput, AsrPackRequest, AsrRole, AsrRoute, AsrWord, AudioFile, BatchAsrRequest +22 | Typed host ports for file decoding, inference, routing and explicit import consent |
+| `src/ingest/meeting_audio/types.rs` | src | m | 24 struct · 4 enum · 2 trait · 3 fn | AllowedWordCorrection, AsrOutput, AsrPackRequest, AsrRole, AsrRoute, AsrWord, AudioFile, BatchAsrRequest +22 | Typed host ports for file decoding, inference, routing and explicit import consent |
 | `src/ingest/mod.rs` | src | s | 3 mod · 14 re-export · 4 crate-vis | — | Ingest source registry and source-local normalization |
 | `src/ingest/parsed.rs` | src | s | 2 struct · 2 crate-vis | ParsedImport, ParsedMessage | Shared pre-semantic import shape |
 | `src/ingest/provider.rs` | src | s | 2 crate-vis | — | Provider conversation decoders |
@@ -1701,18 +1701,20 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/llm/decision/seat/tests.rs` | test | s | — | — | — |
 | `src/llm/decision/tests.rs` | test | m | — | — | — |
 | `src/llm/decision/types.rs` | src | s | 7 struct · 5 enum · 6 fn · 1 crate-vis | AnswerContract, DecisionAnswer, DecisionBand, DecisionClass, DecisionDial, DecisionQuestion, DecisionReceipt, DecisionRung +4 | Closed answer contracts and engine-owned decision receipts |
-| `src/llm/defaults.rs` | src | s | 1 struct · 3 fn | PurposeDefault | Central purpose policy |
+| `src/llm/defaults.rs` | src | m | 4 struct · 2 enum · 1 trait · 16 fn · 4 crate-vis | ExtractionEgressPredicate, PurposeDefault, PurposeDefaultTable, ValidatedPurposeDefaults, VoiceBackendBinding, VoiceLane, VoicePrecedence | Vault-local inference defaults |
+| `src/llm/defaults/tests.rs` | test | m | — | — | Purpose policy and binding regressions |
 | `src/llm/entity_refs.rs` | src | s | 5 crate-vis | — | Validated entity-reference wire encoding for model policy DTOs |
 | `src/llm/error.rs` | src | s | 1 struct · 4 enum | BudgetDenied, FatalLlmError, LlmError, RetryableLlmError, UnsupportedCapability | Error taxonomy: retryable, fatal, and budget-denied errors plus unsupported-capability detail |
 | `src/llm/fallback.rs` | src | s | 1 struct · 1 enum · 1 trait · 3 fn | DeterministicRunner, FallbackError, FallbackRegistry | Named deterministic non-LLM fallback runners |
 | `src/llm/image.rs` | src | s | 5 struct · 1 trait · 2 fn · 1 type | ImageBackend, ImageBytes, ImageCatalog, ImageCatalogRow, ImageIntent, ImageResponse | Provider-neutral image generation and reference-edit intent |
 | `src/llm/image/tests.rs` | test | s | — | — | — |
-| `src/llm/manifest.rs` | src | m | 4 struct · 5 enum · 10 fn · 1 const · 2 crate-vis | CalibratedVerdict, ConfidenceBand, ModelBinding, ModelManifest, ModelRole, ModelSlot, VerdictBasis, VerdictBinding +1 | Manifest v2 role bindings, per-vault narrow-only route dials, and verdict floors |
+| `src/llm/inference_admission.rs` | src | s | 4 struct · 1 enum · 12 fn | AuthorizedInference, BoundInference, HostInferenceBinding, HostInferenceContext, InferencePolicySnapshot | One snapshot and one admission for policy-managed inference calls |
+| `src/llm/manifest.rs` | src | m | 4 struct · 5 enum · 9 fn · 1 const · 3 crate-vis | CalibratedVerdict, ConfidenceBand, ModelBinding, ModelManifest, ModelRole, ModelSlot, VerdictBasis, VerdictBinding +1 | Manifest v2 role bindings, per-vault narrow-only route dials, and verdict floors |
 | `src/llm/manifest/tests.rs` | test | s | — | — | — |
-| `src/llm/mod.rs` | src | s | 8 mod · 18 re-export · 6 crate-vis | — | Engine-facing LLM invocation seam |
+| `src/llm/mod.rs` | src | s | 8 mod · 19 re-export · 6 crate-vis | — | Engine-facing LLM invocation seam |
 | `src/llm/model_id.rs` | src | s | 1 struct · 1 enum · 5 fn · 4 crate-vis | ModelId, ModelIdError | Validated provider/name@revision model identifier with segment checks and shared constructors |
 | `src/llm/protocol.rs` | src | s | 7 struct · 5 enum · 4 fn · 1 crate-vis | ContentPart, FinishReason, ImageContent, LlmInputUsage, LlmMessage, LlmMessageRole, LlmOutputUsage, LlmRequest +4 | Wire protocol: requests, responses, messages, content parts, stream events, usage, tool specs, and canonical… |
-| `src/llm/registry.rs` | src | s | 5 struct · 1 enum · 10 fn · 2 crate-vis | CatalogSeed, ModelRegistryRow, ModelScoreDiff, ModelWireFormat, ScoreObservation, ScoreSnapshot | Vault-persisted, priced model catalogs |
+| `src/llm/registry.rs` | src | m | 5 struct · 1 enum · 10 fn · 3 crate-vis | CatalogSeed, ModelRegistryRow, ModelScoreDiff, ModelWireFormat, ScoreObservation, ScoreSnapshot | Vault-persisted, priced model catalogs |
 | `src/llm/registry/tests.rs` | test | m | — | — | — |
 | `src/llm/routing.rs` | src | m | 11 struct · 1 enum · 1 trait · 13 fn | DescriptionJudge, DescriptionJudgment, DescriptionPolicy, DescriptionReask, MeasuredDescription, ModelDescription, OwnerModelLine, ReaskTrigger +5 | Vault-owned description routing above the raw LLM call seam |
 | `src/llm/routing/tests.rs` | test | m | — | — | — |
@@ -2934,6 +2936,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `tests/consent_guard_compilefail/b_no_proposal_to_owner_conversion.rs` | test | s | — | — | (b) There is no `From<ConsentProposal> for AuthenticatedOwner`: a proposal cannot be converted into the… |
 | `tests/consent_guard_compilefail/c_no_proposal_to_grant_conversion.rs` | test | s | — | — | (c) There is no `From<ConsentProposal> for ConsentGrant` either: the guard cannot skip the owner entirely… |
 | `tests/git_smart_http.rs` | test | L | — | — | Stock-git end-to-end coverage for the vault-as-origin serve wire (ARCH-0068 Phase A, ONE-1908) |
+| `tests/inference_default_bind.rs` | test | s | — | — | Public no-manifest local binding must use one registry snapshot, not a nested reader |
 | `tests/it/analyzer_asset_policy.rs` | test | s | — | — | License + asset governance gate for the analyzer (plan ONE-317 §11) |
 | `tests/it/booking_lifecycle.rs` | test | XL | — | — | ONE-1813 [BK-02] booking lifecycle oracle |
 | `tests/it/booking_lifecycle/busy_event.rs` | test | s | 1 crate-vis | — | Imported busy-event fixture and its source-permit binding oracle |
@@ -2972,7 +2975,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `tests/it/of360_extraction_eval.rs` | test | m | — | — | — |
 | `tests/it/ops_docs.rs` | test | s | — | — | — |
 | `tests/it/outbound_intent_ledger.rs` | test | s | — | — | — |
-| `tests/it/prompt_blocks.rs` | test | m | — | — | — |
+| `tests/it/prompt_blocks.rs` | test | s | — | — | — |
 | `tests/it/receipt_answerability.rs` | test | L | — | — | — |
 | `tests/it/receipt_context.rs` | test | m | — | — | ONE-1544 / RCPT-7 (OF-369, B2 RS9): context receipt field-set on emit-adjacent receipts |
 | `tests/it/saved_query_oracle.rs` | test | XL | — | — | ONE-1773 (CA-02) public-surface oracle for SAVED_QUERY |
