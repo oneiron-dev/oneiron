@@ -26,6 +26,7 @@ pub mod error;
 pub mod feedback_delivery;
 mod handler;
 mod idempotency;
+mod linear_host;
 mod livequery;
 pub mod managed;
 pub mod mcp;

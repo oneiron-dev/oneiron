@@ -348,7 +348,11 @@ impl<'a> AttemptQueue<'a> {
         let mut wtxn = self.store.env.write_txn()?;
         let outcome = crate::ports::JobQueue::port_job_claim(self, &mut wtxn, kind_filter, input)?;
         wtxn.commit()?;
-        self.store.notify_attempt_observers();
+        // An empty claim changes no attempt record. Broadcasting it makes a
+        // notification-driven worker observe its own miss forever (ONE-2100).
+        if matches!(outcome, ClaimOutcome::Claimed(_)) {
+            self.store.notify_attempt_observers();
+        }
 
         Ok(outcome)
     }

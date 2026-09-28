@@ -1,6 +1,9 @@
 //! Resolved-view types plus the `PolicyManifestResolution` struct definition.
 
 use crate::autoreason_campaign::selection::SelectionPolicyRow;
+use crate::gate::operational_policy::{
+    LinearMirrorPolicy, LinearSyncBudget, PolicyPrecedence, WaveHandoffPolicy,
+};
 use crate::llm::{BudgetExhaustionPolicy, BudgetPolicyTable};
 use std::collections::BTreeMap;
 
@@ -294,6 +297,10 @@ pub(crate) struct PolicyManifestResolution {
     pub(crate) untrusted_sheet_answer_limits: Vec<SheetAnswerLimitRow>,
     pub(crate) sheet_answer_default_max_count: Option<u64>,
     pub(crate) sheet_answer_precedence: Option<SheetAnswerPrecedence>,
+    pub(super) linear_mirror: Option<LinearMirrorPolicy>,
+    pub(super) linear_sync: Option<LinearSyncBudget>,
+    pub(super) wave_handoff: Option<WaveHandoffPolicy>,
+    pub(super) operational_precedence: Option<PolicyPrecedence>,
     pub(crate) weave_correction_policy: Option<crate::gate::WeaveCorrectionPolicy>,
     pub(crate) attribution_limits: AttributionLimits,
     /// The shipped defaults apply only until a trusted policy row supplies
