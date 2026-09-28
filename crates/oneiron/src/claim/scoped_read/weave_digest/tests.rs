@@ -789,7 +789,7 @@ fn non_claim_rows_and_edge_endpoints_are_rechecked_at_publication() -> Result<()
         let mut record = ProjectRecord::new(project, Some(root), root, leader);
         record.roster.push(person_id.to_hex());
         record.budget = Some(peer.to_hex());
-        record.goal = Some(peer.to_hex());
+        // No goal pointer: only the goal-intake interview may set one.
         vault.put_project(project, &record, 2)?;
         vault.put_edge(&person_id, EdgeKind::Mentions, &peer, 0.1)?;
         let link_claim = entity(0xC5);
