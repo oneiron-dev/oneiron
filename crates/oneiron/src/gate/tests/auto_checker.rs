@@ -637,6 +637,47 @@ fn checker_posture_frontier_matrix_preserves_main_and_rebinds_authority() -> Res
     Ok(())
 }
 
+/// Project-depth rows join the frontier only when a pack declares them, so a
+/// vault whose manifests predate the rows keeps its landed frontier, and each
+/// declared row value moves it.
+#[test]
+fn project_depth_rows_move_the_frontier_only_when_present() -> Result<()> {
+    let mut frontiers = Vec::new();
+    for rows in [
+        vec![],
+        vec![("project_depth_max", 12u64)],
+        vec![("project_depth_max", 11)],
+        vec![("project_depth_default", 4)],
+    ] {
+        let (_tmp, vault) = temp_vault();
+        let mut data = combined_manifest(None, None);
+        rewrite_policy_manifest_entries(&mut data, |entries| {
+            for (key, value) in entries.iter_mut() {
+                if matches!(
+                    key.as_str(),
+                    Some(POLICY_RULES_KEY | POLICY_ACTOR_CEILINGS_KEY)
+                ) {
+                    *value = Value::Array(vec![]);
+                }
+            }
+            for (key, value) in rows {
+                entries.push((Value::from(key), Value::from(value)));
+            }
+        });
+        put_policy_manifest_bytes(&vault, test_id(0x22), &data)?;
+        let policy = resolve(&vault)?;
+        assert!(!policy.is_fail_closed());
+        frontiers.push(policy.read_frontier_hash()?);
+    }
+    assert_eq!(frontiers[0], integrated_no_checker_frontier("escalate"));
+    for (left_index, left) in frontiers.iter().enumerate() {
+        for (right_index, right) in frontiers.iter().enumerate() {
+            assert_eq!(left == right, left_index == right_index);
+        }
+    }
+    Ok(())
+}
+
 #[test]
 fn changed_effective_credential_lifetime_moves_read_frontier() -> Result<()> {
     let (_dir, vault) = temp_vault();

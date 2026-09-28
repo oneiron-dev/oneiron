@@ -305,6 +305,9 @@ impl Vault {
             parent_id: root_id.to_hex(),
             share_bps: intent.budget_share_bps,
         });
+        // The authenticated tap is the owner's creation act. An owner-rooted
+        // vault records the creation-default birth it resolves now.
+        crate::gate::project_depth::put_local_birth_in_txn(self, txn, id, at)?;
         self.batch_in()
             .put(
                 &id,

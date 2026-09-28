@@ -7,7 +7,9 @@ mod decode_trust_budget;
 mod experiment_selection;
 mod policy_scope_migration;
 
-pub(super) use self::decode_manifest::{ConnectorClassRole, decode_policy_manifest};
+pub(super) use self::decode_manifest::{
+    ConnectorClassRole, DecodedManifestCarrier, decode_manifest_carrier, decode_policy_manifest,
+};
 // Test-only name the gate test seam reaches through `use self::decode::*`
 // (gate/mod.rs); gating the re-export keeps the non-test build warning-free.
 #[cfg(test)]

@@ -16,8 +16,8 @@ use crate::write_envelope::WriteActor;
 use super::types::{
     AGENT_DISPATCH_ATTEMPT_TYPE, AGENT_DISPATCH_INPUT_KEYS, AGENT_DISPATCH_INPUT_SCHEMA_VERSION,
     AgentDispatchInput, AgentDispatchStatus, AgentDispatchTarget, KEY_AGENT_DEF, KEY_CONTEXT_FROM,
-    KEY_CONTEXT_SPEC, KEY_DEFINITION, KEY_DEPTH_REMAINING, KEY_PRESET, KEY_SCHEMA_VERSION,
-    KEY_SCOPE, KEY_TARGET, TARGET_CUSTOM, TARGET_SYSTEM,
+    KEY_CONTEXT_SPEC, KEY_DEFINITION, KEY_DEPTH_REMAINING, KEY_PRESET, KEY_PROJECT_REF,
+    KEY_SCHEMA_VERSION, KEY_SCOPE, KEY_SPAWN_INTENT, KEY_TARGET, TARGET_CUSTOM, TARGET_SYSTEM,
 };
 use crate::error::ArtifactError;
 
@@ -72,6 +72,15 @@ pub fn encode_agent_dispatch_input(input: &AgentDispatchInput) -> Result<Value> 
             Value::from(u64::from(depth_remaining)),
         ));
     }
+    if let Some(project_ref) = input.project_ref {
+        entries.push((
+            Value::from(KEY_PROJECT_REF),
+            Value::from(project_ref.to_hex()),
+        ));
+    }
+    if let Some(intent) = &input.spawn_intent {
+        entries.push((Value::from(KEY_SPAWN_INTENT), Value::from(intent.as_str())));
+    }
     if let Some(scope) = &input.scope {
         let json = serde_json::to_string(scope).map_err(|_| {
             Error::Artifact(ArtifactError::InvalidAgentDispatchInput(
@@ -108,6 +117,8 @@ pub fn decode_agent_dispatch_input(value: &Value) -> Result<AgentDispatchInput> 
     let mut context_spec = None;
     let mut context_from = Vec::new();
     let mut depth_remaining = None;
+    let mut project_ref = None;
+    let mut spawn_intent = None;
     let mut scope = None;
     let mut healer_case = None;
     let mut seen = [false; AGENT_DISPATCH_INPUT_KEYS.len()];
@@ -224,6 +235,35 @@ pub fn decode_agent_dispatch_input(value: &Value) -> Result<AgentDispatchInput> 
                     })?);
                 }
             }
+            KEY_PROJECT_REF => {
+                project_ref = Some(
+                    EntityId::from_hex(value.as_str().ok_or(Error::Artifact(
+                        ArtifactError::InvalidAgentDispatchInput(
+                            "project_ref must be a hex EntityId",
+                        ),
+                    ))?)
+                    .map_err(|_| {
+                        Error::Artifact(ArtifactError::InvalidAgentDispatchInput(
+                            "project_ref must be a hex EntityId",
+                        ))
+                    })?,
+                );
+            }
+            KEY_SPAWN_INTENT => {
+                let digest = value.as_str().ok_or(Error::Artifact(
+                    ArtifactError::InvalidAgentDispatchInput("spawn_intent must be a digest"),
+                ))?;
+                if digest.len() != 64
+                    || !digest
+                        .bytes()
+                        .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
+                {
+                    return Err(Error::Artifact(ArtifactError::InvalidAgentDispatchInput(
+                        "spawn_intent must be lowercase hex",
+                    )));
+                }
+                spawn_intent = Some(digest.to_owned());
+            }
             KEY_SCOPE => {
                 let json = value.as_str().ok_or(Error::Artifact(
                     ArtifactError::InvalidAgentDispatchInput("scope must be serialized Scope"),
@@ -312,6 +352,8 @@ pub fn decode_agent_dispatch_input(value: &Value) -> Result<AgentDispatchInput> 
         context_spec,
         context_from,
         depth_remaining,
+        project_ref,
+        spawn_intent,
         scope,
     })
 }

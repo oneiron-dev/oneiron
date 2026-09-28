@@ -386,6 +386,7 @@ pub(super) fn apply_ops_with_origin(
                     preflight_decision_id,
                     transition.as_ref(),
                     origin,
+                    config.privacy.posture,
                 )?;
                 consume_preflight_decisions(store, wtxn, [preflight_decision_id])?;
                 if let Some((source_id, source_bytes)) = applied.portable_agent_source {
@@ -516,6 +517,7 @@ pub(super) fn apply_ops_with_origin(
                 };
                 let applied = apply_claim_candidate(
                     store,
+                    config.privacy.posture,
                     wtxn,
                     id,
                     *candidate,

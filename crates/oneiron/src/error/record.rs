@@ -25,7 +25,7 @@ pub enum RecordError {
     InvalidProjectBody(&'static str),
     #[error("invalid project home room: {0}")]
     InvalidProjectRoomBody(&'static str),
-    /// A well-formed project reference has not materialized yet.
+    /// A project parent or the signer of its depth fact has not materialized yet.
     #[error("project dependency is not materialized")]
     ProjectDependencyPending,
     #[error("message stream recovery refused: {0}")]
