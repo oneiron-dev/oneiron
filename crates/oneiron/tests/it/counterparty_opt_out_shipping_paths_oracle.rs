@@ -32,10 +32,9 @@ use oneiron::campaign::claims::PREDICATE_COMM_DO_NOT_CONTACT;
 use oneiron::registry::ENTITY_TYPE_PERSON;
 use oneiron::{
     ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSubject, EdgeActorClass, EntityId,
-    OutboundDraftInput, Result, TimeRange, Vault, VaultConfig, channel_identity::ChannelIdentity,
-    channel_identity::ChannelIdentityBinding, channel_identity::ChannelIdentityShape,
-    channel_identity::ChannelIdentityState, connector_key::ConnectorKeyRecord,
-    counterparty_contact::CounterpartyContactRecord,
+    OutboundDraftInput, Result, TimeRange, Vault, VaultConfig,
+    channel_identity::ChannelIdentityBinding, channel_identity::ChannelIdentityState,
+    connector_key::ConnectorKeyRecord, counterparty_contact::CounterpartyContactRecord,
     counterparty_contact::CounterpartyOptOutReason, genui::GrantMintIntent,
     genui::GrantMintIntentScope, outbound::OutboundDeliveryWindowDecision,
     outbound::OutboundDispatchActor, outbound::OutboundDispatchGate,
@@ -146,20 +145,14 @@ fn sending_vault() -> (tempfile::TempDir, Vault, EntityId) {
 
 /// An ACTIVE sending identity on `channel`, bound to `actor`.
 fn put_channel_identity(vault: &Vault, seed: u8, channel: &str, address: &str, actor: EntityId) {
-    let identity = ChannelIdentity {
-        auth_mode: oneiron::channel_identity::ChannelAuthMode::Local,
-        channel: channel.to_owned(),
-        address_or_handle: address.to_owned(),
-        shape: ChannelIdentityShape::DedicatedAddress,
-        binding: ChannelIdentityBinding::agent(actor),
-        state: ChannelIdentityState::Active,
-        pending_fulfillment: None,
-        state_changed_at: 1,
-        quarantine_until: None,
-        reputation_ref: None,
-        manifest_ref: None,
-        grant: None,
-    };
+    let identity = crate::common::self_held_identity_in_state(
+        channel,
+        address,
+        oneiron::channel_identity::SelfHeldShape::DedicatedAddress,
+        ChannelIdentityBinding::agent(actor),
+        ChannelIdentityState::Active,
+        1,
+    );
     vault
         .create_channel_identity(&test_id(seed), &identity)
         .unwrap();

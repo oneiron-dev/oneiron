@@ -40,16 +40,27 @@ impl Memory<'_> {
         let kind = kind_string_for_type(entity_type);
 
         if entity_type == ENTITY_TYPE_CLAIM {
-            let Some(live_body) = self.vault.get_claim(id)? else {
+            let txn = self
+                .vault
+                .store
+                .env
+                .read_txn()
+                .map_err(crate::Error::from)?;
+            let Some(live_body) = self.vault.get_claim_in_txn(&txn, id)? else {
                 return Ok(None);
             };
-            if !claim_surfaceable(&live_body) {
+            if !claim_surfaceable(&live_body)
+                || !crate::claim::has_live_support_in_txn(&self.vault.store, &txn, &live_body)?
+            {
                 return Ok(None);
             }
             let body = if mode == crate::vault::ReadMode::Live {
                 live_body
             } else {
-                let Some(raw) = self.vault.get_raw_with_mode(id, mode)? else {
+                let Some(raw) = crate::vault::entity_revision::read_entity_revision_in_txn(
+                    self.vault, &txn, id, mode,
+                )?
+                else {
                     return Ok(None);
                 };
                 crate::claim::decode_claim_body(
@@ -57,7 +68,9 @@ impl Memory<'_> {
                     true,
                 )?
             };
-            if !claim_surfaceable(&body) {
+            if !claim_surfaceable(&body)
+                || !crate::claim::has_live_support_in_txn(&self.vault.store, &txn, &body)?
+            {
                 return Ok(None);
             }
             let value_json = companion_value_to_json(&body.value);

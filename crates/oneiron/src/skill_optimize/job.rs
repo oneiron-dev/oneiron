@@ -292,7 +292,12 @@ fn run_skill_optimize_bound(
                 Value::from(owner.entity_ref().to_hex()),
             ));
         }
+        let package =
+            vault.optimized_skill_package_in_txn(wtxn, &candidate.skill, &target, &mut record)?;
         vault.put_skill_record_in_txn(wtxn, &proposal_id, &record, occurred, learned_at)?;
+        if let Some(package) = package {
+            vault.persist_hub_package_in_txn(wtxn, &proposal_id, &package)?;
+        }
         Ok(())
     })?;
 
@@ -488,7 +493,8 @@ fn proposal_record(
         dependencies,
         provenance,
     )
-    .with_governance_tier(tier);
+    .with_governance_tier(tier)
+    .with_role(target.role, target.call.clone());
     if crate::skill::resident_of(target)?.is_some() {
         proposal.forked_from = target.forked_from.or(Some(*parent));
     }

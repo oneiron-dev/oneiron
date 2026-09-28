@@ -41,6 +41,7 @@
 //! update/bonus entry points with critic reliability. Attribution remains here:
 //! only receipt-backed wins and routed skill defects reach this posterior.
 
+mod callable;
 mod codec;
 mod floor;
 mod ledger;
@@ -50,6 +51,7 @@ mod provenance;
 mod read;
 mod resident;
 
+pub(crate) use self::callable::{project_callable_receipt_outcome, record_callable_invocation};
 pub use self::floor::{
     DEFAULT_SKILL_RELIABILITY_FLOOR, PREDICATE_SKILL_QUARANTINE_PROPOSAL,
     SKILL_RELIABILITY_FLOOR_KEY, SKILL_RELIABILITY_FLOOR_MIN_OUTCOMES, check_reliability_floor,

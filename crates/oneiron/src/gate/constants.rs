@@ -84,6 +84,14 @@ pub(super) const POLICY_TEACHER_PROBE_KEY: &str = "teacher_probe";
 pub(super) const POLICY_BUDGET_POLICY_KEY: &str = "budget_policy";
 /// Bounded policy rows for foreign connector admission, not persisted-body codec bounds.
 pub(super) const POLICY_CONNECTOR_ADMISSION_KEY: &str = "connector_admission";
+/// Optional trusted DEC-0005 manifest setting for gate-decision age pruning.
+/// The seeded default has a null horizon (no pruning), and an owner-authored
+/// row overrides it. Conflicting owner rows are ambiguous and fail closed.
+pub(super) const POLICY_GATE_DECISION_RETENTION_KEY: &str = "gate_decision_retention";
+pub(super) const GATE_RETENTION_HORIZON_SECS_KEY: &str = "horizon_secs";
+pub(super) const GATE_RETENTION_MAX_SWEEP_ROWS_KEY: &str = "max_sweep_rows";
+pub(super) const GATE_RETENTION_PRECEDENCE_KEY: &str = "precedence";
+pub(super) const GATE_RETENTION_HOLDER_OVERRIDE_CEILING_KEY: &str = "holder_override_ceiling";
 /// Per-format edit resource budgets; precedence is a required manifest row.
 pub(crate) const POLICY_PPTX_COMMENT_LIMITS_KEY: &str = "pptx_comment_limits";
 /// Ordered restrict-only rows: vault, artifact, and named sheet caps compose
@@ -104,6 +112,30 @@ pub(super) const BUDGET_POLICY_PURPOSE_KEY: &str = "purpose";
 pub(super) const BUDGET_POLICY_ACTOR_KEY: &str = "actor";
 pub(super) const BUDGET_POLICY_FLOOR_KEY: &str = "floor";
 pub(super) const BUDGET_POLICY_CAP_KEY: &str = "cap";
+/// Optional manifest table carrying HOW LONG a named wait must run
+/// (DEC-0005 floors-and-ceilings, owner rule 2026-09-27). A row is
+/// `{ wait_class, min_secs, max_secs?, holder_ref?, holder_precedence? }`:
+/// `min_secs` is the floor a caller cannot go under, `max_secs` the ceiling
+/// that also caps how far a holder row may raise the floor. A class no row
+/// names is ungoverned, and the caller keeps its own shipped default.
+pub(super) const POLICY_WAIT_POLICY_KEY: &str = "wait_policy";
+pub(super) const WAIT_POLICY_CLASS_KEY: &str = "wait_class";
+pub(super) const WAIT_POLICY_MIN_SECS_KEY: &str = "min_secs";
+pub(super) const WAIT_POLICY_MAX_SECS_KEY: &str = "max_secs";
+/// Optional manifest table carrying WHETHER a named act class may run for a
+/// named subject class. A row is
+/// `{ act_class, subject_class, posture, holder_ref?, holder_precedence? }`
+/// with posture `deny` (the restrictive pole) or `require_capability` (the
+/// class is not barred; the substrate check still has to find the capability).
+pub(super) const POLICY_ACT_POLICY_KEY: &str = "act_policy";
+pub(super) const ACT_POLICY_CLASS_KEY: &str = "act_class";
+pub(super) const ACT_POLICY_SUBJECT_CLASS_KEY: &str = "subject_class";
+pub(super) const ACT_POLICY_POSTURE_KEY: &str = "posture";
+/// Shared by both class tables: the actor a HOLDER-scoped row names, and what
+/// the vault row lets holder rows do (`nested_narrowing`, the default, or
+/// `vault_only`).
+pub(super) const CLASS_POLICY_HOLDER_REF_KEY: &str = "holder_ref";
+pub(super) const CLASS_POLICY_PRECEDENCE_KEY: &str = "holder_precedence";
 pub(crate) const POLICY_OWNER_POLICY_ROWS_KEY: &str = "owner_policy_rows";
 pub(crate) const POLICY_OWNER_POLICY_ENABLED_KEY: &str = "owner_policy_enabled";
 /// The owner plane's POLICY DOCUMENT: the text the vault owner wrote, sent to

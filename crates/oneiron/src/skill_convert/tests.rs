@@ -779,10 +779,9 @@ fn a_deleted_source_stales_the_skill_it_grounded_without_losing_it() -> Result<(
     assert_eq!(skills_dependent_on_message(&vault, &sources[0])?, [skill]);
 
     assert!(
-        vault.delete_entity_with_options(
-            &sources[0],
-            crate::deletion::DeleteEntityOptions { purge: true }
-        )?,
+        vault
+            .delete_own_room_record(sources[0], DeleteReason::UserHardDelete)?
+            .existed,
         "the source existed"
     );
 
@@ -813,10 +812,7 @@ fn one_lost_source_of_two_is_enough_and_the_survivor_stays_indexed() -> Result<(
     let (_tmp, vault) = temp_vault();
     let (skill, sources) = converted_and_admitted(&vault, &["blinds, kettle", "then priorities"]);
 
-    vault.delete_entity_with_options(
-        &sources[0],
-        crate::deletion::DeleteEntityOptions { purge: true },
-    )?;
+    vault.delete_own_room_record(sources[0], DeleteReason::UserHardDelete)?;
 
     assert_eq!(
         vault.get_skill_record(&skill)?.map(|r| r.lifecycle_status),
@@ -844,10 +840,7 @@ fn deleting_a_message_the_skill_never_cited_leaves_it_active() -> Result<()> {
         .target;
 
     assert!(skills_dependent_on_message(&vault, &stranger)?.is_empty());
-    vault.delete_entity_with_options(
-        &stranger,
-        crate::deletion::DeleteEntityOptions { purge: true },
-    )?;
+    vault.delete_own_room_record(stranger, DeleteReason::UserHardDelete)?;
 
     assert_eq!(
         vault.get_skill_record(&skill)?.map(|r| r.lifecycle_status),
@@ -864,10 +857,7 @@ fn deleting_a_message_the_skill_never_cited_leaves_it_active() -> Result<()> {
 fn the_owner_reverses_the_fold_and_a_later_loss_re_stales() -> Result<()> {
     let (_tmp, vault) = temp_vault();
     let (skill, sources) = converted_and_admitted(&vault, &["blinds, kettle", "then priorities"]);
-    vault.delete_entity_with_options(
-        &sources[0],
-        crate::deletion::DeleteEntityOptions { purge: true },
-    )?;
+    vault.delete_own_room_record(sources[0], DeleteReason::UserHardDelete)?;
 
     let mut revived = vault.get_skill_record(&skill)?.expect("stale record");
     revived.lifecycle_status = SkillLifecycle::Active;
@@ -878,10 +868,7 @@ fn the_owner_reverses_the_fold_and_a_later_loss_re_stales() -> Result<()> {
         "the reversal ends the episode the note described"
     );
 
-    vault.delete_entity_with_options(
-        &sources[1],
-        crate::deletion::DeleteEntityOptions { purge: true },
-    )?;
+    vault.delete_own_room_record(sources[1], DeleteReason::UserHardDelete)?;
 
     assert_eq!(
         vault.get_skill_record(&skill)?.map(|r| r.lifecycle_status),
@@ -904,14 +891,8 @@ fn a_second_loss_in_one_episode_grows_the_note() -> Result<()> {
     let (_tmp, vault) = temp_vault();
     let (skill, sources) = converted_and_admitted(&vault, &["blinds, kettle", "then priorities"]);
 
-    vault.delete_entity_with_options(
-        &sources[0],
-        crate::deletion::DeleteEntityOptions { purge: true },
-    )?;
-    vault.delete_entity_with_options(
-        &sources[1],
-        crate::deletion::DeleteEntityOptions { purge: true },
-    )?;
+    vault.delete_own_room_record(sources[0], DeleteReason::UserHardDelete)?;
+    vault.delete_own_room_record(sources[1], DeleteReason::UserHardDelete)?;
 
     let note = skill_stale_note(&vault, &skill)?.expect("still stale");
     assert_eq!(note.deleted_refs, vec![sources[0], sources[1]]);
@@ -934,10 +915,7 @@ fn a_candidate_conversion_is_left_to_the_admission_gate() -> Result<()> {
     };
     let sources = source_message_refs(&vault.get_skill_record(&skill)?.expect("landed"))?;
 
-    vault.delete_entity_with_options(
-        &sources[0],
-        crate::deletion::DeleteEntityOptions { purge: true },
-    )?;
+    vault.delete_own_room_record(sources[0], DeleteReason::UserHardDelete)?;
 
     assert_eq!(
         vault.get_skill_record(&skill)?.map(|r| r.lifecycle_status),
@@ -954,7 +932,7 @@ fn a_soft_deleted_source_stales_the_skill_too() -> Result<()> {
     let (_tmp, vault) = temp_vault();
     let (skill, sources) = converted_and_admitted(&vault, &["blinds, kettle"]);
 
-    vault.delete_entity_with_reason(&sources[0], DeleteReason::UserDelete)?;
+    vault.delete_own_room_record(sources[0], DeleteReason::UserDelete)?;
 
     assert_eq!(
         vault.get_skill_record(&skill)?.map(|r| r.lifecycle_status),
@@ -1003,10 +981,7 @@ fn the_source_index_rebuilds_to_identity_and_the_delete_path_survives_it() -> Re
         "and it is idempotent"
     );
 
-    vault.delete_entity_with_options(
-        &sources[0],
-        crate::deletion::DeleteEntityOptions { purge: true },
-    )?;
+    vault.delete_own_room_record(sources[0], DeleteReason::UserHardDelete)?;
     assert_eq!(
         vault.get_skill_record(&skill)?.map(|r| r.lifecycle_status),
         Some(SkillLifecycle::Stale)
@@ -1028,14 +1003,122 @@ fn a_citation_row_outliving_its_skill_is_pruned_by_the_sweep() -> Result<()> {
         "the skill's own delete leaves the citation row behind"
     );
 
-    vault.delete_entity_with_options(
-        &sources[0],
-        crate::deletion::DeleteEntityOptions { purge: true },
-    )?;
+    vault.delete_own_room_record(sources[0], DeleteReason::UserHardDelete)?;
 
     assert!(
         skills_dependent_on_message(&vault, &sources[0])?.is_empty(),
         "the sweep prunes what it cannot answer for"
+    );
+    Ok(())
+}
+
+#[test]
+fn conversion_mints_workflow_and_callable_roles_from_authored_source() -> Result<()> {
+    for (role, call) in [
+        (crate::skill::SkillRole::Workflow, ""),
+        (
+            crate::skill::SkillRole::Callable,
+            "call:\n  reference: scripts/run.js\n  arguments: {\"value\":\"integer\"}\n  returns: {\"value\":\"integer\"}\n",
+        ),
+    ] {
+        let (_tmp, vault) = temp_vault();
+        let turns = witnessed_turns(&vault, &["a morning routine checklist"], 1_775_000_000);
+        let mut files = vec![HubFile::new("SKILL.md", format!(
+            "---\nname: morning-routine-checklist\ndescription: Run the morning routine checklist when the day starts\nrole: {}\n{call}---\nUse it every morning.\n",
+            role.as_str()
+        ).into_bytes())];
+        if role == crate::skill::SkillRole::Callable {
+            files.push(HubFile::new(
+                "scripts/run.js",
+                b"finish(JSON.stringify({value:skillArgs.value}));".to_vec(),
+            ));
+        }
+        let refiner = StubRefiner::minting("morning-routine-checklist", files);
+        let ConvertOutcome::Created(id) =
+            convert_messages_to_skill(&vault, &ConvertRequest::new(turns), &refiner, t(20), 21)?
+        else {
+            panic!("mint must create")
+        };
+        let stored = vault.get_skill_record(&id)?.expect("minted role");
+        assert_eq!(stored.role, role);
+        assert_eq!(
+            stored.call.is_some(),
+            role == crate::skill::SkillRole::Callable
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn conversion_merge_preserves_workflow_and_refuses_callable_metadata_loss() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    let existing = seed_extracted_skill(
+        &vault,
+        "morning-routine-checklist",
+        "The morning routine: blinds, kettle, three priorities",
+        &[("SKILL.md", b"# older morning routine\n")],
+    );
+    let mut target = vault.get_skill_record(&existing)?.expect("target");
+    target.version = "2".into();
+    target.role = crate::skill::SkillRole::Workflow;
+    vault.update_skill_record(&existing, &target, t(12), 13)?;
+    let turns = witnessed_turns(
+        &vault,
+        &["blinds, kettle, then the three priorities"],
+        1_775_000_000,
+    );
+    let refiner = StubRefiner::new(
+        "morning-routine-checklist",
+        tree(REFINED_TREE),
+        RefineVerdict::MergeInto {
+            existing,
+            rationale: "same workflow".into(),
+        },
+    );
+    let ConvertOutcome::MergeProposed { proposal, .. } = convert_messages_to_skill(
+        &vault,
+        &ConvertRequest::new(turns.clone()),
+        &refiner,
+        t(20),
+        21,
+    )?
+    else {
+        panic!("merge proposes")
+    };
+    assert_eq!(
+        vault.get_skill_record(&proposal)?.expect("proposal").role,
+        crate::skill::SkillRole::Workflow
+    );
+
+    let mut callable = target;
+    callable.version = "3".into();
+    callable.role = crate::skill::SkillRole::Callable;
+    callable.call = Some(crate::skill::SkillCallContract {
+        reference: "scripts/run.js".into(),
+        arguments: serde_json::json!({"value":"integer"}),
+        returns: serde_json::json!({"value":"integer"}),
+    });
+    vault.update_skill_record(&existing, &callable, t(22), 23)?;
+    let changed_refiner = StubRefiner::new(
+        "morning-routine-checklist",
+        vec![HubFile::new("SKILL.md", b"---\nname: morning-routine-checklist\n---\nA changed routine without callable contract.\n".to_vec())],
+        RefineVerdict::MergeInto { existing, rationale: "same procedure".into() },
+    );
+    let err = convert_messages_to_skill(
+        &vault,
+        &ConvertRequest::new(turns),
+        &changed_refiner,
+        t(24),
+        25,
+    )
+    .expect_err("a callable merge cannot omit its source contract");
+    assert_eq!(err.kind(), ErrorKind::InvalidSkillBody);
+    assert_eq!(
+        vault
+            .get_skill_record(&existing)?
+            .expect("target after refusal")
+            .role,
+        crate::skill::SkillRole::Callable
     );
     Ok(())
 }

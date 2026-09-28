@@ -743,9 +743,9 @@ pub use self::access::{ArtifactLinkCapability, ArtifactServeTier};
 
 #[path = "artifact_hosting/publish.rs"]
 mod publish;
-pub(crate) use self::publish::artifact_publish_receipts;
 #[cfg(any(test, feature = "test-hooks"))]
 use self::publish::publish_artifact_pointer_in_txn;
+pub(crate) use self::publish::{artifact_publish_gate_refs_in_txn, artifact_publish_receipts};
 
 #[cfg(test)]
 mod tests;

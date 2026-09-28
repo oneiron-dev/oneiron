@@ -156,7 +156,7 @@ impl<H: NativeMailHost> ChannelIdentityProviderAdapter for NativeMailAdapter<H> 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::channel_identity::ChannelIdentityState;
+    use crate::channel_identity::ChannelIdentityStep;
     use crate::channel_identity_lifecycle::ChannelIdentityLifecycleActor;
     use crate::surface_event::SurfaceEventHandoffState;
 
@@ -238,12 +238,10 @@ mod tests {
             let dir = tempfile::tempdir()?;
             let vault = Vault::open(dir.path(), crate::VaultConfig::default())?;
             vault.create_channel_identity(&id, &intent.identity)?;
-            vault.transition_channel_identity(
+            vault.step_channel_identity(
                 &id,
-                ChannelIdentityState::PendingFulfillment,
-                Some(ChannelIdentityFulfillment::Api),
+                ChannelIdentityStep::Bind(ChannelIdentityFulfillment::Api),
                 2,
-                None,
             )?;
             vault.fulfill_channel_identity(fulfillment)?;
             let headers = BTreeMap::from([("signature".into(), "fixture".into())]);

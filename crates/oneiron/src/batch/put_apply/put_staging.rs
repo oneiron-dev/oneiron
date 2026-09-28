@@ -409,6 +409,10 @@ pub(super) fn validate_domain_carriers(
     data: &[u8],
     replicated: bool,
 ) -> Result<()> {
+    if entity_type == crate::registry::ENTITY_TYPE_CHANNEL_IDENTITY {
+        // Admission is shared by typed writes and replay, before put effects.
+        crate::channel_identity::validate_channel_identity_put_carrier(data, replicated)?;
+    }
     if entity_type == crate::registry::ENTITY_TYPE_TASK {
         crate::task_verb::guard_ask_fact_put(store, txn, id, timestamps.0, timestamps.1, data)?;
     }
