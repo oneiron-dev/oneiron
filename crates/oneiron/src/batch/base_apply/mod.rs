@@ -245,10 +245,6 @@ pub(super) fn apply_ops_with_origin(
                     hub_sync_imported,
                 )?;
                 let replicated = allow_maintenance && allow_reserved_predicate;
-                #[cfg(feature = "sync")]
-                if !replicated {
-                    crate::sync::residence::require_promoted_for_cached_id(store, wtxn, &id)?;
-                }
                 if let Some(facet) =
                     birth_stamp_target(store, wtxn, id, entity_type, replicated, birth_mask)?
                 {
