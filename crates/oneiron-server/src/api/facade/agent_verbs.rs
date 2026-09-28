@@ -56,6 +56,11 @@ async fn describe(
     auth.require_unrestricted_record_scope()?;
     let value = facade_json(payload)?;
     oneiron::task_verb::sdk::validate_input("describe", &value)?;
+    if value.get("self").and_then(serde_json::Value::as_bool) == Some(true) {
+        return Ok(Json(
+            crate::api::context_board::describe_self_for_auth(&server, &auth, &value).await?,
+        ));
+    }
     let (actor, class) = facade_actor(&auth)?;
     facade_admit_readable_ref(&server.vault, &auth, &value, "task_ref")?;
     Ok(Json(facade_readable_task_rows(
