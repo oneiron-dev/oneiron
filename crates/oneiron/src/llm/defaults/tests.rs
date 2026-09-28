@@ -55,6 +55,7 @@ fn every_builtin_resolves_to_its_policy_without_overriding_the_vault() {
         assert_eq!(tier.resolved(), &row.tier);
         tier.vault_policy = Some(ModelTierRef("vault".into()));
         let mut envelope = CallEnvelope {
+            seat_effort: None,
             scope: Default::default(),
             purpose,
             class: super::super::CallClass::BestEffort,
@@ -114,6 +115,7 @@ fn resident_rows_roundtrip_and_change_resolution() {
         "resident-answer"
     );
     let mut envelope = CallEnvelope {
+        seat_effort: None,
         scope: Default::default(),
         purpose: CallPurpose::AnswerGen,
         class: super::super::CallClass::BestEffort,
@@ -320,6 +322,7 @@ fn nonlocal_extraction_without_stored_table_still_requires_host_egress() {
     let mut request = LlmRequest {
         model: ModelId::new("test/remote@r1").unwrap(),
         envelope: CallEnvelope {
+            seat_effort: None,
             scope: Default::default(),
             purpose: CallPurpose::Extraction,
             class: CallClass::BestEffort,
@@ -365,6 +368,7 @@ fn nonlocal_extraction_requires_host_egress_verdict_before_binding() {
     let mut request = LlmRequest {
         model: ModelId::new("test/own-extraction@r1").unwrap(),
         envelope: CallEnvelope {
+            seat_effort: None,
             scope: Default::default(),
             purpose: CallPurpose::Extraction,
             class: CallClass::BestEffort,
@@ -460,6 +464,7 @@ fn registered_local_model_binds_under_stored_local_default_without_a_manifest() 
     let mut request = LlmRequest {
         model: model.clone(),
         envelope: CallEnvelope {
+            seat_effort: None,
             scope: Default::default(),
             purpose: CallPurpose::Consolidation,
             class: CallClass::BestEffort,
@@ -502,6 +507,7 @@ fn resident_local_default_cannot_relabel_remote_model_to_bypass_budget() {
     let mut request = LlmRequest {
         model: ModelId::new("remote/consolidation@r1").unwrap(),
         envelope: CallEnvelope {
+            seat_effort: None,
             scope: Default::default(),
             purpose: CallPurpose::Consolidation,
             class: super::super::CallClass::BestEffort,

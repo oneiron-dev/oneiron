@@ -89,6 +89,7 @@ mod tests {
             writable: BTreeSet::from([projection.clone()]),
         };
         let envelope = super::super::CallEnvelope {
+            seat_effort: None,
             scope: scope.clone(),
             purpose: super::super::CallPurpose::Consolidation,
             class: super::super::CallClass::BestEffort,

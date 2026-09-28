@@ -91,6 +91,8 @@ pub struct EngineExecutorConfig {
     pub prompt_package_root: PathBuf,
     pub model: ModelId,
     pub model_locality: ModelLocality,
+    /// Immutable seat pin; absent on explicit legacy runs without a manifest.
+    pub seat_effort: Option<crate::llm::ReasoningEffort>,
     pub global_tier: ModelTierRef,
     pub determinism: CodeRunDeterminism,
     pub limits: EngineExecutorLimits,
@@ -266,4 +268,5 @@ pub struct EngineExecutorOutcome {
     pub status: EngineExecutorStatus,
     pub steps_run: u32,
     pub replay_record: CodeRunReplayRecord,
+    pub seat_receipt: Option<crate::llm::seat::SeatChoiceReceipt>,
 }

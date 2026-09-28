@@ -139,6 +139,7 @@ fn the_streaming_request_carries_a_holder_proof() {
     let request = LlmRequest {
         model: ModelId::new("own/model@1").unwrap(),
         envelope: CallEnvelope {
+            seat_effort: None,
             scope: Default::default(),
             purpose: CallPurpose::AnswerGen,
             class: CallClass::BestEffort,

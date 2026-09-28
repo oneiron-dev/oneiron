@@ -6,6 +6,7 @@ use oneiron::code_sandbox::quickjs::QuickJsRuntimeFactory;
 use oneiron::engine_executor::{
     EngineExecutorConfig, JsCodeModeHost, JsCodeModeRuntime, JsCodeModeStep, JsCodeModeStepOutcome,
 };
+use oneiron::llm::seat::SeatJudge;
 use oneiron::{BudgetLease, EntityId, LlmBackend};
 use std::sync::Arc;
 
@@ -16,6 +17,7 @@ pub struct McpQuickJsProvider {
     backend: Arc<dyn LlmBackend>,
     lease: BudgetLease,
     config: EngineExecutorConfig,
+    seat_router: Option<(Arc<dyn SeatJudge>, String)>,
 }
 
 impl McpQuickJsProvider {
@@ -31,13 +33,31 @@ impl McpQuickJsProvider {
             backend,
             lease,
             config,
+            seat_router: None,
         })
+    }
+
+    /// Install the host's typed model judgment and profile for manifest-backed runs.
+    #[must_use]
+    pub fn with_model_seat_router(
+        mut self,
+        judge: Arc<dyn SeatJudge>,
+        facet: impl Into<String>,
+    ) -> Self {
+        self.seat_router = Some((judge, facet.into()));
+        self
     }
 }
 
 impl McpCodeModeProvider for McpQuickJsProvider {
     fn production_runtime_available(&self) -> bool {
         true
+    }
+    fn seat_judge(&self) -> Option<&dyn SeatJudge> {
+        self.seat_router.as_ref().map(|(judge, _)| judge.as_ref())
+    }
+    fn seat_facet(&self) -> Option<&str> {
+        self.seat_router.as_ref().map(|(_, facet)| facet.as_str())
     }
     fn backend(&self) -> &dyn LlmBackend {
         self.backend.as_ref()

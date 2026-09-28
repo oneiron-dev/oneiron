@@ -567,6 +567,7 @@ impl Vault {
         // the pairing `validate_open_config` already accepted.
         let privacy = config.privacy.clone();
         let vault = Self {
+            model_seats: std::sync::Mutex::new(crate::llm::seat::SeatPool::new()),
             store,
             config,
             analyzer,

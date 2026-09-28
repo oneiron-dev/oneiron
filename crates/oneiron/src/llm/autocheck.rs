@@ -311,6 +311,7 @@ pub fn auto_check_llm_request(
     LlmRequest {
         model: auto_check_model_id(checker_ref),
         envelope: CallEnvelope {
+            seat_effort: None,
             scope: crate::llm::Scope::default(),
             purpose: CallPurpose::AutoCheck,
             class: CallClass::Durable {

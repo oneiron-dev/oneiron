@@ -42,6 +42,7 @@ pub mod registry;
 pub mod routing;
 mod safeguard;
 pub mod score_scraper;
+pub mod seat;
 mod step;
 pub mod tagger;
 

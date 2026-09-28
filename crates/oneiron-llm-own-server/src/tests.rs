@@ -117,6 +117,7 @@ fn fixture() -> (tempfile::TempDir, Vault, LlmRequest) {
     let request = LlmRequest {
         model,
         envelope: CallEnvelope {
+            seat_effort: None,
             scope: Default::default(),
             purpose: CallPurpose::AnswerGen,
             class: CallClass::BestEffort,

@@ -157,7 +157,10 @@ pub(crate) fn validate_capabilities(
             "request asks for a JSON response",
         )?;
     }
-    if provider_options.requires_reasoning() || request.params.contains_key("reasoning_effort") {
+    if request.envelope.seat_effort.map_or_else(
+        || provider_options.requires_reasoning() || request.params.contains_key("reasoning_effort"),
+        |effort| effort != oneiron::llm::ReasoningEffort::None,
+    ) {
         require(
             catalog,
             LlmCapability::Reasoning,

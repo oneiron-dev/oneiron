@@ -1536,6 +1536,7 @@ fn verdict_bound_deferred_closure_keeps_prior_until_calibrated_auto_grant() -> R
                 floor: ConfidenceBand::High,
                 mode,
             }),
+            seat_policy: None,
         };
         assert!(vault.set_model_manifest(&manifest).is_err());
         let approval = TeacherProbeApproval::for_scored_checkpoint(

@@ -66,7 +66,7 @@ pub(crate) async fn execute_mcp_execute_code(
         crate::mcp::McpPageSource::truncated(steps.len(), 0, terminal),
     );
     let steps = page.cap(steps);
-    let structured = json!({
+    let mut structured = json!({
         "tool": crate::mcp::MCP_EXECUTE_CODE_TOOL,
         "schema_version": crate::mcp::MCP_CODE_RUN_SCHEMA_VERSION,
         "run_ref": args.run_ref,
@@ -91,6 +91,9 @@ pub(crate) async fn execute_mcp_execute_code(
             args.cache,
         ),
     });
+    if let Some(receipt) = &outcome.seat_receipt {
+        structured["model_choice"] = json!(receipt);
+    }
     Ok(mcp_endpoint_result(
         server,
         actor,

@@ -62,6 +62,7 @@ fn call(model: &ModelId) -> Request<Body> {
     let request = LlmRequest {
         model: model.clone(),
         envelope: CallEnvelope {
+            seat_effort: None,
             scope: Default::default(),
             purpose: CallPurpose::Extraction,
             class: CallClass::BestEffort,

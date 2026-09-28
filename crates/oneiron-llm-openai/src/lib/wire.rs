@@ -4,6 +4,7 @@ use super::{
     OpenAiCompatConfig, OpenAiCompatHttpRequest, OpenAiProviderOptions,
     backend::validate_capabilities,
 };
+use oneiron::llm::ReasoningEffort;
 use oneiron::{
     ContentPart, FatalLlmError, FinishReason, ImageContent, LlmError, LlmInputUsage, LlmMessage,
     LlmMessageRole, LlmOutputUsage, LlmRequest, LlmResponse, LlmResult, LlmToolSpec, LlmUsage,
@@ -27,6 +28,29 @@ pub fn build_openai_chat_request(
     }
     for (key, value) in provider_options.to_wire_fields() {
         body.insert(key, value);
+    }
+    if let Some(effort) = request.envelope.seat_effort {
+        // The seat pin wins after both generic params and provider fields. Keep
+        // unrelated summary controls, but never a competing effort value.
+        let reasoning = match body.remove("reasoning") {
+            Some(JsonValue::Object(mut options)) => {
+                options.remove("effort");
+                Some(options)
+            }
+            Some(_) => return Err(FatalLlmError::InvalidRequest.into()),
+            None => None,
+        };
+        for key in ["reasoning_effort", "thinking", "output_config"] {
+            body.remove(key);
+        }
+        if effort != ReasoningEffort::None {
+            if let Some(options) = reasoning
+                && !options.is_empty()
+            {
+                body.insert("reasoning".into(), JsonValue::Object(options));
+            }
+            body.insert("reasoning_effort".into(), json!(effort));
+        }
     }
     body.insert(
         "model".to_owned(),

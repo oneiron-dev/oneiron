@@ -2,6 +2,7 @@
 
 use std::collections::BTreeMap;
 
+use oneiron::llm::ReasoningEffort;
 use oneiron::{
     ContentPart, FatalLlmError, FinishReason, ImageContent, LlmError, LlmInputUsage, LlmMessage,
     LlmMessageRole, LlmOutputUsage, LlmRequest, LlmResponse, LlmResult, LlmToolSpec, LlmUsage,
@@ -18,7 +19,11 @@ pub fn build_anthropic_messages_request(
     stream: bool,
 ) -> LlmResult<AnthropicMessagesHttpRequest> {
     let catalog = config.catalog_entry(&request.model)?;
-    let provider_options = AnthropicProviderOptions::from_request(request)?;
+    let mut provider_options = AnthropicProviderOptions::from_request(request)?;
+    if request.envelope.seat_effort.is_some() {
+        // Old thinking controls cannot silently override the seat's effort.
+        provider_options.thinking = None;
+    }
     validate_capabilities(catalog, request, &provider_options, stream)?;
 
     let mut body = JsonMap::new();
@@ -27,6 +32,30 @@ pub fn build_anthropic_messages_request(
     }
     for (key, value) in provider_options.to_wire_fields() {
         body.insert(key, value);
+    }
+    if let Some(effort) = request.envelope.seat_effort {
+        let mut output_config = match body.remove("output_config") {
+            Some(JsonValue::Object(config)) => config,
+            Some(_) => return Err(FatalLlmError::InvalidRequest.into()),
+            None => JsonMap::new(),
+        };
+        output_config.remove("effort");
+        for key in ["reasoning_effort", "reasoning", "thinking"] {
+            body.remove(key);
+        }
+        if effort != ReasoningEffort::None {
+            let level = match effort {
+                ReasoningEffort::Low => "low",
+                ReasoningEffort::Medium => "medium",
+                ReasoningEffort::High => "high",
+                ReasoningEffort::XHigh => "max",
+                ReasoningEffort::None => unreachable!(),
+            };
+            output_config.insert("effort".into(), json!(level));
+        }
+        if !output_config.is_empty() {
+            body.insert("output_config".into(), JsonValue::Object(output_config));
+        }
     }
     // Anthropic's /v1/messages defines no response_format parameter; strip any
     // caller-supplied copy so the OpenAI-shaped key never reaches the wire.

@@ -126,6 +126,9 @@ pub struct ModelManifest {
     pub routes: BTreeMap<ModelSlot, ModelLocality>,
     #[serde(default)]
     pub verdict: Option<VerdictBinding>,
+    /// Owner-configured runtime seat policy. An absent row takes bundled data.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub seat_policy: Option<super::seat::SeatPolicy>,
 }
 fn invalid(reason: &str) -> Error {
     Error::InvalidConfig(reason.into())
@@ -162,6 +165,10 @@ impl ModelManifest {
         Self::from_json(&std::fs::read(path)?)
     }
     pub fn validate(&self) -> Result<()> {
+        self.seat_policy.as_ref().map_or_else(
+            || super::seat::SeatPolicy::bundled().map(|_| ()),
+            super::seat::SeatPolicy::validate,
+        )?;
         if self.version != 2
             || MODEL_ROLES
                 .iter()
@@ -290,6 +297,21 @@ impl Vault {
     }
     pub fn model_manifest(&self) -> Result<Option<ModelManifest>> {
         read_manifest(&self.store, &self.store.env.read_txn()?)
+    }
+    /// Effective per-vault route, including a resident narrowing if present.
+    pub fn model_route(&self, slot: ModelSlot) -> Result<Option<ModelLocality>> {
+        let txn = self.store.env.read_txn()?;
+        let Some(manifest) = read_manifest(&self.store, &txn)? else {
+            return Ok(None);
+        };
+        let route = read_routes(&self.store, &txn)?
+            .get(&slot)
+            .copied()
+            .unwrap_or(manifest.routes[&slot]);
+        if route_rank(route) > route_rank(manifest.routes[&slot]) {
+            return Err(invalid("resident route cannot widen manifest pin"));
+        }
+        Ok(Some(route))
     }
     pub fn set_model_route(&self, slot: ModelSlot, route: ModelLocality) -> Result<()> {
         let mut txn = self.store.env.write_txn()?;
