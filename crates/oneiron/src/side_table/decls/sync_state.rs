@@ -230,6 +230,10 @@ side_tables! {
     /// reached only from `#[cfg(test)]` code under `api/tests/`). Same
     /// rationale as `TEST_API_SLIP_CACHE`. Key: hex64 (blake3 of the label).
     TEST_MCP_PAIRED_CACHE: SyncState b"test:mcp:paired:" Raw;
+    /// Request-bound reservation fencing topology writes on an entity between tombstone
+    /// publication and purge (34 bytes: phase, request id, reason, deleted_at LE, window_ts LE).
+    /// Key: hex32 (entity id).
+    DELETION_TOPOLOGY_DELETE_INTENT: SyncState b"topology-delete-intent:" Raw;
     /// One pending update of an entity document (document family). Key: hex32 (entity id) ":" hex8
     /// (sequence).
     DOCUMENT_UPDATE: SyncState b"u:e:" Raw;

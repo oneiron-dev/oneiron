@@ -8,8 +8,8 @@ use crate::claim::ClaimApprovalStatus;
 use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::registry::ENTITY_TYPE_IDENTITY_TOPOLOGY_EVENT;
-use crate::store::Store;
 use crate::side_table::HexId;
+use crate::store::Store;
 use crate::vault::Vault;
 
 use super::lifecycle_state::EntityLifecycleState;

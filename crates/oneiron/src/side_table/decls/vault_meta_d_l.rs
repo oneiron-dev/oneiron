@@ -266,10 +266,25 @@ side_tables! {
     /// the module's own `encode_critical_confirm_invalidation`/
     /// `decode_critical_confirm_invalidation`.
     CRITICAL_CONFIRM_INVALIDATION: VaultMeta b"gate_critical_invalidation:v0:" Raw;
+    /// Latest verified claim-write retention ancestry, inherited by later decisions on the claim;
+    /// the retention-scope module's own layout. Key: id16 (claim).
+    GATE_DECISION_CLAIM_CONTEXT: VaultMeta b"gate_decision:claim_context:v1:" Raw;
     /// Grant-reference index over the gate decision ledger. Key: u64be len + string + id16.
     /// Exterior-key root binding of encrypted claim-bound gate decisions. Key: ().
     GATE_DECISION_CUSTODY_ROOT: VaultMeta b"gate_decision:custody_root:v1" Raw;
     GATE_DECISION_GRANT_REF_INDEX: VaultMeta b"gate_decision:grant_ref_index:v1:" Raw;
+    /// Legal hold on one exterior-key partition of the gate decision ledger; the value is the
+    /// single byte 1. Key: 0 (claim-free partition) or 1 + id16 (claim).
+    GATE_DECISION_PARTITION_HOLD: VaultMeta b"gate_decision:partition_hold:v1:" Raw;
+    /// Latest retain-until stamp (u64be seconds) of a held gate decision partition. Key: 0
+    /// (claim-free partition) or 1 + id16 (claim).
+    GATE_DECISION_PARTITION_RETAIN_UNTIL: VaultMeta b"gate_decision:partition_retain_until:v1:" Raw;
+    /// Committed intent to retire one claim partition's exterior key, holding the key generation
+    /// (u64be) the sweep removed rows under. Key: id16 (claim).
+    GATE_DECISION_PARTITION_RETIRE_PENDING: VaultMeta b"gate_decision:partition_retire_pending:v1:" Raw;
+    /// Append-time retention ancestry of one gate decision; the retention-scope module's own
+    /// layout. Key: id16 (decision).
+    GATE_DECISION_RETENTION_CONTEXT: VaultMeta b"gate_decision:retention_context:v1:" Raw;
     /// Gate decision ledger row. Key: id16.
     ///
     /// Codec fixed to `Raw` (T47 store slice): decode also enforces
@@ -410,6 +425,9 @@ side_tables! {
     /// The passing extraction-teacher probe approval behind the pinned teacher. Key: ().
     LLM_EXTRACTION_TEACHER_PROBE: VaultMeta b"llm:extraction_teacher_probe:v1" LegacyJson;
     LLM_MANIFEST: VaultMeta b"llm:manifest:v2" LegacyJson;
+    /// Revision-pinned description of one registered model, read by seat routing. Key:
+    /// string(model id).
+    LLM_MODEL_DESCRIPTION: VaultMeta b"llm:model_description:v1:" LegacyJson;
     /// Vault-local per-purpose and voice-lane inference defaults table. Key: ().
     LLM_PURPOSE_DEFAULTS: VaultMeta b"llm:purpose_defaults:v1" LegacyJson;
     /// Priced model-catalog row: wire format, cost, and cached benchmark scores. Key: string(model
@@ -420,6 +438,9 @@ side_tables! {
     LLM_RESIDENT_ROUTES: VaultMeta b"llm:resident_routes:v1" LegacyJson;
     /// One routed seat selected and pinned by caller-chosen bounded seat id.
     LLM_ROUTED_SEAT: VaultMeta b"llm:routed_seat:v1:" LegacyJson;
+    /// A run's immutable model-seat pin and choice receipt, committed before its first provider
+    /// call. Key: id16 (run).
+    LLM_RUN_SEAT: VaultMeta b"llm:run_seat:v1:" LegacyJson;
     /// Rolling window (max 64) of recent benchmark score-change diffs for one model. Key:
     /// string(model id) "\x00".
     LLM_SCORE_DIFFS: VaultMeta b"llm:scores:v1:" LegacyJson;

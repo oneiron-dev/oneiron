@@ -260,6 +260,10 @@ side_tables! {
     SKILL_OPTIMIZE_JUDGE_ASK: VaultMeta b"skill_optimize:judge_ask:v1:" LegacyJson;
     /// One human pick over a delivered ask, the label anchor (JSON). Key: bytes32 (ask id).
     SKILL_OPTIMIZE_JUDGE_LABEL: VaultMeta b"skill_optimize:judge_label:v1:" LegacyJson;
+    /// Lease-bound callable invocation witness of one caller step (MessagePack map: executor,
+    /// version, success, result digest). Key: id16 (skill) + u16be length + receipt string +
+    /// u64be step seq.
+    SKILL_RELIABILITY_CALL_INVOCATION: VaultMeta b"skill_reliability:call_invocation:v1:" Raw;
     /// Marker (MessagePack map naming the displaced and replacement judge revisions) that one
     /// outcome row's weight is superseded. Key: the outcome row's full stored key, table prefix
     /// included.

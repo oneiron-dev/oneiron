@@ -1045,6 +1045,7 @@ fn witnessed_person_turn_obeys_room_delete_and_erasure_fence_without_blocking_ot
         .memory(alice, EdgeActorClass::Human)
         .get_entity(&first.turn_short_id)
         .unwrap()
+        .value
         .map(|view| EntityId::from_hex(&view.id_hex).unwrap())
         .unwrap();
     assert!(
@@ -1058,6 +1059,7 @@ fn witnessed_person_turn_obeys_room_delete_and_erasure_fence_without_blocking_ot
         .memory(alice, EdgeActorClass::Human)
         .get_entity(&second.turn_short_id)
         .unwrap()
+        .value
         .map(|view| EntityId::from_hex(&view.id_hex).unwrap())
         .unwrap();
     assert!(
@@ -1072,12 +1074,7 @@ fn witnessed_person_turn_obeys_room_delete_and_erasure_fence_without_blocking_ot
     assert!(witness(bob, "second person still permitted").is_ok());
     vault
         .with_write_txn(|txn| {
-            vault.store.vault_meta.put(
-                txn,
-                &crate::conversation::erasure_key(room, alice),
-                &[1],
-            )?;
-            Ok(())
+            crate::conversation::ROOM_ERASURES.put(&vault.store, txn, &(room, alice), &[1])
         })
         .unwrap();
     assert!(witness(alice, "in-flight sweep must refuse").is_err());
@@ -1225,6 +1222,7 @@ fn mixed_room_messages() -> (
             .memory(alice, EdgeActorClass::Human)
             .get_entity(&first.message_short_ids[0])
             .unwrap()
+            .value
             .unwrap()
             .id_hex,
     )
@@ -1243,6 +1241,7 @@ fn mixed_room_messages() -> (
             .memory(bob, EdgeActorClass::Human)
             .get_entity(&second.message_short_ids[0])
             .unwrap()
+            .value
             .unwrap()
             .id_hex,
     )
@@ -1541,6 +1540,7 @@ fn non_person_witness_author_does_not_block_another_persons_room_erasure() {
             .memory(owner_id, EdgeActorClass::Human)
             .get_entity(&companion.message_short_ids[0])
             .unwrap()
+            .value
             .unwrap()
             .id_hex,
     )
@@ -1563,6 +1563,7 @@ fn non_person_witness_author_does_not_block_another_persons_room_erasure() {
             .memory(owner_id, EdgeActorClass::Human)
             .get_entity(&personal.message_short_ids[0])
             .unwrap()
+            .value
             .unwrap()
             .id_hex,
     )

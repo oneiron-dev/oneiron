@@ -18,6 +18,9 @@ const APPEND_PERMITS: SideTable<EntityId, EntityId, Raw> =
 /// Content pin of one immutable DAG record body, by record id.
 const BODY_PINS: SideTable<EntityId, [u8; 32], Raw> =
     SideTable::new(&side_table::CONVERSATION_DAG_BODY_PIN);
+/// Durable room owner of a TURN. The pin survives deleted/missing ChildOf rows.
+const ROOM_OWNERS: SideTable<EntityId, EntityId, Raw> =
+    SideTable::new(&side_table::CONVERSATION_DAG_ROOM_OWNER);
 
 pub(super) fn permit(
     store: &Store,
@@ -289,24 +292,13 @@ fn guard_erased_author_body(
     Ok(())
 }
 
-/// Durable room owner of a TURN. The pin survives deleted/missing ChildOf rows.
-fn room_owner_key(id: &EntityId) -> Vec<u8> {
-    key(b"conversation_dag:room_owner:v1:", id)
-}
-
 pub(crate) fn room_turn_owner(
     store: &impl ManifestDbs,
     txn: &heed::RoTxn<'_>,
     record: &EntityId,
 ) -> Result<Option<EntityId>> {
-    if let Some(raw) = store.vault_meta().get(txn, &room_owner_key(record))? {
-        let bytes: [u8; 16] = raw
-            .as_ref()
-            .try_into()
-            .map_err(|_| Error::CorruptedIndex("room TURN owner pin"))?;
-        return EntityId::from_bytes(bytes)
-            .map(Some)
-            .map_err(|_| Error::CorruptedIndex("room TURN owner pin"));
+    if let Some(owner) = ROOM_OWNERS.get(store, txn, record)? {
+        return Ok(Some(owner));
     }
     let mut owner = None;
     for row in crate::ports::EdgeStoreRead::port_edges(
@@ -399,9 +391,7 @@ pub(crate) fn pin_membership(
         if room_turn_owner(store, txn, record)?.is_some_and(|owner| owner != *conversation) {
             return Err(invalid("room TURN cannot change owner"));
         }
-        store
-            .vault_meta()
-            .put(txn, &room_owner_key(record), conversation.as_bytes())?;
+        ROOM_OWNERS.put(store, txn, record, conversation)?;
     }
     if is_dag_membership(store, txn, kind, conversation)? {
         pin_record(store, txn, record)?;
@@ -431,15 +421,12 @@ pub(crate) fn keep_membership_pin(
             .get(txn, conversation.as_bytes())?
             .is_some_and(|raw| raw.first() == Some(&ENTITY_TYPE_CONVERSATION))
     {
-        let owner_key = room_owner_key(record);
-        if let Some(owner) = store.vault_meta().get(txn, &owner_key)? {
-            if owner.as_ref() != conversation.as_bytes() {
+        if let Some(owner) = ROOM_OWNERS.get(store, txn, record)? {
+            if owner != *conversation {
                 return Err(invalid("room TURN cannot change owner"));
             }
         } else {
-            store
-                .vault_meta()
-                .put(txn, &owner_key, conversation.as_bytes())?;
+            ROOM_OWNERS.put(store, txn, record, conversation)?;
         }
     }
     if !is_dag_membership(store, txn, kind, conversation)? {

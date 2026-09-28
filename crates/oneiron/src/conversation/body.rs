@@ -154,12 +154,7 @@ pub(crate) fn validate_put_in_txn(
             let previous = ConversationBody::from_bytes(&old[ENTITY_METADATA_HEADER_LEN..])?;
             let mut retained = previous.roles;
             retained.retain(|person, _| body.member_ids.iter().any(|id| id.to_hex() == *person));
-            if retained != body.roles
-                && store
-                    .vault_meta
-                    .get(txn, &super::key(b"conversation:role_update:", id))?
-                    .is_none()
-            {
+            if retained != body.roles && !roles::ROLE_UPDATES.contains(store, txn, &id)? {
                 return Err(state("role changes require the room role door"));
             }
         }
@@ -270,16 +265,10 @@ impl Vault {
                 batch = batch.text(&id, text);
             }
             batch.apply(txn)?;
-            self.store.vault_meta.put(
-                txn,
-                &key(b"conversation:creator:v1:", id),
-                actor.entity_ref().as_bytes(),
-            )?;
+            roles::ROOM_CREATORS.put(&self.store, txn, &id, &actor.entity_ref())?;
             for (person, role) in &body.roles {
                 let person = EntityId::from_hex(person)?;
-                self.store
-                    .vault_meta
-                    .put(txn, &roles::grant_key(id, person), &encode(role)?)?;
+                roles::ROLE_GRANTS.put(&self.store, txn, &(id, person), role)?;
             }
             Ok(())
         })

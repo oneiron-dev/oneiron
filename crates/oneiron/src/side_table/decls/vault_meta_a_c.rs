@@ -182,6 +182,12 @@ side_tables! {
     CHECKOUT_SETTLEMENT: VaultMeta b"checkout:settlement:v1:" Raw;
     /// Retired checkout epoch high-water mark. Key: hex32.
     CHECKOUT_TOMBSTONE: VaultMeta b"checkout:tombstone:v1:" Raw;
+    /// Two-slot channel assignment index: occupant id16 then predecessor id16, all-zero for an
+    /// empty slot. Key: bytes32 (blake3 of the length-framed channel and address).
+    CHANNEL_IDENTITY_ASSIGNMENT: VaultMeta b"cid_assign:v1:" Raw;
+    /// Deletion evidence (the single byte 1) for a soft-erased channel identity's retained
+    /// header-only shell, staged with slot removal. Key: id16.
+    CHANNEL_IDENTITY_ASSIGNMENT_ERASED: VaultMeta b"cid_assign_erased:v1:" Raw;
     /// A destructive claim action (supersede/decay/weaken/stale) parked behind unresolved gate
     /// consent. Key: id16.
     CLAIM_DEFERRED: VaultMeta b"claim.deferred.v1:" Named;
@@ -355,6 +361,20 @@ side_tables! {
     /// Immutable recorded verdict comparing a candidate snapshot against a recorded baseline (diffs
     /// plus test-pass state), keyed by its own content digest. Key: hex64.
     CONTRACT_ORACLE_VERDICT: VaultMeta b"contract_oracle:verdict:v1:" Named;
+    /// Actor id (id16) that created a room; an unrooted vault reads it as the room's owner. Key:
+    /// id16 (room).
+    CONVERSATION_CREATOR: VaultMeta b"conversation:creator:v1:" Raw;
+    /// Per-person room erasure fence: `[1]` while the sweep is in flight, `[2]` once it completed.
+    /// Key: id16 (room) + id16 (person).
+    CONVERSATION_ERASED_PERSON: VaultMeta b"conversation:erased_person:v1:" Raw;
+    /// Durable room (id16) of a MESSAGE, kept after its incident edges are purged. Key: id16
+    /// (message).
+    CONVERSATION_MESSAGE_OWNER: VaultMeta b"conversation:message_owner:v1:" Raw;
+    /// Host-local room role grant of one current member. Key: id16 (room) + id16 (person).
+    CONVERSATION_ROLE_GRANT: VaultMeta b"conversation:role_grant:v1:" Named;
+    /// Single-byte `[1]` marker that the room role door is rewriting a room body, set and cleared
+    /// inside its write transaction. Key: id16 (room).
+    CONVERSATION_ROLE_UPDATE: VaultMeta b"conversation:role_update:" Raw;
     /// Transient in-txn permit binding a legacy ChildOf-append record id to the conversation it may
     /// append to. Key: id16.
     CONVERSATION_DAG_APPEND_PERMIT: VaultMeta b"conversation_dag:append_in_txn:v1:" Raw;
@@ -364,10 +384,22 @@ side_tables! {
     /// Per-record pointer marking a DAG record canonical (points to its successor), or absent for
     /// terminal. Key: id16.
     CONVERSATION_DAG_CANONICAL: VaultMeta b"conversation_dag:canonical:v1:" Raw;
+    /// Single-byte `[1]` reverse Parent witness kept when a DAG record is purged, by parent then
+    /// child. Key: id16 (parent) + id16 (child).
+    CONVERSATION_DAG_ERASED_CHILD: VaultMeta b"conversation_dag:erased_child:v1:" Raw;
+    /// SpawnedBy anchor (id16) of a session whose anchoring DAG record was purged. Key: id16
+    /// (session).
+    CONVERSATION_DAG_ERASED_SPAWN: VaultMeta b"conversation_dag:erased_spawn:v1:" Raw;
+    /// Content-free topology pin (room, parent, session, thread flag, PERSON author) of a soft- or
+    /// hard-erased DAG record. Key: id16 (record).
+    CONVERSATION_DAG_ERASED_TOPOLOGY: VaultMeta b"conversation_dag:erased_topology:v1:" Named;
     /// Per-conversation pointer to the current local-head DAG record id. Key: id16.
     CONVERSATION_DAG_LOCAL_HEAD: VaultMeta b"conversation_dag:local_head:v1:" Raw;
     /// Single-byte [1] marker that a conversation has adopted the DAG record model. Key: id16.
     CONVERSATION_DAG_MIGRATED: VaultMeta b"conversation_dag:migrated:v1:" Raw;
+    /// Durable room (id16) of a room TURN, kept after its ChildOf edge is deleted or purged. Key:
+    /// id16 (TURN).
+    CONVERSATION_DAG_ROOM_OWNER: VaultMeta b"conversation_dag:room_owner:v1:" Raw;
     /// Cached thread projection of a trunk: `[1]`, root id16, reply count u64be, last reply at
     /// u64be. Key: id16 (trunk).
     CONVERSATION_DAG_THREAD_META: VaultMeta b"conversation_dag:thread_meta:v1:" Raw;

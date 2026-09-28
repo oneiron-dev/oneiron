@@ -15,10 +15,6 @@ use crate::edge::EdgeProvenanceFlags;
 use crate::entity_id::EntityId;
 use crate::entity_id::bytes_to_hex_lower;
 use crate::error::{Error, Result};
-use crate::identity_topology::{
-    StoredIdentityOpAction, decode_identity_topology_event_body,
-    encode_identity_topology_event_body,
-};
 use crate::ports::{
     EntityStoreMaintenance, RetrievalIndexMaintenance, ScrubbedRecord, ShortIdStoreMaintenance,
 };

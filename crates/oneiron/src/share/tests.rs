@@ -1191,11 +1191,7 @@ fn receipt_retention_keeps_active_share_admission_gate() -> Result<()> {
     vault.create_share(&id, &issuer, &share)?;
     let gate_id = {
         let txn = vault.store.env.read_txn()?;
-        let raw = vault
-            .store
-            .vault_meta
-            .get(&txn, &admission_key(&id))?
-            .expect("admission");
+        let raw = ADMISSIONS.get(&vault.store, &txn, &id)?.expect("admission");
         ShareAdmission::decode(&raw)
             .expect("typed admission")
             .gate_id

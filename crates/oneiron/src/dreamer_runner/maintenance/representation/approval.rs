@@ -258,14 +258,9 @@ pub(crate) fn representation_approval_is_live_in_txn(
     if receipt.outcome != "approved" || receipt.redacted_at.is_some() {
         return Ok(false);
     }
-    let Some(bytes) = vault
-        .store
-        .vault_meta
-        .get(txn, &key(APPROVAL_PREFIX, &EntityId::from_bytes(claim)?))?
-    else {
+    let Some(approval) = APPROVAL.get(&vault.store, txn, &EntityId::from_bytes(claim)?)? else {
         return Ok(false);
     };
-    let approval: ApprovalRecord = serde_json::from_slice(&bytes).map_err(|_| invalid())?;
     Ok(is_owner_bundle_receipt(receipt, &approval))
 }
 fn content_proposal_id(reference: &str) -> Result<EntityId> {

@@ -344,12 +344,9 @@ fn conflicted_roots_never_restore_local_creator_or_initial_role_powers() {
     assert!(vault.conversation_body(room).unwrap().roles.is_empty());
     let txn = vault.store.env.read_txn().unwrap();
     assert!(
-        vault
-            .store
-            .vault_meta
-            .get(&txn, &erasure_key(room, bob.entity_ref()))
+        !ROOM_ERASURES
+            .contains(&vault.store, &txn, &(room, bob.entity_ref()))
             .unwrap()
-            .is_none()
     );
 }
 

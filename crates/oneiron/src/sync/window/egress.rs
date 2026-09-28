@@ -402,7 +402,7 @@ pub fn replay_pending_mirrors(vault: &Vault, doc: &LoroDoc, window_key: &WindowK
             .is_some_and(|key| redacted_authors.contains(&key))
         {
             vault.with_write_txn(|wtxn| {
-                vault.store.sync_state.delete(wtxn, marker_key)?;
+                OFF_RECORD_PROMOTE_PICKUP.delete(&vault.store, wtxn, marker_key)?;
                 Ok(())
             })?;
             continue;

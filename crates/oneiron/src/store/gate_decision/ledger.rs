@@ -5,7 +5,7 @@ use std::ops::Bound;
 use heed::{RoTxn, RwTxn};
 
 use crate::error::{Error, Result};
-use crate::side_table::{self, CodecError, Raw, RawValue, SideTable};
+use crate::side_table::{self, CodecError, Raw, RawValue, SideKey, SideTable};
 use crate::store::{ManifestDbs, RETRIEVAL_RUNS_CAPACITY_HINT_LIMIT, Store};
 
 use super::keys::{
@@ -633,14 +633,16 @@ impl Store {
             Err(error @ Error::CorruptedIndex("gate decision ORCB")) => {
                 // Collect retirement witnesses while the old read snapshot is
                 // alive, then drop it BEFORE opening a fresh LMDB read slot.
+                // Raw rows, so a ledger key of another shape is not a scan
+                // failure here; only a row addressable by decision id can be
+                // re-read below as removed.
                 let mut retired_keys = Vec::new();
-                for row in self
-                    .vault_meta
-                    .prefix_iter(&rtxn, GATE_DECISION_KEY_PREFIX)?
-                {
+                for row in LEDGER.iter_raw_from(self, &rtxn, &[])? {
                     let (key, raw) = row?;
-                    if orcb::raw_key_retired(&self.core.gate_custody_root, &raw)? {
-                        retired_keys.push(key.into_owned());
+                    if orcb::raw_key_retired(&self.core.gate_custody_root, &raw)?
+                        && let Some(decision_id) = GateDecisionId::decode_key(&key)
+                    {
+                        retired_keys.push(decision_id);
                     }
                 }
                 drop(rtxn);
@@ -649,8 +651,8 @@ impl Store {
                 }
                 let current = self.env.read_txn()?;
                 let mut removed = false;
-                for key in retired_keys {
-                    removed |= self.vault_meta.get(&current, &key)?.is_none();
+                for decision_id in retired_keys {
+                    removed |= !LEDGER.contains(self, &current, &decision_id)?;
                 }
                 if removed {
                     self.gate_decisions_page_in_txn(&current, before, limit)
@@ -725,11 +727,7 @@ fn append_gate_decision_row_in_txn(
     let value = if let Some(claim) = record.claim_id {
         // A committed age sweep may still be retiring this partition's
         // exterior key. No new ciphertext may reuse it in that interval.
-        if store
-            .vault_meta()
-            .get(&*wtxn, &super::retention::pending_key(&claim))?
-            .is_some()
-        {
+        if super::retention::RETIRE_PENDING.contains(store, &*wtxn, &claim)? {
             return Err(Error::InvalidConfig(
                 "gate decision partition is retiring".into(),
             ));
