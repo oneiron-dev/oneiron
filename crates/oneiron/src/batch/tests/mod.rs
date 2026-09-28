@@ -570,6 +570,7 @@ fn put_in_own_txn(
                 write_envelope: envelope,
                 hub_admission: None,
                 refinement_admission: None,
+                transition: None,
             },
         },
     )
@@ -950,6 +951,7 @@ fn every_put_option_reaches_apply_put() -> Result<()> {
                             envelope: Some(&envelope),
                             auto_checker: None,
                             defer_metrics_until_commit: true,
+                            transition: None,
                         },
                         policy,
                         crate::gate::GateWriteMode {

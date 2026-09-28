@@ -16,6 +16,10 @@ const QUARANTINED: SideTable<HexId, [u8; 32], Raw> =
     SideTable::new(&side_table::GATE_MANIFEST_QUARANTINED);
 /// Maps a legacy policy-manifest id forward to its re-authored replacement id. Key: hex32.
 const REKEY: SideTable<HexId, EntityId, Raw> = SideTable::new(&side_table::GATE_MANIFEST_REKEY);
+/// Body-bound seed origin, distinct from trust: the body hash of an engine-seeded default policy
+/// manifest. An owner write clears it. Key: hex32.
+const SEEDED: SideTable<HexId, [u8; 32], Raw> =
+    SideTable::new(&side_table::GATE_MANIFEST_SEEDED_CONFIDENCE);
 
 /// `store::handle`'s vault-bootstrap seed writes this row directly, before any vault (and so any
 /// typed door) exists to read it back through — kept as a plain string builder so that raw write
@@ -23,6 +27,23 @@ const REKEY: SideTable<HexId, EntityId, Raw> = SideTable::new(&side_table::GATE_
 pub(crate) fn trusted_manifest_key(id: &EntityId) -> String {
     format!("manifest:trusted:{}", id.to_hex())
 }
+/// The bootstrap seed's [`SEEDED`] row key, spelled for the same raw write as
+/// [`trusted_manifest_key`].
+pub(crate) fn seeded_manifest_key(id: &EntityId) -> String {
+    format!("manifest:seeded_confidence:{}", id.to_hex())
+}
+
+pub(crate) fn manifest_is_seeded_default(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    id: &EntityId,
+    body: &[u8],
+) -> Result<bool> {
+    Ok(SEEDED
+        .get(store, txn, &HexId(*id))?
+        .is_some_and(|hash| hash == *blake3::hash(body).as_bytes()))
+}
+
 pub(crate) fn stamp_manifest_origin(
     store: &Store,
     txn: &mut heed::RwTxn<'_>,
@@ -33,6 +54,9 @@ pub(crate) fn stamp_manifest_origin(
     let hash = blake3::hash(body);
     let origin_key = HexId(*id);
     if !replicated {
+        // Every local re-authoring is authored even if it keeps the seeded ID,
+        // pack name or byte-identical default value.
+        SEEDED.delete(store, txn, &origin_key)?;
         TRUSTED_ORIGIN.put(store, txn, &origin_key, hash.as_bytes())?;
     } else {
         let existing_matches = store.entities.get(txn, id.as_bytes())?.is_some_and(|raw| {
@@ -40,6 +64,13 @@ pub(crate) fn stamp_manifest_origin(
                 .is_some_and(|h| h.entity_type == ENTITY_TYPE_POLICY_MANIFEST)
                 && raw.get(ENTITY_METADATA_HEADER_LEN..) == Some(body)
         });
+        if !existing_matches
+            || SEEDED
+                .get(store, txn, &origin_key)?
+                .is_none_or(|old| old != *hash.as_bytes())
+        {
+            SEEDED.delete(store, txn, &origin_key)?;
+        }
         if !existing_matches
             || TRUSTED_ORIGIN
                 .get(store, txn, &origin_key)?

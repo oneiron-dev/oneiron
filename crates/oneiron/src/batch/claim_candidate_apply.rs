@@ -116,6 +116,8 @@ pub(super) fn apply_claim_candidate(
                 write_envelope: Some(envelope),
                 hub_admission: None,
                 refinement_admission: None,
+                // Carried-forward transitions bind only to exact claim Puts.
+                transition: None,
             },
         },
     )?;

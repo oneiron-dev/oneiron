@@ -300,6 +300,11 @@ side_tables! {
     REPO_MUTATION_SNAPSHOT: VaultMeta b"repo_mutation:snapshot:v1:" Named;
     /// Log of checkpoint restore/wake/migrate events, one row per epoch. Key: u64be(sequence).
     RESTORE_EPOCH: VaultMeta b"restore:epoch:v1:" Named;
+    /// Published base-ledger retrieval run's capture time, for expiry and cap pruning; empty
+    /// value. Key: u64be (captured at) + id16 (run id).
+    RETRIEVAL_AGE: VaultMeta b"retr_age:v0:" Raw;
+    /// A retrieval run's capture time (u64be), locating its age row. Key: id16 (run id).
+    RETRIEVAL_AGE_BY_RUN: VaultMeta b"retr_age_run:v0:" Raw;
     /// Active reward-tuned blend weights. Key: ().
     ///
     /// Codec fixed to `Raw` (T47 store slice): decode also enforces the

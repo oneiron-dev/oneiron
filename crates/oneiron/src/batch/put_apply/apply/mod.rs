@@ -66,6 +66,7 @@ pub(in crate::batch) fn apply_put(
                 write_envelope,
                 hub_admission,
                 refinement_admission,
+                transition,
             },
     } = request;
     let Replication {
@@ -105,6 +106,7 @@ pub(in crate::batch) fn apply_put(
             allow_reserved_predicate,
             write_envelope,
             replicated,
+            transition,
         },
     )?;
     // ARCH-0052 D2: this is the shared entity materialization choke point for
@@ -202,7 +204,8 @@ pub(in crate::batch) fn apply_put(
                     store,
                     wtxn,
                     &id,
-                    crate::gate::ClaimGateWrite::plain(&body, write_envelope),
+                    crate::gate::ClaimGateWrite::plain(&body, write_envelope)
+                        .with_transition(transition),
                     policy,
                     options.gate_write_mode(),
                     options.decision.preflight,

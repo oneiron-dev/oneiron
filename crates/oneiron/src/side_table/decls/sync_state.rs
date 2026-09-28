@@ -144,6 +144,9 @@ side_tables! {
     RC42_WIRE_MANIFEST: SyncState b"manifest:rc42:wire-observation:v1" Named;
     /// Maps a legacy policy-manifest id forward to its re-authored replacement id. Key: hex32.
     GATE_MANIFEST_REKEY: SyncState b"manifest:rekey:" Raw;
+    /// Body hash (blake3, 32 bytes) of an engine-seeded default policy manifest; an owner write
+    /// clears it. Key: hex32.
+    GATE_MANIFEST_SEEDED_CONFIDENCE: SyncState b"manifest:seeded_confidence:" Raw;
     /// Authenticity hash stamped when a policy manifest is contributed directly (non-replicated).
     /// Key: hex32.
     GATE_MANIFEST_TRUSTED_ORIGIN: SyncState b"manifest:trusted:" Raw;

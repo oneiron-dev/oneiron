@@ -248,7 +248,18 @@ impl Store {
 
         let result = (|| {
             let mut wtxn = self.env.write_txn()?;
+            if published {
+                super::retention::require_prune_retrieval_runs(self, &mut wtxn, 1)?;
+            }
             stage_retrieval_run_with_visibility(self, &mut wtxn, record, published)?;
+            if published {
+                super::retention::put_retrieval_age(
+                    self,
+                    &mut wtxn,
+                    record.run_id,
+                    self.clock.now_recorded_at(),
+                )?;
+            }
             wtxn.commit()?;
             Ok(())
         })();
@@ -286,7 +297,19 @@ impl Store {
         }
 
         let mut wtxn = self.env.write_txn()?;
+        let run_id = finalize.run_id;
+        if RETRIEVAL_RUN_PROVISIONAL.contains(self, &wtxn, &run_id)? {
+            super::retention::require_prune_retrieval_runs(self, &mut wtxn, 1)?;
+        }
         stage_context_pack_retrieval_run_finalize(self, &mut wtxn, finalize)?;
+        if RETRIEVAL_RUN.contains(self, &wtxn, &run_id)? {
+            super::retention::put_retrieval_age(
+                self,
+                &mut wtxn,
+                run_id,
+                self.clock.now_recorded_at(),
+            )?;
+        }
         wtxn.commit()?;
         Ok(())
     }
@@ -462,6 +485,7 @@ fn stage_retrieval_run_with_visibility(
     record.state.validate()?;
     if let Some(existing) = RETRIEVAL_RUN.get(target, &*wtxn, &record.run_id)? {
         super::turn_index::delete(target, wtxn, &existing)?;
+        delete_retrieval_trace_fork_indexes_for_run(target, wtxn, record.run_id)?;
     }
     RETRIEVAL_RUN.put(target, wtxn, &record.run_id, record)?;
     if published {
@@ -478,7 +502,7 @@ fn stage_retrieval_run_with_visibility(
 
 /// Stages the deletion of one retrieval-run row, its provisional marker, its
 /// outcome rows, and its trace fork indexes into `target`'s `vault_meta`.
-fn stage_retrieval_run_delete(
+pub(super) fn stage_retrieval_run_delete(
     target: &impl ManifestDbs,
     wtxn: &mut RwTxn<'_>,
     run_id: RetrievalRunId,
@@ -486,6 +510,7 @@ fn stage_retrieval_run_delete(
     super::turn_index::delete_for_run(target, wtxn, run_id)?;
     delete_retrieval_trace_fork_indexes_for_run(target, wtxn, run_id)?;
     RETRIEVAL_OUTCOME.delete_from(target, wtxn, &retrieval_outcome_run_prefix(run_id))?;
+    super::retention::delete_retrieval_age(target, wtxn, run_id)?;
     RETRIEVAL_RUN_PROVISIONAL.delete(target, wtxn, &run_id)?;
     RETRIEVAL_RUN.delete(target, wtxn, &run_id)?;
     Ok(())

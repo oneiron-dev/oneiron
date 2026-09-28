@@ -15,6 +15,10 @@ use crate::store::Store;
 /// of full entity deindex. Key: hex32.
 const TRUSTED_MANIFEST_ORIGIN: SideTable<HexId, Vec<u8>, Raw> =
     SideTable::new(&side_table::GATE_MANIFEST_TRUSTED_ORIGIN);
+/// The `gate` module's seeded-default body hash, deleted with the manifest
+/// it vouches for. Key: hex32.
+const SEEDED_MANIFEST_CONFIDENCE: SideTable<HexId, Vec<u8>, Raw> =
+    SideTable::new(&side_table::GATE_MANIFEST_SEEDED_CONFIDENCE);
 
 pub(super) fn reject_engine_authored_delete(
     store: &Store,
@@ -226,6 +230,7 @@ pub(super) fn deindex_entity_without_lexical_query_hint_cascade(
     crate::ports::reindex_named_entities(store, wtxn, id, None)?;
     crate::ingest::invalidate_blob_fingerprint(store, wtxn, id)?;
     TRUSTED_MANIFEST_ORIGIN.delete(store, wtxn, &HexId(*id))?;
+    SEEDED_MANIFEST_CONFIDENCE.delete(store, wtxn, &HexId(*id))?;
     crate::claim::remove_claim_projection_index(store, wtxn, *id)?;
     store.entities.delete(wtxn, id.as_bytes())?;
     crate::ports::audit_mutation_in_txn(

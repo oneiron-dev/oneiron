@@ -175,6 +175,9 @@ pub(in crate::batch) struct PutContext<'a> {
     /// presents.
     pub(in crate::batch) refinement_admission:
         Option<&'a crate::skill_hub::RefinementAdmissionProof>,
+    /// The verified confidence transition a local claim put carries forward
+    /// from its predecessor, when the batch was handed one for this op.
+    pub(in crate::batch) transition: Option<&'a crate::batch::VerifiedClaimTransition>,
 }
 
 /// One claim candidate through `apply_claim_candidate`: the candidate and its
