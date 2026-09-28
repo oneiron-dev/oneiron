@@ -116,8 +116,21 @@ pub(crate) use project::{
     validate_project_edge_delete, validate_project_edge_put, validate_project_graph,
     validate_room_body,
 };
-pub use project::{PROJECT_TYPE_BYTE, ProjectRecord, ProjectRole, ProjectRoom, ProjectRoomChange};
+pub use project::{
+    PROJECT_TYPE_BYTE, ProjectBudgetShare, ProjectGoalRecord, ProjectMintReceipt, ProjectRecord,
+    ProjectRole, ProjectRoom, ProjectRoomChange,
+};
 
 mod rooms;
 pub(crate) use rooms::admit_witness as admit_room_witness;
-pub use rooms::{RoomClaimOutcome, RoomClaimReceipt, RoomPage, RoomTurn};
+pub use rooms::{
+    RoomClaimOutcome, RoomClaimReceipt, RoomPage, RoomThread, RoomThreadList, RoomThreadPage,
+    RoomThreadPolicy, RoomThreadWait, RoomThreads, RoomTrunk, RoomTrunkHeader, RoomTurn,
+    RoomWaitKind,
+};
+
+pub(crate) use rooms::RoomThreadTask;
+
+pub(crate) use rooms::project_room_audience_in;
+
+pub use crate::gate::RoomThreadFill;

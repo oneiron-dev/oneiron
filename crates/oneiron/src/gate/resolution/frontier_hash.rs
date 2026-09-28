@@ -9,6 +9,7 @@ use crate::error::{Error, Result};
 use crate::llm::{BudgetExhaustionPolicy, BudgetPolicySelector, BudgetPolicyTable};
 
 use super::manifest_types::{PolicyManifestDiagnostics, PolicyManifestResolution};
+use crate::gate::ask_policy::AskPolicySurface;
 use crate::gate::ceiling::{
     DelegationGrantRecord, PolicyApprovalCeiling, PolicyAxes, PolicyCriticality,
     PolicyOwnerPolicyRow, PolicySensitivity, SourceTrustCeiling, SourceTrustRow,
@@ -67,6 +68,44 @@ pub(super) fn hash_policy_frontier_v0(
             );
         }
     }
+    // Default rows and owner-authored overrides both affect admission and its
+    // consent frontier. Absent policy keeps the old frontier unchanged.
+    if let Some(defaults) = resolution.voice_ref_defaults.as_ref() {
+        hash_voice_ref_policy(hasher, "voice_ref_defaults", defaults);
+    }
+    if resolution.voice_ref_limits
+        != crate::voice_identity::ref_limits::VoiceRefLimitPolicy::default()
+    {
+        hash_voice_ref_policy(
+            hasher,
+            "voice_ref_owner_limits",
+            &resolution.voice_ref_limits,
+        );
+    }
+    if let Some(policy) = &resolution.pack_install_policy {
+        hash_str(hasher, "pack_install_policy");
+        let value = policy.encode();
+        hash_opt_value(hasher, Some(&value))?;
+    }
+    // An absent/empty hosted policy changes no decision and keeps the
+    // established frontier bytes for manifests that never named this knob.
+    if !resolution.hosted_tts.rows.is_empty() {
+        hash_str(hasher, "hosted_tts");
+        hash_str(hasher, resolution.hosted_tts.precedence.as_str());
+        hash_len(hasher, resolution.hosted_tts.rows.len());
+        for row in &resolution.hosted_tts.rows {
+            hash_str(hasher, &row.provider);
+            match row.scope {
+                crate::gate::hosted_tts_policy::HostedTtsScope::Vault => hash_str(hasher, "vault"),
+                crate::gate::hosted_tts_policy::HostedTtsScope::Holder(id) => {
+                    hash_str(hasher, "holder");
+                    hash_bytes(hasher, id.as_bytes());
+                }
+            }
+            hash_u64(hasher, row.limits.max_text_bytes as u64);
+            hash_u64(hasher, row.limits.max_pcm_fragment_bytes as u64);
+        }
+    }
     if let Some(bounds) = resolution.diagnostic_bounds {
         hash_str(hasher, "diagnostic_bounds");
         hash_u64(hasher, bounds.window_secs);
@@ -77,6 +116,58 @@ pub(super) fn hash_policy_frontier_v0(
     if let Some(threshold) = resolution.proposal_check_threshold {
         hash_str(hasher, "proposal_check_threshold");
         hash_u64(hasher, threshold);
+    }
+
+    if let Some(policy) = &resolution.weave_correction_policy {
+        hash_str(hasher, "weave_correction_policy");
+        policy.hash_into(hasher);
+    }
+    if let Some(ask) = &resolution.ask_policy {
+        hash_str(hasher, "ask_operational_policy.v1");
+        hash_u64(hasher, u64::from(ask.guest_fact_limit));
+        hash_u64(hasher, u64::from(ask.retry_page_limit));
+        hash_str(hasher, ask.default_surface.token());
+        hash_str(hasher, ask.precedence.token());
+        hash_len(hasher, ask.allowed_surfaces.len());
+        for surface in &ask.allowed_surfaces {
+            hash_str(hasher, surface.token());
+        }
+        hash_len(hasher, ask.holder_overrides.len());
+        for (holder, override_row) in &ask.holder_overrides {
+            hash_bytes(hasher, holder.as_bytes());
+            hash_u64(
+                hasher,
+                u64::from(override_row.guest_fact_limit.unwrap_or(0)),
+            );
+            hash_u64(
+                hasher,
+                u64::from(override_row.retry_page_limit.unwrap_or(0)),
+            );
+            hash_opt_str(hasher, override_row.surface.map(AskPolicySurface::token));
+        }
+    }
+
+    // Hash authored typed selectors/precedence, not an invented fallback.
+    if !resolution.retry_source_policy.is_empty() {
+        hash_str(hasher, "retry_source_policy");
+        hash_len(hasher, resolution.retry_source_policy.len());
+        for row in &resolution.retry_source_policy {
+            match row.selector {
+                crate::gate::retry_source_policy::RetrySelector::Vault => hash_str(hasher, "vault"),
+                crate::gate::retry_source_policy::RetrySelector::Holder(id) => {
+                    hash_str(hasher, "holder");
+                    hash_bytes(hasher, id.as_bytes());
+                }
+                crate::gate::retry_source_policy::RetrySelector::Project(id) => {
+                    hash_str(hasher, "project");
+                    hash_bytes(hasher, id.as_bytes());
+                }
+            }
+            hash_u64(hasher, row.max_sources.get() as u64);
+            if let Some(precedence) = row.precedence {
+                hash_str(hasher, precedence.as_str());
+            }
+        }
     }
 
     hash_len(hasher, resolution.packs.len());
@@ -140,6 +231,19 @@ pub(super) fn hash_policy_frontier_v0(
         hash_opt_value(hasher, grant.scope.as_ref())?;
         hash_opt_value(hasher, grant.budget.as_ref())?;
         hash_bool(hasher, grant.receipt_required);
+    }
+
+    // Default grant rows change future authority, so they move the same
+    // policy frontier as the other resolved capability rows.
+    if !resolution.federation_grant_rows.is_empty() {
+        hash_str(hasher, crate::federation::grant_policy::ROWS_KEY);
+        hash_len(hasher, resolution.federation_grant_rows.len());
+        for row in &resolution.federation_grant_rows {
+            hash_opt_value(
+                hasher,
+                Some(&crate::federation::grant_policy::encode_row(row)?),
+            )?;
+        }
     }
 
     hash_bool(hasher, resolution.owner_policy_enabled);
@@ -323,6 +427,28 @@ pub(in crate::gate) fn hash_bool(hasher: &mut Sha256, value: bool) {
 
 fn hash_len(hasher: &mut Sha256, value: usize) {
     hasher.update((value as u64).to_le_bytes());
+}
+
+fn hash_voice_ref_policy(
+    hasher: &mut Sha256,
+    tag: &str,
+    policy: &crate::voice_identity::ref_limits::VoiceRefLimitPolicy,
+) {
+    hash_str(hasher, tag);
+    hash_str(
+        hasher,
+        policy.precedence.map_or("absent", |mode| mode.as_str()),
+    );
+    for value in policy.vault.fields() {
+        hash_u64(hasher, value);
+    }
+    hash_len(hasher, policy.holders.len());
+    for (holder, limits) in &policy.holders {
+        hash_bytes(hasher, holder.as_bytes());
+        for value in limits.fields() {
+            hash_u64(hasher, value);
+        }
+    }
 }
 
 fn hash_u64(hasher: &mut Sha256, value: u64) {
