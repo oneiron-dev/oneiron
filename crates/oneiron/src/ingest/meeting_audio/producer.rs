@@ -40,12 +40,21 @@ pub fn produce_meeting_transcript<H: MeetingAudioHost + ?Sized>(
     let vad = host.silero_vad(&audio, &pcm_hash)?;
     validate_receipt(&vad.provenance, &pcm_hash, &mut invocation_ids)?;
     let packs = pack_speech(&vad.spans, duration_ms)?;
+    let row = options.batch_asr_policy.clone().unwrap_or_else(|| {
+        crate::llm::PurposeDefaultTable::default()
+            .voice(crate::llm::VoiceLane::AsrBatch)
+            .clone()
+    });
     let route = host.route_batch_asr(BatchAsrRequest {
         role: AsrRole::Asr,
         preferred_tier: if options.local_only {
             ProcessingTier::Local
         } else {
-            ProcessingTier::HomeFleet
+            match row.locality {
+                crate::llm::ModelLocality::OnDevice => ProcessingTier::Local,
+                crate::llm::ModelLocality::OwnServer => ProcessingTier::HomeFleet,
+                crate::llm::ModelLocality::ThirdParty => ProcessingTier::Hosted,
+            }
         },
         local_only: options.local_only,
         batch_default: &options.batch_default,
