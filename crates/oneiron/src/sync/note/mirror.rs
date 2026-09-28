@@ -5,6 +5,12 @@ use crate::sync::loro_support::{map_delete, map_get_bytes, map_insert_bytes};
 use crate::sync::types::WindowKey;
 
 pub(crate) fn refresh(vault: &Vault, doc: &LoroDoc, window: &WindowKey) -> Result<bool> {
+    // NOTE rows and their text-plane carriers live in the shared base month.
+    // Every caller (reverse, ordinary export, snapshot export, selector) uses
+    // this door, so none may contaminate a world-only document.
+    if window.world().is_some() {
+        return Ok(false);
+    }
     let ids = vault.entities_in_learned_range(
         window.start_timestamp().ok_or(invalid("NOTE window"))?,
         window.end_timestamp().ok_or(invalid("NOTE window"))?,

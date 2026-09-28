@@ -59,8 +59,18 @@ impl SyncServer {
                 .iter()
                 .any(|existing| existing == key)
             {
+                let root_vv = self.root_doc.oplog_vv();
                 add_window_to_root(&self.root_doc, key);
                 server_state::persist_root_snapshot(&self.vault, &self.root_doc)?;
+                let delta = self
+                    .root_doc
+                    .export(ExportMode::updates(&root_vv))
+                    .map_err(|e| {
+                        oneiron::Error::InvalidConfig(format!("root window index export: {e}"))
+                    })?;
+                let mut notice = vec![crate::protocol::TAG_SYNC_UPDATE];
+                notice.extend_from_slice(&delta);
+                let _ = crate::broadcast::broadcast(&self.broadcast_tx, 0, notice);
             }
         }
 

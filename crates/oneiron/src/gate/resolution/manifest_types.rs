@@ -346,6 +346,8 @@ pub(crate) struct PolicyManifestResolution {
     pub(super) carry_forward_authored: bool,
     pub(crate) judge_calibration: Option<crate::skill_optimize::policy::JudgeCalibrationPolicy>,
     pub(crate) credential_lifetimes: Option<CredentialLifetimePolicy>,
+    pub(crate) sync_world_ceiling: Option<std::collections::BTreeSet<crate::EntityId>>,
+    pub(crate) sync_world_default: Option<bool>,
     pub(super) packs: Vec<PolicyPack>,
     pub(super) policy_values: Vec<PolicyValueRow>,
     pub(super) actor_ceilings: Vec<ActorCeiling>,

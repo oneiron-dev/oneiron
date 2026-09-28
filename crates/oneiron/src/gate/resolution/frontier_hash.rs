@@ -272,6 +272,17 @@ pub(super) fn hash_policy_frontier_v0(
             hash_bytes(hasher, &row.floors.care.to_bits().to_be_bytes());
         }
     }
+    if let Some(default_all) = resolution.sync_world_default {
+        hash_str(hasher, "sync_world_default");
+        hash_bool(hasher, default_all);
+    }
+    if let Some(worlds) = &resolution.sync_world_ceiling {
+        hash_str(hasher, "sync_world_ceiling");
+        hash_len(hasher, worlds.len());
+        for world in worlds {
+            hash_bytes(hasher, world.as_bytes());
+        }
+    }
     if let Some(bounds) = resolution.diagnostic_bounds {
         hash_str(hasher, "diagnostic_bounds");
         hash_u64(hasher, bounds.window_secs);

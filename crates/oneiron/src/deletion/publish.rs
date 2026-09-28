@@ -131,7 +131,7 @@ impl Vault {
     fn write_crdt_tombstone_impl(
         &self,
         id: &EntityId,
-        window_ts: u64,
+        window_label: &str,
         value: &TombstoneValueV2,
         gate_decision: Option<&GateDecisionRecord>,
         gate: Option<&GatedDeletion<'_>>,
@@ -149,7 +149,7 @@ impl Vault {
         };
         use loro::CommitOptions;
 
-        let window_key = WindowKey::from_timestamp(window_ts);
+        let window_key = WindowKey::new(window_label);
 
         if let Some((window, materializer, manager)) = self.live_window(&window_key) {
             // Live path: merge the on-disk record first (clobber guard —
@@ -655,7 +655,7 @@ impl Vault {
     pub(super) fn write_crdt_tombstone(
         &self,
         _id: &EntityId,
-        _window_ts: u64,
+        _window_label: &str,
         _value: &TombstoneValueV2,
         _gate_decision: Option<&GateDecisionRecord>,
         _gate: Option<&GatedDeletion<'_>>,
@@ -744,7 +744,7 @@ mod live_query_publication_tests {
                 deleted_at: 1_772_000_000,
                 request_id: [7; 16],
             };
-            let result = vault.write_crdt_tombstone(&id, 1_772_000_000, &value, None, None);
+            let result = vault.write_crdt_tombstone(&id, tee.window.as_str(), &value, None, None);
             assert_eq!(result.is_err(), fail);
             assert_eq!(*tee.seen.lock().unwrap(), usize::from(!fail));
         }

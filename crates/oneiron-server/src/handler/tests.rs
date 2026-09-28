@@ -2365,8 +2365,8 @@ async fn a_session_without_a_jti_is_unaffected_by_an_unreadable_registry() {
 
 #[test]
 fn protocol_hello_validation_literals() {
-    // Full-window v6/v10 and selector v7/v8/v9 stay distinct.
-    // Both v9 and v10 carry entity documents; only v10 carries owner chunks.
+    // Full-window v6/v11 and selector v7/v8/v9 stay distinct.
+    // Both v9 and v11 carry entity documents; only v11 carries owner chunks.
     assert_eq!(
         validate_protocol_hello(&[3, 6]),
         Ok(protocol::LEGACY_FULL_WINDOW_PROTOCOL_VERSION)
@@ -2384,7 +2384,7 @@ fn protocol_hello_validation_literals() {
         Ok(protocol::PROTOCOL_VERSION)
     );
     assert_eq!(
-        validate_protocol_hello(&[3, 10]),
+        validate_protocol_hello(&[3, 11]),
         Ok(protocol::CHUNK_FULL_WINDOW_PROTOCOL_VERSION)
     );
 
@@ -2398,7 +2398,8 @@ fn protocol_hello_validation_literals() {
         ("old_selector_v3_peer", &[3, 3]),
         ("old_full_window_v4_peer", &[3, 4]),
         ("old_selector_v5_peer", &[3, 5]),
-        ("future_version", &[3, 11]),
+        ("retired_owner_v10", &[3, 10]),
+        ("future_version", &[3, 12]),
         ("zero_version", &[3, 0]),
         ("wrong_tag", &[2, 7]),
         ("empty", &[]),

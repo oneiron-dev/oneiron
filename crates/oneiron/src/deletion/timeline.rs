@@ -15,6 +15,31 @@ use super::tombstone::{
     window_label_from_timestamp,
 };
 
+/// A world claim's body may already be erased; the deletion txn preserves
+/// its window address before purge so every reader still finds its tombstone.
+pub(in crate::deletion) fn deletion_window_label(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    id: &EntityId,
+    learned_at: u64,
+) -> Result<String> {
+    let key = format!("m:dw:{}", id.to_hex());
+    if let Some(raw) = store.sync_state.get(txn, &key)? {
+        let label = std::str::from_utf8(&raw).map_err(|_| Error::InvalidKey)?;
+        if label.len() != 40
+            || label.as_bytes()[7] != b'@'
+            || label.get(..7) != Some(window_label_from_timestamp(learned_at).as_str())
+            || EntityId::from_hex(&label[8..])
+                .ok()
+                .is_none_or(|world| world.to_hex() != label[8..])
+        {
+            return Err(Error::InvalidKey);
+        }
+        return Ok(label.to_owned());
+    }
+    Ok(window_label_from_timestamp(learned_at))
+}
+
 /// Stable deletion reason surfaced by short-id hydrate.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -273,7 +298,7 @@ impl Vault {
         id: &EntityId,
         learned_at: u64,
     ) -> Result<Option<HydratedShortIdDeletion>> {
-        let window_label = window_label_from_timestamp(learned_at);
+        let window_label = deletion_window_label(&self.store, txn, id, learned_at)?;
         let pending_key = pending_tombstone_key(&window_label, id);
         if let Some(value) = self.store.sync_state.get(txn, pending_key.as_str())? {
             return Ok(Some(Self::deletion_metadata_from_tombstone_value(
@@ -326,7 +351,7 @@ impl Vault {
         id: &EntityId,
         learned_at: u64,
     ) -> Result<Option<HydratedShortIdDeletion>> {
-        let label = window_label_from_timestamp(learned_at);
+        let label = deletion_window_label(&self.store, txn, id, learned_at)?;
         let key = pending_tombstone_key(&label, id);
         if let Some(raw) = self.store.sync_state.get(txn, key.as_str())? {
             return Ok(Some(Self::deletion_metadata_from_tombstone_value(
@@ -460,7 +485,7 @@ impl Store {
         {
             return Ok(true);
         }
-        let window_label = window_label_from_timestamp(learned_at);
+        let window_label = deletion_window_label(self, txn, id, learned_at)?;
         let pending_key = pending_tombstone_key(&window_label, id);
         if self.sync_state.get(txn, pending_key.as_str())?.is_some() {
             return Ok(true);

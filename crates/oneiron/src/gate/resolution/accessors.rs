@@ -433,6 +433,30 @@ impl PolicyManifestResolution {
     /// the caller must refuse rather than substitute an empty table. An
     /// absent manifest keeps the bootstrap posture and exposes the empty
     /// table, which is exactly the single-pool meter.
+    /// Resolved default mode; missing/bootstrapping manifests preserve the
+    /// shipped non-home `opened` posture.
+    pub(crate) fn sync_default_all_worlds(&self) -> Result<bool> {
+        if self.diagnostics.loaded_manifest_forces_fail_closed() {
+            return Err(crate::Error::InvalidConfig(
+                "invalid sync world default policy".into(),
+            ));
+        }
+        Ok(self.sync_world_default.unwrap_or(false))
+    }
+
+    /// Trusted manifest cap for local world subscriptions. An absent manifest
+    /// preserves bootstrap selection; a malformed loaded one grants nothing.
+    pub(crate) fn sync_world_ceiling(
+        &self,
+    ) -> Result<Option<&std::collections::BTreeSet<crate::EntityId>>> {
+        if self.diagnostics.loaded_manifest_forces_fail_closed() {
+            return Err(crate::Error::InvalidConfig(
+                "invalid sync world ceiling policy".into(),
+            ));
+        }
+        Ok(self.sync_world_ceiling.as_ref())
+    }
+
     #[must_use]
     pub(crate) fn budget_policy(&self) -> Option<&BudgetPolicyTable> {
         if self.diagnostics.loaded_manifest_forces_fail_closed() {

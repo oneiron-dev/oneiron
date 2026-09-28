@@ -100,9 +100,61 @@ pub(super) fn run(ctx: &RematCtx<'_>, ledger: &mut RematLedger) -> TombstonePass
             return;
         }
 
+        let residence = (|| {
+            let txn = vault.store.env.read_txn()?;
+            let state = crate::sync::types::tombstone_residence_in(vault, &txn, &id, window_key)?;
+            if state == crate::sync::types::TombstoneResidence::Unknown
+                && window_key.world().is_some()
+                && let Some(raw) = map_get_bytes(entities_map, &id.to_hex())
+                && crate::sync::types::retained_world_shell_belongs_to_window(
+                    vault, &txn, ctx.doc, &id, &raw, window_key, false,
+                )?
+            {
+                return Ok(crate::sync::types::TombstoneResidence::Match);
+            }
+            Ok(state)
+        })();
+        match residence {
+            Ok(crate::sync::types::TombstoneResidence::Wrong) => {
+                if let Err(error) = quarantine::quarantine_rejected_op(
+                    vault,
+                    window_key.as_str(),
+                    QuarantineContainer::Tombstones,
+                    key,
+                    &Error::InvalidConfig("tombstone outside window residence".into()),
+                    value,
+                ) {
+                    tombstone_error = Some(error);
+                } else {
+                    terminal_quarantines.push(id);
+                }
+                return;
+            }
+            Ok(crate::sync::types::TombstoneResidence::Unknown) if window_key.world().is_some() => {
+                return;
+            }
+            Err(error) => {
+                tombstone_error = Some(error);
+                return;
+            }
+            _ => {}
+        }
         let hard_tombstone = decode_tombstone_value(value).is_hard();
         match quarantine::apply_replayed_tombstone_for_sync(vault, &id, value) {
             Ok(outcome) => {
+                if window_key.world().is_some()
+                    && let Err(error) = vault.with_write_txn(|txn| {
+                        vault.store.sync_state.put(
+                            txn,
+                            &format!("m:dw:{}", id.to_hex()),
+                            window_key.as_str().as_bytes(),
+                        )?;
+                        Ok(())
+                    })
+                {
+                    tombstone_error = Some(error);
+                    return;
+                }
                 if outcome.changed_local_state() {
                     count += 1;
                 }
