@@ -251,6 +251,7 @@ fn records_failed_effect(effect: SelfEffect) -> bool {
             | SelfEffect::MemorySupersedeClaim
             | SelfEffect::MemoryPutEdge
             | SelfEffect::ReportBlocked
+            | SelfEffect::InferenceDefaultsReplace
     ) || effect.is_speech()
 }
 

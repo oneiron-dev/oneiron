@@ -252,7 +252,9 @@ const fn bridge_call_is_external_effect(effect: SelfEffect) -> bool {
         | SelfEffect::Think
         | SelfEffect::Express
         | SelfEffect::ReportBlocked
-        | SelfEffect::WakePolicyWrite => false,
+        | SelfEffect::InferenceDefaultsRead
+        | SelfEffect::InferenceDefaultsReplace => false,
+        SelfEffect::WakePolicyWrite => false,
     }
 }
 
