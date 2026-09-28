@@ -6,4 +6,6 @@ declare const console: { log(...values: unknown[]): void };
 declare const propose: {
   file(path: `/mnt/outputs/${string}` | `/mnt/workspace/${string}`, bytes: Uint8Array | number[]): void;
   claim(input: { id: string; predicate: string; subject: unknown; value: unknown; confidence?: number; occurred?: { start: number; end: number }; learnedAt?: number }): void;
+  delete(path: `/mnt/workspace/${string}`): void;
+  rename(from: `/mnt/workspace/${string}`, to: `/mnt/workspace/${string}`): void;
 };

@@ -364,6 +364,7 @@ impl LocalFoldContext {
             entry_ancestors: None,
             peer_consent_roots: &self.peer_consent_roots,
             consent_arm: folded_device_can_authority_consent,
+            pre_handoff_entries: None,
         }
     }
 }
@@ -397,7 +398,6 @@ pub(super) fn single_owner_state(
             },
         )]),
         tier_floor: AuthorityTier::Software,
-        migrated_roots: BTreeSet::new(),
         genesis_recovery_dismissed: false,
         recovery_redundancy_established: false,
         tier_floor_events: BTreeMap::new(),
@@ -751,7 +751,6 @@ pub(super) fn fold_state_with_pact(
             },
         )]),
         tier_floor: AuthorityTier::Software,
-        migrated_roots: BTreeSet::new(),
         genesis_recovery_dismissed: false,
         recovery_redundancy_established: false,
         tier_floor_events: BTreeMap::new(),
@@ -1000,4 +999,31 @@ pub(super) fn open_vault_at(path: &std::path::Path, secs: u64) -> crate::Vault {
     let mut config = crate::VaultConfig::device();
     config.store_clock = crate::ports::ManualClock::new(secs).bundle();
     crate::Vault::open(path, config).unwrap()
+}
+
+/// Simulate a later local monotonic observation without changing a signed row
+/// or trusting its advisory timestamp. Used only after the row was observed.
+pub(super) fn mature_observed_widen(vault: &crate::Vault, entry: &AuthorityLogEntry) -> u64 {
+    let hash = authority_entry_hash(entry).unwrap();
+    let txn = vault.store.env.read_txn().unwrap();
+    let first_seen = vault
+        .store
+        .sync_state
+        .get(&txn, &authority_first_seen_sync_key(&hash))
+        .unwrap()
+        .and_then(|raw| decode_authority_first_seen_secs(&raw))
+        .unwrap();
+    drop(txn);
+    let now = first_seen + DEFAULT_PENDING_WIDEN_DELAY_SECS;
+    vault
+        .with_write_txn(|txn| {
+            vault.store.sync_state.put(
+                txn,
+                authority_first_seen_clock_sync_key(),
+                &encode_authority_first_seen_secs(now),
+            )?;
+            Ok(())
+        })
+        .unwrap();
+    now
 }

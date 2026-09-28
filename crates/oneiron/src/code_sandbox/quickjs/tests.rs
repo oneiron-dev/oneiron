@@ -330,6 +330,32 @@ fn quickjs_foreign_exports_proposals_and_cannot_link_first_party() {
     assert_eq!(value["observation"], "proposals-only");
 }
 
+#[test]
+fn quickjs_foreign_delete_and_rename_are_canonical_proposals() {
+    use crate::code_sandbox::wasmtime_boundary::{WasmtimeBoundary, bindings};
+    let (bytes, _) = artifact("foreign");
+    let boundary = WasmtimeBoundary::new().expect("boundary");
+    let component = boundary.compile(&bytes).expect("pinned component");
+    let mut request = boundary
+        .request(&component, SandboxGuestTier::Foreign, ForeignHost)
+        .expect("foreign request");
+    let result = request.run_step("propose.delete('/mnt/workspace/old'); propose.rename('/mnt/workspace/moved', '/mnt/workspace/new'); finish('ok');".into())
+        .expect("real JS interpreter");
+    assert!(
+        matches!(&result.proposals[0], bindings::ProposalDelta::FileDelete(delete)
+        if delete.path == "/mnt/workspace/old")
+    );
+    assert!(
+        matches!(&result.proposals[1], bindings::ProposalDelta::FileRename(rename)
+        if rename.origin == "/mnt/workspace/moved" && rename.destination == "/mnt/workspace/new")
+    );
+    assert!(
+        request
+            .run_step("propose.delete('/mnt/uploads/secret')".into())
+            .is_err()
+    );
+}
+
 struct ForeignHost;
 impl crate::code_sandbox::wasmtime_boundary::bindings::GuestImports for ForeignHost {
     fn clock_now_unix_ms(&mut self) -> u64 {

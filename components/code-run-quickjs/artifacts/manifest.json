@@ -12,24 +12,24 @@
   },
   "patched_quickjs_sha256": "81d6e4a91d3167b307b7feca196da09bfecde996ebe360499d0f40d3c9c5640c",
   "patched_dtoa_sha256": "bcbbcff57f97d02d3cbe662b059e1aaad90ef9da213cf8aefee35f548beca2fe",
-  "wit_sha256": "f4c6a438f247873ebb44a4a97a2b99348f218d7412de5003f1f74de22a88b651",
+  "wit_sha256": "35c87c119800826d8d638b358e3cb8eb9c2cf9948e8048a553039cd900a0dcaf",
   "sources": {
-    "guest.c": "aef63e7b6e6f5cf3946db2cc6dcef69de2c943d54e2ee48ce137e9309772f1c0",
+    "guest.c": "877e1c5ef7c6438d35501909e03d911607e02201752f9f662bdefd9010fbf352",
     "libc_denials.c": "34d4078d819b41381cfec7773434bc0a04a9c1d9c2895246a0a22ddf427808fd",
-    "bootstrap.js": "c2e1befb0c2bce6abf447f595f1b4472c0007ebabadca02ea5d960ae6f5a7f4a",
-    "generate_bridge.py": "8dfd1c0cd2003390446641dd82f996aa5c518de8bcf9b053b6e09fec5b2c0ce6",
+    "bootstrap.js": "6ec1e8f8ba4c6403e496aeeb68c82e9d8b528fd9674833233984a15f28f98570",
+    "generate_bridge.py": "edd85d0dac5ef8f29ae2093409963fd5a1ac51298aabca554eea642374f7216b",
     "build.py": "55329a943f412758400d4cc11927efd7453163bbb7baee9443f5744fd20bae6b"
   },
   "artifacts": {
     "first-party": {
       "file": "quickjs-first-party.wasm",
-      "sha256": "57fdf13ee698a884d8d7a693db2d6b5419675c954ee1e901d5f1e5e479cc12a3",
-      "bytes": 1043824
+      "sha256": "ee2aa496624f66b117cbcfe3ac4670c0aacd1093b7cb56f88e623970e1bab82c",
+      "bytes": 1045549
     },
     "foreign": {
       "file": "quickjs-foreign.wasm",
-      "sha256": "456040423f8a9dd630ba263bc8fe87579eac4d50eb14b65f56aaa376e1b73ce1",
-      "bytes": 1032061
+      "sha256": "c89a07cf3d5369d1a67b2df5b15619ec57443df71c9dff3dfff2e9c8190ccb58",
+      "bytes": 1033785
     }
   }
 }
