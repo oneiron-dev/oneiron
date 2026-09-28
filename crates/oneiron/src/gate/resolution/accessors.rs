@@ -29,6 +29,7 @@ use crate::gate::policy_values::{
     PolicyWhy, ResolvedPolicyValue, WhySource, precedence_row, resolve_row, resolve_value,
     shipped_default_precedence,
 };
+use crate::gate::project_conversion::ProjectConversionPolicy;
 
 #[cfg_attr(not(test), allow(dead_code))]
 impl PolicyManifestResolution {
@@ -454,6 +455,13 @@ impl PolicyManifestResolution {
         } else {
             Some(&self.budget_policy)
         }
+    }
+
+    /// Conversion must use this resolved policy inside its write transaction.
+    /// A malformed loaded manifest offers no usable policy, never a default.
+    #[must_use]
+    pub(crate) fn project_conversion_policy(&self) -> Option<ProjectConversionPolicy> {
+        (!self.diagnostics.loaded_manifest_forces_fail_closed()).then_some(self.project_conversion)
     }
 
     /// Retention may erase published telemetry only when the loaded manifest

@@ -34,6 +34,7 @@ mod operational_policy;
 mod owner_policy_mutation;
 mod pack_install_policy;
 pub(crate) mod policy_values;
+mod project_conversion;
 pub(crate) mod project_depth;
 pub(crate) mod proposal_observation;
 mod repair;
@@ -138,6 +139,9 @@ pub(crate) use self::operational_policy::{
 pub(crate) use self::owner_policy_mutation::apply_owner_policy_row_change_in_txn;
 pub use self::owner_policy_mutation::{
     PolicyRowAction, PolicyRowChange, PolicyRowScope, PolicyWhySource,
+};
+pub(crate) use self::project_conversion::{
+    LeaderFallback, ProjectConversionPolicy, RosterSelection, TaskHolderFallback,
 };
 pub(crate) use self::repair::{evaluate_repair_consent, repair_criticality};
 pub(crate) use self::resolution::{
