@@ -257,6 +257,27 @@ pub(super) fn hash_policy_frontier_v0(
         }
     }
 
+    // Operational settings are identity-bearing only when declared: old vaults
+    // retain their existing frontier, while any policy amendment moves it.
+    if let Some(row) = resolution.linear_mirror {
+        hash_str(hasher, "linear_mirror_policy");
+        hash_u64(hasher, row.poll_interval_secs);
+        hash_u64(hasher, row.request_timeout_secs);
+    }
+    if let Some(row) = resolution.linear_sync {
+        hash_str(hasher, "linear_sync_budget");
+        hash_u64(hasher, row.max_pull_pages_per_pass as u64);
+    }
+    if let Some(row) = resolution.wave_handoff {
+        hash_str(hasher, "wave_handoff_policy");
+        hash_u64(hasher, row.scan_limit as u64);
+        hash_u64(hasher, row.retry_floor_ms);
+        hash_u64(hasher, row.retry_cap_ms);
+    }
+    if let Some(precedence) = resolution.operational_precedence {
+        hash_str(hasher, "operational_policy_precedence");
+        hash_str(hasher, precedence.as_str());
+    }
     if let Some(policy) = &resolution.weave_correction_policy {
         hash_str(hasher, "weave_correction_policy");
         policy.hash_into(hasher);

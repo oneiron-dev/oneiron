@@ -184,6 +184,17 @@ impl PolicyManifestResolution {
         self.goal_limits.unwrap_or_default()
     }
 
+    #[must_use]
+    pub(in crate::gate) fn linear_mirror(&self) -> crate::gate::LinearMirrorPolicy {
+        self.linear_mirror.unwrap_or_default()
+    }
+    pub(in crate::gate) fn linear_sync(&self) -> crate::gate::LinearSyncBudget {
+        self.linear_sync.unwrap_or_default()
+    }
+    pub(in crate::gate) fn wave_handoff(&self) -> crate::gate::WaveHandoffPolicy {
+        self.wave_handoff.unwrap_or_default()
+    }
+
     pub(crate) fn proposal_check_threshold(&self) -> u64 {
         self.proposal_check_threshold
             .unwrap_or(crate::gate::proposal_observation::DEFAULT_PROPOSAL_CHECK_THRESHOLD)
