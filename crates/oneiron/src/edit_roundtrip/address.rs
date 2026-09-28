@@ -59,7 +59,7 @@ pub enum Axis {
 }
 
 /// A single cell address, 1-based on both axes (A1 == col 1, row 1).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct CellRef {
     pub col: u32,
     pub row: u32,
@@ -184,6 +184,11 @@ fn letters_to_column(letters: &str) -> Result<u32> {
 pub(super) fn validate_ops(ops: &[EditOp]) -> Result<()> {
     for op in ops {
         match op {
+            EditOp::PptxComment { .. } | EditOp::MintPptxSlideCreationId { .. } => {
+                return Err(Error::Artifact(ArtifactError::InvalidEditManifest(
+                    "PowerPoint operations require the comment pipeline",
+                )));
+            }
             EditOp::SetCell { cell, .. } => check_cell(*cell)?,
             EditOp::SetRange { range, writes, .. } => {
                 check_range(*range)?;
@@ -200,7 +205,10 @@ pub(super) fn validate_ops(ops: &[EditOp]) -> Result<()> {
                 check_range(*from)?;
                 check_cell(*to)?;
             }
-            EditOp::AddSheet { .. } | EditOp::RemoveSheet { .. } | EditOp::RenameSheet { .. } => {}
+            EditOp::DocxRevision { .. }
+            | EditOp::AddSheet { .. }
+            | EditOp::RemoveSheet { .. }
+            | EditOp::RenameSheet { .. } => {}
         }
     }
     Ok(())

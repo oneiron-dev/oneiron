@@ -177,11 +177,16 @@ impl AttemptQueue<'_> {
     /// Reads working-set attempts in creation order; archived rows remain readable by id.
     pub fn list(&self) -> Result<Vec<AttemptRecord>> {
         let rtxn = self.store.env.read_txn()?;
+        self.list_in_txn(&rtxn)
+    }
+
+    /// The same working-set projection at a caller-owned frozen ledger revision.
+    pub(crate) fn list_in_txn(&self, rtxn: &heed::RoTxn<'_>) -> Result<Vec<AttemptRecord>> {
         let mut records = Vec::new();
-        for row in self.store.attempt_records.iter(&rtxn)? {
+        for row in self.store.attempt_records.iter(rtxn)? {
             let (key, raw_record) = row?;
             let id = AttemptId::from_bytes(&key)?;
-            if !crate::vault_cleanup::attempt_is_archived(self.store, &rtxn, id, &raw_record)? {
+            if !crate::vault_cleanup::attempt_is_archived(self.store, rtxn, id, &raw_record)? {
                 records.push(decode_record(&raw_record, id)?);
             }
         }

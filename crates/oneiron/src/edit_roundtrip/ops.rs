@@ -48,6 +48,15 @@ pub struct CellWrite {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum EditOp {
+    /// One modern PowerPoint comment operation; never sent to a spreadsheet session.
+    PptxComment {
+        patch: super::pptx::PptxCommentPatch,
+    },
+    /// A separately declared missing slide identity write produced by the writer.
+    MintPptxSlideCreationId { slide: u64, creation_id: u32 },
+    /// One schema-validated native Word revision transaction. The organ crate
+    /// owns its versioned JSON syntax and the writer, not the spreadsheet seam.
+    DocxRevision { transaction: String },
     /// Write a single cell.
     SetCell {
         sheet: String,
@@ -96,6 +105,7 @@ impl EditOp {
     #[must_use]
     pub fn sheet(&self) -> Option<&str> {
         match self {
+            Self::DocxRevision { .. } => None,
             Self::SetCell { sheet, .. }
             | Self::SetRange { sheet, .. }
             | Self::AddFormulaColumn { sheet, .. }
@@ -106,6 +116,7 @@ impl EditOp {
             | Self::MoveRange { sheet, .. } => Some(sheet),
             Self::AddSheet { name } | Self::RemoveSheet { name } => Some(name),
             Self::RenameSheet { from, .. } => Some(from),
+            Self::PptxComment { .. } | Self::MintPptxSlideCreationId { .. } => None,
         }
     }
 
@@ -113,7 +124,10 @@ impl EditOp {
     /// stage is warranted. Adding an empty sheet cannot.
     #[must_use]
     pub const fn may_affect_values(&self) -> bool {
-        !matches!(self, Self::AddSheet { .. })
+        !matches!(
+            self,
+            Self::AddSheet { .. } | Self::PptxComment { .. } | Self::MintPptxSlideCreationId { .. }
+        )
     }
 
     /// Whether this op changes package structure (row/column/sheet topology)
@@ -140,6 +154,13 @@ impl EditOp {
     #[must_use]
     pub fn anchor_effect(&self) -> Option<AnchorEffect> {
         match self {
+            Self::MintPptxSlideCreationId { slide, creation_id } => {
+                Some(AnchorEffect::PptxSlideCreationId {
+                    slide: *slide,
+                    creation_id: *creation_id,
+                })
+            }
+            Self::DocxRevision { .. } => None,
             Self::InsertRows { sheet, at, count } => Some(AnchorEffect::Shift(StructuralShift {
                 sheet: sheet.clone(),
                 axis: Axis::Row,
@@ -181,7 +202,8 @@ impl EditOp {
             Self::SetCell { .. }
             | Self::SetRange { .. }
             | Self::AddFormulaColumn { .. }
-            | Self::AddSheet { .. } => None,
+            | Self::AddSheet { .. }
+            | Self::PptxComment { .. } => None,
         }
     }
 
@@ -189,6 +211,15 @@ impl EditOp {
     #[must_use]
     pub fn render(&self) -> String {
         match self {
+            Self::PptxComment { patch } => format!(
+                "pptx comment {}: {:?}",
+                patch.thread_id.to_hex(),
+                patch.action
+            ),
+            Self::MintPptxSlideCreationId { slide, creation_id } => {
+                format!("mint slide {slide} creationId {creation_id}")
+            }
+            Self::DocxRevision { .. } => "apply tracked Word revision".to_owned(),
             Self::SetCell {
                 sheet,
                 cell,
@@ -266,6 +297,11 @@ pub struct StructuralShift {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum AnchorEffect {
+    /// A missing slide identity minted as a declared comment-transaction effect.
+    PptxSlideCreationId {
+        slide: u64,
+        creation_id: u32,
+    },
     Shift(StructuralShift),
     RangeMoved {
         sheet: String,

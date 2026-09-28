@@ -3,6 +3,7 @@ use std::sync::Arc;
 
 use crate::wave_dispatch::{WaveDispatchCandidate, WaveHandoffOutcome};
 use oneiron::edge::EdgeActorClass;
+use oneiron::llm::{ExtractionEgressPredicate, HostInferenceBinding, HostInferenceContext};
 use oneiron::{
     BudgetGuard, CommitmentWakeExecutor, CommitmentWakeProposalPlanner, ConsolidationExecutor,
     ConsolidationSink, DreamerAttemptExecutor, DreamerClaimAuthoringStrategy, LlmBackend, ModelId,
@@ -85,6 +86,8 @@ pub struct ConsolidationExecutorFactory {
     strategy: DreamerClaimAuthoringStrategy,
     pub(super) actor: WriteActor,
     model: ModelId,
+    binding: HostInferenceBinding,
+    extraction_egress: Option<Arc<dyn ExtractionEgressPredicate>>,
     sink: Box<dyn ConsolidationSink>,
     /// CMT-3 (ONE-1540). `None` by DEFAULT, and the wrapper is installed
     /// either way: a tagged commitment event that reached the partition
@@ -106,6 +109,8 @@ impl ConsolidationExecutorFactory {
         strategy: DreamerClaimAuthoringStrategy,
         actor: WriteActor,
         model: ModelId,
+        binding: HostInferenceBinding,
+        extraction_egress: Option<Arc<dyn ExtractionEgressPredicate>>,
         sink: Box<dyn ConsolidationSink>,
     ) -> Self {
         Self {
@@ -113,6 +118,8 @@ impl ConsolidationExecutorFactory {
             strategy,
             actor,
             model,
+            binding,
+            extraction_egress,
             sink,
             commitment_wake_planner: None,
             wave_planner: None,
@@ -189,7 +196,12 @@ impl ConsolidationExecutorFactory {
             Arc::new(LocalLlmBackend::from_registry(runtime, vault)?),
             strategy,
             actor,
-            model,
+            model.clone(),
+            HostInferenceBinding::Advertised {
+                model,
+                locality: oneiron::ModelLocality::OnDevice,
+            },
+            None,
             sink,
         ))
     }
@@ -205,6 +217,10 @@ impl PassExecutorFactory for ConsolidationExecutorFactory {
             strategy: self.strategy,
             actor: self.actor,
             model: self.model.clone(),
+            inference: HostInferenceContext {
+                binding: self.binding.clone(),
+                extraction_egress: self.extraction_egress.as_deref(),
+            },
             sink: self.sink.as_mut(),
             scope: None,
         };

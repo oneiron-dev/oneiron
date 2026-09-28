@@ -294,6 +294,11 @@ fn consolidation_factory(actor: WriteActor) -> ConsolidationExecutorFactory {
         DreamerClaimAuthoringStrategy::SinglePass,
         actor,
         oneiron::ModelId::new("test/model@v1").expect("model id"),
+        oneiron::llm::HostInferenceBinding::Advertised {
+            model: oneiron::ModelId::new("test/model@v1").expect("host model"),
+            locality: oneiron::ModelLocality::OwnServer,
+        },
+        Some(Arc::new(|_: &oneiron::LlmRequest| true)),
         Box::new(UnusedSink),
     )
 }
@@ -356,6 +361,8 @@ async fn factory_planner_routes_tagged_attempt_and_delegates_partition() {
         deadline: &deadline,
         budget_id: "wake",
         now_ms: 11_000,
+        prepared_wake: None,
+        prepared_attempt: None,
     };
     assert_eq!(
         executor.execute(&admitted, &mut ctx).await.expect("tagged"),

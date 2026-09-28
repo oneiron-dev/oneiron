@@ -7,10 +7,12 @@ use rmpv::Value;
 use super::keys::{
     BLOB_ARTIFACT_SETTLEMENT_KEY_PREFIX, KEY_ACTOR_REF, KEY_ANCHOR_DRIFTED, KEY_ANCHOR_LOCATOR,
     KEY_ANCHOR_THREAD_ID, KEY_ANCHORS, KEY_BEFORE_VERSION, KEY_BRIEF_REF, KEY_CONTENT_HASH,
-    KEY_MANIFEST_OPS, KEY_MANIFEST_REF, KEY_OUTCOME, KEY_PROPOSAL_REF, KEY_REASON,
-    KEY_SCHEMA_VERSION, KEY_SETTLED_AT, KEY_VERSION, SETTLE_VERB_CLASS, SETTLEMENT_SCHEMA_VERSION,
+    KEY_MANIFEST_OPS, KEY_MANIFEST_REF, KEY_OUTCOME, KEY_PPTX_JUDGMENTS, KEY_PPTX_MINTS,
+    KEY_PPTX_REVIEW_IDENTITIES, KEY_PROPOSAL_REF, KEY_REASON, KEY_SCHEMA_VERSION, KEY_SETTLED_AT,
+    KEY_SHEET_ANSWERS, KEY_VERSION, SETTLE_VERB_CLASS, SETTLEMENT_RECORD_KEYS,
+    SETTLEMENT_SCHEMA_VERSION,
 };
-use super::records::{SettleOutcomeKind, SettledAnchor, SettlementRecord};
+use super::records::{PptxReviewIdentity, SettleOutcomeKind, SettledAnchor, SettlementRecord};
 use crate::anchored_annotation::{decode_locator, encode_locator};
 use crate::consent::{
     ActionClass as ConsentActionClass, ActionEnvelope as ConsentActionEnvelope,
@@ -52,7 +54,18 @@ pub(super) fn settlement_key_artifact_id(key: &[u8]) -> Result<EntityId> {
 // ---------------------------------------------------------------------------
 
 pub(super) fn encode_settlement_record(record: &SettlementRecord) -> Result<Vec<u8>> {
+    crate::edit_roundtrip::slides_review::validate_judgment_rows(&record.pptx_judgments)?;
     let anchors: Vec<Value> = record.anchors.iter().map(encode_settled_anchor).collect();
+    let sheet_answers = record
+        .sheet_answers
+        .as_ref()
+        .map(|bundle| {
+            rmp_serde::to_vec_named(bundle)
+                .map(Value::Binary)
+                .map_err(|_| Error::InvariantViolation("typed answer receipt encode failed"))
+        })
+        .transpose()?
+        .unwrap_or(Value::Nil);
     let value = Value::Map(vec![
         (
             Value::from(KEY_SCHEMA_VERSION),
@@ -101,9 +114,52 @@ pub(super) fn encode_settlement_record(record: &SettlementRecord) -> Result<Vec<
         ),
         (Value::from(KEY_ANCHORS), Value::Array(anchors)),
         (
+            Value::from(KEY_PPTX_MINTS),
+            Value::Array(
+                record
+                    .pptx_slide_creation_id_mints
+                    .iter()
+                    .map(|(slide, id)| Value::Array(vec![Value::from(*slide), Value::from(*id)]))
+                    .collect(),
+            ),
+        ),
+        (
+            Value::from(KEY_PPTX_REVIEW_IDENTITIES),
+            Value::Array(
+                record
+                    .pptx_review_identities
+                    .iter()
+                    .map(|identity| {
+                        Value::Array(vec![
+                            Value::Binary(identity.thread_id.as_bytes().to_vec()),
+                            Value::Binary(identity.asked_by.as_bytes().to_vec()),
+                            Value::Binary(identity.answered_by.as_bytes().to_vec()),
+                            Value::from(identity.export_author_guid.as_str()),
+                            Value::from(identity.export_author_name.as_str()),
+                        ])
+                    })
+                    .collect(),
+            ),
+        ),
+        (
+            Value::from(KEY_PPTX_JUDGMENTS),
+            Value::Array(
+                record
+                    .pptx_judgments
+                    .iter()
+                    .map(|judgment| {
+                        rmp_serde::to_vec_named(judgment)
+                            .map(Value::Binary)
+                            .map_err(|_| Error::InvariantViolation("slide judgment encode failed"))
+                    })
+                    .collect::<Result<Vec<_>>>()?,
+            ),
+        ),
+        (
             Value::from(KEY_REASON),
             option_str_value(record.reason.as_deref()),
         ),
+        (Value::from(KEY_SHEET_ANSWERS), sheet_answers),
     ]);
     let mut out = Vec::new();
     rmpv::encode::write_value(&mut out, &value)
@@ -134,6 +190,13 @@ pub(super) fn decode_settlement_record(bytes: &[u8]) -> Result<SettlementRecord>
     let Value::Map(entries) = value else {
         return Err(corrupt());
     };
+    let mut seen = std::collections::BTreeSet::new();
+    for (key, _) in &entries {
+        let key = key.as_str().ok_or_else(corrupt)?;
+        if !SETTLEMENT_RECORD_KEYS.contains(&key) || !seen.insert(key) {
+            return Err(corrupt());
+        }
+    }
     if field(&entries, KEY_SCHEMA_VERSION).and_then(Value::as_u64)
         != Some(SETTLEMENT_SCHEMA_VERSION)
     {
@@ -153,9 +216,109 @@ pub(super) fn decode_settlement_record(bytes: &[u8]) -> Result<SettlementRecord>
         content_hash: field_opt_hash(&entries, KEY_CONTENT_HASH)?,
         manifest_ref: field_opt_hash(&entries, KEY_MANIFEST_REF)?,
         manifest_ops: field_u64(&entries, KEY_MANIFEST_OPS)?,
+        pptx_slide_creation_id_mints: decode_mints(
+            field(&entries, KEY_PPTX_MINTS).ok_or_else(corrupt)?,
+        )?,
+        pptx_review_identities: decode_review_identities(
+            field(&entries, KEY_PPTX_REVIEW_IDENTITIES).ok_or_else(corrupt)?,
+        )?,
+        pptx_judgments: decode_judgments(field(&entries, KEY_PPTX_JUDGMENTS).ok_or_else(corrupt)?)?,
         anchors,
         reason: field_opt_str(&entries, KEY_REASON)?,
+        sheet_answers: match field(&entries, KEY_SHEET_ANSWERS) {
+            Some(Value::Nil) => None,
+            Some(Value::Binary(bytes)) => {
+                let bundle: crate::edit_roundtrip::SheetAnswerBundle =
+                    rmp_serde::from_slice(bytes).map_err(|_| corrupt())?;
+                bundle.ops().map_err(|_| corrupt())?;
+                Some(Box::new(bundle))
+            }
+            _ => return Err(corrupt()),
+        },
     })
+}
+
+fn decode_judgments(
+    value: &Value,
+) -> Result<Vec<crate::edit_roundtrip::slides_review::SlideJudgment>> {
+    let Value::Array(items) = value else {
+        return Err(corrupt());
+    };
+    if items.len() > crate::edit_roundtrip::slides_review::MAX_JUDGMENTS {
+        return Err(corrupt());
+    }
+    let rows: Vec<_> = items
+        .iter()
+        .map(|item| {
+            let Value::Binary(bytes) = item else {
+                return Err(corrupt());
+            };
+            rmp_serde::from_slice(bytes).map_err(|_| corrupt())
+        })
+        .collect::<Result<_>>()?;
+    crate::edit_roundtrip::slides_review::validate_judgment_rows(&rows).map_err(|_| corrupt())?;
+    Ok(rows)
+}
+
+fn decode_mints(value: &Value) -> Result<Vec<(u64, u32)>> {
+    let Value::Array(items) = value else {
+        return Err(corrupt());
+    };
+    let mut seen = std::collections::BTreeSet::new();
+    items
+        .iter()
+        .map(|item| {
+            let Value::Array(pair) = item else {
+                return Err(corrupt());
+            };
+            if pair.len() != 2 {
+                return Err(corrupt());
+            }
+            let slide = pair[0].as_u64().filter(|n| *n > 0).ok_or_else(corrupt)?;
+            let id = pair[1]
+                .as_u64()
+                .and_then(|n| u32::try_from(n).ok())
+                .ok_or_else(corrupt)?;
+            if !seen.insert(slide) {
+                return Err(corrupt());
+            }
+            Ok((slide, id))
+        })
+        .collect()
+}
+
+fn decode_review_identities(value: &Value) -> Result<Vec<PptxReviewIdentity>> {
+    let Value::Array(rows) = value else {
+        return Err(corrupt());
+    };
+    rows.iter()
+        .map(|row| {
+            let Value::Array(fields) = row else {
+                return Err(corrupt());
+            };
+            let [
+                Value::Binary(thread),
+                Value::Binary(asker),
+                Value::Binary(answerer),
+                guid,
+                name,
+            ] = fields.as_slice()
+            else {
+                return Err(corrupt());
+            };
+            let id = |bytes: &[u8]| -> Result<EntityId> {
+                let raw: [u8; ENTITY_ID_LEN] = bytes.try_into().map_err(|_| corrupt())?;
+                EntityId::from_bytes(raw).map_err(|_| corrupt())
+            };
+            Ok(PptxReviewIdentity {
+                thread_id: id(thread)?,
+                asked_by: id(asker)?,
+                answered_by: id(answerer)?,
+                export_author_guid: guid.as_str().ok_or_else(corrupt)?.to_owned(),
+                export_author_name: name.as_str().ok_or_else(corrupt)?.to_owned(),
+            })
+        })
+        .collect()
 }
 
 fn decode_anchors(value: &Value) -> Result<Vec<SettledAnchor>> {

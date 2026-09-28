@@ -869,7 +869,10 @@ fn raw_task_write_has_no_verified_mirror_writer() -> LinearSyncResult<()> {
     // The generic batch door cleared the facade's stamp: the Linear effect
     // door has no writer to authorize this revision for.
     assert!(store.dirty_writer(raw)?.is_none());
-    assert_eq!(store.dirty_writer(trusted)?.map(|w| w.actor_ref), Some(owner));
+    assert_eq!(
+        store.dirty_writer(trusted)?.map(|w| w.actor_ref),
+        Some(owner)
+    );
     Ok(())
 }
 

@@ -113,6 +113,30 @@ impl AttemptOutcome {
 // Evidence
 // ---------------------------------------------------------------------------
 
+/// Observed use of one loaded skill in a terminal attempt (ARCH-0053 §4).
+/// A deviation keeps the actor's own stated reason, not just a false score.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum FollowedState {
+    Followed,
+    Partly,
+    Ignored,
+    DeviatedWithReason {
+        reason: String,
+        /// A resolved cause is a fact from the receipt source, not a verdict.
+        /// If unsettled, the rule judge abstains and an injected judge can
+        /// inspect the original reason instead of guessing from its wording.
+        cause: Option<DeviationCause>,
+    },
+}
+
+/// Structured cause of a stated departure, when the source can establish it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DeviationCause {
+    IncorrectInstruction,
+    MissingInstruction,
+    ExecutorError,
+}
+
 /// One attributable outcome, as recorded by the caller that observed it.
 ///
 /// The `receipt_ref` is the id of the terminal PACK RECEIPT the attempt's
@@ -135,6 +159,9 @@ pub struct OutcomeEvidence {
     pub outcome: AttemptOutcome,
     /// Did the actor actually follow what the skill said?
     pub followed_skill: Option<bool>,
+    /// Four-state TASK-lane observation; the older boolean inlet remains for
+    /// amendment evidence and callers that cannot yet resolve a full state.
+    pub followed_state: Option<FollowedState>,
     /// Did the skill contain content covering the step that failed?
     pub skill_covered_step: Option<bool>,
     /// Unix seconds the outcome was observed.
@@ -157,6 +184,7 @@ impl OutcomeEvidence {
             skill: None,
             outcome,
             followed_skill: None,
+            followed_state: None,
             skill_covered_step: None,
             at,
         }
@@ -166,6 +194,14 @@ impl OutcomeEvidence {
     #[must_use]
     pub fn with_skill(mut self, skill: EntityId) -> Self {
         self.skill = Some(skill);
+        self
+    }
+
+    /// Records the observed state for one loaded skill. The receipt sweep uses
+    /// this instead of reducing partly/deviated evidence to a boolean.
+    #[must_use]
+    pub fn with_followed_state(mut self, state: FollowedState) -> Self {
+        self.followed_state = Some(state);
         self
     }
 

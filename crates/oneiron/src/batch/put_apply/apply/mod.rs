@@ -39,6 +39,11 @@ use self::claim::reconcile_replicated_critical_confirm;
 use self::validation::{
     decode_previous_skill_record, validate_note_birth_put, validate_witness_message_body,
 };
+fn normalized_policy_body(entity_type: u8, data: &[u8]) -> Option<Vec<u8>> {
+    (entity_type == crate::registry::ENTITY_TYPE_POLICY_MANIFEST)
+        .then(|| crate::gate::normalize_policy_manifest_scope(data))
+        .flatten()
+}
 
 #[expect(
     clippy::too_many_arguments,
@@ -73,11 +78,7 @@ pub(in crate::batch) fn apply_put(
     // Normalize before body comparison, short-id hashing and scope stamping so
     // every index names the bytes actually stored. Malformed policy stays intact
     // and is diagnosed fail-closed by the policy resolver, never defaulted away.
-    let normalized_policy = if entity_type == crate::registry::ENTITY_TYPE_POLICY_MANIFEST {
-        crate::gate::normalize_policy_manifest_scope(data)
-    } else {
-        None
-    };
+    let normalized_policy = normalized_policy_body(entity_type, data);
     let data = normalized_policy.as_deref().unwrap_or(data);
     let carriers = PutCarrierContext::new(entity_type, occurred, learned_at, replicated, origin);
     validate_put_carriers(store, wtxn, id, data, carriers)?;
@@ -366,8 +367,7 @@ pub(in crate::batch) fn apply_put(
     let escalated_skill_body;
     let data = match new_skill_record.as_mut() {
         Some(updated) if !replicated && !hub_sync_imported => {
-            if crate::skill_scan::escalate_activation_approval_in_txn(store, &*wtxn, &id, updated)?
-            {
+            if crate::skill_hub::scan_skill_admission(store, &*wtxn, &id, updated, hub_admission)? {
                 escalated_skill_body = crate::skill::encode_skill_record(updated)?;
                 &escalated_skill_body[..]
             } else {
