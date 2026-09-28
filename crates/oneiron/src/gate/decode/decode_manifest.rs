@@ -12,8 +12,12 @@ use crate::gate::ceiling::{
     PolicySignature, SourceTrustCeiling,
 };
 use crate::gate::constants::{
-    POLICY_ACTOR_CEILINGS_KEY, POLICY_ASK_POLICY_KEY, POLICY_AUTO_CHECKER_KEY,
-    POLICY_BUDGET_POLICY_KEY, POLICY_COMM_OPT_OUT_POSTURE_KEY, POLICY_DEFAULTS_KEY,
+    ATTRIBUTION_HOLDER_ACTOR_KEY, ATTRIBUTION_HOLDER_MAX_BYTES_KEY,
+    ATTRIBUTION_HOLDER_REASON_BYTES_KEY, ATTRIBUTION_PRECEDENCE_KEY,
+    ATTRIBUTION_REASON_MAX_BYTES_KEY, ATTRIBUTION_RECEIPTS_PER_PASS_KEY, POLICY_ACTOR_CEILINGS_KEY,
+    POLICY_ASK_POLICY_KEY, POLICY_ATTRIBUTION_LIMITS_KEY, POLICY_AUTO_CHECKER_KEY,
+    POLICY_BUDGET_POLICY_KEY, POLICY_COMM_OPT_OUT_POSTURE_KEY, POLICY_CONNECTOR_CLASS_CARRY_KEY,
+    POLICY_CONNECTOR_CLASS_PRECEDENCE_KEY, POLICY_CONNECTOR_CLASS_ROLE_KEY, POLICY_DEFAULTS_KEY,
     POLICY_DELEGATED_GRANTS_KEY, POLICY_DOCEDIT_RESOURCE_KEY, POLICY_DOCX_ARCHIVE_LIMITS_KEY,
     POLICY_HOSTED_TTS_KEY, POLICY_LEGAL_FLOOR_ROWS_KEY, POLICY_MIN_ENGINE_VERSION_KEY,
     POLICY_ON_BUDGET_EXHAUSTED_KEY, POLICY_OWNER_POLICY_DOCUMENT_KEY,
@@ -30,7 +34,9 @@ use crate::gate::grants::PolicyScopedGrant;
 use crate::gate::hosted_tts_policy::HostedTtsPolicy;
 use crate::gate::pack_install_policy::KEY as PACK_INSTALL_POLICY_KEY;
 
-use crate::gate::resolution::{CommOptOutPosture, TeacherProbeRow};
+use crate::gate::resolution::{
+    AttributionLimits, CommOptOutPosture, ConnectorClassPrecedence, TeacherProbeRow,
+};
 use crate::llm::{BudgetExhaustionPolicy, BudgetPolicyTable};
 use crate::voice_identity::ref_limits::VoiceRefLimitPolicy;
 
@@ -46,6 +52,13 @@ use super::decode_trust_budget::{
     parse_budget_exhaustion_policy, parse_budget_policy, parse_comm_opt_out_posture,
     parse_source_trust,
 };
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub(in crate::gate) enum ConnectorClassRole {
+    #[default]
+    Vault,
+    Holder,
+}
 
 pub(in crate::gate) struct DecodedPolicyManifest {
     pub(in crate::gate) pack: PolicyPack,
@@ -75,6 +88,9 @@ pub(in crate::gate) struct DecodedPolicyManifest {
     pub(in crate::gate) pptx_comment_limits:
         Option<crate::edit_roundtrip::pptx::PptxOperationalLimits>,
     pub(in crate::gate) hosted_tts: HostedTtsPolicy,
+    pub(in crate::gate) connector_class_carry: Option<std::collections::BTreeSet<(String, String)>>,
+    pub(in crate::gate) connector_class_role: ConnectorClassRole,
+    pub(in crate::gate) connector_class_precedence: Option<ConnectorClassPrecedence>,
 
     pub(in crate::gate) slide_review_policy: crate::llm::decision::SlideReviewPolicy,
     pub(in crate::gate) docedit_resource_policy: Option<DoceditResourcePolicy>,
@@ -89,6 +105,7 @@ pub(in crate::gate) struct DecodedPolicyManifest {
     pub(in crate::gate) sheet_answer_precedence:
         Option<crate::gate::resolution::SheetAnswerPrecedence>,
     pub(in crate::gate) weave_correction_policy: Option<crate::gate::WeaveCorrectionPolicy>,
+    pub(in crate::gate) attribution_limits: Option<AttributionLimits>,
     pub(in crate::gate) ask_policy: Option<crate::gate::ask_policy::AskOperationalPolicy>,
     pub(in crate::gate) retry_source_policy:
         Vec<crate::gate::retry_source_policy::RetrySourcePolicyRow>,
@@ -143,6 +160,9 @@ pub(in crate::gate) fn decode_policy_manifest(data: &[u8]) -> Option<DecodedPoli
                 | "room_thread"
                 | POLICY_PPTX_COMMENT_LIMITS_KEY
                 | POLICY_HOSTED_TTS_KEY
+                | POLICY_CONNECTOR_CLASS_CARRY_KEY
+                | POLICY_CONNECTOR_CLASS_ROLE_KEY
+                | POLICY_CONNECTOR_CLASS_PRECEDENCE_KEY
 
                 | POLICY_SLIDE_REVIEW_KEY
                 | POLICY_DOCEDIT_RESOURCE_KEY
@@ -155,6 +175,7 @@ pub(in crate::gate) fn decode_policy_manifest(data: &[u8]) -> Option<DecodedPoli
                 | POLICY_SHEET_ANSWER_LIMITS_KEY
                 | POLICY_SHEET_ANSWER_PRECEDENCE_KEY
                 | POLICY_WEAVE_CORRECTION_POLICY_KEY
+                | POLICY_ATTRIBUTION_LIMITS_KEY
                 | POLICY_ASK_POLICY_KEY
                 | "retry_source_policy"
                 | "compilation_policy"
@@ -318,6 +339,50 @@ pub(in crate::gate) fn decode_policy_manifest(data: &[u8]) -> Option<DecodedPoli
         MapValue::Duplicate => return None,
         MapValue::Present(value) => HostedTtsPolicy::parse(value)?,
     };
+    let connector_class_carry = match single_map_value(&entries, POLICY_CONNECTOR_CLASS_CARRY_KEY) {
+        MapValue::Missing => None,
+        MapValue::Duplicate => return None,
+        MapValue::Present(Value::Array(rows)) => {
+            let mut result = std::collections::BTreeSet::new();
+            for row in rows {
+                let Value::Array(pair) = row else {
+                    return None;
+                };
+                let [Value::String(from), Value::String(to)] = pair.as_slice() else {
+                    return None;
+                };
+                let (Some(from), Some(to)) = (from.as_str(), to.as_str()) else {
+                    return None;
+                };
+                // Typed class names, not an engine-fixed precedence or pair list.
+                if !matches!(from, "public" | "personal" | "secret" | "header")
+                    || !matches!(to, "public" | "personal" | "secret" | "header")
+                    || from == to
+                    || !result.insert((from.to_owned(), to.to_owned()))
+                {
+                    return None;
+                }
+            }
+            Some(result)
+        }
+        MapValue::Present(_) => return None,
+    };
+    let connector_class_role = match single_map_value(&entries, POLICY_CONNECTOR_CLASS_ROLE_KEY) {
+        MapValue::Missing | MapValue::Present(Value::Nil) => ConnectorClassRole::Vault,
+        MapValue::Duplicate => return None,
+        MapValue::Present(Value::String(role)) => match role.as_str()? {
+            "vault" => ConnectorClassRole::Vault,
+            "holder" => ConnectorClassRole::Holder,
+            _ => return None,
+        },
+        MapValue::Present(_) => return None,
+    };
+    let connector_class_precedence =
+        match single_map_value(&entries, POLICY_CONNECTOR_CLASS_PRECEDENCE_KEY) {
+            MapValue::Missing => None,
+            MapValue::Duplicate => return None,
+            MapValue::Present(value) => Some(ConnectorClassPrecedence::parse(value.as_str()?)?),
+        };
     let livequery_tracker_limits = match single_map_value(&entries, "livequery_tracker_limits") {
         MapValue::Missing => None,
         MapValue::Duplicate => return None,
@@ -385,6 +450,11 @@ pub(in crate::gate) fn decode_policy_manifest(data: &[u8]) -> Option<DecodedPoli
             MapValue::Duplicate => return None,
             MapValue::Present(value) => Some(crate::gate::WeaveCorrectionPolicy::parse(value)?),
         };
+    let attribution_limits = match single_map_value(&entries, POLICY_ATTRIBUTION_LIMITS_KEY) {
+        MapValue::Missing => None,
+        MapValue::Duplicate => return None,
+        MapValue::Present(value) => Some(parse_attribution_limits(value)?),
+    };
     let retry_source_policy = match single_map_value(&entries, "retry_source_policy") {
         MapValue::Missing => Vec::new(),
         MapValue::Duplicate => return None,
@@ -450,6 +520,9 @@ pub(in crate::gate) fn decode_policy_manifest(data: &[u8]) -> Option<DecodedPoli
         room_thread,
         pptx_comment_limits,
         hosted_tts,
+        connector_class_carry,
+        connector_class_role,
+        connector_class_precedence,
         slide_review_policy,
         docedit_resource_policy,
         docx_archive_limits,
@@ -460,6 +533,7 @@ pub(in crate::gate) fn decode_policy_manifest(data: &[u8]) -> Option<DecodedPoli
         sheet_answer_limits,
         sheet_answer_precedence,
         weave_correction_policy,
+        attribution_limits,
         ask_policy,
         retry_source_policy,
         compilation_policy,
@@ -468,6 +542,71 @@ pub(in crate::gate) fn decode_policy_manifest(data: &[u8]) -> Option<DecodedPoli
         engine_version_floor,
         unknown_axis_seen,
     })
+}
+
+/// A policy-manifest row. Numeric knobs are positive; unknown/duplicate keys
+/// refuse the row instead of silently widening its meaning. Holder entries
+/// are narrow-only relative to the vault limit and to other packs.
+fn parse_attribution_limits(value: &Value) -> Option<AttributionLimits> {
+    let Value::Map(entries) = value else {
+        return None;
+    };
+    for (key, _) in entries {
+        if !matches!(
+            key.as_str()?,
+            ATTRIBUTION_REASON_MAX_BYTES_KEY
+                | ATTRIBUTION_RECEIPTS_PER_PASS_KEY
+                | ATTRIBUTION_HOLDER_REASON_BYTES_KEY
+                | ATTRIBUTION_PRECEDENCE_KEY
+        ) {
+            return None;
+        }
+    }
+    if required_string(entries, ATTRIBUTION_PRECEDENCE_KEY)?.as_str() != "nested_narrowing" {
+        return None;
+    }
+    let mut limits = AttributionLimits::default();
+    for (key, target) in [
+        (
+            ATTRIBUTION_REASON_MAX_BYTES_KEY,
+            &mut limits.reason_max_bytes,
+        ),
+        (
+            ATTRIBUTION_RECEIPTS_PER_PASS_KEY,
+            &mut limits.receipts_per_pass,
+        ),
+    ] {
+        match single_map_value(entries, key) {
+            MapValue::Missing => {}
+            MapValue::Duplicate => return None,
+            MapValue::Present(value) => *target = value.as_u64().filter(|v| *v > 0)?,
+        }
+    }
+    match single_map_value(entries, ATTRIBUTION_HOLDER_REASON_BYTES_KEY) {
+        MapValue::Missing => {}
+        MapValue::Duplicate => return None,
+        MapValue::Present(Value::Array(rows)) => {
+            for row in rows {
+                let Value::Map(fields) = row else { return None };
+                if fields.len() != 2 {
+                    return None;
+                }
+                let actor = required_string(fields, ATTRIBUTION_HOLDER_ACTOR_KEY)?;
+                let holder = crate::EntityId::from_hex(&actor).ok()?;
+                if holder.to_hex() != actor {
+                    return None;
+                }
+                let bytes = required_value(fields, ATTRIBUTION_HOLDER_MAX_BYTES_KEY)?
+                    .as_u64()
+                    .filter(|v| *v > 0)?;
+                if limits.holder_reason_bytes.insert(holder, bytes).is_some() {
+                    return None;
+                }
+            }
+        }
+        MapValue::Present(_) => return None,
+    }
+    Some(limits)
 }
 
 /// Longest owner policy document a manifest may carry, mirroring the bound the

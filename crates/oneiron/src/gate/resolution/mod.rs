@@ -10,5 +10,7 @@ pub(crate) use self::manifest_fold::resolve_policy_manifest;
 pub(super) use self::manifest_types::CommOptOutPosture;
 pub(in crate::gate) use self::manifest_types::TeacherProbeRow;
 pub(crate) use self::manifest_types::{
-    PolicyManifestResolution, SheetAnswerLimitRow, SheetAnswerPrecedence,
+    AttributionLimits, ConnectorClassPrecedence, DEFAULT_ATTRIBUTION_REASON_MAX_BYTES,
+    DEFAULT_ATTRIBUTION_RECEIPTS_PER_PASS, PolicyManifestResolution, SheetAnswerLimitRow,
+    SheetAnswerPrecedence,
 };

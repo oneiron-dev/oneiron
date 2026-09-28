@@ -27,6 +27,17 @@ pub(super) fn hash_policy_frontier_v0(
     for predicate in &resolution.single_valued_predicates {
         hash_str(hasher, predicate);
     }
+    // Hashed only when a manifest names a class row, so a manifest that never
+    // did keeps its frontier and every consent binding taken against it.
+    if let Some(carry) = resolution.connector_class_carry.as_ref() {
+        hash_str(hasher, "connector_class_policy.v1");
+        hash_str(hasher, resolution.connector_class_precedence.as_str());
+        hash_len(hasher, carry.len());
+        for (from, to) in carry {
+            hash_str(hasher, from);
+            hash_str(hasher, to);
+        }
+    }
     // A teacher floor change changes admission and invalidates approval
     // snapshots; include the resolved row in the policy frontier too.
     if let Some(vault_min) = resolution.teacher_probe_vault_min {
@@ -161,6 +172,8 @@ pub(super) fn hash_policy_frontier_v0(
         hash_u64(hasher, bounds.actor_writes);
     }
 
+    // Attribution limits bound post-terminal receipt capture, not Gate authority.
+    // Tuning them must not rebind existing consent/grant frontiers.
     if let Some(threshold) = resolution.proposal_check_threshold {
         hash_str(hasher, "proposal_check_threshold");
         hash_u64(hasher, threshold);

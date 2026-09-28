@@ -6,6 +6,7 @@
 mod ask_band;
 mod ask_facade;
 mod ask_guest;
+mod ask_option_link;
 mod ask_policy;
 mod ask_preflight;
 mod ask_record;
@@ -123,8 +124,13 @@ mod ask_outcome_tests;
 mod ask_tests;
 
 pub(crate) use ask_facade::settle_waiting_asks;
-pub(crate) use ask_record::{ask_notice_at_in, guard_ask_fact_put};
+pub(crate) use ask_option_link::{
+    ack_option_void_generation, has_option_link_void, option_void_generation,
+};
+pub(crate) use ask_record::{ask_notice_at_in, guard_ask_fact_put, waits_for_ask_group};
 pub(crate) use ask_settlement::settle_ask_if_due;
+
+pub use ask_option_link::{TaskAskOptionLink, TaskAskOptionLinkView};
 
 pub use ask_soft_confirm_types::{
     TaskAskConfirmation, TaskAskConfirmationDecision, TaskAskSoftConfirmDelivery,
