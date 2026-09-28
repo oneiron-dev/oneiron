@@ -65,9 +65,11 @@ pub(crate) use self::kernel::{
     FIELD_SKILL_EDIT_SKILL, FIELD_SKILL_EDIT_TARGET_DIGEST, FIELD_SKILL_EDIT_TRADEOFF_RESOLUTION,
     FIELD_TARGET_CLASS, MAX_RECEIPT_QUERY_SCAN, hex_lower, retain_newest_receipt,
 };
+#[cfg(test)]
+pub(crate) use self::ledgers::persist_send_receipt;
 pub(crate) use self::ledgers::{
     SendReceiptOutcome, delivered_send_receipt_for_task, durable_send_receipts,
-    persist_send_receipt, stamp_attempt_pack_receipt_in_txn,
+    stamp_attempt_pack_receipt_in_txn,
 };
 #[cfg(test)]
 pub(crate) use self::ledgers::{

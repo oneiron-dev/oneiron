@@ -14,6 +14,7 @@ pub(crate) use manifest_authenticity::stamp_manifest_origin;
 pub(crate) use manifest_authenticity::{seeded_manifest_key, trusted_manifest_key};
 mod carry_forward_policy;
 mod confirm;
+mod connector_admission;
 mod constants;
 mod decision;
 mod decode;
@@ -28,6 +29,7 @@ mod foreign_agent;
 mod grants;
 mod hosted_tts_policy;
 mod input;
+pub(crate) mod mail_policy;
 mod operational_policy;
 mod owner_policy_mutation;
 mod pack_install_policy;
@@ -72,6 +74,7 @@ pub use self::confirm::{
 pub(crate) use self::confirm::{
     critical_write_confirm_binding, reconcile_critical_write_confirm_on_replicated_overwrite,
 };
+pub(crate) use self::connector_admission::ConnectorAdmissionQuotas;
 pub(crate) use self::constants::POLICY_OWNER_POLICY_NOTIFY_KEY;
 #[cfg(test)]
 pub(crate) use self::constants::{
@@ -113,8 +116,9 @@ use self::dreamer_precommit::{
     validate_dreamer_precommit,
 };
 pub(crate) use self::effect::{
-    ExternalEffectGovernance, check_external_effect_policy, check_external_effect_policy_pair,
-    evaluate_external_effect_policy, external_effect_approval_digest,
+    ApprovalContext, ExternalEffectGovernance, check_external_effect_policy,
+    check_external_effect_policy_pair, evaluate_external_effect_policy,
+    external_effect_approval_digest, native_mail_cold_approval_digest,
     record_external_effect_policy,
 };
 pub(crate) use self::grants::{
