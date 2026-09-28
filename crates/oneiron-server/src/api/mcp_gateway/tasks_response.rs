@@ -82,6 +82,18 @@ fn mcp_describe_result(
         oneiron::task_verb::TaskDescription::Section(section) => {
             mcp_tasks_section(server, actor, section)
         }
+        oneiron::task_verb::TaskDescription::SelfCard { tail } => {
+            let value =
+                serde_json::to_value(oneiron::task_verb::TaskDescription::SelfCard { tail })
+                    .map_err(|_| {
+                        McpGatewayError::new(
+                            -32603,
+                            "engine_error",
+                            "typed agent result cannot be encoded",
+                        )
+                    })?;
+            Ok((value, crate::mcp::McpPageSource::complete(1)))
+        }
         oneiron::task_verb::TaskDescription::Card { lines } => {
             let source = crate::mcp::McpPageSource::complete(lines.len());
             let value = serde_json::to_value(oneiron::task_verb::TaskDescription::Card { lines })
@@ -448,10 +460,23 @@ async fn execute_mcp_agent_verb(
             Ok((value, source, McpCarrierPolicy::Drain, None))
         }
         "describe" => {
+            if a.self_target == Some(true) {
+                let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+                let value = crate::api::context_board::describe_self_for_auth(
+                    server,
+                    auth,
+                    &json!({"self":true,"session_id":a.session_id,"task_ref":a.task_ref}),
+                )
+                .await
+                .map_err(|_| invalid())?;
+                let output: oneiron::task_verb::TaskDescription =
+                    serde_json::from_value(value).map_err(|_| invalid())?;
+                let (value, source) = mcp_describe_result(server, actor, output)?;
+                return Ok((value, source, McpCarrierPolicy::Drain, None));
+            }
             let input: oneiron::task_verb::sdk::DescribeRequest =
-                serde_json::from_value(json!({"task_ref":a.task_ref.clone()}))
+                serde_json::from_value(json!({"task_ref":a.task_ref,"session_id":a.session_id}))
                     .map_err(|_| invalid())?;
-
             let output =
                 oneiron::task_verb::sdk::describe(&memory, input).map_err(mcp_facade_error)?;
             let (value, source) = mcp_describe_result(server, actor, output)?;

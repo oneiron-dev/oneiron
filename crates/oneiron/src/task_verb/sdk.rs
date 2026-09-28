@@ -104,6 +104,10 @@ pub struct TaskRequest {
 pub struct DescribeRequest {
     #[serde(default)]
     pub task_ref: Option<String>,
+    #[serde(default, rename = "self")]
+    pub self_target: bool,
+    #[serde(default)]
+    pub session_id: Option<String>,
 }
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
@@ -409,4 +413,29 @@ fn short_ask_retry_identity_includes_recipient_deadline_and_branch() {
         let result = invoke(&memory, "tasks.ask", input).unwrap();
         assert!(handles.insert(result["handle"]["group_ref"].as_str().unwrap().to_owned()));
     }
+}
+
+#[cfg(test)]
+#[test]
+fn describe_self_shares_the_typed_sdk_result_and_mcp_arguments() {
+    let schema = mcp_arguments_schema("describe").expect("describe MCP schema");
+    for field in ["self", "session_id", "task_ref"] {
+        assert!(
+            schema["properties"].get(field).is_some(),
+            "{field} must reach the MCP caller"
+        );
+    }
+    let request: DescribeRequest =
+        serde_json::from_value(serde_json::json!({"self":true,"session_id":"run-1"})).unwrap();
+    assert!(request.self_target);
+    assert_eq!(request.session_id.as_deref(), Some("run-1"));
+    let card = crate::task_verb::TaskDescription::SelfCard {
+        tail: "brief".into(),
+    };
+    let body = serde_json::to_value(&card).unwrap();
+    assert_eq!(body["kind"], "self_card");
+    assert_eq!(
+        serde_json::from_value::<crate::task_verb::TaskDescription>(body).unwrap(),
+        card
+    );
 }

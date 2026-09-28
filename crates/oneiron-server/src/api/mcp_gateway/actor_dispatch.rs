@@ -295,10 +295,13 @@ pub(crate) async fn execute_mcp_tool(
     // and task detail/write facades have no recursive proof projection, so
     // they require an unrestricted record scope instead of dropping caveats.
     // A filtered read that names one task reads that task's card, which is
-    // task detail too.
+    // task detail too. `describe(self)` renders the whole run brief, not
+    // filtered rows, so it takes the same guard.
     let filtered_read = matches!(&args, McpValidatedToolArgs::Setup(_))
         || matches!(&args, McpValidatedToolArgs::Verb(verb)
-            if verb.tool.filtered_read() && verb.payload.arguments.task_ref.is_none());
+            if verb.tool.filtered_read()
+                && verb.payload.arguments.task_ref.is_none()
+                && verb.payload.arguments.self_target != Some(true));
     if !filtered_read {
         auth.require_unrestricted_record_scope().map_err(|_| {
             McpGatewayError::new(

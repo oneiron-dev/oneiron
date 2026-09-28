@@ -105,11 +105,13 @@
       "name": "describe",
       "input": "DescribeRequest",
       "output": "crate::task_verb::TaskDescription",
-      "call": "memory.describe(input.task_ref.as_deref().map(crate::EntityId::from_hex).transpose()?)?",
+      "call": "if input.self_target { Err(MemoryError::bad_request(\"describe(self) requires a bound run session\"))? } else { memory.describe(input.task_ref.as_deref().map(crate::EntityId::from_hex).transpose()?)? }",
       "scope": "Read",
       "mcp": "tool-first",
       "mcp_fields": {
-        "task_ref": "task_ref"
+        "task_ref": "task_ref",
+        "self": "self",
+        "session_id": "session_id"
       },
       "mcp_required_fields": [],
       "mcp_result": "mcp_describe_result(server, actor, output)?",

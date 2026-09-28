@@ -62,6 +62,9 @@ pub struct AssembledContext {
     /// This turn's MEMORIES section; absent when retrieval was skipped.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub memories: Option<MemoriesSection>,
+    /// Turn-one/fold prefix replacement or an append-only mid-run tail card.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub self_brief: Option<super::self_brief::PlacedSelfBrief>,
 }
 
 impl AssembledContext {
@@ -81,6 +84,29 @@ impl AssembledContext {
             budget,
             cursor,
             memories,
+            self_brief: None,
         }
+    }
+
+    /// Assemble the live run's self brief through the session's prefix custody.
+    /// A mid-run read never returns a prefix replacement.
+    pub fn assemble_self(
+        mut self,
+        vault: &crate::Vault,
+        state: &super::self_brief::SelfBriefState,
+        read_set: &super::SessionReadSet,
+        session: &mut super::self_brief::SelfBriefSession,
+        placement: super::self_brief::BriefPlacement,
+    ) -> crate::Result<Self> {
+        self.self_brief = Some(match placement {
+            super::self_brief::BriefPlacement::TurnOne => {
+                session.turn_one(vault, state, read_set)?
+            }
+            super::self_brief::BriefPlacement::Fold => session.fold(vault, state, read_set)?,
+            super::self_brief::BriefPlacement::MidRun => {
+                session.describe_self(vault, state, read_set)?
+            }
+        });
+        Ok(self)
     }
 }

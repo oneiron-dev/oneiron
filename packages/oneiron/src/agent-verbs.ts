@@ -35,7 +35,7 @@ export type TaskAskEffectAuthorization = "not_evaluated_by_ask";
 export interface TaskAskResult {effect_authorization: TaskAskEffectAuthorization; coverage: TaskAskCoverage; decision: TaskAskDecision; fallback: TaskAskFallback | null; evidence: TaskAskEvidence[]; settlement: TaskAskSettlement}
 export type TaskAskStatus = {Pending: {hold: "NoLiveRoute" | null}} | {Changed: {voided: string[]; generation: number}} | {Settled: TaskAskResult};
 export type TaskAskWait = { Pending: {trap_ref: string} } | { Changed: {voided: string[]; generation: number} } | { Ready: TaskAskResult } | {Park: {wait_id: string; effect: string; reason: string; prompt: string | null}};
-export type TaskDescription = {kind: "tasks_section"; rows: unknown[]; overflow: {known_omitted_rows: number; source_exhausted: boolean} | null} | {kind: "task_card"; lines: string[]};
+export type TaskDescription = {kind: "tasks_section"; rows: unknown[]; overflow: {known_omitted_rows: number; source_exhausted: boolean} | null} | {kind: "task_card"; lines: string[]} | {kind: "self_card"; tail: string};
 export interface TaskCancelReceipt {approval: "auto" | "proposed" | "approved" | "rejected"; effected: boolean; proposal_ref: string | null; gate_decision_ref: string | null; status: "queued" | "running" | "paused" | "completed" | "failed" | "cancelled" | "abandoned" | null; cancel_requested: boolean; forced: boolean}
 export function agentVerbs(invoke: AgentInvoke) {
   return {

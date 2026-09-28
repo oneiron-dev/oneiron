@@ -190,6 +190,10 @@ pub struct McpVerbArguments {
     pub scopes: Option<Vec<SubscriptionScope>>,
     #[serde(default)]
     pub task_ref: Option<String>,
+    #[serde(default, rename = "self")]
+    pub self_target: Option<bool>,
+    #[serde(default)]
+    pub session_id: Option<String>,
     #[serde(default)]
     pub room_ref: Option<String>,
     #[serde(default)]
@@ -205,12 +209,14 @@ pub struct McpVerbArguments {
 }
 
 impl McpVerbArguments {
-    fn present_fields(&self) -> [(&'static str, bool); 9] {
+    fn present_fields(&self) -> [(&'static str, bool); 11] {
         [
             ("key", self.key.is_some()),
             ("frame_epoch", self.frame_epoch.is_some()),
             ("scopes", self.scopes.is_some()),
             ("task_ref", self.task_ref.is_some()),
+            ("self", self.self_target.is_some()),
+            ("session_id", self.session_id.is_some()),
             ("room_ref", self.room_ref.is_some()),
             ("turn_ref", self.turn_ref.is_some()),
             ("spec", self.spec.is_some()),
@@ -250,6 +256,7 @@ impl McpVerbArguments {
             })?;
         }
         validate_optional_entity_ref(tool, "arguments.task_ref", self.task_ref.as_deref())?;
+        validate_optional_nonblank(tool, "arguments.session_id", self.session_id.as_deref())?;
         validate_optional_entity_ref(tool, "arguments.room_ref", self.room_ref.as_deref())?;
         validate_optional_entity_ref(tool, "arguments.turn_ref", self.turn_ref.as_deref())?;
         if self.scopes.as_ref().is_some_and(Vec::is_empty) {
