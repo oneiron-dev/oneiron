@@ -4,7 +4,7 @@ mod effect_grants;
 
 pub(super) use self::effect_consent::{
     external_effect_action_requirement, external_effect_composed_effect,
-    external_effect_consent_context,
+    external_effect_consent_context, native_mail_cold_composed_effect,
 };
 use self::effect_contacts::hydrate_external_effect_contact;
 use self::effect_grants::{
@@ -24,7 +24,7 @@ use super::decision::{GateDecision, GateOutcome, GateReasonCode, external_effect
 use super::definition_ceiling::agent_definition_ceiling_for_effect_actor;
 use super::doors::{GateConsentBinding, gate_decision_matches_pending_candidate};
 use super::grants::external_effect_grant_matches;
-use super::input::{ExternalEffectGateInput, GateEvaluatorInput};
+use super::input::{ConsentGateContext, ExternalEffectGateInput, GateEvaluatorInput};
 use super::resolution::PolicyManifestResolution;
 
 /// Connector-key target selected by governance. Accounting consumes this
@@ -33,6 +33,14 @@ pub(crate) struct ExternalEffectBudgetTarget {
     pub(crate) key_id: EntityId,
     pub(crate) key: connector_key::ConnectorKeyRecord,
     pub(crate) governing_connector: String,
+}
+
+/// Phase of one external-effect authorization at the ledger boundary.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum ApprovalContext {
+    Observe,
+    FirstAdmission,
+    Retry(crate::outbound_intent_ledger::AdmittedApproval),
 }
 
 /// Uneffected external-policy decision. The chokepoint may debit the returned
@@ -45,6 +53,7 @@ pub(crate) struct ExternalEffectGovernance {
     binding: GateConsentBinding,
     grant_ref: Option<String>,
     approve_once: Option<crate::consent::ApproveOnceAuthorization>,
+    approval_context: ApprovalContext,
     matched_grant: Option<(EntityId, StandingOutboundGrant)>,
     budget_target: Option<ExternalEffectBudgetTarget>,
     scoped_capability: Option<connector_key::ScopedCapabilityProvenance>,
@@ -64,6 +73,23 @@ impl ExternalEffectGovernance {
         &self,
     ) -> Option<&connector_key::ScopedCapabilityProvenance> {
         self.scoped_capability.as_ref()
+    }
+
+    /// The actual one-send tap selected under the admission writer lock.
+    /// Its proof is persisted only if this Gate decision and Pending insertion
+    /// commit together; a preflight lookup never authors admission authority.
+    pub(crate) fn admitted_mail_approval(
+        &self,
+        intent_id: crate::outbound_intent_ledger::IntentId,
+    ) -> Option<crate::outbound_intent_ledger::AdmittedApproval> {
+        if self.approval_context != ApprovalContext::FirstAdmission
+            || !self.input.external_effect.as_ref()?.mail_approve_once
+        {
+            return None;
+        }
+        self.approve_once.as_ref().map(|tap| {
+            crate::outbound_intent_ledger::AdmittedApproval::from_gate(intent_id, tap.digest())
+        })
     }
 
     #[must_use]
@@ -91,6 +117,14 @@ pub(crate) fn external_effect_approval_digest(
     external_effect_composed_effect(effect).map(|composed| composed.digest())
 }
 
+/// The pack's one-send owner tap uses the same bound digest as the gate's
+/// native-mail cold effect. A different target or send ref is a different tap.
+pub(crate) fn native_mail_cold_approval_digest(
+    effect: &ExternalEffectGateInput,
+) -> Option<crate::consent::EffectDigest> {
+    native_mail_cold_composed_effect(effect).map(|composed| composed.digest())
+}
+
 /// Evaluates consent and connector governance without charging or recording.
 /// The caller must either finalize the returned decision or abort its txn.
 pub(crate) fn evaluate_external_effect_policy(
@@ -100,10 +134,32 @@ pub(crate) fn evaluate_external_effect_policy(
     policy: &PolicyManifestResolution,
     required_grant_id: Option<EntityId>,
     prepared: Option<&crate::outbound_consent::tool_call::PreparedToolCall>,
+    approval_context: ApprovalContext,
 ) -> Result<ExternalEffectGovernance> {
     let mutation_recorded_at = crate::ports::recorded_at_in_txn(store, wtxn)?;
     let (mut hydrated_effect, counterparty_send_override) =
-        hydrate_external_effect_contact(store, &*wtxn, effect)?;
+        hydrate_external_effect_contact(store, &*wtxn, effect, policy)?;
+    // Send eligibility is checked with the Gate's writer snapshot. A sender
+    // released after dispatch preparation cannot authorize even a known
+    // contact through an ordinary policy grant. Terminal replay never enters
+    // this evaluation lane.
+    if hydrated_effect.channel == "email"
+        && hydrated_effect.verb == "send"
+        && let Some(identity) = hydrated_effect.channel_identity_ref
+        && crate::channel_identity_provider::native_mail::is_native_mail_identity_in_txn(
+            store, &*wtxn, identity,
+        )?
+        && !crate::channel_identity_provider::native_mail::native_mail_actor_may_send_in_txn(
+            store,
+            &*wtxn,
+            identity,
+            hydrated_effect.provenance.actor_entity_ref,
+        )?
+    {
+        return Err(crate::error::Error::InvalidConfig(
+            "inactive native-mail sender".into(),
+        ));
+    }
     hydrated_effect.standing_grant_ref = None;
     let mut scoped_mcp_grant_authorized = false;
     let matched_grant = standing_outbound_grant_for_effect(
@@ -140,8 +196,40 @@ pub(crate) fn evaluate_external_effect_policy(
     // honors revocation immediately, and an UNGRANTED irreversible effect is
     // the only one that enters the ask lane (invariant 1).
     let mut consent_grants = crate::consent::load_active_standing_grants(store, wtxn)?;
+    let mail_cold = crate::channel_identity_provider::native_mail::native_mail_cold_send_in_txn(
+        store,
+        &*wtxn,
+        &hydrated_effect,
+        policy,
+    )?;
+    let mail_graduated = crate::channel_identity_provider::native_mail::mail_graduated_in_txn(
+        store,
+        &*wtxn,
+        &hydrated_effect,
+        policy,
+    )?;
     let provisional = hydrated_effect.gate_input(agent_definition_ceiling, None);
     let requirement = external_effect_action_requirement(&hydrated_effect);
+    let mail_retry_authorized = match approval_context {
+        ApprovalContext::Retry(proof) => native_mail_cold_composed_effect(&hydrated_effect)
+            .is_some_and(|effect| effect.digest() == proof.effect_digest()),
+        _ => false,
+    };
+    if mail_retry_authorized
+        && let Some(bound) = requirement.as_ref()
+        && let Ok(grant) = crate::consent::ActionGrant::new(bound.clone())
+    {
+        consent_grants.push(crate::consent::StandingConsentGrant::Action(grant));
+    }
+    if mail_graduated
+        && let Some(bound) = requirement.as_ref()
+        && let Ok(grant) = crate::consent::ActionGrant::new(bound.clone())
+    {
+        // DEC-0006 evaluates its ordinary send requirement. The separate
+        // cold-mail class is echoed as coverage only after the gate has
+        // checked recipient class, actor, sender, and live owner grant here.
+        consent_grants.push(crate::consent::StandingConsentGrant::Action(grant));
+    }
     if let (Some(requirement), Some(effect_ctx)) =
         (requirement, provisional.external_effect.as_ref())
     {
@@ -181,14 +269,29 @@ pub(crate) fn evaluate_external_effect_policy(
     // unforgeable available authorization, or a typed spent-replay refusal.
     // The marker is changed to spent only when the final Gate decision is
     // recorded as Allow in this same transaction.
-    let approve_once = external_effect_composed_effect(&hydrated_effect)
-        .map(|effect| {
-            crate::consent::approve_once_authorization_in_txn(store, &*wtxn, &effect.digest())
+    let composed = if mail_cold || mail_retry_authorized {
+        native_mail_cold_composed_effect(&hydrated_effect)
+    } else {
+        external_effect_composed_effect(&hydrated_effect)
+    };
+    let approve_once = if mail_retry_authorized {
+        None // The first admission spent it; this exact Pending retry reuses it.
+    } else {
+        composed
+            .as_ref()
+            .map(|effect| {
+                crate::consent::approve_once_authorization_in_txn(store, &*wtxn, &effect.digest())
+            })
+            .transpose()?
+            .flatten()
+    };
+    let consent = if mail_cold || mail_retry_authorized {
+        composed.as_ref().map(|effect| {
+            ConsentGateContext::evaluate(effect, approve_once.as_ref(), &consent_grants)
         })
-        .transpose()?
-        .flatten();
-    let consent =
-        external_effect_consent_context(&hydrated_effect, approve_once.as_ref(), &consent_grants);
+    } else {
+        external_effect_consent_context(&hydrated_effect, approve_once.as_ref(), &consent_grants)
+    };
     let mut input = hydrated_effect.gate_input(agent_definition_ceiling, consent);
     // Resolve by audited identity, regardless of the caller's actor-class spelling.
     input.foreign_agent_ceiling = hydrated_effect
@@ -205,6 +308,8 @@ pub(crate) fn evaluate_external_effect_policy(
         .flatten();
     if let Some(effect) = input.external_effect.as_mut() {
         effect.scoped_mcp_grant_authorized = scoped_mcp_grant_authorized;
+        effect.mail_graduated = mail_graduated;
+        effect.mail_approve_once = mail_retry_authorized || (mail_cold && approve_once.is_some());
         // Only a still-available marker looked up by the engine-computed,
         // exact publish digest can release this one proposed public effect.
         effect.artifact_publish_approve_once = approve_once.is_some()
@@ -441,6 +546,7 @@ pub(crate) fn evaluate_external_effect_policy(
         binding,
         grant_ref,
         approve_once,
+        approval_context,
         matched_grant,
         budget_target,
         scoped_capability: scoped_mcp_capability,
@@ -460,11 +566,17 @@ pub(crate) fn record_external_effect_policy(
         binding,
         grant_ref,
         approve_once,
+        approval_context,
         matched_grant,
         budget_target: _,
         scoped_capability: _,
     } = governance;
     if decision.outcome() == GateOutcome::Allow
+        && (approval_context != ApprovalContext::Observe
+            || !input
+                .external_effect
+                .as_ref()
+                .is_some_and(|effect| effect.mail_approve_once))
         && let Some(authorization) = approve_once.as_ref()
     {
         crate::consent::spend_approve_once_in_txn(store, wtxn, authorization)?;
@@ -620,7 +732,13 @@ pub(crate) fn check_external_effect_policy(
     policy: &PolicyManifestResolution,
     admit_for_execution: bool,
 ) -> Result<(GateDecisionId, GateDecision, Option<EffectorBudgetCharge>)> {
-    let mut governance = evaluate_external_effect_policy(store, wtxn, effect, policy, None, None)?;
+    let context = if admit_for_execution {
+        ApprovalContext::FirstAdmission
+    } else {
+        ApprovalContext::Observe
+    };
+    let mut governance =
+        evaluate_external_effect_policy(store, wtxn, effect, policy, None, None, context)?;
     let mut effector_charge = None;
     if admit_for_execution && governance.outcome() == GateOutcome::Allow {
         let (charge, exhausted) = charge_admitted_external_effect(

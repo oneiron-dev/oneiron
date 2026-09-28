@@ -155,6 +155,16 @@ fn send_pending_with_gate<T: OutboundTransport>(
         }
     }
 
+    // A typed mail approval is valid only with the exact current Gate input.
+    // Hostless Resume has no such context: keep Pending instead of sending on
+    // yesterday's consent. Terminal dedup returned before this branch.
+    if replayed && prepared.is_none() && record.admitted_approval.is_some() {
+        let mut held = effect_result(&record, None, replayed, None);
+        held.gate_outcome = Some("pending".into());
+        held.gate_receipt_reasons
+            .push("mail_retry_requires_live_context".into());
+        return Ok(held);
+    }
     // A live retry keeps its frozen identity and paid admission, but today's
     // policy/authorization may still stop a Pending send. Do not charge, spend
     // approval, or record a second Allow. Terminal dedup never reaches here.
@@ -184,6 +194,9 @@ fn send_pending_with_gate<T: OutboundTransport>(
                 PreparedAuthorization::ScopedMcp { prepared, .. } => Some(prepared),
                 PreparedAuthorization::None => None,
             },
+            record
+                .admitted_approval
+                .map_or(gate::ApprovalContext::Observe, gate::ApprovalContext::Retry),
         )?;
         if governance.outcome() != GateOutcome::Allow {
             let (decision_id, decision) =
@@ -388,7 +401,7 @@ pub(super) fn recovery_governance(
     Ok(RecoveryGovernance::Allow)
 }
 
-fn effect_result(
+pub(super) fn effect_result(
     record: &crate::outbound_intent_ledger::IntentLedgerRecord,
     send_outcome: Option<OutboundSendOutcome>,
     replayed: bool,
