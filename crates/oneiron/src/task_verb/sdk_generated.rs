@@ -193,6 +193,14 @@ pub fn mcp_arguments_schema_from_input(
                 "task_ref".to_owned(),
                 schema.pointer("/properties/task_ref")?.clone(),
             );
+            properties.insert(
+                "self".to_owned(),
+                schema.pointer("/properties/self")?.clone(),
+            );
+            properties.insert(
+                "session_id".to_owned(),
+                schema.pointer("/properties/session_id")?.clone(),
+            );
             &[]
         }
         "tasks.create" => {
@@ -522,13 +530,19 @@ pub fn describe(
     memory: &Memory<'_>,
     input: DescribeRequest,
 ) -> MemoryResult<crate::task_verb::TaskDescription> {
-    memory.describe(
-        input
-            .task_ref
-            .as_deref()
-            .map(crate::EntityId::from_hex)
-            .transpose()?,
-    )
+    Ok(if input.self_target {
+        Err(MemoryError::bad_request(
+            "describe(self) requires a bound run session",
+        ))?
+    } else {
+        memory.describe(
+            input
+                .task_ref
+                .as_deref()
+                .map(crate::EntityId::from_hex)
+                .transpose()?,
+        )?
+    })
 }
 pub fn tasks_create(
     memory: &Memory<'_>,

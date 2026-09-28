@@ -20,9 +20,14 @@ pub use worlds::{WorldPresence, WorldsSection};
 mod frame;
 mod history;
 mod hydration;
+mod self_brief;
 pub(crate) use history::validate_board_claim;
 pub use history::{
     BoardHistoryError, BoardSelection, BoardTurn, BoardTurnReceipt, ReconstructedBoard,
+};
+pub use self_brief::{
+    BriefPlacement, BriefSkillRow, ClassLimit, ClassVerdict, CommunicationLimits, PlacedSelfBrief,
+    SelfBrief, SelfBriefInput, SelfBriefSession, SelfBriefState,
 };
 mod memories;
 mod memories_frame;
