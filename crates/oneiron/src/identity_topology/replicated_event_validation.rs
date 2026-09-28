@@ -68,6 +68,14 @@ impl Vault {
             let record = self
                 .identity_topology_event_in_txn(rtxn, &event_id)?
                 .ok_or(Error::CorruptedIndex("identity topology event index"))?;
+            if matches!(
+                record.action,
+                StoredIdentityOpAction::AdmissionDisposition(_)
+                    | StoredIdentityOpAction::AuthorAttribution { .. }
+                    | StoredIdentityOpAction::AuthorRedaction { .. }
+            ) {
+                continue;
+            }
             events.push(IdentityTopologyEvent {
                 event_id,
                 seq: record.seq,
@@ -132,7 +140,27 @@ impl Vault {
         // checked. An available mismatched actor rejects before mutation.
         self.validate_replicated_identity_topology_actor_in_txn(rtxn, record)?;
         match record.action.to_fold_action() {
+            IdentityTopologyAction::Disposition => {
+                if let StoredIdentityOpAction::AuthorAttribution { actor, .. } = &record.action
+                    && let Some(kind) = self.get_entity_type_in_txn(rtxn, &actor.entity_ref())?
+                {
+                    crate::provenance::validate_actor_class(kind, actor.actor_class())?;
+                }
+            }
             IdentityTopologyAction::Apply(op) => {
+                for participant in op.participants() {
+                    if crate::deletion::topology_delete_reservation_in_txn(
+                        &self.store,
+                        rtxn,
+                        &participant,
+                    )?
+                    .is_some()
+                    {
+                        return Err(Error::Sync(SyncError::InvalidIdentityTopologyEventBody(
+                            "identity topology participant reserved for deletion",
+                        )));
+                    }
+                }
                 if let IdentityTopologyParticipantValidation::Invalid(rejection) =
                     self.validate_identity_op_participants_in_txn(rtxn, &op)?
                 {
@@ -158,6 +186,37 @@ impl Vault {
                         self.validate_identity_op_participants_in_txn(rtxn, &op)?
                 {
                     return Err(Error::Sync(SyncError::IdentityTopologyRejected(rejection)));
+                }
+            }
+            IdentityTopologyAction::CancelProposal { proposal } => {
+                let StoredIdentityOpAction::ProposalCancellation { participant, .. } =
+                    &record.action
+                else {
+                    return Err(Error::InvariantViolation("cancellation action codec"));
+                };
+                let Some(target) = self.identity_topology_event_in_txn(rtxn, &proposal)? else {
+                    return Ok(());
+                };
+                let IdentityTopologyAction::Apply(op) = target.action.to_fold_action() else {
+                    return Err(Error::Sync(SyncError::InvalidIdentityTopologyEventBody(
+                        "proposal cancellation must name a parked op",
+                    )));
+                };
+                if target.approval != crate::claim::ClaimApprovalStatus::Proposed
+                    || !matches!(
+                        op,
+                        IdentityTopologyOp::Merge(_) | IdentityTopologyOp::Split(_)
+                    )
+                    || !op.participants().contains(participant)
+                    || !matches!(
+                        record.approval,
+                        crate::claim::ClaimApprovalStatus::Auto
+                            | crate::claim::ClaimApprovalStatus::Approved
+                    )
+                {
+                    return Err(Error::Sync(SyncError::InvalidIdentityTopologyEventBody(
+                        "proposal cancellation must name a deleted participant in a parked op",
+                    )));
                 }
             }
             IdentityTopologyAction::ResolveProposal { proposal, .. } => {
@@ -296,5 +355,22 @@ impl Vault {
             )?;
         }
         Ok(())
+    }
+}
+
+impl Vault {
+    #[cfg_attr(not(feature = "sync"), allow(dead_code))]
+    pub(crate) fn validate_identity_disposition_binding_in_txn(
+        &self,
+        rtxn: &heed::RoTxn<'_>,
+        id: &EntityId,
+        record: &StoredIdentityOpEvent,
+    ) -> Result<()> {
+        super::admission_disposition::validate_incoming_disposition_in_txn(
+            &self.store,
+            rtxn,
+            id,
+            record,
+        )
     }
 }
