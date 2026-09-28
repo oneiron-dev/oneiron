@@ -306,7 +306,20 @@ fn code_sandbox_plain_js_prompt_surface_is_docs_only_and_host_bound() {
     assert!(!dts.contains("batch"));
     assert!(!dts.contains("bulk"));
     assert!(!dts.contains("raw"));
-    assert!(!dts.contains("delete"));
+    // Deletion exists only as the canonical reviewable proposal type; no
+    // delete verb is advertised.
+    assert!(
+        !dts.replace("FileDeleteProposal", "")
+            .replace("\"file-delete\"", "")
+            .contains("delete")
+    );
+    assert!(
+        !contract
+            .runtime()
+            .advertised_prompt_verbs()
+            .iter()
+            .any(|verb| verb.contains("delete"))
+    );
     assert!(!dts.contains("putEntity"));
     assert!(!dts.contains("putReplicated"));
     assert!(!dts.contains("setEdgeWeight"));
