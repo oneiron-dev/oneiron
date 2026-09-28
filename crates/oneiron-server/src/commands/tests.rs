@@ -1019,6 +1019,90 @@ fn api_config_channel_refuses_a_credential_it_cannot_carry_safely() {
     assert!(api::curl_config("line\nheader = \"x: y\"").is_err());
 }
 
+#[test]
+fn cli_binding_proof_authenticates_only_its_logged_holder() {
+    let dir = tempfile::tempdir().unwrap();
+    let vault = std::sync::Arc::new(
+        oneiron::Vault::open(dir.path(), oneiron::VaultConfig::device()).unwrap(),
+    );
+    let server = crate::server::SyncServer::new(
+        vault,
+        crate::config::SyncServerConfig {
+            auth_secret: Some("cli-slip-issuer".into()),
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    let (slip, key) = crate::test_credentials::credential(&server, "jti=cli-holder-proof");
+    assert!(slip.caveats.is_empty(), "this pins the uncaveated control");
+    let token = slip.to_token().unwrap();
+    let seed: String = key.to_bytes().iter().map(|b| format!("{b:02x}")).collect();
+    let json = api::signed_binding_for_seed(&token, &seed).unwrap();
+    let proof: crate::auth::BindingProof = serde_json::from_str(&json).unwrap();
+    let auth =
+        crate::auth::CoreAuth::from_slip_token(&token, &proof, server.vault().as_ref()).unwrap();
+    assert!(auth.is_owner_grade());
+    assert!(api::signed_binding_for_seed(&token, &"00".repeat(32)).is_err());
+}
+
+#[test]
+fn cli_binding_proof_accepts_the_transferred_current_holder() {
+    let dir = tempfile::tempdir().unwrap();
+    let vault = std::sync::Arc::new(
+        oneiron::Vault::open(dir.path(), oneiron::VaultConfig::device()).unwrap(),
+    );
+    let server = crate::server::SyncServer::new(
+        vault,
+        crate::config::SyncServerConfig {
+            auth_secret: Some("cli-transferred-slip-issuer".into()),
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    let (mut slip, old_holder) =
+        crate::test_credentials::credential(&server, "jti=cli-transferred-holder");
+    let recipient = ed25519_dalek::SigningKey::from_bytes(&[0xA5; 32]);
+    slip.attenuate_to(
+        oneiron::authority::SlipCaveat {
+            ttl_secs: Some(60),
+            ..Default::default()
+        },
+        &old_holder,
+        recipient.verifying_key().to_bytes(),
+    )
+    .unwrap();
+    let token = slip.to_token().unwrap();
+    let old_seed: String = old_holder
+        .to_bytes()
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect();
+    assert!(api::signed_binding_for_seed(&token, &old_seed).is_err());
+
+    let recipient_seed: String = recipient
+        .to_bytes()
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect();
+    let json = api::signed_binding_for_seed(&token, &recipient_seed).unwrap();
+    let proof: crate::auth::BindingProof = serde_json::from_str(&json).unwrap();
+    let auth =
+        crate::auth::CoreAuth::from_slip_token(&token, &proof, server.vault().as_ref()).unwrap();
+    assert!(!auth.is_owner_grade());
+}
+
+#[test]
+fn pairing_config_sends_slip_and_holder_proof_without_an_injected_option() {
+    let binding = r#"{"timestamp":42,"nonce":"fresh","signature":"abcd"}"#;
+    let config = api::curl_config_with_binding("v2.slip.logged", Some(binding)).unwrap();
+    assert_eq!(config.lines().count(), 2);
+    assert!(config.contains("Authorization: Bearer v2.slip.logged"));
+    assert!(config.contains(r#"x-oneiron-binding: {\"timestamp\":42"#));
+    assert!(
+        api::curl_config_with_binding("v2.slip.logged", Some("ok\nurl = \"https://bad\"")).is_err()
+    );
+}
+
 /// curl reads the HOST's own config file before any flag on its command line,
 /// and it reads it EVEN when `--config` is given. A line there that added a
 /// transfer would be handed the credential this process puts on the config
