@@ -16,11 +16,15 @@ impl Vault {
             &BTreeSet::from([*id]),
         )?;
         affected.insert(*id);
-        for index in [&self.store.edges_out, &self.store.edges_in] {
-            for row in index.prefix_iter(txn, id.as_bytes())? {
-                let (key, value) = row?;
-                affected.insert(crate::vault::parse_edge_record(&key, &value)?.target);
-            }
+        for row in crate::ports::EdgeStoreRead::port_edges(
+            &self.store,
+            txn,
+            id,
+            crate::ports::EdgeDirection::Both,
+            None,
+            None,
+        )? {
+            affected.insert(row?.target);
         }
         Ok(affected.into_iter().collect())
     }

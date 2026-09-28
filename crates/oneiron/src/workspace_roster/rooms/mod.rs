@@ -22,7 +22,8 @@ pub(crate) use witness::admit_witness;
 
 /// One addressed room turn (actor, addressed agents, message ids, reply/thread links). Key: id16
 /// (turn id).
-pub(super) const TURNS: SideTable<EntityId, RoomTurn, LegacyJson> = SideTable::new(&side_table::ROOMS_TURN);
+pub(super) const TURNS: SideTable<EntityId, RoomTurn, LegacyJson> =
+    SideTable::new(&side_table::ROOMS_TURN);
 /// Maps a host-configured platform handle to the one present actor it addresses within a room.
 /// Key: id16 (room id) + bytes (platform handle).
 const HANDLES: SideTable<(EntityId, String), EntityId, Raw> =

@@ -372,16 +372,10 @@ pub(crate) fn record_possible_delivery(
     id: [u8; 32],
     now_ms: u64,
 ) -> IntentLedgerResult<IntentLedgerRecord> {
-    let key = intent_ledger_key(&id);
     let mut wtxn = vault.store.env.write_txn().map_err(Error::from)?;
-    let raw = vault
-        .store
-        .vault_meta
-        .get(&wtxn, &key)?
-        .ok_or(IntentLedgerError::InvalidRecord(
-            "possible delivery target is missing",
-        ))?;
-    let mut record = decode_record(&key, &raw)?;
+    let mut record = get_ledger_record(vault, &wtxn, &id)?.ok_or(
+        IntentLedgerError::InvalidRecord("possible delivery target is missing"),
+    )?;
     if record.state != IntentState::Pending || record.recorded_outcome.is_some() {
         return Err(IntentLedgerError::InvalidRecord(
             "possible delivery requires outcome-free Pending",
@@ -390,10 +384,7 @@ pub(crate) fn record_possible_delivery(
     if !record.delivery_uncertain {
         record.delivery_uncertain = true;
         record.updated_ms = now_ms.max(record.created_ms);
-        vault
-            .store
-            .vault_meta
-            .put(&mut wtxn, &key, &encode_record(&record)?)?;
+        LEDGER.put(&vault.store, &mut wtxn, &id, &record)?;
         wtxn.commit().map_err(Error::from)?;
     } else {
         drop(wtxn);
@@ -426,11 +417,7 @@ pub(crate) fn reconcile_connector_intent_in_txn(
         record.state = IntentState::Abandoned;
         record.recorded_outcome = Some(RecordedOutboundOutcome::Abandoned(reason));
         record.updated_ms = now_ms.max(record.created_ms);
-        vault.store.vault_meta.put(
-            wtxn,
-            &intent_ledger_key(&record.id),
-            &encode_record(&record)?,
-        )?;
+        LEDGER.put(&vault.store, wtxn, &record.id, &record)?;
     }
     Ok(Some(super::resolution::IntentResolution::from_record(
         &record,

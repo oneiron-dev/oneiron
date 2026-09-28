@@ -472,9 +472,7 @@ impl Vault {
     ) -> Result<(EntityId, ProjectRecord)> {
         let id = match requested {
             Some(id) => id,
-            None => {
-                ROOT.get(&self.store, txn, &())?.ok_or_else(invalid)?
-            }
+            None => ROOT.get(&self.store, txn, &())?.ok_or_else(invalid)?,
         };
         let mut body: ProjectRecord = record(&self.store, txn, id, self.project_type_byte()?)?
             .ok_or(Error::EntityNotFound)?;

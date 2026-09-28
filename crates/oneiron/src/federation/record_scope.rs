@@ -51,7 +51,7 @@ pub(crate) fn read_scope_revision(store: &impl ManifestDbs, txn: &heed::RoTxn<'_
     match SCOPE_RECORD_REVISION.get(store, txn, &())? {
         None => Ok(0),
         Some(bytes) => {
-            Ok(u64::from_le_bytes(bytes.as_ref().try_into().map_err(
+            Ok(u64::from_le_bytes(bytes.as_slice().try_into().map_err(
                 |_| Error::CorruptedIndex("record scope revision"),
             )?))
         }

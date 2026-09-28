@@ -44,6 +44,8 @@ fn normalized_policy_scope(entity_type: u8, data: &[u8]) -> Option<Vec<u8>> {
     }
 }
 
+// One door stages every effect of a put inside its write transaction.
+#[allow(clippy::too_many_lines)]
 pub(in crate::batch) fn apply_put(
     store: &Store,
     wtxn: &mut RwTxn<'_>,
