@@ -74,13 +74,7 @@ impl AuthenticatedOwner {
                 "owner proof belongs to another vault",
             )));
         }
-        let human = crate::ports::EntityStoreRead::port_entity_raw(&vault.store, txn, &self.actor)?
-            .and_then(|raw| crate::batch::EntityMetadataHeader::parse(&raw))
-            .is_some_and(|header| header.entity_type == crate::registry::ENTITY_TYPE_PERSON);
-        if !human
-            || vault.entity_lifecycle_state_in_txn(txn, &self.actor)?
-                != crate::identity_topology::EntityLifecycleState::Active
-        {
+        if !person_is_live_in_txn(vault, txn, &self.actor)? {
             return Err(Error::Gate(GateError::ConsentOwnerNotAuthenticated(
                 "authenticated owner is no longer active",
             )));
@@ -95,6 +89,21 @@ impl AuthenticatedOwner {
             decision_id: self.decision_id,
         }
     }
+}
+
+/// The authentication door's liveness test: the id names a PERSON whose
+/// identity lifecycle is Active (not deleted, merged or split).
+pub(crate) fn person_is_live_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    id: &EntityId,
+) -> Result<bool> {
+    let human = crate::ports::EntityStoreRead::port_entity_raw(&vault.store, txn, id)?
+        .and_then(|raw| crate::batch::EntityMetadataHeader::parse(&raw))
+        .is_some_and(|header| header.entity_type == crate::registry::ENTITY_TYPE_PERSON);
+    Ok(human
+        && vault.entity_lifecycle_state_in_txn(txn, id)?
+            == crate::identity_topology::EntityLifecycleState::Active)
 }
 
 /// The pinned Gate `actor_class` for owner-authored consent decisions.

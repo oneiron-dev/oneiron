@@ -99,8 +99,8 @@ pub use self::registry::{
 
 pub(crate) use self::bound::bound_exceeded;
 pub(crate) use self::doors::{
-    approve_once_authorization_in_txn, revoke_standing_grant_in_txn, spend_approve_once_in_txn,
-    standing_grant_is_active_in_txn,
+    approve_once_authorization_in_txn, person_is_live_in_txn, revoke_standing_grant_in_txn,
+    spend_approve_once_in_txn, standing_grant_is_active_in_txn,
 };
 pub(crate) use self::effect::{
     ApproveOnceAuthorization, classify_composed_effect, evaluate_consent,

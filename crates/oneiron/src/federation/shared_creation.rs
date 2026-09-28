@@ -162,7 +162,8 @@ impl Vault {
                 hub_sync_imported: false,
             });
         }
-        if preset.is_some() {
+        let mut seeded_manifest = None;
+        if let Some(preset) = preset {
             let id = crate::gate::default_policy_manifest_id()?;
             let default = crate::gate::default_policy_manifest()?;
             match crate::ports::EntityStoreRead::port_entity_raw(&self.store, &txn, &id)? {
@@ -181,20 +182,10 @@ impl Vault {
                 }
                 _ => {
                     // Defaults are ordinary editable stored policy, not a
-                    // second runtime policy engine.
-                    ops.push(BatchOp::Put {
-                        id,
-                        entity_type: crate::registry::ENTITY_TYPE_POLICY_MANIFEST,
-                        occurred: TimeRange {
-                            start: now,
-                            end: now,
-                        },
-                        learned_at: now,
-                        data: default,
-                        allow_maintenance: true,
-                        allow_reserved_predicate: false,
-                        hub_sync_imported: false,
-                    });
+                    // second runtime policy engine. The preset's act-policy
+                    // rows ride the same manifest through the owner door.
+                    let data = super::pending_act::with_preset_act_policies(default, preset)?;
+                    seeded_manifest = Some((id, data));
                     creation.policy_ref = Some(id.to_hex());
                 }
             }
@@ -210,6 +201,9 @@ impl Vault {
             false,
             true,
         )?;
+        if let Some((id, data)) = seeded_manifest {
+            self.write_owner_policy_manifest_in_txn(owner, &mut txn, id, data, now)?;
+        }
         SHARED_VAULT_CREATION.put(&self.store, &mut txn, &(), &creation)?;
         txn.commit()?;
         Ok(creation)

@@ -2,6 +2,7 @@
 
 use rmpv::Value;
 
+use crate::federation::SharedActPolicy;
 use crate::gate::ceiling::{
     ActorCeiling, DelegationGrantRecord, OwnerRowAction, PolicyApprovalCeiling, PolicyAxes,
     PolicyCriticality, PolicyOwnerPatternRow, PolicyOwnerPolicyRow, PolicyRule, PolicySensitivity,
@@ -15,6 +16,7 @@ use crate::gate::constants::{
     RULE_AXES_KEY, RULE_EXACT_KEY, RULE_PREFIX_KEY,
 };
 use crate::gate::grants::PolicyScopedGrant;
+use std::collections::BTreeMap;
 
 use super::decode_map_util::{
     MapValue, optional_bool, optional_bool_default, optional_string, optional_value,
@@ -239,6 +241,27 @@ pub(super) fn parse_scoped_grants(value: &Value) -> Option<Vec<PolicyScopedGrant
         });
     }
     Some(grants)
+}
+
+/// Parses the optional shared-vault act-policy table: act name to one strict
+/// row map. An invalid name, a positional row or a row that fails validation
+/// drops the whole manifest, so a bad table never reverts to shipped defaults.
+pub(super) fn parse_shared_act_policies(
+    value: &Value,
+) -> Option<BTreeMap<String, SharedActPolicy>> {
+    let Value::Map(rows) = value else {
+        return None;
+    };
+    let mut parsed = BTreeMap::new();
+    for (key, row) in rows {
+        let act = key.as_str()?;
+        let policy = SharedActPolicy::from_manifest_value(row)?;
+        policy.validate_named(act).ok()?;
+        if parsed.insert(act.to_owned(), policy).is_some() {
+            return None;
+        }
+    }
+    Some(parsed)
 }
 
 /// Parses the `owner_policy_rows` array. Every entry must be a valid row map

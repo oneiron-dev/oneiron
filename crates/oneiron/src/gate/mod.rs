@@ -85,7 +85,9 @@ pub(crate) use self::constants::{
     POLICY_ROW_ACTION_KEY, POLICY_ROW_ACTIVE_KEY, POLICY_ROW_REF_KEY, POLICY_ROW_TEXT_KEY,
     POLICY_ROW_WORLD_REF_KEY,
 };
-pub(crate) use self::constants::{POLICY_SCHEMA_VERSION, SCOPED_READ_EFFECTOR_CORE_READ};
+pub(crate) use self::constants::{
+    POLICY_SCHEMA_VERSION, POLICY_SHARED_ACT_POLICIES_KEY, SCOPED_READ_EFFECTOR_CORE_READ,
+};
 #[cfg(test)]
 pub(crate) use self::decision::gate_metric_emission_count_for_test;
 pub(crate) use self::decision::{GateDecision, GateMetrics, GateOutcome, GateReasonCode};
