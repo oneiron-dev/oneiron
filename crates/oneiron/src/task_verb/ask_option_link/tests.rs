@@ -357,6 +357,8 @@ fn settlement_replay_without_issuer_proof_is_refused_for_unissued_and_voided_lin
                 order: 1,
                 reason: TaskAskEvidenceReason::Counted,
                 ladder_changed: None,
+                soft_confirm: false,
+                delegation_grant_ref: None,
             }],
             settlement: TaskAskSettlement {
                 group_ref: ask.group_ref,
@@ -372,6 +374,7 @@ fn settlement_replay_without_issuer_proof_is_refused_for_unissued_and_voided_lin
                 question_digest: group.question_digest,
                 unmet_sources: BTreeSet::new(),
                 outcome_answer_ref: None,
+                policy_surface: group.policy_surface,
                 link_result_proof: None,
             },
         };
