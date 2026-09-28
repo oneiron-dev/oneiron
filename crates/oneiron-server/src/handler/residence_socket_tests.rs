@@ -1091,10 +1091,10 @@ async fn two_vault_thin_world_claim_edit_promotes_into_its_world_month() {
         home_world.get_deep_value(),
         device_world.doc.get_deep_value()
     );
-    assert_eq!(
-        fixture.home.get_raw(&fixture.claim).unwrap(),
-        fixture.device.get_raw(&fixture.claim).unwrap()
-    );
+    // Both vaults materialize the edit. The home re-proposes it: a replicated
+    // change cannot carry the old body's critical-confirm Auto status.
+    assert!(carries_edit(&fixture.home, fixture.claim));
+    assert!(carries_edit(&fixture.device, fixture.claim));
     fixture.server_task.abort();
 }
 

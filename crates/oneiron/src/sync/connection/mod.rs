@@ -152,13 +152,15 @@ impl SyncConnection {
         {
             return Err(crate::sync::TransportError::InvalidWindowKey);
         }
-        self.manager
-            .vault()
-            .put_entity(&item, entity_type, occurred, learned_at, body)
-            .map_err(|e| crate::sync::TransportError::Storage(e.to_string()))?;
+        // Open the canonical window before the write: opening rematerializes
+        // its current rows, which must never land over this edit.
         let loaded = self
             .manager
             .open_window(window)
+            .map_err(|e| crate::sync::TransportError::Storage(e.to_string()))?;
+        self.manager
+            .vault()
+            .put_entity(&item, entity_type, occurred, learned_at, body)
             .map_err(|e| crate::sync::TransportError::Storage(e.to_string()))?;
         let raw = self
             .manager
