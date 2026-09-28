@@ -6,14 +6,49 @@ use crate::error::{Error, Result};
 use crate::outbound_intent_ledger::{
     IntentLedgerError, IntentRecoveryReport, IntentState, OutboundSendOutcome,
 };
+use crate::side_table::{self, CodecError, Raw, RawValue, SideTable};
 
 use super::authority::OutboundBindingAuthority;
 use super::execution::ScopedResultTransport;
 use super::result_scrub::OutboundResultSender;
 
-const AUTHORIZED_RECOVERY_LEASE_KEY: &[u8] = b"outbound:authorized_recovery_lease:v1";
-
 const AUTHORIZED_RECOVERY_LEASE_VALUE_LEN: usize = 24;
+
+/// The device-local best-effort recovery lease: a singleton row.
+const AUTHORIZED_RECOVERY_LEASE: SideTable<(), AuthorizedRecoveryLease, Raw> =
+    SideTable::new(&side_table::OUTBOUND_AUTHORIZED_RECOVERY_LEASE);
+
+/// `token(16) ++ lease_until_ms(8, little-endian)`.
+struct AuthorizedRecoveryLease {
+    token: AttemptId,
+    lease_until_ms: u64,
+}
+
+impl RawValue for AuthorizedRecoveryLease {
+    fn to_raw(&self) -> std::result::Result<Vec<u8>, CodecError> {
+        let mut encoded = Vec::with_capacity(AUTHORIZED_RECOVERY_LEASE_VALUE_LEN);
+        encoded.extend_from_slice(self.token.as_bytes());
+        encoded.extend_from_slice(&self.lease_until_ms.to_le_bytes());
+        Ok(encoded)
+    }
+
+    fn from_raw(raw: &[u8]) -> std::result::Result<Self, CodecError> {
+        if raw.len() != AUTHORIZED_RECOVERY_LEASE_VALUE_LEN {
+            return Err(Error::CorruptedIndex("outbound recovery lease row").into());
+        }
+        let token = AttemptId::from_bytes(&raw[..16])
+            .map_err(|_| Error::CorruptedIndex("outbound recovery lease row"))?;
+        let lease_until_ms = u64::from_le_bytes(
+            raw[16..]
+                .try_into()
+                .map_err(|_| Error::CorruptedIndex("outbound recovery lease row"))?,
+        );
+        Ok(Self {
+            token,
+            lease_until_ms,
+        })
+    }
+}
 
 /// Recovery result plus final-boundary authorization/scrub counters.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -174,31 +209,20 @@ fn acquire_authorized_recovery_lease(
     lease_until_ms: u64,
 ) -> Result<bool> {
     vault.with_write_txn(|wtxn| {
-        if let Some(raw) = vault
-            .store
-            .vault_meta
-            .get(&*wtxn, AUTHORIZED_RECOVERY_LEASE_KEY)?
+        if let Some(lease) = AUTHORIZED_RECOVERY_LEASE.get(&vault.store, &*wtxn, &())?
+            && lease.lease_until_ms > now_ms
         {
-            let raw: &[u8] = &raw;
-            if raw.len() != AUTHORIZED_RECOVERY_LEASE_VALUE_LEN {
-                return Err(Error::CorruptedIndex("outbound recovery lease row"));
-            }
-            let expires_at = u64::from_le_bytes(
-                raw[16..]
-                    .try_into()
-                    .map_err(|_| Error::CorruptedIndex("outbound recovery lease row"))?,
-            );
-            if expires_at > now_ms {
-                return Ok(false);
-            }
+            return Ok(false);
         }
-        let mut encoded = Vec::with_capacity(AUTHORIZED_RECOVERY_LEASE_VALUE_LEN);
-        encoded.extend_from_slice(token.as_bytes());
-        encoded.extend_from_slice(&lease_until_ms.to_le_bytes());
-        vault
-            .store
-            .vault_meta
-            .put(wtxn, AUTHORIZED_RECOVERY_LEASE_KEY, &encoded)?;
+        AUTHORIZED_RECOVERY_LEASE.put(
+            &vault.store,
+            wtxn,
+            &(),
+            &AuthorizedRecoveryLease {
+                token,
+                lease_until_ms,
+            },
+        )?;
         Ok(true)
     })
 }
@@ -207,22 +231,11 @@ fn acquire_authorized_recovery_lease(
 /// exactly-once authority; durable ledger state and its replay fence are.
 fn release_authorized_recovery_lease(vault: &Vault, token: AttemptId) -> Result<()> {
     vault.with_write_txn(|wtxn| {
-        let Some(raw) = vault
-            .store
-            .vault_meta
-            .get(&*wtxn, AUTHORIZED_RECOVERY_LEASE_KEY)?
-        else {
+        let Some(lease) = AUTHORIZED_RECOVERY_LEASE.get(&vault.store, &*wtxn, &())? else {
             return Ok(());
         };
-        let raw: &[u8] = &raw;
-        if raw.len() != AUTHORIZED_RECOVERY_LEASE_VALUE_LEN {
-            return Err(Error::CorruptedIndex("outbound recovery lease row"));
-        }
-        if &raw[..16] == token.as_bytes() {
-            vault
-                .store
-                .vault_meta
-                .delete(wtxn, AUTHORIZED_RECOVERY_LEASE_KEY)?;
+        if lease.token == token {
+            AUTHORIZED_RECOVERY_LEASE.delete(&vault.store, wtxn, &())?;
         }
         Ok(())
     })

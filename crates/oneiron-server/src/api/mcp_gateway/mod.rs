@@ -40,6 +40,7 @@ pub(crate) use self::facade_verbs::{
     execute_mcp_calendar, execute_mcp_edit, execute_mcp_nav, execute_mcp_read, mcp_ask_result,
     mcp_facade_error, mcp_routed_ask_result,
 };
+use self::tasks_response::mcp_memory;
 pub(crate) use self::tasks_response::{
     execute_mcp_generated_verb, mcp_actor_class_wire, mcp_actor_result, mcp_api_error,
     mcp_engine_error, mcp_error_response, mcp_scoped_read, mcp_text_content,

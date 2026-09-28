@@ -24,6 +24,7 @@ pub(crate) use projection::{reconcile_project_rooms, validate_project_body, vali
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::error::{Error, Result};
 use crate::registry::{ENTITY_TYPE_CONVERSATION, TypeByteZone};
+use crate::side_table::{self, Named, Raw, SideTable};
 use crate::{EntityId, TimeRange, Vault};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
@@ -32,12 +33,22 @@ use std::collections::BTreeSet;
 /// vaults can assign another slot; use Vault::project_type_byte for the binding.
 pub const PROJECT_TYPE_BYTE: u8 = 103;
 const PACK: &str = "oneiron.project";
-const ROOT: &[u8] = b"project.root.v1";
-/// A hub hop uses a smaller PPR budget than an ordinary `belongs_to` edge.
+
+/// The root project's entity id, seeded once at first boot. Key: ().
+const ROOT: SideTable<(), EntityId, Raw> = SideTable::new(&side_table::PROJECT_ROOT);
+
+/// Index from a project's derived home room back to the project that owns it. Key: id16 (derived
+/// home-room id).
+pub(super) const ROOM_PROJECT: SideTable<EntityId, EntityId, Raw> =
+    SideTable::new(&side_table::PROJECT_ROOM_OWNER);
+
+/// Change-log event recording a project's home-room membership transition. Key: id16 (project) +
+/// id16 (change event id).
+const CHANGES: SideTable<(EntityId, EntityId), ProjectRoomChange, Named> =
+    SideTable::new(&side_table::PROJECT_ROOM_CHANGES);
 pub(crate) const HUB_BELONGS_TO_LAMBDA: f32 = 0.05;
+
 const HUB_MEMBERSHIP_WEIGHT: f32 = 0.05;
-pub(super) const ROOM_PROJECT: &[u8] = b"project.room_owner.v1/";
-const CHANGES: &[u8] = b"project.room_changes.v1/";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -174,19 +185,10 @@ pub(crate) fn is_project_entity(
     txn: &heed::RoTxn<'_>,
     id: EntityId,
 ) -> Result<bool> {
-    let Some(root) = store.vault_meta().get(txn, ROOT)? else {
+    let Some(root) = ROOT.get(store, txn, &())? else {
         return Ok(false);
     };
-    let Some(root_raw) = crate::ports::EntityStoreRead::port_entity_raw(
-        store,
-        txn,
-        &EntityId::from_bytes(
-            root.as_ref()
-                .try_into()
-                .map_err(|_| Error::CorruptedIndex("project root id"))?,
-        )?,
-    )?
-    else {
+    let Some(root_raw) = crate::ports::EntityStoreRead::port_entity_raw(store, txn, &root)? else {
         return Err(Error::CorruptedIndex("project root missing"));
     };
     let root_header = EntityMetadataHeader::parse(&root_raw)
@@ -272,18 +274,13 @@ impl Vault {
     }
     pub fn root_project(&self) -> Result<EntityId> {
         let txn = self.store.env.read_txn()?;
-        let raw = self.store.vault_meta.get(&txn, ROOT)?.ok_or_else(invalid)?;
-        EntityId::from_bytes(raw.as_ref().try_into().map_err(|_| invalid())?)
+        ROOT.get(&self.store, &txn, &())?.ok_or_else(invalid)
     }
     pub fn project_room_changes(&self, project: EntityId) -> Result<Vec<ProjectRoomChange>> {
         let txn = self.store.env.read_txn()?;
-        self.store
-            .vault_meta
-            .prefix_iter(&txn, &[CHANGES, project.as_bytes()].concat())?
-            .map(|row| {
-                let (_, bytes) = row?;
-                decode(&bytes)
-            })
+        CHANGES
+            .iter_from(&self.store, &txn, project.as_bytes())?
+            .map(|row| row.map(|(_, change)| change))
             .collect()
     }
 }
@@ -292,12 +289,7 @@ pub(crate) fn seed_root_project(vault: &Vault) -> Result<()> {
     let kind = if let Some(kind) = project_type(&vault.store) {
         kind
     } else {
-        if vault
-            .store
-            .vault_meta
-            .get(&vault.store.env.read_txn()?, ROOT)?
-            .is_some()
-        {
+        if ROOT.contains(&vault.store, &vault.store.env.read_txn()?, &())? {
             return Err(invalid());
         }
         let kind = (crate::registry::TYPE_BYTE_ZONE_COMPILED_PRODUCT_START
@@ -314,7 +306,7 @@ pub(crate) fn seed_root_project(vault: &Vault) -> Result<()> {
         .get_seeded_agent_definition_by_logical_id("sys.team_lead")?
         .ok_or_else(invalid)?;
     vault.with_write_txn(|txn| {
-        if vault.store.vault_meta.get(txn, ROOT)?.is_some() {
+        if ROOT.contains(&vault.store, txn, &())? {
             return Ok(());
         }
         let id = EntityId::now();
@@ -329,7 +321,7 @@ pub(crate) fn seed_root_project(vault: &Vault) -> Result<()> {
                 &encode(&body)?,
             )
             .apply(txn)?;
-        vault.store.vault_meta.put(txn, ROOT, id.as_bytes())?;
+        ROOT.put(&vault.store, txn, &(), &id)?;
         Ok(())
     })
 }

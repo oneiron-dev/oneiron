@@ -172,9 +172,13 @@ fn assert_rejected_without_activation(vault: &Vault, row: BookingAntiAbuseRuleRo
     );
     let rtxn = vault.store.env.read_txn().expect("read transaction");
     assert!(
-        read_meta_bytes(vault, &rtxn, &notice_key(&row_id, 1))
-            .expect("read owner notice")
-            .is_none(),
+        !storage::NOTICE
+            .contains(
+                &vault.store,
+                &rtxn,
+                &(*storage::NOTICE_KEY_TAG, storage::notice_digest(&row_id, 1)),
+            )
+            .expect("read owner notice"),
         "a rejected activation must not write an owner notice"
     );
 }

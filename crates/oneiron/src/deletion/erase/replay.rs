@@ -125,9 +125,7 @@ impl Vault {
             if existed && let Some(captured) = &captured {
                 self.refresh_subject_edge_after_claim_delete_in_txn(wtxn, id, &captured.subject)?;
             }
-            self.store
-                .sync_state
-                .put(wtxn, &crate::deletion::identity_soft_delete_key(id), &[])?;
+            IDENTITY_SOFT_DELETE_MARKER.put(&self.store, wtxn, &HexId(*id), &Vec::new())?;
             if let Some(request) = decoded.request_id.as_ref() {
                 clear_own_topology_delete_in_txn(&self.store, wtxn, id, request, false)?;
             }
@@ -145,7 +143,7 @@ impl Vault {
 
         self.store
             .reject_held_gate_partition_in_txn(wtxn, id.as_bytes())?;
-        let marker_key = local_hard_delete_key(id);
+        let marker_key = HexId(*id);
         let marker_value = decoded.local_hard_delete_marker_value();
         // Probe the FULL delete scope (entity row, vectors, text, phonetic,
         // short-ids, edges): orphan residue without an entities row still
@@ -162,10 +160,8 @@ impl Vault {
             // still gates a future re-put after hostile tombstone-map
             // manipulation. The guarded write keeps every-boot replay a
             // read-only no-op once the marker exists.
-            if self.store.sync_state.get(&*wtxn, &marker_key)?.is_none() {
-                self.store
-                    .sync_state
-                    .put(wtxn, &marker_key, &marker_value)?;
+            if !HARD_DELETE_MARKER.contains(&self.store, &*wtxn, &marker_key)? {
+                HARD_DELETE_MARKER.put(&self.store, wtxn, &marker_key, &marker_value.to_vec())?;
             }
             if let Some((request_id, tombstone_reason)) =
                 decoded.request_id.zip(raw_value.first().copied())
@@ -203,9 +199,7 @@ impl Vault {
         // Receiver-side `dt:` local hard-delete marker (pinned: presence-only
         // value, GLOBAL key, permanent, no GC) — written in the SAME txn as
         // the purge so local delete truth survives CRDT-map manipulation.
-        self.store
-            .sync_state
-            .put(wtxn, &marker_key, &marker_value)?;
+        HARD_DELETE_MARKER.put(&self.store, wtxn, &marker_key, &marker_value.to_vec())?;
         // ARCH-0038 DELETE: "The derived edge flag follows the Claim" — the
         // subject edge is refreshed in the SAME transaction as the purge.
         if let Some(captured) = &captured {

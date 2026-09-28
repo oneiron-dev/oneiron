@@ -9,8 +9,10 @@ use serde::{Deserialize, Serialize};
 use super::{ReceiptKind, ReceiptRecord};
 use crate::Vault;
 use crate::error::{Error, Result};
+use crate::side_table::{self, Named, SideTable};
 
-const PREFIX: &[u8] = b"outbound_direct_receipt:v2:";
+const DIRECT: SideTable<[u8; 32], DirectReceipt, Named> =
+    SideTable::new(&side_table::OUTBOUND_DIRECT_RECEIPT);
 const VERSION: u8 = 2;
 
 #[derive(Serialize, Deserialize)]
@@ -78,9 +80,10 @@ fn thinner_duplicate(
         return Ok(false);
     }
     let fields = evidence_fields(receipt);
-    for row in vault.store.vault_meta.prefix_iter(txn, PREFIX)? {
-        let (_, raw) = row?;
-        let row: DirectReceipt = rmp_serde::from_slice(&raw)
+    for entry in DIRECT.iter_raw_from(&vault.store, txn, &[])? {
+        let (_, raw) = entry?;
+        let row = DIRECT
+            .decode_value(&raw)
             .map_err(|_| Error::CorruptedIndex("direct dispatch receipt"))?;
         if row.logical_ref == logical_ref
             && fields
@@ -94,7 +97,7 @@ fn thinner_duplicate(
     Ok(false)
 }
 
-fn key(logical_ref: &str, receipt: &ReceiptRecord) -> Vec<u8> {
+fn key(logical_ref: &str, receipt: &ReceiptRecord) -> [u8; 32] {
     let result = evidence(receipt);
     let mut hasher = blake3::Hasher::new();
     hasher.update(b"oneiron:direct-outbound-receipt:v2");
@@ -102,7 +105,7 @@ fn key(logical_ref: &str, receipt: &ReceiptRecord) -> Vec<u8> {
     hasher.update(logical_ref.as_bytes());
     hasher.update(&(result.len() as u64).to_le_bytes());
     hasher.update(result.as_bytes());
-    [PREFIX, hasher.finalize().as_bytes()].concat()
+    *hasher.finalize().as_bytes()
 }
 
 /// Stores the first receipt for each material result of a logical dispatch.
@@ -123,13 +126,11 @@ pub(crate) fn record(vault: &Vault, mut receipt: ReceiptRecord) -> Result<()> {
         logical_ref,
         receipt,
     };
-    let bytes = rmp_serde::to_vec_named(&row)
-        .map_err(|_| Error::InvariantViolation("direct dispatch receipt encoding"))?;
     vault.with_write_txn(|txn| {
-        if vault.store.vault_meta.get(txn, &key)?.is_none()
+        if !DIRECT.contains(&vault.store, txn, &key)?
             && !thinner_duplicate(vault, txn, &row.logical_ref, &row.receipt)?
         {
-            vault.store.vault_meta.put(txn, &key, &bytes)?;
+            DIRECT.put(&vault.store, txn, &key, &row)?;
         }
         Ok(())
     })
@@ -138,19 +139,18 @@ pub(crate) fn record(vault: &Vault, mut receipt: ReceiptRecord) -> Result<()> {
 /// Existing outbound receipt-family source, alongside connector-send audits.
 pub(super) fn receipts(vault: &Vault) -> Result<Vec<ReceiptRecord>> {
     let txn = vault.store.env.read_txn()?;
-    vault
-        .store
-        .vault_meta
-        .prefix_iter(&txn, PREFIX)?
-        .map(|row| {
-            let (key_bytes, raw) = row?;
-            let row: DirectReceipt = rmp_serde::from_slice(&raw)
+    DIRECT
+        .iter_raw_from(&vault.store, &txn, &[])?
+        .map(|entry| {
+            let (key_bytes, raw) = entry?;
+            let row = DIRECT
+                .decode_value(&raw)
                 .map_err(|_| Error::CorruptedIndex("direct dispatch receipt"))?;
             if row.version != VERSION
                 || row.receipt.receipt_kind != ReceiptKind::Outbound
                 || row.receipt.receipt_id
                     != format!("{}:{}", row.logical_ref, evidence(&row.receipt))
-                || key_bytes.as_ref() != key(&row.logical_ref, &row.receipt)
+                || key_bytes.as_slice() != key(&row.logical_ref, &row.receipt)
             {
                 return Err(Error::CorruptedIndex("direct dispatch receipt"));
             }

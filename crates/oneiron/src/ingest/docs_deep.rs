@@ -6,12 +6,21 @@ use crate::consent::AuthenticatedOwner;
 use crate::edge::EdgeActorClass;
 use crate::error::{Error, Result};
 use crate::registry::ENTITY_TYPE_ASSET;
+use crate::side_table::{self, HexId, LegacyJson, Raw, SideTable};
 use crate::write_envelope::WriteActor;
 use crate::{EntityId, TimeRange, Vault};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 const MAX_DEEP_CLAIMS: usize = 256;
+
+// These keys retain the existing lower-case hex spelling and JSON value encoding.
+const DEEP_CEILINGS: SideTable<HexId, DeepCeiling, LegacyJson> =
+    SideTable::new(&side_table::INGEST_DOCS_DEEP_CEILING);
+const DEEP_RECEIPTS: SideTable<HexId, DocsDeepReceipt, LegacyJson> =
+    SideTable::new(&side_table::INGEST_DOCS_DEEP_RECEIPT);
+const DOCS_EXTRACTIONS: SideTable<String, EntityId, Raw> =
+    SideTable::new(&side_table::INGEST_DOCS_EXTRACTION);
 
 /// A source-grounded entity/fact proposed by the host's NER implementation.
 /// The quote must occur verbatim in the source segment, never in a model-only summary.
@@ -69,12 +78,6 @@ struct DeepCeiling {
 fn invalid(message: &str) -> Error {
     Error::InvalidConfig(message.to_owned())
 }
-fn ceiling_key(asset: EntityId) -> String {
-    format!("docs-deep-ceiling:v1:{}", asset.to_hex())
-}
-fn receipt_key(asset: EntityId) -> String {
-    format!("docs-deep-receipt:v1:{}", asset.to_hex())
-}
 fn transport_normalized_text(text: &str) -> String {
     text.strip_prefix('\u{feff}')
         .unwrap_or(text)
@@ -128,12 +131,7 @@ pub(crate) fn docs_source_put_changes(
     let Some(previous) = imported_docs_source_body(previous, kind) else {
         return Ok(false);
     };
-    if kind == ENTITY_TYPE_ASSET
-        && store
-            .vault_meta
-            .get(txn, receipt_key(*id).as_bytes())?
-            .is_none()
-    {
+    if kind == ENTITY_TYPE_ASSET && !DEEP_RECEIPTS.contains(store, txn, &HexId(*id))? {
         // The docs importer retracted its prior claims and removed their
         // receipt before staging a changed approved source revision.
         return Ok(false);
@@ -184,11 +182,8 @@ pub(super) fn set_deep_ceiling(
     approval: DeepApproval<'_>,
     now: u64,
 ) -> Result<()> {
-    let key = ceiling_key(asset);
-    let old: Option<DeepCeiling> = vault
-        .store
-        .vault_meta
-        .get(&*txn, key.as_bytes())?
+    let old: Option<DeepCeiling> = DEEP_CEILINGS
+        .get_bytes(&vault.store, txn, &HexId(asset))?
         .map(|raw| serde_json::from_slice(&raw).map_err(|_| invalid("corrupt docs deep ceiling")))
         .transpose()?;
     let hash = source_hash(text);
@@ -196,31 +191,33 @@ pub(super) fn set_deep_ceiling(
         old.source_hash != hash
             || old.project_id != approval.project_id
             || (old.allowed && !allowed)
-    }) {
-        let receipt_key = receipt_key(asset);
-        if let Some(raw) = vault.store.vault_meta.get(&*txn, receipt_key.as_bytes())? {
-            let previous: DocsDeepReceipt =
-                serde_json::from_slice(&raw).map_err(|_| invalid("corrupt docs deep receipt"))?;
-            for reference in previous.claim_refs {
-                let id = EntityId::from_hex(&reference)?;
-                if vault.get_claim_in_txn(txn, &id)?.is_some_and(|body| {
-                    body.lifecycle == crate::claim::ClaimLifecycleStatus::Active
-                }) {
-                    vault.retract_claim_in_txn(txn, &id, now)?;
-                }
+    }) && let Some(raw) = DEEP_RECEIPTS.get_bytes(&vault.store, txn, &HexId(asset))?
+    {
+        let previous: DocsDeepReceipt =
+            serde_json::from_slice(&raw).map_err(|_| invalid("corrupt docs deep receipt"))?;
+        for reference in previous.claim_refs {
+            let id = EntityId::from_hex(&reference)?;
+            if vault
+                .get_claim_in_txn(txn, &id)?
+                .is_some_and(|body| body.lifecycle == crate::claim::ClaimLifecycleStatus::Active)
+            {
+                vault.retract_claim_in_txn(txn, &id, now)?;
             }
-            vault.store.vault_meta.delete(txn, receipt_key.as_bytes())?;
         }
+        DEEP_RECEIPTS.delete(&vault.store, txn, &HexId(asset))?;
     }
-    let data = serde_json::to_vec(&DeepCeiling {
-        source_hash: hash,
-        allowed,
-        owner: approval.owner.to_hex(),
-        approval_digest: approval.digest.to_owned(),
-        project_id: approval.project_id,
-    })
-    .map_err(|_| invalid("docs deep ceiling encoding"))?;
-    vault.store.vault_meta.put(txn, key.as_bytes(), &data)?;
+    DEEP_CEILINGS.put(
+        &vault.store,
+        txn,
+        &HexId(asset),
+        &DeepCeiling {
+            source_hash: hash,
+            allowed,
+            owner: approval.owner.to_hex(),
+            approval_digest: approval.digest.to_owned(),
+            project_id: approval.project_id,
+        },
+    )?;
     Ok(())
 }
 
@@ -441,11 +438,7 @@ impl Vault {
                 .delete_pending_gate_consent_in_txn(&mut txn, &claim.id)?;
             receipt.claim_refs.push(claim.id.to_hex());
         }
-        let encoded =
-            serde_json::to_vec(&receipt).map_err(|_| invalid("docs deep receipt encoding"))?;
-        self.store
-            .vault_meta
-            .put(&mut txn, receipt_key(asset).as_bytes(), &encoded)?;
+        DEEP_RECEIPTS.put(&self.store, &mut txn, &HexId(asset), &receipt)?;
         txn.commit()?;
         Ok(receipt)
     }
@@ -460,15 +453,12 @@ impl Vault {
         text: &str,
     ) -> Result<EntityId> {
         let extraction = super::docs_extraction_id(corpus, page, &format!("chunk:{block}"));
-        let key = format!("docs-extraction:v1:{extraction}");
-        let raw_id = self
-            .store
-            .vault_meta
-            .get(txn, key.as_bytes())?
+        let raw_id = DOCS_EXTRACTIONS
+            .get_bytes(&self.store, txn, &extraction)?
             .ok_or_else(|| invalid("docs deep source chunk missing"))?;
         let id = EntityId::from_bytes(
             raw_id
-                .as_ref()
+                .as_slice()
                 .try_into()
                 .map_err(|_| invalid("corrupt docs deep chunk reference"))?,
         )?;
@@ -519,9 +509,8 @@ impl Vault {
         txn: &heed::RoTxn<'_>,
         asset: EntityId,
     ) -> Result<Option<DocsDeepReceipt>> {
-        self.store
-            .vault_meta
-            .get(txn, receipt_key(asset).as_bytes())?
+        DEEP_RECEIPTS
+            .get_bytes(&self.store, txn, &HexId(asset))?
             .map(|raw| {
                 serde_json::from_slice(&raw).map_err(|_| invalid("corrupt docs deep receipt"))
             })
@@ -558,10 +547,8 @@ impl Vault {
             return Err(invalid("docs deep source is not imported"));
         }
         let hash = source_hash(&text);
-        let ceiling: DeepCeiling = self
-            .store
-            .vault_meta
-            .get(txn, ceiling_key(asset).as_bytes())?
+        let ceiling: DeepCeiling = DEEP_CEILINGS
+            .get_bytes(&self.store, txn, &HexId(asset))?
             .map(|raw| {
                 serde_json::from_slice(&raw).map_err(|_| invalid("corrupt docs deep ceiling"))
             })
@@ -578,8 +565,9 @@ impl Vault {
             ));
         }
         let extraction = super::docs_extraction_id(&corpus, &page, "asset");
-        let key = format!("docs-extraction:v1:{extraction}");
-        if self.store.vault_meta.get(txn, key.as_bytes())?.as_deref()
+        if DOCS_EXTRACTIONS
+            .get_bytes(&self.store, txn, &extraction)?
+            .as_deref()
             != Some(asset.as_bytes().as_slice())
         {
             return Err(invalid("docs deep asset lacks imported identity"));

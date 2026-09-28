@@ -2,7 +2,14 @@
 use super::*;
 use crate::batch::{BatchOp, apply_ops};
 use crate::error::RecordError;
+use crate::side_table::HexId;
 use crate::store::Store;
+
+/// Existence check against the deletion module's local hard-delete marker
+/// (`dt:`, `crate::deletion::LOCAL_HARD_DELETE_PREFIX`) — not owned by this
+/// module; only presence is read here, so no value shape commitment is made.
+const HARD_DELETE_MARKERS: SideTable<HexId, (), Raw> =
+    SideTable::new(&side_table::DELETION_HARD_DELETE_MARKER);
 
 fn invalid() -> Error {
     RecordError::InvalidProjectBody("invalid project or ancestry").into()
@@ -17,11 +24,7 @@ fn dependency(
     kind: u8,
 ) -> Result<ProjectRecord> {
     let Some(raw) = crate::ports::EntityStoreRead::port_entity_raw(store, txn, &id)? else {
-        if store
-            .sync_state
-            .get(txn, &crate::deletion::local_hard_delete_key(&id))?
-            .is_some()
-        {
+        if HARD_DELETE_MARKERS.contains(store, txn, &HexId(id))? {
             return Err(invalid());
         }
         return Err(RecordError::ProjectDependencyPending.into());
@@ -129,11 +132,7 @@ pub(crate) fn reconcile_project_rooms(
         if let Some(source) = &body.born_from {
             let source = EntityId::from_hex(source).map_err(|_| invalid())?;
             let Some(message) = store.entities.get(txn, source.as_bytes())? else {
-                if store
-                    .sync_state
-                    .get(txn, &crate::deletion::local_hard_delete_key(&source))?
-                    .is_some()
-                {
+                if HARD_DELETE_MARKERS.contains(store, txn, &HexId(source))? {
                     return Err(invalid());
                 }
                 return Err(RecordError::ProjectDependencyPending.into());
@@ -230,9 +229,8 @@ pub(crate) fn reconcile_project_rooms(
         if previous.as_ref() == Some(&room) {
             // A batch can submit the exact derived room beside its PROJECT.
             // Even when no room rewrite is needed, its owner marker must land.
-            let marker = [ROOM_PROJECT, room_id.as_bytes()].concat();
-            if store.vault_meta.get(txn, &marker)?.as_deref() != Some(id.as_bytes()) {
-                store.vault_meta.put(txn, &marker, id.as_bytes())?;
+            if ROOM_PROJECT.get(store, txn, &room_id)? != Some(*id) {
+                ROOM_PROJECT.put(store, txn, &room_id, id)?;
             }
             continue;
         }
@@ -244,16 +242,8 @@ pub(crate) fn reconcile_project_rooms(
             at: header.learned_at,
         };
         let event = EntityId::now();
-        store.vault_meta.put(
-            txn,
-            &[CHANGES, id.as_bytes(), event.as_bytes()].concat(),
-            &encode(&change)?,
-        )?;
-        store.vault_meta.put(
-            txn,
-            &[ROOM_PROJECT, room_id.as_bytes()].concat(),
-            id.as_bytes(),
-        )?;
+        CHANGES.put(store, txn, &(*id, event), &change)?;
+        ROOM_PROJECT.put(store, txn, &room_id, id)?;
         room_ops.push(BatchOp::Put {
             id: room_id,
             entity_type: ENTITY_TYPE_CONVERSATION,
@@ -307,11 +297,7 @@ pub(crate) fn validate_room_body(
     id: EntityId,
     data: &[u8],
 ) -> Result<()> {
-    if store
-        .vault_meta
-        .get(txn, &[ROOM_PROJECT, id.as_bytes()].concat())?
-        .is_some()
-    {
+    if ROOM_PROJECT.contains(store, txn, &id)? {
         let room: ProjectRoom = rmp_serde::from_slice(data).map_err(|_| invalid_room())?;
         if room.schema_version != 1 || room.kind != "channel" {
             return Err(invalid_room());

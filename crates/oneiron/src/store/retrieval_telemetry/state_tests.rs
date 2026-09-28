@@ -836,16 +836,11 @@ fn crash_orphans_sweep_on_reopen() -> crate::Result<()> {
             )?
             .is_none()
     );
-    assert!(
-        vault
-            .store
-            .vault_meta
-            .get(
-                &vault.store.env.read_txn()?,
-                &super::run_store::retrieval_run_provisional_key(orphan.run_id)
-            )?
-            .is_none()
-    );
+    assert!(!super::run_store::RETRIEVAL_RUN_PROVISIONAL.contains(
+        &vault.store,
+        &vault.store.env.read_txn()?,
+        &orphan.run_id
+    )?);
     Ok(())
 }
 

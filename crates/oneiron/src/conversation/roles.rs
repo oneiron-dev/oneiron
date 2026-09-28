@@ -2,15 +2,19 @@
 use super::body::RoomRole;
 use super::*;
 use crate::registry::{ENTITY_TYPE_CONVERSATION, ENTITY_TYPE_PERSON};
+use crate::side_table::{self, Named, Raw, SideTable};
 
-pub(super) fn grant_key(room: EntityId, person: EntityId) -> Vec<u8> {
-    [
-        b"conversation:role_grant:v1:".as_slice(),
-        room.as_bytes(),
-        person.as_bytes(),
-    ]
-    .concat()
-}
+/// A member's host-local room role grant, keyed by `(room, person)`.
+pub(super) const ROLE_GRANTS: SideTable<(EntityId, EntityId), RoomRole, Named> =
+    SideTable::new(&side_table::CONVERSATION_ROLE_GRANT);
+
+/// The actor that created a room, keyed by room.
+pub(super) const ROOM_CREATORS: SideTable<EntityId, EntityId, Raw> =
+    SideTable::new(&side_table::CONVERSATION_CREATOR);
+
+/// `[1]` while the role door rewrites a room body, keyed by room.
+pub(super) const ROLE_UPDATES: SideTable<EntityId, [u8; 1], Raw> =
+    SideTable::new(&side_table::CONVERSATION_ROLE_UPDATE);
 
 pub(super) fn role_in(
     vault: &Vault,
@@ -24,10 +28,8 @@ pub(super) fn role_in(
     let body = body::body_in(vault, txn, room)?;
     // The vault owner's active authority binding is the implicit owner role.
     // It is never inferred from untrusted replicated body metadata.
-    let creator = vault
-        .store
-        .vault_meta
-        .get(txn, &key(b"conversation:creator:v1:", room))?;
+    // Compared as stored bytes: a damaged creator row matches no actor.
+    let creator = ROOM_CREATORS.get_bytes(&vault.store, txn, &room)?;
     let fold = vault.authority_fold_readonly_in_txn(txn)?;
     if fold.vault_root_is_conflicted() {
         return Err(denied());
@@ -46,10 +48,9 @@ pub(super) fn role_in(
     if !membership::members_at_rows(&rows, u64::MAX).contains(&id) {
         return Err(denied());
     }
-    let Some(raw) = vault.store.vault_meta.get(txn, &grant_key(room, id))? else {
+    let Some(role) = ROLE_GRANTS.get(&vault.store, txn, &(room, id))? else {
         return Ok(RoomRole::Member);
     };
-    let role: RoomRole = decode(&raw)?;
     if body.roles.get(&id.to_hex()) != Some(&role) {
         return Err(denied());
     }
@@ -88,8 +89,7 @@ impl Vault {
             let raw = require_kind(self, txn, room, ENTITY_TYPE_CONVERSATION)?;
             let header = EntityMetadataHeader::parse(&raw)
                 .ok_or(Error::CorruptedIndex("conversation header"))?;
-            let marker = key(b"conversation:role_update:", room);
-            self.store.vault_meta.put(txn, &marker, &[1])?;
+            ROLE_UPDATES.put(&self.store, txn, &room, &[1])?;
             self.batch_in()
                 .put(
                     &room,
@@ -102,10 +102,8 @@ impl Vault {
                     &body.to_bytes()?,
                 )
                 .apply(txn)?;
-            self.store
-                .vault_meta
-                .put(txn, &grant_key(room, person), &encode(&role)?)?;
-            self.store.vault_meta.delete(txn, &marker)?;
+            ROLE_GRANTS.put(&self.store, txn, &(room, person), &role)?;
+            ROLE_UPDATES.delete(&self.store, txn, &room)?;
             Ok(())
         })
     }

@@ -548,7 +548,7 @@ fn type0_validation_guards_every_write_path() -> Result<()> {
     assert_eq!(err.kind(), ErrorKind::InvalidClaimBody);
     assert_no_entity_state(&vault, &id)?;
 
-    // Path 3: TxnBatchBuilder::apply (the sync-replay path) — the failed
+    // Path 3: BatchBuilder::apply (the sync-replay path) — the failed
     // transaction is dropped without commit, so nothing lands.
     let id = EntityId::now();
     let err = vault
@@ -558,7 +558,7 @@ fn type0_validation_guards_every_write_path() -> Result<()> {
                 .put(&id, 0, test_time_range(1, 1), 1, garbage)
                 .apply(wtxn)
         })
-        .expect_err("TxnBatchBuilder must validate type-0 bodies");
+        .expect_err("BatchBuilder::apply must validate type-0 bodies");
     assert_eq!(err.kind(), ErrorKind::InvalidClaimBody);
     assert_no_entity_state(&vault, &id)?;
 
@@ -1023,7 +1023,7 @@ fn replicated_door_admits_reserved_claim_on_both_builders() -> Result<()> {
     let body = valid_provenance_claim_body(a, a, b);
     let bytes = crate::claim::encode_claim_body(&body)?;
 
-    // TxnBatchBuilder flavor (Observer B's replay door).
+    // BatchBuilder::apply flavor (Observer B's replay door).
     let txn_id = EntityId::now();
     vault.with_write_txn(|wtxn| {
         vault

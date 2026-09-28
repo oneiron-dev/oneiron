@@ -27,15 +27,122 @@ use crate::secret_rotation::{
     ArtifactTaintState, allow_stale_publish_in_txn, exhaust_taint_refs_in_txn,
     taint_state_for_refs_in_txn,
 };
+use crate::side_table::{self, CodecError, Raw, RawValue, SideKey, SideTable};
 use crate::store::GateDecisionId;
 use crate::write_envelope::WriteActor;
 
+mod pointer_rows;
+use self::pointer_rows::{
+    decode_artifact_pointer_row, hex_nibble, put_artifact_pointer_in_txn, snapshot_file_entry,
+    validate_artifact_path,
+};
+pub(crate) use self::pointer_rows::{remove_blob_pointers_in_txn, validate_artifact_id};
+
 pub const ARTIFACT_POINTER_CHANNELS: [&str; 2] = ["published", "preview"];
 
-const ARTIFACT_POINTER_KEY_PREFIX: &[u8] = b"artifact:pointer:v1:";
-const ARTIFACT_PUBLISH_ADMISSION_PREFIX: &[u8] = b"artifact:publish:admission:v1:";
+/// One exact publish identity, even after its pointer changes or disappears.
+const ARTIFACT_ADMISSIONS: SideTable<
+    EntityId,
+    ArtifactPublishAdmission,
+    crate::side_table::LegacyJson,
+> = SideTable::new(&side_table::ARTIFACT_PUBLISH_ADMISSION);
+
 const ARTIFACT_CHANNEL_PUBLISHED: u8 = 0;
 const ARTIFACT_CHANNEL_PREVIEW: u8 = 1;
+
+/// One channel pointer, keyed by `channel(1) ++ artifact_len(u16 be) ++ artifact`
+/// exactly as `artifact_pointer_key` used to spell it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ArtifactPointerRowKey {
+    channel: ArtifactPointerChannel,
+    artifact: String,
+}
+
+impl SideKey for ArtifactPointerRowKey {
+    fn encode_into(&self, out: &mut Vec<u8>) {
+        out.push(self.channel.key_byte());
+        out.extend_from_slice(&(self.artifact.len() as u16).to_be_bytes());
+        out.extend_from_slice(self.artifact.as_bytes());
+    }
+
+    fn decode_key(bytes: &[u8]) -> Option<Self> {
+        let (&channel_byte, rest) = bytes.split_first()?;
+        let channel = ArtifactPointerChannel::from_key_byte(channel_byte)?;
+        let (len_bytes, rest) = rest.split_at_checked(2)?;
+        let len = u16::from_be_bytes(len_bytes.try_into().ok()?) as usize;
+        if rest.len() != len {
+            return None;
+        }
+        Some(Self {
+            channel,
+            artifact: String::from_utf8(rest.to_vec()).ok()?,
+        })
+    }
+}
+
+/// One pointer row's value: the export frame, then an optional suffix. A
+/// private pointer keeps the pre-tier frame: a bare 32-byte fork hash (every
+/// pointer written before SECRET-04) or 33 bytes when the publish rode a
+/// stale-taint override. Any other tier appends the stale flag (0 or 1), a
+/// tier tag and the tier body; `decode_artifact_pointer_row` reads it back.
+struct ArtifactPointerRow {
+    export: ArtifactExportRef,
+    stale_taint_override: bool,
+    serve_tier: ArtifactServeTier,
+}
+
+impl RawValue for ArtifactPointerRow {
+    fn to_raw(&self) -> std::result::Result<Vec<u8>, CodecError> {
+        let mut value = match self.export {
+            ArtifactExportRef::ForkHash(hash) => hash.to_vec(),
+            ArtifactExportRef::BlobVersion {
+                artifact_id,
+                version,
+            } => {
+                let mut bytes = Vec::with_capacity(26);
+                bytes.push(ARTIFACT_POINTER_BLOB_TAG);
+                bytes.extend_from_slice(artifact_id.as_bytes());
+                bytes.extend_from_slice(&version.to_be_bytes());
+                bytes
+            }
+        };
+        if self.stale_taint_override || self.serve_tier != ArtifactServeTier::Private {
+            // A private override is the bare SECRET-04 stamp (0x01).
+            value.push(u8::from(self.stale_taint_override));
+            match self.serve_tier {
+                ArtifactServeTier::Private => {}
+                ArtifactServeTier::Public => value.push(1),
+                ArtifactServeTier::LinkToken(capability) => {
+                    value.push(2);
+                    value.extend_from_slice(&capability.0);
+                }
+                ArtifactServeTier::WorldMembers(world_id) => {
+                    if world_id == 0 {
+                        return Err(Error::InvalidConfig(
+                            "artifact world id cannot be zero".into(),
+                        )
+                        .into());
+                    }
+                    value.push(3);
+                    value.extend_from_slice(&world_id.to_be_bytes());
+                }
+            }
+        }
+        Ok(value)
+    }
+
+    fn from_raw(bytes: &[u8]) -> std::result::Result<Self, CodecError> {
+        let (export, stale_taint_override, serve_tier) = decode_artifact_pointer_row(bytes)?;
+        Ok(Self {
+            export,
+            stale_taint_override,
+            serve_tier,
+        })
+    }
+}
+
+const ARTIFACT_POINTERS: SideTable<ArtifactPointerRowKey, ArtifactPointerRow, Raw> =
+    SideTable::new(&side_table::ARTIFACT_POINTER);
 
 /// The pointer row's value framing.
 ///
@@ -67,6 +174,15 @@ impl ArtifactPointerChannel {
         match self {
             Self::Published => ARTIFACT_CHANNEL_PUBLISHED,
             Self::Preview => ARTIFACT_CHANNEL_PREVIEW,
+        }
+    }
+
+    #[must_use]
+    const fn from_key_byte(byte: u8) -> Option<Self> {
+        match byte {
+            ARTIFACT_CHANNEL_PUBLISHED => Some(Self::Published),
+            ARTIFACT_CHANNEL_PREVIEW => Some(Self::Preview),
+            _ => None,
         }
     }
 
@@ -430,10 +546,11 @@ impl Vault {
     ) -> Result<bool> {
         validate_artifact_id(artifact)?;
         let mut wtxn = self.store.env.write_txn()?;
-        let removed = self
-            .store
-            .vault_meta
-            .delete(&mut wtxn, &artifact_pointer_key(artifact, channel)?)?;
+        let key = ArtifactPointerRowKey {
+            channel,
+            artifact: artifact.to_owned(),
+        };
+        let removed = ARTIFACT_POINTERS.delete(&self.store, &mut wtxn, &key)?;
         wtxn.commit()?;
         Ok(removed)
     }
@@ -452,17 +569,19 @@ impl Vault {
         channel: ArtifactPointerChannel,
     ) -> Result<Option<ArtifactPointer>> {
         validate_artifact_id(artifact)?;
-        let raw = {
+        let row = {
             let rtxn = self.store.env.read_txn()?;
-            self.store
-                .vault_meta
-                .get(&rtxn, &artifact_pointer_key(artifact, channel)?)?
-                .map(|value| value.to_vec())
+            let key = ArtifactPointerRowKey {
+                channel,
+                artifact: artifact.to_owned(),
+            };
+            ARTIFACT_POINTERS.get(&self.store, &rtxn, &key)?
         };
-        let Some(raw) = raw else {
+        let Some(row) = row else {
             return Ok(None);
         };
-        let (export, stale_taint_override, serve_tier) = decode_artifact_pointer_row(&raw)?;
+        let (export, stale_taint_override, serve_tier) =
+            (row.export, row.stale_taint_override, row.serve_tier);
         if self.resolve_export_owner(artifact, export)?.is_none() {
             return Ok(None);
         }
@@ -660,88 +779,9 @@ pub fn artifact_hex(bytes: &[u8]) -> String {
     out
 }
 
-#[path = "artifact_hosting/pointer_row.rs"]
-mod pointer_row;
-pub(crate) use self::pointer_row::remove_blob_pointers_in_txn;
-use self::pointer_row::{
-    artifact_pointer_key, decode_artifact_pointer_row, put_artifact_pointer_in_txn,
-};
-
-fn snapshot_file_entry<'a>(
-    snapshot: &'a CodebaseSnapshot,
-    path: &str,
-) -> Option<&'a CodebaseFileEntry> {
-    let Ok(index) = snapshot
-        .files
-        .binary_search_by(|entry| entry.path.as_str().cmp(path))
-    else {
-        return None;
-    };
-    snapshot.files.get(index)
-}
-
-pub(crate) fn validate_artifact_id(artifact: &str) -> Result<()> {
-    validate_bounded_text(
-        artifact,
-        CODEBASE_PROJECT_ID_MAX_BYTES,
-        "artifact id must be non-empty and at most 256 bytes",
-    )?;
-    if artifact.trim() != artifact {
-        return Err(Error::Code(CodeError::InvalidCodebaseSnapshotBody(
-            "artifact id must not have leading or trailing whitespace",
-        )));
-    }
-    Ok(())
-}
-
-fn validate_artifact_path(path: &str) -> Result<()> {
-    validate_bounded_text(
-        path,
-        CODEBASE_FILE_PATH_MAX_BYTES,
-        "artifact path must be non-empty and at most 4096 bytes",
-    )?;
-    if path.starts_with('/') || path.contains('\\') {
-        return Err(Error::Code(CodeError::InvalidCodebaseSnapshotBody(
-            "artifact path must be bundle-relative",
-        )));
-    }
-    if path
-        .split('/')
-        .any(|part| part.is_empty() || part == "." || part == "..")
-    {
-        return Err(Error::Code(CodeError::InvalidCodebaseSnapshotBody(
-            "artifact path must be normalized and cannot contain . or .. segments",
-        )));
-    }
-    Ok(())
-}
-
-fn validate_bounded_text(text: &str, max_bytes: usize, context: &'static str) -> Result<()> {
-    if text.is_empty() || text.len() > max_bytes {
-        return Err(Error::Code(CodeError::InvalidCodebaseSnapshotBody(context)));
-    }
-    if text.chars().any(char::is_control) {
-        return Err(Error::Code(CodeError::InvalidCodebaseSnapshotBody(
-            "artifact text fields must not contain control characters",
-        )));
-    }
-    Ok(())
-}
-
-fn hex_nibble(byte: u8) -> Option<u8> {
-    match byte {
-        b'0'..=b'9' => Some(byte - b'0'),
-        b'a'..=b'f' => Some(byte - b'a' + 10),
-        b'A'..=b'F' => Some(byte - b'A' + 10),
-        _ => None,
-    }
-}
-
-#[path = "artifact_hosting/access.rs"]
 mod access;
 pub use self::access::{ArtifactLinkCapability, ArtifactServeTier};
 
-#[path = "artifact_hosting/publish.rs"]
 mod publish;
 #[cfg(any(test, feature = "test-hooks"))]
 use self::publish::publish_artifact_pointer_in_txn;

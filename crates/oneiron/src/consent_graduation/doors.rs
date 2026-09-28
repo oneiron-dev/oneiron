@@ -7,9 +7,7 @@ use super::fold::{
 };
 use super::scope::RampScope;
 use super::state::{Counters, DemotionReason, RampState, ScopeOutcomeStats};
-use super::storage::{
-    RAMP_STATS_KEY_PREFIX, StoredScopeStats, decode_row, floor_key, stats_key, stats_row_parts,
-};
+use super::storage::{RAMP_FLOOR, RAMP_STATS, StreakFloor, stats_row_parts};
 use crate::consent::{AuthenticatedOwner, ConsentReceipt};
 use crate::error::{Error, GateError, Result};
 use crate::identity_topology::ProposalOutcome;
@@ -63,10 +61,9 @@ impl Vault {
     /// Storage failures.
     pub fn scope_stats(&self, scope: &RampScope) -> Result<Option<ScopeOutcomeStats>> {
         let rtxn = self.store.env.read_txn()?;
-        let Some(raw) = self.store.vault_meta.get(&rtxn, &stats_key(scope))? else {
+        let Some(row) = RAMP_STATS.get(&self.store, &rtxn, &scope.key())? else {
             return Ok(None);
         };
-        let row: StoredScopeStats = decode_row(&raw, "ramp stats row")?;
         let (stored_scope, counters) = stats_row_parts(row)?;
         let state = derive_state_in_txn(self, &rtxn, &stored_scope, counters)?;
         Ok(Some(stats_view(stored_scope, counters, state)))
@@ -183,9 +180,7 @@ impl Vault {
     pub fn set_ramp_streak_floor(&self, scope: &RampScope, floor: u32) -> Result<()> {
         scope.validate()?;
         self.with_write_txn(|wtxn| {
-            self.store
-                .vault_meta
-                .put(wtxn, &floor_key(scope), &floor.to_le_bytes())?;
+            RAMP_FLOOR.put(&self.store, wtxn, &scope.key(), &StreakFloor(floor))?;
             Ok(())
         })
     }
@@ -228,15 +223,7 @@ impl Vault {
     pub fn rebuild_ramp_stats_from_receipts(&self) -> Result<()> {
         self.with_write_txn(|wtxn| {
             let events = self.ramp_fold_events_in_txn(&*wtxn)?;
-            let stale: Vec<Vec<u8>> = self
-                .store
-                .vault_meta
-                .prefix_iter(&*wtxn, RAMP_STATS_KEY_PREFIX)?
-                .map(|row| row.map(|(key, _)| key.to_vec()))
-                .collect::<Result<_>>()?;
-            for key in stale {
-                self.store.vault_meta.delete(wtxn, &key)?;
-            }
+            RAMP_STATS.delete_from(&self.store, wtxn, &[])?;
 
             let mut folded: std::collections::BTreeMap<RampScope, Counters> =
                 std::collections::BTreeMap::new();

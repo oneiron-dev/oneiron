@@ -89,7 +89,12 @@ fn bound_memory<'a>(vault: &'a oneiron::Vault, auth: &CoreAuth) -> Result<Memory
             ["Re-mint the slip with a 32-character lowercase hex principal ref."],
         )
     })?;
-    Ok(vault.memory(actor, bound_actor_class(auth)?))
+    let memory = vault.memory(actor, bound_actor_class(auth)?);
+    // Reads run under the credential this principal presented (ONE-1187-D6).
+    Ok(match auth.verified_slip() {
+        Some(proof) => memory.with_read_proof(proof),
+        None => memory,
+    })
 }
 
 fn bound_actor_class(auth: &CoreAuth) -> Result<oneiron::EdgeActorClass, AppError> {

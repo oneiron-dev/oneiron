@@ -2,12 +2,17 @@
 
 use crate::Vault;
 use crate::error::{Error, Result};
+use crate::side_table::{self, Named, SideTable};
 use crate::store::Store;
 
 use super::rules::{
-    B2bExemption, CAMPAIGN_COMPLIANCE_META_KEY, CAMPAIGN_COMPLIANCE_SEED_JSON, CompliancePack,
-    ComplianceRuleKind, ComplianceRuleRow, JURISDICTION_NONE,
+    B2bExemption, CAMPAIGN_COMPLIANCE_SEED_JSON, CompliancePack, ComplianceRuleKind,
+    ComplianceRuleRow, JURISDICTION_NONE,
 };
+
+/// The ACTIVE campaign compliance rule pack. Key: `()`.
+const ACTIVE: SideTable<(), CompliancePack, Named> =
+    SideTable::new(&side_table::CAMPAIGN_COMPLIANCE_ACTIVE);
 
 // ---------------------------------------------------------------------------
 // Pack loading and validation
@@ -129,8 +134,8 @@ pub(super) fn active_compliance_pack_in_txn(
     store: &Store,
     txn: &heed::RoTxn<'_>,
 ) -> Result<CompliancePack> {
-    match store.vault_meta.get(txn, CAMPAIGN_COMPLIANCE_META_KEY)? {
-        Some(raw) => decode_pack(&raw, "campaign compliance active pack"),
+    match ACTIVE.get(store, txn, &())? {
+        Some(pack) => Ok(pack),
         None => embedded_seed_pack(),
     }
 }
@@ -143,18 +148,14 @@ pub(super) fn store_active_compliance_pack(
     pack: &CompliancePack,
 ) -> Result<()> {
     validate_compliance_pack(pack)?;
-    let encoded = encode_pack(pack)?;
-    store
-        .vault_meta
-        .put(wtxn, CAMPAIGN_COMPLIANCE_META_KEY, &encoded)?;
+    ACTIVE.put(store, wtxn, &(), pack)?;
     Ok(())
 }
 
+/// Canonical encode used for [`super::amend::compliance_proposal_hash`]'s
+/// digest input. NOT the storage path: [`ACTIVE`] and (in `amend.rs`)
+/// `PENDING` encode through their own typed `put`.
 pub(super) fn encode_pack(pack: &CompliancePack) -> Result<Vec<u8>> {
     rmp_serde::to_vec_named(pack)
         .map_err(|_| Error::InvariantViolation("campaign compliance pack encode failed"))
-}
-
-pub(super) fn decode_pack(raw: &[u8], label: &'static str) -> Result<CompliancePack> {
-    rmp_serde::from_slice(raw).map_err(|_| Error::CorruptedIndex(label))
 }

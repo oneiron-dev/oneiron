@@ -6,7 +6,24 @@ use crate::attempt_queue::AttemptId;
 use crate::dreamer_wake::{BudgetLegibilityEnvelope, WakePassDeadline};
 use crate::entity_id::EntityId;
 use crate::error::Error;
+use crate::side_table::{FixedSideKey, SideKey};
 use crate::write_envelope::WriteActor;
+
+/// `AttemptId` is a foreign (same-crate) type; every step-family side table keys on it, so the
+/// `SideKey` binding lives once here rather than once per table module.
+impl SideKey for AttemptId {
+    fn encode_into(&self, out: &mut Vec<u8>) {
+        out.extend_from_slice(self.as_bytes());
+    }
+
+    fn decode_key(bytes: &[u8]) -> Option<Self> {
+        Self::from_bytes(bytes).ok()
+    }
+}
+
+impl FixedSideKey for AttemptId {
+    const WIDTH: usize = 16;
+}
 
 /// Claim predicate for terminal durable-step records (design D13).
 pub const DREAMER_STEP_PREDICATE: &str = "dreamer.step";
@@ -56,18 +73,6 @@ pub const DREAMER_STEP_INLINE_RESPONSE_MAX_BYTES: usize = 16_384;
 /// retry authority (ruling L6). One retry per entry, all under the SAME
 /// lease; absolute settlement makes retries free of double-count.
 pub const DREAMER_STEP_RETRY_BACKOFF_MS: [u64; 3] = [250, 1_000, 4_000];
-
-pub(super) const DREAMER_PRIVATE_STEP_STATE_PREFIX: &[u8] = b"dreamer:step_state:v1:"; // + job_id(16) + step_hash(32)
-
-pub(super) const DREAMER_PRIVATE_STEP_INDEX_PREFIX: &[u8] = b"dreamer:step_index:v1:"; // + job_id(16) + step_hash(32) -> claim id (16)
-
-pub(super) const DREAMER_PRIVATE_STEP_INDEX_CLAIM_PREFIX: &[u8] = b"dreamer:step_index:v1:i:"; // + claim id (16) -> forward key
-
-pub(super) const DREAMER_PRIVATE_TRAP_BINDING_PREFIX: &[u8] = b"dreamer:trap_binding:v1:"; // + trap anchor claim id (16)
-
-pub(super) const DREAMER_PRIVATE_PEER_WAIT_PREFIX: &[u8] = b"dreamer:peer_wait:v1:"; // + task ref (16) + trap ref (16)
-
-pub(super) const DREAMER_PRIVATE_PEER_WAIT_TRAP_PREFIX: &[u8] = b"dreamer:peer_wait_trap:v1:"; // + trap anchor claim id (16) -> task ref (16)
 
 pub(super) const DREAMER_STEP_STATE_SCHEMA_VERSION: u64 = 1;
 

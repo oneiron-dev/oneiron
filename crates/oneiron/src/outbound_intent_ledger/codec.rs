@@ -13,6 +13,25 @@ use super::types::{
 use crate::attempt_queue::AttemptId;
 use crate::connector_key::ScopedCapabilityProvenance;
 use crate::entity_id::EntityId;
+use crate::error::Error;
+use crate::side_table::{CodecError, RawValue};
+
+/// The whole hand-rolled row codec, wrapped for the typed `outbound:intent_ledger:v2:` side
+/// table. Any validation failure collapses to one generic corruption marker: the specific
+/// [`IntentLedgerError::InvalidRecord`] reasons stay produced (and tested) through
+/// [`decode_record`] and [`validate_record`] directly; nothing here is pinned by a test.
+impl RawValue for IntentLedgerRecord {
+    fn to_raw(&self) -> std::result::Result<Vec<u8>, CodecError> {
+        encode_record(self)
+            .map_err(|_| Error::CorruptedIndex("outbound intent ledger record").into())
+    }
+
+    fn from_raw(bytes: &[u8]) -> std::result::Result<Self, CodecError> {
+        decode_record_fields(bytes)
+            .and_then(|record| validate_record(&record).map(|()| record))
+            .map_err(|_| Error::CorruptedIndex("outbound intent ledger record").into())
+    }
+}
 
 /// Pinned MessagePack key set for device-local outbound intent rows.
 pub const INTENT_LEDGER_VALUE_KEYS: [&str; 20] = [
@@ -260,6 +279,10 @@ fn encode_messagepack_map(entries: Vec<(Value, Value)>) -> IntentLedgerResult<Ve
     Ok(encoded)
 }
 
+/// Reconstructs the full raw key a ledger row lives under. Production reads and writes now go
+/// through [`LEDGER`](super::store) by id alone; this stays for tests that plant or inspect rows
+/// through the raw `vault_meta` door directly.
+#[cfg(test)]
 pub(super) fn intent_ledger_key(id: &[u8; 32]) -> Vec<u8> {
     let mut key = Vec::with_capacity(INTENT_LEDGER_PRIVATE_PREFIX.len() + id.len());
     key.extend_from_slice(INTENT_LEDGER_PRIVATE_PREFIX);
@@ -290,6 +313,21 @@ pub(super) fn encode_record(record: &IntentLedgerRecord) -> IntentLedgerResult<V
 }
 
 pub(super) fn decode_record(key: &[u8], raw: &[u8]) -> IntentLedgerResult<IntentLedgerRecord> {
+    let record = decode_record_fields(raw)?;
+    if id_from_ledger_key(key) != Some(record.id) {
+        return Err(IntentLedgerError::InvalidRecord(
+            "outbound intent key does not match id",
+        ));
+    }
+    validate_record(&record)?;
+    Ok(record)
+}
+
+/// Parses and content-digest-checks one row's bytes, without the key-vs-id
+/// consistency check ([`decode_record`] adds that; the typed side table's
+/// value codec has no key to check against, so [`RawValue::from_raw`] below
+/// calls this directly and the caller checks the id itself).
+fn decode_record_fields(raw: &[u8]) -> IntentLedgerResult<IntentLedgerRecord> {
     let mut cursor = Cursor::new(raw);
     let value = rmpv::decode::read_value(&mut cursor).map_err(|_| {
         IntentLedgerError::InvalidRecord("outbound intent MessagePack decode failed")
@@ -455,7 +493,6 @@ pub(super) fn decode_record(key: &[u8], raw: &[u8]) -> IntentLedgerResult<Intent
             "outbound intent content digest mismatch",
         ));
     }
-    validate_record(key, &record)?;
     Ok(record)
 }
 

@@ -171,22 +171,18 @@ pub fn transfer_code_memory_anchor(
         provenance_claim_id: transfer.provenance_claim_id,
         moved_attachments,
     };
-    store.vault_meta.put(
-        txn,
-        &transfer_key(transfer),
-        &encode_transfer_record(&record),
-    )?;
+    TRANSFER.put(store, txn, &transfer_key(transfer), &record)?;
 
     // Step 7 — Rename retires the source only after every target write and the
     // receipt succeeded. Copy leaves the source completely intact.
     if transfer.kind == AnchorTransferKind::Rename {
-        delete_prefix(
+        ATTACHMENT.delete_from(
             store,
             txn,
             &attachment_symbol_prefix(&transfer.from_symbol_id),
         )?;
-        delete_prefix(store, txn, &slot_symbol_prefix(&transfer.from_symbol_id))?;
-        delete_prefix(
+        SLOT.delete_from(store, txn, &slot_symbol_prefix(&transfer.from_symbol_id))?;
+        ALWAYS_ON.delete_from(
             store,
             txn,
             &always_on_symbol_prefix(&transfer.from_symbol_id),
@@ -241,9 +237,7 @@ pub(crate) fn read_transfer_records(
     of: &EntityId,
 ) -> Result<Vec<AnchorTransferRecord>> {
     let mut records = Vec::new();
-    for entry in store.vault_meta.prefix_iter(txn, TRANSFER_KEY_PREFIX)? {
-        let (_, value) = entry?;
-        let record = decode_transfer_record(&value)?;
+    for (_, record) in TRANSFER.scan(store, txn)? {
         if record.from_symbol_id == *of || record.to_symbol_id == *of {
             records.push(record);
         }

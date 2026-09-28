@@ -76,27 +76,25 @@ fn validate_code_symbol_anchor(store: &Store, txn: &RoTxn<'_>, symbol_id: &Entit
     }))
 }
 
-fn key_with_symbol(prefix: &[u8], symbol_id: &EntityId) -> Vec<u8> {
-    let mut key = Vec::with_capacity(prefix.len() + ENTITY_ID_LEN + 1);
-    key.extend_from_slice(prefix);
+fn key_with_symbol(symbol_id: &EntityId) -> Vec<u8> {
+    let mut key = Vec::with_capacity(ENTITY_ID_LEN + 1);
     key.extend_from_slice(symbol_id.as_bytes());
     key.push(KEY_SEPARATOR);
     key
 }
 
-fn key_with_slot(prefix: &[u8], symbol_id: &EntityId, slot: &CodeMemorySlotName) -> Vec<u8> {
-    let mut key = key_with_symbol(prefix, symbol_id);
+fn key_with_slot(symbol_id: &EntityId, slot: &CodeMemorySlotName) -> Vec<u8> {
+    let mut key = key_with_symbol(symbol_id);
     key.extend_from_slice(slot.as_str().as_bytes());
     key
 }
 
 fn key_with_payload(
-    prefix: &[u8],
     symbol_id: &EntityId,
     slot: &CodeMemorySlotName,
     payload: CodeMemoryPayloadRef,
 ) -> Vec<u8> {
-    let mut key = key_with_slot(prefix, symbol_id, slot);
+    let mut key = key_with_slot(symbol_id, slot);
     key.push(KEY_SEPARATOR);
     key.push(payload.tag());
     key.extend_from_slice(payload.entity_id().as_bytes());
@@ -104,19 +102,19 @@ fn key_with_payload(
 }
 
 fn slot_symbol_prefix(symbol_id: &EntityId) -> Vec<u8> {
-    key_with_symbol(SLOT_KEY_PREFIX, symbol_id)
+    key_with_symbol(symbol_id)
 }
 
 fn slot_key(symbol_id: &EntityId, slot: &CodeMemorySlotName) -> Vec<u8> {
-    key_with_slot(SLOT_KEY_PREFIX, symbol_id, slot)
+    key_with_slot(symbol_id, slot)
 }
 
 fn attachment_symbol_prefix(symbol_id: &EntityId) -> Vec<u8> {
-    key_with_symbol(ATTACHMENT_KEY_PREFIX, symbol_id)
+    key_with_symbol(symbol_id)
 }
 
 fn attachment_slot_prefix(symbol_id: &EntityId, slot: &CodeMemorySlotName) -> Vec<u8> {
-    let mut key = key_with_slot(ATTACHMENT_KEY_PREFIX, symbol_id, slot);
+    let mut key = key_with_slot(symbol_id, slot);
     key.push(KEY_SEPARATOR);
     key
 }
@@ -126,11 +124,11 @@ fn attachment_key(
     slot: &CodeMemorySlotName,
     payload: CodeMemoryPayloadRef,
 ) -> Vec<u8> {
-    key_with_payload(ATTACHMENT_KEY_PREFIX, symbol_id, slot, payload)
+    key_with_payload(symbol_id, slot, payload)
 }
 
 fn always_on_symbol_prefix(symbol_id: &EntityId) -> Vec<u8> {
-    key_with_symbol(ALWAYS_ON_KEY_PREFIX, symbol_id)
+    key_with_symbol(symbol_id)
 }
 
 fn always_on_key(
@@ -138,15 +136,14 @@ fn always_on_key(
     slot: &CodeMemorySlotName,
     payload: CodeMemoryPayloadRef,
 ) -> Vec<u8> {
-    key_with_payload(ALWAYS_ON_KEY_PREFIX, symbol_id, slot, payload)
+    key_with_payload(symbol_id, slot, payload)
 }
 
-/// `TRANSFER_KEY_PREFIX + from + to + observed_at_be + sha256(canonical
-/// transfer encoding)`: a byte-identical replay is an idempotent upsert of
-/// its own key, while distinct transfers cannot collide.
+/// `from + to + observed_at_be + sha256(canonical transfer encoding)`: a
+/// byte-identical replay is an idempotent upsert of its own key, while
+/// distinct transfers cannot collide.
 fn transfer_key(transfer: &AnchorTransfer) -> Vec<u8> {
-    let mut key = Vec::with_capacity(TRANSFER_KEY_PREFIX.len() + 16 + 16 + 8 + 32);
-    key.extend_from_slice(TRANSFER_KEY_PREFIX);
+    let mut key = Vec::with_capacity(16 + 16 + 8 + 32);
     key.extend_from_slice(transfer.from_symbol_id.as_bytes());
     key.extend_from_slice(transfer.to_symbol_id.as_bytes());
     key.extend_from_slice(&transfer.observed_at.to_be_bytes());
@@ -509,10 +506,7 @@ fn read_slot(
     symbol_id: &EntityId,
     slot: &CodeMemorySlotName,
 ) -> Result<Option<CodeMemorySlot>> {
-    let Some(raw) = store.vault_meta.get(txn, &slot_key(symbol_id, slot))? else {
-        return Ok(None);
-    };
-    decode_slot(&raw).map(Some)
+    SLOT.get(store, txn, &slot_key(symbol_id, slot))
 }
 
 fn write_slot(
@@ -521,9 +515,7 @@ fn write_slot(
     symbol_id: &EntityId,
     slot: &CodeMemorySlot,
 ) -> Result<()> {
-    store
-        .vault_meta
-        .put(txn, &slot_key(symbol_id, &slot.name), &encode_slot(slot))
+    SLOT.put(store, txn, &slot_key(symbol_id, &slot.name), slot)
 }
 
 /// Streams `symbol_id`'s slot bodies in canonical order, decoding ONE at a
@@ -543,7 +535,7 @@ fn write_slot(
 /// fixed [`CODE_MEMORY_MAX_VALUES_PER_SLOT`] per-slot value cap.
 ///
 /// CANONICAL ORDER IS PRESERVED, not approximated. A slot key is
-/// `SLOT_KEY_PREFIX | symbol | KEY_SEPARATOR | slot name` ([`slot_key`]) and
+/// `table prefix | symbol | KEY_SEPARATOR | slot name` ([`slot_key`]) and
 /// [`validate_slot_name`] rejects control characters, so no separator byte can
 /// occur inside a name: the prefix cursor already yields rows in slot-name byte
 /// order, which is exactly the order [`read_slots_for_symbol`] sorts into.
@@ -558,15 +550,14 @@ where
     ShouldDecode: FnMut() -> bool,
     Visit: FnMut(CodeMemorySlot) -> Result<ControlFlow<()>>,
 {
-    for entry in store
-        .vault_meta
-        .prefix_iter(txn, &slot_symbol_prefix(symbol_id))?
-    {
+    // Undecoded rows: `should_decode` must gate the decode itself (see the
+    // doc comment above).
+    for entry in SLOT.iter_raw_from(store, txn, &slot_symbol_prefix(symbol_id))? {
         if !should_decode() {
             break;
         }
         let (_, value) = entry?;
-        if visit(decode_slot(&value)?)?.is_break() {
+        if visit(SLOT.decode_value(&value)?)?.is_break() {
             break;
         }
     }
@@ -604,14 +595,11 @@ pub(crate) fn read_always_on_for_symbol(
     txn: &RoTxn<'_>,
     symbol_id: &EntityId,
 ) -> Result<Vec<AlwaysOnCodeMemoryContract>> {
-    let mut contracts = Vec::new();
-    for entry in store
-        .vault_meta
-        .prefix_iter(txn, &always_on_symbol_prefix(symbol_id))?
-    {
-        let (_, value) = entry?;
-        contracts.push(decode_always_on(&value)?);
-    }
+    let mut contracts: Vec<AlwaysOnCodeMemoryContract> = ALWAYS_ON
+        .scan_from(store, txn, &always_on_symbol_prefix(symbol_id))?
+        .into_iter()
+        .map(|(_, contract)| contract)
+        .collect();
     contracts.sort_by(|left, right| (&left.slot, left.payload).cmp(&(&right.slot, right.payload)));
     Ok(contracts)
 }
@@ -622,7 +610,7 @@ fn write_always_on(
     contract: &AlwaysOnCodeMemoryContract,
 ) -> Result<()> {
     let key = always_on_key(&contract.symbol_id, &contract.slot, contract.payload);
-    store.vault_meta.put(txn, &key, &encode_always_on(contract))
+    ALWAYS_ON.put(store, txn, &key, contract)
 }
 
 /// Attachment-index rows for `(symbol, slot)` are EXACTLY the payload set
@@ -653,26 +641,28 @@ fn derive_attachment_rows(
         if relabelled_payloads.contains(&payload) {
             continue;
         }
-        let Some(raw) = store
-            .vault_meta
-            .get(txn, &attachment_key(symbol_id, &slot.name, payload))?
+        let Some((existing, _)) =
+            ATTACHMENT.get(store, txn, &attachment_key(symbol_id, &slot.name, payload))?
         else {
             continue;
         };
-        let (existing, _) = decode_attachment_row(&raw)?;
         retained.insert(payload, existing);
     }
 
-    delete_prefix(store, txn, &attachment_slot_prefix(symbol_id, &slot.name))?;
+    ATTACHMENT.delete_from(store, txn, &attachment_slot_prefix(symbol_id, &slot.name))?;
     for payload in slot.payloads() {
         let Some(provenance) = slot.provenance_for_payload(payload) else {
             continue;
         };
-        let row_locator = retained.get(&payload).unwrap_or(locator);
-        store.vault_meta.put(
+        let row_locator = retained
+            .get(&payload)
+            .cloned()
+            .unwrap_or_else(|| locator.clone());
+        ATTACHMENT.put(
+            store,
             txn,
             &attachment_key(symbol_id, &slot.name, payload),
-            &encode_attachment_row(row_locator, provenance),
+            &(row_locator, provenance),
         )?;
     }
     Ok(())
@@ -687,10 +677,9 @@ pub(crate) fn read_attachments_for_symbol(
     for slot in read_slots_for_symbol(store, txn, symbol_id)? {
         for payload in slot.payloads() {
             let key = attachment_key(symbol_id, &slot.name, payload);
-            let Some(raw) = store.vault_meta.get(txn, &key)? else {
+            let Some((locator, provenance_claim_id)) = ATTACHMENT.get(store, txn, &key)? else {
                 continue;
             };
-            let (locator, provenance_claim_id) = decode_attachment_row(&raw)?;
             attachments.push(CodeMemoryAttachment {
                 anchor: CodeMemoryAnchor {
                     symbol_id: *symbol_id,

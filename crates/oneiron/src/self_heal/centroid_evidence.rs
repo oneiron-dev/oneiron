@@ -4,10 +4,12 @@ use super::{
     DiagnosticSourceKind,
     tiered::{DetectorPolicy, ProposedDiagnostic, ProposedTier, propose, valid_runs},
 };
+use crate::side_table::{self, Named, SideTable};
 use crate::{EntityId, Error, Result, Vault, store::RetrievalRunRecord};
 use serde::{Deserialize, Serialize};
 
-const PREFIX: &[u8] = b"self_heal:centroid_evidence:v1:";
+const EVIDENCE: SideTable<[u8; 32], CentroidEvidence, Named> =
+    SideTable::new(&side_table::SELF_HEAL_CENTROID_EVIDENCE);
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 struct VectorEvidence {
@@ -38,10 +40,6 @@ pub struct CentroidReplay {
     pub matched: bool,
 }
 
-fn key(hash: &[u8; 32]) -> Vec<u8> {
-    [PREFIX, hash].concat()
-}
-
 /// Read-time custody of the immutable centroid inputs used by a tier-1
 /// observation. The producer performs the full replay check before minting.
 pub(crate) fn snapshot_live_in_txn(
@@ -49,7 +47,7 @@ pub(crate) fn snapshot_live_in_txn(
     txn: &heed::RoTxn<'_>,
     hash: &[u8; 32],
 ) -> Result<bool> {
-    let Some(raw) = store.vault_meta.get(txn, &key(hash))? else {
+    let Some(raw) = EVIDENCE.get_bytes(store, txn, hash)? else {
         return Ok(false);
     };
     if blake3::hash(&raw).as_bytes() != hash {
@@ -59,7 +57,7 @@ pub(crate) fn snapshot_live_in_txn(
         rmp_serde::from_slice(&raw).map_err(|_| Error::CorruptedIndex("centroid evidence body"))?;
     let canonical = rmp_serde::to_vec_named(&evidence)
         .map_err(|_| Error::CorruptedIndex("centroid evidence body"))?;
-    Ok(evidence.version == 1 && raw.as_ref() == canonical)
+    Ok(evidence.version == 1 && raw == canonical)
 }
 
 fn similarity(candidate: &[f32], labeled: &[VectorEvidence]) -> Option<f64> {
@@ -160,13 +158,12 @@ impl Vault {
             .map_err(|_| Error::InvariantViolation("centroid evidence encode"))?;
         let hash = *blake3::hash(&bytes).as_bytes();
         self.with_write_txn(|txn| {
-            let evidence_key = key(&hash);
-            if let Some(prior) = self.store.vault_meta.get(txn, &evidence_key)? {
-                if prior.as_ref() != bytes {
+            if let Some(prior) = EVIDENCE.get_bytes(&self.store, txn, &hash)? {
+                if prior != bytes {
                     return Err(Error::CorruptedIndex("centroid evidence collision"));
                 }
             } else {
-                self.store.vault_meta.put(txn, &evidence_key, &bytes)?;
+                EVIDENCE.put(&self.store, txn, &hash, &snapshot)?;
             }
             Ok(())
         })?;
@@ -194,10 +191,8 @@ impl Vault {
             return Err(Error::InvalidConfig("not a centroid finding".into()));
         }
         let txn = self.store.env.read_txn()?;
-        let raw = self
-            .store
-            .vault_meta
-            .get(&txn, &key(&event.replay.content_hash))?
+        let raw = EVIDENCE
+            .get_bytes(&self.store, &txn, &event.replay.content_hash)?
             .ok_or(Error::CorruptedIndex("centroid evidence missing"))?;
         if *blake3::hash(&raw).as_bytes() != event.replay.content_hash {
             return Err(Error::CorruptedIndex("centroid evidence hash"));
@@ -206,7 +201,7 @@ impl Vault {
             .map_err(|_| Error::CorruptedIndex("centroid evidence body"))?;
         let canonical = rmp_serde::to_vec_named(&evidence)
             .map_err(|_| Error::CorruptedIndex("centroid evidence body"))?;
-        if evidence.version != 1 || raw.as_ref() != canonical {
+        if evidence.version != 1 || raw != canonical {
             return Err(Error::CorruptedIndex("centroid evidence canonical form"));
         }
         let mut refs = vec![

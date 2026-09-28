@@ -206,13 +206,10 @@ impl Store {
         entity_type: u8,
         bytes: &[u8],
     ) -> Result<()> {
-        let Some(pin) = self.vault_meta.get(txn, super::persistence::HEAD_KEY)? else {
+        let Some(pin) = super::persistence::HEAD_PIN.get(self, txn, &())? else {
             return Ok(());
         };
-        let hash: [u8; 32] = pin
-            .as_ref()
-            .try_into()
-            .map_err(|_| invalid("invalid local pack map head pin"))?;
+        let hash = pin.0;
         if super::persistence::carrier_id(&hash)? == *id
             && (entity_type != crate::registry::ENTITY_TYPE_ASSET
                 || blake3::hash(bytes).as_bytes() != &hash)
@@ -229,14 +226,10 @@ impl Store {
         txn: &RoTxn<'_>,
         id: &EntityId,
     ) -> Result<()> {
-        let Some(pin) = self.vault_meta.get(txn, super::persistence::HEAD_KEY)? else {
+        let Some(pin) = super::persistence::HEAD_PIN.get(self, txn, &())? else {
             return Ok(());
         };
-        let hash: [u8; 32] = pin
-            .as_ref()
-            .try_into()
-            .map_err(|_| invalid("invalid local pack map head pin"))?;
-        if super::persistence::carrier_id(&hash)? == *id {
+        if super::persistence::carrier_id(&pin.0)? == *id {
             return Err(invalid("current local pack map carrier cannot be deleted"));
         }
         Ok(())

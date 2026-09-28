@@ -19,6 +19,7 @@ use crate::sync::transport::{
 };
 use crate::sync::types::WindowKey;
 use crate::sync::window::{LoadedWindow, apply_pending_window_updates, load_window_from_state};
+use crate::sync::window_rows::BULK_TRANSFER_MARKER;
 
 impl SyncClient {
     /// Handles an incoming wire message from the server.
@@ -426,10 +427,10 @@ impl SyncClient {
         // Persist the in-progress marker (ARCH-0023b key table:
         // `bulk:w:{key}`, device only) so a crash between BulkTransfer and
         // BulkTransferDone is observable on restart.
-        let marker_key = format!("bulk:w:{window_key}");
+        let marker_key = window_key.to_owned();
         self.vault
             .with_write_txn(|wtxn| {
-                self.vault.store.sync_state.put(wtxn, &marker_key, &[1u8])?;
+                BULK_TRANSFER_MARKER.put(&self.vault.store, wtxn, &marker_key, &[1u8])?;
                 Ok(())
             })
             .map_err(|e| TransportError::Storage(format!("persist bulk marker: {e}")))?;
@@ -448,7 +449,7 @@ impl SyncClient {
         window_key: &str,
         doc_state: &[u8],
     ) -> std::result::Result<(), TransportError> {
-        let marker_key = format!("bulk:w:{window_key}");
+        let marker_key = window_key.to_owned();
 
         if !doc_state.is_empty() {
             if let Some(window) = self.window(window_key) {
@@ -551,7 +552,7 @@ impl SyncClient {
         // (fail-closed: a failed persist leaves the marker set for retry).
         self.vault
             .with_write_txn(|wtxn| {
-                self.vault.store.sync_state.delete(wtxn, &marker_key)?;
+                BULK_TRANSFER_MARKER.delete(&self.vault.store, wtxn, &marker_key)?;
                 Ok(())
             })
             .map_err(|e| TransportError::Storage(format!("clear bulk marker: {e}")))?;

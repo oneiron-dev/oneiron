@@ -99,7 +99,7 @@ fn raw_row(vault: &Vault, key: &ActionKey) -> Option<Vec<u8>> {
     vault
         .store
         .vault_meta
-        .get(&rtxn, &build_cache_key(key))
+        .get(&rtxn, &BUILD_CACHE_REAPI_ROW.key_bytes(key.as_bytes()))
         .expect("read row")
         .map(|bytes| bytes.to_vec())
 }
@@ -356,9 +356,9 @@ fn row_starts_with_schema_version() {
     let record = sample_record();
     let bytes = encode_build_cache_row(&record).expect("encode");
     assert_eq!(bytes[0], 2);
-    let decoded = decode_build_cache_row(&record.action_key, &bytes).expect("decode");
+    let decoded = decode_build_cache_row(&bytes).expect("decode");
     assert_eq!(decoded, record);
-    let key = build_cache_key(&record.action_key);
+    let key = BUILD_CACHE_REAPI_ROW.key_bytes(record.action_key.as_bytes());
     assert_eq!(
         &key[..BUILD_CACHE_KEY_PREFIX_V1.len()],
         b"build_cache:reapi:v2:"
@@ -375,7 +375,7 @@ fn unknown_schema_version_is_typed() {
     let mut bytes = encode_build_cache_row(&record).expect("encode");
     bytes[0] = 3;
     assert!(matches!(
-        decode_build_cache_row(&record.action_key, &bytes),
+        decode_build_cache_row(&bytes),
         Err(BuildCacheError::UnknownSchemaVersion { found: 3 })
     ));
 }
@@ -384,8 +384,9 @@ fn unknown_schema_version_is_typed() {
 fn row_key_mismatch_is_corrupt() {
     let record = sample_record();
     let bytes = encode_build_cache_row(&record).expect("encode");
+    let decoded = decode_build_cache_row(&bytes).expect("decode");
     assert!(matches!(
-        decode_build_cache_row(&ActionKey([9; 32]), &bytes),
+        verify_action_key(&ActionKey([9; 32]), &decoded),
         Err(BuildCacheError::CorruptRecord(_))
     ));
 }
@@ -567,7 +568,7 @@ fn noncanonical_output_order_is_rejected() {
         ];
     });
     assert!(matches!(
-        decode_build_cache_row(&record.action_key, &bytes),
+        decode_build_cache_row(&bytes),
         Err(BuildCacheError::CorruptRecord(_))
     ));
 }
@@ -577,7 +578,7 @@ fn duplicate_output_key_is_rejected() {
     let record = sample_record();
     let bytes = forge_row(&record, |row| row.outputs.push(row.outputs[0].clone()));
     assert!(matches!(
-        decode_build_cache_row(&record.action_key, &bytes),
+        decode_build_cache_row(&bytes),
         Err(BuildCacheError::CorruptRecord(_))
     ));
 }
@@ -676,7 +677,7 @@ fn malformed_rows_fail_typed_including_integer_overflow() {
     for bytes in malformed {
         assert!(
             matches!(
-                decode_build_cache_row(&record.action_key, &bytes),
+                decode_build_cache_row(&bytes),
                 Err(BuildCacheError::CorruptRecord(_))
             ),
             "{bytes:?}"

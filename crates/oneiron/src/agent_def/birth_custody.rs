@@ -2,19 +2,28 @@
 use super::portable_source::{birth_source_id, decode_birth_source};
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::registry::{ENTITY_TYPE_AGENT_DEF, ENTITY_TYPE_ASSET};
+use crate::side_table::{self, HexId, Raw, SideTable};
 use crate::{
     entity_id::EntityId,
     error::{Error, Result},
     store::Store,
 };
-const OWNED: &[u8] = b"agent_def/birth-custody/v1\0";
-const BINDING: &[u8] = b"agent_def/birth-asset-binding/v1\0";
-const RETIRED: &[u8] = b"agent_def/birth-retired/v1\0";
-fn key(prefix: &[u8], id: &EntityId) -> Vec<u8> {
-    let mut key = prefix.to_vec();
-    key.extend_from_slice(id.as_bytes());
-    key
-}
+
+/// Which asset entity currently holds custody of a birthed agent's captured
+/// source. Key: the birthed child's id; value: the holder asset's id.
+const OWNED: SideTable<EntityId, EntityId, Raw> =
+    SideTable::new(&side_table::AGENT_DEF_BIRTH_CUSTODY_OWNED);
+/// Binds a captured-source ASSET id back to the child agent it was birthed
+/// for. Key: the asset's id; value: the child's id.
+const BINDING: SideTable<EntityId, EntityId, Raw> =
+    SideTable::new(&side_table::AGENT_DEF_BIRTH_ASSET_BINDING);
+/// Empty marker: an agent's birth source has been retired.
+const RETIRED: SideTable<EntityId, (), Raw> = SideTable::new(&side_table::AGENT_DEF_BIRTH_RETIRED);
+/// The ARCH-0023b global local hard-delete marker (owned by
+/// `crate::deletion::tombstone`); read-only here for the retired/deleted check.
+const HARD_DELETE_MARKER: SideTable<HexId, Vec<u8>, Raw> =
+    SideTable::new(&side_table::DELETION_HARD_DELETE_MARKER);
+
 fn invalid() -> Error {
     Error::Artifact(crate::error::ArtifactError::InvalidAgentDefBody(
         "agent birth source custody retired or mismatched",
@@ -25,26 +34,22 @@ pub(super) fn birth_source_retired(
     txn: &heed::RoTxn<'_>,
     child: &EntityId,
 ) -> Result<bool> {
-    Ok(store.vault_meta.get(txn, &key(RETIRED, child))?.is_some())
+    RETIRED.contains(store, txn, child)
 }
 pub(super) fn mark_birth_source_retired(
     store: &Store,
     txn: &mut heed::RwTxn<'_>,
     child: &EntityId,
 ) -> Result<()> {
-    store.vault_meta.put(txn, &key(RETIRED, child), &[])?;
-    Ok(())
+    RETIRED.put(store, txn, child, &())
 }
 pub(super) fn check_birth_custody(
     store: &Store,
     txn: &heed::RoTxn<'_>,
     child: &EntityId,
 ) -> Result<()> {
-    if store.vault_meta.get(txn, &key(RETIRED, child))?.is_some()
-        || store
-            .sync_state
-            .get(txn, &format!("dt:{}", child.to_hex()))?
-            .is_some()
+    if RETIRED.contains(store, txn, child)?
+        || HARD_DELETE_MARKER.contains(store, txn, &HexId(*child))?
         || store.off_record_sessions.contains_entity(child)?
     {
         return Err(invalid());
@@ -65,10 +70,9 @@ pub(super) fn check_registered_birth_target(
     kind: u8,
     bytes: &[u8],
 ) -> Result<()> {
-    let Some(binding) = store.vault_meta.get(txn, &key(BINDING, id))? else {
+    let Some(child) = BINDING.get(store, txn, id)? else {
         return Ok(());
     };
-    let child = crate::entity_id::parse_entity_id(&binding, "agent birth asset binding")?;
     if kind != ENTITY_TYPE_ASSET
         || decode_birth_source(bytes)?.is_none_or(|source| source.child().ok() != Some(child))
     {
@@ -88,14 +92,10 @@ pub(crate) fn stage_birth_custody_put(
     {
         let child = source.child()?;
         super::birth_dependencies::bind_inputs(store, txn, &source)?;
-        store
-            .vault_meta
-            .put(txn, &key(OWNED, &child), id.as_bytes())?;
-        store
-            .vault_meta
-            .put(txn, &key(BINDING, id), child.as_bytes())?;
+        OWNED.put(store, txn, &child, id)?;
+        BINDING.put(store, txn, id, &child)?;
     }
-    if kind != ENTITY_TYPE_AGENT_DEF && store.vault_meta.get(txn, &key(OWNED, id))?.is_some() {
+    if kind != ENTITY_TYPE_AGENT_DEF && OWNED.contains(store, txn, id)? {
         retire_birth_source_holder_in_txn(store, txn, id)?;
     }
     Ok(())
@@ -105,10 +105,9 @@ pub(crate) fn birth_carriers_for_holder_in_txn(
     txn: &heed::RoTxn<'_>,
     child: &EntityId,
 ) -> Result<Vec<EntityId>> {
-    match store.vault_meta.get(txn, &key(OWNED, child))? {
+    match OWNED.get(store, txn, child)? {
         None => Ok(vec![]),
-        Some(raw) => {
-            let id = crate::entity_id::parse_entity_id(&raw, "agent source custody ID")?;
+        Some(id) => {
             if id != birth_source_id(child)? {
                 return Err(Error::CorruptedIndex("agent source custody ID"));
             }
@@ -174,9 +173,7 @@ pub(crate) fn remove_birth_custody_in_txn(
             && let Some(source) = decode_birth_source(&raw[ENTITY_METADATA_HEADER_LEN..])?
         {
             // Direct carrier deletion retires its payload, never its agent row.
-            store
-                .vault_meta
-                .put(txn, &key(RETIRED, &source.child()?), &[])?;
+            RETIRED.put(store, txn, &source.child()?, &())?;
             super::birth_dependencies::retire_input(store, txn, id)?;
             return Ok(());
         }
@@ -187,7 +184,7 @@ pub(crate) fn remove_birth_custody_in_txn(
         }
     }
     super::birth_dependencies::retire_input(store, txn, id)?;
-    if store.vault_meta.get(txn, &key(OWNED, id))?.is_some() {
+    if OWNED.contains(store, txn, id)? {
         retire_birth_source_holder_in_txn(store, txn, id)?;
     }
     Ok(())

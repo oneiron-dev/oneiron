@@ -2,6 +2,7 @@
 
 use super::room::{RoomBar, RoomMode, RoomPosture, RoomPresence, RoomSection, room_scope};
 use crate::EntityId;
+use crate::claim::PointRead;
 use crate::memory::{ClaimListFilter, EntityView, Memory, MemoryError, MemoryResult};
 
 impl Memory<'_> {
@@ -12,7 +13,10 @@ impl Memory<'_> {
         room: EntityId,
         presence: &[RoomPresence],
     ) -> MemoryResult<RoomSection> {
-        let members = require_member(self, room)?;
+        let crate::claim::ScopedReadResult {
+            value: members,
+            receipt: room_receipt,
+        } = require_member(self, room)?;
         let present: std::collections::BTreeSet<_> =
             presence.iter().map(|entry| entry.actor).collect();
         if !presence
@@ -76,12 +80,7 @@ impl Memory<'_> {
             }
         }
         roster.sort_by_key(|member| member.actor);
-        let key = crate::claim::ScopedReadActorKey::with_actor_class(
-            self.actor().to_hex(),
-            self.actor_class().gate_actor_class(),
-        )
-        .ok_or_else(|| MemoryError::bad_request_with("invalid room actor", &[]))?;
-        let read = self.vault().scoped_read(key);
+        let read = self.read_lane(crate::claim::ClaimReadStatus::Surfaceable)?;
         // The roster meets both world authority above and each participant's
         // ordinary read grants here. A host label cannot widen a participant.
         let peers: Vec<_> = presence
@@ -104,19 +103,33 @@ impl Memory<'_> {
                 .ok_or_else(|| MemoryError::bad_request_with("invalid room actor", &[]))
             })
             .collect::<MemoryResult<_>>()?;
-        let mut claims = Vec::new();
-        let mut posture = RoomPosture::default();
-        let mut has_bar = false;
-        for claim in self.claim_list(&ClaimListFilter {
+        let crate::claim::ScopedReadResult {
+            value: listed,
+            mut receipt,
+        } = self.claim_list(&ClaimListFilter {
             subject_ref: Some(room.to_hex()),
             predicate: None,
             lifecycle: Some("active".into()),
             // The native subject scan fails closed at its work bound. Room
             // output spends its own cap only after all visibility predicates.
             limit: crate::vault::MAX_EDGE_QUERY_RESULTS,
-        })? {
-            let id = EntityId::from_hex(&claim.claim_ref)?;
-            if read.get(&id)?.is_none()
+        })?;
+        let reads = listed
+            .iter()
+            .map(|claim| EntityId::from_hex(&claim.claim_ref).map(PointRead::id))
+            .collect::<crate::Result<Vec<_>>>()?;
+        let own = read.read(&reads, None)?;
+        receipt.restrict_with(&room_receipt);
+        receipt.restrict_with(&own.receipt);
+        let peer_rows = peers
+            .iter()
+            .map(|peer| Ok(peer.read(&reads, None)?.value))
+            .collect::<MemoryResult<Vec<_>>>()?;
+        let mut claims = Vec::new();
+        let mut posture = RoomPosture::default();
+        let mut has_bar = false;
+        for (index, claim) in listed.into_iter().enumerate() {
+            if own.value[index].is_none()
                 || claim
                     .world_ref
                     .as_deref()
@@ -126,14 +139,8 @@ impl Memory<'_> {
             {
                 continue;
             }
-            let mut peers_admit = true;
-            for peer in &peers {
-                if peer.get(&id)?.is_none() {
-                    peers_admit = false;
-                    break;
-                }
-            }
-            if !peers_admit {
+            if peer_rows.iter().any(|rows| rows[index].is_none()) {
+                receipt.add_suppressed(1);
                 continue;
             }
             if claims.len() == 1000 {
@@ -179,14 +186,18 @@ impl Memory<'_> {
             scope,
             posture,
             claims,
+            receipt,
         })
     }
 }
 
-fn require_member(memory: &Memory<'_>, id: EntityId) -> MemoryResult<Vec<EntityId>> {
-    let view = memory
-        .get_entity(&id.to_hex())?
-        .ok_or_else(|| MemoryError::bad_request_with("unknown room", &[]))?;
+/// The room's members, read through the caller's lane, with that read's receipt.
+fn require_member(
+    memory: &Memory<'_>,
+    id: EntityId,
+) -> MemoryResult<crate::claim::ScopedReadResult<Vec<EntityId>>> {
+    let crate::claim::ScopedReadResult { value, receipt } = memory.get_entity(&id.to_hex())?;
+    let view = value.ok_or_else(|| MemoryError::bad_request_with("unknown room", &[]))?;
     let members = member_ids(&view)?;
     if !members.contains(&memory.actor()) {
         return Err(MemoryError::bad_request_with(
@@ -194,7 +205,10 @@ fn require_member(memory: &Memory<'_>, id: EntityId) -> MemoryResult<Vec<EntityI
             &[],
         ));
     }
-    Ok(members)
+    Ok(crate::claim::ScopedReadResult {
+        value: members,
+        receipt,
+    })
 }
 fn member_ids(view: &EntityView) -> MemoryResult<Vec<EntityId>> {
     if view.kind != "CONVERSATION"

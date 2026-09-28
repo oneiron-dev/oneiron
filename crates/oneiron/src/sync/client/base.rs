@@ -6,10 +6,7 @@ use std::sync::Arc;
 use loro::{LoroDoc, VersionVector};
 use tokio::sync::mpsc;
 
-use super::types::{
-    EphemeralChangeOrigin, KEY_LAST_SYNC, KEY_ROOT_DOC, KEY_ROOT_SV, KEY_ROOT_SVF,
-    ROOT_UPDATE_PREFIX, SVF_FRESH, SyncClientConfig, SyncEvent, SyncStatus,
-};
+use super::types::{EphemeralChangeOrigin, SVF_FRESH, SyncClientConfig, SyncEvent, SyncStatus};
 use crate::Vault;
 use crate::error::{
     Error, Result, SyncConfigField, SyncEngineContext, SyncError, SyncProtocolValidation,
@@ -21,6 +18,9 @@ use crate::sync::transport;
 use crate::sync::transport::TransportError;
 use crate::sync::types::{WindowKey, parse_window_key_str};
 use crate::sync::window::LoadedWindow;
+use crate::sync::window_rows::{
+    LAST_SYNC, ROOT_SHALLOW_FENCE, ROOT_SNAPSHOT, ROOT_STATE_VECTOR, ROOT_UPDATE,
+};
 use crate::sync::{
     EphemeralEventTrigger, EphemeralStore, EphemeralStoreEvent, LoroValue, Subscription,
 };
@@ -259,10 +259,7 @@ impl SyncClient {
             .duration_since(std::time::UNIX_EPOCH)
             .map_or(0, |d| d.as_secs());
         self.vault.with_write_txn(|wtxn| {
-            self.vault
-                .store
-                .sync_state
-                .put(wtxn, KEY_LAST_SYNC, &now_secs.to_le_bytes())?;
+            LAST_SYNC.put(&self.vault.store, wtxn, &(), &now_secs.to_le_bytes())?;
             Ok(())
         })
     }
@@ -278,15 +275,9 @@ impl SyncClient {
         let snapshot = export_snapshot(&self.root_doc)?;
         let vv = doc_version_vector(&self.root_doc);
         if let Err(err) = self.vault.with_write_txn(|wtxn| {
-            self.vault
-                .store
-                .sync_state
-                .put(wtxn, KEY_ROOT_DOC, &snapshot)?;
-            self.vault.store.sync_state.put(wtxn, KEY_ROOT_SV, &vv)?;
-            self.vault
-                .store
-                .sync_state
-                .put(wtxn, KEY_ROOT_SVF, &[SVF_FRESH])?;
+            ROOT_SNAPSHOT.put(&self.vault.store, wtxn, &(), &snapshot)?;
+            ROOT_STATE_VECTOR.put(&self.vault.store, wtxn, &(), &vv)?;
+            ROOT_SHALLOW_FENCE.put(&self.vault.store, wtxn, &(), &[SVF_FRESH])?;
             crate::sync::lease::mirror_leases_from_root_in_txn(&self.vault, wtxn, &self.root_doc)?;
             Ok(())
         }) {
@@ -307,15 +298,11 @@ impl SyncClient {
 /// replay (ARCH-0023b startup step 1). Fresh doc when nothing is persisted.
 pub(super) fn load_root_doc(vault: &Vault) -> Result<LoroDoc> {
     let rtxn = vault.store.env.read_txn()?;
-    let doc = match vault.store.sync_state.get(&rtxn, KEY_ROOT_DOC)? {
+    let doc = match ROOT_SNAPSHOT.get(&vault.store, &rtxn, &())? {
         Some(snapshot) => doc_from_snapshot(&snapshot)?,
         None => LoroDoc::new(),
     };
-    let iter = vault
-        .store
-        .sync_state
-        .prefix_iter(&rtxn, ROOT_UPDATE_PREFIX)?;
-    for entry in iter {
+    for entry in ROOT_UPDATE.iter_from(&vault.store, &rtxn, &[])? {
         let (_k, v) = entry?;
         doc.import(&v).map_err(|source| {
             Error::Sync(SyncError::CrdtDecodeError {

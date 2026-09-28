@@ -5,16 +5,6 @@ use serde::{Deserialize, Serialize};
 /// Stable id of the compliance pack this module governs.
 pub const CAMPAIGN_COMPLIANCE_PACK_ID: &str = "crm.compliance.v1";
 
-/// `vault_meta` key holding the ACTIVE pack.
-pub const CAMPAIGN_COMPLIANCE_META_KEY: &[u8] = b"campaign:compliance:active:v1";
-
-/// `vault_meta` key holding the one staged proposal awaiting an owner stamp.
-pub(super) const CAMPAIGN_COMPLIANCE_PENDING_META_KEY: &[u8] = b"campaign:compliance:pending:v1";
-
-/// `vault_meta` prefix of the durable activation-notice log, keyed by the
-/// activated pack version so one version can never write two notices.
-pub(super) const CAMPAIGN_COMPLIANCE_NOTICE_META_PREFIX: &[u8] = b"campaign:compliance:notice:v1:";
-
 /// The bootstrap seed. It is the active pack only while the vault holds none.
 pub const CAMPAIGN_COMPLIANCE_SEED_JSON: &str = include_str!("seed_v1.json");
 

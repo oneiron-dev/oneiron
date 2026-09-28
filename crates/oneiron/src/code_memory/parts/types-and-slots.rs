@@ -17,6 +17,7 @@ use crate::pipeline::ScoredEntity;
 use crate::ppr::{PprNodeVisibility, SeedWeighting, ppr_query_scoped_in_txn};
 use crate::provenance::validate_actor_class;
 use crate::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_CODE_SYMBOL, ENTITY_TYPE_NOTE};
+use crate::side_table::{self, Raw, RawValue, SideTable};
 use crate::store::Store;
 use crate::temporal::TimeRange;
 use crate::vault::MAX_EDGE_QUERY_RESULTS;
@@ -60,10 +61,62 @@ pub const CODE_MEMORY_DEFAULT_PULL_LIMIT: usize = 32;
 /// number of threshold-passing symbols an L2 pull will expand.
 pub const CODE_MEMORY_MAX_PULL_LIMIT: usize = 256;
 
-const ATTACHMENT_KEY_PREFIX: &[u8] = b"code_memory:attachment:v1:";
-const SLOT_KEY_PREFIX: &[u8] = b"code_memory:slot:v1:";
-const TRANSFER_KEY_PREFIX: &[u8] = b"code_memory:transfer:v1:";
-const ALWAYS_ON_KEY_PREFIX: &[u8] = b"code_memory:always_on:v1:";
+/// Named code-memory slot holding the live (possibly conflicting) values
+/// recorded against one code symbol. Key: id16 "\x00" string. Never decomposed
+/// back into its parts, so it stays the opaque `Vec<u8>` [`SideKey`] shape.
+const SLOT: SideTable<Vec<u8>, CodeMemorySlot, Raw> = SideTable::new(&side_table::CODE_MEMORY_SLOT);
+/// Durable L2 attachment row binding a code-symbol slot value to a
+/// note/claim payload. Key: id16 "\x00" string "\x00" u8 id16 (opaque).
+const ATTACHMENT: SideTable<Vec<u8>, (CodeMemoryLocator, EntityId), Raw> =
+    SideTable::new(&side_table::CODE_MEMORY_ATTACHMENT);
+/// Registered always-on code-memory contract. Key: id16 "\x00" string "\x00"
+/// u8 id16 (opaque).
+const ALWAYS_ON: SideTable<Vec<u8>, AlwaysOnCodeMemoryContract, Raw> =
+    SideTable::new(&side_table::CODE_MEMORY_ALWAYS_ON);
+/// Idempotent anchor-transfer receipt. Key: id16 + id16 + u64be + hash32
+/// (opaque).
+const TRANSFER: SideTable<Vec<u8>, AnchorTransferRecord, Raw> =
+    SideTable::new(&side_table::CODE_MEMORY_TRANSFER);
+
+impl RawValue for CodeMemorySlot {
+    fn to_raw(&self) -> std::result::Result<Vec<u8>, side_table::CodecError> {
+        Ok(encode_slot(self))
+    }
+
+    fn from_raw(bytes: &[u8]) -> std::result::Result<Self, side_table::CodecError> {
+        Ok(decode_slot(bytes)?)
+    }
+}
+
+impl RawValue for (CodeMemoryLocator, EntityId) {
+    fn to_raw(&self) -> std::result::Result<Vec<u8>, side_table::CodecError> {
+        Ok(encode_attachment_row(&self.0, self.1))
+    }
+
+    fn from_raw(bytes: &[u8]) -> std::result::Result<Self, side_table::CodecError> {
+        Ok(decode_attachment_row(bytes)?)
+    }
+}
+
+impl RawValue for AlwaysOnCodeMemoryContract {
+    fn to_raw(&self) -> std::result::Result<Vec<u8>, side_table::CodecError> {
+        Ok(encode_always_on(self))
+    }
+
+    fn from_raw(bytes: &[u8]) -> std::result::Result<Self, side_table::CodecError> {
+        Ok(decode_always_on(bytes)?)
+    }
+}
+
+impl RawValue for AnchorTransferRecord {
+    fn to_raw(&self) -> std::result::Result<Vec<u8>, side_table::CodecError> {
+        Ok(encode_transfer_record(self))
+    }
+
+    fn from_raw(bytes: &[u8]) -> std::result::Result<Self, side_table::CodecError> {
+        Ok(decode_transfer_record(bytes)?)
+    }
+}
 
 /// Record version leading every encoded body in this module.
 const CODE_MEMORY_RECORD_VERSION: u8 = 1;

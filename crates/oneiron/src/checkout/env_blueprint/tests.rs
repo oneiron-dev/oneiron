@@ -115,6 +115,10 @@ fn full_blueprint(repo_ref: &RepoRef) -> EnvBlueprint {
     EnvBlueprint::new(repo_ref.clone(), stages)
 }
 
+fn env_blueprint_key(repo_ref: &RepoRef) -> Vec<u8> {
+    BLUEPRINT.key_bytes(&env_blueprint_repo_hash(repo_ref))
+}
+
 fn read_raw_row(vault: &Vault, repo_ref: &RepoRef) -> Option<Vec<u8>> {
     let key = env_blueprint_key(repo_ref);
     let txn = vault.store.env.read_txn().unwrap();

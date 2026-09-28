@@ -16,6 +16,7 @@ use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::receipt::gate_decision_receipt;
 use crate::registry::ENTITY_TYPE_CLAIM;
+use crate::side_table::{self, Raw, SideTable};
 use crate::store::{GATE_DECISION_LEDGER_VERSION, GateDecisionRecord};
 use crate::temporal::TimeRange;
 use crate::write_envelope::WriteActor;
@@ -23,30 +24,29 @@ use crate::write_envelope::WriteActor;
 use super::model::{
     INBOX_BUNDLE_ACTOR_CLASS, INBOX_BUNDLE_CONTENT_KIND, INBOX_BUNDLE_REF_PREFIX,
     INBOX_GROUP_DOOR_PREFIX, INBOX_REASON_AMEND_ACCEPT, INBOX_REASON_AMEND_DELTA_UNCAPTURED,
-    INBOX_REASON_BUNDLE_ACCEPT, INBOX_REASON_BUNDLE_REJECT, INBOX_REVIEW_DIAL_KEY,
-    InboxAmendedApproval, InboxBulkVerb, InboxBundleResolution, InboxGroupReopen, InboxReviewDial,
+    INBOX_REASON_BUNDLE_ACCEPT, INBOX_REASON_BUNDLE_REJECT, InboxAmendedApproval, InboxBulkVerb,
+    InboxBundleResolution, InboxGroupReopen, InboxReviewDial,
 };
 use super::projection::explicit_inbox_group;
 use crate::error::GateError;
+
+/// The owner-set inbox review dial: a singleton row.
+const REVIEW_DIAL: SideTable<(), InboxReviewDial, Raw> =
+    SideTable::new(&side_table::INBOX_REVIEW_DIAL);
 
 impl Vault {
     /// Reads the persisted inbox review dial (default: exceptions-only).
     pub fn inbox_review_dial(&self) -> Result<InboxReviewDial> {
         let rtxn = self.store.env.read_txn()?;
-        let Some(raw) = self.store.vault_meta.get(&rtxn, INBOX_REVIEW_DIAL_KEY)? else {
-            return Ok(InboxReviewDial::default());
-        };
-        let token =
-            std::str::from_utf8(&raw).map_err(|_| Error::CorruptedIndex("inbox review dial"))?;
-        InboxReviewDial::parse(token).ok_or(Error::CorruptedIndex("inbox review dial"))
+        Ok(REVIEW_DIAL
+            .get(&self.store, &rtxn, &())?
+            .unwrap_or_default())
     }
 
     /// Persists the inbox review dial position.
     pub fn set_inbox_review_dial(&self, dial: InboxReviewDial) -> Result<()> {
         self.with_write_txn(|wtxn| {
-            self.store
-                .vault_meta
-                .put(wtxn, INBOX_REVIEW_DIAL_KEY, dial.as_str().as_bytes())?;
+            REVIEW_DIAL.put(&self.store, wtxn, &(), &dial)?;
             Ok(())
         })
     }

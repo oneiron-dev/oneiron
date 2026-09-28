@@ -5,6 +5,7 @@ use crate::blob_artifact::BlobArtifactVersion;
 use crate::edit_roundtrip::{EditManifest, EditProposal};
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
+use crate::side_table::{self, Named, SideTable};
 use crate::write_envelope::WriteActor;
 use serde::{Deserialize, Serialize};
 
@@ -31,6 +32,18 @@ impl StrandedEditProposal {
     }
 }
 
+/// Recovery payload for a stale-base retained proposal. Key: id16 + hash32(blake3 of the
+/// proposal ref).
+const STRANDED: SideTable<(EntityId, [u8; 32]), StrandedEditProposal, Named> =
+    SideTable::new(&side_table::EDIT_SETTLE_STRANDED_PROPOSAL);
+
+fn key_parts(artifact_id: &EntityId, proposal_ref: &str) -> (EntityId, [u8; 32]) {
+    (
+        *artifact_id,
+        *blake3::hash(proposal_ref.as_bytes()).as_bytes(),
+    )
+}
+
 impl Vault {
     /// Reads a stale output without making it the head or rebasing its ops.
     pub fn stranded_edit_proposal(
@@ -39,21 +52,11 @@ impl Vault {
         proposal_ref: &str,
     ) -> Result<Option<StrandedEditProposal>> {
         let txn = self.store.env.read_txn()?;
-        let Some(raw) = self
-            .store
-            .vault_meta
-            .get(&txn, &key(artifact_id, proposal_ref))?
+        let Some(row) = STRANDED.get(&self.store, &txn, &key_parts(artifact_id, proposal_ref))?
         else {
             return Ok(None);
         };
-        let mut cursor = std::io::Cursor::new(&raw);
-        let row: StrandedEditProposal =
-            Deserialize::deserialize(&mut rmp_serde::Deserializer::new(&mut cursor))
-                .map_err(|_| corrupt())?;
-        if cursor.position() != raw.len() as u64
-            || row.artifact_ref != artifact_id.to_hex()
-            || row.proposal_ref != proposal_ref
-        {
+        if row.artifact_ref != artifact_id.to_hex() || row.proposal_ref != proposal_ref {
             return Err(corrupt());
         }
         row.manifest()?;
@@ -82,22 +85,16 @@ impl Vault {
             actor_class: actor.actor_class() as u8,
             retained_at: at,
         };
-        let bytes = rmp_serde::to_vec_named(&row).map_err(|_| corrupt())?;
-        self.store
-            .vault_meta
-            .put(txn, &key(artifact_id, &proposal.run_ref), &bytes)?;
+        STRANDED.put(
+            &self.store,
+            txn,
+            &key_parts(artifact_id, &proposal.run_ref),
+            &row,
+        )?;
         Ok(row)
     }
 }
 
-fn key(artifact_id: &EntityId, proposal_ref: &str) -> Vec<u8> {
-    [
-        b"edit_settle:stranded:v1:".as_slice(),
-        artifact_id.as_bytes(),
-        blake3::hash(proposal_ref.as_bytes()).as_bytes(),
-    ]
-    .concat()
-}
 fn corrupt() -> Error {
     Error::CorruptedIndex("stranded edit proposal")
 }

@@ -210,6 +210,7 @@ fn typed_then_generic_then_typed_checkin_preserves_parent_scope() {
     let body = memory
         .get_entity(&habit.id_hex)
         .unwrap()
+        .value
         .unwrap()
         .body
         .unwrap();

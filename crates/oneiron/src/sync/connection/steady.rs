@@ -9,6 +9,9 @@ use crate::sync::client::{SyncClient, SyncEvent};
 use crate::sync::transport::{self, window_sub_tags};
 use crate::sync::types::parse_window_key_str;
 
+use crate::side_table::HexId;
+use crate::sync::documents::DS_E;
+
 use super::session::EPHEMERAL_HOUSEKEEPING_INTERVAL_SECS;
 use super::{LocalUpdate, LoopExit, SyncConnection, flush_to_queue};
 
@@ -115,13 +118,17 @@ impl SyncConnection {
                                 },
                                 Err(error) => return LoopExit::Disconnected(error.to_string()),
                             };
-                            match client.vault.sync_state_get(&format!("ds:e:{}", id.to_hex())) {
-                                Ok(Some(_)) => {
+                            let subscribed = (|| -> crate::error::Result<bool> {
+                                let rtxn = client.vault.store.env.read_txn()?;
+                                DS_E.contains(&client.vault.store, &rtxn, &HexId(id))
+                            })();
+                            match subscribed {
+                                Ok(true) => {
                                     if let Err(error) = write.send(Message::Binary(frame.into())).await {
                                         return LoopExit::Disconnected(error.to_string());
                                     }
                                 }
-                                Ok(None) => {} // Offline editing before admission stays journaled.
+                                Ok(false) => {} // Offline editing before admission stays journaled.
                                 Err(error) => return LoopExit::Disconnected(error.to_string()),
                             }
                         }

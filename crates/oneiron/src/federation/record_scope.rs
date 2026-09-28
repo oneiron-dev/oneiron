@@ -4,6 +4,7 @@
 //! a wildcard selector. Replication does not invent a stamp for opaque peer bytes.
 use super::{Scope, ScopeAxis, ScopeId, Sensitivity, SensitivityCeiling};
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
+use crate::side_table::{self, LegacyJson, SideTable};
 use crate::{
     EntityId, Vault,
     error::{Error, Result},
@@ -34,17 +35,15 @@ struct Stamp {
     digest: [u8; 32],
     scope: Scope,
 }
-fn key(id: EntityId) -> Vec<u8> {
-    let mut key = b"scope:record:v1:".to_vec();
-    key.extend_from_slice(id.as_bytes());
-    key
-}
-/// Retire an id's scope sidecar in the same transaction that erases its body.
-/// A later same-id, same-bytes write must not inherit the old scope.
+/// One entity's digest-bound record-position stamp, keyed by entity id.
+const SCOPE_RECORD: SideTable<EntityId, Stamp, LegacyJson> =
+    SideTable::new(&side_table::SCOPE_RECORD);
+/// Retire an id's scope sidecar with the body so same-id rewrites cannot inherit it.
 pub(crate) fn retire_stamp(store: &Store, txn: &mut heed::RwTxn<'_>, id: EntityId) -> Result<()> {
-    store.vault_meta.delete(txn, &key(id))?;
+    SCOPE_RECORD.delete(store, txn, &id)?;
     Ok(())
 }
+
 fn digest(kind: u8, data: &[u8]) -> [u8; 32] {
     let mut h = blake3::Hasher::new_derive_key("oneiron/record-scope/v1");
     h.update(&[kind]);
@@ -107,14 +106,14 @@ pub(crate) fn stamp_put(
         // Same bytes may retain their locally authored stamp. A changed opaque
         // replay must not inherit one from an earlier row at the same id.
         if stored_scope(store, txn, id, kind, data)?.is_none() {
-            store.vault_meta.delete(txn, &key(id))?;
+            SCOPE_RECORD.delete(store, txn, &id)?;
         }
         return Ok(());
     } else if kind == crate::registry::ENTITY_TYPE_FACET {
         default_stamp(kind, id)
     } else if carries_birth_stamp(kind) {
         let Some(facet) = birth_facet(store, txn, id)? else {
-            store.vault_meta.delete(txn, &key(id))?;
+            SCOPE_RECORD.delete(store, txn, &id)?;
             return Ok(());
         };
         default_stamp(kind, facet)
@@ -153,13 +152,12 @@ pub(crate) fn stamp_put(
         }
     }
     scope.verbs = ScopeAxis::Bottom;
-    let bytes = serde_json::to_vec(&Stamp {
+    let stamp = Stamp {
         version: 1,
         digest: digest(kind, data),
         scope,
-    })
-    .map_err(|_| Error::InvariantViolation("scope stamp encode"))?;
-    store.vault_meta.put(txn, &key(id), &bytes)?;
+    };
+    SCOPE_RECORD.put(store, txn, &id, &stamp)?;
     Ok(())
 }
 fn stored_scope(
@@ -169,11 +167,9 @@ fn stored_scope(
     kind: u8,
     data: &[u8],
 ) -> Result<Option<Scope>> {
-    let Some(bytes) = store.vault_meta().get(txn, &key(id))? else {
+    let Some(stamp) = SCOPE_RECORD.get(store, txn, &id)? else {
         return Ok(None);
     };
-    let stamp: Stamp =
-        serde_json::from_slice(&bytes).map_err(|_| Error::CorruptedIndex("record scope stamp"))?;
     if stamp.version != 1 || stamp.digest != digest(kind, data) {
         return Ok(None);
     }
@@ -195,16 +191,19 @@ pub(crate) fn preserve_task_projection_scope(
     let Some(scope) = stored_scope(store, txn, id, crate::registry::ENTITY_TYPE_TASK, before)?
     else {
         // A stale stamp cannot become a valid stamp for a new body by accident.
-        store.vault_meta.delete(txn, &key(id))?;
+        SCOPE_RECORD.delete(store, txn, &id)?;
         return Ok(());
     };
-    let bytes = serde_json::to_vec(&Stamp {
-        version: 1,
-        digest: digest(crate::registry::ENTITY_TYPE_TASK, after),
-        scope,
-    })
-    .map_err(|_| Error::InvariantViolation("TASK scope restamp encode"))?;
-    store.vault_meta.put(txn, &key(id), &bytes)?;
+    SCOPE_RECORD.put(
+        store,
+        txn,
+        &id,
+        &Stamp {
+            version: 1,
+            digest: digest(crate::registry::ENTITY_TYPE_TASK, after),
+            scope,
+        },
+    )?;
     Ok(())
 }
 
@@ -222,13 +221,16 @@ pub(crate) fn restamp_document_pointer(
     let Some(scope) = stored_scope(store, txn, id, kind, original)? else {
         return Ok(());
     };
-    let bytes = serde_json::to_vec(&Stamp {
-        version: 1,
-        digest: digest(kind, pointer),
-        scope,
-    })
-    .map_err(|_| Error::InvariantViolation("scope stamp encode"))?;
-    store.vault_meta.put(txn, &key(id), &bytes)?;
+    SCOPE_RECORD.put(
+        store,
+        txn,
+        &id,
+        &Stamp {
+            version: 1,
+            digest: digest(kind, pointer),
+            scope,
+        },
+    )?;
     Ok(())
 }
 /// Derive only an intrinsic current stamp or a digest-matched persisted stamp.
@@ -389,7 +391,7 @@ impl Vault {
             }
             batch.apply(txn)?;
             for id in &ids {
-                retire_stamp(&self.store, txn, *id)?;
+                SCOPE_RECORD.delete(&self.store, txn, id)?;
             }
             Ok(ids)
         })

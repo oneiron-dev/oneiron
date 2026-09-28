@@ -9,6 +9,7 @@
 use std::time::Instant;
 
 use crate::error::Error;
+use crate::side_table::{self, Raw, SideTable};
 use crate::store::StoreCore;
 
 use super::*;
@@ -30,6 +31,41 @@ pub(crate) fn authority_first_seen_backfill_sync_key() -> &'static str {
 
 pub(crate) fn authority_first_seen_clock_sync_key() -> &'static str {
     "authlog:first_seen:clock_floor"
+}
+
+/// The first-seen family's two `u64` (big-endian seconds) row shapes, addressed by tag inside
+/// the shared `authlog:first_seen:` prefix: per-entry-hash sidecars (Key: hex64) and the
+/// per-vault clock floor (Key: the literal `clock_floor`).
+pub(crate) const AUTHORITY_FIRST_SEEN: SideTable<String, u64, Raw> =
+    SideTable::new(&side_table::AUTHLOG_FIRST_SEEN_SIDECAR);
+/// The one-shot sidecar-backfill marker (Key: the literal `backfill:v1`). The value is the
+/// single pinned marker byte `[1]`; every reader checks presence only, so callers use
+/// [`SideTable::contains`] rather than decoding it.
+pub(crate) const AUTHORITY_FIRST_SEEN_BACKFILLED: SideTable<String, [u8; 1], Raw> =
+    SideTable::new(&side_table::AUTHLOG_FIRST_SEEN_SIDECAR);
+
+/// [`AUTHORITY_FIRST_SEEN`]'s key for one entry hash's sidecar row: the same spelling
+/// [`authority_first_seen_sync_key`] gives the legacy raw-key callers, minus the shared prefix
+/// the typed table already carries.
+pub(crate) fn authority_first_seen_sidecar_key(hash: &AuthorityEntryHash) -> String {
+    first_seen_suffix(&authority_first_seen_sync_key(hash))
+}
+
+/// [`AUTHORITY_FIRST_SEEN`]'s key for the per-vault clock floor row.
+pub(crate) fn authority_first_seen_clock_key() -> String {
+    first_seen_suffix(authority_first_seen_clock_sync_key())
+}
+
+/// [`AUTHORITY_FIRST_SEEN_BACKFILLED`]'s key for the one-shot backfill marker row.
+pub(crate) fn authority_first_seen_backfill_key() -> String {
+    first_seen_suffix(authority_first_seen_backfill_sync_key())
+}
+
+fn first_seen_suffix(full_key: &str) -> String {
+    full_key
+        .strip_prefix("authlog:first_seen:")
+        .expect("every first-seen key carries the shared authlog:first_seen: prefix")
+        .to_owned()
 }
 
 /// Verdict text carried by the [`Error::CorruptedIndex`] a readonly fold raises
@@ -173,6 +209,11 @@ pub(crate) fn authority_observation_secs(
         .observation_secs_at(previous_floor, candidate_wall_secs, Instant::now())
 }
 
+/// Production writes go through [`AUTHORITY_FIRST_SEEN`]'s typed door (`u64`'s
+/// built-in big-endian [`crate::side_table::RawValue`]); this raw encoder
+/// stays only for `credential_door::tests`, which pins the clock floor by
+/// writing the legacy raw `sync_state` row directly.
+#[cfg(test)]
 pub(crate) fn encode_authority_first_seen_secs(secs: u64) -> [u8; 8] {
     secs.to_be_bytes()
 }

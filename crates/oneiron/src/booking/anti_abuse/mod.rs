@@ -85,14 +85,14 @@ mod booking_anti_abuse_tests;
 #[cfg(test)]
 use self::storage::{
     QUARANTINE_CLAIM_PREDICATE, QUARANTINE_RUN_ID_PREFIX, ROW_ID_MAX_LEN, RULE_KEY_DOMAIN,
-    hex_lower, notice_key, rule_row_key,
+    hex_lower, rule_row_key,
 };
 #[cfg(test)]
 use crate::Vault;
 #[cfg(test)]
 use crate::booking::BookingError;
 #[cfg(test)]
-use crate::booking::lifecycle::{digest_with, read_meta_bytes};
+use crate::booking::lifecycle::digest_with;
 #[cfg(test)]
 use crate::claim::{ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSubject};
 #[cfg(test)]

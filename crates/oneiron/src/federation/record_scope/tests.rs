@@ -23,12 +23,7 @@ fn person(vault: &Vault) -> EntityId {
 }
 fn stamp_bytes(vault: &Vault, id: EntityId) -> Option<Vec<u8>> {
     let txn = vault.store.env.read_txn().unwrap();
-    vault
-        .store
-        .vault_meta
-        .get(&txn, &key(id))
-        .unwrap()
-        .map(|raw| raw.to_vec())
+    SCOPE_RECORD.get_bytes(&vault.store, &txn, &id).unwrap()
 }
 fn habit(vault: &Vault, member: EntityId) -> EntityId {
     let row = vault
@@ -90,10 +85,7 @@ fn generic_child_in_scope_cannot_rewrite_an_out_of_scope_habit_parent() {
     stamp.scope.audience = ScopeAxis::Some(BTreeSet::from([ScopeId(EntityId::now())]));
     vault
         .with_write_txn(|txn| {
-            vault
-                .store
-                .vault_meta
-                .put(txn, &key(parent), &serde_json::to_vec(&stamp).unwrap())?;
+            SCOPE_RECORD.put(&vault.store, txn, &parent, &stamp)?;
             Ok(())
         })
         .unwrap();
@@ -226,10 +218,8 @@ fn reducer_rebinds_only_a_valid_prior_stamp_and_never_mints_on_replay() {
     // Stale old bytes are not accepted as proof for a later projection.
     vault
         .with_write_txn(|txn| {
-            vault
-                .store
-                .vault_meta
-                .put(txn, &key(parent), &original_stamp)?;
+            let original: Stamp = serde_json::from_slice(&original_stamp).unwrap();
+            SCOPE_RECORD.put(&vault.store, txn, &parent, &original)?;
             crate::ports::EntityStoreMaintenance::port_habit_streak_materialize(
                 &vault.store,
                 txn,

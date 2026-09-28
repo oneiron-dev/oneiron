@@ -132,8 +132,6 @@ impl Vault {
         };
         let header = EntityMetadataHeader::parse(&entity_record)
             .ok_or(Error::CorruptedIndex("entity metadata"))?;
-        let payload = entity_record[..ENTITY_METADATA_HEADER_LEN].to_vec();
-        let changed = entity_record.len() > ENTITY_METADATA_HEADER_LEN;
         // Soft erase keeps the reply edges but removes the TURN body. Both
         // local UserDelete and replayed soft tombstones pass through here.
         if header.entity_type == crate::registry::ENTITY_TYPE_TURN {
@@ -176,27 +174,10 @@ impl Vault {
         crate::claim::remove_claim_projection_index(&self.store, wtxn, *id)?;
         crate::dreamer_runner::deindex_dreamer_milestone_claim(&self.store, wtxn, id)?;
         crate::llm::deindex_dreamer_step_claim(&self.store, wtxn, id)?;
+        self.store
+            .port_entity_scrub(wtxn, id, ScrubbedRecord::Shell, mutation_recorded_at)?;
         crate::federation::record_scope::retire_stamp(&self.store, wtxn, *id)?;
-        crate::ports::EntityStoreStaging::port_stage_entity_row(&self.store, wtxn, id, &payload)?;
-        self.store.sync_state.put(
-            wtxn,
-            &super::super::tombstone::identity_soft_delete_key(id),
-            &[],
-        )?;
-        if changed {
-            crate::ports::audit_mutation_in_txn(
-                &self.store,
-                wtxn,
-                crate::ports::MutationAudit {
-                    entity: *id,
-                    op: crate::ports::ChangeOp::Redact,
-                    actor_principal: None,
-                    occurred_at: mutation_recorded_at,
-                    input: id.as_bytes(),
-                    reason: None,
-                },
-            )?;
-        }
+        IDENTITY_SOFT_DELETE_MARKER.put(&self.store, wtxn, &HexId(*id), &Vec::new())?;
         Ok((true, had_vector, ledger_changed))
     }
 }

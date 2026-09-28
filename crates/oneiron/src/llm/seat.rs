@@ -9,12 +9,15 @@ use serde::{Deserialize, Serialize};
 
 use super::registry::ModelWireFormat;
 use super::{CallPurpose, LlmCapability, ModelId, ModelLocality, ReasoningEffort};
+use crate::side_table::{self, LegacyJson, SideTable};
 use crate::{
     Vault,
     error::{Error, Result},
 };
 
-const DESCRIPTION_PREFIX: &[u8] = b"llm:model_description:v1:";
+/// One revision-pinned model description. Key: string (model id).
+const DESCRIPTIONS: SideTable<String, ModelDescription, LegacyJson> =
+    SideTable::new(&side_table::LLM_MODEL_DESCRIPTION);
 
 fn invalid(reason: impl Into<String>) -> Error {
     Error::InvalidConfig(reason.into())
@@ -96,10 +99,6 @@ impl ModelDescription {
     }
 }
 
-fn description_key(model: &ModelId) -> Vec<u8> {
-    [DESCRIPTION_PREFIX, model.as_str().as_bytes()].concat()
-}
-
 impl Vault {
     /// Resolve the owner manifest row, or the shipped default data for v2
     /// manifests that do not set an explicit seat policy.
@@ -122,11 +121,13 @@ impl Vault {
         if self.model_registry_row(&description.model)?.is_none() {
             return Err(invalid("model description requires a registered model"));
         }
-        let bytes = serde_json::to_vec(description).map_err(|e| invalid(e.to_string()))?;
         let mut txn = self.store.env.write_txn()?;
-        self.store
-            .vault_meta
-            .put(&mut txn, &description_key(&description.model), &bytes)?;
+        DESCRIPTIONS.put(
+            &self.store,
+            &mut txn,
+            &description.model.as_str().to_owned(),
+            description,
+        )?;
         txn.commit()?;
         Ok(())
     }
@@ -134,12 +135,9 @@ impl Vault {
     pub fn model_description(&self, model: &ModelId) -> Result<Option<ModelDescription>> {
         let policy = self.seat_policy()?;
         let txn = self.store.env.read_txn()?;
-        self.store
-            .vault_meta
-            .get(&txn, &description_key(model))?
-            .map(|bytes| {
-                let description: ModelDescription =
-                    serde_json::from_slice(&bytes).map_err(|e| invalid(e.to_string()))?;
+        DESCRIPTIONS
+            .get(&self.store, &txn, &model.as_str().to_owned())?
+            .map(|description| {
                 description.validate_with(&policy)?;
                 if &description.model != model {
                     return Err(invalid("model description identity mismatch"));
@@ -468,7 +466,9 @@ impl SeatPool {
     }
 }
 
-const RUN_SEAT_PREFIX: &[u8] = b"llm:run_seat:v1:";
+/// A run's immutable seat pin. Key: id16 (run).
+const RUN_SEATS: SideTable<crate::EntityId, StoredRunSeat, LegacyJson> =
+    SideTable::new(&side_table::LLM_RUN_SEAT);
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -480,10 +480,6 @@ struct StoredRunSeat {
     facet: String,
     locality: ModelLocality,
     receipt: SeatChoiceReceipt,
-}
-
-fn run_seat_key(run_id: crate::EntityId) -> Vec<u8> {
-    [RUN_SEAT_PREFIX, run_id.as_bytes()].concat()
 }
 
 impl StoredRunSeat {
@@ -577,30 +573,22 @@ impl Vault {
             .model_seats
             .lock()
             .map_err(|_| invalid("seat pool poisoned"))?;
-        let key = run_seat_key(run_id);
         let txn = self.store.env.read_txn()?;
-        let prior = self
-            .store
-            .vault_meta
-            .get(&txn, &key)?
-            .map(|bytes| bytes.to_vec());
+        let prior = RUN_SEATS.get(&self.store, &txn, &run_id)?;
         drop(txn);
-        if let Some(bytes) = prior {
-            let row: StoredRunSeat =
-                serde_json::from_slice(&bytes).map_err(|error| invalid(error.to_string()))?;
+        if let Some(row) = prior {
             return pool.resume(task, &row);
         }
         let seat = pool.birth(self, task, judge)?;
         let row = StoredRunSeat::from_seat(task, &seat)?;
-        let bytes = serde_json::to_vec(&row).map_err(|error| invalid(error.to_string()))?;
         let result = (|| {
             let mut txn = self.store.env.write_txn()?;
             // Single-vault writer serialization keeps a second birth from
             // overwriting a run pin if another handle reached this key first.
-            if self.store.vault_meta.get(&txn, &key)?.is_some() {
+            if RUN_SEATS.contains(&self.store, &txn, &run_id)? {
                 return Err(invalid("run seat was concurrently bound"));
             }
-            self.store.vault_meta.put(&mut txn, &key, &bytes)?;
+            RUN_SEATS.put(&self.store, &mut txn, &run_id, &row)?;
             txn.commit()?;
             Ok(())
         })();
@@ -616,12 +604,9 @@ impl Vault {
 
     /// Durable choice receipt for one run, independent of the current model catalog.
     pub fn model_seat_receipt(&self, run_id: crate::EntityId) -> Result<Option<SeatChoiceReceipt>> {
-        self.store
-            .vault_meta
-            .get(&self.store.env.read_txn()?, &run_seat_key(run_id))?
-            .map(|bytes| {
-                let row: StoredRunSeat =
-                    serde_json::from_slice(&bytes).map_err(|error| invalid(error.to_string()))?;
+        RUN_SEATS
+            .get(&self.store, &self.store.env.read_txn()?, &run_id)?
+            .map(|row| {
                 if row.version != 1 || row.receipt.why.trim().is_empty() {
                     return Err(invalid("invalid stored run seat"));
                 }

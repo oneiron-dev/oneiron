@@ -1,7 +1,7 @@
 //! Read-time support on a replica where erasure precedes a late claim.
 use super::*;
 use crate::authority::HostSlipIssuer;
-use crate::claim::ScopedReadActorKey;
+use crate::claim::{PointRead, ScopedReadActorKey};
 use crate::dreamer_consolidation::{ConsolidationEvidenceEnvelope, encode_consolidation_evidence};
 use crate::edge::EdgeKind;
 use crate::registry::ENTITY_TYPE_CLAIM;
@@ -79,8 +79,18 @@ fn erased_evidence_arriving_after_tombstone_is_suppressed_but_live_support_survi
     vault.ensure_host_root_slip(&issuer)?;
     let proof = vault.verified_host_root_slip(&issuer)?;
     let read = vault.scoped_read(ScopedReadActorKey::from_verified_slip(&proof).unwrap());
-    assert!(read.get(&single)?.is_some());
-    assert!(read.get(&mixed)?.is_some());
+    assert!(
+        read.read(&[PointRead::id(single)], None)?
+            .single()
+            .value
+            .is_some()
+    );
+    assert!(
+        read.read(&[PointRead::id(mixed)], None)?
+            .single()
+            .value
+            .is_some()
+    );
 
     // The replica already knows the erasure when its claim write arrives.
     // Mark the archived deletion in the same metadata family as replayed
@@ -103,9 +113,24 @@ fn erased_evidence_arriving_after_tombstone_is_suppressed_but_live_support_survi
     // The original rows and late rows remain in the history door.
     assert!(vault.get_claim(&late_single)?.is_some());
     assert!(vault.get_claim(&late_mixed)?.is_some());
-    assert!(read.get(&late_single)?.is_none());
-    assert!(read.get(&late_mixed)?.is_some());
-    let facade = vault.memory(actor, EdgeActorClass::Human);
+    assert!(
+        read.read(&[PointRead::id(late_single)], None)?
+            .single()
+            .value
+            .is_none()
+    );
+    assert!(
+        read.read(&[PointRead::id(late_mixed)], None)?
+            .single()
+            .value
+            .is_some()
+    );
+    // Memory reads are scoped to the facade's actor; the owner lane reads
+    // every record the host holds, so only evidence support decides here.
+    let facade = vault.memory(
+        crate::vault::embedded_owner_actor_id()?,
+        EdgeActorClass::Human,
+    );
     assert!(
         facade
             .get_entity(&late_single.to_hex())
@@ -170,8 +195,18 @@ fn erased_evidence_arriving_after_tombstone_is_suppressed_but_live_support_survi
         "othererasedneedlelive",
     )?;
     assert!(vault.get_claim(&unsupported)?.is_some());
-    assert!(read.get(&unsupported)?.is_none());
-    assert!(read.get(&corroborated)?.is_some());
+    assert!(
+        read.read(&[PointRead::id(unsupported)], None)?
+            .single()
+            .value
+            .is_none()
+    );
+    assert!(
+        read.read(&[PointRead::id(corroborated)], None)?
+            .single()
+            .value
+            .is_some()
+    );
 
     let hits = vault.query().search_text("erasedneedle", 10).run()?;
     assert!(
@@ -253,7 +288,12 @@ fn receiving_room_replica_hides_claim_arriving_after_real_tombstone() -> Result<
     peer.ensure_host_root_slip(&issuer)?;
     let proof = peer.verified_host_root_slip(&issuer)?;
     let read = peer.scoped_read(ScopedReadActorKey::from_verified_slip(&proof).unwrap());
-    assert!(read.get(&late)?.is_none());
+    assert!(
+        read.read(&[PointRead::id(late)], None)?
+            .single()
+            .value
+            .is_none()
+    );
     assert!(
         !peer
             .query()

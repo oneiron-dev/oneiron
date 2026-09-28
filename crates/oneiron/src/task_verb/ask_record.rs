@@ -9,6 +9,7 @@ use crate::error::{Error, RecordError, Result};
 use crate::habit::TaskRole;
 use crate::ports::EdgeStoreRead;
 use crate::registry::ENTITY_TYPE_TASK;
+use crate::side_table::{self, SideTable};
 use crate::{EntityId, Vault};
 pub(crate) use guard::guard_ask_fact_put;
 pub(super) use guard::validate_notice_companion;
@@ -25,6 +26,10 @@ pub(super) use link_proof::{
     verify_settlement as verify_link_settlement,
 };
 pub(super) use word_admission::{admit_link_word, admit_word};
+
+/// Node-local origin id this device mints ask intents under. Key: `()`.
+const ASK_ORIGIN: SideTable<(), EntityId, side_table::Raw> =
+    SideTable::new(&side_table::TASK_ASK_ORIGIN);
 
 const GROUP: &str = "tasks.ask_group";
 const ANSWER: &str = "tasks.ask_answer";
@@ -90,15 +95,11 @@ pub(super) fn group_id(
     actor: EntityId,
     intent_key: &str,
 ) -> Result<EntityId> {
-    const ORIGIN_KEY: &[u8] = b"tasks.ask.origin.v1";
-    let origin = if let Some(raw) = vault.store.vault_meta.get(txn, ORIGIN_KEY)? {
-        EntityId::from_bytes(raw.as_ref().try_into().map_err(|_| invalid())?)?
+    let origin = if let Some(origin) = ASK_ORIGIN.get(&vault.store, txn, &())? {
+        origin
     } else {
         let origin = vault.store.clock.entity_id()?;
-        vault
-            .store
-            .vault_meta
-            .put(txn, ORIGIN_KEY, origin.as_bytes())?;
+        ASK_ORIGIN.put(&vault.store, txn, &(), &origin)?;
         origin
     };
     let actor_origin = derived_id(b"oneiron.tasks.ask.origin.v1", origin, actor.as_bytes())?;
@@ -130,10 +131,9 @@ pub(super) fn owns_revision(
     id: EntityId,
     group: &AskGroup,
 ) -> Result<bool> {
-    let Some(raw) = vault.store.vault_meta.get(txn, b"tasks.ask.origin.v1")? else {
+    let Some(origin) = ASK_ORIGIN.get(&vault.store, txn, &())? else {
         return Ok(false);
     };
-    let origin = EntityId::from_bytes(raw.as_ref().try_into().map_err(|_| invalid())?)?;
     let actor_origin = derived_id(
         b"oneiron.tasks.ask.origin.v1",
         origin,

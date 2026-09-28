@@ -67,10 +67,11 @@ fn malformed_prior_on_shell_raises_the_same_structural_error_as_on_actor() -> Re
                 raw.extend_from_slice(&bytes);
                 vault.store.entities.put(wtxn, prior.as_bytes(), &raw)?;
                 if !cached {
-                    vault
-                        .store
-                        .vault_meta
-                        .delete(wtxn, &provider_prior_head_index_key(provider))?;
+                    PROVIDER_PRIOR_HEAD_INDEX.delete(
+                        &vault.store,
+                        wtxn,
+                        &provider_key_hash(provider),
+                    )?;
                 }
                 Ok(())
             })?;
@@ -107,21 +108,14 @@ fn stranded_write_preserves_exact_actor_and_prior_shortcut_bytes() -> Result<()>
         Error::InvalidClaimBody("provider confidence prior stranded by merge")
     ));
     let rtxn = vault.store.env.read_txn()?;
+    let digest = provider_key_hash(provider);
     assert_eq!(
-        vault
-            .store
-            .vault_meta
-            .get(&rtxn, &provider_actor_index_key(provider))?
-            .as_deref(),
-        Some(actor.as_bytes().as_slice())
+        PROVIDER_ACTOR_INDEX.get(&vault.store, &rtxn, &digest)?,
+        Some(actor)
     );
     assert_eq!(
-        vault
-            .store
-            .vault_meta
-            .get(&rtxn, &provider_prior_head_index_key(provider))?
-            .as_deref(),
-        Some(prior.as_bytes().as_slice())
+        PROVIDER_PRIOR_HEAD_INDEX.get(&vault.store, &rtxn, &digest)?,
+        Some(prior)
     );
     drop(rtxn);
     assert_eq!(vault.count_entities_by_type(ENTITY_TYPE_PERSON)?, before);
@@ -139,10 +133,7 @@ fn valid_actor_cache_cannot_hide_another_shells_stranded_prior_from_a_write() ->
     let stranded_prior = write_provider_prior(&vault, provider, 0.30, "evidence:shell")?;
     put_actor(&vault, actor, provider)?;
     vault.with_write_txn(|wtxn| {
-        vault
-            .store
-            .vault_meta
-            .put(wtxn, &provider_actor_index_key(provider), actor.as_bytes())?;
+        PROVIDER_ACTOR_INDEX.put(&vault.store, wtxn, &provider_key_hash(provider), &actor)?;
         Ok(())
     })?;
     let cached_prior = write_provider_prior(&vault, provider, 0.70, "evidence:cached")?;
@@ -160,21 +151,14 @@ fn valid_actor_cache_cannot_hide_another_shells_stranded_prior_from_a_write() ->
         validated_prior_head_owner_in_txn(&vault, &rtxn, &cached_prior, provider)?,
         Some((actor, actor))
     );
+    let digest = provider_key_hash(provider);
     assert_eq!(
-        vault
-            .store
-            .vault_meta
-            .get(&rtxn, &provider_actor_index_key(provider))?
-            .as_deref(),
-        Some(actor.as_bytes().as_slice())
+        PROVIDER_ACTOR_INDEX.get(&vault.store, &rtxn, &digest)?,
+        Some(actor)
     );
     assert_eq!(
-        vault
-            .store
-            .vault_meta
-            .get(&rtxn, &provider_prior_head_index_key(provider))?
-            .as_deref(),
-        Some(cached_prior.as_bytes().as_slice())
+        PROVIDER_PRIOR_HEAD_INDEX.get(&vault.store, &rtxn, &digest)?,
+        Some(cached_prior)
     );
     drop(rtxn);
 
@@ -351,7 +335,7 @@ mod one1891_ruling {
     mod f {
         use crate::claim::encode_claim_body;
         use crate::provider_confidence::indexes::{
-            provider_actor_index_key, provider_prior_head_index_key,
+            PROVIDER_ACTOR_INDEX, PROVIDER_PRIOR_HEAD_INDEX, provider_key_hash,
         };
         use crate::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_PERSON};
         use crate::{
@@ -500,33 +484,23 @@ mod one1891_ruling {
 
         pub(super) fn index_presence(vault: &Vault, provider: &str) -> (bool, bool) {
             let rtxn = vault.store.env.read_txn().expect("index read transaction");
+            let digest = provider_key_hash(provider);
             (
-                vault
-                    .store
-                    .vault_meta
-                    .get(&rtxn, &provider_actor_index_key(provider))
-                    .expect("actor index")
-                    .is_some(),
-                vault
-                    .store
-                    .vault_meta
-                    .get(&rtxn, &provider_prior_head_index_key(provider))
-                    .expect("prior index")
-                    .is_some(),
+                PROVIDER_ACTOR_INDEX
+                    .contains(&vault.store, &rtxn, &digest)
+                    .expect("actor index"),
+                PROVIDER_PRIOR_HEAD_INDEX
+                    .contains(&vault.store, &rtxn, &digest)
+                    .expect("prior index"),
             )
         }
 
         pub(super) fn clear_indexes(vault: &Vault, provider: &str) {
             vault
                 .with_write_txn(|wtxn| {
-                    vault
-                        .store
-                        .vault_meta
-                        .delete(wtxn, &provider_actor_index_key(provider))?;
-                    vault
-                        .store
-                        .vault_meta
-                        .delete(wtxn, &provider_prior_head_index_key(provider))?;
+                    let digest = provider_key_hash(provider);
+                    PROVIDER_ACTOR_INDEX.delete(&vault.store, wtxn, &digest)?;
+                    PROVIDER_PRIOR_HEAD_INDEX.delete(&vault.store, wtxn, &digest)?;
                     Ok(())
                 })
                 .expect("clear provider shortcut rows");

@@ -8,6 +8,7 @@ use sha2::Sha256;
 use crate::entity_id::{ENTITY_ID_LEN, EntityId};
 use crate::error::{Error, Result};
 use crate::registry::ENTITY_TYPE_CONNECTOR_KEY;
+use crate::side_table::{self, CodecError, Raw, RawValue, SideKey, SideTable};
 use crate::store::{GateDecisionId, GateDecisionRecord, Store};
 
 use super::codec::{decode_connector_key_body, encode_connector_key_body};
@@ -15,24 +16,55 @@ use super::record::{
     ConnectorKeyRecord, ConnectorKeyStatus, invalid_body, validate_connector_token,
 };
 
-/// vault_meta connector lookup index: prefix ++ normalized connector bytes ++
-/// `\0` ++ key id (16 bytes) -> `[]`.
-const CONNECTOR_KEY_CONNECTOR_INDEX_PREFIX: &[u8] = b"connector_key/connector/v1\0";
+/// The `(connector, key id)` pair addressed by the connector lookup index:
+/// normalized connector bytes, a NUL separator, then the 16-byte id.
+/// `validate_connector_token` rejects a connector containing NUL, so the
+/// separator is unambiguous on decode.
+pub(super) struct ConnectorIndexKey {
+    pub(super) connector: String,
+    pub(super) id: EntityId,
+}
 
-/// vault_meta engine-catalog name index: prefix ++ normalized catalog name ->
-/// key id (16 bytes).
+impl SideKey for ConnectorIndexKey {
+    fn encode_into(&self, out: &mut Vec<u8>) {
+        out.extend_from_slice(self.connector.as_bytes());
+        out.push(0);
+        out.extend_from_slice(self.id.as_bytes());
+    }
+
+    fn decode_key(bytes: &[u8]) -> Option<Self> {
+        let (rest, id_bytes) = bytes.split_at_checked(bytes.len().checked_sub(ENTITY_ID_LEN)?)?;
+        let (&0, connector_bytes) = rest.split_last()? else {
+            return None;
+        };
+        Some(Self {
+            connector: String::from_utf8(connector_bytes.to_vec()).ok()?,
+            id: EntityId::from_bytes(id_bytes.try_into().ok()?).ok()?,
+        })
+    }
+}
+
+/// vault_meta connector lookup index: normalized connector ++ `\0` ++ key id
+/// -> empty marker.
+pub(super) const CONNECTOR_INDEX: SideTable<ConnectorIndexKey, (), Raw> =
+    SideTable::new(&side_table::CONNECTOR_KEY_CONNECTOR_INDEX);
+
+/// vault_meta engine-catalog name index: normalized catalog name -> key id
+/// (16 raw bytes).
 ///
 /// PERMANENT by design (the ONE-1919 `SECRET_NAME_INDEX_PREFIX` shape, minus
 /// its free-on-revoke behavior): [`crate::Vault::remove_connector_key`] never
 /// deletes a row here, so a catalog name is unique per vault ACROSS HISTORY.
 /// `describe_connector` therefore still resolves a removed connector, and a
 /// name can never be recycled onto a different one.
-pub const CONNECTOR_CATALOG_NAME_INDEX_PREFIX: &[u8] = b"connector_catalog/name/v1\0";
+pub(super) const CATALOG_NAME_INDEX: SideTable<String, EntityId, Raw> =
+    SideTable::new(&side_table::CONNECTOR_CATALOG_NAME_INDEX);
 
-/// vault_meta rotation-generation log: prefix ++ key id (16 bytes) ++
-/// generation u32 BE -> canonical msgpack `{generation, secret_ref,
-/// rotated_at}`. Point-readable for `0..=key_generation`.
-pub const CONNECTOR_KEY_GENERATION_LOG_PREFIX: &[u8] = b"connector_key/generation/v1\0";
+/// vault_meta rotation-generation log: key id (16 bytes) ++ generation u32 BE
+/// -> canonical msgpack `{generation, secret_ref, rotated_at}`. Point-readable
+/// for `0..=key_generation`.
+pub(super) const GENERATION_LOG: SideTable<(EntityId, [u8; 4]), ConnectorKeyGeneration, Raw> =
+    SideTable::new(&side_table::CONNECTOR_KEY_GENERATION_LOG);
 
 const CONNECTOR_KEY_OP_DIFF_DOMAIN: &[u8] = b"oneiron.connector_key.op.v0";
 
@@ -55,61 +87,14 @@ pub struct ConnectorKeyGeneration {
 
 // --- vault_meta keys ---------------------------------------------------------
 
-pub(super) fn connector_key_index_prefix(connector: &str) -> Result<Vec<u8>> {
-    validate_connector_token(connector)?;
-    let mut key = Vec::with_capacity(
-        CONNECTOR_KEY_CONNECTOR_INDEX_PREFIX.len() + connector.len() + 1 + ENTITY_ID_LEN,
-    );
-    key.extend_from_slice(CONNECTOR_KEY_CONNECTOR_INDEX_PREFIX);
-    key.extend_from_slice(connector.as_bytes());
-    key.push(0);
-    Ok(key)
-}
-
-pub(super) fn connector_key_index_key(connector: &str, id: &EntityId) -> Result<Vec<u8>> {
-    let mut key = connector_key_index_prefix(connector)?;
-    key.extend_from_slice(id.as_bytes());
-    Ok(key)
-}
-
-pub(super) fn connector_key_index_entity_id(key: &[u8], connector: &str) -> Result<EntityId> {
-    let prefix = connector_key_index_prefix(connector)?;
-    if key.len() != prefix.len() + ENTITY_ID_LEN || !key.starts_with(&prefix) {
-        return Err(Error::CorruptedIndex("connector key connector index key"));
+impl RawValue for ConnectorKeyGeneration {
+    fn to_raw(&self) -> std::result::Result<Vec<u8>, CodecError> {
+        Ok(encode_connector_key_generation(self)?)
     }
-    let mut raw_id = [0; ENTITY_ID_LEN];
-    raw_id.copy_from_slice(&key[prefix.len()..]);
-    EntityId::from_bytes(raw_id)
-        .map_err(|_| Error::CorruptedIndex("connector key connector index key"))
-}
 
-/// The permanent name-index key for one normalized catalog name.
-pub(super) fn connector_catalog_name_index_key(name: &str) -> Vec<u8> {
-    let mut key = Vec::with_capacity(CONNECTOR_CATALOG_NAME_INDEX_PREFIX.len() + name.len());
-    key.extend_from_slice(CONNECTOR_CATALOG_NAME_INDEX_PREFIX);
-    key.extend_from_slice(name.as_bytes());
-    key
-}
-
-/// Reads the key id out of a catalog name-index VALUE (raw identity bytes —
-/// the index never stores the public hex form).
-pub(super) fn connector_catalog_index_entity_id(value: &[u8]) -> Result<EntityId> {
-    let raw: [u8; ENTITY_ID_LEN] = value
-        .try_into()
-        .map_err(|_| Error::CorruptedIndex("connector catalog name index id"))?;
-    EntityId::from_bytes(raw).map_err(|_| Error::CorruptedIndex("connector catalog name index id"))
-}
-
-/// The generation-log key for one `(key id, generation)` pair. Big-endian so
-/// a prefix scan walks generations in ascending order.
-pub(super) fn connector_key_generation_key(id: &EntityId, generation: u32) -> Vec<u8> {
-    let mut key = Vec::with_capacity(
-        CONNECTOR_KEY_GENERATION_LOG_PREFIX.len() + ENTITY_ID_LEN + size_of::<u32>(),
-    );
-    key.extend_from_slice(CONNECTOR_KEY_GENERATION_LOG_PREFIX);
-    key.extend_from_slice(id.as_bytes());
-    key.extend_from_slice(&generation.to_be_bytes());
-    key
+    fn from_raw(bytes: &[u8]) -> std::result::Result<Self, CodecError> {
+        Ok(decode_connector_key_generation(bytes)?)
+    }
 }
 
 fn encode_connector_key_generation(row: &ConnectorKeyGeneration) -> Result<Vec<u8>> {
@@ -175,13 +160,7 @@ pub(super) fn read_connector_key_generation_in_txn(
     id: &EntityId,
     generation: u32,
 ) -> Result<Option<ConnectorKeyGeneration>> {
-    let Some(bytes) = store
-        .vault_meta
-        .get(txn, &connector_key_generation_key(id, generation))?
-    else {
-        return Ok(None);
-    };
-    decode_connector_key_generation(&bytes).map(Some)
+    GENERATION_LOG.get(store, txn, &(*id, generation.to_be_bytes()))
 }
 
 pub(super) fn write_connector_key_generation_in_txn(
@@ -190,13 +169,7 @@ pub(super) fn write_connector_key_generation_in_txn(
     id: &EntityId,
     row: &ConnectorKeyGeneration,
 ) -> Result<()> {
-    let encoded = encode_connector_key_generation(row)?;
-    store.vault_meta.put(
-        wtxn,
-        &connector_key_generation_key(id, row.generation),
-        &encoded,
-    )?;
-    Ok(())
+    GENERATION_LOG.put(store, wtxn, &(*id, row.generation.to_be_bytes()), row)
 }
 
 // --- Resolution ---------------------------------------------------------------
@@ -227,15 +200,17 @@ pub(crate) fn governing_connector_key(
     connector: &str,
     actor_entity_ref: Option<&EntityId>,
 ) -> Result<Option<(EntityId, ConnectorKeyRecord)>> {
-    let Ok(prefix) = connector_key_index_prefix(connector) else {
+    if validate_connector_token(connector).is_err() {
         // A blank/invalid connector token can never have a registered key.
         return Ok(None);
-    };
-    let mut candidate_ids = Vec::new();
-    for entry in store.vault_meta.prefix_iter(txn, &prefix)? {
-        let (key, _) = entry?;
-        candidate_ids.push(connector_key_index_entity_id(&key, connector)?);
     }
+    let mut key_prefix = connector.as_bytes().to_vec();
+    key_prefix.push(0);
+    let candidate_ids = CONNECTOR_INDEX
+        .scan_from(store, txn, &key_prefix)?
+        .into_iter()
+        .map(|(key, ())| key.id)
+        .collect::<Vec<_>>();
 
     let mut exact: Vec<(EntityId, ConnectorKeyRecord)> = Vec::new();
     let mut agnostic: Vec<(EntityId, ConnectorKeyRecord)> = Vec::new();
@@ -382,7 +357,13 @@ pub(crate) fn rebuild_checkpoint_connector_index(
     body: &[u8],
 ) -> Result<()> {
     let record = decode_connector_key_body(body)?;
-    let key = connector_key_index_key(&record.connector, &id)?;
-    store.vault_meta.put(txn, &key, b"")?;
-    Ok(())
+    CONNECTOR_INDEX.put(
+        store,
+        txn,
+        &ConnectorIndexKey {
+            connector: record.connector,
+            id,
+        },
+        &(),
+    )
 }

@@ -5,10 +5,23 @@ use crate::config::VaultConfig;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::session_overlay::{JournalEntry, JournalRole, JournalScope};
+use crate::side_table::{self, Raw, SideTable};
 use crate::temporal::TimeRange;
 use crate::vault::Vault;
 
 use super::binding::{map_session_error, scoped_read_actor_key, scoped_read_visible_claim_count};
+
+/// ONE-1729 census tables, bound independently of `code_run`'s own private
+/// tables (two typed tables may bind one declaration): the acceptance pin
+/// is that the code-run key FORMATS did not change under the session
+/// route, so this reads the declared prefixes directly through the shared
+/// door rather than importing `code_run`'s own constants. Neither table's
+/// value type is read here (a row count only decodes keys), so both bind
+/// `()` rather than `code_run`'s real row types.
+const CODE_RUN_REPLAY_KEYS: SideTable<EntityId, (), Raw> =
+    SideTable::new(&side_table::CODE_RUN_REPLAY);
+const CODE_RUN_RAW_OUTPUT_KEYS: SideTable<String, (), Raw> =
+    SideTable::new(&side_table::CODE_RUN_RAW_OUTPUT);
 
 /// A typed journal entry for the substrate-level oracles, which assert
 /// journal ATOMICITY and byte accounting rather than role semantics.
@@ -515,7 +528,7 @@ impl<'vault> SessionVault<'vault> {
     pub(in crate::branch_store_oracle) fn session_scoped_read_visible_claim_count(
         &self,
         subject: &EntityId,
-    ) -> Result<usize> {
+    ) -> Result<crate::claim::ScopedReadResult<usize>> {
         let view = self.session.read_view()?;
         let count = scoped_read_visible_claim_count(
             &self
@@ -542,10 +555,12 @@ impl<'vault> SessionVault<'vault> {
     /// ONE-1729: exact artifact census through the SESSION view —
     /// (speak turns, code-run replay records, raw-output rows).
     ///
-    /// The two `vault_meta` prefixes are spelled out rather than imported:
-    /// the acceptance pin is that the code-run key FORMATS did not change
-    /// under the session route, and a census that reused the producer's
-    /// own constants would agree with a rename.
+    /// The two `vault_meta` tables are bound directly against the shared
+    /// declarations (`CODE_RUN_REPLAY_KEYS`/`CODE_RUN_RAW_OUTPUT_KEYS`)
+    /// rather than through `code_run`'s own private tables: the acceptance
+    /// pin is that the code-run key FORMATS did not change under the
+    /// session route, and a census that reused the producer's own
+    /// constants would agree with a rename.
     pub(in crate::branch_store_oracle) fn session_artifact_census(
         &self,
     ) -> Result<(usize, usize, usize)> {
@@ -559,16 +574,8 @@ impl<'vault> SessionVault<'vault> {
             row?;
             turns += 1;
         }
-        let count = |prefix: &[u8]| -> Result<usize> {
-            let mut rows = 0_usize;
-            for row in view.vault_meta.prefix_iter(&rtxn, prefix)? {
-                row?;
-                rows += 1;
-            }
-            Ok(rows)
-        };
-        let replay_records = count(b"code_run:replay:v1:")?;
-        let raw_outputs = count(b"code_run:raw_output:v1:")?;
+        let replay_records = CODE_RUN_REPLAY_KEYS.scan_keys(&view, &rtxn, &[])?.len();
+        let raw_outputs = CODE_RUN_RAW_OUTPUT_KEYS.scan_keys(&view, &rtxn, &[])?.len();
         drop(rtxn);
         drop(view);
         Ok((turns, replay_records, raw_outputs))

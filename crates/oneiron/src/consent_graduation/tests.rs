@@ -97,14 +97,7 @@ fn park_and_rule(
 fn all_stats(vault: &Vault) -> Vec<ScopeOutcomeStats> {
     let rtxn = vault.store.env.read_txn().expect("read txn");
     let mut rows = Vec::new();
-    for entry in vault
-        .store
-        .vault_meta
-        .prefix_iter(&rtxn, RAMP_STATS_KEY_PREFIX)
-        .expect("scan stats")
-    {
-        let (_, raw) = entry.expect("stats row");
-        let row: StoredScopeStats = decode_row(&raw, "ramp stats row").expect("decode");
+    for (_, row) in RAMP_STATS.scan(&vault.store, &rtxn).expect("scan stats") {
         let (scope, counters) = stats_row_parts(row).expect("parts");
         let state = derive_state_in_txn(vault, &rtxn, &scope, counters).expect("state");
         rows.push(stats_view(scope, counters, state));

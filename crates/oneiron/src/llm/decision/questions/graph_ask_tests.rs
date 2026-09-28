@@ -868,7 +868,13 @@ fn diary_pair_revoked_during_answerer_cannot_be_used_as_graph_evidence() -> crat
     let scoped = vault.scoped_read(
         crate::claim::ScopedReadActorKey::with_actor_class(a.to_hex(), "human").unwrap(),
     );
-    assert!(scoped.get(&b_note)?.value.is_some());
+    assert!(
+        scoped
+            .read(&[crate::claim::PointRead::id(b_note)], None)?
+            .single()
+            .value
+            .is_some()
+    );
     Ok(())
 }
 

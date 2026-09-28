@@ -1,5 +1,5 @@
 //! Owner-confirmed project birth: one card, one atomic Grant and project branch.
-use super::{ProjectRecord, ROOT, decode, encode, invalid, project_type, record};
+use super::{ProjectRecord, ROOT, encode, invalid, project_type, record};
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::consent::AuthenticatedOwner;
 use crate::consent::{ActionClass, ActionEnvelope, ActorBound, GrantBound};
@@ -11,11 +11,15 @@ use crate::registry::{
     ENTITY_TYPE_AGENT_DEF, ENTITY_TYPE_MESSAGE, ENTITY_TYPE_PERSON, ENTITY_TYPE_SKILL,
     ENTITY_TYPE_TURN,
 };
+use crate::side_table::{self, Named, SideTable};
 use crate::store::GateDecisionId;
 use crate::{EntityId, Error, Result, TimeRange, Vault};
 use serde::{Deserialize, Serialize};
 
-const TAP: &[u8] = b"project.mint.tap.v1/";
+/// Durable owner tap of one project card: the tap digest and the mint receipt. Key: blake3
+/// hash32 of the card id.
+const TAPS: SideTable<[u8; 32], ([u8; 32], ProjectMintReceipt), Named> =
+    SideTable::new(&side_table::PROJECT_MINT_TAP);
 
 /// The goal is data for the leader, not instructions in its prompt.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -47,23 +51,17 @@ pub struct ProjectMintReceipt {
     pub grant_ref: String,
 }
 
-fn key(prefix: &[u8], id: &[u8]) -> Vec<u8> {
-    [prefix, id].concat()
-}
-
 /// An exact tap replay re-proves its mint against the recorded Grant
 /// decision, so the retention sweep keeps each durable tap's decision.
 pub(crate) fn project_mint_gate_refs_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
 ) -> Result<std::collections::HashSet<GateDecisionId>> {
-    let mut ids = std::collections::HashSet::new();
-    for row in vault.store.vault_meta.prefix_iter(txn, TAP)? {
-        let (_, raw) = row?;
-        let (_, receipt): ([u8; 32], ProjectMintReceipt) = decode(&raw)?;
-        ids.insert(receipt.grant_decision_id);
-    }
-    Ok(ids)
+    Ok(TAPS
+        .scan(&vault.store, txn)?
+        .into_iter()
+        .map(|(_, (_, receipt))| receipt.grant_decision_id)
+        .collect())
 }
 
 fn checked_ref(
@@ -94,13 +92,13 @@ impl Vault {
     fn project_tap_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,
-        tap_key: &[u8],
+        tap_key: &[u8; 32],
         digest: &[u8; 32],
     ) -> Result<Option<ProjectMintReceipt>> {
-        let Some(raw) = self.store.vault_meta.get(txn, tap_key)? else {
+        let Some(raw) = TAPS.get_bytes(&self.store, txn, tap_key)? else {
             return Ok(None);
         };
-        let (stored_digest, receipt): ([u8; 32], ProjectMintReceipt) = decode(&raw)?;
+        let (stored_digest, receipt) = TAPS.decode_value(&raw).map_err(|_| invalid())?;
         if stored_digest != *digest {
             return Err(invalid());
         }
@@ -131,7 +129,7 @@ impl Vault {
     ) -> Result<ProjectMintReceipt> {
         let intent = card.evaluate_action(tap, owner)?;
         let digest = *blake3::hash(&encode(&(card, owner.actor()))?).as_bytes();
-        let tap_key = key(TAP, blake3::hash(card.card_id.as_bytes()).as_bytes());
+        let tap_key = *blake3::hash(card.card_id.as_bytes()).as_bytes();
         let source = EntityId::from_hex(&intent.source_message_ref).map_err(|_| invalid())?;
         let txn = self.store.env.read_txn()?;
         owner.revalidate_in_txn(self, &txn)?;
@@ -224,7 +222,7 @@ impl Vault {
         owner: &AuthenticatedOwner,
         id: EntityId,
         source_turn: EntityId,
-        tap_key: &[u8],
+        tap_key: &[u8; 32],
         digest: &[u8; 32],
         at: u64,
     ) -> Result<ProjectMintReceipt> {
@@ -235,15 +233,7 @@ impl Vault {
         if self.store.entities.get(txn, id.as_bytes())?.is_some() {
             return Err(invalid());
         }
-        let root_id = EntityId::from_bytes(
-            self.store
-                .vault_meta
-                .get(txn, ROOT)?
-                .ok_or_else(invalid)?
-                .as_ref()
-                .try_into()
-                .map_err(|_| invalid())?,
-        )?;
+        let root_id = ROOT.get(&self.store, txn, &())?.ok_or_else(invalid)?;
         let root: ProjectRecord = record(
             &self.store,
             txn,
@@ -330,10 +320,9 @@ impl Vault {
             grant_decision_id: grant_receipt.decision_id(),
             grant_ref,
         };
-        self.store
-            .vault_meta
-            .put(txn, tap_key, &encode(&(*digest, &receipt))?)?;
-        Ok(receipt)
+        let tap = (*digest, receipt);
+        TAPS.put(&self.store, txn, tap_key, &tap)?;
+        Ok(tap.1)
     }
 
     pub fn project_goal_record(&self, id: EntityId) -> Result<Option<ProjectGoalRecord>> {

@@ -10,7 +10,7 @@ mod visibility;
 pub use body::{ConversationBody, ConversationKind, RoomRole};
 pub(crate) use body::{fresh_id_in_txn, validate_put_in_txn};
 #[cfg(test)]
-pub(crate) use deletion::erasure_key;
+pub(crate) use deletion::ROOM_ERASURES;
 pub(crate) use deletion::{
     guard_room_message_delete, pin_room_message_edge, replay_room_message_tombstone,
     room_message_owner_in, room_person_write_allowed,
@@ -38,9 +38,6 @@ fn encode<T: Serialize>(value: &T) -> Result<Vec<u8>> {
 }
 fn decode<T: DeserializeOwned>(bytes: &[u8]) -> Result<T> {
     rmp_serde::from_slice(bytes).map_err(|_| invalid("body decode"))
-}
-fn key(prefix: &[u8], id: EntityId) -> Vec<u8> {
-    [prefix, id.as_bytes()].concat()
 }
 fn require_kind(vault: &Vault, txn: &heed::RoTxn<'_>, id: EntityId, kind: u8) -> Result<Vec<u8>> {
     if !crate::vault::live_entity_row_in_txn(&vault.store, txn, &id)?.is_live() {

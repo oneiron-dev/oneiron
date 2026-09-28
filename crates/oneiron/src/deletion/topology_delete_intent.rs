@@ -7,11 +7,17 @@
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result, SyncError};
 use crate::identity_topology::IdentityTopologyRejection;
+use crate::side_table::{self, CodecError, HexId, Raw, RawValue, SideTable};
 use crate::store::Store;
 
-use super::tombstone::{DecodedTombstoneValue, TombstoneReason, TombstoneValueV2};
+use super::tombstone::{
+    DecodedTombstoneValue, HARD_DELETE_MARKER, PENDING_TOMBSTONE, TombstoneReason, TombstoneValueV2,
+};
 
-const PREFIX: &str = "topology-delete-intent:";
+/// One reservation per entity (`topology-delete-intent:{entity_hex}`), value
+/// the 34-byte [`TopologyDeleteIntent`] layout.
+const TOPOLOGY_DELETE_INTENT: SideTable<HexId, TopologyDeleteIntent, Raw> =
+    SideTable::new(&side_table::DELETION_TOPOLOGY_DELETE_INTENT);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum TopologyDeletePhase {
@@ -42,8 +48,51 @@ pub(crate) struct TopologyDeleteIntent {
     pub(crate) window_ts: u64,
 }
 
-fn key(entity: &EntityId) -> String {
-    format!("{PREFIX}{}", entity.to_hex())
+/// `[phase:1][request_id:16][reason:1][deleted_at:8 LE][window_ts:8 LE]`. A
+/// malformed row is [`Error::CorruptedIndex`], never a default.
+impl RawValue for TopologyDeleteIntent {
+    fn to_raw(&self) -> std::result::Result<Vec<u8>, CodecError> {
+        let mut raw = vec![0; 34];
+        raw[0] = self.phase.byte();
+        raw[1..17].copy_from_slice(&self.request_id);
+        raw[17] = self.reason.wire_byte();
+        raw[18..26].copy_from_slice(&self.deleted_at.to_le_bytes());
+        raw[26..34].copy_from_slice(&self.window_ts.to_le_bytes());
+        Ok(raw)
+    }
+
+    fn from_raw(raw: &[u8]) -> std::result::Result<Self, CodecError> {
+        if raw.len() != 34 {
+            return Err(Error::CorruptedIndex("topology delete intent").into());
+        }
+        let phase = match raw[0] {
+            0 => TopologyDeletePhase::Prepared,
+            1 => TopologyDeletePhase::Published,
+            2 => TopologyDeletePhase::Committed,
+            _ => return Err(Error::CorruptedIndex("topology delete intent").into()),
+        };
+        let mut request_id = [0; 16];
+        request_id.copy_from_slice(&raw[1..17]);
+        let reason = TombstoneReason::from_wire_byte(raw[17])
+            .ok_or(Error::CorruptedIndex("topology delete intent reason"))?;
+        let deleted_at = u64::from_le_bytes(
+            raw[18..26]
+                .try_into()
+                .map_err(|_| Error::CorruptedIndex("topology delete intent time"))?,
+        );
+        let window_ts = u64::from_le_bytes(
+            raw[26..34]
+                .try_into()
+                .map_err(|_| Error::CorruptedIndex("topology delete intent window"))?,
+        );
+        Ok(Self {
+            phase,
+            request_id,
+            reason,
+            deleted_at,
+            window_ts,
+        })
+    }
 }
 
 fn conflict(entity: &EntityId) -> Error {
@@ -59,39 +108,7 @@ pub(crate) fn topology_delete_reservation_in_txn(
     txn: &heed::RoTxn<'_>,
     entity: &EntityId,
 ) -> Result<Option<TopologyDeleteIntent>> {
-    let Some(raw) = store.sync_state.get(txn, &key(entity))? else {
-        return Ok(None);
-    };
-    if raw.len() != 34 {
-        return Err(Error::CorruptedIndex("topology delete intent"));
-    }
-    let phase = match raw[0] {
-        0 => TopologyDeletePhase::Prepared,
-        1 => TopologyDeletePhase::Published,
-        2 => TopologyDeletePhase::Committed,
-        _ => return Err(Error::CorruptedIndex("topology delete intent")),
-    };
-    let mut request_id = [0; 16];
-    request_id.copy_from_slice(&raw[1..17]);
-    let reason = TombstoneReason::from_wire_byte(raw[17])
-        .ok_or(Error::CorruptedIndex("topology delete intent reason"))?;
-    let deleted_at = u64::from_le_bytes(
-        raw[18..26]
-            .try_into()
-            .map_err(|_| Error::CorruptedIndex("topology delete intent time"))?,
-    );
-    let window_ts = u64::from_le_bytes(
-        raw[26..34]
-            .try_into()
-            .map_err(|_| Error::CorruptedIndex("topology delete intent window"))?,
-    );
-    Ok(Some(TopologyDeleteIntent {
-        phase,
-        request_id,
-        reason,
-        deleted_at,
-        window_ts,
-    }))
+    TOPOLOGY_DELETE_INTENT.get(store, txn, &HexId(*entity))
 }
 
 /// A hard request subsumes a different request's deletion of the same entity
@@ -149,14 +166,18 @@ pub(super) fn reserve_topology_delete_in_txn(
             return Ok(());
         }
     }
-    let mut raw = [0; 34];
-    raw[0] = phase.byte();
-    raw[1..17].copy_from_slice(&value.request_id);
-    raw[17] = value.reason.wire_byte();
-    raw[18..26].copy_from_slice(&value.deleted_at.to_le_bytes());
-    raw[26..34].copy_from_slice(&window_ts.to_le_bytes());
-    store.sync_state.put(txn, &key(entity), &raw)?;
-    Ok(())
+    TOPOLOGY_DELETE_INTENT.put(
+        store,
+        txn,
+        &HexId(*entity),
+        &TopologyDeleteIntent {
+            phase,
+            request_id: value.request_id,
+            reason: value.reason,
+            deleted_at: value.deleted_at,
+            window_ts,
+        },
+    )
 }
 
 /// Whether this request may publish: it owns the reservation, or it is a hard
@@ -233,9 +254,8 @@ fn local_topology_delete_complete_in_txn(
     if !intent.reason.is_hard() {
         return Ok(true);
     }
-    Ok(store
-        .sync_state
-        .get(txn, &super::tombstone::local_hard_delete_key(entity))?
+    Ok(HARD_DELETE_MARKER
+        .get(store, txn, &HexId(*entity))?
         .is_some_and(|marker| {
             super::tombstone::decode_tombstone_value(&marker).request_id == Some(intent.request_id)
         }))
@@ -254,7 +274,7 @@ pub(super) fn clear_own_topology_delete_in_txn(
         && intent.request_id == *request_id
         && (!prepared_only || intent.phase == TopologyDeletePhase::Prepared)
     {
-        return store.sync_state.delete(txn, &key(entity));
+        return TOPOLOGY_DELETE_INTENT.delete(store, txn, &HexId(*entity));
     }
     Ok(false)
 }
@@ -278,17 +298,14 @@ pub(crate) fn complete_replayed_topology_delete_in_txn(
         return Ok(false);
     }
     if is_hard {
-        let Some(marker) = store
-            .sync_state
-            .get(txn, &super::tombstone::local_hard_delete_key(entity))?
-        else {
+        let Some(marker) = HARD_DELETE_MARKER.get(store, &*txn, &HexId(*entity))? else {
             return Ok(false);
         };
         if super::tombstone::decode_tombstone_value(&marker).request_id != Some(*request_id) {
             return Ok(false);
         }
     }
-    store.sync_state.delete(txn, &key(entity))
+    TOPOLOGY_DELETE_INTENT.delete(store, txn, &HexId(*entity))
 }
 
 /// Recover an interrupted deletion before a Vault handle becomes observable.
@@ -302,11 +319,12 @@ pub(crate) fn recover_topology_delete_intents_on_open(vault: &crate::Vault) -> R
     let mut intents = Vec::new();
     {
         let rtxn = vault.store.env.read_txn()?;
-        for row in vault.store.sync_state.prefix_iter(&rtxn, PREFIX)? {
-            let (name, _) = row?;
-            let hex = name
-                .strip_prefix(PREFIX)
-                .ok_or(Error::CorruptedIndex("topology delete intent key"))?;
+        // Raw rows: an undecodable key keeps its own corruption error, and
+        // each intent is re-read through its canonical key below.
+        for row in TOPOLOGY_DELETE_INTENT.iter_raw_from(&vault.store, &rtxn, &[])? {
+            let (key, _) = row?;
+            let hex = std::str::from_utf8(&key)
+                .map_err(|_| Error::CorruptedIndex("topology delete intent key"))?;
             let entity = EntityId::from_hex(hex)
                 .map_err(|_| Error::CorruptedIndex("topology delete intent key"))?;
             let intent = topology_delete_reservation_in_txn(&vault.store, &rtxn, &entity)?
@@ -407,28 +425,25 @@ fn matching_recovery_tombstone_in_txn(
     };
     // cfg-off first destructive commit carries a pt: marker until sync can
     // publish it. This is a REAL deletion witness, unlike Prepared alone.
-    for row in store
-        .sync_state
-        .prefix_iter(txn, super::tombstone::PENDING_TOMBSTONE_PREFIX)?
-    {
-        let (name, raw) = row?;
-        if name.ends_with(&format!(":{}", entity.to_hex())) {
+    // Raw rows, matched on the full stored key as before: a `pt:` row of any
+    // key shape that names this entity is still a witness.
+    let entity_suffix = format!(":{}", entity.to_hex());
+    for row in PENDING_TOMBSTONE.iter_raw_from(store, txn, &[])? {
+        let (key, raw) = row?;
+        let name = [PENDING_TOMBSTONE.decl().prefix, key.as_slice()].concat();
+        if name.ends_with(entity_suffix.as_bytes()) {
             observe(&raw)?;
         }
     }
     #[cfg(feature = "sync")]
     {
         use crate::sync::loro_support::{doc_from_snapshot, import_doc, tombstone_values_for_id};
-        for row in store.sync_state.prefix_iter(txn, "d:w:")? {
-            let (name, snapshot) = row?;
-            let Some(label) = name.strip_prefix("d:w:") else {
-                continue;
-            };
+        use crate::sync::window_rows::{WINDOW_SNAPSHOT, WINDOW_UPDATE};
+        for row in WINDOW_SNAPSHOT.iter_from(store, txn, &[])? {
+            let (label, snapshot) = row?;
             let doc = doc_from_snapshot(&snapshot)?;
-            for update in store
-                .sync_state
-                .prefix_iter(txn, &format!("u:w:{label}:"))?
-            {
+            // Raw rows: every stored update imports, whatever its key's tail.
+            for update in WINDOW_UPDATE.iter_raw_from(store, txn, format!("{label}:").as_bytes())? {
                 let (_, bytes) = update?;
                 import_doc(&doc, &bytes)?;
             }
@@ -440,9 +455,7 @@ fn matching_recovery_tombstone_in_txn(
     // A completed hard purge may have retired pt:, yet a crash before the
     // reservation clear left the permanent dt: witness for the same request.
     if intent.reason.is_hard()
-        && let Some(raw) = store
-            .sync_state
-            .get(txn, &super::tombstone::local_hard_delete_key(entity))?
+        && let Some(raw) = HARD_DELETE_MARKER.get(store, txn, &HexId(*entity))?
     {
         observe(&raw)?;
     }
@@ -589,13 +602,12 @@ mod tests {
         };
         let mark_purged = |request_id| {
             let mut txn = vault.store.env.write_txn().unwrap();
-            vault
-                .store
-                .sync_state
+            HARD_DELETE_MARKER
                 .put(
+                    &vault.store,
                     &mut txn,
-                    &super::super::tombstone::local_hard_delete_key(&entity),
-                    &tombstone(request_id).encode(),
+                    &HexId(entity),
+                    &tombstone(request_id).encode().to_vec(),
                 )
                 .unwrap();
             txn.commit().unwrap();
@@ -778,13 +790,12 @@ mod tests {
         // the deferred request's replay is an accepted no-stronger repeat.
         {
             let mut txn = vault.store.env.write_txn().unwrap();
-            vault
-                .store
-                .sync_state
+            HARD_DELETE_MARKER
                 .put(
+                    &vault.store,
                     &mut txn,
-                    &super::super::tombstone::local_hard_delete_key(&entity),
-                    &later.encode(),
+                    &HexId(entity),
+                    &later.encode().to_vec(),
                 )
                 .unwrap();
             txn.commit().unwrap();
@@ -831,13 +842,12 @@ mod tests {
             deleted_at: 1_772_000_000,
             request_id: other,
         };
-        vault
-            .store
-            .sync_state
+        HARD_DELETE_MARKER
             .put(
+                &vault.store,
                 &mut txn,
-                &super::super::tombstone::local_hard_delete_key(&entity),
-                &marker.encode(),
+                &HexId(entity),
+                &marker.encode().to_vec(),
             )
             .unwrap();
         assert!(
@@ -854,13 +864,12 @@ mod tests {
             request_id: request,
             ..marker
         };
-        vault
-            .store
-            .sync_state
+        HARD_DELETE_MARKER
             .put(
+                &vault.store,
                 &mut txn,
-                &super::super::tombstone::local_hard_delete_key(&entity),
-                &matching.encode(),
+                &HexId(entity),
+                &matching.encode().to_vec(),
             )
             .unwrap();
         assert!(
@@ -970,23 +979,16 @@ mod tests {
                 TopologyDeletePhase::Published,
             )
             .unwrap();
-            vault
-                .store
-                .sync_state
-                .put(&mut txn, &format!("d:w:{key}"), &snapshot)
+            crate::sync::window_rows::WINDOW_SNAPSHOT
+                .put(&vault.store, &mut txn, &key.to_string(), &snapshot)
                 .unwrap();
             txn.commit().unwrap();
         }
         let reopened = Vault::open(dir.path(), VaultConfig::device()).unwrap();
         assert!(reopened.get_raw(&entity).unwrap().is_none());
         let txn = reopened.store.env.read_txn().unwrap();
-        let marker = reopened
-            .store
-            .sync_state
-            .get(
-                &txn,
-                &super::super::tombstone::local_hard_delete_key(&entity),
-            )
+        let marker = HARD_DELETE_MARKER
+            .get(&reopened.store, &txn, &HexId(entity))
             .unwrap()
             .expect("completed dt marker");
         assert_eq!(

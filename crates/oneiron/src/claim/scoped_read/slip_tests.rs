@@ -41,12 +41,30 @@ fn host_root_reads_stamped_rows_but_plain_keys_and_revoked_proofs_do_not() -> Re
     let proof = vault.verified_host_root_slip(&issuer)?;
     let read =
         vault.scoped_read(ScopedReadActorKey::from_verified_slip(&proof).expect("read proof"));
-    assert!(read.get(&id)?.is_some());
-    assert!(read.get(&opaque)?.is_some());
+    assert!(
+        read.read(&[crate::claim::PointRead::id(id)], None)?
+            .single()
+            .is_some()
+    );
+    assert!(
+        read.read(&[crate::claim::PointRead::id(opaque)], None)?
+            .single()
+            .is_some()
+    );
     let unproven = vault
         .scoped_read(ScopedReadActorKey::new(proof.claims().holder_ref.clone()).expect("nonblank"));
-    assert!(unproven.get(&id)?.is_none());
-    assert!(unproven.get(&opaque)?.is_none());
+    assert!(
+        unproven
+            .read(&[crate::claim::PointRead::id(id)], None)?
+            .single()
+            .is_none()
+    );
+    assert!(
+        unproven
+            .read(&[crate::claim::PointRead::id(opaque)], None)?
+            .single()
+            .is_none()
+    );
     let mut world_only = root.clone();
     let world = EntityId::from_bytes([0x31; 16])?;
     let mut scope = Scope::top();
@@ -67,7 +85,8 @@ fn host_root_reads_stamped_rows_but_plain_keys_and_revoked_proofs_do_not() -> Re
     assert!(
         vault
             .scoped_read(ScopedReadActorKey::from_verified_slip(&narrowed).expect("read proof"))
-            .get(&id)?
+            .read(&[crate::claim::PointRead::id(id)], None)?
+            .single()
             .is_none()
     );
     let mut named = root.clone();
@@ -82,8 +101,18 @@ fn host_root_reads_stamped_rows_but_plain_keys_and_revoked_proofs_do_not() -> Re
     let verified =
         vault.verify_capability_slip(&issuer.public_key(), &named, b"named read", &named_proof)?;
     let limited = vault.scoped_read(ScopedReadActorKey::from_verified_slip(&verified).unwrap());
-    assert!(limited.get(&opaque)?.is_some());
-    assert!(limited.get(&id)?.is_none());
+    assert!(
+        limited
+            .read(&[crate::claim::PointRead::id(opaque)], None)?
+            .single()
+            .is_some()
+    );
+    assert!(
+        limited
+            .read(&[crate::claim::PointRead::id(id)], None)?
+            .single()
+            .is_none()
+    );
     vault.delete_entity_with_reason(&id, crate::deletion::DeleteReason::UserDelete)?;
     // An erased claim cannot prove its read scope, so even the root proof
     // gets a withholding receipt instead of the deletion record.
@@ -102,7 +131,7 @@ fn host_root_reads_stamped_rows_but_plain_keys_and_revoked_proofs_do_not() -> Re
     vault.revoke_capability_slip(&issuer, root.claims.slip_id)?;
     for revoked in [id, opaque] {
         assert!(matches!(
-            read.get(&revoked),
+            read.read(&[crate::claim::PointRead::id(revoked)], None),
             Err(Error::InvalidClaimBody(
                 "scoped read credential no longer live"
             ))

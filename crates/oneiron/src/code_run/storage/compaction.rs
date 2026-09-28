@@ -1,14 +1,18 @@
 //! Node-local executor coverage: typed run/step binding to a committed epoch SUMMARY.
 //! Raw outputs cannot write or impersonate this disjoint vault-meta keyspace.
 
-use crate::code_run::{CodeRunReplayRecord, decode_code_run_replay_record};
+use crate::code_run::CodeRunReplayRecord;
 use crate::compaction::EpochMint;
 use crate::compaction::{CompactionRequest, EpochSummaryBody, decode_epoch_summary_body};
 use crate::ports::EntityStoreRead;
 use crate::registry::ENTITY_TYPE_SUMMARY;
+use crate::side_table::{self, CodecError, Raw, RawValue, SideTable};
 use crate::{EntityId, Error, Result, Vault};
 
-const PREFIX: &[u8] = b"code_run:compaction:v1:";
+/// One coverage row per (run id, minted SUMMARY id), in the fixed frame
+/// [`encode`] spells.
+const COVERAGE: SideTable<(EntityId, EntityId), CodeRunCompactionCoverage, Raw> =
+    SideTable::new(&side_table::CODE_RUN_COMPACTION);
 const VERSION: u8 = 1;
 const BODY_LEN: usize = 1 + 16 * 3 + 8 * 3;
 
@@ -97,12 +101,14 @@ impl CodeRunCompactionCoverage {
     }
 }
 
-fn key(run_id: EntityId, summary_id: EntityId) -> Vec<u8> {
-    [PREFIX, run_id.as_bytes(), summary_id.as_bytes()].concat()
-}
+impl RawValue for CodeRunCompactionCoverage {
+    fn to_raw(&self) -> std::result::Result<Vec<u8>, CodecError> {
+        Ok(encode(self))
+    }
 
-fn prefix(run_id: EntityId) -> Vec<u8> {
-    [PREFIX, run_id.as_bytes()].concat()
+    fn from_raw(bytes: &[u8]) -> std::result::Result<Self, CodecError> {
+        Ok(decode(bytes)?)
+    }
 }
 
 fn encode(row: &CodeRunCompactionCoverage) -> Vec<u8> {
@@ -185,15 +191,9 @@ impl Vault {
                 "executor coverage differs from minted summary",
             ));
         }
-        let replay_raw = self
-            .store
-            .vault_meta
-            .get(
-                txn,
-                &super::records::code_run_replay_record_key(&span.run_id),
-            )?
+        let replay = super::records::REPLAY_RECORDS
+            .get(&self.store, txn, &span.run_id)?
             .ok_or(Error::CorruptedIndex("missing executor replay record"))?;
-        let replay = decode_code_run_replay_record(&replay_raw)?;
         let completed = u64::try_from(replay.step_checkpoints.len())
             .map_err(|_| Error::ArithmeticOverflow("executor step count"))?;
         if replay.run_id != span.run_id || span.last >= completed {
@@ -210,13 +210,13 @@ impl Vault {
             last: span.last,
         };
         verify_summary(self, &*txn, &row)?;
-        let key = key(row.run_id, row.summary_id);
-        if self.store.vault_meta.get(txn, &key)?.is_some() {
+        let key = (row.run_id, row.summary_id);
+        if COVERAGE.contains(&self.store, txn, &key)? {
             return Err(Error::InvariantViolation(
                 "duplicate executor compaction coverage",
             ));
         }
-        self.store.vault_meta.put(txn, &key, &encode(&row))?;
+        COVERAGE.put(&self.store, txn, &key, &row)?;
         #[cfg(test)]
         if span.fail_after_write {
             return Err(Error::InvariantViolation(
@@ -234,10 +234,9 @@ impl Vault {
     ) -> Result<Vec<CodeRunCompactionCoverage>> {
         let txn = self.store.env.read_txn()?;
         let mut rows = Vec::new();
-        for item in self.store.vault_meta.prefix_iter(&txn, &prefix(run_id))? {
-            let (stored_key, raw) = item?;
-            let row = decode(&raw)?;
-            if stored_key != key(row.run_id, row.summary_id) || row.run_id != run_id {
+        for item in COVERAGE.iter_from(&self.store, &txn, run_id.as_bytes())? {
+            let ((key_run, key_summary), row) = item?;
+            if (key_run, key_summary) != (row.run_id, row.summary_id) || row.run_id != run_id {
                 return Err(Error::CorruptedIndex("code-run compaction coverage key"));
             }
             verify_summary(self, &txn, &row)?;

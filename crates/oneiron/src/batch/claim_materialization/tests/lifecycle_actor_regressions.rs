@@ -39,11 +39,9 @@ fn authored_local_claim(vault: &Vault, actor: WriteActor, id: EntityId) -> Resul
 
 fn binding_digest(vault: &Vault, id: EntityId) -> Result<Option<Vec<u8>>> {
     let txn = vault.store.env.read_txn()?;
-    Ok(vault
-        .store
-        .vault_meta
-        .get(&txn, &authored_key(&id))?
-        .map(|bytes| bytes.to_vec()))
+    Ok(AUTHORED
+        .get(&vault.store, &txn, &id)?
+        .map(|digest| digest.to_vec()))
 }
 
 fn assert_current_actor(vault: &Vault, id: EntityId, actor: WriteActor) -> Result<()> {

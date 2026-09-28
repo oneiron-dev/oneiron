@@ -1,15 +1,4 @@
-//! Pinned code/blob pointer frames, including their serving tier.
-
-use super::{
-    ARTIFACT_POINTER_BLOB_TAG, ARTIFACT_POINTER_KEY_PREFIX, ARTIFACT_POINTER_STALE_OVERRIDE_STAMP,
-    ArtifactExportRef, ArtifactLinkCapability, ArtifactPointerChannel, ArtifactServeTier,
-    validate_artifact_id,
-};
-use crate::{
-    EntityId,
-    error::{Error, Result},
-};
-use heed::RwTxn;
+use super::*;
 
 pub(super) fn put_artifact_pointer_in_txn(
     store: &crate::store::Store,
@@ -20,42 +9,20 @@ pub(super) fn put_artifact_pointer_in_txn(
     stale_taint_override: bool,
     serve_tier: ArtifactServeTier,
 ) -> Result<()> {
-    let key = artifact_pointer_key(artifact, channel)?;
-    let mut value = match export {
-        ArtifactExportRef::ForkHash(hash) => hash.to_vec(),
-        ArtifactExportRef::BlobVersion {
-            artifact_id,
-            version,
-        } => {
-            let mut value = Vec::with_capacity(26);
-            value.push(ARTIFACT_POINTER_BLOB_TAG);
-            value.extend_from_slice(artifact_id.as_bytes());
-            value.extend_from_slice(&version.to_be_bytes());
-            value
-        }
-    };
-    if stale_taint_override || serve_tier != ArtifactServeTier::Private {
-        value.push(u8::from(stale_taint_override));
-        match serve_tier {
-            ArtifactServeTier::Private => {}
-            ArtifactServeTier::Public => value.push(1),
-            ArtifactServeTier::LinkToken(capability) => {
-                value.push(2);
-                value.extend_from_slice(&capability.0);
-            }
-            ArtifactServeTier::WorldMembers(world_id) => {
-                if world_id == 0 {
-                    return Err(Error::InvalidConfig(
-                        "artifact world id cannot be zero".into(),
-                    ));
-                }
-                value.push(3);
-                value.extend_from_slice(&world_id.to_be_bytes());
-            }
-        }
-    }
-    store.vault_meta.put(wtxn, &key, &value)?;
-    Ok(())
+    validate_artifact_id(artifact)?;
+    ARTIFACT_POINTERS.put(
+        store,
+        wtxn,
+        &ArtifactPointerRowKey {
+            channel,
+            artifact: artifact.to_owned(),
+        },
+        &ArtifactPointerRow {
+            export,
+            stale_taint_override,
+            serve_tier,
+        },
+    )
 }
 
 /// A deleted blob must not leave a channel that can spring back to life if
@@ -70,47 +37,36 @@ pub(crate) fn remove_blob_pointers_in_txn(
         ArtifactPointerChannel::Published,
         ArtifactPointerChannel::Preview,
     ] {
-        let key = artifact_pointer_key(&artifact, channel)?;
-        if let Some(raw) = store.vault_meta.get(wtxn, &key)?
-            && matches!(decode_artifact_pointer_row(&raw)?.0,
+        let key = ArtifactPointerRowKey {
+            channel,
+            artifact: artifact.clone(),
+        };
+        if let Some(row) = ARTIFACT_POINTERS.get(store, wtxn, &key)?
+            && matches!(row.export,
                 ArtifactExportRef::BlobVersion { artifact_id, .. } if artifact_id == *id)
         {
-            store.vault_meta.delete(wtxn, &key)?;
+            ARTIFACT_POINTERS.delete(store, wtxn, &key)?;
         }
     }
     Ok(())
 }
 
-pub(super) fn artifact_pointer_key(
-    artifact: &str,
-    channel: ArtifactPointerChannel,
-) -> Result<Vec<u8>> {
-    validate_artifact_id(artifact)?;
-    let len = u16::try_from(artifact.len())
-        .map_err(|_| Error::ArithmeticOverflow("artifact id length overflow"))?;
-    let mut key = Vec::with_capacity(ARTIFACT_POINTER_KEY_PREFIX.len() + 1 + 2 + artifact.len());
-    key.extend_from_slice(ARTIFACT_POINTER_KEY_PREFIX);
-    key.push(channel.key_byte());
-    key.extend_from_slice(&len.to_be_bytes());
-    key.extend_from_slice(artifact.as_bytes());
-    Ok(key)
-}
-
 /// Legacy 32/33-byte fork rows remain byte-identical. A blob row has a
 /// disjoint 25/26-byte tagged frame: tag, entity id, big-endian version,
-/// and the optional stale-taint override stamp.
+/// and the optional stale-taint override stamp. A non-private serve tier
+/// follows as the stale flag (0 or 1), a tier tag and the tier body.
 pub(super) fn decode_artifact_pointer_row(
     raw: &[u8],
 ) -> Result<(ArtifactExportRef, bool, ArtifactServeTier)> {
     // Fork and blob base frames are disjoint lengths even with the tier suffix.
     let base_len = match raw.len() {
-        32 | 33 | 34 | 42 | 66 => 32,
+        32 | 33 | 34 | 42 | 66 => CODEBASE_FORK_HASH_LEN,
         25 | 26 | 27 | 35 | 59 => 25,
         _ => return Err(Error::CorruptedIndex("artifact pointer frame")),
     };
-    let export = if base_len == 32 {
+    let export = if base_len == CODEBASE_FORK_HASH_LEN {
         ArtifactExportRef::ForkHash(
-            raw[..32]
+            raw[..CODEBASE_FORK_HASH_LEN]
                 .try_into()
                 .map_err(|_| Error::CorruptedIndex("artifact pointer fork hash"))?,
         )
@@ -162,4 +118,74 @@ pub(super) fn decode_artifact_pointer_row(
         _ => return Err(Error::CorruptedIndex("artifact pointer tier")),
     };
     Ok((export, stale, tier))
+}
+
+pub(super) fn snapshot_file_entry<'a>(
+    snapshot: &'a CodebaseSnapshot,
+    path: &str,
+) -> Option<&'a CodebaseFileEntry> {
+    let Ok(index) = snapshot
+        .files
+        .binary_search_by(|entry| entry.path.as_str().cmp(path))
+    else {
+        return None;
+    };
+    snapshot.files.get(index)
+}
+
+pub(crate) fn validate_artifact_id(artifact: &str) -> Result<()> {
+    validate_bounded_text(
+        artifact,
+        CODEBASE_PROJECT_ID_MAX_BYTES,
+        "artifact id must be non-empty and at most 256 bytes",
+    )?;
+    if artifact.trim() != artifact {
+        return Err(Error::Code(CodeError::InvalidCodebaseSnapshotBody(
+            "artifact id must not have leading or trailing whitespace",
+        )));
+    }
+    Ok(())
+}
+
+pub(super) fn validate_artifact_path(path: &str) -> Result<()> {
+    validate_bounded_text(
+        path,
+        CODEBASE_FILE_PATH_MAX_BYTES,
+        "artifact path must be non-empty and at most 4096 bytes",
+    )?;
+    if path.starts_with('/') || path.contains('\\') {
+        return Err(Error::Code(CodeError::InvalidCodebaseSnapshotBody(
+            "artifact path must be bundle-relative",
+        )));
+    }
+    if path
+        .split('/')
+        .any(|part| part.is_empty() || part == "." || part == "..")
+    {
+        return Err(Error::Code(CodeError::InvalidCodebaseSnapshotBody(
+            "artifact path must be normalized and cannot contain . or .. segments",
+        )));
+    }
+    Ok(())
+}
+
+fn validate_bounded_text(text: &str, max_bytes: usize, context: &'static str) -> Result<()> {
+    if text.is_empty() || text.len() > max_bytes {
+        return Err(Error::Code(CodeError::InvalidCodebaseSnapshotBody(context)));
+    }
+    if text.chars().any(char::is_control) {
+        return Err(Error::Code(CodeError::InvalidCodebaseSnapshotBody(
+            "artifact text fields must not contain control characters",
+        )));
+    }
+    Ok(())
+}
+
+pub(super) fn hex_nibble(byte: u8) -> Option<u8> {
+    match byte {
+        b'0'..=b'9' => Some(byte - b'0'),
+        b'a'..=b'f' => Some(byte - b'a' + 10),
+        b'A'..=b'F' => Some(byte - b'A' + 10),
+        _ => None,
+    }
 }

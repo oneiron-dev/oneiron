@@ -2,18 +2,53 @@
 
 use heed::RwTxn;
 
-use crate::error::{Error, Result};
+use crate::error::{Error, Result, SideTableRowProblem, StoreError};
+use crate::side_table::{self, CodecError, Raw, RawValue, SideTable};
 use crate::store::{ManifestDbs, Store};
 
 use super::RetrievalRunId;
-use super::run_store::stage_retrieval_run_delete;
 #[cfg(target_os = "linux")]
-use super::run_store::{RETRIEVAL_RUN_PROVISIONAL_KEY_PREFIX, retrieval_run_id_from_value};
+use super::run_store::RETRIEVAL_RUN_PROVISIONAL;
+use super::run_store::stage_retrieval_run_delete;
 
 // Base-ledger retention only. Session overlay rows evaporate on close and
 // cannot be evicted while an in-flight room assembly still owns them.
-const RETRIEVAL_AGE_KEY_PREFIX: &[u8] = b"retr_age:v0:";
-const RETRIEVAL_AGE_BY_RUN_KEY_PREFIX: &[u8] = b"retr_age_run:v0:";
+/// A published run's capture time, ordered for expiry and cap pruning; empty
+/// value. Production run ids come from the store-local monotonic id source,
+/// so the id breaks ties between captures in the same clock second. Key:
+/// u64be (captured at) + run id.
+const RETRIEVAL_AGE: SideTable<(u64, RetrievalRunId), (), Raw> =
+    SideTable::new(&side_table::RETRIEVAL_AGE);
+/// A run's capture time, locating its [`RETRIEVAL_AGE`] row. Key: run id.
+const RETRIEVAL_AGE_BY_RUN: SideTable<RetrievalRunId, CapturedAt, Raw> =
+    SideTable::new(&side_table::RETRIEVAL_AGE_BY_RUN);
+
+/// [`RETRIEVAL_AGE_BY_RUN`]'s value: the capture time, u64 big-endian.
+struct CapturedAt(u64);
+
+impl RawValue for CapturedAt {
+    fn to_raw(&self) -> std::result::Result<Vec<u8>, CodecError> {
+        Ok(self.0.to_be_bytes().to_vec())
+    }
+
+    fn from_raw(bytes: &[u8]) -> std::result::Result<Self, CodecError> {
+        let bytes = bytes
+            .try_into()
+            .map_err(|_| Error::CorruptedIndex("retrieval run retention"))?;
+        Ok(Self(u64::from_be_bytes(bytes)))
+    }
+}
+
+/// A key that does not spell its table's shape stays a corrupt-index error.
+fn corrupt_key(context: &'static str) -> impl FnOnce(Error) -> Error {
+    move |error| match error {
+        Error::Store(StoreError::SideTableRow {
+            problem: SideTableRowProblem::KeyShape,
+            ..
+        }) => Error::CorruptedIndex(context),
+        other => other,
+    }
+}
 
 /// On Linux every live Store holds a shared lock for its lifetime. The sole opener may
 /// take an exclusive lock, sweep crashed provisional rows, then downgrade.
@@ -112,17 +147,9 @@ impl Store {
             // writer lock even if another process owns a shared lease.
             let mut wtxn = self.env.write_txn()?;
             if sole_opener {
-                let mut orphans = Vec::new();
-                for row in self
-                    .vault_meta
-                    .prefix_iter(&wtxn, RETRIEVAL_RUN_PROVISIONAL_KEY_PREFIX)?
-                {
-                    let (key, _) = row?;
-                    let id = retrieval_run_id_from_value(
-                        &key[RETRIEVAL_RUN_PROVISIONAL_KEY_PREFIX.len()..],
-                    )?;
-                    orphans.push(id);
-                }
+                let orphans = RETRIEVAL_RUN_PROVISIONAL
+                    .scan_keys(self, &wtxn, &[])
+                    .map_err(corrupt_key("retrieval run telemetry"))?;
                 for id in orphans {
                     stage_retrieval_run_delete(self, &mut wtxn, id)?;
                 }
@@ -151,30 +178,14 @@ impl Store {
     }
 }
 
-fn age_by_run_key(id: RetrievalRunId) -> Vec<u8> {
-    [RETRIEVAL_AGE_BY_RUN_KEY_PREFIX, &id.as_bytes()].concat()
-}
-
-// Production run ids come from the store-local monotonic id source, so the
-// id breaks ties between captures in the same clock second.
-fn age_key(at: u64, id: RetrievalRunId) -> Vec<u8> {
-    [RETRIEVAL_AGE_KEY_PREFIX, &at.to_be_bytes(), &id.as_bytes()].concat()
-}
-
 pub(super) fn delete_retrieval_age(
     target: &impl ManifestDbs,
     txn: &mut RwTxn<'_>,
     id: RetrievalRunId,
 ) -> Result<()> {
-    let by_run = age_by_run_key(id);
-    if let Some(raw) = target.vault_meta().get(txn, &by_run)? {
-        let at = u64::from_be_bytes(
-            raw.as_ref()
-                .try_into()
-                .map_err(|_| Error::CorruptedIndex("retrieval run retention"))?,
-        );
-        target.vault_meta().delete(txn, &age_key(at, id))?;
-        target.vault_meta().delete(txn, &by_run)?;
+    if let Some(CapturedAt(at)) = RETRIEVAL_AGE_BY_RUN.get(target, &*txn, &id)? {
+        RETRIEVAL_AGE.delete(target, txn, &(at, id))?;
+        RETRIEVAL_AGE_BY_RUN.delete(target, txn, &id)?;
     }
     Ok(())
 }
@@ -186,10 +197,8 @@ pub(super) fn put_retrieval_age(
     at: u64,
 ) -> Result<()> {
     delete_retrieval_age(target, txn, id)?;
-    target.vault_meta().put(txn, &age_key(at, id), b"")?;
-    target
-        .vault_meta()
-        .put(txn, &age_by_run_key(id), &at.to_be_bytes())?;
+    RETRIEVAL_AGE.put(target, txn, &(at, id), &())?;
+    RETRIEVAL_AGE_BY_RUN.put(target, txn, &id, &CapturedAt(at))?;
     Ok(())
 }
 
@@ -208,19 +217,9 @@ pub(super) fn prune_retrieval_runs(
     let now = store.clock.now_recorded_at();
     let cutoff = now.saturating_sub(max_age_secs);
     // Collect keys before any delete; heed forbids mutating under an active cursor.
-    let mut age_rows = Vec::new();
-    for row in store
-        .vault_meta
-        .prefix_iter(txn, RETRIEVAL_AGE_KEY_PREFIX)?
-    {
-        let (key, _) = row?;
-        let suffix: [u8; 24] = key[RETRIEVAL_AGE_KEY_PREFIX.len()..]
-            .try_into()
-            .map_err(|_| Error::CorruptedIndex("retrieval run retention"))?;
-        let at = u64::from_be_bytes(suffix[..8].try_into().expect("eight bytes"));
-        let id = RetrievalRunId::from_bytes(suffix[8..].try_into().expect("sixteen bytes"));
-        age_rows.push((at, id));
-    }
+    let age_rows = RETRIEVAL_AGE
+        .scan_keys(store, txn, &[])
+        .map_err(corrupt_key("retrieval run retention"))?;
     let over = age_rows
         .len()
         .saturating_sub(max_runs.saturating_sub(reserve));

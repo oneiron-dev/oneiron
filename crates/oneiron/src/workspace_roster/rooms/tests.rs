@@ -553,7 +553,13 @@ fn room_projection_reads_task_register_and_reply_without_stored_liveness() -> Re
     let scoped = vault.scoped_read(
         crate::claim::ScopedReadActorKey::with_actor_class(owner.to_hex(), "human").unwrap(),
     );
-    assert!(scoped.get(&foreign_result)?.value.is_none());
+    assert!(
+        scoped
+            .read(&[crate::claim::PointRead::id(foreign_result)], None)?
+            .single()
+            .value
+            .is_none()
+    );
     assert!(
         !human
             .rooms_trunk(room, trunk)
@@ -1021,7 +1027,7 @@ fn exact_project_and_room_batch_still_has_a_roster_audience() -> Result<()> {
     assert_eq!(vault.room_audience_members(room)?, vec![leader, peer]);
     // The stored derived body identifies the substrate even if the auxiliary
     // marker is absent. Losing it cannot reinterpret this room as empty.
-    let key = [super::super::project::ROOM_PROJECT, room.as_bytes()].concat();
+    let key = super::super::project::ROOM_PROJECT.key_bytes(&room);
     let mut txn = vault.store.env.write_txn()?;
     vault.store.vault_meta.delete(&mut txn, &key)?;
     txn.commit()?;

@@ -469,7 +469,7 @@ fn blob_artifact_forks_machine_version_without_rewriting_history() -> Result<()>
             .vault_meta
             .get(
                 &txn,
-                &super::store_keys::blob_artifact_version_key(&artifact, machine.version),
+                &super::versions::VERSIONS.key_bytes(&(artifact, machine.version)),
             )?
             .unwrap()
             .to_vec()
@@ -506,7 +506,7 @@ fn blob_artifact_forks_machine_version_without_rewriting_history() -> Result<()>
         .vault_meta
         .get(
             &txn,
-            &super::store_keys::blob_artifact_version_key(&artifact, upload.version),
+            &super::versions::VERSIONS.key_bytes(&(artifact, upload.version)),
         )?
         .unwrap();
     assert_eq!(
@@ -539,7 +539,7 @@ fn blob_artifact_forks_machine_version_without_rewriting_history() -> Result<()>
     let txn = vault.store.env.read_txn()?;
     let unchanged = vault.store.vault_meta.get(
         &txn,
-        &super::store_keys::blob_artifact_version_key(&artifact, machine.version),
+        &super::versions::VERSIONS.key_bytes(&(artifact, machine.version)),
     )?;
     assert_eq!(unchanged.as_deref(), Some(original.as_slice()));
     Ok(())
@@ -638,9 +638,9 @@ fn blob_artifact_tree_reader_refuses_bad_parent_and_head() -> Result<()> {
         test_time(13),
         13,
     )?;
-    let key = super::store_keys::blob_artifact_version_key(&artifact, child.version);
-    let head_key = super::store_keys::blob_artifact_head_key(&artifact);
-    let first_key = super::store_keys::blob_artifact_version_key(&artifact, first.version);
+    let key = super::versions::VERSIONS.key_bytes(&(artifact, child.version));
+    let head_key = super::versions::HEAD.key_bytes(&artifact);
+    let first_key = super::versions::VERSIONS.key_bytes(&(artifact, first.version));
     let (original, root) = {
         let txn = vault.store.env.read_txn()?;
         (

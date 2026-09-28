@@ -126,6 +126,18 @@ pub fn encode_code_run_replay_record(record: &CodeRunReplayRecord) -> Result<Vec
     encode_value(&value, "code-run replay record MessagePack encode failed")
 }
 
+/// The replay record is its own pinned MessagePack layout: the side table
+/// stores exactly the bytes [`encode_code_run_replay_record`] spells.
+impl crate::side_table::RawValue for CodeRunReplayRecord {
+    fn to_raw(&self) -> std::result::Result<Vec<u8>, crate::side_table::CodecError> {
+        Ok(encode_code_run_replay_record(self)?)
+    }
+
+    fn from_raw(bytes: &[u8]) -> std::result::Result<Self, crate::side_table::CodecError> {
+        Ok(decode_code_run_replay_record(bytes)?)
+    }
+}
+
 /// Decodes a deterministic code-run replay record.
 pub fn decode_code_run_replay_record(bytes: &[u8]) -> Result<CodeRunReplayRecord> {
     let value = decode_value(bytes)?;

@@ -18,4 +18,5 @@ mod outbound_actor_scope;
 mod recall;
 mod recall_l2;
 mod recall_revision;
+mod recall_security;
 mod retrieval_quality;

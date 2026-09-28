@@ -1,9 +1,9 @@
 //! Receipt projection for graduation answers.
 
-use super::answers::{StoredAnswer, answer_key_id};
-use super::{ANSWER_KEY_PREFIX, ANSWER_RECEIPT_PREFIX, ANSWER_ROW_LABEL, ROW_VERSION, decode_row};
+use super::answers::StoredAnswer;
+use super::{ANSWER, ANSWER_RECEIPT_PREFIX};
 use crate::entity_id::EntityId;
-use crate::error::{Error, Result};
+use crate::error::Result;
 use crate::receipt::{ReceiptKind, ReceiptQuery, ReceiptRecord};
 use crate::store::Store;
 
@@ -16,18 +16,6 @@ use crate::store::Store;
 #[must_use]
 pub fn is_graduation_answer_receipt(record: &ReceiptRecord) -> bool {
     record.receipt_kind == ReceiptKind::Gate && record.receipt_id.starts_with(ANSWER_RECEIPT_PREFIX)
-}
-
-/// Names the first key past the answer-log family, so the reverse walk has the
-/// explicit half-open range `OverlayDb` needs (it exposes no reverse prefix
-/// iterator). The prefix is an ASCII literal, so bumping its final byte is the
-/// exclusive bound.
-fn answer_key_range_end() -> Vec<u8> {
-    let mut end = ANSWER_KEY_PREFIX.to_vec();
-    if let Some(last) = end.last_mut() {
-        *last = last.saturating_add(1);
-    }
-    end
 }
 
 /// Projects the answer log as `Gate` receipts, on the caller's read txn.
@@ -53,17 +41,12 @@ pub(crate) fn answer_receipts_in_txn(
     txn: &heed::RoTxn<'_>,
     query: &ReceiptQuery,
 ) -> Result<Vec<ReceiptRecord>> {
-    let end = answer_key_range_end();
-    let bounds = (
-        std::ops::Bound::Included(ANSWER_KEY_PREFIX),
-        std::ops::Bound::Excluded(&end[..]),
-    );
     let mut out = Vec::new();
-    // One row PAST the cap is reached and never decoded: it is what separates a
-    // log holding exactly the cap from one the cap truncated.
-    for (scanned, entry) in store
-        .vault_meta
-        .rev_range(txn, &bounds)?
+    // One row PAST the cap is reached (and its decode is wasted rather than
+    // meaningful): it is what separates a log holding exactly the cap from
+    // one the cap truncated.
+    for (scanned, entry) in ANSWER
+        .iter_rev_from(store, txn, &[])?
         .take(crate::receipt::MAX_RECEIPT_QUERY_SCAN + 1)
         .enumerate()
     {
@@ -71,12 +54,8 @@ pub(crate) fn answer_receipts_in_txn(
             note_answer_scan_capped();
             break;
         }
-        let (key, raw) = entry?;
-        let row: StoredAnswer = decode_row(&raw, ANSWER_ROW_LABEL)?;
-        if row.v != ROW_VERSION {
-            return Err(Error::CorruptedIndex(ANSWER_ROW_LABEL));
-        }
-        let receipt = answer_receipt_record(&answer_key_id(&key)?, &row);
+        let ((_, id), row) = entry?;
+        let receipt = answer_receipt_record(&id, &row);
         if query.matches(&receipt) {
             out.push(receipt);
         }

@@ -5,13 +5,15 @@
 
 use crate::error::{Error, Result};
 use crate::llm::{CallClass, FinishReason, LlmRequest, LlmResponse};
+use crate::side_table::{self, Raw, SideTable};
 use crate::write_envelope::WriteActor;
 use crate::{ClaimLifecycleStatus, ClaimSource, ClaimSubject, EdgeActorClass, EntityId, Vault};
 use rmpv::Value;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 
-pub(crate) const KEY: &[u8] = b"dreamer:consolidation:failure_rules:v1";
+pub(crate) const DREAMER_FAILURE_RULES: SideTable<(), Vec<u8>, Raw> =
+    SideTable::new(&side_table::DREAMER_FAILURE_RULES);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -213,10 +215,8 @@ pub(super) fn load(vault: &Vault) -> Result<Option<FailureRules>> {
 }
 
 fn load_in_txn(vault: &Vault, txn: &heed::RoTxn<'_>) -> Result<Option<FailureRules>> {
-    vault
-        .store
-        .vault_meta
-        .get(txn, KEY)?
+    DREAMER_FAILURE_RULES
+        .get(&vault.store, txn, &())?
         .map(|bytes| {
             let stored: StoredRules = serde_json::from_slice(&bytes).map_err(|_| invalid())?;
             EntityId::from_hex(&stored.author).map_err(|_| invalid())?;
@@ -274,7 +274,7 @@ impl Vault {
             return Err(invalid());
         }
         let mut txn = self.store.env.write_txn()?;
-        self.store.vault_meta.put(&mut txn, KEY, &bytes)?;
+        DREAMER_FAILURE_RULES.put(&self.store, &mut txn, &(), &bytes)?;
         txn.commit()?;
         Ok(())
     }

@@ -2183,7 +2183,7 @@ fn listing_storage_errors_stay_top_level_by_construction() {
         "opening the read transaction stays a top-level error"
     );
     assert!(
-        body.contains("prefix_iter(&rtxn, INTENT_LEDGER_PRIVATE_PREFIX)?"),
+        body.contains("ledger_rows(vault, &rtxn)?"),
         "creating the prefix iterator stays a top-level error"
     );
     let iteration_at = body

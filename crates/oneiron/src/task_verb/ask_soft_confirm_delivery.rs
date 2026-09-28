@@ -1,21 +1,15 @@
 //! Durable soft-confirm outbox, retried independently of answer replay.
 use super::TaskAskSoftConfirmDelivery;
 use crate::edge::EdgeActorClass;
+use crate::side_table::{self, Named, Raw, SideTable};
 use crate::{EntityId, Result, Vault};
 
-const PREFIX: &[u8] = b"tasks.ask.soft_confirm.delivery.v1/";
-const CURSOR: &[u8] = b"tasks.ask.soft_confirm.delivery_cursor.v1";
-
-fn key(group: EntityId, person: EntityId) -> Vec<u8> {
-    let mut key = PREFIX.to_vec();
-    key.extend_from_slice(group.as_bytes());
-    key.extend_from_slice(person.as_bytes());
-    key
-}
-
-fn decode(bytes: &[u8]) -> Result<TaskAskSoftConfirmDelivery> {
-    rmp_serde::from_slice(bytes).map_err(|_| super::ask_record::invalid())
-}
+/// Soft-confirm notice delivery state of one guest. Key: id16 (group) + id16 (person).
+const DELIVERIES: SideTable<(EntityId, EntityId), TaskAskSoftConfirmDelivery, Named> =
+    SideTable::new(&side_table::TASK_ASK_SOFT_CONFIRM_DELIVERY);
+/// The delivery key suffix (group id16 + person id16) the retry sweep visited last. Key: ().
+const CURSOR: SideTable<(), Vec<u8>, Raw> =
+    SideTable::new(&side_table::TASK_ASK_SOFT_CONFIRM_DELIVERY_CURSOR);
 
 fn store(
     vault: &Vault,
@@ -24,12 +18,7 @@ fn store(
     person: EntityId,
     state: TaskAskSoftConfirmDelivery,
 ) -> Result<()> {
-    vault.store.vault_meta.put(
-        txn,
-        &key(group, person),
-        &rmp_serde::to_vec_named(&state).map_err(|_| super::ask_record::invalid())?,
-    )?;
-    Ok(())
+    DELIVERIES.put(&vault.store, txn, &(group, person), &state)
 }
 
 /// Inserted atomically with the immutable notice and answer.
@@ -56,11 +45,7 @@ impl Vault {
         person: EntityId,
     ) -> Result<Option<TaskAskSoftConfirmDelivery>> {
         let txn = self.store.env.read_txn()?;
-        self.store
-            .vault_meta
-            .get(&txn, &key(group, person))?
-            .map(|data| decode(&data))
-            .transpose()
+        DELIVERIES.get(&self.store, &txn, &(group, person))
     }
 
     /// Retries one committed notice. The same outbound idempotency key closes
@@ -72,12 +57,9 @@ impl Vault {
     ) -> Result<TaskAskSoftConfirmDelivery> {
         let (notice, companion, current) = {
             let txn = self.store.env.read_txn()?;
-            let current = self
-                .store
-                .vault_meta
-                .get(&txn, &key(group, person))?
-                .ok_or_else(super::ask_record::invalid)
-                .and_then(|data| decode(&data))?;
+            let current = DELIVERIES
+                .get(&self.store, &txn, &(group, person))?
+                .ok_or_else(super::ask_record::invalid)?;
             let notice = super::ask_soft_confirm::notice(self, &txn, group, person)?;
             if notice.is_none() {
                 drop(txn);
@@ -148,12 +130,9 @@ impl Vault {
             }
         };
         self.with_write_txn(|txn| {
-            let stored = self
-                .store
-                .vault_meta
-                .get(&*txn, &key(group, person))?
-                .ok_or_else(super::ask_record::invalid)
-                .and_then(|data| decode(&data))?;
+            let stored = DELIVERIES
+                .get(&self.store, txn, &(group, person))?
+                .ok_or_else(super::ask_record::invalid)?;
             if matches!(
                 stored,
                 TaskAskSoftConfirmDelivery::Scheduled | TaskAskSoftConfirmDelivery::Closed
@@ -178,40 +157,18 @@ impl Vault {
             .ask_operational_policy()
             .ok_or_else(super::ask_record::invalid)?
             .retry_limit(limit);
-        let cursor = self
-            .store
-            .vault_meta
-            .get(&txn, CURSOR)?
-            .map(|bytes| bytes.to_vec())
-            .unwrap_or_default();
+        let cursor = CURSOR.get(&self.store, &txn, &())?.unwrap_or_default();
         let mut rows = Vec::new();
-        for row in self.store.vault_meta.prefix_iter(&txn, PREFIX)? {
-            let (key, value) = row?;
+        for row in DELIVERIES.iter_from(&self.store, &txn, &[])? {
+            let ((group, person), state) = row?;
             if matches!(
-                decode(&value)?,
+                state,
                 TaskAskSoftConfirmDelivery::Scheduled | TaskAskSoftConfirmDelivery::Closed
             ) {
                 continue;
             }
-            let bytes = key
-                .get(PREFIX.len()..)
-                .ok_or_else(super::ask_record::invalid)?;
-            if bytes.len() != 32 {
-                return Err(super::ask_record::invalid());
-            }
-            rows.push((
-                bytes.to_vec(),
-                EntityId::from_bytes(
-                    bytes[..16]
-                        .try_into()
-                        .map_err(|_| super::ask_record::invalid())?,
-                )?,
-                EntityId::from_bytes(
-                    bytes[16..]
-                        .try_into()
-                        .map_err(|_| super::ask_record::invalid())?,
-                )?,
-            ));
+            let key = [group.as_bytes().as_slice(), person.as_bytes()].concat();
+            rows.push((key, group, person));
         }
         drop(txn);
         if rows.is_empty() {
@@ -230,7 +187,7 @@ impl Vault {
             .collect();
         if let Some((last, _, _)) = pending.last() {
             self.with_write_txn(|txn| {
-                self.store.vault_meta.put(txn, CURSOR, last)?;
+                CURSOR.put(&self.store, txn, &(), last)?;
                 Ok(())
             })?;
         }

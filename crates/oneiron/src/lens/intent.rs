@@ -5,18 +5,15 @@ use super::{
     LensRegenOutcome, LensRegenRequest, LensRegenerator, LensVersionStamp, lens_load_action,
     regenerate_lens,
 };
+use crate::side_table::{self, Named, SideTable};
 use crate::{EntityId, Error, Result, Vault};
 use serde::{Deserialize, Serialize};
 
-const KEY_PREFIX: &[u8] = b"lens/intent/v1\0";
+/// The authored prompt is separate from generated lens revisions. Key: id16.
+const INTENTS: SideTable<EntityId, LensIntentRecord, Named> =
+    SideTable::new(&side_table::LENS_INTENT);
 /// Bound prompt storage before allocation or dispatch into a model runner.
 pub const LENS_INTENT_MAX_BYTES: usize = 16_384;
-
-fn key(id: &EntityId) -> Vec<u8> {
-    let mut key = KEY_PREFIX.to_vec();
-    key.extend_from_slice(id.as_bytes());
-    key
-}
 
 /// Per-lens authored source, independent of generated atom trees and shell stamps.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -53,23 +50,22 @@ impl Vault {
     /// Replacing one lens's intent never changes another's record.
     pub fn put_lens_intent(&self, lens_id: &EntityId, intent: &LensIntentRecord) -> Result<()> {
         intent.validate()?;
-        let bytes = rmp_serde::to_vec_named(intent)
-            .map_err(|_| Error::InvalidConfig("lens intent encoding failed".into()))?;
-        self.with_write_txn(|txn| {
-            self.store.vault_meta.put(txn, &key(lens_id), &bytes)?;
-            Ok(())
-        })
+        self.with_write_txn(|txn| INTENTS.put(&self.store, txn, lens_id, intent))
     }
 
     /// Decode the stored intent strictly; corrupt or missing source never becomes an empty prompt.
     pub fn get_lens_intent(&self, lens_id: &EntityId) -> Result<Option<LensIntentRecord>> {
         let txn = self.store.env.read_txn()?;
-        self.store
-            .vault_meta
-            .get(&txn, &key(lens_id))?
-            .map(|bytes| {
-                let intent: LensIntentRecord = rmp_serde::from_slice(&bytes)
-                    .map_err(|_| Error::CorruptedIndex("lens intent record"))?;
+        INTENTS
+            .get(&self.store, &txn, lens_id)
+            .map_err(|error| {
+                if error.kind() == crate::error::ErrorKind::SideTableRow {
+                    Error::CorruptedIndex("lens intent record")
+                } else {
+                    error
+                }
+            })?
+            .map(|intent| {
                 intent
                     .validate()
                     .map_err(|_| Error::CorruptedIndex("lens intent record"))?;
