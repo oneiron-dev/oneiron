@@ -5,7 +5,7 @@ use crate::{ClaimApprovalStatus, ClaimLifecycleStatus, ClaimSource, EntityId, Re
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 const CADENCE_KEY: &[u8] = b"settings:dreamer:proactivity:cadence:v1";
-const STATE_KEY: &[u8] = b"dreamer:proactivity:state:v1";
+const STATE_KEY: &[u8] = b"dreamer:proactivity:state:v2:";
 const DIGEST_PREFIX: &[u8] = b"dreamer:proactivity:digest:v1:";
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -33,6 +33,8 @@ pub struct DigestProposal {
 pub struct ProactivityDigest {
     pub id: [u8; 32],
     pub created_at: u64,
+    #[serde(with = "crate::serialize::entity_ref")]
+    pub recipient: EntityId,
     pub urgent: bool,
     pub groups: BTreeMap<String, Vec<DigestProposal>>,
     pub judge_asks: Vec<crate::skill_optimize::JudgeAsk>,
@@ -80,10 +82,11 @@ impl Vault {
             if cadence.period_secs == 0 {
                 return Err(invalid());
             }
+            let state_key = [STATE_KEY, owner.actor().as_bytes()].concat();
             let mut state: DigestState = self
                 .store
                 .vault_meta
-                .get(&*txn, STATE_KEY)?
+                .get(&*txn, &state_key)?
                 .map(|bytes| serde_json::from_slice(&bytes).map_err(|_| invalid()))
                 .transpose()?
                 .unwrap_or_default();
@@ -187,11 +190,19 @@ impl Vault {
                 ));
             }
             let is_urgent = !due && breakthrough;
-            let identity = serde_json::to_vec(&(now, &groups, &judge_asks, is_urgent, &rendered))
-                .map_err(|_| invalid())?;
+            let identity = serde_json::to_vec(&(
+                now,
+                owner.actor(),
+                &groups,
+                &judge_asks,
+                is_urgent,
+                &rendered,
+            ))
+            .map_err(|_| invalid())?;
             let digest = ProactivityDigest {
                 id: *blake3::hash(&identity).as_bytes(),
                 created_at: now,
+                recipient: owner.actor(),
                 urgent: is_urgent,
                 groups,
                 judge_asks,
@@ -204,7 +215,7 @@ impl Vault {
             state.last_emitted = Some(now);
             self.store.vault_meta.put(
                 txn,
-                STATE_KEY,
+                &state_key,
                 &serde_json::to_vec(&state).map_err(|_| invalid())?,
             )?;
             Ok(Some(digest))
@@ -220,6 +231,7 @@ impl Vault {
                     serde_json::from_slice(&bytes).map_err(|_| invalid())?;
                 let identity = serde_json::to_vec(&(
                     digest.created_at,
+                    digest.recipient,
                     &digest.groups,
                     &digest.judge_asks,
                     digest.urgent,

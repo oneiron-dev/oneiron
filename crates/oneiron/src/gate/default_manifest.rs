@@ -43,6 +43,13 @@ pub(crate) fn default_policy_manifest() -> Vec<u8> {
             Value::from(POLICY_PACK_ID_KEY),
             Value::from("oneiron-default-policy"),
         ),
+        (
+            Value::from(crate::skill_optimize::policy::MANIFEST_KEY),
+            Value::Map(vec![
+                (Value::from("ask_minutes"), Value::from(1)),
+                (Value::from("max_context_bytes"), Value::from(512)),
+            ]),
+        ),
         (Value::from(POLICY_PACK_VERSION_KEY), Value::from("v1")),
         (
             Value::from(POLICY_MIN_ENGINE_VERSION_KEY),

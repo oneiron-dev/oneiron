@@ -14,7 +14,6 @@ use crate::error::{Error, Result};
 const ASK_PREFIX: &[u8] = b"skill_optimize:judge_ask:v1:";
 const LABEL_PREFIX: &[u8] = b"skill_optimize:judge_label:v1:";
 const BUDGET_PREFIX: &[u8] = b"settings:skill_optimize:judge_minutes:v1:";
-const MAX_CONTEXT_BYTES: usize = 512;
 
 fn invalid() -> Error {
     Error::InvalidConfig("invalid judge calibration ask or pick".into())
@@ -73,8 +72,32 @@ fn encode<T: Serialize>(value: &T) -> Result<Vec<u8>> {
 fn decode<T: serde::de::DeserializeOwned>(bytes: &[u8]) -> Result<T> {
     serde_json::from_slice(bytes).map_err(|_| Error::CorruptedIndex("judge calibration row"))
 }
-fn valid_text(value: &str) -> bool {
-    !value.trim().is_empty() && value.len() <= MAX_CONTEXT_BYTES
+fn valid_text(value: &str, limit: u32) -> bool {
+    !value.trim().is_empty() && value.len() <= usize::try_from(limit).unwrap_or(usize::MAX)
+}
+
+fn validate_live_owner(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    owner: &AuthenticatedOwner,
+) -> Result<()> {
+    owner.revalidate_in_txn(vault, txn)?;
+    if !matches!(
+        crate::vault::live_entity_row_in_txn(&vault.store, txn, &owner.actor())?,
+        crate::vault::LiveEntityRow::Live {
+            entity_type: crate::registry::ENTITY_TYPE_PERSON,
+            ..
+        }
+    ) || vault.entity_lifecycle_state_in_txn(txn, &owner.actor())?
+        != crate::identity_topology::EntityLifecycleState::Active
+    {
+        return Err(Error::Gate(
+            crate::error::GateError::ConsentOwnerNotAuthenticated(
+                "judge calibration requires a live human owner",
+            ),
+        ));
+    }
+    Ok(())
 }
 
 /// Propose an A/B ask when two judge revisions disagree on the same evidence.
@@ -131,11 +154,7 @@ fn propose(
     reason: JudgeAskReason,
     [option_a, option_b]: [&str; 2],
 ) -> Result<JudgeAsk> {
-    if [campaign, evidence, option_a, option_b]
-        .iter()
-        .any(|s| !valid_text(s))
-        || option_a == option_b
-    {
+    if option_a == option_b {
         return Err(invalid());
     }
     let identity = encode(&(
@@ -160,6 +179,13 @@ fn propose(
         delivered_at: None,
     };
     vault.with_write_txn(|txn| {
+        let policy = super::policy::resolved_in_txn(vault, &*txn)?;
+        if [campaign, evidence, option_a, option_b]
+            .iter()
+            .any(|text| !valid_text(text, policy.max_context_bytes))
+        {
+            return Err(invalid());
+        }
         if !matches!(
             crate::vault::live_entity_row_in_txn(&vault.store, &*txn, &skill)?,
             crate::vault::LiveEntityRow::Live {
@@ -200,8 +226,8 @@ fn propose(
     })
 }
 
-/// Set the remaining minutes of new judge questions for this human. One A/B
-/// question costs one minute at digest delivery. The balance is not reset on
+/// Set the remaining minutes of new judge questions for this human. Each ask
+/// costs the resolved manifest's `ask_minutes` at delivery. The balance is not reset on
 /// cadence; zero disables delivery until an authenticated owner replenishes it.
 pub fn set_judge_digest_minutes(
     vault: &Vault,
@@ -209,7 +235,7 @@ pub fn set_judge_digest_minutes(
     minutes: u32,
 ) -> Result<()> {
     vault.with_write_txn(|txn| {
-        owner.revalidate_in_txn(vault, &*txn)?;
+        validate_live_owner(vault, &*txn, owner)?;
         vault
             .store
             .vault_meta
@@ -250,7 +276,7 @@ pub fn record_judge_pick(
     at: u64,
 ) -> Result<JudgeLabel> {
     vault.with_write_txn(|txn| {
-        owner.revalidate_in_txn(vault, &*txn)?;
+        validate_live_owner(vault, &*txn, owner)?;
         let raw = vault
             .store
             .vault_meta
@@ -287,7 +313,7 @@ pub fn record_judge_pick(
 }
 
 /// Digest integration: include at most the owner's funded minutes of pending
-/// asks, debit one minute per ask, and mark only those asks delivered in the
+/// asks, debit the resolved manifest cost per ask, and mark only those asks delivered in the
 /// same transaction as the digest. Failure restores both balance and asks.
 pub(crate) fn take_digest_asks_in_txn(
     vault: &Vault,
@@ -306,7 +332,9 @@ pub(crate) fn take_digest_asks_in_txn(
         })
         .transpose()?
         .unwrap_or(0);
-    if minutes == 0 {
+    let cost = super::policy::resolved_in_txn(vault, &*txn)?.ask_minutes;
+    let slots = minutes / cost;
+    if slots == 0 {
         return Ok(Vec::new());
     }
     let mut selected = Vec::new();
@@ -319,7 +347,7 @@ pub(crate) fn take_digest_asks_in_txn(
         if ask.responsible == owner && ask.delivered_at.is_none() {
             ask.delivered_at = Some(at);
             selected.push(ask);
-            if selected.len() >= minutes as usize {
+            if selected.len() >= usize::try_from(slots).unwrap_or(usize::MAX) {
                 break;
             }
         }
@@ -327,8 +355,11 @@ pub(crate) fn take_digest_asks_in_txn(
     if !selected.is_empty() {
         let count = u32::try_from(selected.len())
             .map_err(|_| Error::ArithmeticOverflow("judge ask minutes"))?;
+        let spent = count
+            .checked_mul(cost)
+            .ok_or(Error::ArithmeticOverflow("judge ask minutes"))?;
         let remaining = minutes
-            .checked_sub(count)
+            .checked_sub(spent)
             .ok_or(Error::ArithmeticOverflow("judge ask minutes"))?;
         vault
             .store
