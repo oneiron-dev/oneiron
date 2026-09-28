@@ -1,7 +1,3 @@
-#![expect(
-    clippy::unwrap_used,
-    reason = "test fixture failures should panic immediately"
-)]
 //! A real enrol: root + thin index, one opened item, remote search and offline honesty.
 
 use crate::config::SyncServerConfig;
@@ -11,8 +7,8 @@ use oneiron::federation::{FederationGrant, FederationGrantPreset, FederationGran
 use oneiron::memory::{WitnessAuthor, WitnessMessage, WitnessTurn};
 use oneiron::sync::client::NoteSyncSession;
 use oneiron::sync::{
-    SearchSource, SyncClient, SyncClientConfig, SyncSelector, SyncSelectorWorld, WindowKey,
-    WindowManager, bridge::Materializer,
+    ConnectionConfig, SearchSource, SyncClient, SyncClientConfig, SyncConnection, SyncEvent,
+    SyncSelector, SyncSelectorWorld, SyncStatus, WindowKey, WindowManager, bridge::Materializer,
 };
 use oneiron::{EdgeActorClass, EntityId, TimeRange, Vault, VaultConfig};
 use std::sync::Arc;
@@ -189,7 +185,6 @@ async fn phone_enrols_with_index_then_opens_one_item_and_searches_home() {
     // Exercise the real connection owner, not only SyncClient frame builders:
     // enrol reaches Synced with the bound actor session and selector and still
     // materializes no full month window.
-    use oneiron::sync::{ConnectionConfig, SyncConnection, SyncEvent, SyncStatus};
     let driver_dir = tempfile::tempdir().unwrap();
     let driver_vault = Arc::new(Vault::open(driver_dir.path(), VaultConfig::device()).unwrap());
     let driver_manager = Arc::new(WindowManager::new(
@@ -253,7 +248,6 @@ async fn phone_enrols_with_index_then_opens_one_item_and_searches_home() {
 #[tokio::test]
 async fn thin_first_edit_promotes_causally_and_concurrent_home_edit_converges() {
     use oneiron::sync::transport::{self, window_sub_tags};
-    use oneiron::sync::{ConnectionConfig, SyncConnection};
     let server_dir = tempfile::tempdir().unwrap();
     let device_dir = tempfile::tempdir().unwrap();
     let home = Arc::new(Vault::open(server_dir.path(), VaultConfig::device()).unwrap());

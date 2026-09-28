@@ -1,7 +1,3 @@
-#![expect(
-    clippy::unwrap_used,
-    reason = "test fixture failures should panic immediately"
-)]
 use super::*;
 use crate::livequery::{production_tests, test_wire};
 use oneiron::federation::{FederationGrant, FederationGrantPreset, FederationGrantRole};
