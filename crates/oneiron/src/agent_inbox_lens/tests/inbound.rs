@@ -1,7 +1,5 @@
 use super::*;
-use crate::channel_identity::{
-    ChannelIdentity, ChannelIdentityBinding, ChannelIdentityState, SelfHeldShape,
-};
+use crate::channel_identity::{ChannelIdentityBinding, ChannelIdentityState, SelfHeldShape};
 use crate::surface_event::{
     InboundSurfaceEventInput, SurfaceCounterpartyStamp, SurfaceEventAdmission,
 };
@@ -17,15 +15,14 @@ fn unified_inbox_reads_identity_stamps_membership_drafts_and_updates() -> Result
         (identity, "resident@example.com"),
         (other, "other@example.com"),
     ] {
-        let mut channel = ChannelIdentity::requested(
+        let channel = crate::test_util::self_held_identity_in_state(
             "email",
             address,
             SelfHeldShape::DedicatedAddress,
             ChannelIdentityBinding::agent(actor),
+            ChannelIdentityState::Active,
             1,
         );
-        channel.state = ChannelIdentityState::Active;
-        channel.pending_fulfillment = None;
         vault.create_channel_identity(&id, &channel)?;
         let input = InboundSurfaceEventInput::new(
             format!("<{address}>"),

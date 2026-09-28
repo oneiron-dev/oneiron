@@ -74,8 +74,8 @@ impl ChannelIdentityProviderAdapter for MockChannelIdentityProviderAdapter {
         Ok(ChannelIdentityProviderProvision {
             provider_key: self.provider_key().to_owned(),
             identity_id: intent.identity_id,
-            channel: intent.identity.channel.clone(),
-            address_or_handle: intent.identity.address_or_handle.clone(),
+            channel: intent.identity.channel().to_owned(),
+            address_or_handle: intent.identity.address_or_handle().to_owned(),
             fulfillment_mode: self.provision_mode,
             provider_identity_ref: format!("mock:{}", intent.identity_id.to_hex()),
             fulfilled_at,

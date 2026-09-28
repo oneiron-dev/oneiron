@@ -1,7 +1,10 @@
 use std::collections::BTreeMap;
 
 use super::*;
-use crate::channel_identity::{ChannelIdentity, ChannelIdentityFulfillment, SelfHeldShape};
+use crate::channel_identity::{
+    ChannelIdentity, ChannelIdentityFulfillment, ChannelIdentityState, ChannelIdentityStep,
+    SelfHeldShape,
+};
 use crate::edge::EdgeActorClass;
 use crate::receipt::{ReceiptRecord, SendReceiptOutcome, persist_send_receipt};
 use crate::store::GateDecisionId;
@@ -52,14 +55,12 @@ fn fixture_with_config(
         ChannelIdentityBinding::agent(actor_ref),
         1,
     )
-    .transition(
-        ChannelIdentityState::PendingFulfillment,
-        Some(ChannelIdentityFulfillment::Manual),
+    .step(
+        ChannelIdentityStep::Bind(ChannelIdentityFulfillment::Manual),
         2,
-        None,
     )
     .unwrap()
-    .transition(ChannelIdentityState::Active, None, 3, None)
+    .step(ChannelIdentityStep::Fulfill, 3)
     .unwrap();
     vault
         .create_channel_identity(&identity_ref, &identity)
@@ -1559,11 +1560,18 @@ fn graduation_evidence_binds_every_scope_axis_outcome_and_time() {
     let scope = review_scope(&request);
     // A second live identity for the same actor passes identity admission but
     // must not borrow the first identity's persisted review.
-    let mut other_identity = vault
+    let first = vault
         .get_channel_identity(&scope.identity_ref)
         .unwrap()
         .unwrap();
-    other_identity.address_or_handle = "other@example.test".to_owned();
+    let other_identity = crate::test_util::self_held_identity_in_state(
+        first.channel(),
+        "other@example.test",
+        SelfHeldShape::DedicatedAddress,
+        first.binding(),
+        ChannelIdentityState::Active,
+        3,
+    );
     vault
         .create_channel_identity(&entity(0x62), &other_identity)
         .unwrap();

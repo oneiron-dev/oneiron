@@ -183,7 +183,7 @@ impl Vault {
             return Err(invalid_autonomy());
         }
         let record = decode_channel_identity_body(&raw[ENTITY_METADATA_HEADER_LEN..])?;
-        if record.state != ChannelIdentityState::Active {
+        if record.state() != ChannelIdentityState::Active {
             return Err(invalid_autonomy());
         }
         if record.is_delegated() {
@@ -197,7 +197,7 @@ impl Vault {
                 },
             )?;
         }
-        match record.binding {
+        match record.binding() {
             ChannelIdentityBinding::Actor { actor_ref, .. } => Ok(actor_ref),
             ChannelIdentityBinding::Vault { .. } => Err(invalid_autonomy()),
         }

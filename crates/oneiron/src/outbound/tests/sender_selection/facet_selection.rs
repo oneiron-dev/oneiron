@@ -8,8 +8,9 @@ fn automatic_outbound_selection_matches_actor_not_facet_and_preserves_safety() -
     };
 
     use crate::channel_identity::{
-        ChannelIdentity, ChannelIdentityBinding, ChannelIdentityFulfillment, ChannelIdentityState,
-        DelegatedGrant, DelegatedGrantScope, DelegatedProvisionRequest, SelfHeldShape,
+        ChannelIdentityBinding, ChannelIdentityFulfillment, ChannelIdentityState,
+        ChannelIdentityStep, DelegatedGrant, DelegatedGrantScope, DelegatedProvisionRequest,
+        SelfHeldShape,
     };
     use crate::error::Result;
 
@@ -45,14 +46,14 @@ fn automatic_outbound_selection_matches_actor_not_facet_and_preserves_safety() -
         resolve_channel_identity_ref_for_connector(&vault.store, &txn, "email", who)
     };
     let put = |seed: u8, channel: &str, binding, state| -> Result<()> {
-        let mut identity = ChannelIdentity::requested(
+        let identity = crate::test_util::self_held_identity_in_state(
             channel,
-            format!("sender-{seed}@example.com"),
+            &format!("sender-{seed}@example.com"),
             SelfHeldShape::DedicatedAddress,
             binding,
+            state,
             100,
         );
-        identity.state = state;
         vault.create_channel_identity(&entity(seed), &identity)
     };
     put(
@@ -106,21 +107,14 @@ fn automatic_outbound_selection_matches_actor_not_facet_and_preserves_safety() -
         },
         1_800_000_000,
     )?;
-    vault.transition_channel_identity(
+    vault.step_channel_identity(
         &entity(0x99),
-        ChannelIdentityState::PendingFulfillment,
-        Some(ChannelIdentityFulfillment::Api),
+        ChannelIdentityStep::Bind(ChannelIdentityFulfillment::Api),
         1_800_000_010,
-        None,
     )?;
-    let delegated = vault.transition_channel_identity(
-        &entity(0x99),
-        ChannelIdentityState::Active,
-        None,
-        1_800_000_020,
-        None,
-    )?;
-    assert_eq!(delegated.binding, binding);
+    let delegated =
+        vault.step_channel_identity(&entity(0x99), ChannelIdentityStep::Fulfill, 1_800_000_020)?;
+    assert_eq!(delegated.binding(), binding);
     assert!(!delegated.may_send());
     assert_eq!(resolve(Some(&actor))?, None);
 
@@ -142,13 +136,7 @@ fn automatic_outbound_selection_matches_actor_not_facet_and_preserves_safety() -
         matches!(resolve(Some(&actor)), Err(Error::InvalidConfig(_))),
         "masked plus unmasked is ambiguous"
     );
-    vault.transition_channel_identity(
-        &entity(0x9B),
-        ChannelIdentityState::Released,
-        None,
-        200,
-        None,
-    )?;
+    vault.step_channel_identity(&entity(0x9B), ChannelIdentityStep::Release, 200)?;
     assert_eq!(resolve(Some(&actor))?, Some(entity(0x9A)));
     let second_facet = seed_entity(&vault, entity(0x9C), crate::registry::ENTITY_TYPE_FACET);
     put(
@@ -180,9 +168,7 @@ fn automatic_outbound_selection_matches_actor_not_facet_and_preserves_safety() -
 fn provider_email_selection_reuses_email_sender_but_not_another_provider_key() -> crate::Result<()>
 {
     use super::dispatch_pipeline::resolve_channel_identity_ref_for_connector;
-    use crate::channel_identity::{
-        ChannelIdentity, ChannelIdentityBinding, ChannelIdentityState, SelfHeldShape,
-    };
+    use crate::channel_identity::{ChannelIdentityBinding, ChannelIdentityState, SelfHeldShape};
     use crate::connector_key::ConnectorKeyRecord;
 
     for channel in ["email_resend", "email_ses", "email_postmark"] {
@@ -200,14 +186,14 @@ fn provider_email_selection_reuses_email_sender_but_not_another_provider_key() -
             ConnectorKeyRecord::active(channel, Some(actor), Vec::new(), 10),
         )?;
         let sender = entity(0x77);
-        let mut identity = ChannelIdentity::requested(
+        let identity = crate::test_util::self_held_identity_in_state(
             "email",
             "sender@example.com",
             SelfHeldShape::DedicatedAddress,
             ChannelIdentityBinding::actor(actor),
+            ChannelIdentityState::Active,
             10,
         );
-        identity.state = ChannelIdentityState::Active;
         vault.create_channel_identity(&sender, &identity)?;
         let txn = vault.store.env.read_txn()?;
         assert_eq!(

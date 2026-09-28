@@ -27,16 +27,15 @@ fn actor_person_round_trip() -> Result<()> {
     )?;
 
     let identity_id = entity(0x60);
-    let mut identity = sample_identity();
-    identity.binding = ChannelIdentityBinding::actor_with_facet(actor, facet);
+    let identity = sample_identity_faceted(actor, facet);
     vault.create_channel_identity(&identity_id, &identity)?;
 
     let stored = vault
         .get_channel_identity(&identity_id)?
         .expect("identity stored");
-    assert_eq!(stored.binding, identity.binding);
-    assert_eq!(stored.binding.actor_ref(), Some(actor));
-    assert_eq!(stored.binding.facet_ref(), Some(facet));
+    assert_eq!(stored.binding(), identity.binding());
+    assert_eq!(stored.binding().actor_ref(), Some(actor));
+    assert_eq!(stored.binding().facet_ref(), Some(facet));
     // Binding is unchanged, but the anchor is absent before its occurrence.
     assert_eq!(
         crate::subject_model::actor_subject_anchor(&vault, &actor, 1_799_999_999)?,
@@ -66,15 +65,14 @@ fn actor_org_round_trip() -> Result<()> {
     )?;
 
     let identity_id = entity(0x63);
-    let mut identity = sample_identity();
-    identity.binding = ChannelIdentityBinding::actor(actor);
+    let identity = sample_identity_actor(actor);
     vault.create_channel_identity(&identity_id, &identity)?;
 
     let stored = vault
         .get_channel_identity(&identity_id)?
         .expect("identity stored");
-    assert_eq!(stored.binding, ChannelIdentityBinding::actor(actor));
-    assert_eq!(stored.binding.facet_ref(), None);
+    assert_eq!(stored.binding(), ChannelIdentityBinding::actor(actor));
+    assert_eq!(stored.binding().facet_ref(), None);
     assert_eq!(
         crate::subject_model::actor_subject_anchor(&vault, &org, 1_800_000_000)?,
         None,
@@ -95,33 +93,45 @@ fn facet_type_is_checked() -> Result<()> {
     let actor = seed_entity(&vault, entity(0x71), crate::registry::ENTITY_TYPE_AGENT_DEF);
     let not_a_facet = seed_entity(&vault, entity(0x72), crate::registry::ENTITY_TYPE_PERSON);
 
-    let mut identity = sample_identity();
-    identity.binding = ChannelIdentityBinding::actor_with_facet(actor, not_a_facet);
     let err = vault
-        .create_channel_identity(&entity(0x73), &identity)
+        .create_channel_identity(&entity(0x73), &sample_identity_faceted(actor, not_a_facet))
         .expect_err("non-FACET mask must be refused");
     assert_eq!(err.kind(), ErrorKind::InvalidChannelIdentityBody);
 
     // An absent entity is refused on the same axis.
-    identity.binding = ChannelIdentityBinding::actor_with_facet(actor, entity(0x7E));
     let err = vault
-        .create_channel_identity(&entity(0x74), &identity)
+        .create_channel_identity(&entity(0x74), &sample_identity_faceted(actor, entity(0x7E)))
         .expect_err("dangling mask must be refused");
     assert_eq!(err.kind(), ErrorKind::InvalidChannelIdentityBody);
 
     // The real thing lands.
     let facet = seed_entity(&vault, entity(0x75), crate::registry::ENTITY_TYPE_FACET);
-    identity.binding = ChannelIdentityBinding::actor_with_facet(actor, facet);
-    vault.create_channel_identity(&entity(0x76), &identity)?;
+    vault.create_channel_identity(&entity(0x76), &sample_identity_faceted(actor, facet))?;
     assert_eq!(
         vault
             .get_channel_identity(&entity(0x76))?
             .expect("stored")
-            .binding
+            .binding()
             .facet_ref(),
         Some(facet)
     );
     Ok(())
+}
+
+/// [`sample_identity`] bound to `actor` wearing `facet` on this channel.
+fn sample_identity_faceted(actor: EntityId, facet: EntityId) -> ChannelIdentity {
+    sample_identity_bound(
+        Custody::requested_self_held(SelfHeldShape::DedicatedAddress),
+        ChannelIdentityBinding::actor_with_facet(actor, facet),
+    )
+}
+
+/// [`sample_identity`] bound to an unmasked `actor`.
+fn sample_identity_actor(actor: EntityId) -> ChannelIdentity {
+    sample_identity_bound(
+        Custody::requested_self_held(SelfHeldShape::DedicatedAddress),
+        ChannelIdentityBinding::actor(actor),
+    )
 }
 
 fn seed_entity(vault: &Vault, id: EntityId, entity_type: u8) -> EntityId {
@@ -168,10 +178,10 @@ fn facet_check_covers_delegated_provision_and_shared_lifecycle_admission() -> Re
     assert_eq!(vault.get_channel_identity(&id)?, None);
 
     let prior = sample_identity();
-    let next = ChannelIdentity {
+    let next = sample_identity_bound(
+        Custody::requested_self_held(SelfHeldShape::DedicatedAddress),
         binding,
-        ..prior.clone()
-    };
+    );
     let rtxn = vault.store.env.read_txn()?;
     for transition in [
         IdentityTransition::Birth { next: &next },

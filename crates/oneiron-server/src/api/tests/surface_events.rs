@@ -230,19 +230,18 @@ async fn v1_core_surface_event_rejection_receipt_names_which_identity_failed() {
     // envelope collapsed this onto the same body as an unknown address.
     let identity_ref = seeded_test_entity_id(0x1259_0080);
     let address = "surface-vault-bound@example.com";
-    let mut identity = oneiron::channel_identity::ChannelIdentity::requested(
+    let identity = oneiron::channel_identity::ChannelIdentity::requested(
         "email",
         address,
         oneiron::channel_identity::SelfHeldShape::DedicatedAddress,
         oneiron::channel_identity::ChannelIdentityBinding::vault(7),
         1_782_357_000,
     );
-    identity.state = oneiron::channel_identity::ChannelIdentityState::Active;
-    identity.pending_fulfillment = None;
     server
         .vault
         .create_channel_identity(&identity_ref, &identity)
         .expect("seed vault-bound identity");
+    activate_seeded_identity(&server, identity_ref, 1_782_357_000);
 
     let (status, receipt) = core_json(
         server.clone(),
@@ -484,22 +483,20 @@ async fn v1_core_surface_event_rejection_is_not_cached_under_the_idempotency_key
     // Provisioning completes.
     server
         .vault
-        .transition_channel_identity(
+        .step_channel_identity(
             &identity_ref,
-            oneiron::channel_identity::ChannelIdentityState::PendingFulfillment,
-            Some(oneiron::channel_identity::ChannelIdentityFulfillment::Api),
+            oneiron::channel_identity::ChannelIdentityStep::Bind(
+                oneiron::channel_identity::ChannelIdentityFulfillment::Api,
+            ),
             1_782_357_100,
-            None,
         )
         .expect("pend fulfillment");
     server
         .vault
-        .transition_channel_identity(
+        .step_channel_identity(
             &identity_ref,
-            oneiron::channel_identity::ChannelIdentityState::Active,
-            None,
+            oneiron::channel_identity::ChannelIdentityStep::Fulfill,
             1_782_357_200,
-            None,
         )
         .expect("activate identity");
 

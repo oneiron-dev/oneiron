@@ -1,7 +1,7 @@
 use super::gmail::{
     GMAIL_CONNECTOR_EFFECTOR, GMAIL_INBOX_POLL_ATTEMPT_KIND, GMAIL_METADATA_OAUTH_SCOPE,
     GmailDelegatedAdapter, GmailDelegatedAdapterConfig, GmailInboxPage, GmailInboxPollConfig,
-    GmailMessageMetadata, GmailReadAuthority, GmailReadWire,
+    GmailMessageMetadata, GmailReadAuthority, GmailReadWire, HeaderMailbox,
     delegated_scope_for_google_oauth_scope, gmail_inbox_poll_dedupe_key,
 };
 use super::mail_placement::{MailPlacement, PlacementPolicy};
@@ -9,7 +9,8 @@ use super::mailbox_cursor::{MailboxPageToken, mailbox_cursor_snapshot};
 use super::*;
 use crate::attempt_queue::{AttemptQueue, EnqueueOutcome};
 use crate::channel_identity::{
-    ChannelIdentityState, DelegatedGrant, DelegatedGrantScope, DelegatedProvisionRequest,
+    ChannelIdentity, ChannelIdentityBinding, ChannelIdentityState, ChannelIdentityStep,
+    DelegatedGrant, DelegatedGrantScope, DelegatedProvisionRequest, MailboxAddr, SelfHeldShape,
     delegated_custody_scopes,
 };
 use crate::secret_custody::{
@@ -50,12 +51,10 @@ fn activate_line_identity(
     let identity =
         adapter.requested_identity(identity_id, agent_ref, source_user_id, requested_at)?;
     vault.create_channel_identity(&identity_id, &identity)?;
-    vault.transition_channel_identity(
+    vault.step_channel_identity(
         &identity_id,
-        ChannelIdentityState::PendingFulfillment,
-        Some(ChannelIdentityFulfillment::Manual),
+        ChannelIdentityStep::Bind(ChannelIdentityFulfillment::Manual),
         requested_at + 1,
-        None,
     )?;
     let provision = adapter.provision(
         &ProvisionIntent {
@@ -86,10 +85,10 @@ fn assert_provider_conformance<A: ChannelIdentityProviderAdapter>(
     );
     let provision = adapter.provision(&intent, 2_000)?;
     assert_eq!(provision.identity_id, intent.identity_id);
-    assert_eq!(provision.channel, intent.identity.channel);
+    assert_eq!(provision.channel, intent.identity.channel());
     assert_eq!(
         provision.address_or_handle,
-        intent.identity.address_or_handle
+        intent.identity.address_or_handle()
     );
     assert_eq!(provision.fulfillment_mode, ChannelIdentityFulfillment::Api);
     assert_eq!(
@@ -102,7 +101,7 @@ fn assert_provider_conformance<A: ChannelIdentityProviderAdapter>(
     assert_eq!(parsed.channel, EMAIL_CHANNEL);
     assert_eq!(
         parsed.receiving_address_or_handle,
-        intent.identity.address_or_handle
+        intent.identity.address_or_handle()
     );
     assert!(parsed.foreign_inbound);
     Ok(())
@@ -151,8 +150,8 @@ fn dev_email_adapter_derives_signed_per_identity_addresses() -> Result<()> {
     assert!(address.starts_with("agent-21212121212121212121212121212121-"));
 
     let identity = adapter.requested_identity(identity_id, agent_ref, 1_000);
-    assert_eq!(identity.address_or_handle, address);
-    assert_eq!(identity.state, ChannelIdentityState::Requested);
+    assert_eq!(identity.address_or_handle(), address);
+    assert_eq!(identity.state(), ChannelIdentityState::Requested);
 
     assert_provider_conformance(
         &adapter,
@@ -291,8 +290,18 @@ fn dev_email_adapter_requires_agent_scoped_dedicated_address() -> Result<()> {
         "dev-secret",
     )?);
     let identity_id = entity(0x31);
-    let mut identity = adapter.requested_identity(identity_id, entity(0x53), 1_000);
-    identity.binding = ChannelIdentityBinding::vault(42);
+    // The adapter's own deterministic address, VAULT-bound: the binding is
+    // chosen where the row is built, so the refusal is proved on a row a caller
+    // could really construct rather than on one mutated after the fact.
+    let identity = ChannelIdentity::requested(
+        adapter
+            .requested_identity(identity_id, entity(0x53), 1_000)
+            .channel(),
+        adapter.address_for_identity(identity_id),
+        SelfHeldShape::DedicatedAddress,
+        ChannelIdentityBinding::vault(42),
+        1_000,
+    );
 
     let err = adapter
         .provision(
@@ -355,15 +364,15 @@ fn slack_shared_presence_identities_distinguish_agents_in_one_workspace() -> Res
     let identity_a = adapter.requested_identity(agent_a, "T123ABC", "@eiri", 1_000)?;
     let identity_b = adapter.requested_identity(agent_b, "T123ABC", "herald", 1_000)?;
 
-    assert_eq!(identity_a.channel, SLACK_CHANNEL);
-    assert_eq!(identity_a.shape, ChannelIdentityShape::SharedPresence);
-    assert_eq!(identity_a.binding, ChannelIdentityBinding::agent(agent_a));
+    assert_eq!(identity_a.channel(), SLACK_CHANNEL);
+    assert_eq!(identity_a.shape(), ChannelIdentityShape::SharedPresence);
+    assert_eq!(identity_a.binding(), ChannelIdentityBinding::agent(agent_a));
     assert_eq!(
-        identity_a.address_or_handle,
+        identity_a.address_or_handle(),
         "slack:workspace:T123ABC:persona:eiri"
     );
     assert_eq!(
-        identity_b.address_or_handle,
+        identity_b.address_or_handle(),
         "slack:workspace:T123ABC:persona:herald"
     );
 
@@ -400,9 +409,9 @@ fn slack_enterprise_identity_matches_inbound_and_outbound_keys() -> Result<()> {
         1_000,
     )?;
 
-    assert_eq!(identity.channel, SLACK_CHANNEL);
-    assert_eq!(identity.shape, ChannelIdentityShape::SharedPresence);
-    assert_eq!(identity.address_or_handle, expected_identity_key);
+    assert_eq!(identity.channel(), SLACK_CHANNEL);
+    assert_eq!(identity.shape(), ChannelIdentityShape::SharedPresence);
+    assert_eq!(identity.address_or_handle(), expected_identity_key);
     assert_eq!(
         SlackSharedPresenceAdapter::workspace_ref("T123ABC", Some("E123ABC"))?,
         expected_workspace_ref
@@ -451,8 +460,14 @@ fn slack_enterprise_identity_matches_inbound_and_outbound_keys() -> Result<()> {
 #[test]
 fn slack_adapter_rejects_non_shared_presence_provision() -> Result<()> {
     let adapter = slack_adapter()?;
-    let mut identity = adapter.requested_identity(entity(0xB1), "T123ABC", "eiri", 1_000)?;
-    identity.shape = ChannelIdentityShape::DedicatedHandle;
+    let lawful = adapter.requested_identity(entity(0xB1), "T123ABC", "eiri", 1_000)?;
+    let identity = ChannelIdentity::requested(
+        lawful.channel(),
+        lawful.address_or_handle(),
+        SelfHeldShape::DedicatedHandle,
+        lawful.binding(),
+        1_000,
+    );
 
     let err = adapter
         .provision(
@@ -551,11 +566,11 @@ fn line_oa_adapter_manual_fulfillment_and_inbound_stamping() -> Result<()> {
     );
 
     let identity = adapter.requested_identity(identity_id, agent_ref, source_user_id, 1_000)?;
-    assert_eq!(identity.channel, LINE_CHANNEL);
-    assert_eq!(identity.address_or_handle, address);
-    assert_eq!(identity.shape, ChannelIdentityShape::SharedPresence);
+    assert_eq!(identity.channel(), LINE_CHANNEL);
+    assert_eq!(identity.address_or_handle(), address);
+    assert_eq!(identity.shape(), ChannelIdentityShape::SharedPresence);
     assert!(matches!(
-        identity.binding,
+        identity.binding(),
         ChannelIdentityBinding::Actor { actor_ref: bound, .. } if bound == agent_ref
     ));
 
@@ -579,12 +594,10 @@ fn line_oa_adapter_manual_fulfillment_and_inbound_stamping() -> Result<()> {
 
     let (_tmp, vault) = temp_vault();
     vault.create_channel_identity(&identity_id, &identity)?;
-    vault.transition_channel_identity(
+    vault.step_channel_identity(
         &identity_id,
-        ChannelIdentityState::PendingFulfillment,
-        Some(ChannelIdentityFulfillment::Manual),
+        ChannelIdentityStep::Bind(ChannelIdentityFulfillment::Manual),
         1_001,
-        None,
     )?;
     vault.fulfill_channel_identity(
         provision.fulfillment_input(ChannelIdentityLifecycleActor::agent(agent_ref)),
@@ -712,8 +725,14 @@ fn line_oa_adapter_rejects_wrong_destination_and_non_shared_presence() -> Result
     assert!(matches!(inbound_err, Error::InvalidConfig(_)));
 
     let identity_id = entity(0x81);
-    let mut identity = adapter.requested_identity(identity_id, entity(0xA8), LINE_USER_A, 3_100)?;
-    identity.shape = ChannelIdentityShape::DedicatedHandle;
+    let lawful = adapter.requested_identity(identity_id, entity(0xA8), LINE_USER_A, 3_100)?;
+    let identity = ChannelIdentity::requested(
+        lawful.channel(),
+        lawful.address_or_handle(),
+        SelfHeldShape::DedicatedHandle,
+        lawful.binding(),
+        3_100,
+    );
     let provision_err = adapter
         .provision(
             &ProvisionIntent {
@@ -828,6 +847,109 @@ fn gmail_adapter() -> Result<GmailDelegatedAdapter> {
     ))
 }
 
+#[test]
+fn gmail_parsed_from_uses_normalized_mailbox_counterparty_key() -> Result<()> {
+    let adapter = gmail_adapter()?;
+    let parsed_from = MailboxAddr::parse_addr_spec("Sender@Example.Test")?;
+    let inbound = GmailMessageMetadata::new(
+        "msg-parsed-from",
+        "thread-parsed-from",
+        "member@alias.example",
+        HeaderMailbox::Parsed(parsed_from),
+        1_800_000_009,
+        MailPlacement::Inbox,
+    )
+    .into_provider_inbound()?;
+    let parsed = adapter.parse_inbound(ChannelIdentityProviderInbound::Email(inbound))?;
+    assert_eq!(
+        parsed.counterparty,
+        SurfaceCounterpartyStamp::unknown("email:sender@example.test")
+    );
+    Ok(())
+}
+
+#[test]
+fn gmail_unparseable_from_is_digest_stamped_and_still_routes() -> Result<()> {
+    let (_dir, vault) = temp_vault();
+    let adapter = gmail_adapter()?;
+    let raw_from = "Doe, Jane <sender without an addr-spec>";
+    let metadata = GmailMessageMetadata::new(
+        "msg-unparseable-from",
+        "thread-unparseable-from",
+        "member@alias.example",
+        raw_from,
+        1_800_000_010,
+        MailPlacement::Inbox,
+    );
+    let expected_header = HeaderMailbox::unparsed(raw_from);
+    let inbound = metadata.into_provider_inbound()?;
+    assert_eq!(inbound.header_mailbox.as_ref(), Some(&expected_header));
+    assert!(inbound.envelope_from.is_empty());
+    let serialized = serde_json::to_string(&inbound).expect("typed inbound serializes");
+    assert!(
+        !serialized.contains(raw_from),
+        "raw sender header is not retained"
+    );
+    let decoded: EmailProviderInbound =
+        serde_json::from_str(&serialized).expect("typed inbound deserializes");
+    assert_eq!(decoded, inbound);
+
+    let receiving = ChannelIdentity::requested(
+        EMAIL_CHANNEL,
+        GMAIL_MAILBOX,
+        SelfHeldShape::DedicatedAddress,
+        ChannelIdentityBinding::agent(entity(0xC9)),
+        1_800_000_000,
+    )
+    .step(
+        ChannelIdentityStep::Bind(ChannelIdentityFulfillment::Api),
+        1_800_000_001,
+    )?
+    .step(ChannelIdentityStep::Fulfill, 1_800_000_002)?;
+    let receiving_ref = entity(0xC8);
+    vault.create_channel_identity(&receiving_ref, &receiving)?;
+
+    let parsed = adapter.parse_inbound(ChannelIdentityProviderInbound::Email(inbound))?;
+    let expected_stamp = match expected_header {
+        HeaderMailbox::Unparsed { raw_hash } => {
+            SurfaceCounterpartyStamp::unparsed(EMAIL_CHANNEL, raw_hash)
+        }
+        HeaderMailbox::Parsed(_) => unreachable!("display-name header is not an addr-spec"),
+    };
+    assert_eq!(
+        parsed.receiving_address_or_handle,
+        "member@member-owned.example"
+    );
+    assert_eq!(parsed.counterparty, expected_stamp);
+
+    let receipt = vault.route_inbound_surface_event(parsed)?;
+    assert_eq!(receipt.outcome, InboundSurfaceRouteOutcome::Routed);
+    assert_eq!(receipt.receiving_identity_ref, Some(receiving_ref.to_hex()));
+    let event = receipt
+        .surface_event
+        .expect("unparseable sender still routes");
+    assert_eq!(event.counterparty, expected_stamp);
+    assert!(event.source.user_ref.starts_with("unparsed:email:"));
+
+    // The trait's legacy raw-email path is total too. A caller that has not
+    // supplied a host projection still gets the same digest-only fallback.
+    let raw_input = adapter.parse_inbound(ChannelIdentityProviderInbound::Email(
+        EmailProviderInbound::new(
+            "gmail:msg-raw-unparseable-from",
+            GMAIL_MAILBOX,
+            raw_from,
+            1_800_000_011,
+        ),
+    ))?;
+    assert!(matches!(
+        raw_input.counterparty,
+        SurfaceCounterpartyStamp::Unparsed { .. }
+    ));
+    let raw_receipt = vault.route_inbound_surface_event(raw_input)?;
+    assert_eq!(raw_receipt.outcome, InboundSurfaceRouteOutcome::Routed);
+    Ok(())
+}
+
 /// Registers the member's OAuth grant: live, `connector:gmail` read-bound, and
 /// naming THIS mailbox as its subject.
 fn register_gmail_custody(vault: &Vault) -> Result<EntityId> {
@@ -866,7 +988,10 @@ fn gmail_delegated_reads_require_an_active_identity_row() -> Result<()> {
 
     let provisioned =
         adapter.provision_delegated_identity(&vault, identity_id, agent_ref, 1_800_000_000)?;
-    assert_eq!(provisioned.identity.state, ChannelIdentityState::Requested);
+    assert_eq!(
+        provisioned.identity.state(),
+        ChannelIdentityState::Requested
+    );
 
     // The door must never reach the VALUE on a refusal, so every arm below
     // watches this flag rather than only the returned error.
@@ -889,12 +1014,10 @@ fn gmail_delegated_reads_require_an_active_identity_row() -> Result<()> {
         .with_delegated_token_at_door(&vault, identity_id, &mut door)
         .expect_err("a not-yet-live row opens no token door");
 
-    vault.transition_channel_identity(
+    vault.step_channel_identity(
         &identity_id,
-        ChannelIdentityState::PendingFulfillment,
-        Some(ChannelIdentityFulfillment::Api),
+        ChannelIdentityStep::Bind(ChannelIdentityFulfillment::Api),
         1_800_000_002,
-        None,
     )?;
 
     // 2. PENDING_FULFILLMENT: same reason.
@@ -907,13 +1030,7 @@ fn gmail_delegated_reads_require_an_active_identity_row() -> Result<()> {
 
     // 3. ACTIVE: both doors open, and the token reaches the closure exactly
     //    once, through the SECRET-02 injection.
-    vault.transition_channel_identity(
-        &identity_id,
-        ChannelIdentityState::Active,
-        None,
-        1_800_000_004,
-        None,
-    )?;
+    vault.step_channel_identity(&identity_id, ChannelIdentityStep::Fulfill, 1_800_000_004)?;
     let outcome = adapter.enqueue_inbox_poll(&vault, identity_id, 1_800_000_005)?;
     assert!(matches!(outcome, EnqueueOutcome::Enqueued(_)));
     let receipt = adapter.with_delegated_token_at_door(&vault, identity_id, &mut door)?;
@@ -925,11 +1042,19 @@ fn gmail_delegated_reads_require_an_active_identity_row() -> Result<()> {
     // 4. RELEASED, then TOMBSTONE. Custody is NOT revoked by either — the
     //    member's OAuth grant is not ours to revoke — so a custody-only check
     //    still passes at both stops while the row's authority is gone.
-    for (state, at) in [
-        (ChannelIdentityState::Released, 1_800_000_006),
-        (ChannelIdentityState::Tombstone, 1_800_000_007),
+    for (step, state, at) in [
+        (
+            ChannelIdentityStep::Release,
+            ChannelIdentityState::Released,
+            1_800_000_006,
+        ),
+        (
+            ChannelIdentityStep::Close,
+            ChannelIdentityState::Tombstone,
+            1_800_000_007,
+        ),
     ] {
-        vault.transition_channel_identity(&identity_id, state, None, at, None)?;
+        vault.step_channel_identity(&identity_id, step, at)?;
         adapter
             .verify_custody_grant(&vault)
             .expect("the member's grant outlives the row that pointed at it");
@@ -1043,20 +1168,12 @@ fn gmail_delegated_doors_refuse_a_row_that_is_not_this_adapters() -> Result<()> 
         },
         1_800_000_000,
     )?;
-    vault.transition_channel_identity(
+    vault.step_channel_identity(
         &other_id,
-        ChannelIdentityState::PendingFulfillment,
-        Some(ChannelIdentityFulfillment::Api),
+        ChannelIdentityStep::Bind(ChannelIdentityFulfillment::Api),
         1_800_000_001,
-        None,
     )?;
-    vault.transition_channel_identity(
-        &other_id,
-        ChannelIdentityState::Active,
-        None,
-        1_800_000_002,
-        None,
-    )?;
+    vault.step_channel_identity(&other_id, ChannelIdentityStep::Fulfill, 1_800_000_002)?;
     assert!(matches!(
         adapter
             .enqueue_inbox_poll(&vault, other_id, 1_800_000_003)
@@ -1135,20 +1252,12 @@ impl GmailReadWire for GmailPageWire {
 fn live_gmail_identity(vault: &Vault, adapter: &GmailDelegatedAdapter, id: EntityId) -> Result<()> {
     register_gmail_custody(vault)?;
     adapter.provision_delegated_identity(vault, id, entity(0xC2), 1_800_000_000)?;
-    vault.transition_channel_identity(
+    vault.step_channel_identity(
         &id,
-        ChannelIdentityState::PendingFulfillment,
-        Some(ChannelIdentityFulfillment::Api),
+        ChannelIdentityStep::Bind(ChannelIdentityFulfillment::Api),
         1_800_000_001,
-        None,
     )?;
-    vault.transition_channel_identity(
-        &id,
-        ChannelIdentityState::Active,
-        None,
-        1_800_000_002,
-        None,
-    )?;
+    vault.step_channel_identity(&id, ChannelIdentityStep::Fulfill, 1_800_000_002)?;
     Ok(())
 }
 
@@ -1309,20 +1418,16 @@ impl GmailReadWire for WithdrawingGmailWire<'_> {
         _cursor: Option<&MailboxPageToken>,
     ) -> Result<GmailInboxPage> {
         self.entered.set(true);
-        self.vault.transition_channel_identity(
+        self.vault.step_channel_identity(
             &self.identity_id,
-            ChannelIdentityState::Released,
-            None,
+            ChannelIdentityStep::Release,
             1_800_000_005,
-            None,
         )?;
         if self.target == ChannelIdentityState::Tombstone {
-            self.vault.transition_channel_identity(
+            self.vault.step_channel_identity(
                 &self.identity_id,
-                ChannelIdentityState::Tombstone,
-                None,
+                ChannelIdentityStep::Close,
                 1_800_000_006,
-                None,
             )?;
         }
         // The only route to a provider request is inside the credential door.
@@ -1362,7 +1467,10 @@ fn gmail_runner_refuses_token_after_identity_withdrawal_at_wire_egress() -> Resu
         assert!(!wire.provider_called.get());
         assert_eq!(mailbox_cursor_snapshot(&vault, id)?, None);
         assert_eq!(
-            vault.get_channel_identity(&id)?.expect("row exists").state,
+            vault
+                .get_channel_identity(&id)?
+                .expect("row exists")
+                .state(),
             target
         );
         // The custody stays active: the refusal came from the identity-aware
@@ -1388,20 +1496,12 @@ fn gmail_delivery_correlation_is_mailbox_local_and_retries_stay_idempotent() -> 
         second_ref,
     )?);
     second.provision_delegated_identity(&vault, second_id, entity(0xC3), 1_800_000_000)?;
-    vault.transition_channel_identity(
+    vault.step_channel_identity(
         &second_id,
-        ChannelIdentityState::PendingFulfillment,
-        Some(ChannelIdentityFulfillment::Api),
+        ChannelIdentityStep::Bind(ChannelIdentityFulfillment::Api),
         1_800_000_001,
-        None,
     )?;
-    vault.transition_channel_identity(
-        &second_id,
-        ChannelIdentityState::Active,
-        None,
-        1_800_000_002,
-        None,
-    )?;
+    vault.step_channel_identity(&second_id, ChannelIdentityStep::Fulfill, 1_800_000_002)?;
     let first_wire = GmailPageWire::new(vec![
         GmailInboxPage::new(vec![gmail_message("same-id", MailPlacement::Inbox)], None),
         GmailInboxPage::new(vec![gmail_message("same-id", MailPlacement::Inbox)], None),

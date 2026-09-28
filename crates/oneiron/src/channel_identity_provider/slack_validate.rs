@@ -17,25 +17,25 @@ pub(super) fn validate_slack_provision_intent(intent: &ProvisionIntent) -> Resul
             "slack adapter fulfillment mode does not match ProvisionIntent".to_owned(),
         ));
     }
-    if intent.identity.channel != SLACK_CHANNEL {
+    if intent.identity.channel() != SLACK_CHANNEL {
         return Err(Error::InvalidConfig(
             "slack adapter channel does not match ProvisionIntent".to_owned(),
         ));
     }
-    if intent.identity.shape != ChannelIdentityShape::SharedPresence {
+    if intent.identity.shape() != ChannelIdentityShape::SharedPresence {
         return Err(Error::InvalidConfig(
             "slack adapter requires shared_presence identities".to_owned(),
         ));
     }
     if !matches!(
-        intent.identity.binding,
+        intent.identity.binding(),
         ChannelIdentityBinding::Actor { .. }
     ) {
         return Err(Error::InvalidConfig(
             "slack adapter requires agent-scoped personas".to_owned(),
         ));
     }
-    validate_slack_identity_key(&intent.identity.address_or_handle)?;
+    validate_slack_identity_key(intent.identity.address_or_handle())?;
     intent.identity.validate()
 }
 

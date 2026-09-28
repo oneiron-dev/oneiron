@@ -1,8 +1,6 @@
 //! Owner presentation must ride the ordinary gate, frozen payload and recovery.
 use super::*;
-use crate::channel_identity::{
-    ChannelIdentity, ChannelIdentityBinding, ChannelIdentityState, SelfHeldShape,
-};
+use crate::channel_identity::{ChannelIdentityBinding, ChannelIdentityState, SelfHeldShape};
 use crate::channel_identity_autonomy::{FrozenSpacePosting, GroupPostingPreset};
 use crate::outbound_chokepoint::{
     OutboundEffectCommand, OutboundTransport, execute_outbound_effect,
@@ -61,14 +59,14 @@ fn owner_presentation_is_frozen_gated_space_local_and_revocable_on_recovery()
         crate::store::GateDecisionId::now(),
     )?);
     let identity_id = entity(0x93);
-    let mut identity = ChannelIdentity::requested(
+    let identity = crate::test_util::self_held_identity_in_state(
         "email",
         "agent@example.com",
         SelfHeldShape::DedicatedAddress,
         ChannelIdentityBinding::actor(actor_ref),
+        ChannelIdentityState::Active,
         1,
     );
-    identity.state = ChannelIdentityState::Active;
     vault.create_channel_identity(&identity_id, &identity)?;
     let make_request =
         |seq| email_send_dispatch_request(actor.clone(), seq).channel_identity_ref(identity_id);

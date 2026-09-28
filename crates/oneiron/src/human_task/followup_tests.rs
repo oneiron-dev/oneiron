@@ -4,7 +4,8 @@ use super::*;
 
 use crate::attempt_queue::AttemptQueue;
 use crate::channel_identity::{
-    ChannelIdentity, ChannelIdentityBinding, ChannelIdentityFulfillment, SelfHeldShape,
+    ChannelIdentity, ChannelIdentityBinding, ChannelIdentityFulfillment, ChannelIdentityStep,
+    SelfHeldShape,
 };
 use crate::comm::{
     CommClaimValue, record_comm_inbound_stop, resolve_or_create_comm_party, run_comm_projector,
@@ -157,14 +158,19 @@ fn add_owner_route(fixture: &HumanFixture) {
         )
         .expect("owner connector key");
     let actor_identity = crate::test_util::entity(ACTOR_IDENTITY);
-    let mut identity = ChannelIdentity::requested(
+    let identity = ChannelIdentity::requested(
         "email",
         ACTOR_ADDRESS,
         SelfHeldShape::DedicatedAddress,
         ChannelIdentityBinding::actor(owner),
         NOW,
-    );
-    identity.state = ChannelIdentityState::Active;
+    )
+    .step(
+        ChannelIdentityStep::Bind(ChannelIdentityFulfillment::Api),
+        NOW,
+    )
+    .and_then(|pending| pending.step(ChannelIdentityStep::Fulfill, NOW))
+    .expect("owner sending face is active");
     vault
         .create_channel_identity(&actor_identity, &identity)
         .expect("owner sending face");
@@ -204,16 +210,14 @@ fn active_email_identity(vault: &Vault) -> EntityId {
         )
         .expect("create channel identity");
     vault
-        .transition_channel_identity(
+        .step_channel_identity(
             &identity_ref,
-            ChannelIdentityState::PendingFulfillment,
-            Some(ChannelIdentityFulfillment::Api),
+            ChannelIdentityStep::Bind(ChannelIdentityFulfillment::Api),
             NOW,
-            None,
         )
         .expect("enter fulfillment");
     vault
-        .transition_channel_identity(&identity_ref, ChannelIdentityState::Active, None, NOW, None)
+        .step_channel_identity(&identity_ref, ChannelIdentityStep::Fulfill, NOW)
         .expect("activate the identity");
     identity_ref
 }
@@ -474,7 +478,7 @@ fn preflight_face_is_the_sender_on_the_scheduled_ask_notice() {
         .get_channel_identity(&sender_ref)
         .expect("sender read")
         .expect("sender identity");
-    assert_eq!(sender.address_or_handle, face);
+    assert_eq!(sender.address_or_handle(), face);
     assert_ne!(sender_ref, crate::test_util::entity(0x7C));
 }
 
@@ -529,17 +533,15 @@ fn delegated_read_only_face_is_not_a_sending_route() {
         .expect("delegate identity");
     fixture
         .vault
-        .transition_channel_identity(
+        .step_channel_identity(
             &id,
-            ChannelIdentityState::PendingFulfillment,
-            Some(ChannelIdentityFulfillment::Api),
+            ChannelIdentityStep::Bind(ChannelIdentityFulfillment::Api),
             NOW,
-            None,
         )
         .expect("pending delegate");
     fixture
         .vault
-        .transition_channel_identity(&id, ChannelIdentityState::Active, None, NOW, None)
+        .step_channel_identity(&id, ChannelIdentityStep::Fulfill, NOW)
         .expect("active delegate");
     fixture
         .vault

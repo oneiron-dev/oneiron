@@ -3,10 +3,9 @@ use std::collections::BTreeMap;
 
 use oneiron::{
     EntityId, ErrorKind, InboundSurfaceRouteOutcome, Result, SurfaceCounterpartyStamp, Vault,
-    VaultConfig, attempt_queue::EnqueueOutcome, channel_identity::ChannelIdentity,
-    channel_identity::ChannelIdentityBinding, channel_identity::ChannelIdentityState,
-    channel_identity::SelfHeldShape, linkedin_connector::LINKEDIN_CHANNEL,
-    linkedin_connector::LINKEDIN_CONNECT_CONSENT_BODY,
+    VaultConfig, attempt_queue::EnqueueOutcome, channel_identity::ChannelIdentityBinding,
+    channel_identity::ChannelIdentityState, channel_identity::SelfHeldShape,
+    linkedin_connector::LINKEDIN_CHANNEL, linkedin_connector::LINKEDIN_CONNECT_CONSENT_BODY,
     linkedin_connector::LINKEDIN_CONNECT_REQUEST_VERB,
     linkedin_connector::LINKEDIN_DEFAULT_CADENCE_JITTER_MAX_SECONDS,
     linkedin_connector::LINKEDIN_DEFAULT_CADENCE_JITTER_MIN_SECONDS,
@@ -116,14 +115,14 @@ fn active_linkedin_identity_with_seeds(
 ) -> Result<(EntityId, EntityId)> {
     let identity_id = entity(identity_seed);
     let agent_ref = entity(agent_seed);
-    let mut identity = ChannelIdentity::requested(
+    let identity = crate::common::self_held_identity_in_state(
         LINKEDIN_CHANNEL,
         adapter.receiving_address_or_handle(),
         SelfHeldShape::DedicatedHandle,
         ChannelIdentityBinding::agent(agent_ref),
+        ChannelIdentityState::Active,
         1_800_000_000,
     );
-    identity.state = ChannelIdentityState::Active;
     vault.create_channel_identity(&identity_id, &identity)?;
     Ok((identity_id, agent_ref))
 }
@@ -412,14 +411,14 @@ fn linkedin_get_inbox_fixture_normalizes_each_thread_and_routes() -> Result<()> 
     let (_tmp, vault) = temp_vault();
     let identity_id = entity(0x51);
     let agent_ref = entity(0x52);
-    let mut identity = ChannelIdentity::requested(
+    let identity = crate::common::self_held_identity_in_state(
         LINKEDIN_CHANNEL,
         adapter.receiving_address_or_handle(),
         SelfHeldShape::DedicatedHandle,
         ChannelIdentityBinding::agent(agent_ref),
+        ChannelIdentityState::Active,
         1_800_000_000,
     );
-    identity.state = ChannelIdentityState::Active;
     vault.create_channel_identity(&identity_id, &identity)?;
 
     let receipt = vault.route_inbound_surface_event(events[0].clone())?;

@@ -36,6 +36,7 @@ fn first_party_connector_actor_ref() -> String {
     super::first_party_connector_actor_ref()
 }
 
+mod class_policy;
 mod pending_lookup;
 
 #[path = "../repair_tests.rs"]

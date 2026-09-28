@@ -206,7 +206,7 @@ impl ChannelIdentityProviderAdapter for LineOfficialAccountAdapter {
             provider_key: self.provider_key().to_owned(),
             identity_id: intent.identity_id,
             channel: LINE_CHANNEL.to_owned(),
-            address_or_handle: intent.identity.address_or_handle.clone(),
+            address_or_handle: intent.identity.address_or_handle().to_owned(),
             fulfillment_mode: ChannelIdentityFulfillment::Manual,
             provider_identity_ref: self.provider_identity_ref(),
             fulfilled_at,

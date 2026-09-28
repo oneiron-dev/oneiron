@@ -189,7 +189,7 @@ pub(super) fn counterparty_contact_channel_class(
         return Ok(None);
     }
     let identity = decode_channel_identity_body(&raw.body)?;
-    Ok(Some(normalize_channel_class(&identity.channel)))
+    Ok(Some(normalize_channel_class(identity.channel())))
 }
 
 /// Whether a record participates in the `(party_ref, channel_class)` aggregate.

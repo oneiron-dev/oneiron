@@ -34,7 +34,7 @@ use oneiron::{
     ClaimApprovalStatus, ClaimLifecycleStatus, EntityId, Vault, VaultConfig,
     channel_identity::ChannelIdentity, channel_identity::ChannelIdentityBinding,
     channel_identity::ChannelIdentityFulfillment, channel_identity::ChannelIdentityState,
-    channel_identity::SelfHeldShape,
+    channel_identity::ChannelIdentityStep, channel_identity::SelfHeldShape,
 };
 
 /// Channel assignment provisioned by this door.
@@ -114,24 +114,22 @@ fn run() -> Result<(), String> {
 /// Applies exactly `Requested -> PendingFulfillment (manual) -> Active`.
 fn fulfill(vault: &Vault, identity_ref: &EntityId, now: u64) -> Result<ChannelIdentity, String> {
     let pending = vault
-        .transition_channel_identity(
+        .step_channel_identity(
             identity_ref,
-            ChannelIdentityState::PendingFulfillment,
-            Some(ChannelIdentityFulfillment::Manual),
+            ChannelIdentityStep::Bind(ChannelIdentityFulfillment::Manual),
             now,
-            None,
         )
         .map_err(|err| format!("transition to pending_fulfillment failed: {err}"))?;
-    if pending.state != ChannelIdentityState::PendingFulfillment
-        || pending.pending_fulfillment != Some(ChannelIdentityFulfillment::Manual)
+    if pending.state() != ChannelIdentityState::PendingFulfillment
+        || pending.pending_fulfillment() != Some(ChannelIdentityFulfillment::Manual)
     {
         return Err("pending_fulfillment transition did not land the manual lane".to_owned());
     }
 
     let active = vault
-        .transition_channel_identity(identity_ref, ChannelIdentityState::Active, None, now, None)
+        .step_channel_identity(identity_ref, ChannelIdentityStep::Fulfill, now)
         .map_err(|err| format!("transition to active failed: {err}"))?;
-    if active.state != ChannelIdentityState::Active {
+    if active.state() != ChannelIdentityState::Active {
         return Err("active transition did not land the active state".to_owned());
     }
     Ok(active)
@@ -218,13 +216,13 @@ fn unix_seconds_now() -> Result<u64, String> {
 /// to redact beyond the operator's own handle argument, which is echoed once.
 fn print_confirmation(identity_ref: &EntityId, identity: &ChannelIdentity, agent_ref: EntityId) {
     println!("identity_ref: {}", identity_ref.to_hex());
-    println!("channel: {}", identity.channel);
-    println!("shape: {}", identity.shape.as_str());
+    println!("channel: {}", identity.channel());
+    println!("shape: {}", identity.shape().as_str());
     println!(
         "binding: {}:{}",
-        identity.binding.scope_str(),
+        identity.binding().scope_str(),
         agent_ref.to_hex()
     );
-    println!("receiving_handle: {}", identity.address_or_handle);
-    println!("state: {}", identity.state.as_str());
+    println!("receiving_handle: {}", identity.address_or_handle());
+    println!("state: {}", identity.state().as_str());
 }

@@ -451,11 +451,11 @@ impl ChannelIdentityProviderAdapter for SlackSharedPresenceAdapter {
             provider_key: self.provider_key().to_owned(),
             identity_id: intent.identity_id,
             channel: SLACK_CHANNEL.to_owned(),
-            address_or_handle: intent.identity.address_or_handle.clone(),
+            address_or_handle: intent.identity.address_or_handle().to_owned(),
             fulfillment_mode: ChannelIdentityFulfillment::Api,
             provider_identity_ref: format!(
                 "slack-shared-presence:{}",
-                intent.identity.address_or_handle
+                intent.identity.address_or_handle()
             ),
             fulfilled_at,
         })

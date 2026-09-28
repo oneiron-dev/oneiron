@@ -29,6 +29,23 @@ use loro::{CommitOptions, LoroDoc, LoroMap};
 /// are left alone: this pass inserts missing records only.
 ///
 /// Returns the number of entities newly mirrored into the CRDT.
+pub(in crate::sync) fn is_delegated_channel_identity_carrier(raw: &[u8]) -> bool {
+    let Some(header) = EntityMetadataHeader::parse(raw) else {
+        return false;
+    };
+    if header.entity_type != crate::registry::ENTITY_TYPE_CHANNEL_IDENTITY {
+        return false;
+    }
+    // A ChannelIdentity carrier is portable only after the strict body decoder
+    // positively establishes a valid self-held identity. Damage to a delegated
+    // map (including truncated MessagePack) must never open the export seal.
+    let body = &raw[ENTITY_METADATA_HEADER_LEN..];
+    !matches!(
+        crate::channel_identity::decode_channel_identity_body(body),
+        Ok(identity) if !identity.is_delegated()
+    )
+}
+
 pub fn reverse_rematerialize(vault: &Vault, doc: &LoroDoc, window_key: &WindowKey) -> Result<u32> {
     let start_ts = window_key
         .start_timestamp()
@@ -38,6 +55,7 @@ pub fn reverse_rematerialize(vault: &Vault, doc: &LoroDoc, window_key: &WindowKe
         .ok_or_else(|| Error::InvalidConfig("invalid window key".to_string()))?;
 
     super::egress::scrub_local_claim_carriers(vault, window_key, doc)?;
+    super::egress::scrub_local_only_carriers(vault, window_key, doc)?;
     let entities_in_range = vault.entities_in_learned_range(start_ts, end_ts)?;
     let device_only = {
         let rtxn = vault.store.env.read_txn()?;
@@ -137,6 +155,7 @@ pub fn reverse_rematerialize(vault: &Vault, doc: &LoroDoc, window_key: &WindowKe
         // a local dial narrows an existing portable credential.
         if !claim_sync_allowed(&raw)
             || is_unsyncable_secret_custody(&raw)
+            || is_delegated_channel_identity_carrier(&raw)
             || *id == crate::gate::default_policy_manifest_id()?
         {
             let removed = remove_entity_crdt_carriers(&entities_map, &edges_map, id)?;

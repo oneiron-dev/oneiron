@@ -24,8 +24,22 @@
 //! let _: Option<DelegatedCustodyProof<'static>> = None;
 //! ```
 
+//! Delegated lifecycle edges have no rotation or quarantine variant. Trying to
+//! construct either act on a delegated lifecycle is a compile-time error:
+//!
+//! ```compile_fail
+//! use oneiron::channel_identity::DelegatedLifecycle;
+//! let _ = DelegatedLifecycle::Rotating;
+//! ```
+//!
+//! ```compile_fail
+//! use oneiron::channel_identity::DelegatedLifecycle;
+//! let _ = DelegatedLifecycle::Quarantine { until: 123 };
+//! ```
+
 mod actors;
 mod address;
+mod assignment;
 mod auth_mode;
 mod binding;
 mod codec;
@@ -33,6 +47,7 @@ mod custody;
 mod keys;
 mod lifecycle;
 mod record;
+mod sender;
 mod shape;
 mod transition;
 mod vault_doors;
@@ -42,34 +57,46 @@ pub use address::{
     AssignmentAddress, AssignmentKey, ChannelKey, MailboxAddr, normalize_email_domain,
 };
 pub use custody::{
-    DelegatedGrant, DelegatedGrantScope, delegated_custody_effector, delegated_custody_scopes,
-    delegated_custody_subject_scope,
+    Custody, DelegatedGrant, DelegatedGrantScope, InboundDisposition, delegated_custody_effector,
+    delegated_custody_scopes, delegated_custody_subject_scope,
 };
+pub use lifecycle::{DelegatedLifecycle, SelfHeldLifecycle};
 
 pub use self::binding::{ChannelIdentityBinding, ChannelIdentityFulfillment};
 pub use self::codec::{
     decode_channel_identity_body, encode_channel_identity_body, is_channel_identity_claim_predicate,
 };
 pub use self::keys::{
-    CHANNEL_IDENTITY_BODY_KEYS, CHANNEL_IDENTITY_CLAIM_PREDICATES,
-    CHANNEL_IDENTITY_DELEGATED_BODY_KEYS, CHANNEL_IDENTITY_DELEGATED_SCHEMA_VERSION,
-    CHANNEL_IDENTITY_MIN_QUARANTINE_SECS, CHANNEL_IDENTITY_SCHEMA_VERSION, KEY_BINDING_FACET_REF,
+    ACT_CLASS_CHANNEL_IDENTITY_OUTBOUND_SEND, CHANNEL_IDENTITY_BODY_KEYS,
+    CHANNEL_IDENTITY_CLAIM_PREDICATES, CHANNEL_IDENTITY_DELEGATED_BODY_KEYS,
+    CHANNEL_IDENTITY_DELEGATED_SCHEMA_VERSION, CHANNEL_IDENTITY_SCHEMA_VERSION,
+    DEFAULT_CHANNEL_IDENTITY_QUARANTINE_MIN_SECS, KEY_BINDING_FACET_REF,
     PREDICATE_CHANNEL_IDENTITY_ADDRESS_OR_HANDLE, PREDICATE_CHANNEL_IDENTITY_BINDING_FACET_REF,
     PREDICATE_CHANNEL_IDENTITY_BINDING_SCOPE, PREDICATE_CHANNEL_IDENTITY_BINDING_TARGET,
     PREDICATE_CHANNEL_IDENTITY_CHANNEL, PREDICATE_CHANNEL_IDENTITY_MANIFEST_REF,
     PREDICATE_CHANNEL_IDENTITY_PENDING_FULFILLMENT, PREDICATE_CHANNEL_IDENTITY_QUARANTINE_UNTIL,
     PREDICATE_CHANNEL_IDENTITY_REPUTATION_REF, PREDICATE_CHANNEL_IDENTITY_SHAPE,
     PREDICATE_CHANNEL_IDENTITY_STATE, PREDICATE_CHANNEL_IDENTITY_STATE_CHANGED_AT,
+    SUBJECT_CLASS_SELF_HELD, WAIT_CLASS_CHANNEL_IDENTITY_QUARANTINE,
 };
-pub use self::lifecycle::ChannelIdentityState;
+pub use self::lifecycle::{ChannelIdentityState, ChannelIdentityStep};
 pub use self::record::ChannelIdentity;
 pub use self::shape::{ChannelIdentityShape, SelfHeldShape};
 pub use self::transition::DelegatedProvisionRequest;
 
-pub(crate) use self::codec::{
-    validate_channel_identity_body_bytes, validate_channel_identity_claim_structure,
+pub(crate) use self::assignment::{clear_assignment_for_delete, maintain_assignment_put};
+#[cfg(test)]
+use self::codec::validate_channel_identity_body_bytes;
+pub(crate) use self::codec::validate_channel_identity_claim_structure;
+pub(crate) use self::codec::validate_channel_identity_put_carrier;
+#[cfg(test)]
+use self::record::StoredIdentityParts;
+pub(crate) use self::sender::enrich_dispatch_channel_identity;
+pub(crate) use self::sender::resolve_channel_identity_ref_for_connector;
+pub(crate) use self::transition::{
+    IdentityTransition, admit_channel_identity_transition_in_txn, resolve_quarantine_floor_in_txn,
+    step_channel_identity_in_txn,
 };
-pub(crate) use self::transition::{IdentityTransition, admit_channel_identity_transition_in_txn};
 
 #[cfg(test)]
 mod tests;

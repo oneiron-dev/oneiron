@@ -158,10 +158,10 @@ pub(super) fn hydrate_calendar_invite_hygiene(
     let primary_domain = primary_calendar_domain(vault, actor)?;
     let sender_is_shared_presence = sender
         .as_ref()
-        .is_some_and(|identity| identity.shape == ChannelIdentityShape::SharedPresence);
+        .is_some_and(|identity| identity.shape() == ChannelIdentityShape::SharedPresence);
     let sender_domain = sender
         .as_ref()
-        .and_then(|identity| email_domain(&identity.address_or_handle));
+        .and_then(|identity| email_domain(identity.address_or_handle()));
     Ok(CalendarInviteHygieneContext {
         method: payload.method,
         consent_basis,
@@ -322,10 +322,10 @@ pub(super) fn primary_calendar_domain(
     let Some(identity) = active_identity_for_channel(vault, actor, "email")? else {
         return Ok(None);
     };
-    if identity.shape == ChannelIdentityShape::SharedPresence {
+    if identity.shape() == ChannelIdentityShape::SharedPresence {
         return Ok(None);
     }
-    Ok(email_domain(&identity.address_or_handle))
+    Ok(email_domain(identity.address_or_handle()))
 }
 
 /// The single ACTIVE identity bound to `actor` on one channel class.
@@ -347,8 +347,8 @@ fn active_identity_for_channel(
             continue;
         };
         if !identity.may_send()
-            || crate::counterparty_contact::normalize_channel_class(&identity.channel) != wanted
-            || identity.binding.actor_ref() != Some(actor)
+            || crate::counterparty_contact::normalize_channel_class(identity.channel()) != wanted
+            || identity.binding().actor_ref() != Some(actor)
         {
             continue;
         }

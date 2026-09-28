@@ -1511,14 +1511,14 @@ mod calendar_invite_fixture {
             .expect("put event");
         oneiron::calendar::index_passport_uid(&vault, UID, &event_ref()).expect("index uid");
 
-        let mut identity = oneiron::channel_identity::ChannelIdentity::requested(
+        let identity = crate::common::self_held_identity_in_state(
             "email",
             "me@primary.test",
             oneiron::channel_identity::SelfHeldShape::DedicatedAddress,
             oneiron::channel_identity::ChannelIdentityBinding::agent(actor),
+            oneiron::channel_identity::ChannelIdentityState::Active,
             100,
         );
-        identity.state = oneiron::channel_identity::ChannelIdentityState::Active;
         vault
             .create_channel_identity(&id(0x93), &identity)
             .expect("create sending identity");

@@ -541,6 +541,11 @@ pub(super) fn entity_selector_decision(
 ) -> Option<EntitySelectorDecision> {
     let (id, blob) = entity;
     let header = EntityMetadataHeader::parse(blob)?;
+    // Delegated ChannelIdentity rows carry local custody and consent facts.
+    // Filter from the carrier body itself, never from its peer-chosen map key.
+    if crate::sync::window::is_delegated_channel_identity_carrier(blob) {
+        return None;
+    }
     if !claim_sync_allowed(blob) {
         return None;
     }

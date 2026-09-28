@@ -301,20 +301,18 @@ fn executable_with_invite(
     action_policy: EmergencyActionPolicy,
     send_initial: bool,
 ) -> (tempfile::TempDir, Vault, ConfirmReceipt, EmergencyPlan) {
-    use crate::channel_identity::{
-        ChannelIdentity, ChannelIdentityBinding, ChannelIdentityState, SelfHeldShape,
-    };
+    use crate::channel_identity::{ChannelIdentityBinding, ChannelIdentityState, SelfHeldShape};
     let (dir, vault) = open_test_vault_with(VaultConfig::default());
     page(&vault, PAGE, OWNER);
     let receipt = book(&vault, PAGE, NOW + 3_600);
-    let mut identity = ChannelIdentity::requested(
+    let identity = crate::test_util::self_held_identity_in_state(
         "email",
         "host@example.test",
         SelfHeldShape::DedicatedAddress,
         ChannelIdentityBinding::agent(id(OWNER)),
+        ChannelIdentityState::Active,
         NOW,
     );
-    identity.state = ChannelIdentityState::Active;
     vault.create_channel_identity(&id(0x79), &identity).unwrap();
     policy(&vault);
     crate::booking::mint_publish_page_invite_grant(

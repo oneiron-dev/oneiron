@@ -92,23 +92,23 @@ pub(super) fn validate_provision_intent(
             "provider adapter fulfillment mode does not match ProvisionIntent".to_owned(),
         ));
     }
-    if intent.identity.channel != expected_channel {
+    if intent.identity.channel() != expected_channel {
         return Err(Error::InvalidConfig(
             "provider adapter channel does not match ProvisionIntent".to_owned(),
         ));
     }
-    if intent.identity.address_or_handle != expected_address_or_handle {
+    if intent.identity.address_or_handle() != expected_address_or_handle {
         return Err(Error::InvalidConfig(
             "provider adapter address does not match deterministic identity address".to_owned(),
         ));
     }
-    if intent.identity.shape != ChannelIdentityShape::DedicatedAddress {
+    if intent.identity.shape() != ChannelIdentityShape::DedicatedAddress {
         return Err(Error::InvalidConfig(
             "email provider adapter requires dedicated_address identities".to_owned(),
         ));
     }
     if !matches!(
-        intent.identity.binding,
+        intent.identity.binding(),
         ChannelIdentityBinding::Actor { .. }
     ) {
         return Err(Error::InvalidConfig(
@@ -127,18 +127,18 @@ pub(super) fn validate_line_provision_intent(
             "LINE OA adapter requires manual fulfillment".to_owned(),
         ));
     }
-    if intent.identity.channel != LINE_CHANNEL {
+    if intent.identity.channel() != LINE_CHANNEL {
         return Err(Error::InvalidConfig(
             "LINE OA adapter channel does not match ProvisionIntent".to_owned(),
         ));
     }
-    if intent.identity.shape != ChannelIdentityShape::SharedPresence {
+    if intent.identity.shape() != ChannelIdentityShape::SharedPresence {
         return Err(Error::InvalidConfig(
             "LINE OA adapter requires shared_presence identities".to_owned(),
         ));
     }
     if !matches!(
-        intent.identity.binding,
+        intent.identity.binding(),
         ChannelIdentityBinding::Actor { .. }
     ) {
         return Err(Error::InvalidConfig(
@@ -146,7 +146,7 @@ pub(super) fn validate_line_provision_intent(
         ));
     }
     validate_line_shared_presence_address(
-        &intent.identity.address_or_handle,
+        intent.identity.address_or_handle(),
         expected_destination,
     )?;
     intent.identity.validate()

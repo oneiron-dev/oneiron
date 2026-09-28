@@ -310,7 +310,7 @@ pub(super) fn bind_delegated_mailbox(
 ) -> Result<()> {
     with_workspace_authority(vault, intent.workspace.workspace_vault_id, writer, |txn| {
         if let Some(existing) = read_onboarding_mailbox_in_txn(vault, txn, intent, mailbox)? {
-            return Ok(existing.state);
+            return Ok(existing.state());
         }
         vault
             .provision_delegated_identity_in_txn(
@@ -324,7 +324,7 @@ pub(super) fn bind_delegated_mailbox(
                 },
                 intent.occurred_at,
             )
-            .map(|identity| identity.state)
+            .map(|identity| identity.state())
     })
     .and_then(|state| require_active_mailbox(mailbox, state))
 }
@@ -366,17 +366,18 @@ pub(super) fn read_onboarding_mailbox_in_txn(
     }
     let existing =
         crate::channel_identity::decode_channel_identity_body(&raw[ENTITY_METADATA_HEADER_LEN..])?;
-    let valid_time = match existing.state {
-        ChannelIdentityState::Requested => existing.state_changed_at == intent.occurred_at,
+    let stamp = existing.state_changed_at();
+    let valid_time = match existing.state() {
+        ChannelIdentityState::Requested => stamp == intent.occurred_at,
         ChannelIdentityState::PendingFulfillment | ChannelIdentityState::Active => {
-            existing.state_changed_at >= intent.occurred_at && existing.state_changed_at <= now
+            stamp >= intent.occurred_at && stamp <= now
         }
         _ => false,
     };
     if !existing.is_delegated()
         || existing.assignment_key() != AssignmentKey::of(&mailbox.channel, &mailbox.address)
-        || existing.binding != ChannelIdentityBinding::agent(intent.actor_ref)
-        || existing.grant.as_ref()
+        || existing.binding() != ChannelIdentityBinding::agent(intent.actor_ref)
+        || existing.grant()
             != Some(&DelegatedGrant::new(
                 &mailbox.custody_name,
                 mailbox.scopes.clone(),

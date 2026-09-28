@@ -820,7 +820,7 @@ const CONSULT_NOW: u64 = 1_772_400_000;
 /// shared.
 mod human_fixture {
     use oneiron::channel_identity::{
-        ChannelIdentity, ChannelIdentityBinding, ChannelIdentityFulfillment, ChannelIdentityState,
+        ChannelIdentity, ChannelIdentityBinding, ChannelIdentityFulfillment, ChannelIdentityStep,
         SelfHeldShape,
     };
     use oneiron::code_run::{SelfDurableWait, SelfDurableWaitReason, SelfEffect};
@@ -890,21 +890,17 @@ mod human_fixture {
                 )
                 .expect("create channel identity");
             vault
-                .transition_channel_identity(
+                .step_channel_identity(
                     &identity_ref,
-                    ChannelIdentityState::PendingFulfillment,
-                    Some(ChannelIdentityFulfillment::Api),
+                    ChannelIdentityStep::Bind(ChannelIdentityFulfillment::Api),
                     super::CONSULT_NOW,
-                    None,
                 )
                 .expect("enter fulfillment");
             vault
-                .transition_channel_identity(
+                .step_channel_identity(
                     &identity_ref,
-                    ChannelIdentityState::Active,
-                    None,
+                    ChannelIdentityStep::Fulfill,
                     super::CONSULT_NOW,
-                    None,
                 )
                 .expect("activate the identity");
             vault

@@ -12,8 +12,35 @@ pub const CHANNEL_IDENTITY_SCHEMA_VERSION: u64 = 5;
 /// set at decode, so the shapes' key sets can never be mixed.
 pub const CHANNEL_IDENTITY_DELEGATED_SCHEMA_VERSION: u64 = 6;
 
-/// Minimum self-hold window for a quarantined released identity (90 days).
-pub const CHANNEL_IDENTITY_MIN_QUARANTINE_SECS: u64 = 90 * 24 * 60 * 60;
+/// Wait class the quarantine hold resolves under, in the manifest's
+/// `wait_policy` table (DEC-0005; owner rule 2026-09-27).
+///
+/// The number itself is NOT here. It is a row in the vault-resident default
+/// manifest, resolved in the same snapshot as the row it governs, because how
+/// long we hold an address we minted is a policy the vault owns and not an
+/// engine invariant. What stays in code is the substrate: a `Quarantine` state
+/// carries a window, that window is not before the state change it dates from,
+/// and computing it does not overflow.
+pub const WAIT_CLASS_CHANNEL_IDENTITY_QUARANTINE: &str = "channel_identity.quarantine";
+
+/// Act class an outbound send resolves under, in the manifest's `act_policy`
+/// table.
+pub const ACT_CLASS_CHANNEL_IDENTITY_OUTBOUND_SEND: &str = "channel_identity.outbound_send";
+
+/// Subject class of every self-held row in the `act_policy` table.
+///
+/// The three self-held SHAPES answer the same way about outbound reach, so one
+/// row covers them; the delegated shape's own string is
+/// [`ChannelIdentityShape::DelegatedGrant`](super::shape::ChannelIdentityShape::DelegatedGrant).
+pub const SUBJECT_CLASS_SELF_HELD: &str = "self_held";
+
+/// Shipped self-hold window for a quarantined released identity (90 days).
+///
+/// This is the value of the default manifest's
+/// [`WAIT_CLASS_CHANNEL_IDENTITY_QUARANTINE`] row and the fail-closed answer a
+/// caller with no resolved manifest takes — never a floor the engine asserts
+/// over resolved policy.
+pub const DEFAULT_CHANNEL_IDENTITY_QUARANTINE_MIN_SECS: u64 = 90 * 24 * 60 * 60;
 
 /// Pinned on-disk MessagePack key set for ChannelIdentity bodies.
 ///

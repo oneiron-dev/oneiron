@@ -51,7 +51,8 @@ pub fn channel_identity_email_address(
     let requested_at = requested_at.map_or(0, ts_to_u64);
     Ok(adapter
         .requested_identity(identity_id, agent_ref, requested_at)
-        .address_or_handle)
+        .address_or_handle()
+        .to_owned())
 }
 
 /// Parse inbound email webhook data into a SurfaceEvent input JSON string.

@@ -3,7 +3,8 @@ use super::*;
 #[test]
 fn faceted_sender_selection_preserves_actor_custody_and_ambiguity_checks() -> crate::Result<()> {
     use crate::channel_identity::{
-        ChannelIdentityFulfillment, DelegatedGrant, DelegatedGrantScope, DelegatedProvisionRequest,
+        ChannelIdentityFulfillment, ChannelIdentityStep, DelegatedGrant, DelegatedGrantScope,
+        DelegatedProvisionRequest,
     };
     use crate::test_util::entity;
 
@@ -31,14 +32,14 @@ fn faceted_sender_selection_preserves_actor_custody_and_ambiguity_checks() -> cr
     }
     let binding = ChannelIdentityBinding::actor_with_facet(actor, facet);
     let put = |seed: u8, channel: &str, binding, state| -> crate::Result<()> {
-        let mut identity = ChannelIdentity::requested(
+        let identity = crate::test_util::self_held_identity_in_state(
             channel,
-            format!("sender-{seed}@example.com"),
+            &format!("sender-{seed}@example.com"),
             SelfHeldShape::DedicatedAddress,
             binding,
+            state,
             NOW,
         );
-        identity.state = state;
         vault.create_channel_identity(&entity(seed), &identity)
     };
     put(
@@ -93,21 +94,14 @@ fn faceted_sender_selection_preserves_actor_custody_and_ambiguity_checks() -> cr
         },
         NOW,
     )?;
-    vault.transition_channel_identity(
+    vault.step_channel_identity(
         &entity(0xA8),
-        ChannelIdentityState::PendingFulfillment,
-        Some(ChannelIdentityFulfillment::Api),
+        ChannelIdentityStep::Bind(ChannelIdentityFulfillment::Api),
         NOW + 10,
-        None,
     )?;
-    let delegated = vault.transition_channel_identity(
-        &entity(0xA8),
-        ChannelIdentityState::Active,
-        None,
-        NOW + 20,
-        None,
-    )?;
-    assert_eq!(delegated.binding, binding);
+    let delegated =
+        vault.step_channel_identity(&entity(0xA8), ChannelIdentityStep::Fulfill, NOW + 20)?;
+    assert_eq!(delegated.binding(), binding);
     assert!(!delegated.may_send());
     assert!(
         sending_address(&vault, actor)
@@ -130,13 +124,7 @@ fn faceted_sender_selection_preserves_actor_custody_and_ambiguity_checks() -> cr
         sending_address(&vault, actor).is_err(),
         "masked plus unmasked is ambiguous"
     );
-    vault.transition_channel_identity(
-        &entity(0xAA),
-        ChannelIdentityState::Released,
-        None,
-        NOW + 30,
-        None,
-    )?;
+    vault.step_channel_identity(&entity(0xAA), ChannelIdentityStep::Release, NOW + 30)?;
     put(0xAB, "calendar", binding, ChannelIdentityState::Active)?;
     assert_eq!(
         sending_address(&vault, actor).expect("lookup"),
