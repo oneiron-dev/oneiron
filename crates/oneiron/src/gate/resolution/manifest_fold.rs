@@ -216,6 +216,9 @@ pub(crate) fn resolve_policy_manifest(
                     }
                 }
                 resolution.budget_policy.extend_rows(decoded.budget_policy);
+                resolution
+                    .failure_signal_policy
+                    .extend(decoded.failure_signal_policy);
                 if let Some(policy) = decoded.pack_install_policy {
                     if let Some(existing) = &mut resolution.pack_install_policy {
                         existing.restrict(policy);

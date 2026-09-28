@@ -339,7 +339,9 @@ impl Vault {
             .iter()
             .filter_map(DiagnosticObservation::from_retrieval_run)
             .collect();
-        run(self, scope, observations, &[&RetrievalMissDetector])
+        let ids = run(self, scope, observations, &[&RetrievalMissDetector])?;
+        self.capture_tier1_point_producer(&ids)?;
+        Ok(ids)
     }
     pub fn run_receipt_tripwires(
         &self,
@@ -475,6 +477,7 @@ impl Vault {
         }
         ids.sort();
         ids.dedup();
+        self.capture_tier1_receipt_window(&ids, receipts)?;
         Ok(ids)
     }
     pub fn run_dreamer_output_tripwires(
