@@ -63,7 +63,7 @@ pub(super) fn run_comment_roundtrip_with_limits(
             ValidationCheck{name:"well_formed_opc",passed:true,detail:"bounded ZIP records and checksums verified".into()},
             ValidationCheck{name:"pptx_comment_links",passed:true,detail:"modern author/comment references and XML verified".into()},
             ValidationCheck{name:"pptx_semantic_write_set",passed:true,detail:"only declared comment, author, extension and relationship insertions; no Office-host proof".into()},
-        ]},recalc:RecalcStatus::NotNeeded,calc_engine:None,base_version:None,base_content_hash:*blake3::hash(input).as_bytes(),
+        ]},recalc:RecalcStatus::NotNeeded,calc_engine:None,base_version:None,base_content_hash:*blake3::hash(input).as_bytes(),sheet_answers:None,
     })
 }
 

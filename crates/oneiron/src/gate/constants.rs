@@ -70,6 +70,11 @@ pub(super) const POLICY_AUTO_CHECKER_KEY: &str = "auto_checker";
 pub(super) const POLICY_BUDGET_POLICY_KEY: &str = "budget_policy";
 /// Per-format edit resource budgets; precedence is a required manifest row.
 pub(crate) const POLICY_PPTX_COMMENT_LIMITS_KEY: &str = "pptx_comment_limits";
+/// Ordered restrict-only rows: vault, artifact, and named sheet caps compose
+/// by minimum. The shipped vault row bounds holder overrides.
+pub(super) const POLICY_SHEET_ANSWER_LIMITS_KEY: &str = "sheet_answer_limits";
+/// The shipped scope-composition row, distinct from the numeric limit rows.
+pub(super) const POLICY_SHEET_ANSWER_PRECEDENCE_KEY: &str = "sheet_answer_precedence";
 pub(super) const POLICY_HOSTED_TTS_KEY: &str = "hosted_tts";
 pub(super) const BUDGET_POLICY_PURPOSE_KEY: &str = "purpose";
 pub(super) const BUDGET_POLICY_ACTOR_KEY: &str = "actor";
