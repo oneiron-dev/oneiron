@@ -159,10 +159,10 @@ fn floor_softening_is_delayed_vetoable_and_causal() {
     let soften_hash = authority_entry_hash(&soften).unwrap();
     let seen = BTreeMap::from([(soften_hash, 10)]);
     let entries = vec![genesis.clone(), soften.clone()];
-    let pending = fold_authority_log_with_seen_times(&entries, &seen, 10 + delay - 1);
+    let pending = fold_legacy_authority_log_with_seen_times(&entries, &seen, 10 + delay - 1);
     assert_eq!(pending.tier_floor, Some(AuthorityTier::Hardware));
     assert!(pending.pending_widens.contains_key(&soften_hash));
-    let mature = fold_authority_log_with_seen_times(&entries, &seen, 10 + delay);
+    let mature = fold_legacy_authority_log_with_seen_times(&entries, &seen, 10 + delay);
     assert_eq!(mature.tier_floor, Some(AuthorityTier::Software));
     assert!(mature.pending_widens.is_empty());
     let veto = sign_p256(
@@ -178,8 +178,11 @@ fn floor_softening_is_delayed_vetoable_and_causal() {
         ),
         &hardware,
     );
-    let vetoed =
-        fold_authority_log_with_seen_times(&[genesis.clone(), soften.clone(), veto], &seen, 20);
+    let vetoed = fold_legacy_authority_log_with_seen_times(
+        &[genesis.clone(), soften.clone(), veto],
+        &seen,
+        20,
+    );
     assert_eq!(vetoed.tier_floor, Some(AuthorityTier::Hardware));
     assert!(vetoed.vetoed_widens.contains(&soften_hash));
     let concurrent = sign_p256(
@@ -196,11 +199,11 @@ fn floor_softening_is_delayed_vetoable_and_causal() {
         &hardware,
     );
     let mut fork = vec![genesis, soften, concurrent];
-    let constrained = fold_authority_log_with_seen_times(&fork, &seen, 10 + delay);
+    let constrained = fold_legacy_authority_log_with_seen_times(&fork, &seen, 10 + delay);
     assert_eq!(constrained.tier_floor, Some(AuthorityTier::Hardware));
     fork.reverse();
     assert_eq!(
         constrained,
-        fold_authority_log_with_seen_times(&fork, &seen, 10 + delay)
+        fold_legacy_authority_log_with_seen_times(&fork, &seen, 10 + delay)
     );
 }

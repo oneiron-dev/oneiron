@@ -58,7 +58,10 @@ impl MicroVmSandboxAdapter {
 
         let vm = backend.prepare(&contract, &mounts)?;
         let mut proxy = CredentialEgressProxy::new(allowlist, resolver);
-        backend.proxy_credentials(&vm, proxy.resolver())?;
+        if let Err(error) = backend.proxy_credentials(&vm, proxy.resolver()) {
+            backend.cleanup(&vm);
+            return Err(error);
+        }
         proxy.arm();
 
         Ok(Self {
@@ -245,6 +248,14 @@ impl SandboxBoundaryAdapter for MicroVmSandboxAdapter {
         let delta = SandboxProposalDelta::new(self.contract.tier(), write)?;
         self.proposal_deltas.push(delta.clone());
         Ok(delta)
+    }
+}
+
+impl Drop for MicroVmSandboxAdapter {
+    fn drop(&mut self) {
+        // A backend must not retain its cloned handle after an adapter ends.
+        // Scratch custody is Arc-owned, so external handle clones remain safe.
+        self.backend.cleanup(&self.vm);
     }
 }
 
