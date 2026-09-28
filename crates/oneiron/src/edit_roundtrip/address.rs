@@ -184,6 +184,11 @@ fn letters_to_column(letters: &str) -> Result<u32> {
 pub(super) fn validate_ops(ops: &[EditOp]) -> Result<()> {
     for op in ops {
         match op {
+            EditOp::PptxComment { .. } | EditOp::MintPptxSlideCreationId { .. } => {
+                return Err(Error::Artifact(ArtifactError::InvalidEditManifest(
+                    "PowerPoint operations require the comment pipeline",
+                )));
+            }
             EditOp::SetCell { cell, .. } => check_cell(*cell)?,
             EditOp::SetRange { range, writes, .. } => {
                 check_range(*range)?;

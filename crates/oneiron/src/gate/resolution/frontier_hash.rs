@@ -63,6 +63,20 @@ pub(super) fn hash_policy_frontier_v0(
         let value = policy.encode();
         hash_opt_value(hasher, Some(&value))?;
     }
+    if let Some(limits) = resolution.pptx_comment_limits {
+        hash_str(hasher, "pptx_comment_limits:nested_narrowing");
+        for value in [
+            limits.max_patches,
+            limits.max_author_name_bytes,
+            limits.max_xml_bytes,
+            limits.max_xml_attributes,
+            limits.max_xml_namespaces,
+            limits.max_xml_depth,
+            limits.max_xml_nodes,
+        ] {
+            hash_u64(hasher, value as u64);
+        }
+    }
     // An absent/empty hosted policy changes no decision and keeps the
     // established frontier bytes for manifests that never named this knob.
     if !resolution.hosted_tts.rows.is_empty() {
