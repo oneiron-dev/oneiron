@@ -2664,7 +2664,7 @@
      "path": "src/batch/base_apply/mod.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 3
      }
     },
     {
@@ -2781,7 +2781,7 @@
      "path": "src/batch/claim_materialization.rs",
      "purpose": "Exact-operation envelope handoff",
      "surface": {
-      "crate-vis": 16
+      "crate-vis": 18
      }
     },
     {
@@ -3165,7 +3165,7 @@
      "path": "src/batch/gate_mode.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 9
+      "crate-vis": 10
      }
     },
     {
@@ -3203,7 +3203,7 @@
      "path": "src/batch/mod.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 24,
+      "crate-vis": 25,
       "mod": 1,
       "re-export": 2
      }
@@ -3546,6 +3546,16 @@
      "purpose": "—",
      "surface": {
       "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/batch/verified_claim_transition.rs",
+     "purpose": "Sealed operation proof: minted only after the owning consent, curation or lifecycle validator checks the…",
+     "surface": {
+      "crate-vis": 11
      }
     },
     {
@@ -17626,6 +17636,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/gate/carry_forward_policy.rs",
+     "purpose": "Vault-resident confidence floors for carry-forward Auto admission",
+     "surface": {
+      "crate-vis": 12
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
@@ -17761,7 +17781,7 @@
      "surface": {}
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [],
      "path": "src/gate/default_manifest.rs",
@@ -17857,7 +17877,7 @@
      "path": "src/gate/doors/peripheral.rs",
      "purpose": "Write mode types and the small standalone claim doors",
      "surface": {
-      "crate-vis": 12
+      "crate-vis": 13
      }
     },
     {
@@ -17970,7 +17990,7 @@
      "path": "src/gate/manifest_authenticity.rs",
      "purpose": "Local write-door authentication for manifest contributions",
      "surface": {
-      "crate-vis": 6,
+      "crate-vis": 8,
       "fn": 4,
       "struct": 1
      }
@@ -17982,7 +18002,7 @@
      "path": "src/gate/mod.rs",
      "purpose": "DEC-0005 Gate policy manifest resolver",
      "surface": {
-      "crate-vis": 32,
+      "crate-vis": 33,
       "re-export": 6
      }
     },
@@ -18040,7 +18060,7 @@
      "path": "src/gate/resolution/accessors.rs",
      "purpose": "Read-only resolved-field accessors plus the frontier-hash entry",
      "surface": {
-      "crate-vis": 43
+      "crate-vis": 45
      }
     },
     {
@@ -18112,6 +18132,24 @@
      "kind": "test",
      "notable": [],
      "path": "src/gate/retrieval_filter/tests.rs",
+     "purpose": "—",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/gate/retrieval_retention.rs",
+     "purpose": "Declared retrieval-telemetry retention rows and restrictive resolution",
+     "surface": {
+      "crate-vis": 9
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/gate/retrieval_retention/tests.rs",
      "purpose": "—",
      "surface": {}
     },
@@ -18195,6 +18233,24 @@
      "notable": [],
      "path": "src/gate/tests/burst_retired.rs",
      "purpose": "Write velocity does not replace the ordinary verdict or create a pause",
+     "surface": {}
+    },
+    {
+     "bucket": "L",
+     "kind": "test",
+     "notable": [],
+     "path": "src/gate/tests/carry_forward.rs",
+     "purpose": "ONE-2032: four forward kinds round-trip the shared claim Gate",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/gate/tests/carry_forward_sync.rs",
+     "purpose": "Current-head CRDT replay does not depend on a receiver's local lifecycle history",
      "surface": {}
     },
     {
@@ -31957,7 +32013,7 @@
      "path": "src/store/open_gates/manifest_storage_gates.rs",
      "purpose": "Process path registry, owned environment close semantics, manifest create/open/validate pairs, and storage…",
      "surface": {
-      "crate-vis": 29
+      "crate-vis": 31
      }
     },
     {
@@ -32163,8 +32219,18 @@
      "path": "src/store/retrieval_telemetry/mod.rs",
      "purpose": "Retrieval telemetry: run records, trace fork index, outcome rows, and reward-weighted blend-weight tuning",
      "surface": {
-      "crate-vis": 6,
+      "crate-vis": 7,
       "re-export": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/store/retrieval_telemetry/retention.rs",
+     "purpose": "Bounded, expirable base-ledger retrieval runs and crash-orphan reconciliation",
+     "surface": {
+      "crate-vis": 7
      }
     },
     {
@@ -32174,7 +32240,7 @@
      "path": "src/store/retrieval_telemetry/run_store.rs",
      "purpose": "Retrieval-run, outcome, and trace-fork persistence: `Store` and `SessionStoreView` methods, staging bodies…",
      "surface": {
-      "crate-vis": 26,
+      "crate-vis": 29,
       "fn": 3
      }
     },
@@ -32195,7 +32261,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "test",
      "notable": [],
      "path": "src/store/retrieval_telemetry/state_tests.rs",
@@ -32307,7 +32373,7 @@
      "path": "src/store/test_hooks.rs",
      "purpose": "The test seams one open vault owns, plus the two path-keyed LMDB open hooks that necessarily predate it",
      "surface": {
-      "crate-vis": 19
+      "crate-vis": 21
      }
     },
     {
@@ -32328,7 +32394,7 @@
      "purpose": "Process-owner writer lease, shared by the server and embedded SDK",
      "surface": {
       "const": 2,
-      "crate-vis": 2,
+      "crate-vis": 3,
       "fn": 4,
       "struct": 1
      }
@@ -36406,9 +36472,26 @@
      "path": "src/write_envelope.rs",
      "purpose": "Write-path stamping: `WriteActor`/`WriteProvenance`/`WriteEnvelope`/`ClaimCandidate` + evidence stamping",
      "surface": {
-      "crate-vis": 18,
+      "crate-vis": 19,
       "fn": 28,
+      "mod": 1,
       "struct": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "CarryForwardClaim",
+      "CarryForwardKind"
+     ],
+     "path": "src/write_envelope/carry_forward.rs",
+     "purpose": "Confidence-gated forward commitments, separate from belief consolidation and the commitment ledger",
+     "surface": {
+      "crate-vis": 3,
+      "enum": 1,
+      "fn": 4,
+      "struct": 1
      }
     },
     {
@@ -37259,7 +37342,7 @@
      "purpose": "Engine-side AR-3 campaign reports and read-only experiment selection"
     },
     "batch": {
-     "files": 90,
+     "files": 91,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -37798,7 +37881,7 @@
      "purpose": "—"
     },
     "gate": {
-     "files": 93,
+     "files": 98,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -38323,7 +38406,7 @@
      "purpose": "EMB-5 speculative retrieval over ASR partials (ONE-EMBED E7)"
     },
     "store": {
-     "files": 50,
+     "files": 51,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -38477,17 +38560,17 @@
      "purpose": "Workspace roster preset + member onboarding (ONEIRON-ARCH-0065)"
     },
     "write_envelope": {
-     "files": 2,
-     "impl_vault": false,
+     "files": 3,
+     "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "file+dir",
      "purpose": "Write-path stamping: `WriteActor`/`WriteProvenance`/`WriteEnvelope`/`ClaimCandidate` + evidence stamping"
     }
    },
-   "over_bar": 8,
+   "over_bar": 9,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2279,
-   "test_files": 789
+   "source_files": 2284,
+   "test_files": 792
   },
   "oneiron-android": {
    "files": [

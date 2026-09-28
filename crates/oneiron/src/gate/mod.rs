@@ -10,7 +10,8 @@ mod ceiling;
 pub(crate) mod manifest_authenticity;
 #[cfg(test)]
 pub(crate) use manifest_authenticity::stamp_manifest_origin;
-pub(crate) use manifest_authenticity::trusted_manifest_key;
+pub(crate) use manifest_authenticity::{seeded_manifest_key, trusted_manifest_key};
+mod carry_forward_policy;
 mod confirm;
 mod connector_admission;
 mod constants;
@@ -34,11 +35,13 @@ mod resolution;
 mod tracker_limits;
 pub use tracker_limits::LiveQueryTrackerLimits;
 mod retrieval_filter;
+pub(crate) mod retrieval_retention;
 pub(crate) mod retry_source_policy;
 mod room_thread;
 pub use room_thread::RoomThreadFill;
 pub(crate) use room_thread::{RoomThreadManifest, RoomThreadSettings};
 mod share;
+pub(crate) mod voice_serving;
 mod weave_correction_policy;
 mod witness_message;
 pub(crate) use weave_correction_policy::WeaveCorrectionPolicy;
@@ -123,6 +126,7 @@ pub(crate) use self::retrieval_filter::{
 pub(crate) use self::share::check_share_create_policy;
 #[cfg(test)]
 pub(crate) use self::share::share_create_effect;
+pub(crate) use self::voice_serving::VoiceServingLimits;
 #[cfg(test)]
 pub(crate) use self::witness_message::canonical_witness_message_body_for_test;
 pub(crate) use self::witness_message::{

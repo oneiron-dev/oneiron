@@ -399,6 +399,7 @@ impl MicroVmBackend for OutputBackend {
         .collect::<Result<Vec<_>>>()
         .map(|edits| edits.into_iter().flatten().collect())
     }
+    fn cleanup(&self, _: &MicroVmHandle) {}
     fn proxy_credentials(&self, _: &MicroVmHandle, _: &dyn CredentialResolver) -> Result<()> {
         Ok(())
     }

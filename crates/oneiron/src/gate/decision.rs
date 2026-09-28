@@ -281,6 +281,8 @@ pub(crate) enum GateReasonCode {
     /// answer as a hold, spelled differently so an owner can tell "the checker
     /// said no" from "nothing checked".
     PendingCheckerUnavailable,
+    /// A forward claim lacks the confidence for its subtype (care is stricter).
+    PendingCarryForwardConfidence,
 }
 
 #[cfg_attr(not(test), allow(dead_code))]
@@ -328,6 +330,7 @@ impl GateReasonCode {
             Self::PendingCounterpartyOptOut => "gate.pending.counterparty_opt_out",
             Self::PendingChecker => "gate.pending.checker",
             Self::PendingCheckerUnavailable => "gate.pending.checker.unavailable",
+            Self::PendingCarryForwardConfidence => "gate.pending.carry_forward_confidence",
         }
     }
 
@@ -388,6 +391,7 @@ impl GateReasonCode {
             Self::PendingChecker | Self::PendingCheckerUnavailable => {
                 GateMetricReasonClass::SourceTrust
             }
+            Self::PendingCarryForwardConfidence => GateMetricReasonClass::CriticalityFloor,
         }
     }
 }
