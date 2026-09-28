@@ -195,6 +195,18 @@ impl PolicyManifestResolution {
         self.wave_handoff.unwrap_or_default()
     }
 
+    #[must_use]
+    pub(crate) fn judge_calibration_policy(
+        &self,
+    ) -> Option<crate::skill_optimize::policy::JudgeCalibrationPolicy> {
+        if self.diagnostics.loaded_manifest_forces_fail_closed() {
+            None
+        } else {
+            Some(self.judge_calibration.unwrap_or_default())
+        }
+    }
+
+    #[must_use]
     pub(crate) fn proposal_check_threshold(&self) -> u64 {
         self.proposal_check_threshold
             .unwrap_or(crate::gate::proposal_observation::DEFAULT_PROPOSAL_CHECK_THRESHOLD)
@@ -347,6 +359,20 @@ impl PolicyManifestResolution {
         &self,
     ) -> Option<crate::gate::retrieval_retention::RetrievalRetentionPolicy> {
         (!self.diagnostics.loaded_manifest_forces_fail_closed()).then_some(self.retrieval_retention)
+    }
+
+    /// The trusted, nested-narrow voice limits. A malformed or absent policy
+    /// never falls back to compiled operational allowances.
+    pub(crate) fn voice_serving_limits(
+        &self,
+        holder: Option<crate::EntityId>,
+    ) -> Result<crate::gate::VoiceServingLimits> {
+        if self.diagnostics.is_fail_closed() {
+            return Err(crate::error::Error::InvalidConfig(
+                "voice serving policy unavailable".into(),
+            ));
+        }
+        crate::gate::voice_serving::resolve(&self.voice_serving, holder)
     }
 
     /// Effective trusted per-vault limits. Malformed loaded policy refuses

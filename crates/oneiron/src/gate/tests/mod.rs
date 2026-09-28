@@ -77,6 +77,7 @@ mod support;
 mod tracker_limits;
 mod trust_boundary;
 mod vad_vetting;
+mod voice_serving;
 mod witness_message;
 
 mod auto_signals;
