@@ -9,7 +9,6 @@ use crate::conversation_dag::topology::{
 use crate::edge::{EdgeKind, decode_edge_value_for_kind};
 use crate::error::{Error, Result};
 use crate::side_table::{self, Raw, SideTable};
-use crate::store::Store;
 use crate::sync::quarantine::{self, QuarantineContainer, remote_rejection_reason};
 use crate::sync::types::WindowKey;
 use crate::{EntityId, Vault};

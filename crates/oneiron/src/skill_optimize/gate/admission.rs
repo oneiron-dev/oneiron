@@ -557,13 +557,9 @@ pub(in crate::skill_optimize) fn retained_optimizer_parent_goal_in_txn(
     txn: &heed::RoTxn<'_>,
     parent: &EntityId,
 ) -> Result<Option<(SkillGoalId, String)>> {
-    let Some(raw) = store
-        .vault_meta
-        .get(txn, &optimizer_origin_marker_key(parent))?
-    else {
+    let Some(values) = ORIGIN_MARKER.get(store, txn, parent)? else {
         return Ok(None);
     };
-    let values = decode_origin_marker(&raw)?;
     let corrupt = || Error::CorruptedIndex(ORIGIN_MARKER_LABEL);
     if values[0].as_deref() != Some(SKILL_OPTIMIZE_BIRTH_PATH) {
         return Err(corrupt());
