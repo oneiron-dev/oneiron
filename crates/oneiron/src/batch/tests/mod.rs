@@ -317,7 +317,7 @@ const CLAIM_CANDIDATE_DIGEST: &str =
     "f16d870a0e8d25cfcd0aecf2bd78c50a4dad12223dc40906100323e38784bd12";
 #[cfg(not(feature = "sync"))]
 const CLAIM_CANDIDATE_DIGEST: &str =
-    "dd443e808094d95f9b88abcdcb077e85cf5773694548ef3eac91d811f0c2ea98";
+    "13c7aa5a0792c06ba386af50bb9c6f613a4483a6200b1689dbad3f0d7e7caa02";
 
 #[test]
 fn one_builder_writes_what_both_builders_wrote() -> Result<()> {
