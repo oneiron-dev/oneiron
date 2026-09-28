@@ -110,6 +110,10 @@ pub use self::records::{
 mod tests;
 
 mod project;
+#[cfg(all(test, feature = "sync"))]
+pub(crate) use project::create_project_signed_for_test;
+#[cfg(test)]
+pub(crate) use project::set_project_depth_signed_for_test;
 pub use project::{
     GoalAxis, GoalExplorationBudget, GoalInterviewTurns, GoalPreference, GoalRecord,
     LEADER_CHAT_RULE_PREDICATE, LeaderChat, MessageHangs, PROJECT_TYPE_BYTE, ProjectBudgetShare,
@@ -126,8 +130,6 @@ pub(crate) use project::{
     validate_project_body, validate_project_edge_delete, validate_project_edge_put,
     validate_project_graph, validate_room_body, verify_existing_leader_chat_turn,
 };
-#[cfg(test)]
-pub(crate) use project::{create_project_signed_for_test, set_project_depth_signed_for_test};
 
 mod rooms;
 pub(crate) use rooms::admit_witness as admit_room_witness;
