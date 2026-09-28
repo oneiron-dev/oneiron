@@ -4,6 +4,28 @@ use crate::secret_custody::validate_replicated_custody_put;
 
 type PreflightDecisionIds = HashMap<EntityId, VecDeque<Option<crate::store::GateDecisionId>>>;
 
+pub(super) fn mark_unapplied_preflight_decisions(
+    store: &Store,
+    wtxn: &mut RwTxn<'_>,
+    ids: &PreflightDecisionIds,
+) -> Result<()> {
+    for id in ids.values().flat_map(|queue| queue.iter().flatten()) {
+        store.mark_unapplied_preflight_decision_in_txn(wtxn, *id)?;
+    }
+    Ok(())
+}
+
+pub(super) fn consume_preflight_decisions(
+    store: &Store,
+    wtxn: &mut RwTxn<'_>,
+    ids: impl IntoIterator<Item = Option<crate::store::GateDecisionId>>,
+) -> Result<()> {
+    for id in ids.into_iter().flatten() {
+        store.consume_unapplied_preflight_decision_in_txn(wtxn, id)?;
+    }
+    Ok(())
+}
+
 pub(super) fn take_lapse_decisions(
     preflight: &mut PreflightDecisionIds,
     ids: &[EntityId],

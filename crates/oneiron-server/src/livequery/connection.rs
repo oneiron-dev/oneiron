@@ -86,6 +86,24 @@ impl Hub {
         }
     }
 
+    /// Indexed publication happens after the vault transaction commits, not
+    /// in Observer B. Feed only the published entity ids through the existing
+    /// dependency index; neither unindexed edits nor raw documents are pushed.
+    pub(crate) fn indexed_published(&self, publications: &[oneiron::memory::IndexedPublication]) {
+        let sessions: Vec<_> = self
+            .sessions
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .values()
+            .map(|session| Arc::clone(&session.queries))
+            .collect();
+        for publication in publications {
+            for queries in &sessions {
+                queries.on_indexed_published(*publication);
+            }
+        }
+    }
+
     fn session(
         &self,
         auth: &CoreAuth,
@@ -108,6 +126,10 @@ impl Hub {
             ));
         }
         let server = self.server.upgrade().ok_or_else(AppError::unauthorized)?;
+        let limits = server
+            .vault()
+            .policy_livequery_tracker_limits(auth.principal_ref())
+            .map_err(|_| AppError::internal_server_error("livequery tracker policy refused"))?;
         let document = oneiron::EntityId::now().to_hex();
         let session_budget = super::budget::Budget::new(super::budget::SESSION_BYTES);
         let source: Arc<dyn LiveQuerySource> = Arc::new(super::source::BoundSource::with_budgets(
@@ -122,6 +144,7 @@ impl Hub {
             source,
             session_budget,
             self.budget.clone(),
+            limits,
         ));
         let tee: Arc<dyn LiveQueryTee> = queries.clone();
         server
