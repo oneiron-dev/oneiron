@@ -15084,7 +15084,7 @@
      "path": "src/edit_distance/miner/mod.rs",
      "purpose": "ED-04 (ONE-1760, ARCH-0056 §4): the recurring-substitution miner — the Dreamer session-end pass that turns a…",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 4,
       "re-export": 7
      }
     },
@@ -15108,6 +15108,16 @@
       "enum": 3,
       "fn": 3,
       "struct": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/edit_distance/miner/policy.rs",
+     "purpose": "OF-379 proposal routing, driven by validated policy-manifest rows",
+     "surface": {
+      "crate-vis": 3
      }
     },
     {
@@ -15138,7 +15148,7 @@
       "CompilationTarget"
      ],
      "path": "src/edit_distance/miner/target.rs",
-     "purpose": "Host-classified compilation proposals",
+     "purpose": "Bounded compilation proposals from principal-bound corrected deltas",
      "surface": {
       "crate-vis": 5,
       "enum": 1
@@ -15153,7 +15163,7 @@
      "surface": {}
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "test",
      "notable": [],
      "path": "src/edit_distance/miner/tests/preference_learning.rs",
@@ -15940,7 +15950,7 @@
      "path": "src/entity_doc/document.rs",
      "purpose": "The common actor-stamped Loro document primitive",
      "surface": {
-      "crate-vis": 7,
+      "crate-vis": 8,
       "fn": 9,
       "struct": 3
      }
@@ -15983,7 +15993,7 @@
      "path": "src/entity_doc/mod.rs",
      "purpose": "Durable, bounded entity text documents, anchored edits, fork sets and owner purge",
      "surface": {
-      "crate-vis": 4,
+      "crate-vis": 5,
       "re-export": 6
      }
     },
@@ -16001,6 +16011,16 @@
       "enum": 1,
       "fn": 8,
       "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/entity_doc/recovery.rs",
+     "purpose": "Value-only canonical recovery for generic EntityDoc owners",
+     "surface": {
+      "crate-vis": 2
      }
     },
     {
@@ -27096,7 +27116,7 @@
       "enum": 2,
       "fn": 7,
       "mod": 1,
-      "re-export": 4,
+      "re-export": 5,
       "struct": 2
      }
     },
@@ -27107,6 +27127,7 @@
       "CanonicalBaseEdge",
       "CanonicalContainerManifest",
       "CanonicalEntity",
+      "CanonicalEntityDocument",
       "CanonicalSchemaManifest",
       "CanonicalSnapshot",
       "CanonicalTombstone"
@@ -27117,11 +27138,11 @@
       "const": 2,
       "crate-vis": 9,
       "fn": 6,
-      "struct": 6
+      "struct": 7
      }
     },
     {
-     "bucket": "L",
+     "bucket": "XL",
      "kind": "test",
      "notable": [],
      "path": "src/recovery/canonical_tests.rs",
@@ -27271,6 +27292,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/recovery/snapshot_writer.rs",
+     "purpose": "Off-hot-path publication of canonical Layer-1 window artifacts",
+     "surface": {
+      "fn": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/recovery/soft_shell.rs",
      "purpose": "Retained soft-delete headers on the standard forward recovery path",
      "surface": {
@@ -27292,7 +27323,7 @@
      "path": "src/recovery/validation.rs",
      "purpose": "Fail-closed whole-payload validation before a recovery mutation",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 5
      }
     },
     {
@@ -36592,7 +36623,7 @@
      "purpose": "Edge kinds, layouts, value codec, strict edge-record parsing, `EdgeInfo`"
     },
     "edit_distance": {
-     "files": 68,
+     "files": 69,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "file+dir",
@@ -36627,7 +36658,7 @@
      "purpose": "Engine-native JS code-mode executor"
     },
     "entity_doc": {
-     "files": 9,
+     "files": 10,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -37012,7 +37043,7 @@
      "purpose": "Unified receipt-family query surface over existing receipt emitters"
     },
     "recovery": {
-     "files": 17,
+     "files": 18,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "file+dir",
@@ -37378,7 +37409,7 @@
    },
    "over_bar": 4,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2219,
+   "source_files": 2222,
    "test_files": 757
   },
   "oneiron-android": {
