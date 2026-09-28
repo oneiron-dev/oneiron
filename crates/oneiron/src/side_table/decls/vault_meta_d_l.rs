@@ -416,6 +416,9 @@ side_tables! {
     /// Verified typed writer of a task at its current revision (u64be revision, id16 actor, class
     /// byte). Key: id16.
     LINEAR_TASK_WRITER: VaultMeta b"linear.task_writer.v1/" Raw;
+    /// Digest of the Linear effect request an operation id was first authorized for. Key: 32-byte
+    /// operation id.
+    LINEAR_EFFECT_AUTHORIZED: VaultMeta b"linear:effect_authorized:v1/" Raw;
     /// Task to tracker issue link state. Key: id16.
     LINEAR_SYNC_LINK: VaultMeta b"linear_sync:link:v4:" LegacyJson;
     /// The vault's pinned model-role manifest (role bindings, tier/route defaults). Key: ().

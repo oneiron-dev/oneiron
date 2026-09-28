@@ -16,8 +16,8 @@ use crate::entity_id::EntityId;
 #[cfg(all(feature = "sync", test))]
 use crate::error::SyncEngineContext;
 use crate::error::{Error, Result};
-use crate::ports::EntityStoreRead;
 use crate::ports::EntityStoreMaintenance;
+use crate::ports::EntityStoreRead;
 use crate::registry::ENTITY_TYPE_REDACTION_AUDIT;
 #[cfg(all(feature = "sync", test))]
 use crate::sync::window_rows::WINDOW_UPDATE;

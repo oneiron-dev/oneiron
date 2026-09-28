@@ -173,6 +173,28 @@ side_tables! {
     /// Per-envelope usage/rate-window accounting shared by every standing grant naming that envelope.
     /// Key: bytes (channel-identity envelope ref).
     OUTBOUND_GRANT_CHANNEL_IDENTITY_USAGE: VaultMeta b"outbound_grant:channel_identity_usage:v1:" Raw;
+    /// Owner policy-row change event. Key: event id.
+    OWNER_POLICY_CHANGE_EVENT: VaultMeta b"owner_policy:change:event:v1:" Raw;
+    /// Pending owner policy-row change proposal. Key: proposal id.
+    OWNER_POLICY_CHANGE_PROPOSAL: VaultMeta b"owner_policy:change:proposal:v1:" Raw;
+    /// Owner policy-row change receipt, in sequence order. Key: u64be sequence.
+    OWNER_POLICY_CHANGE_RECEIPT: VaultMeta b"owner_policy:change:receipt:v1:" Raw;
+    /// Last owner policy-row change sequence (u64be). Key: ().
+    OWNER_POLICY_CHANGE_SEQUENCE: VaultMeta b"owner_policy:change:seq:v1" Raw;
+    /// Delivery cursor over the queued owner policy notifications. Key: ().
+    OWNER_POLICY_NOTIFICATION_CURSOR: VaultMeta b"owner_policy:notification:cursor:v1" Raw;
+    /// Owner policy digest rows of one recipient. Key: recipient ':' tag.
+    OWNER_POLICY_NOTIFICATION_DIGEST_RECIPIENT: VaultMeta b"owner_policy:notification:digest_recipient:v1:" Raw;
+    /// Open owner policy digest window of one recipient. Key: recipient.
+    OWNER_POLICY_NOTIFICATION_DIGEST_WINDOW: VaultMeta b"owner_policy:notification:digest_window:v1:" Raw;
+    /// Failed delivery of one queued owner policy notification. Key: its queue key suffix.
+    OWNER_POLICY_NOTIFICATION_FAILURE: VaultMeta b"owner_policy:notification:failure:v1:" Raw;
+    /// Owner policy notification preference of one recipient. Key: recipient.
+    OWNER_POLICY_NOTIFICATION_PREFERENCE: VaultMeta b"owner_policy:notification:preference:v1:" Raw;
+    /// Queued owner policy notification. Key: queue order ‖ recipient.
+    OWNER_POLICY_NOTIFICATION_QUEUED: VaultMeta b"owner_policy:notification:queued:v1:" Raw;
+    /// Receipt of one owner policy notification rule. Key: receipt id.
+    OWNER_POLICY_NOTIFICATION_RULE_RECEIPT: VaultMeta b"owner_policy:notification:rule_receipt:v1:" Raw;
     /// Marker (engine version string) that the built-in connector packs have been seeded. Key: ().
     SKILL_HUB_PACK_BUILTIN_SEED: VaultMeta b"pack.builtin.seeded.v1" Raw;
     /// Candidate knowledge-pack receipt. Key: lowercase hex content hash.

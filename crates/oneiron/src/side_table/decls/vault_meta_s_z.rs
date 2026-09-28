@@ -246,6 +246,8 @@ side_tables! {
     SKILL_HUB_SOURCE_CUSTODY: VaultMeta b"skill_hub/source-custody/v1\0" Raw;
     /// Empty-marker that a source holder's custody has been permanently retired. Key: id16.
     SKILL_HUB_SOURCE_RETIRED: VaultMeta b"skill_hub/source-retired/v1\0" Raw;
+    /// Portable goal-axis identity of a skill under optimization. Key: id16.
+    SKILL_OPTIMIZE_GOAL: VaultMeta b"skill_optimize/goal/v1\0" Raw;
     /// Optimizer-birth marker. Key: id16.
     SKILL_OPTIMIZE_ORIGIN_MARKER: VaultMeta b"skill_optimize/origin/v1\0" Raw;
     /// Skill-edit gate verdict ledger row. Key: id16.
@@ -402,6 +404,12 @@ side_tables! {
     VOICE_IDENTITY_SAMPLE: VaultMeta b"voice_identity.sample.v1:" Raw;
     /// Wave-plan cut index. Key: bytes32.
     TASK_WAVE_PLAN_INDEX: VaultMeta b"wave.task.v1/" Raw;
+    /// Weave digest of one reader. Key: reader kind byte + id16 + u64be.
+    WEAVE_DIGEST: VaultMeta b"weave:digest:v1:" Raw;
+    /// Source-to-digest invalidation index. Key: source id16 ‖ digest key.
+    WEAVE_DIGEST_SOURCE: VaultMeta b"weave:digest_source:v1:" Raw;
+    /// Weave digest schedule of one reader. Key: reader kind byte + id16.
+    WEAVE_DIGEST_SCHEDULE: VaultMeta b"weave:schedule:v1:" Raw;
     /// One immutable wrong-link label filed from a live weave report. Key: edge ref (33 bytes) +
     /// id16 (label receipt id).
     WEAVE_WRONG_LINK_LABEL: VaultMeta b"weave:wrong-link:v1:" Named;
