@@ -166,6 +166,7 @@ fn extraction_keeps_same_answers_for_different_topics_distinct_on_replay() -> Re
             actor: vault.dreamer_authority()?,
             model: crate::ModelId::new("test/model@r1").expect("fixture model"),
             sink: &mut sink,
+            inference: test_inference_host(),
             scope: None,
         };
         let mut ctx = WakeAttemptContext {
