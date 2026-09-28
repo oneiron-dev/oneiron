@@ -194,9 +194,16 @@ pub(crate) fn allows(
     vault_allowed && nested_allowed && holder.unwrap_or(true)
 }
 
+/// The default manifest's room entry. Room behavior defaults are typed rows,
+/// not a role allow-list in the delete/append doors; trusted vault and room
+/// rows may narrow them.
+pub(super) fn default_entry() -> (Value, Value) {
+    (Value::from(KEY), default_rows())
+}
+
 /// Shipped room behavior lives in the default POLICY_MANIFEST rather than a
 /// hardcoded role allow-list in a room/deletion write door.
-pub(crate) fn default_rows() -> Value {
+fn default_rows() -> Value {
     let row = |action: RoomAction, roles: &[&str], allow| {
         Value::Map(vec![
             (Value::from("action"), Value::from(action.as_str())),

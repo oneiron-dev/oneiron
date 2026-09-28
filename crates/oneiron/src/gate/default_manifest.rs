@@ -596,12 +596,7 @@ pub(crate) fn default_policy_manifest() -> Vec<u8> {
             Value::from(POLICY_ON_BUDGET_EXHAUSTED_KEY),
             Value::from("suspend"),
         ),
-        // Room behavior defaults are typed rows, not a role allow-list in
-        // the delete/append doors. Trusted vault and room rows may narrow.
-        (
-            Value::from(super::room_policy::KEY),
-            super::room_policy::default_rows(),
-        ),
+        super::room_policy::default_entry(),
         (
             Value::from(POLICY_PPTX_COMMENT_LIMITS_KEY),
             crate::edit_roundtrip::pptx::PptxOperationalLimits::default().policy_row(),
