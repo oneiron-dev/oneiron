@@ -143,6 +143,7 @@ fn target_json(target: &RenderTarget) -> Value {
     let revision: String = fence
         .incarnation
         .iter()
+        .flatten()
         .chain(&fence.ref_digest)
         .map(|byte| format!("{byte:02x}"))
         .collect();

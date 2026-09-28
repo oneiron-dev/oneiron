@@ -91,7 +91,9 @@ pub struct VoiceTargetRecord {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct VoiceRefFence {
     pub owner: EntityId,
-    pub incarnation: [u8; 16],
+    /// None only for an identity banked before incarnations were minted. Every
+    /// rebirth mints one, so such a fence never matches a re-banked identity.
+    pub incarnation: Option<[u8; 16]>,
     pub ref_digest: [u8; 32],
     pub include_generated: bool,
 }
@@ -461,14 +463,15 @@ fn fenced_clone(
     let owner = read_identity(store, txn, voice_id)?
         .ok_or_else(|| invalid("unknown voice identity"))?
         .owner;
-    let raw = store
+    let incarnation = store
         .vault_meta
         .get(txn, &key(INCARNATION_PREFIX, voice_id)?)?
-        .ok_or_else(|| invalid("voice identity incarnation missing"))?;
-    let incarnation = raw
-        .as_ref()
-        .try_into()
-        .map_err(|_| invalid("corrupt voice identity incarnation"))?;
+        .map(|raw| {
+            raw.as_ref()
+                .try_into()
+                .map_err(|_| invalid("corrupt voice identity incarnation"))
+        })
+        .transpose()?;
     let fence = VoiceRefFence {
         owner,
         incarnation,
@@ -662,6 +665,44 @@ mod tests {
                 .with_fenced_voice_clone("our-voice", "local", &fence, |_| Ok(()))
                 .is_err()
         );
+        Ok(())
+    }
+
+    #[test]
+    fn identity_banked_before_incarnations_fences_until_rebirth() -> Result<()> {
+        let dir = tempfile::tempdir().expect("ref vault directory");
+        let vault = Vault::open(dir.path(), crate::VaultConfig::device())?;
+        let owner = EntityId::now();
+        let pack = VoiceRefPack {
+            version: 1,
+            id: "source".into(),
+            voice_id: "our-voice".into(),
+            owner,
+            origin: VoiceRefOrigin::Captured,
+            clips: vec![VoiceRegisterClip {
+                register: "neutral".into(),
+                media_type: "audio/wav".into(),
+                audio: vec![1],
+                transcript: String::new(),
+            }],
+        };
+        vault.store_voice_ref_pack(&pack)?;
+        // An identity banked before incarnations were minted has no row.
+        let mut txn = vault.store.env.write_txn()?;
+        vault
+            .store
+            .vault_meta
+            .delete(&mut txn, &key(INCARNATION_PREFIX, "our-voice")?)?;
+        txn.commit()?;
+        let (_, legacy) = vault.prepare_fenced_voice_clone("our-voice", "local", false)?;
+        assert_eq!(legacy.incarnation, None);
+        assert!(vault.voice_ref_fence_current_now("our-voice", "local", &legacy)?);
+        // Withdrawal deletes the identity; an identical rebank is a new incarnation.
+        let mut txn = vault.store.env.write_txn()?;
+        delete_owner_refs(&vault.store, &mut txn, &owner)?;
+        txn.commit()?;
+        vault.store_voice_ref_pack(&pack)?;
+        assert!(!vault.voice_ref_fence_current_now("our-voice", "local", &legacy)?);
         Ok(())
     }
 }
