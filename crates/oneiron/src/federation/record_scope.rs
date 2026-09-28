@@ -179,7 +179,7 @@ pub(crate) fn stamp_put(
         if prior.version != 2
             || prior.kind != kind
             || prior.birth_facet != *facet.as_bytes()
-            || prior.scope != scope
+            || (prior.scope != scope && !leader_settled(kind, &prior.scope, &scope))
         {
             return Err(Error::InvalidClaimBody("record scope restamp refused"));
         }
@@ -203,6 +203,18 @@ pub(crate) fn stamp_put(
     .map_err(|_| Error::InvariantViolation("scope stamp encode"))?;
     store.vault_meta.put(txn, &key(id), &bytes)?;
     Ok(())
+}
+/// A TURN/MESSAGE body never proposes an audience: only
+/// `stamp_leader_project` settles a non-default one, at the record's birth. A
+/// later content put recomputes the default and keeps that settled position.
+fn leader_settled(kind: u8, prior: &Scope, proposed: &Scope) -> bool {
+    matches!(
+        kind,
+        crate::registry::ENTITY_TYPE_TURN | crate::registry::ENTITY_TYPE_MESSAGE
+    ) && Scope {
+        audience: proposed.audience.clone(),
+        ..prior.clone()
+    } == *proposed
 }
 /// Restamp a locally authenticated leader-chat TURN/MESSAGE at the ordinary
 /// record-position scope door, after the typed write's full batch succeeds.
