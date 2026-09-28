@@ -29,6 +29,7 @@ mod grants;
 mod hosted_tts_policy;
 mod input;
 mod operational_policy;
+mod owner_policy_mutation;
 mod pack_install_policy;
 pub(crate) mod policy_values;
 pub(crate) mod proposal_observation;
@@ -68,6 +69,7 @@ pub use self::confirm::{
 pub(crate) use self::confirm::{
     critical_write_confirm_binding, reconcile_critical_write_confirm_on_replicated_overwrite,
 };
+pub(crate) use self::constants::POLICY_OWNER_POLICY_NOTIFY_KEY;
 #[cfg(test)]
 pub(crate) use self::constants::{
     FIRST_PARTY_CONNECTOR_ACTOR_ID, POLICY_LEGAL_FLOOR_ROWS_KEY, POLICY_OWNER_POLICY_DOCUMENT_KEY,
@@ -124,6 +126,10 @@ pub(crate) use self::input::{
 pub(crate) use self::operational_policy::default_manifest_with_linear_sync_pages_for_test;
 pub(crate) use self::operational_policy::{
     LinearMirrorPolicy, LinearSyncBudget, WaveHandoffPolicy,
+};
+pub(crate) use self::owner_policy_mutation::apply_owner_policy_row_change_in_txn;
+pub use self::owner_policy_mutation::{
+    PolicyRowAction, PolicyRowChange, PolicyRowScope, PolicyWhySource,
 };
 pub(crate) use self::repair::{evaluate_repair_consent, repair_criticality};
 pub(crate) use self::resolution::{

@@ -9,8 +9,8 @@ use super::experiment_selection::parse_experiment_selection;
 use crate::autoreason_campaign::selection::SelectionPolicyRow;
 use crate::gate::PackInstallPolicy;
 use crate::gate::ceiling::{
-    ActorCeiling, DelegationGrantRecord, PolicyOwnerPatternRow, PolicyOwnerPolicyRow, PolicyPack,
-    PolicySignature, SourceTrustCeiling,
+    ActorCeiling, DelegationGrantRecord, PolicyOwnerPatternRow, PolicyOwnerPolicyRow,
+    PolicyOwnerPrecedence, PolicyPack, PolicySignature, SourceTrustCeiling,
 };
 use crate::gate::class_policy::{ActPolicyTable, WaitPolicyTable};
 use crate::gate::constants::{
@@ -25,13 +25,13 @@ use crate::gate::constants::{
     POLICY_MIN_ENGINE_VERSION_KEY, POLICY_ON_BUDGET_EXHAUSTED_KEY,
     POLICY_OWNER_POLICY_DOCUMENT_KEY, POLICY_OWNER_POLICY_ENABLED_KEY,
     POLICY_OWNER_POLICY_OUTPUT_CONTRACT_KEY, POLICY_OWNER_POLICY_PATTERNS_KEY,
-    POLICY_OWNER_POLICY_ROWS_KEY, POLICY_PACK_ID_KEY, POLICY_PACK_VERSION_KEY,
-    POLICY_PPTX_COMMENT_LIMITS_KEY, POLICY_RETIRED_COMM_OPT_OUT_POSTURE_KEY,
-    POLICY_RETIRED_PROPOSAL_CHECK_THRESHOLD_KEY, POLICY_RULES_KEY, POLICY_SCHEMA_VERSION,
-    POLICY_SCHEMA_VERSION_KEY, POLICY_SCOPED_GRANTS_KEY, POLICY_SHEET_ANSWER_LIMITS_KEY,
-    POLICY_SHEET_ANSWER_PRECEDENCE_KEY, POLICY_SIGNATURE_KEY, POLICY_SIGNATURES_KEY,
-    POLICY_SLIDE_REVIEW_KEY, POLICY_SOURCE_TRUST_KEY, POLICY_TEACHER_PROBE_KEY,
-    POLICY_WAIT_POLICY_KEY, POLICY_WEAVE_CORRECTION_POLICY_KEY,
+    POLICY_OWNER_POLICY_PRECEDENCE_KEY, POLICY_OWNER_POLICY_ROWS_KEY, POLICY_PACK_ID_KEY,
+    POLICY_PACK_VERSION_KEY, POLICY_PPTX_COMMENT_LIMITS_KEY,
+    POLICY_RETIRED_COMM_OPT_OUT_POSTURE_KEY, POLICY_RETIRED_PROPOSAL_CHECK_THRESHOLD_KEY,
+    POLICY_RULES_KEY, POLICY_SCHEMA_VERSION, POLICY_SCHEMA_VERSION_KEY, POLICY_SCOPED_GRANTS_KEY,
+    POLICY_SHEET_ANSWER_LIMITS_KEY, POLICY_SHEET_ANSWER_PRECEDENCE_KEY, POLICY_SIGNATURE_KEY,
+    POLICY_SIGNATURES_KEY, POLICY_SLIDE_REVIEW_KEY, POLICY_SOURCE_TRUST_KEY,
+    POLICY_TEACHER_PROBE_KEY, POLICY_WAIT_POLICY_KEY, POLICY_WEAVE_CORRECTION_POLICY_KEY,
 };
 use crate::gate::docedit_resource::DoceditResourcePolicy;
 use crate::gate::grants::PolicyScopedGrant;
@@ -83,6 +83,7 @@ pub(in crate::gate) struct DecodedPolicyManifest {
     pub(in crate::gate) federation_grant_rows: Vec<crate::federation::grant_policy::GrantPolicyRow>,
     pub(in crate::gate) room_policy_rows: Vec<crate::gate::room_policy::RoomPolicyRow>,
     pub(in crate::gate) owner_policy_rows: Vec<PolicyOwnerPolicyRow>,
+    pub(in crate::gate) owner_policy_precedence: PolicyOwnerPrecedence,
     pub(in crate::gate) owner_policy_rows_dropped: bool,
     pub(in crate::gate) owner_policy_enabled: bool,
     pub(in crate::gate) owner_policy_document: Option<String>,
@@ -172,6 +173,8 @@ pub(in crate::gate) fn decode_policy_manifest(data: &[u8]) -> Option<DecodedPoli
                 | crate::federation::grant_policy::ROWS_KEY
                 | crate::gate::room_policy::KEY
                 | POLICY_OWNER_POLICY_ROWS_KEY
+                | POLICY_OWNER_POLICY_PRECEDENCE_KEY
+                | super::super::constants::POLICY_OWNER_POLICY_NOTIFY_KEY
                 | POLICY_OWNER_POLICY_ENABLED_KEY
                 | POLICY_OWNER_POLICY_DOCUMENT_KEY
                 | POLICY_OWNER_POLICY_OUTPUT_CONTRACT_KEY
@@ -228,6 +231,8 @@ pub(in crate::gate) fn decode_policy_manifest(data: &[u8]) -> Option<DecodedPoli
             return None;
         }
     }
+
+    validate_owner_policy_notify(&entries)?;
 
     let unsupported_schema = match single_map_value(&entries, POLICY_SCHEMA_VERSION_KEY) {
         MapValue::Missing => true,
@@ -291,6 +296,7 @@ pub(in crate::gate) fn decode_policy_manifest(data: &[u8]) -> Option<DecodedPoli
                 None => (Vec::new(), true),
             },
         };
+    let owner_policy_precedence = decode_owner_policy_precedence(&entries)?;
     let owner_policy_document = match single_map_value(&entries, POLICY_OWNER_POLICY_DOCUMENT_KEY) {
         MapValue::Missing => None,
         MapValue::Duplicate => return None,
@@ -632,6 +638,7 @@ pub(in crate::gate) fn decode_policy_manifest(data: &[u8]) -> Option<DecodedPoli
         room_policy_rows,
         single_valued_predicates,
         owner_policy_rows,
+        owner_policy_precedence,
         owner_policy_rows_dropped,
         owner_policy_enabled,
         owner_policy_document,
@@ -681,6 +688,92 @@ pub(in crate::gate) fn decode_policy_manifest(data: &[u8]) -> Option<DecodedPoli
         engine_version_floor,
         unknown_axis_seen,
     })
+}
+
+/// A malformed notification row must not silently suppress a promised
+/// holder push. Validation shares the manifest's closed-key admission.
+fn validate_owner_policy_notify(entries: &[(Value, Value)]) -> Option<()> {
+    match single_map_value(
+        entries,
+        super::super::constants::POLICY_OWNER_POLICY_NOTIFY_KEY,
+    ) {
+        MapValue::Missing => {}
+        MapValue::Duplicate => return None,
+        MapValue::Present(Value::Array(rows)) => {
+            let mut scopes = std::collections::BTreeSet::new();
+            for row in rows {
+                let Value::Map(fields) = row else { return None };
+                if fields.len() != 3
+                    || fields.iter().any(|(k, _)| {
+                        !matches!(
+                            k.as_str(),
+                            Some("scope" | "delivery" | "digest_interval_seconds")
+                        )
+                    })
+                {
+                    return None;
+                }
+                let scope = single_map_value(fields, "scope");
+                let delivery = single_map_value(fields, "delivery");
+                let (
+                    MapValue::Present(Value::String(scope)),
+                    MapValue::Present(Value::String(delivery)),
+                ) = (scope, delivery)
+                else {
+                    return None;
+                };
+                let (Some(scope), Some(delivery)) = (scope.as_str(), delivery.as_str()) else {
+                    return None;
+                };
+                if !matches!(scope, "vault" | "override")
+                    || !matches!(delivery, "push_other_holders" | "log_only")
+                    || !matches!(single_map_value(fields, "digest_interval_seconds"),
+                        MapValue::Present(value) if value.as_u64().is_some_and(|secs| (1..=31_536_000).contains(&secs)))
+                    || !scopes.insert(scope)
+                {
+                    return None;
+                }
+            }
+            if scopes.len() != 2 {
+                return None;
+            }
+        }
+        MapValue::Present(_) => return None,
+    }
+    Some(())
+}
+
+/// Invalid policy must not fall back to the permissive scope selection.
+fn decode_owner_policy_precedence(entries: &[(Value, Value)]) -> Option<PolicyOwnerPrecedence> {
+    let precedence = match single_map_value(entries, POLICY_OWNER_POLICY_PRECEDENCE_KEY) {
+        MapValue::Missing => PolicyOwnerPrecedence::default(),
+        MapValue::Duplicate => return None,
+        MapValue::Present(Value::Map(fields)) => {
+            if fields.len() != 2
+                || fields
+                    .iter()
+                    .any(|(key, _)| !matches!(key.as_str(), Some("composition" | "vault_cap")))
+            {
+                return None;
+            }
+            if !matches!(
+                single_map_value(fields, "vault_cap"),
+                MapValue::Present(Value::Boolean(true))
+            ) {
+                return None;
+            }
+            match single_map_value(fields, "composition") {
+                MapValue::Present(Value::String(value)) => match value.as_str()? {
+                    "nested_narrowing" => PolicyOwnerPrecedence::NestedNarrowing,
+                    "most_specific_vault_capped" => PolicyOwnerPrecedence::MostSpecificVaultCapped,
+                    _ => return None,
+                },
+                _ => return None,
+            }
+        }
+        MapValue::Present(_) => return None,
+    };
+    Some(precedence)
 }
 
 /// A policy-manifest row. Numeric knobs are positive; unknown/duplicate keys
