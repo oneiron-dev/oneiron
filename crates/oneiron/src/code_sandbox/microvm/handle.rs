@@ -87,13 +87,14 @@ impl fmt::Debug for GuestImage {
 ///
 /// Host paths (overlay dirs, egress socket) stay host-side: the [`fmt::Debug`]
 /// rendering redacts them so they cannot leak into guest-visible diagnostics.
-#[derive(Clone, PartialEq, Eq)]
+#[derive(Clone)]
 pub struct MicroVmHandle {
     id: String,
     tier: SandboxGuestTier,
     base_root: PathBuf,
     overlay_upper: PathBuf,
     egress_socket: PathBuf,
+    scratch: Option<super::scratch::ScratchHandle>,
 }
 
 impl MicroVmHandle {
@@ -121,7 +122,13 @@ impl MicroVmHandle {
             base_root: base_root.into(),
             overlay_upper: overlay_upper.into(),
             egress_socket: egress_socket.into(),
+            scratch: None,
         })
+    }
+
+    pub(super) fn with_scratch(mut self, scratch: super::scratch::ScratchHandle) -> Self {
+        self.scratch = Some(scratch);
+        self
     }
 
     #[must_use]
@@ -195,3 +202,15 @@ impl ExecutionBudget {
         self.wall_clock_secs > 0 && self.mem_mib > 0 && self.pids > 0
     }
 }
+
+impl PartialEq for MicroVmHandle {
+    fn eq(&self, other: &Self) -> bool {
+        self.id == other.id
+            && self.tier == other.tier
+            && self.base_root == other.base_root
+            && self.overlay_upper == other.overlay_upper
+            && self.egress_socket == other.egress_socket
+            && self.scratch.is_some() == other.scratch.is_some()
+    }
+}
+impl Eq for MicroVmHandle {}
