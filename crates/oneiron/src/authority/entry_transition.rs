@@ -21,6 +21,22 @@ pub(super) fn fold_entry_state(
         return EntryFold::Invalid(AuthorityFoldIssue::InvalidEntry(hash));
     }
 
+    // Slips are the client credential in every posture. Retired device-key
+    // operations survive only as verified pre-handoff ancestry: a later
+    // enrolment cannot gain authority by waiting out the old delay window.
+    if matches!(
+        entry.op,
+        AuthorityOp::EnrollDevice { .. }
+            | AuthorityOp::RotateKey { .. }
+            | AuthorityOp::SetTierFloor { .. }
+            | AuthorityOp::VetoPendingWiden { .. }
+    ) && context
+        .pre_handoff_entries
+        .is_some_and(|permitted| !permitted.contains(&hash))
+    {
+        return EntryFold::Invalid(AuthorityFoldIssue::InvalidEntry(hash));
+    }
+
     // A strictly older observed sequence is rollback. Equal-sequence siblings
     // have separate hashes and fold under their own ancestry, not a fork alarm.
     if context
@@ -70,7 +86,6 @@ pub(super) fn fold_entry_state(
             vault_id,
             roster: BTreeMap::new(),
             tier_floor: *tier_floor,
-            migrated_roots: BTreeSet::new(),
             genesis_recovery_dismissed: recovery.dismissed(),
             recovery_redundancy_established: false,
             tier_floor_events: BTreeMap::from([(hash, (*tier_floor, BTreeSet::new()))]),
@@ -264,16 +279,12 @@ pub(super) fn fold_entry_state(
         state.seqs.insert(signer, entry.seq);
         return EntryFold::Ready(state);
     }
-    if context.vetoed_widens.contains(&hash)
-        && op_is_delayable_widen(&state, &entry.op, &participants)
-    {
+    if context.vetoed_widens.contains(&hash) && op_is_delayable_widen(&state, &entry.op) {
         state.pending_widens.remove(&hash);
         state.seqs.insert(signer, entry.seq);
         return EntryFold::Ready(state);
     }
-    if let Some(pending_widen) =
-        pending_widen_for_entry(&state, entry, hash, &participants, context)
-    {
+    if let Some(pending_widen) = pending_widen_for_entry(&state, entry, hash, context) {
         let mut eventual_state = state.clone();
         apply_op(&mut eventual_state, &entry.op, hash, true, &signer);
         if !state_has_authority_consent(&eventual_state, context) {
@@ -294,7 +305,7 @@ pub(super) fn fold_entry_state(
         return EntryFold::Ready(state);
     }
     let applied_delayed_widen =
-        context.enforce_seen_time_delay && op_is_delayable_widen(&state, &entry.op, &participants);
+        context.enforce_seen_time_delay && op_is_delayable_widen(&state, &entry.op);
     apply_op(&mut state, &entry.op, hash, applied_delayed_widen, &signer);
     if !state_has_authority_consent(&state, context) {
         return EntryFold::Invalid(AuthorityFoldIssue::MissingAuthorityConsent(hash));
@@ -406,10 +417,9 @@ fn pending_widen_for_entry(
     state: &FoldState,
     entry: &AuthorityLogEntry,
     hash: AuthorityEntryHash,
-    participants: &BTreeSet<AuthorityKey>,
     context: FoldContext<'_>,
 ) -> Option<AuthorityPendingWiden> {
-    if !context.enforce_seen_time_delay || !op_is_delayable_widen(state, &entry.op, participants) {
+    if !context.enforce_seen_time_delay || !op_is_delayable_widen(state, &entry.op) {
         return None;
     }
 
@@ -430,28 +440,10 @@ fn pending_widen_for_entry(
     })
 }
 
-fn op_has_instant_widen_authority(
-    state: &FoldState,
-    _op: &AuthorityOp,
-    participants: &BTreeSet<AuthorityKey>,
-) -> bool {
-    participants.iter().any(|key| {
-        state.roster.get(key).is_some_and(|device| {
-            folded_device_can_authority_consent(device)
-                && device.tier == AuthorityTier::Hardware
-                && !state.migrated_roots.contains(key)
-        })
-    })
-}
-
-fn op_is_delayable_widen(
-    state: &FoldState,
-    op: &AuthorityOp,
-    participants: &BTreeSet<AuthorityKey>,
-) -> bool {
+fn op_is_delayable_widen(state: &FoldState, op: &AuthorityOp) -> bool {
+    // A device's assurance tier is not a widen credential. In particular,
+    // Hardware must not bypass the local pending window for legacy device ops.
     op_can_be_pending_widen(state, op)
-        && (matches!(op, AuthorityOp::SetTierFloor { .. })
-            || !op_has_instant_widen_authority(state, op, participants))
 }
 
 /// Whether `op` still folds while an UNRELATED widen is pending.

@@ -95,6 +95,8 @@ side_tables! {
     PREFILTER_SKIP: VaultMeta b"dreamer:prefilter:skip:v1:" Named;
     /// One emitted proactivity digest, keyed by its content-derived id. Key: hash32.
     DREAMER_PROACTIVITY_DIGEST: VaultMeta b"dreamer:proactivity:digest:v1:" LegacyJson;
+    /// Time (u64 BE) of the last digest that delivered judge asks to one recipient. Key: id16.
+    DREAMER_PROACTIVITY_JUDGE_ASKS: VaultMeta b"dreamer:proactivity:judge_asks:v1:" Raw;
     /// Rolling proactivity-digest emission state (last_emitted timestamp). Key: ().
     DREAMER_PROACTIVITY_STATE: VaultMeta b"dreamer:proactivity:state:v1" LegacyJson;
     /// Owner approval/decline record for a representation proposal review. Key: id16.

@@ -135,6 +135,8 @@ mod dials;
 mod gate;
 mod goal_axes;
 mod job;
+mod labels;
+pub(crate) mod policy;
 mod selection;
 mod tier;
 
@@ -159,6 +161,11 @@ pub use self::job::{
     PROVENANCE_OPTIMIZE_OF_VERSION_KEY, PROVENANCE_OPTIMIZE_RATIONALE_KEY,
     PROVENANCE_OPTIMIZE_RECEIPTS_KEY, SKILL_OPTIMIZE_BIRTH_PATH, SkillOptimizeOutcome,
     run_skill_optimize, run_skill_optimize_as, run_skill_optimize_for_resident,
+};
+pub(crate) use self::labels::take_digest_asks_in_txn;
+pub use self::labels::{
+    JudgeAsk, JudgeAskReason, JudgeLabel, ask_judge_disagreement, ask_judge_uncertainty,
+    judge_label_anchor, record_judge_pick, set_judge_digest_minutes,
 };
 pub use self::selection::{
     SkillOptimizeCandidate, optimize_candidates, optimize_candidates_for_resident,

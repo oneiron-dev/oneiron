@@ -15,6 +15,9 @@ const PRESENTATION: SideTable<(), ProactivityPresentation, LegacyJson> =
     SideTable::new(&side_table::DREAMER_PROACTIVITY_PRESENTATION);
 const POLICY_CONFIRMED: SideTable<EntityId, [u8; 32], side_table::Raw> =
     SideTable::new(&side_table::DREAMER_PROACTIVITY_CONFIRMED);
+/// Per-recipient time of the last digest that delivered judge asks.
+const JUDGE_ASK_MARK: SideTable<EntityId, u64, side_table::Raw> =
+    SideTable::new(&side_table::DREAMER_PROACTIVITY_JUDGE_ASKS);
 /// Generic proposed claim written through the existing gated agent memory
 /// verb. It changes NO settings until the owner confirms its exact revision.
 pub const PROACTIVITY_POLICY_REQUEST_PREDICATE: &str = "dreamer.proactivity.policy_request";
@@ -109,8 +112,13 @@ pub struct DigestProposal {
 pub struct ProactivityDigest {
     pub id: [u8; 32],
     pub created_at: u64,
+    /// The authenticated reader the judge asks are addressed to; `None` for
+    /// the ownerless timer projection, which carries no asks.
+    #[serde(with = "crate::serialize::entity_ref::optional")]
+    pub recipient: Option<EntityId>,
     pub urgent: bool,
     pub groups: BTreeMap<String, Vec<DigestProposal>>,
+    pub judge_asks: Vec<crate::skill_optimize::JudgeAsk>,
     pub rendered: String,
     pub voice_style: String,
 }
@@ -223,6 +231,8 @@ impl Vault {
 
     /// The deadline source calls this on a timer wake. No owner credential is
     /// minted by the background job: this is a projection, not a policy edit.
+    /// Judge asks stay pending here; they reach only their responsible
+    /// human's authenticated digest read.
     pub fn emit_due_proactivity_digest(
         &self,
         now: u64,
@@ -278,6 +288,15 @@ impl Vault {
                 .last_regular
                 .map(|last| last.saturating_add(cadence.period_secs));
             let due = next.is_none_or(|next| now >= next);
+            // Judge asks spend one human's funded minutes, so each recipient
+            // keeps its own mark on the shared vault cadence: one person's
+            // digest never consumes another's.
+            let recipient = owner.map(crate::consent::AuthenticatedOwner::actor);
+            let asks_due = match &recipient {
+                Some(actor) => load_ask_mark(self, &*txn, actor)?
+                    .is_none_or(|last| now >= last.saturating_add(cadence.period_secs)),
+                None => false,
+            };
             let breakthrough = if let (Some(wake), Some(next), Some(owner)) = (urgent, next, owner)
             {
                 if cadence.urgent_breakthrough
@@ -303,12 +322,12 @@ impl Vault {
             } else {
                 false
             };
-            if !due && !breakthrough {
+            if !due && !breakthrough && !asks_due {
                 return Ok(None);
             }
             let mut groups: BTreeMap<String, Vec<DigestProposal>> = BTreeMap::new();
             for (group, proposal) in pending_proposals(self, txn, authority, &state, &cadence)? {
-                if !due && !presentation.urgent_groups.contains(&group) {
+                if !due && (!breakthrough || !presentation.urgent_groups.contains(&group)) {
                     continue;
                 }
                 let display_group = presentation
@@ -318,7 +337,13 @@ impl Vault {
                     .unwrap_or(group);
                 groups.entry(display_group).or_default().push(proposal);
             }
-            if groups.is_empty() {
+            let judge_asks = match recipient {
+                Some(actor) if asks_due => {
+                    crate::skill_optimize::take_digest_asks_in_txn(self, txn, actor, now)?
+                }
+                _ => Vec::new(),
+            };
+            if groups.is_empty() && judge_asks.is_empty() {
                 return Ok(None);
             }
             let mut rendered = String::new();
@@ -337,10 +362,12 @@ impl Vault {
                         .insert(proposal.claim_ref.to_hex(), proposal.revision);
                 }
             }
-            let is_urgent = !due && breakthrough;
+            let is_urgent = !due && breakthrough && !groups.is_empty();
             let identity = serde_json::to_vec(&(
                 now,
+                recipient,
                 &groups,
+                &judge_asks,
                 is_urgent,
                 &rendered,
                 &presentation.voice_style,
@@ -349,17 +376,26 @@ impl Vault {
             let digest = ProactivityDigest {
                 id: *blake3::hash(&identity).as_bytes(),
                 created_at: now,
+                recipient,
                 urgent: is_urgent,
                 groups,
+                judge_asks,
                 rendered,
                 voice_style: presentation.voice_style,
             };
             DIGEST.put(&self.store, txn, &digest.id, &digest)?;
-            if due {
-                state.last_regular = Some(now);
+            // The vault state and board pointer follow the shared proposals;
+            // an asks-only digest is the recipient's and moves only its mark.
+            if !digest.groups.is_empty() {
+                if due {
+                    state.last_regular = Some(now);
+                }
+                state.last_digest_id = Some(digest.id);
+                STATE.put(&self.store, txn, &(), &state)?;
             }
-            state.last_digest_id = Some(digest.id);
-            STATE.put(&self.store, txn, &(), &state)?;
+            if let Some(actor) = recipient.filter(|_| !digest.judge_asks.is_empty()) {
+                JUDGE_ASK_MARK.put(&self.store, txn, &actor, &now)?;
+            }
             Ok(Some(digest))
         })
     }
@@ -402,7 +438,9 @@ impl Vault {
             .map(|digest| {
                 let identity = serde_json::to_vec(&(
                     digest.created_at,
+                    digest.recipient,
                     &digest.groups,
+                    &digest.judge_asks,
                     digest.urgent,
                     &digest.rendered,
                     &digest.voice_style,
@@ -433,6 +471,14 @@ fn load_cadence(vault: &Vault, txn: &heed::RoTxn<'_>) -> Result<ProactivityCaden
 }
 fn load_state(vault: &Vault, txn: &heed::RoTxn<'_>) -> Result<DigestState> {
     Ok(STATE.get(&vault.store, txn, &())?.unwrap_or_default())
+}
+fn load_ask_mark(vault: &Vault, txn: &heed::RoTxn<'_>, actor: &EntityId) -> Result<Option<u64>> {
+    JUDGE_ASK_MARK
+        .get(&vault.store, txn, actor)
+        .map_err(|error| match error {
+            crate::Error::Store(crate::error::StoreError::SideTableRow { .. }) => invalid(),
+            other => other,
+        })
 }
 fn load_presentation(vault: &Vault, txn: &heed::RoTxn<'_>) -> Result<ProactivityPresentation> {
     let row: ProactivityPresentation = match PRESENTATION.get(&vault.store, txn, &())? {

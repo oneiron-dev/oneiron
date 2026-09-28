@@ -114,6 +114,8 @@ side_tables! {
     /// Owner-set posterior-lower-bound floor below which a skill's reliability triggers a quarantine
     /// proposal. Key: ().
     SKILL_RELIABILITY_FLOOR: VaultMeta b"settings:skill:v1:reliability_floor" Raw;
+    /// An owner's funded judge-ask minutes (u32be). Key: id16 (owner).
+    SKILL_OPTIMIZE_JUDGE_MINUTES: VaultMeta b"settings:skill_optimize:judge_minutes:v1:" Raw;
     /// Accepted edits per Dreamer cycle. Key: ().
     SKILL_EDIT_CYCLE_CAP: VaultMeta b"settings:skill_optimize:v1:cycle_cap" Raw;
     /// Minimum attributed outcomes before optimization. Key: ().
@@ -254,6 +256,10 @@ side_tables! {
     /// Fence on a displaced candidate judge revision: its replacement revision (UTF-8). Key: string
     /// (the displaced revision).
     SKILL_OPTIMIZE_DISPLACED_REVISION: VaultMeta b"skill_optimize:displaced_revision:v1:" Raw;
+    /// One proposed judge-calibration A/B ask (JSON). Key: bytes32 (ask id).
+    SKILL_OPTIMIZE_JUDGE_ASK: VaultMeta b"skill_optimize:judge_ask:v1:" LegacyJson;
+    /// One human pick over a delivered ask, the label anchor (JSON). Key: bytes32 (ask id).
+    SKILL_OPTIMIZE_JUDGE_LABEL: VaultMeta b"skill_optimize:judge_label:v1:" LegacyJson;
     /// Marker (MessagePack map naming the displaced and replacement judge revisions) that one
     /// outcome row's weight is superseded. Key: the outcome row's full stored key, table prefix
     /// included.
@@ -378,6 +384,8 @@ side_tables! {
     VOICE_OWNER_REF_OWNER_INDEX: VaultMeta b"voice:owner_ref_owner:v1:" Raw;
     /// Voice identity over its reference packs. Key: string (voice id).
     VOICE_REF_IDENTITY: VaultMeta b"voice:ref_identity:v1:" Named;
+    /// Voice identity incarnation (16 random bytes), fresh at every birth. Key: string (voice id).
+    VOICE_REF_INCARNATION: VaultMeta b"voice:ref_incarnation:v1:" Raw;
     /// Cached voice render-target pointer. Key: string (voice id) "\0" string (target).
     VOICE_REF_TARGET: VaultMeta b"voice:ref_target:v1:" Named;
     /// Voice consent decision event. Key: id16 + digest16.

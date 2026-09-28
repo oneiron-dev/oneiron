@@ -244,7 +244,6 @@ pub(super) struct FoldState {
     pub(super) vault_id: AuthorityVaultId,
     pub(super) roster: BTreeMap<AuthorityKey, FoldedDevice>,
     pub(super) tier_floor: AuthorityTier,
-    pub(super) migrated_roots: BTreeSet<AuthorityKey>,
     pub(super) genesis_recovery_dismissed: bool,
     pub(super) recovery_redundancy_established: bool,
     pub(super) tier_floor_events:
@@ -381,9 +380,6 @@ pub(super) fn merge_states(left: &FoldState, right: &FoldState) -> FoldState {
     debug_assert_eq!(left.vault_id, right.vault_id);
     let mut merged = left.clone();
     merged.slips.merge_from(&right.slips);
-    merged
-        .migrated_roots
-        .extend(right.migrated_roots.iter().cloned());
     merged.genesis_recovery_dismissed |= right.genesis_recovery_dismissed;
     merged.recovery_redundancy_established |= right.recovery_redundancy_established;
     merged

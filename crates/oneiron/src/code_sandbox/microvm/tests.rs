@@ -266,9 +266,7 @@ fn code_sandbox_microvm_overlay_small_multifile_parity() {
         .into_iter()
         .map(|write| match write {
             SandboxProposalWrite::FileWrite(write) => (write.path.as_str().to_owned(), write.bytes),
-            SandboxProposalWrite::ClaimCandidate(_) | SandboxProposalWrite::FileEdit(_) => {
-                unreachable!("file writes only")
-            }
+            _ => unreachable!("file writes only"),
         })
         .collect::<Vec<_>>();
     collected.sort();
@@ -419,4 +417,265 @@ fn code_sandbox_microvm_budget_must_bound_every_axis() {
     assert!(!ExecutionBudget::new(0, 128, 32).is_bounded());
     assert!(!ExecutionBudget::new(5, 0, 32).is_bounded());
     assert!(!ExecutionBudget::new(5, 128, 0).is_bounded());
+}
+
+#[test]
+fn code_sandbox_microvm_whiteouts_and_opaque_directories_are_typed() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    fs::create_dir(dir.path().join("renamed")).expect("nested dir");
+    fs::write(dir.path().join(".wh.old.txt"), []).expect("OCI whiteout");
+    fs::write(dir.path().join("new.txt"), b"moved bytes").expect("rename destination");
+    fs::write(dir.path().join("renamed/.wh..wh..opq"), []).expect("opaque marker");
+    fs::write(dir.path().join("renamed/kept.txt"), b"new").expect("overlay file");
+    let writes = collect_overlay_writes(dir.path(), SandboxMount::Workspace).expect("delta");
+    assert_eq!(writes.len(), 4);
+    assert!(writes.iter().any(|write| matches!(write,
+        SandboxProposalWrite::FileDelete(delete) if delete.path.as_str() == "/mnt/workspace/old.txt")));
+    assert!(writes.iter().any(|write| matches!(write,
+        SandboxProposalWrite::DirectoryOpaque(opaque) if opaque.path.as_str() == "/mnt/workspace/renamed")));
+    assert!(writes.iter().any(|write| matches!(write,
+        SandboxProposalWrite::FileWrite(file) if file.path.as_str() == "/mnt/workspace/new.txt" && file.bytes == b"moved bytes")));
+    assert!(!writes.iter().any(|write| matches!(write,
+        SandboxProposalWrite::FileWrite(file) if file.path.as_str().contains(".wh."))));
+}
+
+#[test]
+fn code_sandbox_microvm_malformed_whiteouts_fail_closed() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    fs::write(dir.path().join("ordinary.txt"), b"valid").expect("valid write");
+    fs::write(dir.path().join(".wh.old"), b"not a marker").expect("invalid marker");
+    assert_eq!(
+        collect_overlay_writes(dir.path(), SandboxMount::Workspace)
+            .expect_err("invalid whiteout must abort entire delta")
+            .kind(),
+        ErrorKind::MicroVmOverlayError
+    );
+}
+
+#[test]
+fn code_sandbox_microvm_last_clone_releases_scratch_on_success_and_run_error() {
+    struct UnusedResolver;
+    impl CredentialResolver for UnusedResolver {
+        fn resolve_for(
+            &self,
+            _: &SandboxCredentialHandle,
+            _: &CredentialDestination,
+        ) -> Result<Vec<u8>> {
+            unreachable!("no credential read")
+        }
+    }
+    let dir = tempfile::tempdir().expect("tempdir");
+    let scratch = dir.path().join("scratch");
+    for success in [true, false] {
+        let backend: Box<dyn MicroVmBackend> = Box::new(DevProcessBackend::new(&scratch));
+        let mut adapter = MicroVmSandboxAdapter::new(
+            SandboxGuestTier::Foreign,
+            test_mounts(dir.path()),
+            backend,
+            Arc::new(UnusedResolver),
+            CredentialAllowlist::new(),
+        )
+        .expect("adapter");
+        let clone = adapter.vm().clone();
+        let vm_root = clone
+            .overlay_upper()
+            .parent()
+            .expect("VM directory")
+            .to_path_buf();
+        let image = GuestImage::new(
+            dir.path().join("kernel"),
+            dir.path().join("rootfs"),
+            dir.path().join("component"),
+        );
+        if success {
+            for path in [&image.kernel, &image.rootfs, &image.component] {
+                fs::write(path, b"image").expect("artifact");
+            }
+            fs::write(clone.overlay_upper().join("output"), b"proposal").expect("staged write");
+            assert_eq!(
+                adapter
+                    .run(&image, ExecutionBudget::new(5, 128, 32))
+                    .expect("run")
+                    .status,
+                0
+            );
+            assert_eq!(
+                adapter.collect_overlay_proposals().expect("collect").len(),
+                1
+            );
+        } else {
+            assert_eq!(
+                adapter
+                    .run(&image, ExecutionBudget::new(0, 128, 32))
+                    .expect_err("unbounded run refused")
+                    .kind(),
+                ErrorKind::MicroVmBackendError
+            );
+        }
+        drop(adapter);
+        assert!(vm_root.exists(), "a cloned handle still owns scratch");
+        drop(clone);
+        assert!(!vm_root.exists(), "the last handle must clean scratch");
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn code_sandbox_microvm_reaper_skips_live_and_removes_crashed_vm_scratch() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let scratch = dir.path().join("scratch");
+    let contract = SandboxBoundaryContract::for_tier(SandboxGuestTier::Foreign);
+    let handle = prepare_overlay_handle(
+        &scratch,
+        DEV_BACKEND_NAME,
+        &contract,
+        &test_mounts(dir.path()),
+    )
+    .expect("first VM");
+    let live = handle
+        .overlay_upper()
+        .parent()
+        .expect("VM root")
+        .to_path_buf();
+    let stale = scratch.join("1234567890abcdef1234567890abcdef");
+    fs::create_dir(&stale).expect("crashed VM fixture");
+    fs::write(stale.join("old"), b"stale bytes").expect("crashed VM output");
+    let unrelated = scratch.join("keep-me");
+    fs::create_dir(&unrelated).expect("other data");
+    let second = prepare_overlay_handle(
+        &scratch,
+        DEV_BACKEND_NAME,
+        &contract,
+        &test_mounts(dir.path()),
+    )
+    .expect("reap and prepare");
+    assert!(!stale.exists(), "orphan is reaped during next prepare");
+    assert!(live.exists(), "live VM must not be reaped");
+    assert!(
+        unrelated.exists(),
+        "unrelated directory must not be deleted"
+    );
+    drop(handle);
+    drop(second);
+    assert!(!live.exists());
+}
+
+#[cfg(unix)]
+#[test]
+fn code_sandbox_microvm_startup_reaper_cleans_crash_leftovers_without_new_vm() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let root = dir.path().join("scratch");
+    let contract = SandboxBoundaryContract::for_tier(SandboxGuestTier::Foreign);
+    let live = prepare_overlay_handle(&root, DEV_BACKEND_NAME, &contract, &test_mounts(dir.path()))
+        .expect("live VM");
+    let live_root = live
+        .overlay_upper()
+        .parent()
+        .expect("VM root")
+        .to_path_buf();
+    let stale = root.join("fedcba9876543210fedcba9876543210");
+    fs::create_dir(&stale).expect("crashed VM fixture");
+    fs::write(stale.join("old"), b"orphan").expect("crashed output");
+    reap_overlay_scratch(&root, DEV_BACKEND_NAME).expect("backend startup reaper");
+    assert!(!stale.exists());
+    assert!(live_root.exists());
+    drop(live);
+    assert!(!live_root.exists());
+}
+
+#[test]
+fn code_sandbox_microvm_opaque_marker_preserves_real_dot_opaque_file_in_both_orders() {
+    for marker_first in [false, true] {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let nested = dir.path().join("nested");
+        fs::create_dir(&nested).expect("nested");
+        let file = || fs::write(nested.join(".opaque"), b"actual edit").expect("file");
+        let marker = || fs::write(nested.join(".wh..wh..opq"), []).expect("marker");
+        if marker_first {
+            marker();
+            file();
+        } else {
+            file();
+            marker();
+        }
+        let deltas = collect_overlay_writes(dir.path(), SandboxMount::Workspace).expect("delta");
+        assert_eq!(deltas.len(), 2);
+        assert!(deltas.iter().any(|entry| matches!(entry,
+            SandboxProposalWrite::FileWrite(write) if write.path.as_str() == "/mnt/workspace/nested/.opaque" && write.bytes == b"actual edit")));
+        assert!(deltas.iter().any(|entry| matches!(entry,
+            SandboxProposalWrite::DirectoryOpaque(dir) if dir.path.as_str() == "/mnt/workspace/nested")));
+    }
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn code_sandbox_microvm_xattr_and_oci_opaque_markers_deduplicate_without_losing_file() {
+    use std::{ffi::CString, os::unix::ffi::OsStrExt};
+    let dir = tempfile::tempdir().expect("tempdir");
+    let nested = dir.path().join("nested");
+    fs::create_dir(&nested).expect("nested");
+    let path = CString::new(nested.as_os_str().as_bytes()).expect("path");
+    // SAFETY: both C strings and the one-byte value are valid for this call.
+    let result = unsafe {
+        libc::setxattr(
+            path.as_ptr(),
+            c"user.overlay.opaque".as_ptr(),
+            b"y".as_ptr().cast(),
+            1,
+            0,
+        )
+    };
+    assert_eq!(result, 0, "setxattr: {}", std::io::Error::last_os_error());
+    fs::write(nested.join(".wh..wh..opq"), []).expect("OCI marker");
+    fs::write(nested.join(".opaque"), b"actual edit").expect("file");
+    let deltas = collect_overlay_writes(dir.path(), SandboxMount::Workspace).expect("delta");
+    assert_eq!(deltas.len(), 2);
+    assert!(deltas.iter().any(|entry| matches!(entry,
+        SandboxProposalWrite::FileWrite(write) if write.path.as_str() == "/mnt/workspace/nested/.opaque" && write.bytes == b"actual edit")));
+    assert!(deltas.iter().any(|entry| matches!(entry,
+        SandboxProposalWrite::DirectoryOpaque(dir) if dir.path.as_str() == "/mnt/workspace/nested")));
+}
+
+#[cfg(unix)]
+#[test]
+fn code_sandbox_microvm_concurrent_last_drop_prepare_and_startup_reap() {
+    use std::sync::{Arc, Barrier};
+    let dir = tempfile::tempdir().expect("tempdir");
+    let root = dir.path().join("scratch");
+    let contract = SandboxBoundaryContract::for_tier(SandboxGuestTier::Foreign);
+    for _ in 0..32 {
+        let handle =
+            prepare_overlay_handle(&root, DEV_BACKEND_NAME, &contract, &test_mounts(dir.path()))
+                .expect("live VM");
+        let old_root = handle
+            .overlay_upper()
+            .parent()
+            .expect("VM root")
+            .to_path_buf();
+        let barrier = Arc::new(Barrier::new(3));
+        std::thread::scope(|scope| {
+            let drop_barrier = barrier.clone();
+            scope.spawn(move || {
+                drop_barrier.wait();
+                drop(handle);
+            });
+            let reap_barrier = barrier.clone();
+            let root_ref = &root;
+            scope.spawn(move || {
+                reap_barrier.wait();
+                reap_overlay_scratch(root_ref, DEV_BACKEND_NAME)
+                    .expect("concurrent startup reaper");
+            });
+            barrier.wait();
+            let new_vm = prepare_overlay_handle(
+                &root,
+                DEV_BACKEND_NAME,
+                &contract,
+                &test_mounts(dir.path()),
+            )
+            .expect("concurrent prepare");
+            assert!(new_vm.overlay_upper().is_dir());
+        });
+        assert!(!old_root.exists());
+    }
 }
