@@ -64,6 +64,13 @@ impl PolicyManifestResolution {
             .map(|policy| policy.limit_for(holder))
     }
 
+    /// Shipped manifest rows or the same bootstrap default if no ask row
+    /// exists; an invalid loaded manifest never silently supplies authority.
+    pub(crate) fn ask_operational_policy(&self) -> Option<crate::gate::AskOperationalPolicy> {
+        (!self.diagnostics.loaded_manifest_forces_fail_closed())
+            .then(|| self.ask_policy.clone().unwrap_or_default())
+    }
+
     /// Resolve the required vault ceiling and every matching actor/scope row.
     pub(crate) fn retry_budget_for(
         &self,
