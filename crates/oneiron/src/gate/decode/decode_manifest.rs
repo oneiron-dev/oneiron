@@ -145,6 +145,8 @@ pub(in crate::gate) struct DecodedPolicyManifest {
     pub(in crate::gate) unknown_axis_seen: bool,
 }
 
+// One decode per manifest row, mirroring default_policy_manifest: splitting it would scatter one manifest.
+#[allow(clippy::too_many_lines)]
 pub(in crate::gate) fn decode_policy_manifest(data: &[u8]) -> Option<DecodedPolicyManifest> {
     let mut cursor = Cursor::new(data);
     let value = rmpv::decode::read_value(&mut cursor).ok()?;
