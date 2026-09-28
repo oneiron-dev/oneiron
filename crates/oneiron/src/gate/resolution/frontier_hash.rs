@@ -17,6 +17,7 @@ use crate::gate::ceiling::{
     PolicyOwnerPolicyRow, PolicySensitivity, SourceTrustCeiling, SourceTrustRow,
 };
 
+// One hash step per manifest row, in manifest order: splitting it would scatter one frontier.
 #[allow(clippy::too_many_lines)]
 pub(super) fn hash_policy_frontier_v0(
     hasher: &mut Sha256,
@@ -157,6 +158,26 @@ pub(super) fn hash_policy_frontier_v0(
                 },
             );
         }
+    }
+    // An explicit default and an omitted conversion row are equivalent. A
+    // narrowed conversion policy changes the frontier before standing grants
+    // bound to the old policy may be used again.
+    if resolution.project_conversion != Default::default() {
+        hash_str(hasher, "project_conversion");
+        hash_str(
+            hasher,
+            resolution.project_conversion.leader_fallback.as_str(),
+        );
+        hash_str(
+            hasher,
+            resolution.project_conversion.roster_selection.as_str(),
+        );
+        hash_str(
+            hasher,
+            resolution.project_conversion.task_holder_fallback.as_str(),
+        );
+        hash_u64(hasher, resolution.project_conversion.max_tasks as u64);
+        hash_bool(hasher, resolution.project_conversion.allow_holder_override);
     }
     // Default rows and owner-authored overrides both affect admission and its
     // consent frontier. Absent policy keeps the old frontier unchanged.

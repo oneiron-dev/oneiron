@@ -1058,6 +1058,7 @@ async fn roster_room_applies_each_members_disclosure_dial_and_owner_presence() {
         project_id: project.to_hex(),
         member_ids: roster.roster.clone(),
         claims_scope_ref: roster.claims_scope_ref.clone(),
+        origin: None,
     };
     // A public batch can submit the exact derived room beside its PROJECT
     // edit; the owner-signed birth above admitted the PROJECT itself.

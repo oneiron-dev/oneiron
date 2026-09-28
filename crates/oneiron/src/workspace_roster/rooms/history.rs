@@ -5,6 +5,7 @@ use std::ops::Bound;
 
 const HISTORY: &[u8] = b"rooms.history.v1/";
 const HEADS: &[u8] = b"rooms.heads.v1/";
+pub(in crate::workspace_roster) const THREAD_CHILDREN: &[u8] = b"rooms.thread_children.v1/";
 const RESPONSE: &[u8] = b"rooms.response.v1/";
 const PAGE_LIMIT: usize = 256;
 
@@ -23,12 +24,29 @@ pub(super) fn index_turn(store: &Store, txn: &mut heed::RwTxn<'_>, turn: &RoomTu
     store
         .vault_meta
         .put(txn, &ordered_key(HISTORY, room, turn.at, id), id.as_bytes())?;
-    if turn.thread_of.is_none() {
+    if let Some(parent) = &turn.thread_of {
+        let parent = EntityId::from_hex(parent)?;
+        let key = [
+            THREAD_CHILDREN,
+            room.as_bytes(),
+            parent.as_bytes(),
+            id.as_bytes(),
+        ]
+        .concat();
+        store.vault_meta.put(txn, &key, id.as_bytes())?;
+    } else {
         store
             .vault_meta
             .put(txn, &ordered_key(HEADS, room, turn.at, id), id.as_bytes())?;
     }
     Ok(())
+}
+fn turn_in_raw(store: &Store, txn: &heed::RoTxn<'_>, turn: EntityId) -> Result<RoomTurn> {
+    let raw = store
+        .vault_meta
+        .get(txn, &key(TURNS, turn))?
+        .ok_or(Error::CorruptedIndex("room turn"))?;
+    decode(&raw)
 }
 fn stored_id(raw: &[u8]) -> Result<EntityId> {
     EntityId::from_bytes(
@@ -54,6 +72,20 @@ pub(in crate::workspace_roster) fn delete_room_metadata(
         }
         for (row_key, raw) in page {
             let turn = stored_id(&raw)?;
+            let stored = turn_in_raw(store, txn, turn)?;
+            if let Some(parent) = stored.thread_of {
+                let parent = EntityId::from_hex(&parent)?;
+                store.vault_meta.delete(
+                    txn,
+                    &[
+                        THREAD_CHILDREN,
+                        room.as_bytes(),
+                        parent.as_bytes(),
+                        turn.as_bytes(),
+                    ]
+                    .concat(),
+                )?;
+            }
             for prefix in [TURNS, CLAIMS, RESPONSE] {
                 store.vault_meta.delete(txn, &key(prefix, turn))?;
             }
@@ -79,6 +111,33 @@ pub(in crate::workspace_roster) fn delete_room_metadata(
     Ok(())
 }
 impl Memory<'_> {
+    /// Bounded first trunk page: the original thread is a pointer card,
+    /// followed by trunk turns. Thread replies never consume trunk slots.
+    pub fn room_trunk(&self, room: EntityId) -> MemoryResult<Vec<RoomTrunkItem>> {
+        let txn = self.vault().store.env.read_txn().map_err(Error::from)?;
+        let project_room = require_member(self.vault(), &txn, room, self.actor())?;
+        let origin = project_room.origin;
+        let mut entries = Vec::with_capacity(PAGE_LIMIT + usize::from(origin.is_some()));
+        if let Some(origin) = origin {
+            entries.push(RoomTrunkItem::Origin(origin));
+        }
+        for row in self
+            .vault()
+            .store
+            .vault_meta
+            .prefix_iter(&txn, &key(HEADS, room))?
+            .take(PAGE_LIMIT)
+        {
+            let (_, raw) = row?;
+            entries.push(RoomTrunkItem::Turn(turn_in(
+                self.vault(),
+                &txn,
+                stored_id(&raw)?,
+            )?));
+        }
+        Ok(entries)
+    }
+
     /// First bounded page in chronological order. Continue with the last turn's
     /// id through `rooms_messages_page`; room membership is rechecked per page.
     pub fn rooms_messages(&self, room: EntityId) -> MemoryResult<Vec<RoomTurn>> {
