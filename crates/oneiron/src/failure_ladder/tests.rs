@@ -18,6 +18,7 @@ use crate::temporal::TimeRange;
 use crate::test_util::entity as test_id;
 
 mod custom_review;
+mod drill;
 mod failure_integrity;
 
 const LEASE_OWNER: &str = "failure-ladder-worker";

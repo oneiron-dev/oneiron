@@ -39,6 +39,9 @@ pub struct AuthenticatedOwner {
     actor: EntityId,
     principal_ref: String,
     decision_id: GateDecisionId,
+    /// The vault that authenticated this principal. A proof from a different
+    /// vault must never authorize reading or acting on this vault's records.
+    vault_path: std::path::PathBuf,
 }
 
 impl AuthenticatedOwner {
@@ -67,6 +70,11 @@ impl AuthenticatedOwner {
     }
 
     pub(crate) fn revalidate_in_txn(&self, vault: &Vault, txn: &heed::RoTxn<'_>) -> Result<()> {
+        if self.vault_path.as_path() != vault.store.env.path() {
+            return Err(Error::Gate(GateError::ConsentOwnerNotAuthenticated(
+                "owner proof belongs to another vault",
+            )));
+        }
         let human = vault
             .store
             .entities
@@ -184,6 +192,7 @@ impl Vault {
             actor,
             principal_ref,
             decision_id,
+            vault_path: self.store.env.path().to_path_buf(),
         })
     }
 
