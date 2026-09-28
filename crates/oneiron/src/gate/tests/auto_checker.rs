@@ -516,9 +516,14 @@ fn integrated_no_checker_frontier(posture: &str) -> [u8; 32] {
     bytes.push(1);
     text(&mut bytes, "normal"); // default sensitivity
     bytes.push(0); // unknown axis
-    for _ in 0..5 {
-        len(&mut bytes, 0); // rules, actor ceilings, delegations, revokes, scoped grants
+    for _ in 0..4 {
+        len(&mut bytes, 0); // rules, actor ceilings, delegations, revokes
     }
+    text(&mut bytes, "weave_report_policy");
+    bytes.push(0); // absent, not an explicitly empty policy table
+    text(&mut bytes, "nested_narrowing");
+    len(&mut bytes, 0); // no weave rows
+    len(&mut bytes, 0); // scoped grants
     bytes.extend_from_slice(&[0; 2]); // owner-policy enabled / rows dropped
     len(&mut bytes, 0); // owner-policy rows
     bytes.extend_from_slice(&[0; 3]); // document, output contract, patterns dropped
@@ -1499,5 +1504,34 @@ fn rate_and_streak_are_soft_inputs_to_the_existing_verdict() -> Result<()> {
             ClaimApprovalStatus::Auto
         );
     }
+    Ok(())
+}
+
+#[test]
+fn authored_weave_policy_and_precedence_move_gate_frontier() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    let id = test_id(0x22);
+    let base = combined_manifest(None, None);
+    put_policy_manifest_bytes(&vault, id, &base)?;
+    let original = resolve(&vault)?.read_frontier_hash()?;
+    let mut rows = base;
+    rewrite_policy_manifest_entries(&mut rows, |entries| {
+        entries.push((
+            Value::from(crate::gate::weave_policy::KEY),
+            crate::gate::weave_policy::default_value(),
+        ));
+    });
+    put_policy_manifest_bytes(&vault, id, &rows)?;
+    let changed_rows = resolve(&vault)?.read_frontier_hash()?;
+    assert_ne!(original, changed_rows);
+    rewrite_policy_manifest_entries(&mut rows, |entries| {
+        entries.push((
+            Value::from(crate::gate::weave_policy::PRECEDENCE_KEY),
+            Value::from("holder_required"),
+        ));
+    });
+    put_policy_manifest_bytes(&vault, id, &rows)?;
+    let changed_precedence = resolve(&vault)?.read_frontier_hash()?;
+    assert_ne!(changed_rows, changed_precedence);
     Ok(())
 }

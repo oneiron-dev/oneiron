@@ -741,6 +741,8 @@ pub(crate) fn default_policy_manifest() -> Vec<u8> {
             Value::from(POLICY_OWNER_POLICY_ROWS_KEY),
             Value::Array(Vec::new()),
         ),
+        crate::gate::weave_policy::default_entry(),
+        crate::gate::weave_policy::default_precedence_entry(),
         // GATE-009: the restrictive STARTING values for the two class
         // tables ship here, in the vault-resident default manifest, rather
         // than as engine constants (DEC-0005; owner rule 2026-09-27). Both
