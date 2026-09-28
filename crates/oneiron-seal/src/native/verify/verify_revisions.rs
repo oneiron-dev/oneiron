@@ -20,14 +20,23 @@ fn changed(before: &Document, after: &Document) -> Option<BTreeSet<ObjectId>> {
     {
         return None;
     }
-    Some(
-        after
-            .objects
-            .iter()
-            .filter(|(id, obj)| before.objects.get(id) != Some(obj))
-            .map(|(id, _)| *id)
-            .collect(),
-    )
+    let mut out = BTreeSet::new();
+    for (id, old) in &before.objects {
+        let current = after.objects.get(id)?;
+        // A redefinition with identical effective value is still a write.
+        if current != old
+            || format!("{:?}", before.reference_table.get(id.0))
+                != format!("{:?}", after.reference_table.get(id.0))
+        {
+            out.insert(*id);
+        }
+    }
+    for id in after.objects.keys() {
+        if !before.objects.contains_key(id) {
+            out.insert(*id);
+        }
+    }
+    Some(out)
 }
 /// Only the section's actual native xref STREAM is infrastructure. A new
 /// object declaring `/Type /XRef` elsewhere is still an unknown change.
@@ -310,13 +319,23 @@ pub(super) fn classify(
     bytes: &[u8],
     signatures: &[EnvelopeEvidence],
     ends: Option<&[usize]>,
+    facts: Option<&pdf::RevisionFacts>,
     limits: &SealResourceLimits,
 ) -> (Vec<RevisionReport>, Modifications, Vec<Anomaly>) {
     let Some(ends) = ends else {
         return (vec![], Modifications::NotRun, vec![]);
     };
+    let Some(facts) = facts else {
+        return (vec![], Modifications::NotRun, vec![]);
+    };
+    if facts.ends() != ends {
+        return (vec![], Modifications::NotRun, vec![]);
+    }
     let mut revisions = Vec::new();
     let mut anomalies = Vec::new();
+    if facts.has_duplicates() {
+        anomalies.push(Anomaly::DuplicateObjectNumber);
+    }
     let mut previous: Option<Document> = None;
     let mut first_signer = None;
     let mut modification = ModificationLevel::None;
@@ -369,13 +388,14 @@ pub(super) fn classify(
                 anomalies.push(Anomaly::RetypedObject);
             }
             if first_signer.is_some() {
-                let allowed = match kind {
-                    RevisionKind::Dss => dss_allowed(before, &doc, &ids),
-                    RevisionKind::DocumentTimestamp => signed.is_some_and(|s| {
-                        doc_timestamp_allowed(before, &doc, &ids, s.kind, &s.checks)
-                    }),
-                    _ => false,
-                };
+                let allowed = facts.accounts_for(index, &ids)
+                    && match kind {
+                        RevisionKind::Dss => dss_allowed(before, &doc, &ids),
+                        RevisionKind::DocumentTimestamp => signed.is_some_and(|s| {
+                            doc_timestamp_allowed(before, &doc, &ids, s.kind, &s.checks)
+                        }),
+                        _ => false,
+                    };
                 if allowed {
                     modification = ModificationLevel::LtaUpdates;
                 } else {

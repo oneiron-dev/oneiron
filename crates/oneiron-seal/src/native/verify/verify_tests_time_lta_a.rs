@@ -214,7 +214,10 @@ pub(crate) mod tests {
             &mut covered,
             AT_UNIX * 1000,
         );
-        assert!(got.is_none(), "bad ByteRange rejects the DocTimeStamp");
+        assert!(
+            got.trusted.is_none(),
+            "bad ByteRange rejects the DocTimeStamp"
+        );
         assert!(
             covered.is_empty(),
             "a rejected DocTimeStamp leaves its TSA chain out of the binding set"

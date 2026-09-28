@@ -49,6 +49,8 @@ pub enum VerifyFindingCode {
     CertificateBindingMismatch,
     CertificatePathInvalid,
     TimestampInvalid,
+    TrustRootUnavailable,
+    TrustCheckNotRun,
     ValidationMaterialInvalid,
     DocumentTimestampInvalid,
     ModificationNotAllowed,

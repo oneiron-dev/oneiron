@@ -8,7 +8,9 @@ use crate::api::{
 use crate::error::{InputInvalidCode, SealError};
 
 use super::super::{cms, pdf};
-use super::evidence_time::{archival_coverage, material_validation_time, signer_validation_time};
+use super::evidence_time::{
+    archival_coverage, material_validation_time, provisional_material_time, signer_validation_time,
+};
 use super::verify_dss_core::{EmbeddedCert, dss_revision_end, verify_dss};
 use super::verify_report_build::{classify_signature, signature_report};
 use super::verify_revisions;
@@ -168,6 +170,47 @@ pub(super) fn anchors(config: &SealConfig) -> Vec<pkix_chain::TrustAnchor> {
         .collect()
 }
 
+/// Retry only the reason for a failed DSS check: if fully parsed material
+/// validates with crypto-valid embedded chains treated as PROVISIONAL roots,
+/// root availability is NotRun. No provisional result grants trust or profile.
+fn classify_missing_material_root(
+    doc: &Document,
+    covered: &[EmbeddedCert],
+    at: u64,
+    max_stream_bytes: usize,
+    checks: &mut Checks,
+) {
+    let unresolved = checks.list.iter().any(|c| {
+        c.status == VerifyCheckStatus::NotRun
+            && matches!(
+                c.kind,
+                VerifyCheckKind::TimestampCertificatePath | VerifyCheckKind::CertificatePath
+            )
+    });
+    if !unresolved
+        || !checks.list.iter().any(|c| {
+            c.kind == VerifyCheckKind::ValidationMaterial && c.status == VerifyCheckStatus::Fail
+        })
+    {
+        return;
+    }
+    let provisional: Vec<_> = covered
+        .iter()
+        .filter_map(|c| EmbeddedCert::from_der(&c.der))
+        .collect();
+    let mut probe = Checks::new();
+    verify_dss(doc, &provisional, covered, at, max_stream_bytes, &mut probe);
+    if probe.passed(VerifyCheckKind::ValidationMaterial)
+        && let Some(check) = checks
+            .list
+            .iter_mut()
+            .find(|c| c.kind == VerifyCheckKind::ValidationMaterial)
+    {
+        check.status = VerifyCheckStatus::NotRun;
+        check.finding = Some(VerifyFindingCode::TrustRootUnavailable);
+    }
+}
+
 /// Full document verification and profile classification (§7.7).
 pub(crate) fn verify_document(
     bytes: &[u8],
@@ -264,6 +307,23 @@ pub(crate) fn verify_document(
         limits.max_input_bytes,
         &mut checks,
     );
+    let trust_pending = envelopes.iter().flat_map(|e| e.checks.iter()).any(|c| {
+        c.kind == VerifyCheckKind::TimestampCertificatePath && c.status == VerifyCheckStatus::NotRun
+    });
+    if trust_pending {
+        // Include the typed pending check solely as a reason for the probe.
+        checks.not_run(VerifyCheckKind::TimestampCertificatePath);
+        classify_missing_material_root(
+            &doc,
+            &covered,
+            provisional_material_time(&envelopes, dss_end, None, ctx.clock_ms / 1000),
+            limits.max_input_bytes,
+            &mut checks,
+        );
+        checks
+            .list
+            .retain(|c| c.kind != VerifyCheckKind::TimestampCertificatePath);
+    }
 
     // Stage 2: resolve TWO independent obligations for each signer. The
     // earliest eligible proof fixes signer validation time; a possibly newer
@@ -315,6 +375,27 @@ pub(crate) fn verify_document(
             limits.max_input_bytes,
             &mut material_checks,
         );
+        if envelopes[index].checks.iter().any(|c| {
+            c.kind == VerifyCheckKind::TimestampCertificatePath
+                && c.status == VerifyCheckStatus::NotRun
+        }) {
+            material_checks.not_run(VerifyCheckKind::TimestampCertificatePath);
+            classify_missing_material_root(
+                &doc,
+                &material,
+                provisional_material_time(
+                    &envelopes,
+                    dss_end,
+                    Some(&envelopes[index]),
+                    ctx.clock_ms / 1000,
+                ),
+                limits.max_input_bytes,
+                &mut material_checks,
+            );
+            material_checks
+                .list
+                .retain(|c| c.kind != VerifyCheckKind::TimestampCertificatePath);
+        }
         let dss_ok = material_checks.passed(VerifyCheckKind::ValidationMaterial);
         envelopes[index].checks.extend(material_checks.list);
         profiles.push(classify_signature(
@@ -328,8 +409,14 @@ pub(crate) fn verify_document(
 
     // Stage 3: classify raw revision changes against the private evidence,
     // then project each final envelope into the public report exactly once.
-    let (revisions, modifications, anomalies) =
-        verify_revisions::classify(bytes, &envelopes, revision_ends.as_deref(), limits);
+    let facts = pdf::analyze_revision_facts(bytes, limits).ok();
+    let (revisions, modifications, anomalies) = verify_revisions::classify(
+        bytes,
+        &envelopes,
+        revision_ends.as_deref(),
+        facts.as_ref(),
+        limits,
+    );
     match modifications {
         Modifications::Suspicious => checks.record(
             VerifyCheckKind::Modification,

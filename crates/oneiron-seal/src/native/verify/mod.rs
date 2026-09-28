@@ -7,6 +7,9 @@
 //! absent optional profile.
 
 mod evidence_time;
+#[cfg(test)]
+mod review_1842_tests;
+mod timestamp_evidence;
 mod verify_chain_gates;
 mod verify_dss_core;
 mod verify_evidence;
