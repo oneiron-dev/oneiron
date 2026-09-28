@@ -194,6 +194,17 @@ impl PolicyManifestResolution {
     }
 
     #[must_use]
+    pub(in crate::gate) fn linear_mirror(&self) -> crate::gate::LinearMirrorPolicy {
+        self.linear_mirror.unwrap_or_default()
+    }
+    pub(in crate::gate) fn linear_sync(&self) -> crate::gate::LinearSyncBudget {
+        self.linear_sync.unwrap_or_default()
+    }
+    pub(in crate::gate) fn wave_handoff(&self) -> crate::gate::WaveHandoffPolicy {
+        self.wave_handoff.unwrap_or_default()
+    }
+
+    #[must_use]
     pub(crate) fn judge_calibration_policy(
         &self,
     ) -> Option<crate::skill_optimize::policy::JudgeCalibrationPolicy> {

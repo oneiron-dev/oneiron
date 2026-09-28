@@ -378,6 +378,28 @@ pub(crate) fn resolve_policy_manifest(
                         resolution.voice_ref_limits.narrow(limits);
                     }
                 }
+                if let Some(row) = decoded.linear_mirror {
+                    resolution.linear_mirror = Some(
+                        resolution
+                            .linear_mirror
+                            .map_or(row, |old| old.restrict(row)),
+                    );
+                }
+                if let Some(row) = decoded.linear_sync {
+                    resolution.linear_sync =
+                        Some(resolution.linear_sync.map_or(row, |old| old.restrict(row)));
+                }
+                if let Some(row) = decoded.wave_handoff {
+                    resolution.wave_handoff =
+                        Some(resolution.wave_handoff.map_or(row, |old| old.restrict(row)));
+                }
+                if let Some(precedence) = decoded.operational_precedence {
+                    match resolution.operational_precedence {
+                        None => resolution.operational_precedence = Some(precedence),
+                        Some(existing) if existing == precedence => {}
+                        Some(_) => resolution.diagnostics.malformed_manifest_seen = true,
+                    }
+                }
                 if let Some(quota) = decoded.weave_correction_policy {
                     match &mut resolution.weave_correction_policy {
                         Some(existing) => existing.restrict(quota),
