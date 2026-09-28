@@ -29,13 +29,14 @@ use crate::gate::constants::{
     POLICY_OWNER_POLICY_DOCUMENT_KEY, POLICY_OWNER_POLICY_ENABLED_KEY,
     POLICY_OWNER_POLICY_OUTPUT_CONTRACT_KEY, POLICY_OWNER_POLICY_PATTERNS_KEY,
     POLICY_OWNER_POLICY_PRECEDENCE_KEY, POLICY_OWNER_POLICY_ROWS_KEY, POLICY_PACK_ID_KEY,
-    POLICY_PACK_VERSION_KEY, POLICY_PPTX_COMMENT_LIMITS_KEY, POLICY_PROJECT_CONVERSION_KEY,
-    POLICY_RETIRED_COMM_OPT_OUT_POSTURE_KEY, POLICY_RETIRED_PROPOSAL_CHECK_THRESHOLD_KEY,
-    POLICY_RULES_KEY, POLICY_SCHEMA_VERSION, POLICY_SCHEMA_VERSION_KEY, POLICY_SCOPED_GRANTS_KEY,
-    POLICY_SHEET_ANSWER_LIMITS_KEY, POLICY_SHEET_ANSWER_PRECEDENCE_KEY, POLICY_SIGNATURE_KEY,
-    POLICY_SIGNATURES_KEY, POLICY_SKILL_EDIT_GOAL_KEY, POLICY_SLIDE_REVIEW_KEY,
-    POLICY_SOURCE_TRUST_KEY, POLICY_SYNC_WORLD_CEILING_KEY, POLICY_SYNC_WORLD_DEFAULT_KEY,
-    POLICY_TEACHER_PROBE_KEY, POLICY_WAIT_POLICY_KEY, POLICY_WEAVE_CORRECTION_POLICY_KEY,
+    POLICY_PACK_VERSION_KEY, POLICY_PPTX_COMMENT_LIMITS_KEY, POLICY_PROJECT_COLLABORATION_KEY,
+    POLICY_PROJECT_CONVERSION_KEY, POLICY_RETIRED_COMM_OPT_OUT_POSTURE_KEY,
+    POLICY_RETIRED_PROPOSAL_CHECK_THRESHOLD_KEY, POLICY_RULES_KEY, POLICY_SCHEMA_VERSION,
+    POLICY_SCHEMA_VERSION_KEY, POLICY_SCOPED_GRANTS_KEY, POLICY_SHEET_ANSWER_LIMITS_KEY,
+    POLICY_SHEET_ANSWER_PRECEDENCE_KEY, POLICY_SIGNATURE_KEY, POLICY_SIGNATURES_KEY,
+    POLICY_SKILL_EDIT_GOAL_KEY, POLICY_SLIDE_REVIEW_KEY, POLICY_SOURCE_TRUST_KEY,
+    POLICY_SYNC_WORLD_CEILING_KEY, POLICY_SYNC_WORLD_DEFAULT_KEY, POLICY_TEACHER_PROBE_KEY,
+    POLICY_WAIT_POLICY_KEY, POLICY_WEAVE_CORRECTION_POLICY_KEY,
 };
 use crate::gate::docedit_resource::DoceditResourcePolicy;
 use crate::gate::grants::PolicyScopedGrant;
@@ -49,8 +50,8 @@ use crate::gate::policy_values::{PolicyValueRow, parse_policy_values};
 use crate::gate::project_conversion::{ProjectConversionPolicy, parse_project_conversion};
 use crate::gate::resolution::{
     AttributionLimits, ConnectorClassPrecedence, CredentialLifetimePolicy,
-    CredentialLifetimePrecedence, GateDecisionRetentionPolicy, ResidenceOperationBudgetRow,
-    TeacherProbeRow,
+    CredentialLifetimePrecedence, GateDecisionRetentionPolicy, ProjectCollaborationPolicy,
+    ResidenceOperationBudgetRow, TeacherProbeRow,
 };
 use crate::gate::retrieval_retention::{
     RETRIEVAL_RETENTION_ROWS_KEY, RetrievalRetentionRows, parse_retrieval_retention_rows,
@@ -107,6 +108,7 @@ pub(in crate::gate) struct DecodedPolicyManifest {
     pub(in crate::gate) project_depth_default: Option<u8>,
     pub(in crate::gate) project_depth_max: Option<u8>,
     pub(in crate::gate) native_mail_policy: Vec<crate::gate::mail_policy::MailPolicy>,
+    pub(in crate::gate) project_collaboration: Option<ProjectCollaborationPolicy>,
     /// The opaque host checker ref (ONE-1296), absent unless the manifest
     /// names one.
     pub(in crate::gate) auto_checker: Option<String>,
@@ -239,6 +241,7 @@ pub(in crate::gate) fn decode_policy_manifest(data: &[u8]) -> Option<DecodedPoli
                 | POLICY_SIGNATURES_KEY
                 | POLICY_ON_BUDGET_EXHAUSTED_KEY
                 | crate::gate::mail_policy::MANIFEST_KEY
+                | POLICY_PROJECT_COLLABORATION_KEY
                 | POLICY_AUTO_CHECKER_KEY
                 | POLICY_BUDGET_POLICY_KEY
                 | POLICY_CONNECTOR_ADMISSION_KEY
@@ -447,6 +450,11 @@ pub(in crate::gate) fn decode_policy_manifest(data: &[u8]) -> Option<DecodedPoli
             MapValue::Duplicate => return None,
             MapValue::Present(value) => crate::gate::mail_policy::decode_rows(value)?,
         };
+    let project_collaboration = match single_map_value(&entries, POLICY_PROJECT_COLLABORATION_KEY) {
+        MapValue::Missing => None,
+        MapValue::Duplicate => return None,
+        MapValue::Present(value) => Some(super::project_collaboration::parse(value)?),
+    };
     // ONE-1296: the checker ref is a SELECTOR the host resolves, so decode
     // asks only that it be one non-blank, bounded string. A duplicate row is
     // the same ambiguity `on_budget_exhausted` refuses, and a blank or
@@ -841,6 +849,7 @@ pub(in crate::gate) fn decode_policy_manifest(data: &[u8]) -> Option<DecodedPoli
         signatures,
         on_budget_exhausted,
         native_mail_policy,
+        project_collaboration,
         auto_checker,
         project_depth_default,
         project_depth_max,

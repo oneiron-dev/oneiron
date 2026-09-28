@@ -12,6 +12,16 @@ impl Memory<'_> {
     /// Returns at admission. This does not open a trap, lease a run, or wait.
     /// A question answer never stands in for an authenticated consent receipt.
     pub fn tasks_ask(&self, input: &TaskAskSpec) -> MemoryResult<TaskAskReceipt> {
+        self.tasks_ask_with_txn_effect(input, |_, _| Ok(()))
+    }
+
+    /// Compose a project arc projection into the same ask admission transaction.
+    /// A replay has already committed its effect and does not execute it twice.
+    pub(crate) fn tasks_ask_with_txn_effect(
+        &self,
+        input: &TaskAskSpec,
+        effect: impl FnOnce(&mut heed::RwTxn<'_>, EntityId) -> MemoryResult<()>,
+    ) -> MemoryResult<TaskAskReceipt> {
         if input.intent_key.trim().is_empty() || input.intent_key.len() > 256 {
             return Err(MemoryError::bad_request(
                 "ask intent key must contain 1..=256 bytes",
@@ -172,6 +182,7 @@ impl Memory<'_> {
                 }
             }
             let mut receipt = replay_receipt(group_ref, group, self.actor(), &digest)?;
+            effect(txn, group_ref)?;
             receipt.idempotent_replay = false;
             Ok(receipt)
         })

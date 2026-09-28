@@ -145,8 +145,8 @@ pub(crate) use self::project_conversion::{
 };
 pub(crate) use self::repair::{evaluate_repair_consent, repair_criticality};
 pub(crate) use self::resolution::{
-    GateDecisionRetentionPolicy, GateRetentionContext, PolicyManifestResolution,
-    ResidenceOperationBudgetLimits, ResidenceOperationBudgetPrecedence,
+    GateDecisionRetentionPolicy, GateRetentionContext, LeaderChatDefault, PolicyManifestResolution,
+    ProjectWidenAskFallback, ResidenceOperationBudgetLimits, ResidenceOperationBudgetPrecedence,
     ResidenceOperationBudgetRow, resolve_credential_lifetimes, resolve_gate_decision_retention,
     resolve_policy_manifest, resolve_project_depth_max, retention_edit_target,
 };

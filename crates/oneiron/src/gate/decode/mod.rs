@@ -7,6 +7,7 @@ mod decode_residence_operation_budgets;
 mod decode_trust_budget;
 mod experiment_selection;
 mod policy_scope_migration;
+mod project_collaboration;
 
 pub(super) use self::decode_manifest::{
     ConnectorClassRole, DecodedManifestCarrier, decode_manifest_carrier, decode_policy_manifest,

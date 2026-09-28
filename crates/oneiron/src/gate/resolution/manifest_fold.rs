@@ -295,6 +295,13 @@ pub(crate) fn resolve_policy_manifest(
                         Some(_) => resolution.diagnostics.malformed_manifest_seen = true,
                     }
                 }
+                if let Some(policy) = decoded.project_collaboration {
+                    resolution.project_collaboration = Some(
+                        resolution
+                            .project_collaboration
+                            .map_or(policy, |old| old.restrict(policy)),
+                    );
+                }
                 // One checker per vault (ONE-1296), folded exactly like the
                 // budget policy above: the first value wins, a second manifest
                 // stating the SAME ref is one configuration written twice, and

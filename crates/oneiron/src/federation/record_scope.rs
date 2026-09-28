@@ -204,6 +204,39 @@ pub(crate) fn stamp_put(
     store.vault_meta.put(txn, &key(id), &bytes)?;
     Ok(())
 }
+/// Restamp a locally authenticated leader-chat TURN/MESSAGE at the ordinary
+/// record-position scope door, after the typed write's full batch succeeds.
+/// Opaque replicated rows cannot call this door and remain unstamped.
+pub(crate) fn stamp_leader_project(
+    store: &Store,
+    txn: &mut heed::RwTxn<'_>,
+    id: EntityId,
+    project: EntityId,
+) -> Result<()> {
+    let raw = store
+        .entities
+        .get(txn, id.as_bytes())?
+        .ok_or(Error::EntityNotFound)?;
+    let header = EntityMetadataHeader::parse(&raw)
+        .ok_or(Error::CorruptedIndex("leader chat scope header"))?;
+    if !matches!(
+        header.entity_type,
+        crate::registry::ENTITY_TYPE_TURN | crate::registry::ENTITY_TYPE_MESSAGE
+    ) {
+        return Err(Error::InvalidEntityType(header.entity_type));
+    }
+    let data = &raw[ENTITY_METADATA_HEADER_LEN..];
+    let mut scope = default_stamp(header.entity_type, crate::claim::substrate_facet_id(id));
+    scope.audience = singleton(ScopeId(project));
+    let bytes = serde_json::to_vec(&Stamp {
+        version: 1,
+        digest: digest(header.entity_type, data),
+        scope,
+    })
+    .map_err(|_| Error::InvariantViolation("leader chat scope stamp encode"))?;
+    store.vault_meta.put(txn, &key(id), &bytes)?;
+    Ok(())
+}
 fn stored_scope(
     store: &impl ManifestDbs,
     txn: &heed::RoTxn<'_>,
