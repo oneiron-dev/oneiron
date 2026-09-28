@@ -125,6 +125,21 @@ pub(in crate::gate) struct TeacherProbeRow {
     pub(in crate::gate) holders: BTreeMap<String, u32>,
 }
 
+/// Restrict-only typed sheet answer count for a vault, artifact, or sheet.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct SheetAnswerLimitRow {
+    pub(crate) artifact_ref: Option<String>,
+    pub(crate) sheet: Option<String>,
+    pub(crate) max_count: u64,
+}
+
+/// The manifest's explicit scope-composition rule. Other tokens fail decode
+/// until their admission semantics are specified and tested.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum SheetAnswerPrecedence {
+    NestedNarrowingHolderCappedAtVault,
+}
+
 #[derive(Debug, Clone, Default, PartialEq)]
 pub(crate) struct PolicyManifestResolution {
     pub(crate) diagnostics: PolicyManifestDiagnostics,
@@ -137,6 +152,10 @@ pub(crate) struct PolicyManifestResolution {
     pub(crate) proposal_check_threshold: Option<u64>,
     pub(crate) voice_ref_defaults: Option<crate::voice_identity::ref_limits::VoiceRefLimitPolicy>,
     pub(crate) voice_ref_limits: crate::voice_identity::ref_limits::VoiceRefLimitPolicy,
+    pub(crate) sheet_answer_limits: Vec<SheetAnswerLimitRow>,
+    pub(crate) untrusted_sheet_answer_limits: Vec<SheetAnswerLimitRow>,
+    pub(crate) sheet_answer_default_max_count: Option<u64>,
+    pub(crate) sheet_answer_precedence: Option<SheetAnswerPrecedence>,
     pub(crate) weave_correction_policy: Option<crate::gate::WeaveCorrectionPolicy>,
     pub(crate) attribution_limits: AttributionLimits,
     /// The shipped defaults apply only until a trusted policy row supplies
@@ -169,5 +188,10 @@ pub(crate) struct PolicyManifestResolution {
     pub(super) auto_checker: Option<String>,
     pub(super) budget_policy: BudgetPolicyTable,
     pub(crate) pack_install_policy: Option<crate::gate::PackInstallPolicy>,
+    pub(super) pptx_comment_limits: Option<crate::edit_roundtrip::pptx::PptxOperationalLimits>,
+    pub(super) docx_archive_limits: Vec<crate::gate::docx_budget::DocxArchivePolicy>,
     pub(super) hosted_tts: HostedTtsPolicy,
+    pub(super) slide_review_policy: crate::llm::decision::SlideReviewPolicy,
+    pub(in crate::gate) docedit_resource_policy:
+        Option<crate::gate::docedit_resource::DoceditResourcePolicy>,
 }

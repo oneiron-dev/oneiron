@@ -4,6 +4,7 @@ use std::io::Cursor;
 
 use rmpv::Value;
 
+use super::decode_docedit_resource::parse_docedit_resource_policy;
 use crate::gate::PackInstallPolicy;
 use crate::gate::ceiling::{
     ActorCeiling, DelegationGrantRecord, PolicyOwnerPatternRow, PolicyOwnerPolicyRow, PolicyPack,
@@ -15,15 +16,18 @@ use crate::gate::constants::{
     ATTRIBUTION_REASON_MAX_BYTES_KEY, ATTRIBUTION_RECEIPTS_PER_PASS_KEY, POLICY_ACTOR_CEILINGS_KEY,
     POLICY_ASK_POLICY_KEY, POLICY_ATTRIBUTION_LIMITS_KEY, POLICY_AUTO_CHECKER_KEY,
     POLICY_BUDGET_POLICY_KEY, POLICY_COMM_OPT_OUT_POSTURE_KEY, POLICY_DEFAULTS_KEY,
-    POLICY_DELEGATED_GRANTS_KEY, POLICY_HOSTED_TTS_KEY, POLICY_LEGAL_FLOOR_ROWS_KEY,
-    POLICY_MIN_ENGINE_VERSION_KEY, POLICY_ON_BUDGET_EXHAUSTED_KEY,
-    POLICY_OWNER_POLICY_DOCUMENT_KEY, POLICY_OWNER_POLICY_ENABLED_KEY,
-    POLICY_OWNER_POLICY_OUTPUT_CONTRACT_KEY, POLICY_OWNER_POLICY_PATTERNS_KEY,
-    POLICY_OWNER_POLICY_ROWS_KEY, POLICY_PACK_ID_KEY, POLICY_PACK_VERSION_KEY, POLICY_RULES_KEY,
+    POLICY_DELEGATED_GRANTS_KEY, POLICY_DOCEDIT_RESOURCE_KEY, POLICY_DOCX_ARCHIVE_LIMITS_KEY,
+    POLICY_HOSTED_TTS_KEY, POLICY_LEGAL_FLOOR_ROWS_KEY, POLICY_MIN_ENGINE_VERSION_KEY,
+    POLICY_ON_BUDGET_EXHAUSTED_KEY, POLICY_OWNER_POLICY_DOCUMENT_KEY,
+    POLICY_OWNER_POLICY_ENABLED_KEY, POLICY_OWNER_POLICY_OUTPUT_CONTRACT_KEY,
+    POLICY_OWNER_POLICY_PATTERNS_KEY, POLICY_OWNER_POLICY_ROWS_KEY, POLICY_PACK_ID_KEY,
+    POLICY_PACK_VERSION_KEY, POLICY_PPTX_COMMENT_LIMITS_KEY, POLICY_RULES_KEY,
     POLICY_SCHEMA_VERSION, POLICY_SCHEMA_VERSION_KEY, POLICY_SCOPED_GRANTS_KEY,
-    POLICY_SIGNATURE_KEY, POLICY_SIGNATURES_KEY, POLICY_SOURCE_TRUST_KEY, POLICY_TEACHER_PROBE_KEY,
-    POLICY_WEAVE_CORRECTION_POLICY_KEY,
+    POLICY_SHEET_ANSWER_LIMITS_KEY, POLICY_SHEET_ANSWER_PRECEDENCE_KEY, POLICY_SIGNATURE_KEY,
+    POLICY_SIGNATURES_KEY, POLICY_SLIDE_REVIEW_KEY, POLICY_SOURCE_TRUST_KEY,
+    POLICY_TEACHER_PROBE_KEY, POLICY_WEAVE_CORRECTION_POLICY_KEY,
 };
+use crate::gate::docedit_resource::DoceditResourcePolicy;
 use crate::gate::grants::PolicyScopedGrant;
 use crate::gate::hosted_tts_policy::HostedTtsPolicy;
 use crate::gate::pack_install_policy::KEY as PACK_INSTALL_POLICY_KEY;
@@ -69,13 +73,22 @@ pub(in crate::gate) struct DecodedPolicyManifest {
     pub(in crate::gate) budget_policy: BudgetPolicyTable,
     pub(in crate::gate) pack_install_policy: Option<PackInstallPolicy>,
     pub(in crate::gate) room_thread: Option<crate::gate::RoomThreadManifest>,
+    pub(in crate::gate) pptx_comment_limits:
+        Option<crate::edit_roundtrip::pptx::PptxOperationalLimits>,
     pub(in crate::gate) hosted_tts: HostedTtsPolicy,
+
+    pub(in crate::gate) slide_review_policy: crate::llm::decision::SlideReviewPolicy,
+    pub(in crate::gate) docedit_resource_policy: Option<DoceditResourcePolicy>,
+    pub(in crate::gate) docx_archive_limits: Option<crate::gate::docx_budget::DocxArchivePolicy>,
 
     pub(in crate::gate) diagnostic_bounds: Option<crate::self_heal::tripwires::TripwireBounds>,
     pub(in crate::gate) livequery_tracker_limits:
         Option<crate::gate::tracker_limits::PolicyTrackerLimits>,
     pub(in crate::gate) proposal_check_threshold: Option<u64>,
     pub(in crate::gate) voice_ref_limits: Option<VoiceRefLimitPolicy>,
+    pub(in crate::gate) sheet_answer_limits: Vec<crate::gate::resolution::SheetAnswerLimitRow>,
+    pub(in crate::gate) sheet_answer_precedence:
+        Option<crate::gate::resolution::SheetAnswerPrecedence>,
     pub(in crate::gate) weave_correction_policy: Option<crate::gate::WeaveCorrectionPolicy>,
     pub(in crate::gate) attribution_limits: Option<AttributionLimits>,
     pub(in crate::gate) ask_policy: Option<crate::gate::ask_policy::AskOperationalPolicy>,
@@ -129,12 +142,19 @@ pub(in crate::gate) fn decode_policy_manifest(data: &[u8]) -> Option<DecodedPoli
                 | POLICY_BUDGET_POLICY_KEY
                 | PACK_INSTALL_POLICY_KEY
                 | "room_thread"
+                | POLICY_PPTX_COMMENT_LIMITS_KEY
                 | POLICY_HOSTED_TTS_KEY
+
+                | POLICY_SLIDE_REVIEW_KEY
+                | POLICY_DOCEDIT_RESOURCE_KEY
+                | POLICY_DOCX_ARCHIVE_LIMITS_KEY
 
                 | "diagnostic_bounds"
                 | "livequery_tracker_limits"
                 | "proposal_check_threshold"
                 | "voice_ref_limits"
+                | POLICY_SHEET_ANSWER_LIMITS_KEY
+                | POLICY_SHEET_ANSWER_PRECEDENCE_KEY
                 | POLICY_WEAVE_CORRECTION_POLICY_KEY
                 | POLICY_ATTRIBUTION_LIMITS_KEY
                 | POLICY_ASK_POLICY_KEY
@@ -278,6 +298,18 @@ pub(in crate::gate) fn decode_policy_manifest(data: &[u8]) -> Option<DecodedPoli
         MapValue::Duplicate => return None,
         MapValue::Present(value) => Some(crate::gate::RoomThreadManifest::decode(value)?),
     };
+    let pptx_comment_limits = match single_map_value(&entries, POLICY_PPTX_COMMENT_LIMITS_KEY) {
+        MapValue::Missing => None,
+        MapValue::Duplicate => return None,
+        MapValue::Present(value) => {
+            Some(crate::edit_roundtrip::pptx::PptxOperationalLimits::from_policy_row(value)?)
+        }
+    };
+    let docx_archive_limits = match single_map_value(&entries, POLICY_DOCX_ARCHIVE_LIMITS_KEY) {
+        MapValue::Missing => None,
+        MapValue::Duplicate => return None,
+        MapValue::Present(value) => Some(crate::gate::docx_budget::parse(value)?),
+    };
     let hosted_tts = match single_map_value(&entries, POLICY_HOSTED_TTS_KEY) {
         MapValue::Missing => HostedTtsPolicy::default(),
         MapValue::Duplicate => return None,
@@ -289,6 +321,16 @@ pub(in crate::gate) fn decode_policy_manifest(data: &[u8]) -> Option<DecodedPoli
         MapValue::Present(value) => Some(crate::gate::tracker_limits::PolicyTrackerLimits::decode(
             value,
         )?),
+    };
+    let slide_review_policy = match single_map_value(&entries, POLICY_SLIDE_REVIEW_KEY) {
+        MapValue::Missing => crate::llm::decision::SlideReviewPolicy::default(),
+        MapValue::Duplicate => return None,
+        MapValue::Present(value) => crate::llm::decision::SlideReviewPolicy::decode(value)?,
+    };
+    let docedit_resource_policy = match single_map_value(&entries, POLICY_DOCEDIT_RESOURCE_KEY) {
+        MapValue::Missing => None,
+        MapValue::Duplicate => return None,
+        MapValue::Present(value) => Some(parse_docedit_resource_policy(value)?),
     };
     let diagnostic_bounds = match single_map_value(&entries, "diagnostic_bounds") {
         MapValue::Missing => None,
@@ -308,6 +350,31 @@ pub(in crate::gate) fn decode_policy_manifest(data: &[u8]) -> Option<DecodedPoli
         MapValue::Missing => None,
         MapValue::Duplicate => return None,
         MapValue::Present(value) => Some(VoiceRefLimitPolicy::decode(value)?),
+    };
+
+    let sheet_answer_limits = match single_map_value(&entries, POLICY_SHEET_ANSWER_LIMITS_KEY) {
+        MapValue::Missing => Vec::new(),
+        MapValue::Duplicate => return None,
+        MapValue::Present(value) => parse_sheet_answer_limits(value)?,
+    };
+
+    let sheet_answer_precedence = match single_map_value(
+        &entries,
+        POLICY_SHEET_ANSWER_PRECEDENCE_KEY,
+    ) {
+        MapValue::Missing => None,
+        MapValue::Duplicate => return None,
+        MapValue::Present(Value::Map(row)) => {
+            if row.len() != 1 {
+                return None;
+            }
+            match single_map_value(row, "mode") {
+                MapValue::Present(value) if value.as_str() == Some("nested_narrowing_holder_capped_at_vault") =>
+                    Some(crate::gate::resolution::SheetAnswerPrecedence::NestedNarrowingHolderCappedAtVault),
+                _ => return None,
+            }
+        }
+        _ => return None,
     };
     let weave_correction_policy =
         match single_map_value(&entries, POLICY_WEAVE_CORRECTION_POLICY_KEY) {
@@ -382,12 +449,17 @@ pub(in crate::gate) fn decode_policy_manifest(data: &[u8]) -> Option<DecodedPoli
         budget_policy,
         pack_install_policy,
         room_thread,
+        pptx_comment_limits,
         hosted_tts,
-
+        slide_review_policy,
+        docedit_resource_policy,
+        docx_archive_limits,
         diagnostic_bounds,
         livequery_tracker_limits,
         proposal_check_threshold,
         voice_ref_limits,
+        sheet_answer_limits,
+        sheet_answer_precedence,
         weave_correction_policy,
         attribution_limits,
         ask_policy,
@@ -559,4 +631,174 @@ fn parse_teacher_probe_row(value: &Value) -> Option<TeacherProbeRow> {
         min_f1_millionths: minimum,
         holders,
     })
+}
+
+/// Exact row decoder; a malformed or unknown field rejects the manifest.
+fn parse_sheet_answer_limits(
+    value: &Value,
+) -> Option<Vec<crate::gate::resolution::SheetAnswerLimitRow>> {
+    use crate::gate::resolution::SheetAnswerLimitRow;
+    let Value::Array(rows) = value else {
+        return None;
+    };
+    if rows.len() > 1024 {
+        return None;
+    }
+    let mut out = Vec::with_capacity(rows.len());
+    let mut seen = std::collections::BTreeSet::new();
+    for row in rows {
+        let Value::Map(fields) = row else {
+            return None;
+        };
+        if fields
+            .iter()
+            .any(|(key, _)| !matches!(key.as_str(), Some("artifact_ref" | "sheet" | "max_count")))
+        {
+            return None;
+        }
+        let artifact_ref = match single_map_value(fields, "artifact_ref") {
+            MapValue::Missing => None,
+            MapValue::Duplicate => return None,
+            MapValue::Present(value) => {
+                let id = value.as_str()?;
+                let parsed = crate::entity_id::EntityId::from_hex(id).ok()?;
+                // Accepted rows must match the canonical lookup key; rejecting
+                // mixed case prevents a silent widening at both write doors.
+                if parsed.to_hex() != id {
+                    return None;
+                }
+                Some(id.to_owned())
+            }
+        };
+        let sheet = match single_map_value(fields, "sheet") {
+            MapValue::Missing => None,
+            MapValue::Duplicate => return None,
+            MapValue::Present(value) => {
+                artifact_ref.as_ref()?;
+                let name = value.as_str()?;
+                if name.trim().is_empty() || name.len() > 255 {
+                    return None;
+                }
+                Some(name.to_owned())
+            }
+        };
+        let max_count = match single_map_value(fields, "max_count") {
+            MapValue::Present(value) => value.as_u64().filter(|n| *n > 0)?,
+            _ => return None,
+        };
+        if !seen.insert((artifact_ref.clone(), sheet.clone())) {
+            return None;
+        }
+        out.push(SheetAnswerLimitRow {
+            artifact_ref,
+            sheet,
+            max_count,
+        });
+    }
+    Some(out)
+}
+
+#[cfg(test)]
+mod sheet_answer_limit_tests {
+    use super::*;
+    use crate::gate::resolution::{PolicyManifestResolution, SheetAnswerLimitRow};
+
+    #[test]
+    fn default_and_nested_manifest_rows_restrict_holder_at_vault() {
+        let shipped = crate::gate::default_manifest::default_policy_manifest();
+        let default = decode_policy_manifest(&shipped).expect("shipped manifest decodes");
+        assert_eq!(default.sheet_answer_limits[0].max_count, 4096);
+        assert_eq!(
+            default.sheet_answer_precedence,
+            Some(
+                crate::gate::resolution::SheetAnswerPrecedence::NestedNarrowingHolderCappedAtVault
+            )
+        );
+        let artifact = "11111111111111111111111111111111";
+        let rows = Value::Array(vec![
+            Value::Map(vec![(Value::from("max_count"), Value::from(256u64))]),
+            Value::Map(vec![
+                (Value::from("artifact_ref"), Value::from(artifact)),
+                (Value::from("max_count"), Value::from(128u64)),
+            ]),
+            Value::Map(vec![
+                (Value::from("artifact_ref"), Value::from(artifact)),
+                (Value::from("sheet"), Value::from("Private")),
+                (Value::from("max_count"), Value::from(32u64)),
+            ]),
+        ]);
+        let parsed = parse_sheet_answer_limits(&rows).expect("nested rows parse");
+        let mut policy = PolicyManifestResolution::default();
+        policy.sheet_answer_default_max_count = Some(default.sheet_answer_limits[0].max_count);
+        policy.sheet_answer_precedence = default.sheet_answer_precedence;
+        policy.sheet_answer_limits = parsed;
+        let mut raised = PolicyManifestResolution::default();
+        raised.sheet_answer_default_max_count = policy.sheet_answer_default_max_count;
+        raised.sheet_answer_precedence = policy.sheet_answer_precedence;
+        raised.sheet_answer_limits.push(SheetAnswerLimitRow {
+            artifact_ref: None,
+            sheet: None,
+            max_count: 8192,
+        });
+        assert_eq!(
+            raised.sheet_answer_limit(artifact, "Public", Some(8192)),
+            Some(8192)
+        );
+        assert_eq!(
+            raised.sheet_answer_limit(artifact, "Public", Some(9000)),
+            Some(8192)
+        );
+        assert_eq!(
+            policy.sheet_answer_limit(artifact, "Private", None),
+            Some(32)
+        );
+        assert_eq!(
+            policy.sheet_answer_limit(artifact, "Public", Some(64)),
+            Some(64)
+        );
+        assert_eq!(
+            policy.sheet_answer_limit("22222222222222222222222222222222", "Private", Some(1000)),
+            Some(256)
+        );
+        assert_eq!(policy.sheet_answer_limit(artifact, "Public", Some(0)), None);
+        let mut narrowed = policy;
+        narrowed.sheet_answer_limits.push(SheetAnswerLimitRow {
+            artifact_ref: Some(artifact.into()),
+            sheet: Some("Private".into()),
+            max_count: 8,
+        });
+        assert_eq!(
+            narrowed.sheet_answer_limit(artifact, "Private", Some(4096)),
+            Some(8)
+        );
+        let letters = "abababababababababababababababab";
+        let upper = letters.to_ascii_uppercase();
+        assert!(
+            parse_sheet_answer_limits(&Value::Array(vec![Value::Map(vec![
+                (Value::from("artifact_ref"), Value::from(upper.as_str())),
+                (Value::from("max_count"), Value::from(1u64)),
+            ])]))
+            .is_none(),
+            "accepted uppercase IDs would silently miss canonical lookups"
+        );
+        let valid = parse_sheet_answer_limits(&Value::Array(vec![Value::Map(vec![
+            (Value::from("artifact_ref"), Value::from(letters)),
+            (Value::from("max_count"), Value::from(1u64)),
+        ])]))
+        .expect("canonical artifact ref");
+        narrowed.sheet_answer_limits.extend(valid);
+        assert_eq!(
+            narrowed.sheet_answer_limit(letters, "Public", None),
+            Some(1)
+        );
+        // Unknown or duplicate row keys fail the manifest rather than falling
+        // back to the shipped limit, which could inadvertently widen it.
+        assert!(
+            parse_sheet_answer_limits(&Value::Array(vec![Value::Map(vec![
+                (Value::from("max_count"), Value::from(1u64)),
+                (Value::from("unknown"), Value::from(1u64)),
+            ])]))
+            .is_none()
+        );
+    }
 }
