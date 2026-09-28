@@ -266,14 +266,9 @@ impl ModelSession {
             envelope: CallEnvelope {
                 seat_effort: None,
                 scope: Default::default(),
-                purpose,
+                purpose: purpose.clone(),
                 class: CallClass::BestEffort,
-                tier: TierPrecedence {
-                    per_seat: None,
-                    vault_policy: None,
-                    purpose_default: None,
-                    global_default: ModelTierRef("eval-pinned".into()),
-                },
+                tier: TierPrecedence::for_purpose(&purpose, ModelTierRef("eval-pinned".into())),
                 response_format: ResponseFormat::Text,
                 locality: ModelLocality::ThirdParty,
             },

@@ -15,6 +15,6 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/lib/mod.rs` | src | s | 5 re-export | — | Anthropic Messages wire adapter for Oneiron's [`oneiron::LlmBackend`] seam |
 | `src/lib/options.rs` | src | s | 2 struct · 4 fn · 1 const | AnthropicProviderOptions, AnthropicThinkingOptions | Namespaced provider options and thinking controls with wire-field projection |
 | `src/lib/stream.rs` | src | s | 2 struct · 4 fn | AnthropicMessagesLlmStream, AnthropicMessagesStreamAccumulator | Anthropic block-indexed SSE decoder, including thinking and tool input |
-| `src/lib/tests.rs` | test | L | — | — | — |
+| `src/lib/tests.rs` | test | m | — | — | — |
 | `src/lib/transport.rs` | src | s | 2 struct · 2 enum · 1 trait · 2 type | AnthropicMessagesHttpRequest, AnthropicMessagesHttpResponse, AnthropicMessagesStreamFrame, AnthropicMessagesTransport, AnthropicMessagesTransportError | Host-owned execution seam: future/stream aliases, HTTP envelope types, stream frame, transport trait, error… |
 | `src/lib/wire.rs` | src | m | 3 fn · 2 crate-vis | — | Anthropic Messages protocol mapping: request build, response parse, message/part/tool codecs, usage, status… |

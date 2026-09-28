@@ -109,12 +109,10 @@ fn request_fixture() -> LlmRequest {
             scope: crate::llm::Scope::default(),
             purpose: CallPurpose::Consolidation,
             class: CallClass::BestEffort,
-            tier: TierPrecedence {
-                per_seat: None,
-                vault_policy: None,
-                purpose_default: None,
-                global_default: ModelTierRef("default".to_owned()),
-            },
+            tier: TierPrecedence::for_purpose(
+                &CallPurpose::Consolidation,
+                ModelTierRef("default".into()),
+            ),
             response_format: ResponseFormat::Text,
             locality: ModelLocality::OwnServer,
         },

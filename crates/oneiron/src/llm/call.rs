@@ -26,7 +26,7 @@ pub struct CallEnvelope {
     pub seat_effort: Option<super::ReasoningEffort>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum CallPurpose {
     Extraction,

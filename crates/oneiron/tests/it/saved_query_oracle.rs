@@ -272,12 +272,7 @@ fn judge_envelope() -> CallEnvelope {
         scope: oneiron::llm::Scope::default(),
         purpose: CallPurpose::Eval,
         class: CallClass::BestEffort,
-        tier: TierPrecedence {
-            per_seat: None,
-            vault_policy: None,
-            purpose_default: None,
-            global_default: ModelTierRef("default".to_owned()),
-        },
+        tier: TierPrecedence::for_purpose(&CallPurpose::Eval, ModelTierRef("default".into())),
         response_format: ResponseFormat::Text,
         locality: ModelLocality::OwnServer,
     }

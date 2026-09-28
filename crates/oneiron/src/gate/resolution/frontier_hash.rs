@@ -26,6 +26,17 @@ pub(super) fn hash_policy_frontier_v0(
     for predicate in &resolution.single_valued_predicates {
         hash_str(hasher, predicate);
     }
+    // A teacher floor change changes admission and invalidates approval
+    // snapshots; include the resolved row in the policy frontier too.
+    if let Some(vault_min) = resolution.teacher_probe_vault_min {
+        hash_str(hasher, "teacher_probe");
+        hash_u64(hasher, u64::from(vault_min));
+        hash_len(hasher, resolution.teacher_probe_holders.len());
+        for (holder, minimum) in &resolution.teacher_probe_holders {
+            hash_str(hasher, holder);
+            hash_u64(hasher, u64::from(*minimum));
+        }
+    }
     hash_budget_exhaustion_policy(hasher, resolution.on_budget_exhausted());
     // The RESOLVED posture, beside its budget sibling: it decides whether an
     // opted-out send holds or ships, so flipping it must move the frontier and
@@ -82,6 +93,29 @@ pub(super) fn hash_policy_frontier_v0(
     if let Some(policy) = &resolution.weave_correction_policy {
         hash_str(hasher, "weave_correction_policy");
         policy.hash_into(hasher);
+    }
+
+    // Hash authored typed selectors/precedence, not an invented fallback.
+    if !resolution.retry_source_policy.is_empty() {
+        hash_str(hasher, "retry_source_policy");
+        hash_len(hasher, resolution.retry_source_policy.len());
+        for row in &resolution.retry_source_policy {
+            match row.selector {
+                crate::gate::retry_source_policy::RetrySelector::Vault => hash_str(hasher, "vault"),
+                crate::gate::retry_source_policy::RetrySelector::Holder(id) => {
+                    hash_str(hasher, "holder");
+                    hash_bytes(hasher, id.as_bytes());
+                }
+                crate::gate::retry_source_policy::RetrySelector::Project(id) => {
+                    hash_str(hasher, "project");
+                    hash_bytes(hasher, id.as_bytes());
+                }
+            }
+            hash_u64(hasher, row.max_sources.get() as u64);
+            if let Some(precedence) = row.precedence {
+                hash_str(hasher, precedence.as_str());
+            }
+        }
     }
 
     hash_len(hasher, resolution.packs.len());

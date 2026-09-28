@@ -108,6 +108,7 @@ pub(super) fn options() -> ProducerOptions {
             ]),
         }),
         local_only: false,
+        batch_asr_policy: None,
     }
 }
 

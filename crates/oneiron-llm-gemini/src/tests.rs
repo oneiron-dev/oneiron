@@ -749,30 +749,37 @@ fn manifest_gemini_seat_none_clears_stale_thinking_on_recorded_wire() {
     let dir = tempfile::tempdir().unwrap();
     let vault = Vault::open(dir.path(), VaultConfig::device()).unwrap();
     let model = ModelId::new("google/gemini-model@r1").unwrap();
+    let manifest = ModelManifest {
+        version: 2,
+        roles: MODEL_ROLES
+            .into_iter()
+            .map(|role| {
+                (
+                    role,
+                    ModelBinding {
+                        model: model.clone(),
+                        slot: ModelSlot::Llm,
+                        tier: ModelTierRef("legacy".into()),
+                        route_models: BTreeMap::new(),
+                    },
+                )
+            })
+            .collect(),
+        routes: [ModelSlot::Llm, ModelSlot::Embedder, ModelSlot::Oneironer]
+            .into_iter()
+            .map(|slot| (slot, ModelLocality::ThirdParty))
+            .collect(),
+        verdict: None,
+        seat_policy: None,
+    };
+    let approval = oneiron::llm::manifest::TeacherProbeApproval::for_scored_checkpoint(
+        &manifest,
+        &vault.teacher_probe_policy(None).unwrap(),
+        1_000_000,
+    )
+    .unwrap();
     vault
-        .set_model_manifest(&ModelManifest {
-            version: 2,
-            roles: MODEL_ROLES
-                .into_iter()
-                .map(|role| {
-                    (
-                        role,
-                        ModelBinding {
-                            model: model.clone(),
-                            slot: ModelSlot::Llm,
-                            tier: ModelTierRef("legacy".into()),
-                            route_models: BTreeMap::new(),
-                        },
-                    )
-                })
-                .collect(),
-            routes: [ModelSlot::Llm, ModelSlot::Embedder, ModelSlot::Oneironer]
-                .into_iter()
-                .map(|slot| (slot, ModelLocality::ThirdParty))
-                .collect(),
-            verdict: None,
-            seat_policy: None,
-        })
+        .set_model_manifest_with_teacher_approval(&manifest, &approval)
         .unwrap();
     let row = ModelRegistryRow {
         version: 1,

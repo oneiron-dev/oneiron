@@ -60,6 +60,15 @@ impl PolicyManifestResolution {
             .map(|policy| policy.limit_for(holder))
     }
 
+    /// Resolve the required vault ceiling and every matching actor/scope row.
+    pub(crate) fn retry_budget_for(
+        &self,
+        actor: crate::EntityId,
+        scope: Option<&crate::llm::Scope>,
+    ) -> crate::Result<crate::gate::retry_source_policy::ResolvedRetryBudget> {
+        crate::gate::retry_source_policy::resolve(&self.retry_source_policy, actor, scope)
+    }
+
     #[must_use]
     pub(crate) fn proposal_check_threshold(&self) -> u64 {
         self.proposal_check_threshold
@@ -87,6 +96,24 @@ impl PolicyManifestResolution {
     #[must_use]
     pub(crate) fn auto_checker(&self) -> Option<&str> {
         self.auto_checker.as_deref()
+    }
+
+    /// The quality floor lives in a trusted, seeded POLICY_MANIFEST row.
+    /// Holder overrides are nested restrict-only rows capped at the vault.
+    #[must_use]
+    pub(crate) fn teacher_probe_policy(
+        &self,
+        holder_ref: Option<&str>,
+    ) -> Option<crate::llm::manifest::TeacherProbePolicy> {
+        if self.is_fail_closed() || !self.teacher_probe_trusted {
+            return None;
+        }
+        let vault_min = self.teacher_probe_vault_min?;
+        let effective = holder_ref
+            .and_then(|holder| self.teacher_probe_holders.get(holder).copied())
+            .unwrap_or(vault_min)
+            .max(vault_min);
+        crate::llm::manifest::TeacherProbePolicy::resolved(vault_min, effective, holder_ref).ok()
     }
 
     /// The resolved `budget_policy` rows, fail-closed: a loaded manifest that

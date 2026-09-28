@@ -1,6 +1,7 @@
 //! Resolved-view types plus the `PolicyManifestResolution` struct definition.
 
 use crate::llm::{BudgetExhaustionPolicy, BudgetPolicyTable};
+use std::collections::BTreeMap;
 
 use crate::gate::ceiling::{
     ActorCeiling, DelegationFoldCache, PolicyOwnerPatternRow, PolicyOwnerPolicyRow, PolicyPack,
@@ -73,12 +74,22 @@ impl CommOptOutPosture {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(in crate::gate) struct TeacherProbeRow {
+    pub(in crate::gate) min_f1_millionths: u32,
+    pub(in crate::gate) holders: BTreeMap<String, u32>,
+}
+
 #[derive(Debug, Clone, Default, PartialEq)]
 pub(crate) struct PolicyManifestResolution {
     pub(crate) diagnostics: PolicyManifestDiagnostics,
     pub(crate) diagnostic_bounds: Option<crate::self_heal::tripwires::TripwireBounds>,
+    pub(in crate::gate) teacher_probe_trusted: bool,
+    pub(in crate::gate) teacher_probe_vault_min: Option<u32>,
+    pub(in crate::gate) teacher_probe_holders: BTreeMap<String, u32>,
     pub(crate) proposal_check_threshold: Option<u64>,
     pub(crate) weave_correction_policy: Option<crate::gate::WeaveCorrectionPolicy>,
+    pub(crate) retry_source_policy: Vec<crate::gate::retry_source_policy::RetrySourcePolicyRow>,
     pub(super) packs: Vec<PolicyPack>,
     pub(super) actor_ceilings: Vec<ActorCeiling>,
     pub(crate) delegation_fold: DelegationFoldCache,

@@ -111,40 +111,47 @@ async fn quickjs_execute_code_wire_resumes_one_actor_run_without_repeated_writes
         )
         .unwrap();
     let seat_model = ModelId::new("fixture/code-seat@v2").unwrap();
+    let manifest = ModelManifest {
+        version: 2,
+        roles: MODEL_ROLES
+            .into_iter()
+            .map(|role| {
+                (
+                    role,
+                    ModelBinding {
+                        model: seat_model.clone(),
+                        slot: ModelSlot::Llm,
+                        tier: Tier("legacy".into()),
+                        route_models: BTreeMap::new(),
+                    },
+                )
+            })
+            .collect(),
+        routes: [ModelSlot::Llm, ModelSlot::Embedder, ModelSlot::Oneironer]
+            .into_iter()
+            .map(|slot| (slot, ModelLocality::OnDevice))
+            .collect(),
+        verdict: None,
+        seat_policy: Some(oneiron::llm::seat::SeatPolicy {
+            purpose_defaults: BTreeMap::from([(
+                format!(
+                    "other:{}",
+                    oneiron::engine_executor::ENGINE_EXECUTOR_PURPOSE_NAME
+                ),
+                ReasoningEffort::High,
+            )]),
+            vault_ceiling: ReasoningEffort::High,
+            ..oneiron::llm::seat::SeatPolicy::bundled().unwrap()
+        }),
+    };
+    let approval = oneiron::llm::manifest::TeacherProbeApproval::for_scored_checkpoint(
+        &manifest,
+        &vault.teacher_probe_policy(None).unwrap(),
+        1_000_000,
+    )
+    .unwrap();
     vault
-        .set_model_manifest(&ModelManifest {
-            version: 2,
-            roles: MODEL_ROLES
-                .into_iter()
-                .map(|role| {
-                    (
-                        role,
-                        ModelBinding {
-                            model: seat_model.clone(),
-                            slot: ModelSlot::Llm,
-                            tier: Tier("legacy".into()),
-                            route_models: BTreeMap::new(),
-                        },
-                    )
-                })
-                .collect(),
-            routes: [ModelSlot::Llm, ModelSlot::Embedder, ModelSlot::Oneironer]
-                .into_iter()
-                .map(|slot| (slot, ModelLocality::OnDevice))
-                .collect(),
-            verdict: None,
-            seat_policy: Some(oneiron::llm::seat::SeatPolicy {
-                purpose_defaults: BTreeMap::from([(
-                    format!(
-                        "other:{}",
-                        oneiron::engine_executor::ENGINE_EXECUTOR_PURPOSE_NAME
-                    ),
-                    ReasoningEffort::High,
-                )]),
-                vault_ceiling: ReasoningEffort::High,
-                ..oneiron::llm::seat::SeatPolicy::bundled().unwrap()
-            }),
-        })
+        .set_model_manifest_with_teacher_approval(&manifest, &approval)
         .unwrap();
     vault
         .put_model_registry_row(&ModelRegistryRow {
