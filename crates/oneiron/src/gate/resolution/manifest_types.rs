@@ -1,5 +1,6 @@
 //! Resolved-view types plus the `PolicyManifestResolution` struct definition.
 
+use crate::autoreason_campaign::selection::SelectionPolicyRow;
 use crate::llm::{BudgetExhaustionPolicy, BudgetPolicyTable};
 use std::collections::BTreeMap;
 
@@ -96,6 +97,7 @@ pub(crate) struct PolicyManifestResolution {
     pub(crate) ask_policy: Option<crate::gate::ask_policy::AskOperationalPolicy>,
     pub(crate) retry_source_policy: Vec<crate::gate::retry_source_policy::RetrySourcePolicyRow>,
     pub(crate) compilation_policies: Vec<crate::edit_distance::miner::CompilationPolicy>,
+    pub(crate) experiment_selection: Vec<SelectionPolicyRow>,
     pub(super) packs: Vec<PolicyPack>,
     pub(super) actor_ceilings: Vec<ActorCeiling>,
     pub(crate) delegation_fold: DelegationFoldCache,
