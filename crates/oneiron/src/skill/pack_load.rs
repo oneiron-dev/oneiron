@@ -1,7 +1,7 @@
 //! Attempt-bound pack reads stamp their actual revision in the same transaction.
 
 use super::{SkillLifecycle, SkillRecord};
-use crate::attempt_queue::{AttemptId, AttemptQueue, ManifestEntry, ManifestKind};
+use crate::attempt_queue::{AttemptId, AttemptQueue, AttemptRecord, ManifestEntry, ManifestKind};
 use crate::claim::{ClaimApprovalStatus, ClaimBody, claim_surfaceable, encode_claim_body};
 use crate::{EntityId, Error, Result, Vault};
 
@@ -82,7 +82,7 @@ impl Vault {
             None,
             lease_owner,
             attempt_count,
-            executor_model,
+            Some(executor_model),
             at,
         )
     }
@@ -109,7 +109,7 @@ impl Vault {
             Some(*resident),
             lease_owner,
             attempt_count,
-            executor_model,
+            Some(executor_model),
             at,
         )
     }
@@ -125,7 +125,7 @@ impl Vault {
         resident: Option<EntityId>,
         lease_owner: &str,
         attempt_count: u32,
-        executor_model: &str,
+        executor_model: Option<&str>,
         at: u64,
     ) -> Result<LoadedSkillPack> {
         self.with_write_txn(|txn| {
@@ -148,13 +148,15 @@ impl Vault {
                 .map(|package| package.files);
             let queue = AttemptQueue::new(self);
             queue.require_skill_load_lease_in_txn(txn, attempt, lease_owner, attempt_count)?;
-            queue.set_executor_model_in_txn(
-                txn,
-                attempt,
-                lease_owner,
-                attempt_count,
-                executor_model,
-            )?;
+            if let Some(executor_model) = executor_model {
+                queue.set_executor_model_in_txn(
+                    txn,
+                    attempt,
+                    lease_owner,
+                    attempt_count,
+                    executor_model,
+                )?;
+            }
             if let Some(resident) = resident {
                 let receipt = crate::receipt::attempt_pack_receipt_id(&attempt);
                 super::resident::bind_receipt_in_txn(self, txn, &receipt, &resident)?;
@@ -170,6 +172,39 @@ impl Vault {
                 source_files,
             })
         })
+    }
+
+    /// The callable door runs the shared load in the caller's own lease
+    /// generation, so a stale worker cannot append a manifest entry on a
+    /// re-leased or terminal attempt. The first executor stamps the attempt;
+    /// a later step's executor is bound per invocation instead of rebinding it.
+    pub(crate) fn load_leased_callable_skill_pack(
+        &self,
+        leased: &AttemptRecord,
+        skill: &EntityId,
+        executor: &str,
+        at: u64,
+    ) -> Result<LoadedSkillPack> {
+        let lease_owner = leased
+            .lease_owner
+            .as_deref()
+            .ok_or(Error::InvalidClaimBody(
+                "callable execution requires the caller's live attempt lease",
+            ))?;
+        let stamped = AttemptQueue::new(self)
+            .get(leased.id)?
+            .ok_or(Error::EntityNotFound)?
+            .executor_model
+            .is_some();
+        self.load_skill_pack_bound(
+            leased.id,
+            skill,
+            None,
+            lease_owner,
+            leased.attempt_count,
+            (!stamped).then_some(executor),
+            at,
+        )
     }
 
     /// Pick a resident's best version with the shared UCB bandit and stamp

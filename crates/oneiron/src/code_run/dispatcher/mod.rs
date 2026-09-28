@@ -35,6 +35,7 @@ pub use self::memory_verbs::SELF_MEMORY_SEARCH_MAX_RESULTS;
 /// cannot spoof actor, source, or approval fields through this skeleton.
 pub struct HostSelfDispatcher<'a> {
     pub(super) agent_parent: Option<crate::attempt_queue::AttemptId>,
+    pub(super) agent_lease: Option<crate::agent_def::AgentAuthorLease>,
     pub(super) storage: ExecutorStorage<'a>,
     pub(super) actor: WriteActor,
     pub(super) run_ref: String,
@@ -144,6 +145,7 @@ impl<'a> HostSelfDispatcher<'a> {
 
         Ok(Self {
             agent_parent: None,
+            agent_lease: None,
             storage,
             actor,
             run_ref,
@@ -248,6 +250,20 @@ impl<'a> HostSelfDispatcher<'a> {
         }
         match call {
             SelfCall::AgentsSpawn(call) => self.dispatch_agents_spawn(*call),
+            SelfCall::AgentsPut(call) => {
+                let disposition = self.put_agent_definition(
+                    &call.id,
+                    &call.definition,
+                    call.occurred,
+                    call.learned_at,
+                )?;
+                Ok(SelfDispatchOutcome::AgentDefinitionPut(
+                    crate::code_run::SelfAgentDefinitionPutResult {
+                        id: call.id,
+                        disposition,
+                    },
+                ))
+            }
             SelfCall::TasksAsk(call) => self.dispatch_tasks_ask(*call),
             SelfCall::TasksWait(call) => self.dispatch_tasks_wait(call, run_id),
             SelfCall::MemorySearch(call) => self.dispatch_memory_search(call),

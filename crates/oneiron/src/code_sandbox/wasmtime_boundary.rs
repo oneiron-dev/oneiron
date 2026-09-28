@@ -169,6 +169,7 @@ fn link<H: bindings::GuestImports + 'static>(
                 },
             )?,
             "oneiron.random.bytes" => unary!(root, wit, random_bytes, u32),
+            "vault.agents.put" => unary!(root, wit, agents_put, AgentPutInput),
             "self.json.validate" => root.func_wrap(
                 wit,
                 |_cx: StoreContextMut<'_, RequestState<H>>, (schema, value): (String, String)| {

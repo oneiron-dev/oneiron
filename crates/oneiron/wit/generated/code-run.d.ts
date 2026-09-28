@@ -9,6 +9,8 @@ declare namespace OneironCodeRun {
   interface WaitOutput { waitId: string; }
   interface SpeechOutput { order: number; isVisible: boolean; }
   interface BlockedOutput { receipt: string; }
+  interface AgentPutInput { id: string; definition: unknown; }
+  interface AgentPutOutput { id: string; disposition: string; }
   interface SupersedeInput { newId: string; oldId: string; now: number; }
   interface EdgeInput { src: string; kind: string; tgt: string; weight?: number | undefined; }
   interface PromptInput { prompt: string; }
@@ -34,6 +36,11 @@ declare namespace oneiron {
   }
   namespace random {
     function bytes(length: number): Uint8Array;
+  }
+}
+declare namespace vault {
+  namespace agents {
+    function put(input: OneironCodeRun.AgentPutInput): Promise<OneironCodeRun.AgentPutOutput>;
   }
 }
 declare namespace self {

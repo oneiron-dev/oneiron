@@ -169,6 +169,7 @@ fn code_sandbox_foreign_and_untrusted_link_zero_write_imports() {
             "sandbox.credential.call",
             "oneiron.clock.now_unix_ms",
             "oneiron.random.bytes",
+            "vault.agents.put",
             "self.json.validate",
             "self.memory.search",
             "self.memory.put_claim",
@@ -190,6 +191,7 @@ fn code_sandbox_foreign_and_untrusted_link_zero_write_imports() {
     assert_eq!(
         write_imports,
         vec![
+            "vault.agents.put",
             "self.memory.put_claim",
             "self.memory.supersede_claim",
             "self.memory.put_edge",

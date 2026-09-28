@@ -9,13 +9,14 @@ use crate::error::{Error, Result};
 use super::identity::SkillContentHash;
 use super::lifecycle::{SkillGovernanceTier, SkillLifecycle};
 use super::record::{
-    KEY_APPROVAL_STATUS, KEY_CONFIDENCE, KEY_CONTENT_HASH, KEY_DEP_MIN_VERSION, KEY_DEP_SKILL_ID,
-    KEY_DEPENDENCIES, KEY_DESC, KEY_FORKED_FROM, KEY_GENERATED, KEY_GOVERNANCE_TIER,
-    KEY_HUMAN_AUTHORED, KEY_LIFECYCLE_STATUS, KEY_PROVENANCE, KEY_SKILL_ID, KEY_SOURCE,
-    KEY_VERSION, SKILL_DEPENDENCY_KEYS, SKILL_DESC_MAX_BYTES, SKILL_ID_MAX_BYTES,
-    SKILL_MAX_DEPENDENCIES, SKILL_RECORD_BODY_KEYS, SKILL_VERSION_MAX_BYTES, SkillDependency,
-    SkillRecord,
+    KEY_APPROVAL_STATUS, KEY_CALL, KEY_CONFIDENCE, KEY_CONTENT_HASH, KEY_DEP_MIN_VERSION,
+    KEY_DEP_SKILL_ID, KEY_DEPENDENCIES, KEY_DESC, KEY_FORKED_FROM, KEY_GENERATED,
+    KEY_GOVERNANCE_TIER, KEY_HUMAN_AUTHORED, KEY_LIFECYCLE_STATUS, KEY_PROVENANCE, KEY_ROLE,
+    KEY_SKILL_ID, KEY_SOURCE, KEY_VERSION, SKILL_DEPENDENCY_KEYS, SKILL_DESC_MAX_BYTES,
+    SKILL_ID_MAX_BYTES, SKILL_MAX_DEPENDENCIES, SKILL_RECORD_BODY_KEYS, SKILL_VERSION_MAX_BYTES,
+    SkillDependency, SkillRecord,
 };
+use super::role::{SkillCallContract, SkillRole};
 use super::validate::{validate_skill_record, validate_text_field};
 use crate::error::ArtifactError;
 
@@ -74,6 +75,12 @@ pub fn encode_skill_record(record: &SkillRecord) -> Result<Vec<u8>> {
     if let Some(tier) = &record.governance_tier {
         entries.push((Value::from(KEY_GOVERNANCE_TIER), Value::from(tier.as_str())));
     }
+    if record.role != SkillRole::Knowledge {
+        entries.push((Value::from(KEY_ROLE), Value::from(record.role.as_str())));
+    }
+    if let Some(call) = &record.call {
+        entries.push((Value::from(KEY_CALL), call.encode()?));
+    }
     let value = Value::Map(entries);
     let mut out = Vec::new();
     rmpv::encode::write_value(&mut out, &value)
@@ -117,6 +124,8 @@ fn decode_skill_record_value(value: &Value) -> Result<SkillRecord> {
     let mut content_hash = None;
     let mut forked_from = None;
     let mut governance_tier = None;
+    let mut role = None;
+    let mut call = None;
     let mut seen = [false; SKILL_RECORD_BODY_KEYS.len()];
 
     for (key, value) in entries {
@@ -241,6 +250,17 @@ fn decode_skill_record_value(value: &Value) -> Result<SkillRecord> {
                     )),
                 )?);
             }
+            KEY_ROLE => {
+                role = Some(
+                    value
+                        .as_str()
+                        .and_then(SkillRole::parse)
+                        .ok_or(Error::Artifact(ArtifactError::InvalidSkillBody(
+                            "role must be knowledge|workflow|callable",
+                        )))?,
+                );
+            }
+            KEY_CALL => call = Some(SkillCallContract::decode(value)?),
             _ => unreachable!("index resolved from SKILL_RECORD_BODY_KEYS"),
         }
     }
@@ -287,6 +307,8 @@ fn decode_skill_record_value(value: &Value) -> Result<SkillRecord> {
         // whose owner has not ruled: the tier resolver, not the codec,
         // decides what an absent mark means.
         governance_tier,
+        role: role.unwrap_or(SkillRole::Knowledge),
+        call,
     };
     validate_skill_record(&record)?;
     Ok(record)

@@ -145,7 +145,8 @@ pub(super) fn canonical_source_package(package: &HubPackage) -> Result<HubPackag
         vec![],
         rmpv::Value::Map(vec![("source".into(), "byte-custody".into())]),
     )
-    .with_content_hash(package.content_hash()?);
+    .with_content_hash(package.content_hash()?)
+    .with_role(package.record.role, package.record.call.clone());
     let mut canonical =
         HubPackage::new(record, package.files.clone(), package.capabilities.clone());
     canonical.format = package.format;

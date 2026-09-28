@@ -128,6 +128,22 @@ pub fn run_task_attribution_sweep_with_judge(
         .collect();
     report.judgments = judgments.len();
     report.skills = crate::skill_reliability::project_skill_reliability(vault, &judgments)?;
+    // A callable's loss lands on the executors that invoked it; the shared
+    // projector above leaves callable subjects to this pass.
+    for judgment in &judgments {
+        if judgment.verdict == super::AttributionVerdict::SkillDefect
+            && !super::judgment_displaced(vault, judgment.sequence)?
+            && let Some(receipt) = judgment.evidence_receipts.first()
+        {
+            crate::skill_reliability::project_callable_receipt_outcome(
+                vault,
+                &judgment.subject,
+                receipt,
+                false,
+                judgment.at,
+            )?;
+        }
+    }
     report.actor_claims =
         crate::actor_claims::project_actor_claims_from_judgments(vault, &judgments)?;
     for (sequence, evidence) in evidence_after(vault, applied)? {
@@ -137,52 +153,60 @@ pub fn run_task_attribution_sweep_with_judge(
                 || evidence.followed_state.is_none() && evidence.followed_skill == Some(true))
             && let Some(skill) = evidence.skill
         {
-            if crate::skill::resident_of(
-                &vault
-                    .get_skill_record(&skill)?
-                    .ok_or(Error::EntityNotFound)?,
-            )?
-            .is_some()
-            {
-                crate::skill_reliability::record_resident_skill_contributing_win(
+            let record = vault
+                .get_skill_record(&skill)?
+                .ok_or(Error::EntityNotFound)?;
+            if record.role == crate::skill::SkillRole::Callable {
+                // The invocation witness names the executor that ran the
+                // callable; the attempt's own stamp may belong to another step.
+                crate::skill_reliability::project_callable_receipt_outcome(
                     vault,
-                    &evidence.actor,
                     &skill,
                     &evidence.receipt_ref,
+                    true,
                     evidence.at,
                 )?;
             } else {
-                crate::skill_reliability::record_skill_contributing_win(
-                    vault,
-                    &skill,
-                    &evidence.receipt_ref,
-                    evidence.at,
-                )?;
-            }
-            let receipt = crate::receipt::attempt_pack_receipt(vault, &evidence.receipt_ref)?
-                .ok_or(Error::InvalidClaimBody("attribution receipt disappeared"))?;
-            match receipt
-                .fields
-                .get("model")
-                .filter(|model| !model.is_empty())
-            {
-                Some(model) => {
-                    crate::skill_reliability::project_skill_reliability_for_executor(
+                if crate::skill::resident_of(&record)?.is_some() {
+                    crate::skill_reliability::record_resident_skill_contributing_win(
+                        vault,
+                        &evidence.actor,
+                        &skill,
+                        &evidence.receipt_ref,
+                        evidence.at,
+                    )?;
+                } else {
+                    crate::skill_reliability::record_skill_contributing_win(
                         vault,
                         &skill,
-                        model,
+                        &evidence.receipt_ref,
                         evidence.at,
                     )?;
                 }
-                None => {
-                    crate::skill_reliability::project_skill_reliability_for(
-                        vault,
-                        &skill,
-                        evidence.at,
-                    )?;
+                let receipt = crate::receipt::attempt_pack_receipt(vault, &evidence.receipt_ref)?
+                    .ok_or(Error::InvalidClaimBody("attribution receipt disappeared"))?;
+                match receipt
+                    .fields
+                    .get("model")
+                    .filter(|model| !model.is_empty())
+                {
+                    Some(model) => {
+                        crate::skill_reliability::project_skill_reliability_for_executor(
+                            vault,
+                            &skill,
+                            model,
+                            evidence.at,
+                        )?;
+                    }
+                    None => {
+                        crate::skill_reliability::project_skill_reliability_for(
+                            vault,
+                            &skill,
+                            evidence.at,
+                        )?;
+                    }
                 }
             }
-
             if !report.skills.contains(&skill) {
                 report.skills.push(skill);
             }

@@ -60,6 +60,12 @@ struct Search {
 }
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
+struct AgentPut {
+    id: String,
+    definition: Value,
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 struct Speech {
     text: String,
 }
@@ -201,6 +207,14 @@ pub(super) fn dispatch(state: &mut Bridge<'_>, name: &str, input: &str) -> Resul
 
 fn self_call(name: &str, input: &str, now: u64) -> Result<SelfCall> {
     Ok(match name {
+        "vault.agents.put" => {
+            let args: AgentPut = parse(input)?;
+            SelfCall::AgentsPut(Box::new(crate::code_run::parse_agent_put_request(
+                &args.id,
+                args.definition,
+                now,
+            )?))
+        }
         "tasks.ask" => SelfCall::TasksAsk(Box::new(parse::<crate::task_verb::TaskAskSpec>(input)?)),
         "tasks.wait" => SelfCall::TasksWait(parse::<crate::task_verb::TaskAskHandle>(input)?),
         "self.memory.put_claim" => {
@@ -284,6 +298,9 @@ fn response(response: SelfDispatchResponse) -> Result<String> {
             json!({"denied":value.outcome,"reasonCodes":value.reason_codes})
         }
         SelfDispatchOutcome::Failed(_) => json!({"failed":true}),
+        SelfDispatchOutcome::AgentDefinitionPut(value) => {
+            json!({"id":value.id.to_hex(),"disposition":value.disposition.as_str()})
+        }
         SelfDispatchOutcome::AgentSpawn(value) => match value {
             crate::code_run::SelfAgentSpawnResult::Queued { attempt_ref } => {
                 json!({"kind":"agent_spawn","state":"queued","attempt":crate::entity_id::bytes_to_hex_lower(attempt_ref.as_bytes())})
