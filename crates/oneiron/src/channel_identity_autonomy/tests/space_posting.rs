@@ -74,13 +74,20 @@ fn owner_dial_is_space_local_receipted_and_never_expands_room_or_grants_send() -
 fn bot_only_platform_refuses_owner_presentation_and_keeps_named_default() -> crate::Result<()> {
     let (_dir, vault, owner, request) = fixture(ChannelIdentityAutonomyRung::DraftOnly);
     let id = EntityId::now();
-    let mut identity = vault
-        .get_channel_identity(&request.read_envelope.identity_ref)?
-        .unwrap();
-    identity.channel = "telegram".to_owned();
-    identity.address_or_handle = "@agent".to_owned();
-    // Use the channel's native dedicated-handle shape.
-    identity.shape = crate::channel_identity::ChannelIdentityShape::DedicatedHandle;
+    // A live row on a BOT-ONLY platform, in the channel's native
+    // dedicated-handle shape: the fixture's email row is rebuilt on telegram
+    // rather than having its fields overwritten.
+    let identity = crate::test_util::self_held_identity_in_state(
+        "telegram",
+        "@agent",
+        crate::channel_identity::SelfHeldShape::DedicatedHandle,
+        vault
+            .get_channel_identity(&request.read_envelope.identity_ref)?
+            .expect("fixture identity")
+            .binding(),
+        crate::channel_identity::ChannelIdentityState::Active,
+        1,
+    );
     vault.create_channel_identity(&id, &identity)?;
     assert!(
         vault

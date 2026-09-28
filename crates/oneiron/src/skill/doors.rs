@@ -516,7 +516,7 @@ impl Vault {
 
     pub(crate) fn read_skill_record_in_txn(
         &self,
-        txn: &heed::RwTxn<'_>,
+        txn: &heed::RoTxn<'_>,
         id: &EntityId,
     ) -> Result<SkillRecord> {
         let raw = self
