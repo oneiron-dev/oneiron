@@ -249,7 +249,7 @@ impl<'a> HostSelfDispatcher<'a> {
         match call {
             SelfCall::AgentsSpawn(call) => self.dispatch_agents_spawn(*call),
             SelfCall::TasksAsk(call) => self.dispatch_tasks_ask(*call),
-            SelfCall::TasksWait(call) => self.dispatch_tasks_wait(call),
+            SelfCall::TasksWait(call) => self.dispatch_tasks_wait(call, run_id),
             SelfCall::MemorySearch(call) => self.dispatch_memory_search(call),
             SelfCall::MemoryWriteFixture(call) => self.dispatch_memory_write_fixture(call),
             SelfCall::MemoryPutClaim(call) => self.dispatch_memory_put_claim(call),
@@ -271,8 +271,42 @@ impl<'a> HostSelfDispatcher<'a> {
             SelfCall::Think(call) => self.dispatch_speech(SelfEffect::Think, call, run_id),
             SelfCall::Express(call) => self.dispatch_speech(SelfEffect::Express, call, run_id),
             SelfCall::ReportBlocked(call) => self.dispatch_report_blocked(call, run_id),
+            SelfCall::InferenceDefaultsRead => self.dispatch_inference_defaults(None),
+            SelfCall::InferenceDefaultsReplace(json) => {
+                self.dispatch_inference_defaults(Some(&json))
+            }
             SelfCall::WakePolicyWrite(call) => self.dispatch_wake_policy_write(call),
         }
+    }
+}
+
+impl HostSelfDispatcher<'_> {
+    fn dispatch_inference_defaults(
+        &self,
+        replacement: Option<&str>,
+    ) -> Result<SelfDispatchOutcome> {
+        let ExecutorStorage::Canonical(vault) = &self.storage else {
+            return Err(crate::Error::InvalidConfig(
+                "inference defaults require canonical vault".into(),
+            ));
+        };
+        // The shared action registry is not the only caller of SelfDispatcher.
+        // Re-check the host-bound actor here so a raw SelfCall cannot bypass
+        // the owner's Auto ceiling or a narrowed agent definition.
+        crate::code_run::actions::check_ceiling(
+            vault,
+            self.actor,
+            crate::agent_def::AgentCeiling::Auto,
+        )?;
+        if let Some(json) = replacement {
+            let next = crate::llm::PurposeDefaultTable::from_json(json.as_bytes())?;
+            vault.set_resident_purpose_default_table(&next)?;
+        }
+        let active = vault.purpose_default_table()?;
+        Ok(SelfDispatchOutcome::InferenceDefaults(
+            serde_json::to_string(&active)
+                .map_err(|e| crate::Error::InvalidConfig(e.to_string()))?,
+        ))
     }
 }
 

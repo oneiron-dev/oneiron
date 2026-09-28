@@ -118,6 +118,27 @@ pub(super) fn map_for_each_value_bytes(map: &LoroMap, mut f: impl FnMut(&str, Op
     });
 }
 
+/// [`map_for_each_value_bytes`] that visits the Binary values `later` selects
+/// only after every other key, so a row checked against a sibling row in the
+/// same map never depends on key order.
+pub(super) fn map_for_each_value_bytes_deferring(
+    map: &LoroMap,
+    later: impl Fn(&[u8]) -> bool,
+    mut f: impl FnMut(&str, Option<&[u8]>),
+) {
+    let mut deferred = Vec::new();
+    map.for_each(|key, value| match value {
+        ValueOrContainer::Value(LoroValue::Binary(bytes)) if later(&bytes) => {
+            deferred.push((key.to_owned(), bytes));
+        }
+        ValueOrContainer::Value(LoroValue::Binary(bytes)) => f(key, Some(&bytes)),
+        _ => f(key, None),
+    });
+    for (key, bytes) in &deferred {
+        f(key, Some(bytes));
+    }
+}
+
 /// Tombstone-map iterator: visits EVERY key. Binary values pass their bytes
 /// through; any non-Binary value (string/int/container/…) yields the EMPTY
 /// slice, which `decode_tombstone_value` decodes as HARD — fail closed,
