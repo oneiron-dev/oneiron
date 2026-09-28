@@ -292,7 +292,7 @@ pub(crate) fn decode_passport_value(value: &Value) -> Result<CalendarPassportVal
 }
 
 /// Decodes a `calendar.status` value.
-pub(in crate::calendar) fn decode_status_value(value: &Value) -> Result<CalendarStatusValue> {
+pub(crate) fn decode_status_value(value: &Value) -> Result<CalendarStatusValue> {
     let entries = value_map(value)?;
     let keys = [KEY_STATUS, KEY_BASIS, KEY_RECORDED_AT];
     validate_keys(entries, &keys, &keys)?;
