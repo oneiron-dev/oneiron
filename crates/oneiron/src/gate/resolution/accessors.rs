@@ -3,13 +3,16 @@
 use sha2::{Digest, Sha256};
 
 use crate::EntityId;
+
 use crate::error::Result;
 use crate::gate::hosted_tts_policy::HostedTtsLimits;
 use crate::llm::{BudgetExhaustionPolicy, BudgetPolicyTable};
+use oneiron_docedit::ArchiveLimits;
 
 use super::frontier_hash::hash_policy_frontier_v0;
 use super::manifest_types::{
-    CommOptOutPosture, PolicyManifestDiagnostics, PolicyManifestResolution,
+    AttributionLimits, CommOptOutPosture, PolicyManifestDiagnostics, PolicyManifestResolution,
+    SheetAnswerPrecedence,
 };
 use crate::gate::ceiling::{
     PolicyAxes, PolicyCriticality, PolicyOwnerPatternRow, PolicyOwnerPolicyRow, PolicySensitivity,
@@ -30,6 +33,15 @@ impl PolicyManifestResolution {
             return None;
         }
         self.pack_install_policy.as_ref()
+    }
+
+    /// Trusted manifest rows, intersected across packs. Header is not a
+    /// content class; without a policy row no cross-class carry is allowed.
+    pub(crate) fn connector_class_carry(&self) -> std::collections::BTreeSet<(String, String)> {
+        if self.is_fail_closed() {
+            return Default::default();
+        }
+        self.connector_class_carry.clone().unwrap_or_default()
     }
 
     pub(crate) fn is_single_valued_predicate(&self, predicate: &str) -> bool {
@@ -53,6 +65,58 @@ impl PolicyManifestResolution {
         self.diagnostics.manifest_count > 0 || self.diagnostics.loaded_manifest_forces_fail_closed()
     }
 
+    /// Resolved restrictive cap, with vault cap and applicable artifact/sheet
+    /// rows combined by minimum. An untrusted row can only narrow this cap.
+    /// The holder may request a smaller limit, never exceed the vault cap.
+    pub(crate) fn sheet_answer_limit(
+        &self,
+        artifact_ref: &str,
+        sheet: &str,
+        holder_override: Option<u64>,
+    ) -> Option<u64> {
+        if self.diagnostics.loaded_manifest_forces_fail_closed() {
+            return None;
+        }
+        let SheetAnswerPrecedence::NestedNarrowingHolderCappedAtVault =
+            self.sheet_answer_precedence?;
+        let mut trusted_vault_cap = None::<u64>;
+        let mut scoped_cap = u64::MAX;
+        for row in &self.sheet_answer_limits {
+            match (row.artifact_ref.as_deref(), row.sheet.as_deref()) {
+                (None, None) => {
+                    trusted_vault_cap = Some(
+                        trusted_vault_cap.map_or(row.max_count, |old: u64| old.min(row.max_count)),
+                    );
+                }
+                (Some(artifact), None) if artifact == artifact_ref => {
+                    scoped_cap = scoped_cap.min(row.max_count);
+                }
+                (Some(artifact), Some(name)) if artifact == artifact_ref && name == sheet => {
+                    scoped_cap = scoped_cap.min(row.max_count);
+                }
+                _ => {}
+            }
+        }
+        // Untrusted rows can narrow the trusted vault cap, never replace the
+        // shipped fallback when the owner omitted their vault row.
+        let vault_cap = trusted_vault_cap.or(self.sheet_answer_default_max_count)?;
+        let mut cap = vault_cap.min(scoped_cap);
+        for row in &self.untrusted_sheet_answer_limits {
+            match (row.artifact_ref.as_deref(), row.sheet.as_deref()) {
+                (None, None) => cap = cap.min(row.max_count),
+                (Some(artifact), None) if artifact == artifact_ref => cap = cap.min(row.max_count),
+                (Some(artifact), Some(name)) if artifact == artifact_ref && name == sheet => {
+                    cap = cap.min(row.max_count);
+                }
+                _ => {}
+            }
+        }
+        if holder_override == Some(0) {
+            return None;
+        }
+        Some(cap.min(holder_override.unwrap_or(u64::MAX)))
+    }
+
     /// Effective correction quota from the resolved manifest, never from a
     /// caller-supplied request. Malformed policy cannot authorize a label.
     pub(crate) fn weave_correction_limit(&self, holder: &str) -> Option<usize> {
@@ -62,6 +126,13 @@ impl PolicyManifestResolution {
         self.weave_correction_policy
             .as_ref()
             .map(|policy| policy.limit_for(holder))
+    }
+
+    /// Limits are resolved by nested narrowing across trusted manifests.
+    /// A malformed loaded manifest never gets to relax admission by omission.
+    #[must_use]
+    pub(crate) fn attribution_limits(&self) -> Option<&AttributionLimits> {
+        (!self.diagnostics.loaded_manifest_forces_fail_closed()).then_some(&self.attribution_limits)
     }
 
     /// Shipped manifest rows or the same bootstrap default if no ask row
@@ -274,6 +345,19 @@ impl PolicyManifestResolution {
         }
     }
 
+    /// Restrictive DOCX workload fold: shipped/default vault upper bound,
+    /// every trusted manifest's vault row, and the selected holder rows. A
+    /// malformed loaded manifest yields no usable budget (never a fallback).
+    pub(crate) fn docx_archive_limits(&self, holder: Option<EntityId>) -> Option<ArchiveLimits> {
+        if self.diagnostics.loaded_manifest_forces_fail_closed() {
+            return None;
+        }
+        let mut limits = ArchiveLimits::DEFAULT;
+        for policy in &self.docx_archive_limits {
+            limits = limits.narrow(policy.for_holder(holder));
+        }
+        Some(limits)
+    }
     pub(crate) fn hosted_tts_limits(
         &self,
         provider: &str,
@@ -283,6 +367,36 @@ impl PolicyManifestResolution {
             return None;
         }
         self.hosted_tts.limits(provider, holder)
+    }
+    /// Effective artifact-review limits from trusted manifest rows; a holder
+    /// may only narrow the vault setting, never widen it.
+    pub(crate) fn slide_review_limits(
+        &self,
+        holder: crate::EntityId,
+    ) -> Option<crate::llm::decision::SlideReviewLimits> {
+        (!self.diagnostics.loaded_manifest_forces_fail_closed())
+            .then(|| self.slide_review_policy.resolve(holder))
+    }
+
+    pub(crate) fn slide_review_route(
+        &self,
+        holder: crate::EntityId,
+    ) -> Option<crate::llm::decision::SlideReviewRoute> {
+        (!self.diagnostics.loaded_manifest_forces_fail_closed())
+            .then(|| self.slide_review_policy.resolve_route(holder))
+    }
+    /// Only a valid loaded policy resolves document resource ceilings.
+    /// An absent row uses the shipped manifest's baseline, not organ literals.
+    pub(in crate::gate) fn docedit_resource_policy(
+        &self,
+    ) -> Option<crate::gate::docedit_resource::DoceditResourcePolicy> {
+        if self.diagnostics.is_fail_closed() {
+            return None;
+        }
+        Some(
+            self.docedit_resource_policy
+                .unwrap_or_else(crate::gate::docedit_resource::DoceditResourcePolicy::shipped),
+        )
     }
 
     /// Rendering pins follow declared critical classes, not the fail-closed

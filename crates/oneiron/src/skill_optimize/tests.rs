@@ -2709,10 +2709,13 @@ fn evidence_arriving_mid_flight_aborts_retryably_and_writes_nothing() -> Result<
 
 #[test]
 fn a_terminal_reason_that_stops_holding_aborts_instead_of_refusing() -> Result<()> {
-    let (_tmp, vault) = temp_vault();
+    let (tmp, vault) = temp_vault();
     // Leaked so the race hook — a `'static` thread-local, because the gate that
     // fires it holds no test state — can reach this exact vault. The temp dir
-    // still drops with the test; only the handle outlives it.
+    // is leaked with it: the handle keeps its root registered as open, so
+    // deleting the files would free their inodes for a later test's vault and
+    // fail that open with DuplicateOpenRoot.
+    let _tmp: &'static tempfile::TempDir = Box::leak(Box::new(tmp));
     let vault: &'static Vault = Box::leak(Box::new(vault));
     let (skill, _) = put_standard_active(vault, "oneiron.skill.losing");
     attribute_defects_across_split(vault, &skill, "oneiron.skill.losing");

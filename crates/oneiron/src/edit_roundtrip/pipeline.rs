@@ -7,7 +7,7 @@ use super::opc;
 use super::session_validate::{diff_parts, validate};
 use super::{
     EDIT_MANIFEST_SCHEMA_VERSION, EditManifest, EditOp, EditPlan, EditSession, MutationMode,
-    OfficeDoc, OfficeFormat, StructureSummary, ValidationReport,
+    OfficeDoc, OfficeFormat, SheetAnswerBundle, StructureSummary, ValidationReport,
 };
 use crate::blob_artifact::{BlobVersionProvenance, CalcEngineStamp};
 use crate::entity_id::EntityId;
@@ -48,6 +48,8 @@ pub struct EditProposal {
     /// artifact head's content hash — an intervening edit changes the head hash,
     /// so committing these bytes would clobber it and replay a stale manifest.
     pub base_content_hash: [u8; 32],
+    /// Typed answers bound to the manifest; persisted with Keep receipts.
+    pub sheet_answers: Option<Box<SheetAnswerBundle>>,
 }
 
 impl EditProposal {
@@ -66,7 +68,7 @@ impl EditProposal {
 /// bytes forward.
 #[derive(Debug, Clone)]
 pub enum EditOutcome {
-    Proposed(EditProposal),
+    Proposed(Box<EditProposal>),
     Rejected {
         inspection: StructureSummary,
         report: ValidationReport,
@@ -101,6 +103,17 @@ pub fn run_edit_roundtrip<S: EditSession>(
         )));
     }
 
+    // The spreadsheet seam must not pass native DOCX transactions to an
+    // arbitrary external session, even if it reports them as applied.
+    if plan
+        .ops
+        .iter()
+        .any(|op| matches!(op, EditOp::DocxRevision { .. }))
+    {
+        return Err(Error::Artifact(ArtifactError::InvalidEditManifest(
+            "a docx revision must use the native docx writer",
+        )));
+    }
     // Reject a malformed plan before it can reach a session: cells, ranges, and
     // axis positions are 1-based, but the unchecked constructors let 0 through.
     validate_ops(&plan.ops)?;
@@ -173,6 +186,7 @@ pub fn run_edit_roundtrip<S: EditSession>(
         mutation_mode,
         warnings,
         pptx_holder_limits: None,
+        slide_judgments: Vec::new(),
     };
 
     let report = validate(&before, &after, format);
@@ -190,7 +204,7 @@ pub fn run_edit_roundtrip<S: EditSession>(
         None
     };
 
-    Ok(EditOutcome::Proposed(EditProposal {
+    Ok(EditOutcome::Proposed(Box::new(EditProposal {
         calc_engine,
         run_ref: run_ref.to_owned(),
         format,
@@ -203,7 +217,8 @@ pub fn run_edit_roundtrip<S: EditSession>(
         // input bytes it edited. `propose_blob_artifact_edit` fills base_version.
         base_version: None,
         base_content_hash: *blake3::hash(input_bytes).as_bytes(),
-    }))
+        sheet_answers: None,
+    })))
 }
 
 impl crate::Vault {
