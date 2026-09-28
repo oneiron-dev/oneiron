@@ -174,8 +174,7 @@ fn immutable_edits_merge_restrictively_and_causal_raise_supersedes_seen_heads() 
     assert_eq!(a.project(id)?.unwrap().depth, 12);
     put_manifest_for_test(&a, b_fact.0, &b_fact.1, 6)?;
     assert_eq!(a.project(id)?.unwrap().depth, 12);
-    let saved = a.project(id)?.unwrap();
-    let mut stale_member = saved.clone();
+    let mut stale_member = a.project(id)?.unwrap();
     stale_member.depth = 10;
     stale_member.roster.push(EntityId::now().to_hex());
     a.put_project(id, &stale_member, 7)?;
@@ -256,10 +255,10 @@ fn predecessor_and_owner_history_can_arrive_after_edits_without_widening() -> Re
                 | codec::ProjectDepthContribution::DefaultEdit(_) => continue,
                 codec::ProjectDepthContribution::Birth(_) => birth = Some((*key, body.clone())),
                 codec::ProjectDepthContribution::Edit(edit) if edit.depth == 2 => {
-                    first = Some((*key, body.clone()))
+                    first = Some((*key, body.clone()));
                 }
                 codec::ProjectDepthContribution::Edit(edit) if edit.depth == 12 => {
-                    second = Some((*key, body.clone()))
+                    second = Some((*key, body.clone()));
                 }
                 _ => {
                     return Err(Error::InvalidConfig(
@@ -399,7 +398,7 @@ fn revoked_edit_stays_non_authorizing_after_regrant_until_post_regrant_edit() ->
             actor_class: "human".into(),
             epoch: 2,
         },
-        signer: bind.signer.clone(),
+        signer: bind.signer,
         cosigns: Vec::new(),
         ts: 103,
     };
@@ -435,13 +434,13 @@ fn revoked_edit_stays_non_authorizing_after_regrant_until_post_regrant_edit() ->
 
 #[test]
 fn unsigned_seed_birth_cannot_reset_an_owner_changed_creation_default() -> Result<()> {
+    use ed25519_dalek::Signer;
     let _dir = tempfile::tempdir()?;
     let vault = Vault::open(_dir.path(), crate::VaultConfig::default())?;
     let root = vault.root_project()?;
     let writer = owner(&vault, 0xBF)?;
     let signing = ed25519_dalek::SigningKey::from_bytes(&[0xBF; 32]);
     let key = crate::authority::AuthorityKey::Ed25519(signing.verifying_key().to_bytes());
-    use ed25519_dalek::Signer;
     vault.set_project_creation_depth_default(8, &writer, 2, key, |message| {
         Ok(signing.sign(message).to_bytes().to_vec())
     })?;

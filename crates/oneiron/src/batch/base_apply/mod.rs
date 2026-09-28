@@ -134,7 +134,8 @@ pub(crate) fn apply_session_bundle_claim_puts(
 /// class outright.
 #[expect(
     clippy::too_many_arguments,
-    reason = "batch write plumbing keeps gate persistence modes and the write origin explicit at call sites"
+    clippy::too_many_lines,
+    reason = "batch write plumbing keeps gate persistence modes, the write origin and the privacy posture explicit at call sites"
 )]
 pub(super) fn apply_ops_with_origin(
     store: &Store,

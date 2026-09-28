@@ -4569,7 +4569,7 @@ fn pre_regrant_depth_edit_stays_refused_through_both_replay_doors() -> Result<()
             actor_class: "human".into(),
             epoch: 2,
         },
-        signer: bind.signer.clone(),
+        signer: bind.signer,
         cosigns: Vec::new(),
         ts: 103,
     };
@@ -4683,15 +4683,15 @@ fn signed_project_edit_before_predecessor_survives_forward_retry_drain() -> Resu
     for (id, body) in crate::gate::project_depth::contributions_for_test(&source, project)? {
         match crate::gate::project_depth::decode_contribution(&body)? {
             crate::gate::project_depth::ProjectDepthContribution::Birth(_) => {
-                birth = Some((id, body))
+                birth = Some((id, body));
             }
             crate::gate::project_depth::ProjectDepthContribution::Edit(edit) if edit.depth == 2 => {
-                first = Some((id, body))
+                first = Some((id, body));
             }
             crate::gate::project_depth::ProjectDepthContribution::Edit(edit)
                 if edit.depth == 12 =>
             {
-                second = Some((id, body))
+                second = Some((id, body));
             }
             _ => return Err(Error::InvalidConfig("project predecessor fixture".into())),
         }
