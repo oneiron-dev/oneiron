@@ -112,6 +112,10 @@ pub(crate) fn default_policy_manifest() -> Vec<u8> {
     let commitment_projection_actor_ref = commitment_projection_actor().entity_ref().to_hex();
     let manifest = Value::Map(vec![
         (
+            Value::from(crate::failure_signals::policy::POLICY_KEY),
+            crate::failure_signals::policy::default_row(),
+        ),
+        (
             Value::from(POLICY_SCHEMA_VERSION_KEY),
             Value::from(POLICY_SCHEMA_VERSION),
         ),

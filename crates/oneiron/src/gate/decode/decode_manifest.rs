@@ -104,6 +104,7 @@ pub(in crate::gate) struct DecodedPolicyManifest {
     pub(in crate::gate) docx_archive_limits: Option<crate::gate::docx_budget::DocxArchivePolicy>,
 
     pub(in crate::gate) diagnostic_bounds: Option<crate::self_heal::tripwires::TripwireBounds>,
+    pub(in crate::gate) failure_signal_policy: Vec<crate::failure_signals::policy::Row>,
     pub(in crate::gate) livequery_tracker_limits:
         Option<crate::gate::tracker_limits::PolicyTrackerLimits>,
     pub(in crate::gate) proposal_check_threshold: Option<u64>,
@@ -186,6 +187,7 @@ pub(in crate::gate) fn decode_policy_manifest(data: &[u8]) -> Option<DecodedPoli
                 | POLICY_DOCX_ARCHIVE_LIMITS_KEY
 
                 | "diagnostic_bounds"
+                | crate::failure_signals::policy::POLICY_KEY
                 | "livequery_tracker_limits"
                 | "proposal_check_threshold"
                 | RETRIEVAL_RETENTION_ROWS_KEY
@@ -450,6 +452,13 @@ pub(in crate::gate) fn decode_policy_manifest(data: &[u8]) -> Option<DecodedPoli
         }
     };
 
+    let failure_signal_policy =
+        match single_map_value(&entries, crate::failure_signals::policy::POLICY_KEY) {
+            MapValue::Missing => Vec::new(),
+            MapValue::Duplicate => return None,
+            MapValue::Present(value) => crate::failure_signals::policy::decode(value)?,
+        };
+
     let proposal_check_threshold = match single_map_value(&entries, "proposal_check_threshold") {
         MapValue::Missing => None,
         MapValue::Duplicate => return None,
@@ -603,6 +612,7 @@ pub(in crate::gate) fn decode_policy_manifest(data: &[u8]) -> Option<DecodedPoli
         docedit_resource_policy,
         docx_archive_limits,
         diagnostic_bounds,
+        failure_signal_policy,
         livequery_tracker_limits,
         proposal_check_threshold,
         retrieval_retention,
