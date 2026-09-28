@@ -5,8 +5,8 @@ use crate::llm::{BudgetExhaustionPolicy, BudgetPolicyTable};
 use std::collections::BTreeMap;
 
 use crate::gate::ceiling::{
-    ActorCeiling, DelegationFoldCache, PolicyOwnerPatternRow, PolicyOwnerPolicyRow, PolicyPack,
-    PolicySignature, SourceTrustCeiling,
+    ActorCeiling, DelegationFoldCache, PolicyOwnerPatternRow, PolicyOwnerPolicyRow,
+    PolicyOwnerPrecedence, PolicyPack, PolicySignature, SourceTrustCeiling,
 };
 use crate::gate::grants::PolicyScopedGrant;
 use crate::gate::hosted_tts_policy::HostedTtsPolicy;
@@ -202,6 +202,7 @@ pub(crate) struct PolicyManifestResolution {
     pub(super) scoped_grants: Vec<PolicyScopedGrant>,
     pub(crate) federation_grant_rows: Vec<crate::federation::grant_policy::GrantPolicyRow>,
     pub(super) owner_policy_rows: Vec<PolicyOwnerPolicyRow>,
+    pub(super) owner_policy_precedence: PolicyOwnerPrecedence,
     pub(super) owner_policy_rows_dropped: bool,
     pub(super) owner_policy_enabled: bool,
     pub(super) owner_policy_document: Option<String>,

@@ -1,5 +1,7 @@
 //! Read-only resolved-field accessors plus the frontier-hash entry.
 
+use std::collections::BTreeMap;
+
 use crate::autoreason_campaign::selection::{SelectionPolicy, SelectionPrecedence};
 use sha2::{Digest, Sha256};
 
@@ -16,8 +18,8 @@ use super::manifest_types::{
     SheetAnswerPrecedence,
 };
 use crate::gate::ceiling::{
-    PolicyAxes, PolicyCriticality, PolicyOwnerPatternRow, PolicyOwnerPolicyRow, PolicySensitivity,
-    PolicySignature,
+    OwnerRowAction, PolicyAxes, PolicyCriticality, PolicyOwnerPatternRow, PolicyOwnerPolicyRow,
+    PolicyOwnerPrecedence, PolicySensitivity, PolicySignature,
 };
 use crate::gate::grants::{PolicyScopedGrant, scoped_read_grant_has_read_effector};
 
@@ -457,33 +459,97 @@ impl PolicyManifestResolution {
         !self.diagnostics.loaded_manifest_forces_fail_closed() && self.owner_policy_enabled
     }
 
+    /// Compose matching owner rows by the manifest's owner-authored policy.
+    /// A vault row always remains in force. The optional most-specific mode
+    /// can discard an intermediate world rule, but never the vault rule.
     #[must_use]
-    pub(crate) fn active_owner_policy_rows(
+    pub(crate) fn active_owner_policy_rows_for_scope(
         &self,
         world_ref: Option<&str>,
-    ) -> Vec<&PolicyOwnerPolicyRow> {
+        project_ref: Option<&str>,
+    ) -> Vec<PolicyOwnerPolicyRow> {
         if self.diagnostics.loaded_manifest_forces_fail_closed() || self.owner_policy_rows_dropped {
             return Vec::new();
         }
 
-        let scoped_refs: Vec<&str> = match world_ref {
-            Some(world_ref) => self
-                .owner_policy_rows
-                .iter()
-                .filter(|row| row.active && row.world_ref.as_deref() == Some(world_ref))
-                .map(|row| row.row_ref.as_str())
-                .collect(),
-            None => Vec::new(),
-        };
-
-        self.owner_policy_rows
-            .iter()
-            .filter(|row| row.active)
-            .filter(|row| match (world_ref, row.world_ref.as_deref()) {
-                (Some(world_ref), Some(row_world)) => row_world == world_ref,
-                (Some(_), None) => !scoped_refs.contains(&row.row_ref.as_str()),
-                (None, None) => true,
-                (None, Some(_)) => false,
+        let mut by_ref = BTreeMap::<&str, Vec<&PolicyOwnerPolicyRow>>::new();
+        let mut order = Vec::new();
+        for row in self.owner_policy_rows.iter().filter(|row| {
+            row.active
+                && row
+                    .world_ref
+                    .as_deref()
+                    .is_none_or(|world| Some(world) == world_ref)
+                && row
+                    .project_ref
+                    .as_deref()
+                    .is_none_or(|project| Some(project) == project_ref)
+        }) {
+            if !by_ref.contains_key(row.row_ref.as_str()) {
+                order.push(row.row_ref.as_str());
+            }
+            by_ref.entry(row.row_ref.as_str()).or_default().push(row);
+        }
+        order
+            .into_iter()
+            .map(|row_ref| {
+                let candidates = &by_ref[row_ref];
+                let specificity = |row: &PolicyOwnerPolicyRow| {
+                    u8::from(row.project_ref.is_some()) * 2 + u8::from(row.world_ref.is_some())
+                };
+                let chosen = candidates
+                    .iter()
+                    .max_by_key(|row| specificity(row))
+                    .expect("nonempty rows");
+                let mut matching: Vec<_> = match self.owner_policy_precedence {
+                    PolicyOwnerPrecedence::NestedNarrowing => candidates.clone(),
+                    PolicyOwnerPrecedence::MostSpecificVaultCapped => candidates
+                        .iter()
+                        .copied()
+                        .filter(|row| {
+                            specificity(row) == 0 || specificity(row) == specificity(chosen)
+                        })
+                        .collect(),
+                };
+                matching.sort_by_key(|row| specificity(row));
+                let mut effective = (**chosen).clone();
+                effective.text = matching
+                    .iter()
+                    .map(|row| row.text.as_str())
+                    .collect::<Vec<_>>()
+                    .join("\n");
+                effective.action =
+                    matching.iter().fold(OwnerRowAction::Warn, |current, row| {
+                        match (current, row.action) {
+                            (OwnerRowAction::Block, _) | (_, OwnerRowAction::Block) => {
+                                OwnerRowAction::Block
+                            }
+                            (OwnerRowAction::RouteToHelp, _) | (_, OwnerRowAction::RouteToHelp) => {
+                                OwnerRowAction::RouteToHelp
+                            }
+                            _ => OwnerRowAction::Warn,
+                        }
+                    });
+                // Named moderators select the most specific applicable scope;
+                // the presence of any human still imposes the Hold action.
+                effective.human = matching.iter().rev().find_map(|row| row.human.clone());
+                effective.why = Some(
+                    matching
+                        .iter()
+                        .filter_map(|row| row.why.as_deref())
+                        .collect::<Vec<_>>()
+                        .join("\n"),
+                )
+                .filter(|why| !why.is_empty());
+                // A combined explanation has no single provenance when its
+                // contributing rows disagree; never invent an invalid token.
+                effective.why_source = matching
+                    .iter()
+                    .filter_map(|row| row.why_source.as_deref())
+                    .reduce(|left, right| if left == right { left } else { "" })
+                    .filter(|source| !source.is_empty())
+                    .map(str::to_owned);
+                effective
             })
             .collect()
     }

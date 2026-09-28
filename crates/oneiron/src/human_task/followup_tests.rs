@@ -1000,6 +1000,67 @@ fn non_human_lanes_get_no_cursor() {
     );
 }
 
+/// An undeliverable policy push cannot stop an unrelated due human TASK.
+#[test]
+fn failed_policy_push_does_not_stop_an_unrelated_due_human_followup()
+-> Result<(), Box<dyn std::error::Error>> {
+    use crate::federation::{FederationGrantRole, InitialSharedMember};
+    let fixture = HumanFixture::open();
+    let task = fixture.create_human_task();
+    let due = fixture.cursor(task).next_due_at.expect("due task");
+    let root = fixture.vault.ensure_embedded_owner_actor()?;
+    let owner = fixture.vault.authenticate_owner(
+        root,
+        &root.to_hex(),
+        true,
+        crate::store::GateDecisionId::now(),
+    )?;
+    fixture.vault.initialize_shared_vault(
+        &owner,
+        62,
+        None,
+        &[
+            InitialSharedMember {
+                member_ref: root,
+                role: Some(FederationGrantRole::Owner),
+            },
+            InitialSharedMember {
+                member_ref: fixture.person,
+                role: Some(FederationGrantRole::Owner),
+            },
+            // The TASK's creating agent keeps a writing role, so its own
+            // follow-up passes the shared-vault role gate.
+            InitialSharedMember {
+                member_ref: fixture.owner,
+                role: Some(FederationGrantRole::Member),
+            },
+        ],
+        NOW,
+    )?;
+    let invalid_author = EntityId::from_bytes([0xec; 16])?;
+    // A previously queued receipt whose author has lost its actor binding.
+    // The row is well formed and the recipient still holds policy power.
+    let queued = serde_json::json!({
+        "receipt_id": "000-bad-author", "recipient": fixture.person.to_hex(),
+        "author": invalid_author.to_hex(), "scope": "Vault",
+        "grant_target": "policy-row:unavailable-author", "mode": "push_all",
+        "followup_task": null, "digest_due_at": null,
+    });
+    fixture.vault.with_write_txn(|txn| {
+        fixture.vault.store.vault_meta.put(
+            txn,
+            b"owner_policy:notification:queued:v1:000-bad-author",
+            &rmp_serde::to_vec_named(&queued)
+                .map_err(|_| crate::Error::InvariantViolation("test notification encode"))?,
+        )?;
+        Ok(())
+    })?;
+    run_human_followups_on_wake(&fixture.vault, due)?;
+    assert_eq!(fixture.vault.policy_notification_failures()?.len(), 1);
+    assert_eq!(fixture.cursor(task).stage, HumanFollowupStage::ReminderDue);
+    Ok(())
+}
+
 #[test]
 fn token_answer_completes_its_member_and_suppresses_due_reminder_while_group_waits() {
     use crate::task_verb::{

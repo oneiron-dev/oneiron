@@ -242,7 +242,7 @@ pub(super) fn parse_scoped_grants(value: &Value) -> Option<Vec<PolicyScopedGrant
 }
 
 /// Parses the `owner_policy_rows` array. Every entry must be a valid row map
-/// carrying only the five recognized keys — an unknown key rejects the whole
+/// carrying only the recognized keys — an unknown key rejects the whole
 /// table, exactly as [`parse_budget_policy_row`] does, so a misspelled
 /// `action` can never fall through to the gentle `Warn` default and quietly
 /// widen the owner's plane.
@@ -261,8 +261,11 @@ pub(super) fn parse_owner_policy_rows(value: &Value) -> Option<Vec<PolicyOwnerPo
                 | POLICY_ROW_TEXT_KEY
                 | POLICY_ROW_ACTIVE_KEY
                 | POLICY_ROW_WORLD_REF_KEY
+                | "project_ref"
                 | POLICY_ROW_ACTION_KEY
-                | "human" => {}
+                | "human"
+                | "why"
+                | "why_source" => {}
                 _ => return None,
             }
         }
@@ -270,10 +273,27 @@ pub(super) fn parse_owner_policy_rows(value: &Value) -> Option<Vec<PolicyOwnerPo
         let text = required_nonempty_string(entries, POLICY_ROW_TEXT_KEY)?;
         let active = optional_bool_default(entries, POLICY_ROW_ACTIVE_KEY, true)?;
         let world_ref = optional_string(entries, POLICY_ROW_WORLD_REF_KEY)?;
+        let project_ref = optional_string(entries, "project_ref")?;
         let human = optional_string(entries, "human")?;
         if human.as_ref().is_some_and(|name| name.trim().is_empty()) {
             return None;
         }
+        let why = match single_map_value(entries, "why") {
+            MapValue::Missing => None,
+            MapValue::Present(value) => Some(value.as_str().map(str::to_owned)?),
+            MapValue::Duplicate => return None,
+        };
+        let why = why.filter(|value| !value.trim().is_empty());
+        let why_source = match single_map_value(entries, "why_source") {
+            MapValue::Missing if why.is_some() => Some("owner".to_owned()),
+            MapValue::Missing => None,
+            MapValue::Present(value) if why.is_some() => match value.as_str()? {
+                "owner" => Some("owner".to_owned()),
+                "drafted" => Some("drafted".to_owned()),
+                _ => return None,
+            },
+            MapValue::Present(_) | MapValue::Duplicate => return None,
+        };
         let action = match optional_string(entries, POLICY_ROW_ACTION_KEY)? {
             // A row that names no action only wants to be told about, so the
             // gentlest arm is the default: content still ships unchanged.
@@ -285,13 +305,13 @@ pub(super) fn parse_owner_policy_rows(value: &Value) -> Option<Vec<PolicyOwnerPo
         // looks up — and resolution takes the FIRST match, so a duplicate is a
         // rule that can never fire, however strict its action.
         //
-        // The key is the PAIR, not the ref alone: one ref written twice under
-        // two worlds is the scoped-override shape `active_owner_policy_rows`
-        // exists to resolve, and only rows that would land in the same rubric
-        // together shadow each other. Refusing them here drops the rows as
-        // malformed rather than letting one silently swallow the other.
+        // Different scopes may override the same ref; within one exact
+        // (row_ref, world_ref, project_ref) slot, a duplicate would shadow
+        // whichever row followed it. Reject that ambiguity before resolution.
         if parsed.iter().any(|seen: &PolicyOwnerPolicyRow| {
-            seen.row_ref == row_ref && seen.world_ref == world_ref
+            seen.row_ref == row_ref
+                && seen.world_ref == world_ref
+                && seen.project_ref == project_ref
         }) {
             return None;
         }
@@ -300,7 +320,10 @@ pub(super) fn parse_owner_policy_rows(value: &Value) -> Option<Vec<PolicyOwnerPo
             text,
             active,
             world_ref,
+            project_ref,
             human,
+            why,
+            why_source,
             action,
         });
     }

@@ -545,6 +545,10 @@ impl<'a> HumanTaskFollowupDriver<'a> {
 
 /// Drives every due human follow-up on one Dreamer wake pass.
 pub(crate) fn run_human_followups_on_wake(vault: &Vault, now: u64) -> Result<()> {
+    // A policy change lands without waiting for contact routing. Link its
+    // durable holder-push intent when a route becomes available, then let the
+    // ordinary human follow-up ladder drive the resulting TASK.
+    vault.drive_policy_notification_queue(now, FOLLOWUP_WAKE_LIMIT)?;
     HumanTaskFollowupDriver::new(vault)
         .run_due(now, FOLLOWUP_WAKE_LIMIT)
         .map(|_| ())
