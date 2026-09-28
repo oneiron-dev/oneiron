@@ -276,6 +276,98 @@ fn assert_native_reimport(
 }
 
 #[test]
+fn fork_hash_matches_unchanged_parent_with_selected_knowledge() -> Result<()> {
+    let (_dir, vault) = open_test_vault_with(VaultConfig::default());
+    install(&vault)?;
+    let parent = EntityId::now();
+    vault.put_agent_definition(
+        &parent,
+        &agent("fixture.knowledge-parent", None),
+        time(),
+        130,
+    )?;
+    let claim = EntityId::now();
+    vault.put_claim(
+        &claim,
+        &ClaimBody::new(
+            "test.source_note",
+            ClaimSubject::Entity(parent),
+            Value::from("Selected parent knowledge"),
+            1.0,
+            ClaimApprovalStatus::Approved,
+            ClaimLifecycleStatus::Active,
+        ),
+        time(),
+        130,
+    )?;
+    let before = vault.export_whole_vault(PackFormat::Json)?;
+    let before = vault.read_whole_vault_json(before.bytes())?;
+    let claim_row = before
+        .claims
+        .iter()
+        .find(|row| row.id == claim.to_hex())
+        .unwrap();
+    assert!(
+        claim_row.short_ref.is_some(),
+        "archive entity retains its hydratable short ref"
+    );
+    let parent_bundle = before
+        .agent_packs
+        .iter()
+        .find(|bundle| bundle.entity_id == parent.to_hex())
+        .unwrap();
+    let tree = parent_bundle.source_tree.as_ref().unwrap();
+    let parent_hash = tree.content_hash.as_ref().unwrap();
+    let selected = tree
+        .files
+        .iter()
+        .find(|file| file.path == "knowledge/selected.json")
+        .unwrap();
+    let selected: Vec<ExportEntity> =
+        serde_json::from_str(selected.content.as_deref().unwrap()).unwrap();
+    assert_eq!(selected.len(), 1);
+    assert_eq!(selected[0].id, claim.to_hex());
+    assert_eq!(
+        selected[0].short_ref, None,
+        "portable facet has no source-vault refs"
+    );
+    let child = EntityId::now();
+    vault.put_agent_definition(
+        &child,
+        &agent("fixture.knowledge-child", Some(parent)),
+        time(),
+        131,
+    )?;
+    let after = vault.export_whole_vault(PackFormat::Json)?;
+    let after = vault.read_whole_vault_json(after.bytes())?;
+    let unchanged_parent = after
+        .agent_packs
+        .iter()
+        .find(|bundle| bundle.entity_id == parent.to_hex())
+        .unwrap();
+    assert_eq!(
+        unchanged_parent
+            .source_tree
+            .as_ref()
+            .unwrap()
+            .content_hash
+            .as_ref(),
+        Some(parent_hash)
+    );
+    let fork = after
+        .agent_packs
+        .iter()
+        .find(|bundle| bundle.entity_id == child.to_hex())
+        .unwrap();
+    assert_eq!(
+        fork.fork_hash.as_ref(),
+        Some(parent_hash),
+        "fork captures the exported parent's exact portable tree"
+    );
+    Ok(())
+}
+
+#[test]
 fn fork_hash_binds_actual_parent_at_fork_not_current_parent_at_export() -> Result<()> {
     let (_dir, vault) = open_test_vault_with(VaultConfig::default());
     install(&vault)?;
@@ -617,9 +709,21 @@ fn install_native_agent_pack(
         "agents/fixture.agent",
         HubPin::ContentHash(source.content_hash().to_hex()),
     )?;
-    let PackInstallDisposition::Installed(receipt) =
-        vault.install_pack_from_adapter(&adapter, &reference, &publisher, &Fit, time(), 133)?
-    else {
+    // Install screening reads the seeded pack-install policy and fails closed
+    // without it (ONE-2019). Restore the shipped manifest this legacy fixture
+    // cleared for the install only; the reimport keeps its manifest-free Gate.
+    let policy_id = crate::gate::default_policy_manifest_id()?;
+    crate::test_util::put_policy_manifest_bytes(
+        vault,
+        policy_id,
+        &crate::gate::default_policy_manifest(),
+    )?;
+    let installed =
+        vault.install_pack_from_adapter(&adapter, &reference, &publisher, &Fit, time(), 133);
+    vault.with_write_txn(|txn| {
+        crate::batch::deindex_entity_for_test(&vault.store, txn, &policy_id)
+    })?;
+    let PackInstallDisposition::Installed(receipt) = installed? else {
         panic!("native pack install");
     };
     assert_eq!(receipt.content_hash, source.content_hash().to_hex());

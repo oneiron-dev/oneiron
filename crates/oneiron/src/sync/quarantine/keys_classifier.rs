@@ -150,9 +150,13 @@ pub(crate) fn remote_rejection_reason(error: &Error) -> Option<String> {
         | ErrorKind::InvalidSkillBody
         | ErrorKind::InvalidAgentDefBody
         | ErrorKind::InvalidTaskBody
+        // An ask word or receipt that arrived before its group or person is
+        // remote data waiting on a dependency; forward remat keeps its retry.
+        | ErrorKind::AskDependencyPending
         | ErrorKind::InvalidProjectBody
         | ErrorKind::InvalidProjectRoomBody
         | ErrorKind::ProjectDependencyPending
+        | ErrorKind::ResidentOwnerDependencyPending
         | ErrorKind::InvalidPredicate
         | ErrorKind::InvalidEdgeWeight
         | ErrorKind::InvalidVad

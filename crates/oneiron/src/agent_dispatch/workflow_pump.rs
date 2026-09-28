@@ -54,7 +54,8 @@ impl AgentDispatcher<'_> {
         }
         if active.state != AttemptState::Completed {
             let lease = self.claim_workflow_wrapper(&mut txn, root, now)?;
-            queue.fail_in_txn(
+            crate::ports::JobQueue::port_job_fail(
+                self.vault,
                 &mut txn,
                 FailAttempt {
                     id: root,
@@ -103,7 +104,8 @@ impl AgentDispatcher<'_> {
                     now,
                 },
             )?;
-            queue.complete_in_txn(
+            crate::ports::JobQueue::port_job_complete(
+                self.vault,
                 &mut txn,
                 CompleteAttempt {
                     id: root,
@@ -142,7 +144,8 @@ impl AgentDispatcher<'_> {
                 now,
             },
         )?;
-        match queue.claim_id_in_txn(
+        match crate::ports::JobQueue::port_job_claim_id(
+            self.vault,
             txn,
             root,
             ClaimAttempt {

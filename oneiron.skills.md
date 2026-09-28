@@ -238,6 +238,22 @@ Fetch Tier-1 first. It contains one endpoint block per live route literal and no
   - "what formats does the server support?"
 - safety: Read-only, unauthenticated by design.
 
+#### inference-defaults-read - `GET /v1/llm/defaults`
+
+- when-to-use: Read the vault's current seven purpose defaults and four live/batch ASR/TTS routing rows before changing inference policy.
+- trigger phrases:
+  - "show inference defaults"
+  - "read speech routing defaults"
+- safety: Read-only; requires an owner-grade bearer. Scoped credentials are refused.
+
+#### inference-defaults-replace - `PUT /v1/llm/defaults`
+
+- when-to-use: Replace the validated vault-local inference defaults after the owner asks an authorized agent to edit them. Read the current table first and preserve every row not changed.
+- trigger phrases:
+  - "change inference default tier"
+  - "edit ASR or TTS route"
+- safety: Mutating; requires an owner-grade bearer. The seven purpose rows and four speech lanes must all be present. Extraction defaults on-device; a nonlocal extraction default needs an owner-edited `extraction_max_locality` bound and a host-installed request egress predicate. Voice overrides follow the editable `voice_precedence` policy and cannot widen the vault lane. The owner manifest and explicit model pins still govern actual routes.
+
 #### mcp-gateway - `POST /mcp`
 
 - when-to-use: Call Oneiron MCP JSON-RPC methods when a connector needs the executable MCP tool layer for initialized tools, tool listings, or tool calls.
@@ -525,6 +541,16 @@ Example response:
 }
 ```
 
+### Inference Defaults
+
+Methods: `GET` and `PUT` on the two Tier-1 inference-defaults routes.
+
+Authentication: `Authorization: Bearer <owner-grade credential>`; a scoped core token is not enough.
+
+`GET` returns `{ "purposes": { ... }, "voice": { ... } }`. Purpose keys are `extraction`, `consolidation`, `answer_gen`, `auto_check`, `tool_routing`, `voice`, and `eval`. Voice keys are `asr_live`, `asr_batch`, `tts_live`, and `tts_batch`. Each row contains a `tier` string and `locality` (`on_device`, `own_server`, or `third_party`). `voice_precedence` is `nested_narrowing` (shipped default) or `vault_only`; `extraction_max_locality` is the owner-authored widest extraction destination (shipped `on_device`).
+
+`PUT` sends the whole table as JSON, capped at 16 KiB. It validates all eleven rows and returns the stored table; invalid rows return `400 invalid_defaults`, and non-owner credentials return `403 owner_required`. Read-modify-write from an agent so other rows are not dropped. An override cannot widen its vault voice lane. Nonlocal extraction also needs an installed host egress predicate to admit the actual request before budget or provider work. A row is a preference, not permission to relabel an already bound remote model as local; the model-role binding door refuses an unbound locality change.
+
 ### OpenAPI Schema
 
 Method: `GET`
@@ -562,7 +588,7 @@ Authentication: configured API bearer credential, unless the server explicitly a
 Path parameters:
 
 - `artifact` required: code project id or canonical lowercase hex blob entity id.
-- `path` optional: code snapshot file path, or the blob export name / stable `export` path. Root requests select `index.html` for code and the export for blobs.
+- `path` optional: code snapshot file path, or the blob export name / stable `export` path. Short entry URLs `/a/{artifact}/` and `/a/{artifact}/_t/{token}/` authorize first, then redirect to canonical `/a/{artifact}/_s/c/published/` or `/a/{artifact}/_t/{token}/_s/c/published/`. Preview uses `/_s/c/preview/`; immutable exports use `/_s/f/{forkHash}/` and `/_s/b/{blobVersion}/`, with the same optional token prefix. The fixed-position `_s` selector marker is never searched inside the artifact id or file suffix. Bundle paths after it may contain `c/`, `f/`, `b/`, `_s/`, or `_t/` as ordinary directories. Code roots select `index.html`; blob roots select the export. Every query-selected entry authorizes then redirects to its selector-bearing path so relative assets inherit both capability and selection. Names containing `#`, `?`, and `%` retain their encoded spelling across redirects.
 
 Query parameters:
 
@@ -572,10 +598,10 @@ Query parameters:
 
 Response behavior:
 
-- Resolves the channel pointer to a pinned code snapshot or blob version. Explicit `forkHash` and `blobVersion` select immutable exports directly. Codebase-class snapshots are not hostable.
-- Repointing published or preview changes future channel reads, not the pinned versions. Unpublish removes a channel, not direct version reads.
-- Returns `404` when the pointer, version, or file is absent, and `400` for malformed or mutually exclusive selector parameters.
-- Code channel responses use `Cache-Control: no-cache, max-age=0, must-revalidate`; direct code snapshots use `public, max-age=31536000, immutable`. Blob channels use `private, no-cache, max-age=0, must-revalidate` and direct blob versions use `private, max-age=31536000, immutable`. Code snapshots use content-hash ETags; blob exports use version-scoped ETags (including the content hash), so same-byte repoints with different pinned presentation revalidate. Both kinds send restrictive CSP. Blob responses render only passive allowlisted media types inline; active or unknown types download as `application/octet-stream` attachments with `X-Content-Type-Options: nosniff`. No public publishing tier is enabled.
+- Resolves only an authorized live channel pointer to a pinned code snapshot or blob version. Explicit `forkHash` and `blobVersion` require a matching live published or preview pin; unpinned versions and codebase-class snapshots are not hostable.
+- Serving tiers are private by default: an explicitly public pin serves anonymously; a link-token pin needs its 256-bit URL capability; a world-member pin needs a verified, unrestricted read credential and a live federation membership grant. Wrong or missing authority, absent files, and unpublished pointers return the same artifact `404`. Repointing and unpublishing revoke old direct-version serving, not the underlying immutable export.
+- Returns `400` for malformed or mutually exclusive selector parameters. No vault API is available to served bundles.
+- Public code channel responses use `Cache-Control: no-cache, max-age=0, must-revalidate`; pinned public code snapshots use `public, max-age=31536000, immutable`. Public blob channels use `private, no-cache, max-age=0, must-revalidate` and direct public blob versions use `private, max-age=31536000, immutable`. Token and member responses use `private, no-store`. All responses send `Referrer-Policy: no-referrer` to protect capability URLs. Code snapshots use content-hash ETags; blob exports use version-scoped ETags (including the content hash), so same-byte repoints with different pinned presentation revalidate. Both kinds send restrictive CSP. Blob responses render only passive allowlisted media types inline; active or unknown types download as `application/octet-stream` attachments with `X-Content-Type-Options: nosniff`.
 
 ### Core Discovery
 

@@ -5,12 +5,13 @@ use super::{
 };
 use crate::attempt_queue::AttemptId;
 use crate::campaign::send_hygiene::inject_campaign_email_hygiene_headers;
+use crate::counterparty_contact::normalize_channel_class;
 use crate::edge::EdgeActorClass;
 use crate::error::{Error, OffRecordError};
 use crate::gate::ExternalEffectPolicyRisk;
 use crate::linkedin_connector::{LINKEDIN_CHANNEL, LINKEDIN_CONNECT_REQUEST_VERB};
 use crate::outbound::capability::{
-    OutboundRetryClass, OutboundVerbContract, normalize_key, outbound_verb_contract,
+    OutboundRetryClass, OutboundVerbContract, outbound_verb_contract,
 };
 use crate::outbound::dispatch_attempt_id::outbound_dispatch_attempt_id;
 use crate::outbound::dispatch_types::{OutboundDispatchError, OutboundDispatchRequest};
@@ -47,6 +48,9 @@ impl PreparedOutboundDispatch {
         verified_actor: Option<(EntityId, EdgeActorClass)>,
     ) -> Result<Self, OutboundDispatchError> {
         crate::dreamer_runner::maintenance::representation::validate_dispatch(vault, &request)?;
+        if !crate::task_verb::validate_ask_soft_confirm_dispatch(vault, &request)? {
+            return Err(OutboundDispatchError::ObsoleteAskConfirmation);
+        }
         // OF-326 talk-only (ONE-1546): an intent originating from a session
         // currently in off-record mode is rejected before verb resolution —
         // the typed error carries the exit-prompt semantics. Intents from a
@@ -74,9 +78,11 @@ impl PreparedOutboundDispatch {
                 "LinkedIn connect request requires current seat policy".to_owned(),
             )));
         }
-        let idempotency_supported = !matches!(
+        // A queue-only dedupe key cannot make an ambiguous remote send safe
+        // to replay; native keys and semantic replacement can.
+        let idempotency_supported = matches!(
             verb_contract.retry_class,
-            OutboundRetryClass::NonIdempotentInterrupt
+            OutboundRetryClass::IdempotentNative | OutboundRetryClass::ReplaceIdempotent
         );
 
         // Find the logical attempt BEFORE consulting today's sender set. A
@@ -139,7 +145,7 @@ impl PreparedOutboundDispatch {
         let request = &self.request;
         let mut hygiene_headers = BTreeMap::new();
         inject_campaign_email_hygiene_headers(
-            &normalize_key(&request.intent.channel),
+            &normalize_channel_class(&request.intent.channel),
             &mut hygiene_headers,
             request.campaign_unsubscribe.as_ref(),
         )?;

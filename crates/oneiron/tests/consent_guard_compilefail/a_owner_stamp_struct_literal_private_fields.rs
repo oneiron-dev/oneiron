@@ -1,5 +1,5 @@
 //! (a) A guard holding a `ConsentProposal` must not be able to struct-literal
-//! an `AuthenticatedOwner`: all three fields are private, so the only door is
+//! an `AuthenticatedOwner`: every field is private, so the only door is
 //! `Vault::authenticate_owner`. Every field VALUE below is well-typed and
 //! publicly constructible on purpose — the sole thing between a guard and a
 //! forged owner stamp is the field privacy this case pins.

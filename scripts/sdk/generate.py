@@ -64,7 +64,7 @@ def boundary_type(value, language, wire=False):
         return f'list[{item}]' if language.startswith('py') else f'({item})[]' if ' | ' in item else item + '[]'
     if language == 'napi': return RESULTS[inner][0]
     if language == 'py': return {'String': 'str', 'bool': 'bool'}.get(inner, 'dict[str, Any]')
-    if language == 'py_stub': return {'String': 'str', 'bool': 'bool', 'MemoryReceipt': 'FacadeReceipt'}.get(inner, inner)
+    if language == 'py_stub': return {'String': 'str', 'bool': 'bool', 'MemoryReceipt': 'FacadeReceipt', 'MemoryExport': 'dict[str, Any]'}.get(inner, inner)
     return {'String': 'string', 'bool': 'boolean', 'MemoryReceipt': 'FacadeReceipt', **({'KeyValueItem': 'WireItem'} if wire else {})}.get(inner, inner)
 
 def remote_boundary(row):
@@ -307,6 +307,31 @@ def outputs():
     for r in facade_rows:
         method=r['name'].replace('.','_')
         if r['name'] == 'recall': server += SERVER_RECALL_DOC
+        if r.get('admission', {}).get('owner_grade'):
+            # A full-vault result must carry verifier-produced owner proof into
+            # same-snapshot engine admission, never generic actor-only invoke.
+            server += f'''async fn {method}(auth: CoreAuth, State(server): State<Arc<SyncServer>>, payload: Result<Json<serde_json::Value>, JsonRejection>) -> Result<Json<serde_json::Value>, FacadeApiError> {{
+                auth.require(CoreScope::{r["scope"]})?;
+                auth.require_unrestricted_record_scope()?;
+                if !auth.is_owner_grade() {{
+                    return Err(FacadeApiError::forbidden("full-vault export requires owner authority", ["Present a verified, unattenuated owner credential."]));
+                }}
+                let value = facade_json(payload)?;
+                oneiron::task_verb::sdk::validate_input({json.dumps(r["name"])}, &value)?;
+                let input: oneiron::memory::ExportOptions = facade_input(value)?;
+                let proof = auth.verified_slip().ok_or_else(|| FacadeApiError::forbidden("full-vault export requires verified owner authority", ["Present a verified owner credential."]))?;
+                let output = if proof.claims().holder_ref == "host" {{
+                    server.vault.export_with_verified_host_owner(&input, proof)?
+                }} else {{
+                    let (actor, class) = facade_actor(&auth)?;
+                    server.vault.memory(actor, class).export_with_verified_owner(&input, proof)?
+                }};
+                Ok(Json(serde_json::to_value(output).map_err(|_| FacadeApiError::new(
+                    StatusCode::INTERNAL_SERVER_ERROR, MEMORY_CODE_INTERNAL,
+                    "export result encoding failed", ["Report this SDK response mismatch."]
+                ))?))
+            }}\n'''
+            continue
         # `readable` names the credential read checks: each caller-named ref is
         # refused before the engine call, and `rows` filters the typed result.
         guard, result = '', f'oneiron::task_verb::sdk::invoke(&server.vault.memory(actor,class), "{r["name"]}", value)?'
@@ -421,12 +446,12 @@ export interface TaskAskAnswer { task_ref: string; actor_ref: string; result_ref
 export interface TaskAskCoverage {met: boolean; required: number; responded: string[]; unknown: string[]; unmet_people: string[]}
 export type TaskAskDecision = "collected" | {first: TaskAskAnswer} | {answer: TaskAskOptionId} | "no" | "conflict" | "unknown";
 export interface TaskAskFallback {branch: TaskAskDefault; surface: "card" | "none"}
-export interface TaskAskEvidence {answer: TaskAskAnswer; word: TaskAskWord; source: "human" | "inform" | "executor"; person_ref: string; order: number; reason: "counted" | "inform" | "human_dominates" | "executor" | "superseded" | "outside_electorate" | "missing_source" | "late"; ladder_changed: boolean | null}
-export interface TaskAskSettlement {group_ref: string; reference: string; revision: number; at: number; cutoff_order: number; reason: "first_word" | "all_responded" | "deadline" | "stale"; requested: TaskAskSpec; effective: TaskAskSpec; base_policy_version: number; electorate: string[]; question_digest: number[]; unmet_sources: ConsultPayloadRef[]; outcome_answer_ref: string | null}
+export interface TaskAskEvidence {answer: TaskAskAnswer; word: TaskAskWord; source: "human" | "foreign_stated" | "inform" | "executor"; person_ref: string; order: number; reason: "counted" | "inform" | "human_dominates" | "executor" | "superseded" | "outside_electorate" | "missing_source" | "late"; ladder_changed: boolean | null}
+export interface TaskAskSettlement {group_ref: string; reference: string; revision: number; at: number; cutoff_order: number; reason: "first_word" | "all_responded" | "deadline" | "stale"; requested: TaskAskSpec; effective: TaskAskSpec; base_policy_version: number; electorate: string[]; question_digest: number[]; unmet_sources: ConsultPayloadRef[]; outcome_answer_ref: string | null; link_result_proof?: number[]}
 export type TaskAskEffectAuthorization = "not_evaluated_by_ask";
 export interface TaskAskResult {effect_authorization: TaskAskEffectAuthorization; coverage: TaskAskCoverage; decision: TaskAskDecision; fallback: TaskAskFallback | null; evidence: TaskAskEvidence[]; settlement: TaskAskSettlement}
-export type TaskAskStatus = {Pending: {hold: "NoLiveRoute" | null}} | {Settled: TaskAskResult};
-export type TaskAskWait = { Pending: {trap_ref: string} } | { Ready: TaskAskResult } | {Park: {wait_id: string; effect: string; reason: string; prompt: string | null}};
+export type TaskAskStatus = {Pending: {hold: "NoLiveRoute" | null}} | {Changed: {voided: string[]; generation: number}} | {Settled: TaskAskResult};
+export type TaskAskWait = { Pending: {trap_ref: string} } | { Changed: {voided: string[]; generation: number} } | { Ready: TaskAskResult } | {Park: {wait_id: string; effect: string; reason: string; prompt: string | null}};
 export type TaskDescription = {kind: "tasks_section"; rows: unknown[]; overflow: {known_omitted_rows: number; source_exhausted: boolean} | null} | {kind: "task_card"; lines: string[]};
 export interface TaskCancelReceipt {approval: "auto" | "proposed" | "approved" | "rejected"; effected: boolean; proposal_ref: string | null; gate_decision_ref: string | null; status: "queued" | "running" | "paused" | "completed" | "failed" | "cancelled" | "abandoned" | null; cancel_requested: boolean; forced: boolean}
 export function agentVerbs(invoke: AgentInvoke) {
@@ -449,7 +474,9 @@ export function agentVerbs(invoke: AgentInvoke) {
             elif verb=='answer':decl='handle: TaskAskHandle, word: TaskAskWord';value='{handle, word}';result='TaskAskAnswer'
             elif verb=='outcomes':decl='handle: TaskAskHandle';value='handle';result='CalibrationPair[]'
             elif verb=='list':decl='';value='{}';result='unknown[]'
-            elif verb=='messages':decl='roomRef: string, after?: string, limit?: number';value='{room_ref: roomRef, after, limit}';result='{rows: unknown[]; next_after: string | null}'
+            elif verb in ('messages', 'find'):decl='roomRef: string, after?: string, limit?: number';value='{room_ref: roomRef, after, limit}';result='{rows: unknown[]; next_after: string | null}'
+            elif verb=='render':decl='roomRef: string';value='{room_ref: roomRef}';result='string[]'
+            elif verb in ('get', 'trunk'):decl='roomRef: string, turnRef: string';value='{room_ref: roomRef, turn_ref: turnRef}';result='unknown'
             elif verb=='claim':decl='roomRef: string, turnRef: string';value='{room_ref: roomRef, turn_ref: turnRef}';result='unknown'
             else: decl='turn: Record<string, unknown>';value='turn';result='unknown'
             ts += f'{verb}({decl}): {result} {{ return invoke("{method}", {value}) as {result} }},\n'
@@ -475,7 +502,9 @@ export function agentVerbs(invoke: AgentInvoke) {
             elif verb=='answer':params='handle, word';value='{"handle": handle, "word": word}'
             elif verb=='outcomes':params='handle';value='handle'
             elif verb=='list':params='';value='{}'
-            elif verb=='messages':params='room_ref, after=None, limit=None';value='{"room_ref": room_ref, "after": after, "limit": limit}'
+            elif verb in ('messages', 'find'):params='room_ref, after=None, limit=None';value='{"room_ref": room_ref, "after": after, "limit": limit}'
+            elif verb=='render':params='room_ref';value='{"room_ref": room_ref}'
+            elif verb in ('get', 'trunk'):params='room_ref, turn_ref';value='{"room_ref": room_ref, "turn_ref": turn_ref}'
             elif verb=='claim':params='room_ref, turn_ref';value='{"room_ref": room_ref, "turn_ref": turn_ref}'
             else:params='spec';value='spec'
             comma=', ' if params else ''
@@ -521,7 +550,9 @@ export function agentVerbs(invoke: AgentInvoke) {
                 continue
             if verb=='wait': args='handle: dict[str, Any], step_key: str = "sdk.wait"'
             elif verb=='answer':args='handle: dict[str, Any], word: dict[str, Any]'
-            elif verb=='messages':args='room_ref: str, after: str | None = None, limit: int | None = None'
+            elif verb in ('messages', 'find'):args='room_ref: str, after: str | None = None, limit: int | None = None'
+            elif verb=='render':args='room_ref: str'
+            elif verb in ('get', 'trunk'):args='room_ref: str, turn_ref: str'
             elif verb=='claim':args='room_ref: str, turn_ref: str'
             elif verb=='outcomes':args='handle: dict[str, Any]'
             elif verb=='list':args=''

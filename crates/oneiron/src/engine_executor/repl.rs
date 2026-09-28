@@ -10,9 +10,9 @@ use super::record::{
     validate_executor_config_marker,
 };
 use super::store::{
-    checkpoint_label, fallback_speech_marker, implicit_speak_output_path, load_utf8_output,
-    observation_output_path, record_output, record_text_output, script_output_path,
-    validate_runtime_outputs,
+    RECOVERABLE_OUTPUT_CHUNK_BYTES, checkpoint_label, fallback_speech_marker,
+    implicit_speak_output_path, load_utf8_output, observation_output_path, record_output,
+    record_text_output, recoverable_chunk_path, script_output_path, validate_runtime_outputs,
 };
 use super::types::{
     ENGINE_EXECUTOR_FALLBACK_NAME, ENGINE_EXECUTOR_PURPOSE_NAME, EngineExecutorConfig,
@@ -24,6 +24,7 @@ use crate::code_run::{
     CodeRunBridgeCall, CodeRunHistoryTurn, CodeRunReplayGeneration, CodeRunReplayRecord,
     CodeRunStepCheckpoint, SelfDurableWait,
 };
+use crate::compaction::output::{OutputAffordance, OutputRef, OutputTier, OutputWorkingContext};
 use crate::off_record::ExecutorUtterance;
 use crate::prompt::resolve_engine_executor_wire_prompt;
 use crate::{
@@ -31,7 +32,7 @@ use crate::{
     LlmMessageRole, LlmRequest, ResponseFormat, TierPrecedence,
 };
 use serde_json::json;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 
 impl EngineNativeExecutor<'_> {
     pub async fn run(
@@ -46,6 +47,12 @@ impl EngineNativeExecutor<'_> {
             .map_err(Error::from)?;
         let boundary = executor_boundary_contract()?;
         let loaded = self.load_or_create_record(config, &wire_prompt.stamp.resolved_fingerprint)?;
+        // A terminal replay still owes typed restore even when no new model
+        // request is assembled during this attempt.
+        if self.output_run != Some(config.run_id) {
+            self.output_context = OutputWorkingContext::default();
+            self.output_run = Some(config.run_id);
+        }
         if let Some(status) = loaded.terminal_status {
             self.recover_checkpointed_implicit_speak(&loaded.record, &status, config)?;
             return Ok(EngineExecutorOutcome {
@@ -110,7 +117,8 @@ impl EngineNativeExecutor<'_> {
                 bridge_start as u64,
                 config.determinism,
                 self.legibility,
-            );
+            )
+            .with_recoverable_outputs(&self.storage, &record)?;
             let step = JsCodeModeStep {
                 run_id: config.run_id,
                 seq: completed_steps,
@@ -554,8 +562,66 @@ impl EngineNativeExecutor<'_> {
         })
     }
 
-    fn build_llm_request(
+    /// Resolve a typed model-facing re-expand action through the same routed
+    /// replay store as the original observation, including off-record overlays.
+    pub fn reexpand_observation(
         &self,
+        record: &CodeRunReplayRecord,
+        action: OutputAffordance,
+    ) -> EngineExecutorResult<Vec<u8>> {
+        self.verify_storage_dispatcher_binding()?;
+        if self.output_run != Some(record.run_id) {
+            return Err(Error::InvalidConfig("executor output run mismatch".into()).into());
+        }
+        let OutputAffordance::Reexpand(source) = action else {
+            return Err(Error::InvalidConfig("expected reexpand action".into()).into());
+        };
+        for seq in 0..completed_step_count(record)? {
+            let bytes = load_utf8_output(&self.storage, record, &observation_output_path(seq))?;
+            if OutputRef::from_bytes(bytes.as_bytes()) == source {
+                return Ok(bytes.into_bytes());
+            }
+        }
+        Err(Error::CorruptedIndex("missing recoverable executor observation").into())
+    }
+
+    /// Sync every durably completed observation before either a model request
+    /// or a compaction mint. No uncommitted runtime output enters context.
+    pub(super) fn sync_output_context(
+        &mut self,
+        record: &CodeRunReplayRecord,
+    ) -> EngineExecutorResult<HashMap<OutputRef, String>> {
+        let completed_steps = completed_step_count(record)?;
+        // Reconstruct references from the routed durable replay record. No
+        // observation is copied into the base vault for off-record sessions.
+        // Working flags are projections of committed typed coverage. Rebuild
+        // rather than trusting a cached flag or any raw-output existence.
+        self.output_context = OutputWorkingContext::default();
+        self.output_run = Some(record.run_id);
+        let coverage = match &self.storage {
+            crate::code_run::ExecutorStorage::Canonical(vault) => {
+                vault.code_run_compaction_coverage(record.run_id)?
+            }
+            crate::code_run::ExecutorStorage::Session(_) => Vec::new(),
+        };
+        let mut raw = HashMap::new();
+        for seq in 0..completed_steps {
+            let observation =
+                load_utf8_output(&self.storage, record, &observation_output_path(seq))?;
+            let source = OutputRef::from_bytes(observation.as_bytes());
+            let overview: String = observation.chars().take(128).collect();
+            self.output_context
+                .record_referenced(seq, source, overview)?;
+            if coverage.iter().any(|row| row.covers(record.run_id, seq)) {
+                self.output_context.compact_span(seq, seq);
+            }
+            raw.insert(source, observation);
+        }
+        Ok(raw)
+    }
+
+    fn build_llm_request(
+        &mut self,
         config: &EngineExecutorConfig,
         record: &CodeRunReplayRecord,
         wire_prompt: &str,
@@ -580,14 +646,29 @@ impl EngineNativeExecutor<'_> {
             }],
         });
 
-        for seq in 0..completed_steps {
-            // ONE-1929: history is rendered CANONICALLY from the two trusted
-            // sources — the healed bare program and the runtime's own
-            // observation. A malformed provider reply is never taught back,
-            // and neither payload can forge the engine's framing.
+        let raw = self.sync_output_context(record)?;
+        let views =
+            self.output_context
+                .assemble_with(completed_steps, self.output_decay, |source| {
+                    raw.get(&source)
+                        .map(|text| text.as_bytes().to_vec())
+                        .ok_or(Error::CorruptedIndex("missing executor observation"))
+                })?;
+        for (seq, view) in views.into_iter().enumerate() {
+            // ONE-1929 framing remains engine-authored. The stored program and
+            // observation never change; only this model-facing projection does.
+            let console = match view.tier {
+                OutputTier::Full | OutputTier::Overview => String::from_utf8(view.bytes)
+                    .map_err(|_| Error::CorruptedIndex("executor observation encoding"))?,
+                OutputTier::Stub => serde_json::to_string(&json!({
+                    "sandbox.fs.read_file": recoverable_chunk_path(seq as u64, view.source, 0),
+                    "byte_len": view.source.byte_len,
+                    "max_chunk_bytes": RECOVERABLE_OUTPUT_CHUNK_BYTES,
+                }))?,
+            };
             let turn = CodeRunHistoryTurn {
-                code: load_utf8_output(&self.storage, record, &script_output_path(seq))?,
-                console: load_utf8_output(&self.storage, record, &observation_output_path(seq))?,
+                code: load_utf8_output(&self.storage, record, &script_output_path(seq as u64))?,
+                console,
             };
             messages.push(LlmMessage {
                 role: LlmMessageRole::Assistant,
@@ -598,7 +679,7 @@ impl EngineNativeExecutor<'_> {
             messages.push(LlmMessage {
                 role: LlmMessageRole::User,
                 content: vec![ContentPart::Text {
-                    text: turn.user_console(seq),
+                    text: turn.user_console(seq as u64),
                 }],
             });
         }

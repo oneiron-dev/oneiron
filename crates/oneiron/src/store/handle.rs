@@ -131,6 +131,9 @@ pub struct StoreCore {
     /// this vault handle. No process-global state or cross-vault kill switch.
     pub(in crate::store) retrieval_writes_disabled: std::sync::atomic::AtomicBool,
     pub(in crate::store) retrieval_telemetry_capture: bool,
+    #[cfg(target_os = "linux")]
+    pub(in crate::store) retrieval_telemetry_lease:
+        Mutex<Option<super::retrieval_telemetry::RetrievalTelemetryLease>>,
     /// This vault's monotonic authority first-seen observation clock. It dies
     /// with the handle: a reopen re-anchors from the persisted floor, so there
     /// is no registry to release from and no cross-vault anchor to share.
@@ -143,6 +146,12 @@ pub struct StoreCore {
     pub(crate) diagnostics: Diagnostics,
     /// Bounded, content-addressed L2 render cache. Never persisted.
     pub(crate) l2_base_cache: Mutex<crate::context_pack::L2BaseCache>,
+    /// Content-free, per-vault digest deadline invalidation. The host
+    /// subscribes before reading its first deadline; no process-global timer.
+    pub(crate) proactivity_updates: tokio::sync::watch::Sender<u64>,
+    /// A failed digest lane stays quiet until a committed relevant change.
+    /// This is per-vault, content-free and never gates unrelated deadlines.
+    pub(crate) proactivity_suspended: Mutex<Option<u64>>,
     /// Content-free local invalidations. Readers always re-read committed rows.
     #[cfg(feature = "sync")]
     pub(crate) attempt_updates: tokio::sync::broadcast::Sender<()>,
@@ -175,8 +184,12 @@ pub struct StoreOwner {
     /// invariant; see [`StoreCore`].
     pub(in crate::store) core: Weak<StoreCore>,
     /// Sole owner of the environment's close-on-last-clone semantics
-    /// (ONE-1142).
+    /// (ONE-1142). Unix LFS staging reads its bound root descriptor.
+    #[cfg(unix)]
     pub(in crate::store) env: OwnedEnv,
+    /// Same drop-order ownership on targets without descriptor-based staging.
+    #[cfg(not(unix))]
+    pub(in crate::store) _env: OwnedEnv,
     // DROP-ORDER: keep this field after `env`. Fields drop in declaration
     // order, so the path registry releases the path only after [`OwnedEnv`]
     // has closed the LMDB environment — a reopen racing this drop can never
@@ -500,6 +513,11 @@ pub(super) fn seed_default_policy_manifest_in_txn(
     sync_state.put(
         wtxn,
         &crate::gate::trusted_manifest_key(id),
+        blake3::hash(&body).as_bytes(),
+    )?;
+    sync_state.put(
+        wtxn,
+        &crate::gate::seeded_manifest_key(id),
         blake3::hash(&body).as_bytes(),
     )?;
     type_index.put(

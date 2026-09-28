@@ -1,11 +1,13 @@
 //! TASK-lane receipt pump: capture once, route, then resume both idempotent projections.
 
 use super::codec::{decode_u64, evidence_after, validate_evidence};
+use super::manifest_entry_names_skill;
 use super::projector::record_evidence_in_txn;
 use super::{
-    AttemptOutcome, AttributionJudge, OutcomeEvidence, RuleAttributionJudge, attribution_judgments,
-    read_attribution_cursor, run_attribution_projector_with_judge,
+    AttemptOutcome, AttributionJudge, FollowedState, OutcomeEvidence, RuleAttributionJudge,
+    attribution_judgments, read_attribution_cursor, run_attribution_projector_with_judge,
 };
+use crate::attempt_queue::MAX_ATTEMPT_MANIFEST_ENTRIES;
 use crate::receipt::{ReceiptRecord, attempt_pack_receipt_page};
 use crate::{EntityId, Error, Result, Vault};
 
@@ -19,7 +21,7 @@ const CAPTURED_PREFIX: &[u8] = b"skill_attribution:sweep_receipt:v1:";
 pub struct ReceiptAttributionFacts {
     pub actor: EntityId,
     pub skill: Option<EntityId>,
-    pub followed_skill: bool,
+    pub followed_state: FollowedState,
     pub skill_covered_step: bool,
 }
 
@@ -67,7 +69,18 @@ pub fn run_task_attribution_sweep_with_judge(
             })
             .transpose()?
     };
-    let (receipts, complete) = attempt_pack_receipt_page(vault, after.as_deref(), limit)?;
+    let page_limit = {
+        let txn = vault.store.env.read_txn()?;
+        let policy = crate::gate::resolve_policy_manifest(&vault.store, &txn)?;
+        let budget = policy
+            .attribution_limits()
+            .ok_or_else(|| {
+                Error::InvalidConfig("attribution work budget policy is malformed".to_owned())
+            })?
+            .receipts_per_pass;
+        limit.min(usize::try_from(budget).unwrap_or(usize::MAX))
+    };
+    let (receipts, complete) = attempt_pack_receipt_page(vault, after.as_deref(), page_limit)?;
     let mut report = AttributionSweepReport {
         scanned: receipts.len(),
         ..Default::default()
@@ -120,15 +133,56 @@ pub fn run_task_attribution_sweep_with_judge(
     for (sequence, evidence) in evidence_after(vault, applied)? {
         if sequence <= routed
             && evidence.outcome == AttemptOutcome::Succeeded
+            && (matches!(evidence.followed_state, Some(FollowedState::Followed))
+                || evidence.followed_state.is_none() && evidence.followed_skill == Some(true))
             && let Some(skill) = evidence.skill
         {
-            crate::skill_reliability::record_skill_contributing_win(
-                vault,
-                &skill,
-                &evidence.receipt_ref,
-                evidence.at,
-            )?;
-            crate::skill_reliability::project_skill_reliability_for(vault, &skill, evidence.at)?;
+            if crate::skill::resident_of(
+                &vault
+                    .get_skill_record(&skill)?
+                    .ok_or(Error::EntityNotFound)?,
+            )?
+            .is_some()
+            {
+                crate::skill_reliability::record_resident_skill_contributing_win(
+                    vault,
+                    &evidence.actor,
+                    &skill,
+                    &evidence.receipt_ref,
+                    evidence.at,
+                )?;
+            } else {
+                crate::skill_reliability::record_skill_contributing_win(
+                    vault,
+                    &skill,
+                    &evidence.receipt_ref,
+                    evidence.at,
+                )?;
+            }
+            let receipt = crate::receipt::attempt_pack_receipt(vault, &evidence.receipt_ref)?
+                .ok_or(Error::InvalidClaimBody("attribution receipt disappeared"))?;
+            match receipt
+                .fields
+                .get("model")
+                .filter(|model| !model.is_empty())
+            {
+                Some(model) => {
+                    crate::skill_reliability::project_skill_reliability_for_executor(
+                        vault,
+                        &skill,
+                        model,
+                        evidence.at,
+                    )?;
+                }
+                None => {
+                    crate::skill_reliability::project_skill_reliability_for(
+                        vault,
+                        &skill,
+                        evidence.at,
+                    )?;
+                }
+            }
+
             if !report.skills.contains(&skill) {
                 report.skills.push(skill);
             }
@@ -170,10 +224,51 @@ fn capture_receipt(
     let Some(facts) = source.facts(receipt)? else {
         return Ok(None);
     };
-    if facts.len() > 64 {
+    if facts.len() > MAX_ATTEMPT_MANIFEST_ENTRIES {
         return Err(Error::InvalidConfig(
-            "too many attribution facts for one receipt".to_owned(),
+            "attribution facts exceed the attempt manifest structural maximum".to_owned(),
         ));
+    }
+    // A partial host answer must not mark this receipt captured forever. The
+    // terminal manifest is the authority on which tier-2 skills were loaded.
+    if let Some(manifest) = receipt.pack_manifest_skills() {
+        let loaded: std::collections::BTreeSet<_> = manifest.iter().collect();
+        let named = facts
+            .iter()
+            .map(|fact| {
+                let skill = fact.skill.ok_or(Error::InvalidConfig(
+                    "attribution fact must name a loaded skill".to_owned(),
+                ))?;
+                vault.get_skill_record(&skill)?.ok_or(Error::InvalidConfig(
+                    "attribution fact names an unknown skill".to_owned(),
+                ))
+            })
+            .collect::<Result<Vec<_>>>()?;
+        let named_revisions: std::collections::BTreeSet<_> = named
+            .iter()
+            .map(|record| (record.skill_id.as_str(), record.version.as_str()))
+            .collect();
+        if named_revisions.len() != named.len()
+            || loaded.len() != named.len()
+            || loaded.iter().any(|wire| {
+                named
+                    .iter()
+                    .filter(|record| manifest_entry_names_skill(wire, record))
+                    .count()
+                    != 1
+            })
+            || named.iter().any(|record| {
+                loaded
+                    .iter()
+                    .filter(|wire| manifest_entry_names_skill(wire, record))
+                    .count()
+                    != 1
+            })
+        {
+            return Err(Error::InvalidConfig(
+                "attribution facts must cover every loaded skill revision exactly once".to_owned(),
+            ));
+        }
     }
     let mut unique = std::collections::BTreeSet::new();
     let mut evidence = Vec::new();
@@ -189,7 +284,8 @@ fn capture_receipt(
             outcome,
             receipt.occurred_at,
         )
-        .with_routing_facts(fact.followed_skill, fact.skill_covered_step);
+        .with_followed_state(fact.followed_state);
+        row.skill_covered_step = Some(fact.skill_covered_step);
         row.skill = fact.skill;
         validate_evidence(vault, &row)?;
         evidence.push(row);

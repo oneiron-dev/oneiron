@@ -39,6 +39,9 @@ pub struct AuthenticatedOwner {
     actor: EntityId,
     principal_ref: String,
     decision_id: GateDecisionId,
+    /// The vault that authenticated this principal. A proof from a different
+    /// vault must never authorize reading or acting on this vault's records.
+    vault_path: std::path::PathBuf,
 }
 
 impl AuthenticatedOwner {
@@ -67,6 +70,11 @@ impl AuthenticatedOwner {
     }
 
     pub(crate) fn revalidate_in_txn(&self, vault: &Vault, txn: &heed::RoTxn<'_>) -> Result<()> {
+        if self.vault_path.as_path() != vault.store.env.path() {
+            return Err(Error::Gate(GateError::ConsentOwnerNotAuthenticated(
+                "owner proof belongs to another vault",
+            )));
+        }
         let human = vault
             .store
             .entities
@@ -184,6 +192,7 @@ impl Vault {
             actor,
             principal_ref,
             decision_id,
+            vault_path: self.store.env.path().to_path_buf(),
         })
     }
 
@@ -306,8 +315,13 @@ impl Vault {
             grant: ConsentGrant::Standing(grant),
         };
 
-        let key = consent_grant_key(&row.grant_ref());
+        let grant_ref = row.grant_ref();
+        let key = consent_grant_key(&grant_ref);
         let data = encode_consent_grant_row(&row)?;
+        // A same-bound re-mint is a NEW issuance, even with the same
+        // AuthenticatedOwner. Its predecessor's reason and undo must not
+        // authorize or revoke this replacement.
+        super::owner_reason::retire_owner_reason_rules_in_txn(&self.store, wtxn, &grant_ref)?;
         // Re-minting an identical bound is the owner re-affirming it; the row
         // is idempotent, and the receipt is still written so the act is
         // audit-visible.
@@ -350,6 +364,7 @@ impl Vault {
         row.status = ConsentGrantStatus::Revoked;
         let data = encode_consent_grant_row(&row)?;
         self.store.vault_meta.put(&mut wtxn, &key, &data)?;
+        super::owner_reason::retire_owner_reason_rules_in_txn(&self.store, &mut wtxn, grant_ref)?;
         let receipt = ConsentReceipt::Revoked {
             decision_id: crate::store::GateDecisionId::from_bytes(self.store.clock.ulid()?),
             grant_ref: grant_ref.to_owned(),
@@ -383,8 +398,39 @@ impl Vault {
             grant_ref: grant_ref.to_owned(),
             effect_digest,
         };
-        self.append_consent_gate_decision_in_txn(&mut wtxn, &row.owner_stamp, &receipt)?;
+        self.append_consent_gate_decision_in_txn(&mut wtxn, &row.owner_stamp, &receipt, None)?;
         wtxn.commit()?;
+        Ok(receipt)
+    }
+
+    /// One quiet reuse receipt joined to the reason row that justified it.
+    /// The caller holds the matching rule and the active-grant read in this txn.
+    pub(super) fn record_owner_reason_use_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        grant_ref: &str,
+        rule_decision_id: [u8; 16],
+        reason: &str,
+        effect_digest: EffectDigest,
+    ) -> Result<ConsentReceipt> {
+        let row = self
+            .consent_grant_in_txn(&*txn, grant_ref)?
+            .ok_or(Error::Gate(GateError::ConsentGrantNotFound))?;
+        if !row.is_active() {
+            return Err(Error::Gate(GateError::ConsentGrantRevoked));
+        }
+        let receipt = ConsentReceipt::Used {
+            decision_id: GateDecisionId::from_bytes(self.store.clock.ulid()?),
+            grant_ref: grant_ref.to_owned(),
+            effect_digest,
+        };
+        let rule_id = GateDecisionId::from_bytes(rule_decision_id).to_hex();
+        self.append_consent_gate_decision_in_txn(
+            txn,
+            &row.owner_stamp,
+            &receipt,
+            Some((&rule_id, reason)),
+        )?;
         Ok(receipt)
     }
 
@@ -508,13 +554,13 @@ impl Vault {
         Ok(rows)
     }
 
-    fn append_consent_receipt_in_txn(
+    pub(super) fn append_consent_receipt_in_txn(
         &self,
         wtxn: &mut heed::RwTxn<'_>,
         owner: &AuthenticatedOwner,
         receipt: &ConsentReceipt,
     ) -> Result<()> {
-        self.append_consent_gate_decision_in_txn(wtxn, &owner.stamp(), receipt)
+        self.append_consent_gate_decision_in_txn(wtxn, &owner.stamp(), receipt, None)
     }
 
     /// Projects a [`ConsentReceipt`] into the existing Gate receipt family.
@@ -527,6 +573,7 @@ impl Vault {
         wtxn: &mut heed::RwTxn<'_>,
         stamp: &ConsentOwnerStamp,
         receipt: &ConsentReceipt,
+        owner_reason: Option<(&str, &str)>,
     ) -> Result<()> {
         let mutation_recorded_at = crate::ports::recorded_at_in_txn(&self.store, wtxn)?;
         let record = GateDecisionRecord {
@@ -534,9 +581,28 @@ impl Vault {
             decision_id: receipt.decision_id(),
             created_at: mutation_recorded_at,
             outcome: receipt.gate_outcome().to_owned(),
-            reason_codes: vec![receipt.reason_code().to_owned()],
+            reason_codes: {
+                let mut codes = vec![receipt.reason_code().to_owned()];
+                if let Some((rule_id, _)) = owner_reason {
+                    codes.push(format!("gate.consent.owner_reason.{rule_id}"));
+                }
+                codes
+            },
             receipt_reasons: Vec::new(),
-            system_notices: Vec::new(),
+            system_notices: owner_reason.map_or_else(Vec::new, |(rule_id, reason)| {
+                vec![crate::store::GateSystemNoticeRecord {
+                    notice_type: "owner_reason".to_owned(),
+                    channel: "receipt".to_owned(),
+                    voice: "neutral".to_owned(),
+                    audience: "owner".to_owned(),
+                    body: reason.to_owned(),
+                    row_ref: Some(rule_id.to_owned()),
+                    setting_change_offer: None,
+                    policy_plane: None,
+                    policy_version: None,
+                    docs_url: None,
+                }]
+            }),
             actor_class: CONSENT_ACTOR_CLASS.to_owned(),
             actor_ref: Some(stamp.actor.to_hex()),
             content_kind: CONSENT_CONTENT_KIND.to_owned(),
@@ -646,6 +712,7 @@ pub(crate) fn revoke_standing_grant_in_txn(
     row.status = ConsentGrantStatus::Revoked;
     let data = encode_consent_grant_row(&row)?;
     store.vault_meta.put(wtxn, &key, &data)?;
+    super::owner_reason::retire_owner_reason_rules_in_txn(store, wtxn, grant_ref)?;
     Ok(true)
 }
 

@@ -71,9 +71,7 @@ fn person_sees_only_self_and_member_project_rows_and_touching_live_links() -> Re
     for (id, member) in [(project, person), (outsider_project, stranger)] {
         let mut row = ProjectRecord::new(id, Some(root), root, leader);
         row.roster.push(member.to_hex());
-        if id == project {
-            row.goal = Some(entity(0x67).to_hex());
-        } // no such row
+        // No goal pointer: only the goal-intake interview may set one.
         vault.put_project(id, &row, 2)?;
     }
     let own = put(&vault, 0x61, "report.change", ClaimSubject::Entity(person))?;
@@ -556,5 +554,157 @@ fn session_weave_uses_composed_claim_and_project_candidates_without_changing_bas
         .scoped_read(ScopedReadActorKey::new(person.to_hex()).unwrap())
         .weave_report(WeaveReader::Person(person), &recipe)?;
     assert_eq!(still_base.value, base.value);
+    Ok(())
+}
+
+#[test]
+fn authenticated_wrong_link_tap_persists_label_and_rejects_unknown_link() -> Result<()> {
+    use crate::provenance::EdgeRef;
+    let (_tmp, vault) = open_test_vault_with(embedding_test_config());
+    let person = entity(0xb1);
+    let peer = entity(0xb2);
+    for id in [person, peer] {
+        vault.put_entity(
+            &id,
+            crate::registry::ENTITY_TYPE_PERSON,
+            TimeRange { start: 1, end: 1 },
+            1,
+            b"reader",
+        )?;
+    }
+    vault.put_edge(&person, EdgeKind::Mentions, &peer, 0.5)?;
+    crate::test_util::authorize_readers(&vault, &[&person.to_hex()]);
+    let auth = vault.authenticate_owner(
+        person,
+        &person.to_hex(),
+        true,
+        crate::store::GateDecisionId::now(),
+    )?;
+    let read = vault.scoped_read(ScopedReadActorKey::new(person.to_hex()).unwrap());
+    let link = EdgeRef::new(person, EdgeKind::Mentions, peer);
+    let filed = read.report_wrong_link(&auth, WeaveReader::Person(person), link)?;
+    assert_eq!(filed.link, link);
+    assert_eq!(filed.actor, person);
+    assert_eq!(
+        read.weave_link_corrections(WeaveReader::Person(person), link)?,
+        vec![filed]
+    );
+    assert_eq!(
+        vault.weave_link_correction_labels_in_txn(&vault.store.env.read_txn()?, link)?,
+        vec![filed]
+    );
+    let unknown = EdgeRef::new(peer, EdgeKind::Mentions, person);
+    assert!(matches!(
+        read.report_wrong_link(&auth, WeaveReader::Person(person), unknown),
+        Err(Error::EntityNotFound)
+    ));
+    assert!(matches!(
+        read.weave_link_corrections(WeaveReader::Person(person), unknown),
+        Err(Error::EntityNotFound)
+    ));
+    let stranger = entity(0xb3);
+    vault.put_entity(
+        &stranger,
+        crate::registry::ENTITY_TYPE_PERSON,
+        TimeRange { start: 1, end: 1 },
+        1,
+        b"stranger",
+    )?;
+    let other_auth = vault.authenticate_owner(
+        stranger,
+        &stranger.to_hex(),
+        true,
+        crate::store::GateDecisionId::now(),
+    )?;
+    assert!(
+        read.report_wrong_link(&other_auth, WeaveReader::Person(person), link)
+            .is_err()
+    );
+    assert_eq!(
+        read.weave_link_corrections(WeaveReader::Person(person), link)?,
+        vec![filed]
+    );
+    assert!(vault.delete_edge(&person, EdgeKind::Mentions, &peer)?);
+    assert_eq!(
+        vault.weave_link_correction_labels_in_txn(&vault.store.env.read_txn()?, link)?,
+        vec![filed]
+    );
+    assert!(matches!(
+        read.weave_link_corrections(WeaveReader::Person(person), link),
+        Err(Error::EntityNotFound)
+    ));
+    Ok(())
+}
+
+#[test]
+fn weave_exact_pair_admission_keeps_independent_link_to_same_target() -> Result<()> {
+    use crate::edge::EdgeActorClass;
+    use crate::note::{NoteKind, NoteScope, NoteWriteEnvelope};
+    let (_dir, vault) = open_test_vault_with(embedding_test_config());
+    let a = vault.ensure_embedded_owner_actor().unwrap();
+    let b = entity(0xC7);
+    vault.put_entity(
+        &b,
+        crate::registry::ENTITY_TYPE_PERSON,
+        TimeRange { start: 1, end: 1 },
+        1,
+        b"resident",
+    )?;
+    let am = vault.memory(a, EdgeActorClass::Human);
+    let bm = vault.memory(b, EdgeActorClass::Human);
+    let diary = |memory: &crate::memory::Memory<'_>, owner: EntityId| -> Result<EntityId> {
+        let receipt = memory
+            .author_note(&NoteWriteEnvelope {
+                kind: NoteKind::Diary,
+                scope: NoteScope::ActorPrivate { owner_ref: owner },
+                markdown: "weave private notebook".into(),
+                source_revision_ref: [0xC8; 16],
+                mask: None,
+            })
+            .map_err(|error| crate::Error::InvalidConfig(error.to_string()))?;
+        EntityId::from_hex(&receipt.id_hex)
+    };
+    let a1 = diary(&am, a)?;
+    let a2 = diary(&am, a)?;
+    let b_note = diary(&bm, b)?;
+    am.link_diary_coreference(a1, b_note).unwrap();
+    am.grant_diary_coreference(a1, b_note).unwrap();
+    bm.grant_diary_coreference(a1, b_note).unwrap();
+    am.link_diary_coreference(a2, b_note).unwrap(); // Empty relation
+    vault
+        .batch()
+        .edge(&a2, EdgeKind::BlockedBy, &b_note, 1.0)
+        .commit()?;
+    crate::test_util::authorize_readers(&vault, &[&a.to_hex()]);
+    let read =
+        vault.scoped_read(ScopedReadActorKey::with_actor_class(a.to_hex(), "human").unwrap());
+    let owner =
+        vault.authenticate_owner(a, &a.to_hex(), true, crate::store::GateDecisionId::now())?;
+    let mut recipe = [section(WeaveSectionKind::Links, &[])];
+    recipe[0].edge_kinds = vec![EdgeKind::SameAs, EdgeKind::BlockedBy];
+    let report = || {
+        read.weave_report(WeaveReader::Owner(&owner), &recipe)
+            .unwrap()
+    };
+    let links = &report().value.sections[0].items;
+    let hidden = WeaveItem::Link {
+        source: a2,
+        kind: EdgeKind::SameAs,
+        target: b_note,
+    };
+    let independent = WeaveItem::Link {
+        source: a2,
+        kind: EdgeKind::BlockedBy,
+        target: b_note,
+    };
+    assert!(!links.contains(&hidden));
+    assert!(links.contains(&independent));
+    am.grant_diary_coreference(a2, b_note).unwrap();
+    let b_grant = bm.grant_diary_coreference(a2, b_note).unwrap();
+    assert!(report().value.sections[0].items.contains(&hidden));
+    bm.revoke_diary_coreference_grant(b_grant).unwrap();
+    let restored = &report().value.sections[0].items;
+    assert!(!restored.contains(&hidden));
+    assert!(restored.contains(&independent));
     Ok(())
 }

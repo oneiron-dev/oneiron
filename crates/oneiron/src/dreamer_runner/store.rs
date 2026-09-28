@@ -44,6 +44,12 @@ impl<'a> DreamerRunnerStore<'a> {
         }
     }
 
+    /// The vault backing this store; used by the engine's one wake scheduler.
+    #[must_use]
+    pub(crate) fn vault(&self) -> &'a Vault {
+        self.vault
+    }
+
     /// Enqueues a Dreamer attempt and records its private run-tree parent row in
     /// the same LMDB write transaction.
     pub fn enqueue(&self, input: EnqueueDreamerAttempt) -> Result<EnqueueDreamerAttemptOutcome> {
@@ -72,7 +78,8 @@ impl<'a> DreamerRunnerStore<'a> {
         };
         let encoded_payload = encode_dreamer_attempt_payload(&payload)?;
 
-        let outcome = self.attempts.enqueue_with_task_ref_in_txn(
+        let outcome = crate::ports::JobQueue::port_job_enqueue_scoped(
+            self.vault,
             wtxn,
             EnqueueAttempt {
                 kind: DREAMER_RUNNER_ATTEMPT_KIND.to_owned(),
@@ -81,7 +88,10 @@ impl<'a> DreamerRunnerStore<'a> {
                 run_id: input.run_id,
                 now: input.now,
             },
-            task_ref,
+            crate::ports::JobScope {
+                task_ref,
+                dedupe_actor_ref: None,
+            },
         )?;
 
         let record = match &outcome {
@@ -295,7 +305,8 @@ impl<'a> DreamerRunnerStore<'a> {
     ) -> Result<EnqueueDreamerAttemptOutcome> {
         let encoded_payload = encode_dreamer_attempt_payload(&payload)?;
 
-        let outcome = self.attempts.enqueue_in_txn(
+        let outcome = crate::ports::JobQueue::port_job_enqueue(
+            self.vault,
             wtxn,
             EnqueueAttempt {
                 kind: queue_kind.to_owned(),
@@ -380,7 +391,8 @@ impl<'a> DreamerRunnerStore<'a> {
         self.ensure_terminal_transition_target(input.id)?;
         let attempt_id = input.id;
         let outcome = self.vault.with_write_txn(|wtxn| {
-            let outcome = self.attempts.complete_in_txn(
+            let outcome = crate::ports::JobQueue::port_job_complete(
+                self.vault,
                 wtxn,
                 CompleteAttempt {
                     id: input.id,
@@ -465,7 +477,8 @@ impl<'a> DreamerRunnerStore<'a> {
                         "agent dispatch failures require typed detector evidence",
                     ));
                 }
-                let outcome = self.attempts.fail_in_txn(
+                let outcome = crate::ports::JobQueue::port_job_fail(
+                    self.vault,
                     wtxn,
                     FailAttempt {
                         id: input.id,

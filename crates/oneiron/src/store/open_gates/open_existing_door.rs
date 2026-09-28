@@ -151,11 +151,15 @@ impl Store {
             retrieval_blend_tuning_lock: Mutex::new(()),
             retrieval_writes_disabled: std::sync::atomic::AtomicBool::new(false),
             retrieval_telemetry_capture: config.retrieval_telemetry_capture,
+            #[cfg(target_os = "linux")]
+            retrieval_telemetry_lease: Mutex::new(None),
             authority_local_clock: Mutex::new(AuthorityLocalClock::default()),
             authority_fold_cache: Mutex::new(None),
             l2_base_cache: Mutex::new(crate::context_pack::L2BaseCache::default()),
             clock,
             diagnostics: Diagnostics::default(),
+            proactivity_updates: tokio::sync::watch::channel(0).0,
+            proactivity_suspended: Mutex::new(None),
             #[cfg(feature = "sync")]
             attempt_updates: tokio::sync::broadcast::channel(256).0,
             #[cfg(feature = "sync")]
@@ -167,7 +171,10 @@ impl Store {
         });
         let owner = StoreOwner {
             core: Arc::downgrade(&core),
+            #[cfg(unix)]
             env,
+            #[cfg(not(unix))]
+            _env: env,
             _registered_path: registered_path,
         };
         Ok(Self {
@@ -226,7 +233,8 @@ impl Store {
         )?;
         self.ensure_receipt_family_indexes_on_open()?;
         self.ensure_gate_claim_index_flag_on_open()?;
-        self.ensure_default_policy_manifest_on_open()
+        self.ensure_default_policy_manifest_on_open()?;
+        self.reconcile_retrieval_telemetry_on_open()
     }
 
     pub(super) fn ensure_default_policy_manifest_on_open(&self) -> Result<()> {

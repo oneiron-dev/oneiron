@@ -38,6 +38,7 @@ mod claims;
 mod dreamer;
 mod entity_delete;
 mod error;
+mod export;
 mod expression_preference;
 pub mod extraction;
 mod key_value;
@@ -79,6 +80,7 @@ pub use error::{
     MEMORY_CODE_OFF_RECORD_SESSION_DOOR, MEMORY_CODE_OWNER_BINDING_REQUIRED,
     MEMORY_CODE_VAULT_LOCKED_SINGLE_WRITER, MemoryError, MemoryGateDenial, MemoryResult,
 };
+pub use export::{ExportOptions, MemoryExport};
 pub use expression_preference::{
     ExpressionPreferenceInput, ExpressionPreferenceReceipt, ExpressionPreferenceView,
 };
@@ -120,8 +122,10 @@ pub(crate) use support::{
 };
 pub(crate) use witness::sole_edge_target;
 
-// Read-version and citation types are available under the existing memory
-// namespace; no additional crate-root surface is required.
+// Read-version, revision-change, and publication types are available under
+// the existing memory namespace; no additional crate-root surface is required.
+pub use crate::gate::LiveQueryTrackerLimits;
+pub use crate::vault::entity_revision::{EntityRevisionChange, IndexedPublication};
 pub use crate::vault::{
     IndexedRefreshReport, IndexedRevisionEmbedder, IndexedRevisionInput, PinnedCitation, ReadMode,
     ResolvedCitation, RevisionRef,

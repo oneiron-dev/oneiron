@@ -88,6 +88,7 @@ impl Vault {
         ) {
             let mut txn = self.store.env.write_txn()?;
             reverify_deletion_authority_before_publication(gate, &txn)?;
+            crate::workspace_roster::precheck_goal_delete(&self.store, &txn, *id, gate.is_some())?;
             if !crate::share::active_brief_shares_for(
                 &self.store,
                 &txn,
@@ -129,6 +130,7 @@ impl Vault {
         {
             let txn = self.store.env.read_txn()?;
             crate::federation::reject_ruling_delete(&self.store, &txn, id)?;
+            crate::workspace_roster::precheck_goal_delete(&self.store, &txn, *id, gate.is_some())?;
             self.store.guard_pack_map_carrier_delete_in_txn(&txn, id)?;
         }
         // Hold the entire key partition before a hard tombstone can publish.
@@ -194,7 +196,8 @@ impl Vault {
             // arm publishes its tombstone after the scrub, so the re-fold below
             // in the publish txn is the decision that binds.
             reverify_deletion_authority_before_publication(gate.as_ref(), &wtxn)?;
-            let (existed, had_vector) = self.soft_erase_active_store_in_txn(&mut wtxn, id)?;
+            let (existed, had_vector, _ledger_changed) =
+                self.soft_erase_active_store_in_txn(&mut wtxn, id)?;
             if had_vector {
                 crate::hnsw::increment_vector_version(&self.store, &mut wtxn)?;
             }
@@ -343,7 +346,8 @@ impl Vault {
             self.reject_held_redirect_shells_in_txn(&wtxn, id)?;
             let scrub_is_the_linearization_point = !authority_settled;
             crate::note::erase_citations_in_txn(self, &mut wtxn, id)?;
-            let (existed, had_vector) = self.soft_erase_active_store_in_txn(&mut wtxn, id)?;
+            let (existed, had_vector, _ledger_changed) =
+                self.soft_erase_active_store_in_txn(&mut wtxn, id)?;
             if had_vector {
                 crate::hnsw::increment_vector_version(&self.store, &mut wtxn)?;
             }

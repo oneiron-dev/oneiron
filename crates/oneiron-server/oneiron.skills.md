@@ -209,7 +209,7 @@ Fetch Tier-1 first. It contains one endpoint block per live route literal and no
   - "open published artifact"
   - "preview local app artifact"
   - "serve artifact index"
-- safety: Read-only local artifact serving. Only artifact-class code snapshots can be served; the published pointer selects an immutable fork hash.
+- safety: Read-only local artifact serving. The published pointer pins a code snapshot or a numbered blob export; no public publishing tier is enabled.
 
 #### local-artifact-published-root-slash - `GET /a/{artifact}/`
 
@@ -218,16 +218,16 @@ Fetch Tier-1 first. It contains one endpoint block per live route literal and no
   - "open artifact root"
   - "serve artifact home page"
   - "preview published artifact"
-- safety: Read-only local artifact serving. Only artifact-class code snapshots can be served; the published pointer selects an immutable fork hash.
+- safety: Read-only local artifact serving. The published pointer pins a code snapshot or a numbered blob export; no public publishing tier is enabled.
 
 #### local-artifact-file - `GET /a/{artifact}/{*path}`
 
-- when-to-use: Serve a specific file from a pinned local artifact snapshot, or select a preview pointer or explicit fork hash for immutable local inspection.
+- when-to-use: Serve a code snapshot file or a blob export, using a preview pointer, an explicit fork hash, or a numbered blob version.
 - trigger phrases:
   - "serve artifact file"
   - "load artifact asset"
   - "open pinned artifact snapshot"
-- safety: Read-only local artifact serving. Codebase-class snapshots are rejected; responses use restrictive local CSP and immutable cache headers.
+- safety: Read-only local artifact serving. Codebase-class snapshots are rejected; responses use restrictive local CSP, with no-cache headers on channels and immutable headers on direct versions.
 
 #### health - `GET /api/health`
 
@@ -557,24 +557,25 @@ Response:
 
 Method: `GET`
 
-Authentication: None for this local serving endpoint.
+Authentication: configured API bearer credential, unless the server explicitly allows unauthenticated development access.
 
 Path parameters:
 
-- `artifact` required: stable artifact id segment for the local mount.
-- `path` optional: file path within the pinned snapshot. Root requests serve `index.html`.
+- `artifact` required: code project id or canonical lowercase hex blob entity id.
+- `path` optional: code snapshot file path, or the blob export name / stable `export` path. Short entry URLs `/a/{artifact}/` and `/a/{artifact}/_t/{token}/` authorize first, then redirect to canonical `/a/{artifact}/_s/c/published/` or `/a/{artifact}/_t/{token}/_s/c/published/`. Preview uses `/_s/c/preview/`; immutable exports use `/_s/f/{forkHash}/` and `/_s/b/{blobVersion}/`, with the same optional token prefix. The fixed-position `_s` selector marker is never searched inside the artifact id or file suffix. Bundle paths after it may contain `c/`, `f/`, `b/`, `_s/`, or `_t/` as ordinary directories. Code roots select `index.html`; blob roots select the export. Every query-selected entry authorizes then redirects to its selector-bearing path so relative assets inherit both capability and selection. Names containing `#`, `?`, and `%` retain their encoded spelling across redirects.
 
 Query parameters:
 
 - `channel` optional: pointer channel to resolve, currently `published` by default or `preview`.
-- `forkHash` optional: 64-character hex immutable snapshot hash. Do not combine with `channel`.
+- `forkHash` optional: 64-character hex immutable code snapshot hash. Do not combine with `channel` or `blobVersion`.
+- `blobVersion` optional: positive numbered blob export version. Do not combine with `channel` or `forkHash`.
 
 Response behavior:
 
-- Resolves the pointer or fork hash to an artifact-class code snapshot and serves bytes from that pinned snapshot only.
-- Repointing a published or preview pointer affects future stable mount reads but does not mutate old fork-hash mounts.
-- Returns `404` when the pointer, snapshot, or file is absent, and `400` for malformed selectors or mutually exclusive selector parameters.
-- Sends `Cache-Control: public, max-age=31536000, immutable`, an ETag derived from the served file content hash, and a restrictive CSP for local artifact assets.
+- Resolves only an authorized live channel pointer to a pinned code snapshot or blob version. Explicit `forkHash` and `blobVersion` require a matching live published or preview pin; unpinned versions and codebase-class snapshots are not hostable.
+- Serving tiers are private by default: an explicitly public pin serves anonymously; a link-token pin needs its 256-bit URL capability; a world-member pin needs a verified, unrestricted read credential and a live federation membership grant. Wrong or missing authority, absent files, and unpublished pointers return the same artifact `404`. Repointing and unpublishing revoke old direct-version serving, not the underlying immutable export.
+- Returns `400` for malformed or mutually exclusive selector parameters. No vault API is available to served bundles.
+- Public code channel responses use `Cache-Control: no-cache, max-age=0, must-revalidate`; pinned public code snapshots use `public, max-age=31536000, immutable`. Public blob channels use `private, no-cache, max-age=0, must-revalidate` and direct public blob versions use `private, max-age=31536000, immutable`. Token and member responses use `private, no-store`. All responses send `Referrer-Policy: no-referrer` to protect capability URLs. Code snapshots use content-hash ETags; blob exports use version-scoped ETags (including the content hash), so same-byte repoints with different pinned presentation revalidate. Both kinds send restrictive CSP. Blob responses render only passive allowlisted media types inline; active or unknown types download as `application/octet-stream` attachments with `X-Content-Type-Options: nosniff`.
 
 ### Core Discovery
 
@@ -937,8 +938,7 @@ Request body (every block is optional; `{}` returns the prefix beside the caller
 - `retrieval` optional: a Context Pack request body (see above). When present, retrieval runs and its pack rides the response.
 - `memories` optional: `enabled` (default `true`) and `slots` per-slot row caps (`claims`, `turns`, `summaries`, `facets`, `companions`, `other`).
 - `session` optional: `session_id` that carries the cursor across calls; defaults to the caller identity.
-- `companion` optional: `person_ref` identifies the PERSON, `persona_ref` supplies the other relationship endpoint, and `expression` selects `professional`, `warm`, or `unrestricted`.
-  Only an active relationship record can select a non-neutral companion scope.
+- `companion` optional: `person_ref`, `persona_ref`, and `expression` (`professional`, `warm`, or `unrestricted`).
 
 Response fields:
 

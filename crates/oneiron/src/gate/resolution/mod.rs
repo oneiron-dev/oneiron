@@ -10,7 +10,10 @@ pub(crate) use self::manifest_fold::{
     resolve_gate_decision_retention, resolve_policy_manifest, retention_edit_target,
 };
 pub(super) use self::manifest_types::CommOptOutPosture;
+pub(in crate::gate) use self::manifest_types::TeacherProbeRow;
 pub(crate) use self::manifest_types::{
-    GateDecisionRetentionPolicy, GateRetentionContext, GateRetentionOverrideCeiling,
-    GateRetentionPrecedence, GateRetentionRow, GateRetentionScope, PolicyManifestResolution,
+    AttributionLimits, ConnectorClassPrecedence, DEFAULT_ATTRIBUTION_REASON_MAX_BYTES,
+    DEFAULT_ATTRIBUTION_RECEIPTS_PER_PASS, GateDecisionRetentionPolicy, GateRetentionContext,
+    GateRetentionOverrideCeiling, GateRetentionPrecedence, GateRetentionRow, GateRetentionScope,
+    PolicyManifestResolution, SheetAnswerLimitRow, SheetAnswerPrecedence,
 };

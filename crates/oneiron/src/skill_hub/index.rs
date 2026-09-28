@@ -51,15 +51,51 @@ impl Vault {
         &self,
         rtxn: &heed::RoTxn<'_>,
         content_hash: SkillContentHash,
+        source: Option<&HubRef>,
     ) -> Result<Option<EntityId>> {
+        // Explicit restore may have minted a newer live holder for these exact
+        // bytes. Prefer it; otherwise ordinary re-import preserves an inactive
+        // holder and adds the new provenance without reviving it (owner ruling A).
+        let mut exact_live = None;
+        let mut other_live = None;
+        let mut exact_inactive = None;
+        let mut other_inactive = None;
         for (entity, record) in
             self.structured_skills_for_content_hash_in_txn(rtxn, content_hash)?
         {
-            if record.source == ClaimSource::Imported {
-                return Ok(Some(entity));
+            if record.source != ClaimSource::Imported {
+                continue;
+            }
+            let exact = if let Some(source) = source {
+                self.default_skill_present_for_entity_in_txn(rtxn, &entity, source)?
+            } else {
+                false
+            };
+            match (record.lifecycle_status, exact) {
+                (
+                    crate::skill::SkillLifecycle::Candidate | crate::skill::SkillLifecycle::Active,
+                    true,
+                ) => {
+                    exact_live.get_or_insert(entity);
+                }
+                (
+                    crate::skill::SkillLifecycle::Candidate | crate::skill::SkillLifecycle::Active,
+                    false,
+                ) => {
+                    other_live.get_or_insert(entity);
+                }
+                (_, true) => {
+                    exact_inactive.get_or_insert(entity);
+                }
+                (_, false) => {
+                    other_inactive.get_or_insert(entity);
+                }
             }
         }
-        Ok(None)
+        Ok(exact_live
+            .or(other_live)
+            .or(exact_inactive)
+            .or(other_inactive))
     }
 
     pub(super) fn structured_skills_for_content_hash_in_txn(
@@ -82,6 +118,14 @@ impl Vault {
             let entity =
                 crate::entity_id::parse_entity_id(&key[prefix.len()..], "skill content hash index")
                     .map_err(|_| Error::CorruptedIndex("skill content hash index"))?;
+            // User delete can retain an erased body as a tombstone shell.
+            // The hash-index entry may still exist, but a shell is not a
+            // candidate holder and its bytes are not a SkillRecord.
+            if crate::ports::TombstoneStoreRead::port_deletion_state(&self.store, rtxn, &entity)?
+                .deleted
+            {
+                continue;
+            }
             let Some(raw) = self
                 .store
                 .port_entity_record(rtxn, &entity)?
@@ -126,6 +170,11 @@ impl Vault {
                 return Err(Error::IndexOverflow("skill_entity_for_content_hash"));
             }
             let id = entry?;
+            if crate::ports::TombstoneStoreRead::port_deletion_state(&self.store, rtxn, &id)?
+                .deleted
+            {
+                continue;
+            }
             let raw = self
                 .store
                 .port_entity_record(rtxn, &id)?

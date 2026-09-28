@@ -4,6 +4,7 @@
 //! module does not mint a new receipt store and does not change emitter schema.
 
 mod brief_share;
+mod direct_dispatch;
 mod dispatch_observation;
 mod family;
 mod field_set;
@@ -42,6 +43,7 @@ pub use self::projection::{
 };
 pub use self::session::{SessionLocalReceiptLog, SessionReceiptClose};
 
+pub(crate) use self::direct_dispatch::record as record_direct_dispatch_receipt;
 pub(crate) use self::dispatch_observation::{
     DispatchObservationKey, append_dispatch_observation_in_txn, read_dispatch_observation,
 };
@@ -69,7 +71,8 @@ pub(crate) use self::ledgers::{
 };
 #[cfg(test)]
 pub(crate) use self::ledgers::{
-    overwrite_attempt_pack_receipt_for_test, put_attempt_pack_receipt_for_test,
+    make_attempt_receipt_legacy_for_tests, overwrite_attempt_pack_receipt_for_test,
+    put_attempt_pack_receipt_for_test,
 };
 pub(crate) use self::projection::{COMMITMENT_TRIGGER_PREFIX, commitment_trigger_ref};
 pub(crate) use self::record::{

@@ -1075,6 +1075,171 @@ async fn localized_platform_announcement_exposes_original_text_toggle() {
 }
 
 #[tokio::test]
+async fn conversation_list_previews_last_visible_multibyte_message_for_every_row() {
+    let (_dir, server) = test_server();
+    let mut sources = Vec::new();
+    for n in 0..2 {
+        let (status, room) = route_json(
+            server.clone(),
+            json_request(
+                "POST",
+                "/v1/core/conversations",
+                json!({"body":{"name":format!("room-{n}")}}),
+            ),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        let id = room["id"].as_str().unwrap().to_owned();
+        let source = format!("{n} {}", "漢😀".repeat(40));
+        let (status, _) = route_json(
+            server.clone(),
+            json_request(
+                "POST",
+                &format!("/v1/core/conversations/{id}/turns"),
+                json!({"body":{"txt":source},"learned_at":900+n}),
+            ),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        sources.push((id, source));
+    }
+    // A newer deleted record must not replace the most recent visible one.
+    let (status, hidden) = route_json(
+        server.clone(),
+        json_request(
+            "POST",
+            &format!("/v1/core/conversations/{}/turns", sources[0].0),
+            json!({"body":{"txt":"deleted newer text"},"learned_at":999_u64}),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    server
+        .vault
+        .delete_entity_with_reason(
+            &oneiron::EntityId::from_hex(hidden["id"].as_str().unwrap()).unwrap(),
+            oneiron::DeleteReason::UserDelete,
+        )
+        .unwrap();
+    let (status, empty) = route_json(
+        server.clone(),
+        json_request(
+            "POST",
+            "/v1/core/conversations",
+            json!({"body":{"name":"empty-room"}}),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let empty_id = empty["id"].as_str().unwrap();
+    for path in [
+        "/v1/core/conversations?limit=10",
+        "/v1/core/conversations?kind=direct&limit=10",
+    ] {
+        let (status, response) = route_json(
+            server.clone(),
+            Request::builder().uri(path).body(Body::empty()).unwrap(),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{response}");
+        let rows = response["items"].as_array().unwrap();
+        for (id, source) in &sources {
+            let row = rows.iter().find(|row| row["id"] == *id).unwrap();
+            let snippet = row["lastMessageSnippet"].as_str().unwrap();
+            assert!(snippet.chars().count() <= 50);
+            assert!(snippet.ends_with('…'));
+            assert!(source.starts_with(snippet.trim_end_matches('…')));
+        }
+        assert!(
+            rows.iter().find(|row| row["id"] == empty_id).unwrap()["lastMessageSnippet"].is_null()
+        );
+    }
+    let (status, standard) = route_json(
+        server,
+        Request::builder()
+            .uri("/v1/core/conversations?view=standard&limit=10")
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{standard}");
+    assert_eq!(
+        standard["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|row| row["lastMessageSnippet"].is_string())
+            .count(),
+        2
+    );
+}
+
+#[test]
+fn old_conversation_list_row_deserializes_with_absent_preview() {
+    let before = json!({
+        "items": [{"id":"old", "kind":"CONVERSATION", "label":"old room", "updatedAt":1}],
+        "meta": {"countMode":"exact", "total":1}
+    });
+    let response: ConversationsListResponse = serde_json::from_value(before).unwrap();
+    let current = serde_json::to_value(response).unwrap();
+    assert_eq!(current["items"][0]["id"], "old");
+    assert!(current["items"][0]["lastMessageSnippet"].is_null());
+}
+
+#[tokio::test]
+async fn conversation_list_previews_witness_message_content_not_turn_speaker() {
+    let (_dir, server) = test_server();
+    let actor = oneiron::EntityId::now();
+    let conversation = oneiron::EntityId::now();
+    let at = 1234_u64;
+    server
+        .vault
+        .put_entity(
+            &actor,
+            oneiron::registry::ENTITY_TYPE_PERSON,
+            oneiron::TimeRange { start: at, end: at },
+            at,
+            b"actor",
+        )
+        .unwrap();
+    let content = "visible witness message content";
+    server
+        .vault
+        .memory(actor, oneiron::EdgeActorClass::Human)
+        .witness(&oneiron::WitnessTurn {
+            conversation_ref: conversation.to_hex(),
+            turn_ref: None,
+            messages: vec![oneiron::WitnessMessage {
+                id: None,
+                author: oneiron::WitnessAuthor::User,
+                message_type: "dialogue".to_owned(),
+                content: content.to_owned(),
+                metadata: None,
+                is_visible: true,
+                order: 0,
+            }],
+            occurred_at: at,
+        })
+        .unwrap();
+    let (status, response) = route_json(
+        server,
+        Request::builder()
+            .uri("/v1/core/conversations?limit=10")
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{response}");
+    let row = response["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|row| row["id"] == conversation.to_hex())
+        .unwrap();
+    assert_eq!(row["lastMessageSnippet"], content);
+}
+
+#[tokio::test]
 async fn owner_watch_persists_and_timeline_renders_stored_before_after() {
     let (_dir, server) = auth_test_server();
     oneiron::campaign::register_crm_pack(
