@@ -431,3 +431,57 @@ fn the_selection_door_resolves_the_act_row_in_the_reading_transaction() -> Resul
     assert_eq!(selected()?, None);
     Ok(())
 }
+
+#[test]
+fn a_vault_without_a_manifest_leaves_the_send_verdict_to_the_gate() -> Result<()> {
+    use crate::channel_identity::{
+        enrich_dispatch_channel_identity, resolve_channel_identity_ref_for_connector,
+    };
+    use crate::connector_key::ConnectorKeyRecord;
+
+    // `test_vault` carries no policy manifest, so its gate pends every
+    // external effect. The sender door must not answer for it on a row that
+    // does not exist; only the substrate capability stays in code.
+    let (_tmp, vault) = test_vault();
+    let actor = crate::test_util::seed_agent_definition(&vault, entity(0x68), "bootstrap sender");
+    vault.register_connector_key(
+        &entity(0x69),
+        ConnectorKeyRecord::active("email", Some(actor), Vec::new(), 100),
+    )?;
+    let identity = crate::test_util::self_held_identity_in_state(
+        "email",
+        "bootstrap@example.com",
+        SelfHeldShape::DedicatedAddress,
+        ChannelIdentityBinding::actor(actor),
+        ChannelIdentityState::Active,
+        100,
+    );
+    let identity_ref = entity(0x6B);
+    vault.create_channel_identity(&identity_ref, &identity)?;
+
+    let selected = || -> Result<Option<EntityId>> {
+        let txn = vault.store.env.read_txn()?;
+        resolve_channel_identity_ref_for_connector(&vault.store, &txn, "email", Some(&actor))
+    };
+    let explicit = || -> Result<Option<EntityId>> {
+        let txn = vault.store.env.read_txn()?;
+        enrich_dispatch_channel_identity(
+            &vault.store,
+            &txn,
+            "email",
+            Some(&actor),
+            Some(identity_ref),
+        )
+    };
+    assert_eq!(selected()?, Some(identity_ref));
+    assert_eq!(explicit()?, Some(identity_ref));
+
+    // A retired row still holds no capability, manifest or not.
+    vault.step_channel_identity(&identity_ref, ChannelIdentityStep::Release, 101)?;
+    assert_eq!(selected()?, None);
+    assert!(
+        explicit().is_err(),
+        "an explicit retired sender is refused without a manifest too"
+    );
+    Ok(())
+}

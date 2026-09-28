@@ -127,28 +127,30 @@ pub(crate) fn enrich_dispatch_channel_identity(
 /// Raising the manifest row therefore cannot by itself enable a send. What it
 /// changes is which of the two refusals the vault reports, and who owns the
 /// decision: the vault's policy data rather than an engine class ban.
+///
+/// A vault with no policy manifest at all has no row to ask. Its gate already
+/// holds every external effect on `gate.pending.external_effect_authority`, so
+/// only the substrate question is asked here: refusing on the missing row
+/// would make the sender identity, not the gate, the source of that verdict.
+/// A loaded manifest that is merely silent about this act still denies.
 fn outbound_send_permitted(
     store: &Store,
     txn: &heed::RoTxn<'_>,
     identity: &ChannelIdentity,
 ) -> crate::Result<bool> {
-    let posture = resolved_outbound_posture(store, txn, identity)?;
-    Ok(identity.may_send_under(posture))
-}
-
-fn resolved_outbound_posture(
-    store: &Store,
-    txn: &heed::RoTxn<'_>,
-    identity: &ChannelIdentity,
-) -> crate::Result<ActPosture> {
     let policy = crate::gate::resolve_policy_manifest(store, txn)?;
-    Ok(policy
+    let diagnostics = policy.diagnostics();
+    if diagnostics.manifest_count == 0 && !diagnostics.loaded_manifest_forces_fail_closed() {
+        return Ok(identity.holds_outbound_capability());
+    }
+    let posture: ActPosture = policy
         .resolved_act_posture(
             ACT_CLASS_CHANNEL_IDENTITY_OUTBOUND_SEND,
             identity.outbound_subject_class(),
             identity.binding().actor_ref(),
         )
-        .unwrap_or_default())
+        .unwrap_or_default();
+    Ok(identity.may_send_under(posture))
 }
 
 /// The refusal for an explicit sender the vault will not send through.
