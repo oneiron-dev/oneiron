@@ -263,8 +263,8 @@ fn lfs_put_rejects_expected_oid_mismatch_without_writing() {
             .entities_by_type(ENTITY_TYPE_ASSET)
             .expect("scan assets")
             .len(),
-        4,
-        "only the four seeded bootstrap carriers exist after the refusal"
+        8,
+        "only four bootstrap skill carriers and four built-in pack sources exist after the refusal"
     );
     assert_eq!(
         vault
@@ -307,8 +307,8 @@ fn lfs_put_rejects_size_mismatch_without_writing() {
             .entities_by_type(ENTITY_TYPE_ASSET)
             .expect("scan assets")
             .len(),
-        4,
-        "and no ASSET entity was created beyond the four seed carriers"
+        8,
+        "and no ASSET entity was created beyond the eight seeded assets"
     );
 }
 

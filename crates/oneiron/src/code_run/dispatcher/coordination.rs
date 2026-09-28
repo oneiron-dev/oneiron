@@ -7,12 +7,13 @@ use crate::agent_dispatch::{
 use crate::attempt_queue::AttemptId;
 use crate::code_run::storage::ExecutorStorage;
 use crate::code_run::{
-    SelfAgentSpawnCall, SelfAgentSpawnResult, SelfDispatchOutcome, SelfEffect, SelfFailedResult,
+    SelfAgentSpawnCall, SelfAgentSpawnResult, SelfCall, SelfDispatchOutcome, SelfEffect,
+    SelfFailedResult,
 };
 use crate::dreamer_runner::DreamerRunnerStore;
 use crate::error::{ArtifactError, Error, Result};
 use crate::task_verb::{TaskAskHandle, TaskAskSpec, TaskAskWait};
-use crate::{Vault, WriteActor};
+use crate::{EntityId, Vault, WriteActor};
 
 fn invalid() -> Error {
     Error::Artifact(ArtifactError::InvalidAgentDispatchInput(
@@ -124,14 +125,45 @@ impl<'a> HostSelfDispatcher<'a> {
         })
     }
 
-    pub(super) fn dispatch_tasks_wait(&self, handle: TaskAskHandle) -> Result<SelfDispatchOutcome> {
+    pub(super) fn dispatch_tasks_wait(
+        &self,
+        handle: TaskAskHandle,
+        run_id: Option<EntityId>,
+    ) -> Result<SelfDispatchOutcome> {
         let vault = self.coordination_vault()?;
         let memory = vault.memory(self.actor.entity_ref(), self.actor.actor_class());
-        Ok(match memory.tasks_wait(handle, None) {
+        // Only a persisted bridge result acknowledges a void. If the process
+        // died after returning Changed but before replay append, it is offered
+        // again; a later distinct void has a higher generation and re-wakes.
+        let mut observed = 0;
+        if let Some(run_id) = run_id
+            && let Some(record) = vault.get_code_run_replay_record(&run_id)?
+        {
+            let request =
+                super::super::payload::self_call_request_value(&SelfCall::TasksWait(handle))?;
+            for call in &record.bridge_calls {
+                if call.effect == SelfEffect::TasksWait
+                    && call.request == request
+                    && let SelfDispatchOutcome::TaskAskStatus(
+                        crate::task_verb::TaskAskStatus::Changed { generation, .. },
+                    ) = super::super::payload::decode_self_dispatch_outcome(&call.outcome)?
+                {
+                    observed = observed.max(generation);
+                }
+            }
+            crate::task_verb::ack_option_void_generation(vault, handle.group_ref, observed)?;
+        }
+        Ok(match memory.tasks_wait_observing(handle, None, observed) {
             Ok(TaskAskWait::Ready(result)) => {
                 SelfDispatchOutcome::TaskAskStatus(crate::task_verb::TaskAskStatus::Settled(result))
             }
             Ok(TaskAskWait::Park(wait)) => SelfDispatchOutcome::DurableWait(wait),
+            Ok(TaskAskWait::Changed { voided, generation }) => {
+                SelfDispatchOutcome::TaskAskStatus(crate::task_verb::TaskAskStatus::Changed {
+                    voided,
+                    generation,
+                })
+            }
             Ok(TaskAskWait::Pending { .. }) => failed(
                 SelfEffect::TasksWait,
                 crate::memory::MemoryError::bad_request("external wait on engine step"),

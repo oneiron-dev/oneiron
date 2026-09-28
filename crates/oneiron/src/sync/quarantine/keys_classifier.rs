@@ -153,6 +153,9 @@ pub(crate) fn remote_rejection_reason(error: &Error) -> Option<String> {
         // introduce, replace or clear its approved manifest through replay.
         | ErrorKind::InvalidConnectorKeyBody
         | ErrorKind::InvalidTaskBody
+        // An ask word or receipt that arrived before its group or person is
+        // remote data waiting on a dependency; forward remat keeps its retry.
+        | ErrorKind::AskDependencyPending
         | ErrorKind::InvalidProjectBody
         | ErrorKind::InvalidProjectRoomBody
         | ErrorKind::ProjectDependencyPending

@@ -602,6 +602,8 @@ impl TaskAskWord {
 #[serde(rename_all = "snake_case")]
 pub enum TaskAskSource {
     Human,
+    /// Bearer-bound external word attributed to the intended person, not an instruction.
+    ForeignStated,
     Companion,
     Inform,
     Executor,
@@ -711,6 +713,9 @@ pub struct TaskAskSettlement {
     pub unmet_sources: BTreeSet<ConsultPayloadRef>,
     pub outcome_answer_ref: Option<EntityId>,
     pub policy_surface: TaskAskSurface,
+    /// Issuer signature over this complete receipt when link-derived words occur.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub link_result_proof: Option<Vec<u8>>,
 }
 /// Ask settlement cannot grant or deny an external effect. Only the separate
 /// effect gate evaluates that authority against its own live inputs.
@@ -732,14 +737,27 @@ pub struct TaskAskResult {
 }
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum TaskAskStatus {
-    Pending { hold: Option<TaskAskHoldReason> },
+    Pending {
+        hold: Option<TaskAskHoldReason>,
+    },
+    /// Nonterminal link void; this is a notification, never an answer.
+    Changed {
+        voided: Vec<EntityId>,
+        generation: u64,
+    },
     Settled(Box<TaskAskResult>),
 }
 
 /// This is a signal contract, not a blocking read or a polling loop.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum TaskAskWait {
-    Pending { trap_ref: String },
+    Pending {
+        trap_ref: String,
+    },
+    Changed {
+        voided: Vec<EntityId>,
+        generation: u64,
+    },
     Ready(Box<TaskAskResult>),
     Park(crate::code_run::SelfDurableWait),
 }

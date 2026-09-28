@@ -12,7 +12,7 @@ use crate::vault::Vault;
 use crate::write_envelope::{SourceLineage, WriteActor};
 
 use super::manifest_types::ConnectorClassPrecedence;
-use super::manifest_types::PolicyManifestResolution;
+use super::manifest_types::{PolicyManifestResolution, TeacherProbeRow};
 use crate::gate::ceiling::{
     DelegationFoldCache, DelegationGrantRecord, PolicyOwnerPolicyRow, check_source_trust,
     fold_delegated_grants,
@@ -25,11 +25,34 @@ pub(crate) fn resolve_policy_manifest(
     txn: &heed::RoTxn<'_>,
 ) -> Result<PolicyManifestResolution> {
     let mut resolution = PolicyManifestResolution::default();
+    // The shipped manifest supplies bootstrap policy even when a replacement
+    // omits optional count rows; a peer cannot replace these trusted defaults.
+    let shipped = decode_policy_manifest(&crate::gate::default_manifest::default_policy_manifest())
+        .ok_or(Error::InvariantViolation(
+            "shipped sheet-answer policy manifest invalid",
+        ))?;
+    resolution.sheet_answer_default_max_count = shipped
+        .sheet_answer_limits
+        .iter()
+        .find(|row| row.artifact_ref.is_none() && row.sheet.is_none())
+        .map(|row| row.max_count);
+    resolution.sheet_answer_precedence = shipped.sheet_answer_precedence;
+    if resolution.sheet_answer_default_max_count.is_none()
+        || resolution.sheet_answer_precedence.is_none()
+    {
+        return Err(Error::InvariantViolation(
+            "shipped sheet-answer policy rows missing",
+        ));
+    }
     let mut untrusted_source_rows = Vec::new();
+    let mut untrusted_teacher_rows = Vec::new();
+    let mut untrusted_sheet_limits = Vec::new();
     let mut delegated_rows: Vec<DelegationGrantRecord> = Vec::new();
     let mut vault_class_carry: Option<BTreeSet<(String, String)>> = None;
     let mut holder_class_carry: Vec<BTreeSet<(String, String)>> = Vec::new();
     let mut vault_precedence: Option<ConnectorClassPrecedence> = None;
+    let mut shipped_pptx_limits: Option<crate::edit_roundtrip::pptx::PptxOperationalLimits> = None;
+    let mut owner_pptx_limits: Option<crate::edit_roundtrip::pptx::PptxOperationalLimits> = None;
 
     for index_entry in store.port_entity_ids_by_type(txn, ENTITY_TYPE_POLICY_MANIFEST, None)? {
         let id = match index_entry {
@@ -65,6 +88,10 @@ pub(crate) fn resolve_policy_manifest(
                 resolution.diagnostics.manifest_count += 1;
                 if !trusted {
                     untrusted_source_rows.push(decoded.source_trust);
+                    if let Some(row) = decoded.teacher_probe {
+                        untrusted_teacher_rows.push(row);
+                    }
+                    untrusted_sheet_limits.extend(decoded.sheet_answer_limits);
                     continue;
                 }
                 // Only trusted packs can authorize the no-LLM lane. Each must agree.
@@ -80,6 +107,10 @@ pub(crate) fn resolve_policy_manifest(
                 resolution.diagnostics.unsupported_schema_seen |= decoded.unsupported_schema;
                 resolution.diagnostics.engine_version_floor_seen |= decoded.engine_version_floor;
                 resolution.diagnostics.unknown_axis_seen |= decoded.unknown_axis_seen;
+                if let Some(row) = decoded.teacher_probe {
+                    resolution.teacher_probe_trusted = true;
+                    merge_teacher_probe_row(&mut resolution, row);
+                }
                 resolution.source_trust.merge(decoded.source_trust);
                 resolution.actor_ceilings.extend(decoded.actor_ceilings);
                 delegated_rows.extend(decoded.delegated_grants);
@@ -194,7 +225,27 @@ pub(crate) fn resolve_policy_manifest(
                         },
                     };
                 }
+                if let Some(limits) = decoded.pptx_comment_limits {
+                    // The shipped row is a DEFAULT, not a permanent ceiling:
+                    // an authenticated vault row may adjust it up or down.
+                    // Multiple owner rows and holder caps compose restrictively.
+                    let slot = if id == crate::gate::default_policy_manifest_id()? {
+                        &mut shipped_pptx_limits
+                    } else {
+                        &mut owner_pptx_limits
+                    };
+                    *slot = Some(slot.map_or(limits, |previous| previous.narrow(limits)));
+                }
                 resolution.hosted_tts.rows.extend(decoded.hosted_tts.rows);
+                if let Some(bounds) = decoded.docedit_resource_policy {
+                    let baseline = crate::gate::docedit_resource::DoceditResourcePolicy::shipped();
+                    resolution.docedit_resource_policy = Some(
+                        resolution
+                            .docedit_resource_policy
+                            .unwrap_or(baseline)
+                            .restrict(bounds),
+                    );
+                }
 
                 if let Some(limits) = decoded.livequery_tracker_limits {
                     if let Some(existing) = &mut resolution.livequery_tracker_limits {
@@ -203,6 +254,16 @@ pub(crate) fn resolve_policy_manifest(
                         resolution.livequery_tracker_limits = Some(limits);
                     }
                 }
+                if !resolution
+                    .slide_review_policy
+                    .restrict(decoded.slide_review_policy)
+                {
+                    resolution.diagnostics.malformed_manifest_seen = true;
+                }
+                if let Some(limits) = decoded.docx_archive_limits {
+                    resolution.docx_archive_limits.push(limits);
+                }
+
                 if let Some(bounds) = decoded.diagnostic_bounds {
                     match resolution.diagnostic_bounds {
                         None => resolution.diagnostic_bounds = Some(bounds),
@@ -222,6 +283,17 @@ pub(crate) fn resolve_policy_manifest(
                 }
                 // Advisory threshold composition is deterministic and never
                 // authorizes or refuses a write. The earliest question wins.
+                if let Some(limits) = decoded.attribution_limits {
+                    if resolution.attribution_limits_set {
+                        resolution.attribution_limits.restrict(limits);
+                    } else {
+                        resolution.attribution_limits = limits;
+                        resolution.attribution_limits_set = true;
+                    }
+                }
+                resolution
+                    .sheet_answer_limits
+                    .extend(decoded.sheet_answer_limits);
                 if let Some(threshold) = decoded.proposal_check_threshold {
                     resolution.proposal_check_threshold = Some(
                         resolution
@@ -286,8 +358,16 @@ pub(crate) fn resolve_policy_manifest(
     }
     resolution.connector_class_carry = class_policy_named.then_some(carry);
 
+    resolution.pptx_comment_limits = owner_pptx_limits.or(shipped_pptx_limits);
+
+    resolution.untrusted_sheet_answer_limits = untrusted_sheet_limits;
     for contribution in untrusted_source_rows {
         resolution.source_trust.restrict_only(contribution);
+    }
+    // Untrusted manifests may only RAISE a trusted vault floor, never seed
+    // the teacher policy by themselves or lower an existing holder floor.
+    for row in untrusted_teacher_rows {
+        merge_teacher_probe_row(&mut resolution, row);
     }
 
     // Duplicate owner rows are refused per manifest by
@@ -331,6 +411,15 @@ pub(crate) fn resolve_policy_manifest(
     Ok(resolution)
 }
 
+fn merge_teacher_probe_row(resolution: &mut PolicyManifestResolution, row: TeacherProbeRow) {
+    let vault_min = resolution.teacher_probe_vault_min.get_or_insert(0);
+    *vault_min = (*vault_min).max(row.min_f1_millionths);
+    for (holder, minimum) in row.holders {
+        let floor = resolution.teacher_probe_holders.entry(holder).or_insert(0);
+        *floor = (*floor).max(minimum);
+    }
+}
+
 /// Folds a once-per-vault owner string across manifests. A second manifest
 /// naming the same field differently is a malformed policy state, not a
 /// precedence question.
@@ -372,6 +461,19 @@ fn has_duplicate_owner_policy_row(rows: &[PolicyOwnerPolicyRow]) -> bool {
 }
 
 impl Vault {
+    /// Resolve the live document package limits from trusted policy rows.
+    /// A missing or invalid manifest is a refusal, never an organ fallback.
+    pub fn docedit_package_limits(&self) -> Result<oneiron_docedit::retained_opc::Limits> {
+        let rtxn = self.store.env.read_txn()?;
+        let resolution = resolve_policy_manifest(&self.store, &rtxn)?;
+        let policy = resolution.docedit_resource_policy().ok_or_else(|| {
+            Error::InvalidConfig(
+                "document resource policy is unavailable or fail-closed".to_owned(),
+            )
+        })?;
+        Ok(policy.organ_limits())
+    }
+
     /// Builds the ONE policy-aware LLM budget meter for one wake pass: the
     /// same `BudgetGuard`, bound at construction to the engine-stamped actor
     /// and to the live manifest's resolved `budget_policy` table.
