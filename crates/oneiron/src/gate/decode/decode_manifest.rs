@@ -113,6 +113,8 @@ pub(in crate::gate) struct DecodedPolicyManifest {
         Vec<crate::gate::retry_source_policy::RetrySourcePolicyRow>,
     pub(in crate::gate) compilation_policy: Option<crate::edit_distance::miner::CompilationPolicy>,
     pub(in crate::gate) teacher_probe: Option<TeacherProbeRow>,
+    pub(in crate::gate) carry_forward_confidence:
+        Option<crate::gate::carry_forward_policy::CarryForwardPolicy>,
     pub(in crate::gate) unsupported_schema: bool,
     pub(in crate::gate) engine_version_floor: bool,
     pub(in crate::gate) unknown_axis_seen: bool,
@@ -182,6 +184,7 @@ pub(in crate::gate) fn decode_policy_manifest(data: &[u8]) -> Option<DecodedPoli
                 | "retry_source_policy"
                 | "compilation_policy"
                 | POLICY_TEACHER_PROBE_KEY
+                | crate::gate::carry_forward_policy::KEY
         ) {
             return None;
         }
@@ -488,6 +491,14 @@ pub(in crate::gate) fn decode_policy_manifest(data: &[u8]) -> Option<DecodedPoli
         MapValue::Present(value) => Some(parse_teacher_probe_row(value)?),
     };
 
+    let carry_forward_confidence =
+        match single_map_value(&entries, crate::gate::carry_forward_policy::KEY) {
+            MapValue::Missing => None,
+            MapValue::Duplicate => return None,
+            MapValue::Present(value) => {
+                Some(crate::gate::carry_forward_policy::CarryForwardPolicy::parse(value)?)
+            }
+        };
     let unknown_axis_seen =
         defaults.unknown_axis_seen || rules.iter().any(|rule| rule.axes.unknown_axis_seen);
 
@@ -540,6 +551,7 @@ pub(in crate::gate) fn decode_policy_manifest(data: &[u8]) -> Option<DecodedPoli
         retry_source_policy,
         compilation_policy,
         teacher_probe,
+        carry_forward_confidence,
         unsupported_schema,
         engine_version_floor,
         unknown_axis_seen,
