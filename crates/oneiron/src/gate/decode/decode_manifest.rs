@@ -5,6 +5,8 @@ use std::io::Cursor;
 use rmpv::Value;
 
 use super::decode_docedit_resource::parse_docedit_resource_policy;
+use super::experiment_selection::parse_experiment_selection;
+use crate::autoreason_campaign::selection::SelectionPolicyRow;
 use crate::gate::PackInstallPolicy;
 use crate::gate::ceiling::{
     ActorCeiling, DelegationGrantRecord, PolicyOwnerPatternRow, PolicyOwnerPolicyRow, PolicyPack,
@@ -111,6 +113,7 @@ pub(in crate::gate) struct DecodedPolicyManifest {
         Vec<crate::gate::retry_source_policy::RetrySourcePolicyRow>,
     pub(in crate::gate) compilation_policy: Option<crate::edit_distance::miner::CompilationPolicy>,
     pub(in crate::gate) teacher_probe: Option<TeacherProbeRow>,
+    pub(in crate::gate) experiment_selection: Vec<SelectionPolicyRow>,
     pub(in crate::gate) unsupported_schema: bool,
     pub(in crate::gate) engine_version_floor: bool,
     pub(in crate::gate) unknown_axis_seen: bool,
@@ -181,6 +184,7 @@ pub(in crate::gate) fn decode_policy_manifest(data: &[u8]) -> Option<DecodedPoli
                 | "retry_source_policy"
                 | "compilation_policy"
                 | POLICY_TEACHER_PROBE_KEY
+                | "experiment_selection"
         ) {
             return None;
         }
@@ -495,6 +499,11 @@ pub(in crate::gate) fn decode_policy_manifest(data: &[u8]) -> Option<DecodedPoli
             value,
         )?),
     };
+    let experiment_selection = match single_map_value(&entries, "experiment_selection") {
+        MapValue::Missing => Vec::new(),
+        MapValue::Duplicate => return None,
+        MapValue::Present(value) => parse_experiment_selection(value)?,
+    };
 
     let teacher_probe = match single_map_value(&entries, POLICY_TEACHER_PROBE_KEY) {
         MapValue::Missing => None,
@@ -555,6 +564,7 @@ pub(in crate::gate) fn decode_policy_manifest(data: &[u8]) -> Option<DecodedPoli
         retry_source_policy,
         compilation_policy,
         teacher_probe,
+        experiment_selection,
         unsupported_schema,
         engine_version_floor,
         unknown_axis_seen,
