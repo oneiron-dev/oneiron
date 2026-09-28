@@ -10,7 +10,7 @@ use crate::memory::{Memory, MemoryError, MemoryResult, WitnessReceipt, WitnessTu
 #[cfg(test)]
 use crate::workspace_roster::RoomThreadFill;
 use crate::{EntityId, Vault};
-pub(super) use history::delete_room_metadata;
+pub(super) use history::{THREAD_CHILDREN, delete_room_metadata};
 pub(crate) use liveness::RoomThreadTask;
 pub use liveness::{
     RoomThread, RoomThreadList, RoomThreadPolicy, RoomThreadWait, RoomThreads, RoomWaitKind,
@@ -19,13 +19,13 @@ use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 pub(crate) use witness::admit_witness;
 
-const TURNS: &[u8] = b"rooms.turn.v1/";
+pub(super) const TURNS: &[u8] = b"rooms.turn.v1/";
 const HANDLES: &[u8] = b"rooms.platform_handle.v1/";
 const CLAIMS: &[u8] = b"rooms.claim.v1/";
-fn key(prefix: &[u8], id: EntityId) -> Vec<u8> {
+pub(super) fn key(prefix: &[u8], id: EntityId) -> Vec<u8> {
     [prefix, id.as_bytes()].concat()
 }
-fn encode<T: Serialize>(value: &T) -> Result<Vec<u8>> {
+pub(super) fn encode<T: Serialize>(value: &T) -> Result<Vec<u8>> {
     serde_json::to_vec(value).map_err(|_| invalid())
 }
 fn decode<T: for<'a> Deserialize<'a>>(bytes: &[u8]) -> Result<T> {
@@ -34,7 +34,7 @@ fn decode<T: for<'a> Deserialize<'a>>(bytes: &[u8]) -> Result<T> {
 fn invalid() -> Error {
     Error::InvalidConfig("invalid room operation".into())
 }
-fn room_in(vault: &Vault, txn: &heed::RoTxn<'_>, room: EntityId) -> Result<ProjectRoom> {
+pub(super) fn room_in(vault: &Vault, txn: &heed::RoTxn<'_>, room: EntityId) -> Result<ProjectRoom> {
     let room: ProjectRoom = super::project::record(
         &vault.store,
         txn,
@@ -87,7 +87,19 @@ pub struct RoomTurn {
     pub reply_to: Option<String>,
     pub thread_of: Option<String>,
     pub at: u64,
+    #[serde(default)]
+    pub task_ids: Vec<String>,
+    #[serde(default)]
+    pub converted_project: Option<String>,
 }
+/// The first trunk entry is the origin card when this room came from a thread.
+/// It points to that thread without copying any of its messages.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RoomTrunkItem {
+    Origin(super::project::RoomOriginCard),
+    Turn(RoomTurn),
+}
+
 /// A delivered TASK's durable result, attached to its trunk on a room read.
 /// The TASK terminal register holds the fact; no second row is stored.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

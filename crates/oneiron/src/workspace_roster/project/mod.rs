@@ -1,10 +1,13 @@
 //! Project responsibility records and their derived home-room membership.
 //! PROJECT uses the compiled-pack registration door, not a new core kind.
+mod conversion;
+pub use conversion::MessageHangs;
 mod deletion;
 mod edges;
 mod goal;
 mod mint;
 pub(crate) use mint::project_mint_gate_refs_in_txn;
+mod origin;
 pub use mint::{ProjectBudgetShare, ProjectGoalRecord, ProjectMintReceipt};
 mod projection;
 pub(crate) use deletion::deindex_project_room;
@@ -17,6 +20,8 @@ pub(crate) use goal::{
     admitted_claim_of_project, guard_claim_put as guard_goal_claim_put, guard_goal_delete,
     guard_pointer_put as guard_goal_pointer_put, precheck_goal_delete, retire_goal_for_delete,
 };
+#[cfg(test)]
+mod review_tests;
 #[cfg(test)]
 mod tests;
 pub(crate) use projection::{
@@ -82,6 +87,12 @@ pub struct ProjectRecord {
     pub budget_share: Option<ProjectBudgetShare>,
     pub asks: Vec<String>,
     pub home_room: String,
+    #[serde(default)]
+    pub origin_room: Option<String>,
+    #[serde(default)]
+    pub origin_thread: Option<String>,
+    #[serde(default)]
+    pub origin_at: Option<u64>,
 }
 impl ProjectRecord {
     pub fn new(
@@ -113,7 +124,21 @@ impl ProjectRecord {
             budget_share: None,
             asks: vec![],
             home_room: home_room_id(id).to_hex(),
+            origin_room: None,
+            origin_thread: None,
+            origin_at: None,
         }
+    }
+
+    /// The thread this project was converted from. A card mint on a plain
+    /// message has `born_from` but no origin thread.
+    pub(crate) fn origin_card(&self) -> Option<RoomOriginCard> {
+        Some(RoomOriginCard {
+            room: self.origin_room.clone()?,
+            thread: self.origin_thread.clone()?,
+            message: self.born_from.clone()?,
+            at: self.origin_at?,
+        })
     }
 }
 
@@ -127,6 +152,18 @@ pub struct ProjectRoom {
     pub member_ids: Vec<String>,
     /// Membership never grants additional memory scope.
     pub claims_scope_ref: String,
+    /// Absent on an ordinary room, so its body and API shape stay unchanged.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub origin: Option<RoomOriginCard>,
+}
+/// A reference to the original thread, not a second copy of its messages.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RoomOriginCard {
+    pub room: String,
+    pub thread: String,
+    pub message: String,
+    pub at: u64,
 }
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
