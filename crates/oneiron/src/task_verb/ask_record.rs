@@ -10,9 +10,11 @@ use crate::habit::TaskRole;
 use crate::ports::EdgeStoreRead;
 use crate::registry::ENTITY_TYPE_TASK;
 use crate::{EntityId, Vault};
+pub(crate) use guard::guard_ask_fact_put;
 pub(super) use guard::validate_notice_companion;
 use guard::validate_word;
-pub(crate) use guard::{guard_ask_fact_put, waits_for_ask_group};
+#[cfg(feature = "sync")]
+pub(crate) use guard::waits_for_ask_group;
 use rmpv::Value;
 use serde::{Deserialize, Serialize};
 

@@ -59,6 +59,8 @@ pub(crate) fn default_policy_manifest_id() -> Result<EntityId> {
         .map_err(|_| Error::InvariantViolation("invalid default policy manifest id"))
 }
 
+// One row per default policy entry: the manifest is a data table, and splitting it would scatter one manifest.
+#[allow(clippy::too_many_lines)]
 pub(crate) fn default_policy_manifest() -> Vec<u8> {
     let first_party_actor_ref = first_party_connector_actor_ref();
     // Per a provisional architectural ruling (owner batch pending): the
@@ -116,41 +118,7 @@ pub(crate) fn default_policy_manifest() -> Vec<u8> {
             Value::from(POLICY_MIN_ENGINE_VERSION_KEY),
             Value::from(env!("CARGO_PKG_VERSION")),
         ),
-        (
-            Value::from("room_thread"),
-            Value::Map(vec![
-                (
-                    Value::from("base"),
-                    Value::Map(vec![
-                        (Value::from("fresh_for_secs"), Value::from(7 * 86_400_u64)),
-                        (Value::from("rows_per_list"), Value::from(8)),
-                        (Value::from("tokens_per_list"), Value::from(512)),
-                        (Value::from("fill"), Value::from("stage")),
-                        (Value::from("waits_per_thread"), Value::from(8)),
-                    ]),
-                ),
-                (
-                    Value::from("vault_ceiling"),
-                    Value::Map(vec![
-                        (Value::from("fresh_for_secs"), Value::from(30 * 86_400_u64)),
-                        (Value::from("rows_per_list"), Value::from(1_000)),
-                        (Value::from("tokens_per_list"), Value::from(65_536)),
-                        (Value::from("fill"), Value::from("stage")),
-                        (Value::from("waits_per_thread"), Value::from(128)),
-                    ]),
-                ),
-                (Value::from("precedence"), Value::from("nested_narrowing")),
-                (
-                    Value::from("allowed_fills"),
-                    Value::Array(vec![
-                        Value::from("recency"),
-                        Value::from("nudge_due"),
-                        Value::from("stage"),
-                    ]),
-                ),
-                (Value::from("holder_rows"), Value::Array(Vec::new())),
-            ]),
-        ),
+        (Value::from("room_thread"), room_thread_default_row()),
         (
             Value::from(super::carry_forward_policy::KEY),
             Value::Map(vec![
@@ -749,6 +717,43 @@ pub(crate) fn default_policy_manifest() -> Vec<u8> {
     let mut data = Vec::new();
     rmpv::encode::write_value(&mut data, &manifest).expect("encode default policy manifest");
     data
+}
+
+/// Shipped project-room thread liveness data: base budgets, the vault
+/// ceiling, precedence and allowed fills.
+fn room_thread_default_row() -> Value {
+    Value::Map(vec![
+        (
+            Value::from("base"),
+            Value::Map(vec![
+                (Value::from("fresh_for_secs"), Value::from(7 * 86_400_u64)),
+                (Value::from("rows_per_list"), Value::from(8)),
+                (Value::from("tokens_per_list"), Value::from(512)),
+                (Value::from("fill"), Value::from("stage")),
+                (Value::from("waits_per_thread"), Value::from(8)),
+            ]),
+        ),
+        (
+            Value::from("vault_ceiling"),
+            Value::Map(vec![
+                (Value::from("fresh_for_secs"), Value::from(30 * 86_400_u64)),
+                (Value::from("rows_per_list"), Value::from(1_000)),
+                (Value::from("tokens_per_list"), Value::from(65_536)),
+                (Value::from("fill"), Value::from("stage")),
+                (Value::from("waits_per_thread"), Value::from(128)),
+            ]),
+        ),
+        (Value::from("precedence"), Value::from("nested_narrowing")),
+        (
+            Value::from("allowed_fills"),
+            Value::Array(vec![
+                Value::from("recency"),
+                Value::from("nudge_due"),
+                Value::from("stage"),
+            ]),
+        ),
+        (Value::from("holder_rows"), Value::Array(Vec::new())),
+    ])
 }
 
 /// Engine-authored vault policy DATA for grant creation. The grant codec and
