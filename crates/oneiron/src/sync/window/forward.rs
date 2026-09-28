@@ -132,6 +132,9 @@ fn forward_with_recovery(
     // tombstones, then the marker settle below. The tombstone call has no
     // `?`: its error stays deferred past the marker txn (Trap 2).
     entity_pass::run(&ctx, &mut ledger)?;
+    // A redaction can arrive after its attribution in this same entity pass;
+    // clear the now-dominated live carrier and force history-free egress.
+    super::egress::scrub_redacted_attribution_carriers(vault, window_key, doc)?;
     if let Some(documents) = native_documents {
         ledger.healed.extend(crate::sync::note::apply(
             vault,
