@@ -20,7 +20,7 @@ use oneiron::registry::ENTITY_TYPE_REDACTION_AUDIT;
 use oneiron::sync::bridge::{
     BRIDGE_ORIGIN, Materializer, encode_edge_value_for_crdt, format_edge_key, parse_edge_value,
 };
-use oneiron::sync::client::{SyncClient, SyncClientConfig, SyncEvent};
+use oneiron::sync::client::{SyncClient, SyncClientConfig, SyncEvent, SyncResidenceMode};
 use oneiron::sync::lease;
 use oneiron::sync::manager::WindowManager;
 use oneiron::sync::schema::create_window_doc;
@@ -51,7 +51,14 @@ fn make_client(vault: &Arc<Vault>) -> (SyncClient, UnboundedReceiver<SyncEvent>)
         materializer,
         TEST_USER,
     ));
-    SyncClient::new(manager, SyncClientConfig::default()).unwrap()
+    SyncClient::new(
+        manager,
+        SyncClientConfig {
+            residence_mode: SyncResidenceMode::All,
+            ..Default::default()
+        },
+    )
+    .unwrap()
 }
 
 fn put_entity_in_window(window: &LoadedWindow, id: &EntityId, learned_at: u64, data: &[u8]) {
