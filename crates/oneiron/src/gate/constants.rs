@@ -78,6 +78,8 @@ pub(super) const POLICY_SHEET_ANSWER_PRECEDENCE_KEY: &str = "sheet_answer_preced
 pub(super) const POLICY_HOSTED_TTS_KEY: &str = "hosted_tts";
 /// Vault and holder rows for artifact-review operating limits and precedence.
 pub(super) const POLICY_SLIDE_REVIEW_KEY: &str = "slide_review_policy";
+/// Vault-wide resource ceilings for bounded office package parsing.
+pub(super) const POLICY_DOCEDIT_RESOURCE_KEY: &str = "docedit_resource_policy";
 pub(super) const BUDGET_POLICY_PURPOSE_KEY: &str = "purpose";
 pub(super) const BUDGET_POLICY_ACTOR_KEY: &str = "actor";
 pub(super) const BUDGET_POLICY_FLOOR_KEY: &str = "floor";
