@@ -3126,6 +3126,7 @@ fn coordination_effects_and_outcomes_round_trip_through_replay_wire() {
             unmet_sources: Default::default(),
             outcome_answer_ref: None,
             policy_surface: crate::task_verb::TaskAskSurface::Card,
+            link_result_proof: None,
         },
     };
     let outcomes = vec![
@@ -3161,4 +3162,89 @@ fn coordination_effects_and_outcomes_round_trip_through_replay_wire() {
     ] {
         assert_eq!(self_effect_from_str(effect.as_str()).unwrap(), effect);
     }
+}
+
+#[test]
+fn ask_void_notice_replays_until_durable_bridge_result_then_reparks()
+-> std::result::Result<(), Box<dyn std::error::Error>> {
+    use crate::task_verb::{
+        ConsultPayloadRef, TaskAskOptionId, TaskAskQuestion, TaskAskSpec, TaskAskStatus,
+        TaskAskTarget,
+    };
+    let dir = tempfile::tempdir()?;
+    let vault = Vault::open(dir.path(), crate::VaultConfig::default())?;
+    let owner = vault.ensure_embedded_owner_actor()?;
+    let friend = seed_person(&vault, 0xA7);
+    let question = entity(0xA8);
+    let body = rmp_serde::to_vec_named(&std::collections::BTreeMap::from([("role", "question")]))?;
+    vault.put_entity(
+        &question,
+        crate::registry::ENTITY_TYPE_TURN,
+        range(1),
+        1,
+        &body,
+    )?;
+    let mut what = TaskAskQuestion::new(ConsultPayloadRef::Turn(question));
+    what.options
+        .insert(TaskAskOptionId::new("yes")?, "Yes".into());
+    let mut spec = TaskAskSpec::shorthand(
+        Some(TaskAskTarget::People([friend].into())),
+        what,
+        Some(u64::MAX),
+        Default::default(),
+    );
+    spec.intent_key = "code-mode-void-cursor".into();
+    let memory = vault.memory(owner, EdgeActorClass::Human);
+    let handle = memory.tasks_ask(&spec)?.handle;
+    let first = memory.tasks_ask_option_link(handle, friend)?;
+    vault.void_ask_option_link(&first.token)?;
+    let run = entity(0xA9);
+    let dispatcher = GatedActorWrite::new(
+        &vault,
+        WriteActor::new(owner, EdgeActorClass::Human),
+        "void-replay",
+    )?;
+    let call = SelfCall::TasksWait(handle);
+    let changed = dispatcher.dispatch_for_executor_run(run, call.clone())?;
+    let SelfDispatchOutcome::TaskAskStatus(TaskAskStatus::Changed { voided, generation }) =
+        &changed
+    else {
+        panic!("first void is observable before wait");
+    };
+    assert_eq!(voided, &vec![friend]);
+    assert_eq!(*generation, 1);
+    assert_eq!(
+        dispatcher.dispatch_for_executor_run(run, call.clone())?,
+        changed,
+        "an unrecorded result must be replayed after a crash"
+    );
+    let mut record = CodeRunReplayRecord::new(run, CodeRunDeterminism::new(1000, [4; 32]));
+    record
+        .bridge_calls
+        .push(CodeRunBridgeCall::record(0, &call, &changed, 1000, 1000)?);
+    vault.put_code_run_replay_record(&record)?;
+    assert!(
+        matches!(
+            dispatcher.dispatch_for_executor_run(run, call.clone())?,
+            SelfDispatchOutcome::DurableWait(_)
+        ),
+        "the recorded generation permits the next wait to park"
+    );
+    assert!(!crate::task_verb::has_option_link_void(
+        &vault,
+        handle.group_ref
+    )?);
+    let next = memory.tasks_ask_option_link(handle, friend)?;
+    vault.void_ask_option_link(&next.token)?;
+    let SelfDispatchOutcome::TaskAskStatus(TaskAskStatus::Changed { generation, .. }) =
+        dispatcher.dispatch_for_executor_run(run, call)?
+    else {
+        panic!("later void wakes again")
+    };
+    assert_eq!(generation, 2);
+    assert!(matches!(
+        memory.tasks_ask_status(handle)?,
+        TaskAskStatus::Pending { .. }
+    ));
+    Ok(())
 }
