@@ -1,9 +1,11 @@
 mod ingest;
 mod repo_ref;
 mod residue;
+mod serve_lookup;
 mod snapshot;
 mod store;
 
+pub(crate) use self::ingest::read_asset_blob_in_txn;
 pub use self::ingest::{
     HostedMediaHashMatchDecision, HostedMediaHashMatchInput, HostedMediaHashMatchProvider,
     NoopHostedMediaHashMatchProvider, RepoIngestConfig, RepoIngestResult,

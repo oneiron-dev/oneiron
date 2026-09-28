@@ -289,8 +289,17 @@ pub(super) fn read_asset_blob(
     vault: &Vault,
     content_hash: &[u8; CODEBASE_CONTENT_HASH_LEN],
 ) -> Result<Vec<u8>> {
+    let txn = vault.store.env.read_txn()?;
+    read_asset_blob_in_txn(vault, &txn, content_hash)
+}
+
+pub(crate) fn read_asset_blob_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    content_hash: &[u8; CODEBASE_CONTENT_HASH_LEN],
+) -> Result<Vec<u8>> {
     let asset_id = codebase_asset_entity_id(content_hash)?;
-    let Some(raw) = vault.get_raw(&asset_id)? else {
+    let Some(raw) = vault.store.entities.get(txn, asset_id.as_bytes())? else {
         return Err(Error::EntityNotFound);
     };
     let header = EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity header"))?;

@@ -1,5 +1,5 @@
-use super::check_api_auth;
 use super::core_engine_error;
+use crate::auth::{CoreAuth, CoreScope};
 use crate::error::ApiError;
 use crate::error::EnvelopedApiError;
 use crate::server::SyncServer;
@@ -11,7 +11,6 @@ use axum::extract::State;
 use axum::http::HeaderMap;
 use axum::http::HeaderValue;
 use axum::http::StatusCode;
-use axum::http::Uri;
 use axum::http::header::CACHE_CONTROL;
 use axum::http::header::CONTENT_DISPOSITION;
 use axum::http::header::CONTENT_SECURITY_POLICY;
@@ -19,6 +18,7 @@ use axum::http::header::CONTENT_TYPE;
 use axum::http::header::ETAG;
 use axum::http::header::IF_NONE_MATCH;
 use axum::http::header::LOCATION;
+use axum::http::header::REFERRER_POLICY;
 use axum::http::header::X_CONTENT_TYPE_OPTIONS;
 use axum::response::Response;
 use serde::Deserialize;
@@ -52,6 +52,10 @@ pub(crate) struct ArtifactServeQuery {
     blob_version: Option<u64>,
 }
 
+#[path = "artifacts/route.rs"]
+mod route;
+use self::route::ArtifactRoute;
+
 pub(crate) async fn serve_artifact_root(
     headers: HeaderMap,
     OriginalUri(uri): OriginalUri,
@@ -59,111 +63,71 @@ pub(crate) async fn serve_artifact_root(
     Path(artifact): Path<String>,
     Query(query): Query<ArtifactServeQuery>,
 ) -> Result<Response, EnvelopedApiError> {
-    check_api_auth(&headers, &server).map_err(EnvelopedApiError::from)?;
-    if !uri.path().ends_with('/') {
-        return artifact_root_redirect_response(&uri);
+    let route = ArtifactRoute::parse(&uri, &artifact, &query)?;
+    let response = serve_artifact_file(server, &route, &headers)?;
+    if let Some(target) = route.redirect() {
+        return artifact_redirect_response(&target);
     }
-    serve_artifact_file(server, artifact, "", query, &headers)
+    Ok(response)
 }
 
 pub(crate) async fn serve_artifact_path(
     headers: HeaderMap,
+    OriginalUri(uri): OriginalUri,
     State(server): State<Arc<SyncServer>>,
-    Path((artifact, path)): Path<(String, String)>,
+    Path((artifact, _path)): Path<(String, String)>,
     Query(query): Query<ArtifactServeQuery>,
 ) -> Result<Response, EnvelopedApiError> {
-    check_api_auth(&headers, &server).map_err(EnvelopedApiError::from)?;
-    serve_artifact_file(server, artifact, &path, query, &headers)
+    let route = ArtifactRoute::parse(&uri, &artifact, &query)?;
+    let response = serve_artifact_file(server, &route, &headers)?;
+    if let Some(target) = route.redirect() {
+        return artifact_redirect_response(&target);
+    }
+    Ok(response)
 }
 
-pub(crate) fn serve_artifact_file(
+fn serve_artifact_file(
     server: Arc<SyncServer>,
-    artifact: String,
-    route_path: &str,
-    query: ArtifactServeQuery,
+    route: &ArtifactRoute,
     request_headers: &HeaderMap,
 ) -> Result<Response, EnvelopedApiError> {
-    let selector = artifact_snapshot_selector(&query)?;
-    let path = normalize_artifact_route_path(route_path);
+    // An adapter without content-scope enforcement must reject narrowed
+    // credentials. Neither a write-only slip nor an identity alone grants a read.
+    let principal =
+        CoreAuth::from_headers(request_headers, &server.config, server.vault().as_ref())
+            .ok()
+            .filter(|auth| {
+                auth.has_scope(CoreScope::Read) && auth.require_unrestricted_record_scope().is_ok()
+            })
+            .and_then(|auth| {
+                auth.principal_ref()
+                    .and_then(|id| oneiron::EntityId::from_hex(id).ok())
+            });
     let Some(file) = server
         .vault
-        .resolve_artifact_file(&artifact, selector, &path)
+        .resolve_authorized_artifact_file(
+            &route.artifact,
+            route.selector,
+            route.path(),
+            route.token.as_deref(),
+            principal,
+        )
         .map_err(|error| core_engine_error("artifact serving failed", error))?
     else {
-        return Err(ApiError::not_found("artifact", Some(&artifact)).into());
+        return Err(ApiError::not_found("artifact", None).into());
     };
     artifact_file_response(file, request_headers)
 }
 
-pub(crate) fn artifact_snapshot_selector(
-    query: &ArtifactServeQuery,
-) -> Result<oneiron::ArtifactSnapshotSelector, EnvelopedApiError> {
-    if let Some(version) = query.blob_version {
-        if version == 0 {
-            return Err(ApiError::bad_request(
-                "blobVersion must be greater than zero",
-                Some("blobVersion"),
-            )
-            .into());
-        }
-        if query.channel.is_some() || query.fork_hash.is_some() {
-            return Err(ApiError::bad_request(
-                "blobVersion cannot be combined with channel or forkHash",
-                Some("blobVersion"),
-            )
-            .into());
-        }
-        return Ok(oneiron::ArtifactSnapshotSelector::BlobVersion(version));
-    }
-    if query.channel.is_some() && query.fork_hash.is_some() {
-        return Err(ApiError::bad_request(
-            "channel and forkHash cannot be combined",
-            Some("forkHash"),
-        )
-        .into());
-    }
-    if let Some(fork_hash) = &query.fork_hash {
-        return Ok(oneiron::ArtifactSnapshotSelector::ForkHash(
-            oneiron::parse_codebase_fork_hash_hex(fork_hash)
-                .map_err(|error| ApiError::bad_request(error.to_string(), Some("forkHash")))?,
-        ));
-    }
-    let channel = match query.channel.as_deref() {
-        Some(channel) => oneiron::ArtifactPointerChannel::parse(channel)
-            .map_err(|error| ApiError::bad_request(error.to_string(), Some("channel")))?,
-        None => oneiron::ArtifactPointerChannel::Published,
-    };
-    Ok(oneiron::ArtifactSnapshotSelector::Channel(channel))
-}
-
-pub(crate) fn normalize_artifact_route_path(route_path: &str) -> String {
-    let path = route_path.trim_start_matches('/');
-    if path.is_empty() {
-        "index.html".to_owned()
-    } else if path.ends_with('/') {
-        format!("{path}index.html")
-    } else {
-        path.to_owned()
-    }
-}
-
-pub(crate) fn artifact_root_redirect_response(uri: &Uri) -> Result<Response, EnvelopedApiError> {
-    let query_len = uri.query().map_or(0, str::len);
-    let mut target =
-        String::with_capacity(uri.path().len() + 1 + query_len + usize::from(query_len > 0));
-    target.push_str(uri.path());
-    target.push('/');
-    if let Some(query) = uri.query() {
-        target.push('?');
-        target.push_str(query);
-    }
-
+fn artifact_redirect_response(target: &str) -> Result<Response, EnvelopedApiError> {
     let mut response = Response::new(Body::empty());
     *response.status_mut() = StatusCode::PERMANENT_REDIRECT;
+    response
+        .headers_mut()
+        .insert(REFERRER_POLICY, HeaderValue::from_static("no-referrer"));
     response.headers_mut().insert(
         LOCATION,
-        HeaderValue::from_str(&target)
-            .map_err(|_| ApiError::internal_server_error("artifact redirect target was invalid"))?,
+        HeaderValue::from_str(target).map_err(|_| ApiError::not_found("artifact", None))?,
     );
     Ok(response)
 }
@@ -172,7 +136,11 @@ pub(crate) fn artifact_file_response(
     file: oneiron::ArtifactServedFile,
     request_headers: &HeaderMap,
 ) -> Result<Response, EnvelopedApiError> {
-    let cache_control = artifact_cache_control(file.selector, file.export);
+    let cache_control = if file.serve_tier == oneiron::artifact_hosting::ArtifactServeTier::Public {
+        artifact_cache_control(file.selector, file.export)
+    } else {
+        "private, no-store"
+    };
     let (content_type, attachment) = match file.media_type.as_deref() {
         Some(media_type) => match passive_blob_media_type(media_type) {
             Some(safe_type) => (HeaderValue::from_static(safe_type), false),
@@ -204,6 +172,7 @@ pub(crate) fn artifact_file_response(
         *response.status_mut() = StatusCode::NOT_MODIFIED;
         let headers = response.headers_mut();
         headers.insert(CACHE_CONTROL, HeaderValue::from_static(cache_control));
+        headers.insert(REFERRER_POLICY, HeaderValue::from_static("no-referrer"));
         headers.insert(X_CONTENT_TYPE_OPTIONS, HeaderValue::from_static("nosniff"));
         if attachment {
             headers.insert(CONTENT_DISPOSITION, HeaderValue::from_static("attachment"));
@@ -224,6 +193,7 @@ pub(crate) fn artifact_file_response(
     let headers = response.headers_mut();
     headers.insert(CONTENT_TYPE, content_type);
     headers.insert(CACHE_CONTROL, HeaderValue::from_static(cache_control));
+    headers.insert(REFERRER_POLICY, HeaderValue::from_static("no-referrer"));
     headers.insert(X_CONTENT_TYPE_OPTIONS, HeaderValue::from_static("nosniff"));
     if attachment {
         headers.insert(CONTENT_DISPOSITION, HeaderValue::from_static("attachment"));
