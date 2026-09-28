@@ -134,6 +134,10 @@ pub(crate) fn default_policy_manifest() -> Vec<u8> {
     let manifest = Value::Map(vec![
         (Value::from("policy_values"), policy_values),
         (
+            Value::from(crate::failure_signals::policy::POLICY_KEY),
+            crate::failure_signals::policy::default_row(),
+        ),
+        (
             Value::from(POLICY_SCHEMA_VERSION_KEY),
             Value::from(POLICY_SCHEMA_VERSION),
         ),

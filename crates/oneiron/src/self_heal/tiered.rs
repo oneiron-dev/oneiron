@@ -98,6 +98,7 @@ pub(super) fn propose(
     }
     evidence.sort();
     evidence.dedup();
+    let centroid_snapshot = centroid.as_ref().map(|(hash, _)| *hash);
     let (digest, evidence) = centroid.unwrap_or((*digest.finalize().as_bytes(), evidence));
     let event = DiagnosticEvent {
         detector_id: format!("{}.{}", tier.token(), policy.family),
@@ -122,6 +123,7 @@ pub(super) fn propose(
     let body = encode_diagnostic_event_body(&event)?;
     let id = diagnostic_event_id(&event.detector_id, &body);
     vault.emit_diagnostic_event(&id, &event)?;
+    vault.capture_tier1_retrieval_window(id, runs, centroid_snapshot)?;
     Ok(Some(ProposedDiagnostic {
         tier,
         event_id: id,

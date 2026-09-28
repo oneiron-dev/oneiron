@@ -5,6 +5,7 @@ use super::{
 };
 use crate::entity_id::EntityId;
 use crate::error::Result;
+use crate::store::Store;
 use crate::temporal::TimeRange;
 
 pub(super) fn validate_detector_id(detector_id: &str) -> Result<()> {
@@ -30,6 +31,19 @@ pub(crate) fn validate_diagnostic_event_admission(
         return Err(invalid_diagnostic(
             "diagnostic occurrence does not match body validity",
         ));
+    }
+    Ok(())
+}
+
+/// Base DIAGNOSTIC writes may not cite an evaporating room, even when their
+/// own content-addressed ID is different from the overlay member ID. Run this
+/// after canonical decode at the shared batch door (local and replicated).
+pub(crate) fn reject_off_record_diagnostic_sources(store: &Store, data: &[u8]) -> Result<()> {
+    let event = validate_diagnostic_event_body_bytes(data)?;
+    for id in event.evidence_refs.iter().chain(event.actor_ref.iter()) {
+        if store.off_record_sessions.contains_entity(id)? {
+            return Err(invalid_diagnostic("diagnostic cites off-record source"));
+        }
     }
     Ok(())
 }

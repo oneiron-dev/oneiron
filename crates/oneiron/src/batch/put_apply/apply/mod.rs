@@ -262,6 +262,7 @@ pub(in crate::batch) fn apply_put(
         crate::comm::validate_comm_record_body_bytes(data)?;
     } else if entity_type == ENTITY_TYPE_DIAGNOSTIC {
         crate::self_heal::validate_diagnostic_event_admission(&id, occurred, data)?;
+        crate::self_heal::reject_off_record_diagnostic_sources(store, data)?;
     } else if entity_type == ENTITY_TYPE_OUTBOUND_GRANT {
         crate::outbound_grant::validate_standing_outbound_grant_body_bytes(data)?;
     } else if entity_type == ENTITY_TYPE_PSYCH_PROFILE {
