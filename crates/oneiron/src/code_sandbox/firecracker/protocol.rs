@@ -4,20 +4,19 @@ use super::refused;
 use crate::{
     Result,
     code_sandbox::{
-        SandboxCredentialCall, SandboxCredentialHandle, SandboxFileWriteProposal, SandboxMount,
-        SandboxProposalWrite, SandboxVirtualPath,
+        SandboxCredentialCall, SandboxCredentialHandle, SandboxFileDeleteProposal,
+        SandboxFileRenameProposal, SandboxFileWriteProposal, SandboxMount, SandboxProposalWrite,
+        SandboxVirtualPath,
         microvm::{
             CredentialEgressProxy, CredentialReadTransport, ExecutionBudget, MicroVmExit,
             MicroVmHandle,
         },
     },
 };
-use oneiron_sandbox_contract::{
-    MAX_COMPONENT_BYTES, MAX_PROGRAM_BYTES, WorkspacePath, WorkspaceShape,
-};
+use oneiron_sandbox_contract::{MAX_COMPONENT_BYTES, MAX_PROGRAM_BYTES, WorkspacePath};
 use serde::{Deserialize, Serialize};
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, BTreeSet},
     io::{Read, Write},
     os::unix::net::UnixStream,
     time::Instant,
@@ -41,6 +40,13 @@ enum GuestFrame {
     Write {
         path: String,
         bytes: Vec<u8>,
+    },
+    Delete {
+        path: String,
+    },
+    Rename {
+        from: String,
+        to: String,
     },
     Finish {
         status: i32,
@@ -124,7 +130,7 @@ pub(super) fn exchange(
     // Snapshot bytes only. There is no host mount device inside the VM and
     // no path from a guest overlay file to the original source directory.
     let base = super::snapshot::files(vm.base_root())?;
-    for file in &base {
+    for file in &base.files {
         write_frame(
             &mut stream,
             &HostFrame::File {
@@ -138,15 +144,21 @@ pub(super) fn exchange(
     let (mut exit, writes) = receive_proposals(stream, vm, &base, deadline, proxy, transport)?;
     let mut edits = Vec::new();
     for write in writes {
-        let SandboxProposalWrite::FileWrite(file) = write else {
-            return Err(refused("unexpected guest write kind"));
-        };
-        let old = base
-            .iter()
-            .find(|entry| entry.path == file.path)
-            .map_or(b"".as_slice(), |entry| entry.bytes.as_slice());
-        if let Some(edit) = file.lower_to_edit(old)? {
-            edits.push(SandboxProposalWrite::FileEdit(edit));
+        match write {
+            SandboxProposalWrite::FileWrite(file) => {
+                let old = base
+                    .files
+                    .iter()
+                    .find(|entry| entry.path == file.path)
+                    .map_or(b"".as_slice(), |entry| entry.bytes.as_slice());
+                if let Some(edit) = file.lower_to_edit(old)? {
+                    edits.push(SandboxProposalWrite::FileEdit(edit));
+                }
+            }
+            SandboxProposalWrite::FileDelete(_) | SandboxProposalWrite::FileRename(_) => {
+                edits.push(write);
+            }
+            _ => return Err(refused("unexpected guest proposal kind")),
         }
     }
     exit.overlay_dirty = !edits.is_empty();
@@ -156,20 +168,18 @@ pub(super) fn exchange(
 fn receive_proposals(
     mut stream: UnixStream,
     vm: &MicroVmHandle,
-    base: &[SandboxFileWriteProposal],
+    base: &super::snapshot::Snapshot,
     deadline: Instant,
     proxy: &CredentialEgressProxy,
     transport: Option<&dyn CredentialReadTransport>,
 ) -> Result<(MicroVmExit, Vec<SandboxProposalWrite>)> {
     let mut writes = BTreeMap::new();
-    let mut shape = WorkspaceShape::new();
-    for file in base {
-        let path =
-            WorkspacePath::parse(file.path.as_str()).map_err(|error| refused(error.reason()))?;
-        shape
-            .add_file(&path, file.bytes.len())
-            .map_err(|error| refused(error.reason()))?;
-    }
+    // One effect per path: a deleted file or a rename endpoint is not
+    // written again in the same run.
+    let mut occupied = BTreeSet::new();
+    // The snapshot tree (empty directories included) with every accepted
+    // proposal applied, under the same rules as the guest and the walker.
+    let mut shape = base.shape.clone();
     for _ in 0..MAX_REQUESTS {
         match read_frame(&mut stream, deadline)? {
             GuestFrame::Hello { .. } => return Err(refused("duplicate guest hello")),
@@ -195,17 +205,65 @@ fn receive_proposals(
             }
             GuestFrame::Write { path, bytes } => {
                 let path = SandboxVirtualPath::try_new(path)?;
-                if path.mount() != SandboxMount::Workspace || writes.contains_key(path.as_str()) {
+                if path.mount() != SandboxMount::Workspace
+                    || !occupied.insert(path.as_str().to_owned())
+                {
                     return Err(refused("guest proposal path or duplicate refused"));
                 }
-                let checked =
-                    WorkspacePath::parse(path.as_str()).map_err(|error| refused(error.reason()))?;
                 shape
-                    .replace_file(&checked, bytes.len())
+                    .replace_file(&workspace_path(&path)?, bytes.len())
                     .map_err(|error| refused(error.reason()))?;
                 writes.insert(
                     path.as_str().to_owned(),
                     SandboxProposalWrite::FileWrite(SandboxFileWriteProposal::new(path, bytes)),
+                );
+                write_frame(
+                    &mut stream,
+                    &HostFrame::Receipt { accepted: true },
+                    deadline,
+                )?;
+            }
+            GuestFrame::Delete { path } => {
+                let path = SandboxVirtualPath::try_new(path)?;
+                if path.mount() != SandboxMount::Workspace
+                    || !base.files.iter().any(|file| file.path == path)
+                    || !occupied.insert(path.as_str().to_owned())
+                {
+                    return Err(refused("guest delete path refused"));
+                }
+                shape
+                    .remove_file(&workspace_path(&path)?)
+                    .map_err(|error| refused(error.reason()))?;
+                writes.insert(
+                    path.as_str().to_owned(),
+                    SandboxProposalWrite::FileDelete(SandboxFileDeleteProposal { path }),
+                );
+                write_frame(
+                    &mut stream,
+                    &HostFrame::Receipt { accepted: true },
+                    deadline,
+                )?;
+            }
+            GuestFrame::Rename { from, to } => {
+                let from = SandboxVirtualPath::try_new(from)?;
+                let to = SandboxVirtualPath::try_new(to)?;
+                if from.mount() != SandboxMount::Workspace
+                    || to.mount() != SandboxMount::Workspace
+                    || from == to
+                    || !base.files.iter().any(|file| file.path == from)
+                    || occupied.contains(from.as_str())
+                    || occupied.contains(to.as_str())
+                {
+                    return Err(refused("guest rename path refused"));
+                }
+                shape
+                    .rename_file(&workspace_path(&from)?, &workspace_path(&to)?)
+                    .map_err(|error| refused(error.reason()))?;
+                occupied.insert(from.as_str().to_owned());
+                occupied.insert(to.as_str().to_owned());
+                writes.insert(
+                    from.as_str().to_owned(),
+                    SandboxProposalWrite::FileRename(SandboxFileRenameProposal { from, to }),
                 );
                 write_frame(
                     &mut stream,
@@ -267,6 +325,10 @@ fn write_frame(stream: &mut UnixStream, value: &HostFrame<'_>, deadline: Instant
         .write_all(&len.to_be_bytes())
         .and_then(|()| stream.write_all(&bytes))
         .map_err(|_| refused("host frame write failed"))
+}
+
+fn workspace_path(path: &SandboxVirtualPath) -> Result<WorkspacePath> {
+    WorkspacePath::parse(path.as_str()).map_err(|error| refused(error.reason()))
 }
 
 #[cfg(test)]

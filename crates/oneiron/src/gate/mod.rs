@@ -41,6 +41,7 @@ mod room_thread;
 pub use room_thread::RoomThreadFill;
 pub(crate) use room_thread::{RoomThreadManifest, RoomThreadSettings};
 mod share;
+pub(crate) mod voice_serving;
 mod weave_correction_policy;
 mod witness_message;
 pub(crate) use weave_correction_policy::WeaveCorrectionPolicy;
@@ -129,6 +130,7 @@ pub(crate) use self::retrieval_filter::{
 pub(crate) use self::share::check_share_create_policy;
 #[cfg(test)]
 pub(crate) use self::share::share_create_effect;
+pub(crate) use self::voice_serving::VoiceServingLimits;
 #[cfg(test)]
 pub(crate) use self::witness_message::canonical_witness_message_body_for_test;
 pub(crate) use self::witness_message::{
