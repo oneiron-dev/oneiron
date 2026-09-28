@@ -3888,7 +3888,7 @@ fn a_verdict_row_is_schema_v6_and_every_older_row_fails_closed() -> Result<()> {
         ErrorKind::CorruptedIndex
     );
     // The same v5 shape relabelled v6 is still missing the goal fields.
-    const GOAL_KEYS: [&str; 4] = [
+    let goal_keys = [
         "goal_axes",
         "goal_revision",
         "goal_id",
@@ -3896,7 +3896,7 @@ fn a_verdict_row_is_schema_v6_and_every_older_row_fails_closed() -> Result<()> {
     ];
     rewrite_verdict_row(&vault, |entries| {
         set_row_field(entries, "v", &Value::from(6u64));
-        for key in GOAL_KEYS {
+        for key in goal_keys {
             rename_row_field(entries, key, &format!("v5_{key}"));
         }
     });
@@ -3907,7 +3907,7 @@ fn a_verdict_row_is_schema_v6_and_every_older_row_fails_closed() -> Result<()> {
         ErrorKind::CorruptedIndex
     );
     rewrite_verdict_row(&vault, |entries| {
-        for key in GOAL_KEYS {
+        for key in goal_keys {
             rename_row_field(entries, &format!("v5_{key}"), key);
         }
     });
