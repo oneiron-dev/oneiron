@@ -5157,4 +5157,96 @@ fn observer_b_quarantines_project_parent_forgery_removal_and_claim_hub_edge() {
         );
     }
 }
+/// Deleting an edge-provenance Claim restamps its subject edge A->B in both
+/// edge indexes, so the committed tombstone notice names both endpoints. An
+/// item rolled back to its savepoint names neither, and leaves the flags.
+#[test]
+fn provenance_claim_tombstone_notifies_both_subject_endpoints_after_commit() {
+    use crate::edge::EdgeKind;
+    use crate::provenance::{EdgeProvenanceClaimBody, EdgeRef, SupersessionStatus};
+    use crate::sync::bridge::{LiveQueryTee, MaterializedDiffSummary, OriginMark};
+    use std::sync::Mutex;
+
+    #[derive(Default)]
+    struct Capture(Mutex<Vec<String>>);
+    impl LiveQueryTee for Capture {
+        fn on_materialized(&self, _: &str, diff: &MaterializedDiffSummary, _: &OriginMark) {
+            self.0
+                .lock()
+                .unwrap()
+                .extend(diff.containers.iter().cloned());
+        }
+    }
+    for reason in [1u8, 2u8] {
+        for rollback in [false, true] {
+            let vault = test_vault();
+            let at = 1_771_027_200;
+            let [source, target, other, other_target] =
+                [0xE1, 0xE2, 0xE3, 0xE4].map(|byte| EntityId::from_bytes([byte; 16]).unwrap());
+            for id in [source, target, other, other_target] {
+                vault
+                    .put_entity(
+                        &id,
+                        crate::registry::ENTITY_TYPE_PERSON,
+                        TimeRange { start: at, end: at },
+                        at,
+                        b"provenance endpoint",
+                    )
+                    .unwrap();
+            }
+            vault
+                .put_edge(&source, EdgeKind::Mentions, &target, 0.5)
+                .unwrap();
+            vault
+                .put_edge(&other, EdgeKind::Mentions, &other_target, 0.5)
+                .unwrap();
+            let claim = EntityId::from_bytes([0xE5; 16]).unwrap();
+            vault
+                .put_edge_provenance(
+                    &claim,
+                    &EdgeRef::new(source, EdgeKind::Mentions, target),
+                    &EdgeProvenanceClaimBody::new(source, 0.8, SupersessionStatus::Confirmed),
+                    EdgeActorClass::Human,
+                    at,
+                )
+                .unwrap();
+            let flags = || {
+                vault
+                    .edges_out(&source)
+                    .unwrap()
+                    .into_iter()
+                    .find(|edge| edge.kind == EdgeKind::Mentions)
+                    .unwrap()
+                    .provenance
+            };
+            assert!(flags().is_some());
+
+            let doc = LoroDoc::new();
+            let materializer = Arc::new(Materializer::new());
+            let capture = Arc::new(Capture::default());
+            let tee: Arc<dyn LiveQueryTee> = capture.clone();
+            materializer.attach_live_query_tee(&tee);
+            let _subs = register_observer_b(&doc, &vault, &materializer, ONE521_WINDOW);
+            if rollback {
+                crate::sync::quarantine::INJECT_PURGE_FAILURES.with(|cell| cell.set(1));
+            }
+            map_insert_bytes(
+                &doc.get_map("tombstones"),
+                &claim.to_hex(),
+                &one521_tombstone(reason, 0xE6),
+            )
+            .unwrap();
+            doc.commit();
+            crate::sync::quarantine::INJECT_PURGE_FAILURES.with(|cell| cell.set(0));
+
+            let seen = capture.0.lock().unwrap().clone();
+            let named = |id: &EntityId| seen.contains(&format!("e:{}", id.to_hex()));
+            assert_eq!(flags().is_some(), rollback, "reason {reason}");
+            assert_eq!(named(&source), !rollback, "reason {reason}: {seen:?}");
+            assert_eq!(named(&target), !rollback, "reason {reason}: {seen:?}");
+            assert!(!named(&other) && !named(&other_target), "{seen:?}");
+        }
+    }
+}
+
 mod resident;

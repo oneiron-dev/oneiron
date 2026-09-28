@@ -44,7 +44,7 @@ pub(super) fn materialize_tombstones_from_delta(
     vault: &Vault,
     window_key: &str,
     _lease_vault_id: u64,
-) -> bool {
+) -> Option<Vec<EntityId>> {
     let entities_map = doc.get_map("entities");
     // Staged BEFORE the batch transaction opens: the door gates below are
     // document reads plus their own committing quarantine writes (pre-batch
@@ -121,10 +121,66 @@ pub(super) fn materialize_tombstones_from_delta(
                     continue;
                 }
 
+                let residence: Result<crate::sync::types::TombstoneResidence> = (|| {
+                    let txn = vault.store.env.read_txn()?;
+                    let window =
+                        crate::sync::WindowKey::try_new(window_key).ok_or(Error::InvalidKey)?;
+                    let state =
+                        crate::sync::types::tombstone_residence_in(vault, &txn, &id, &window)?;
+                    if state == crate::sync::types::TombstoneResidence::Unknown
+                        && window.world().is_some()
+                        && let Some(raw) = map_get_bytes(&entities_map, &id.to_hex())
+                        && crate::sync::types::retained_world_shell_belongs_to_window(
+                            vault, &txn, doc, &id, &raw, &window, false,
+                        )?
+                    {
+                        return Ok(crate::sync::types::TombstoneResidence::Match);
+                    }
+                    Ok(state)
+                })(
+                );
+                match residence {
+                    Ok(crate::sync::types::TombstoneResidence::Wrong) => {
+                        if let Err(error) = quarantine_rejected_op(
+                            vault,
+                            window_key,
+                            QuarantineContainer::Tombstones,
+                            key.as_ref(),
+                            &Error::InvalidConfig("tombstone outside window residence".into()),
+                            raw_value,
+                        ) {
+                            tracing::error!(%error, "failed to quarantine cross-world tombstone");
+                        }
+                        continue;
+                    }
+                    Ok(crate::sync::types::TombstoneResidence::Unknown)
+                        if window_key.contains('@') =>
+                    {
+                        // The CRDT tombstone itself gates this window. Do not
+                        // mint a global dt: marker for an unproven ID.
+                        continue;
+                    }
+                    Err(error) => {
+                        let _ = vault.with_write_txn(|txn| {
+                            quarantine::set_remat_marker_in_txn(vault, txn, window_key, &id)
+                        });
+                        tracing::error!(%error, "tombstone residence check failed");
+                        continue;
+                    }
+                    _ => {}
+                }
+
                 staged.push(TombstoneWork {
                     id,
                     crdt_key: key.as_ref().to_string(),
                     raw_value: raw_value.to_vec(),
+                    witnessed_shell: matches!(
+                        residence,
+                        Ok(crate::sync::types::TombstoneResidence::Match)
+                    ) && window_key.contains('@')
+                        && map_get_bytes(&entities_map, &id.to_hex()).is_some_and(|raw| {
+                            raw.len() == crate::batch::ENTITY_METADATA_HEADER_LEN
+                        }),
                     hard: crate::deletion::decode_tombstone_value(raw_value).is_hard(),
                 });
             }
@@ -177,7 +233,7 @@ pub(super) fn materialize_tombstones_from_delta(
     }
 
     if staged.is_empty() {
-        return false;
+        return None;
     }
     // Soft-over-hard `ra:` reassert for staged soft items runs INSIDE
     // apply_tombstone_batch's single parent write txn (ONE-521) — materialize
@@ -192,6 +248,7 @@ struct TombstoneWork {
     id: EntityId,
     crdt_key: String,
     raw_value: Vec<u8>,
+    witnessed_shell: bool,
     hard: bool,
 }
 
@@ -226,16 +283,24 @@ enum TombstoneFailureStage {
 /// as partial success. The tombstones stay in the CRDT map, which is both the
 /// resurrection gate for entity materialization and the replay source for
 /// forward rematerialization, so the work is not lost.
-fn apply_tombstone_batch(vault: &Vault, window_key: &str, staged: &[TombstoneWork]) -> bool {
+fn apply_tombstone_batch(
+    vault: &Vault,
+    window_key: &str,
+    staged: &[TombstoneWork],
+) -> Option<Vec<EntityId>> {
     let mut failures = Vec::<(&TombstoneWork, TombstoneFailureStage, Error)>::new();
 
     #[cfg(test)]
     note_tombstone_batch_top_level_txn();
     let batch = vault.with_write_txn(|parent| {
+        let mut affected = Vec::new();
         for work in staged {
-            let Err((stage, err)) = apply_tombstone_in_savepoint(vault, parent, window_key, work)
-            else {
-                continue;
+            let (stage, err) = match apply_tombstone_in_savepoint(vault, parent, window_key, work) {
+                Ok(ids) => {
+                    affected.extend(ids);
+                    continue;
+                }
+                Err(failure) => failure,
             };
             // Item-local bookkeeping on the PARENT — the item's own child is
             // already aborted, and none of this may use `?`: one tombstone's
@@ -299,17 +364,17 @@ fn apply_tombstone_batch(vault: &Vault, window_key: &str, staged: &[TombstoneWor
                 );
             }
         }
-        Ok(())
+        Ok(affected)
     });
 
-    if let Err(e) = batch {
+    if let Err(e) = &batch {
         tracing::error!(
             window = %window_key,
             tombstones = staged.len(),
             error = %e,
             "observer-b: tombstone batch transaction FAILED — NO tombstone in this delta was applied; the CRDT tombstones map keeps gating materialization and remains the replay source"
         );
-        return false;
+        return None;
     }
 
     loop {
@@ -338,7 +403,7 @@ fn apply_tombstone_batch(vault: &Vault, window_key: &str, staged: &[TombstoneWor
             ),
         }
     }
-    true
+    batch.ok()
 }
 
 /// Applies one staged tombstone inside a nested write transaction (savepoint)
@@ -352,19 +417,43 @@ fn apply_tombstone_in_savepoint(
     parent: &mut heed::RwTxn<'_>,
     window_key: &str,
     work: &TombstoneWork,
-) -> std::result::Result<(), (TombstoneFailureStage, Error)> {
+) -> std::result::Result<Vec<EntityId>, (TombstoneFailureStage, Error)> {
     let mut child = vault
         .store
         .env
         .nested_write_txn(parent)
         .map_err(|e| (TombstoneFailureStage::Replay, Error::from(e)))?;
 
+    if let Some(window) = crate::sync::WindowKey::try_new(window_key)
+        && window.world().is_some()
+        && crate::sync::types::tombstone_residence_in(vault, &child, &work.id, &window)
+            .map_err(|e| (TombstoneFailureStage::Replay, e))?
+            != crate::sync::types::TombstoneResidence::Match
+        && !work.witnessed_shell
+    {
+        return Err((
+            TombstoneFailureStage::Replay,
+            Error::InvalidConfig("unproven world tombstone residence".into()),
+        ));
+    }
+    // Read before replay tears edge indexes and redirect shells. An item
+    // rolled back to its savepoint contributes no committed invalidations.
+    let mut affected = if work.hard {
+        vault
+            .hard_delete_affected_ids_in_txn(&child, &work.id)
+            .map_err(|e| (TombstoneFailureStage::Replay, e))?
+    } else {
+        vec![work.id]
+    };
     let applied = quarantine::apply_replayed_tombstone_for_sync_in_txn(
         vault,
         &mut child,
         &work.id,
         &work.raw_value,
     );
+    if let Ok((_, changed_documents)) = &applied {
+        affected.extend(changed_documents);
+    }
     let item = match applied {
         Ok(_) if work.hard => {
             scrub_receiver_outbox_on_remote_hard_delete_in_txn(vault, &mut child, window_key)
@@ -376,9 +465,24 @@ fn apply_tombstone_in_savepoint(
     };
 
     match item {
-        Ok(()) => child
-            .commit()
-            .map_err(|e| (TombstoneFailureStage::Replay, Error::from(e))),
+        Ok(()) => {
+            if crate::sync::WindowKey::try_new(window_key).is_some_and(|key| key.world().is_some())
+            {
+                vault
+                    .store
+                    .sync_state
+                    .put(
+                        &mut child,
+                        &format!("m:dw:{}", work.id.to_hex()),
+                        window_key.as_bytes(),
+                    )
+                    .map_err(|e| (TombstoneFailureStage::Replay, e))?;
+            }
+            child
+                .commit()
+                .map(|()| affected)
+                .map_err(|e| (TombstoneFailureStage::Replay, Error::from(e)))
+        }
         Err(failure) => {
             // Savepoint abort: this item's entity/index/receipt/sweep/outbox
             // writes never reach the parent, while its siblings' do.

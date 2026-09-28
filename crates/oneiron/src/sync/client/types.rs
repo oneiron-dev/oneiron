@@ -1,8 +1,23 @@
 //! Sync client configuration, events, and sync_state key constants.
 
+/// How an own device keeps ledger windows resident.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum SyncResidenceMode {
+    /// Root and index at enrol; items are fetched on demand.
+    #[default]
+    Opened,
+    /// Explicit opt-in to full month-window replication.
+    All,
+}
+
 /// Client-side sync configuration.
 #[derive(Debug, Clone)]
 pub struct SyncClientConfig {
+    /// Non-home devices default to opened items; full replication is opt-in.
+    pub residence_mode: SyncResidenceMode,
+    /// Grant selector supplied by the authenticated host for index, first touch,
+    /// and local opened-item filtering. Never inferred from root or peer bytes.
+    pub residence_selector: Option<crate::sync::SyncSelector>,
     /// Federation principal/grant supplied by the authenticated transport host.
     /// Never inferred from `auth_token` or untrusted CRDT peer ids.
     pub federation_peer: Option<crate::sync::federation_burst::FederationPeer>,
@@ -18,6 +33,9 @@ pub struct SyncClientConfig {
     /// Must be a MAC-verified actor-bound slip with core:read,core:write and jti.
     /// Only TLS or loopback URLs are accepted for this lane.
     pub note_session: Option<NoteSyncSession>,
+    /// `None` on the home node means sync all worlds; `Some(worlds)` follows
+    /// only the named worlds. The device default follows none until selected.
+    pub followed_worlds: Option<Vec<crate::EntityId>>,
     /// Host-owned MACRO candidate feed. Its updates, not WebSocket liveness,
     /// cause the connection to persist a new home-node designation.
     pub home_node_topology: Option<crate::sync::connection::HomeNodeTopology>,
@@ -36,12 +54,15 @@ pub struct SyncClientConfig {
 impl Default for SyncClientConfig {
     fn default() -> Self {
         Self {
+            residence_mode: SyncResidenceMode::Opened,
+            residence_selector: None,
             federation_peer: None,
             federation_admission_role: crate::sync::FederationAdmissionRole::Guest,
             server_url: String::new(),
             auth_token: String::new(),
             transport_credential: None,
             note_session: None,
+            followed_worlds: Some(Vec::new()),
             home_node_topology: None,
             default_window_count: 2,
             sync_debounce_ms: 50,
@@ -63,11 +84,49 @@ impl SyncTransportCredential {
     pub fn new(token: String, key: ed25519_dalek::SigningKey) -> Self {
         Self { token, key }
     }
-    pub(in crate::sync) fn token(&self) -> &str {
-        &self.token
-    }
-    pub(in crate::sync) fn key(&self) -> &ed25519_dalek::SigningKey {
-        &self.key
+
+    /// Proves the slip on a WebSocket upgrade with a fresh holder signature.
+    /// Each upgrade has its own nonce, so a proof cannot be replayed.
+    pub(in crate::sync) fn sign_upgrade(
+        &self,
+        timestamp: u64,
+        request: &mut tokio_tungstenite::tungstenite::handshake::client::Request,
+    ) -> Result<(), &'static str> {
+        use ed25519_dalek::Signer;
+        use tokio_tungstenite::tungstenite::http::header::AUTHORIZATION;
+
+        let slip = crate::authority::CapabilitySlip::from_token(&self.token)
+            .map_err(|_| "Sync transport slip is invalid")?;
+        if slip.claims.binding_key != self.key.verifying_key().to_bytes() {
+            return Err("Sync transport holder key does not match slip");
+        }
+        let nonce = crate::EntityId::now().to_hex();
+        let challenge = format!("oneiron-request:{timestamp}:{nonce}");
+        let signature: String = self
+            .key
+            .sign(
+                &slip
+                    .binding_transcript(challenge.as_bytes())
+                    .map_err(|_| "Sync transport binding transcript is invalid")?,
+            )
+            .to_bytes()
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect();
+        request.headers_mut().insert(
+            AUTHORIZATION,
+            format!("Bearer {}", self.token)
+                .parse()
+                .map_err(|_| "Sync transport token is not a valid header")?,
+        );
+        request.headers_mut().insert(
+            "x-oneiron-binding",
+            serde_json::json!({"timestamp":timestamp,"nonce":nonce,"signature":signature})
+                .to_string()
+                .parse()
+                .map_err(|_| "Sync transport proof is not a valid header")?,
+        );
+        Ok(())
     }
 }
 impl std::fmt::Debug for SyncTransportCredential {
