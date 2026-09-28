@@ -288,7 +288,7 @@ fn row_controls_non_owner_starter_own_objection_and_budgets() -> Result<()> {
             .start_authority_act(&admin, 42, "erase", vec![], 100)
             .is_err()
     );
-    let mut row = base.clone();
+    let mut row = base;
     row.initiator_roles.push(Role::Admin);
     row.wait_secs = 5;
     row.max_act_name_bytes = 20;
@@ -751,7 +751,7 @@ fn malformed_act_policy_table_refuses_start() -> Result<()> {
         // A wait with nobody who may object.
         rows(row_value(&SharedActPolicy {
             objector_roles: Vec::new(),
-            ..row.clone()
+            ..row
         })?),
         // A positional row.
         rows(Value::Array(vec![5.into()])),
