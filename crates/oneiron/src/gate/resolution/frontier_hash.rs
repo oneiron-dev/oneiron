@@ -190,6 +190,7 @@ pub(super) fn hash_policy_frontier_v0(
             .expect("validated booking policy rows encode");
         hash_bytes(hasher, &bytes);
     }
+    hash_class_policy_tables(hasher, resolution);
     // An absent/empty hosted policy changes no decision and keeps the
     // established frontier bytes for manifests that never named this knob.
     if !resolution.hosted_tts.rows.is_empty() {
@@ -751,5 +752,42 @@ fn hash_budget_policy_table(hasher: &mut Sha256, table: &BudgetPolicyTable) {
         if let Some(cap_units) = row.cap_units() {
             hash_u64(hasher, cap_units);
         }
+    }
+}
+
+fn hash_class_policy_tables(hasher: &mut Sha256, resolution: &PolicyManifestResolution) {
+    let waits = resolution.wait_policy.rows();
+    if !waits.is_empty() {
+        hash_str(hasher, "wait_policy");
+        hash_len(hasher, waits.len());
+        for row in waits {
+            hash_str(hasher, &row.wait_class);
+            hash_opt_entity(hasher, row.holder_ref);
+            hash_u64(hasher, row.min_secs);
+            hash_bool(hasher, row.max_secs.is_some());
+            if let Some(max_secs) = row.max_secs {
+                hash_u64(hasher, max_secs);
+            }
+            hash_str(hasher, row.precedence.as_str());
+        }
+    }
+    let acts = resolution.act_policy.rows();
+    if !acts.is_empty() {
+        hash_str(hasher, "act_policy");
+        hash_len(hasher, acts.len());
+        for row in acts {
+            hash_str(hasher, &row.act_class);
+            hash_str(hasher, &row.subject_class);
+            hash_opt_entity(hasher, row.holder_ref);
+            hash_str(hasher, row.posture.as_str());
+            hash_str(hasher, row.precedence.as_str());
+        }
+    }
+}
+
+fn hash_opt_entity(hasher: &mut Sha256, value: Option<EntityId>) {
+    hash_bool(hasher, value.is_some());
+    if let Some(value) = value {
+        hash_bytes(hasher, value.as_bytes());
     }
 }
