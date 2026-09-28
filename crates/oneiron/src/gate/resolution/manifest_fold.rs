@@ -121,6 +121,9 @@ pub(crate) fn resolve_policy_manifest(
                 resolution.actor_ceilings.extend(decoded.actor_ceilings);
                 delegated_rows.extend(decoded.delegated_grants);
                 resolution.scoped_grants.extend(decoded.scoped_grants);
+                if let Some(goal) = decoded.skill_edit_goal {
+                    resolution.skill_edit_goal.push(goal);
+                }
                 resolution
                     .weave_report_policy
                     .extend(decoded.weave_report_policy);

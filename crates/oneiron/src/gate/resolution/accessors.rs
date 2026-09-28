@@ -555,6 +555,16 @@ impl PolicyManifestResolution {
             .unwrap_or(PolicySensitivity::Sensitive)
     }
 
+    /// Trusted optimizer-goal policy rows; absence or malformed policy fails
+    /// the optimizer closed rather than enabling an implicit scalar default.
+    pub(crate) fn skill_edit_goal_policies(&self) -> Option<&[crate::gate::SkillEditGoalPolicy]> {
+        if self.is_fail_closed() || self.skill_edit_goal.is_empty() {
+            None
+        } else {
+            Some(&self.skill_edit_goal)
+        }
+    }
+
     #[must_use]
     pub(crate) fn scoped_grants(&self) -> &[PolicyScopedGrant] {
         if self.is_fail_closed() {
