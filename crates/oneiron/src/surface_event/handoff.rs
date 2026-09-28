@@ -631,7 +631,7 @@ const MAX_VERBATIM_CORRELATION_RUN_ID_BYTES: usize = 128;
 /// Derives the bounded run id for a public correlation id.
 ///
 /// This keeps status lookup and run-index behavior correlation-based. Dedupe
-/// uses [`surface_event_dedupe_key`] instead, scoped by the receiving identity.
+/// uses `surface_event_dedupe_key` instead, scoped by the receiving identity.
 /// The public correlation id is never rewritten.
 #[must_use]
 pub fn surface_event_run_id(correlation_id: &str) -> String {

@@ -148,7 +148,7 @@ impl GmailMessageMetadata {
     ///
     /// # Errors
     ///
-    /// [`Error::InvalidConfig`] when either id is blank, over the ceiling its
+    /// [`crate::Error::InvalidConfig`] when either id is blank, over the ceiling its
     /// namespaced form leaves, or itself namespaced.
     pub fn into_provider_inbound(self) -> Result<EmailProviderInbound> {
         validate_gmail_id(

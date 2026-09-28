@@ -4,10 +4,9 @@ use crate::edge::EdgeKind;
 use rmpv::Value;
 
 use super::*;
-pub(crate) use support::{
-    signed_birth as create_project_signed_for_test,
-    signed_depth as set_project_depth_signed_for_test,
-};
+#[cfg(feature = "sync")]
+pub(crate) use support::signed_birth as create_project_signed_for_test;
+pub(crate) use support::signed_depth as set_project_depth_signed_for_test;
 fn enable_leader_chat_policy(vault: &Vault) -> Result<()> {
     let policy = serde_json::json!({
         "schema_version": "1.2", "pack_id": "leader-chat-test-policy",

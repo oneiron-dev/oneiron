@@ -29,7 +29,7 @@ impl Default for SyncConfig {
 /// loop. `update_bytes` are raw Loro update bytes (not wire-encoded yet).
 #[derive(Debug)]
 pub struct LocalUpdate {
-    /// Window key (YYYY-MM or YYYY-MM@<world hex>).
+    /// Window key (`YYYY-MM` or `YYYY-MM@<world hex>`).
     pub window_key: String,
     /// Raw Loro update bytes (not wire-encoded yet).
     pub update_bytes: Vec<u8>,
