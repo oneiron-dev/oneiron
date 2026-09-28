@@ -95,6 +95,14 @@ pub(super) fn deindex_entity_without_lexical_query_hint_cascade(
 ) -> Result<(bool, bool, bool, Vec<EntityId>)> {
     crate::workspace_roster::guard_goal_delete(store, wtxn, *id)?;
     crate::federation::reject_ruling_delete(store, wtxn, id)?;
+    // The shared physical tear is reached by facade deletes, public batch
+    // deletes and lexical-hint cascades. Every one must erase claim decisions
+    // and the pending tray before the entity bytes leave this transaction.
+    store.redact_gate_decisions_for_claim_in_txn(
+        wtxn,
+        id.as_bytes(),
+        store.clock.now_recorded_at(),
+    )?;
     #[cfg(feature = "sync")]
     crate::entity_doc::erase_in_txn(store, wtxn, id)?;
     store

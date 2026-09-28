@@ -3,6 +3,7 @@
 //! GATE-001 added stable decision inputs. GATE-002 routes local write doors
 //! through the evaluator while keeping replicated replay trust-blind.
 
+mod ask_policy;
 mod auto_signals;
 mod bundle;
 mod ceiling;
@@ -27,7 +28,13 @@ mod pack_install_policy;
 pub(crate) mod proposal_observation;
 mod repair;
 mod resolution;
+mod tracker_limits;
+pub use tracker_limits::LiveQueryTrackerLimits;
 mod retrieval_filter;
+pub(crate) mod retry_source_policy;
+mod room_thread;
+pub use room_thread::RoomThreadFill;
+pub(crate) use room_thread::{RoomThreadManifest, RoomThreadSettings};
 mod share;
 mod weave_correction_policy;
 mod witness_message;
@@ -36,6 +43,7 @@ pub(crate) use weave_correction_policy::WeaveCorrectionPolicy;
 #[cfg(test)]
 mod tests;
 
+pub(crate) use self::ask_policy::{AskOperationalPolicy, AskPolicySurface};
 pub use self::bundle::{
     GATE_BUNDLE_CONTENT_KIND, GATE_BUNDLE_OUTCOME_APPROVED, GATE_BUNDLE_OUTCOME_DECLINED,
     GATE_BUNDLE_REASON_APPROVED, GATE_BUNDLE_REASON_DECLINED,

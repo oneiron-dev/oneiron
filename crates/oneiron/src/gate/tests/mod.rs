@@ -42,6 +42,7 @@ mod pending_lookup;
 mod repair_tests;
 
 mod actor_fork;
+mod ask_policy;
 mod auto_checker;
 mod budget_policy;
 mod charter_ceiling;
@@ -65,6 +66,7 @@ mod posture_override;
 mod scoped_read;
 mod special_doors;
 mod support;
+mod tracker_limits;
 mod trust_boundary;
 mod vad_vetting;
 mod witness_message;
