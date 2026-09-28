@@ -42,6 +42,26 @@ fn key(hash: &[u8; 32]) -> Vec<u8> {
     [PREFIX, hash].concat()
 }
 
+/// Read-time custody of the immutable centroid inputs used by a tier-1
+/// observation. The producer performs the full replay check before minting.
+pub(crate) fn snapshot_live_in_txn(
+    store: &crate::store::Store,
+    txn: &heed::RoTxn<'_>,
+    hash: &[u8; 32],
+) -> Result<bool> {
+    let Some(raw) = store.vault_meta.get(txn, &key(hash))? else {
+        return Ok(false);
+    };
+    if blake3::hash(&raw).as_bytes() != hash {
+        return Ok(false);
+    }
+    let evidence: CentroidEvidence =
+        rmp_serde::from_slice(&raw).map_err(|_| Error::CorruptedIndex("centroid evidence body"))?;
+    let canonical = rmp_serde::to_vec_named(&evidence)
+        .map_err(|_| Error::CorruptedIndex("centroid evidence body"))?;
+    Ok(evidence.version == 1 && raw.as_ref() == canonical)
+}
+
 fn similarity(candidate: &[f32], labeled: &[VectorEvidence]) -> Option<f64> {
     if candidate.is_empty() || labeled.is_empty() || candidate.iter().any(|x| !x.is_finite()) {
         return None;

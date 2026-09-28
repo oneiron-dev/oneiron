@@ -330,6 +330,9 @@ fn parse_effective_config(
     common: PathBuf,
     git_dir: PathBuf,
 ) -> Result<(RepoLayout, WorktreeSemantics, WorktreeOverrides)> {
+    // A linked worktree has its own admin dir under the common dir. Git never
+    // treats one as bare, whatever the shared `core.bare` says.
+    let linked = git_dir != common;
     let mut version: Option<u8> = None;
     let mut backend: Option<RefBackend> = None;
     let mut bare = false;
@@ -466,6 +469,9 @@ fn parse_effective_config(
                 "core.eol" => semantics.eol.map(WorktreeSetting::Eol),
                 "core.safecrlf" => semantics.safe_crlf.map(WorktreeSetting::SafeCrlf),
                 "core.checkstat" => semantics.check_stat.map(WorktreeSetting::CheckStat),
+                // The door checkout pins `core.bare = false` on its linked
+                // worktree; that restates Git's own rule and is no override.
+                "core.bare" if linked && !parse_bool(value)? => None,
                 "core.bare" => return Err(invalid("worktree cannot override core.bare")),
                 _ => None,
             };
@@ -491,7 +497,7 @@ fn parse_effective_config(
             git_dir,
             format_version: version,
             refs,
-            bare,
+            bare: bare && !linked,
             worktree_config_enabled,
         },
         semantics,

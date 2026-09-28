@@ -299,21 +299,28 @@ pub(super) fn observe_claim_proposal_after_put(
     input: ProposalObservation<'_>,
 ) -> Result<()> {
     if !input.replicated
-        && input
+        && let Some(body) = input
             .body
-            .is_some_and(|body| body.approval == crate::claim::ClaimApprovalStatus::Proposed)
+            .filter(|body| body.approval == crate::claim::ClaimApprovalStatus::Proposed)
         && let Some(envelope) = input.envelope
     {
-        let threshold = match input.policy {
-            Some(policy) => policy.proposal_check_threshold(),
-            None => crate::gate::resolve_policy_manifest(store, &*wtxn)?.proposal_check_threshold(),
+        // The stored claim's scope, never a caller-selected policy position.
+        let scope = crate::gate::policy_values::PolicyEvaluationScope {
+            world: Some(body.world.unwrap_or_else(crate::claim::base_world_id)),
+            project: Some(body.scope_project),
+            ..Default::default()
+        };
+        let policy_source = match input.policy {
+            Some(policy) => policy.proposal_check_threshold_source(&scope),
+            None => crate::gate::resolve_policy_manifest(store, &*wtxn)?
+                .proposal_check_threshold_source(&scope),
         };
         crate::gate::proposal_observation::observe_submission_in_txn(
             store,
             wtxn,
             envelope.actor().entity_ref(),
             &format!("claim:{}", id.to_hex()),
-            threshold,
+            policy_source,
             input.body_changed,
         )?;
     }

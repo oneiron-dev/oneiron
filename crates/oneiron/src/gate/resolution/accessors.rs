@@ -1,5 +1,7 @@
 //! Read-only resolved-field accessors plus the frontier-hash entry.
 
+use std::collections::BTreeMap;
+
 use crate::autoreason_campaign::selection::{SelectionPolicy, SelectionPrecedence};
 use sha2::{Digest, Sha256};
 
@@ -18,10 +20,15 @@ use super::manifest_types::{
 use crate::gate::class_policy::{ActPosture, WaitResolution};
 
 use crate::gate::ceiling::{
-    PolicyAxes, PolicyCriticality, PolicyOwnerPatternRow, PolicyOwnerPolicyRow, PolicySensitivity,
-    PolicySignature,
+    OwnerRowAction, PolicyAxes, PolicyCriticality, PolicyOwnerPatternRow, PolicyOwnerPolicyRow,
+    PolicyOwnerPrecedence, PolicySensitivity, PolicySignature,
 };
 use crate::gate::grants::{PolicyScopedGrant, scoped_read_grant_has_read_effector};
+use crate::gate::policy_values::{
+    PolicyEvaluationScope, PolicyPrecedence, PolicyValue, PolicyValueKey, PolicyValueRow,
+    PolicyWhy, ResolvedPolicyValue, WhySource, precedence_row, resolve_row, resolve_value,
+    shipped_default_precedence,
+};
 
 #[cfg_attr(not(test), allow(dead_code))]
 impl PolicyManifestResolution {
@@ -187,6 +194,17 @@ impl PolicyManifestResolution {
     }
 
     #[must_use]
+    pub(in crate::gate) fn linear_mirror(&self) -> crate::gate::LinearMirrorPolicy {
+        self.linear_mirror.unwrap_or_default()
+    }
+    pub(in crate::gate) fn linear_sync(&self) -> crate::gate::LinearSyncBudget {
+        self.linear_sync.unwrap_or_default()
+    }
+    pub(in crate::gate) fn wave_handoff(&self) -> crate::gate::WaveHandoffPolicy {
+        self.wave_handoff.unwrap_or_default()
+    }
+
+    #[must_use]
     pub(crate) fn judge_calibration_policy(
         &self,
     ) -> Option<crate::skill_optimize::policy::JudgeCalibrationPolicy> {
@@ -198,9 +216,78 @@ impl PolicyManifestResolution {
     }
 
     #[must_use]
+    pub(in crate::gate) fn policy_value_row(
+        &self,
+        key: PolicyValueKey,
+        scope: &PolicyEvaluationScope,
+    ) -> Option<&PolicyValueRow> {
+        (!self.is_fail_closed())
+            .then(|| resolve_row(&self.policy_values, key, scope))
+            .flatten()
+    }
+
+    /// The meta-rule is read at vault scope only. Absence uses the shipped
+    /// data default; callers can receipt the missing-row fallback distinctly.
+    pub(in crate::gate) fn scope_precedence(&self) -> (PolicyPrecedence, Option<&str>) {
+        if !self.is_fail_closed()
+            && let Some(row) = precedence_row(&self.policy_values)
+            && let PolicyValue::ScopePrecedence(mode) = row.value
+        {
+            return (mode, Some(&row.row_ref));
+        }
+        (shipped_default_precedence(), None)
+    }
+
+    pub(in crate::gate) fn resolved_policy_value(
+        &self,
+        key: PolicyValueKey,
+        scope: &PolicyEvaluationScope,
+        fallback: PolicyValue,
+    ) -> ResolvedPolicyValue<'_> {
+        if self.is_fail_closed() {
+            return ResolvedPolicyValue {
+                value: fallback,
+                deciding_row: None,
+            };
+        }
+        resolve_value(
+            &self.policy_values,
+            key,
+            scope,
+            self.scope_precedence().0,
+            fallback,
+        )
+    }
+
+    #[must_use]
     pub(crate) fn proposal_check_threshold(&self) -> u64 {
-        self.proposal_check_threshold
-            .unwrap_or(crate::gate::proposal_observation::DEFAULT_PROPOSAL_CHECK_THRESHOLD)
+        self.proposal_check_threshold_in_scope(&PolicyEvaluationScope::default())
+    }
+
+    #[must_use]
+    pub(crate) fn proposal_check_threshold_in_scope(&self, scope: &PolicyEvaluationScope) -> u64 {
+        self.proposal_check_threshold_source(scope).threshold
+    }
+
+    pub(crate) fn proposal_check_threshold_source(
+        &self,
+        scope: &PolicyEvaluationScope,
+    ) -> crate::gate::proposal_observation::ProposalPolicySource {
+        let fallback = PolicyValue::ProposalCheckThreshold(
+            crate::gate::policy_values::shipped_default_proposal_check_threshold(),
+        );
+        let resolved =
+            self.resolved_policy_value(PolicyValueKey::ProposalCheckThreshold, scope, fallback);
+        let PolicyValue::ProposalCheckThreshold(threshold) = resolved.value else {
+            unreachable!("typed policy key")
+        };
+        let (_, precedence_row) = self.scope_precedence();
+        crate::gate::proposal_observation::ProposalPolicySource {
+            threshold,
+            deciding_row: resolved.deciding_row.map(|row| row.row_ref.clone()),
+            precedence_row: precedence_row.map(str::to_owned),
+            shipped_default_precedence: precedence_row.is_none(),
+        }
     }
 
     /// Trusted vault policy narrowed by the holder's own limits and shipped defaults.
@@ -226,7 +313,20 @@ impl PolicyManifestResolution {
     /// restrictive default, `Escalate`.
     #[must_use]
     pub(in crate::gate) fn comm_opt_out_posture(&self) -> CommOptOutPosture {
-        self.comm_opt_out_posture.unwrap_or_default()
+        let fallback = PolicyValue::CommOptOutPosture(
+            crate::gate::policy_values::shipped_default_comm_opt_out_posture(),
+        );
+        match self
+            .resolved_policy_value(
+                PolicyValueKey::CommOptOutPosture,
+                &PolicyEvaluationScope::default(),
+                fallback,
+            )
+            .value
+        {
+            PolicyValue::CommOptOutPosture(value) => value,
+            _ => unreachable!("typed policy key"),
+        }
     }
 
     /// The manifest's opaque auto-checker ref (ONE-1296), or `None` when no
@@ -495,6 +595,16 @@ impl PolicyManifestResolution {
             .unwrap_or(PolicySensitivity::Sensitive)
     }
 
+    /// Trusted optimizer-goal policy rows; absence or malformed policy fails
+    /// the optimizer closed rather than enabling an implicit scalar default.
+    pub(crate) fn skill_edit_goal_policies(&self) -> Option<&[crate::gate::SkillEditGoalPolicy]> {
+        if self.is_fail_closed() || self.skill_edit_goal.is_empty() {
+            None
+        } else {
+            Some(&self.skill_edit_goal)
+        }
+    }
+
     #[must_use]
     pub(crate) fn scoped_grants(&self) -> &[PolicyScopedGrant] {
         if self.is_fail_closed() {
@@ -512,33 +622,98 @@ impl PolicyManifestResolution {
         !self.diagnostics.loaded_manifest_forces_fail_closed() && self.owner_policy_enabled
     }
 
+    /// Compose matching owner rows by the manifest's owner-authored policy.
+    /// A vault row always remains in force. The optional most-specific mode
+    /// can discard an intermediate world rule, but never the vault rule.
     #[must_use]
-    pub(crate) fn active_owner_policy_rows(
+    pub(crate) fn active_owner_policy_rows_for_scope(
         &self,
         world_ref: Option<&str>,
-    ) -> Vec<&PolicyOwnerPolicyRow> {
+        project_ref: Option<&str>,
+    ) -> Vec<PolicyOwnerPolicyRow> {
         if self.diagnostics.loaded_manifest_forces_fail_closed() || self.owner_policy_rows_dropped {
             return Vec::new();
         }
 
-        let scoped_refs: Vec<&str> = match world_ref {
-            Some(world_ref) => self
-                .owner_policy_rows
-                .iter()
-                .filter(|row| row.active && row.world_ref.as_deref() == Some(world_ref))
-                .map(|row| row.row_ref.as_str())
-                .collect(),
-            None => Vec::new(),
-        };
-
-        self.owner_policy_rows
-            .iter()
-            .filter(|row| row.active)
-            .filter(|row| match (world_ref, row.world_ref.as_deref()) {
-                (Some(world_ref), Some(row_world)) => row_world == world_ref,
-                (Some(_), None) => !scoped_refs.contains(&row.row_ref.as_str()),
-                (None, None) => true,
-                (None, Some(_)) => false,
+        let mut by_ref = BTreeMap::<&str, Vec<&PolicyOwnerPolicyRow>>::new();
+        let mut order = Vec::new();
+        for row in self.owner_policy_rows.iter().filter(|row| {
+            row.active
+                && row
+                    .world_ref
+                    .as_deref()
+                    .is_none_or(|world| Some(world) == world_ref)
+                && row
+                    .project_ref
+                    .as_deref()
+                    .is_none_or(|project| Some(project) == project_ref)
+        }) {
+            if !by_ref.contains_key(row.row_ref.as_str()) {
+                order.push(row.row_ref.as_str());
+            }
+            by_ref.entry(row.row_ref.as_str()).or_default().push(row);
+        }
+        order
+            .into_iter()
+            .map(|row_ref| {
+                let candidates = &by_ref[row_ref];
+                let specificity = |row: &PolicyOwnerPolicyRow| {
+                    u8::from(row.project_ref.is_some()) * 2 + u8::from(row.world_ref.is_some())
+                };
+                let chosen = candidates
+                    .iter()
+                    .max_by_key(|row| specificity(row))
+                    .expect("nonempty rows");
+                let mut matching: Vec<_> = match self.owner_policy_precedence {
+                    PolicyOwnerPrecedence::NestedNarrowing => candidates.clone(),
+                    PolicyOwnerPrecedence::MostSpecificVaultCapped => candidates
+                        .iter()
+                        .copied()
+                        .filter(|row| {
+                            specificity(row) == 0 || specificity(row) == specificity(chosen)
+                        })
+                        .collect(),
+                };
+                matching.sort_by_key(|row| specificity(row));
+                let mut effective = (**chosen).clone();
+                effective.text = matching
+                    .iter()
+                    .map(|row| row.text.as_str())
+                    .collect::<Vec<_>>()
+                    .join("\n");
+                effective.action =
+                    matching.iter().fold(OwnerRowAction::Warn, |current, row| {
+                        match (current, row.action) {
+                            (OwnerRowAction::Block, _) | (_, OwnerRowAction::Block) => {
+                                OwnerRowAction::Block
+                            }
+                            (OwnerRowAction::RouteToHelp, _) | (_, OwnerRowAction::RouteToHelp) => {
+                                OwnerRowAction::RouteToHelp
+                            }
+                            _ => OwnerRowAction::Warn,
+                        }
+                    });
+                // Named moderators select the most specific applicable scope;
+                // the presence of any human still imposes the Hold action.
+                effective.human = matching.iter().rev().find_map(|row| row.human.clone());
+                // The combined explanation is owner-written only when every
+                // part is: one drafted part makes the whole text partly model
+                // output, so it is labelled drafted rather than overclaimed.
+                let whys: Vec<&PolicyWhy> =
+                    matching.iter().filter_map(|row| row.why.as_ref()).collect();
+                effective.why = (!whys.is_empty()).then(|| PolicyWhy {
+                    text: whys
+                        .iter()
+                        .map(|why| why.text.as_str())
+                        .collect::<Vec<_>>()
+                        .join("\n"),
+                    source: if whys.iter().all(|why| why.source == WhySource::Owner) {
+                        WhySource::Owner
+                    } else {
+                        WhySource::Drafted
+                    },
+                });
+                effective
             })
             .collect()
     }

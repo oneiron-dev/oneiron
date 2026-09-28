@@ -4,6 +4,7 @@
 //! admissible turns in this extraction's working set may mint a new row. The
 //! mint door stamps Generated provenance and refuses existing/deleted ids.
 
+use super::resources::FallbackOutputPin;
 use super::support::invalid_consolidation;
 use super::watermark::read_turn_facts_in_txn;
 use crate::Vault;
@@ -54,6 +55,7 @@ pub(super) fn mint_extracted_people(
     working_set: &[EntityId],
     scope: &crate::llm::Scope,
     now: u64,
+    fallback_binding: Option<(FallbackOutputPin, EntityId)>,
     deadline: Option<&WakePassDeadline>,
 ) -> Result<()> {
     let text: String = response
@@ -77,6 +79,23 @@ pub(super) fn mint_extracted_people(
             return Err(invalid_consolidation(
                 "wake pass expired before person mint",
             ));
+        }
+        if let Some((binding, actor)) = fallback_binding {
+            let policy = crate::gate::resolve_policy_manifest(&vault.store, txn)?;
+            if !crate::llm::verified_step_consolidation_eligible_in_txn(
+                vault,
+                txn,
+                &policy,
+                binding.step,
+                actor,
+                binding.response_hash,
+            )
+            .map_err(|_| invalid_consolidation("invalid extraction fallback checkpoint"))?
+            {
+                return Err(invalid_consolidation(
+                    "extraction fallback eligibility revoked",
+                ));
+            }
         }
         for person in people {
             let Some(id) = person
