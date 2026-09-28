@@ -443,6 +443,45 @@ pub(crate) fn default_policy_manifest() -> Vec<u8> {
             Value::from(PACK_INSTALL_POLICY_KEY),
             PackInstallPolicy::shipped().encode(),
         ),
+        // OF-379 compilation is policy, not a Rust-owned language heuristic.
+        // A holder row can narrow this vault row, never widen it.
+        (
+            Value::from("compilation_policy"),
+            Value::Map(vec![
+                (
+                    Value::from("precedence"),
+                    Value::from("nested_narrowing_holder_capped_at_vault"),
+                ),
+                (
+                    Value::from("order"),
+                    Value::Array(vec![
+                        Value::from("style_rule"),
+                        Value::from("charter_line"),
+                        Value::from("brief_update"),
+                        Value::from("ban"),
+                    ]),
+                ),
+                (
+                    Value::from("rows"),
+                    Value::Array(vec![Value::Map(vec![(
+                        Value::from("routes"),
+                        Value::Array(vec![
+                            compilation_route(
+                                "style_rule",
+                                "expression.style:",
+                                true,
+                                "",
+                                "",
+                                true,
+                            ),
+                            compilation_route("charter_line", "charter:", true, "", "", false),
+                            compilation_route("brief_update", "brief:", true, "", "", false),
+                            compilation_route("ban", "", false, "never ", "never ", false),
+                        ]),
+                    )])]),
+                ),
+            ]),
+        ),
         (
             Value::from(POLICY_ATTRIBUTION_LIMITS_KEY),
             Value::Map(vec![
@@ -490,4 +529,40 @@ pub(crate) fn default_policy_manifest() -> Vec<u8> {
     let mut data = Vec::new();
     rmpv::encode::write_value(&mut data, &manifest).expect("encode default policy manifest");
     data
+}
+
+/// Shipped OF-379 row data. Engines read these selectors through the same
+/// validated manifest path as owner-edited rows.
+fn compilation_route(
+    family: &str,
+    scope_prefix: &str,
+    require_scope_suffix: bool,
+    to_prefix: &str,
+    from_not_prefix: &str,
+    style_atom: bool,
+) -> Value {
+    Value::Map(vec![
+        (Value::from("family"), Value::from(family)),
+        (Value::from("enabled"), Value::Boolean(true)),
+        (Value::from("scope_prefix"), Value::from(scope_prefix)),
+        (
+            Value::from("scope_not_prefixes"),
+            Value::Array(if family == "ban" {
+                vec![
+                    Value::from("expression.style:"),
+                    Value::from("charter:"),
+                    Value::from("brief:"),
+                ]
+            } else {
+                Vec::new()
+            }),
+        ),
+        (
+            Value::from("require_scope_suffix"),
+            Value::Boolean(require_scope_suffix),
+        ),
+        (Value::from("to_prefix"), Value::from(to_prefix)),
+        (Value::from("from_not_prefix"), Value::from(from_not_prefix)),
+        (Value::from("style_atom"), Value::Boolean(style_atom)),
+    ])
 }
