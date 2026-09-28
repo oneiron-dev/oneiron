@@ -119,6 +119,15 @@ impl Vault {
             && fold.slip_is_live(&claims.slip_id)
             && verified.witness_pact(&fold).is_ok())
     }
+    /// Sample the authority plane's local monotonic clock before constructing
+    /// a slip mint. Using the wall/store recording clock for `issued_at` can
+    /// race one second ahead of the authority fold's observation and cause a
+    /// valid OAuth sign-in to be refused at mint.
+    pub fn capability_slip_now(&self) -> Result<u64> {
+        let txn = self.store.env.read_txn()?;
+        Ok(self.instant_in_txn(&txn)?.secs())
+    }
+
     /// A session already proved its uncaveated instrument. Its mint's lifetime
     /// and the current fold still bound every subsequent frame.
     pub fn capability_slip_id_is_live(&self, id: &[u8; 32]) -> Result<bool> {
@@ -357,6 +366,32 @@ impl Vault {
     }
 
     /// Appends a signed mint in the same transaction that checks its ancestry.
+    /// OAuth sign-in mints under the trusted manifest and JWT ceiling in one
+    /// transaction. The caller's requested lifetime can only narrow both.
+    pub fn mint_oauth_capability_slip(
+        &self,
+        issuer: &HostSlipIssuer,
+        mut claims: SlipClaims,
+        jwt_remaining_secs: u64,
+        requested_secs: Option<u64>,
+    ) -> Result<CapabilitySlip> {
+        if jwt_remaining_secs == 0 || requested_secs == Some(0) {
+            return Err(invalid_authority());
+        }
+        let mut txn = self.store.env.write_txn()?;
+        let ceiling = crate::gate::resolve_credential_lifetimes(&self.store, &txn)?;
+        let now = self.instant_in_txn(&txn)?.secs();
+        let ttl = jwt_remaining_secs
+            .min(ceiling.oauth_exchange_secs)
+            .min(requested_secs.unwrap_or(u64::MAX));
+        claims.issued_at = now;
+        claims.expires_at = now.checked_add(ttl).ok_or_else(invalid_authority)?;
+        claims.ttl_secs = ttl;
+        let slip = self.mint_slip_in_txn(&mut txn, issuer, claims)?;
+        txn.commit()?;
+        Ok(slip)
+    }
+
     pub fn mint_capability_slip(
         &self,
         issuer: &HostSlipIssuer,

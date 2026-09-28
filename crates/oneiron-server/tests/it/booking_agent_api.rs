@@ -267,19 +267,19 @@ fn booking_attempts(vault: &Vault) -> usize {
         .count()
 }
 
-async fn spawn(vault: Arc<Vault>) -> (SocketAddr, tokio::task::JoinHandle<()>) {
+async fn spawn(vault: Arc<Vault>) -> (SocketAddr, Arc<SyncServer>, tokio::task::JoinHandle<()>) {
     let config = SyncServerConfig {
         auth_secret: Some(SECRET.to_owned()),
         ..Default::default()
     };
     let server = Arc::new(SyncServer::new(vault, config).unwrap());
-    let app = build_app(server);
+    let app = build_app(server.clone());
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
     let handle = tokio::spawn(async move {
         axum::serve(listener, app).await.unwrap();
     });
-    (addr, handle)
+    (addr, server, handle)
 }
 
 async fn read_response(mut stream: tokio::net::TcpStream, request: String) -> String {
@@ -292,27 +292,51 @@ async fn read_response(mut stream: tokio::net::TcpStream, request: String) -> St
     String::from_utf8(response).unwrap()
 }
 
-async fn http_get(addr: SocketAddr, path: &str, accept: Option<&str>) -> String {
+fn root_headers(server: &SyncServer) -> String {
+    let issuer = oneiron::authority::HostSlipIssuer::from_secret(SECRET.as_bytes()).unwrap();
+    let slip = server.vault().ensure_host_root_slip(&issuer).unwrap();
+    let timestamp = server.vault().now_recorded_at();
+    let nonce = EntityId::now().to_hex();
+    let challenge = format!("oneiron-request:{timestamp}:{nonce}");
+    let signature: String = issuer
+        .binding_proof(&slip, challenge.as_bytes())
+        .unwrap()
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect();
+    let binding = json!({"timestamp":timestamp,"nonce":nonce,"signature":signature});
+    format!(
+        "Authorization: Bearer {}\r\nx-oneiron-binding: {binding}\r\n",
+        slip.to_token().unwrap()
+    )
+}
+
+async fn http_get(
+    addr: SocketAddr,
+    server: &SyncServer,
+    path: &str,
+    accept: Option<&str>,
+) -> String {
     let stream = tokio::net::TcpStream::connect(addr).await.unwrap();
     let accept = accept
         .map(|value| format!("Accept: {value}\r\n"))
         .unwrap_or_default();
+    let auth = root_headers(server);
     read_response(
         stream,
-        format!(
-            "GET {path} HTTP/1.1\r\nHost: {addr}\r\nConnection: close\r\nAuthorization: Bearer {SECRET}\r\n{accept}\r\n"
-        ),
+        format!("GET {path} HTTP/1.1\r\nHost: {addr}\r\nConnection: close\r\n{auth}{accept}\r\n"),
     )
     .await
 }
 
-async fn http_post(addr: SocketAddr, path: &str, body: &Value) -> String {
+async fn http_post(addr: SocketAddr, server: &SyncServer, path: &str, body: &Value) -> String {
     let stream = tokio::net::TcpStream::connect(addr).await.unwrap();
     let body = body.to_string();
+    let auth = root_headers(server);
     read_response(
         stream,
         format!(
-            "POST {path} HTTP/1.1\r\nHost: {addr}\r\nConnection: close\r\nContent-Type: application/json\r\nContent-Length: {}\r\nAuthorization: Bearer {SECRET}\r\n\r\n{body}",
+            "POST {path} HTTP/1.1\r\nHost: {addr}\r\nConnection: close\r\nContent-Type: application/json\r\nContent-Length: {}\r\n{auth}\r\n{body}",
             body.len()
         ),
     )
@@ -423,11 +447,12 @@ fn keys(values: &[&str]) -> BTreeSet<String> {
 #[tokio::test]
 async fn booking_agent_instructions_v1_is_canonical() {
     let (_dir, vault, page) = seeded_vault(None);
-    let (addr, handle) = spawn(vault).await;
+    let (addr, server, handle) = spawn(vault).await;
     let token = page_token(page);
 
     let response = http_get(
         addr,
+        &server,
         &format!("/api/booking/{token}/agent-instructions"),
         None,
     )
@@ -499,11 +524,11 @@ async fn booking_agent_instructions_v1_is_canonical() {
 #[tokio::test]
 async fn booking_agent_instructions_fragment_is_script_safe() {
     let (_dir, vault, page) = seeded_vault(Some(HOSTILE_EVENT_TYPE));
-    let (addr, handle) = spawn(vault).await;
+    let (addr, server, handle) = spawn(vault).await;
     let token = page_token(page);
     let path = format!("/api/booking/{token}/agent-instructions");
 
-    let fragment_response = http_get(addr, &path, Some("text/html")).await;
+    let fragment_response = http_get(addr, &server, &path, Some("text/html")).await;
     assert_eq!(status_of(&fragment_response), 200);
     let fragment = body_of(&fragment_response);
 
@@ -528,7 +553,7 @@ async fn booking_agent_instructions_fragment_is_script_safe() {
 
     // Decoding the escaped body yields exactly the endpoint document.
     let decoded: Value = serde_json::from_str(inner).unwrap();
-    let document_response = http_get(addr, &path, None).await;
+    let document_response = http_get(addr, &server, &path, None).await;
     let document = body_of(&document_response);
     assert_eq!(serde_json::to_string(&decoded).unwrap(), document);
 
@@ -557,11 +582,11 @@ async fn booking_agent_instructions_fragment_is_script_safe() {
 #[tokio::test]
 async fn booking_agent_instructions_endpoint_matches_embedded_block() {
     let (_dir, vault, page) = seeded_vault(Some(HOSTILE_EVENT_TYPE));
-    let (addr, handle) = spawn(vault).await;
+    let (addr, server, handle) = spawn(vault).await;
     let path = format!("/api/booking/{}/agent-instructions", page_token(page));
 
-    let document = http_get(addr, &path, None).await;
-    let fragment = http_get(addr, &path, Some("text/html")).await;
+    let document = http_get(addr, &server, &path, None).await;
+    let fragment = http_get(addr, &server, &path, Some("text/html")).await;
     let inner = body_of(&fragment)
         .strip_prefix(&format!(
             "<script type=\"{BOOKING_AGENT_INSTRUCTIONS_MIME}\">"
@@ -589,11 +614,12 @@ async fn booking_agent_instructions_endpoint_matches_embedded_block() {
 #[tokio::test]
 async fn booking_availability_discloses_slots_only() {
     let (_dir, vault, page) = seeded_vault(None);
-    let (addr, handle) = spawn(vault).await;
+    let (addr, server, handle) = spawn(vault).await;
     let token = page_token(page);
 
     let response = http_post(
         addr,
+        &server,
         &format!("/api/booking/{token}/availability"),
         &availability_body(6, Value::Null),
     )
@@ -640,7 +666,7 @@ async fn booking_availability_discloses_slots_only() {
 #[tokio::test]
 async fn booking_free_text_is_normalized_before_solve() {
     let (_dir, vault, page) = seeded_vault(None);
-    let (addr, handle) = spawn(vault).await;
+    let (addr, server, handle) = spawn(vault).await;
     let path = format!("/api/booking/{}/availability", page_token(page));
 
     // A prebuilt object bypasses parsing but still canonicalizes: the same
@@ -656,7 +682,7 @@ async fn booking_free_text_is_normalized_before_solve() {
             "allow_flex_pool": true,
         },
     });
-    let response = http_post(addr, &path, &availability_body(6, unsorted)).await;
+    let response = http_post(addr, &server, &path, &availability_body(6, unsorted)).await;
     assert_eq!(status_of(&response), 200, "{}", body_of(&response));
     assert_eq!(json_of(&response)["op"], "availability");
 
@@ -671,14 +697,14 @@ async fn booking_free_text_is_normalized_before_solve() {
             "allow_flex_pool": false,
         },
     });
-    let response = http_post(addr, &path, &availability_body(6, wrong_version)).await;
+    let response = http_post(addr, &server, &path, &availability_body(6, wrong_version)).await;
     assert_eq!(status_of(&response), 400, "{}", body_of(&response));
 
     // Free text never reaches the oracle. This daemon binds no constraint
     // parse tier, so the only answers available are "parsed into an object"
     // and "refused" — and the refusal returns no slots at all.
     let free_text = json!({ "kind": "free_text", "value": "tuesday afternoon please" });
-    let response = http_post(addr, &path, &availability_body(6, free_text)).await;
+    let response = http_post(addr, &server, &path, &availability_body(6, free_text)).await;
     let status = status_of(&response);
     assert_ne!(status, 200, "raw free text must never be solved");
     let body = json_of(&response);
@@ -701,11 +727,12 @@ async fn booking_free_text_is_normalized_before_solve() {
 #[tokio::test]
 async fn booking_hold_then_confirm_is_real_lifecycle_flow() {
     let (_dir, vault, page) = seeded_vault(None);
-    let (addr, handle) = spawn(vault).await;
+    let (addr, server, handle) = spawn(vault).await;
     let token = page_token(page);
 
     let availability = http_post(
         addr,
+        &server,
         &format!("/api/booking/{token}/availability"),
         &availability_body(6, Value::Null),
     )
@@ -725,7 +752,13 @@ async fn booking_hold_then_confirm_is_real_lifecycle_flow() {
             "idempotency_key": "hold-1",
         },
     });
-    let response = http_post(addr, &format!("/api/booking/{token}/book"), &hold_body).await;
+    let response = http_post(
+        addr,
+        &server,
+        &format!("/api/booking/{token}/book"),
+        &hold_body,
+    )
+    .await;
     assert_eq!(status_of(&response), 200, "{}", body_of(&response));
     let held = json_of(&response);
     assert_eq!(held["op"], "book");
@@ -749,7 +782,13 @@ async fn booking_hold_then_confirm_is_real_lifecycle_flow() {
         .as_object_mut()
         .unwrap()
         .insert("ttl_secs".to_owned(), json!(86_400));
-    let response = http_post(addr, &format!("/api/booking/{token}/book"), &with_ttl).await;
+    let response = http_post(
+        addr,
+        &server,
+        &format!("/api/booking/{token}/book"),
+        &with_ttl,
+    )
+    .await;
     assert_eq!(
         status_of(&response),
         400,
@@ -767,7 +806,13 @@ async fn booking_hold_then_confirm_is_real_lifecycle_flow() {
         .as_object_mut()
         .unwrap()
         .insert("idempotency_key".to_owned(), json!("hold-forged"));
-    let response = http_post(addr, &format!("/api/booking/{token}/book"), &forged_lease).await;
+    let response = http_post(
+        addr,
+        &server,
+        &format!("/api/booking/{token}/book"),
+        &forged_lease,
+    )
+    .await;
     assert_ne!(
         status_of(&response),
         200,
@@ -785,7 +830,13 @@ async fn booking_hold_then_confirm_is_real_lifecycle_flow() {
             "idempotency_key": "confirm-1",
         },
     });
-    let response = http_post(addr, &format!("/api/booking/{token}/book"), &confirm_body).await;
+    let response = http_post(
+        addr,
+        &server,
+        &format!("/api/booking/{token}/book"),
+        &confirm_body,
+    )
+    .await;
     assert_eq!(status_of(&response), 200, "{}", body_of(&response));
     let confirmed = json_of(&response);
     assert_eq!(confirmed["result"]["stage"], "confirmed");
@@ -812,7 +863,7 @@ async fn booking_hold_then_confirm_is_real_lifecycle_flow() {
 #[tokio::test]
 async fn booking_mutations_revalidate() {
     let (_dir, vault, page) = seeded_vault(None);
-    let (addr, handle) = spawn(vault).await;
+    let (addr, server, handle) = spawn(vault).await;
     let token = page_token(page);
 
     // A hallucinated slot — one the oracle never offered, far outside the
@@ -831,7 +882,13 @@ async fn booking_mutations_revalidate() {
             "idempotency_key": "hallucinated-1",
         },
     });
-    let response = http_post(addr, &format!("/api/booking/{token}/book"), &hallucinated).await;
+    let response = http_post(
+        addr,
+        &server,
+        &format!("/api/booking/{token}/book"),
+        &hallucinated,
+    )
+    .await;
     let body = body_of(&response).to_owned();
     if status_of(&response) == 200 {
         let held = json_of(&response);
@@ -853,7 +910,13 @@ async fn booking_mutations_revalidate() {
             "idempotency_key": "orphan-1",
         },
     });
-    let response = http_post(addr, &format!("/api/booking/{token}/book"), &orphan).await;
+    let response = http_post(
+        addr,
+        &server,
+        &format!("/api/booking/{token}/book"),
+        &orphan,
+    )
+    .await;
     assert_ne!(
         status_of(&response),
         200,
@@ -867,7 +930,7 @@ async fn booking_mutations_revalidate() {
 #[tokio::test]
 async fn booking_reschedule_cancel_require_action_scoped_tokens() {
     let (_dir, vault, page) = seeded_vault(None);
-    let (addr, handle) = spawn(vault).await;
+    let (addr, server, handle) = spawn(vault).await;
     let token = page_token(page);
     let now = now_secs();
 
@@ -881,6 +944,7 @@ async fn booking_reschedule_cancel_require_action_scoped_tokens() {
     });
     let response = http_post(
         addr,
+        &server,
         &format!("/api/booking/{token}/reschedule"),
         &with_entity_id,
     )
@@ -898,6 +962,7 @@ async fn booking_reschedule_cancel_require_action_scoped_tokens() {
     });
     let response = http_post(
         addr,
+        &server,
         &format!("/api/booking/{token}/cancel"),
         &with_entity_id,
     )
@@ -914,6 +979,7 @@ async fn booking_reschedule_cancel_require_action_scoped_tokens() {
     for malformed in &malformed_tokens {
         let response = http_post(
             addr,
+            &server,
             &format!("/api/booking/{token}/cancel"),
             &json!({ "cancel_token": malformed, "idempotency_key": "cx-bad" }),
         )
@@ -928,6 +994,7 @@ async fn booking_reschedule_cancel_require_action_scoped_tokens() {
     // A well-formed credential that names no booking is refused too.
     let response = http_post(
         addr,
+        &server,
         &format!("/api/booking/{token}/cancel"),
         &json!({ "cancel_token": "b".repeat(64), "idempotency_key": "cx-unknown" }),
     )
@@ -938,6 +1005,7 @@ async fn booking_reschedule_cancel_require_action_scoped_tokens() {
     // not a cancel token.
     let availability = http_post(
         addr,
+        &server,
         &format!("/api/booking/{token}/availability"),
         &availability_body(6, Value::Null),
     )
@@ -950,6 +1018,7 @@ async fn booking_reschedule_cancel_require_action_scoped_tokens() {
         .unwrap();
     let hold = http_post(
         addr,
+        &server,
         &format!("/api/booking/{token}/book"),
         &json!({
             "stage": "hold",
@@ -972,6 +1041,7 @@ async fn booking_reschedule_cancel_require_action_scoped_tokens() {
         .to_owned();
     let response = http_post(
         addr,
+        &server,
         &format!("/api/booking/{token}/cancel"),
         &json!({ "cancel_token": hold_token, "idempotency_key": "cx-wrong-action" }),
     )
@@ -992,9 +1062,15 @@ async fn booking_reschedule_cancel_require_action_scoped_tokens() {
 
 /// Books a real slot on `route` through hold and confirm, and returns the two
 /// action-scoped credentials the lifecycle minted for that booking.
-async fn confirmed_booking(addr: SocketAddr, route: &str, session: &str) -> (String, String) {
+async fn confirmed_booking(
+    addr: SocketAddr,
+    server: &SyncServer,
+    route: &str,
+    session: &str,
+) -> (String, String) {
     let availability = http_post(
         addr,
+        server,
         &format!("/api/booking/{route}/availability"),
         &availability_body(6, Value::Null),
     )
@@ -1007,6 +1083,7 @@ async fn confirmed_booking(addr: SocketAddr, route: &str, session: &str) -> (Str
         .unwrap();
     let hold = http_post(
         addr,
+        server,
         &format!("/api/booking/{route}/book"),
         &json!({
             "stage": "hold",
@@ -1029,6 +1106,7 @@ async fn confirmed_booking(addr: SocketAddr, route: &str, session: &str) -> (Str
         .to_owned();
     let confirm = http_post(
         addr,
+        server,
         &format!("/api/booking/{route}/book"),
         &json!({
             "stage": "confirm",
@@ -1060,7 +1138,7 @@ async fn confirmed_booking(addr: SocketAddr, route: &str, session: &str) -> (Str
 async fn booking_action_tokens_do_not_cross_pages() {
     let (_dir, vault, page_a) = seeded_vault(None);
     let page_b = install_second_page(&vault);
-    let (addr, handle) = spawn(Arc::clone(&vault)).await;
+    let (addr, server, handle) = spawn(Arc::clone(&vault)).await;
     let route_a = page_token(page_a);
     let route_b = page_token(page_b);
 
@@ -1068,6 +1146,7 @@ async fn booking_action_tokens_do_not_cross_pages() {
     // offers its own slots, so no refusal below is a broken-fixture artifact.
     let avail_b = http_post(
         addr,
+        &server,
         &format!("/api/booking/{route_b}/availability"),
         &availability_body(6, Value::Null),
     )
@@ -1079,12 +1158,13 @@ async fn booking_action_tokens_do_not_cross_pages() {
 
     // A real booking on page A, holding the real credentials confirm minted.
     let (reschedule_token, cancel_token) =
-        confirmed_booking(addr, &route_a, "sess-cross-page").await;
+        confirmed_booking(addr, &server, &route_a, "sess-cross-page").await;
 
     // A slot page A still offers, read AFTER the booking exists so the move
     // below can only fail for the reason under test.
     let availability = http_post(
         addr,
+        &server,
         &format!("/api/booking/{route_a}/availability"),
         &availability_body(6, Value::Null),
     )
@@ -1101,6 +1181,7 @@ async fn booking_action_tokens_do_not_cross_pages() {
     let enqueued = booking_attempts(&vault);
     let cross_reschedule = http_post(
         addr,
+        &server,
         &format!("/api/booking/{route_b}/reschedule"),
         &json!({
             "reschedule_token": reschedule_token,
@@ -1118,6 +1199,7 @@ async fn booking_action_tokens_do_not_cross_pages() {
     );
     let cross_cancel = http_post(
         addr,
+        &server,
         &format!("/api/booking/{route_b}/cancel"),
         &json!({ "cancel_token": cancel_token, "idempotency_key": "cx-cross-page" }),
     )
@@ -1140,6 +1222,7 @@ async fn booking_action_tokens_do_not_cross_pages() {
     // no oracle for "this token is real, just not here" — and it names no page.
     let unknown = http_post(
         addr,
+        &server,
         &format!("/api/booking/{route_b}/cancel"),
         &json!({ "cancel_token": "b".repeat(64), "idempotency_key": "cx-unknown-page" }),
     )
@@ -1166,6 +1249,7 @@ async fn booking_action_tokens_do_not_cross_pages() {
     // page, still reach the writer, and still answer in the shipped shape.
     let moved = http_post(
         addr,
+        &server,
         &format!("/api/booking/{route_a}/reschedule"),
         &json!({
             "reschedule_token": reschedule_token,
@@ -1183,6 +1267,7 @@ async fn booking_action_tokens_do_not_cross_pages() {
 
     let cancelled = http_post(
         addr,
+        &server,
         &format!("/api/booking/{route_a}/cancel"),
         &json!({ "cancel_token": cancel_token, "idempotency_key": "cx-same-page" }),
     )
@@ -1251,7 +1336,7 @@ fn booking_token_page_binding_precedes_admission() {
 async fn booking_anti_abuse_admission_runs_once_in_shared_executor() {
     let (_dir, vault, page) = seeded_vault(None);
     let unseeded_page = install_second_page(&vault);
-    let (addr, handle) = spawn(Arc::clone(&vault)).await;
+    let (addr, server, handle) = spawn(Arc::clone(&vault)).await;
     let token = page_token(page);
     let unseeded_token = page_token(unseeded_page);
 
@@ -1270,7 +1355,7 @@ async fn booking_anti_abuse_admission_runs_once_in_shared_executor() {
             json!({ "cancel_token": "c".repeat(64), "idempotency_key": "admission-cancel" }),
         ),
     ] {
-        let response = http_post(addr, &path, &body).await;
+        let response = http_post(addr, &server, &path, &body).await;
         assert_ne!(
             status_of(&response),
             500,
@@ -1297,6 +1382,7 @@ async fn booking_anti_abuse_admission_runs_once_in_shared_executor() {
 
     let first = http_post(
         addr,
+        &server,
         &format!("/api/booking/{token}/availability"),
         &availability_body(6, Value::Null),
     )
@@ -1312,6 +1398,7 @@ async fn booking_anti_abuse_admission_runs_once_in_shared_executor() {
     // budget is spent, and the refusal is the typed admission state.
     let second = http_post(
         addr,
+        &server,
         &format!("/api/booking/{token}/availability"),
         &availability_body(7, Value::Null),
     )
@@ -1334,6 +1421,7 @@ async fn booking_anti_abuse_admission_runs_once_in_shared_executor() {
     // the budget belongs to the page whose rows carry it.
     let unseeded = http_post(
         addr,
+        &server,
         &format!("/api/booking/{unseeded_token}/availability"),
         &availability_body(7, Value::Null),
     )
@@ -1495,12 +1583,12 @@ fn assert_registered_mcp_capabilities(capabilities: &BTreeSet<&str>) {
 #[tokio::test]
 async fn booking_discover_openapi_skills_are_consistent() {
     let (_dir, vault, page) = seeded_vault(None);
-    let (addr, handle) = spawn(vault).await;
+    let (addr, server, handle) = spawn(vault).await;
     let token = page_token(page);
 
     // Discovery advertises the registered MCP endpoints, booking's four HTTP
     // operations, and the instructions version.
-    let discover = json_of(&http_get(addr, "/api/core/discover", None).await);
+    let discover = json_of(&http_get(addr, &server, "/api/core/discover", None).await);
     let capabilities: BTreeSet<&str> = discover["feature_flags"]["capabilities"]
         .as_array()
         .unwrap()
@@ -1519,14 +1607,14 @@ async fn booking_discover_openapi_skills_are_consistent() {
     }
     // Health and discovery agree, as they already do for every other
     // capability.
-    let health = json_of(&http_get(addr, "/api/health", None).await);
+    let health = json_of(&http_get(addr, &server, "/api/health", None).await);
     assert_eq!(
         health["capabilities"]["capabilities"],
         discover["feature_flags"]["capabilities"]
     );
 
     // OpenAPI publishes the five routes and the strict schemas.
-    let spec = json_of(&http_get(addr, "/api/openapi.json", None).await);
+    let spec = json_of(&http_get(addr, &server, "/api/openapi.json", None).await);
     let paths = spec["paths"].as_object().unwrap();
     for (path, method) in [
         ("/api/booking/{page_token}/agent-instructions", "get"),
@@ -1566,6 +1654,7 @@ async fn booking_discover_openapi_skills_are_consistent() {
     let block: BookingAgentInstructionsBlock = serde_json::from_str(body_of(
         &http_get(
             addr,
+            &server,
             &format!("/api/booking/{token}/agent-instructions"),
             None,
         )

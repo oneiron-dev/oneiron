@@ -30,6 +30,9 @@ const HOLD_REASON: &str = "checker: hedged verdict";
 /// ENGINE's family marker and is always applied, so the host's own leading
 /// "checker:" word renders into the slug after it; the WHY stays legible.
 const HOLD_RECEIPT_REASON: &str = "checker_checker_hedged_verdict";
+const BASE_OAUTH_EXCHANGE_SECS: u64 = 3_600;
+const BASE_INITIAL_OWNER_SECS: u64 = 365 * 24 * 60 * 60;
+const LIFETIME_PRECEDENCE: &str = "vault_ceiling_holder_narrows";
 
 /// Counts every consult and records what it was shown.
 struct RecordingAutoChecker {
@@ -338,12 +341,45 @@ fn posture_entry(value: &str) -> (Value, Value) {
     )
 }
 
+fn credential_lifetimes_entry(oauth_exchange_secs: u64, initial_owner_secs: u64) -> (Value, Value) {
+    (
+        Value::from(POLICY_CREDENTIAL_LIFETIMES_KEY),
+        Value::Map(vec![
+            (Value::from("precedence"), Value::from(LIFETIME_PRECEDENCE)),
+            (
+                Value::from("oauth_exchange_secs"),
+                Value::from(oauth_exchange_secs),
+            ),
+            (
+                Value::from("initial_owner_secs"),
+                Value::from(initial_owner_secs),
+            ),
+        ]),
+    )
+}
+
 fn combined_manifest(posture: Option<&str>, checker: Option<&str>) -> Vec<u8> {
-    let entries = posture
-        .map(posture_entry)
-        .into_iter()
-        .chain(checker.map(checker_entry))
-        .collect();
+    combined_manifest_with_lifetimes(
+        posture,
+        checker,
+        BASE_OAUTH_EXCHANGE_SECS,
+        BASE_INITIAL_OWNER_SECS,
+    )
+}
+
+fn combined_manifest_with_lifetimes(
+    posture: Option<&str>,
+    checker: Option<&str>,
+    oauth_exchange_secs: u64,
+    initial_owner_secs: u64,
+) -> Vec<u8> {
+    let entries = std::iter::once(credential_lifetimes_entry(
+        oauth_exchange_secs,
+        initial_owner_secs,
+    ))
+    .chain(posture.map(posture_entry))
+    .chain(checker.map(checker_entry))
+    .collect();
     encode_policy_manifest(entries)
 }
 
@@ -507,6 +543,11 @@ fn integrated_no_checker_frontier(posture: &str) -> [u8; 32] {
     text(&mut bytes, "scope_precedence_effective");
     text(&mut bytes, "nested_narrowing"); // shipped-data fallback
     len(&mut bytes, 0); // policy value rows
+    text(&mut bytes, "credential_lifetimes");
+    bytes.push(1); // present
+    text(&mut bytes, LIFETIME_PRECEDENCE);
+    bytes.extend_from_slice(&BASE_OAUTH_EXCHANGE_SECS.to_le_bytes());
+    bytes.extend_from_slice(&BASE_INITIAL_OWNER_SECS.to_le_bytes());
     len(&mut bytes, 1); // one pack
     text(&mut bytes, "gate-test");
     text(&mut bytes, "v1");
@@ -593,6 +634,25 @@ fn checker_posture_frontier_matrix_preserves_main_and_rebinds_authority() -> Res
             assert_eq!((&left.4, left.2) == (&right.4, right.2), same_policy);
         }
     }
+    Ok(())
+}
+
+#[test]
+fn changed_effective_credential_lifetime_moves_read_frontier() -> Result<()> {
+    let (_dir, vault) = temp_vault();
+    let write = |oauth_secs| {
+        let manifest =
+            combined_manifest_with_lifetimes(None, None, oauth_secs, BASE_INITIAL_OWNER_SECS);
+        put_policy_manifest_bytes(&vault, test_id(0x29), &manifest)
+    };
+    write(BASE_OAUTH_EXCHANGE_SECS)?;
+    let before = resolve(&vault)?.read_frontier_hash()?;
+    write(BASE_OAUTH_EXCHANGE_SECS / 2)?;
+    let after = resolve(&vault)?.read_frontier_hash()?;
+    assert_ne!(
+        before, after,
+        "a changed resolved lifetime must invalidate bound frontiers"
+    );
     Ok(())
 }
 

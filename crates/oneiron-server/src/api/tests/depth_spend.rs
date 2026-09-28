@@ -138,7 +138,7 @@ fn deep_request(reason: bool) -> Request<Body> {
     } else {
         Request::builder()
             .uri("/api/search/text?query=launch&depth=max")
-            .header("authorization", "Bearer secret")
+            .header("authorization", test_bearer(""))
             .body(Body::empty())
             .unwrap()
     }

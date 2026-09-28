@@ -53,6 +53,7 @@ mod charter_ceiling;
 mod claim_candidate_lineage;
 mod connector_budget;
 mod consent_bundle;
+mod credential_lifetimes;
 mod critical_confirm_index;
 mod critical_confirm_lifecycle;
 mod delegation;
