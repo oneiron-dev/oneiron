@@ -361,3 +361,89 @@ async fn narrowed_vault_timeout_controls_authenticated_bridge_request() {
     assert!(page.changes.is_empty());
     server.join().expect("requests");
 }
+
+#[test]
+fn enabled_linear_host_refuses_unauthenticated_core_writers() {
+    assert!(validate_server_auth(true, None, true).is_err());
+    assert!(validate_server_auth(true, Some("server-secret"), true).is_err());
+    assert!(validate_server_auth(true, None, false).is_err());
+    assert!(validate_server_auth(true, Some(""), false).is_err());
+    assert!(validate_server_auth(true, Some("server-secret"), false).is_ok());
+    assert!(validate_server_auth(false, None, true).is_ok());
+    assert!(scheduler_actor(None).is_err());
+    assert!(scheduler_actor(Some("not-an-id".into())).is_err());
+    let actor = EntityId::now();
+    assert_eq!(scheduler_actor(Some(actor.to_hex())).unwrap(), actor);
+}
+
+#[test]
+fn missing_effect_grants_refuse_before_any_linear_http_request() {
+    use oneiron::linear_sync::{LinearSyncDirection, linear_operation_id};
+    use oneiron::task_verb::TaskCreateSpec;
+    use oneiron::{EdgeActorClass, TimeRange, Vault, VaultConfig};
+    let dir = tempfile::tempdir().unwrap();
+    let vault = Arc::new(Vault::open(dir.path(), VaultConfig::default()).unwrap());
+    let writer = EntityId::now();
+    let scheduler = EntityId::now();
+    for (id, kind) in [
+        (writer, oneiron::registry::ENTITY_TYPE_PERSON),
+        (scheduler, oneiron::registry::ENTITY_TYPE_MACHINE),
+    ] {
+        vault
+            .put_entity(&id, kind, TimeRange { start: 1, end: 1 }, 1, b"actor")
+            .unwrap();
+    }
+    let task = vault
+        .memory(writer, EdgeActorClass::Human)
+        .tasks_create(&TaskCreateSpec::new(
+            rmpv::Value::from("work"),
+            Some("mirror".into()),
+            None,
+            Some(100),
+        ))
+        .unwrap()
+        .task_ref
+        .unwrap();
+    let snapshot = VaultLinearTaskStore::new(&vault)
+        .task_snapshot(task)
+        .unwrap();
+    let op = linear_operation_id(
+        LinearSyncDirection::TaskToIssue,
+        task,
+        snapshot.revision,
+        None,
+        None,
+        None,
+    );
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    listener.set_nonblocking(true).unwrap();
+    let mut egress = GatedEgress {
+        bridge: LinearBridge {
+            client: Client::builder().build().unwrap(),
+            base: reqwest::Url::parse(&format!("http://{}/", listener.local_addr().unwrap()))
+                .unwrap(),
+            credential: reqwest::header::HeaderValue::from_static("Bearer test-token"),
+            request_timeout: Duration::from_secs(3),
+        },
+        vault: Arc::clone(&vault),
+        scheduler_actor: scheduler,
+    };
+    assert!(matches!(
+        egress.create_issue(op, task, &snapshot.fields),
+        Err(LinearSyncError::AuthorizationDenied)
+    ));
+    // An update for an issue the vault never linked has no TASK authority.
+    let issue = LinearIssueRef {
+        issue_id: "issue-9".into(),
+        team_id: "team".into(),
+        identifier: "TEAM-9".into(),
+    };
+    assert!(matches!(
+        egress.update_issue_conditional(op, &issue, &BTreeMap::new(), &snapshot.fields),
+        Err(LinearSyncError::AuthorizationDenied)
+    ));
+    assert_eq!(
+        listener.accept().unwrap_err().kind(),
+        std::io::ErrorKind::WouldBlock
+    );
+}

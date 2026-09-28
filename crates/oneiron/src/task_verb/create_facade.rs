@@ -323,10 +323,32 @@ impl Memory<'_> {
         // deadline has already passed writes a body carrying that past
         // deadline against a later `now`. The public door's born-expired check
         // would refuse exactly the write the expiry lane exists to make.
+        // The generic batch path also admits raw/replayed TASKs. Verify the
+        // facade's actor on this transaction and stamp only a changed typed
+        // write, so a raw write cannot borrow the scheduler's external grant.
+        crate::memory::verify_actor_binding_in_txn(
+            self.vault(),
+            &*wtxn,
+            self.actor(),
+            self.actor_class(),
+        )?;
+        let previous =
+            super::linear_store::task_revision_in_txn(&self.vault().store, &*wtxn, task_ref)?;
         self.vault()
             .batch_in()
             .put_internal(&task_ref, ENTITY_TYPE_TASK, occurred, now, body)
             .apply(wtxn)?;
+        if super::linear_store::task_revision_in_txn(&self.vault().store, &*wtxn, task_ref)?
+            > previous
+        {
+            super::linear_store::note_task_writer_in_txn(
+                &self.vault().store,
+                wtxn,
+                task_ref,
+                self.actor(),
+                self.actor_class(),
+            )?;
+        }
         Ok(())
     }
 

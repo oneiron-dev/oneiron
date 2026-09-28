@@ -120,7 +120,14 @@ llama-server -m harrier-oss-v1-0.6b.f16.gguf --embeddings --pooling last -c 4096
 The server starts a mirror pass only when both
 `ONEIRON_LINEAR_BRIDGE_URL` and `ONEIRON_LINEAR_BRIDGE_TOKEN` are set. The URL
 must be HTTPS (or loopback HTTP for a local bridge). A partial or blank config
-stops startup. Poll wait and request timeout resolve from vault policy manifest rows
+stops startup. An enabled mirror also requires authenticated core writes (an
+`auth_secret`, and no `--insecure-allow-unauthenticated`), and
+`ONEIRON_LINEAR_SCHEDULER_ACTOR`: the entity id of the stored Machine actor the
+scheduler acts as. Before the bridge receives any create or update, the vault's
+ExternalEffect Gate must admit it for both that scheduler and the verified
+writer of the TASK revision (live standing grants and `linear` connector
+budgets); a raw or replayed TASK write has no verified writer and is never
+sent. Poll wait and request timeout resolve from vault policy manifest rows
 `linear_mirror_policy` (seeded 30s/15s), and the page allowance from
 `linear_sync_budget` (seeded 64); allowed holder selectors may only narrow
 the resolved vault bounds. The daemon re-resolves these at each pass. The

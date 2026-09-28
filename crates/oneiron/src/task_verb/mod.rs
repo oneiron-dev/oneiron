@@ -109,7 +109,7 @@ mod symbol_lease_tests;
 pub use wave_port::{VaultWaveTaskPort, WaveDispatchGeneration, WaveDispatchPage};
 
 pub use linear_store::VaultLinearTaskStore;
-pub(crate) use linear_store::{forget_task_mirror, note_task_write};
+pub(crate) use linear_store::{forget_task_mirror, linear_effect_state_in_txn, note_task_write};
 
 #[cfg(test)]
 mod production_ports_tests;

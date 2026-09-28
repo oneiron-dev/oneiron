@@ -1,17 +1,21 @@
 //! Opt-in scheduled Linear mirror over an authenticated host-owned bridge.
 //!
 //! This host boundary carries normalized tracker events with stable event IDs.
-//! The bridge, not the vault, owns the Linear provider credential and the
-//! outbound effect door. A raw issue-list poll cannot supply exact event IDs.
+//! The bridge, not the vault, owns the Linear provider credential. Every
+//! mutation it is asked to send first passes the vault's ExternalEffect Gate
+//! for both the verified TASK writer and the configured scheduler actor. A raw
+//! issue-list poll cannot supply exact event IDs.
 
 use std::collections::BTreeMap;
 use std::io::Read;
 use std::sync::Arc;
 use std::time::Duration;
 
+use oneiron::linear_sync::{LinearEffectKind, LinearEffectRequest};
 use oneiron::{
     EntityId, LinearChangePage, LinearChangeSource, LinearEgress, LinearIssueChange,
-    LinearIssueRef, LinearSyncAdapter, LinearSyncError, LinearSyncResult, MirroredTaskFields,
+    LinearIssueRef, LinearSyncAdapter, LinearSyncError, LinearSyncResult, LinearTaskStore,
+    MirroredTaskFields,
 };
 use reqwest::blocking::Client;
 use serde::de::DeserializeOwned;
@@ -198,10 +202,100 @@ fn hex_operation_id(id: [u8; 32]) -> String {
     id.iter().map(|byte| format!("{byte:02x}")).collect()
 }
 
-fn synchronize_once(
+/// Outbound door for the scheduled mirror: no bridge mutation is sent until
+/// the vault admits it for the TASK's verified writer AND the scheduler.
+struct GatedEgress {
+    bridge: LinearBridge,
+    vault: Arc<oneiron::Vault>,
+    scheduler_actor: EntityId,
+}
+
+impl GatedEgress {
+    fn admit(
+        &self,
+        kind: LinearEffectKind,
+        operation_id: [u8; 32],
+        task_ref: EntityId,
+        issue: Option<&LinearIssueRef>,
+        fields: &MirroredTaskFields,
+    ) -> LinearSyncResult<()> {
+        let gate_ref = self.vault.authorize_linear_effect(&LinearEffectRequest {
+            operation_id,
+            task_ref,
+            scheduler_actor: self.scheduler_actor,
+            issue: issue.cloned(),
+            kind,
+            fields: fields.clone(),
+        })?;
+        tracing::debug!(gate_ref, "Linear effect admitted");
+        Ok(())
+    }
+}
+
+impl LinearEgress for GatedEgress {
+    fn create_issue(
+        &mut self,
+        operation_id: [u8; 32],
+        task_ref: EntityId,
+        fields: &MirroredTaskFields,
+    ) -> LinearSyncResult<LinearIssueChange> {
+        self.admit(
+            LinearEffectKind::Create,
+            operation_id,
+            task_ref,
+            None,
+            fields,
+        )?;
+        self.bridge.create_issue(operation_id, task_ref, fields)
+    }
+
+    fn update_issue_conditional(
+        &mut self,
+        operation_id: [u8; 32],
+        issue: &LinearIssueRef,
+        expected_remote: &BTreeMap<String, [u8; 32]>,
+        fields: &MirroredTaskFields,
+    ) -> LinearSyncResult<LinearIssueChange> {
+        let task_ref = oneiron::linear_sync::VaultLinearTaskStore::new(&self.vault)
+            .link_for_issue(issue)?
+            .ok_or(LinearSyncError::AuthorizationDenied)?
+            .task_ref;
+        self.admit(
+            LinearEffectKind::Update,
+            operation_id,
+            task_ref,
+            Some(issue),
+            fields,
+        )?;
+        self.bridge
+            .update_issue_conditional(operation_id, issue, expected_remote, fields)
+    }
+}
+
+/// A bearer-gated server is a prerequisite, independent of provider auth.
+/// Otherwise an anonymous core batch writer can inject TASKs for the mirror.
+pub(crate) fn validate_server_auth(
+    configured: bool,
+    auth_secret: Option<&str>,
+    allow_unauthenticated: bool,
+) -> anyhow::Result<()> {
+    if configured && (allow_unauthenticated || auth_secret.is_none_or(str::is_empty)) {
+        anyhow::bail!("Linear mirror refuses a server without authenticated core writes");
+    }
+    Ok(())
+}
+
+fn scheduler_actor(raw: Option<String>) -> anyhow::Result<EntityId> {
+    let raw = raw
+        .ok_or_else(|| anyhow::anyhow!("Linear mirror requires ONEIRON_LINEAR_SCHEDULER_ACTOR"))?;
+    EntityId::from_hex(raw.trim())
+        .map_err(|_| anyhow::anyhow!("Linear scheduler actor must be an entity id"))
+}
+
+fn synchronize_once<O: LinearEgress>(
     vault: &oneiron::Vault,
     inbound: LinearBridge,
-    outbound: LinearBridge,
+    outbound: O,
     now: u64,
     max_pull_pages_per_pass: usize,
 ) -> LinearSyncResult<(
@@ -235,6 +329,12 @@ pub(crate) async fn spawn(
     if base.is_none() && token.is_none() {
         return Ok(None);
     }
+    validate_server_auth(
+        true,
+        server.config.auth_secret.as_deref(),
+        server.config.allow_unauthenticated,
+    )?;
+    let scheduler_actor = scheduler_actor(std::env::var("ONEIRON_LINEAR_SCHEDULER_ACTOR").ok())?;
     // Fail at configuration time if a provided credential is incomplete or
     // the resolved manifest is unreadable. The client itself is built off
     // Tokio's runtime thread.
@@ -256,7 +356,11 @@ pub(crate) async fn spawn(
                 let budget = vault.linear_sync_budget().map_err(LinearSyncError::Store)?;
                 let mut inbound = client;
                 inbound.request_timeout = Duration::from_secs(policy.request_timeout_secs);
-                let outbound = inbound.clone();
+                let outbound = GatedEgress {
+                    bridge: inbound.clone(),
+                    vault: vault.clone(),
+                    scheduler_actor,
+                };
                 let now = std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
                     .map_or(0, |time| time.as_secs());

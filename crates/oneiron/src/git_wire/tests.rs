@@ -2618,3 +2618,75 @@ fn hub_budget_walk_passes_the_git_init_symlink_probe_and_refuses_every_other_lin
     super::hub_read::check_budget(&scratch.path().join("removed"), deadline)
         .expect("a vanished directory holds nothing");
 }
+
+#[test]
+fn linked_worktree_of_bare_repo_admits_non_bare_pin_and_refuses_bare_override() {
+    // Setup verbs the bridge does not model run through stock Git.
+    fn git(root: &Path, args: &[&str]) {
+        let output = std::process::Command::new("git")
+            .current_dir(root)
+            .env("GIT_CONFIG_NOSYSTEM", "1")
+            .env("GIT_CONFIG_GLOBAL", "/dev/null")
+            .args(args)
+            .output()
+            .expect("spawn git");
+        assert!(
+            output.status.success(),
+            "git {args:?}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+    let (_vault_dir, vault) = open_test_vault();
+    let wire = new_wire(&vault);
+    let source = init_repo();
+    let parent = tempfile::tempdir().expect("bare parent");
+    let bare = parent.path().join("served.git");
+    let tree = parent.path().join("tree");
+    git(
+        parent.path(),
+        &[
+            "clone",
+            "--bare",
+            "--",
+            source.path().to_str().unwrap(),
+            "served.git",
+        ],
+    );
+    git(
+        &bare,
+        &[
+            "worktree",
+            "add",
+            "--detach",
+            "--",
+            tree.to_str().unwrap(),
+            "HEAD",
+        ],
+    );
+    let admit = |root: &Path, bare_add: bool| {
+        super::repository_profile::AdmittedRepoProfile::admit(
+            wire.process_env(),
+            root,
+            &[],
+            bare_add,
+        )
+    };
+    let admitted = admit(&tree, false).expect("linked worktree of a bare repository");
+    assert!(!admitted.layout.bare);
+    // The door checkout's own configuration: worktreeConfig plus a
+    // per-worktree non-bare pin.
+    git(
+        &bare,
+        &["config", "--local", "extensions.worktreeConfig", "true"],
+    );
+    git(&tree, &["config", "--worktree", "core.bare", "false"]);
+    let admitted = admit(&tree, false).expect("non-bare pin on a linked worktree");
+    assert!(!admitted.layout.bare);
+    git(&tree, &["config", "--worktree", "core.bare", "true"]);
+    assert!(
+        admit(&tree, false).is_err(),
+        "a worktree cannot declare itself bare"
+    );
+    // The bare repository itself stays bare.
+    assert!(admit(&bare, true).expect("bare source profile").layout.bare);
+}
