@@ -16312,7 +16312,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "EngineNativeExecutor"
@@ -16321,7 +16321,7 @@
      "purpose": "Executor driver: struct, constructors, and the witness-turn doors",
      "surface": {
       "crate-vis": 3,
-      "fn": 7,
+      "fn": 8,
       "struct": 1
      }
     },
@@ -16390,6 +16390,14 @@
      "notable": [],
      "path": "src/engine_executor/tests/output_decay.rs",
      "purpose": "Model-facing output decay and successful native compaction on the real REPL path",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/engine_executor/tests/seat_routing.rs",
+     "purpose": "—",
      "surface": {}
     },
     {
@@ -22014,7 +22022,7 @@
       "const": 1,
       "crate-vis": 4,
       "enum": 5,
-      "fn": 10,
+      "fn": 11,
       "re-export": 1,
       "struct": 4
      }
@@ -22051,7 +22059,7 @@
      "purpose": "Engine-facing LLM invocation seam",
      "surface": {
       "crate-vis": 6,
-      "mod": 8,
+      "mod": 9,
       "re-export": 19
      }
     },
@@ -22146,6 +22154,7 @@
      "path": "src/llm/routing.rs",
      "purpose": "Vault-owned description routing above the raw LLM call seam",
      "surface": {
+      "crate-vis": 1,
       "enum": 1,
       "fn": 13,
       "struct": 11,
@@ -22234,6 +22243,56 @@
       "fn": 1,
       "struct": 1
      }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "DescriptionLine",
+      "DescriptionSource",
+      "ModelDescription",
+      "ModelSeat",
+      "SeatCandidate",
+      "SeatChoiceReceipt",
+      "SeatJudge",
+      "SeatJudgment",
+      "SeatKind",
+      "SeatPool",
+      "SeatTask"
+     ],
+     "path": "src/llm/seat.rs",
+     "purpose": "Seat-birth model routing above the raw LLM call seam",
+     "surface": {
+      "enum": 2,
+      "fn": 17,
+      "re-export": 1,
+      "struct": 8,
+      "trait": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "SeatPolicy",
+      "SeatPrecedence"
+     ],
+     "path": "src/llm/seat/policy.rs",
+     "purpose": "Manifest-owned runtime seat policy; shipped defaults are data, not routing code",
+     "surface": {
+      "crate-vis": 6,
+      "enum": 1,
+      "fn": 2,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "L",
+     "kind": "test",
+     "notable": [],
+     "path": "src/llm/seat/tests.rs",
+     "purpose": "—",
+     "surface": {}
     },
     {
      "bucket": "s",
@@ -34846,7 +34905,7 @@
      "path": "src/test_util/mod.rs",
      "purpose": "Shared test helpers",
      "surface": {
-      "crate-vis": 12
+      "crate-vis": 13
      }
     },
     {
@@ -37939,7 +37998,7 @@
      "purpose": "—"
     },
     "engine_executor": {
-     "files": 11,
+     "files": 12,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -38142,7 +38201,7 @@
      "purpose": "Deterministic LinkedIn entity resolution and explicit runtime-path corpus preload"
     },
     "llm": {
-     "files": 87,
+     "files": 90,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -38697,8 +38756,8 @@
    },
    "over_bar": 11,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2290,
-   "test_files": 796
+   "source_files": 2292,
+   "test_files": 798
   },
   "oneiron-android": {
    "files": [
@@ -41046,7 +41105,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "test",
      "notable": [],
      "path": "src/lib/tests.rs",
@@ -41125,7 +41184,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "test",
      "notable": [],
      "path": "src/tests.rs",
@@ -42086,7 +42145,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "test",
      "notable": [],
      "path": "src/remote/tests.rs",
@@ -44282,7 +44341,7 @@
      "surface": {}
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "test",
      "notable": [],
      "path": "src/api/tests/mcp_quickjs.rs",
@@ -45699,7 +45758,7 @@
      "path": "src/mcp/quickjs_provider.rs",
      "purpose": "Production MCP provider over the hash-pinned engine QuickJS component",
      "surface": {
-      "fn": 1,
+      "fn": 2,
       "struct": 1
      }
     },
