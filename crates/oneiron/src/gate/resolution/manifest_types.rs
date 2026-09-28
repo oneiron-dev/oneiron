@@ -74,6 +74,30 @@ impl CommOptOutPosture {
     }
 }
 
+/// Policy-authored fold order for holder class-carry rows. Every holder is
+/// still capped by the trusted vault relation.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub(crate) enum ConnectorClassPrecedence {
+    #[default]
+    Nested,
+    HolderOverride,
+}
+impl ConnectorClassPrecedence {
+    pub(crate) fn parse(value: &str) -> Option<Self> {
+        match value {
+            "nested" => Some(Self::Nested),
+            "holder_override" => Some(Self::HolderOverride),
+            _ => None,
+        }
+    }
+    pub(crate) fn as_str(self) -> &'static str {
+        match self {
+            Self::Nested => "nested",
+            Self::HolderOverride => "holder_override",
+        }
+    }
+}
+
 /// The shipped vault-level policy row, composed by nested narrowing.
 /// The attempt manifest's 4,096-entry cap is structural; this work budget
 /// limits receipt pages, not the number of facts one valid receipt may carry.
@@ -191,6 +215,8 @@ pub(crate) struct PolicyManifestResolution {
     pub(super) pptx_comment_limits: Option<crate::edit_roundtrip::pptx::PptxOperationalLimits>,
     pub(super) docx_archive_limits: Vec<crate::gate::docx_budget::DocxArchivePolicy>,
     pub(super) hosted_tts: HostedTtsPolicy,
+    pub(crate) connector_class_carry: Option<std::collections::BTreeSet<(String, String)>>,
+    pub(crate) connector_class_precedence: ConnectorClassPrecedence,
     pub(super) slide_review_policy: crate::llm::decision::SlideReviewPolicy,
     pub(in crate::gate) docedit_resource_policy:
         Option<crate::gate::docedit_resource::DoceditResourcePolicy>,
