@@ -3,7 +3,7 @@ use super::notifications::{PolicyQueuedNotification, QUEUED};
 use super::*;
 use crate::VaultConfig;
 use crate::channel_identity::{
-    ChannelIdentity, ChannelIdentityBinding, ChannelIdentityFulfillment, ChannelIdentityState,
+    ChannelIdentity, ChannelIdentityBinding, ChannelIdentityFulfillment, ChannelIdentityStep,
     SelfHeldShape,
 };
 use crate::comm::resolve_or_create_comm_party;
@@ -52,14 +52,12 @@ fn route(vault: &Vault) -> Result<()> {
             NOW,
         ),
     )?;
-    vault.transition_channel_identity(
+    vault.step_channel_identity(
         &face,
-        ChannelIdentityState::PendingFulfillment,
-        Some(ChannelIdentityFulfillment::Api),
+        ChannelIdentityStep::Bind(ChannelIdentityFulfillment::Api),
         NOW,
-        None,
     )?;
-    vault.transition_channel_identity(&face, ChannelIdentityState::Active, None, NOW, None)?;
+    vault.step_channel_identity(&face, ChannelIdentityStep::Fulfill, NOW)?;
     vault.create_counterparty_contact(
         &EntityId::from_bytes([0xb2; 16])?,
         &CounterpartyContactRecord::user_introduction(face, "notify@example.test", NOW)?,
