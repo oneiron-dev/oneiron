@@ -7,6 +7,8 @@ mod doctor_manifest;
 mod edges;
 mod entities;
 pub(crate) mod entity_revision;
+#[cfg(feature = "sync")]
+pub(crate) use entity_revision::EntityRevisionChange;
 pub use entity_revision::{
     IndexedRefreshReport, IndexedRevisionEmbedder, IndexedRevisionInput, PinnedCitation, ReadMode,
     ResolvedCitation, RevisionRef,
@@ -50,6 +52,8 @@ pub(crate) use self::open::{embedded_owner_actor_id, encode_embedded_owner_actor
 /// Main vault API wrapping LMDB storage and configuration.
 pub struct Vault {
     pub(crate) message_streams: crate::memory::MessageStreamRuntime,
+    /// Serializes per-request voice-ref uploads with consent withdrawal.
+    pub(crate) voice_ref_guard: std::sync::RwLock<()>,
     #[cfg(feature = "sync")]
     pub(crate) entity_docs: std::sync::Mutex<crate::entity_doc::EntityDocRegistry>,
     pub(crate) store: Store,

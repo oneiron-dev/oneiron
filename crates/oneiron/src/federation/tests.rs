@@ -200,13 +200,17 @@ fn delegate_member_ref() -> EntityId {
 }
 
 fn test_delegate() -> FederationGrant {
-    FederationGrant::attenuated_delegate(
+    let mut delegate = FederationGrant::attenuated_delegate(
         &test_grant(),
         delegate_member_ref(),
         DELEGATE_NOW,
         DELEGATE_EXPIRES_AT,
     )
-    .expect("an admin parent mints a delegate")
+    .expect("an admin parent mints a delegate");
+    // The fixture chooses read explicitly; production resolves it from the
+    // vault's policy manifest in the writer that stores the grant.
+    delegate.authority_scope = super::scope_codec::read_preset();
+    delegate
 }
 
 fn non_delegate_grant(role: FederationGrantRole, preset: FederationGrantPreset) -> FederationGrant {
@@ -280,7 +284,7 @@ fn attenuated_delegate_round_trips_byte_stable() -> Result<()> {
     let Value::Map(entries) = value else {
         panic!("delegate body must encode as a map");
     };
-    assert_eq!(entries.len(), FEDERATION_GRANT_BODY_KEYS.len());
+    assert_eq!(entries.len(), FEDERATION_GRANT_BODY_KEYS.len() - 1);
     assert_eq!(
         required_value(&entries, KEY_ROLE)?.as_str(),
         Some("delegate")
@@ -352,6 +356,7 @@ fn delegate_minting_never_self_widens() {
         FederationGrantRole::Viewer,
         FederationGrantRole::Auditor,
         FederationGrantRole::Delegate,
+        FederationGrantRole::Guest,
     ] {
         assert_eq!(
             role.is_admin(),
@@ -453,6 +458,25 @@ fn delegate_is_a_one_to_one_role_preset_pair() {
         );
     }
     assert!(FederationGrantPreset::Delegate.permits_role(FederationGrantRole::Delegate));
+    assert!(FederationGrantPreset::Guest.permits_role(FederationGrantRole::Guest));
+    for preset in non_delegate_presets
+        .into_iter()
+        .chain([FederationGrantPreset::Delegate])
+    {
+        assert!(
+            !preset.permits_role(FederationGrantRole::Guest),
+            "{preset:?} must not carry the guest role"
+        );
+    }
+    for role in non_delegate_roles
+        .into_iter()
+        .chain([FederationGrantRole::Delegate])
+    {
+        assert!(
+            !FederationGrantPreset::Guest.permits_role(role),
+            "the guest preset must not carry {role:?}"
+        );
+    }
 
     // Every pre-existing role/preset verdict is unchanged.
     for preset in non_delegate_presets {
@@ -471,7 +495,9 @@ fn delegate_is_a_one_to_one_role_preset_pair() {
                     FederationGrantRole::Viewer | FederationGrantRole::Auditor
                 ),
                 FederationGrantPreset::Audit => matches!(role, FederationGrantRole::Auditor),
-                FederationGrantPreset::Delegate => unreachable!("non-delegate presets only"),
+                FederationGrantPreset::Delegate | FederationGrantPreset::Guest => {
+                    unreachable!("non-delegate presets only")
+                }
             };
             assert_eq!(
                 preset.permits_role(role),
@@ -656,20 +682,13 @@ fn delegate_body_decode_fails_closed_on_new_keys() {
         .expect("the canonical delegate body decodes");
 }
 
-/// Done-means 5 (forward compatibility) + 9 (hydration does not grow).
-///
-/// Schema version stays 1 while the on-disk body grows to seven keys. There is
-/// no runtime assertion to make against a binary that no longer exists, so what
-/// is pinned here is the property that makes the old reader safe: a
-/// pre-Delegate reader's key allowlist is exactly the five-key head, and a
-/// delegate body carries keys outside it — so that reader FAILS CLOSED rather
-/// than reading a delegate as a non-expiring grant.
+/// Guest payloads get a new schema version while older member/delegate bodies
+/// remain decodable. Guest identity and fact details stay out of hydration.
 #[test]
-fn delegate_body_grows_while_schema_version_and_hydration_hold() -> Result<()> {
-    assert_eq!(FEDERATION_GRANT_SCHEMA_VERSION, 2);
-    assert_eq!(FEDERATION_GRANT_BODY_KEYS.len(), 8);
+fn guest_schema_grows_while_hydration_stays_narrow() -> Result<()> {
+    assert_eq!(FEDERATION_GRANT_SCHEMA_VERSION, 3);
+    assert_eq!(FEDERATION_GRANT_BODY_KEYS.len(), 9);
 
-    // Hydration profiles keep their pre-Delegate content and lengths.
     assert_eq!(FEDERATION_GRANT_FIELDS_MINIMAL, ["scope", "role", "preset"]);
     assert_eq!(
         FEDERATION_GRANT_FIELDS_STANDARD,
@@ -679,7 +698,7 @@ fn delegate_body_grows_while_schema_version_and_hydration_hold() -> Result<()> {
         FEDERATION_GRANT_FIELDS_FULL,
         ["schema_version", "scope", "member_ref", "role", "preset"]
     );
-    for key in [KEY_EXPIRES_AT, KEY_DELEGATED_BY] {
+    for key in [KEY_EXPIRES_AT, KEY_DELEGATED_BY, KEY_GUEST] {
         assert!(
             !FEDERATION_GRANT_FIELDS_FULL.contains(&key),
             "{key} must not enter context-pack hydration"
@@ -702,8 +721,6 @@ fn delegate_body_grows_while_schema_version_and_hydration_hold() -> Result<()> {
         "a five-key reader's allowlist rejects the delegate body"
     );
 
-    // Current non-delegate grants carry authority_scope as well. An old
-    // five-key reader must refuse them rather than discard that bound.
     let non_delegate = encode_federation_grant_body(&test_grant())?;
     let mut cursor = Cursor::new(&non_delegate);
     let Value::Map(entries) = rmpv::decode::read_value(&mut cursor).expect("decode grant body")
@@ -735,6 +752,192 @@ fn federation_grant_policy_rejects_admin_role_under_non_admin_preset() {
         .expect_err("read-only preset must not carry admin role");
 
     assert_eq!(err.kind(), ErrorKind::InvalidFederationGrantBody);
+}
+
+fn ask_guest_grant() -> FederationGrant {
+    FederationGrant::ask_guest(
+        scope_entity(0x70),
+        scope_entity(0x71),
+        scope_entity(0x72),
+        scope_entity(0x73),
+        BTreeSet::from([scope_entity(0x74), scope_entity(0x75)]),
+    )
+    .expect("bounded ask guest grant")
+}
+
+#[test]
+fn ask_guest_admits_only_the_named_fact_and_identity_tuple() {
+    let grant = ask_guest_grant();
+    assert_eq!(grant.scope, FederationGrantScope::ask(scope_entity(0x70)));
+    assert_eq!(grant.role, FederationGrantRole::Guest);
+    assert!(grant.role.is_guest());
+    assert!(!grant.role.is_admin());
+    assert!(!grant.is_admin());
+    assert!(grant.guest.is_some());
+    assert!(grant.allows_ask_fact(
+        scope_entity(0x70),
+        scope_entity(0x71),
+        scope_entity(0x72),
+        scope_entity(0x73),
+        scope_entity(0x74),
+    ));
+    for (ask_ref, guest_actor, person_ref, asker_ref, fact) in [
+        (
+            scope_entity(0x76),
+            scope_entity(0x71),
+            scope_entity(0x72),
+            scope_entity(0x73),
+            scope_entity(0x74),
+        ),
+        (
+            scope_entity(0x70),
+            scope_entity(0x77),
+            scope_entity(0x72),
+            scope_entity(0x73),
+            scope_entity(0x74),
+        ),
+        (
+            scope_entity(0x70),
+            scope_entity(0x71),
+            scope_entity(0x78),
+            scope_entity(0x73),
+            scope_entity(0x74),
+        ),
+        (
+            scope_entity(0x70),
+            scope_entity(0x71),
+            scope_entity(0x72),
+            scope_entity(0x79),
+            scope_entity(0x74),
+        ),
+        (
+            scope_entity(0x70),
+            scope_entity(0x71),
+            scope_entity(0x72),
+            scope_entity(0x73),
+            scope_entity(0x7A),
+        ),
+    ] {
+        assert!(
+            !grant.allows_ask_fact(ask_ref, guest_actor, person_ref, asker_ref, fact),
+            "mismatched or undisclosed tuple must be denied"
+        );
+    }
+
+    let member_role_grant = FederationGrant::new(
+        FederationGrantScope::vault(7),
+        scope_entity(0x71),
+        FederationGrantRole::Member,
+        FederationGrantPreset::Member,
+    );
+    assert_eq!(member_role_grant.guest, None);
+    assert!(!member_role_grant.allows_ask_fact(
+        scope_entity(0x70),
+        scope_entity(0x71),
+        scope_entity(0x72),
+        scope_entity(0x73),
+        scope_entity(0x74),
+    ));
+
+    let invalid_member = FederationGrant::new(
+        FederationGrantScope::ask(scope_entity(0x70)),
+        scope_entity(0x71),
+        FederationGrantRole::Member,
+        FederationGrantPreset::Member,
+    );
+    assert!(invalid_member.validate().is_err());
+    let invalid_vault_guest = FederationGrant::new(
+        FederationGrantScope::vault(7),
+        scope_entity(0x71),
+        FederationGrantRole::Guest,
+        FederationGrantPreset::Guest,
+    );
+    assert!(invalid_vault_guest.validate().is_err());
+}
+
+#[test]
+fn ask_guest_codec_is_strict_and_payload_is_bounded() -> Result<()> {
+    let grant = ask_guest_grant();
+    let encoded = encode_federation_grant_body(&grant)?;
+    let decoded = decode_federation_grant_body(&encoded)?;
+    assert_eq!(decoded, grant);
+    assert_eq!(encode_federation_grant_body(&decoded)?, encoded);
+    let mut prior = test_grant();
+    prior.role = FederationGrantRole::Member;
+    prior.preset = FederationGrantPreset::Member;
+    let bytes = encode_federation_grant_body(&prior)?;
+    let Value::Map(mut old) =
+        rmpv::decode::read_value(&mut Cursor::new(&bytes)).expect("grant map")
+    else {
+        panic!("grant map")
+    };
+    old.iter_mut()
+        .find(|(key, _)| key.as_str() == Some(KEY_SCHEMA_VERSION))
+        .expect("schema version")
+        .1 = Value::from(2_u64);
+    assert_grant_rejected("old unshipped schema 2 member", &grant_map(old));
+
+    let mut cursor = Cursor::new(&encoded);
+    let Value::Map(mut entries) = rmpv::decode::read_value(&mut cursor).expect("grant map") else {
+        panic!("grant is map");
+    };
+    {
+        let guest = entries
+            .iter_mut()
+            .find(|(key, _)| key.as_str() == Some(KEY_GUEST))
+            .expect("guest payload");
+        let Value::Map(payload) = &mut guest.1 else {
+            panic!("guest payload is map");
+        };
+        payload.push((Value::from("future"), Value::from("ignored")));
+    }
+    assert_grant_rejected("unknown guest payload key", &grant_map(entries.clone()));
+    {
+        let guest = entries
+            .iter_mut()
+            .find(|(key, _)| key.as_str() == Some(KEY_GUEST))
+            .expect("guest payload");
+        let Value::Map(payload) = &mut guest.1 else {
+            panic!("guest payload is map");
+        };
+        payload.pop();
+    }
+    entries
+        .iter_mut()
+        .find(|(key, _)| key.as_str() == Some(KEY_SCHEMA_VERSION))
+        .expect("schema version")
+        .1 = Value::from(2_u64);
+    assert_grant_rejected("schema 2 cannot carry guest payload", &grant_map(entries));
+
+    assert!(
+        FederationGrant::ask_guest(
+            scope_entity(0x70),
+            scope_entity(0x71),
+            scope_entity(0x72),
+            scope_entity(0x73),
+            BTreeSet::new(),
+        )
+        .is_err()
+    );
+    let too_many = (1..=65)
+        .map(|byte| {
+            let mut bytes = [0xFE; 16];
+            bytes[15] = byte;
+            EntityId::from_bytes(bytes).expect("distinct non-pinned test id")
+        })
+        .collect::<BTreeSet<_>>();
+    assert_eq!(too_many.len(), MAX_GUEST_DISCLOSED_REFS + 1);
+    assert!(
+        FederationGrant::ask_guest(
+            scope_entity(0x70),
+            scope_entity(0x71),
+            scope_entity(0x72),
+            scope_entity(0x73),
+            too_many,
+        )
+        .is_err()
+    );
+    Ok(())
 }
 
 fn scope_entity(byte: u8) -> EntityId {
@@ -1659,9 +1862,8 @@ use crate::authority::{
     AUTHORITY_LOG_SCHEMA_VERSION, AuthorityAttestation, AuthorityEntryHash, AuthorityFoldIssue,
     AuthoritySignature, AuthorityTier, DeviceAuthority, FederationLifecycleAction,
     FederationLifecycleKind, FederationLifecycleRejection, FederationPactGesture, ROLE_ADMIN,
-    ROLE_AGENT, ROLE_OWNER, authority_transcript, encode_authority_log_entry_body,
-    federation_scope_digest, fold_authority_log_with_peer_consent_roots,
-    sign_federation_pact_gesture,
+    ROLE_OWNER, authority_transcript, encode_authority_log_entry_body, federation_scope_digest,
+    fold_authority_log_with_peer_consent_roots, sign_federation_pact_gesture,
 };
 use crate::error::{ClaimError, RecordError, RegistryError};
 use crate::registry::ENTITY_TYPE_AUTHORITY_LOG;
@@ -1797,49 +1999,19 @@ fn peer_vault_fixture(seed: u8) -> PeerVaultFixture {
     let vault_id = genesis_vault_id(&genesis).expect("genesis vault id");
     let genesis_hash = authority_entry_hash(&genesis).expect("genesis hash");
 
-    let enroll_admin = auth_entry(
+    // The peer authority log has a host root and a signed, non-widening
+    // withdrawal. Admin is pinned for the Connect gesture, not enrolled into
+    // the peer authority roster; agent/spare keys remain ineligible too.
+    let withdrawal = auth_entry(
         Some(vault_id),
         1,
         vec![genesis_hash],
-        AuthorityOp::EnrollDevice {
-            device: auth_device(auth_pub(&admin_signing), ROLE_OWNER | ROLE_ADMIN),
+        AuthorityOp::SlipRevoke {
+            slip_id: [seed.wrapping_add(20); 32],
         },
         &host_signing,
         None,
         2,
-    );
-    let enroll_agent = auth_entry(
-        Some(vault_id),
-        2,
-        vec![authority_entry_hash(&enroll_admin).expect("hash")],
-        AuthorityOp::EnrollDevice {
-            device: auth_device(auth_pub(&agent_signing), ROLE_AGENT),
-        },
-        &host_signing,
-        Some(&admin_signing),
-        3,
-    );
-    let enroll_spare = auth_entry(
-        Some(vault_id),
-        3,
-        vec![authority_entry_hash(&enroll_agent).expect("hash")],
-        AuthorityOp::EnrollDevice {
-            device: auth_device(auth_pub(&revoked_signing), ROLE_OWNER | ROLE_ADMIN),
-        },
-        &host_signing,
-        Some(&admin_signing),
-        4,
-    );
-    let revoke_spare = auth_entry(
-        Some(vault_id),
-        4,
-        vec![authority_entry_hash(&enroll_spare).expect("hash")],
-        AuthorityOp::RevokeDevice {
-            revoked_key: auth_pub(&revoked_signing),
-        },
-        &host_signing,
-        Some(&admin_signing),
-        5,
     );
 
     PeerVaultFixture {
@@ -1852,13 +2024,7 @@ fn peer_vault_fixture(seed: u8) -> PeerVaultFixture {
         agent_signing,
         revoked_signing,
         vault_id,
-        entries: vec![
-            genesis,
-            enroll_admin,
-            enroll_agent,
-            enroll_spare,
-            revoke_spare,
-        ],
+        entries: vec![genesis, withdrawal],
     }
 }
 
@@ -2054,7 +2220,7 @@ fn peer_roster_is_refolded_from_relayed_bytes_never_relayed_whole() {
         roots.contains(&peer.host),
         "host-root: the peer HOST key roots",
     );
-    assert!(roots.contains(&peer.admin));
+    assert!(!roots.contains(&peer.admin));
     assert!(!roots.contains(&peer.agent));
     assert!(!roots.contains(&peer.revoked));
 
@@ -2089,7 +2255,7 @@ fn peer_entry_admission_is_idempotent_and_order_free() {
     assert_eq!(roster.vault_id, Some(peer.vault_id));
     let roots = peer_consent_roots(&roster);
     assert!(roots.contains(&peer.host));
-    assert!(roots.contains(&peer.admin));
+    assert!(!roots.contains(&peer.admin));
     assert!(!roots.contains(&peer.agent));
     assert!(!roots.contains(&peer.revoked));
 
@@ -2213,8 +2379,8 @@ fn corrupt_stored_peer_bytes_fail_closed_instead_of_shrinking_the_roster() {
         "a corrupt local row is refused, never skipped into a partial roster"
     );
     assert!(
-        peer_consent_roots(&healthy).contains(&peer.admin),
-        "the skipped-row roster would have silently dropped this consent root"
+        peer_consent_roots(&healthy).contains(&peer.host),
+        "the healthy peer root is proved by the full signed history"
     );
     assert!(
         vault.authority_fold().is_err(),

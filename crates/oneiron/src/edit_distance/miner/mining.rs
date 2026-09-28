@@ -231,6 +231,17 @@ fn clusters_from(
     now: Option<u64>,
 ) -> Result<Vec<SubstitutionCluster>> {
     let artifacts = artifact_index(vault)?;
+    // Close the policy read transaction before any other vault read/write on
+    // this thread: heed does not allow a nested read slot for this environment.
+    let policies = {
+        let txn = vault.store.env.read_txn()?;
+        let policy = crate::gate::resolve_policy_manifest(&vault.store, &txn)?;
+        if policy.diagnostics.is_fail_closed() {
+            Vec::new()
+        } else {
+            policy.compilation_policies
+        }
+    };
     let decisions = super::feedback::principal_decisions(vault)?;
     let decision_by_receipt = decisions
         .iter()
@@ -265,12 +276,18 @@ fn clusters_from(
             continue;
         }
         for substitution in substitutions(source.delta_source, source.artifact) {
+            let target = binding.as_ref().map_or_else(Default::default, |_| {
+                super::policy::infer_target(
+                    &policies,
+                    binding.expect("bound decision").principal,
+                    &judgment.scope,
+                    &substitution.from,
+                    &substitution.to,
+                )
+            });
             let key = ClusterKey {
                 principal: binding.as_ref().map(|row| row.principal),
-                target: binding
-                    .as_ref()
-                    .map(|row| row.target.clone())
-                    .unwrap_or_default(),
+                target,
                 scope: judgment.scope.clone(),
                 actor: source.actor,
                 from: substitution.from,
@@ -310,9 +327,14 @@ fn clusters_from(
             };
             pair
         };
+        let target = if row.target == super::target::CompilationTarget::Fallback {
+            super::policy::infer_target(&policies, row.principal, &row.scope, &pair.0, &pair.1)
+        } else {
+            row.target
+        };
         let key = ClusterKey {
             principal: Some(row.principal),
-            target: row.target,
+            target,
             scope: row.scope,
             actor: row.actor,
             from: pair.0,

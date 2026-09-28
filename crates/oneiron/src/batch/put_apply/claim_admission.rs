@@ -11,6 +11,7 @@ pub(super) struct ClaimPutAdmission<'a> {
     pub(super) allow_reserved_predicate: bool,
     pub(super) write_envelope: Option<&'a WriteEnvelope>,
     pub(super) replicated: bool,
+    pub(super) transition: Option<&'a crate::batch::VerifiedClaimTransition>,
 }
 
 pub(super) fn admit_claim_put(
@@ -37,7 +38,32 @@ pub(super) fn admit_claim_put(
         None
     };
     crate::booking::publication::guard_publication_put(store, txn, id, body.as_ref())?;
+    crate::workspace_roster::guard_goal_claim_put(
+        store,
+        txn,
+        id,
+        body.as_ref(),
+        input.data,
+        input.replicated,
+    )?;
     if let Some(body) = &body {
+        // Replay applies the CRDT's current head, not every intermediate
+        // consent/demotion transition. Structural validation above still runs;
+        // local confidence admission needs a predecessor only on local writes.
+        if !input.replicated {
+            crate::write_envelope::carry_forward::validate_admission(
+                store,
+                txn,
+                &id,
+                body,
+                crate::write_envelope::carry_forward::CarryForwardAdmission {
+                    envelope: input.write_envelope,
+                    transition: input.transition,
+                    occurred: input.occurred,
+                    learned_at: input.learned_at,
+                },
+            )?;
+        }
         crate::scope_summary::merge_summary_ref(body)?;
         crate::federation::validate_ruling_claim(
             store,

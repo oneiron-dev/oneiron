@@ -42,8 +42,12 @@ mod pending_lookup;
 mod repair_tests;
 
 mod actor_fork;
+mod ask_policy;
 mod auto_checker;
 mod budget_policy;
+mod carry_forward;
+#[cfg(feature = "sync")]
+mod carry_forward_sync;
 mod charter_ceiling;
 mod claim_candidate_lineage;
 mod connector_budget;
@@ -51,6 +55,8 @@ mod consent_bundle;
 mod critical_confirm_index;
 mod critical_confirm_lifecycle;
 mod delegation;
+mod docedit_resource;
+mod docx_zip_budget;
 mod dreamer_precommit;
 mod effect_policy;
 mod evaluator_core;
@@ -62,11 +68,15 @@ mod manifest_authenticity;
 mod manifest_auto;
 mod policy_inputs;
 mod posture_override;
+mod pptx_limits;
 mod scoped_read;
+mod slide_review_policy;
 mod special_doors;
 mod support;
+mod tracker_limits;
 mod trust_boundary;
 mod vad_vetting;
+mod voice_serving;
 mod witness_message;
 
 mod auto_signals;

@@ -42,6 +42,8 @@ pub(crate) struct ClaimGateWrite<'a> {
     /// and every door that does not opt in is unchanged by construction.
     pub(crate) auto_checker: Option<&'a BoundedAutoChecker>,
     pub(crate) defer_metrics_until_commit: bool,
+    /// Sealed canonical transition. Presence alone never grants Gate authority.
+    pub(crate) transition: Option<&'a crate::batch::VerifiedClaimTransition>,
 }
 
 impl<'a> ClaimGateWrite<'a> {
@@ -56,7 +58,16 @@ impl<'a> ClaimGateWrite<'a> {
             envelope,
             auto_checker: None,
             defer_metrics_until_commit: false,
+            transition: None,
         }
+    }
+
+    pub(crate) fn with_transition(
+        mut self,
+        transition: Option<&'a crate::batch::VerifiedClaimTransition>,
+    ) -> Self {
+        self.transition = transition;
+        self
     }
 }
 

@@ -1,13 +1,20 @@
 //! Room participation and addressed turn claims. Joining grants no memory scope.
 mod history;
+mod liveness;
 #[cfg(test)]
 mod tests;
 mod witness;
 use super::ProjectRoom;
 use crate::error::{Error, Result};
 use crate::memory::{Memory, MemoryError, MemoryResult, WitnessReceipt, WitnessTurn};
+#[cfg(test)]
+use crate::workspace_roster::RoomThreadFill;
 use crate::{EntityId, Vault};
 pub(super) use history::delete_room_metadata;
+pub(crate) use liveness::RoomThreadTask;
+pub use liveness::{
+    RoomThread, RoomThreadList, RoomThreadPolicy, RoomThreadWait, RoomThreads, RoomWaitKind,
+};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 pub(crate) use witness::admit_witness;
@@ -44,7 +51,7 @@ fn room_in(vault: &Vault, txn: &heed::RoTxn<'_>, room: EntityId) -> Result<Proje
     }
     Ok(room)
 }
-fn require_member(
+pub(in crate::workspace_roster) fn require_member(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     room: EntityId,
@@ -56,7 +63,11 @@ fn require_member(
     }
     Ok(record)
 }
-fn turn_in(vault: &Vault, txn: &heed::RoTxn<'_>, id: EntityId) -> Result<RoomTurn> {
+pub(in crate::workspace_roster) fn turn_in(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    id: EntityId,
+) -> Result<RoomTurn> {
     let bytes = vault
         .store
         .vault_meta
@@ -76,6 +87,28 @@ pub struct RoomTurn {
     pub reply_to: Option<String>,
     pub thread_of: Option<String>,
     pub at: u64,
+}
+/// A delivered TASK's durable result, attached to its trunk on a room read.
+/// The TASK terminal register holds the fact; no second row is stored.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RoomTrunkHeader {
+    pub thread: EntityId,
+    pub task: EntityId,
+    pub result_ref: EntityId,
+}
+
+/// A trunk turn with the delivered task headers under its thread anchors.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RoomTrunk {
+    pub turn: RoomTurn,
+    pub headers: Vec<RoomTrunkHeader>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RoomThreadPage {
+    pub rows: Vec<EntityId>,
+    /// Explicit end marker: `None` means the room has no further page.
+    pub next_after: Option<EntityId>,
 }
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -97,6 +130,46 @@ pub enum RoomClaimOutcome {
     Claimed(RoomClaimReceipt),
     HeldBy(RoomClaimReceipt),
     NotAddressed,
+}
+
+/// Project rooms use the PROJECT roster instead of the ordinary membership
+/// ledger. Return None for other conversations so their historical membership
+/// windows remain authoritative at the ordinary audience door.
+pub(crate) fn project_room_audience_in(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    room: EntityId,
+    audience: &[EntityId],
+) -> Result<Option<bool>> {
+    let Some(raw) = vault.store.entities.get(txn, room.as_bytes())? else {
+        return Ok(None);
+    };
+    let header = crate::batch::EntityMetadataHeader::parse(&raw).ok_or_else(invalid)?;
+    if header.entity_type != crate::registry::ENTITY_TYPE_CONVERSATION {
+        return Ok(None);
+    }
+    let body = crate::conversation::ConversationBody::from_bytes(
+        &raw[crate::batch::ENTITY_METADATA_HEADER_LEN..],
+    )?;
+    if !body.extra.contains_key("project_id")
+        && !body.extra.contains_key("memberIds")
+        && vault
+            .store
+            .vault_meta
+            .get(
+                txn,
+                &[super::project::ROOM_PROJECT, room.as_bytes()].concat(),
+            )?
+            .is_none()
+    {
+        return Ok(None);
+    }
+    let room = room_in(vault, txn, room)?;
+    Ok(Some(
+        audience
+            .iter()
+            .all(|actor| room.member_ids.contains(&actor.to_hex())),
+    ))
 }
 
 impl Vault {
