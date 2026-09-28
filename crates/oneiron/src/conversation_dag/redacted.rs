@@ -91,7 +91,8 @@ pub(crate) fn pin_record(vault: &Vault, txn: &mut heed::RwTxn<'_>, id: &EntityId
         room,
         parent: parents.first().copied(),
         session: crate::compaction::turn_session_membership_in_txn(&vault.store, txn, id)?,
-        thread: super::topology::record_kind(&row.body)? == Some(super::topology::RecordKind::Thread),
+        thread: super::topology::record_kind(&row.body)?
+            == Some(super::topology::RecordKind::Thread),
         author: author(&vault.store, txn, &row.body)?,
     };
     vault.store.vault_meta.put(

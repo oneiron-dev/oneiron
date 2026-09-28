@@ -179,7 +179,19 @@ pub(crate) fn allows(
             }
         }
     }
-    vault_seen && vault_allowed && nested_allowed && holder.unwrap_or(true)
+    if !vault_seen {
+        // No trusted manifest names this action: a seeded manifest that
+        // predates room rows is never reseeded, and a vault may hold none.
+        // The shipped default row decides, as absent policy does elsewhere.
+        vault_allowed = parse_rows(&default_rows()).is_some_and(|rows| {
+            let mut shipped = rows
+                .iter()
+                .filter(|row| row.action == action && row.room.is_none())
+                .peekable();
+            shipped.peek().is_some() && shipped.all(|row| row.admits(role))
+        });
+    }
+    vault_allowed && nested_allowed && holder.unwrap_or(true)
 }
 
 /// Shipped room behavior lives in the default POLICY_MANIFEST rather than a

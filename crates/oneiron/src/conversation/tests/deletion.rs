@@ -883,3 +883,61 @@ fn room_holder_override_cannot_widen_vault_delete_ceiling() {
     );
     assert!(vault.get(&record).unwrap().is_some());
 }
+
+#[test]
+fn manifest_seeded_before_room_rows_uses_shipped_room_defaults() {
+    let (_dir, vault, owner, room, _) = fixture();
+    let bob = second(&vault);
+    vault
+        .join_member(room, bob.entity_ref(), owner, 2, HistoryChoice::Share)
+        .unwrap();
+    // An existing vault keeps the manifest it was first seeded with; open
+    // never reseeds one that predates `room_policy_rows`.
+    let rmpv::Value::Map(fields) =
+        rmpv::decode::read_value(&mut crate::gate::default_policy_manifest().as_slice()).unwrap()
+    else {
+        unreachable!()
+    };
+    let legacy = rmpv::Value::Map(
+        fields
+            .into_iter()
+            .filter(|(key, _)| key.as_str() != Some("room_policy_rows"))
+            .collect(),
+    );
+    crate::test_util::put_policy_manifest_bytes(
+        &vault,
+        crate::gate::default_policy_manifest_id().unwrap(),
+        &encode(&legacy).unwrap(),
+    )
+    .unwrap();
+    let owned = vault
+        .append_dag_record(&record(&vault, room, owner, 3))
+        .unwrap()
+        .id;
+    let bobs = vault
+        .append_dag_record(&record(&vault, room, bob, 4))
+        .unwrap()
+        .id;
+    assert!(
+        vault
+            .delete_room_record(room, bobs, bob, crate::DeleteReason::UserDelete)
+            .unwrap()
+            .existed,
+        "the shipped default lets an author delete their own record"
+    );
+    assert_eq!(
+        vault
+            .delete_room_record(room, owned, bob, crate::DeleteReason::PolicyDelete)
+            .unwrap_err()
+            .kind(),
+        ErrorKind::ConversationDenied,
+        "the shipped default still limits policy deletion to owner/admin"
+    );
+    assert!(
+        vault
+            .delete_room_record(room, owned, owner, crate::DeleteReason::PolicyDelete)
+            .unwrap()
+            .receipt_id
+            .is_some()
+    );
+}

@@ -281,10 +281,14 @@ fn guard_erased_author_body(
     body: &[u8],
 ) -> Result<()> {
     if let Some(person) = turn_person(body)? {
+        // A known non-PERSON author is a bad carrier now. An unknown id stays
+        // admissible, as recipients do: a peer may deliver the TURN before
+        // (or without) its author's PERSON row. The erasure fence is keyed by
+        // id and still applies.
         if store
             .entities()
             .get(txn, person.as_bytes())?
-            .is_none_or(|row| row.first() != Some(&crate::registry::ENTITY_TYPE_PERSON))
+            .is_some_and(|row| row.first() != Some(&crate::registry::ENTITY_TYPE_PERSON))
         {
             return Err(invalid("room TURN author must be a PERSON"));
         }

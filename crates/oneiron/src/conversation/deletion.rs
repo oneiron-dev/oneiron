@@ -159,7 +159,13 @@ pub(crate) fn pin_room_message_edge(
             .get(txn, target.as_bytes())?
             .is_some_and(|raw| raw.first() == Some(&ENTITY_TYPE_CONVERSATION))
     {
-        if room_message_owner_in(store, txn, message)?.is_some_and(|room| room != target) {
+        // The new row is already staged: a second binding is a refused write,
+        // not a corrupted index.
+        if crate::conversation_dag::edge_ids(store, txn, &message, EdgeKind::BelongsTo, false, 2)?
+            .len()
+            > 1
+            || room_message_owner_in(store, txn, message)?.is_some_and(|room| room != target)
+        {
             return Err(denied());
         }
         store
@@ -334,18 +340,23 @@ pub(crate) fn replay_room_message_tombstone(
         // active scrub, so read the still-present original bytes under this
         // writer snapshot and validate its PERSON author before any child edge
         // is removed. Never infer an author from the caller's asserted role.
+        // A header-only shell (for example, recovered from a canonical
+        // snapshot without the local pin) has no body author left to read.
         match raw
             .get(crate::batch::ENTITY_METADATA_HEADER_LEN..)
+            .filter(|body| !body.is_empty())
             .map(record_author)
             .transpose()?
             .flatten()
         {
+            // Admission keeps an unknown author id (its PERSON row may never
+            // arrive); only a known non-PERSON author is a bad binding.
             Some(person)
                 if vault
                     .store
                     .entities
                     .get(txn, person.as_bytes())?
-                    .is_some_and(|row| row.first() == Some(&ENTITY_TYPE_PERSON)) =>
+                    .is_none_or(|row| row.first() == Some(&ENTITY_TYPE_PERSON)) =>
             {
                 Some(person)
             }
@@ -577,6 +588,38 @@ impl Vault {
             return Err(denied());
         }
         self.delete_room_record_as(room, record, actor, reason, None)
+    }
+
+    /// Test seam for suites whose subject is a downstream effect of deletion:
+    /// resolves the record's room and recorded author, then deletes through
+    /// [`Self::delete_room_record`] as that author. The door's checks all run.
+    #[cfg(test)]
+    pub(crate) fn delete_own_room_record(
+        &self,
+        record: EntityId,
+        reason: DeleteReason,
+    ) -> Result<DeleteEntityOutcome> {
+        let txn = self.store.env.read_txn()?;
+        let (room, author) = match message_room_author(self, &txn, record)? {
+            Some(found) => found,
+            None => (
+                conversation_of(&self.store, &txn, &record)?,
+                author_in(self, &txn, record)?,
+            ),
+        };
+        let author = author.ok_or_else(denied)?;
+        let class = match self
+            .store
+            .entities
+            .get(&txn, author.as_bytes())?
+            .and_then(|raw| raw.first().copied())
+        {
+            Some(crate::registry::ENTITY_TYPE_AGENT_DEF) => crate::edge::EdgeActorClass::Agent,
+            Some(crate::registry::ENTITY_TYPE_MACHINE) => crate::edge::EdgeActorClass::System,
+            _ => crate::edge::EdgeActorClass::Human,
+        };
+        drop(txn);
+        self.delete_room_record(room, record, WriteActor::new(author, class), reason)
     }
 
     /// Hard-erases this PERSON's live and soft-erased records in keyset pages.
