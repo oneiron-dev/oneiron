@@ -55,6 +55,7 @@ fn production_executor_mints_only_explicit_evidenced_people_and_never_relabels()
         actor: vault.dreamer_authority()?,
         model: crate::ModelId::new("test/model@r1").expect("regression fixture"),
         sink: &mut sink,
+        inference: test_inference_host(),
         scope: None,
     };
     let mut ctx = WakeAttemptContext {
