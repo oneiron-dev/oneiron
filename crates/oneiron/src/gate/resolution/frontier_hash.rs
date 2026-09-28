@@ -447,6 +447,13 @@ pub(super) fn hash_policy_frontier_v0(
     }
 
     hash_bool(hasher, resolution.owner_policy_enabled);
+    // The shipped nested_narrowing composition keeps the historical frontier
+    // bytes, so standing bindings survive; only a declared change is hashed.
+    if resolution.owner_policy_precedence != crate::gate::ceiling::PolicyOwnerPrecedence::default()
+    {
+        hash_str(hasher, "owner_policy_precedence");
+        hash_str(hasher, resolution.owner_policy_precedence.as_str());
+    }
     hash_bool(hasher, resolution.owner_policy_rows_dropped);
     hash_len(hasher, resolution.owner_policy_rows.len());
     for row in &resolution.owner_policy_rows {
@@ -531,6 +538,12 @@ fn hash_owner_policy_row(hasher: &mut Sha256, row: &PolicyOwnerPolicyRow) {
     hash_str(hasher, &row.text);
     hash_bool(hasher, row.active);
     hash_opt_str(hasher, row.world_ref.as_deref());
+    // Preserve the existing no-project frontier, while binding each new
+    // project scope to its exact bytes (and a distinct field domain).
+    if let Some(project_ref) = row.project_ref.as_deref() {
+        hash_str(hasher, "project_ref");
+        hash_str(hasher, project_ref);
+    }
     hash_str(hasher, row.action.as_str());
     hash_opt_str(hasher, row.human.as_deref());
     hash_opt_str(hasher, row.why.as_ref().map(|why| why.text.as_str()));

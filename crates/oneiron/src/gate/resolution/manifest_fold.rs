@@ -128,6 +128,13 @@ pub(crate) fn resolve_policy_manifest(
                     .owner_policy_rows
                     .extend(decoded.owner_policy_rows);
                 resolution.owner_policy_rows_dropped |= decoded.owner_policy_rows_dropped;
+                resolution.owner_policy_precedence = if resolution.packs.is_empty() {
+                    decoded.owner_policy_precedence
+                } else {
+                    resolution
+                        .owner_policy_precedence
+                        .restrict(decoded.owner_policy_precedence)
+                };
                 resolution.owner_policy_enabled |= decoded.owner_policy_enabled;
                 resolution
                     .owner_policy_patterns
@@ -426,9 +433,10 @@ pub(crate) fn resolve_policy_manifest(
 
     // Duplicate owner rows are refused per manifest by
     // `parse_owner_policy_rows`, but the RESOLVED table is the concatenation
-    // of every manifest's rows and `active_owner_policy_rows` first-matches
-    // over that concatenation. Two manifests naming the same `(row_ref,
-    // world_ref)` pair once each are individually well formed and still shadow
+    // of every manifest's rows and scope selection first-matches over that
+    // concatenation. Two manifests naming the same
+    // `(row_ref, world_ref, project_ref)` triple once each are individually
+    // well formed and still shadow
     // one another here — the same rule that can never fire, however strict its
     // action, only assembled across entities instead of inside one. So the
     // question is asked again of the resolved set, and answered the same way:
@@ -495,11 +503,10 @@ fn merge_single_owner_string(
 }
 
 /// Whether any two rows that could be in force TOGETHER claim the same
-/// `(row_ref, world_ref)` pair.
+/// `(row_ref, world_ref, project_ref)` triple.
 ///
-/// The PAIR, not the ref alone: one ref written under two worlds is the
-/// scoped-override shape `active_owner_policy_rows` exists to resolve, and only
-/// rows that would land in the same rubric together can shadow each other.
+/// The TRIPLE, not the ref alone: one ref written under separate scopes is a
+/// scoped override, and only rows in the same exact slot shadow each other.
 /// Same key as the per-manifest check in `parse_owner_policy_rows`.
 ///
 /// And only ACTIVE rows, for exactly the reason the sentence above gives.
@@ -511,9 +518,13 @@ fn merge_single_owner_string(
 /// question that was never ambiguous.
 fn has_duplicate_owner_policy_row(rows: &[PolicyOwnerPolicyRow]) -> bool {
     let mut seen = BTreeSet::new();
-    rows.iter()
-        .filter(|row| row.active)
-        .any(|row| !seen.insert((row.row_ref.as_str(), row.world_ref.as_deref())))
+    rows.iter().filter(|row| row.active).any(|row| {
+        !seen.insert((
+            row.row_ref.as_str(),
+            row.world_ref.as_deref(),
+            row.project_ref.as_deref(),
+        ))
+    })
 }
 
 impl Vault {

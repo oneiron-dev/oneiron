@@ -90,6 +90,10 @@ pub(super) const BUDGET_POLICY_ACTOR_KEY: &str = "actor";
 pub(super) const BUDGET_POLICY_FLOOR_KEY: &str = "floor";
 pub(super) const BUDGET_POLICY_CAP_KEY: &str = "cap";
 pub(crate) const POLICY_OWNER_POLICY_ROWS_KEY: &str = "owner_policy_rows";
+/// Manifest-authored owner row composition. Absence resolves to nested narrowing.
+pub(crate) const POLICY_OWNER_POLICY_PRECEDENCE_KEY: &str = "owner_policy_precedence";
+/// Manifest-resident delivery rule for owner-policy change receipts.
+pub(crate) const POLICY_OWNER_POLICY_NOTIFY_KEY: &str = "owner_policy_change_notifications";
 pub(crate) const POLICY_OWNER_POLICY_ENABLED_KEY: &str = "owner_policy_enabled";
 /// The owner plane's POLICY DOCUMENT: the text the vault owner wrote, sent to
 /// their safeguard model verbatim as the system message. Absent by default —
