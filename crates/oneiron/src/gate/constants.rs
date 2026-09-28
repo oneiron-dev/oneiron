@@ -77,6 +77,10 @@ pub(super) const ATTRIBUTION_RECEIPTS_PER_PASS_KEY: &str = "receipts_per_pass";
 pub(super) const ATTRIBUTION_HOLDER_REASON_BYTES_KEY: &str = "holder_reason_bytes";
 pub(super) const ATTRIBUTION_HOLDER_ACTOR_KEY: &str = "actor_ref";
 pub(super) const ATTRIBUTION_HOLDER_MAX_BYTES_KEY: &str = "max_bytes";
+/// Vault-resident extraction-teacher quality floor, in F1 millionths.
+/// The seeded default is data in `default_policy_manifest`; nested holder
+/// floors only narrow it, and independent trusted packs compose by max.
+pub(super) const POLICY_TEACHER_PROBE_KEY: &str = "teacher_probe";
 pub(super) const POLICY_BUDGET_POLICY_KEY: &str = "budget_policy";
 pub(super) const POLICY_HOSTED_TTS_KEY: &str = "hosted_tts";
 pub(super) const BUDGET_POLICY_PURPOSE_KEY: &str = "purpose";

@@ -424,6 +424,7 @@ fn run(config: AdapterConfig) -> Result<(), Box<dyn std::error::Error>> {
         diarization_model_id: config.routes.diarization.model_id.clone(),
         cleanup_policy: Some(policy.cleanup.clone()),
         local_only: true,
+        batch_asr_policy: None,
     };
     config
         .routes
