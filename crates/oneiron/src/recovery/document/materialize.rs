@@ -303,26 +303,40 @@ pub(crate) fn run_in_txn(
                     vault,
                     txn,
                     note,
-                    head,
-                    u64::try_from(seq).map_err(|_| invalid("NOTE head sequence"))?,
+                    (
+                        head,
+                        u64::try_from(seq).map_err(|_| invalid("NOTE head sequence"))?,
+                    ),
                     &row.text,
+                    row.title.as_deref(),
                     &row.authorship,
                 )?;
             } else {
-                crate::note::recovery::restore(vault, txn, note, &row.text, &row.authorship)?;
+                crate::note::recovery::restore(
+                    vault,
+                    txn,
+                    note,
+                    &row.text,
+                    row.title.as_deref(),
+                    &row.authorship,
+                )?;
             }
         } else {
             let key = crate::note::documents::doc_key(note, id(row.head)?);
             // Proposal equality is a text-value claim, never proof that a
             // nested Loro snapshot has no erased history. Rebuild even when
             // the current text matches; live value-equal docs remain untouched.
-            let doc = crate::note::documents::proposal_value(note, &row.text)?;
+            let doc =
+                crate::note::documents::proposal_value(note, &row.text, row.title.as_deref())?;
             vault
                 .store
                 .sync_state
                 .put(txn, &key, &crate::note::documents::snapshot(&doc)?)?;
         }
     }
+    // Install the NOTE-owned final title set even when every live document
+    // was value-equal and its history-free restore took the no-op path.
+    crate::note::replace_recovered_titles_in_txn(vault, txn, snapshot)?;
     for receipt in &snapshot.head_move_receipts {
         vault
             .store
@@ -340,6 +354,9 @@ pub(crate) fn run_in_txn(
             .store
             .vault_meta
             .put(txn, &workflow::bundle_key(bundle), &pack(bundle)?)?;
+    }
+    for row in &snapshot.entity_documents {
+        crate::entity_doc::restore_canonical(vault, txn, row)?;
     }
     Ok(())
 }

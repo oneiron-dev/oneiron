@@ -76,30 +76,6 @@ fn valid_text(value: &str, limit: u32) -> bool {
     !value.trim().is_empty() && value.len() <= usize::try_from(limit).unwrap_or(usize::MAX)
 }
 
-fn validate_live_owner(
-    vault: &Vault,
-    txn: &heed::RoTxn<'_>,
-    owner: &AuthenticatedOwner,
-) -> Result<()> {
-    owner.revalidate_in_txn(vault, txn)?;
-    if !matches!(
-        crate::vault::live_entity_row_in_txn(&vault.store, txn, &owner.actor())?,
-        crate::vault::LiveEntityRow::Live {
-            entity_type: crate::registry::ENTITY_TYPE_PERSON,
-            ..
-        }
-    ) || vault.entity_lifecycle_state_in_txn(txn, &owner.actor())?
-        != crate::identity_topology::EntityLifecycleState::Active
-    {
-        return Err(Error::Gate(
-            crate::error::GateError::ConsentOwnerNotAuthenticated(
-                "judge calibration requires a live human owner",
-            ),
-        ));
-    }
-    Ok(())
-}
-
 /// Propose an A/B ask when two judge revisions disagree on the same evidence.
 /// The options are their distinct revision answers, not answers supplied by
 /// this module. Repeating the same question returns its original identity.
@@ -235,7 +211,7 @@ pub fn set_judge_digest_minutes(
     minutes: u32,
 ) -> Result<()> {
     vault.with_write_txn(|txn| {
-        validate_live_owner(vault, &*txn, owner)?;
+        crate::dreamer_runner::maintenance::validate_owner_in_txn(vault, &*txn, owner)?;
         vault
             .store
             .vault_meta
@@ -276,7 +252,7 @@ pub fn record_judge_pick(
     at: u64,
 ) -> Result<JudgeLabel> {
     vault.with_write_txn(|txn| {
-        validate_live_owner(vault, &*txn, owner)?;
+        crate::dreamer_runner::maintenance::validate_owner_in_txn(vault, &*txn, owner)?;
         let raw = vault
             .store
             .vault_meta
@@ -332,6 +308,9 @@ pub(crate) fn take_digest_asks_in_txn(
         })
         .transpose()?
         .unwrap_or(0);
+    if minutes == 0 {
+        return Ok(Vec::new());
+    }
     let cost = super::policy::resolved_in_txn(vault, &*txn)?.ask_minutes;
     let slots = minutes / cost;
     if slots == 0 {

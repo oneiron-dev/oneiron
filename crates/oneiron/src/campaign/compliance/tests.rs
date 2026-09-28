@@ -539,6 +539,26 @@ fn hydrate(vault: &Vault, subject: EntityId) -> DispatchComplianceFacts {
     .expect("hydration")
 }
 
+#[test]
+fn provider_email_uses_email_consent_rows() {
+    let (_tmp, vault) = crate::test_util::open_test_vault_with(VaultConfig::device());
+    let subject = put_person(&vault, SUBJECT_SEED);
+    let rtxn = vault.store.env.read_txn().expect("read txn");
+    for channel in ["email_resend", "email_ses", "email_postmark"] {
+        let mut effect = gate_effect(None);
+        effect.channel = channel.to_owned();
+        let hydrated =
+            hydrate_dispatch_compliance_facts(&vault.store, &rtxn, &effect, subject, FRESH_NOW)
+                .expect("provider compliance facts");
+        assert_eq!(hydrated.channel, "email", "{channel}");
+        assert_eq!(
+            verdict(&facts(Some("UK"), &hydrated.channel)),
+            verdict(&facts(Some("UK"), "email")),
+            "{channel} must use the same consent-class and message-element rows",
+        );
+    }
+}
+
 /// Writes the evidence claim citing `provenance_ref` as `class`.
 fn put_evidence(vault: &Vault, subject: EntityId, provenance_ref: EntityId, class: &str) {
     put_claim(

@@ -1,8 +1,8 @@
 use super::*;
 use crate::receipt::ReceiptRecord;
-use crate::skill_reliability::{skill_reliability_posterior, skill_reliability_prior};
+use crate::skill_reliability::{skill_reliability_posterior_for_executor, skill_reliability_prior};
 
-fn terminal(vault: &Vault, failed: bool) -> Result<String> {
+fn terminal(vault: &Vault, actor: EntityId, failed: bool) -> Result<String> {
     let queue = AttemptQueue::new(vault);
     let EnqueueOutcome::Enqueued(row) = queue.enqueue(EnqueueAttempt {
         kind: "attribution.sweep".to_owned(),
@@ -14,6 +14,7 @@ fn terminal(vault: &Vault, failed: bool) -> Result<String> {
     else {
         panic!("new")
     };
+    vault.bind_actor_attempt(row.id, &actor)?;
     queue.append_manifest_entry(
         row.id,
         ManifestEntry::new(ManifestKind::Skill, FIXTURE_SKILL_ID, "1.0.0", 11),
@@ -28,6 +29,7 @@ fn terminal(vault: &Vault, failed: bool) -> Result<String> {
     else {
         panic!("lease")
     };
+    queue.set_executor_model(row.id, "host", leased.attempt_count, "fixture/model@1")?;
     if failed {
         queue.fail(crate::attempt_queue::FailAttempt {
             id: row.id,
@@ -68,7 +70,7 @@ fn task_sweep_projects_defect_lapse_and_win_once_across_bounded_pages() -> Resul
     let actor = put_actor(&vault, EntityId::now())?;
     let skill = put_skill(&vault, EntityId::now(), FIXTURE_SKILL_ID)?;
     let prior = skill_reliability_prior(&vault, &skill)?;
-    terminal(&vault, true)?;
+    terminal(&vault, actor, true)?;
     let mut source = Source {
         actor,
         skill,
@@ -77,17 +79,19 @@ fn task_sweep_projects_defect_lapse_and_win_once_across_bounded_pages() -> Resul
     let defect = run_task_attribution_sweep(&vault, 1, &source)?;
     assert_eq!(defect.captured_evidence, 1);
     assert_eq!(defect.judgments, 1);
-    let after_defect = skill_reliability_posterior(&vault, &skill)?.unwrap();
+    let after_defect =
+        skill_reliability_posterior_for_executor(&vault, &skill, "fixture/model@1")?.unwrap();
     assert_eq!(after_defect.beta, prior.beta + 1.0);
     assert!(after_defect.mean() < prior.mean());
-    source.lapse = Some(terminal(&vault, true)?);
-    terminal(&vault, false)?;
+    source.lapse = Some(terminal(&vault, actor, true)?);
+    terminal(&vault, actor, false)?;
     let mut captures = 0;
     for _ in 0..3 {
         captures += run_task_attribution_sweep(&vault, 1, &source)?.captured_evidence;
     }
     assert_eq!(captures, 2);
-    let after = skill_reliability_posterior(&vault, &skill)?.unwrap();
+    let after =
+        skill_reliability_posterior_for_executor(&vault, &skill, "fixture/model@1")?.unwrap();
     assert_eq!(after.alpha, prior.alpha + 1.0);
     assert_eq!(after.beta, prior.beta + 1.0);
     let failures = vault
@@ -105,7 +109,10 @@ fn task_sweep_projects_defect_lapse_and_win_once_across_bounded_pages() -> Resul
     assert_eq!(rerun.judgments, 0);
     assert!(rerun.failures.is_empty());
     assert_eq!(read_attribution_cursor(&vault)?, cursor);
-    assert_eq!(skill_reliability_posterior(&vault, &skill)?, Some(after));
+    assert_eq!(
+        skill_reliability_posterior_for_executor(&vault, &skill, "fixture/model@1")?,
+        Some(after)
+    );
     assert_eq!(attribution_judgments(&vault)?.len(), 2);
     Ok(())
 }

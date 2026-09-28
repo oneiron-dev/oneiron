@@ -60,6 +60,10 @@ impl NativeClient {
         memory_pack_from_engine(output).map_err(boundary_error)
     }
     #[napi]
+    pub fn export(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner.agent_verb("export", input).map_err(facade_error)
+    }
+    #[napi]
     pub fn receipts(&self, limit: Option<f64>) -> napi::Result<Vec<NapiGateReceipt>> {
         let limit = limit
             .map(limit_to_engine)
@@ -219,6 +223,30 @@ impl NativeClient {
     pub fn rooms_messages(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
         self.inner
             .agent_verb("rooms.messages", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn rooms_render(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("rooms.render", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn rooms_find(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("rooms.find", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn rooms_get(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("rooms.get", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn rooms_trunk(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("rooms.trunk", input)
             .map_err(facade_error)
     }
     #[napi]

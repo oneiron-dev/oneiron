@@ -60,11 +60,16 @@ impl ReflectionGapKind {
 }
 
 /// One observed reflection gap.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct ReflectionGap {
     pub kind: ReflectionGapKind,
     pub subject: EntityId,
     pub evidence_turn_refs: Vec<EntityId>,
+    /// Typed citations for conflict escalation; TURN-only detectors use empty.
+    pub evidence_refs: Vec<super::SwarmEvidenceRef>,
+    /// Parent-verified citation identity, absent only for deterministic
+    /// TURN-only detectors that have no child judgement.
+    pub verified_evidence: Option<Value>,
     pub first_seen: u64,
     pub last_seen: u64,
     pub escalations: u32,
@@ -84,7 +89,7 @@ pub fn gap_hash(kind: ReflectionGapKind, subject: &EntityId, description: &str) 
 }
 
 /// Outcome of one gap-queue upsert pass.
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, PartialEq, Default)]
 pub struct GapQueueDelta {
     pub created: u32,
     pub refreshed: u32,
@@ -124,6 +129,8 @@ pub fn scan_reflection_gaps(
                 kind: ReflectionGapKind::UnresolvedThread,
                 subject: conversation,
                 evidence_turn_refs: vec![last.turn_id],
+                evidence_refs: Vec::new(),
+                verified_evidence: None,
                 first_seen: now,
                 last_seen: now,
                 escalations: 0,
@@ -146,6 +153,8 @@ pub fn scan_reflection_gaps(
                     kind: ReflectionGapKind::MissingFollowUp,
                     subject: conversation,
                     evidence_turn_refs: vec![turn.turn_id],
+                    evidence_refs: Vec::new(),
+                    verified_evidence: None,
                     first_seen: now,
                     last_seen: now,
                     escalations: 0,
@@ -157,6 +166,8 @@ pub fn scan_reflection_gaps(
                     kind: ReflectionGapKind::StatedIntentWithoutAction,
                     subject: conversation,
                     evidence_turn_refs: vec![turn.turn_id],
+                    evidence_refs: Vec::new(),
+                    verified_evidence: None,
                     first_seen: now,
                     last_seen: now,
                     escalations: 0,
@@ -250,6 +261,8 @@ fn upsert_gap_projection(
                 }
                 stored.last_seen = now;
                 stored.evidence_turn_refs = gap.evidence_turn_refs;
+                stored.evidence_refs = gap.evidence_refs;
+                stored.verified_evidence = gap.verified_evidence;
                 let encoded = encode_gap_row(&stored)?;
                 vault.store.vault_meta.put(&mut wtxn, &key, &encoded)?;
                 delta.refreshed += 1;
@@ -296,6 +309,89 @@ fn upsert_gap_projection(
     Ok(delta)
 }
 
+const GAP_EVIDENCE_REFS_KEY: &str = "evidence_refs";
+
+fn encode_gap_locator(locator: &super::SwarmEvidenceRef) -> Value {
+    let mut fields = vec![(
+        Value::from("source_id"),
+        Value::Binary(locator.source_id.as_bytes().to_vec()),
+    )];
+    if let Some(claim) = locator.claim_id {
+        fields.push((
+            Value::from("claim_id"),
+            Value::Binary(claim.as_bytes().to_vec()),
+        ));
+    }
+    if let Some((start, end)) = locator.byte_range {
+        fields.push((
+            Value::from("byte_range"),
+            Value::Array(vec![Value::from(start as u64), Value::from(end as u64)]),
+        ));
+    }
+    Value::Map(fields)
+}
+
+fn decode_gap_locator(value: &Value) -> Result<super::SwarmEvidenceRef> {
+    let Value::Map(fields) = value else {
+        return Err(invalid_consolidation("gap evidence locator must be a map"));
+    };
+    let mut source_id = None;
+    let mut claim_id = None;
+    let mut byte_range = None;
+    for (key, value) in fields {
+        match key.as_str() {
+            Some("source_id") if source_id.is_none() => {
+                source_id = Some(
+                    entity_ref_from_value(value)
+                        .ok_or_else(|| invalid_consolidation("invalid gap evidence source"))?,
+                );
+            }
+            Some("claim_id") if claim_id.is_none() => {
+                claim_id = Some(
+                    entity_ref_from_value(value)
+                        .ok_or_else(|| invalid_consolidation("invalid gap claim ref"))?,
+                );
+            }
+            Some("byte_range") if byte_range.is_none() => {
+                let Value::Array(pair) = value else {
+                    return Err(invalid_consolidation("invalid gap byte range"));
+                };
+                let [start, end] = pair.as_slice() else {
+                    return Err(invalid_consolidation("invalid gap byte range"));
+                };
+                byte_range = Some((
+                    usize::try_from(
+                        start
+                            .as_u64()
+                            .ok_or_else(|| invalid_consolidation("invalid gap start"))?,
+                    )
+                    .map_err(|_| invalid_consolidation("gap start overflow"))?,
+                    usize::try_from(
+                        end.as_u64()
+                            .ok_or_else(|| invalid_consolidation("invalid gap end"))?,
+                    )
+                    .map_err(|_| invalid_consolidation("gap end overflow"))?,
+                ));
+            }
+            _ => {
+                return Err(invalid_consolidation(
+                    "duplicate or unknown gap evidence locator",
+                ));
+            }
+        }
+    }
+    let source_id =
+        source_id.ok_or_else(|| invalid_consolidation("missing gap evidence source"))?;
+    if claim_id.is_some() && byte_range.is_some() {
+        return Err(invalid_consolidation("gap locator mixes claim and range"));
+    }
+    Ok(super::SwarmEvidenceRef {
+        source_id,
+        claim_id,
+        byte_range,
+    })
+}
+
 fn encode_gap_row(gap: &ReflectionGap) -> Result<Vec<u8>> {
     encode_value(&Value::Map(vec![
         (
@@ -316,6 +412,14 @@ fn encode_gap_row(gap: &ReflectionGap) -> Result<Vec<u8>> {
                     .collect(),
             ),
         ),
+        (
+            Value::from(GAP_EVIDENCE_REFS_KEY),
+            Value::Array(gap.evidence_refs.iter().map(encode_gap_locator).collect()),
+        ),
+        (
+            Value::from("verified_evidence"),
+            gap.verified_evidence.clone().unwrap_or(Value::Nil),
+        ),
         (Value::from(KEY_FIRST_SEEN), Value::from(gap.first_seen)),
         (Value::from(KEY_LAST_SEEN), Value::from(gap.last_seen)),
         (Value::from(KEY_ESCALATIONS), Value::from(gap.escalations)),
@@ -323,12 +427,14 @@ fn encode_gap_row(gap: &ReflectionGap) -> Result<Vec<u8>> {
     ]))
 }
 
-fn decode_gap_row(raw: &[u8]) -> Result<ReflectionGap> {
+pub(super) fn decode_gap_row(raw: &[u8]) -> Result<ReflectionGap> {
     let value = decode_value(raw)?;
     let entries = expect_map(&value, "dreamer gap row must be a MessagePack map")?;
     let mut kind = None;
     let mut subject = None;
     let mut evidence = Vec::new();
+    let mut evidence_refs = Vec::new();
+    let mut verified_evidence = None;
     let mut first_seen = None;
     let mut last_seen = None;
     let mut escalations = None;
@@ -349,6 +455,20 @@ fn decode_gap_row(raw: &[u8]) -> Result<ReflectionGap> {
                     }
                 }
             }
+            GAP_EVIDENCE_REFS_KEY => {
+                let Value::Array(rows) = value else {
+                    return Err(invalid_consolidation("gap evidence refs must be an array"));
+                };
+                evidence_refs = rows.iter().map(decode_gap_locator).collect::<Result<_>>()?;
+            }
+            "verified_evidence" => {
+                if !matches!(value, Value::Nil) {
+                    super::decode_consolidation_evidence(value)?
+                        .ok_or_else(|| invalid_consolidation("invalid verified gap evidence"))?;
+                    super::decode_verified_locators(value)?;
+                    verified_evidence = Some(value.clone());
+                }
+            }
             KEY_FIRST_SEEN => first_seen = value.as_u64(),
             KEY_LAST_SEEN => last_seen = value.as_u64(),
             KEY_ESCALATIONS => escalations = value.as_u64(),
@@ -360,6 +480,8 @@ fn decode_gap_row(raw: &[u8]) -> Result<ReflectionGap> {
         kind: kind.ok_or(invalid_consolidation("missing dreamer gap kind"))?,
         subject: subject.ok_or(invalid_consolidation("missing dreamer gap subject"))?,
         evidence_turn_refs: evidence,
+        evidence_refs,
+        verified_evidence,
         first_seen: first_seen.ok_or(invalid_consolidation("missing dreamer gap first_seen"))?,
         last_seen: last_seen.ok_or(invalid_consolidation("missing dreamer gap last_seen"))?,
         escalations: u32::try_from(escalations.unwrap_or(0))

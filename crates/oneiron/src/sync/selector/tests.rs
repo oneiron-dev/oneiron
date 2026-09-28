@@ -4519,9 +4519,14 @@ fn put_delegate_grant(
         FederationGrantRole::Admin,
         FederationGrantPreset::Admin,
     );
-    let delegate =
+    let mut delegate =
         FederationGrant::attenuated_delegate(&parent, member_ref, now_secs, expires_at_secs)
             .expect("an admin parent mints a delegate");
+    // Clock/selector fixture: select an explicit read capability. The bare
+    // constructor is inert; production mints from vault-resident policy.
+    delegate.authority_scope = parent
+        .authority_scope
+        .meet(&crate::federation::scope_codec::read_preset());
     let grant_id = EntityId::now();
     vault
         .batch()
@@ -5325,6 +5330,7 @@ fn document_peer_import_rechecks_pact_activation_ceiling_and_expiry_in_txn() {
         preset: FederationGrantPreset::Delegate,
         expires_at: Some(1),
         delegated_by: Some(entity_id(0x35)),
+        guest: None,
     };
     vault
         .batch()
@@ -5643,4 +5649,97 @@ fn a_named_facet_request_selects_a_note_born_under_that_facet() {
     );
 
     assert!(import_ids(&note_window_export(&vault, note, &selector)).contains(&note));
+}
+
+#[test]
+fn federation_addressing_copy_requires_stamped_source_and_exact_edge_bytes() {
+    let (_dir, source, conv, actor) = crate::conversation_dag::fixtures::fixture();
+    let recipient = EntityId::now();
+    let forged = EntityId::now();
+    for id in [recipient, forged] {
+        source
+            .put_entity(
+                &id,
+                ENTITY_TYPE_PERSON,
+                TimeRange { start: 1, end: 1 },
+                1,
+                &crate::conversation_dag::fixtures::body("person"),
+            )
+            .unwrap();
+    }
+    let mut input = crate::conversation_dag::fixtures::input(conv, None, true, actor);
+    input.address = crate::conversation_dag::AddressMode::Direct;
+    input.recipients = vec![recipient];
+    let record = source.append_dag_record(&input).unwrap().id;
+    let key = WindowKey::from_timestamp(input.learned_at);
+    let source_doc = create_window_doc("source", &key);
+    crate::sync::window::reverse_rematerialize(&source, &source_doc, &key).unwrap();
+    let valid = crate::sync::bridge::format_edge_key(&record, EdgeKind::AddressedTo, &recipient);
+    let invalid = crate::sync::bridge::format_edge_key(&record, EdgeKind::AddressedTo, &forged);
+    map_insert_bytes(
+        &source_doc.get_map("edges"),
+        &invalid,
+        &encode_edge_value_for_crdt(EdgeKind::AddressedTo, 1.0, input.learned_at, None, None)
+            .unwrap(),
+    )
+    .unwrap();
+    let target = create_window_doc("target", &key);
+    let peer_dir = tempfile::tempdir().unwrap();
+    let peer = Vault::open(peer_dir.path(), crate::VaultConfig::device()).unwrap();
+    edge::copy_admitted_edges(
+        &peer,
+        &key,
+        &source_doc.get_map("entities"),
+        &source_doc.get_map("edges"),
+        &target.get_map("edges"),
+    )
+    .unwrap();
+    assert!(crate::sync::loro_support::map_contains_binary(
+        &target.get_map("edges"),
+        &valid
+    ));
+    assert!(!crate::sync::loro_support::map_contains_binary(
+        &target.get_map("edges"),
+        &invalid
+    ));
+    assert!(
+        quarantined_records(&peer)
+            .unwrap()
+            .iter()
+            .any(|(_, row)| row.container == QuarantineContainer::Edges
+                && row.reason_code == "ReservedEdgeKind")
+    );
+}
+
+#[test]
+fn ask_guest_grant_cannot_authorize_sync_selector() {
+    let member = entity_id(0x70);
+    let group = entity_id(0x71);
+    let guest = FederationGrant::ask_guest(
+        group,
+        member,
+        entity_id(0x72),
+        entity_id(0x73),
+        std::collections::BTreeSet::from([entity_id(0x74)]),
+    )
+    .expect("valid guest grant");
+    let dir = tempfile::tempdir().unwrap();
+    let vault = Vault::open(dir.path(), crate::VaultConfig::device()).unwrap();
+    let grant_id = EntityId::now();
+    let body = encode_federation_grant_body(&guest).unwrap();
+    vault
+        .batch()
+        .put_replicated(
+            &grant_id,
+            ENTITY_TYPE_FEDERATION_GRANT,
+            TimeRange { start: 1, end: 1 },
+            1,
+            &body,
+        )
+        .commit()
+        .unwrap();
+    let selector = SyncSelector::new(grant_id, member, SyncSelectorWorld::All, vec![], vec![]);
+
+    assert!(authorize_sync_selector(&vault, FederationGrantScope::ask(group), &selector).is_err());
+    assert!(authorize_sync_selector(&vault, FederationGrantScope::vault(7), &selector).is_err());
 }

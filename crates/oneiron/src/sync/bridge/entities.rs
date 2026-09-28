@@ -42,12 +42,25 @@ pub(super) fn materialize_entities_from_delta(
     window_key: &str,
     lease_vault_id: u64,
 ) -> bool {
+    materialize_entities_with_changes(doc, delta, vault, window_key, lease_vault_id).0
+}
+
+/// Revision receipts are retained only after the nested savepoint and outer
+/// materialization transaction have both committed.
+pub(super) fn materialize_entities_with_changes(
+    doc: &LoroDoc,
+    delta: &loro::event::MapDelta<'_>,
+    vault: &Vault,
+    window_key: &str,
+    lease_vault_id: u64,
+) -> (bool, Vec<crate::vault::EntityRevisionChange>) {
     let tombstones_map = doc.get_map("tombstones");
     // ONE-1147: ids + op bytes applied into the batch txn, retained outside
     // it — on whole-txn failure there is no surviving per-entity failure
     // point (unlike the tombstone path), so the swallow site below needs
     // the full list to flag retry markers.
     let mut applied_ops: Vec<(EntityId, Vec<u8>)> = Vec::new();
+    let mut revision_changes = Vec::new();
     let mut pending_companion_scrubs = Vec::new();
     let result = vault.with_write_txn(|wtxn| {
         for (key, new_val) in &delta.updated {
@@ -162,6 +175,9 @@ pub(super) fn materialize_entities_from_delta(
                     // partial writes with its quarantine record or siblings.
                     let materialize_result = {
                         let mut savepoint = vault.store.env.nested_write_txn(wtxn)?;
+                        let previous_revision = crate::vault::entity_revision::revision_for_mode_in_txn(
+                            &vault.store, &savepoint, &id, crate::vault::ReadMode::Live,
+                        )?;
                         match materialize_entity_blob_in_txn(
                             vault,
                             &mut savepoint,
@@ -172,15 +188,34 @@ pub(super) fn materialize_entities_from_delta(
                             lease_vault_id,
                         ) {
                             Ok(applied) => {
+                                let revision = crate::vault::entity_revision::revision_for_mode_in_txn(
+                                    &vault.store, &savepoint, &id, crate::vault::ReadMode::Live,
+                                )?;
+                                let indexed_revision = crate::vault::entity_revision::revision_for_mode_in_txn(
+                                    &vault.store, &savepoint, &id, crate::vault::ReadMode::Indexed,
+                                )?;
                                 savepoint.commit()?;
-                                Ok(applied)
+                                // The savepoint has no postcommit owner. Carry
+                                // its claim change to the outer transaction's
+                                // watch, which fires only after THAT commit.
+                                if applied && header.entity_type == crate::registry::ENTITY_TYPE_CLAIM {
+                                    crate::batch::queue_proactivity_change(vault, wtxn);
+                                }
+                                Ok((applied, previous_revision, revision, indexed_revision))
                             }
                             Err(error) => Err(error),
                         }
                     };
                     match materialize_result {
-                        Ok(true) => applied_ops.push((id, blob.to_vec())),
-                        Ok(false) => {}
+                        Ok((true, previous_revision, revision, indexed_revision)) => {
+                            applied_ops.push((id, blob.to_vec()));
+                            if previous_revision != revision {
+                                revision_changes.push(crate::vault::EntityRevisionChange {
+                                    entity: id, previous_revision, revision, indexed_revision,
+                                });
+                            }
+                        }
+                        Ok((false, _, _, _)) => {}
                         Err(e) => {
                             if remote_rejection_reason(&e).is_some() {
                                 quarantine_rejected_op_in_txn(
@@ -315,7 +350,14 @@ pub(super) fn materialize_entities_from_delta(
             "observer-b: entity batch commit failed — flagged entity-scoped rm: markers for durable retry"
         );
     }
-    committed
+    (
+        committed,
+        if committed {
+            revision_changes
+        } else {
+            Vec::new()
+        },
+    )
 }
 
 /// ONE-1147 (best-effort, post-abort): `true` ONLY when the committed

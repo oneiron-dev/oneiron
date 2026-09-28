@@ -55,6 +55,7 @@ pub(crate) fn validate_project_body(id: EntityId, bytes: &[u8]) -> Result<Vec<En
     }
     refs.extend(&body.parents);
     refs.extend(body.goal.iter());
+    refs.extend(body.born_from.iter());
     refs.extend(body.budget.iter());
     for list in [
         &body.board,
@@ -79,6 +80,21 @@ pub(crate) fn validate_project_body(id: EntityId, bytes: &[u8]) -> Result<Vec<En
         ids.push(id);
     }
     if !body.roster.contains(&body.leader) {
+        return Err(invalid());
+    }
+    if body.goal_record.as_ref().is_some_and(|goal| {
+        goal.project_id != id.to_hex()
+            || goal.goal.trim().is_empty()
+            || goal.why.trim().is_empty()
+            || goal.axes.is_empty()
+            || goal.axes.len() > 128
+            || goal.axes.iter().any(|axis| axis.trim().is_empty())
+            || body.why.as_deref() != Some(goal.why.as_str())
+    }) || body.budget_share.as_ref().is_some_and(|budget| {
+        budget.project_id != id.to_hex()
+            || !body.parents.contains(&budget.parent_id)
+            || budget.share_bps > 10_000
+    }) {
         return Err(invalid());
     }
     Ok(ids)
@@ -107,6 +123,29 @@ pub(crate) fn reconcile_project_rooms(
         }
         let body: ProjectRecord = rmp_serde::from_slice(&raw[ENTITY_METADATA_HEADER_LEN..])
             .map_err(|_| Error::CorruptedIndex("project projection body"))?;
+        // The card's provenance is a MESSAGE, not just a parseable entity ID.
+        // Missing replicated dependencies are retryable by the sync entity pass;
+        // a wrong kind or erased source is terminal at every write door.
+        if let Some(source) = &body.born_from {
+            let source = EntityId::from_hex(source).map_err(|_| invalid())?;
+            let Some(message) = store.entities.get(txn, source.as_bytes())? else {
+                if store
+                    .sync_state
+                    .get(txn, &crate::deletion::local_hard_delete_key(&source))?
+                    .is_some()
+                {
+                    return Err(invalid());
+                }
+                return Err(RecordError::ProjectDependencyPending.into());
+            };
+            let message_header = EntityMetadataHeader::parse(&message)
+                .ok_or(Error::CorruptedIndex("project born-from header"))?;
+            if message_header.entity_type != crate::registry::ENTITY_TYPE_MESSAGE
+                || message.len() == ENTITY_METADATA_HEADER_LEN
+            {
+                return Err(invalid());
+            }
+        }
         // Fail closed on cycles, dangling parents, and non-project parents.
         let mut visited = BTreeSet::from([id.to_hex()]);
         let mut pending = body.parents.clone();

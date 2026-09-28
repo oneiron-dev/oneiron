@@ -3,14 +3,12 @@ use super::*;
 
 // ── ONE-1914 · corpus scope filter ──────────────────────────────────────
 
-fn corpus(byte: u8) -> CorpusId {
-    CorpusId::from_entity_id(entity_id(byte))
+fn corpus(byte: u8) -> EntityId {
+    entity_id(byte)
 }
 
-/// A live CLAIM body carrying an optional corpus scope (`None` =
-/// unscoped/core). Built through the pinned claim encoder so the nested
-/// `corpus_id` entry is the real 16-byte binary the read side decodes.
-fn corpus_claim_body(corpus_scope: Option<CorpusId>) -> Result<Vec<u8>> {
+/// A live CLAIM body stamped with a project id (`None` = default project).
+fn corpus_claim_body(corpus_scope: Option<EntityId>) -> Result<Vec<u8>> {
     let mut body = ClaimBody::new(
         "facet.scope_test",
         ClaimSubject::Entity(entity_id(0x7C)),
@@ -20,9 +18,9 @@ fn corpus_claim_body(corpus_scope: Option<CorpusId>) -> Result<Vec<u8>> {
         ClaimLifecycleStatus::Active,
     );
     if let Some(corpus_scope) = corpus_scope {
-        body.scope = Some(scope_with_corpus_id(None, corpus_scope)?);
+        body.scope_project = corpus_scope;
     }
-    Ok(crate::claim::encode_claim_body(&body).expect("encode claim body"))
+    crate::claim::encode_claim_body(&body)
 }
 
 /// A vector-ranked corpus-scoped CLAIM.
@@ -30,7 +28,7 @@ fn put_claim_with_vector_corpus(
     vault: &Vault,
     id: EntityId,
     vector: [f32; 4],
-    corpus_scope: Option<CorpusId>,
+    corpus_scope: Option<EntityId>,
 ) -> Result<()> {
     vault
         .batch()
@@ -51,7 +49,7 @@ fn put_claim_text_corpus(
     vault: &Vault,
     id: EntityId,
     text: &str,
-    corpus_scope: Option<CorpusId>,
+    corpus_scope: Option<EntityId>,
 ) -> Result<()> {
     vault
         .batch()
@@ -67,15 +65,15 @@ fn put_claim_text_corpus(
 }
 
 struct CorpusFixture {
-    corpus_a: CorpusId,
-    corpus_b: CorpusId,
+    corpus_a: EntityId,
+    corpus_b: EntityId,
     claim_core: EntityId,
     claim_a: EntityId,
     claim_b: EntityId,
     event: EntityId,
 }
 
-/// Three claims — unscoped, corpus A, corpus B — plus one non-CLAIM row, all
+/// Three claims — default project, corpus A, corpus B — plus one non-CLAIM row, all
 /// reachable from [`FACET_QUERY`].
 fn setup_corpus_fixture(vault: &Vault) -> Result<CorpusFixture> {
     let fixture = CorpusFixture {
@@ -119,7 +117,7 @@ fn setup_corpus_fixture(vault: &Vault) -> Result<CorpusFixture> {
 /// corpus, another corpus's claims are removed, and non-CLAIM rows never
 /// participate.
 #[test]
-fn corpus_scope_selects_audience_and_keeps_unscoped_claims() -> Result<()> {
+fn corpus_scope_selects_exact_project_stamps() -> Result<()> {
     let (_dir, vault) = open_test_vault();
     let fixture = setup_corpus_fixture(&vault)?;
     let ids = |scope: Option<CorpusScope>| -> Result<HashSet<EntityId>> {
@@ -146,15 +144,15 @@ fn corpus_scope_selects_audience_and_keeps_unscoped_claims() -> Result<()> {
         );
     }
 
-    // Corpus(A): A's claims + unscoped core + the non-claim row; B is gone.
+    // Corpus(A): A's claims and the non-claim row; default/B are gone.
     let in_a = ids(Some(CorpusScope::Corpus(fixture.corpus_a)))?;
     assert_eq!(
         in_a,
-        HashSet::from([fixture.claim_core, fixture.claim_a, fixture.event]),
-        "Corpus(A) keeps A + unscoped + non-claims, drops B"
+        HashSet::from([fixture.claim_a, fixture.event]),
+        "Corpus(A) keeps only A claims and non-claims"
     );
 
-    // Unscoped: core only — every corpus-scoped claim is removed.
+    // Unscoped selects the default project, not universal claims.
     let unscoped = ids(Some(CorpusScope::Unscoped))?;
     assert_eq!(
         unscoped,
@@ -162,20 +160,15 @@ fn corpus_scope_selects_audience_and_keeps_unscoped_claims() -> Result<()> {
         "Unscoped keeps core knowledge and drops every corpus-scoped claim"
     );
 
-    // AnyOf spans the named corpora, still alongside unscoped core.
+    // AnyOf spans exactly the named project ids, not the default project.
     let any_of = ids(Some(CorpusScope::AnyOf(vec![
         fixture.corpus_a,
         fixture.corpus_b,
     ])))?;
     assert_eq!(
         any_of,
-        HashSet::from([
-            fixture.claim_core,
-            fixture.claim_a,
-            fixture.claim_b,
-            fixture.event
-        ]),
-        "AnyOf(A, B) keeps both corpora plus unscoped"
+        HashSet::from([fixture.claim_a, fixture.claim_b, fixture.event]),
+        "AnyOf(A, B) keeps both project corpora only"
     );
     Ok(())
 }
@@ -416,13 +409,13 @@ fn corpus_trace_forks_equal_candidates_by_canonical_selection() -> Result<()> {
         CorpusScope::AnyOf(vec![corpus(0x95), corpus(0x96)]),
     ];
     let traces = scopes.into_iter().map(trace).collect::<Result<Vec<_>>>()?;
-    let expected = &traces[0].final_stage.candidates;
-    assert!(!expected.is_empty());
-    for current in &traces {
-        assert_eq!(&current.final_stage.candidates, expected);
-        assert_eq!(current.per_channel, traces[0].per_channel);
-        assert_eq!(current.fused, traces[0].fused);
-        assert_eq!(current.blended, traces[0].blended);
+    assert!(!traces[0].final_stage.candidates.is_empty());
+    assert_eq!(
+        traces[0].final_stage.candidates,
+        traces[1].final_stage.candidates
+    );
+    for trace in &traces[2..] {
+        assert!(trace.final_stage.candidates.is_empty());
     }
     assert_eq!(
         traces

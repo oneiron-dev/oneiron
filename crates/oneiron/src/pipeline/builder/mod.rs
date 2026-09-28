@@ -1,0 +1,654 @@
+#[path = "../builder_capture.rs"]
+mod capture;
+#[path = "../builder_effort.rs"]
+mod effort;
+mod terminal;
+
+use std::collections::HashMap;
+
+use crate::Vault;
+use crate::codebase::RepoRef;
+use crate::context_pack::ContextPackRetrievalBudget;
+use crate::corpus::CorpusScope;
+use crate::entity_id::EntityId;
+use crate::error::Result;
+use crate::query_expansion::{GroundingContext, HydeExpander, HydeOptions};
+use crate::rerank::{RerankOptions, Reranker};
+use crate::store::RetrievalAction;
+use crate::temporal::{TemporalAnchorMode, TemporalGranularity, TimeRange};
+
+use super::support::normalize_range;
+use super::types::{
+    ActiveWorldSelection, DEFAULT_RESULT_LIMIT, DEFAULT_SIGMA_SECS, FacetMode, RelMode,
+    ScoredEntity, TemporalSearchConfig, WorldAuthoritySet, WorldScope,
+};
+
+#[derive(Clone)]
+#[must_use = "PipelineBuilder executes no query until a terminal `.run*()` method is called"]
+pub struct PipelineBuilder<'a> {
+    pub(super) vault: &'a Vault,
+    pub(super) vector_search: Option<(Vec<f32>, usize)>,
+    pub(super) text_search: Option<(String, usize)>,
+    pub(super) rank_profile: Option<crate::config::Bm25RankProfile>,
+    pub(super) phonetic_search: Option<Vec<String>>,
+    pub(super) temporal_search: Option<TemporalSearchConfig>,
+    pub(super) ppr_search: Option<(Vec<EntityId>, u32)>,
+    pub(super) ppr_expand: Option<(Vec<EntityId>, u32)>,
+    pub(super) community_session_usage: Option<&'a HashMap<crate::ppr_community::CommunityId, u32>>,
+    pub(super) recency_blend_enabled: bool,
+    pub(super) apply_salience: bool,
+    pub(super) apply_confidence: bool,
+    pub(super) apply_gravity: bool,
+    pub(super) apply_contiguity: bool,
+    /// Internal memory allocation mask, not a caller authority predicate.
+    pub(super) memory_category: bool,
+    pub(super) candidate_filter: Option<&'a super::CandidateFilter<'a>>,
+    pub(super) type_filter: Option<Vec<u8>>,
+    pub(super) criticality: Option<bool>,
+    pub(super) authority_filter: Option<crate::gate::ResolvedRetrievalFilter>,
+    /// Only actor-scoped callers may nominate private diary NOTEs in a text channel.
+    pub(super) scoped_note_reader: Option<crate::claim::ScopedReadActorKey>,
+    pub(super) since_filter: Option<u64>,
+    pub(super) occurred_range: Option<(u64, u64)>,
+    pub(super) learned_range: Option<(u64, u64)>,
+    pub(super) repo_ref_filter: Option<RepoRef>,
+    pub(super) project_id_filter: Option<String>,
+    pub(super) facet_filter: Option<(EntityId, FacetMode)>,
+    pub(super) relationship_filter: Option<(EntityId, RelMode)>,
+    pub(super) world_scope: WorldScope,
+    /// The per-turn ActiveSet selection (ONE-1420). A SIDECAR rather than a
+    /// payload on [`WorldScope::ActiveSet`], because the selection is in-memory
+    /// turn state that is never stored, separate from the selected scope
+    /// token shared with the context pack and the agent-scope mapping. `None`
+    /// under every other scope: [`PipelineBuilder::world`] clears it, so a
+    /// stale selection can never leak into another scope's run.
+    pub(super) active_world_selection: Option<ActiveWorldSelection>,
+    /// Captured only from a host-bound execution capability, never from a
+    /// selection's caller-supplied agent id. Bare `Vault::query` has none.
+    pub(super) execution_actor: Option<crate::write_envelope::WriteActor>,
+    pub(super) skill_executor: Option<String>,
+    pub(super) corpus_scope: CorpusScope,
+    pub(super) made_by: crate::provenance::made_by::MadeByPredicate,
+    pub(super) context_pack_budget: Option<ContextPackRetrievalBudget>,
+    pub(super) result_limit: usize,
+    pub(super) temporal_adaptive_default: bool,
+    pub(super) temporal_now: Option<u64>,
+    pub(super) telemetry_action: RetrievalAction,
+    pub(super) capture_retrieval_trace: bool,
+    pub(super) retrieval_state: Option<crate::store::RetrievalState>,
+    pub(super) retrieval_turn: Option<crate::store::RetrievalTurn>,
+    pub(super) corpus_snapshot_ref: Option<String>,
+    pub(super) replay_query_ref: Option<String>,
+    pub(super) deadline: Option<&'a crate::retrieval_depth::RetrievalDeadline>,
+    pub(super) rerank: Option<(&'a dyn Reranker, RerankOptions)>,
+    pub(super) hyde: Option<(&'a dyn HydeExpander, GroundingContext, HydeOptions)>,
+    pub(super) access_factor_overrides: Option<&'a HashMap<EntityId, f32>>,
+    pub(super) skip_vector_rescore: bool,
+    /// Additive session routing (ONE-1728 K10). `None` on every canonical
+    /// entry, which is therefore behaviorally unchanged; a retrieval issued
+    /// inside a room passes the room's registration door so the retrieval-run
+    /// row is written under the route the run captured — into the room's
+    /// overlay `VaultMeta` while it is off record, and under the same route's
+    /// refusal once it is not. Retrieval SCORING is untouched by this field.
+    pub(super) session: Option<&'a crate::off_record::SessionRetrievalTelemetry<'a>>,
+}
+
+impl<'a> PipelineBuilder<'a> {
+    pub(crate) fn new(vault: &'a Vault) -> Self {
+        Self {
+            vault,
+            vector_search: None,
+            text_search: None,
+            rank_profile: None,
+            phonetic_search: None,
+            temporal_search: None,
+            ppr_search: None,
+            ppr_expand: None,
+            community_session_usage: None,
+            recency_blend_enabled: false,
+            apply_salience: false,
+            apply_confidence: false,
+            apply_gravity: false,
+            apply_contiguity: false,
+            memory_category: false,
+            candidate_filter: None,
+            type_filter: None,
+            criticality: None,
+            authority_filter: None,
+            scoped_note_reader: None,
+            since_filter: None,
+            occurred_range: None,
+            learned_range: None,
+            repo_ref_filter: None,
+            project_id_filter: None,
+            facet_filter: None,
+            relationship_filter: None,
+            world_scope: WorldScope::All,
+            active_world_selection: None,
+            execution_actor: None,
+            skill_executor: None,
+            corpus_scope: CorpusScope::All,
+            made_by: crate::provenance::made_by::MadeByPredicate::All,
+            context_pack_budget: None,
+            result_limit: DEFAULT_RESULT_LIMIT,
+            temporal_adaptive_default: true,
+            temporal_now: None,
+            telemetry_action: RetrievalAction::Pipeline,
+            capture_retrieval_trace: false,
+            retrieval_state: None,
+            retrieval_turn: None,
+            corpus_snapshot_ref: None,
+            replay_query_ref: None,
+            deadline: None,
+            rerank: None,
+            hyde: None,
+            access_factor_overrides: None,
+            skip_vector_rescore: false,
+            session: None,
+        }
+    }
+
+    /// Selects the exact executor model@revision for skill reliability ranking.
+    /// Unspecified queries rank the unknown-executor arm, not another model's evidence.
+    pub fn skill_executor(mut self, model: impl Into<String>) -> Result<Self> {
+        let model = model.into();
+        crate::skill_reliability::validate_executor(&model)?;
+        self.skill_executor = Some(model);
+        Ok(self)
+    }
+
+    /// Resolve the same type gate for graph neighbors that the retrieval run
+    /// applies to primary candidates. An explicit named kind stays reachable.
+    pub(crate) fn neighbor_type_policy(
+        &self,
+        txn: &heed::RoTxn<'_>,
+    ) -> Result<(crate::gate::ResolvedRetrievalFilter, Option<&[u8]>)> {
+        let filter = match self.authority_filter.as_ref() {
+            Some(filter) => filter.clone(),
+            None => {
+                let policy = crate::gate::resolve_policy_manifest(&self.vault.store, txn)?;
+                let floor = policy.retrieval_floor_for_actor(None);
+                crate::gate::narrow_retrieval_filter(&floor, None)?
+            }
+        };
+        Ok((filter, self.type_filter.as_deref()))
+    }
+
+    /// Selects stated, concluded, or all claims after admission and before truncation.
+    pub fn made_by(mut self, predicate: crate::provenance::made_by::MadeByPredicate) -> Self {
+        self.made_by = predicate;
+        self
+    }
+
+    /// Routes this run's retrieval-run registration through a live room's
+    /// door (ONE-1728 K10). Additive: retrieval scoring, filters, and every
+    /// base reader stay exactly as they were.
+    ///
+    /// ONE-1570 Arm B lands the production caller P4a pinned the routing for:
+    /// `Memory::recall_in_session` takes the handle from
+    /// `OffRecordSession::retrieval_telemetry` and threads it here and
+    /// through [`crate::context_pack::ContextPackBuilder::in_session`].
+    pub(crate) fn in_session(
+        mut self,
+        session: &'a crate::off_record::SessionRetrievalTelemetry<'a>,
+    ) -> Self {
+        self.session = Some(session);
+        self
+    }
+
+    /// Installs only gate-resolved authority. Public callers use scoped search.
+    pub(crate) fn authority_filter(mut self, filter: crate::gate::ResolvedRetrievalFilter) -> Self {
+        self.authority_filter = Some(filter);
+        self
+    }
+
+    /// A scoped read provides the authenticated actor, not a candidate list.
+    pub(crate) fn scoped_note_reader(mut self, key: crate::claim::ScopedReadActorKey) -> Self {
+        self.scoped_note_reader = Some(key);
+        self
+    }
+
+    pub(crate) fn result_limit(&self) -> usize {
+        self.result_limit
+    }
+
+    /// Attaches a host-injected top-N reranker for this run (RET-010,
+    /// 1186-D2). Presence IS the feature flag: no reranker attached means
+    /// rerank is off and the pipeline behaves exactly as before. The block
+    /// size is `options.top_n`; the pipeline never overfetches on rerank's
+    /// behalf — the reranker only sees more than `result_limit` candidates
+    /// when the caller's per-channel limits exceed `result_limit`.
+    pub fn rerank(mut self, reranker: &'a dyn Reranker, options: RerankOptions) -> Self {
+        self.rerank = Some((reranker, options));
+        self
+    }
+
+    /// Opts into host-injected HyDE query expansion for this retrieval.
+    pub fn hyde(
+        mut self,
+        expander: &'a dyn HydeExpander,
+        grounding: GroundingContext,
+        options: HydeOptions,
+    ) -> Self {
+        self.hyde = Some((expander, grounding, options));
+        self
+    }
+
+    /// Supplies caller-owned per-entity read-side access-factor overrides
+    /// for this run: an input seam only — the map is borrowed for the run,
+    /// nothing is persisted, and no claim byte is written.
+    ///
+    /// Each value replaces the class-derived decay factor of that CLAIM
+    /// candidate and must be finite and within `[0, 1]`; an inadmissible
+    /// value fails the run closed with [`crate::error::Error::InvalidConfig`]. Entries
+    /// for non-claim entities are inert (non-claims stay at `1.0`), and a
+    /// superseded, retracted or validity-expired claim stays at `0.0` — an
+    /// override never resurfaces a closed claim.
+    pub fn with_access_factor_overrides(mut self, overrides: &'a HashMap<EntityId, f32>) -> Self {
+        self.access_factor_overrides = Some(overrides);
+        self
+    }
+
+    pub fn search_vector(mut self, vector: &[f32], limit: usize) -> Self {
+        self.vector_search = Some((vector.to_vec(), limit));
+        self
+    }
+
+    /// Voice-hot-lane knob (ONE-EMBED E3): score the vector channel on the
+    /// `fast_dims` prefix only, skipping the exact full-dim rescore. Inert
+    /// when `fast_dims` is not configured.
+    pub fn skip_vector_rescore(mut self, skip: bool) -> Self {
+        self.skip_vector_rescore = skip;
+        self
+    }
+
+    pub fn search_text(mut self, query: &str, limit: usize) -> Self {
+        self.text_search = Some((query.to_owned(), limit));
+        self
+    }
+
+    /// Applies a scoring-only BM25F rank profile to the text signal
+    /// (ARCH-0031: Okapi default, `Plus { delta }` and per-channel
+    /// weight / `b` are non-reindexing options). The profile is
+    /// validated fail-closed when the pipeline runs; an invalid
+    /// parameter returns [`StoreError::InvalidRankProfile`](crate::error::StoreError::InvalidRankProfile), even when
+    /// no text search is configured.
+    pub fn rank_profile(mut self, profile: crate::config::Bm25RankProfile) -> Self {
+        self.rank_profile = Some(profile);
+        self
+    }
+
+    pub fn search_phonetic(mut self, codes: &[&str]) -> Self {
+        self.phonetic_search = Some(codes.iter().map(|code| (*code).to_owned()).collect());
+        self
+    }
+
+    pub fn search_temporal(mut self, anchor_start: u64, anchor_end: u64, limit: usize) -> Self {
+        let (anchor_start, anchor_end) = normalize_range(anchor_start, anchor_end);
+        let width = anchor_end.saturating_sub(anchor_start);
+        let sigma_secs = width.max(DEFAULT_SIGMA_SECS);
+        self.temporal_search = Some(TemporalSearchConfig {
+            anchor_start,
+            anchor_end,
+            learned_start: None,
+            learned_end: None,
+            sigma_secs,
+            anchor_mode: TemporalAnchorMode::Auto,
+            adaptive: self.temporal_adaptive_default,
+            limit,
+            query_occurred_range: None,
+            effort_anchor: false,
+        });
+        self
+    }
+
+    pub fn search_temporal_with_sigma(
+        mut self,
+        anchor_start: u64,
+        anchor_end: u64,
+        sigma_secs: u64,
+        anchor_mode: TemporalAnchorMode,
+        limit: usize,
+    ) -> Self {
+        let (anchor_start, anchor_end) = normalize_range(anchor_start, anchor_end);
+        self.temporal_search = Some(TemporalSearchConfig {
+            anchor_start,
+            anchor_end,
+            learned_start: None,
+            learned_end: None,
+            sigma_secs,
+            anchor_mode,
+            adaptive: self.temporal_adaptive_default,
+            limit,
+            query_occurred_range: None,
+            effort_anchor: false,
+        });
+        self
+    }
+
+    pub fn search_temporal_with_granularity(
+        mut self,
+        anchor_start: u64,
+        anchor_end: u64,
+        granularity: TemporalGranularity,
+        anchor_mode: TemporalAnchorMode,
+        limit: usize,
+    ) -> Self {
+        let (anchor_start, anchor_end) = normalize_range(anchor_start, anchor_end);
+        self.temporal_search = Some(TemporalSearchConfig {
+            anchor_start,
+            anchor_end,
+            learned_start: None,
+            learned_end: None,
+            sigma_secs: granularity.sigma_secs(),
+            anchor_mode,
+            adaptive: self.temporal_adaptive_default,
+            limit,
+            query_occurred_range: None,
+            effort_anchor: false,
+        });
+        self
+    }
+
+    pub fn search_temporal_bitemporal(
+        mut self,
+        occurred_start: u64,
+        occurred_end: u64,
+        learned_start: u64,
+        learned_end: u64,
+        sigma_secs: u64,
+        limit: usize,
+    ) -> Self {
+        let (anchor_start, anchor_end) = normalize_range(occurred_start, occurred_end);
+        let (learned_start, learned_end) = normalize_range(learned_start, learned_end);
+        self.temporal_search = Some(TemporalSearchConfig {
+            anchor_start,
+            anchor_end,
+            learned_start: Some(learned_start),
+            learned_end: Some(learned_end),
+            sigma_secs,
+            anchor_mode: TemporalAnchorMode::Both,
+            adaptive: self.temporal_adaptive_default,
+            limit,
+            query_occurred_range: None,
+            effort_anchor: false,
+        });
+        self
+    }
+
+    /// Recency blends when asked for, unless a host-supplied temporal
+    /// window already ranks by time. The effort's default now anchor is
+    /// no such window, so recency still blends under it.
+    pub(super) fn recency_blend_applies(&self) -> bool {
+        self.recency_blend_enabled
+            && self
+                .temporal_search
+                .as_ref()
+                .is_none_or(|config| config.effort_anchor)
+    }
+
+    pub fn temporal_adaptive(mut self, enabled: bool) -> Self {
+        self.temporal_adaptive_default = enabled;
+        if let Some(config) = self.temporal_search.as_mut() {
+            config.adaptive = enabled;
+        }
+        self
+    }
+
+    /// Overrides the clock used to resolve natural-language temporal query
+    /// hints and time-dependent retrieval scoring. Production callers normally
+    /// use the default wall clock; tests and replay fixtures can inject a
+    /// frozen Unix timestamp.
+    pub fn with_temporal_now(mut self, now: u64) -> Self {
+        self.temporal_now = Some(now);
+        self
+    }
+
+    pub fn search(
+        mut self,
+        query: &str,
+        vector: &[f32],
+        time: Option<TimeRange>,
+        limit: usize,
+    ) -> Self {
+        self = self.search_text(query, limit).search_vector(vector, limit);
+        if let Some(range) = time {
+            self = self
+                .search_temporal(range.start, range.end, limit)
+                .filter_occurred_range(range.start, range.end);
+        }
+        self.limit(limit)
+    }
+
+    pub fn search_ppr(mut self, seeds: &[EntityId], depth: u32) -> Self {
+        self.ppr_search = Some((seeds.to_vec(), depth));
+        self
+    }
+
+    pub fn expand_ppr(mut self, seeds: &[EntityId], depth: u32) -> Self {
+        self.ppr_expand = Some((seeds.to_vec(), depth));
+        self
+    }
+
+    /// Supplies caller-owned fine-community usage counts for this expansion.
+    /// Counts are borrowed for this run, never persisted or shared through PPR
+    /// cache rows. Inert at beta zero and on `search_ppr`-only queries.
+    pub fn with_community_session_usage(
+        mut self,
+        usage: &'a HashMap<crate::ppr_community::CommunityId, u32>,
+    ) -> Self {
+        self.community_session_usage = Some(usage);
+        self
+    }
+
+    pub(super) fn community_trace_identity(
+        &self,
+        seeds: &[ScoredEntity],
+        version: u64,
+    ) -> [u8; 32] {
+        use sha2::{Digest, Sha256};
+        let mut hash = Sha256::new();
+        hash.update(b"oneiron.retrieval_trace.community.v0");
+        hash.update(version.to_le_bytes());
+        let config = &self.vault.config.ppr_community;
+        for value in [
+            config.beta,
+            config.gamma,
+            config.multiplier_cap,
+            config.max_graph_fraction,
+            config.max_top_k_fraction,
+        ] {
+            hash.update(value.to_bits().to_le_bytes());
+        }
+        hash.update((seeds.len() as u64).to_le_bytes());
+        for seed in seeds {
+            hash.update(seed.id.as_bytes());
+            hash.update(seed.score.to_bits().to_le_bytes());
+        }
+        let mut usage: Vec<_> = self
+            .community_session_usage
+            .into_iter()
+            .flat_map(|map| map.iter())
+            .collect();
+        usage.sort_unstable_by_key(|(id, _)| **id);
+        hash.update((usage.len() as u64).to_le_bytes());
+        for (id, count) in usage {
+            hash.update(id.as_bytes());
+            hash.update(count.to_le_bytes());
+        }
+        hash.finalize().into()
+    }
+
+    /// Enables the recency signal for the retrieval blend.
+    ///
+    /// `half_life_days` is retained as a compatibility toggle: finite
+    /// positive values enable recency, but the actual decay half-life comes
+    /// from the per-entity-type RET-010c contract table.
+    pub fn boost_recency(mut self, half_life_days: f32) -> Self {
+        self.recency_blend_enabled = half_life_days.is_finite() && half_life_days > 0.0;
+        self
+    }
+
+    pub fn boost_salience(mut self) -> Self {
+        self.apply_salience = true;
+        self
+    }
+
+    pub fn boost_confidence(mut self) -> Self {
+        self.apply_confidence = true;
+        self
+    }
+
+    pub fn boost_gravity(mut self) -> Self {
+        self.apply_gravity = true;
+        self
+    }
+
+    pub fn boost_contiguity(mut self) -> Self {
+        self.apply_contiguity = true;
+        self
+    }
+
+    pub(crate) fn filter_candidates(mut self, filter: &'a super::CandidateFilter<'a>) -> Self {
+        self.candidate_filter = Some(filter);
+        self
+    }
+
+    /// Narrows CLAIM candidates to their manifest tier. No predicate is promoted.
+    pub fn criticality(mut self, critical: bool) -> Self {
+        self.criticality = Some(critical);
+        self
+    }
+
+    pub fn filter_types(mut self, types: &[u8]) -> Self {
+        self.type_filter = Some(types.to_vec());
+        self
+    }
+
+    pub fn filter_since(mut self, timestamp: u64) -> Self {
+        self.since_filter = Some(timestamp);
+        self
+    }
+
+    pub fn filter_occurred_range(mut self, start: u64, end: u64) -> Self {
+        self.occurred_range = Some(normalize_range(start, end));
+        self
+    }
+
+    pub fn filter_learned_range(mut self, start: u64, end: u64) -> Self {
+        self.learned_range = Some(normalize_range(start, end));
+        self
+    }
+
+    pub fn filter_repo_ref(mut self, repo_ref: RepoRef) -> Self {
+        self.repo_ref_filter = Some(repo_ref);
+        self
+    }
+
+    pub fn filter_project_id(mut self, project_id: impl Into<String>) -> Self {
+        self.project_id_filter = Some(project_id.into());
+        self
+    }
+
+    pub fn limit(mut self, n: usize) -> Self {
+        self.result_limit = n;
+        self
+    }
+
+    /// Activates the ARCH-0039 facet filter for this query: `facet_id` is
+    /// the active FACET entity and `mode` selects `strict` (only core +
+    /// active-facet claims) or `prefer` (return all, boost active facet).
+    /// Not calling this method is the contract's *(no facet)* mode — no
+    /// facet filtering at all.
+    ///
+    /// The filter runs post-fusion/post-boosts, before the
+    /// `result_limit` truncation and under the same read transaction, so
+    /// claims excluded by `strict` never consume result slots. It reads
+    /// each candidate CLAIM's outgoing `FacetOf` (`CLAIM → FACET`) edges;
+    /// claim bodies are never decoded by this stage.
+    pub fn facet(mut self, facet_id: &EntityId, mode: FacetMode) -> Self {
+        self.facet_filter = Some((*facet_id, mode));
+        self
+    }
+
+    /// Binds this query to a relationship scope.
+    pub fn relationship(mut self, rel_id: &EntityId, mode: RelMode) -> Self {
+        self.relationship_filter = Some((*rel_id, mode));
+        self
+    }
+
+    /// Sets the ARCH-0004 / ARCH-0022 world scope for this query. The default
+    /// is [`WorldScope::All`] (span every world). [`WorldScope::Base`] keeps
+    /// only claims with no `world` key; [`WorldScope::World`] keeps that
+    /// world's claims plus base claims. The filter runs post-fusion /
+    /// post-boosts, before the `result_limit` truncation and under the same
+    /// read transaction — in the same stage as the facet filter — so claims
+    /// excluded by scope never consume result slots. Scoring and fusion are
+    /// untouched.
+    ///
+    /// Setting any scope OTHER than [`WorldScope::ActiveSet`] clears the
+    /// per-turn ActiveSet sidecar (ONE-1420): a selection made earlier on this
+    /// builder must not silently keep restricting — or worse, be re-read as
+    /// authority for — a run that has since asked for a different scope.
+    /// Setting `ActiveSet` here WITHOUT [`PipelineBuilder::active_worlds`] or
+    /// [`PipelineBuilder::default_active_worlds`] leaves no selection behind
+    /// and fails the run closed with [`crate::error::Error::InvalidConfig`].
+    pub fn world(mut self, scope: WorldScope) -> Self {
+        if !matches!(scope, WorldScope::ActiveSet) {
+            self.active_world_selection = None;
+        }
+        self.world_scope = scope;
+        self
+    }
+
+    /// Restricts this ONE turn to an explicit base/world selection made by
+    /// `agent_ref` (ONE-1420 tier 3).
+    ///
+    /// The selection is never persisted and never widens: at execution time it
+    /// is checked against the owner-granted ALLOWED-SET claims about
+    /// `agent_ref` (`core.world_access.allowed_set`), and a member outside that
+    /// grant fails the run closed with [`crate::error::Error::InvalidConfig`] rather than
+    /// falling back to [`WorldScope::All`] or dropping the offending member.
+    /// Base reality — base claims and every non-claim entity — survives only
+    /// when the selection sets `include_base`.
+    ///
+    /// Requires [`Vault::query_for_execution`]. `agent_ref` must match that
+    /// capability's executing actor; it is an assertion, not an identity setter.
+    /// A bare [`Vault::query`] has no principal and fails closed.
+    pub fn active_worlds(mut self, agent_ref: EntityId, selected: WorldAuthoritySet) -> Self {
+        self.world_scope = WorldScope::ActiveSet;
+        self.active_world_selection = Some(ActiveWorldSelection {
+            agent_ref,
+            selected: Some(selected),
+        });
+        self
+    }
+
+    /// Restricts this turn to `agent_ref`'s stored DEFAULT-SUBSET
+    /// (`core.world_access.default_subset`, ONE-1420 tier 2).
+    ///
+    /// Same enforcement as [`PipelineBuilder::active_worlds`] with the
+    /// selection left implicit: the newest active default row is resolved at
+    /// execution time and must itself sit inside the owner's ALLOWED-SET. With
+    /// no default row the turn reads NOTHING — never everything. Requires the
+    /// same execution capability and actor match as the explicit selection.
+    pub fn default_active_worlds(mut self, agent_ref: EntityId) -> Self {
+        self.world_scope = WorldScope::ActiveSet;
+        self.active_world_selection = Some(ActiveWorldSelection {
+            agent_ref,
+            selected: None,
+        });
+        self
+    }
+
+    /// Selects claims by their `scopeProjectId` stamp. A corpus is a PROJECT
+    /// entity with role corpus; this is not a second axis in the opaque scope
+    /// map. `All` does not restrict projects; `Unscoped` selects the default
+    /// project; `Corpus` and `AnyOf` select exactly the named project ids.
+    /// Callers build scope-set unions explicitly with `AnyOf`. Non-CLAIM
+    /// entities are unaffected. An empty `AnyOf` fails closed at execution.
+    pub fn corpus(mut self, scope: CorpusScope) -> Self {
+        self.corpus_scope = scope;
+        self
+    }
+}
