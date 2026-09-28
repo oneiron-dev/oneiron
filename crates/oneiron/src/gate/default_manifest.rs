@@ -515,11 +515,7 @@ pub(crate) fn default_policy_manifest() -> Vec<u8> {
         ),
         (
             Value::from(POLICY_CONNECTOR_CLASS_CARRY_KEY),
-            Value::Array(vec![
-                Value::Array(vec![Value::from("public"), Value::from("personal")]),
-                Value::Array(vec![Value::from("public"), Value::from("secret")]),
-                Value::Array(vec![Value::from("personal"), Value::from("secret")]),
-            ]),
+            connector_class_carry_default_rows(),
         ),
         (
             Value::from(PACK_INSTALL_POLICY_KEY),
@@ -529,40 +525,7 @@ pub(crate) fn default_policy_manifest() -> Vec<u8> {
         // A holder row can narrow this vault row, never widen it.
         (
             Value::from("compilation_policy"),
-            Value::Map(vec![
-                (
-                    Value::from("precedence"),
-                    Value::from("nested_narrowing_holder_capped_at_vault"),
-                ),
-                (
-                    Value::from("order"),
-                    Value::Array(vec![
-                        Value::from("style_rule"),
-                        Value::from("charter_line"),
-                        Value::from("brief_update"),
-                        Value::from("ban"),
-                    ]),
-                ),
-                (
-                    Value::from("rows"),
-                    Value::Array(vec![Value::Map(vec![(
-                        Value::from("routes"),
-                        Value::Array(vec![
-                            compilation_route(
-                                "style_rule",
-                                "expression.style:",
-                                true,
-                                "",
-                                "",
-                                true,
-                            ),
-                            compilation_route("charter_line", "charter:", true, "", "", false),
-                            compilation_route("brief_update", "brief:", true, "", "", false),
-                            compilation_route("ban", "", false, "never ", "never ", false),
-                        ]),
-                    )])]),
-                ),
-            ]),
+            compilation_policy_default_row(),
         ),
         (
             Value::from(POLICY_ATTRIBUTION_LIMITS_KEY),
@@ -702,6 +665,47 @@ fn federation_grant_default_rows() -> Value {
         .map(|row| encode_row(row).expect("default grant policy row"))
         .collect(),
     )
+}
+
+/// Shipped vault carry rows between connector data classes. Header is not a
+/// content class, so it never appears here.
+fn connector_class_carry_default_rows() -> Value {
+    Value::Array(vec![
+        Value::Array(vec![Value::from("public"), Value::from("personal")]),
+        Value::Array(vec![Value::from("public"), Value::from("secret")]),
+        Value::Array(vec![Value::from("personal"), Value::from("secret")]),
+    ])
+}
+
+/// OF-379 compilation routes: the shipped vault row that holder rows only narrow.
+fn compilation_policy_default_row() -> Value {
+    Value::Map(vec![
+        (
+            Value::from("precedence"),
+            Value::from("nested_narrowing_holder_capped_at_vault"),
+        ),
+        (
+            Value::from("order"),
+            Value::Array(vec![
+                Value::from("style_rule"),
+                Value::from("charter_line"),
+                Value::from("brief_update"),
+                Value::from("ban"),
+            ]),
+        ),
+        (
+            Value::from("rows"),
+            Value::Array(vec![Value::Map(vec![(
+                Value::from("routes"),
+                Value::Array(vec![
+                    compilation_route("style_rule", "expression.style:", true, "", "", true),
+                    compilation_route("charter_line", "charter:", true, "", "", false),
+                    compilation_route("brief_update", "brief:", true, "", "", false),
+                    compilation_route("ban", "", false, "never ", "never ", false),
+                ]),
+            )])]),
+        ),
+    ])
 }
 
 /// Shipped OF-379 row data. Engines read these selectors through the same
