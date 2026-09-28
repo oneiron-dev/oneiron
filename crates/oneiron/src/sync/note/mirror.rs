@@ -40,6 +40,12 @@ impl SideKey for NoteForkKey {
 }
 
 pub(crate) fn refresh(vault: &Vault, doc: &LoroDoc, window: &WindowKey) -> Result<bool> {
+    // NOTE rows and their text-plane carriers live in the shared base month.
+    // Every caller (reverse, ordinary export, snapshot export, selector) uses
+    // this door, so none may contaminate a world-only document.
+    if window.world().is_some() {
+        return Ok(false);
+    }
     let ids = vault.entities_in_learned_range(
         window.start_timestamp().ok_or(invalid("NOTE window"))?,
         window.end_timestamp().ok_or(invalid("NOTE window"))?,

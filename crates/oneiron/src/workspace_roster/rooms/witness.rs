@@ -122,6 +122,8 @@ pub(crate) fn admit_witness(
         reply_to: reply_to.map(|id| id.to_hex()),
         thread_of: thread_of.map(|id| id.to_hex()),
         at: input.occurred_at,
+        task_ids: Vec::new(),
+        converted_project: None,
     };
     if let Some(old) = TURNS.get(&vault.store, txn, &turn_id)? {
         if old.actor != turn.actor
@@ -133,6 +135,8 @@ pub(crate) fn admit_witness(
             return Err(invalid());
         }
         turn.at = old.at;
+        turn.task_ids = old.task_ids;
+        turn.converted_project = old.converted_project;
         let mut all = old.message_ids;
         for id in &turn.message_ids {
             if !all.contains(id) {

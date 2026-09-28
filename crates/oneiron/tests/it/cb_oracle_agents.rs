@@ -654,9 +654,10 @@ mod cb_a {
             .collect();
         assert_eq!(branch_runs.iter().filter(|id| **id == run_id).count(), 3);
         // Depth decrements at every level and is persisted, not merely counted.
-        assert_eq!(fixture.persisted_depth(lead_attempt), Some(8));
-        assert_eq!(fixture.persisted_depth(workers[0].attempt.id), Some(7));
-        assert_eq!(fixture.persisted_depth(helper.attempt.id), Some(6));
+        // The root starts at the project's depth row, 10 by default (ARCH-0067 §7).
+        assert_eq!(fixture.persisted_depth(lead_attempt), Some(10));
+        assert_eq!(fixture.persisted_depth(workers[0].attempt.id), Some(9));
+        assert_eq!(fixture.persisted_depth(helper.attempt.id), Some(8));
 
         TeamLeadDelegation {
             preset_available,

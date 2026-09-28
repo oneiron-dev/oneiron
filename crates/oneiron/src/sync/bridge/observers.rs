@@ -478,7 +478,13 @@ fn subscribe_map_observer(
     vault: &Arc<Vault>,
     materializer: &Arc<Materializer>,
     window_key: &str,
-    materialize: fn(&LoroDoc, &loro::event::MapDelta<'_>, &Vault, &str, u64) -> bool,
+    materialize: fn(
+        &LoroDoc,
+        &loro::event::MapDelta<'_>,
+        &Vault,
+        &str,
+        u64,
+    ) -> Option<Vec<EntityId>>,
     live_query: (&'static str, Option<Arc<dyn LiveQueryTee>>),
 ) -> Subscription {
     let callback_doc = doc.clone();
@@ -530,16 +536,18 @@ fn subscribe_map_observer(
             }
             for cdiff in &event.events {
                 if let Some(map_delta) = cdiff.diff.as_map() {
-                    let (committed, changes) = {
+                    let (replayed_entities, changes) = {
                         let _guard = materializer.lock();
                         if live_query.0 == "entities" {
-                            super::entities::materialize_entities_with_changes(
-                                &callback_doc,
-                                map_delta,
-                                &vault,
-                                &window_key,
-                                lease_vault_id,
-                            )
+                            let (committed, changes) =
+                                super::entities::materialize_entities_with_changes(
+                                    &callback_doc,
+                                    map_delta,
+                                    &vault,
+                                    &window_key,
+                                    lease_vault_id,
+                                );
+                            (committed.then(Vec::new), changes)
                         } else {
                             (
                                 materialize(
@@ -553,9 +561,16 @@ fn subscribe_map_observer(
                             )
                         }
                     };
-                    if committed {
+                    if let Some(replayed_entities) = replayed_entities {
                         let path = format!("w:{window_key}/{}", live_query.0);
                         let mut diff = entity_document_diff(&path, live_query.0, map_delta);
+                        diff.containers.extend(
+                            replayed_entities
+                                .iter()
+                                .map(|id| format!("e:{}", id.to_hex())),
+                        );
+                        diff.containers.sort_unstable();
+                        diff.containers.dedup();
                         diff.revision_events = changes
                             .into_iter()
                             .map(super::RevisionEvent::Original)

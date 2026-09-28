@@ -65,21 +65,21 @@ pub(super) fn fence_dependents(
     Ok(dependents.into_iter().collect())
 }
 
+/// Returns the citing documents whose readable state changed: rebuilt without
+/// the erased pin, or (featureless) fenced until a sync-capable sweep runs.
+/// The caller notifies them only after its transaction commits.
 pub(crate) fn erase_citations_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
     id: &EntityId,
-) -> Result<()> {
-    let dependents = fence_dependents(&vault.store, txn, *id)?;
+) -> Result<Vec<EntityId>> {
+    let mut dependents = fence_dependents(&vault.store, txn, *id)?;
+    dependents.retain(|citing| citing != id);
     #[cfg(feature = "sync")]
-    for citing in dependents {
-        if citing != *id {
-            super::citation_scrub::scrub_pending(vault, txn, citing)?;
-        }
+    for citing in &dependents {
+        super::citation_scrub::scrub_pending(vault, txn, *citing)?;
     }
-    #[cfg(not(feature = "sync"))]
-    let _ = dependents;
-    Ok(())
+    Ok(dependents)
 }
 
 pub(super) fn pin_is_erased(

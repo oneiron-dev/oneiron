@@ -236,6 +236,36 @@ impl<'a> PutCarrierContext<'a> {
     }
 }
 
+/// Normalize a PROJECT body and admit a project-depth policy contribution
+/// before the carrier guards read either row.
+pub(super) fn stage_project_put(
+    store: &Store,
+    txn: &RwTxn<'_>,
+    id: EntityId,
+    entity_type: u8,
+    data: &[u8],
+    replicated: bool,
+    posture: crate::HostingPrivacyPosture,
+) -> Result<Option<Vec<u8>>> {
+    let project = if crate::workspace_roster::is_project_type(store, entity_type) {
+        Some(crate::workspace_roster::normalize_project_body(
+            store, txn, id, data, posture,
+        )?)
+    } else {
+        None
+    };
+    let data = project.as_deref().unwrap_or(data);
+    if entity_type == crate::registry::ENTITY_TYPE_POLICY_MANIFEST
+        && (crate::gate::project_depth::is_project_depth_id(&id)
+            || crate::gate::project_depth::is_project_depth_contribution(data))
+    {
+        crate::gate::project_depth::validate_contribution_put(
+            store, txn, id, data, replicated, posture,
+        )?;
+    }
+    Ok(project)
+}
+
 /// Run the existing scope, storage-owned, and domain guards in order.
 pub(super) fn validate_put_carriers(
     store: &Store,
@@ -245,6 +275,14 @@ pub(super) fn validate_put_carriers(
     context: PutCarrierContext<'_>,
 ) -> Result<()> {
     validate_scope_carriers(store, txn, id, context.entity_type, data, context.origin)?;
+    super::connector_key_guard::validate_connector_manifest_put(
+        store,
+        txn,
+        id,
+        context.entity_type,
+        data,
+        context.replicated,
+    )?;
     super::owned_body::guard_storage_owned_body(
         store,
         txn,

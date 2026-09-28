@@ -338,7 +338,14 @@ pub(crate) fn update_manifest_origin(
     // Any generic write (including replay) invalidates the holder's exact
     // body attestation. The authenticated owner door re-stamps it afterwards.
     RETENTION_HOLDER.delete(store, txn, &HexId(*id))?;
-    if kind == ENTITY_TYPE_POLICY_MANIFEST {
+    if kind == ENTITY_TYPE_POLICY_MANIFEST
+        && (super::project_depth::is_project_depth_id(id)
+            || super::project_depth::is_project_depth_contribution(body))
+    {
+        // A signed project policy is authenticated by its immutable carrier
+        // and authority fold, never the local-only trusted-manifest sidecar.
+        TRUSTED_ORIGIN.delete(store, txn, &HexId(*id))?;
+    } else if kind == ENTITY_TYPE_POLICY_MANIFEST {
         stamp_manifest_origin(store, txn, id, body, replicated)?;
     } else {
         TRUSTED_ORIGIN.delete(store, txn, &HexId(*id))?;

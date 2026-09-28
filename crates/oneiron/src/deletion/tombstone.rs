@@ -410,6 +410,40 @@ pub(super) const ARCHIVE_MARKER: SideTable<HexId, Vec<u8>, Raw> =
 /// window address for the `pt:` marker even in builds WITHOUT the `sync`
 /// feature; `sync::types::WindowKey::from_timestamp` delegates here so the
 /// two can never drift.
+/// Canonical base/world monthly address grammar shared by sync and
+/// feature-independent recovery/deletion. World IDs use lowercase hex only.
+pub(crate) fn parse_window_label(key: &str) -> Option<(i32, u32)> {
+    let bytes = key.as_bytes();
+    if bytes.len() != 7 && bytes.len() != 40 {
+        return None;
+    }
+    if bytes[4] != b'-'
+        || !bytes[..4].iter().all(u8::is_ascii_digit)
+        || !bytes[5..7].iter().all(u8::is_ascii_digit)
+    {
+        return None;
+    }
+    if bytes.len() == 40 {
+        if bytes[7] != b'@'
+            || !bytes[8..]
+                .iter()
+                .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(b))
+        {
+            return None;
+        }
+        let world = crate::EntityId::from_hex(&key[8..]).ok()?;
+        if world.to_hex() != key[8..] {
+            return None;
+        }
+    }
+    let year: i32 = key[..4].parse().ok()?;
+    let month: u32 = key[5..7].parse().ok()?;
+    if year < 1970 || !(1..=12).contains(&month) {
+        return None;
+    }
+    Some((year, month))
+}
+
 pub(crate) fn window_label_from_timestamp(ts: u64) -> String {
     // Stay in u64: an `as i64` cast would wrap negative for ts > i64::MAX
     // and silently yield "1970-01".

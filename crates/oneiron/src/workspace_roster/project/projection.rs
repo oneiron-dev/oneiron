@@ -45,6 +45,7 @@ fn dependency(
 pub(crate) fn validate_project_body(id: EntityId, bytes: &[u8]) -> Result<Vec<EntityId>> {
     let body: ProjectRecord = rmp_serde::from_slice(bytes).map_err(|_| invalid())?;
     if body.schema_version != 1
+        || usize::from(body.depth) > crate::context_projection::CONTEXT_PROJECTION_MAX_ANCESTORS
         || body.home_room != home_room_id(id).to_hex()
         || body.roster.is_empty()
     {
@@ -57,6 +58,17 @@ pub(crate) fn validate_project_body(id: EntityId, bytes: &[u8]) -> Result<Vec<En
         return Err(invalid());
     }
     refs.extend(&body.parents);
+    // A card mint on a message carries only `born_from`. A converted thread
+    // also names its origin room, thread and position: all of them or none.
+    match (&body.origin_room, &body.origin_thread, body.origin_at) {
+        (None, None, None) => {}
+        (Some(room), Some(thread), Some(_))
+            if body.born_from.is_some() && !body.parents.is_empty() =>
+        {
+            refs.extend([room, thread]);
+        }
+        _ => return Err(invalid()),
+    }
     refs.extend(body.goal.iter());
     refs.extend(body.born_from.iter());
     refs.extend(body.budget.iter());
@@ -103,6 +115,30 @@ pub(crate) fn validate_project_body(id: EntityId, bytes: &[u8]) -> Result<Vec<En
     Ok(ids)
 }
 
+/// Project membership carries a birth-depth cache, not authority. Replacing
+/// members with an older view must not roll back the policy contribution set.
+pub(crate) fn normalize_project_body(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    id: EntityId,
+    bytes: &[u8],
+    posture: crate::HostingPrivacyPosture,
+) -> Result<Vec<u8>> {
+    validate_project_body(id, bytes)?;
+    let mut body: ProjectRecord = rmp_serde::from_slice(bytes).map_err(|_| invalid())?;
+    if body.parents.contains(&id.to_hex()) {
+        return Err(invalid());
+    }
+    body.depth = match crate::gate::project_depth::birth_for_project(store, txn, id)? {
+        Some((_, birth)) => birth.depth,
+        None if crate::gate::project_depth::implicit_birth_applies(store, txn, posture, id)? => {
+            crate::gate::project_depth::canonical_birth(id)?.depth
+        }
+        None => return Err(RecordError::ProjectDependencyPending.into()),
+    };
+    encode(&body)
+}
+
 pub(crate) fn reconcile_project_rooms(
     store: &Store,
     config: &crate::VaultConfig,
@@ -115,6 +151,7 @@ pub(crate) fn reconcile_project_rooms(
         return Ok(());
     };
     let mut room_ops = Vec::new();
+    let mut origins = Vec::new();
     for id in touched {
         let Some(raw) = crate::ports::EntityStoreRead::port_entity_raw(store, txn, id)? else {
             continue;
@@ -164,6 +201,7 @@ pub(crate) fn reconcile_project_rooms(
             )?;
             pending.extend(parent_body.parents);
         }
+        origins.push((*id, body.clone()));
         // The body is the authority for the project DAG. Materialize its
         // `belongs_to` links in the same batch as the home room, so PPR and
         // graph readers see both parents (or neither on a rejected write).
@@ -211,6 +249,7 @@ pub(crate) fn reconcile_project_rooms(
             project_id: id.to_hex(),
             member_ids: body.roster.clone(),
             claims_scope_ref: body.claims_scope_ref.clone(),
+            origin: body.origin_card(),
         };
         let previous: Option<ProjectRoom> =
             match record(store, txn, room_id, ENTITY_TYPE_CONVERSATION) {
@@ -284,9 +323,16 @@ pub(crate) fn reconcile_project_rooms(
             || project.home_room != id.to_hex()
             || project.roster != room.member_ids
             || project.claims_scope_ref != room.claims_scope_ref
+            || project.origin_card() != room.origin
         {
             return Err(invalid_room());
         }
+    }
+    // Origins are proved against the batch's final state: every derived room
+    // above has landed, so a source roster edit in the same batch is seen.
+    for (id, body) in &origins {
+        origin::validate_binding(store, txn, body)?;
+        origin::index_origin(store, txn, *id, body)?;
     }
     Ok(())
 }

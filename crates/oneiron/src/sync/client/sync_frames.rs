@@ -3,7 +3,7 @@
 use loro::{LoroDoc, VersionVector};
 
 use super::base::SyncClient;
-use super::types::{SVF_FRESH, SyncEvent};
+use super::types::{SVF_FRESH, SyncEvent, SyncResidenceMode};
 use crate::error::Result;
 use crate::sync::loro_support::doc_version_vector;
 use crate::sync::transport;
@@ -12,6 +12,21 @@ use crate::sync::types::WindowKey;
 use crate::sync::window_rows::{WINDOW_SHALLOW_FENCE, WINDOW_STATE_VECTOR};
 
 impl SyncClient {
+    /// Every socket has its own subscribed-key set. A reconnect retains its
+    /// local Docs and root, but must negotiate every world VV again after
+    /// the server's root response (and after all shared base VVs).
+    pub(in crate::sync) fn begin_connection_sync(&mut self) {
+        self.requested_windows
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clear();
+        self.pending_world_windows
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clear();
+        self.root_bootstrapped = false;
+    }
+
     /// Drops all in-memory CRDT state for a forced re-bootstrap (ARCH-0023b
     /// Fig. 2: "drop Docs + queue").
     ///
@@ -28,6 +43,16 @@ impl SyncClient {
             self.manager.discard_window(&key);
         }
         self.server_vvs.clear();
+        self.requested_windows
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clear();
+        self.pending_world_windows
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clear();
+        self.root_bootstrapped = false;
+        self.residence_acks.clear();
         let root_doc = LoroDoc::new();
         let _meta = root_doc.get_map("meta");
         // Same peer-id pinning as `new`: the client never authors root ops,
@@ -82,11 +107,18 @@ impl SyncClient {
     pub(in crate::sync) fn try_generate_initial_sync(
         &self,
     ) -> std::result::Result<Vec<Vec<u8>>, TransportError> {
-        // v10 carries own-device windows and grant-backed entity documents
+        // v11 carries own-device windows and grant-backed entity documents
         // on the same connection; authentication uses a paired capability.
         // Device lease requests are retired (C07); the NOTE session bind
         // (HEAD) still rides along when configured.
-        let mut messages = vec![transport::encode_chunk_full_window_protocol_hello()];
+        let mut messages = vec![if self.config.federation_peer.is_some() {
+            transport::encode_protocol_hello()
+        } else {
+            match self.config.residence_mode {
+                SyncResidenceMode::Opened => transport::encode_residence_protocol_hello(),
+                SyncResidenceMode::All => transport::encode_chunk_full_window_protocol_hello(),
+            }
+        }];
         if let Some(session) = &self.config.note_session {
             messages.push(super::note_session::bind_frame(session)?);
         }
@@ -118,16 +150,59 @@ impl SyncClient {
             .duration_since(std::time::UNIX_EPOCH)
             .map_or(0, |d| d.as_secs());
 
+        let effective_worlds = self.effective_worlds()?;
         let mut keys: Vec<WindowKey> = Vec::new();
-        let mut next = Some(WindowKey::from_timestamp(now_secs));
-        for _ in 0..self.config.default_window_count {
-            let Some(key) = next else { break };
-            next = key.previous_month();
-            keys.push(key);
-        }
-        for key in self.manager.loaded_keys() {
-            if !keys.contains(&key) {
+        if self.config.residence_mode == SyncResidenceMode::All {
+            let mut next = Some(WindowKey::from_timestamp(now_secs));
+            for _ in 0..self.config.default_window_count {
+                let Some(key) = next else { break };
+                next = key.previous_month();
+                if let Some(worlds) = &effective_worlds {
+                    for world in worlds {
+                        let scoped = WindowKey::for_month_world(&key, *world);
+                        if !keys.contains(&scoped) {
+                            keys.push(scoped);
+                        }
+                    }
+                }
                 keys.push(key);
+            }
+            for key in self.manager.loaded_keys() {
+                if Self::follows_window(&key, &effective_worlds) && !keys.contains(&key) {
+                    keys.push(key);
+                }
+            }
+            // The home/sync-all replica requests every root and local partition,
+            // including historical base months and world claims not yet indexed
+            // by a fresh server. A followed world also needs its base month.
+            let mut discovered = crate::sync::schema::read_window_list(&self.root_doc);
+            if effective_worlds
+                .as_ref()
+                .is_none_or(|worlds| !worlds.is_empty())
+            {
+                discovered.extend(
+                    crate::sync::discover_local_window_keys(&self.vault)
+                        .map_err(|error| TransportError::Storage(error.to_string()))?,
+                );
+            }
+            for key in Self::selected_discovered_windows(discovered, &effective_worlds) {
+                if !keys.contains(&key) {
+                    keys.push(key);
+                }
+            }
+        } else {
+            for marker in self
+                .vault
+                .sync_state_keys_with_prefix("rp:w:")
+                .map_err(|e| TransportError::Storage(e.to_string()))?
+            {
+                let key = marker
+                    .strip_prefix("rp:w:")
+                    .and_then(WindowKey::try_new)
+                    .ok_or(TransportError::InvalidWindowKey)?;
+                if !keys.contains(&key) {
+                    keys.push(key);
+                }
             }
         }
         for key in extra_windows {
@@ -137,12 +212,45 @@ impl SyncClient {
                 )));
                 continue;
             };
-            if !keys.contains(&window_key) {
+            if Self::follows_window(&window_key, &effective_worlds) && !keys.contains(&window_key) {
                 keys.push(window_key);
             }
         }
 
+        keys.sort_by(|left, right| {
+            left.world()
+                .is_some()
+                .cmp(&right.world().is_some())
+                .then_with(|| left.as_str().cmp(right.as_str()))
+        });
         for key in keys {
+            if self.config.residence_mode == SyncResidenceMode::Opened
+                && self.config.federation_peer.is_none()
+            {
+                let selector = self.config.residence_selector.as_ref().ok_or(
+                    TransportError::InvalidPayload("promoted window has no selector"),
+                )?;
+                let bytes = crate::sync::encode_sync_selector(selector)
+                    .map_err(|_| TransportError::InvalidPayload("invalid promotion selector"))?;
+                messages.push(
+                    transport::encode_window_sync(
+                        key.as_str(),
+                        window_sub_tags::PROMOTION_REQUEST,
+                        &bytes,
+                    )
+                    .into_result()?,
+                );
+            }
+            if key.world().is_some() {
+                // The server sends root first, but initial frames are already
+                // queued on this socket. Wait for that root response, request
+                // every shared base month, THEN this world's VV.
+                self.pending_world_windows
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .insert(key);
+                continue;
+            }
             match self.window_vv_for_initial_sync(&key) {
                 Ok(vv) => {
                     let frame = transport::encode_window_sync(
@@ -156,6 +264,10 @@ impl SyncClient {
                             "Initial sync frame encode for window {key} failed: {e}"
                         )));
                     })?;
+                    self.requested_windows
+                        .lock()
+                        .unwrap_or_else(std::sync::PoisonError::into_inner)
+                        .insert(key);
                     messages.push(frame);
                 }
                 Err(e) => {
@@ -174,6 +286,117 @@ impl SyncClient {
                 .map_err(|error| TransportError::Storage(error.to_string()))?,
         );
         Ok(messages)
+    }
+
+    fn selected_discovered_windows(
+        discovered: Vec<WindowKey>,
+        effective_worlds: &Option<std::collections::BTreeSet<crate::EntityId>>,
+    ) -> Vec<WindowKey> {
+        let mut selected = Vec::new();
+        for key in discovered {
+            if key.world().is_some() && Self::follows_window(&key, effective_worlds) {
+                let base =
+                    WindowKey::from_timestamp(key.start_timestamp().expect("validated window"));
+                if !selected.contains(&base) {
+                    selected.push(base);
+                }
+                if !selected.contains(&key) {
+                    selected.push(key);
+                }
+            } else if key.world().is_none()
+                && effective_worlds
+                    .as_ref()
+                    .is_none_or(|worlds| !worlds.is_empty())
+                && !selected.contains(&key)
+            {
+                // A selected-world edge can name a shared base endpoint
+                // learned in any older month. The first-touch item index in
+                // ONE-2662 may narrow these shared base fetches later; this
+                // carrier must not strand valid graph dependencies today.
+                selected.push(key);
+            }
+        }
+        selected
+    }
+
+    /// The root document may arrive after initial frames on a new device.
+    /// Request newly advertised, followed world windows only after the root
+    /// import is durable. A repeat root update never requests the same key.
+    pub(super) fn newly_followed_window_requests(
+        &mut self,
+    ) -> std::result::Result<Vec<Vec<u8>>, TransportError> {
+        let effective_worlds = self.effective_worlds()?;
+        // Opened residence exchanges full VVs only for promoted windows; the
+        // deferred set holds only those, so an advertised key never enrolls.
+        let opened = self.config.residence_mode == SyncResidenceMode::Opened
+            && self.config.federation_peer.is_none();
+        let mut discovered = if opened {
+            Vec::new()
+        } else {
+            let mut listed = crate::sync::schema::read_window_list(&self.root_doc);
+            listed.extend(self.manager.loaded_keys());
+            listed
+        };
+        discovered.extend(
+            self.pending_world_windows
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .iter()
+                .cloned(),
+        );
+        if !opened
+            && !self.root_bootstrapped
+            && effective_worlds
+                .as_ref()
+                .is_none_or(|worlds| !worlds.is_empty())
+        {
+            discovered.extend(
+                crate::sync::discover_local_window_keys(&self.vault)
+                    .map_err(|error| TransportError::Storage(error.to_string()))?,
+            );
+        }
+        // A promoted world window is requested alone: the device opened it,
+        // whether or not its world is followed, and its base month is not
+        // promoted, so the home would refuse that month's full exchange.
+        let mut keys = if opened {
+            discovered
+        } else {
+            Self::selected_discovered_windows(discovered, &effective_worlds)
+        };
+        keys.sort_by(|left, right| {
+            left.world()
+                .is_some()
+                .cmp(&right.world().is_some())
+                .then_with(|| left.as_str().cmp(right.as_str()))
+        });
+        let mut frames = Vec::new();
+        for key in keys {
+            if self
+                .requested_windows
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .contains(&key)
+            {
+                continue;
+            }
+            let vv = self
+                .window_vv_for_initial_sync(&key)
+                .map_err(|e| TransportError::Storage(e.to_string()))?;
+            let frame =
+                transport::encode_window_sync(key.as_str(), window_sub_tags::VV_REQUEST, &vv)
+                    .into_result()?;
+            self.requested_windows
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .insert(key.clone());
+            self.pending_world_windows
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .remove(&key);
+            frames.push(frame);
+        }
+        self.root_bootstrapped = true;
+        Ok(frames)
     }
 
     /// Resolves the wire VV (Loro binary `VersionVector::encode()` bytes)

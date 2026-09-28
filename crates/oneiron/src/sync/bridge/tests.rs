@@ -3987,6 +3987,358 @@ fn edge_hydration_rolls_back_late_project_rejection_but_commits_valid_sibling() 
 }
 
 #[test]
+fn observer_b_quarantines_in_range_project_depth_edit_without_owner_proof() -> crate::Result<()> {
+    let vault = test_vault();
+    let root = vault.root_project()?;
+    let person = EntityId::now();
+    vault.put_entity(
+        &person,
+        crate::registry::ENTITY_TYPE_PERSON,
+        TimeRange { start: 1, end: 1 },
+        1,
+        b"owner",
+    )?;
+    let writer = crate::write_envelope::WriteActor::new(person, EdgeActorClass::Human);
+    let revoke = crate::subject_model::tests::authorization::root_owner(&vault, writer, 0xB1)?;
+    crate::workspace_roster::set_project_depth_signed_for_test(&vault, root, 0, &writer, 2, 0xB1)?;
+    vault.put_authority_log_entry(
+        &revoke,
+        TimeRange {
+            start: 102,
+            end: 102,
+        },
+        102,
+    )?;
+    let (edit, mut forged) = crate::gate::project_depth::contributions_for_test(&vault, root)?
+        .into_iter()
+        .find(|(_, bytes)| {
+            matches!(
+                crate::gate::project_depth::decode_contribution(bytes).ok(),
+                Some(crate::gate::project_depth::ProjectDepthContribution::Edit(
+                    _
+                ))
+            )
+        })
+        .expect("signed edit");
+    forged.push(0x01); // existing id no longer names these signed bytes
+    let doc = LoroDoc::new();
+    let materializer = Arc::new(Materializer::new());
+    let _subscription = register_observer_b(&doc, &vault, &materializer, "2026-03");
+    map_insert_bytes(
+        &doc.get_map("entities"),
+        &edit.to_hex(),
+        &entity_blob(
+            crate::registry::ENTITY_TYPE_POLICY_MANIFEST,
+            TimeRange { start: 3, end: 3 },
+            3,
+            &forged,
+        ),
+    )?;
+    doc.commit();
+    assert_eq!(vault.project(root)?.unwrap().depth, 0);
+    assert!(
+        crate::sync::quarantine::quarantined_records(&vault)?
+            .iter()
+            .any(|(_, row)| row.reason_code == "InvalidProjectBody")
+    );
+    Ok(())
+}
+
+#[test]
+fn observer_b_replays_signed_owner_project_depth_and_rejects_tampering() -> crate::Result<()> {
+    let a = test_vault();
+    let root_a = a.root_project()?;
+    let leader = EntityId::from_hex(&a.project(root_a)?.unwrap().leader)?;
+    let project = EntityId::now();
+    a.put_project(
+        project,
+        &crate::workspace_roster::ProjectRecord::new(project, Some(root_a), root_a, leader),
+        1,
+    )?;
+    let owner_id = EntityId::now();
+    a.put_entity(
+        &owner_id,
+        crate::registry::ENTITY_TYPE_PERSON,
+        TimeRange { start: 1, end: 1 },
+        1,
+        b"owner",
+    )?;
+    let owner = crate::write_envelope::WriteActor::new(owner_id, EdgeActorClass::Human);
+    crate::subject_model::tests::authorization::root_owner(&a, owner, 0xB7)?;
+    crate::workspace_roster::set_project_depth_signed_for_test(&a, project, 2, &owner, 2, 0xB7)?;
+    let signed = a.project(project)?.unwrap();
+    let (edit, edit_bytes) = crate::gate::project_depth::contributions_for_test(&a, project)?
+        .into_iter()
+        .find(|(_, bytes)| {
+            matches!(
+                crate::gate::project_depth::decode_contribution(bytes).ok(),
+                Some(crate::gate::project_depth::ProjectDepthContribution::Edit(
+                    _
+                ))
+            )
+        })
+        .expect("signed depth contribution");
+
+    let b = test_vault();
+    let root_b = b.root_project()?;
+    let lead_b = EntityId::from_hex(&b.project(root_b)?.unwrap().leader)?;
+    b.put_project(
+        root_a,
+        &crate::workspace_roster::ProjectRecord::new(root_a, Some(root_b), root_b, lead_b),
+        1,
+    )?;
+    b.put_project(
+        project,
+        &crate::workspace_roster::ProjectRecord::new(project, Some(root_a), root_a, lead_b),
+        1,
+    )?;
+    b.put_entity(
+        &owner_id,
+        crate::registry::ENTITY_TYPE_PERSON,
+        TimeRange { start: 1, end: 1 },
+        1,
+        b"owner",
+    )?;
+    b.import_signed_authority_history(&a.export_signed_authority_history()?)?;
+    let doc = LoroDoc::new();
+    let materializer = Arc::new(Materializer::new());
+    let _subscription = register_observer_b(&doc, &b, &materializer, "2026-03");
+    map_insert_bytes(
+        &doc.get_map("entities"),
+        &edit.to_hex(),
+        &entity_blob(
+            crate::registry::ENTITY_TYPE_POLICY_MANIFEST,
+            TimeRange { start: 2, end: 2 },
+            2,
+            &edit_bytes,
+        ),
+    )?;
+    map_insert_bytes(
+        &doc.get_map("entities"),
+        &project.to_hex(),
+        &entity_blob(
+            b.project_type_byte()?,
+            TimeRange { start: 2, end: 2 },
+            2,
+            &rmp_serde::to_vec_named(&signed).expect("member body"),
+        ),
+    )?;
+    doc.commit();
+    assert_eq!(b.project(project)?.unwrap().depth, 2);
+    let mut forged = edit_bytes;
+    forged.push(0x01); // same id, different signed content
+    map_insert_bytes(
+        &doc.get_map("entities"),
+        &edit.to_hex(),
+        &entity_blob(
+            crate::registry::ENTITY_TYPE_POLICY_MANIFEST,
+            TimeRange { start: 3, end: 3 },
+            3,
+            &forged,
+        ),
+    )?;
+    doc.commit();
+    assert_eq!(b.project(project)?.unwrap().depth, 2);
+    assert!(
+        crate::sync::quarantine::quarantined_records(&b)?
+            .iter()
+            .any(|(_, row)| row.reason_code == "InvalidProjectBody")
+    );
+    Ok(())
+}
+
+#[test]
+fn observer_b_project_depth_authority_dependency_survives_retry_until_bind() -> crate::Result<()> {
+    let source = test_vault();
+    let root = source.root_project()?;
+    let leader = EntityId::from_hex(&source.project(root)?.unwrap().leader)?;
+    let id = EntityId::now();
+    source.put_project(
+        id,
+        &crate::workspace_roster::ProjectRecord::new(id, Some(root), root, leader),
+        1,
+    )?;
+    let human = EntityId::now();
+    source.put_entity(
+        &human,
+        crate::registry::ENTITY_TYPE_PERSON,
+        TimeRange { start: 1, end: 1 },
+        1,
+        b"owner",
+    )?;
+    let writer = crate::write_envelope::WriteActor::new(human, EdgeActorClass::Human);
+    crate::subject_model::tests::authorization::root_owner(&source, writer, 0xBB)?;
+    let history = source.export_signed_authority_history()?;
+    crate::workspace_roster::set_project_depth_signed_for_test(&source, id, 2, &writer, 2, 0xBB)?;
+    let (edit, body) = crate::gate::project_depth::contributions_for_test(&source, id)?
+        .into_iter()
+        .find(|(_, bytes)| {
+            matches!(
+                crate::gate::project_depth::decode_contribution(bytes).ok(),
+                Some(crate::gate::project_depth::ProjectDepthContribution::Edit(
+                    _
+                ))
+            )
+        })
+        .expect("signed depth contribution");
+
+    let target = test_vault();
+    let target_root = target.root_project()?;
+    let target_leader = EntityId::from_hex(&target.project(target_root)?.unwrap().leader)?;
+    target.put_project(
+        root,
+        &crate::workspace_roster::ProjectRecord::new(
+            root,
+            Some(target_root),
+            target_root,
+            target_leader,
+        ),
+        1,
+    )?;
+    target.put_project(
+        id,
+        &crate::workspace_roster::ProjectRecord::new(id, Some(root), root, target_leader),
+        1,
+    )?;
+    target.put_entity(
+        &human,
+        crate::registry::ENTITY_TYPE_PERSON,
+        TimeRange { start: 1, end: 1 },
+        1,
+        b"owner",
+    )?;
+    target.import_signed_authority_history(&history[..1])?;
+    let doc = LoroDoc::new();
+    let materializer = Arc::new(Materializer::new());
+    let window = "2026-03";
+    let window_key = crate::sync::types::WindowKey::new(window);
+    let _subscription = register_observer_b(&doc, &target, &materializer, window);
+    map_insert_bytes(
+        &doc.get_map("entities"),
+        &edit.to_hex(),
+        &entity_blob(
+            crate::registry::ENTITY_TYPE_POLICY_MANIFEST,
+            TimeRange { start: 2, end: 2 },
+            2,
+            &body,
+        ),
+    )?;
+    doc.commit();
+    assert_eq!(
+        target.project(id)?.unwrap().depth,
+        0,
+        "pending signer cannot authorize a permissive depth"
+    );
+    assert!(
+        target.get(&edit)?.is_some(),
+        "immutable fact survives missing authority"
+    );
+    crate::sync::window::forward_rematerialize(&target, &doc, &materializer, &window_key)?;
+    assert_eq!(target.project(id)?.unwrap().depth, 0);
+    target.import_signed_authority_history(&history[1..])?;
+    assert_eq!(
+        target.project(id)?.unwrap().depth,
+        2,
+        "authority arrival activates already-stored contribution without resending it"
+    );
+    Ok(())
+}
+
+#[test]
+fn observer_b_bootstraps_signed_default_birth_and_edit_on_fresh_replica() -> crate::Result<()> {
+    use ed25519_dalek::Signer;
+    let a = test_vault();
+    let root_a = a.root_project()?;
+    let leader = EntityId::from_hex(&a.project(root_a)?.unwrap().leader)?;
+    let person = EntityId::now();
+    a.put_entity(
+        &person,
+        crate::registry::ENTITY_TYPE_PERSON,
+        TimeRange { start: 1, end: 1 },
+        1,
+        b"owner",
+    )?;
+    let writer = crate::write_envelope::WriteActor::new(person, EdgeActorClass::Human);
+    crate::subject_model::tests::authorization::root_owner(&a, writer, 0xC1)?;
+    let signing = SigningKey::from_bytes(&[0xC1; 32]);
+    let key = crate::authority::AuthorityKey::Ed25519(signing.verifying_key().to_bytes());
+    a.set_project_creation_depth_default(8, &writer, 2, key, |message| {
+        Ok(signing.sign(message).to_bytes().to_vec())
+    })?;
+    let id = EntityId::now();
+    crate::workspace_roster::create_project_signed_for_test(
+        &a, id, root_a, leader, &writer, 3, 0xC1,
+    )?;
+    assert_eq!(a.project(id)?.unwrap().depth, 8);
+    crate::workspace_roster::set_project_depth_signed_for_test(&a, id, 2, &writer, 4, 0xC1)?;
+    let project_facts = crate::gate::project_depth::contributions_for_test(&a, id)?;
+    let default_id = crate::gate::project_depth::seeded_default_carrier()?.0;
+    let default_facts = crate::gate::project_depth::contributions_for_test(&a, default_id)?;
+    assert_eq!(default_facts.len(), 1);
+    assert_eq!(project_facts.len(), 2);
+
+    let b = test_vault();
+    let root_b = b.root_project()?;
+    let leader_b = EntityId::from_hex(&b.project(root_b)?.unwrap().leader)?;
+    b.put_project(
+        root_a,
+        &crate::workspace_roster::ProjectRecord::new(root_a, Some(root_b), root_b, leader_b),
+        1,
+    )?;
+    b.put_entity(
+        &person,
+        crate::registry::ENTITY_TYPE_PERSON,
+        TimeRange { start: 1, end: 1 },
+        1,
+        b"owner",
+    )?;
+    b.import_signed_authority_history(&a.export_signed_authority_history()?)?;
+    let doc = LoroDoc::new();
+    let materializer = Arc::new(Materializer::new());
+    let window = "2026-03";
+    let _subs = register_observer_b(&doc, &b, &materializer, window);
+    for (fact, body) in default_facts.iter().chain(project_facts.iter()) {
+        map_insert_bytes(
+            &doc.get_map("entities"),
+            &fact.to_hex(),
+            &entity_blob(
+                crate::registry::ENTITY_TYPE_POLICY_MANIFEST,
+                TimeRange { start: 4, end: 4 },
+                4,
+                body,
+            ),
+        )?;
+    }
+    let member = rmp_serde::to_vec_named(&a.project(id)?.unwrap()).expect("member view");
+    map_insert_bytes(
+        &doc.get_map("entities"),
+        &id.to_hex(),
+        &entity_blob(
+            b.project_type_byte()?,
+            TimeRange { start: 4, end: 4 },
+            4,
+            &member,
+        ),
+    )?;
+    doc.commit();
+    let key = crate::sync::types::WindowKey::new(window);
+    for _ in 0..2 {
+        crate::sync::window::forward_rematerialize(&b, &doc, &materializer, &key)?;
+    }
+    assert_eq!(b.project(id)?.unwrap().depth, 2);
+    assert_eq!(
+        crate::gate::project_depth::resolve_creation_default(
+            &b.store,
+            &b.store.env.read_txn()?,
+            b.privacy_posture(),
+        )?
+        .depth,
+        8
+    );
+    Ok(())
+}
+
+#[test]
 fn deferred_cancellation_target_materializes_as_person_without_poisoning_deletes() {
     use crate::identity_topology::{StoredIdentityOpAction, StoredIdentityOpEvent};
 
@@ -4802,4 +5154,96 @@ fn observer_b_quarantines_project_parent_forgery_removal_and_claim_hub_edge() {
         );
     }
 }
+/// Deleting an edge-provenance Claim restamps its subject edge A->B in both
+/// edge indexes, so the committed tombstone notice names both endpoints. An
+/// item rolled back to its savepoint names neither, and leaves the flags.
+#[test]
+fn provenance_claim_tombstone_notifies_both_subject_endpoints_after_commit() {
+    use crate::edge::EdgeKind;
+    use crate::provenance::{EdgeProvenanceClaimBody, EdgeRef, SupersessionStatus};
+    use crate::sync::bridge::{LiveQueryTee, MaterializedDiffSummary, OriginMark};
+    use std::sync::Mutex;
+
+    #[derive(Default)]
+    struct Capture(Mutex<Vec<String>>);
+    impl LiveQueryTee for Capture {
+        fn on_materialized(&self, _: &str, diff: &MaterializedDiffSummary, _: &OriginMark) {
+            self.0
+                .lock()
+                .unwrap()
+                .extend(diff.containers.iter().cloned());
+        }
+    }
+    for reason in [1u8, 2u8] {
+        for rollback in [false, true] {
+            let vault = test_vault();
+            let at = 1_771_027_200;
+            let [source, target, other, other_target] =
+                [0xE1, 0xE2, 0xE3, 0xE4].map(|byte| EntityId::from_bytes([byte; 16]).unwrap());
+            for id in [source, target, other, other_target] {
+                vault
+                    .put_entity(
+                        &id,
+                        crate::registry::ENTITY_TYPE_PERSON,
+                        TimeRange { start: at, end: at },
+                        at,
+                        b"provenance endpoint",
+                    )
+                    .unwrap();
+            }
+            vault
+                .put_edge(&source, EdgeKind::Mentions, &target, 0.5)
+                .unwrap();
+            vault
+                .put_edge(&other, EdgeKind::Mentions, &other_target, 0.5)
+                .unwrap();
+            let claim = EntityId::from_bytes([0xE5; 16]).unwrap();
+            vault
+                .put_edge_provenance(
+                    &claim,
+                    &EdgeRef::new(source, EdgeKind::Mentions, target),
+                    &EdgeProvenanceClaimBody::new(source, 0.8, SupersessionStatus::Confirmed),
+                    EdgeActorClass::Human,
+                    at,
+                )
+                .unwrap();
+            let flags = || {
+                vault
+                    .edges_out(&source)
+                    .unwrap()
+                    .into_iter()
+                    .find(|edge| edge.kind == EdgeKind::Mentions)
+                    .unwrap()
+                    .provenance
+            };
+            assert!(flags().is_some());
+
+            let doc = LoroDoc::new();
+            let materializer = Arc::new(Materializer::new());
+            let capture = Arc::new(Capture::default());
+            let tee: Arc<dyn LiveQueryTee> = capture.clone();
+            materializer.attach_live_query_tee(&tee);
+            let _subs = register_observer_b(&doc, &vault, &materializer, ONE521_WINDOW);
+            if rollback {
+                crate::sync::quarantine::INJECT_PURGE_FAILURES.with(|cell| cell.set(1));
+            }
+            map_insert_bytes(
+                &doc.get_map("tombstones"),
+                &claim.to_hex(),
+                &one521_tombstone(reason, 0xE6),
+            )
+            .unwrap();
+            doc.commit();
+            crate::sync::quarantine::INJECT_PURGE_FAILURES.with(|cell| cell.set(0));
+
+            let seen = capture.0.lock().unwrap().clone();
+            let named = |id: &EntityId| seen.contains(&format!("e:{}", id.to_hex()));
+            assert_eq!(flags().is_some(), rollback, "reason {reason}");
+            assert_eq!(named(&source), !rollback, "reason {reason}: {seen:?}");
+            assert_eq!(named(&target), !rollback, "reason {reason}: {seen:?}");
+            assert!(!named(&other) && !named(&other_target), "{seen:?}");
+        }
+    }
+}
+
 mod resident;

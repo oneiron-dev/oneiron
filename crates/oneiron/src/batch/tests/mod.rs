@@ -571,6 +571,7 @@ fn put_in_own_txn(
                 hub_admission: None,
                 refinement_admission: None,
                 transition: None,
+                posture: crate::HostingPrivacyPosture::default(),
             },
         },
     )

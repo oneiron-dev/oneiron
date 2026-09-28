@@ -21,6 +21,7 @@ pub(super) const POLICY_SCOPED_GRANTS_KEY: &str = "scoped_grants";
 pub(super) const POLICY_SIGNATURE_KEY: &str = "signature";
 pub(super) const POLICY_SIGNATURES_KEY: &str = "signatures";
 pub(super) const POLICY_ON_BUDGET_EXHAUSTED_KEY: &str = "on_budget_exhausted";
+pub(super) const POLICY_PROJECT_COLLABORATION_KEY: &str = "project_collaboration";
 /// Optional top-level manifest key naming the HOST's auto checker (ONE-1296).
 ///
 /// The value is an opaque non-empty string the engine never interprets: it
@@ -72,6 +73,8 @@ pub(super) const ATTRIBUTION_HOLDER_MAX_BYTES_KEY: &str = "max_bytes";
 /// floors only narrow it, and independent trusted packs compose by max.
 pub(super) const POLICY_TEACHER_PROBE_KEY: &str = "teacher_probe";
 pub(super) const POLICY_BUDGET_POLICY_KEY: &str = "budget_policy";
+/// Bounded policy rows for foreign connector admission, not persisted-body codec bounds.
+pub(super) const POLICY_CONNECTOR_ADMISSION_KEY: &str = "connector_admission";
 /// Optional trusted DEC-0005 manifest setting for gate-decision age pruning.
 /// The seeded default has a null horizon (no pruning), and an owner-authored
 /// row overrides it. Conflicting owner rows are ambiguous and fail closed.
@@ -80,6 +83,8 @@ pub(super) const GATE_RETENTION_HORIZON_SECS_KEY: &str = "horizon_secs";
 pub(super) const GATE_RETENTION_MAX_SWEEP_ROWS_KEY: &str = "max_sweep_rows";
 pub(super) const GATE_RETENTION_PRECEDENCE_KEY: &str = "precedence";
 pub(super) const GATE_RETENTION_HOLDER_OVERRIDE_CEILING_KEY: &str = "holder_override_ceiling";
+/// Complete typed conversion policy map; an absent row keeps the default.
+pub(super) const POLICY_PROJECT_CONVERSION_KEY: &str = "project_conversion";
 /// Per-format edit resource budgets; precedence is a required manifest row.
 pub(crate) const POLICY_PPTX_COMMENT_LIMITS_KEY: &str = "pptx_comment_limits";
 /// Ordered restrict-only rows: vault, artifact, and named sheet caps compose
@@ -221,3 +226,7 @@ pub(super) const POLICY_CONNECTOR_CLASS_ROLE_KEY: &str = "connector_class_role";
 pub(super) const POLICY_CONNECTOR_CLASS_PRECEDENCE_KEY: &str = "connector_class_precedence";
 /// Trusted policy rows for cross-vault ask limits, surface and retry cadence.
 pub(super) const POLICY_ASK_POLICY_KEY: &str = "ask_policy";
+
+/// Optional trusted manifest ceiling for device world-window subscriptions.
+pub(crate) const POLICY_SYNC_WORLD_CEILING_KEY: &str = "sync_world_ceiling";
+pub(crate) const POLICY_SYNC_WORLD_DEFAULT_KEY: &str = "sync_world_default";

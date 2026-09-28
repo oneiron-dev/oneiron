@@ -14,6 +14,7 @@ pub(crate) use manifest_authenticity::stamp_manifest_origin;
 pub(crate) use manifest_authenticity::{seeded_manifest_key, trusted_manifest_key};
 mod carry_forward_policy;
 mod confirm;
+mod connector_admission;
 mod constants;
 mod decision;
 mod decode;
@@ -28,10 +29,13 @@ mod foreign_agent;
 mod grants;
 mod hosted_tts_policy;
 mod input;
+pub(crate) mod mail_policy;
 mod operational_policy;
 mod owner_policy_mutation;
 mod pack_install_policy;
 pub(crate) mod policy_values;
+mod project_conversion;
+pub(crate) mod project_depth;
 pub(crate) mod proposal_observation;
 mod repair;
 mod resolution;
@@ -71,6 +75,7 @@ pub use self::confirm::{
 pub(crate) use self::confirm::{
     critical_write_confirm_binding, reconcile_critical_write_confirm_on_replicated_overwrite,
 };
+pub(crate) use self::connector_admission::ConnectorAdmissionQuotas;
 pub(crate) use self::constants::POLICY_OWNER_POLICY_NOTIFY_KEY;
 #[cfg(test)]
 pub(crate) use self::constants::{
@@ -87,6 +92,7 @@ pub(crate) use self::decision::{GateDecision, GateMetrics, GateOutcome, GateReas
 pub(crate) use self::decode::normalize_policy_manifest_scope;
 pub(crate) use self::default_manifest::{
     DEFAULT_POLICY_MANIFEST_TIMESTAMP, default_policy_manifest, default_policy_manifest_id,
+    seeded_project_depth_default,
 };
 pub(crate) use self::definition_ceiling::agent_definition_ceiling_for_actor;
 #[cfg(test)]
@@ -111,8 +117,9 @@ use self::dreamer_precommit::{
     validate_dreamer_precommit,
 };
 pub(crate) use self::effect::{
-    ExternalEffectGovernance, check_external_effect_policy, check_external_effect_policy_pair,
-    evaluate_external_effect_policy, external_effect_approval_digest,
+    ApprovalContext, ExternalEffectGovernance, check_external_effect_policy,
+    check_external_effect_policy_pair, evaluate_external_effect_policy,
+    external_effect_approval_digest, native_mail_cold_approval_digest,
     record_external_effect_policy,
 };
 pub(crate) use self::grants::{
@@ -133,11 +140,15 @@ pub(crate) use self::owner_policy_mutation::apply_owner_policy_row_change_in_txn
 pub use self::owner_policy_mutation::{
     PolicyRowAction, PolicyRowChange, PolicyRowScope, PolicyWhySource,
 };
+pub(crate) use self::project_conversion::{
+    LeaderFallback, ProjectConversionPolicy, RosterSelection, TaskHolderFallback,
+};
 pub(crate) use self::repair::{evaluate_repair_consent, repair_criticality};
 pub(crate) use self::resolution::{
-    GateDecisionRetentionPolicy, GateRetentionContext, PolicyManifestResolution,
-    resolve_credential_lifetimes, resolve_gate_decision_retention, resolve_policy_manifest,
-    retention_edit_target,
+    GateDecisionRetentionPolicy, GateRetentionContext, LeaderChatDefault, PolicyManifestResolution,
+    ProjectWidenAskFallback, ResidenceOperationBudgetLimits, ResidenceOperationBudgetPrecedence,
+    ResidenceOperationBudgetRow, resolve_credential_lifetimes, resolve_gate_decision_retention,
+    resolve_policy_manifest, resolve_project_depth_max, retention_edit_target,
 };
 pub use self::retrieval_filter::RetrievalFilter;
 pub(crate) use self::retrieval_filter::{

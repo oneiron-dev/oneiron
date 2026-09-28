@@ -11,6 +11,7 @@ use super::kernel::{
     FIELD_RECEIPT_SCHEMA, FIELD_TASK_REF, FIELD_TRANSPORT_DISPATCHED, MAX_RECEIPT_QUERY_SCAN,
     ReceiptKind, ReceiptRecord, ReceiptScan, hex_lower,
 };
+#[cfg(test)]
 use super::send_receipt_txn::persist_send_receipt_in_txn;
 use crate::Vault;
 use crate::attempt_queue::{AttemptId, AttemptRecord};
@@ -52,6 +53,7 @@ pub(super) struct DurableSendReceipt {
 pub(crate) enum SendReceiptOutcome {
     Delivered,
     Failed,
+    Ambiguous,
 }
 
 /// The stable `receipt_id` of one attempt's terminal PACK RECEIPT.
@@ -247,10 +249,8 @@ fn note_attempt_pack_scan_capped() {
     ATTEMPT_PACK_SCAN_CAPPED.with(|fired| fired.set(fired.get() + 1));
 }
 
-/// Appends one outbound attempt's audit receipt and updates its TASK summary.
-/// Delivered summaries are sticky and atomically install the actor-scoped client
-/// idempotency index. Failed receipts never authorize idempotency and remain in
-/// the history after a later attempt updates the summary.
+/// Test fixture for delivered/failed send receipt summary and idempotency.
+#[cfg(test)]
 pub(crate) fn persist_send_receipt(
     vault: &Vault,
     task_ref: EntityId,
@@ -294,6 +294,7 @@ pub(super) fn decode_durable_send_receipt(
     let expected_receipt_outcome = match durable.outcome {
         SendReceiptOutcome::Delivered => "delivered_to_channel",
         SendReceiptOutcome::Failed => "failed",
+        SendReceiptOutcome::Ambiguous => "ambiguous",
     };
     if durable.version != SEND_RECEIPT_RECORD_VERSION
         || durable.task_ref != crate::entity_id::bytes_to_hex_lower(task_id)

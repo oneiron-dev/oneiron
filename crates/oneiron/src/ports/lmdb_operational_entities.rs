@@ -191,9 +191,8 @@ impl EntityStoreMaintenance for Store {
         };
         let body = crate::habit::rewrite_habit_streak_fields(&row.body, streak)?;
         if body != row.body {
-            crate::federation::record_scope::preserve_task_projection_scope(
-                self, txn, *id, &row.body, &body,
-            )?;
+            // The record scope stamp binds to the id, not the body bytes, so a
+            // derived streak rewrite keeps the birth stamp as it is.
             row.body = body;
             let payload = row.encode();
             crate::vault::entity_revision::capture_entity_revision(self, txn, id, &payload)?;

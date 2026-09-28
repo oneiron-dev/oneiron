@@ -19,23 +19,24 @@ use crate::gate::constants::{
     ATTRIBUTION_HOLDER_REASON_BYTES_KEY, ATTRIBUTION_PRECEDENCE_KEY,
     ATTRIBUTION_REASON_MAX_BYTES_KEY, ATTRIBUTION_RECEIPTS_PER_PASS_KEY, POLICY_ACT_POLICY_KEY,
     POLICY_ACTOR_CEILINGS_KEY, POLICY_ASK_POLICY_KEY, POLICY_ATTRIBUTION_LIMITS_KEY,
-    POLICY_AUTO_CHECKER_KEY, POLICY_BUDGET_POLICY_KEY, POLICY_CONNECTOR_CLASS_CARRY_KEY,
-    POLICY_CONNECTOR_CLASS_PRECEDENCE_KEY, POLICY_CONNECTOR_CLASS_ROLE_KEY,
-    POLICY_CREDENTIAL_LIFETIMES_KEY, POLICY_DEFAULTS_KEY, POLICY_DELEGATED_GRANTS_KEY,
-    POLICY_DOCEDIT_RESOURCE_KEY, POLICY_DOCX_ARCHIVE_LIMITS_KEY,
+    POLICY_AUTO_CHECKER_KEY, POLICY_BUDGET_POLICY_KEY, POLICY_CONNECTOR_ADMISSION_KEY,
+    POLICY_CONNECTOR_CLASS_CARRY_KEY, POLICY_CONNECTOR_CLASS_PRECEDENCE_KEY,
+    POLICY_CONNECTOR_CLASS_ROLE_KEY, POLICY_CREDENTIAL_LIFETIMES_KEY, POLICY_DEFAULTS_KEY,
+    POLICY_DELEGATED_GRANTS_KEY, POLICY_DOCEDIT_RESOURCE_KEY, POLICY_DOCX_ARCHIVE_LIMITS_KEY,
     POLICY_DREAMER_FAILURE_PRECEDENCE_KEY, POLICY_DREAMER_FAILURE_RULES_KEY,
     POLICY_GATE_DECISION_RETENTION_KEY, POLICY_HOSTED_TTS_KEY, POLICY_LEGAL_FLOOR_ROWS_KEY,
     POLICY_MIN_ENGINE_VERSION_KEY, POLICY_ON_BUDGET_EXHAUSTED_KEY,
     POLICY_OWNER_POLICY_DOCUMENT_KEY, POLICY_OWNER_POLICY_ENABLED_KEY,
     POLICY_OWNER_POLICY_OUTPUT_CONTRACT_KEY, POLICY_OWNER_POLICY_PATTERNS_KEY,
     POLICY_OWNER_POLICY_PRECEDENCE_KEY, POLICY_OWNER_POLICY_ROWS_KEY, POLICY_PACK_ID_KEY,
-    POLICY_PACK_VERSION_KEY, POLICY_PPTX_COMMENT_LIMITS_KEY,
-    POLICY_RETIRED_COMM_OPT_OUT_POSTURE_KEY, POLICY_RETIRED_PROPOSAL_CHECK_THRESHOLD_KEY,
-    POLICY_RULES_KEY, POLICY_SCHEMA_VERSION, POLICY_SCHEMA_VERSION_KEY, POLICY_SCOPED_GRANTS_KEY,
-    POLICY_SHEET_ANSWER_LIMITS_KEY, POLICY_SHEET_ANSWER_PRECEDENCE_KEY, POLICY_SIGNATURE_KEY,
-    POLICY_SIGNATURES_KEY, POLICY_SKILL_EDIT_GOAL_KEY, POLICY_SLIDE_REVIEW_KEY,
-    POLICY_SOURCE_TRUST_KEY, POLICY_TEACHER_PROBE_KEY, POLICY_WAIT_POLICY_KEY,
-    POLICY_WEAVE_CORRECTION_POLICY_KEY,
+    POLICY_PACK_VERSION_KEY, POLICY_PPTX_COMMENT_LIMITS_KEY, POLICY_PROJECT_COLLABORATION_KEY,
+    POLICY_PROJECT_CONVERSION_KEY, POLICY_RETIRED_COMM_OPT_OUT_POSTURE_KEY,
+    POLICY_RETIRED_PROPOSAL_CHECK_THRESHOLD_KEY, POLICY_RULES_KEY, POLICY_SCHEMA_VERSION,
+    POLICY_SCHEMA_VERSION_KEY, POLICY_SCOPED_GRANTS_KEY, POLICY_SHEET_ANSWER_LIMITS_KEY,
+    POLICY_SHEET_ANSWER_PRECEDENCE_KEY, POLICY_SIGNATURE_KEY, POLICY_SIGNATURES_KEY,
+    POLICY_SKILL_EDIT_GOAL_KEY, POLICY_SLIDE_REVIEW_KEY, POLICY_SOURCE_TRUST_KEY,
+    POLICY_SYNC_WORLD_CEILING_KEY, POLICY_SYNC_WORLD_DEFAULT_KEY, POLICY_TEACHER_PROBE_KEY,
+    POLICY_WAIT_POLICY_KEY, POLICY_WEAVE_CORRECTION_POLICY_KEY,
 };
 use crate::gate::docedit_resource::DoceditResourcePolicy;
 use crate::gate::grants::PolicyScopedGrant;
@@ -46,9 +47,11 @@ use crate::gate::operational_policy::{
 };
 use crate::gate::pack_install_policy::KEY as PACK_INSTALL_POLICY_KEY;
 use crate::gate::policy_values::{PolicyValueRow, parse_policy_values};
+use crate::gate::project_conversion::{ProjectConversionPolicy, parse_project_conversion};
 use crate::gate::resolution::{
     AttributionLimits, ConnectorClassPrecedence, CredentialLifetimePolicy,
-    CredentialLifetimePrecedence, GateDecisionRetentionPolicy, TeacherProbeRow,
+    CredentialLifetimePrecedence, GateDecisionRetentionPolicy, ProjectCollaborationPolicy,
+    ResidenceOperationBudgetRow, TeacherProbeRow,
 };
 use crate::gate::retrieval_retention::{
     RETRIEVAL_RETENTION_ROWS_KEY, RetrievalRetentionRows, parse_retrieval_retention_rows,
@@ -72,6 +75,7 @@ use super::decode_trust_budget::{
     parse_budget_exhaustion_policy, parse_budget_policy, parse_gate_decision_retention,
     parse_source_trust,
 };
+use super::parse_residence_operation_budgets;
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub(in crate::gate) enum ConnectorClassRole {
@@ -101,10 +105,16 @@ pub(in crate::gate) struct DecodedPolicyManifest {
     pub(in crate::gate) owner_policy_patterns_dropped: bool,
     pub(in crate::gate) signatures: Vec<PolicySignature>,
     pub(in crate::gate) on_budget_exhausted: Option<BudgetExhaustionPolicy>,
+    pub(in crate::gate) project_depth_default: Option<u8>,
+    pub(in crate::gate) project_depth_max: Option<u8>,
+    pub(in crate::gate) native_mail_policy: Vec<crate::gate::mail_policy::MailPolicy>,
+    pub(in crate::gate) project_collaboration: Option<ProjectCollaborationPolicy>,
     /// The opaque host checker ref (ONE-1296), absent unless the manifest
     /// names one.
     pub(in crate::gate) auto_checker: Option<String>,
     pub(in crate::gate) budget_policy: BudgetPolicyTable,
+    pub(in crate::gate) connector_admission:
+        Option<crate::gate::connector_admission::ConnectorAdmissionPolicy>,
     pub(in crate::gate) voice_serving: Option<crate::gate::voice_serving::VoiceServingRows>,
     pub(in crate::gate) weave_report_policy: Vec<crate::gate::weave_policy::Row>,
     pub(in crate::gate) weave_report_policy_empty: bool,
@@ -113,6 +123,7 @@ pub(in crate::gate) struct DecodedPolicyManifest {
     pub(in crate::gate) wait_policy: WaitPolicyTable,
     pub(in crate::gate) act_policy: ActPolicyTable,
     pub(in crate::gate) pack_install_policy: Option<PackInstallPolicy>,
+    pub(in crate::gate) project_conversion: Option<ProjectConversionPolicy>,
     pub(in crate::gate) room_thread: Option<crate::gate::RoomThreadManifest>,
     pub(in crate::gate) pptx_comment_limits:
         Option<crate::edit_roundtrip::pptx::PptxOperationalLimits>,
@@ -130,6 +141,7 @@ pub(in crate::gate) struct DecodedPolicyManifest {
 
     pub(in crate::gate) diagnostic_bounds: Option<crate::self_heal::tripwires::TripwireBounds>,
     pub(in crate::gate) failure_signal_policy: Vec<crate::failure_signals::policy::Row>,
+    pub(in crate::gate) residence_operation_budgets: Option<ResidenceOperationBudgetRow>,
     pub(in crate::gate) livequery_tracker_limits:
         Option<crate::gate::tracker_limits::PolicyTrackerLimits>,
     pub(in crate::gate) retrieval_retention: Option<RetrievalRetentionRows>,
@@ -155,9 +167,32 @@ pub(in crate::gate) struct DecodedPolicyManifest {
     pub(in crate::gate) judge_calibration:
         Option<crate::skill_optimize::policy::JudgeCalibrationPolicy>,
     pub(in crate::gate) credential_lifetimes: Option<CredentialLifetimePolicy>,
+    pub(in crate::gate) sync_world_ceiling: Option<std::collections::BTreeSet<crate::EntityId>>,
+    pub(in crate::gate) sync_world_default: Option<bool>,
     pub(in crate::gate) unsupported_schema: bool,
     pub(in crate::gate) engine_version_floor: bool,
     pub(in crate::gate) unknown_axis_seen: bool,
+}
+
+/// A policy carrier is either a complete ordinary pack or one immutable
+/// project-scoped signed contribution. Signed rows never inherit a pack's
+/// local-only trusted marker or its unrelated gate defaults.
+#[expect(
+    clippy::large_enum_variant,
+    reason = "transient per-row decode value, matched once by the manifest fold"
+)]
+pub(in crate::gate) enum DecodedManifestCarrier {
+    Pack(DecodedPolicyManifest),
+    ProjectDepth(crate::gate::project_depth::ProjectDepthContribution),
+}
+
+pub(in crate::gate) fn decode_manifest_carrier(data: &[u8]) -> Option<DecodedManifestCarrier> {
+    if crate::gate::project_depth::is_project_depth_contribution(data) {
+        return crate::gate::project_depth::decode_contribution(data)
+            .ok()
+            .map(DecodedManifestCarrier::ProjectDepth);
+    }
+    decode_policy_manifest(data).map(DecodedManifestCarrier::Pack)
 }
 
 // One decode per manifest row, mirroring default_policy_manifest: splitting it would scatter one manifest.
@@ -205,13 +240,17 @@ pub(in crate::gate) fn decode_policy_manifest(data: &[u8]) -> Option<DecodedPoli
                 | POLICY_SIGNATURE_KEY
                 | POLICY_SIGNATURES_KEY
                 | POLICY_ON_BUDGET_EXHAUSTED_KEY
+                | crate::gate::mail_policy::MANIFEST_KEY
+                | POLICY_PROJECT_COLLABORATION_KEY
                 | POLICY_AUTO_CHECKER_KEY
                 | POLICY_BUDGET_POLICY_KEY
+                | POLICY_CONNECTOR_ADMISSION_KEY
                 | crate::gate::voice_serving::KEY
                 | POLICY_GATE_DECISION_RETENTION_KEY
                 | POLICY_WAIT_POLICY_KEY
                 | POLICY_ACT_POLICY_KEY
                 | PACK_INSTALL_POLICY_KEY
+                | POLICY_PROJECT_CONVERSION_KEY
                 | "room_thread"
                 | POLICY_PPTX_COMMENT_LIMITS_KEY
                 | "booking_conversion"
@@ -227,11 +266,14 @@ pub(in crate::gate) fn decode_policy_manifest(data: &[u8]) -> Option<DecodedPoli
                 | POLICY_DOCX_ARCHIVE_LIMITS_KEY
 
                 | "diagnostic_bounds"
+                | "project_depth_default"
+                | "project_depth_max"
                 | "policy_values"
                 | crate::failure_signals::policy::POLICY_KEY
                 | "livequery_tracker_limits"
                 | crate::gate::weave_policy::KEY
                 | crate::gate::weave_policy::PRECEDENCE_KEY
+                | super::POLICY_RESIDENCE_OPERATION_BUDGETS_KEY
                 | RETRIEVAL_RETENTION_ROWS_KEY
                 | "goal_limits"
                 | "voice_ref_limits"
@@ -250,6 +292,8 @@ pub(in crate::gate) fn decode_policy_manifest(data: &[u8]) -> Option<DecodedPoli
                 | "experiment_selection"
                 | crate::gate::carry_forward_policy::KEY
                 | crate::skill_optimize::policy::MANIFEST_KEY
+                | POLICY_SYNC_WORLD_CEILING_KEY
+                | POLICY_SYNC_WORLD_DEFAULT_KEY
         ) {
             return None;
         }
@@ -400,6 +444,17 @@ pub(in crate::gate) fn decode_policy_manifest(data: &[u8]) -> Option<DecodedPoli
         MapValue::Duplicate => return None,
         MapValue::Present(value) => Some(parse_budget_exhaustion_policy(value)?),
     };
+    let native_mail_policy =
+        match single_map_value(&entries, crate::gate::mail_policy::MANIFEST_KEY) {
+            MapValue::Missing => Vec::new(),
+            MapValue::Duplicate => return None,
+            MapValue::Present(value) => crate::gate::mail_policy::decode_rows(value)?,
+        };
+    let project_collaboration = match single_map_value(&entries, POLICY_PROJECT_COLLABORATION_KEY) {
+        MapValue::Missing => None,
+        MapValue::Duplicate => return None,
+        MapValue::Present(value) => Some(super::project_collaboration::parse(value)?),
+    };
     // ONE-1296: the checker ref is a SELECTOR the host resolves, so decode
     // asks only that it be one non-blank, bounded string. A duplicate row is
     // the same ambiguity `on_budget_exhausted` refuses, and a blank or
@@ -419,6 +474,13 @@ pub(in crate::gate) fn decode_policy_manifest(data: &[u8]) -> Option<DecodedPoli
         MapValue::Missing => BudgetPolicyTable::default(),
         MapValue::Duplicate => return None,
         MapValue::Present(value) => parse_budget_policy(value)?,
+    };
+    let connector_admission = match single_map_value(&entries, POLICY_CONNECTOR_ADMISSION_KEY) {
+        MapValue::Missing => None,
+        MapValue::Duplicate => return None,
+        MapValue::Present(value) => {
+            Some(crate::gate::connector_admission::ConnectorAdmissionPolicy::decode(value)?)
+        }
     };
     let voice_serving = match single_map_value(&entries, crate::gate::voice_serving::KEY) {
         MapValue::Missing => None,
@@ -443,6 +505,11 @@ pub(in crate::gate) fn decode_policy_manifest(data: &[u8]) -> Option<DecodedPoli
         MapValue::Missing => ActPolicyTable::default(),
         MapValue::Duplicate => return None,
         MapValue::Present(value) => parse_act_policy(value)?,
+    };
+    let project_conversion = match single_map_value(&entries, POLICY_PROJECT_CONVERSION_KEY) {
+        MapValue::Missing => None,
+        MapValue::Duplicate => return None,
+        MapValue::Present(value) => Some(parse_project_conversion(value)?),
     };
     let room_thread = match single_map_value(&entries, "room_thread") {
         MapValue::Missing => None,
@@ -560,6 +627,14 @@ pub(in crate::gate) fn decode_policy_manifest(data: &[u8]) -> Option<DecodedPoli
             Some(crate::self_heal::tripwires::TripwireBounds::decode(value)?)
         }
     };
+
+    let (project_depth_default, project_depth_max) = parse_project_depth_rows(&entries)?;
+    let residence_operation_budgets =
+        match single_map_value(&entries, super::POLICY_RESIDENCE_OPERATION_BUDGETS_KEY) {
+            MapValue::Missing => None,
+            MapValue::Duplicate => return None,
+            MapValue::Present(value) => Some(parse_residence_operation_budgets(value)?),
+        };
 
     let failure_signal_policy =
         match single_map_value(&entries, crate::failure_signals::policy::POLICY_KEY) {
@@ -716,6 +791,33 @@ pub(in crate::gate) fn decode_policy_manifest(data: &[u8]) -> Option<DecodedPoli
             }
         };
 
+    let sync_world_ceiling = match single_map_value(&entries, POLICY_SYNC_WORLD_CEILING_KEY) {
+        MapValue::Missing => None,
+        MapValue::Duplicate => return None,
+        MapValue::Present(Value::Array(worlds)) => {
+            let mut ids = std::collections::BTreeSet::new();
+            for value in worlds {
+                let Value::Binary(bytes) = value else {
+                    return None;
+                };
+                let id = crate::EntityId::from_bytes(bytes.as_slice().try_into().ok()?).ok()?;
+                if !ids.insert(id) {
+                    return None;
+                }
+            }
+            Some(ids)
+        }
+        MapValue::Present(_) => return None,
+    };
+
+    let sync_world_default = match single_map_value(&entries, POLICY_SYNC_WORLD_DEFAULT_KEY) {
+        MapValue::Missing => None,
+        MapValue::Duplicate => return None,
+        MapValue::Present(Value::String(mode)) if mode.as_str() == Some("opened") => Some(false),
+        MapValue::Present(Value::String(mode)) if mode.as_str() == Some("all") => Some(true),
+        MapValue::Present(_) => return None,
+    };
+
     let unknown_axis_seen =
         defaults.unknown_axis_seen || rules.iter().any(|rule| rule.axes.unknown_axis_seen);
 
@@ -746,8 +848,13 @@ pub(in crate::gate) fn decode_policy_manifest(data: &[u8]) -> Option<DecodedPoli
         owner_policy_patterns_dropped,
         signatures,
         on_budget_exhausted,
+        native_mail_policy,
+        project_collaboration,
         auto_checker,
+        project_depth_default,
+        project_depth_max,
         budget_policy,
+        connector_admission,
         voice_serving,
         weave_report_policy,
         weave_report_policy_empty,
@@ -756,6 +863,7 @@ pub(in crate::gate) fn decode_policy_manifest(data: &[u8]) -> Option<DecodedPoli
         wait_policy,
         act_policy,
         pack_install_policy,
+        project_conversion,
         room_thread,
         pptx_comment_limits,
         booking_conversion_rows,
@@ -770,6 +878,7 @@ pub(in crate::gate) fn decode_policy_manifest(data: &[u8]) -> Option<DecodedPoli
         docx_archive_limits,
         diagnostic_bounds,
         failure_signal_policy,
+        residence_operation_budgets,
         livequery_tracker_limits,
         retrieval_retention,
         goal_limits,
@@ -790,6 +899,8 @@ pub(in crate::gate) fn decode_policy_manifest(data: &[u8]) -> Option<DecodedPoli
         carry_forward_confidence,
         judge_calibration,
         credential_lifetimes,
+        sync_world_ceiling,
+        sync_world_default,
         unsupported_schema,
         engine_version_floor,
         unknown_axis_seen,
@@ -1041,6 +1152,31 @@ fn parse_teacher_probe_row(value: &Value) -> Option<TeacherProbeRow> {
         min_f1_millionths: minimum,
         holders,
     })
+}
+
+/// The project-depth creation default and vault ceiling rows. Each is
+/// optional, but a duplicate, a value past the projection walk bound, or a
+/// default above the ceiling rejects the manifest.
+fn parse_project_depth_rows(entries: &[(Value, Value)]) -> Option<(Option<u8>, Option<u8>)> {
+    let row = |key: &str| match single_map_value(entries, key) {
+        MapValue::Missing => Some(None),
+        MapValue::Duplicate => None,
+        MapValue::Present(value) => u8::try_from(value.as_u64()?).ok().map(Some),
+    };
+    let default = row("project_depth_default")?;
+    let max = row("project_depth_max")?;
+    let past_walk_bound = |depth: Option<u8>| {
+        depth.is_some_and(|depth| {
+            usize::from(depth) > crate::context_projection::CONTEXT_PROJECTION_MAX_ANCESTORS
+        })
+    };
+    if past_walk_bound(default)
+        || past_walk_bound(max)
+        || default.zip(max).is_some_and(|(start, max)| start > max)
+    {
+        return None;
+    }
+    Some((default, max))
 }
 
 /// Exact row decoder; a malformed or unknown field rejects the manifest.
