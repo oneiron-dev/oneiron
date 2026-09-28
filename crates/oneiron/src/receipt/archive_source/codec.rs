@@ -87,9 +87,7 @@ impl ReceiptArchive {
         {
             return Ok(false);
         }
-        let raw = store
-            .entities
-            .get(txn, holder.as_bytes())?
+        let raw = crate::ports::EntityStoreRead::port_entity_raw(store, txn, &holder)?
             .ok_or(Error::EntityNotFound)?;
         let header = EntityMetadataHeader::parse(&raw)
             .ok_or(Error::CorruptedIndex("archived receipt holder"))?;

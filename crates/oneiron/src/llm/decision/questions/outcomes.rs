@@ -73,7 +73,9 @@ pub fn calibration_pairs(
         if record.principal != principal {
             continue;
         }
-        let Some(raw) = vault.store.entities.get(&txn, outcome.fact.as_bytes())? else {
+        let Some(raw) =
+            crate::ports::EntityStoreRead::port_entity_raw(&vault.store, &txn, &outcome.fact)?
+        else {
             continue;
         };
         let header = crate::batch::EntityMetadataHeader::parse(&raw)

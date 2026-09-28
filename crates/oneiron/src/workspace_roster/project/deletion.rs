@@ -7,7 +7,7 @@ pub(crate) fn deindex_project_room(
     txn: &mut heed::RwTxn<'_>,
     id: &EntityId,
 ) -> Result<(bool, bool, Vec<EntityId>)> {
-    let Some(raw) = store.entities.get(txn, id.as_bytes())? else {
+    let Some(raw) = crate::ports::EntityStoreRead::port_entity_raw(store, txn, id)? else {
         return Ok((false, false, Vec::new()));
     };
     let Some(header) = EntityMetadataHeader::parse(&raw) else {

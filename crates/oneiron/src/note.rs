@@ -344,7 +344,7 @@ pub(crate) fn ordinary_entity_visible(
     txn: &heed::RoTxn<'_>,
     id: &EntityId,
 ) -> Result<bool> {
-    let Some(raw) = store.entities().get(txn, id.as_bytes())? else {
+    let Some(raw) = crate::ports::EntityStoreRead::port_entity_raw(store, txn, id)? else {
         return Ok(true);
     };
     let Some(header) = crate::batch::EntityMetadataHeader::parse(&raw) else {

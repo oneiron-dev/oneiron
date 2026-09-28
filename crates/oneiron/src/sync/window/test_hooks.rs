@@ -39,7 +39,12 @@ pub(super) fn run_receipt_revocation_race(vault: &Vault) -> Result<()> {
             return Err(Error::InvariantViolation("empty local receipt test row"));
         }
         vault.with_write_txn(|wtxn| {
-            vault.store.entities.put(wtxn, id.as_bytes(), &local_blob)?;
+            crate::ports::EntityStoreStaging::port_stage_entity_row(
+                &vault.store,
+                wtxn,
+                &id,
+                &local_blob,
+            )?;
             Ok(())
         })?;
     }

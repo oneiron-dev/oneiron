@@ -4,12 +4,12 @@ use heed::RwTxn;
 
 use crate::affect::Vad;
 use crate::edge::{
-    EDGE_KEY_LEN, EDGE_VALUE_SEMANTIC_LEN, EDGE_VALUE_SEMANTIC_PROVENANCED_LEN,
-    EDGE_VALUE_STRUCTURAL_LEN, EdgeKind, EdgeProvenanceFlags, encode_edge_value,
-    validate_edge_weight,
+    EDGE_VALUE_SEMANTIC_LEN, EDGE_VALUE_SEMANTIC_PROVENANCED_LEN, EDGE_VALUE_STRUCTURAL_LEN,
+    EdgeKind, EdgeProvenanceFlags, encode_edge_value, validate_edge_weight,
 };
 use crate::entity_id::EntityId;
 use crate::error::{ClaimError, Error, RegistryError, Result};
+use crate::ports::EdgeStoreStaging;
 use crate::store::Store;
 
 /// Applies one PUBLIC plain edge put (`BatchOp::Edge` — the op behind
@@ -56,8 +56,7 @@ pub(super) fn reject_if_existing_edge_is_provenanced(
         EDGE_VALUE_SEMANTIC_LEN + 2,
         "provenanced-edge detection is layout-length based; update the reject gate if the hot-flag layout changes"
     );
-    let key_out = Store::encode_edge_key(&src, kind, &tgt);
-    if let Some(existing) = store.edges_out.get(wtxn, &key_out)?
+    if let Some(existing) = store.port_edge_encoded(wtxn, &src, kind, &tgt)?
         && existing.len() == EDGE_VALUE_SEMANTIC_PROVENANCED_LEN
     {
         return Err(Error::Claim(ClaimError::EdgeIsProvenanced {
@@ -94,12 +93,12 @@ pub(super) fn apply_public_edge_with_created_at(
 pub(super) fn read_edge_value_for_setter(
     store: &Store,
     wtxn: &RwTxn<'_>,
-    key_out: &[u8; EDGE_KEY_LEN],
+    src: &EntityId,
+    kind: EdgeKind,
+    dst: &EntityId,
 ) -> Result<Vec<u8>> {
     let existing = store
-        .edges_out
-        .get(wtxn, key_out)?
-        .map(|value| value.to_vec())
+        .port_edge_encoded(wtxn, src, kind, dst)?
         .ok_or(Error::EdgeNotFound)?;
     match existing.len() {
         EDGE_VALUE_STRUCTURAL_LEN
@@ -127,12 +126,9 @@ pub(super) fn apply_set_edge_weight(
 ) -> Result<()> {
     validate_edge_weight(weight)?;
     crate::workspace_roster::validate_project_edge_put(store, wtxn, src, kind, tgt, weight)?;
-    let key_out = Store::encode_edge_key(&src, kind, &tgt);
-    let key_in = Store::encode_edge_key(&tgt, kind, &src);
-    let mut value = read_edge_value_for_setter(store, wtxn, &key_out)?;
+    let mut value = read_edge_value_for_setter(store, wtxn, &src, kind, &tgt)?;
     value[0..4].copy_from_slice(&weight.to_le_bytes());
-    store.edges_out.put(wtxn, &key_out, &value)?;
-    store.edges_in.put(wtxn, &key_in, &value)?;
+    store.port_stage_edge_rows(wtxn, &src, kind, &tgt, &value)?;
     crate::conversation_dag::pin_membership(store, wtxn, &src, kind, &tgt)?;
     Ok(())
 }
@@ -155,9 +151,7 @@ pub(super) fn apply_set_edge_vad(
     if let Some((component, value)) = vad.invalid_component() {
         return Err(Error::InvalidVad { component, value });
     }
-    let key_out = Store::encode_edge_key(&src, kind, &tgt);
-    let key_in = Store::encode_edge_key(&tgt, kind, &src);
-    let mut value = read_edge_value_for_setter(store, wtxn, &key_out)?;
+    let mut value = read_edge_value_for_setter(store, wtxn, &src, kind, &tgt)?;
     if value.len() == EDGE_VALUE_STRUCTURAL_LEN {
         return Err(Error::InvariantViolation(
             "structural edges do not carry VAD",
@@ -166,8 +160,7 @@ pub(super) fn apply_set_edge_vad(
     value[12..16].copy_from_slice(&vad.valence.to_le_bytes());
     value[16..20].copy_from_slice(&vad.arousal.to_le_bytes());
     value[20..24].copy_from_slice(&vad.dominance.to_le_bytes());
-    store.edges_out.put(wtxn, &key_out, &value)?;
-    store.edges_in.put(wtxn, &key_in, &value)?;
+    store.port_stage_edge_rows(wtxn, &src, kind, &tgt, &value)?;
     crate::conversation_dag::pin_membership(store, wtxn, &src, kind, &tgt)?;
     Ok(())
 }
@@ -245,12 +238,8 @@ pub(super) fn apply_delete_edge(
         )
         .into());
     }
-    let key_out = Store::encode_edge_key(&src, kind, &tgt);
-    let key_in = Store::encode_edge_key(&tgt, kind, &src);
     if kind == EdgeKind::RepliesTo {
         crate::conversation_dag::invalidate_thread_meta(store, wtxn, tgt)?;
     }
-    let deleted_out = store.edges_out.delete(wtxn, &key_out)?;
-    let _deleted_in = store.edges_in.delete(wtxn, &key_in)?;
-    Ok(deleted_out)
+    store.port_remove_edge_rows(wtxn, &src, kind, &tgt)
 }

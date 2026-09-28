@@ -147,7 +147,7 @@ pub(crate) fn validate_birth_source_put(
     bytes: &[u8],
 ) -> Result<()> {
     super::birth_custody::check_registered_birth_target(store, txn, id, kind, bytes)?;
-    let old = store.entities.get(txn, id.as_bytes())?;
+    let old = crate::ports::EntityStoreRead::port_entity_raw(store, txn, id)?;
     if let Some(old) = &old {
         let header =
             EntityMetadataHeader::parse(old).ok_or(Error::CorruptedIndex("agent source header"))?;

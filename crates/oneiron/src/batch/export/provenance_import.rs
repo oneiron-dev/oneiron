@@ -175,13 +175,13 @@ impl ProvenanceImport {
         stage_edge(vault, txn, edge, inserted_ids)?;
         let new_ids = rows
             .iter()
-            .filter_map(
-                |(_, id, _)| match vault.store.entities.get(txn, id.as_bytes()) {
+            .filter_map(|(_, id, _)| {
+                match crate::ports::EntityStoreRead::port_entity_raw(&vault.store, txn, id) {
                     Ok(None) => Some(Ok(*id)),
                     Ok(Some(_)) => None,
                     Err(error) => Some(Err(error)),
-                },
-            )
+                }
+            })
             .collect::<std::result::Result<BTreeSet<_>, _>>()?;
         let (inserted, unchanged) = restore_cohort(vault, txn, &rows)?;
         if inserted != new_ids.len() {
@@ -200,7 +200,9 @@ fn restore_cohort(
     for (row, id, body) in rows {
         let expected =
             ExportBody::from_bytes(&crate::claim::encode_claim_body(body)?, row.entity_type);
-        if let Some(existing) = vault.store.entities.get(txn, id.as_bytes())? {
+        if let Some(existing) =
+            crate::ports::EntityStoreRead::port_entity_raw(&vault.store, txn, id)?
+        {
             if !crate::vault::live_entity_row_in_txn(&vault.store, txn, id)?.is_live()
                 || !matches_row(row, &existing, &expected)
             {
@@ -224,10 +226,7 @@ fn restore_cohort(
     // A superseded row is never silently resurrected if its closing history
     // was absent or ambiguous. Every final lifecycle must reproduce exactly.
     for (row, id, body) in rows {
-        let actual = vault
-            .store
-            .entities
-            .get(txn, id.as_bytes())?
+        let actual = crate::ports::EntityStoreRead::port_entity_raw(&vault.store, txn, id)?
             .ok_or(Error::EntityNotFound)?;
         let expected =
             ExportBody::from_bytes(&crate::claim::encode_claim_body(body)?, row.entity_type);
@@ -250,9 +249,9 @@ pub(super) fn stage_edge(
     let target = parse_id(&edge.target)?;
     let kind = crate::edge::EdgeKind::try_from_u8(edge.kind)
         .ok_or_else(|| invalid("archive edge kind"))?;
-    let key = crate::store::Store::encode_edge_key(&source, kind, &target);
-    if let Some(raw) = vault.store.edges_out.get(txn, &key)? {
-        let existing = crate::edge::parse_strict_edge_record(&key, &raw)?.decoded;
+    if let Some(existing) =
+        crate::ports::EdgeStoreRead::port_edge_get(&vault.store, txn, &source, kind, &target)?
+    {
         if existing.weight != edge.weight
             || existing.created_at != edge.created_at
             || existing.vad.map(|v| [v.valence, v.arousal, v.dominance]) != edge.vad

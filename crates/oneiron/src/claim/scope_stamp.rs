@@ -55,7 +55,7 @@ pub(crate) fn default_facet_in(store: &Store, txn: &heed::RoTxn<'_>) -> Result<E
         None,
     )? {
         let claim = edge?.target;
-        let Some(raw) = store.entities.get(txn, claim.as_bytes())? else {
+        let Some(raw) = crate::ports::EntityStoreRead::port_entity_raw(store, txn, &claim)? else {
             continue;
         };
         let header =

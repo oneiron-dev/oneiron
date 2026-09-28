@@ -207,10 +207,7 @@ pub(crate) fn capture_entity_revision(
     if header.entity_type == crate::registry::ENTITY_TYPE_SECRET_CUSTODY {
         return Ok(());
     }
-    let prior = store
-        .entities()
-        .get(txn, id.as_bytes())?
-        .map(|r| r.to_vec());
+    let prior = crate::ports::EntityStoreRead::port_entity_raw(store, txn, id)?;
     let existing = state(store, txn, id)?;
     // Every citable row needs a lightweight revision/identity binding, including
     // opaque structural rows. The Loro document still waits for a replacement
@@ -333,7 +330,7 @@ pub(crate) fn entity_owns_revision_in_txn(
     id: &EntityId,
     revision: RevisionRef,
 ) -> Result<bool> {
-    let Some(raw) = store.entities().get(txn, id.as_bytes())? else {
+    let Some(raw) = crate::ports::EntityStoreRead::port_entity_raw(store, txn, id)? else {
         return Ok(false);
     };
     Ok(reference(id, &raw) == revision
@@ -359,7 +356,7 @@ pub(crate) fn read_entity_revision_from_store_in_txn(
     id: &EntityId,
     mode: ReadMode,
 ) -> Result<Option<Vec<u8>>> {
-    let Some(raw) = store.entities().get(txn, id.as_bytes())? else {
+    let Some(raw) = crate::ports::EntityStoreRead::port_entity_raw(store, txn, id)? else {
         return Ok(None);
     };
     let header =

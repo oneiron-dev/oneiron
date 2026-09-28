@@ -106,10 +106,7 @@ fn sources_in_txn(
         {
             return Err(Error::EntityNotFound);
         }
-        let raw = vault
-            .store
-            .entities
-            .get(txn, id.as_bytes())?
+        let raw = crate::ports::EntityStoreRead::port_entity_raw(&vault.store, txn, id)?
             .ok_or(Error::EntityNotFound)?;
         let header = EntityMetadataHeader::parse(&raw)
             .ok_or(Error::CorruptedIndex("standing source header"))?;
@@ -266,10 +263,7 @@ pub fn backfill_standing_answer(
             if crate::vault_cleanup::is_archived_in_txn(&vault.store, txn, &id)? {
                 return Err(Error::EntityNotFound);
             }
-            let raw = vault
-                .store
-                .entities
-                .get(txn, id.as_bytes())?
+            let raw = crate::ports::EntityStoreRead::port_entity_raw(&vault.store, txn, &id)?
                 .ok_or(Error::EntityNotFound)?;
             let header = EntityMetadataHeader::parse(&raw)
                 .ok_or(Error::CorruptedIndex("standing answer header"))?;
@@ -290,7 +284,7 @@ pub fn backfill_standing_answer(
                     &policy,
                     &reader,
                     &body,
-                    &crate::claim::facet_refs_in_db(&vault.store.edges_out, txn, &id)?,
+                    &crate::claim::facet_refs_in_port(&vault.store, txn, &id)?,
                 )
             {
                 return Err(Error::EntityNotFound);

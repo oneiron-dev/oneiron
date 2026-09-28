@@ -22,10 +22,7 @@ pub(crate) fn birth_message_stream_in_txn(
     {
         return Err(invalid("stream birth cannot replace an existing document"));
     }
-    let raw = vault
-        .store
-        .entities
-        .get(txn, entity.as_bytes())?
+    let raw = crate::ports::EntityStoreRead::port_entity_raw(&vault.store, txn, entity)?
         .ok_or(Error::EntityNotFound)?
         .to_vec();
     let header =
@@ -57,10 +54,12 @@ pub(crate) fn birth_message_stream_in_txn(
     let mut replacement = raw[..ENTITY_METADATA_HEADER_LEN].to_vec();
     rmpv::encode::write_value(&mut replacement, &rmpv::Value::Map(fields))
         .map_err(|_| invalid("message document pointer"))?;
-    vault
-        .store
-        .entities
-        .put(txn, entity.as_bytes(), &replacement)?;
+    crate::ports::EntityStoreStaging::port_stage_entity_row(
+        &vault.store,
+        txn,
+        entity,
+        &replacement,
+    )?;
     let mut head = storage::Head {
         entity: entity.to_hex(),
         incarnation: EntityId::now().to_hex(),
@@ -101,10 +100,7 @@ pub(crate) fn append_message_stream_in_txn(
         .is_none()
     {
         // Atomic MESSAGEs move their original text into birth exactly once.
-        let raw = vault
-            .store
-            .entities
-            .get(txn, entity.as_bytes())?
+        let raw = crate::ports::EntityStoreRead::port_entity_raw(&vault.store, txn, entity)?
             .ok_or(Error::EntityNotFound)?;
         let header =
             EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("message header"))?;

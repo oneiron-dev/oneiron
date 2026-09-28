@@ -16,7 +16,7 @@ fn dependency(
     id: EntityId,
     kind: u8,
 ) -> Result<ProjectRecord> {
-    let Some(raw) = store.entities.get(txn, id.as_bytes())? else {
+    let Some(raw) = crate::ports::EntityStoreRead::port_entity_raw(store, txn, &id)? else {
         if store
             .sync_state
             .get(txn, &crate::deletion::local_hard_delete_key(&id))?
@@ -150,7 +150,7 @@ pub(crate) fn reconcile_project_rooms(
     let mut room_ops = Vec::new();
     let mut origins = Vec::new();
     for id in touched {
-        let Some(raw) = store.entities.get(txn, id.as_bytes())? else {
+        let Some(raw) = crate::ports::EntityStoreRead::port_entity_raw(store, txn, id)? else {
             continue;
         };
         let header = EntityMetadataHeader::parse(&raw)
@@ -207,19 +207,20 @@ pub(crate) fn reconcile_project_rooms(
         // `belongs_to` links in the same batch as the home room, so PPR and
         // graph readers see both parents (or neither on a rejected write).
         let mut existing = std::collections::BTreeMap::new();
-        let prefix = [
-            id.as_bytes().as_slice(),
-            &[crate::edge::EdgeKind::BelongsTo as u8],
-        ]
-        .concat();
-        for row in store.edges_out.prefix_iter(txn, &prefix)? {
-            let (key, value) = row?;
-            let edge = crate::edge::parse_strict_edge_record(&key, &value)?;
+        for row in crate::ports::EdgeStoreRead::port_edges(
+            store,
+            txn,
+            id,
+            crate::ports::EdgeDirection::Out,
+            Some(crate::edge::EdgeKind::BelongsTo),
+            None,
+        )? {
+            let edge = row?;
             // The PROJECT body owns only PROJECT-to-PROJECT parent links.
             // A venture may also belong to an ORG; saving its body must not
             // remove or rewrite that independently owned relationship.
             if is_project_entity(store, txn, edge.target)? {
-                existing.insert(edge.target.to_hex(), edge.decoded.weight);
+                existing.insert(edge.target.to_hex(), edge.weight);
             }
         }
         for parent in existing.keys() {
@@ -313,7 +314,7 @@ pub(crate) fn reconcile_project_rooms(
     }
     // Generic room writes cannot silently widen the derived membership/scope.
     for id in touched {
-        let Some(raw) = store.entities.get(txn, id.as_bytes())? else {
+        let Some(raw) = crate::ports::EntityStoreRead::port_entity_raw(store, txn, id)? else {
             continue;
         };
         let header = EntityMetadataHeader::parse(&raw)

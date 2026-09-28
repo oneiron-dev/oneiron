@@ -540,7 +540,8 @@ fn pending_proposals(
                 .try_into()
                 .map_err(|_| crate::Error::CorruptedIndex("claim projection index"))?,
         )?;
-        let Some(bytes) = vault.store.entities.get(txn, id.as_bytes())? else {
+        let Some(bytes) = crate::ports::EntityStoreRead::port_entity_raw(&vault.store, txn, &id)?
+        else {
             continue;
         };
         let header = EntityMetadataHeader::parse(&bytes).ok_or_else(invalid)?;
@@ -626,10 +627,7 @@ fn load_policy_proposal(
     owner: EntityId,
     claim_ref: EntityId,
 ) -> Result<ProactivityPolicyProposal> {
-    let raw = vault
-        .store
-        .entities
-        .get(txn, claim_ref.as_bytes())?
+    let raw = crate::ports::EntityStoreRead::port_entity_raw(&vault.store, txn, &claim_ref)?
         .ok_or_else(invalid)?;
     let header = EntityMetadataHeader::parse(&raw).ok_or_else(invalid)?;
     if header.entity_type != crate::registry::ENTITY_TYPE_CLAIM

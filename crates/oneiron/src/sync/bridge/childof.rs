@@ -7,10 +7,8 @@ use loro::LoroMap;
 use super::edges::{EdgeOpMeta, quarantine_edge_apply_failure};
 use super::{format_edge_key, parse_edge_key};
 
-use crate::batch::{self, BatchOp, child_of_prefix};
-use crate::edge::{
-    EdgeKind, decode_edge_value_for_kind, parse_strict_edge_record, parse_strict_edge_record_key,
-};
+use crate::batch::{self, BatchOp};
+use crate::edge::{EdgeKind, decode_edge_value_for_kind};
 use crate::entity_id::EntityId;
 use crate::store::Store;
 use crate::sync::loro_support::map_for_each_bytes;
@@ -112,13 +110,14 @@ pub(super) fn replayed_child_of_candidates(
     for (child, named_parents) in &named {
         let mut stored = HashSet::<EntityId>::new();
         let mut unseated = false;
-        for entry in vault
-            .store
-            .edges_out
-            .prefix_iter(rtxn, &child_of_prefix(child))?
-        {
-            let (row_key, row_value) = entry?;
-            let (_, _, parent) = parse_strict_edge_record_key(&row_key)?;
+        for entry in crate::ports::EdgeStoreRead::port_edge_peers(
+            &vault.store,
+            rtxn,
+            child,
+            crate::ports::EdgeDirection::Out,
+            EdgeKind::ChildOf,
+        )? {
+            let parent = entry?;
             stored.insert(parent);
             if removed
                 .get(child)
@@ -134,10 +133,16 @@ pub(super) fn replayed_child_of_candidates(
             // only there is the row's VALUE decoded — and there the resolver is
             // about to decode the very same row, fail-closed, for the very same
             // reason. The removal path keeps its key-only read.
+            let raw = crate::ports::EdgeStoreStaging::port_edge_encoded(
+                &vault.store,
+                rtxn,
+                child,
+                EdgeKind::ChildOf,
+                &parent,
+            )?
+            .ok_or(crate::Error::CorruptedIndex("child_of edge missing"))?;
             if *restamped_at
-                < parse_strict_edge_record(&row_key, &row_value)?
-                    .decoded
-                    .created_at
+                < crate::edge::decode_edge_value_for_kind(EdgeKind::ChildOf, &raw)?.created_at
             {
                 displaced.push(format_edge_key(child, EdgeKind::ChildOf, &parent));
                 unseated = true;
@@ -598,14 +603,14 @@ fn retry_child_of_row(
     match applied {
         Ok(()) => {
             settle_child_of(vault, txn, window, &src, &tgt)?;
-            let stored = vault
-                .store
-                .edges_out
-                .get(
-                    &*txn,
-                    &Store::encode_edge_key(&src, EdgeKind::ChildOf, &tgt),
-                )?
-                .is_some();
+            let stored = crate::ports::EdgeStoreRead::port_edge_get(
+                &vault.store,
+                &*txn,
+                &src,
+                EdgeKind::ChildOf,
+                &tgt,
+            )?
+            .is_some();
             Ok(stored.then_some(
                 crate::conversation_dag::topology::Dependency::ConversationMembership(src),
             ))

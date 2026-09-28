@@ -123,8 +123,12 @@ impl Memory<'_> {
                     }
                     state.base = committed_text(self.vault, txn, &state.seed)?.unwrap_or_default();
                     state.emitted_chars = state.base.chars().count();
-                    state.seed.continuation =
-                        self.vault.store.entities.get(txn, id.as_bytes())?.is_some();
+                    state.seed.continuation = crate::ports::EntityStoreRead::port_entity_raw(
+                        &self.vault.store,
+                        txn,
+                        &id,
+                    )?
+                    .is_some();
                     if state.seed.continuation && !state.pending.is_empty() {
                         return Err(MessageStreamError::InvalidRequest(
                             "continuation starts with empty content",
@@ -152,12 +156,12 @@ impl Memory<'_> {
                         super::super::person_author_in_txn(self.vault, txn, state.seed.actor)?,
                     )?;
                     if state.seed.author == crate::memory::WitnessAuthor::System
-                        && self
-                            .vault
-                            .store
-                            .entities
-                            .get(txn, state.seed.turn.as_bytes())?
-                            .is_none()
+                        && crate::ports::EntityStoreRead::port_entity_raw(
+                            &self.vault.store,
+                            txn,
+                            &state.seed.turn,
+                        )?
+                        .is_none()
                     {
                         return Err(MessageStreamError::InvalidRequest(
                             "system stream requires an existing turn",
@@ -306,7 +310,7 @@ pub(super) fn authorize(
         if vault.local_hard_delete_marker_exists_in_txn(txn, id)? {
             return Err(Error::EntityNotFound.into());
         }
-        if let Some(raw) = vault.store.entities.get(txn, id.as_bytes())? {
+        if let Some(raw) = crate::ports::EntityStoreRead::port_entity_raw(&vault.store, txn, id)? {
             let header = EntityMetadataHeader::parse(&raw)
                 .ok_or(Error::CorruptedIndex("stream container header"))?;
             if header.entity_type != expected_kind {
@@ -334,7 +338,9 @@ pub(super) fn committed_text(
     txn: &heed::RoTxn<'_>,
     seed: &Seed,
 ) -> MessageStreamResult<Option<String>> {
-    let Some(raw) = vault.store.entities.get(txn, seed.message_id.as_bytes())? else {
+    let Some(raw) =
+        crate::ports::EntityStoreRead::port_entity_raw(&vault.store, txn, &seed.message_id)?
+    else {
         return Ok(None);
     };
     let header =

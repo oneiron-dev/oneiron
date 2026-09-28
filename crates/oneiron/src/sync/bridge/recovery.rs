@@ -46,7 +46,9 @@ pub(crate) fn preflight_canonical_recovery(
                 materializer.lease_vault_id(),
             )?;
         }
-        if vault.store.entities.get(&txn, &entity.id)?.as_deref() != Some(entity.blob.as_slice()) {
+        if crate::ports::EntityStoreRead::port_entity_raw(&vault.store, &txn, &id)?.as_deref()
+            != Some(entity.blob.as_slice())
+        {
             return Err(ArtifactError::InvalidRecoveryArtifact(
                 "entity refused recovery preflight",
             )
@@ -96,8 +98,9 @@ pub(crate) fn preflight_canonical_recovery(
                 return Err(reserved);
             }
         }
-        if vault.store.entities.get(&txn, &edge.source)?.is_none()
-            || vault.store.entities.get(&txn, &edge.target)?.is_none()
+        if crate::ports::EntityStoreRead::port_entity_raw(&vault.store, &txn, &source)?.is_none()
+            || crate::ports::EntityStoreRead::port_entity_raw(&vault.store, &txn, &target)?
+                .is_none()
         {
             return Err(ArtifactError::InvalidRecoveryArtifact(
                 "edge endpoint missing at recovery",

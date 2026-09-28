@@ -109,11 +109,10 @@ fn blocked(vault: &Vault, txn: &heed::RoTxn<'_>, doc: &LoroDoc, note: &EntityId)
     {
         return Ok(true);
     }
-    Ok(vault
-        .store
-        .entities
-        .get(txn, note.as_bytes())?
-        .is_some_and(|row| row.len() == crate::batch::ENTITY_METADATA_HEADER_LEN))
+    Ok(
+        crate::ports::EntityStoreRead::port_entity_raw(&vault.store, txn, note)?
+            .is_some_and(|row| row.len() == crate::batch::ENTITY_METADATA_HEADER_LEN),
+    )
 }
 
 impl State {

@@ -75,10 +75,7 @@ impl AuthenticatedOwner {
                 "owner proof belongs to another vault",
             )));
         }
-        let human = vault
-            .store
-            .entities
-            .get(txn, self.actor.as_bytes())?
+        let human = crate::ports::EntityStoreRead::port_entity_raw(&vault.store, txn, &self.actor)?
             .and_then(|raw| crate::batch::EntityMetadataHeader::parse(&raw))
             .is_some_and(|header| header.entity_type == crate::registry::ENTITY_TYPE_PERSON);
         if !human

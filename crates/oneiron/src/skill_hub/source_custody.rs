@@ -50,7 +50,7 @@ pub(super) fn check_source_custody(
     {
         return Err(invalid("source custody has been retired"));
     }
-    if let Some(raw) = store.entities.get(txn, holder.as_bytes())? {
+    if let Some(raw) = crate::ports::EntityStoreRead::port_entity_raw(store, txn, holder)? {
         let header = EntityMetadataHeader::parse(&raw)
             .ok_or(Error::CorruptedIndex("source holder header"))?;
         if header.entity_type != ENTITY_TYPE_SKILL || raw.len() == ENTITY_METADATA_HEADER_LEN {
@@ -211,7 +211,8 @@ fn retire_revision(
         .get(txn, &owner_key(BINDING, &carrier))?
         .is_some();
     // Do not remove an unrelated row that merely occupies a derived ID.
-    if seen && let Some(raw) = store.entities.get(txn, carrier.as_bytes())? {
+    if seen && let Some(raw) = crate::ports::EntityStoreRead::port_entity_raw(store, txn, &carrier)?
+    {
         let header = EntityMetadataHeader::parse(&raw)
             .ok_or(Error::CorruptedIndex("source custody carrier header"))?;
         if header.entity_type != ENTITY_TYPE_ASSET {
@@ -271,7 +272,7 @@ pub(crate) fn remove_source_custody_in_txn(
     txn: &mut heed::RwTxn<'_>,
     id: &EntityId,
 ) -> Result<()> {
-    let raw = store.entities.get(txn, id.as_bytes())?;
+    let raw = crate::ports::EntityStoreRead::port_entity_raw(store, txn, id)?;
     if let Some(raw) = &raw {
         let header = EntityMetadataHeader::parse(raw)
             .ok_or(Error::CorruptedIndex("source delete header"))?;

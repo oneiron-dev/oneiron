@@ -49,11 +49,9 @@ pub(crate) fn ingest_replicated_identity_topology_event_in_txn(
     lease_vault_id: u64,
 ) -> Result<bool> {
     let mutation_recorded_at = crate::ports::recorded_at_in_txn(&vault.store, wtxn)?;
-    let byte_identical_replay = vault
-        .store
-        .entities
-        .get(&*wtxn, id.as_bytes())?
-        .map(|existing| *existing == *blob);
+    let byte_identical_replay =
+        crate::ports::EntityStoreRead::port_entity_raw(&vault.store, &*wtxn, id)?
+            .map(|existing| *existing == *blob);
     match byte_identical_replay {
         Some(true) => {
             // The stored bytes equal the replayed bytes, so a decode
@@ -319,7 +317,7 @@ pub(super) fn ensure_entity_materialized_from_crdt(
         return Ok(EndpointHydration::Deferred);
     }
 
-    if let Some(raw) = vault.store.entities.get(&*wtxn, id.as_bytes())? {
+    if let Some(raw) = crate::ports::EntityStoreRead::port_entity_raw(&vault.store, &*wtxn, id)? {
         if EntityMetadataHeader::parse(&raw)
             .is_some_and(|header| header.entity_type == crate::registry::ENTITY_TYPE_NOTE)
             && crate::sync::quarantine::unproven_remat_marker_exists_in_txn(

@@ -128,7 +128,7 @@ fn subscriptions(
 ) -> Result<Vec<(EntityId, ConnectorSubscription)>> {
     let mut result = Vec::new();
     for id in crate::claim::claim_ids_for_predicate_in_txn(store, txn, PREDICATE)? {
-        let Some(raw) = store.entities.get(txn, id.as_bytes())? else {
+        let Some(raw) = crate::ports::EntityStoreRead::port_entity_raw(store, txn, &id)? else {
             continue;
         };
         let header =

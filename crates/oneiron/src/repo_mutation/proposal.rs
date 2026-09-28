@@ -341,10 +341,7 @@ impl Vault {
         )]));
         session_claim.evidence = body.evidence.clone();
         let mut txn = self.store.env.write_txn()?;
-        if self
-            .store
-            .entities
-            .get(&txn, session_claim_id.as_bytes())?
+        if crate::ports::EntityStoreRead::port_entity_raw(&self.store, &txn, &session_claim_id)?
             .is_none()
         {
             put_journal_claim(
@@ -356,7 +353,7 @@ impl Vault {
                 row.created_at,
             )?;
         }
-        if self.store.entities.get(&txn, actor.as_bytes())?.is_none() {
+        if crate::ports::EntityStoreRead::port_entity_raw(&self.store, &txn, &actor)?.is_none() {
             return Err(Error::EntityNotFound);
         }
         put_journal_claim(self, &mut txn, row.id, actor, &body, row.created_at)?;
@@ -395,7 +392,7 @@ impl Vault {
             || critique.candidate_ref != id.to_hex()
             || critique.out_of_scope
             || row.critiques.len() >= 64
-            || self.store.entities.get(&txn, critic.as_bytes())?.is_none()
+            || crate::ports::EntityStoreRead::port_entity_raw(&self.store, &txn, &critic)?.is_none()
         {
             return Err(invalid(
                 "critic is unbound, self-reviewing, or proposal is closed",
@@ -600,10 +597,7 @@ pub(super) fn finish(
         RepoMutationStatus::Prepared => RepoProposalStatus::Approved,
     };
     if status == RepoMutationStatus::Applied {
-        let raw = vault
-            .store
-            .entities
-            .get(txn, id.as_bytes())?
+        let raw = crate::ports::EntityStoreRead::port_entity_raw(&vault.store, txn, &id)?
             .ok_or(Error::EntityNotFound)?;
         let bytes = raw
             .get(crate::batch::ENTITY_METADATA_HEADER_LEN..)

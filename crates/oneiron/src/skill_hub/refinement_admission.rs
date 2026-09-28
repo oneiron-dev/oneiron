@@ -370,9 +370,10 @@ pub(crate) fn validate_refinement_admission(
             return Err(Error::CorruptedIndex("refinement origin binding"));
         }
         if control.is_none() {
-            let same_stored_proposal = store.entities.get(txn, id.as_bytes())?.is_some_and(|raw| {
-                raw.get(crate::batch::ENTITY_METADATA_HEADER_LEN..) == Some(data)
-            });
+            let same_stored_proposal = crate::ports::EntityStoreRead::port_entity_raw(
+                store, txn, id,
+            )?
+            .is_some_and(|raw| raw.get(crate::batch::ENTITY_METADATA_HEADER_LEN..) == Some(data));
             let body = crate::claim::decode_claim_body(data, true)?;
             if !same_stored_proposal
                 || body.approval != crate::claim::ClaimApprovalStatus::Proposed
@@ -389,10 +390,10 @@ pub(crate) fn validate_refinement_admission(
             return Err(Error::CorruptedIndex("skill refinement origin binding"));
         }
         if control.is_none() {
-            let same_stored_candidate =
-                store.entities.get(txn, id.as_bytes())?.is_some_and(|raw| {
-                    raw.get(crate::batch::ENTITY_METADATA_HEADER_LEN..) == Some(data)
-                });
+            let same_stored_candidate = crate::ports::EntityStoreRead::port_entity_raw(
+                store, txn, id,
+            )?
+            .is_some_and(|raw| raw.get(crate::batch::ENTITY_METADATA_HEADER_LEN..) == Some(data));
             let record = crate::skill::decode_skill_record(data)?;
             if !same_stored_candidate
                 || record.lifecycle_status != crate::skill::SkillLifecycle::Candidate
@@ -446,10 +447,11 @@ pub(crate) fn validate_refinement_admission(
     }
     match (kind, control.state) {
         (ENTITY_TYPE_CLAIM, RefinementState::Pending | RefinementState::Refused) => {
-            let same_proposed = store.entities.get(txn, id.as_bytes())?.is_some_and(|raw| {
-                raw.get(crate::batch::ENTITY_METADATA_HEADER_LEN..) == Some(data)
-            }) && crate::claim::decode_claim_body(data, false)?.approval
-                == crate::claim::ClaimApprovalStatus::Proposed;
+            let same_proposed =
+                crate::ports::EntityStoreRead::port_entity_raw(store, txn, id)?.is_some_and(
+                    |raw| raw.get(crate::batch::ENTITY_METADATA_HEADER_LEN..) == Some(data),
+                ) && crate::claim::decode_claim_body(data, false)?.approval
+                    == crate::claim::ClaimApprovalStatus::Proposed;
             if !same_proposed && !proof.is_some_and(|p| p.binds(id, kind, data, &control)) {
                 return Err(invalid("claim refinement requires exact admission proof"));
             }

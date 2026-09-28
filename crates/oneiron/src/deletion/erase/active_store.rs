@@ -144,7 +144,9 @@ impl Vault {
         crate::skill_hub::remove_refinement_carrier_in_txn(&self.store, wtxn, id)?;
         crate::skill_hub::retire_refinement_holder_in_txn(&self.store, wtxn, id)?;
         crate::agent_def::remove_birth_custody_in_txn(&self.store, wtxn, id)?;
-        let Some(entity_record) = self.store.entities.get(wtxn, id.as_bytes())? else {
+        let Some(entity_record) =
+            crate::ports::EntityStoreRead::port_entity_raw(&self.store, wtxn, id)?
+        else {
             let cleanup = delete_vad_annotation_metadata_in_txn(&self.store, wtxn, id)?;
             had_vector |= cleanup.had_vector;
             if cleanup.had_graph_mutation {
@@ -204,7 +206,7 @@ impl Vault {
         crate::dreamer_runner::deindex_dreamer_milestone_claim(&self.store, wtxn, id)?;
         crate::llm::deindex_dreamer_step_claim(&self.store, wtxn, id)?;
         crate::federation::record_scope::retire_stamp(&self.store, wtxn, *id)?;
-        self.store.entities.put(wtxn, id.as_bytes(), &payload)?;
+        crate::ports::EntityStoreStaging::port_stage_entity_row(&self.store, wtxn, id, &payload)?;
         self.store.sync_state.put(
             wtxn,
             &super::super::tombstone::identity_soft_delete_key(id),

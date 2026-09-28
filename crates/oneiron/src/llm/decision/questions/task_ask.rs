@@ -184,10 +184,7 @@ pub(crate) fn validate_task_answer_unit(
             return Err(Error::EntityNotFound);
         }
     }
-    let raw = vault
-        .store
-        .entities
-        .get(txn, unit.as_bytes())?
+    let raw = crate::ports::EntityStoreRead::port_entity_raw(&vault.store, txn, &unit)?
         .ok_or(Error::EntityNotFound)?;
     let header =
         EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("ask result header"))?;

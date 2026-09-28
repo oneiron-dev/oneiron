@@ -194,10 +194,7 @@ impl Vault {
         // A PROJECT and its exact room may arrive in the same batch. The
         // projector's equality path can then leave no marker behind; the
         // stored body, not that auxiliary row, identifies the substrate.
-        let raw = self
-            .store
-            .entities
-            .get(&txn, room.as_bytes())?
+        let raw = crate::ports::EntityStoreRead::port_entity_raw(&self.store, &txn, &room)?
             .ok_or(Error::EntityNotFound)?;
         let header = crate::batch::EntityMetadataHeader::parse(&raw).ok_or_else(invalid)?;
         if header.entity_type != crate::registry::ENTITY_TYPE_CONVERSATION {

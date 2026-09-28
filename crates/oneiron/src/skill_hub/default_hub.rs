@@ -33,7 +33,7 @@ pub(crate) fn seed_default_skill_hub(vault: &Vault) -> Result<()> {
     let mut txn = vault.store.env.write_txn()?;
     // Reopens never revert an owner's endpoint, trust, or policy changes. Nor
     // does an erased default come back without an explicit restore decision.
-    if vault.store.entities.get(&txn, id.as_bytes())?.is_some()
+    if crate::ports::EntityStoreRead::port_entity_raw(&vault.store, &txn, &id)?.is_some()
         || vault.local_hard_delete_marker_exists_in_txn(&txn, &id)?
     {
         return Ok(());

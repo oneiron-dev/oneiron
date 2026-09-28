@@ -400,7 +400,7 @@ pub(super) fn committed_entity_state_matches(vault: &Vault, id: &EntityId, blob:
         return false;
     };
     matches!(
-        vault.store.entities.get(&rtxn, id.as_bytes()),
+        crate::ports::EntityStoreRead::port_entity_raw(&vault.store, &rtxn, id),
         Ok(Some(existing)) if *existing == *blob || pack_sync::pack_echo_equal(&existing, blob)
     )
 }
@@ -568,7 +568,9 @@ pub(super) fn materialize_entity_blob_in_txn(
     // (OD-10 lazy re-admission — no new scheduling machinery).
     let quota_debit = if header.entity_type == crate::registry::ENTITY_TYPE_REDACTION_AUDIT {
         crate::deletion::validate_redaction_receipt_body(data)?;
-        if let Some(existing) = vault.store.entities.get(&*wtxn, id.as_bytes())? {
+        if let Some(existing) =
+            crate::ports::EntityStoreRead::port_entity_raw(&vault.store, &*wtxn, &id)?
+        {
             if *existing == *blob {
                 return Ok(false);
             }
@@ -605,7 +607,8 @@ pub(super) fn materialize_entity_blob_in_txn(
             mutation_recorded_at,
         )?
     } else if header.entity_type == ENTITY_TYPE_AUTHORITY_LOG {
-        if let Some(existing) = vault.store.entities.get(&*wtxn, id.as_bytes())?
+        if let Some(existing) =
+            crate::ports::EntityStoreRead::port_entity_raw(&vault.store, &*wtxn, &id)?
             && *existing == *blob
         {
             quarantine_and_neutralize_protected_tombstone_in_txn(
@@ -673,7 +676,8 @@ pub(super) fn materialize_entity_blob_in_txn(
         return Ok(false);
     }
     if pack_sync::is_pack_handle(header.entity_type)
-        && let Some(existing) = vault.store.entities.get(wtxn, id.as_bytes())?
+        && let Some(existing) =
+            crate::ports::EntityStoreRead::port_entity_raw(&vault.store, wtxn, &id)?
         && pack_sync::pack_echo_equal(&existing, blob)
     {
         return Ok(false);

@@ -70,7 +70,7 @@ pub(crate) fn reindex_identity_hints(
     id: &EntityId,
     replacement: Option<(u8, &[u8])>,
 ) -> Result<()> {
-    if let Some(raw) = store.entities().get(txn, id.as_bytes())?
+    if let Some(raw) = crate::ports::EntityStoreRead::port_entity_raw(store, txn, id)?
         && let Some(header) = crate::batch::EntityMetadataHeader::parse(&raw)
     {
         for hint in hints(
@@ -127,7 +127,8 @@ impl Vault {
             let id = EntityId::from_bytes(bytes)?;
             // Verify indexed evidence at read too; a stale/corrupt shortcut
             // can never create a candidate absent from the stored record.
-            if let Some(raw) = self.store.entities.get(txn, id.as_bytes())?
+            if let Some(raw) =
+                crate::ports::EntityStoreRead::port_entity_raw(&self.store, txn, &id)?
                 && crate::batch::EntityMetadataHeader::parse(&raw)
                     .is_some_and(|h| h.entity_type == kind)
                 && hints(kind, &raw[crate::batch::ENTITY_METADATA_HEADER_LEN..])

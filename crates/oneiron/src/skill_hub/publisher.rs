@@ -134,10 +134,7 @@ impl Vault {
         txn: &heed::RoTxn<'_>,
         hub: &EntityId,
     ) -> Result<SkillHubRecord> {
-        let raw = self
-            .store
-            .entities
-            .get(txn, hub.as_bytes())?
+        let raw = crate::ports::EntityStoreRead::port_entity_raw(&self.store, txn, hub)?
             .ok_or(Error::EntityNotFound)?;
         let header = crate::batch::EntityMetadataHeader::parse(&raw)
             .ok_or(Error::CorruptedIndex("entity header"))?;
