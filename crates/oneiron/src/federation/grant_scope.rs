@@ -21,6 +21,7 @@ pub(crate) fn membership_preset(role: super::FederationGrantRole) -> Scope {
             scope.verbs = ScopeAxis::Some(BTreeSet::from(["read".to_owned(), "write".to_owned()]));
             scope
         }
+        super::FederationGrantRole::Guest => Scope::default(),
         _ => super::scope_codec::read_preset(),
     }
 }
