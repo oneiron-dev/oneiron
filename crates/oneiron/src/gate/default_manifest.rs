@@ -10,21 +10,24 @@ use super::constants::{
     ACTOR_CEILING_KEY, ACTOR_CLASS_KEY, ACTOR_REF_KEY, ATTRIBUTION_PRECEDENCE_KEY,
     ATTRIBUTION_REASON_MAX_BYTES_KEY, ATTRIBUTION_RECEIPTS_PER_PASS_KEY, AXIS_CRITICALITY_KEY,
     AXIS_SENSITIVITY_KEY, LOCAL_WRITE_ACTOR_CLASS, POLICY_ACTOR_CEILINGS_KEY,
-    POLICY_ATTRIBUTION_LIMITS_KEY, POLICY_DEFAULTS_KEY, POLICY_HOSTED_TTS_KEY,
-    POLICY_MIN_ENGINE_VERSION_KEY, POLICY_ON_BUDGET_EXHAUSTED_KEY, POLICY_OWNER_POLICY_ENABLED_KEY,
-    POLICY_OWNER_POLICY_ROWS_KEY, POLICY_PACK_ID_KEY, POLICY_PACK_VERSION_KEY,
-    POLICY_PPTX_COMMENT_LIMITS_KEY, POLICY_RULES_KEY, POLICY_SCHEMA_VERSION,
-    POLICY_SCHEMA_VERSION_KEY, POLICY_SHEET_ANSWER_LIMITS_KEY, POLICY_SHEET_ANSWER_PRECEDENCE_KEY,
-    POLICY_SIGNATURES_KEY, POLICY_SLIDE_REVIEW_KEY, POLICY_SOURCE_TRUST_KEY,
-    POLICY_TEACHER_PROBE_KEY, POLICY_WEAVE_CORRECTION_POLICY_KEY, RULE_AXES_KEY, RULE_EXACT_KEY,
-    RULE_PREFIX_KEY, SIGNATURE_ALG_KEY, SIGNATURE_KEY_ID_KEY, SIGNATURE_SIG_KEY,
-    SOURCE_TRUST_MAX_AUTO_SENSITIVITY_KEY, SOURCE_TRUST_RECEIPTED_KEY, SOURCE_TRUST_WARNED_KEY,
+    POLICY_ATTRIBUTION_LIMITS_KEY, POLICY_CONNECTOR_CLASS_CARRY_KEY,
+    POLICY_CONNECTOR_CLASS_PRECEDENCE_KEY, POLICY_CONNECTOR_CLASS_ROLE_KEY, POLICY_DEFAULTS_KEY,
+    POLICY_HOSTED_TTS_KEY, POLICY_MIN_ENGINE_VERSION_KEY, POLICY_ON_BUDGET_EXHAUSTED_KEY,
+    POLICY_OWNER_POLICY_ENABLED_KEY, POLICY_OWNER_POLICY_ROWS_KEY, POLICY_PACK_ID_KEY,
+    POLICY_PACK_VERSION_KEY, POLICY_PPTX_COMMENT_LIMITS_KEY, POLICY_RULES_KEY,
+    POLICY_SCHEMA_VERSION, POLICY_SCHEMA_VERSION_KEY, POLICY_SHEET_ANSWER_LIMITS_KEY,
+    POLICY_SHEET_ANSWER_PRECEDENCE_KEY, POLICY_SIGNATURES_KEY, POLICY_SLIDE_REVIEW_KEY,
+    POLICY_SOURCE_TRUST_KEY, POLICY_TEACHER_PROBE_KEY, POLICY_WEAVE_CORRECTION_POLICY_KEY,
+    RULE_AXES_KEY, RULE_EXACT_KEY, RULE_PREFIX_KEY, SIGNATURE_ALG_KEY, SIGNATURE_KEY_ID_KEY,
+    SIGNATURE_SIG_KEY, SOURCE_TRUST_MAX_AUTO_SENSITIVITY_KEY, SOURCE_TRUST_RECEIPTED_KEY,
+    SOURCE_TRUST_WARNED_KEY,
 };
 use super::definition_ceiling::first_party_connector_actor_ref;
 use super::pack_install_policy::{KEY as PACK_INSTALL_POLICY_KEY, PackInstallPolicy};
 use super::resolution::{
     DEFAULT_ATTRIBUTION_REASON_MAX_BYTES, DEFAULT_ATTRIBUTION_RECEIPTS_PER_PASS,
 };
+use super::retrieval_retention::{RETRIEVAL_RETENTION_ROWS_KEY, default_retrieval_retention_rows};
 
 const DEFAULT_POLICY_MANIFEST_ID: [u8; ENTITY_ID_LEN] = [0xD7; ENTITY_ID_LEN];
 pub(crate) const DEFAULT_POLICY_MANIFEST_TIMESTAMP: u64 = 0;
@@ -135,6 +138,25 @@ pub(crate) fn default_policy_manifest() -> Vec<u8> {
             ]),
         ),
         (
+            Value::from(super::carry_forward_policy::KEY),
+            Value::Map(vec![
+                (Value::from("precedence"), Value::from("nested_narrowing")),
+                (
+                    Value::from("vault"),
+                    Value::Map(vec![
+                        (
+                            Value::from("ordinary"),
+                            Value::F32(super::carry_forward_policy::DEFAULT_ORDINARY),
+                        ),
+                        (
+                            Value::from("care"),
+                            Value::F32(super::carry_forward_policy::DEFAULT_CARE),
+                        ),
+                    ]),
+                ),
+            ]),
+        ),
+        (
             Value::from(POLICY_DEFAULTS_KEY),
             Value::Map(vec![
                 (Value::from(AXIS_CRITICALITY_KEY), Value::from("critical")),
@@ -171,6 +193,10 @@ pub(crate) fn default_policy_manifest() -> Vec<u8> {
             ]),
         ),
         (
+            Value::from("goal_limits"),
+            crate::workspace_roster::GoalLimits::default().encode(),
+        ),
+        (
             Value::from(POLICY_RULES_KEY),
             Value::Array(vec![
                 Value::Map(vec![
@@ -203,6 +229,23 @@ pub(crate) fn default_policy_manifest() -> Vec<u8> {
                     (
                         Value::from(RULE_PREFIX_KEY),
                         Value::from(crate::commitment::PREDICATE_COMMITMENT_RECORD),
+                    ),
+                    (Value::from(RULE_EXACT_KEY), Value::Boolean(true)),
+                    (
+                        Value::from(RULE_AXES_KEY),
+                        Value::Map(vec![
+                            (Value::from(AXIS_CRITICALITY_KEY), Value::from("normal")),
+                            (Value::from(AXIS_SENSITIVITY_KEY), Value::from("normal")),
+                        ]),
+                    ),
+                ]),
+                // A goal-intake candidate still needs a human-authenticated
+                // write door; the ordinary claim gate must not strand that
+                // confirmed interview at the unrelated critical-consent floor.
+                Value::Map(vec![
+                    (
+                        Value::from(RULE_PREFIX_KEY),
+                        Value::from("project.goal_intake"),
                     ),
                     (Value::from(RULE_EXACT_KEY), Value::Boolean(true)),
                     (
@@ -543,6 +586,10 @@ pub(crate) fn default_policy_manifest() -> Vec<u8> {
             ]),
         ),
         (
+            Value::from(RETRIEVAL_RETENTION_ROWS_KEY),
+            default_retrieval_retention_rows(),
+        ),
+        (
             Value::from(POLICY_ATTRIBUTION_LIMITS_KEY),
             Value::Map(vec![
                 (
@@ -562,6 +609,22 @@ pub(crate) fn default_policy_manifest() -> Vec<u8> {
         (
             Value::from(crate::federation::grant_policy::ROWS_KEY),
             federation_grant_default_rows(),
+        ),
+        (
+            Value::from(POLICY_CONNECTOR_CLASS_ROLE_KEY),
+            Value::from("vault"),
+        ),
+        (
+            Value::from(POLICY_CONNECTOR_CLASS_PRECEDENCE_KEY),
+            Value::from("nested"),
+        ),
+        (
+            Value::from(POLICY_CONNECTOR_CLASS_CARRY_KEY),
+            Value::Array(vec![
+                Value::Array(vec![Value::from("public"), Value::from("personal")]),
+                Value::Array(vec![Value::from("public"), Value::from("secret")]),
+                Value::Array(vec![Value::from("personal"), Value::from("secret")]),
+            ]),
         ),
         (
             Value::from(POLICY_TEACHER_PROBE_KEY),
@@ -593,6 +656,10 @@ pub(crate) fn default_policy_manifest() -> Vec<u8> {
             default_docedit_resource_row(),
         ),
         (
+            Value::from("experiment_selection"),
+            default_experiment_selection_rows(),
+        ),
+        (
             Value::from(POLICY_ON_BUDGET_EXHAUSTED_KEY),
             Value::from("suspend"),
         ),
@@ -605,6 +672,20 @@ pub(crate) fn default_policy_manifest() -> Vec<u8> {
             crate::llm::decision::SlideReviewPolicy::default_rows(),
         ),
         super::docx_budget::default_entry(),
+        (
+            Value::from("booking_conversion"),
+            Value::Array(vec![
+                rmpv::ext::to_value(
+                    serde_json::to_value(crate::booking::BookingConversionPolicyRow {
+                        scope: crate::booking::BookingPolicyScope::Vault,
+                        holder_ref: None,
+                        policy: crate::booking::BookingConversionPolicy::default(),
+                    })
+                    .expect("default booking conversion row encodes"),
+                )
+                .expect("default booking conversion JSON becomes MessagePack"),
+            ]),
+        ),
         // The owner policy plane ships OFF with zero rows: a fresh vault
         // classifies nothing and calls no safeguard model until its owner
         // opts in and writes their own rows.
@@ -716,4 +797,17 @@ fn compilation_route(
         (Value::from("from_not_prefix"), Value::from(from_not_prefix)),
         (Value::from("style_atom"), Value::Boolean(style_atom)),
     ])
+}
+
+/// The vault-wide search policy ships as data, not a Rust threshold or
+/// hard-coded stagnation branch. The manifest resolver composes edits by scope.
+fn default_experiment_selection_rows() -> Value {
+    let rows: Vec<crate::autoreason_campaign::selection::SelectionPolicyRow> =
+        serde_json::from_str(include_str!(
+            "../autoreason_campaign/selection_defaults.json"
+        ))
+        .expect("valid shipped experiment selection rows");
+    let bytes = rmp_serde::to_vec_named(&rows).expect("encode shipped experiment selection rows");
+    rmpv::decode::read_value(&mut bytes.as_slice())
+        .expect("decode shipped experiment selection rows")
 }

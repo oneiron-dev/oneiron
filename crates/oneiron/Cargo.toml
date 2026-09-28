@@ -96,18 +96,12 @@ ocrs = { version = "0.10", optional = true }
 rten = { version = "0.21", optional = true }
 image = { version = "0.25", default-features = false, features = ["jpeg", "png"] }
 
-# CAL-01 (ONE-1783): the shared calendar dependency reservation. `chrono` +
-# `chrono-tz` back the IANA conversion border in `src/calendar/tz.rs` and are
-# private to it — no chrono-family type may appear in a public signature. The
-# core index stays pure `u64` UTC. `icalendar` (CAL-02/CAL-04 parse/emit) and
-# `rrule` (CAL-03) land in the same append so the stacked calendar layers never
-# reopen this manifest. `default-features = false` on chrono states this crate's
-# own need — the border converts, it never reads a system clock or a host zone.
-# Note that `rrule` depends on chrono with defaults, so feature unification
-# still resolves chrono with `clock`; the flag is intent, not an achieved
-# tree-wide floor.
+# CAL-01's UTC/IANA border uses embedded 2026c TZif data, including the
+# BC permanent-UTC-7 rule. The parser and database stay private to calendar/tz.
+# `chrono` remains for other calendar/ingest code and the border's range pin.
 chrono = { version = "0.4", default-features = false, features = ["std"] }
-chrono-tz = "0.10"
+jiff-tzdb = "=0.1.8"
+tz-rs = "0.7.3"
 icalendar = "0.17"
 rrule = "0.14"
 
