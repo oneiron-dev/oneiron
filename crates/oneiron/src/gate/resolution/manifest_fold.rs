@@ -213,6 +213,9 @@ pub(crate) fn resolve_policy_manifest(
                         resolution.pack_install_policy = Some(policy);
                     }
                 }
+                if let Some(rows) = decoded.retrieval_retention {
+                    resolution.retrieval_retention.narrow(rows);
+                }
                 if let Some(settings) = decoded.room_thread {
                     resolution.room_thread = match resolution.room_thread.take() {
                         None => Some(settings),

@@ -27,6 +27,7 @@ use super::pack_install_policy::{KEY as PACK_INSTALL_POLICY_KEY, PackInstallPoli
 use super::resolution::{
     DEFAULT_ATTRIBUTION_REASON_MAX_BYTES, DEFAULT_ATTRIBUTION_RECEIPTS_PER_PASS,
 };
+use super::retrieval_retention::{RETRIEVAL_RETENTION_ROWS_KEY, default_retrieval_retention_rows};
 
 const DEFAULT_POLICY_MANIFEST_ID: [u8; ENTITY_ID_LEN] = [0xD7; ENTITY_ID_LEN];
 pub(crate) const DEFAULT_POLICY_MANIFEST_TIMESTAMP: u64 = 0;
@@ -564,6 +565,10 @@ pub(crate) fn default_policy_manifest() -> Vec<u8> {
                     )])]),
                 ),
             ]),
+        ),
+        (
+            Value::from(RETRIEVAL_RETENTION_ROWS_KEY),
+            default_retrieval_retention_rows(),
         ),
         (
             Value::from(POLICY_ATTRIBUTION_LIMITS_KEY),

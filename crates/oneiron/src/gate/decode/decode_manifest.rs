@@ -38,6 +38,9 @@ use crate::gate::pack_install_policy::KEY as PACK_INSTALL_POLICY_KEY;
 use crate::gate::resolution::{
     AttributionLimits, CommOptOutPosture, ConnectorClassPrecedence, TeacherProbeRow,
 };
+use crate::gate::retrieval_retention::{
+    RETRIEVAL_RETENTION_ROWS_KEY, RetrievalRetentionRows, parse_retrieval_retention_rows,
+};
 use crate::llm::{BudgetExhaustionPolicy, BudgetPolicyTable};
 use crate::voice_identity::ref_limits::VoiceRefLimitPolicy;
 
@@ -101,6 +104,7 @@ pub(in crate::gate) struct DecodedPolicyManifest {
     pub(in crate::gate) livequery_tracker_limits:
         Option<crate::gate::tracker_limits::PolicyTrackerLimits>,
     pub(in crate::gate) proposal_check_threshold: Option<u64>,
+    pub(in crate::gate) retrieval_retention: Option<RetrievalRetentionRows>,
     pub(in crate::gate) goal_limits: Option<crate::workspace_roster::GoalLimits>,
     pub(in crate::gate) voice_ref_limits: Option<VoiceRefLimitPolicy>,
     pub(in crate::gate) sheet_answer_limits: Vec<crate::gate::resolution::SheetAnswerLimitRow>,
@@ -174,6 +178,7 @@ pub(in crate::gate) fn decode_policy_manifest(data: &[u8]) -> Option<DecodedPoli
                 | "diagnostic_bounds"
                 | "livequery_tracker_limits"
                 | "proposal_check_threshold"
+                | RETRIEVAL_RETENTION_ROWS_KEY
                 | "goal_limits"
                 | "voice_ref_limits"
                 | POLICY_SHEET_ANSWER_LIMITS_KEY
@@ -429,6 +434,11 @@ pub(in crate::gate) fn decode_policy_manifest(data: &[u8]) -> Option<DecodedPoli
         MapValue::Present(value) => Some(value.as_u64().filter(|value| *value > 0)?),
     };
 
+    let retrieval_retention = match single_map_value(&entries, RETRIEVAL_RETENTION_ROWS_KEY) {
+        MapValue::Missing => None,
+        MapValue::Duplicate => return None,
+        MapValue::Present(value) => Some(parse_retrieval_retention_rows(value)?),
+    };
     let goal_limits = match single_map_value(&entries, "goal_limits") {
         MapValue::Missing => None,
         MapValue::Duplicate => return None,
@@ -554,6 +564,7 @@ pub(in crate::gate) fn decode_policy_manifest(data: &[u8]) -> Option<DecodedPoli
         diagnostic_bounds,
         livequery_tracker_limits,
         proposal_check_threshold,
+        retrieval_retention,
         goal_limits,
         voice_ref_limits,
         sheet_answer_limits,
