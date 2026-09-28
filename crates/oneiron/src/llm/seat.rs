@@ -66,30 +66,33 @@ impl ModelDescription {
             .into_iter()
             .flatten()
             .any(|text| text.trim().is_empty() || text.len() > policy.line_max_bytes)
-            || self.lines().is_empty()
+            || [&self.owner, &self.measured, &self.benchmarks, &self.vendor]
+                .into_iter()
+                .all(Option::is_none)
         {
             return Err(invalid("invalid model description"));
         }
         Ok(())
     }
 
-    /// Stronger provenance first. The judge sees every line and its source;
-    /// vendor copy cannot silently stand in for an owner's line.
-    pub fn lines(&self) -> Vec<DescriptionLine> {
-        [
-            (DescriptionSource::Owner, &self.owner),
-            (DescriptionSource::Measured, &self.measured),
-            (DescriptionSource::Benchmarks, &self.benchmarks),
-            (DescriptionSource::Vendor, &self.vendor),
-        ]
-        .into_iter()
-        .filter_map(|(source, value)| {
-            value.as_ref().map(|text| DescriptionLine {
-                source,
-                text: text.clone(),
+    /// Lines in the policy's evidence order. The judge sees every line and its
+    /// source; vendor copy cannot silently stand in for an owner's line.
+    pub fn lines(&self, order: &[DescriptionSource]) -> Vec<DescriptionLine> {
+        order
+            .iter()
+            .filter_map(|source| {
+                let text = match source {
+                    DescriptionSource::Owner => &self.owner,
+                    DescriptionSource::Measured => &self.measured,
+                    DescriptionSource::Benchmarks => &self.benchmarks,
+                    DescriptionSource::Vendor => &self.vendor,
+                };
+                text.as_ref().map(|text| DescriptionLine {
+                    source: *source,
+                    text: text.clone(),
+                })
             })
-        })
-        .collect()
+            .collect()
     }
 }
 
@@ -182,7 +185,7 @@ pub struct SeatCandidate {
     pub locality: ModelLocality,
     pub description: Vec<DescriptionLine>,
     pub reasoning: bool,
-    /// First rung of the default effort ladder for this model.
+    /// Composed policy default, or this model's first rung when none is authored.
     pub default_effort: ReasoningEffort,
     pub allowed_efforts: Vec<ReasoningEffort>,
 }
@@ -297,6 +300,8 @@ impl SeatPool {
         let policy = vault.seat_policy()?;
         let descriptions = vault.description_policy()?;
         let purpose = super::routing::purpose_key(&task.purpose);
+        // A widening level refuses the birth before any judgment or receipt.
+        let composed = policy.compose_defaults(&purpose, descriptions.as_ref())?;
         let rows = vault.model_registry_rows()?;
         let mut candidates = Vec::new();
         for row in rows {
@@ -336,22 +341,17 @@ impl SeatPool {
                 || policy.ladder(&catalog.model, row.wire, reasoning),
                 |model| model.effort_ladder.clone(),
             );
-            let default_effort = match policy.resolve_default(
-                &ladder,
-                &purpose,
-                descriptions
-                    .as_ref()
-                    .and_then(|configured| configured.vault_effort),
-                descriptions
-                    .as_ref()
-                    .and_then(|configured| configured.purpose_effort.get(&purpose).copied()),
-                descriptions
-                    .as_ref()
-                    .and_then(|configured| configured.global_effort),
-            ) {
-                Ok(effort) => effort,
-                Err(_) => continue,
+            let Ok(default_effort) = policy.resolve_default(&ladder, composed) else {
+                continue;
             };
+            // A holder request is known before judgment: filter, never judge, a
+            // candidate it would widen.
+            if task
+                .override_effort
+                .is_some_and(|effort| policy.choose(composed, Some(effort), &ladder).is_err())
+            {
+                continue;
+            }
             candidates.push(SeatCandidate {
                 reasoning,
                 wire: row.wire,
@@ -359,7 +359,7 @@ impl SeatPool {
                 allowed_efforts: ladder,
                 model: catalog.model,
                 locality: route,
-                description: description.lines(),
+                description: description.lines(&policy.evidence_order),
             });
         }
         if candidates.is_empty() {
@@ -378,11 +378,7 @@ impl SeatPool {
                     .find(|candidate| candidate.model == seat.model)
                     .is_some_and(|candidate| {
                         policy
-                            .choose(
-                                candidate.default_effort,
-                                Some(seat.effort),
-                                &candidate.allowed_efforts,
-                            )
+                            .choose(composed, Some(seat.effort), &candidate.allowed_efforts)
                             .is_ok()
                     })
                 && task
@@ -406,7 +402,7 @@ impl SeatPool {
             .find(|c| c.model == judgment.model)
             .ok_or_else(|| invalid("seat judgment selected ineligible model"))?;
         let effort = policy.choose(
-            candidate.default_effort,
+            composed,
             task.override_effort.or(judgment.effort),
             &candidate.allowed_efforts,
         )?;

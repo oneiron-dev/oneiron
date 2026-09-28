@@ -598,6 +598,7 @@ fn effort_constraint_filters_before_judgment_and_is_part_of_judge_input() {
     let measurement = BTreeMap::new();
     let (candidate, judgment, effort) = resolve(
         &configured,
+        &crate::llm::seat::SeatPolicy::bundled().unwrap(),
         &measurement,
         &settings,
         &CallPurpose::AutoCheck,

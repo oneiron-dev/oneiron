@@ -8,6 +8,7 @@
   "global_default": null,
   "vault_ceiling": "xhigh",
   "precedence": "narrow_only",
+  "evidence_order": ["owner", "measured", "benchmarks", "vendor"],
   "facet_max_bytes": 256,
   "line_max_bytes": 4096
 }
