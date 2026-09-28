@@ -783,6 +783,7 @@ fn dangling_ancestry_is_hidden_without_aborting_other_audience_results() {
 }
 
 mod audience_boundaries;
+mod deletion;
 
 #[test]
 fn room_members_reject_non_person_and_agent_def_atomically() {
@@ -956,7 +957,9 @@ fn scope_summary_and_merge_header_require_every_covered_membership_window() {
     for id in [summary, claim, record] {
         assert!(!audience_admits(&vault, id, bob).unwrap());
     }
-    vault.batch().delete(&before).commit().unwrap();
+    vault
+        .delete_room_record(room, before, actor, crate::DeleteReason::UserHardDelete)
+        .unwrap();
     for id in [summary, claim, record] {
         assert!(!audience_admits(&vault, id, actor.entity_ref()).unwrap());
     }

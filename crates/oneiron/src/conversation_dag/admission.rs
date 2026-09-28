@@ -109,7 +109,26 @@ pub(crate) fn guard_record_put(
             }
         }
     }
+    if kind == ENTITY_TYPE_TURN
+        && let Some(room) = room_turn_owner(store, txn, id)?
+    {
+        guard_erased_author_body(store, txn, room, body)?;
+    }
     let prior = store.port_entity_record(txn, id)?;
+    // A witnessed TURN can predate DAG adoption, so the DAG body pin does not
+    // yet protect it. Its PERSON byline is nonetheless an immutable admission
+    // fact: a raw local or replicated re-put may re-dirty the row, but cannot
+    // assign its earlier words to a new author (or remove that author).
+    if kind == ENTITY_TYPE_TURN
+        && room_turn_owner(store, txn, id)?.is_some()
+        && let Some(previous) = prior
+            .as_ref()
+            .filter(|row| row.entity_type == ENTITY_TYPE_TURN)
+        && !previous.body.is_empty()
+        && turn_person(&previous.body)? != turn_person(body)?
+    {
+        return Err(invalid("room TURN author is immutable"));
+    }
     let stored_pin = store.vault_meta.get(txn, &pin_key(id))?;
     let inferred_pin = if stored_pin.is_none() {
         if let Some(row) = prior
@@ -214,6 +233,161 @@ fn is_dag_membership(
             .is_some_and(|raw| raw.first() == Some(&ENTITY_TYPE_CONVERSATION)))
 }
 
+/// A local TURN body may carry a PERSON author. Missing authors (for example,
+/// imported transcript labels) have no per-person fence to evaluate.
+fn turn_person(body: &[u8]) -> Result<Option<EntityId>> {
+    let mut bytes = body;
+    let Ok(rmpv::Value::Map(fields)) = rmpv::decode::read_value(&mut bytes) else {
+        return Ok(None);
+    };
+    let mut values = fields
+        .iter()
+        .filter(|(key, _)| key.as_str() == Some("actor"));
+    let Some((_, value)) = values.next() else {
+        return Ok(None);
+    };
+    if !bytes.is_empty() || values.next().is_some() {
+        return Err(invalid("invalid room TURN author"));
+    }
+    value
+        .as_str()
+        .and_then(|text| EntityId::from_hex(text).ok())
+        .map(Some)
+        .ok_or_else(|| invalid("invalid room TURN author"))
+}
+
+fn guard_erased_person(
+    store: &impl ManifestDbs,
+    txn: &heed::RoTxn<'_>,
+    room: &EntityId,
+    record: &EntityId,
+) -> Result<()> {
+    let Some(raw) = store.entities().get(txn, record.as_bytes())? else {
+        return Ok(());
+    };
+    if raw.first() != Some(&ENTITY_TYPE_TURN) {
+        return Ok(());
+    }
+    let body = raw
+        .get(crate::batch::ENTITY_METADATA_HEADER_LEN..)
+        .ok_or(Error::CorruptedIndex("room TURN header"))?;
+    guard_erased_author_body(store, txn, *room, body)
+}
+
+fn guard_erased_author_body(
+    store: &impl ManifestDbs,
+    txn: &heed::RoTxn<'_>,
+    room: EntityId,
+    body: &[u8],
+) -> Result<()> {
+    if let Some(person) = turn_person(body)? {
+        // A known non-PERSON author is a bad carrier now. An unknown id stays
+        // admissible, as recipients do: a peer may deliver the TURN before
+        // (or without) its author's PERSON row. The erasure fence is keyed by
+        // id and still applies.
+        if store
+            .entities()
+            .get(txn, person.as_bytes())?
+            .is_some_and(|row| row.first() != Some(&crate::registry::ENTITY_TYPE_PERSON))
+        {
+            return Err(invalid("room TURN author must be a PERSON"));
+        }
+        if !crate::conversation::room_person_write_allowed(store, txn, room, person)? {
+            return Err(invalid("erased person cannot append to this room"));
+        }
+    }
+    Ok(())
+}
+
+/// Durable room owner of a TURN. The pin survives deleted/missing ChildOf rows.
+fn room_owner_key(id: &EntityId) -> Vec<u8> {
+    key(b"conversation_dag:room_owner:v1:", id)
+}
+
+pub(crate) fn room_turn_owner(
+    store: &impl ManifestDbs,
+    txn: &heed::RoTxn<'_>,
+    record: &EntityId,
+) -> Result<Option<EntityId>> {
+    if let Some(raw) = store.vault_meta().get(txn, &room_owner_key(record))? {
+        let bytes: [u8; 16] = raw
+            .as_ref()
+            .try_into()
+            .map_err(|_| Error::CorruptedIndex("room TURN owner pin"))?;
+        return EntityId::from_bytes(bytes)
+            .map(Some)
+            .map_err(|_| Error::CorruptedIndex("room TURN owner pin"));
+    }
+    let mut owner = None;
+    for row in crate::ports::EdgeStoreRead::port_edges(
+        store,
+        txn,
+        record,
+        crate::ports::EdgeDirection::Out,
+        Some(EdgeKind::ChildOf),
+        None,
+    )? {
+        let target = row?.target;
+        if store
+            .entities()
+            .get(txn, target.as_bytes())?
+            .is_some_and(|raw| raw.first() == Some(&ENTITY_TYPE_CONVERSATION))
+            && owner.replace(target).is_some()
+        {
+            return Err(Error::CorruptedIndex("multiple room TURN owners"));
+        }
+    }
+    Ok(owner)
+}
+
+pub(crate) fn guard_room_turn_delete(
+    store: &impl ManifestDbs,
+    txn: &heed::RoTxn<'_>,
+    id: &EntityId,
+) -> Result<()> {
+    let Some(raw) = store.entities().get(txn, id.as_bytes())? else {
+        // Refuse reuse even after a prior purge removed the TURN bytes.
+        if room_turn_owner(store, txn, id)?.is_some() {
+            return Err(invalid("room TURN deletion requires the actor-bound door"));
+        }
+        return Ok(());
+    };
+    let header = crate::batch::EntityMetadataHeader::parse(&raw)
+        .ok_or(Error::CorruptedIndex("room TURN header"))?;
+    if header.entity_type == ENTITY_TYPE_TURN
+        && (room_turn_owner(store, txn, id)?.is_some()
+            || record_kind(&raw[crate::batch::ENTITY_METADATA_HEADER_LEN..])?.is_some())
+    {
+        return Err(invalid("room TURN deletion requires the actor-bound door"));
+    }
+    Ok(())
+}
+
+pub(crate) fn guard_room_membership_delete(
+    store: &impl ManifestDbs,
+    txn: &heed::RoTxn<'_>,
+    record: &EntityId,
+    kind: EdgeKind,
+    conversation: &EntityId,
+) -> Result<()> {
+    if kind == EdgeKind::ChildOf
+        && store
+            .entities()
+            .get(txn, record.as_bytes())?
+            .is_some_and(|raw| raw.first() == Some(&ENTITY_TYPE_TURN))
+        && (room_turn_owner(store, txn, record)? == Some(*conversation)
+            || store
+                .entities()
+                .get(txn, conversation.as_bytes())?
+                .is_some_and(|raw| raw.first() == Some(&ENTITY_TYPE_CONVERSATION)))
+    {
+        return Err(invalid(
+            "room TURN membership requires the actor-bound door",
+        ));
+    }
+    Ok(())
+}
+
 pub(crate) fn pin_membership(
     store: &impl ManifestDbs,
     txn: &mut heed::RwTxn<'_>,
@@ -221,6 +395,24 @@ pub(crate) fn pin_membership(
     kind: EdgeKind,
     conversation: &EntityId,
 ) -> Result<()> {
+    if kind == EdgeKind::ChildOf
+        && store
+            .entities()
+            .get(txn, record.as_bytes())?
+            .is_some_and(|raw| raw.first() == Some(&ENTITY_TYPE_TURN))
+        && store
+            .entities()
+            .get(txn, conversation.as_bytes())?
+            .is_some_and(|raw| raw.first() == Some(&ENTITY_TYPE_CONVERSATION))
+    {
+        guard_erased_person(store, txn, conversation, record)?;
+        if room_turn_owner(store, txn, record)?.is_some_and(|owner| owner != *conversation) {
+            return Err(invalid("room TURN cannot change owner"));
+        }
+        store
+            .vault_meta()
+            .put(txn, &room_owner_key(record), conversation.as_bytes())?;
+    }
     if is_dag_membership(store, txn, kind, conversation)? {
         pin_record(store, txn, record)?;
     }
@@ -239,6 +431,27 @@ pub(crate) fn keep_membership_pin(
     kind: EdgeKind,
     conversation: &EntityId,
 ) -> Result<()> {
+    if kind == EdgeKind::ChildOf
+        && store
+            .entities()
+            .get(txn, record.as_bytes())?
+            .is_some_and(|raw| raw.first() == Some(&ENTITY_TYPE_TURN))
+        && store
+            .entities()
+            .get(txn, conversation.as_bytes())?
+            .is_some_and(|raw| raw.first() == Some(&ENTITY_TYPE_CONVERSATION))
+    {
+        let owner_key = room_owner_key(record);
+        if let Some(owner) = store.vault_meta().get(txn, &owner_key)? {
+            if owner.as_ref() != conversation.as_bytes() {
+                return Err(invalid("room TURN cannot change owner"));
+            }
+        } else {
+            store
+                .vault_meta()
+                .put(txn, &owner_key, conversation.as_bytes())?;
+        }
+    }
     if !is_dag_membership(store, txn, kind, conversation)? {
         return Ok(());
     }

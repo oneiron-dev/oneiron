@@ -4,6 +4,7 @@ mod deletion;
 mod edges;
 mod goal;
 mod mint;
+pub(crate) use mint::project_mint_gate_refs_in_txn;
 pub use mint::{ProjectBudgetShare, ProjectGoalRecord, ProjectMintReceipt};
 mod projection;
 pub(crate) use deletion::deindex_project_room;

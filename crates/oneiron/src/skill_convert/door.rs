@@ -8,7 +8,8 @@ use crate::claim::{ClaimApprovalStatus, ClaimSource};
 
 use crate::error::{Error, Result};
 use crate::skill::{
-    SkillContentHash, SkillDependency, SkillLifecycle, SkillRecord, canonical_skill_tree_hash,
+    SkillCallContract, SkillContentHash, SkillDependency, SkillLifecycle, SkillRecord, SkillRole,
+    canonical_skill_tree_hash,
 };
 use crate::skill_reliability::{ProvenanceTrustClass, SkillReliabilityPosterior};
 use crate::temporal::TimeRange;
@@ -56,6 +57,7 @@ pub fn convert_messages_to_skill(
         hint: request.hint.clone(),
     };
     let refined = refiner.refine(&brief)?;
+    let (declared_role, declared_call) = crate::skill_hub::declared_role_call(&refined.files)?;
     let content_hash = canonical_skill_tree_hash(
         refined
             .files
@@ -113,6 +115,15 @@ pub fn convert_messages_to_skill(
                         "merge target was superseded while the refinement ran",
                     )));
                 }
+                if declared_role.is_some_and(|role| role != target.role)
+                    || declared_call
+                        .as_ref()
+                        .is_some_and(|call| target.call.as_ref() != Some(call))
+                {
+                    return Err(Error::Artifact(ArtifactError::InvalidSkillBody(
+                        "merge source cannot change the target role or call contract",
+                    )));
+                }
                 converted_record(
                     // The proposal continues the TARGET's skill id — that is
                     // what makes it a revision the admission gate can supersede
@@ -128,6 +139,8 @@ pub fn convert_messages_to_skill(
                     // dependency channel, exactly so it cannot invent one.
                     target.dependencies,
                     provenance(&brief.said, rationale, Some(&existing)),
+                    target.role,
+                    target.call,
                 )
             }
             None => converted_record(
@@ -139,6 +152,8 @@ pub fn convert_messages_to_skill(
                 // contract, and there is no prior revision to inherit one from.
                 Vec::new(),
                 provenance(&brief.said, rationale, None),
+                declared_role.unwrap_or(SkillRole::Knowledge),
+                declared_call.clone(),
             ),
         };
         let id = vault.store.clock.entity_id()?;
@@ -166,6 +181,10 @@ pub fn convert_messages_to_skill(
 /// "conversation convert" under [`ProvenanceTrustClass::Generated`], so the
 /// confidence CACHE is seeded from that class's prior rather than from an
 /// optimistic constant — a converted skill starts WEAK and earns its place.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "both verdicts land one record from the same refined fields plus its role contract"
+)]
 fn converted_record(
     skill_id: &str,
     desc: &str,
@@ -173,6 +192,8 @@ fn converted_record(
     approval: ClaimApprovalStatus,
     dependencies: Vec<SkillDependency>,
     provenance: Value,
+    role: SkillRole,
+    call: Option<SkillCallContract>,
 ) -> SkillRecord {
     SkillRecord::new(
         skill_id,
@@ -188,6 +209,7 @@ fn converted_record(
         provenance,
     )
     .with_content_hash(content_hash)
+    .with_role(role, call)
 }
 
 pub(super) fn validate_text(text: &str, max_bytes: usize, context: &'static str) -> Result<()> {

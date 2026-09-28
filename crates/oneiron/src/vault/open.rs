@@ -567,6 +567,7 @@ impl Vault {
         // the pairing `validate_open_config` already accepted.
         let privacy = config.privacy.clone();
         let vault = Self {
+            model_seats: std::sync::Mutex::new(crate::llm::seat::SeatPool::new()),
             store,
             config,
             analyzer,
@@ -587,6 +588,9 @@ impl Vault {
             #[cfg(feature = "sync")]
             live_window_manager_attached: std::sync::atomic::AtomicBool::new(false),
         };
+        // A published deletion must finish its request-bound topology tear
+        // before any caller can apply a new merge or observe this vault.
+        crate::deletion::topology_delete_intent::recover_topology_delete_intents_on_open(&vault)?;
         // Rebuilds the content-hash → holder index (import/sync dedup) when it
         // is missing or stale; completes before any caller receives a usable
         // handle. ONE-1741 dropped the verdict-dedup half — scan verdicts now
