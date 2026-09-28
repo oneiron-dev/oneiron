@@ -33,6 +33,7 @@ mod resolution;
 mod tracker_limits;
 pub use tracker_limits::LiveQueryTrackerLimits;
 mod retrieval_filter;
+pub(crate) mod retrieval_retention;
 pub(crate) mod retry_source_policy;
 mod room_thread;
 pub use room_thread::RoomThreadFill;

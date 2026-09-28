@@ -129,6 +129,9 @@ pub struct StoreCore {
     /// this vault handle. No process-global state or cross-vault kill switch.
     pub(in crate::store) retrieval_writes_disabled: std::sync::atomic::AtomicBool,
     pub(in crate::store) retrieval_telemetry_capture: bool,
+    #[cfg(target_os = "linux")]
+    pub(in crate::store) retrieval_telemetry_lease:
+        Mutex<Option<super::retrieval_telemetry::RetrievalTelemetryLease>>,
     /// This vault's monotonic authority first-seen observation clock. It dies
     /// with the handle: a reopen re-anchors from the persisted floor, so there
     /// is no registry to release from and no cross-vault anchor to share.
@@ -179,8 +182,12 @@ pub struct StoreOwner {
     /// invariant; see [`StoreCore`].
     pub(in crate::store) core: Weak<StoreCore>,
     /// Sole owner of the environment's close-on-last-clone semantics
-    /// (ONE-1142).
+    /// (ONE-1142). Unix LFS staging reads its bound root descriptor.
+    #[cfg(unix)]
     pub(in crate::store) env: OwnedEnv,
+    /// Same drop-order ownership on targets without descriptor-based staging.
+    #[cfg(not(unix))]
+    pub(in crate::store) _env: OwnedEnv,
     // DROP-ORDER: keep this field after `env`. Fields drop in declaration
     // order, so the path registry releases the path only after [`OwnedEnv`]
     // has closed the LMDB environment — a reopen racing this drop can never

@@ -147,6 +147,13 @@ impl VaultWriterLease {
         ))
     }
 
+    /// Clone the leased root descriptor so store-local telemetry locks bind
+    /// the same directory inode as the process-owned LMDB environment.
+    #[cfg(unix)]
+    pub(super) fn clone_directory(&self) -> Result<std::fs::File> {
+        Ok(self.directory.try_clone()?)
+    }
+
     /// The same descriptor-bound path used by the existing-only store door.
     #[cfg(target_os = "linux")]
     pub(super) fn environment_path(&self) -> PathBuf {
