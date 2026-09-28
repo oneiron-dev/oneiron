@@ -14,6 +14,8 @@ fn turn(n: u8, thread_of: Option<EntityId>, reply_to: Option<EntityId>, at: u64)
         reply_to: reply_to.map(|id| id.to_hex()),
         thread_of: thread_of.map(|id| id.to_hex()),
         at,
+        task_ids: vec![],
+        converted_project: None,
     }
 }
 #[test]

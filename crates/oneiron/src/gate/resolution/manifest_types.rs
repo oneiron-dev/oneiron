@@ -19,6 +19,7 @@ use crate::gate::ceiling::{
 use crate::gate::grants::PolicyScopedGrant;
 use crate::gate::hosted_tts_policy::HostedTtsPolicy;
 use crate::gate::policy_values::PolicyValueRow;
+use crate::gate::project_conversion::ProjectConversionPolicy;
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub(crate) struct PolicyManifestDiagnostics {
@@ -379,6 +380,7 @@ pub(crate) struct PolicyManifestResolution {
     pub(super) budget_policy: BudgetPolicyTable,
     pub(super) voice_serving: Vec<crate::gate::voice_serving::VoiceServingRows>,
     pub(super) gate_decision_retention: Option<GateDecisionRetentionPolicy>,
+    pub(super) project_conversion: ProjectConversionPolicy,
     pub(crate) pack_install_policy: Option<crate::gate::PackInstallPolicy>,
     pub(super) pptx_comment_limits: Option<crate::edit_roundtrip::pptx::PptxOperationalLimits>,
     pub(super) docx_archive_limits: Vec<crate::gate::docx_budget::DocxArchivePolicy>,

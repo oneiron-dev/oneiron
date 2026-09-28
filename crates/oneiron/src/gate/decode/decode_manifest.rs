@@ -29,7 +29,7 @@ use crate::gate::constants::{
     POLICY_OWNER_POLICY_DOCUMENT_KEY, POLICY_OWNER_POLICY_ENABLED_KEY,
     POLICY_OWNER_POLICY_OUTPUT_CONTRACT_KEY, POLICY_OWNER_POLICY_PATTERNS_KEY,
     POLICY_OWNER_POLICY_PRECEDENCE_KEY, POLICY_OWNER_POLICY_ROWS_KEY, POLICY_PACK_ID_KEY,
-    POLICY_PACK_VERSION_KEY, POLICY_PPTX_COMMENT_LIMITS_KEY,
+    POLICY_PACK_VERSION_KEY, POLICY_PPTX_COMMENT_LIMITS_KEY, POLICY_PROJECT_CONVERSION_KEY,
     POLICY_RETIRED_COMM_OPT_OUT_POSTURE_KEY, POLICY_RETIRED_PROPOSAL_CHECK_THRESHOLD_KEY,
     POLICY_RULES_KEY, POLICY_SCHEMA_VERSION, POLICY_SCHEMA_VERSION_KEY, POLICY_SCOPED_GRANTS_KEY,
     POLICY_SHEET_ANSWER_LIMITS_KEY, POLICY_SHEET_ANSWER_PRECEDENCE_KEY, POLICY_SIGNATURE_KEY,
@@ -46,6 +46,7 @@ use crate::gate::operational_policy::{
 };
 use crate::gate::pack_install_policy::KEY as PACK_INSTALL_POLICY_KEY;
 use crate::gate::policy_values::{PolicyValueRow, parse_policy_values};
+use crate::gate::project_conversion::{ProjectConversionPolicy, parse_project_conversion};
 use crate::gate::resolution::{
     AttributionLimits, ConnectorClassPrecedence, CredentialLifetimePolicy,
     CredentialLifetimePrecedence, GateDecisionRetentionPolicy, TeacherProbeRow,
@@ -115,6 +116,7 @@ pub(in crate::gate) struct DecodedPolicyManifest {
     pub(in crate::gate) wait_policy: WaitPolicyTable,
     pub(in crate::gate) act_policy: ActPolicyTable,
     pub(in crate::gate) pack_install_policy: Option<PackInstallPolicy>,
+    pub(in crate::gate) project_conversion: Option<ProjectConversionPolicy>,
     pub(in crate::gate) room_thread: Option<crate::gate::RoomThreadManifest>,
     pub(in crate::gate) pptx_comment_limits:
         Option<crate::edit_roundtrip::pptx::PptxOperationalLimits>,
@@ -235,6 +237,7 @@ pub(in crate::gate) fn decode_policy_manifest(data: &[u8]) -> Option<DecodedPoli
                 | POLICY_WAIT_POLICY_KEY
                 | POLICY_ACT_POLICY_KEY
                 | PACK_INSTALL_POLICY_KEY
+                | POLICY_PROJECT_CONVERSION_KEY
                 | "room_thread"
                 | POLICY_PPTX_COMMENT_LIMITS_KEY
                 | "booking_conversion"
@@ -468,6 +471,11 @@ pub(in crate::gate) fn decode_policy_manifest(data: &[u8]) -> Option<DecodedPoli
         MapValue::Missing => ActPolicyTable::default(),
         MapValue::Duplicate => return None,
         MapValue::Present(value) => parse_act_policy(value)?,
+    };
+    let project_conversion = match single_map_value(&entries, POLICY_PROJECT_CONVERSION_KEY) {
+        MapValue::Missing => None,
+        MapValue::Duplicate => return None,
+        MapValue::Present(value) => Some(parse_project_conversion(value)?),
     };
     let room_thread = match single_map_value(&entries, "room_thread") {
         MapValue::Missing => None,
@@ -784,6 +792,7 @@ pub(in crate::gate) fn decode_policy_manifest(data: &[u8]) -> Option<DecodedPoli
         wait_policy,
         act_policy,
         pack_install_policy,
+        project_conversion,
         room_thread,
         pptx_comment_limits,
         booking_conversion_rows,

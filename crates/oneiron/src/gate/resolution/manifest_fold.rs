@@ -315,6 +315,9 @@ pub(crate) fn resolve_policy_manifest(
                 resolution
                     .failure_signal_policy
                     .extend(decoded.failure_signal_policy);
+                if let Some(policy) = decoded.project_conversion {
+                    resolution.project_conversion = resolution.project_conversion.restrict(policy);
+                }
                 if let Some(policy) = decoded.pack_install_policy {
                     if let Some(existing) = &mut resolution.pack_install_policy {
                         existing.restrict(policy);
