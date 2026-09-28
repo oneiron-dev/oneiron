@@ -26,8 +26,7 @@ impl AgentDispatcher<'_> {
         };
         if let Some(key) = input.dedupe_key.as_deref() {
             let txn = self.vault.store.env.read_txn()?;
-            if let Some(bytes) = self.vault.store.vault_meta.get(&txn, &dedupe_key(key))? {
-                let id = crate::attempt_queue::AttemptId::from_bytes(&bytes)?;
+            if let Some(id) = DEDUPE.get(&self.vault.store, &txn, &dedupe_key_hash(key))? {
                 let row = AttemptQueue::new(self.vault)
                     .get_in_txn(&txn, id)?
                     .ok_or_else(|| invalid("workflow dedupe root is missing"))?;

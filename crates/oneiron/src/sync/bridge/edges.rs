@@ -15,7 +15,7 @@ use super::entities::{committed_entity_state_matches, set_remat_marker_logged};
 
 use crate::affect::Vad;
 use crate::batch::BatchOp;
-use crate::edge::{EdgeKind, decode_edge_value_for_kind, parse_strict_edge_record_key};
+use crate::edge::{EdgeKind, decode_edge_value_for_kind};
 use crate::entity_id::EntityId;
 use crate::ports::EdgeStoreRead;
 use crate::store::Store;
@@ -31,15 +31,16 @@ fn projected_child_of_parents(
     txn: &heed::RoTxn<'_>,
     child: &EntityId,
 ) -> Result<std::collections::BTreeSet<EntityId>> {
-    vault
-        .store
-        .edges_out
-        .prefix_iter(txn, &crate::batch::child_of_prefix(child))?
-        .map(|row| {
-            let (key, _) = row?;
-            Ok(parse_strict_edge_record_key(&key)?.2)
-        })
-        .collect()
+    crate::ports::EdgeStoreRead::port_edges(
+        &vault.store,
+        txn,
+        child,
+        crate::ports::EdgeDirection::Out,
+        Some(crate::edge::EdgeKind::ChildOf),
+        None,
+    )?
+    .map(|row| Ok(row?.target))
+    .collect()
 }
 
 /// Materialize edge changes from a Loro MapDelta to LMDB.
