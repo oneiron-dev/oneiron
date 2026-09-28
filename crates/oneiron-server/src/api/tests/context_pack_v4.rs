@@ -854,7 +854,8 @@ async fn context_board_feeds_explicit_subjects_to_the_l2_producer() {
         (
             "l2-observed",
             json!([
-                "changed[1:]{id,to}:",
+                "changed[2:]{id,to}:",
+                format!("{}: retracted", user_claim.to_hex()),
                 format!("{}: retracted", persona_claim.to_hex())
             ]),
         ),
