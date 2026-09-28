@@ -1,0 +1,27 @@
+[Unit]
+Description=Always-warm VoxCPM2 CUDA voice worker
+After=network-online.target
+Wants=network-online.target
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+User=oneiron-voice
+Group=oneiron-voice
+WorkingDirectory=/opt/oneiron
+EnvironmentFile=/etc/oneiron-voxcpm2.env
+Environment=HF_HOME=/var/cache/oneiron-voxcpm2
+RuntimeDirectory=oneiron-voxcpm2
+RuntimeDirectoryMode=0700
+CacheDirectory=oneiron-voxcpm2
+CacheDirectoryMode=0700
+ExecStart=/opt/oneiron-voice/.venv/bin/python /opt/oneiron/deploy/voxcpm2/worker.py --runtime-dir /run/oneiron-voxcpm2 --policy-file /etc/oneiron-voxcpm2-policy.json --port 8769
+Restart=always
+RestartSec=2s
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target
