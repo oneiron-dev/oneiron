@@ -12,6 +12,16 @@ pub struct LoadedSkillPack {
     pub source_files: Option<Vec<crate::skill_hub::HubFile>>,
 }
 
+/// The one runtime admission invariant used by the load door and hub installs.
+#[must_use]
+pub(crate) fn skill_loadable(record: &SkillRecord) -> bool {
+    record.lifecycle_status == SkillLifecycle::Active
+        && matches!(
+            record.approval_status,
+            ClaimApprovalStatus::Auto | ClaimApprovalStatus::Approved
+        )
+}
+
 impl Vault {
     /// Bind one live attempt to its executing actor (PERSON, AGENT_DEF or
     /// MACHINE), even when it loads only shared skills or no skill at all.
@@ -128,12 +138,7 @@ impl Vault {
                     "skill belongs to a different resident",
                 ));
             }
-            if record.lifecycle_status != SkillLifecycle::Active
-                || !matches!(
-                    record.approval_status,
-                    ClaimApprovalStatus::Auto | ClaimApprovalStatus::Approved
-                )
-            {
+            if !skill_loadable(&record) {
                 return Err(Error::InvalidClaimBody(
                     "pack load requires an active approved skill",
                 ));
