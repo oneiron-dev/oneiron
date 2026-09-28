@@ -76,6 +76,24 @@ impl PolicyManifestResolution {
         crate::gate::retry_source_policy::resolve(&self.retry_source_policy, actor, scope)
     }
 
+    /// Only trusted policy rows select the room working set. A malformed
+    /// loaded manifest refuses reads rather than silently restoring defaults.
+    pub(crate) fn room_thread_settings(
+        &self,
+        actor: crate::EntityId,
+    ) -> Result<crate::gate::RoomThreadSettings> {
+        if self.diagnostics.loaded_manifest_forces_fail_closed() {
+            return Err(crate::Error::InvalidConfig(
+                "invalid room thread policy".into(),
+            ));
+        }
+        Ok(self
+            .room_thread
+            .clone()
+            .unwrap_or_default()
+            .effective(actor))
+    }
+
     #[must_use]
     pub(crate) fn proposal_check_threshold(&self) -> u64 {
         self.proposal_check_threshold

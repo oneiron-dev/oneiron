@@ -53,6 +53,10 @@ outcomes(handle: TaskAskHandle): CalibrationPair[] { return invoke("tasksOutcome
 rooms: {
 list(): unknown[] { return invoke("roomsList", {}) as unknown[] },
 messages(roomRef: string, after?: string, limit?: number): {rows: unknown[]; next_after: string | null} { return invoke("roomsMessages", {room_ref: roomRef, after, limit}) as {rows: unknown[]; next_after: string | null} },
+render(roomRef: string): string[] { return invoke("roomsRender", {room_ref: roomRef}) as string[] },
+find(roomRef: string, after?: string, limit?: number): {rows: unknown[]; next_after: string | null} { return invoke("roomsFind", {room_ref: roomRef, after, limit}) as {rows: unknown[]; next_after: string | null} },
+get(roomRef: string, turnRef: string): unknown { return invoke("roomsGet", {room_ref: roomRef, turn_ref: turnRef}) as unknown },
+trunk(roomRef: string, turnRef: string): unknown { return invoke("roomsTrunk", {room_ref: roomRef, turn_ref: turnRef}) as unknown },
 claim(roomRef: string, turnRef: string): unknown { return invoke("roomsClaim", {room_ref: roomRef, turn_ref: turnRef}) as unknown },
 speak(turn: Record<string, unknown>): unknown { return invoke("roomsSpeak", turn) as unknown },
 },

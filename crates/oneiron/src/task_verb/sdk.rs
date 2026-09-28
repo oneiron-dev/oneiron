@@ -76,6 +76,17 @@ pub struct RoomRequest {
 }
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
+pub struct RoomRefRequest {
+    pub room_ref: String,
+}
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct RoomTurnRequest {
+    pub room_ref: String,
+    pub turn_ref: String,
+}
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct RoomClaimRequest {
     pub room_ref: String,
     pub turn_ref: String,
