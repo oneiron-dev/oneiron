@@ -27,7 +27,13 @@
           "revision_kind": "catalog_snapshot",
           "wire_model": "aion-labs/aion-3.0-mini",
           "endpoint_base": "https://openrouter.ai/api/v1",
-          "vendor": "aion-labs"
+          "vendor": "aion-labs",
+          "description": {
+            "vendor_copy": {
+              "text": "Aion-3.0 Mini is a multi-model roleplaying and storytelling system from AionLabs, built on the DeepSeek family of models. It uses a collaborative generation process in which multiple specialized models each...",
+              "source": "https://openrouter.ai/api/v1/models#aion-labs/aion-3.0-mini"
+            }
+          }
         }
       }
     },
@@ -57,7 +63,13 @@
           "revision_kind": "catalog_snapshot",
           "wire_model": "amazon/nova-2-lite-v1",
           "endpoint_base": "https://openrouter.ai/api/v1",
-          "vendor": "amazon"
+          "vendor": "amazon",
+          "description": {
+            "vendor_copy": {
+              "text": "Nova 2 Lite is a fast, cost-effective reasoning model for everyday workloads that can process text, images, and videos to generate text. Nova 2 Lite demonstrates standout capabilities in processing...",
+              "source": "https://openrouter.ai/api/v1/models#amazon/nova-2-lite-v1"
+            }
+          }
         }
       }
     },
@@ -84,7 +96,13 @@
           "revision_kind": "catalog_snapshot",
           "wire_model": "anthracite-org/magnum-v4-72b",
           "endpoint_base": "https://openrouter.ai/api/v1",
-          "vendor": "anthracite-org"
+          "vendor": "anthracite-org",
+          "description": {
+            "vendor_copy": {
+              "text": "This is a series of models designed to replicate the prose quality of the Claude 3 models, specifically Sonnet(https://openrouter.ai/anthropic/claude-3.5-sonnet) and Opus(https://openrouter.ai/anthropic/claude-3-opus). The model is fine-tuned on top of [Qwen2.5 72B](https://openrouter.ai/qwen/qwen-2.5-72b-instruct).",
+              "source": "https://openrouter.ai/api/v1/models#anthracite-org/magnum-v4-72b"
+            }
+          }
         }
       }
     },
@@ -117,7 +135,13 @@
           "revision_kind": "catalog_snapshot",
           "wire_model": "anthropic/claude-fable-5.1",
           "endpoint_base": "https://openrouter.ai/api/v1",
-          "vendor": "anthropic"
+          "vendor": "anthropic",
+          "description": {
+            "vendor_copy": {
+              "text": "Claude Fable 5.1 improves on Claude Fable 5 across the board, with the biggest gains in agentic coding, long-running agentic workflows, and knowledge work: long code refactors, front-end and visual...",
+              "source": "https://openrouter.ai/api/v1/models#anthropic/claude-fable-5.1"
+            }
+          }
         }
       }
     },
@@ -147,7 +171,13 @@
           "revision_kind": "catalog_snapshot",
           "wire_model": "arcee-ai/trinity-large-thinking",
           "endpoint_base": "https://openrouter.ai/api/v1",
-          "vendor": "arcee-ai"
+          "vendor": "arcee-ai",
+          "description": {
+            "vendor_copy": {
+              "text": "Trinity Large Thinking is a powerful open source reasoning model from the team at Arcee AI. It shows strong performance in PinchBench, agentic workloads, and reasoning tasks. Launch video: https://youtu.be/Gc82AXLa0Rg?si=4RLn6WBz33qT--B7...",
+              "source": "https://openrouter.ai/api/v1/models#arcee-ai/trinity-large-thinking"
+            }
+          }
         }
       }
     },
@@ -175,7 +205,13 @@
           "revision_kind": "catalog_snapshot",
           "wire_model": "baidu/ernie-4.5-vl-424b-a47b",
           "endpoint_base": "https://openrouter.ai/api/v1",
-          "vendor": "baidu"
+          "vendor": "baidu",
+          "description": {
+            "vendor_copy": {
+              "text": "ERNIE-4.5-VL-424B-A47B is a multimodal Mixture-of-Experts (MoE) model from Baidu’s ERNIE 4.5 series, featuring 424B total parameters with 47B active per token. It is trained jointly on text and image data...",
+              "source": "https://openrouter.ai/api/v1/models#baidu/ernie-4.5-vl-424b-a47b"
+            }
+          }
         }
       }
     },
@@ -204,7 +240,13 @@
           "revision_kind": "catalog_snapshot",
           "wire_model": "bytedance/ui-tars-1.5-7b",
           "endpoint_base": "https://openrouter.ai/api/v1",
-          "vendor": "bytedance"
+          "vendor": "bytedance",
+          "description": {
+            "vendor_copy": {
+              "text": "UI-TARS-1.5 is a multimodal vision-language agent optimized for GUI-based environments, including desktop interfaces, web browsers, mobile systems, and games. Built by ByteDance, it builds upon the UI-TARS framework with reinforcement...",
+              "source": "https://openrouter.ai/api/v1/models#bytedance/ui-tars-1.5-7b"
+            }
+          }
         }
       }
     },
@@ -235,7 +277,13 @@
           "revision_kind": "catalog_snapshot",
           "wire_model": "bytedance-seed/seed-2-1-turbo",
           "endpoint_base": "https://openrouter.ai/api/v1",
-          "vendor": "bytedance-seed"
+          "vendor": "bytedance-seed",
+          "description": {
+            "vendor_copy": {
+              "text": "Seed 2.1 Turbo is a multimodal model from ByteDance Seed for coding and long-horizon agent workflows. It is suited for end-to-end software delivery, multi-step task execution, and understanding visual and...",
+              "source": "https://openrouter.ai/api/v1/models#bytedance-seed/seed-2-1-turbo"
+            }
+          }
         }
       }
     },
@@ -261,7 +309,13 @@
           "revision_kind": "catalog_snapshot",
           "wire_model": "cognitivecomputations/dolphin-mistral-24b-venice-edition",
           "endpoint_base": "https://openrouter.ai/api/v1",
-          "vendor": "cognitivecomputations"
+          "vendor": "cognitivecomputations",
+          "description": {
+            "vendor_copy": {
+              "text": "Venice Uncensored Dolphin Mistral 24B Venice Edition is a fine-tuned variant of Mistral-Small-24B-Instruct-2501, developed by dphn.ai in collaboration with Venice.ai. This model is designed as an “uncensored” instruct-tuned LLM, preserving...",
+              "source": "https://openrouter.ai/api/v1/models#cognitivecomputations/dolphin-mistral-24b-venice-edition"
+            }
+          }
         }
       }
     },
@@ -290,7 +344,13 @@
           "revision_kind": "catalog_snapshot",
           "wire_model": "cohere/north-mini-code:free",
           "endpoint_base": "https://openrouter.ai/api/v1",
-          "vendor": "cohere"
+          "vendor": "cohere",
+          "description": {
+            "vendor_copy": {
+              "text": "North Mini Code is Cohere's first agentic coding model and the debut of its North family. A sparse mixture-of-experts model with 30B total parameters and 3B active, it is optimized...",
+              "source": "https://openrouter.ai/api/v1/models#cohere/north-mini-code:free"
+            }
+          }
         }
       }
     },
@@ -322,7 +382,13 @@
           "revision_kind": "catalog_snapshot",
           "wire_model": "deepseek/deepseek-v4.1-flash",
           "endpoint_base": "https://openrouter.ai/api/v1",
-          "vendor": "deepseek"
+          "vendor": "deepseek",
+          "description": {
+            "vendor_copy": {
+              "text": "DeepSeek V4.1 Flash is a sparse mixture-of-experts model from DeepSeek, and the first built on the company's Causal Encoder-Decoder (CED) architecture. It activates 8B parameters on input and 16B on...",
+              "source": "https://openrouter.ai/api/v1/models#deepseek/deepseek-v4.1-flash"
+            }
+          }
         }
       }
     },
@@ -353,7 +419,13 @@
           "revision_kind": "catalog_snapshot",
           "wire_model": "dots-studio/dots-3-note-preview:free",
           "endpoint_base": "https://openrouter.ai/api/v1",
-          "vendor": "dots-studio"
+          "vendor": "dots-studio",
+          "description": {
+            "vendor_copy": {
+              "text": "Dots3-Note Preview is an open-weight mixture-of-experts model from Dots Studio, with 16B active parameters out of 280B total. It is the lightest model in the Dots 3 family and is...",
+              "source": "https://openrouter.ai/api/v1/models#dots-studio/dots-3-note-preview:free"
+            }
+          }
         }
       }
     },
@@ -386,7 +458,13 @@
           "revision_kind": "catalog_snapshot",
           "wire_model": "google/gemini-3.8-flash",
           "endpoint_base": "https://openrouter.ai/api/v1",
-          "vendor": "google"
+          "vendor": "google",
+          "description": {
+            "vendor_copy": {
+              "text": "Gemini 3.8 Flash is Google's most intelligent Flash model with significant gains from 3.7 Flash across software engineering, agentic tasks, and multi-step reasoning.",
+              "source": "https://openrouter.ai/api/v1/models#google/gemini-3.8-flash"
+            }
+          }
         }
       }
     },
@@ -413,7 +491,13 @@
           "revision_kind": "catalog_snapshot",
           "wire_model": "gryphe/mythomax-l2-13b",
           "endpoint_base": "https://openrouter.ai/api/v1",
-          "vendor": "gryphe"
+          "vendor": "gryphe",
+          "description": {
+            "vendor_copy": {
+              "text": "One of the highest performing and most popular fine-tunes of Llama 2 13B, with rich descriptions and roleplay. #merge",
+              "source": "https://openrouter.ai/api/v1/models#gryphe/mythomax-l2-13b"
+            }
+          }
         }
       }
     },
@@ -444,7 +528,13 @@
           "revision_kind": "catalog_snapshot",
           "wire_model": "ibm-granite/granite-4.2-8b",
           "endpoint_base": "https://openrouter.ai/api/v1",
-          "vendor": "ibm-granite"
+          "vendor": "ibm-granite",
+          "description": {
+            "vendor_copy": {
+              "text": "Granite 4.2 8B is a dense reasoning model from IBM. It is suited for mathematics, code generation, multilingual dialogue, and agentic workflows that need multi-step reasoning. It supports full, low-effort,...",
+              "source": "https://openrouter.ai/api/v1/models#ibm-granite/granite-4.2-8b"
+            }
+          }
         }
       }
     },
@@ -475,7 +565,13 @@
           "revision_kind": "catalog_snapshot",
           "wire_model": "inception/mercury-2.5",
           "endpoint_base": "https://openrouter.ai/api/v1",
-          "vendor": "inception"
+          "vendor": "inception",
+          "description": {
+            "vendor_copy": {
+              "text": "Mercury 2.5 is the fastest reasoning LLM, and the latest diffusion LLM (dLLM) from Inception. Instead of generating tokens sequentially, Mercury 2.5 produces and refines multiple tokens in parallel, achieving...",
+              "source": "https://openrouter.ai/api/v1/models#inception/mercury-2.5"
+            }
+          }
         }
       }
     },
@@ -507,7 +603,13 @@
           "revision_kind": "catalog_snapshot",
           "wire_model": "inclusionai/ling-3.0-flash-vl",
           "endpoint_base": "https://openrouter.ai/api/v1",
-          "vendor": "inclusionai"
+          "vendor": "inclusionai",
+          "description": {
+            "vendor_copy": {
+              "text": "Ling 3.0 Flash VL builds on Ling 3.0 Flash (124B total / 5.5B active MoE from InclusionAI), further strengthening its language capabilities while adding native visual perception and advanced visual...",
+              "source": "https://openrouter.ai/api/v1/models#inclusionai/ling-3.0-flash-vl"
+            }
+          }
         }
       }
     },
@@ -535,7 +637,13 @@
           "revision_kind": "catalog_snapshot",
           "wire_model": "inference-net/schematron-v2-turbo",
           "endpoint_base": "https://openrouter.ai/api/v1",
-          "vendor": "inference-net"
+          "vendor": "inference-net",
+          "description": {
+            "vendor_copy": {
+              "text": "Schematron V2 Turbo is a 3B-parameter HTML-to-JSON extraction model from Inference.net. It prioritizes throughput for high-volume extraction workloads. Extraction instructions must be supplied through a JSON schema in response_format rather...",
+              "source": "https://openrouter.ai/api/v1/models#inference-net/schematron-v2-turbo"
+            }
+          }
         }
       }
     },
@@ -565,7 +673,13 @@
           "revision_kind": "catalog_snapshot",
           "wire_model": "kwaipilot/kat-coder-pro-v2.5",
           "endpoint_base": "https://openrouter.ai/api/v1",
-          "vendor": "kwaipilot"
+          "vendor": "kwaipilot",
+          "description": {
+            "vendor_copy": {
+              "text": "KAT-Coder-Pro V2.5 is a flagship-level Agentic Coding model that can directly hand over an entire issue or an entire business workflow to it, allowing it to autonomously locate and make...",
+              "source": "https://openrouter.ai/api/v1/models#kwaipilot/kat-coder-pro-v2.5"
+            }
+          }
         }
       }
     },
@@ -595,7 +709,13 @@
           "revision_kind": "catalog_snapshot",
           "wire_model": "liquid/lfm-2.5-2.6b:free",
           "endpoint_base": "https://openrouter.ai/api/v1",
-          "vendor": "liquid"
+          "vendor": "liquid",
+          "description": {
+            "vendor_copy": {
+              "text": "LFM2.5-2.6B is a compact reasoning model from Liquid AI. It is suited for agent workflows, data extraction, RAG, and long-context processing. Liquid advises against using it for agentic coding or...",
+              "source": "https://openrouter.ai/api/v1/models#liquid/lfm-2.5-2.6b:free"
+            }
+          }
         }
       }
     },
@@ -621,7 +741,13 @@
           "revision_kind": "catalog_snapshot",
           "wire_model": "mancer/weaver",
           "endpoint_base": "https://openrouter.ai/api/v1",
-          "vendor": "mancer"
+          "vendor": "mancer",
+          "description": {
+            "vendor_copy": {
+              "text": "An attempt to recreate Claude-style verbosity, but don't expect the same level of coherence or memory. Meant for use in roleplay/narrative situations.",
+              "source": "https://openrouter.ai/api/v1/models#mancer/weaver"
+            }
+          }
         }
       }
     },
@@ -651,7 +777,13 @@
           "revision_kind": "catalog_snapshot",
           "wire_model": "meituan/longcat-2.0",
           "endpoint_base": "https://openrouter.ai/api/v1",
-          "vendor": "meituan"
+          "vendor": "meituan",
+          "description": {
+            "vendor_copy": {
+              "text": "LongCat 2.0 is a sparse mixture-of-experts language model from Meituan, with 48B active parameters out of 1.6T total. It is suited for coding, repository-level changes, long-horizon problem solving, and agentic...",
+              "source": "https://openrouter.ai/api/v1/models#meituan/longcat-2.0"
+            }
+          }
         }
       }
     },
@@ -683,7 +815,13 @@
           "revision_kind": "catalog_snapshot",
           "wire_model": "meta/muse-spark-1.3-contributor",
           "endpoint_base": "https://openrouter.ai/api/v1",
-          "vendor": "meta"
+          "vendor": "meta",
+          "description": {
+            "vendor_copy": {
+              "text": "Muse Spark 1.3 Contributor is the cost-efficient contributor tier of Meta’s multimodal reasoning model for experimentation, learning, and early-stage agentic, multi-agent, and coding workflows. It is designed to track information...",
+              "source": "https://openrouter.ai/api/v1/models#meta/muse-spark-1.3-contributor"
+            }
+          }
         }
       }
     },
@@ -710,7 +848,13 @@
           "revision_kind": "catalog_snapshot",
           "wire_model": "meta-llama/llama-guard-4-12b",
           "endpoint_base": "https://openrouter.ai/api/v1",
-          "vendor": "meta-llama"
+          "vendor": "meta-llama",
+          "description": {
+            "vendor_copy": {
+              "text": "Llama Guard 4 is a Llama 4 Scout-derived multimodal pretrained model, fine-tuned for content safety classification. Similar to previous versions, it can be used to classify content in both LLM...",
+              "source": "https://openrouter.ai/api/v1/models#meta-llama/llama-guard-4-12b"
+            }
+          }
         }
       }
     },
@@ -737,7 +881,13 @@
           "revision_kind": "catalog_snapshot",
           "wire_model": "microsoft/phi-4",
           "endpoint_base": "https://openrouter.ai/api/v1",
-          "vendor": "microsoft"
+          "vendor": "microsoft",
+          "description": {
+            "vendor_copy": {
+              "text": "[Microsoft Research](/microsoft) Phi-4 is designed to perform well in complex reasoning tasks and can operate efficiently in situations with limited memory or where quick responses are needed. At 14 billion...",
+              "source": "https://openrouter.ai/api/v1/models#microsoft/phi-4"
+            }
+          }
         }
       }
     },
@@ -769,7 +919,13 @@
           "revision_kind": "catalog_snapshot",
           "wire_model": "minimax/minimax-m3",
           "endpoint_base": "https://openrouter.ai/api/v1",
-          "vendor": "minimax"
+          "vendor": "minimax",
+          "description": {
+            "vendor_copy": {
+              "text": "MiniMax-M3 is a multimodal foundation model from MiniMax. It supports text, image, and video inputs with text output, a 1M-token context window, and is suited for long-horizon agentic work, coding,...",
+              "source": "https://openrouter.ai/api/v1/models#minimax/minimax-m3"
+            }
+          }
         }
       }
     },
@@ -800,7 +956,13 @@
           "revision_kind": "catalog_snapshot",
           "wire_model": "mistralai/mistral-medium-3-5",
           "endpoint_base": "https://openrouter.ai/api/v1",
-          "vendor": "mistralai"
+          "vendor": "mistralai",
+          "description": {
+            "vendor_copy": {
+              "text": "Mistral Medium 3.5 is a dense 128B instruction-following model from Mistral AI. It supports text and image inputs with text output, and is designed for agentic workflows, coding, and complex...",
+              "source": "https://openrouter.ai/api/v1/models#mistralai/mistral-medium-3-5"
+            }
+          }
         }
       }
     },
@@ -832,7 +994,13 @@
           "revision_kind": "catalog_snapshot",
           "wire_model": "moonshotai/kimi-k3",
           "endpoint_base": "https://openrouter.ai/api/v1",
-          "vendor": "moonshotai"
+          "vendor": "moonshotai",
+          "description": {
+            "vendor_copy": {
+              "text": "Kimi K3 is a 2.8T parameter open-weight multimodal reasoning model from Moonshot AI. It is suited for complex coding, knowledge work, and long-horizon agentic workflows, and is particularly strong at...",
+              "source": "https://openrouter.ai/api/v1/models#moonshotai/kimi-k3"
+            }
+          }
         }
       }
     },
@@ -859,7 +1027,13 @@
           "revision_kind": "catalog_snapshot",
           "wire_model": "morph/morph-v3-large",
           "endpoint_base": "https://openrouter.ai/api/v1",
-          "vendor": "morph"
+          "vendor": "morph",
+          "description": {
+            "vendor_copy": {
+              "text": "Morph's high-accuracy apply model for complex code edits. ~4,500 tokens/sec with 98% accuracy for precise code transformations. The model requires the prompt to be in the following format: <instruction>{instruction}</instruction> <code>{initial_code}</code>...",
+              "source": "https://openrouter.ai/api/v1/models#morph/morph-v3-large"
+            }
+          }
         }
       }
     },
@@ -890,7 +1064,8 @@
           "revision_kind": "catalog_snapshot",
           "wire_model": "nex-agi/nex-n2.5-mini:free",
           "endpoint_base": "https://openrouter.ai/api/v1",
-          "vendor": "nex-agi"
+          "vendor": "nex-agi",
+          "description": {}
         }
       }
     },
@@ -917,7 +1092,13 @@
           "revision_kind": "catalog_snapshot",
           "wire_model": "nousresearch/hermes-4-405b",
           "endpoint_base": "https://openrouter.ai/api/v1",
-          "vendor": "nousresearch"
+          "vendor": "nousresearch",
+          "description": {
+            "vendor_copy": {
+              "text": "Hermes 4 is a large-scale reasoning model built on Meta-Llama-3.1-405B and released by Nous Research. It introduces a hybrid reasoning mode, where the model can choose to deliberate internally with...",
+              "source": "https://openrouter.ai/api/v1/models#nousresearch/hermes-4-405b"
+            }
+          }
         }
       }
     },
@@ -948,7 +1129,13 @@
           "revision_kind": "catalog_snapshot",
           "wire_model": "nvidia/nemotron-3.5-lightning",
           "endpoint_base": "https://openrouter.ai/api/v1",
-          "vendor": "nvidia"
+          "vendor": "nvidia",
+          "description": {
+            "vendor_copy": {
+              "text": "NVIDIA Nemotron 3.5 Lightning is an open mixture-of-experts model from NVIDIA, with 3B active parameters out of 30B total. It is suited for high-throughput agentic workloads and specialized tasks that...",
+              "source": "https://openrouter.ai/api/v1/models#nvidia/nemotron-3.5-lightning"
+            }
+          }
         }
       }
     },
@@ -981,7 +1168,13 @@
           "revision_kind": "catalog_snapshot",
           "wire_model": "openai/gpt-6-astra",
           "endpoint_base": "https://openrouter.ai/api/v1",
-          "vendor": "openai"
+          "vendor": "openai",
+          "description": {
+            "vendor_copy": {
+              "text": "GPT-6 Astra is OpenAI's flagship model for demanding end-to-end work. It is suited for advanced analysis, software engineering, deep research, scientific work, and document creation, with particular strengths in long-horizon...",
+              "source": "https://openrouter.ai/api/v1/models#openai/gpt-6-astra"
+            }
+          }
         }
       }
     },
@@ -1012,7 +1205,13 @@
           "revision_kind": "catalog_snapshot",
           "wire_model": "openrouter/free",
           "endpoint_base": "https://openrouter.ai/api/v1",
-          "vendor": "openrouter"
+          "vendor": "openrouter",
+          "description": {
+            "vendor_copy": {
+              "text": "The simplest way to get free inference. openrouter/free is a router that selects free models at random from the models available on OpenRouter. The router smartly filters for models that...",
+              "source": "https://openrouter.ai/api/v1/models#openrouter/free"
+            }
+          }
         }
       }
     },
@@ -1041,7 +1240,13 @@
           "revision_kind": "catalog_snapshot",
           "wire_model": "perceptron/perceptron-mk1",
           "endpoint_base": "https://openrouter.ai/api/v1",
-          "vendor": "perceptron"
+          "vendor": "perceptron",
+          "description": {
+            "vendor_copy": {
+              "text": "Perceptron Mk1 (Mark One) is Perceptron's highest-quality vision-language model for video and embodied reasoning.** It accepts image and video inputs paired with natural language queries, and produces detailed visual understanding...",
+              "source": "https://openrouter.ai/api/v1/models#perceptron/perceptron-mk1"
+            }
+          }
         }
       }
     },
@@ -1070,7 +1275,13 @@
           "revision_kind": "catalog_snapshot",
           "wire_model": "perplexity/sonar-pro-search",
           "endpoint_base": "https://openrouter.ai/api/v1",
-          "vendor": "perplexity"
+          "vendor": "perplexity",
+          "description": {
+            "vendor_copy": {
+              "text": "Exclusively available on the OpenRouter API, Sonar Pro's new Pro Search mode is Perplexity's most advanced agentic search system. It is designed for deeper reasoning and analysis. Pricing is based...",
+              "source": "https://openrouter.ai/api/v1/models#perplexity/sonar-pro-search"
+            }
+          }
         }
       }
     },
@@ -1100,7 +1311,13 @@
           "revision_kind": "catalog_snapshot",
           "wire_model": "poolside/laguna-s-2.1",
           "endpoint_base": "https://openrouter.ai/api/v1",
-          "vendor": "poolside"
+          "vendor": "poolside",
+          "description": {
+            "vendor_copy": {
+              "text": "Laguna S 2.1 is the latest coding agent model from [Poolside](<https://poolside.ai/>). Laguna S 2.1 is a 118B total parameter model with 8B active parameters, scoring 70.2% on Terminal-Bench 2.1 and...",
+              "source": "https://openrouter.ai/api/v1/models#poolside/laguna-s-2.1"
+            }
+          }
         }
       }
     },
@@ -1131,7 +1348,13 @@
           "revision_kind": "catalog_snapshot",
           "wire_model": "prism-ml/ternary-bonsai-2-27b",
           "endpoint_base": "https://openrouter.ai/api/v1",
-          "vendor": "prism-ml"
+          "vendor": "prism-ml",
+          "description": {
+            "vendor_copy": {
+              "text": "Bonsai 2 27B is a 27B-parameter reasoning model from PrismML derived from Qwen3.8-27B. It supports coding, mathematics, tool calling, and image understanding with a 262K-token context window. Ternary compression shrinks...",
+              "source": "https://openrouter.ai/api/v1/models#prism-ml/ternary-bonsai-2-27b"
+            }
+          }
         }
       }
     },
@@ -1164,7 +1387,13 @@
           "revision_kind": "catalog_snapshot",
           "wire_model": "qwen/qwen3.8-max-0902",
           "endpoint_base": "https://openrouter.ai/api/v1",
-          "vendor": "qwen"
+          "vendor": "qwen",
+          "description": {
+            "vendor_copy": {
+              "text": "Qwen3.8 Max 0902 is an updated snapshot of Qwen3.8 Max from Alibaba's Qwen team. It is a 2.4-trillion-parameter mixture-of-experts model that accepts text, image, and video input and returns text,...",
+              "source": "https://openrouter.ai/api/v1/models#qwen/qwen3.8-max-0902"
+            }
+          }
         }
       }
     },
@@ -1194,7 +1423,13 @@
           "revision_kind": "catalog_snapshot",
           "wire_model": "rekaai/reka-edge",
           "endpoint_base": "https://openrouter.ai/api/v1",
-          "vendor": "rekaai"
+          "vendor": "rekaai",
+          "description": {
+            "vendor_copy": {
+              "text": "Reka Edge is an extremely efficient 7B multimodal vision-language model that accepts image/video+text inputs and generates text outputs. This model is optimized specifically to deliver industry-leading performance in image understanding,...",
+              "source": "https://openrouter.ai/api/v1/models#rekaai/reka-edge"
+            }
+          }
         }
       }
     },
@@ -1222,7 +1457,13 @@
           "revision_kind": "catalog_snapshot",
           "wire_model": "relace/relace-search",
           "endpoint_base": "https://openrouter.ai/api/v1",
-          "vendor": "relace"
+          "vendor": "relace",
+          "description": {
+            "vendor_copy": {
+              "text": "The relace-search model uses 4-12 `view_file` and `grep` tools in parallel to explore a codebase and return relevant files to the user request. In contrast to RAG, relace-search performs agentic...",
+              "source": "https://openrouter.ai/api/v1/models#relace/relace-search"
+            }
+          }
         }
       }
     },
@@ -1254,7 +1495,13 @@
           "revision_kind": "catalog_snapshot",
           "wire_model": "sakana/fugu-ultra-v2",
           "endpoint_base": "https://openrouter.ai/api/v1",
-          "vendor": "sakana"
+          "vendor": "sakana",
+          "description": {
+            "vendor_copy": {
+              "text": "Fugu Ultra v2 is the higher-performance model in Sakana AI's Fugu family. Rather than a single monolithic model, Fugu is a learned multi-agent orchestration system: a language model trained to...",
+              "source": "https://openrouter.ai/api/v1/models#sakana/fugu-ultra-v2"
+            }
+          }
         }
       }
     },
@@ -1281,7 +1528,13 @@
           "revision_kind": "catalog_snapshot",
           "wire_model": "sao10k/l3.3-euryale-70b",
           "endpoint_base": "https://openrouter.ai/api/v1",
-          "vendor": "sao10k"
+          "vendor": "sao10k",
+          "description": {
+            "vendor_copy": {
+              "text": "Euryale L3.3 70B is a model focused on creative roleplay from [Sao10k](https://ko-fi.com/sao10k). It is the successor of [Euryale L3 70B v2.2](/models/sao10k/l3-euryale-70b).",
+              "source": "https://openrouter.ai/api/v1/models#sao10k/l3.3-euryale-70b"
+            }
+          }
         }
       }
     },
@@ -1313,7 +1566,13 @@
           "revision_kind": "catalog_snapshot",
           "wire_model": "stepfun/step-3.7-flash",
           "endpoint_base": "https://openrouter.ai/api/v1",
-          "vendor": "stepfun"
+          "vendor": "stepfun",
+          "description": {
+            "vendor_copy": {
+              "text": "Step 3.7 Flash is StepFun's latest high-efficiency multimodal Mixture-of-Experts model. It pairs a 196B-parameter language backbone with a vision encoder for native image and video understanding, activating roughly 11B parameters...",
+              "source": "https://openrouter.ai/api/v1/models#stepfun/step-3.7-flash"
+            }
+          }
         }
       }
     },
@@ -1344,7 +1603,13 @@
           "revision_kind": "catalog_snapshot",
           "wire_model": "tencent/hy4-preview",
           "endpoint_base": "https://openrouter.ai/api/v1",
-          "vendor": "tencent"
+          "vendor": "tencent",
+          "description": {
+            "vendor_copy": {
+              "text": "Tencent: Hy4 preview is a mixture-of-experts model from Tencent, with 49B active parameters out of 770B total. It is designed for coding agents, complex tool-use workflows, and productivity tasks that...",
+              "source": "https://openrouter.ai/api/v1/models#tencent/hy4-preview"
+            }
+          }
         }
       }
     },
@@ -1372,7 +1637,13 @@
           "revision_kind": "catalog_snapshot",
           "wire_model": "thedrummer/cydonia-24b-v4.1",
           "endpoint_base": "https://openrouter.ai/api/v1",
-          "vendor": "thedrummer"
+          "vendor": "thedrummer",
+          "description": {
+            "vendor_copy": {
+              "text": "Uncensored and creative writing model based on Mistral Small 3.2 24B with good recall, prompt adherence, and intelligence.",
+              "source": "https://openrouter.ai/api/v1/models#thedrummer/cydonia-24b-v4.1"
+            }
+          }
         }
       }
     },
@@ -1403,7 +1674,13 @@
           "revision_kind": "catalog_snapshot",
           "wire_model": "thinkingmachines/inkling-small",
           "endpoint_base": "https://openrouter.ai/api/v1",
-          "vendor": "thinkingmachines"
+          "vendor": "thinkingmachines",
+          "description": {
+            "vendor_copy": {
+              "text": "Inkling Small is an open-weight multimodal mixture-of-experts model from Thinking Machines Lab, with 12B active parameters out of 276B total. It is positioned as the smaller, more efficient member of...",
+              "source": "https://openrouter.ai/api/v1/models#thinkingmachines/inkling-small"
+            }
+          }
         }
       }
     },
@@ -1433,7 +1710,13 @@
           "revision_kind": "catalog_snapshot",
           "wire_model": "unbiased/pareto",
           "endpoint_base": "https://openrouter.ai/api/v1",
-          "vendor": "unbiased"
+          "vendor": "unbiased",
+          "description": {
+            "vendor_copy": {
+              "text": "Pareto is a multimodal composite model built for research, coding, and agentic workflows, while delivering frontier-level performance across a broad range of general-purpose tasks.",
+              "source": "https://openrouter.ai/api/v1/models#unbiased/pareto"
+            }
+          }
         }
       }
     },
@@ -1460,7 +1743,13 @@
           "revision_kind": "catalog_snapshot",
           "wire_model": "undi95/remm-slerp-l2-13b",
           "endpoint_base": "https://openrouter.ai/api/v1",
-          "vendor": "undi95"
+          "vendor": "undi95",
+          "description": {
+            "vendor_copy": {
+              "text": "A recreation trial of the original MythoMax-L2-B13 but with updated models. #merge",
+              "source": "https://openrouter.ai/api/v1/models#undi95/remm-slerp-l2-13b"
+            }
+          }
         }
       }
     },
@@ -1491,7 +1780,13 @@
           "revision_kind": "catalog_snapshot",
           "wire_model": "upstage/solar-pro4",
           "endpoint_base": "https://openrouter.ai/api/v1",
-          "vendor": "upstage"
+          "vendor": "upstage",
+          "description": {
+            "vendor_copy": {
+              "text": "Solar Pro 4 is Upstage's cost-efficient large language model, featuring a 524K context window. It is built for long-horizon tasks and agentic workflows, with strong capabilities in office productivity, document-intensive...",
+              "source": "https://openrouter.ai/api/v1/models#upstage/solar-pro4"
+            }
+          }
         }
       }
     },
@@ -1517,7 +1812,13 @@
           "revision_kind": "catalog_snapshot",
           "wire_model": "writer/palmyra-x5",
           "endpoint_base": "https://openrouter.ai/api/v1",
-          "vendor": "writer"
+          "vendor": "writer",
+          "description": {
+            "vendor_copy": {
+              "text": "Palmyra X5 is Writer's most advanced model, purpose-built for building and scaling AI agents across the enterprise. It delivers industry-leading speed and efficiency on context windows up to 1 million...",
+              "source": "https://openrouter.ai/api/v1/models#writer/palmyra-x5"
+            }
+          }
         }
       }
     },
@@ -1549,7 +1850,13 @@
           "revision_kind": "catalog_snapshot",
           "wire_model": "x-ai/grok-4.6",
           "endpoint_base": "https://openrouter.ai/api/v1",
-          "vendor": "x-ai"
+          "vendor": "x-ai",
+          "description": {
+            "vendor_copy": {
+              "text": "Grok 4.6 is a model from SpaceXAI with frontier performance on coding, knowledge work, and STEM. It is succeeded by [Grok 4.7](/x-ai/grok-4.7).",
+              "source": "https://openrouter.ai/api/v1/models#x-ai/grok-4.6"
+            }
+          }
         }
       }
     },
@@ -1580,7 +1887,13 @@
           "revision_kind": "catalog_snapshot",
           "wire_model": "xiaomi/mimo-v2.5-pro",
           "endpoint_base": "https://openrouter.ai/api/v1",
-          "vendor": "xiaomi"
+          "vendor": "xiaomi",
+          "description": {
+            "vendor_copy": {
+              "text": "MiMo-V2.5-Pro is Xiaomi’s flagship model, delivering strong performance in general agentic capabilities, complex software engineering, and long-horizon tasks, with top rankings on benchmarks such as ClawEval, GDPVal, and SWE-bench Pro....",
+              "source": "https://openrouter.ai/api/v1/models#xiaomi/mimo-v2.5-pro"
+            }
+          }
         }
       }
     },
@@ -1612,7 +1925,13 @@
           "revision_kind": "catalog_snapshot",
           "wire_model": "z-ai/glm-5.3-flash",
           "endpoint_base": "https://openrouter.ai/api/v1",
-          "vendor": "z-ai"
+          "vendor": "z-ai",
+          "description": {
+            "vendor_copy": {
+              "text": "GLM-5.3-Flash is a native multimodal model from Z.ai. It is suited for efficient coding and long-horizon agent tasks. Its hybrid sparse and linear attention architecture maintains accurate long-context behavior while...",
+              "source": "https://openrouter.ai/api/v1/models#z-ai/glm-5.3-flash"
+            }
+          }
         }
       }
     }
