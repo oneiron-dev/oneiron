@@ -115,8 +115,6 @@ pub use project::{
     PROJECT_TYPE_BYTE, ProjectBudgetShare, ProjectGoalRecord, ProjectMintReceipt, ProjectRecord,
     ProjectRole, ProjectRoom, ProjectRoomChange,
 };
-#[cfg(test)]
-pub(crate) use project::{create_project_signed_for_test, set_project_depth_signed_for_test};
 pub(crate) use project::{
     GoalLimits, HUB_BELONGS_TO_LAMBDA, deindex_project_room, guard_goal_claim_put,
     guard_goal_delete, guard_goal_pointer_put, is_project_entity, is_project_type,
@@ -124,6 +122,8 @@ pub(crate) use project::{
     seed_root_project, validate_project_body, validate_project_edge_delete,
     validate_project_edge_put, validate_project_graph, validate_room_body,
 };
+#[cfg(test)]
+pub(crate) use project::{create_project_signed_for_test, set_project_depth_signed_for_test};
 
 mod rooms;
 pub(crate) use rooms::admit_witness as admit_room_witness;
