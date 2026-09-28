@@ -387,16 +387,14 @@ fn tombstone_before_authority_row_cannot_poison_materialization() -> Result<()> 
     assert_eq!(vault.get_authority_log_entry(&id)?, Some(enroll));
     let fold = vault.authority_fold()?;
     assert!(
-        fold.pending_widens.contains_key(&enroll_hash) || fold.valid_entries.contains(&enroll_hash),
+        fold.valid_entries.contains(&enroll_hash),
         "the fold must see the admitted entry"
     );
     Ok(())
 }
 
-/// Hardware-tier genesis: a hardware owner grants INSTANT widen authority, so
-/// the enroll below joins the roster immediately instead of sitting in
-/// `pending_widens`. The revocation regression needs a real two-device roster
-/// (revokes require peer quorum), not a pending one.
+/// Hardware-tier genesis for the revocation regression, which needs a real
+/// two-device roster (revokes require peer quorum).
 #[cfg(feature = "sync")]
 fn authority_hardware_genesis_fixture(seed: u8) -> crate::authority::AuthorityLogEntry {
     let signing = authority_test_key(seed);

@@ -3,22 +3,18 @@
 //! `FoldContext` plus the topological entry-by-entry driver and its local,
 //! peer, and seen-time variants. Per-entry state transitions are delegated
 //! to [`super::entry_transition`].
+//!
+//! Seen-times feed only the post-fold stale-roster window; no entry waits on
+//! them (the delayed-widen ceremony died 2026-08-05, identity canon "Device-key
+//! widen ceremony (dead 2026-08-05)").
 
-use std::cell::Cell;
 use std::collections::{BTreeMap, BTreeSet};
 
 use super::*;
 
 #[derive(Clone, Copy)]
 pub(super) struct FoldContext<'a> {
-    pub(super) first_seen_at_secs: &'a BTreeMap<AuthorityEntryHash, u64>,
-    pub(super) now_secs: Option<u64>,
-    /// Minimum future eligibility observed during ANY fold pass, including a
-    /// pending widen subsequently removed by an accepted veto.
-    pub(super) deadline_observer: Option<&'a Cell<Option<u64>>>,
     pub(super) sequence_floors: Option<&'a BTreeMap<AuthorityEntryHash, u64>>,
-    pub(super) enforce_seen_time_delay: bool,
-    pub(super) vetoed_widens: &'a BTreeSet<AuthorityEntryHash>,
     pub(super) entry_ancestors:
         Option<&'a BTreeMap<AuthorityEntryHash, BTreeSet<AuthorityEntryHash>>>,
     /// Consent roots of every ADMITTED PEER roster, keyed by peer vault id.
@@ -43,52 +39,31 @@ impl FoldContext<'_> {
     }
 }
 
-#[derive(Default)]
-struct FoldLocalInputs<'a> {
-    observations: Option<&'a AuthorityLocalObservations>,
-    deadline_observer: Option<&'a Cell<Option<u64>>>,
-}
-
 /// Folds a set of authority entries into a deterministic roster.
 ///
-/// Entries missing local first-seen timestamps remain pending; callers with
-/// local seen-time data should use [`fold_authority_log_with_seen_times`].
+/// No local seen-times, so the stale-roster window never expires an approval;
+/// callers with local seen-time data should use
+/// [`fold_authority_log_with_seen_times`].
 pub fn fold_authority_log(entries: &[AuthorityLogEntry]) -> AuthorityFold {
     let first_seen_at_secs = BTreeMap::new();
     let peer_consent_roots = BTreeMap::new();
     fold_authority_log_inner(
         entries,
         &first_seen_at_secs,
-        Some(0),
-        true,
-        &peer_consent_roots,
-        folded_device_can_authority_consent,
-        FoldLocalInputs::default(),
-    )
-}
-
-#[cfg(test)]
-pub(super) fn fold_authority_log_without_seen_time_delay(
-    entries: &[AuthorityLogEntry],
-) -> AuthorityFold {
-    let first_seen_at_secs = BTreeMap::new();
-    let peer_consent_roots = BTreeMap::new();
-    fold_authority_log_inner(
-        entries,
-        &first_seen_at_secs,
         None,
-        false,
         &peer_consent_roots,
         folded_device_can_authority_consent,
-        FoldLocalInputs::default(),
+        None,
     )
 }
 
-/// Folds authority entries using local first-seen timestamps for delayed widens.
+/// Folds authority entries using local first-seen timestamps for the
+/// stale-roster approval window.
 ///
 /// `first_seen_at_secs` is keyed by authority entry hash and must be sourced
-/// from the local device's monotonic first-observation time. Entries missing a
-/// timestamp remain pending until the caller can provide one.
+/// from the local device's monotonic first-observation time. An entry missing a
+/// timestamp never starts a stale-roster window. No entry waits on its
+/// timestamp: every op lands the moment its ancestry folds.
 pub fn fold_authority_log_with_seen_times(
     entries: &[AuthorityLogEntry],
     first_seen_at_secs: &BTreeMap<AuthorityEntryHash, u64>,
@@ -119,10 +94,9 @@ pub(crate) fn fold_authority_log_with_peer_consent_roots(
         entries,
         first_seen_at_secs,
         Some(now_secs),
-        true,
         peer_consent_roots,
         folded_device_can_authority_consent,
-        FoldLocalInputs::default(),
+        None,
     )
 }
 
@@ -144,10 +118,9 @@ pub fn fold_authority_log_for_posture(
         entries,
         first_seen_at_secs,
         Some(now_secs),
-        true,
         peer_consent_roots,
         consent,
-        FoldLocalInputs::default(),
+        None,
     )
 }
 
@@ -155,10 +128,9 @@ pub fn fold_authority_log_for_posture(
 /// swaps.
 ///
 /// The consent arm becomes the unfiltered host-root predicate
-/// (`folded_peer_device_is_consent_root`), and there are no seen-times: a
-/// peer's widen is not a LOCAL observation, so it can never force a local
-/// pending state. Peer entries carry no local first-observation time and stay
-/// inside the peer fold's own epoch semantics.
+/// (`folded_peer_device_is_consent_root`), and there are no seen-times: peer
+/// entries carry no local first-observation time, so no local stale-roster
+/// window applies, and they stay inside the peer fold's own epoch semantics.
 ///
 /// The output is evidence, not authority: it never enters the local roster.
 #[must_use]
@@ -169,98 +141,58 @@ pub fn fold_peer_authority_log(entries: &[AuthorityLogEntry]) -> AuthorityFold {
         entries,
         &first_seen_at_secs,
         None,
-        false,
         &peer_consent_roots,
         folded_peer_device_is_consent_root,
-        FoldLocalInputs::default(),
+        None,
     )
 }
 
-/// Return the same reference fold plus the earliest future eligibility
-/// observed in its fixed-point passes. This is cache metadata, not fold output.
-/// A veto can erase its target from the final pending map even though that
-/// target's eligibility still changes whether the veto is valid later.
-pub(super) fn fold_authority_log_with_local_observations_and_posture_with_deadline(
+/// The reference fold under the vault's local observations (sequence floors
+/// and observation policy) and hosting posture.
+pub(super) fn fold_authority_log_with_local_observations_and_posture(
     entries: &[AuthorityLogEntry],
     first_seen_at_secs: &BTreeMap<AuthorityEntryHash, u64>,
     now_secs: u64,
     peer_consent_roots: &BTreeMap<AuthorityVaultId, BTreeSet<AuthorityKey>>,
     observations: &AuthorityLocalObservations,
     posture: crate::HostingPrivacyPosture,
-) -> (AuthorityFold, Option<u64>) {
+) -> AuthorityFold {
     let consent = if posture == crate::HostingPrivacyPosture::Hosted {
         folded_host_device_can_consent
     } else {
         folded_device_can_authority_consent
     };
-    let deadline = Cell::new(None);
-    let fold = fold_authority_log_inner(
+    fold_authority_log_inner(
         entries,
         first_seen_at_secs,
         Some(now_secs),
-        true,
         peer_consent_roots,
         consent,
-        FoldLocalInputs {
-            observations: Some(observations),
-            deadline_observer: Some(&deadline),
-        },
-    );
-    (fold, deadline.get())
+        Some(observations),
+    )
 }
 
 fn fold_authority_log_inner(
     entries: &[AuthorityLogEntry],
     first_seen_at_secs: &BTreeMap<AuthorityEntryHash, u64>,
     now_secs: Option<u64>,
-    enforce_seen_time_delay: bool,
     peer_consent_roots: &BTreeMap<AuthorityVaultId, BTreeSet<AuthorityKey>>,
     consent_arm: fn(&FoldedDevice) -> bool,
-    local: FoldLocalInputs<'_>,
+    observations: Option<&AuthorityLocalObservations>,
 ) -> AuthorityFold {
-    let mut vetoed_widens = BTreeSet::new();
-    let sequence_floors = local
-        .observations
-        .map(|observations| &observations.sequence_floors);
-    let stale_roster_window_secs = local
-        .observations
-        .map_or(DEFAULT_STALE_ROSTER_WINDOW_SECS, |local| {
-            local.policy.stale_roster_window_secs
-        });
-    let mut fold = fold_authority_log_once(
+    let sequence_floors = observations.map(|observations| &observations.sequence_floors);
+    let stale_roster_window_secs = observations.map_or(DEFAULT_STALE_ROSTER_WINDOW_SECS, |local| {
+        local.policy.stale_roster_window_secs
+    });
+    let fold = fold_authority_log_once(
         entries,
         FoldContext {
-            first_seen_at_secs,
-            now_secs,
-            deadline_observer: local.deadline_observer,
             sequence_floors,
-            enforce_seen_time_delay,
-            vetoed_widens: &vetoed_widens,
             entry_ancestors: None,
             peer_consent_roots,
             consent_arm,
         },
     );
-    for _ in 0..=entries.len() {
-        if fold.vetoed_widens == vetoed_widens {
-            break;
-        }
-        vetoed_widens = fold.vetoed_widens.clone();
-        fold = fold_authority_log_once(
-            entries,
-            FoldContext {
-                first_seen_at_secs,
-                now_secs,
-                deadline_observer: local.deadline_observer,
-                sequence_floors,
-                enforce_seen_time_delay,
-                vetoed_widens: &vetoed_widens,
-                entry_ancestors: None,
-                peer_consent_roots,
-                consent_arm,
-            },
-        );
-    }
     let mut fold = apply_stale_roster_window(
         entries,
         fold,
@@ -334,14 +266,12 @@ fn fold_authority_log_once(
                 break;
             }
             let entry = &by_hash[&hash];
-            let fold_context = context;
             match super::ancestry_evaluator::evaluate_entry(
                 entry,
                 hash,
                 &by_hash,
                 &states,
-                &pending,
-                fold_context,
+                context,
                 super::ancestry_evaluator::EvaluationPhase::Normal,
             ) {
                 EntryFold::Ready(state) => {
@@ -355,31 +285,6 @@ fn fold_authority_log_once(
                     progressed = true;
                 }
                 EntryFold::Waiting => {}
-            }
-        }
-        if !progressed {
-            // The round made no progress, so every hash still pending is stuck
-            // for good under ordinary rules. ONLY here — never while entries may
-            // still be waiting their turn — may a revocation resolve against the
-            // ancestry ABOVE a parent that will never fold.
-            let stalled: Vec<_> = pending.iter().copied().collect();
-            for hash in stalled {
-                let entry = &by_hash[&hash];
-                let fold_context = context;
-                let empty_rejected = BTreeSet::new();
-                if let EntryFold::Ready(state) = super::ancestry_evaluator::evaluate_entry(
-                    entry,
-                    hash,
-                    &by_hash,
-                    &states,
-                    &pending,
-                    fold_context,
-                    super::ancestry_evaluator::EvaluationPhase::Stalled(&empty_rejected),
-                ) {
-                    states.insert(hash, state);
-                    pending.remove(&hash);
-                    progressed = true;
-                }
             }
         }
     }
@@ -414,8 +319,6 @@ fn fold_authority_log_once(
             roster: BTreeMap::new(),
             tier_floor: None,
             genesis_fragile: false,
-            pending_widens: BTreeMap::new(),
-            vetoed_widens: BTreeSet::new(),
             federation_pacts: BTreeMap::new(),
             federation_confirms: BTreeMap::new(),
             critical_write_confirms: BTreeMap::new(),
@@ -485,12 +388,6 @@ fn fold_authority_log_once(
         genesis_fragile: merged.as_ref().is_some_and(|state| {
             state.genesis_recovery_dismissed && !state.recovery_redundancy_established
         }),
-        pending_widens: merged
-            .as_ref()
-            .map_or_else(BTreeMap::new, |state| state.pending_widens.clone()),
-        vetoed_widens: merged
-            .as_ref()
-            .map_or_else(BTreeSet::new, |state| state.vetoed_widens.clone()),
         federation_pacts: merged
             .as_ref()
             .map_or_else(BTreeMap::new, |state| state.federation_pacts.clone()),

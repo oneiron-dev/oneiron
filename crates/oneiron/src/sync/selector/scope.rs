@@ -147,7 +147,7 @@ pub(super) fn coreference_export_context(
     // would nest inside the caller's read txn and fail with
     // `Storage(Mdb(BadRslot))` on LMDB's single-reader-slot-per-thread rule.
     // The readonly fold is pact-equivalent for this check: first-seen timing
-    // only gates delayable widens, never pact binding or status.
+    // only gates stale-roster approval expiry, never pact binding or status.
     let fold = vault.authority_fold_readonly_in_txn(rtxn)?;
     let Some(pact_id) = active_export_pact(&fold, &selector.grant_id) else {
         return Ok(CoreferenceExportContext::default());

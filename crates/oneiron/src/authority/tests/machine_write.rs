@@ -54,7 +54,6 @@ fn machine_enrollment_and_signed_claim_verify_at_all_write_doors() {
         )
         .unwrap();
     let key = authority_key_from_ed(&signing);
-    assert!(!vault.authority_fold().unwrap().pending_widens.is_empty());
 
     let envelope = WriteEnvelope::new(
         WriteActor::new(machine, EdgeActorClass::System),
@@ -77,21 +76,11 @@ fn machine_enrollment_and_signed_claim_verify_at_all_write_doors() {
         signature: signing.sign(&transcript).to_bytes(),
     };
     let signed = envelope.clone().with_machine_signature(proof);
-    assert!(
-        vault
-            .batch()
-            .claim_candidate(&id, candidate.clone(), &signed, at, 10_000)
-            .commit()
-            .is_err(),
-        "a pending enrollment must not authorize"
-    );
-    assert!(vault.get(&id).unwrap().is_none());
 
-    // The observation clock ignores wall-clock jumps. Advance its monotone
-    // test floor, as in the authority readonly-fold delay fixtures.
-    let matured = 10_000 + DEFAULT_PENDING_WIDEN_DELAY_SECS + 1;
-    clock.set(matured);
-    assert!(authority_observation_secs(&vault.store, matured, 0) >= matured);
+    // A host-landed software enrollment takes effect at once: the device-key
+    // widen delay is dead (identity.md, "Device-key widen ceremony").
+    let later = 10_001;
+    clock.set(later);
     let fold = vault.authority_fold().unwrap();
     assert!(fold.actor_bindings.contains_key(&key), "{fold:?}");
     assert_eq!(fold.actor_bindings[&key].status, ActorBindingStatus::Active);
@@ -120,7 +109,7 @@ fn machine_enrollment_and_signed_claim_verify_at_all_write_doors() {
         crate::claim::ClaimLifecycleStatus::Active
     );
     vault
-        .retract_claim(&id, matured)
+        .retract_claim(&id, later)
         .expect("host-authorized transition");
     let resolved = vault.resolved_machine_claim(id).unwrap();
     assert_eq!(
@@ -211,9 +200,6 @@ fn machine_enrollment_and_signed_claim_verify_at_all_write_doors() {
         previous_handoff_hash: handoff.previous_handoff_hash,
         challenge: &handoff.challenge,
     };
-    replica.authority_fold().unwrap(); // first local observation of software enrollment
-    let replica_matured = replica.now_recorded_at() + DEFAULT_PENDING_WIDEN_DELAY_SECS + 1;
-    authority_observation_secs(&replica.store, replica_matured, 0);
     assert!(
         replica
             .authority_fold()
@@ -402,7 +388,7 @@ fn machine_enrollment_and_signed_claim_verify_at_all_write_doors() {
                 authority_key: key.clone(),
                 epoch: 1,
             },
-            matured,
+            later,
         )
         .unwrap();
     revoke.cosigns.push(AuthoritySignature {
@@ -419,10 +405,10 @@ fn machine_enrollment_and_signed_claim_verify_at_all_write_doors() {
         .put_authority_log_entry(
             &revoke,
             TimeRange {
-                start: matured,
-                end: matured,
+                start: later,
+                end: later,
             },
-            matured,
+            later,
         )
         .unwrap();
     let revoked_id = EntityId::now();
@@ -658,8 +644,7 @@ fn owner_approval_and_machine_supersession_follow_signed_history() {
             |transcript| Ok(signing.sign(transcript).to_bytes()),
         )
         .unwrap();
-    let matured = vault.now_recorded_at() + DEFAULT_PENDING_WIDEN_DELAY_SECS + 1;
-    authority_observation_secs(&vault.store, matured, 0);
+    let later = vault.now_recorded_at() + 1;
     let mut manifest = crate::gate::default_policy_manifest();
     let Value::Map(mut fields) =
         rmpv::decode::read_value(&mut std::io::Cursor::new(manifest.as_slice())).unwrap()
@@ -772,7 +757,7 @@ fn owner_approval_and_machine_supersession_follow_signed_history() {
             .unwrap();
         ids.push(next_id);
     }
-    vault.supersede_claim(&ids[1], &ids[0], matured).unwrap();
+    vault.supersede_claim(&ids[1], &ids[0], later).unwrap();
     assert_eq!(
         vault.get_claim(&ids[0]).unwrap().unwrap().lifecycle,
         crate::claim::ClaimLifecycleStatus::Superseded
@@ -821,10 +806,8 @@ fn successor_root_carries_exact_machine_history_and_refuses_retired_backdating()
             |transcript| Ok(machine_key.sign(transcript).to_bytes()),
         )
         .unwrap();
-    let matured = vault.now_recorded_at() + DEFAULT_PENDING_WIDEN_DELAY_SECS + 1;
-    authority_observation_secs(&vault.store, matured, 0);
+    let later = vault.now_recorded_at() + 1;
     let pre_rotation = vault.authority_fold().unwrap();
-    assert!(pre_rotation.pending_widens.is_empty(), "{pre_rotation:?}");
     assert_eq!(
         pre_rotation.actor_bindings[&authority_key_from_ed(&machine_key)].status,
         ActorBindingStatus::Active
@@ -853,7 +836,7 @@ fn successor_root_carries_exact_machine_history_and_refuses_retired_backdating()
         .claim_candidate(&id, candidate, &signed, at, 10)
         .commit()
         .unwrap();
-    vault.retract_claim(&id, matured).unwrap();
+    vault.retract_claim(&id, later).unwrap();
     let prior_handoff = vault.resolved_machine_claim(id).unwrap().handoff_digest;
     let successor = HostSlipIssuer::from_secret(b"successor machine history root").unwrap();
     let fold = vault.authority_fold().unwrap();
@@ -874,7 +857,7 @@ fn successor_root_carries_exact_machine_history_and_refuses_retired_backdating()
                     roles: ROLE_OWNER | ROLE_ADMIN,
                 },
             },
-            matured,
+            later,
         )
         .unwrap();
     let machine_authority_key = authority_key_from_ed(&machine_key);
@@ -1035,8 +1018,7 @@ fn scoped_birth_control_follows_restrictive_current_demotion() {
             |transcript| Ok(signing.sign(transcript).to_bytes()),
         )
         .unwrap();
-    let matured = vault.now_recorded_at() + DEFAULT_PENDING_WIDEN_DELAY_SECS + 1;
-    authority_observation_secs(&vault.store, matured, 0);
+    let later = vault.now_recorded_at() + 1;
     let candidate = ClaimCandidate::new(
         "profile.color",
         ClaimSubject::Entity(machine),
@@ -1085,7 +1067,7 @@ fn scoped_birth_control_follows_restrictive_current_demotion() {
                 ClaimDemotionAction::Decay {
                     new_claim_of_weight: 0.5
                 },
-                matured
+                later
             )
             .unwrap(),
         ClaimDemotionRung::Decayed
@@ -1097,14 +1079,14 @@ fn scoped_birth_control_follows_restrictive_current_demotion() {
                 ClaimDemotionAction::Weaken {
                     new_confidence: 0.5
                 },
-                matured + 1
+                later + 1
             )
             .unwrap(),
         ClaimDemotionRung::Weakened
     );
     assert_eq!(
         vault
-            .apply_claim_demotion(&id, ClaimDemotionAction::MarkStale, matured + 2)
+            .apply_claim_demotion(&id, ClaimDemotionAction::MarkStale, later + 2)
             .unwrap(),
         ClaimDemotionRung::Stale
     );
@@ -1179,8 +1161,6 @@ fn signing_and_materialization_share_birth_facet_across_default_change() {
             |transcript| Ok(signing.sign(transcript).to_bytes()),
         )
         .unwrap();
-    let matured = vault.now_recorded_at() + DEFAULT_PENDING_WIDEN_DELAY_SECS + 1;
-    authority_observation_secs(&vault.store, matured, 0);
     let mask = EntityId::now();
     let replacement_mask = EntityId::now();
     let explicit_mask = EntityId::now();
@@ -1259,5 +1239,107 @@ fn signing_and_materialization_share_birth_facet_across_default_change() {
             .unwrap(),
         explicit_transcript,
         "explicit nondefault facet survives another default change"
+    );
+}
+
+/// A same-id successor closes the signed history with a `SupersedeClose` in
+/// its author's name and then owns the live row. Another actor's row cannot
+/// replace it, and a local erasure takes the signed history with the claim.
+#[test]
+fn same_id_successor_supersedes_signed_history_and_erasure_takes_it() {
+    let dir = tempfile::tempdir().unwrap();
+    let vault = Vault::open(dir.path(), VaultConfig::device()).unwrap();
+    // The engine's projector signs with its host-held key and holds the
+    // default manifest's auto grant, so its birth needs no consent.
+    crate::test_util::provision_engine_machines(&vault);
+    let at = TimeRange { start: 10, end: 10 };
+    let mut signed = crate::commitment_schedule::commitment_projection_envelope().unwrap();
+    let machine = signed.actor().entity_ref();
+    let owner = vault.ensure_embedded_owner_actor().unwrap();
+    crate::test_util::bind_test_owner(&vault, owner);
+    let stranger = EntityId::now();
+    vault
+        .put_entity(
+            &stranger,
+            crate::registry::ENTITY_TYPE_PERSON,
+            at,
+            10,
+            b"stranger",
+        )
+        .unwrap();
+    let candidate = |value: &str| {
+        ClaimCandidate::new(
+            "profile.color",
+            ClaimSubject::Entity(machine),
+            Value::from(value),
+            1.0,
+        )
+    };
+    let by = |actor| {
+        WriteEnvelope::new(
+            WriteActor::new(actor, EdgeActorClass::Human),
+            ClaimSource::UserStated,
+            WriteProvenance::new(Value::from("person")).unwrap(),
+            ClaimApprovalStatus::Auto,
+        )
+    };
+
+    let id = EntityId::now();
+    {
+        let txn = vault.store.env.read_txn().unwrap();
+        vault
+            .sign_retained_machine_claim_in_txn(&txn, &id, &candidate("blue"), &mut signed)
+            .unwrap();
+    }
+    assert!(signed.machine_signature().is_some());
+    vault
+        .batch()
+        .claim_candidate(&id, candidate("blue"), &signed, at, 10)
+        .commit()
+        .unwrap();
+
+    vault
+        .batch()
+        .claim_candidate(&id, candidate("green"), &by(owner), at, 20)
+        .commit()
+        .unwrap();
+    let resolved = vault.resolved_machine_claim(id).unwrap();
+    assert_eq!(
+        resolved.current.lifecycle,
+        crate::claim::ClaimLifecycleStatus::Superseded
+    );
+    assert_eq!(resolved.signed_origin.value, Value::from("blue"));
+    let live = vault.get_claim(&id).unwrap().unwrap();
+    assert_eq!(live.value, Value::from("green"));
+    assert_eq!(crate::memory::claim_author(&live), Some(owner));
+
+    assert!(
+        vault
+            .batch()
+            .claim_candidate(&id, candidate("red"), &by(stranger), at, 30)
+            .commit()
+            .is_err(),
+        "only the actor that superseded the signed history owns its row"
+    );
+    assert_eq!(
+        vault.get_claim(&id).unwrap().unwrap().value,
+        Value::from("green")
+    );
+
+    vault.batch().delete(&id).commit().unwrap();
+    assert!(vault.get_claim(&id).unwrap().is_none());
+    let txn = vault.store.env.read_txn().unwrap();
+    assert!(
+        crate::claim::history_store::machine_history_ids_for_target(&vault.store, &txn, id)
+            .unwrap()
+            .is_empty()
+    );
+    assert!(
+        vault
+            .store
+            .vault_meta
+            .get(&txn, &crate::claim::history_projection::pin_key(id))
+            .unwrap()
+            .is_none()
     );
 }

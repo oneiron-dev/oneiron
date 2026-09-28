@@ -276,7 +276,7 @@ fn lifecycle_dag() -> LifecycleDag {
 #[test]
 fn federation_lifecycle_dag_merges_pacts_fail_closed() {
     let dag = lifecycle_dag();
-    let fold = fold_authority_log_without_seen_time_delay(&dag.entries);
+    let fold = fold_authority_log(&dag.entries);
     assert!(
         fold.issues.is_empty(),
         "unexpected issues: {:?}",
@@ -417,7 +417,7 @@ proptest! {
         perm in prop::collection::vec(0_usize..17, 17),
     ) {
         let dag = lifecycle_dag();
-        let baseline = fold_authority_log_without_seen_time_delay(&dag.entries);
+        let baseline = fold_authority_log(&dag.entries);
         prop_assert!(baseline.issues.is_empty());
 
         let mut permuted = Vec::new();
@@ -432,7 +432,7 @@ proptest! {
             }
         }
 
-        let folded = fold_authority_log_without_seen_time_delay(&permuted);
+        let folded = fold_authority_log(&permuted);
         // The HEAL TARGET (the grant_ref an epoch+1 repact must name) is
         // anchored to the GLOBAL tie-break winner under every permutation —
         // an absolute check, not just baseline equality, so a consistently
@@ -513,11 +513,7 @@ fn federation_divergent_grant_bindings_suspend_and_deny_both_grants() {
         ),
     );
 
-    let fold = fold_authority_log_without_seen_time_delay(&[
-        fixture.genesis.clone(),
-        connect_a,
-        connect_b,
-    ]);
+    let fold = fold_authority_log(&[fixture.genesis.clone(), connect_a, connect_b]);
     assert!(
         fold.issues.is_empty(),
         "both connects fold valid on their branches"
@@ -584,7 +580,7 @@ fn federation_divergent_binding_heals_under_the_surviving_grant_only() {
         repact_action_with(&fixture, fixture.pact_id, loser, 2, &heal_scope, [0x6E; 16]),
     );
     let bad_heal_hash = authority_entry_hash(&bad_heal).unwrap();
-    let fold = fold_authority_log_without_seen_time_delay(&[
+    let fold = fold_authority_log(&[
         fixture.genesis.clone(),
         connect_a.clone(),
         connect_b.clone(),
@@ -623,13 +619,7 @@ fn federation_divergent_binding_heals_under_the_surviving_grant_only() {
         connect_action_with(&fixture, [0xD4; 32], loser, &fixture.scope, [0x70; 16]),
     );
     let rebind_hash = authority_entry_hash(&rebind).unwrap();
-    let fold = fold_authority_log_without_seen_time_delay(&[
-        fixture.genesis.clone(),
-        connect_a,
-        connect_b,
-        heal,
-        rebind,
-    ]);
+    let fold = fold_authority_log(&[fixture.genesis.clone(), connect_a, connect_b, heal, rebind]);
     let pact = &fold.federation_pacts[&fixture.pact_id];
     assert_eq!(pact.status, FederationPactStatus::Active);
     assert_eq!(pact.pact_epoch, 2);
@@ -700,7 +690,7 @@ fn federation_activation_denies_grant_bound_to_any_non_active_pact() {
     let connect_p_g_hash = authority_entry_hash(&connect_p_g).unwrap();
     let connect_p_h_hash = authority_entry_hash(&connect_p_h).unwrap();
 
-    let fold = fold_authority_log_without_seen_time_delay(&[
+    let fold = fold_authority_log(&[
         fixture.genesis.clone(),
         connect_p_g.clone(),
         connect_p_h.clone(),
@@ -747,7 +737,7 @@ fn federation_activation_denies_grant_bound_to_any_non_active_pact() {
             1,
         ),
     );
-    let fold = fold_authority_log_without_seen_time_delay(&[
+    let fold = fold_authority_log(&[
         fixture.genesis,
         connect_p_g,
         connect_p_h,
@@ -804,7 +794,7 @@ fn federation_three_way_divergence_heals_to_global_tiebreak_winner() {
 
     let mut entries = vec![fixture.genesis.clone()];
     entries.extend(connects.iter().cloned());
-    let fold = fold_authority_log_without_seen_time_delay(&entries);
+    let fold = fold_authority_log(&entries);
     let pact = &fold.federation_pacts[&fixture.pact_id];
     assert_eq!(pact.status, FederationPactStatus::Suspended);
     assert_eq!(pact.grant_ref, winner, "heal target = global lex-min grant");
@@ -831,7 +821,7 @@ fn federation_three_way_divergence_heals_to_global_tiebreak_winner() {
     let bad_heal_hash = authority_entry_hash(&bad_heal).unwrap();
     let mut with_bad_heal = entries.clone();
     with_bad_heal.push(bad_heal);
-    let fold = fold_authority_log_without_seen_time_delay(&with_bad_heal);
+    let fold = fold_authority_log(&with_bad_heal);
     assert_eq!(
         lifecycle_rejection(&fold, bad_heal_hash),
         Some(FederationLifecycleRejection::GrantAlreadyBound)
@@ -851,7 +841,7 @@ fn federation_three_way_divergence_heals_to_global_tiebreak_winner() {
         ),
     );
     entries.push(heal);
-    let fold = fold_authority_log_without_seen_time_delay(&entries);
+    let fold = fold_authority_log(&entries);
     let pact = &fold.federation_pacts[&fixture.pact_id];
     assert_eq!(pact.status, FederationPactStatus::Active);
     assert_eq!(pact.pact_epoch, 2);
@@ -912,11 +902,7 @@ fn federation_equal_key_merge_picks_peer_fields_by_total_order() {
         },
     );
 
-    let fold = fold_authority_log_without_seen_time_delay(&[
-        fixture.genesis.clone(),
-        connect_a,
-        connect_b,
-    ]);
+    let fold = fold_authority_log(&[fixture.genesis.clone(), connect_a, connect_b]);
     assert!(fold.issues.is_empty());
     let pact = &fold.federation_pacts[&fixture.pact_id];
     assert_eq!(pact.status, FederationPactStatus::Active);

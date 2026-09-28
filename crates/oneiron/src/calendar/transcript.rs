@@ -282,7 +282,10 @@ fn persist_turns(
 }
 
 /// Stable dedicated actor for file-drop import NOTE authorship.
-fn file_drop_import_actor(vault: &crate::Vault, at: u64) -> crate::Result<crate::EntityId> {
+pub(crate) fn file_drop_import_actor(
+    vault: &crate::Vault,
+    at: u64,
+) -> crate::Result<crate::EntityId> {
     let digest = Sha256::digest(b"oneiron:calendar:file-drop-import-machine:v1");
     let actor = crate::EntityId::from_bytes(digest[..16].try_into().expect("sha256 prefix"))?;
     let _ = at;

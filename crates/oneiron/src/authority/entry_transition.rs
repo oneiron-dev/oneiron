@@ -1,5 +1,11 @@
-//! Per-entry state transition and the consent / quorum / widen-delay predicates.
+//! Per-entry state transition and the consent / quorum predicates.
 //!
+//! Every accepted op lands the moment its ancestry folds. There is no pending
+//! state and no seen-time delay: the device-key widen ceremony, with its
+//! delayed-broadcast veto, died 2026-08-05 (identity canon, "Device-key widen
+//! ceremony (dead 2026-08-05)"; ARCH-0040 ONE-AUTHLOG-F6). Widening is owner
+//! action through the host, so an owner-signed enrollment, rotation or floor
+//! change is already the whole ceremony.
 use std::collections::{BTreeMap, BTreeSet};
 
 use super::*;
@@ -18,6 +24,12 @@ pub(super) fn fold_entry_state(
     context: FoldContext<'_>,
 ) -> EntryFold {
     if entry.validate_shape().is_err() || verify_entry_signatures(entry).is_err() {
+        return EntryFold::Invalid(AuthorityFoldIssue::InvalidEntry(hash));
+    }
+    // Still decodes and hashes, so signed history stays byte-identical, but
+    // the ceremony it vetoed is dead (identity canon, "Device-key widen
+    // ceremony (dead 2026-08-05)"): there is never a pending widen to veto.
+    if matches!(entry.op, AuthorityOp::VetoPendingWiden { .. }) {
         return EntryFold::Invalid(AuthorityFoldIssue::InvalidEntry(hash));
     }
 
@@ -51,11 +63,12 @@ pub(super) fn fold_entry_state(
     {
         return EntryFold::Invalid(AuthorityFoldIssue::InvalidEntry(hash));
     }
+    // `pending_widen_delay_secs` is a legacy signed field: validated on the
+    // wire, never read here.
     if let AuthorityOp::Genesis {
         recovery,
         device,
         tier_floor,
-        pending_widen_delay_secs,
         ..
     } = &entry.op
     {
@@ -70,14 +83,9 @@ pub(super) fn fold_entry_state(
             vault_id,
             roster: BTreeMap::new(),
             tier_floor: *tier_floor,
-            migrated_roots: BTreeSet::new(),
             genesis_recovery_dismissed: recovery.dismissed(),
             recovery_redundancy_established: false,
             tier_floor_events: BTreeMap::from([(hash, (*tier_floor, BTreeSet::new()))]),
-            pending_widen_delay_secs: *pending_widen_delay_secs,
-            pending_widens: BTreeMap::new(),
-            vetoed_widens: context.vetoed_widens.clone(),
-            delayed_rotation_veto_revocations: BTreeMap::new(),
             federation_pacts: BTreeMap::new(),
             federation_confirms: BTreeMap::new(),
             critical_write_confirms: BTreeMap::new(),
@@ -128,39 +136,6 @@ pub(super) fn fold_entry_state(
         .is_some_and(|device| !tier_meets_floor(device.tier, state.tier_floor))
     {
         return EntryFold::Invalid(AuthorityFoldIssue::SignerBelowTierFloor(hash));
-    }
-    if let AuthorityOp::VetoPendingWiden { pending_widen_hash } = &entry.op {
-        if !context.vetoed_widens.contains(pending_widen_hash) {
-            let Some(target_state) = states.get(pending_widen_hash) else {
-                return EntryFold::Waiting;
-            };
-            if !target_state.pending_widens.contains_key(pending_widen_hash) {
-                return EntryFold::Invalid(AuthorityFoldIssue::InvalidEntry(hash));
-            }
-        }
-        let participants = match veto_participant_keys(&state, entry, *pending_widen_hash, context)
-        {
-            Ok(participants) => participants,
-            Err(issue) => return EntryFold::Invalid(issue),
-        };
-        if !has_veto_authority_consent(&state, &participants, *pending_widen_hash, context) {
-            return EntryFold::Invalid(AuthorityFoldIssue::MissingAuthorityConsent(hash));
-        }
-        if let Some(prior_seq) = state.seqs.get(&signer).copied()
-            && entry.seq <= prior_seq
-        {
-            return EntryFold::Invalid(AuthorityFoldIssue::NonMonotonicSeq(hash));
-        }
-        state.vetoed_widens.insert(*pending_widen_hash);
-        state.pending_widens.remove(pending_widen_hash);
-        state.seqs.insert(signer, entry.seq);
-        return EntryFold::Ready(state);
-    }
-    if context.enforce_seen_time_delay
-        && !state.pending_widens.is_empty()
-        && !op_applies_despite_pending_widen(&entry.op)
-    {
-        return EntryFold::Waiting;
     }
     if state
         .roster
@@ -264,67 +239,12 @@ pub(super) fn fold_entry_state(
         state.seqs.insert(signer, entry.seq);
         return EntryFold::Ready(state);
     }
-    if context.vetoed_widens.contains(&hash)
-        && op_is_delayable_widen(&state, &entry.op, &participants)
-    {
-        state.pending_widens.remove(&hash);
-        state.seqs.insert(signer, entry.seq);
-        return EntryFold::Ready(state);
-    }
-    if let Some(pending_widen) =
-        pending_widen_for_entry(&state, entry, hash, &participants, context)
-    {
-        let mut eventual_state = state.clone();
-        apply_op(&mut eventual_state, &entry.op, hash, true, &signer);
-        if !state_has_authority_consent(&eventual_state, context) {
-            return EntryFold::Invalid(AuthorityFoldIssue::MissingAuthorityConsent(hash));
-        }
-        // Record eligibility before a later veto (or fixed-point pass) can
-        // remove this pending row from the final fold. Cache expiry must still
-        // revisit whether that veto is valid at the target's deadline.
-        if let (Some(observer), Some(deadline)) =
-            (context.deadline_observer, pending_widen.eligible_at_secs)
-        {
-            observer.set(Some(
-                observer.get().map_or(deadline, |old| old.min(deadline)),
-            ));
-        }
-        state.pending_widens.insert(hash, pending_widen);
-        state.seqs.insert(signer, entry.seq);
-        return EntryFold::Ready(state);
-    }
-    let applied_delayed_widen =
-        context.enforce_seen_time_delay && op_is_delayable_widen(&state, &entry.op, &participants);
-    apply_op(&mut state, &entry.op, hash, applied_delayed_widen, &signer);
+    apply_op(&mut state, &entry.op, hash, &signer);
     if !state_has_authority_consent(&state, context) {
         return EntryFold::Invalid(AuthorityFoldIssue::MissingAuthorityConsent(hash));
     }
     state.seqs.insert(signer, entry.seq);
     EntryFold::Ready(state)
-}
-
-fn veto_participant_keys(
-    state: &FoldState,
-    entry: &AuthorityLogEntry,
-    pending_widen_hash: AuthorityEntryHash,
-    context: FoldContext<'_>,
-) -> std::result::Result<BTreeSet<AuthorityKey>, AuthorityFoldIssue> {
-    let mut participants = BTreeSet::new();
-    for signature in std::iter::once(&entry.signer).chain(entry.cosigns.iter()) {
-        let key = &signature.public_key;
-        let active_member = state
-            .roster
-            .get(key)
-            .is_some_and(|device| !device.revoked && device.roles != 0);
-        if !active_member && !delayed_rotation_veto_allowed(state, key, pending_widen_hash, context)
-        {
-            return Err(AuthorityFoldIssue::SignerNotInAncestry(
-                authority_entry_hash(entry).unwrap_or([0; 32]),
-            ));
-        }
-        participants.insert(key.clone());
-    }
-    Ok(participants)
 }
 
 pub(super) fn active_participant_keys(
@@ -361,178 +281,11 @@ pub(super) fn has_authority_consent(
     })
 }
 
-fn has_veto_authority_consent(
-    state: &FoldState,
-    participants: &BTreeSet<AuthorityKey>,
-    pending_widen_hash: AuthorityEntryHash,
-    context: FoldContext<'_>,
-) -> bool {
-    participants.iter().any(|key| {
-        state.roster.get(key).is_some_and(|device| {
-            context.device_can_consent(device) && device.roles & ROLE_OWNER != 0
-        }) || delayed_rotation_veto_allowed(state, key, pending_widen_hash, context)
-    })
-}
-
-fn delayed_rotation_veto_allowed(
-    state: &FoldState,
-    key: &AuthorityKey,
-    pending_widen_hash: AuthorityEntryHash,
-    context: FoldContext<'_>,
-) -> bool {
-    let Some(revocations) = state.delayed_rotation_veto_revocations.get(key) else {
-        return false;
-    };
-    let Some(entry_ancestors) = context.entry_ancestors else {
-        return false;
-    };
-    let Some(target_ancestors) = entry_ancestors.get(&pending_widen_hash) else {
-        return false;
-    };
-
-    revocations
-        .iter()
-        .all(|revocation| !target_ancestors.contains(revocation))
-}
-
 fn state_has_authority_consent(state: &FoldState, context: FoldContext<'_>) -> bool {
     state
         .roster
         .values()
         .any(|device| context.device_can_consent(device))
-}
-
-fn pending_widen_for_entry(
-    state: &FoldState,
-    entry: &AuthorityLogEntry,
-    hash: AuthorityEntryHash,
-    participants: &BTreeSet<AuthorityKey>,
-    context: FoldContext<'_>,
-) -> Option<AuthorityPendingWiden> {
-    if !context.enforce_seen_time_delay || !op_is_delayable_widen(state, &entry.op, participants) {
-        return None;
-    }
-
-    let first_seen_at_secs = context.first_seen_at_secs.get(&hash).copied();
-    let eligible_at_secs =
-        first_seen_at_secs.and_then(|seen_at| seen_at.checked_add(state.pending_widen_delay_secs));
-    if let (Some(now_secs), Some(eligible_at_secs)) = (context.now_secs, eligible_at_secs)
-        && now_secs >= eligible_at_secs
-    {
-        return None;
-    }
-
-    Some(AuthorityPendingWiden {
-        entry_hash: hash,
-        first_seen_at_secs,
-        eligible_at_secs,
-        delay_secs: state.pending_widen_delay_secs,
-    })
-}
-
-fn op_has_instant_widen_authority(
-    state: &FoldState,
-    _op: &AuthorityOp,
-    participants: &BTreeSet<AuthorityKey>,
-) -> bool {
-    participants.iter().any(|key| {
-        state.roster.get(key).is_some_and(|device| {
-            folded_device_can_authority_consent(device)
-                && device.tier == AuthorityTier::Hardware
-                && !state.migrated_roots.contains(key)
-        })
-    })
-}
-
-fn op_is_delayable_widen(
-    state: &FoldState,
-    op: &AuthorityOp,
-    participants: &BTreeSet<AuthorityKey>,
-) -> bool {
-    op_can_be_pending_widen(state, op)
-        && (matches!(op, AuthorityOp::SetTierFloor { .. })
-            || !op_has_instant_widen_authority(state, op, participants))
-}
-
-/// Whether `op` still folds while an UNRELATED widen is pending.
-///
-/// A pending widen freezes the log: every later entry waits, because the widen
-/// may yet be vetoed and folding on a roster that might change would decide the
-/// entry against the wrong state. That is the right default for anything that
-/// GRANTS — the grant can afford to wait out the veto window, and waiting is the
-/// conservative direction.
-///
-/// It is the wrong default for `RevokeActor`. A revocation is the operator's
-/// emergency brake: it WITHDRAWS consent, and withdrawal of consent is
-/// unconditional — no roster the pending widen could produce makes a revoked
-/// actor's authority legitimate again. Deferring it hands the widen's clock (up
-/// to `MAX_DEFAULT_PENDING_WIDEN_DELAY_SECS`) to the revocation, so an owner who
-/// files a revocation because a key is compromised watches that key keep every
-/// owner verb until an unrelated enrollment matures. Worse, the attacker chooses
-/// the delay: filing any delayable widen of their own extends their own
-/// authority.
-///
-/// The asymmetry is deliberate and narrow. `BindActor`/`RebindActor` GRANT
-/// identity, so they keep the deferral; only the withdrawal skips it. Skipping
-/// is safe because a revocation cannot widen anything: it only raises a
-/// per-key watermark that kills bindings at or below it, so folding it early
-/// can strictly REMOVE authority from the derived roster, never add it — and
-/// the pending widen still matures on its own clock, unaffected.
-///
-/// SEAM — this exemption has a SECOND half, [`revocation_bypass_states`]. The
-/// check here runs after parents are resolved, so on its own it does nothing
-/// for a revocation whose PARENT is the frozen entry: an unresolved parent
-/// returns `Waiting` before this line is reached, and a compromised key can
-/// manufacture exactly that parent. The ancestry bypass closes that path by
-/// letting a stalled revocation — and only a revocation — resolve against its
-/// nearest ready ancestor. Same ruling, same blast radius (removal-only,
-/// monotone watermark); read the two together before changing either.
-pub(super) fn op_applies_despite_pending_widen(op: &AuthorityOp) -> bool {
-    match op {
-        AuthorityOp::RevokeActor { .. }
-        | AuthorityOp::SlipRevoke { .. }
-        | AuthorityOp::SlipConsume { .. } => true,
-        AuthorityOp::Genesis { .. }
-        | AuthorityOp::EnrollDevice { .. }
-        | AuthorityOp::RevokeDevice { .. }
-        | AuthorityOp::RetiredCeiling { .. }
-        | AuthorityOp::SlipMint(_)
-        | AuthorityOp::RotateKey { .. }
-        | AuthorityOp::SetTierFloor { .. }
-        | AuthorityOp::ReRoot { .. }
-        | AuthorityOp::FederationConfirm(_)
-        | AuthorityOp::CriticalWriteConfirm(_)
-        | AuthorityOp::VetoPendingWiden { .. }
-        | AuthorityOp::FederationLifecycle(_)
-        | AuthorityOp::BindActor { .. }
-        | AuthorityOp::RebindActor { .. } => false,
-    }
-}
-
-fn op_can_be_pending_widen(state: &FoldState, op: &AuthorityOp) -> bool {
-    match op {
-        AuthorityOp::EnrollDevice { device } => state
-            .roster
-            .get(&device.key)
-            .is_none_or(|folded| folded.revoked),
-        AuthorityOp::RotateKey { .. } => true,
-        AuthorityOp::SetTierFloor { tier_floor } => *tier_floor < state.tier_floor,
-        AuthorityOp::ReRoot { .. } => false,
-        AuthorityOp::Genesis { .. }
-        | AuthorityOp::RevokeDevice { .. }
-        | AuthorityOp::RetiredCeiling { .. }
-        | AuthorityOp::SlipMint(_) | AuthorityOp::SlipRevoke {..} | AuthorityOp::SlipConsume {..}
-        | AuthorityOp::FederationConfirm(_) | AuthorityOp::CriticalWriteConfirm(_)
-        | AuthorityOp::VetoPendingWiden { .. }
-        | AuthorityOp::FederationLifecycle(_)
-        // Bind ops are instant, never delayed-vetoable widens: the widen
-        // ceremony already ran when the KEY was enrolled, and a human-class
-        // bind additionally demands an owner-capable signer AND an
-        // owner-capable bound key, so no authority widens at bind time.
-        | AuthorityOp::BindActor { .. }
-        | AuthorityOp::RebindActor { .. }
-        | AuthorityOp::RevokeActor { .. } => false,
-    }
 }
 
 fn op_reuses_existing_device_key(state: &FoldState, op: &AuthorityOp) -> bool {
@@ -565,7 +318,6 @@ fn entry_requires_peer_cosign(entry: &AuthorityLogEntry) -> bool {
     !matches!(
         entry.op,
         AuthorityOp::Genesis { .. }
-            | AuthorityOp::VetoPendingWiden { .. }
             | AuthorityOp::SlipMint(_)
             | AuthorityOp::SlipRevoke { .. }
             | AuthorityOp::SlipConsume { .. }
@@ -580,6 +332,14 @@ fn revoke_would_break_quorum(
     let AuthorityOp::RevokeDevice { revoked_key } = &entry.op else {
         return false;
     };
+    // Revoking a MACHINE writer's key never weakens the owner quorum.
+    if state
+        .roster
+        .get(revoked_key)
+        .is_some_and(|device| !device.revoked && machine_writer_key(state, revoked_key, device))
+    {
+        return false;
+    }
     let active_before = active_roster_count(state);
     let revoked_was_active = state
         .roster
@@ -592,7 +352,21 @@ fn revoke_would_break_quorum(
 fn active_roster_count(state: &FoldState) -> usize {
     state
         .roster
-        .values()
-        .filter(|device| !device.revoked && device.roles != 0)
+        .iter()
+        .filter(|(key, device)| {
+            !device.revoked && device.roles != 0 && !machine_writer_key(state, key, device)
+        })
         .count()
+}
+
+/// A MACHINE writer's key: agent-only and bound to a system actor. It signs
+/// only its own claims, and ops land when the owner acts through the host
+/// (identity.md, host-rooted authority), so it is neither a quorum peer nor
+/// protected by quorum: the host alone enrolls and revokes each writer.
+fn machine_writer_key(state: &FoldState, key: &AuthorityKey, device: &FoldedDevice) -> bool {
+    device.roles == ROLE_AGENT
+        && state
+            .actor_bindings
+            .get(key)
+            .is_some_and(|binding| binding.actor_class == "system")
 }

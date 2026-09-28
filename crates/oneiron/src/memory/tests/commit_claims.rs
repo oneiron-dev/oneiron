@@ -1324,8 +1324,7 @@ fn signed_machine_keyed_create_replace_and_delete() {
             |transcript| Ok(machine_key.sign(transcript).to_bytes()),
         )
         .unwrap();
-    let matured = vault.now_recorded_at() + crate::authority::DEFAULT_PENDING_WIDEN_DELAY_SECS + 1;
-    crate::authority::authority_observation_secs(&vault.store, matured, 0);
+    // A host-landed enrollment is live at once: the widen delay is dead.
     assert_eq!(
         vault.authority_fold().unwrap().actor_bindings
             [&crate::authority::AuthorityKey::Ed25519(machine_key.verifying_key().to_bytes())]

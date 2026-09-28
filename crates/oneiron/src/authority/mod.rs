@@ -27,7 +27,6 @@
 pub use crate::gate::manifest_authenticity::ManifestContribution;
 
 mod ancestor_index;
-mod ancestry_bypass;
 mod ancestry_evaluator;
 mod causal_write;
 mod checkpoint;
@@ -36,6 +35,7 @@ mod confirm;
 mod constants;
 mod crypto;
 mod device;
+mod engine_machine;
 mod entry_transition;
 mod federation_pact;
 mod first_seen_clock;
@@ -116,7 +116,6 @@ pub(crate) use sequence_observation::record_authority_sequence_observation_in_tx
 
 // Module-internal only: nothing here leaves `authority`.
 use ancestor_index::*;
-use ancestry_bypass::*;
 use entry_transition::*;
 pub(crate) use machine_write::{
     machine_claim_needs_history, machine_claim_read_admitted, machine_history_authority_descends,

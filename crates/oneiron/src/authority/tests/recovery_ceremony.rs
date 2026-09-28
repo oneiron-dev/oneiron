@@ -42,15 +42,12 @@ fn genesis_secret_step_cannot_be_skipped_and_dismissal_is_visible() {
     let hash = authority_entry_hash(&enroll).unwrap();
     let entries = [genesis, enroll];
     let seen = BTreeMap::from([(hash, 10)]);
-    assert!(fold_authority_log_with_seen_times(&entries, &seen, 10).genesis_fragile);
-    assert!(
-        !fold_authority_log_with_seen_times(&entries, &seen, 10 + DEFAULT_PENDING_WIDEN_DELAY_SECS)
-            .genesis_fragile
-    );
+    // Enrolling a second device closes the genesis window at once.
+    assert!(!fold_authority_log_with_seen_times(&entries, &seen, 10).genesis_fragile);
 }
 
 #[test]
-fn migration_preserves_genesis_and_does_not_restore_instant_widen_authority() {
+fn migration_preserves_genesis_and_retires_the_old_root() {
     let old = ed_key(75);
     let new = ed_key(76);
     let genesis = genesis_entry(75, DEFAULT_PENDING_WIDEN_DELAY_SECS, 1);
@@ -78,7 +75,6 @@ fn migration_preserves_genesis_and_does_not_restore_instant_widen_authority() {
     assert_eq!(migrated.vault_id, Some(vault_id));
     assert!(migrated.roster[&authority_key_from_ed(&old)].revoked);
     assert!(!migrated.roster[&authority_key_from_ed(&new)].revoked);
-    assert!(migrated.pending_widens.is_empty());
     let enroll = enroll_device_entry(
         vault_id,
         &reroot,
@@ -94,10 +90,9 @@ fn migration_preserves_genesis_and_does_not_restore_instant_widen_authority() {
     let hash = authority_entry_hash(&enroll).unwrap();
     let seen = BTreeMap::from([(hash, 10)]);
     let entries = [genesis, reroot, enroll];
-    let pending = fold_authority_log_with_seen_times(&entries, &seen, 10);
-    assert!(pending.pending_widens.contains_key(&hash));
-    let cleared =
-        fold_authority_log_with_seen_times(&entries, &seen, 10 + DEFAULT_PENDING_WIDEN_DELAY_SECS);
-    assert!(!cleared.roster[&authority_key_from_ed(&ed_key(77))].revoked);
-    assert_eq!(cleared.vault_id, Some(vault_id));
+    // The re-rooted key's enrollment lands at once, even first seen just now.
+    let enrolled = fold_authority_log_with_seen_times(&entries, &seen, 10);
+    assert!(enrolled.valid_entries.contains(&hash));
+    assert!(!enrolled.roster[&authority_key_from_ed(&ed_key(77))].revoked);
+    assert_eq!(enrolled.vault_id, Some(vault_id));
 }

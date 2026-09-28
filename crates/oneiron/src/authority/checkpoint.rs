@@ -271,7 +271,6 @@ impl Vault {
         if fold.vault_id != Some(checkpoint.vault_id)
             || fold.roster != checkpoint.roster
             || fold.tier_floor != Some(checkpoint.tier_floor)
-            || !fold.pending_widens.is_empty()
         {
             return Err(invalid_authority());
         }

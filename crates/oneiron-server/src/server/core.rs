@@ -130,6 +130,8 @@ impl SyncServer {
         {
             let issuer = oneiron::authority::HostSlipIssuer::from_secret(secret.as_bytes())?;
             vault.ensure_host_root_slip(&issuer)?;
+            // The engine's MACHINE writers sign with host-held keys (ONE-1634).
+            vault.provision_engine_machine_identities(&issuer)?;
         }
 
         let root_doc = match server_state::load_root_from_state(&vault)? {

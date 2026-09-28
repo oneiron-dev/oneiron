@@ -8,7 +8,7 @@ use crate::{
     HostingPrivacyPosture,
     error::{Error, Result},
 };
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 use std::sync::Arc;
 
 /// The generation belongs to the snapshot, not to the most recent process-wide
@@ -166,26 +166,20 @@ fn cache_fold_if_committed(
 /// backfill, no transaction of its own. It reproduces both write-side
 /// effects in its snapshot instead.
 ///
-/// The observation time is deliberately NOT the raw wall clock. Widen
-/// maturity is an AUTHORIZATION decision here — the facade's owner-verb
+/// The observation time is deliberately NOT the raw wall clock. Stale-roster
+/// approval expiry is an AUTHORIZATION decision here — the facade's owner-verb
 /// gate consumes this fold — so it runs on the same monotonic clock
 /// [`Vault::authority_fold`] uses: the persisted floor read through `txn`,
-/// raised through [`authority_observation_secs`]. On the raw
-/// wall clock a forward jump would mature a pending owner enrollment early
-/// and expose an Active human binding INSIDE the veto window, while a jump
-/// backward below the persisted floor would un-apply an elapsed rotation
-/// and resurrect the retired key's binding. The derived value is not
-/// written back — the floor advances only on write paths, and a lagging
-/// floor can delay a widen but never skip the delay.
+/// raised through [`authority_observation_secs`]. On the raw wall clock a jump
+/// backward below the persisted floor would revive an approval whose
+/// stale-roster window had already expired. The derived value is not written
+/// back — the floor advances only on write paths. No op waits on this clock:
+/// the delayed-widen ceremony died 2026-08-05 (identity canon, "Device-key
+/// widen ceremony (dead 2026-08-05)").
 ///
-/// The other divergence the full fold hides is a MISSING sidecar, and
-/// omitting it here is not the conservative default it looks like — see
-/// [`readonly_first_seen_for`] for why an omitted sidecar can leave a
-/// retired owner key live, and what this fold does instead. Where that
-/// leaves a delayable widen resting on an UNOBSERVED first-seen time, this
-/// fold refuses with [`AUTHORITY_FIRST_SEEN_INDETERMINATE`] rather than pick
-/// a roster; the refusal clears the moment one write-path fold records the
-/// observation.
+/// The other divergence the full fold hides is a MISSING sidecar — see
+/// [`readonly_first_seen_for`] for how this fold reproduces the one-shot
+/// migration without writing, and when it refuses instead.
 pub(crate) fn authority_fold_readonly_for_store_in_txn(
     store: &Store,
     posture: HostingPrivacyPosture,
@@ -208,7 +202,6 @@ pub(super) fn authority_view_readonly_for_store_in_txn(
     }
     tracing::trace!(target: "oneiron::authority::cache", generation = key.generation, "full authority fold fallback");
     let mut first_seen_at_secs = BTreeMap::new();
-    let mut indeterminate = BTreeSet::new();
     // Read ONCE, before the row scan: the synthesized-first-seen rule below
     // must be the same for every entry in one fold, and this also decides
     // whether an absent sidecar is a pre-migration gap or genuine corruption.
@@ -223,11 +216,7 @@ pub(super) fn authority_view_readonly_for_store_in_txn(
         .collect::<Result<Vec<_>>>()?;
     for entry in &entries {
         let hash = authority_entry_hash(entry)?;
-        let (first_seen, observed_locally) =
-            readonly_first_seen_for(store, txn, &hash, backfilled, now_secs)?;
-        if !observed_locally {
-            indeterminate.insert(hash);
-        }
+        let first_seen = readonly_first_seen_for(store, txn, &hash, backfilled, now_secs)?;
         first_seen_at_secs.insert(hash, first_seen);
     }
     // Peer consent roots ride BOTH folds. This one authorizes, and a fold
@@ -237,52 +226,24 @@ pub(super) fn authority_view_readonly_for_store_in_txn(
     let peer_consent_roots =
         crate::federation::admitted_peer_consent_roots_for_store_in_txn(store, txn)?;
     let observations = authority_local_observations_in_txn(store, txn, &entries)?;
-    let (fold, observed_widen_deadline) =
-        fold_authority_log_with_local_observations_and_posture_with_deadline(
-            &entries,
-            &first_seen_at_secs,
-            now_secs,
-            &peer_consent_roots,
-            &observations,
-            posture,
-        );
-    // An indeterminate row is only a problem where its delay actually
-    // decides something. `now_secs` is the maximum-delay assumption, so any
-    // affected DELAYABLE widen lands in `pending_widens` — and pending is
-    // fail-OPEN for `RotateKey`/`ReRoot`, which revoke as they
-    // grant. Refuse there rather than authorize against a roster still
-    // holding a key a matured rotation may already have retired. Rows whose
-    // first-seen time the fold never consults (every non-delayable op, and
-    // widens a veto already killed) are unaffected, so a legacy vault whose
-    // log carries no live delayable widen keeps working untouched.
-    if fold
-        .pending_widens
-        .keys()
-        .any(|hash| indeterminate.contains(hash))
-    {
-        return Err(Error::CorruptedIndex(AUTHORITY_FIRST_SEEN_INDETERMINATE));
-    }
-    // The fold's two clock-sensitive transitions are widen eligibility and
-    // stale-roster approval expiry. Slip TTL is checked by each caller against
-    // its own snapshot clock, not frozen into this authority view.
-    let next_widen = fold
-        .pending_widens
-        .values()
-        .filter_map(|pending| pending.eligible_at_secs)
-        .filter(|deadline| *deadline > now_secs)
-        .min();
-    let next_stale = next_stale_roster_deadline(
+    let fold = fold_authority_log_with_local_observations_and_posture(
+        &entries,
+        &first_seen_at_secs,
+        now_secs,
+        &peer_consent_roots,
+        &observations,
+        posture,
+    );
+    // The fold's only clock-sensitive transition is stale-roster approval
+    // expiry. Slip TTL is checked by each caller against its own snapshot
+    // clock, not frozen into this authority view.
+    let next_deadline_secs = next_stale_roster_deadline(
         &entries,
         &fold,
         &first_seen_at_secs,
         now_secs,
         key.policy.stale_roster_window_secs,
     );
-    let next_deadline_secs = next_widen
-        .into_iter()
-        .chain(observed_widen_deadline)
-        .chain(next_stale)
-        .min();
     let view = AuthorityView {
         fold: Arc::new(fold),
         generation: key.generation,
@@ -292,64 +253,42 @@ pub(super) fn authority_view_readonly_for_store_in_txn(
 }
 
 /// First-seen seconds for ONE entry inside a readonly fold, reproducing the
-/// one-shot migration's semantics without writing anything.
-///
-/// Returns `(first_seen_secs, observed_locally)`. `observed_locally` is
-/// false when the value is an ASSUMPTION rather than a record of local
-/// observation; the caller escalates that to a refusal only where the value
-/// actually decided a pending widen.
-///
-/// Omitting an entry from `first_seen_at_secs` is NOT fail-closed, which is
-/// what the naive version got wrong. A sidecar-less delayable widen folds to
-/// `eligible_at_secs: None`, which pins it PENDING forever — and "pending"
-/// is only conservative for widens that GRANT (EnrollDevice, SetTierFloor).
-/// `RotateKey` and `ReRoot` also REVOKE: an un-applied rotation
-/// leaves the retired owner key in the roster with its actor binding Active.
-/// On a legacy vault whose matured rotation K→K2 never got a sidecar, an
-/// attacker still holding K could file a sibling `BindActor(K, …, "human")`
-/// parented before the rotation, and this fold would hand them every owner
-/// verb — while [`Vault::authority_fold`] (which backfills first) revokes K.
-/// A fold used for AUTHORIZATION must not be weaker than the one used for
-/// truth.
+/// one-shot migration's semantics without writing anything. The value feeds
+/// only the stale-roster approval window.
 ///
 /// Two states, two answers:
 ///
 /// - backfill marker ABSENT — the migration has not run in a write txn yet,
 ///   so this vault has NO local record of when it first saw the row. The
 ///   header's `learned_at` is not a substitute: it is peer-written entity
-///   metadata, and a legacy `EnrollDevice` shipped with `learned_at = 0`
-///   would read as first seen in 1970, i.e. matured before it ever arrived.
-///   The answer is `now_secs` — the same value
+///   metadata, and a claim of `learned_at = 0` would start a stale-roster
+///   window in 1970. The answer is `now_secs` — the same value
 ///   [`Vault::backfill_authority_first_seen_sidecars`] will persist when it
-///   next runs, and the maximum remaining delay — flagged indeterminate.
+///   next runs.
 /// - marker PRESENT and the sidecar still missing, or the row present but
 ///   undecodable under EITHER marker state — the one-shot pass can never
 ///   regenerate it (it is gated by the marker, and it skips keys that
-///   already hold a row), so the entry's delay clock is unrecoverable in
-///   place. Refuse the fold with [`AUTHORITY_FIRST_SEEN_SIDECAR_CORRUPT`];
-///   the facade turns that into an invalid-state suspension of owner verbs
-///   rather than authorizing on a fold it cannot compute.
-///
-/// The assumed value never MATURES anything: it equals the `now_secs` the
-/// maturity comparison uses, so `now + delay > now` holds for every positive
-/// delay and the widen stays pending until a real observation is recorded.
+///   already hold a row), so the entry's stale-roster clock is unrecoverable
+///   in place. Omitting the entry is not fail-closed: an approval with no
+///   first-seen time never expires. Refuse the fold with
+///   [`AUTHORITY_FIRST_SEEN_SIDECAR_CORRUPT`]; the facade turns that into an
+///   invalid-state suspension of owner verbs rather than authorizing on a
+///   fold it cannot compute.
 fn readonly_first_seen_for(
     store: &Store,
     txn: &heed::RoTxn<'_>,
     hash: &AuthorityEntryHash,
     backfilled: bool,
     now_secs: u64,
-) -> Result<(u64, bool)> {
+) -> Result<u64> {
     let corrupt = || Error::CorruptedIndex(AUTHORITY_FIRST_SEEN_SIDECAR_CORRUPT);
     match store
         .sync_state
         .get(txn, authority_first_seen_sync_key(hash).as_str())?
     {
-        Some(raw) => decode_authority_first_seen_secs(&raw)
-            .ok_or_else(corrupt)
-            .map(|secs| (secs, true)),
+        Some(raw) => decode_authority_first_seen_secs(&raw).ok_or_else(corrupt),
         None if backfilled => Err(corrupt()),
-        None => Ok((now_secs, false)),
+        None => Ok(now_secs),
     }
 }
 

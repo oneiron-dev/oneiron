@@ -201,6 +201,15 @@ fn admit_imported_evidence_claim_typed_guarded(
         imported_candidate(predicate, value, source_record_id, admission)?;
     if sign_machine {
         vault.sign_registered_machine_claim(&admission.claim_id, &candidate, &mut envelope)?;
+    } else if guard.is_none() {
+        // The host's own import door: a MACHINE it provisioned signs here.
+        let txn = vault.store.env.read_txn()?;
+        vault.sign_retained_machine_claim_in_txn(
+            &txn,
+            &admission.claim_id,
+            &candidate,
+            &mut envelope,
+        )?;
     }
 
     if let Some(guard) = guard {

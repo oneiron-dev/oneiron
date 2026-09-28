@@ -29,3 +29,15 @@ pub(crate) fn entity(seed: u8) -> EntityId {
     );
     EntityId::from_bytes([seed; 16]).expect("non-pinned seed byte forms a valid entity id")
 }
+
+/// Mirror of `test_util::provision_engine_machines`: roots the vault under a
+/// test host and provisions the engine's MACHINE writers with host-held keys,
+/// as a host does at bootstrap (ONE-1634).
+pub(crate) fn provision_engine_machines(vault: &oneiron::Vault) {
+    let issuer = oneiron::authority::HostSlipIssuer::from_secret(b"oneiron integration test host")
+        .expect("host issuer");
+    vault.ensure_host_root_slip(&issuer).expect("host root");
+    vault
+        .provision_engine_machine_identities(&issuer)
+        .expect("engine machine identities");
+}

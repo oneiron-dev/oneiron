@@ -289,15 +289,16 @@ fn malformed_wire_and_opaque_scope_are_not_normalized() {
 
 #[test]
 fn terminal_validity_and_approval_causality() {
+    // A Proposed birth may be superseded; ARCH-0040 gates the closure on the
+    // superseding write's approval, not on the target's.
     let close = signed(
         ClaimTransitionKind::SupersedeClose,
         TransitionDelta::ValidTo(100),
         vec![],
     );
-    assert_eq!(
-        folded(std::slice::from_ref(&close), &[hash(&close)]).unwrap_err(),
-        TransitionFoldError::Rollback
-    );
+    let result = folded(std::slice::from_ref(&close), &[hash(&close)]).unwrap();
+    assert_eq!(result.lifecycle, ClaimLifecycleStatus::Superseded);
+    assert_eq!(result.approval, ClaimApprovalStatus::Proposed);
     let approval = signed(ClaimTransitionKind::Approve, TransitionDelta::None, vec![]);
     let close = signed(
         ClaimTransitionKind::SupersedeClose,

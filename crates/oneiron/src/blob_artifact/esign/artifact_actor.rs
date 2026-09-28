@@ -2,7 +2,7 @@
 use super::model::invalid;
 use crate::{EntityId, Result, TimeRange, Vault};
 const ACTOR: &[u8] = b"esign.artifact_actor.v1";
-pub(super) fn actor(
+pub(crate) fn actor(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
     now: u64,

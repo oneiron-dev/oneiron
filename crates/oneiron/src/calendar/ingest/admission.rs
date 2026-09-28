@@ -629,10 +629,7 @@ pub fn ics_import_actor_id() -> crate::Result<EntityId> {
     derive_entity_id(ICS_IMPORT_ACTOR_ID_DOMAIN, &[])
 }
 
-pub(in crate::calendar) fn ensure_ics_import_actor(
-    vault: &Vault,
-    now: u64,
-) -> crate::Result<EntityId> {
+pub(crate) fn ensure_ics_import_actor(vault: &Vault, now: u64) -> crate::Result<EntityId> {
     let id = ics_import_actor_id()?;
     if vault.get_entity_type(&id)? != Some(ENTITY_TYPE_MACHINE) {
         let mut body = Vec::new();

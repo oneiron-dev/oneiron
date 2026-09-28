@@ -138,22 +138,12 @@ pub(crate) fn verify_actor_binding_in_txn(
 ///
 /// An UNCOMPUTABLE fold is a third state, and it is the one this gate must not
 /// paper over. When an AUTHORITY_LOG row has lost its first-seen sidecar after
-/// the one-shot migration ran, the readonly fold cannot decide whether a
-/// delayable widen elapsed — and a `RotateKey` or `ReRoot` left
-/// un-applied keeps the key it RETIRES live and owner-bound. So the fold
-/// refuses instead of guessing, and the refusal surfaces here as INVALID_STATE
-/// (the vault's authority is broken, not the caller's request), suspending
-/// every owner verb until the log is re-folded through the write path.
-///
-/// A PRE-MIGRATION log takes the same door for the same reason. There the
-/// first-seen time is not lost but never recorded, and the only other candidate
-/// — the header's `learned_at` — is peer-written: trusting it lets a legacy
-/// `EnrollDevice(learned_at = 0)` present as long matured, so a child
-/// `BindActor` on the freshly owner-capable key would fold ACTIVE with no veto
-/// window. The fold assumes first-seen-now instead, which leaves the affected
-/// widens pending, and refuses while any of them is load-bearing. Unlike the
-/// lost-sidecar case this clears itself: one write-path fold records the
-/// observation and the delay runs from there.
+/// the one-shot migration ran, the readonly fold cannot decide whether an
+/// approval resting on a revoked roster has outlived its stale-roster window.
+/// So the fold refuses instead of guessing, and the refusal surfaces here as
+/// INVALID_STATE (the vault's authority is broken, not the caller's request),
+/// suspending every owner verb until the log is re-folded through the write
+/// path.
 pub(crate) fn verify_owner_actor_binding_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -166,17 +156,7 @@ pub(crate) fn verify_owner_actor_binding_in_txn(
                 format!("{err}; owner verbs are suspended"),
                 &[
                     "Restore this vault's sync_state from backup, or re-import the authority log into a fresh vault so first-seen times are observed again.",
-                    "A widen whose local first-seen time is lost cannot be judged elapsed or pending; no binding authorizes until it can.",
-                ],
-            );
-        }
-        if crate::authority::is_indeterminate_first_seen(&err) {
-            return MemoryError::new(
-                MEMORY_CODE_INVALID_STATE,
-                format!("{err}; owner verbs are suspended"),
-                &[
-                    "Run a write-path authority fold (any authority-log write, or `authority_fold`) so this vault records when it first observed the pending entries.",
-                    "The delay then runs from that local observation; a widen's first-seen time is never taken from the peer-claimed learned_at metadata.",
+                    "An approval whose local first-seen time is lost cannot be judged stale or live; no binding authorizes until it can.",
                 ],
             );
         }

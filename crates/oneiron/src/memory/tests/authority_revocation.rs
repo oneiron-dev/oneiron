@@ -415,21 +415,6 @@ fn second_owner_hard_deletes_actor_before_target_delete_txn1() {
             (enroll_b, test_time(3), 3),
         ])
         .expect("root A and enroll B");
-    // The authority clock uses a monotonic per-vault anchor, not the wall
-    // clock. Advance its persisted floor to model the elapsed veto window;
-    // the next fold rebases the anchor against this later local observation.
-    let matured_at = 1_000 + crate::authority::DEFAULT_PENDING_WIDEN_DELAY_SECS + 1;
-    clock.set(matured_at);
-    vault
-        .with_write_txn(|txn| {
-            vault.store.sync_state.put(
-                txn,
-                crate::authority::authority_first_seen_clock_sync_key(),
-                &matured_at.to_be_bytes(),
-            )?;
-            Ok(())
-        })
-        .expect("advance local authority clock floor");
     // With two live roster keys a new BindActor needs B's peer cosign.
     let mut bind_b = entry(
         3,
@@ -1301,12 +1286,10 @@ fn conflicting_vault_roots_fail_owner_verbs_closed() {
 /// SIBLING `BindActor(retired_key, attacker, "human")` parented at genesis, and
 /// the gate hands them every owner verb.
 ///
-/// fix-3 closed that by synthesizing the migration's `learned_at.min(now)`.
-/// fix-leg 4 removes `learned_at` from the answer entirely — it is peer-written,
-/// so the long-past values in this fixture are the attacker's own claim — and
-/// the gate suspends instead: INVALID_STATE while the fold cannot date the
-/// rotation, cleared by one write-path fold, after which the rotation serves its
-/// delay from local observation. Either way the retired key never authorizes.
+/// With the delayed-widen ceremony dead (identity canon, "Device-key widen
+/// ceremony (dead 2026-08-05)") the rotation needs no date at all: it lands the
+/// moment its ancestry folds, sidecar or not, so the retired key is revoked in
+/// the merged roster and the squatting binding is dead on arrival.
 #[test]
 fn sidecarless_rotation_denies_owner_verbs_through_the_facade() {
     use crate::authority::{AuthorityKey, AuthorityLogEntry, AuthorityOp, AuthoritySignature};
@@ -1393,9 +1376,8 @@ fn sidecarless_rotation_denies_owner_verbs_through_the_facade() {
     // elapsed ages ago — which fix-leg 4 refuses to act on.
     strip_authority_first_seen_state(&vault);
 
-    // Pre-migration the fold cannot date the rotation, so every owner verb is
-    // SUSPENDED — the gate refuses rather than reading maturity out of the
-    // attacker's own `learned_at`.
+    // Pre-migration: the rotation has already retired the key, so the squat
+    // holds no active owner binding.
     for err in [
         facade
             .safe_delete(&subject.to_hex(), SafeDeleteReason::UserDelete)
@@ -1415,22 +1397,15 @@ fn sidecarless_rotation_denies_owner_verbs_through_the_facade() {
             .claim_retract(&claim.claim_short_id)
             .expect_err("retired key must not retract another actor's claim"),
     ] {
-        assert_eq!(err.code, MEMORY_CODE_INVALID_STATE, "{}", err.message);
-        assert!(
-            err.message.contains("owner verbs are suspended"),
+        assert_eq!(
+            err.code, MEMORY_CODE_OWNER_BINDING_REQUIRED,
             "{}",
             err.message
         );
     }
 
-    // This fixture exercises an ordinary delayed key rotation, not ReRoot.
-    // First-seen migration starts its veto window now; peer timestamps cannot
-    // pretend that the delay has already elapsed.
     let full = vault.authority_fold().expect("fold");
-    assert!(
-        !full.pending_widens.is_empty(),
-        "the rotation is dated at migration time, so its delay has not elapsed"
-    );
+    assert!(full.roster[&retired].revoked, "the rotation lands at once");
     let rtxn = vault.store.env.read_txn().expect("read txn");
     assert_eq!(
         vault

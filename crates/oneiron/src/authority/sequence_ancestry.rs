@@ -55,3 +55,64 @@ pub(super) fn causal_sequence_floors(
         }
     }
 }
+
+/// Chain-validation probe: re-folds `target_hash` over its own complete
+/// ancestry.
+///
+/// It inherits exactly TWO things from the enclosing fold — the consent arm and
+/// the admitted peer consent roots — because those define what "folds" MEANS.
+/// A probe answering under different consent semantics than the fold it serves
+/// would quietly disagree with it about which history can vouch a sequence floor.
+fn entry_folds_on_available_ancestry(
+    target_hash: AuthorityEntryHash,
+    by_hash: &BTreeMap<AuthorityEntryHash, AuthorityLogEntry>,
+    ancestors: &BTreeMap<AuthorityEntryHash, BTreeSet<AuthorityEntryHash>>,
+    context: FoldContext<'_>,
+) -> bool {
+    let Some(target_ancestors) = ancestors.get(&target_hash) else {
+        return false;
+    };
+    if target_ancestors
+        .iter()
+        .any(|ancestor| !by_hash.contains_key(ancestor))
+    {
+        return false;
+    }
+    let mut states = BTreeMap::<AuthorityEntryHash, FoldState>::new();
+    let mut pending = target_ancestors.clone();
+    pending.insert(target_hash);
+
+    for _ in 0..=pending.len() {
+        if states.contains_key(&target_hash) {
+            return true;
+        }
+        let hashes: Vec<_> = pending.iter().copied().collect();
+        let mut progressed = false;
+        for hash in hashes {
+            let Some(entry) = by_hash.get(&hash) else {
+                return false;
+            };
+            match fold_entry_state(
+                entry,
+                hash,
+                &states,
+                FoldContext {
+                    entry_ancestors: Some(ancestors),
+                    ..context
+                },
+            ) {
+                EntryFold::Ready(state) => {
+                    states.insert(hash, state);
+                    pending.remove(&hash);
+                    progressed = true;
+                }
+                EntryFold::Waiting => {}
+                EntryFold::Invalid(_) => return false,
+            }
+        }
+        if !progressed {
+            return false;
+        }
+    }
+    false
+}

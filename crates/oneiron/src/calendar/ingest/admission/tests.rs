@@ -492,22 +492,20 @@ fn missing_dtstart_retracts_time_metadata_and_never_bills_the_poll_instant() {
     let event = crate::calendar::passport::resolve_event_by_uid(&vault, "uid-oc@x")
         .unwrap()
         .unwrap();
-    // Imports remain proposed until reviewed. Approve the initial facts through
-    // the public write door so this oracle tests time semantics, not filtering.
+    // Imports remain proposed until reviewed. The owner approves the initial
+    // facts, a signed transition on each MACHINE import, so this oracle tests
+    // time semantics, not filtering.
+    let owner = vault.ensure_embedded_owner_actor().unwrap();
+    crate::test_util::bind_test_owner(&vault, owner);
     for id in vault.claims_for_subject(&event).unwrap() {
-        let mut claim = vault.get_claim(&id).unwrap().unwrap();
-        claim.approval = crate::ClaimApprovalStatus::Approved;
-        vault
-            .put_claim(
-                &id,
-                &claim,
-                TimeRange {
-                    start: now,
-                    end: now,
-                },
-                now,
-            )
-            .unwrap();
+        if vault.get_claim(&id).unwrap().unwrap().approval == crate::ClaimApprovalStatus::Proposed {
+            vault
+                .approve_machine_claim_as(
+                    id,
+                    crate::WriteActor::new(owner, crate::EdgeActorClass::Human),
+                )
+                .unwrap();
+        }
     }
     let window = TimeRange {
         start: 0,

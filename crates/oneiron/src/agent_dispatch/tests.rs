@@ -517,7 +517,7 @@ fn dispatch_survives_checkpoint_resume() -> Result<()> {
 
     // The system/Dreamer bookkeeping envelope: a MACHINE actor, class System,
     // with the agent attribution carried in the provenance payload (B1 (a)).
-    vault.put_entity(&dreamer_actor, ENTITY_TYPE_MACHINE, t(1), 1, b"dreamer")?;
+    let dreamer_host = seed_dreamer_machine(&vault, dreamer_actor)?;
     // The milestone subject is the attempt id itself (pinned); anchor an entity at
     // those bytes so the claim door's subject-existence check passes.
     // (`EntityId::from_bytes` takes the 16-byte array by value.)
@@ -588,23 +588,15 @@ fn dispatch_survives_checkpoint_resume() -> Result<()> {
 
     // Mid-run checkpoint: an ordinary gated claim under the same envelope.
     let checkpoint_id = EntityId::now();
-    let checkpoint_value =
-        dreamer_milestone_value(attempt_id, DreamerMilestoneKind::CheckpointReached, 30);
-    vault
-        .batch()
-        .claim_candidate(
-            &checkpoint_id,
-            ClaimCandidate::new(
-                DREAMER_MILESTONE_PREDICATE,
-                ClaimSubject::Entity(subject),
-                checkpoint_value,
-                1.0,
-            ),
-            &milestone_envelope,
-            t(30),
-            30,
-        )
-        .commit()?;
+    write_milestone_claim(
+        &vault,
+        &checkpoint_id,
+        subject,
+        attempt_id,
+        DreamerMilestoneKind::CheckpointReached,
+        30,
+        &milestone_envelope,
+    )?;
 
     // The milestone claim landed Approved (not held to proposal) and carries
     // the agent attribution in its stamped envelope provenance.
@@ -632,6 +624,8 @@ fn dispatch_survives_checkpoint_resume() -> Result<()> {
     // Drop and REOPEN the vault: milestone index and queue row are durable.
     drop(vault);
     let vault = Vault::open(dir.path(), config).expect("reopen vault");
+    // Signers live on the vault handle: the host provisions them again.
+    vault.provision_host_machine_identity(&dreamer_host, dreamer_actor)?;
     let runner = DreamerRunnerStore::new(&vault);
     let milestone = runner
         .latest_durable_milestone(attempt_id)?
@@ -778,7 +772,7 @@ fn milestone_attribution_cannot_be_forged() -> Result<()> {
     };
     let attempt_id = status.attempt.id;
 
-    vault.put_entity(&dreamer_actor, ENTITY_TYPE_MACHINE, t(1), 1, b"dreamer")?;
+    seed_dreamer_machine(&vault, dreamer_actor)?;
     let subject = EntityId::from_bytes(*attempt_id.as_bytes())?;
     vault.put_entity(
         &subject,
@@ -866,21 +860,15 @@ fn milestone_attribution_cannot_be_forged() -> Result<()> {
     // Ordinary-claim door: a forged checkpoint commits as a claim but never
     // enters the durable index.
     let forged_checkpoint_id = EntityId::now();
-    vault
-        .batch()
-        .claim_candidate(
-            &forged_checkpoint_id,
-            ClaimCandidate::new(
-                DREAMER_MILESTONE_PREDICATE,
-                ClaimSubject::Entity(subject),
-                dreamer_milestone_value(attempt_id, DreamerMilestoneKind::CheckpointReached, 30),
-                1.0,
-            ),
-            &forged_envelope,
-            t(30),
-            30,
-        )
-        .commit()?;
+    write_milestone_claim(
+        &vault,
+        &forged_checkpoint_id,
+        subject,
+        attempt_id,
+        DreamerMilestoneKind::CheckpointReached,
+        30,
+        &forged_envelope,
+    )?;
     assert_eq!(
         runner
             .latest_durable_milestone(attempt_id)?
@@ -904,21 +892,15 @@ fn milestone_attribution_cannot_be_forged() -> Result<()> {
         crate::claim::ClaimApprovalStatus::Approved,
     );
     let checkpoint_id = EntityId::now();
-    vault
-        .batch()
-        .claim_candidate(
-            &checkpoint_id,
-            ClaimCandidate::new(
-                DREAMER_MILESTONE_PREDICATE,
-                ClaimSubject::Entity(subject),
-                dreamer_milestone_value(attempt_id, DreamerMilestoneKind::CheckpointReached, 40),
-                1.0,
-            ),
-            &bound_envelope,
-            t(40),
-            40,
-        )
-        .commit()?;
+    write_milestone_claim(
+        &vault,
+        &checkpoint_id,
+        subject,
+        attempt_id,
+        DreamerMilestoneKind::CheckpointReached,
+        40,
+        &bound_envelope,
+    )?;
     assert_eq!(
         runner
             .latest_durable_milestone(attempt_id)?
@@ -927,6 +909,19 @@ fn milestone_attribution_cannot_be_forged() -> Result<()> {
         DreamerMilestoneKind::CheckpointReached
     );
     Ok(())
+}
+
+/// Seeds the Dreamer bookkeeping MACHINE with a host-held key: Dreamer signs
+/// like any other machine (ONE-1634). The returned host issuer re-provisions
+/// the signer after a reopen.
+fn seed_dreamer_machine(
+    vault: &Vault,
+    dreamer_actor: EntityId,
+) -> Result<crate::authority::HostSlipIssuer> {
+    vault.put_entity(&dreamer_actor, ENTITY_TYPE_MACHINE, t(1), 1, b"dreamer")?;
+    let issuer = crate::test_util::provision_engine_machines(vault);
+    vault.provision_host_machine_identity(&issuer, dreamer_actor)?;
+    Ok(issuer)
 }
 
 /// A system/Dreamer bookkeeping envelope with the given agent attribution.
@@ -954,20 +949,21 @@ fn write_milestone_claim(
     at: u64,
     envelope: &WriteEnvelope,
 ) -> Result<()> {
+    let candidate = ClaimCandidate::new(
+        DREAMER_MILESTONE_PREDICATE,
+        ClaimSubject::Entity(subject),
+        dreamer_milestone_value(attempt_id, kind, at),
+        1.0,
+    );
+    // The runner signs its own bookkeeping with the host-held key.
+    let mut envelope = envelope.clone();
+    {
+        let txn = vault.store.env.read_txn()?;
+        vault.sign_retained_machine_claim_in_txn(&txn, claim_id, &candidate, &mut envelope)?;
+    }
     vault
         .batch()
-        .claim_candidate(
-            claim_id,
-            ClaimCandidate::new(
-                DREAMER_MILESTONE_PREDICATE,
-                ClaimSubject::Entity(subject),
-                dreamer_milestone_value(attempt_id, kind, at),
-                1.0,
-            ),
-            envelope,
-            t(at),
-            at,
-        )
+        .claim_candidate(claim_id, candidate, &envelope, t(at), at)
         .commit()
 }
 
@@ -1000,7 +996,7 @@ fn milestone_forgery_rejected_for_every_kind_and_binding() -> Result<()> {
     let attempt_id = status.attempt.id;
     let agent_id = status.input.definition.agent_id;
 
-    vault.put_entity(&dreamer_actor, ENTITY_TYPE_MACHINE, t(1), 1, b"dreamer")?;
+    seed_dreamer_machine(&vault, dreamer_actor)?;
     let subject = EntityId::from_bytes(*attempt_id.as_bytes())?;
     vault.put_entity(&subject, ENTITY_TYPE_PERSON, t(1), 1, b"attempt anchor")?;
     let decoy_subject = test_id(0x2E);
@@ -1174,7 +1170,7 @@ fn milestone_forgery_rejected_through_backfill() -> Result<()> {
     let attempt_id = status.attempt.id;
     let agent_id = status.input.definition.agent_id;
 
-    vault.put_entity(&dreamer_actor, ENTITY_TYPE_MACHINE, t(1), 1, b"dreamer")?;
+    seed_dreamer_machine(&vault, dreamer_actor)?;
     let subject = EntityId::from_bytes(*attempt_id.as_bytes())?;
     vault.put_entity(&subject, ENTITY_TYPE_PERSON, t(1), 1, b"attempt anchor")?;
 
@@ -1226,7 +1222,7 @@ fn milestone_with_absent_attempt_row_does_not_index() -> Result<()> {
         Some(dreamer_actor),
     )?;
 
-    vault.put_entity(&dreamer_actor, ENTITY_TYPE_MACHINE, t(1), 1, b"dreamer")?;
+    seed_dreamer_machine(&vault, dreamer_actor)?;
     // An attempt id that exists on some other device only.
     let foreign_attempt = crate::attempt_queue::AttemptId::now();
     let subject = EntityId::from_bytes(*foreign_attempt.as_bytes())?;
@@ -1288,7 +1284,7 @@ fn milestone_writer_resolved_from_storage_not_class_byte() -> Result<()> {
     let attempt_id = status.attempt.id;
     let agent_id = status.input.definition.agent_id;
 
-    vault.put_entity(&dreamer_actor, ENTITY_TYPE_MACHINE, t(1), 1, b"dreamer")?;
+    seed_dreamer_machine(&vault, dreamer_actor)?;
     let subject = EntityId::from_bytes(*attempt_id.as_bytes())?;
     vault.put_entity(&subject, ENTITY_TYPE_PERSON, t(1), 1, b"attempt anchor")?;
 

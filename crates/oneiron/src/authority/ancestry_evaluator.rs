@@ -1,9 +1,10 @@
 //! Shared stalled-revocation ancestry evaluation for ordinary and proof folds.
 //!
 //! A rejected permissive ancestor may be skipped only after its own transition
-//! failed. A frozen one may be crossed only by the positive pending-widen
-//! classifier in `revocation_bypass_states`. Neither op is ever applied in a
-//! substitute state. The caller receives a scratch proof, not permissive state.
+//! failed; its op is never applied in a substitute state. The caller receives a
+//! scratch proof, not permissive state. This is the ancestry-invalidation rule
+//! (identity canon, "Ancestry invalidation (2026-08-03)"): a verified
+//! `RevokeActor` still lands its epoch floor when its ancestry turns invalid.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -11,9 +12,7 @@ use super::*;
 
 /// One entry-progress rule for the ordinary fold and signed-branch proof.
 /// During normal rounds no ancestry is bypassed. After a full stalled round,
-/// only a RevokeActor may cross proven-rejected permissive parents, and the
-/// positive pending-widen classifier is the sole way to cross frozen parents.
-/// Slip revocations retain their existing frozen-only rule.
+/// only a RevokeActor may cross proven-rejected permissive parents.
 pub(super) enum EvaluationPhase<'a> {
     Normal,
     Stalled(&'a BTreeSet<AuthorityEntryHash>),
@@ -24,7 +23,6 @@ pub(super) fn evaluate_entry(
     hash: AuthorityEntryHash,
     entries: &BTreeMap<AuthorityEntryHash, AuthorityLogEntry>,
     states: &BTreeMap<AuthorityEntryHash, FoldState>,
-    pending: &BTreeSet<AuthorityEntryHash>,
     context: FoldContext<'_>,
     phase: EvaluationPhase<'_>,
 ) -> EntryFold {
@@ -35,17 +33,7 @@ pub(super) fn evaluate_entry(
     if !matches!(result, EntryFold::Waiting) {
         return result;
     }
-    if matches!(entry.op, AuthorityOp::RevokeActor { .. }) {
-        return stalled_actor_revoke(entry, hash, entries, states, pending, rejected, context)
-            .map_or(EntryFold::Waiting, EntryFold::Ready);
-    }
-    revocation_bypass_states(entry, entries, states, pending, context)
-        .and_then(
-            |substitutes| match fold_entry_state(entry, hash, &substitutes, context) {
-                EntryFold::Ready(state) => Some(state),
-                EntryFold::Waiting | EntryFold::Invalid(_) => None,
-            },
-        )
+    stalled_actor_revoke(entry, hash, entries, states, rejected, context)
         .map_or(EntryFold::Waiting, EntryFold::Ready)
 }
 
@@ -61,15 +49,13 @@ pub(super) fn skippable_permissive(op: &AuthorityOp) -> bool {
     )
 }
 
-/// Try a stalled actor revoke against explicitly rejected and/or frozen parents.
-/// Normal folding passes an empty rejection set; signed-history verification
-/// passes its own rejected ancestors. Both use the SAME frozen-parent bypass.
-pub(super) fn stalled_actor_revoke(
+/// Try a stalled actor revoke against explicitly rejected parents, which
+/// signed-history verification passes as its own rejected ancestors.
+fn stalled_actor_revoke(
     entry: &AuthorityLogEntry,
     hash: AuthorityEntryHash,
     entries: &BTreeMap<AuthorityEntryHash, AuthorityLogEntry>,
     states: &BTreeMap<AuthorityEntryHash, FoldState>,
-    pending: &BTreeSet<AuthorityEntryHash>,
     rejected: &BTreeSet<AuthorityEntryHash>,
     context: FoldContext<'_>,
 ) -> Option<FoldState> {
@@ -80,12 +66,12 @@ pub(super) fn stalled_actor_revoke(
     let mut substituted = false;
     for parent in &entry.parent_hashes {
         if !scratch.contains_key(parent) {
-            let state = resolve_parent(*parent, entries, states, pending, rejected, context)?;
+            let state = resolve_parent(*parent, entries, states, rejected, context)?;
             scratch.insert(*parent, state);
             substituted = true;
         }
     }
-    // A stall on consent or sequence is not a frozen/rejected parent.
+    // A stall on consent or sequence is not a rejected parent.
     if !substituted {
         return None;
     }
@@ -95,11 +81,9 @@ pub(super) fn stalled_actor_revoke(
     }
 }
 
-/// Explicit outcomes for EACH missing parent. A rejected branch and a frozen
-/// sibling can meet under the same parent without either granting permission.
+/// Explicit outcomes for EACH missing parent.
 enum ParentOutcome<'a> {
     Ready(&'a FoldState),
-    FrozenByPendingWiden,
     RejectedAncestry,
     Unavailable,
 }
@@ -107,11 +91,8 @@ enum ParentOutcome<'a> {
 fn parent_outcome<'a>(
     hash: AuthorityEntryHash,
     entry: &AuthorityLogEntry,
-    entries: &BTreeMap<AuthorityEntryHash, AuthorityLogEntry>,
     states: &'a BTreeMap<AuthorityEntryHash, FoldState>,
-    pending: &BTreeSet<AuthorityEntryHash>,
     rejected: &BTreeSet<AuthorityEntryHash>,
-    context: FoldContext<'_>,
 ) -> ParentOutcome<'a> {
     if let Some(state) = states.get(&hash) {
         return ParentOutcome::Ready(state);
@@ -119,23 +100,16 @@ fn parent_outcome<'a>(
     if rejected.contains(&hash) && skippable_permissive(&entry.op) {
         return ParentOutcome::RejectedAncestry;
     }
-    if pending.contains(&hash)
-        && entry_is_frozen_by_pending_widen(entry, entries, states, pending, context)
-    {
-        return ParentOutcome::FrozenByPendingWiden;
-    }
     ParentOutcome::Unavailable
 }
 
 /// Resolve every branch to real folded evidence. An otherwise rejected grant
-/// is skipped; a waiting grant is crossed ONLY after the positive freeze
-/// classifier proves its cause. Neither op applies. Missing or cyclic history
-/// and incompatible vault roots refuse the whole restrictive proof.
+/// is skipped and its op never applies. Missing or cyclic history and
+/// incompatible vault roots refuse the whole restrictive proof.
 fn resolve_parent(
     start: AuthorityEntryHash,
     entries: &BTreeMap<AuthorityEntryHash, AuthorityLogEntry>,
     states: &BTreeMap<AuthorityEntryHash, FoldState>,
-    pending: &BTreeSet<AuthorityEntryHash>,
     rejected: &BTreeSet<AuthorityEntryHash>,
     context: FoldContext<'_>,
 ) -> Option<FoldState> {
@@ -155,7 +129,7 @@ fn resolve_parent(
         {
             return None;
         }
-        match parent_outcome(hash, entry, entries, states, pending, rejected, context) {
+        match parent_outcome(hash, entry, states, rejected) {
             ParentOutcome::Ready(state) => {
                 merged = Some(match merged {
                     Some(current) if current.vault_id != state.vault_id => return None,
@@ -163,7 +137,7 @@ fn resolve_parent(
                     None => state.clone(),
                 });
             }
-            ParentOutcome::RejectedAncestry | ParentOutcome::FrozenByPendingWiden => {
+            ParentOutcome::RejectedAncestry => {
                 if entry.parent_hashes.is_empty() {
                     return None;
                 }

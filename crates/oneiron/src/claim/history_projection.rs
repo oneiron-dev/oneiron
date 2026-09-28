@@ -548,7 +548,10 @@ impl Vault {
             return Err(bad());
         }
         let previous = super::decode_claim_body(&raw[ENTITY_METADATA_HEADER_LEN..], true)?;
-        if previous != projected {
+        // A superseded history's same-id successor owns the live row.
+        let successor = projection.admits_successor_by(crate::memory::claim_author(&previous))
+            && !crate::authority::machine_claim_needs_history(&self.store, &txn, &previous)?;
+        if previous != projected && !successor {
             crate::batch::apply_ops(
                 &self.store,
                 &self.config,

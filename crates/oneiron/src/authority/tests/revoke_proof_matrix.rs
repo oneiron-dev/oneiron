@@ -5,9 +5,13 @@ use super::*;
 
 #[derive(Clone, Copy, Debug)]
 enum Chain {
+    /// The grant above the loser is intrinsically invalid.
     Invalid,
-    Frozen,
-    FrozenThenInvalid,
+    /// A widen (enrollment) then a valid rebind: both land at once, first
+    /// seen now or not.
+    Widened,
+    /// A widen (enrollment) then an intrinsically invalid grant.
+    WidenedThenInvalid,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -47,7 +51,7 @@ fn confirm_entry(
 
 #[test]
 fn restrictive_facts_compose_across_ancestry_matrix() {
-    for chain in [Chain::Invalid, Chain::Frozen, Chain::FrozenThenInvalid] {
+    for chain in [Chain::Invalid, Chain::Widened, Chain::WidenedThenInvalid] {
         for signer_lost in [true, false] {
             for loss in [Loss::Equivocation, Loss::Confirmation] {
                 let label = format!("{chain:?} signer_lost={signer_lost} {loss:?}");
@@ -165,7 +169,7 @@ fn restrictive_facts_compose_across_ancestry_matrix() {
                 let mut parent = loser_hash;
                 let mut seq = if signer_lost { 1 } else { 2 };
                 let now = 10_000_000;
-                let mut deferred = BTreeSet::new();
+                let mut just_seen = BTreeSet::new();
                 let sign_chain = |parent, seq, op, ts| {
                     if signer_lost {
                         cosign_ed(
@@ -209,14 +213,14 @@ fn restrictive_facts_compose_across_ancestry_matrix() {
                         6,
                     );
                     parent = authority_entry_hash(&widen).unwrap();
-                    deferred.insert(parent);
+                    just_seen.insert(parent);
                     entries.push(widen);
                     seq += 1;
                 }
                 let grant = sign_chain(
                     parent,
                     seq,
-                    if matches!(chain, Chain::Frozen) {
+                    if matches!(chain, Chain::Widened) {
                         rebind_op(&consent_key, actor, "human", 10)
                     } else {
                         bind_op(&consent_key, scope_entity(0x77), "human", 10)
@@ -224,17 +228,17 @@ fn restrictive_facts_compose_across_ancestry_matrix() {
                     7,
                 );
                 parent = authority_entry_hash(&grant).unwrap();
-                deferred.insert(parent);
+                just_seen.insert(parent);
                 entries.push(grant);
                 seq += 1;
                 let revoke = sign_chain(parent, seq, revoke_actor_op(&consent_key, 11), 8);
                 let revoke_hash = authority_entry_hash(&revoke).unwrap();
-                deferred.insert(revoke_hash);
+                just_seen.insert(revoke_hash);
                 entries.push(revoke);
                 let mut first_seen = BTreeMap::new();
                 for entry in &entries {
                     let hash = authority_entry_hash(entry).unwrap();
-                    first_seen.insert(hash, if deferred.contains(&hash) { now } else { 1 });
+                    first_seen.insert(hash, if just_seen.contains(&hash) { now } else { 1 });
                 }
                 first_seen.insert(authority_entry_hash(&sibling).unwrap(), 1);
                 let before = fold_authority_log_with_seen_times(&entries, &first_seen, now);
@@ -251,10 +255,18 @@ fn restrictive_facts_compose_across_ancestry_matrix() {
                     matches!(loss, Loss::Equivocation),
                     "{label}"
                 );
-                assert!(!after.valid_entries.contains(&parent), "{label}");
+                // Nothing waits on a first-seen time: the chain above the
+                // loser is valid exactly when every link in it is.
+                let chain_valid =
+                    matches!(loss, Loss::Equivocation) && matches!(chain, Chain::Widened);
+                assert_eq!(
+                    after.valid_entries.contains(&parent),
+                    chain_valid,
+                    "{label}"
+                );
                 assert_eq!(
                     after.valid_entries.contains(&revoke_hash),
-                    matches!(loss, Loss::Equivocation) && !matches!(chain, Chain::Invalid),
+                    chain_valid,
                     "{label}"
                 );
                 assert_eq!(
@@ -354,35 +366,6 @@ fn restrictive_facts_compose_across_ancestry_matrix() {
                     after,
                     "{label}"
                 );
-                if !matches!(chain, Chain::Invalid) {
-                    // The pending grant may later mature (and in the mixed
-                    // chain, become intrinsically invalid). Neither transition
-                    // can erase the revoke fact in the complete signed log.
-                    let matured = now + DEFAULT_PENDING_WIDEN_DELAY_SECS + 1;
-                    let later = fold_authority_log_with_seen_times(&entries, &first_seen, matured);
-                    assert_eq!(
-                        folded_status(&later, &consent_key),
-                        Some(ActorBindingStatus::Revoked),
-                        "matured {label}: {:?}",
-                        later.issues
-                    );
-                    assert_eq!(
-                        later.valid_entries.contains(&loser_hash),
-                        matches!(loss, Loss::Equivocation),
-                        "matured {label}"
-                    );
-                    assert_eq!(
-                        later.valid_entries.contains(&parent),
-                        matches!(loss, Loss::Equivocation) && matches!(chain, Chain::Frozen),
-                        "matured grant {label}"
-                    );
-                    entries.reverse();
-                    assert_eq!(
-                        fold_authority_log_with_seen_times(&entries, &first_seen, matured),
-                        later,
-                        "matured order {label}"
-                    );
-                }
             }
         }
     }

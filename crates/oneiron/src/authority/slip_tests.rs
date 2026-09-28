@@ -610,7 +610,7 @@ fn a_slip_mint_signed_by_an_agent_device_folds_invalid_even_with_an_owner_cosign
         )
         .unwrap();
     let enrolled_hash = authority_entry_hash(&enroll).unwrap();
-    let enrolled = super::super::fold_engine::fold_authority_log_without_seen_time_delay(&[
+    let enrolled = super::super::fold_engine::fold_authority_log(&[
         genesis.clone(),
         root_mint.clone(),
         enroll.clone(),
@@ -648,9 +648,7 @@ fn a_slip_mint_signed_by_an_agent_device_folds_invalid_even_with_an_owner_cosign
     mint.cosigns[0].signature = owner.sign(&transcript).to_bytes().to_vec();
     super::super::crypto::verify_entry_signatures(&mint).unwrap();
     let hash = authority_entry_hash(&mint).unwrap();
-    let fold = super::super::fold_engine::fold_authority_log_without_seen_time_delay(&[
-        genesis, root_mint, enroll, mint,
-    ]);
+    let fold = super::super::fold_engine::fold_authority_log(&[genesis, root_mint, enroll, mint]);
     assert!(fold.valid_entries.contains(&enrolled_hash));
     assert!(!fold.valid_entries.contains(&hash));
 }
@@ -695,9 +693,7 @@ fn a_slip_revoke_signed_by_a_revoked_owner_device_folds_invalid() {
         )
         .unwrap();
     let hash = authority_entry_hash(&revoked).unwrap();
-    let fold = super::super::fold_engine::fold_authority_log_without_seen_time_delay(&[
-        genesis, mint, rotation, revoked,
-    ]);
+    let fold = super::super::fold_engine::fold_authority_log(&[genesis, mint, rotation, revoked]);
     assert!(fold.valid_entries.contains(&rotation_hash));
     assert!(fold.roster[&issuer.public_key()].revoked);
     assert!(!fold.valid_entries.contains(&hash));

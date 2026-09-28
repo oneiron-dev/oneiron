@@ -88,6 +88,19 @@ pub(super) fn apply_claim_candidate(
     let had_prior = store.entities.get(wtxn, id.as_bytes())?.is_some();
     let body = candidate.into_claim_body(envelope, default_facet);
     let data = crate::claim::encode_claim_body(&body)?;
+    if had_prior {
+        crate::claim::history_store::close_machine_history_for_successor(
+            store,
+            config,
+            analyzer,
+            wtxn,
+            id,
+            &body,
+            actor,
+            learned_at,
+            text_index_trusted,
+        )?;
+    }
     let applied_put = apply_put(
         store,
         config,

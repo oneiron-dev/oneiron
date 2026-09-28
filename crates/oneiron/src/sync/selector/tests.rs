@@ -5049,8 +5049,6 @@ fn selector_export_verifies_machine_origin_against_actual_crdt_id_and_body() {
             |transcript| Ok(signing.sign(transcript).to_bytes()),
         )
         .unwrap();
-    let matured = vault.now_recorded_at() + crate::authority::DEFAULT_PENDING_WIDEN_DELAY_SECS + 1;
-    crate::authority::authority_observation_secs(&vault.store, matured, 0);
     let envelope = WriteEnvelope::new(
         WriteActor::new(machine, EdgeActorClass::System),
         ClaimSource::Observed,

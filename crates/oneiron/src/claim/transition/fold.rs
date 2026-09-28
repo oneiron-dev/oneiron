@@ -39,6 +39,8 @@ pub(crate) struct ClaimTransitionProjection {
     pub valid_to: Option<u64>,
     pub stale: bool,
     pub scope_band_floor: Option<u8>,
+    /// The actor whose signed `SupersedeClose` ended the history.
+    pub superseded_by: Option<EntityId>,
     pub frontier: Vec<TransitionEventHash>,
 }
 
@@ -73,8 +75,24 @@ impl ClaimTransitionProjection {
             valid_to: body.valid_to,
             stale: false,
             scope_band_floor: None,
+            superseded_by: None,
             frontier: Vec::new(),
         })
+    }
+
+    /// Whether the signed history has ended, so no further transition applies.
+    pub(crate) fn is_closed(&self) -> bool {
+        self.lifecycle != ClaimLifecycleStatus::Active
+            || self.approval == ClaimApprovalStatus::Rejected
+    }
+
+    /// Whether a same-id successor row by `author` owns the live claim: its
+    /// author ended this history with a signed `SupersedeClose`. A retracted
+    /// or rejected history never becomes an ordinary claim.
+    pub(crate) fn admits_successor_by(&self, author: Option<EntityId>) -> bool {
+        self.lifecycle == ClaimLifecycleStatus::Superseded
+            && author.is_some()
+            && self.superseded_by == author
     }
 
     fn join(&mut self, other: &Self) -> Result<(), TransitionFoldError> {
@@ -109,6 +127,11 @@ impl ClaimTransitionProjection {
         };
         self.stale |= other.stale;
         self.scope_band_floor = self.scope_band_floor.max(other.scope_band_floor);
+        // Concurrent closes by two actors settle on one, independent of order.
+        self.superseded_by = match (self.superseded_by, other.superseded_by) {
+            (Some(a), Some(b)) => Some(a.min(b)),
+            (a, b) => a.or(b),
+        };
         Ok(())
     }
 
@@ -129,10 +152,11 @@ impl ClaimTransitionProjection {
             }
             (ClaimTransitionKind::Retract, TransitionDelta::ValidTo(end))
             | (ClaimTransitionKind::SupersedeClose, TransitionDelta::ValidTo(end)) => {
+                // A Proposed claim closes like any other: ARCH-0040 defers a
+                // destructive supersede on the superseding write's approval,
+                // which the deferred-closure grant settles before staging.
                 if self.birth.valid_from.is_some_and(|start| end < start)
                     || self.valid_to.is_some_and(|old| end > old)
-                    || (event.kind == ClaimTransitionKind::SupersedeClose
-                        && self.approval == Proposed)
                 {
                     return Err(TransitionFoldError::Rollback);
                 }
@@ -140,6 +164,7 @@ impl ClaimTransitionProjection {
                 self.lifecycle = if event.kind == ClaimTransitionKind::Retract {
                     Retracted
                 } else {
+                    self.superseded_by = Some(event.actor);
                     Superseded
                 };
             }

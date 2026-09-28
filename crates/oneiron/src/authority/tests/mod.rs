@@ -25,14 +25,13 @@ mod federation_lifecycle;
 mod federation_merge;
 mod foundations;
 mod hosted_consent;
+mod instant_widen;
 mod observation_safety;
 mod peer_roster;
 mod readonly_fold;
-mod revoke_freeze_bypass;
 mod revoke_proof_matrix;
 mod support;
 mod tier_floor;
-mod widen_veto;
 
 mod causal_claim;
 mod checkpoint;

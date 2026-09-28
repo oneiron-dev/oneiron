@@ -257,7 +257,6 @@ fn critical_write_confirm_three_sibling_nonce_collision_keeps_provenance_associa
                 CriticalWriteConfirmMethod::TokenReauth,
             )),
             [hash; 32],
-            false,
             &owner_key,
         );
         state
@@ -488,7 +487,7 @@ fn critical_write_confirm_revoked_signer_is_fold_invalid() {
     let fold = fold_authority_log_with_seen_times(
         &[genesis, enroll_second, enroll_peer, revoke, confirm.clone()],
         &seen,
-        1_000 + DEFAULT_PENDING_WIDEN_DELAY_SECS + 1,
+        1_000,
     );
     assert!(fold.roster[&authority_key_from_ed(&second)].revoked);
     assert!(fold.issues.iter().any(|issue| matches!(issue,
@@ -533,11 +532,8 @@ fn critical_write_confirm_admin_only_signer_is_fold_invalid() {
     );
     let mut seen = BTreeMap::new();
     seen.insert(authority_entry_hash(&enroll).unwrap(), 1_000);
-    let fold = fold_authority_log_with_seen_times(
-        &[genesis, enroll, confirm.clone()],
-        &seen,
-        1_000 + DEFAULT_PENDING_WIDEN_DELAY_SECS + 1,
-    );
+    let fold =
+        fold_authority_log_with_seen_times(&[genesis, enroll, confirm.clone()], &seen, 1_000);
     let device = &fold.roster[&authority_key_from_ed(&admin)];
     assert!(!device.revoked && device.roles & ROLE_ADMIN != 0 && device.roles & ROLE_OWNER == 0);
     assert!(fold.issues.iter().any(|issue| matches!(issue,

@@ -127,8 +127,8 @@ impl Vault {
             end: now,
         };
         self.put_authority_log_entries_in_txn(&mut txn, &[(enroll, at, now), (bind, at, now)])?;
-        // Software enrollment may remain pending under the vault's existing
-        // observed-time delay; the write door refuses it until the fold activates.
+        // A host-landed enrollment takes effect at once: the device-key widen
+        // delay is dead (identity.md, "Device-key widen ceremony").
         txn.commit()?;
         self.retain_machine_history_issuer(issuer)?;
         Ok(())
@@ -162,13 +162,20 @@ impl Vault {
         envelope: &WriteEnvelope,
     ) -> Result<Vec<u8>> {
         let txn = self.store.env.read_txn()?;
-        let fold = self.authority_fold_readonly_in_txn(&txn)?;
+        self.machine_claim_transcript_in_txn(&txn, id, candidate, envelope)
+    }
+
+    fn machine_claim_transcript_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        id: &EntityId,
+        candidate: &ClaimCandidate,
+        envelope: &WriteEnvelope,
+    ) -> Result<Vec<u8>> {
+        let fold = self.authority_fold_readonly_in_txn(txn)?;
         let vault_id = fold.vault_id.ok_or_else(denied)?;
-        let facet = crate::batch::claim_candidate_apply::claim_candidate_birth_facet(
-            &self.store,
-            &txn,
-            id,
-        )?;
+        let facet =
+            crate::batch::claim_candidate_apply::claim_candidate_birth_facet(&self.store, txn, id)?;
         let body = candidate.clone().into_claim_body(envelope, facet);
         machine_claim_transcript(&vault_id, id, &body)
     }
@@ -220,15 +227,57 @@ impl Vault {
         if envelope.actor().actor_class() != EdgeActorClass::System {
             return Err(denied());
         }
-        let (public_key, sign) = self
+        let signer = self
+            .retained_machine_signer(envelope.actor().entity_ref())?
+            .ok_or_else(denied)?;
+        let txn = self.store.env.read_txn()?;
+        self.attach_machine_signature(&txn, id, candidate, envelope, signer)
+    }
+
+    /// An engine writer signs its own MACHINE candidate inside the caller's
+    /// transaction with the signer the host retained for the envelope's
+    /// actor. Without one the envelope stays unsigned and the write door
+    /// decides: a MACHINE author is refused, any other author is unaffected.
+    pub(crate) fn sign_retained_machine_claim_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        id: &EntityId,
+        candidate: &ClaimCandidate,
+        envelope: &mut WriteEnvelope,
+    ) -> Result<()> {
+        if envelope.machine_signature().is_some()
+            || envelope.actor().actor_class() != EdgeActorClass::System
+        {
+            return Ok(());
+        }
+        match self.retained_machine_signer(envelope.actor().entity_ref())? {
+            Some(signer) => self.attach_machine_signature(txn, id, candidate, envelope, signer),
+            None => Ok(()),
+        }
+    }
+
+    fn retained_machine_signer(
+        &self,
+        machine: EntityId,
+    ) -> Result<Option<([u8; 32], crate::store::MachineWriteSigner)>> {
+        Ok(self
             .store
             .machine_write_signers
             .lock()
             .map_err(|_| Error::InvariantViolation("machine signer lock poisoned"))?
-            .get(&envelope.actor().entity_ref())
-            .cloned()
-            .ok_or_else(denied)?;
-        let transcript = self.machine_claim_transcript(id, candidate, envelope)?;
+            .get(&machine)
+            .cloned())
+    }
+
+    fn attach_machine_signature(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        id: &EntityId,
+        candidate: &ClaimCandidate,
+        envelope: &mut WriteEnvelope,
+        (public_key, sign): ([u8; 32], crate::store::MachineWriteSigner),
+    ) -> Result<()> {
+        let transcript = self.machine_claim_transcript_in_txn(txn, id, candidate, envelope)?;
         *envelope = envelope
             .clone()
             .with_machine_signature(MachineWriteSignature {
@@ -424,6 +473,10 @@ pub(crate) fn machine_claim_read_admitted(
             Ok(projection)
                 if crate::claim::history_projection::project_machine_claim(&projection)
                     == *body => {}
+            // A superseded history's same-id successor is an ordinary claim.
+            Ok(projection)
+                if projection.admits_successor_by(crate::memory::claim_author(body))
+                    && !machine_claim_needs_history(store, txn, body)? => {}
             Ok(_)
             | Err(Error::Claim(ClaimError::MachineClaimHistoryIncomplete))
             | Err(Error::Claim(ClaimError::InvalidMachineClaimProof)) => return Ok(false),

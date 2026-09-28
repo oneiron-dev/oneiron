@@ -522,6 +522,36 @@ fn next_entry(
         now,
     )
 }
+#[cfg(test)]
+impl Vault {
+    /// Binds a test owner person as the human owner under the host root, so
+    /// owner verbs keep working once a fixture roots its vault.
+    pub(crate) fn bind_host_owner_for_test(
+        &self,
+        issuer: &HostSlipIssuer,
+        person: crate::EntityId,
+    ) -> Result<()> {
+        let fold = self.authority_fold()?;
+        let now = self.now_recorded_at();
+        let bind = next_entry(
+            issuer,
+            &fold,
+            AuthorityOp::BindActor {
+                authority_key: issuer.public_key(),
+                actor_ref: person,
+                actor_class: "human".into(),
+                epoch: 1,
+            },
+            now,
+        )?;
+        let at = TimeRange {
+            start: now,
+            end: now,
+        };
+        self.put_authority_log_entries(&[(bind, at, now)])?;
+        Ok(())
+    }
+}
 pub(super) fn require_host(fold: &AuthorityFold, issuer: &HostSlipIssuer) -> Result<()> {
     if fold.vault_id.is_none()
         || fold.vault_root_is_conflicted()

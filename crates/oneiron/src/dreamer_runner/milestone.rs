@@ -84,12 +84,19 @@ pub(super) fn apply_milestone_claim_in_txn(
         value,
         1.0,
     );
+    let mut envelope = milestone.envelope;
+    vault.sign_retained_machine_claim_in_txn(
+        &*wtxn,
+        &milestone.claim_id,
+        &candidate,
+        &mut envelope,
+    )?;
     vault
         .batch_in()
         .claim_candidate(
             &milestone.claim_id,
             candidate,
-            &milestone.envelope,
+            &envelope,
             milestone.occurred,
             milestone.learned_at,
         )

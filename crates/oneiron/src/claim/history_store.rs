@@ -197,6 +197,11 @@ pub(crate) fn validate_machine_history_put(
         match super::history_projection::resolved_machine_history(store, txn, &fold, *id) {
             Ok(projection)
                 if incoming == &super::history_projection::project_machine_claim(&projection) => {}
+            // A superseded history leaves the live row to its same-id
+            // successor, an ordinary claim of the actor that superseded it.
+            Ok(projection)
+                if projection.admits_successor_by(crate::memory::claim_author(incoming))
+                    && !crate::authority::machine_claim_needs_history(store, txn, incoming)? => {}
             Ok(_) => {
                 return Err(Error::Claim(
                     crate::error::ClaimError::InvalidMachineClaimProof,
@@ -365,17 +370,28 @@ pub(crate) fn reject_machine_history_delete(
         .get(txn, &super::history_projection::pin_key(*id))?
         .is_some()
     {
-        // An owner erasure must retire the authenticated pin and coverage by
-        // a dedicated signed deletion action, not a generic LWW tombstone.
+        // An erasure must retire the authenticated pin and coverage first
+        // (`retire_machine_history_for_delete`), not a generic LWW tombstone.
         return Err(invalid_history());
     }
     if let Some(raw) = store.entities.get(txn, id.as_bytes())?
         && EntityMetadataHeader::parse(&raw)
             .is_some_and(|h| h.entity_type == crate::registry::ENTITY_TYPE_CLAIM)
-        && crate::claim::decode_claim_body(&raw[ENTITY_METADATA_HEADER_LEN..], true)
-            .is_ok_and(|body| machine_history_kind(&body.predicate).is_some())
+        && let Ok(body) = crate::claim::decode_claim_body(&raw[ENTITY_METADATA_HEADER_LEN..], true)
+        && machine_history_kind(&body.predicate).is_some()
     {
-        return Err(invalid_history());
+        // A control goes only with its erased target.
+        let ClaimSubject::Entity(target) = body.subject else {
+            return Err(invalid_history());
+        };
+        if store
+            .vault_meta
+            .get(txn, &super::history_projection::pin_key(target))?
+            .is_some()
+            || store.entities.get(txn, target.as_bytes())?.is_some()
+        {
+            return Err(invalid_history());
+        }
     }
     Ok(())
 }
@@ -424,6 +440,91 @@ pub(crate) fn machine_history_ids_for_target(
         }
     }
     Ok(ids)
+}
+
+/// A local erasure of a MACHINE claim takes its signed history with it, as
+/// the controls embed the born content: this drops the pin and the target
+/// index and returns the controls, which the caller erases after the claim
+/// row in the same writer.
+pub(crate) fn retire_machine_history_for_delete(
+    store: &Store,
+    txn: &mut heed::RwTxn<'_>,
+    target: EntityId,
+) -> Result<Vec<EntityId>> {
+    let pin = super::history_projection::pin_key(target);
+    if store.vault_meta.get(txn, &pin)?.is_none() {
+        return Ok(Vec::new());
+    }
+    let controls = machine_history_ids_for_target(store, txn, target)?;
+    store.vault_meta.delete(txn, &pin)?;
+    for control in &controls {
+        let mut key = target_prefix(target);
+        key.extend_from_slice(control.as_bytes());
+        store.vault_meta.delete(txn, &key)?;
+    }
+    Ok(controls)
+}
+
+/// A same-id successor authored by another actor replaces a MACHINE claim as
+/// the claim lifecycle lets it replace any claim, without editing the signed
+/// birth: the history first closes with a signed `SupersedeClose` in the
+/// successor author's name, and the live row then belongs to that author. The
+/// caller stages the successor in the same writer and aborts on any error.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the close shares the successor's LMDB writer and materialization context"
+)]
+pub(crate) fn close_machine_history_for_successor(
+    store: &Store,
+    config: &crate::VaultConfig,
+    analyzer: &crate::analyzer::MultilingualAnalyzer,
+    txn: &mut heed::RwTxn<'_>,
+    target: EntityId,
+    successor: &ClaimBody,
+    actor: crate::WriteActor,
+    learned_at: u64,
+    text_index_trusted: bool,
+) -> Result<()> {
+    if store
+        .vault_meta
+        .get(txn, &super::history_projection::pin_key(target))?
+        .is_none()
+        || crate::authority::machine_claim_needs_history(store, txn, successor)?
+    {
+        return Ok(());
+    }
+    let fold = crate::authority::authority_fold_readonly_for_store_in_txn(
+        store,
+        config.privacy.posture,
+        txn,
+    )?;
+    let projection =
+        super::history_projection::resolved_machine_history(store, txn, &fold, target)?;
+    if projection.is_closed() {
+        return Ok(());
+    }
+    // The close must stay inside the born validity window.
+    let end = learned_at
+        .max(projection.birth.valid_from.unwrap_or(0))
+        .min(projection.valid_to.unwrap_or(u64::MAX));
+    super::transition::stage_machine_claim_transition(
+        store,
+        config,
+        analyzer,
+        txn,
+        target,
+        super::transition::ClaimTransitionKind::SupersedeClose,
+        super::transition::TransitionDelta::ValidTo(end),
+        actor.entity_ref(),
+        actor.actor_class(),
+        TimeRange {
+            start: learned_at,
+            end: learned_at,
+        },
+        learned_at,
+        text_index_trusted,
+    )?;
+    Ok(())
 }
 
 /// Stage the immutable birth and the first host-authenticated complete
@@ -534,6 +635,24 @@ pub(crate) fn stage_machine_birth_after_candidate(
     );
     let at = occurred;
     let mut ops = Vec::new();
+    // The controls carry the claim's facet as a FacetOf edge. A default stamp
+    // may name the owner's substrate facet before the owner PERSON exists; as
+    // a birth stamp does (batch::base_apply), create the owner first.
+    let owner = crate::vault::embedded_owner_actor_id()?;
+    if body.scope_facet == super::substrate_facet_id(owner)
+        && store.entities.get(txn, owner.as_bytes())?.is_none()
+    {
+        ops.push(crate::batch::BatchOp::Put {
+            id: owner,
+            entity_type: crate::registry::ENTITY_TYPE_PERSON,
+            occurred: at,
+            learned_at,
+            data: crate::vault::encode_embedded_owner_actor_body()?,
+            allow_maintenance: false,
+            allow_reserved_predicate: false,
+            hub_sync_imported: false,
+        });
+    }
     for (id, control) in [(birth_id, birth_record), (handoff_id, handoff_record)] {
         ops.push(crate::batch::BatchOp::Put {
             id,

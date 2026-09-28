@@ -73,9 +73,14 @@ impl Vault {
             let fold = self.authority_fold_readonly_in_txn(rtxn)?;
             let projection =
                 super::history_projection::resolved_machine_history(&self.store, rtxn, &fold, *id)?;
-            return Ok(Some(super::history_projection::project_machine_claim(
-                &projection,
-            )));
+            // A superseded history's same-id successor is an ordinary claim.
+            if !projection.admits_successor_by(crate::memory::claim_author(&body))
+                || crate::authority::machine_claim_needs_history(&self.store, rtxn, &body)?
+            {
+                return Ok(Some(super::history_projection::project_machine_claim(
+                    &projection,
+                )));
+            }
         }
         Ok(Some(body))
     }
