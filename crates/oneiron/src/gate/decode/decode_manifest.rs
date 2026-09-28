@@ -20,7 +20,7 @@ use crate::gate::constants::{
     POLICY_PPTX_COMMENT_LIMITS_KEY, POLICY_RULES_KEY, POLICY_SCHEMA_VERSION,
     POLICY_SCHEMA_VERSION_KEY, POLICY_SCOPED_GRANTS_KEY, POLICY_SHEET_ANSWER_LIMITS_KEY,
     POLICY_SHEET_ANSWER_PRECEDENCE_KEY, POLICY_SIGNATURE_KEY, POLICY_SIGNATURES_KEY,
-    POLICY_SOURCE_TRUST_KEY, POLICY_WEAVE_CORRECTION_POLICY_KEY,
+    POLICY_SLIDE_REVIEW_KEY, POLICY_SOURCE_TRUST_KEY, POLICY_WEAVE_CORRECTION_POLICY_KEY,
 };
 use crate::gate::grants::PolicyScopedGrant;
 use crate::gate::hosted_tts_policy::HostedTtsPolicy;
@@ -71,6 +71,7 @@ pub(in crate::gate) struct DecodedPolicyManifest {
         Option<crate::edit_roundtrip::pptx::PptxOperationalLimits>,
     pub(in crate::gate) hosted_tts: HostedTtsPolicy,
 
+    pub(in crate::gate) slide_review_policy: crate::llm::decision::SlideReviewPolicy,
     pub(in crate::gate) diagnostic_bounds: Option<crate::self_heal::tripwires::TripwireBounds>,
     pub(in crate::gate) livequery_tracker_limits:
         Option<crate::gate::tracker_limits::PolicyTrackerLimits>,
@@ -133,6 +134,7 @@ pub(in crate::gate) fn decode_policy_manifest(data: &[u8]) -> Option<DecodedPoli
                 | POLICY_PPTX_COMMENT_LIMITS_KEY
                 | POLICY_HOSTED_TTS_KEY
 
+                | POLICY_SLIDE_REVIEW_KEY
                 | "diagnostic_bounds"
                 | "livequery_tracker_limits"
                 | "proposal_check_threshold"
@@ -299,6 +301,11 @@ pub(in crate::gate) fn decode_policy_manifest(data: &[u8]) -> Option<DecodedPoli
             value,
         )?),
     };
+    let slide_review_policy = match single_map_value(&entries, POLICY_SLIDE_REVIEW_KEY) {
+        MapValue::Missing => crate::llm::decision::SlideReviewPolicy::default(),
+        MapValue::Duplicate => return None,
+        MapValue::Present(value) => crate::llm::decision::SlideReviewPolicy::decode(value)?,
+    };
     let diagnostic_bounds = match single_map_value(&entries, "diagnostic_bounds") {
         MapValue::Missing => None,
         MapValue::Duplicate => return None,
@@ -408,6 +415,7 @@ pub(in crate::gate) fn decode_policy_manifest(data: &[u8]) -> Option<DecodedPoli
         pptx_comment_limits,
         hosted_tts,
 
+        slide_review_policy,
         diagnostic_bounds,
         livequery_tracker_limits,
         proposal_check_threshold,

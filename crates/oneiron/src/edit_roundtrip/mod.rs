@@ -66,6 +66,7 @@ mod ops;
 mod pipeline;
 pub mod pptx;
 mod session_validate;
+pub mod slides_review;
 mod xml;
 
 pub use self::address::{Axis, CellRef, OfficeFormat, RangeRef};
