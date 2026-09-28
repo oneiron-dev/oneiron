@@ -1,16 +1,20 @@
 //! Featureless canonical world-month carry and retained-shell round trip.
 
 use loro::LoroDoc;
-use oneiron::recovery::{
-    CanonicalSnapshot, capture_canonical_window, rebuild_vault_window_from_canonical,
-};
+use oneiron::recovery::{capture_canonical_window, rebuild_vault_window_from_canonical};
 use oneiron::{
-    ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSubject, EdgeKind, EntityId,
-    TimeRange, Vault, VaultConfig,
+    ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSubject, EntityId, TimeRange, Vault,
+    VaultConfig,
 };
 
+/// A sync build publishes the tombstone into the window document instead of
+/// the `pt:` marker this empty-document capture reads.
+#[cfg(not(feature = "sync"))]
 #[test]
 fn soft_world_claim_round_trips_without_sync_feature() {
+    use oneiron::EdgeKind;
+    use oneiron::recovery::CanonicalSnapshot;
+
     let dir = tempfile::tempdir().unwrap();
     let vault = Vault::open(dir.path(), VaultConfig::device()).unwrap();
     let world = EntityId::now();
