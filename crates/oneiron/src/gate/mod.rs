@@ -34,6 +34,7 @@ mod operational_policy;
 mod owner_policy_mutation;
 mod pack_install_policy;
 pub(crate) mod policy_values;
+pub(crate) mod project_depth;
 pub(crate) mod proposal_observation;
 mod repair;
 mod resolution;
@@ -90,6 +91,7 @@ pub(crate) use self::decision::{GateDecision, GateMetrics, GateOutcome, GateReas
 pub(crate) use self::decode::normalize_policy_manifest_scope;
 pub(crate) use self::default_manifest::{
     DEFAULT_POLICY_MANIFEST_TIMESTAMP, default_policy_manifest, default_policy_manifest_id,
+    seeded_project_depth_default,
 };
 pub(crate) use self::definition_ceiling::agent_definition_ceiling_for_actor;
 #[cfg(test)]
@@ -142,7 +144,7 @@ pub(crate) use self::resolution::{
     GateDecisionRetentionPolicy, GateRetentionContext, PolicyManifestResolution,
     ResidenceOperationBudgetLimits, ResidenceOperationBudgetPrecedence,
     ResidenceOperationBudgetRow, resolve_credential_lifetimes, resolve_gate_decision_retention,
-    resolve_policy_manifest, retention_edit_target,
+    resolve_policy_manifest, resolve_project_depth_max, retention_edit_target,
 };
 pub use self::retrieval_filter::RetrievalFilter;
 pub(crate) use self::retrieval_filter::{

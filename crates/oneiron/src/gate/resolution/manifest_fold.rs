@@ -20,7 +20,21 @@ use crate::gate::ceiling::{
     fold_delegated_grants,
 };
 use crate::gate::decode::ConnectorClassRole;
-use crate::gate::decode::decode_policy_manifest;
+use crate::gate::decode::{
+    DecodedManifestCarrier, decode_manifest_carrier, decode_policy_manifest,
+};
+
+/// The vault ceiling on any project's depth row: the resolved manifest row,
+/// capped by the shipped ceiling. A loaded malformed manifest fails closed to
+/// the most restrictive ceiling (DEC-0005); it never bricks the vault.
+pub(crate) fn resolve_project_depth_max(store: &Store, txn: &heed::RoTxn<'_>) -> Result<u8> {
+    let policy = resolve_policy_manifest(store, txn)?;
+    if policy.diagnostics.loaded_manifest_forces_fail_closed() {
+        return Ok(0);
+    }
+    let ceiling = crate::gate::default_manifest::SEEDED_PROJECT_DEPTH_MAX;
+    Ok(policy.project_depth_max.unwrap_or(ceiling).min(ceiling))
+}
 
 /// Resolve in the caller's mint/issuance transaction so policy and the
 /// resulting log or pending link observe one LMDB snapshot.
@@ -41,6 +55,8 @@ pub(crate) fn resolve_credential_lifetimes(
     })
 }
 
+// One fold per manifest row, in manifest order: splitting it would scatter one manifest.
+#[allow(clippy::too_many_lines)]
 pub(crate) fn resolve_policy_manifest(
     store: &impl crate::store::ManifestDbs,
     txn: &heed::RoTxn<'_>,
@@ -105,13 +121,26 @@ pub(crate) fn resolve_policy_manifest(
         }
 
         let body = &raw.body;
+        if crate::gate::project_depth::is_project_depth_id(&id)
+            || crate::gate::project_depth::is_project_depth_contribution(body)
+        {
+            match crate::gate::decode::decode_manifest_carrier(body) {
+                Some(crate::gate::decode::DecodedManifestCarrier::ProjectDepth(row)) => {
+                    // Its policy is resolved by the project-scoped causal fold,
+                    // not by a local manifest:trusted sidecar or a global pack.
+                    let _ = row;
+                }
+                _ => resolution.diagnostics.malformed_manifest_seen = true,
+            }
+            continue;
+        }
         if crate::gate::manifest_authenticity::manifest_is_quarantined(store, txn, &id, body)? {
             continue;
         }
         let trusted =
             crate::gate::manifest_authenticity::manifest_is_trusted(store, txn, &id, body)?;
-        match decode_policy_manifest(body) {
-            Some(decoded) => {
+        match decode_manifest_carrier(body) {
+            Some(DecodedManifestCarrier::Pack(decoded)) => {
                 resolution.diagnostics.manifest_count += 1;
                 if !trusted {
                     untrusted_source_rows.push(decoded.source_trust);
@@ -223,6 +252,17 @@ pub(crate) fn resolve_policy_manifest(
                     decoded.owner_policy_output_contract,
                     &mut resolution.diagnostics.malformed_manifest_seen,
                 );
+                for (slot, row) in [
+                    (
+                        &mut resolution.project_depth_default,
+                        decoded.project_depth_default,
+                    ),
+                    (&mut resolution.project_depth_max, decoded.project_depth_max),
+                ] {
+                    if let Some(value) = row {
+                        *slot = Some(slot.map_or(value, |current| current.min(value)));
+                    }
+                }
                 resolution.signatures.extend(decoded.signatures);
                 if let Some(retention) = decoded.gate_decision_retention {
                     if retention.rows.iter().any(|row| row.override_parent)
@@ -495,6 +535,10 @@ pub(crate) fn resolve_policy_manifest(
                     );
                 }
                 resolution.packs.push(decoded.pack);
+            }
+            Some(DecodedManifestCarrier::ProjectDepth(_)) => {
+                // A project contribution never becomes a global policy pack.
+                continue;
             }
             None => {
                 resolution.diagnostics.malformed_manifest_seen = true;

@@ -24,12 +24,32 @@ impl AgentDispatcher<'_> {
             context_spec: spawn.context_spec.map(normalize_context_spec),
             ..spawn
         };
+        if let Some(key) = input.dedupe_key.as_deref() {
+            let txn = self.vault.store.env.read_txn()?;
+            if let Some(bytes) = self.vault.store.vault_meta.get(&txn, &dedupe_key(key))? {
+                let id = crate::attempt_queue::AttemptId::from_bytes(&bytes)?;
+                let row = AttemptQueue::new(self.vault)
+                    .get_in_txn(&txn, id)?
+                    .ok_or_else(|| invalid("workflow dedupe root is missing"))?;
+                let record = self.read_workflow(&txn, &row)?;
+                let (_, expected) = self.workflow_intent(&txn, &input, &spawn)?;
+                if record.intent != expected {
+                    return Err(invalid("workflow dedupe key names a different intent"));
+                }
+                return Ok(AgentDispatchOutcome::WorkflowExisting(Box::new(
+                    self.workflow_status_from(row, &record)?,
+                )));
+            }
+        }
         // A wrapper is inert and cannot stand in for an actual authority parent.
         if let Some(parent) = input.parent_attempt {
             self.parent_dispatch_input(parent)?
                 .ok_or_else(|| invalid("workflow requires an actual agent parent"))?;
             self.child_depth_remaining(parent)?;
         }
+        let txn = self.vault.store.env.read_txn()?;
+        self.project_depth_limit_in_txn(&txn, input.parent_attempt, spawn.project_ref)?;
+        drop(txn);
         if let Some(outcome) = self.propose_context_widen(&input, &spawn)? {
             return Ok(outcome);
         }
@@ -39,26 +59,19 @@ impl AgentDispatcher<'_> {
         Ok(outcome)
     }
 
-    /// The approval caller carries a private, already-validated parent projection.
-    /// No persisted override is read before its transaction has committed. Both
-    /// paths still check declared and resolved narrowing for EVERY real leaf.
-    pub(super) fn dispatch_workflow_in_txn(
+    fn workflow_intent(
         &self,
-        txn: &mut heed::RwTxn<'_>,
-        input: DispatchAgent,
-        spawn: AgentSpawnContext,
-        approved_parent: Option<&PreparedParentContext>,
-    ) -> Result<AgentDispatchOutcome> {
+        txn: &heed::RoTxn<'_>,
+        input: &DispatchAgent,
+        spawn: &AgentSpawnContext,
+    ) -> Result<(
+        crate::agent_def::workflow::WorkflowDefinition,
+        WorkflowIntent,
+    )> {
         let AgentDispatchTarget::Workflow(id) = input.target else {
             return Err(invalid("workflow dispatch requires a workflow target"));
         };
         let definition = self.workflow_definition_in_txn(txn, id)?;
-        if let Some(parent) = input.parent_attempt {
-            let parent_input = self
-                .parent_dispatch_input_in_txn(txn, parent)?
-                .ok_or_else(|| invalid("workflow requires an actual agent parent"))?;
-            super::attenuation::child_depth_from(Some(parent_input))?;
-        }
         let intent = WorkflowIntent {
             workflow_ref: id.to_hex(),
             definition: crate::agent_def::workflow::encode_workflow(&definition)?,
@@ -71,7 +84,28 @@ impl AgentDispatcher<'_> {
                 .map(crate::EntityId::to_hex)
                 .collect(),
             depth_remaining: spawn.depth_remaining,
+            project_ref: spawn.project_ref.map(|id| id.to_hex()),
         };
+        Ok((definition, intent))
+    }
+
+    /// The approval caller carries a private, already-validated parent projection.
+    /// No persisted override is read before its transaction has committed. Both
+    /// paths still check declared and resolved narrowing for EVERY real leaf.
+    pub(super) fn dispatch_workflow_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        input: DispatchAgent,
+        spawn: AgentSpawnContext,
+        approved_parent: Option<&PreparedParentContext>,
+    ) -> Result<AgentDispatchOutcome> {
+        let (definition, intent) = self.workflow_intent(txn, &input, &spawn)?;
+        if let Some(parent) = input.parent_attempt {
+            let parent_input = self
+                .parent_dispatch_input_in_txn(txn, parent)?
+                .ok_or_else(|| invalid("workflow requires an actual agent parent"))?;
+            super::attenuation::child_depth_from(Some(parent_input))?;
+        }
         // Validate all leaves while the writer serializes revocation. Resolution
         // opens read snapshots, so finish it before any fork or queue mutation.
         for step in &definition.steps {
@@ -217,12 +251,10 @@ impl AgentDispatcher<'_> {
         // Composition stays frozen, authority does not. Recheck a narrower or
         // revoked parent at every release, even after a host restart.
         frozen.definition.ceiling = live.ceiling;
+        let (_, ceiling) =
+            self.project_depth_limit_in_txn(txn, record.intent.parent, frozen.project_ref)?;
+        frozen.depth_remaining = Some(frozen.depth_remaining.unwrap_or(ceiling).min(ceiling));
         if let Some(parent) = record.intent.parent {
-            let parent_input = self
-                .parent_dispatch_input_in_txn(txn, parent)?
-                .ok_or_else(|| invalid("workflow live parent is missing"))?;
-            let bound = super::attenuation::child_depth_from(Some(parent_input))?;
-            frozen.depth_remaining = Some(frozen.depth_remaining.unwrap_or(bound).min(bound));
             let (target, definition) = self.attenuate_child_target(
                 txn,
                 parent,

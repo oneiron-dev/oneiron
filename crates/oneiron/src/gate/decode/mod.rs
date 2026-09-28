@@ -8,7 +8,9 @@ mod decode_trust_budget;
 mod experiment_selection;
 mod policy_scope_migration;
 
-pub(super) use self::decode_manifest::{ConnectorClassRole, decode_policy_manifest};
+pub(super) use self::decode_manifest::{
+    ConnectorClassRole, DecodedManifestCarrier, decode_manifest_carrier, decode_policy_manifest,
+};
 pub(super) use self::decode_residence_operation_budgets::{
     POLICY_RESIDENCE_OPERATION_BUDGETS_KEY, parse_residence_operation_budgets,
 };
