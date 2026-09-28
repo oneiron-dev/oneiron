@@ -518,7 +518,8 @@ pub(super) fn apply_ops_with_origin(
                 put_options.decision.preflight = preflight_decision_id;
                 let applied = apply_claim_candidate(
                     store,
-                    config.privacy.posture,
+                    config,
+                    (analyzer, text_index_trusted),
                     wtxn,
                     ClaimCandidateRequest {
                         id,
@@ -625,7 +626,7 @@ pub(super) fn apply_ops_with_origin(
             BatchOp::Delete { id } => {
                 reject_engine_authored_delete(store, wtxn, &id)?;
                 let (_existed, had_vector, deleted_graph_state, neighbors) =
-                    deindex_entity(store, wtxn, &id)?;
+                    deindex_entity_with_machine_history(store, wtxn, &id)?;
                 claim_materialization::invalidate_authored_claim(store, wtxn, &id)?;
                 if persist_gate_pending_consent {
                     store.let_go_pending_gate_consent_in_txn(wtxn, &id, mutation_recorded_at)?;

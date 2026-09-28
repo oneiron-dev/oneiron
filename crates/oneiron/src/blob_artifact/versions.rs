@@ -425,7 +425,7 @@ impl Vault {
             ),
             1.0,
         );
-        let envelope = WriteEnvelope::new(
+        let mut envelope = WriteEnvelope::new(
             actor,
             provenance.claim_source(),
             WriteProvenance::new(write_provenance_value(provenance))?,
@@ -443,6 +443,7 @@ impl Vault {
             occurred,
             learned_at,
         )?;
+        self.sign_retained_machine_claim_in_txn(&*wtxn, &claim_id, &candidate, &mut envelope)?;
         self.batch_in()
             .claim_candidate(&claim_id, candidate, &envelope, occurred, learned_at)
             .apply_actor(wtxn, &actor)?;

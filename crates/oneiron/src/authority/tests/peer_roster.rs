@@ -362,25 +362,6 @@ fn forged_peer_entry_signed_off_roster_never_enters_the_peer_roster() {
 }
 
 #[test]
-fn peer_fold_uses_no_local_seen_times_so_peer_widens_never_pend() {
-    let fixture = peer_log_fixture(188);
-    let peer = fold_legacy_peer_authority_log(&fixture.entries);
-    assert!(
-        peer.pending_widens.is_empty(),
-        "a peer's widen is not a LOCAL observation and must never pend"
-    );
-    assert!(peer_roster_consent_keys(&peer).contains(&fixture.admin_key));
-
-    // The SAME entries through the local seen-time fold do pend — which is
-    // exactly the local state a peer must not be able to force.
-    let local = fold_legacy_authority_log(&fixture.entries);
-    assert!(
-        !local.pending_widens.is_empty(),
-        "fixture must actually carry a delayable widen for this contrast to bite"
-    );
-}
-
-#[test]
 fn peer_fold_never_imports_an_unpaired_client_authority_key() {
     let owner = ed_key(123);
     let genesis = genesis_entry(123, DEFAULT_PENDING_WIDEN_DELAY_SECS, 1);

@@ -190,20 +190,10 @@ impl Vault {
                 let sidecar_key = authority_first_seen_sidecar_key(&hash);
                 if !AUTHORITY_FIRST_SEEN.contains(&self.store, wtxn, &sidecar_key)? {
                     // fix-leg 4: the persisted value is THIS vault's local
-                    // observation time, never `header.learned_at`. The header
-                    // field is entity metadata written by whichever peer
-                    // shipped the row, so trusting it lets a legacy
-                    // sidecar-less `EnrollDevice(learned_at = 0)` claim it was
-                    // first seen in 1970 — instantly past its veto delay, with
-                    // a child `BindActor` on the freshly owner-capable key
-                    // folding ACTIVE on arrival. `observed_floor` clamps
-                    // FUTURE claims only; the whole past is unclamped, and the
-                    // past is the dangerous direction.
-                    //
-                    // Migrating at the observation time means an
-                    // already-imported widen serves its full delay from HERE
-                    // rather than from a claim, which delays a legitimate
-                    // legacy widen once and never skips one.
+                    // observation time, never `header.learned_at`. First-seen
+                    // is a LOCAL observation, and the header field is entity
+                    // metadata written by whichever peer shipped the row, so
+                    // it must never set this vault's stale-roster clock.
                     missing_sidecars.push((sidecar_key, observed_floor));
                 }
             }
@@ -242,8 +232,9 @@ impl Vault {
     ///
     /// The fold is the authority boundary: replay doors only admit canonical,
     /// origin-signed records; signer ancestry, sequence, quorum, and roster
-    /// semantics are recomputed here from the stored log. Software-tier widens
-    /// are evaluated against this device's local first-seen timestamps.
+    /// semantics are recomputed here from the stored log. Stale-roster approval
+    /// expiry is evaluated against this device's local first-seen timestamps;
+    /// no op waits on them.
     ///
     /// Admitted PEER authority logs (FED-03) are refolded alongside, and their
     /// consent roots enter as gesture evidence only: they never join the local

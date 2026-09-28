@@ -339,28 +339,21 @@ pub(super) fn veto_entry(
     )
 }
 
-/// Owned backing store for a default LOCAL [`FoldContext`]: no
-/// seen-time delay and no admitted peers.
+/// Owned backing store for a default LOCAL [`FoldContext`]: no admitted
+/// peers.
 ///
 /// Tests that need one axis populated mutate that field and spread the rest
 /// with `..storage.context()`, so a new `FoldContext` field lands HERE once
 /// instead of in every fold-internal test.
 #[derive(Default)]
 pub(super) struct LocalFoldContext {
-    pub(super) first_seen_at_secs: BTreeMap<AuthorityEntryHash, u64>,
-    pub(super) vetoed_widens: BTreeSet<AuthorityEntryHash>,
     pub(super) peer_consent_roots: BTreeMap<AuthorityVaultId, BTreeSet<AuthorityKey>>,
 }
 
 impl LocalFoldContext {
     pub(super) fn context(&self) -> FoldContext<'_> {
         FoldContext {
-            first_seen_at_secs: &self.first_seen_at_secs,
             sequence_floors: None,
-            now_secs: None,
-            deadline_observer: None,
-            enforce_seen_time_delay: false,
-            vetoed_widens: &self.vetoed_widens,
             entry_ancestors: None,
             peer_consent_roots: &self.peer_consent_roots,
             consent_arm: folded_device_can_authority_consent,
@@ -401,10 +394,6 @@ pub(super) fn single_owner_state(
         genesis_recovery_dismissed: false,
         recovery_redundancy_established: false,
         tier_floor_events: BTreeMap::new(),
-        pending_widen_delay_secs: DEFAULT_PENDING_WIDEN_DELAY_SECS,
-        pending_widens: BTreeMap::new(),
-        vetoed_widens: BTreeSet::new(),
-        delayed_rotation_veto_revocations: BTreeMap::new(),
         federation_pacts: BTreeMap::new(),
         federation_confirms: BTreeMap::new(),
         critical_write_confirms: BTreeMap::new(),
@@ -754,10 +743,6 @@ pub(super) fn fold_state_with_pact(
         genesis_recovery_dismissed: false,
         recovery_redundancy_established: false,
         tier_floor_events: BTreeMap::new(),
-        pending_widen_delay_secs: DEFAULT_PENDING_WIDEN_DELAY_SECS,
-        pending_widens: BTreeMap::new(),
-        vetoed_widens: BTreeSet::new(),
-        delayed_rotation_veto_revocations: BTreeMap::new(),
         federation_pacts: BTreeMap::new(),
         federation_confirms: BTreeMap::new(),
         critical_write_confirms: BTreeMap::new(),

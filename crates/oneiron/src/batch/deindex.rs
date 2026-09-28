@@ -48,6 +48,27 @@ pub(super) fn reject_engine_authored_delete(
     Ok(())
 }
 
+/// [`deindex_entity`] for a local delete. A MACHINE claim's signed history
+/// controls embed its born content, so they are erased with it
+/// (`retire_machine_history_for_delete`).
+pub(super) fn deindex_entity_with_machine_history(
+    store: &Store,
+    wtxn: &mut RwTxn<'_>,
+    id: &EntityId,
+) -> Result<(bool, bool, bool, Vec<EntityId>)> {
+    let controls =
+        crate::claim::history_store::retire_machine_history_for_delete(store, wtxn, *id)?;
+    let (existed, mut had_vector, mut had_graph_mutation, neighbors) =
+        deindex_entity(store, wtxn, id)?;
+    for control in controls {
+        let (_, vector, graph, control_neighbors) = deindex_entity(store, wtxn, &control)?;
+        ppr::invalidate_ppr_for_delete(store, wtxn, &control, &control_neighbors)?;
+        had_vector |= vector;
+        had_graph_mutation |= graph;
+    }
+    Ok((existed, had_vector, had_graph_mutation, neighbors))
+}
+
 pub(crate) fn deindex_entity(
     store: &Store,
     wtxn: &mut RwTxn<'_>,
@@ -109,6 +130,7 @@ pub(super) fn deindex_entity_without_lexical_query_hint_cascade(
 ) -> Result<(bool, bool, bool, Vec<EntityId>)> {
     crate::workspace_roster::guard_goal_delete(store, wtxn, *id)?;
     crate::federation::reject_ruling_delete(store, wtxn, id)?;
+    crate::claim::history_store::reject_machine_history_delete(store, wtxn, id)?;
     // The shared physical tear is reached by facade deletes, public batch
     // deletes and lexical-hint cascades. Every one must erase claim decisions
     // and the pending tray before the entity bytes leave this transaction.

@@ -182,7 +182,6 @@ fn account_auth_migrates_managed_root_without_widening() {
     assert_eq!(fold.vault_id, Some(id));
     assert!(fold.roster[&key].revoked);
     assert!(!fold.roster[&authority_key_from_ed(&new)].revoked);
-    assert!(fold.pending_widens.is_empty());
 }
 
 #[test]

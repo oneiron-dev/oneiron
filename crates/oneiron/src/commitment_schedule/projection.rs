@@ -445,11 +445,13 @@ impl Vault {
 
         let candidate = commitment_claim_candidate(&record)?
             .with_validity(Some(occurrence.window.start), Some(occurrence.window.end));
+        let mut envelope = mint.envelope.clone();
+        self.sign_retained_machine_claim_in_txn(&*wtxn, &instance_ref, &candidate, &mut envelope)?;
         self.batch_in()
             .claim_candidate(
                 &instance_ref,
                 candidate,
-                mint.envelope,
+                &envelope,
                 occurrence.window,
                 mint.learned_at,
             )

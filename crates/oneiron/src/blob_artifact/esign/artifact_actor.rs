@@ -6,7 +6,7 @@ use crate::{EntityId, Result, TimeRange, Vault};
 /// Esign machine actor id. Key: ().
 const ACTOR: SideTable<(), EntityId, Raw> = SideTable::new(&side_table::ESIGN_ARTIFACT_ACTOR);
 
-pub(super) fn actor(
+pub(crate) fn actor(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
     now: u64,
