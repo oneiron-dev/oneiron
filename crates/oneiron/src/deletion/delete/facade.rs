@@ -403,8 +403,14 @@ impl Vault {
                 // the publication the refusal denied. Nothing replayable may
                 // survive a refusal — `begin_tombstone_publish_txn` withdraws
                 // it in the refusing txn itself.
-                let crdt_persisted =
-                    self.write_crdt_tombstone(id, &window_label, &tombstone, None, gate.as_ref())?;
+                let crdt_persisted = self.write_crdt_tombstone(
+                    id,
+                    header.learned_at,
+                    &window_label,
+                    &tombstone,
+                    None,
+                    gate.as_ref(),
+                )?;
                 signal_delete_rendezvous(self, DeleteRendezvous::AfterTombstonePublish, id, None);
                 if crdt_persisted {
                     self.finish_published_topology_delete(&window_label, id, &tombstone)?;
@@ -425,6 +431,7 @@ impl Vault {
         // a revoked owner must not publish a deletion other devices obey.
         let crdt_persisted = self.write_crdt_tombstone(
             id,
+            header.learned_at,
             &window_label,
             &tombstone,
             gate_decision.as_ref(),

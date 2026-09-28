@@ -64,8 +64,14 @@ impl Vault {
             self.store
                 .reject_held_gate_partition_in_txn(&txn, id.as_bytes())?;
         }
-        let crdt_persisted =
-            self.write_crdt_tombstone(id, &window_label, &tombstone, gate_decision.as_ref(), gate)?;
+        let crdt_persisted = self.write_crdt_tombstone(
+            id,
+            requested_at,
+            &window_label,
+            &tombstone,
+            gate_decision.as_ref(),
+            gate,
+        )?;
         #[cfg(all(test, feature = "sync"))]
         maybe_fail_after_tombstone_before_purge()?;
         #[cfg(not(all(test, feature = "sync")))]
