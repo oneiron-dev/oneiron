@@ -19,10 +19,10 @@ use crate::gate::constants::{
     ATTRIBUTION_HOLDER_REASON_BYTES_KEY, ATTRIBUTION_PRECEDENCE_KEY,
     ATTRIBUTION_REASON_MAX_BYTES_KEY, ATTRIBUTION_RECEIPTS_PER_PASS_KEY, POLICY_ACT_POLICY_KEY,
     POLICY_ACTOR_CEILINGS_KEY, POLICY_ASK_POLICY_KEY, POLICY_ATTRIBUTION_LIMITS_KEY,
-    POLICY_AUTO_CHECKER_KEY, POLICY_BUDGET_POLICY_KEY, POLICY_CONNECTOR_CLASS_CARRY_KEY,
-    POLICY_CONNECTOR_CLASS_PRECEDENCE_KEY, POLICY_CONNECTOR_CLASS_ROLE_KEY,
-    POLICY_CREDENTIAL_LIFETIMES_KEY, POLICY_DEFAULTS_KEY, POLICY_DELEGATED_GRANTS_KEY,
-    POLICY_DOCEDIT_RESOURCE_KEY, POLICY_DOCX_ARCHIVE_LIMITS_KEY,
+    POLICY_AUTO_CHECKER_KEY, POLICY_BUDGET_POLICY_KEY, POLICY_CONNECTOR_ADMISSION_KEY,
+    POLICY_CONNECTOR_CLASS_CARRY_KEY, POLICY_CONNECTOR_CLASS_PRECEDENCE_KEY,
+    POLICY_CONNECTOR_CLASS_ROLE_KEY, POLICY_CREDENTIAL_LIFETIMES_KEY, POLICY_DEFAULTS_KEY,
+    POLICY_DELEGATED_GRANTS_KEY, POLICY_DOCEDIT_RESOURCE_KEY, POLICY_DOCX_ARCHIVE_LIMITS_KEY,
     POLICY_DREAMER_FAILURE_PRECEDENCE_KEY, POLICY_DREAMER_FAILURE_RULES_KEY,
     POLICY_GATE_DECISION_RETENTION_KEY, POLICY_HOSTED_TTS_KEY, POLICY_LEGAL_FLOOR_ROWS_KEY,
     POLICY_MIN_ENGINE_VERSION_KEY, POLICY_ON_BUDGET_EXHAUSTED_KEY,
@@ -105,6 +105,8 @@ pub(in crate::gate) struct DecodedPolicyManifest {
     /// names one.
     pub(in crate::gate) auto_checker: Option<String>,
     pub(in crate::gate) budget_policy: BudgetPolicyTable,
+    pub(in crate::gate) connector_admission:
+        Option<crate::gate::connector_admission::ConnectorAdmissionPolicy>,
     pub(in crate::gate) voice_serving: Option<crate::gate::voice_serving::VoiceServingRows>,
     pub(in crate::gate) weave_report_policy: Vec<crate::gate::weave_policy::Row>,
     pub(in crate::gate) weave_report_policy_empty: bool,
@@ -207,6 +209,7 @@ pub(in crate::gate) fn decode_policy_manifest(data: &[u8]) -> Option<DecodedPoli
                 | POLICY_ON_BUDGET_EXHAUSTED_KEY
                 | POLICY_AUTO_CHECKER_KEY
                 | POLICY_BUDGET_POLICY_KEY
+                | POLICY_CONNECTOR_ADMISSION_KEY
                 | crate::gate::voice_serving::KEY
                 | POLICY_GATE_DECISION_RETENTION_KEY
                 | POLICY_WAIT_POLICY_KEY
@@ -419,6 +422,13 @@ pub(in crate::gate) fn decode_policy_manifest(data: &[u8]) -> Option<DecodedPoli
         MapValue::Missing => BudgetPolicyTable::default(),
         MapValue::Duplicate => return None,
         MapValue::Present(value) => parse_budget_policy(value)?,
+    };
+    let connector_admission = match single_map_value(&entries, POLICY_CONNECTOR_ADMISSION_KEY) {
+        MapValue::Missing => None,
+        MapValue::Duplicate => return None,
+        MapValue::Present(value) => {
+            Some(crate::gate::connector_admission::ConnectorAdmissionPolicy::decode(value)?)
+        }
     };
     let voice_serving = match single_map_value(&entries, crate::gate::voice_serving::KEY) {
         MapValue::Missing => None,
@@ -748,6 +758,7 @@ pub(in crate::gate) fn decode_policy_manifest(data: &[u8]) -> Option<DecodedPoli
         on_budget_exhausted,
         auto_checker,
         budget_policy,
+        connector_admission,
         voice_serving,
         weave_report_policy,
         weave_report_policy_empty,

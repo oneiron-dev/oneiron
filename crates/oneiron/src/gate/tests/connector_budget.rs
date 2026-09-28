@@ -564,6 +564,7 @@ fn gate_ledger_accepts_only_pinned_receipt_reason_prefix_families() {
         "connector_key_suspended",
         "effector_budget_exhausted",
         "charter_drift",
+        "connector_manifest_drift",
     ] {
         append(accepted).unwrap_or_else(|error| panic!("{accepted} must be accepted: {error}"));
     }
@@ -761,5 +762,56 @@ fn exhausted_denial_carries_backfilled_ladder_history() -> Result<()> {
             crate::llm::BudgetThreshold::Land95,
         ]
     );
+    Ok(())
+}
+
+#[test]
+fn retained_manifest_change_holds_ordinary_connector_verb_too() -> Result<()> {
+    use crate::connector_key::{
+        ConnectorManifestQualifier, ConnectorToolSchema, ResolvedConnectorManifest,
+    };
+    use serde_json::json;
+    struct Suite;
+    impl ConnectorManifestQualifier for Suite {
+        fn qualify(&self, _: &ResolvedConnectorManifest, _: &str) -> Result<String> {
+            Ok("c".repeat(64))
+        }
+    }
+    let (_tmp, vault) = temp_vault();
+    put_policy_manifest_bytes(&vault, test_id(0xD0), &connector_key_line_send_manifest())?;
+    let key_id = test_id(0x7F);
+    vault.register_connector_key(
+        &key_id,
+        crate::connector_key::ConnectorKeyRecord::active("line", None, Vec::new(), 1_000),
+    )?;
+    let manifest = |permission: &str| {
+        ResolvedConnectorManifest::resolve(vec![ConnectorToolSchema {
+            name: "send".into(),
+            permissions: [permission.into()].into(),
+            triggers: Default::default(),
+            input_schema: json!({"type":"object","properties":{}}),
+        }])
+        .unwrap()
+    };
+    let mut key = vault.get_connector_key(&key_id)?.unwrap();
+    key.retained_manifest = Some(manifest("read"));
+    key.protocol_revision = Some("r1".into());
+    vault.with_write_txn(|txn| {
+        crate::connector_key::rewrite_connector_key_in_txn(&vault.store, txn, &key_id, &key)
+    })?;
+    let policy = resolve(&vault)?;
+    let effect = external_effect_gate_input("sender", "send", "line");
+    assert_eq!(
+        check_effect(&vault, &effect, &policy)?.0.outcome(),
+        GateOutcome::Allow
+    );
+    vault.stage_connector_manifest(&key_id, manifest("write"), "r1", &Suite, 1_001)?;
+    let (held, charge) = check_effect(&vault, &effect, &policy)?;
+    assert_eq!(held.outcome(), GateOutcome::Pending);
+    assert_eq!(
+        gate_reason_strs(&held),
+        vec!["gate.pending.connector_manifest_drift"]
+    );
+    assert!(charge.is_none());
     Ok(())
 }

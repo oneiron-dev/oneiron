@@ -375,6 +375,7 @@ pub(crate) struct PolicyManifestResolution {
     /// from a resolved manifest.
     pub(super) auto_checker: Option<String>,
     pub(super) budget_policy: BudgetPolicyTable,
+    pub(crate) connector_admission: crate::gate::connector_admission::ConnectorAdmissionPolicy,
     pub(super) voice_serving: Vec<crate::gate::voice_serving::VoiceServingRows>,
     pub(super) gate_decision_retention: Option<GateDecisionRetentionPolicy>,
     pub(crate) pack_install_policy: Option<crate::gate::PackInstallPolicy>,

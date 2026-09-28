@@ -133,6 +133,54 @@ fn scoped_mcp_effect(principal: EntityId, server: &str) -> ExternalEffectGateInp
     effect
 }
 
+fn qualify_scoped_fixture(vault: &crate::Vault, key_id: &EntityId) -> Result<()> {
+    use crate::connector_key::{
+        ConnectorManifestQualifier, ConnectorToolSchema, ResolvedConnectorManifest,
+    };
+    struct Suite;
+    impl ConnectorManifestQualifier for Suite {
+        fn qualify(&self, _: &ResolvedConnectorManifest, _: &str) -> Result<String> {
+            Ok("a".repeat(64))
+        }
+    }
+    let manifest = ResolvedConnectorManifest::resolve(vec![ConnectorToolSchema {
+        name: "read_file".into(),
+        permissions: ["read".into()].into(),
+        triggers: Default::default(),
+        input_schema: serde_json::json!({"properties":{}}),
+    }])?;
+    vault.stage_connector_manifest(key_id, manifest.clone(), "R1", &Suite, 11)?;
+    let owner = EntityId::now();
+    vault.put_entity(
+        &owner,
+        crate::registry::ENTITY_TYPE_PERSON,
+        crate::TimeRange { start: 1, end: 1 },
+        1,
+        b"owner",
+    )?;
+    let auth = vault.authenticate_owner(
+        owner,
+        &owner.to_hex(),
+        true,
+        crate::store::GateDecisionId::from_bytes(*EntityId::now().as_bytes()),
+    )?;
+    let candidate = vault
+        .get_connector_key(key_id)?
+        .unwrap()
+        .pending_manifest
+        .unwrap()
+        .candidate_id;
+    vault.approve_connector_manifest(
+        &auth,
+        key_id,
+        candidate,
+        manifest.hash()?,
+        &"a".repeat(64),
+        12,
+    )?;
+    Ok(())
+}
+
 #[test]
 fn charter_never_key_denies_one_scoped_grant_without_widening() -> Result<()> {
     let (_tmp, vault) = temp_vault();
@@ -174,6 +222,7 @@ fn charter_never_key_denies_one_scoped_grant_without_widening() -> Result<()> {
                 10,
             ),
         )?;
+        qualify_scoped_fixture(&vault, &key_id)?;
     }
     let policy = resolve(&vault)?;
     let denied_effect = scoped_mcp_effect(denied_principal, "files");
@@ -257,6 +306,7 @@ fn charter_never_channel_preserves_hyphen_and_underscore_for_scoped_calls() -> R
             10,
         ),
     )?;
+    qualify_scoped_fixture(&vault, &hyphen_key)?;
     vault.register_connector_key(
         &underscore_key,
         crate::connector_key::ConnectorKeyRecord::active(
@@ -266,6 +316,7 @@ fn charter_never_channel_preserves_hyphen_and_underscore_for_scoped_calls() -> R
             10,
         ),
     )?;
+    qualify_scoped_fixture(&vault, &underscore_key)?;
     let policy = resolve(&vault)?;
     let hyphen_effect = scoped_mcp_effect(principal, "foo-bar");
     let underscore_effect = scoped_mcp_effect(principal, "foo_bar");
@@ -317,6 +368,7 @@ fn charter_never_channel_preserves_hyphen_and_underscore_for_scoped_calls() -> R
             10,
         ),
     )?;
+    qualify_scoped_fixture(&vault, &alias_key)?;
     let policy = resolve(&vault)?;
     let alias_effect = scoped_mcp_effect(alias_principal, "foo-bar");
     let pending = vault.propose_connector_charter(&alias_key, "never * on mcp:foo_bar", 1_003)?;
@@ -352,6 +404,7 @@ fn charter_wildcard_channel_still_binds_typed_scoped_calls() -> Result<()> {
             10,
         ),
     )?;
+    qualify_scoped_fixture(&vault, &key_id)?;
     let policy = resolve(&vault)?;
     let effect = scoped_mcp_effect(principal, "foo-bar");
     assert_eq!(
@@ -389,6 +442,7 @@ fn charter_wildcard_channel_still_binds_typed_scoped_calls() -> Result<()> {
             10,
         ),
     )?;
+    qualify_scoped_fixture(&vault, &other_key)?;
     let policy = resolve(&vault)?;
     let pending = vault.propose_connector_charter(&other_key, "never send", 1_003)?;
     vault.approve_connector_charter(&other_key, pending.compiled_hash, "owner", 1_004)?;
@@ -717,5 +771,69 @@ fn definition_ceiling_blocks_external_effect_auto() -> Result<()> {
         "a Proposed-ceiling agent can never auto-fire an external effect, got {:?}",
         decision.reason_codes()
     );
+    Ok(())
+}
+
+#[test]
+fn resolved_manifest_drift_holds_scoped_tool_at_gate() -> Result<()> {
+    use crate::connector_key::{
+        ConnectorManifestQualifier, ConnectorToolSchema, ResolvedConnectorManifest,
+    };
+    use serde_json::json;
+    struct Suite;
+    impl ConnectorManifestQualifier for Suite {
+        fn qualify(&self, _: &ResolvedConnectorManifest, _: &str) -> Result<String> {
+            Ok("b".repeat(64))
+        }
+    }
+    let (_tmp, vault) = temp_vault();
+    put_policy_manifest_bytes(&vault, test_id(0xC6), &encode_policy_manifest(vec![]))?;
+    let principal = test_id(0xE5);
+    let grant_id = test_id(0xE6);
+    vault.mint_scoped_mcp_outbound_grant(
+        &grant_id,
+        &scoped_mcp_grant_intent(&principal.to_hex(), "files"),
+        10,
+    )?;
+    let key_id = test_id(0xE7);
+    vault.register_connector_key(
+        &key_id,
+        crate::connector_key::ConnectorKeyRecord::active(
+            scoped_capability_connector("files", &grant_id),
+            None,
+            Vec::new(),
+            10,
+        ),
+    )?;
+    qualify_scoped_fixture(&vault, &key_id)?;
+    let manifest = |default| {
+        ResolvedConnectorManifest::resolve(vec![ConnectorToolSchema {
+        name: "read_file".into(), permissions: ["read".into()].into(), triggers: Default::default(),
+        input_schema: json!({"type":"object", "properties":{"path":{"type":"string","default":default}}}),
+    }]).unwrap()
+    };
+    let mut record = vault.get_connector_key(&key_id)?.unwrap();
+    record.retained_manifest = Some(manifest("safe"));
+    record.protocol_revision = Some("r1".into());
+    vault.with_write_txn(|txn| {
+        crate::connector_key::rewrite_connector_key_in_txn(&vault.store, txn, &key_id, &record)
+    })?;
+    let policy = resolve(&vault)?;
+    let effect = scoped_mcp_effect(principal, "files");
+    let (before, _) = check_effect(&vault, &effect, &policy)?;
+    assert_eq!(before.outcome(), GateOutcome::Allow);
+    vault.stage_connector_manifest(&key_id, manifest("changed"), "r1", &Suite, 11)?;
+    let (after, charge) = check_effect(&vault, &effect, &policy)?;
+    assert_eq!(after.outcome(), GateOutcome::Pending);
+    assert_eq!(
+        gate_reason_strs(&after),
+        vec!["gate.pending.connector_manifest_drift"]
+    );
+    assert!(
+        after
+            .receipt_reasons()
+            .contains(&"connector_manifest_drift")
+    );
+    assert!(charge.is_none());
     Ok(())
 }

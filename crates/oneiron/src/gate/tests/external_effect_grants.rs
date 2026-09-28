@@ -2,6 +2,54 @@
 
 use super::*;
 
+fn approve_scoped_external_fixture(vault: &crate::Vault, key_id: &EntityId) -> Result<()> {
+    use crate::connector_key::{
+        ConnectorManifestQualifier, ConnectorToolSchema, ResolvedConnectorManifest,
+    };
+    struct Suite;
+    impl ConnectorManifestQualifier for Suite {
+        fn qualify(&self, _: &ResolvedConnectorManifest, _: &str) -> Result<String> {
+            Ok("b".repeat(64))
+        }
+    }
+    let manifest = ResolvedConnectorManifest::resolve(vec![ConnectorToolSchema {
+        name: "read_file".into(),
+        permissions: ["read".into()].into(),
+        triggers: Default::default(),
+        input_schema: serde_json::json!({"properties":{}}),
+    }])?;
+    vault.stage_connector_manifest(key_id, manifest.clone(), "R1", &Suite, 11)?;
+    let owner = EntityId::now();
+    vault.put_entity(
+        &owner,
+        crate::registry::ENTITY_TYPE_PERSON,
+        crate::TimeRange { start: 1, end: 1 },
+        1,
+        b"owner",
+    )?;
+    let auth = vault.authenticate_owner(
+        owner,
+        &owner.to_hex(),
+        true,
+        crate::store::GateDecisionId::from_bytes(*EntityId::now().as_bytes()),
+    )?;
+    let candidate = vault
+        .get_connector_key(key_id)?
+        .unwrap()
+        .pending_manifest
+        .unwrap()
+        .candidate_id;
+    vault.approve_connector_manifest(
+        &auth,
+        key_id,
+        candidate,
+        manifest.hash()?,
+        &"b".repeat(64),
+        12,
+    )?;
+    Ok(())
+}
+
 #[test]
 fn external_effect_scoped_grant_allows_and_records_receipt() -> Result<()> {
     let (_tmp, vault) = temp_vault();
@@ -208,6 +256,7 @@ fn scoped_mcp_grant_is_payload_aware_at_external_effect_gate() -> Result<()> {
             10,
         ),
     )?;
+    approve_scoped_external_fixture(&vault, &test_id(0xDA))?;
     let policy = resolve(&vault)?;
     let in_scope_call = || crate::outbound_consent::ScopedMcpCallContext {
         server: "files".to_owned(),
@@ -340,6 +389,7 @@ fn scoped_mcp_grant_budget_matches_its_synthetic_governing_key() -> Result<()> {
             10,
         ),
     )?;
+    approve_scoped_external_fixture(&vault, &key_id)?;
 
     let policy = resolve(&vault)?;
     let mut effect = external_effect_gate_input(&principal_ref, "send", "mcp:calendar");
@@ -412,6 +462,7 @@ fn scoped_mcp_grant_dissolves_only_its_proposed_external_effect_fork() -> Result
             10,
         ),
     )?;
+    approve_scoped_external_fixture(&vault, &test_id(0xBA))?;
     let policy = resolve(&vault)?;
     let mut effect = external_effect_gate_input(&herald_id.to_hex(), "send", "mcp:calendar");
     effect.actor.actor_class = "agent".to_owned();
@@ -466,6 +517,7 @@ fn scoped_mcp_grant_does_not_cross_an_unverified_identity_pair() -> Result<()> {
             10,
         ),
     )?;
+    approve_scoped_external_fixture(&vault, &test_id(0xBF))?;
     let policy = resolve(&vault)?;
     let mut effect = external_effect_gate_input(&caller_id.to_hex(), "send", "mcp:calendar");
     effect.actor.actor_class = "agent".to_owned();

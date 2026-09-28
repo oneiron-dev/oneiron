@@ -149,6 +149,9 @@ pub(crate) fn remote_rejection_reason(error: &Error) -> Option<String> {
         | ErrorKind::InvalidPsychProfileBody
         | ErrorKind::InvalidSkillBody
         | ErrorKind::InvalidAgentDefBody
+        // CONNECTOR_KEY authority is local to the host: a peer cannot
+        // introduce, replace or clear its approved manifest through replay.
+        | ErrorKind::InvalidConnectorKeyBody
         | ErrorKind::InvalidTaskBody
         // An ask word or receipt that arrived before its group or person is
         // remote data waiting on a dependency; forward remat keeps its retry.

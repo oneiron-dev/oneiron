@@ -2,7 +2,7 @@
 use super::*;
 use crate::consent::AuthenticatedOwner;
 use crate::outbound_consent::tool_call::{
-    MutationIntent, PreparedToolCall, ToolCallDescriptor, ToolGrantDataClass, prepare_tool_call,
+    MutationIntent, PreparedToolCall, ToolCallDescriptor, ToolGrantDataClass,
 };
 use crate::outbound_grant::StandingOutboundGrant;
 use serde_json::{Value, json};
@@ -37,26 +37,60 @@ fn grant(vault: &Vault, classes: Vec<ToolGrantDataClass>) -> (EntityId, Standing
     let grant = vault
         .mint_scoped_mcp_outbound_grant_with_owner(&owner, &id, &intent, 10)
         .unwrap();
-    register_active_scoped_connector_key_with_budget(vault, &id, "files", 100);
+    let key_id = register_active_scoped_connector_key_with_budget(vault, &id, "files", 100);
+    // Header tests use one approved descriptor with the same resolved header
+    // schema that their prepared calls freeze.
+    let mut key = vault.get_connector_key(&key_id).unwrap().unwrap();
+    key.retained_manifest = Some(
+        crate::connector_key::ResolvedConnectorManifest::resolve(vec![
+            crate::connector_key::ConnectorToolSchema {
+                name: "read_file".into(),
+                permissions: ["read".into()].into(),
+                triggers: Default::default(),
+                input_schema: json!({"properties": {
+                    "tenant": {"type": "string", "x-mcp-header": "X-Tenant"},
+                    "record": {"type": "string"}, "dry_run": {"type": "boolean"}
+                }}),
+            },
+        ])
+        .unwrap(),
+    );
+    vault
+        .with_write_txn(|txn| {
+            crate::connector_key::rewrite_connector_key_in_txn(&vault.store, txn, &key_id, &key)
+        })
+        .unwrap();
     (id, grant)
 }
 
-fn prepare(arguments: &Value, mutation: MutationIntent) -> PreparedToolCall {
-    prepare_tool_call(
-        scoped_call(),
-        ToolCallDescriptor {
-            schema: &json!({"properties": {
-                "tenant": {"type": "string", "x-mcp-header": "X-Tenant"},
-                "record": {"type": "string"},
-                "dry_run": {"type": "boolean"}
-            }}),
-            destructive_hint: true,
-            replay: fixture_descriptor(),
-        },
-        arguments,
-        mutation,
-    )
-    .unwrap()
+fn prepare(
+    vault: &Vault,
+    grant_id: &EntityId,
+    arguments: &Value,
+    mutation: MutationIntent,
+) -> PreparedToolCall {
+    let schema = json!({"properties": {
+        "tenant": {"type": "string", "x-mcp-header": "X-Tenant"},
+        "record": {"type": "string"},
+        "dry_run": {"type": "boolean"}
+    }});
+    vault
+        .prepare_connector_tool_call(
+            &vault
+                .connector_key_for(&scoped_capability_connector("files", grant_id), None)
+                .unwrap()
+                .unwrap()
+                .0,
+            scoped_call(),
+            ToolCallDescriptor {
+                schema: &schema,
+                destructive_hint: true,
+                replay: fixture_descriptor(),
+            },
+            arguments,
+            mutation,
+        )
+        .unwrap()
 }
 
 #[test]
@@ -65,6 +99,8 @@ fn missing_header_class_refuses_both_authorize_and_atomic_mint_despite_argument_
     let (id, grant) = grant(&vault, vec![ToolGrantDataClass::Arguments]);
     let authority = OutboundBindingAuthority::for_vault(&vault).unwrap();
     let prepared = prepare(
+        &vault,
+        &id,
         &json!({"tenant": "original", "record": "r1"}),
         MutationIntent::default(),
     );
@@ -131,7 +167,7 @@ fn granted_headers_and_default_destructive_preview_survive_durable_recovery_byte
     );
     let authority = OutboundBindingAuthority::for_vault(&vault).unwrap();
     let mut arguments = json!({"tenant": "original", "record": "r1", "dry_run": false});
-    let prepared = prepare(&arguments, MutationIntent::default());
+    let prepared = prepare(&vault, &id, &arguments, MutationIntent::default());
     let expected = prepared.frozen_bytes().to_vec();
     arguments["tenant"] = json!("changed after preparation");
     let attempt = AttemptId::now();
@@ -222,10 +258,16 @@ fn explicit_mutation_does_not_supply_missing_consent_or_relax_sensitivity() {
         let authority = OutboundBindingAuthority::for_vault(&vault).unwrap();
         let mut call = scoped_call();
         call.payload_data_class = sensitivity;
-        let prepared = prepare_tool_call(
+        let key_ref = vault
+            .connector_key_for(&scoped_capability_connector("files", &id), None)
+            .unwrap()
+            .unwrap()
+            .0;
+        let prepared = vault.prepare_connector_tool_call(
+            &key_ref,
             call,
             ToolCallDescriptor {
-                schema: &json!({"properties":{"tenant":{"x-mcp-header":"X-Tenant"},"dry_run":{"type":"boolean"}}}),
+                schema: &json!({"properties":{"tenant":{"type":"string","x-mcp-header":"X-Tenant"},"record":{"type":"string"},"dry_run":{"type":"boolean"}}}),
                 destructive_hint: true,
                 replay: fixture_descriptor(),
             },
@@ -293,6 +335,8 @@ fn header_class_requires_owner_door_and_revocation_blocks_prepared_mutation() {
     let (id, grant) = grant(&vault, intent.tool_data_classes);
     let authority = OutboundBindingAuthority::for_vault(&vault).unwrap();
     let prepared = prepare(
+        &vault,
+        &id,
         &json!({"tenant":"original"}),
         MutationIntent::ExplicitMutation,
     );
@@ -398,7 +442,12 @@ fn raw_payload_cannot_replace_preparation_or_downgrade_to_unscoped_authority() {
             ],
         );
         let authority = OutboundBindingAuthority::for_vault(&vault).unwrap();
-        let prepared = prepare(&json!({"tenant":"original"}), MutationIntent::default());
+        let prepared = prepare(
+            &vault,
+            &id,
+            &json!({"tenant":"original"}),
+            MutationIntent::default(),
+        );
         let mut effect = prepared_effect(id, &grant, prepared);
         effect.payload =
             br#"{"arguments":{"dry_run":false},"headers":{"x-tenant":"raw bypass"}}"#.to_vec();

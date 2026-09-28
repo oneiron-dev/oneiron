@@ -303,6 +303,7 @@ pub(super) fn revoke_connector_key_in_txn(
         status_changed_at: Some(at),
         suspended_reason: None,
         pending_charter: None,
+        pending_manifest: None,
         suggested_budgets: Vec::new(),
         ..record.clone()
     };

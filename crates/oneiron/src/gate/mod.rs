@@ -14,6 +14,7 @@ pub(crate) use manifest_authenticity::stamp_manifest_origin;
 pub(crate) use manifest_authenticity::{seeded_manifest_key, trusted_manifest_key};
 mod carry_forward_policy;
 mod confirm;
+mod connector_admission;
 mod constants;
 mod decision;
 mod decode;
@@ -71,6 +72,7 @@ pub use self::confirm::{
 pub(crate) use self::confirm::{
     critical_write_confirm_binding, reconcile_critical_write_confirm_on_replicated_overwrite,
 };
+pub(crate) use self::connector_admission::ConnectorAdmissionQuotas;
 pub(crate) use self::constants::POLICY_OWNER_POLICY_NOTIFY_KEY;
 #[cfg(test)]
 pub(crate) use self::constants::{

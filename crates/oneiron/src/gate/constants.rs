@@ -72,6 +72,8 @@ pub(super) const ATTRIBUTION_HOLDER_MAX_BYTES_KEY: &str = "max_bytes";
 /// floors only narrow it, and independent trusted packs compose by max.
 pub(super) const POLICY_TEACHER_PROBE_KEY: &str = "teacher_probe";
 pub(super) const POLICY_BUDGET_POLICY_KEY: &str = "budget_policy";
+/// Bounded policy rows for foreign connector admission, not persisted-body codec bounds.
+pub(super) const POLICY_CONNECTOR_ADMISSION_KEY: &str = "connector_admission";
 /// Optional trusted DEC-0005 manifest setting for gate-decision age pruning.
 /// The seeded default has a null horizon (no pruning), and an owner-authored
 /// row overrides it. Conflicting owner rows are ambiguous and fail closed.

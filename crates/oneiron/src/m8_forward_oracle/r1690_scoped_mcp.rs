@@ -264,6 +264,7 @@ impl OutboundTransport for OracleResultChokepointTransport<'_> {
 fn trace_effectful_mcp_send(vault: &Vault) -> EffectfulSendTrace {
     let fixture = install_oracle_scoped_fixture(vault);
     let prepared = oracle_prepared_effect(
+        vault,
         &fixture,
         AttemptId::from_bytes(&[0x91; 16]).expect("attempt id"),
         1,

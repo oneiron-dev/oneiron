@@ -1,5 +1,6 @@
 //! Key and catalog registry shapes: status, call class, catalog entry, key spec/record with validate, charter data shapes.
 
+use crate::connector_key::manifest_drift::{ConnectorManifestDrift, ResolvedConnectorManifest};
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 
@@ -11,8 +12,10 @@ use crate::error::RecordError;
 
 /// ConnectorKeyRecord lifecycle status.
 ///
-/// Catalogued keys start Pending; only the qualification suite can activate them.
-/// Legacy catalog-free budget keys retain their Active registration door.
+/// Catalogued keys and per-grant scoped keys start Pending; only the
+/// qualification suite can activate them, and a protocol-revision change
+/// returns them to Pending. Legacy catalog-free budget keys retain their
+/// Active registration door.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum ConnectorKeyStatus {
     Pending,
@@ -218,7 +221,8 @@ pub struct ConnectorKeyRecord {
     pub catalog: Option<ConnectorCatalogEntry>,
     /// Typed slate whose owner stamp must precede qualification.
     pub slate_ref: Option<EntityId>,
-    /// Pinned negotiated revision; any change sends the key back to Pending.
+    /// Pinned negotiated revision, beside schema_version on disk; any change
+    /// sends the key back to Pending.
     pub protocol_revision: Option<String>,
     /// Slate revision accepted at the last qualification.
     pub slate_revision: Option<u64>,
@@ -226,6 +230,21 @@ pub struct ConnectorKeyRecord {
     pub admission_epoch: u64,
     /// Whether this admission requires a new owner decision on expanded rows.
     pub consent_required: bool,
+    /// Last approved fully resolved manifest; never overwritten by a proposal.
+    pub retained_manifest: Option<ResolvedConnectorManifest>,
+    /// Candidate awaiting qualification and graded owner re-consent.
+    pub pending_manifest: Option<PendingConnectorManifest>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PendingConnectorManifest {
+    /// Unique per staging attempt; rendered to the owner and checked at approval.
+    pub candidate_id: [u8; 32],
+    pub manifest: ResolvedConnectorManifest,
+    pub protocol_revision: String,
+    pub drift: ConnectorManifestDrift,
+    pub qualification_report_hash: Option<String>,
 }
 
 impl ConnectorKeyRecord {
@@ -256,7 +275,32 @@ impl ConnectorKeyRecord {
             slate_revision: None,
             admission_epoch: 0,
             consent_required: false,
+            retained_manifest: None,
+            pending_manifest: None,
         }
+    }
+
+    /// Fail-closed per-tool drift wall shared by admission and recovery.
+    /// Legacy unmanifested keys retain their existing connector-key behavior;
+    /// once a manifest is staged or pinned, unknown tools cannot auto-fire.
+    #[must_use]
+    pub fn tool_requires_confirmation(&self, tool: &str) -> bool {
+        if self
+            .pending_manifest
+            .as_ref()
+            .is_some_and(|pending| pending.drift.requires_reregistration)
+        {
+            return true;
+        }
+        let Some(approved) = self.retained_manifest.as_ref() else {
+            return self.pending_manifest.is_some() || self.status == ConnectorKeyStatus::Pending;
+        };
+        if !approved.tools().iter().any(|entry| entry.name == tool) {
+            return true;
+        }
+        self.pending_manifest
+            .as_ref()
+            .is_some_and(|pending| pending.drift.affected_tools.contains(tool))
     }
 
     /// Validates structural invariants shared by encode, decode, and register.
@@ -309,16 +353,20 @@ impl ConnectorKeyRecord {
         if let Some(secret_ref) = self.secret_ref.as_deref() {
             validate_secret_ref(secret_ref)?;
         }
-        if let Some(revision) = self.protocol_revision.as_deref()
-            && (revision.trim().is_empty()
-                || revision.len() > 128
-                || revision.as_bytes().contains(&0))
-        {
-            return Err(invalid_body("invalid connector protocol revision"));
+        // The retained snapshot is always paired with the revision it was
+        // approved at. A catalog key pins its revision at registration, before
+        // any manifest is retained.
+        if self.retained_manifest.is_some() && self.protocol_revision.is_none() {
+            return Err(invalid_body("manifest and protocol pin must be paired"));
         }
+        if let Some(revision) = self.protocol_revision.as_deref() {
+            validate_protocol_revision(revision)?;
+        }
+        // A catalog-free scoped key pins its revision only beside an approved
+        // manifest; the slate admission fields belong to catalog keys.
         if self.catalog.is_none()
             && (self.slate_ref.is_some()
-                || self.protocol_revision.is_some()
+                || self.protocol_revision.is_some() && self.retained_manifest.is_none()
                 || self.slate_revision.is_some()
                 || self.admission_epoch != 0
                 || self.consent_required)
@@ -335,6 +383,46 @@ impl ConnectorKeyRecord {
                 || self.consent_required)
         {
             return Err(invalid_body("active catalog key lacks qualification"));
+        }
+        if let Some(manifest) = &self.retained_manifest {
+            manifest.validate_snapshot()?;
+            validate_manifest_json_size(manifest)?;
+        }
+        if let Some(pending) = &self.pending_manifest {
+            validate_protocol_revision(&pending.protocol_revision)?;
+            pending.manifest.validate_snapshot()?;
+            validate_manifest_json_size(pending)?;
+            if pending.candidate_id == [0; 32] {
+                return Err(invalid_body("manifest candidate id missing"));
+            }
+            let expected = match (&self.retained_manifest, &self.protocol_revision) {
+                (Some(old), Some(revision)) => ConnectorManifestDrift::between(
+                    old,
+                    &pending.manifest,
+                    revision,
+                    &pending.protocol_revision,
+                ),
+                // A catalog key's first manifest is staged at its pinned revision.
+                (None, Some(revision)) if *revision == pending.protocol_revision => {
+                    ConnectorManifestDrift::first_registration(&pending.manifest)
+                }
+                (None, None) => ConnectorManifestDrift::first_registration(&pending.manifest),
+                _ => return Err(invalid_body("manifest pin incomplete")),
+            };
+            if pending.drift != expected
+                || !pending.drift.has_change()
+                || pending
+                    .qualification_report_hash
+                    .as_ref()
+                    .is_some_and(|hash| {
+                        hash.len() != 64 || !hash.bytes().all(|b| b.is_ascii_hexdigit())
+                    })
+            {
+                return Err(invalid_body("manifest drift is inconsistent"));
+            }
+            if pending.drift.requires_reregistration && self.status != ConnectorKeyStatus::Pending {
+                return Err(invalid_body("revision drift must hold key pending"));
+            }
         }
         if let Some(catalog) = self.catalog.as_ref() {
             catalog.validate()?;
@@ -472,4 +560,33 @@ pub(in crate::connector_key) fn validate_compiled_policy(
 
 pub(crate) fn invalid_body(reason: &'static str) -> Error {
     Error::Record(RecordError::InvalidConnectorKeyBody(reason))
+}
+
+/// Protocol revisions are bounded transport tokens, not caller-authored prose.
+pub(in crate::connector_key) fn validate_protocol_revision(value: &str) -> Result<()> {
+    if value.is_empty()
+        || value.len() > 128
+        || !value
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'-' | b'_'))
+    {
+        return Err(invalid_body("invalid negotiated protocol revision"));
+    }
+    Ok(())
+}
+
+/// The same maximum applies to both serialized snapshot and pending wrapper.
+/// It is checked before write and before decode so a writer cannot persist an
+/// otherwise valid key that its own reader refuses.
+pub(in crate::connector_key) const MAX_CONNECTOR_MANIFEST_BYTES: usize = 4_194_304;
+
+fn validate_manifest_json_size(value: &impl serde::Serialize) -> Result<()> {
+    if serde_json::to_vec(value)
+        .map_err(|_| invalid_body("manifest serialization failed"))?
+        .len()
+        > MAX_CONNECTOR_MANIFEST_BYTES
+    {
+        return Err(invalid_body("resolved manifest exceeds aggregate bound"));
+    }
+    Ok(())
 }

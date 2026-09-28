@@ -23,21 +23,38 @@ fn fixture_descriptor() -> OutboundToolDescriptor {
 }
 
 fn prepared_fixture(
+    vault: &Vault,
+    grant_id: &EntityId,
     call: ScopedMcpCallContext,
     descriptor: OutboundToolDescriptor,
     bytes: Vec<u8>,
 ) -> tool_call::PreparedToolCall {
-    tool_call::prepare_tool_call(
-        call,
-        tool_call::ToolCallDescriptor {
-            schema: &serde_json::json!({"properties": {}}),
-            destructive_hint: false,
-            replay: descriptor,
-        },
-        &serde_json::json!({"fixture_bytes": bytes}),
-        tool_call::MutationIntent::default(),
-    )
-    .expect("prepare fixture")
+    let schema = serde_json::json!({"properties": {}});
+    let tool = tool_call::ToolCallDescriptor {
+        schema: &schema,
+        destructive_hint: false,
+        replay: descriptor,
+    };
+    let args = serde_json::json!({"fixture_bytes": bytes});
+    let connector = scoped_capability_connector(&call.server, grant_id);
+    if let Some((id, key)) = vault
+        .connector_key_for(&connector, None)
+        .expect("key lookup")
+        && key.retained_manifest.is_some()
+        && key.status == crate::connector_key::ConnectorKeyStatus::Active
+    {
+        return vault
+            .prepare_connector_tool_call(
+                &id,
+                call,
+                tool,
+                &args,
+                tool_call::MutationIntent::default(),
+            )
+            .expect("prepare exact approved connector schema");
+    }
+    tool_call::prepare_tool_call(call, tool, &args, tool_call::MutationIntent::default())
+        .expect("prepare fixture")
 }
 
 fn scoped_intent() -> ScopedMcpGrantMintIntent {
@@ -99,6 +116,17 @@ fn register_active_scoped_connector_key_with_budgets(
     server: &str,
     budgets: Vec<crate::connector_key::EffectorBudget>,
 ) -> EntityId {
+    struct Suite;
+    impl crate::connector_key::ConnectorManifestQualifier for Suite {
+        fn qualify(
+            &self,
+            _: &crate::connector_key::ResolvedConnectorManifest,
+            _: &str,
+        ) -> crate::error::Result<String> {
+            Ok("a".repeat(64))
+        }
+    }
+
     let key_id = entity(0xD0);
     vault
         .register_connector_key(
@@ -111,6 +139,53 @@ fn register_active_scoped_connector_key_with_budgets(
             ),
         )
         .expect("register active scoped connector key");
+    let manifest = crate::connector_key::ResolvedConnectorManifest::resolve(vec![
+        crate::connector_key::ConnectorToolSchema {
+            name: "read_file".into(),
+            permissions: ["read".into()].into(),
+            triggers: Default::default(),
+            input_schema: serde_json::json!({"properties": {}}),
+        },
+    ])
+    .expect("resolved fixture schema");
+    vault
+        .stage_connector_manifest(&key_id, manifest.clone(), "R1", &Suite, 11)
+        .expect("qualify fixture");
+    let owner = EntityId::now();
+    vault
+        .put_entity(
+            &owner,
+            crate::registry::ENTITY_TYPE_PERSON,
+            crate::TimeRange { start: 1, end: 1 },
+            1,
+            b"owner",
+        )
+        .expect("owner person");
+    let auth = vault
+        .authenticate_owner(
+            owner,
+            &owner.to_hex(),
+            true,
+            crate::store::GateDecisionId::from_bytes(*EntityId::now().as_bytes()),
+        )
+        .expect("owner authentication");
+    let candidate = vault
+        .get_connector_key(&key_id)
+        .expect("key read")
+        .unwrap()
+        .pending_manifest
+        .unwrap()
+        .candidate_id;
+    vault
+        .approve_connector_manifest(
+            &auth,
+            &key_id,
+            candidate,
+            manifest.hash().unwrap(),
+            &"a".repeat(64),
+            12,
+        )
+        .expect("stamp fixture");
     key_id
 }
 
@@ -343,7 +418,13 @@ fn binding_authenticity_and_endpoint_swap_fail_closed_at_chokepoint() {
         &grant.principal_ref,
         AttemptId::from_bytes(&[0x31; 16]).expect("attempt id"),
         1,
-        prepared_fixture(scoped_call(), descriptor, b"valid payload".to_vec()),
+        prepared_fixture(
+            &vault,
+            &grant_id,
+            scoped_call(),
+            descriptor,
+            b"valid payload".to_vec(),
+        ),
         11,
         &mut transport,
     )
@@ -360,7 +441,13 @@ fn binding_authenticity_and_endpoint_swap_fail_closed_at_chokepoint() {
         &grant.principal_ref,
         AttemptId::from_bytes(&[0x32; 16]).expect("attempt id"),
         2,
-        prepared_fixture(scoped_call(), descriptor, b"tampered payload".to_vec()),
+        prepared_fixture(
+            &vault,
+            &grant_id,
+            scoped_call(),
+            descriptor,
+            b"tampered payload".to_vec(),
+        ),
         12,
         &mut ambiguous,
     )
@@ -412,6 +499,8 @@ fn binding_authenticity_and_endpoint_swap_fail_closed_at_chokepoint() {
         AttemptId::from_bytes(&[0x33; 16]).expect("attempt id"),
         3,
         prepared_fixture(
+            &vault,
+            &grant_id,
             scoped_call(),
             descriptor,
             b"endpoint-bound payload".to_vec(),
@@ -462,6 +551,8 @@ fn binding_authenticity_and_endpoint_swap_fail_closed_at_chokepoint() {
         AttemptId::from_bytes(&[0x34; 16]).expect("attempt id"),
         4,
         prepared_fixture(
+            &vault,
+            &grant_id,
             ScopedMcpCallContext {
                 resolved_endpoint: "https://exfil.example".to_owned(),
                 ..scoped_call()
@@ -501,6 +592,8 @@ fn authorize_request_reloads_persisted_grant_liveness() {
             AttemptId::from_bytes(&[0x34; 16]).expect("attempt id"),
             1,
             &prepared_fixture(
+                &vault,
+                &grant_id,
                 scoped_call(),
                 fixture_descriptor(),
                 b"stale caller payload".to_vec(),
@@ -540,6 +633,8 @@ fn scoped_mcp_authorization_is_bound_to_the_acting_principal() {
             AttemptId::from_bytes(&[0x35; 16]).expect("attempt id"),
             1,
             &prepared_fixture(
+                &vault,
+                &grant_id,
                 call.clone(),
                 fixture_descriptor(),
                 b"wrong principal payload".to_vec(),
@@ -567,7 +662,13 @@ fn scoped_mcp_authorization_is_bound_to_the_acting_principal() {
         &principal_b,
         AttemptId::from_bytes(&[0x36; 16]).expect("attempt id"),
         2,
-        prepared_fixture(call.clone(), descriptor, b"rejected payload".to_vec()),
+        prepared_fixture(
+            &vault,
+            &grant_id,
+            call.clone(),
+            descriptor,
+            b"rejected payload".to_vec(),
+        ),
         11,
         &mut transport,
     )
@@ -588,7 +689,13 @@ fn scoped_mcp_authorization_is_bound_to_the_acting_principal() {
         &principal_a,
         AttemptId::from_bytes(&[0x37; 16]).expect("attempt id"),
         3,
-        prepared_fixture(call, descriptor, b"authorized payload".to_vec()),
+        prepared_fixture(
+            &vault,
+            &grant_id,
+            call,
+            descriptor,
+            b"authorized payload".to_vec(),
+        ),
         12,
         &mut transport,
     )
@@ -622,6 +729,8 @@ fn suspended_scoped_mcp_connector_key_blocks_the_public_send_path() {
         AttemptId::from_bytes(&[0x51; 16]).expect("attempt id"),
         1,
         prepared_fixture(
+            &vault,
+            &grant_id,
             scoped_call(),
             OutboundToolDescriptor {
                 read_only_hint: Some(false),
@@ -691,6 +800,8 @@ fn drifted_scoped_mcp_connector_charter_blocks_the_direct_send_path() {
         AttemptId::from_bytes(&[0x71; 16]).expect("attempt id"),
         1,
         prepared_fixture(
+            &vault,
+            &grant_id,
             scoped_call(),
             OutboundToolDescriptor {
                 read_only_hint: Some(false),
@@ -752,6 +863,8 @@ fn scoped_mcp_connector_key_budget_refuses_the_n_plus_one_send() {
             AttemptId::from_bytes(&[attempt_seed; 16]).expect("attempt id"),
             u64::try_from(index).expect("small index") + 1,
             prepared_fixture(
+                &vault,
+                &grant_id,
                 scoped_call(),
                 descriptor,
                 format!("payload {index}").into_bytes(),
@@ -773,7 +886,13 @@ fn scoped_mcp_connector_key_budget_refuses_the_n_plus_one_send() {
         &grant.principal_ref,
         AttemptId::from_bytes(&[0x62; 16]).expect("attempt id"),
         3,
-        prepared_fixture(scoped_call(), descriptor, b"payload refused".to_vec()),
+        prepared_fixture(
+            &vault,
+            &grant_id,
+            scoped_call(),
+            descriptor,
+            b"payload refused".to_vec(),
+        ),
         22,
         &mut transport,
     )
@@ -819,7 +938,13 @@ fn done_intent_replay_skips_the_connector_key_debit() {
         &grant.principal_ref,
         attempt_id,
         1,
-        prepared_fixture(scoped_call(), descriptor, b"replay payload".to_vec()),
+        prepared_fixture(
+            &vault,
+            &grant_id,
+            scoped_call(),
+            descriptor,
+            b"replay payload".to_vec(),
+        ),
         11,
         &mut transport,
     )
@@ -835,7 +960,13 @@ fn done_intent_replay_skips_the_connector_key_debit() {
         &grant.principal_ref,
         attempt_id,
         1,
-        prepared_fixture(scoped_call(), descriptor, b"replay payload".to_vec()),
+        prepared_fixture(
+            &vault,
+            &grant_id,
+            scoped_call(),
+            descriptor,
+            b"replay payload".to_vec(),
+        ),
         12,
         &mut transport,
     )
@@ -888,7 +1019,13 @@ fn pending_resume_and_done_replay_charge_and_complete_once() {
             &grant.principal_ref,
             attempt_id,
             1,
-            prepared_fixture(scoped_call(), descriptor, b"exactly once".to_vec()),
+            prepared_fixture(
+                &vault,
+                &grant_id,
+                scoped_call(),
+                descriptor,
+                b"exactly once".to_vec(),
+            ),
             now_ms,
             transport,
         )
@@ -959,6 +1096,8 @@ fn pending_and_budget_marker_are_committed_before_transport() {
         AttemptId::from_bytes(&[0x7B; 16]).expect("attempt id"),
         1,
         prepared_fixture(
+            &vault,
+            &grant_id,
             scoped_call(),
             OutboundToolDescriptor {
                 read_only_hint: Some(false),
@@ -1004,6 +1143,8 @@ fn same_version_reopen_recovers_own_budget_marker_and_outcome_row() {
             AttemptId::from_bytes(&[0x7D; 16]).expect("attempt id"),
             1,
             prepared_fixture(
+                &vault,
+                &grant_id,
                 scoped_call(),
                 OutboundToolDescriptor {
                     read_only_hint: Some(false),
@@ -1085,6 +1226,8 @@ fn scoped_effect_without_send_ref_still_debits_the_sends_dimension() {
         AttemptId::from_bytes(&[0x74; 16]).expect("attempt id"),
         1,
         prepared_fixture(
+            &vault,
+            &grant_id,
             scoped_call(),
             OutboundToolDescriptor {
                 read_only_hint: Some(true),
@@ -1119,6 +1262,8 @@ fn scoped_effect_without_send_ref_still_debits_the_sends_dimension() {
         AttemptId::from_bytes(&[0x75; 16]).expect("attempt id"),
         2,
         prepared_fixture(
+            &vault,
+            &grant_id,
             scoped_call(),
             OutboundToolDescriptor {
                 read_only_hint: Some(false),
@@ -1191,6 +1336,8 @@ fn paid_pending_ignores_later_standing_grant_revocation_and_completes() {
         AttemptId::from_bytes(&[0x41; 16]).expect("attempt id"),
         1,
         prepared_fixture(
+            &vault,
+            &grant_id,
             scoped_call(),
             OutboundToolDescriptor {
                 read_only_hint: Some(false),
@@ -1266,6 +1413,8 @@ fn recovery_rechecks_suspended_connector_key_and_keeps_intent_pending() {
         AttemptId::from_bytes(&[0x76; 16]).expect("attempt id"),
         1,
         prepared_fixture(
+            &vault,
+            &grant_id,
             scoped_call(),
             OutboundToolDescriptor {
                 read_only_hint: Some(false),
@@ -1326,6 +1475,8 @@ fn recovery_keeps_charter_never_list_and_drift_recoverable_pending() {
         AttemptId::from_bytes(&[0x7C; 16]).expect("attempt id"),
         1,
         prepared_fixture(
+            &vault,
+            &grant_id,
             scoped_call(),
             OutboundToolDescriptor {
                 read_only_hint: Some(false),
@@ -1422,6 +1573,8 @@ fn revoked_connector_abandons_paid_pending_without_transport() {
         AttemptId::from_bytes(&[0x77; 16]).expect("attempt id"),
         1,
         prepared_fixture(
+            &vault,
+            &grant_id,
             scoped_call(),
             OutboundToolDescriptor {
                 read_only_hint: Some(false),
@@ -1480,6 +1633,8 @@ fn non_idempotent_pending_abandons_without_resume_attempt() {
         AttemptId::from_bytes(&[0x79; 16]).expect("attempt id"),
         1,
         prepared_fixture(
+            &vault,
+            &grant_id,
             scoped_call(),
             OutboundToolDescriptor {
                 read_only_hint: Some(false),
@@ -1544,6 +1699,8 @@ fn allowlisted_endpoint_rotation_freezes_the_selected_endpoint() {
         AttemptId::from_bytes(&[0x78; 16]).expect("attempt id"),
         1,
         prepared_fixture(
+            &vault,
+            &grant_id,
             ScopedMcpCallContext {
                 resolved_endpoint: "https://files-backup.internal.example".to_owned(),
                 ..scoped_call()
@@ -1627,6 +1784,17 @@ fn authorized_recovery_skips_non_scoped_connector_rows() {
 // --- ONE-1885 typed capability provenance round trip -------------------------
 
 fn register_scoped_key(vault: &Vault, key_id: &EntityId, grant_id: &EntityId, server: &str) {
+    struct Suite;
+    impl crate::connector_key::ConnectorManifestQualifier for Suite {
+        fn qualify(
+            &self,
+            _: &crate::connector_key::ResolvedConnectorManifest,
+            _: &str,
+        ) -> crate::error::Result<String> {
+            Ok("a".repeat(64))
+        }
+    }
+
     vault
         .register_connector_key(
             key_id,
@@ -1638,6 +1806,53 @@ fn register_scoped_key(vault: &Vault, key_id: &EntityId, grant_id: &EntityId, se
             ),
         )
         .expect("register active scoped connector key");
+    let manifest = crate::connector_key::ResolvedConnectorManifest::resolve(vec![
+        crate::connector_key::ConnectorToolSchema {
+            name: "read_file".into(),
+            permissions: ["read".into()].into(),
+            triggers: Default::default(),
+            input_schema: serde_json::json!({"properties": {}}),
+        },
+    ])
+    .unwrap();
+    vault
+        .stage_connector_manifest(key_id, manifest.clone(), "R1", &Suite, 11)
+        .unwrap();
+    let owner = EntityId::now();
+    vault
+        .put_entity(
+            &owner,
+            crate::registry::ENTITY_TYPE_PERSON,
+            crate::TimeRange { start: 1, end: 1 },
+            1,
+            b"owner",
+        )
+        .unwrap();
+    let auth = vault
+        .authenticate_owner(
+            owner,
+            &owner.to_hex(),
+            true,
+            crate::store::GateDecisionId::from_bytes(*EntityId::now().as_bytes()),
+        )
+        .unwrap();
+    let candidate = vault
+        .get_connector_key(key_id)
+        .unwrap()
+        .unwrap()
+        .pending_manifest
+        .unwrap()
+        .candidate_id;
+    vault
+        .approve_connector_manifest(
+            &auth,
+            key_id,
+            candidate,
+            manifest.hash().unwrap(),
+            &"a".repeat(64),
+            12,
+        )
+        .unwrap();
 }
 
 fn stamp_charter(vault: &Vault, key_id: &EntityId, text: &str) {
@@ -1683,6 +1898,8 @@ fn capability_provenance_survives_admission_ledger_and_recovery() {
                 .expect("attempt id"),
             1,
             prepared_fixture(
+                &vault,
+                &grant_id,
                 scoped_call(),
                 OutboundToolDescriptor {
                     read_only_hint: Some(false),
@@ -1799,6 +2016,8 @@ fn canonical_hyphenated_server_round_trips_through_key_ledger_and_recovery_trans
         AttemptId::from_bytes(&[0x75; 16]).expect("attempt id"),
         1,
         prepared_fixture(
+            &vault,
+            &grant_id,
             call,
             OutboundToolDescriptor {
                 read_only_hint: Some(false),
@@ -1837,3 +2056,414 @@ fn canonical_hyphenated_server_round_trips_through_key_ledger_and_recovery_trans
 }
 
 mod header_consent;
+
+#[test]
+fn fresh_unqualified_scoped_key_cannot_send_even_with_live_grant() {
+    let (_dir, vault) = temp_vault();
+    let grant_id = entity(0xD6);
+    let grant = vault
+        .mint_scoped_mcp_outbound_grant(&grant_id, &scoped_intent(), 10)
+        .unwrap();
+    let key_id = entity(0xD8);
+    vault
+        .register_connector_key(
+            &key_id,
+            crate::connector_key::ConnectorKeyRecord::active(
+                scoped_capability_connector("files", &grant_id),
+                None,
+                vec![],
+                10,
+            ),
+        )
+        .unwrap();
+    let authority = OutboundBindingAuthority::for_vault(&vault).unwrap();
+    let mut sender = RecordingResultSender::default();
+    let result = execute_scoped_mcp_outbound_call(
+        &vault,
+        &authority,
+        grant_id,
+        &grant,
+        &grant.principal_ref,
+        AttemptId::from_bytes(&[0xD7; 16]).unwrap(),
+        1,
+        prepared_fixture(
+            &vault,
+            &grant_id,
+            scoped_call(),
+            fixture_descriptor(),
+            vec![1],
+        ),
+        11,
+        &mut sender,
+    )
+    .unwrap();
+    assert_eq!(
+        result.decision,
+        ScopedMcpConsentDecision::Escalate(ScopedMcpEscalationReason::ConnectorKeyPending)
+    );
+    assert_eq!(
+        vault.get_connector_key(&key_id).unwrap().unwrap().status,
+        crate::connector_key::ConnectorKeyStatus::Pending
+    );
+    assert_eq!(result.effectful_sends, 0);
+    assert!(sender.sent_payloads.is_empty());
+}
+
+#[test]
+fn replaced_manifest_refuses_delayed_and_pending_scoped_calls_with_current_hash() {
+    struct Suite;
+    impl crate::connector_key::ConnectorManifestQualifier for Suite {
+        fn qualify(
+            &self,
+            _: &crate::connector_key::ResolvedConnectorManifest,
+            _: &str,
+        ) -> crate::error::Result<String> {
+            Ok("b".repeat(64))
+        }
+    }
+    let (_dir, vault) = temp_vault();
+    let grant_id = entity(0xD9);
+    let grant = vault
+        .mint_scoped_mcp_outbound_grant(&grant_id, &scoped_intent(), 10)
+        .unwrap();
+    let key_id = register_active_scoped_connector_key_with_budget(&vault, &grant_id, "files", 100);
+    let authority = OutboundBindingAuthority::for_vault(&vault).unwrap();
+    let delayed = prepared_fixture(
+        &vault,
+        &grant_id,
+        scoped_call(),
+        fixture_descriptor(),
+        vec![1],
+    );
+    let pending = prepared_fixture(
+        &vault,
+        &grant_id,
+        scoped_call(),
+        fixture_descriptor(),
+        vec![2],
+    );
+    let mut ambiguous = AmbiguousResultSender;
+    let attempt = AttemptId::from_bytes(&[0xD9; 16]).unwrap();
+    let initial = execute_scoped_mcp_outbound_call(
+        &vault,
+        &authority,
+        grant_id,
+        &grant,
+        &grant.principal_ref,
+        attempt,
+        1,
+        pending.clone(),
+        11,
+        &mut ambiguous,
+    )
+    .unwrap();
+    assert_eq!(initial.effectful_sends, 1);
+    assert_eq!(
+        initial.dispatch.as_ref().and_then(|d| d.state),
+        Some(IntentState::Pending)
+    );
+
+    let changed = crate::connector_key::ResolvedConnectorManifest::resolve(vec![
+        crate::connector_key::ConnectorToolSchema {
+            name: "read_file".into(),
+            permissions: ["write".into()].into(),
+            triggers: Default::default(),
+            input_schema: serde_json::json!({"properties": {}}),
+        },
+    ])
+    .unwrap();
+    vault
+        .stage_connector_manifest(&key_id, changed.clone(), "R1", &Suite, 13)
+        .unwrap();
+    let owner = EntityId::now();
+    vault
+        .put_entity(
+            &owner,
+            crate::registry::ENTITY_TYPE_PERSON,
+            crate::TimeRange { start: 1, end: 1 },
+            1,
+            b"owner",
+        )
+        .unwrap();
+    let auth = vault
+        .authenticate_owner(
+            owner,
+            &owner.to_hex(),
+            true,
+            crate::store::GateDecisionId::from_bytes(*EntityId::now().as_bytes()),
+        )
+        .unwrap();
+    let candidate = vault
+        .get_connector_key(&key_id)
+        .unwrap()
+        .unwrap()
+        .pending_manifest
+        .unwrap()
+        .candidate_id;
+    vault
+        .approve_connector_manifest(
+            &auth,
+            &key_id,
+            candidate,
+            changed.hash().unwrap(),
+            &"b".repeat(64),
+            14,
+        )
+        .unwrap();
+    let expected =
+        ScopedMcpConsentDecision::Escalate(ScopedMcpEscalationReason::StaleConnectorManifest {
+            current_manifest_hash: changed.hash().unwrap(),
+        });
+    let mut sender = RecordingResultSender::default();
+    let delayed_result = execute_scoped_mcp_outbound_call(
+        &vault,
+        &authority,
+        grant_id,
+        &grant,
+        &grant.principal_ref,
+        AttemptId::from_bytes(&[0xDA; 16]).unwrap(),
+        2,
+        delayed.clone(),
+        15,
+        &mut sender,
+    )
+    .unwrap();
+    assert_eq!(delayed_result.decision, expected);
+    assert_eq!(delayed_result.effectful_sends, 0);
+    let pending_result = execute_scoped_mcp_outbound_call(
+        &vault,
+        &authority,
+        grant_id,
+        &grant,
+        &grant.principal_ref,
+        attempt,
+        1,
+        pending,
+        16,
+        &mut sender,
+    )
+    .unwrap();
+    assert_eq!(pending_result.decision, expected);
+    assert_eq!(pending_result.effectful_sends, 0);
+    assert!(sender.sent_payloads.is_empty());
+    assert_eq!(
+        intent_ledger_records(&vault)
+            .unwrap()
+            .first()
+            .unwrap()
+            .state,
+        IntentState::Pending
+    );
+    // A renamed/removed tool must still report the replaced snapshot, not
+    // generic unknown-tool drift. The public sweep must preserve that typed
+    // result and must not debit or send the paid Pending intent again.
+    let removed = crate::connector_key::ResolvedConnectorManifest::resolve(vec![
+        crate::connector_key::ConnectorToolSchema {
+            name: "other".into(),
+            permissions: ["read".into()].into(),
+            triggers: Default::default(),
+            input_schema: serde_json::json!({"properties":{}}),
+        },
+    ])
+    .unwrap();
+    vault
+        .stage_connector_manifest(&key_id, removed.clone(), "R1", &Suite, 17)
+        .unwrap();
+    let candidate = vault
+        .get_connector_key(&key_id)
+        .unwrap()
+        .unwrap()
+        .pending_manifest
+        .unwrap()
+        .candidate_id;
+    vault
+        .approve_connector_manifest(
+            &auth,
+            &key_id,
+            candidate,
+            removed.hash().unwrap(),
+            &"b".repeat(64),
+            18,
+        )
+        .unwrap();
+    let removed_result = execute_scoped_mcp_outbound_call(
+        &vault,
+        &authority,
+        grant_id,
+        &grant,
+        &grant.principal_ref,
+        AttemptId::from_bytes(&[0xDB; 16]).unwrap(),
+        3,
+        delayed,
+        19,
+        &mut sender,
+    )
+    .unwrap();
+    assert_eq!(
+        removed_result.decision,
+        ScopedMcpConsentDecision::Escalate(ScopedMcpEscalationReason::StaleConnectorManifest {
+            current_manifest_hash: removed.hash().unwrap(),
+        })
+    );
+    assert_eq!(removed_result.effectful_sends, 0);
+    let connector = scoped_capability_connector("files", &grant_id);
+    let debit_before = vault
+        .effector_budget_read(&connector, None)
+        .unwrap()
+        .unwrap()
+        .rows[0]
+        .used;
+    let sweep =
+        recover_authorized_outbound_intents(&vault, &authority, &mut sender, 20, 30_000).unwrap();
+    assert_eq!(sweep.effectful_sends, 0);
+    assert_eq!(sweep.ledger.pending, 1);
+    assert_eq!(sweep.stale_manifest_refusals.len(), 1);
+    assert_eq!(
+        sweep.stale_manifest_refusals[0].intent_id,
+        intent_ledger_records(&vault).unwrap()[0].id
+    );
+    assert_eq!(
+        sweep.stale_manifest_refusals[0].current_manifest_hash,
+        removed.hash().unwrap()
+    );
+    assert_eq!(
+        vault
+            .effector_budget_read(&connector, None)
+            .unwrap()
+            .unwrap()
+            .rows[0]
+            .used,
+        debit_before
+    );
+    assert!(sender.sent_payloads.is_empty());
+}
+
+#[test]
+fn failed_revision_revert_stays_closed_for_preparation_admission_and_recovery() {
+    struct Suite(Option<&'static str>);
+    impl crate::connector_key::ConnectorManifestQualifier for Suite {
+        fn qualify(
+            &self,
+            _: &crate::connector_key::ResolvedConnectorManifest,
+            _: &str,
+        ) -> crate::error::Result<String> {
+            self.0
+                .map(str::to_owned)
+                .ok_or_else(|| crate::Error::InvalidConfig("probe failed".into()))
+        }
+    }
+    let (_dir, vault) = temp_vault();
+    let grant_id = entity(0xBC);
+    let grant = vault
+        .mint_scoped_mcp_outbound_grant(&grant_id, &scoped_intent(), 10)
+        .unwrap();
+    let key_id = register_active_scoped_connector_key_with_budget(&vault, &grant_id, "files", 100);
+    let authority = OutboundBindingAuthority::for_vault(&vault).unwrap();
+    let prepared = prepared_fixture(
+        &vault,
+        &grant_id,
+        scoped_call(),
+        fixture_descriptor(),
+        vec![3],
+    );
+    let mut ambiguous = AmbiguousResultSender;
+    let initial = execute_scoped_mcp_outbound_call(
+        &vault,
+        &authority,
+        grant_id,
+        &grant,
+        &grant.principal_ref,
+        AttemptId::from_bytes(&[0xBC; 16]).unwrap(),
+        1,
+        prepared.clone(),
+        11,
+        &mut ambiguous,
+    )
+    .unwrap();
+    assert_eq!(initial.effectful_sends, 1);
+    assert_eq!(
+        initial.dispatch.as_ref().and_then(|r| r.state),
+        Some(IntentState::Pending)
+    );
+    let manifest = vault
+        .get_connector_key(&key_id)
+        .unwrap()
+        .unwrap()
+        .retained_manifest
+        .unwrap();
+    assert!(
+        vault
+            .stage_connector_manifest(&key_id, manifest.clone(), "R2", &Suite(None), 13)
+            .is_err()
+    );
+    assert!(
+        vault
+            .stage_connector_manifest(&key_id, manifest.clone(), "R1", &Suite(None), 14)
+            .is_err()
+    );
+    assert!(
+        vault
+            .stage_connector_manifest(&key_id, manifest, "R1", &Suite(Some("malformed")), 15)
+            .is_err()
+    );
+    assert_eq!(
+        vault.get_connector_key(&key_id).unwrap().unwrap().status,
+        crate::connector_key::ConnectorKeyStatus::Pending
+    );
+    let descriptor = tool_call::ToolCallDescriptor {
+        schema: &serde_json::json!({"properties":{}}),
+        destructive_hint: false,
+        replay: fixture_descriptor(),
+    };
+    assert!(
+        vault
+            .prepare_connector_tool_call(
+                &key_id,
+                scoped_call(),
+                descriptor,
+                &serde_json::json!({}),
+                tool_call::MutationIntent::default()
+            )
+            .is_err()
+    );
+    let mut sender = RecordingResultSender::default();
+    let admission = execute_scoped_mcp_outbound_call(
+        &vault,
+        &authority,
+        grant_id,
+        &grant,
+        &grant.principal_ref,
+        AttemptId::from_bytes(&[0xBD; 16]).unwrap(),
+        2,
+        prepared,
+        16,
+        &mut sender,
+    )
+    .unwrap();
+    assert_eq!(
+        admission.decision,
+        ScopedMcpConsentDecision::Escalate(ScopedMcpEscalationReason::ConnectorKeyPending)
+    );
+    assert_eq!(admission.effectful_sends, 0);
+    let connector = scoped_capability_connector("files", &grant_id);
+    let used = vault
+        .effector_budget_read(&connector, None)
+        .unwrap()
+        .unwrap()
+        .rows[0]
+        .used;
+    let sweep =
+        recover_authorized_outbound_intents(&vault, &authority, &mut sender, 17, 30_000).unwrap();
+    assert_eq!(sweep.effectful_sends, 0);
+    assert_eq!(sweep.ledger.pending, 1);
+    assert_eq!(
+        vault
+            .effector_budget_read(&connector, None)
+            .unwrap()
+            .unwrap()
+            .rows[0]
+            .used,
+        used
+    );
+    assert!(sender.sent_payloads.is_empty());
+}

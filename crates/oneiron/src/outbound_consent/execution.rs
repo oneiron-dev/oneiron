@@ -165,6 +165,9 @@ fn scoped_decision_after_effect(
                 "connector_key_suspended" => Some(ScopedMcpEscalationReason::ConnectorKeySuspended),
                 "connector_key_revoked" => Some(ScopedMcpEscalationReason::ConnectorKeyRevoked),
                 "charter_drift" => Some(ScopedMcpEscalationReason::ConnectorKeyCharterDrift),
+                "connector_manifest_drift" => {
+                    Some(ScopedMcpEscalationReason::ConnectorManifestDrift)
+                }
                 "charter_never_list" => {
                     Some(ScopedMcpEscalationReason::ConnectorKeyCharterNeverList)
                 }
@@ -173,6 +176,36 @@ fn scoped_decision_after_effect(
                 }
                 _ => None,
             });
+    if effect
+        .gate_receipt_reasons
+        .iter()
+        .any(|reason| reason == "connector_manifest_stale")
+    {
+        let Some(identity) = crate::connector_key::ScopedCapabilityProvenance::mint(
+            &prepared.call().server,
+            &grant_id,
+        ) else {
+            return Ok(ScopedMcpConsentDecision::Escalate(
+                ScopedMcpEscalationReason::ConnectorKeyUnregistered,
+            ));
+        };
+        let actor = EntityId::from_hex(principal_ref).unwrap_or(grant_id);
+        let Some((_, key)) = vault.connector_key_for(identity.connector(), Some(&actor))? else {
+            return Ok(ScopedMcpConsentDecision::Escalate(
+                ScopedMcpEscalationReason::ConnectorKeyUnregistered,
+            ));
+        };
+        let Some(manifest) = key.retained_manifest.as_ref() else {
+            return Ok(ScopedMcpConsentDecision::Escalate(
+                ScopedMcpEscalationReason::ConnectorManifestDrift,
+            ));
+        };
+        return Ok(ScopedMcpConsentDecision::Escalate(
+            ScopedMcpEscalationReason::StaleConnectorManifest {
+                current_manifest_hash: manifest.hash()?,
+            },
+        ));
+    }
     if let Some(reason) = connector_reason {
         return Ok(ScopedMcpConsentDecision::Escalate(reason));
     }

@@ -2,6 +2,7 @@
 
 mod apply;
 mod claim_admission;
+mod connector_key_guard;
 mod lexical_hint;
 mod owned_body;
 mod put_entity_update;

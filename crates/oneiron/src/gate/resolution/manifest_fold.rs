@@ -271,6 +271,9 @@ pub(crate) fn resolve_policy_manifest(
                     }
                 }
                 resolution.budget_policy.extend_rows(decoded.budget_policy);
+                if let Some(admission) = decoded.connector_admission {
+                    resolution.connector_admission.restrict(admission);
+                }
                 if let Some(voice_serving) = decoded.voice_serving {
                     resolution.voice_serving.push(voice_serving);
                 }
