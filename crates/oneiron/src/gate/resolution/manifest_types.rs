@@ -165,6 +165,8 @@ pub(crate) struct PolicyManifestResolution {
     pub(crate) ask_policy: Option<crate::gate::ask_policy::AskOperationalPolicy>,
     pub(crate) retry_source_policy: Vec<crate::gate::retry_source_policy::RetrySourcePolicyRow>,
     pub(crate) compilation_policies: Vec<crate::edit_distance::miner::CompilationPolicy>,
+    pub(crate) carry_forward_confidence: crate::gate::carry_forward_policy::CarryForwardPolicy,
+    pub(super) carry_forward_authored: bool,
     pub(super) packs: Vec<PolicyPack>,
     pub(super) actor_ceilings: Vec<ActorCeiling>,
     pub(crate) delegation_fold: DelegationFoldCache,
