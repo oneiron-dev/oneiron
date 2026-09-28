@@ -143,9 +143,13 @@ pub(super) fn hash_policy_frontier_v0(
     }
 
     hash_bool(hasher, resolution.owner_policy_enabled);
-    // Include the resolved composition row even when there are no owner rows.
-    hash_str(hasher, "owner_policy_precedence");
-    hash_str(hasher, resolution.owner_policy_precedence.as_str());
+    // The shipped nested_narrowing composition keeps the historical frontier
+    // bytes, so standing bindings survive; only a declared change is hashed.
+    if resolution.owner_policy_precedence != crate::gate::ceiling::PolicyOwnerPrecedence::default()
+    {
+        hash_str(hasher, "owner_policy_precedence");
+        hash_str(hasher, resolution.owner_policy_precedence.as_str());
+    }
     hash_bool(hasher, resolution.owner_policy_rows_dropped);
     hash_len(hasher, resolution.owner_policy_rows.len());
     for row in &resolution.owner_policy_rows {
