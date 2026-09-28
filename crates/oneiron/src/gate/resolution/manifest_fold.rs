@@ -11,11 +11,13 @@ use crate::store::Store;
 use crate::vault::Vault;
 use crate::write_envelope::{SourceLineage, WriteActor};
 
+use super::manifest_types::ConnectorClassPrecedence;
 use super::manifest_types::{PolicyManifestResolution, TeacherProbeRow};
 use crate::gate::ceiling::{
     DelegationFoldCache, DelegationGrantRecord, PolicyOwnerPolicyRow, check_source_trust,
     fold_delegated_grants,
 };
+use crate::gate::decode::ConnectorClassRole;
 use crate::gate::decode::decode_policy_manifest;
 
 pub(crate) fn resolve_policy_manifest(
@@ -46,6 +48,9 @@ pub(crate) fn resolve_policy_manifest(
     let mut untrusted_teacher_rows = Vec::new();
     let mut untrusted_sheet_limits = Vec::new();
     let mut delegated_rows: Vec<DelegationGrantRecord> = Vec::new();
+    let mut vault_class_carry: Option<BTreeSet<(String, String)>> = None;
+    let mut holder_class_carry: Vec<BTreeSet<(String, String)>> = Vec::new();
+    let mut vault_precedence: Option<ConnectorClassPrecedence> = None;
     let mut shipped_pptx_limits: Option<crate::edit_roundtrip::pptx::PptxOperationalLimits> = None;
     let mut owner_pptx_limits: Option<crate::edit_roundtrip::pptx::PptxOperationalLimits> = None;
 
@@ -107,6 +112,9 @@ pub(crate) fn resolve_policy_manifest(
                     merge_teacher_probe_row(&mut resolution, row);
                 }
                 resolution.source_trust.merge(decoded.source_trust);
+                resolution
+                    .experiment_selection
+                    .extend(decoded.experiment_selection);
                 resolution.actor_ceilings.extend(decoded.actor_ceilings);
                 delegated_rows.extend(decoded.delegated_grants);
                 resolution.scoped_grants.extend(decoded.scoped_grants);
@@ -180,6 +188,31 @@ pub(crate) fn resolve_policy_manifest(
                 // Deterministic resolved order: type-index manifest scan
                 // order, then row order inside each manifest. Row indices in
                 // ladder events index this concatenation.
+                match decoded.connector_class_role {
+                    ConnectorClassRole::Vault => {
+                        if let Some(rows) = decoded.connector_class_carry {
+                            match &mut vault_class_carry {
+                                None => vault_class_carry = Some(rows),
+                                Some(existing) => existing.retain(|row| rows.contains(row)),
+                            }
+                        }
+                        if let Some(precedence) = decoded.connector_class_precedence {
+                            match vault_precedence {
+                                None => vault_precedence = Some(precedence),
+                                Some(existing) if existing == precedence => {}
+                                Some(_) => resolution.diagnostics.malformed_manifest_seen = true,
+                            }
+                        }
+                    }
+                    ConnectorClassRole::Holder => {
+                        if decoded.connector_class_precedence.is_some() {
+                            resolution.diagnostics.malformed_manifest_seen = true;
+                        }
+                        if let Some(rows) = decoded.connector_class_carry {
+                            holder_class_carry.push(rows);
+                        }
+                    }
+                }
                 resolution.budget_policy.extend_rows(decoded.budget_policy);
                 if let Some(policy) = decoded.pack_install_policy {
                     if let Some(existing) = &mut resolution.pack_install_policy {
@@ -211,6 +244,9 @@ pub(crate) fn resolve_policy_manifest(
                     };
                     *slot = Some(slot.map_or(limits, |previous| previous.narrow(limits)));
                 }
+                resolution
+                    .booking_conversion_rows
+                    .extend(decoded.booking_conversion_rows);
                 resolution.hosted_tts.rows.extend(decoded.hosted_tts.rows);
                 if let Some(bounds) = decoded.docedit_resource_policy {
                     let baseline = crate::gate::docedit_resource::DoceditResourcePolicy::shipped();
@@ -276,6 +312,13 @@ pub(crate) fn resolve_policy_manifest(
                             .map_or(threshold, |old| old.min(threshold)),
                     );
                 }
+                if let Some(limits) = decoded.goal_limits {
+                    resolution.goal_limits = Some(
+                        resolution
+                            .goal_limits
+                            .map_or(limits, |old| old.restrict(limits)),
+                    );
+                }
                 if let Some(limits) = decoded.voice_ref_limits {
                     if id == crate::gate::default_policy_manifest_id()? {
                         resolution.voice_ref_defaults = Some(limits);
@@ -309,6 +352,29 @@ pub(crate) fn resolve_policy_manifest(
             }
         }
     }
+
+    // `None` only when no trusted manifest names a class row, so the frontier
+    // of such manifests keeps its established bytes.
+    let class_policy_named =
+        vault_class_carry.is_some() || vault_precedence.is_some() || !holder_class_carry.is_empty();
+    resolution.connector_class_precedence = vault_precedence.unwrap_or_default();
+    let mut carry = vault_class_carry.unwrap_or_default();
+    match resolution.connector_class_precedence {
+        ConnectorClassPrecedence::Nested => {
+            for holder in holder_class_carry {
+                carry.retain(|row| holder.contains(row));
+            }
+        }
+        ConnectorClassPrecedence::HolderOverride => {
+            if holder_class_carry.len() > 1 {
+                resolution.diagnostics.malformed_manifest_seen = true;
+                carry.clear();
+            } else if let Some(holder) = holder_class_carry.pop() {
+                carry.retain(|row| holder.contains(row));
+            }
+        }
+    }
+    resolution.connector_class_carry = class_policy_named.then_some(carry);
 
     resolution.pptx_comment_limits = owner_pptx_limits.or(shipped_pptx_limits);
 
@@ -344,7 +410,9 @@ pub(crate) fn resolve_policy_manifest(
     if resolution.hosted_tts.rows.len() > usize::from(u16::MAX) + 1 {
         resolution.diagnostics.malformed_manifest_seen = true;
     }
-    if resolution.budget_policy.rows().len() > usize::from(u16::MAX) + 1 {
+    if resolution.budget_policy.rows().len() > usize::from(u16::MAX) + 1
+        || resolution.booking_conversion_rows.len() > 128
+    {
         resolution.diagnostics.malformed_manifest_seen = true;
     }
 

@@ -149,6 +149,14 @@ pub(crate) fn default_value() -> Value {
     )
 }
 
+/// The shipped rows and their precedence order as default-manifest entries.
+pub(crate) fn default_entry() -> (Value, Value) {
+    (Value::from(KEY), default_value())
+}
+pub(crate) fn default_precedence_entry() -> (Value, Value) {
+    (Value::from(PRECEDENCE_KEY), Value::from(NESTED_NARROWING))
+}
+
 const SECTION_NAMES: &[&str] = &[
     "changes",
     "projects",

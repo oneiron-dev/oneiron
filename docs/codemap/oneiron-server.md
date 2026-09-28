@@ -12,7 +12,8 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | path | kind | bucket | pub surface | notable types | purpose |
 |---|---|---|---|---|---|
 | `src/actions.rs` | src | s | 1 struct · 4 fn | SharedActionExecutor | Host-bound UI and agent action executor over the engine's one verb registry |
-| `src/api/artifacts.rs` | src | m | 16 crate-vis | — | — |
+| `src/api/artifacts.rs` | src | s | 12 crate-vis | — | — |
+| `src/api/artifacts/route.rs` | src | s | 6 crate-vis | — | One typed codec for artifact bundle entry and canonical file URLs |
 | `src/api/booking.rs` | src | m | 14 crate-vis | — | ONE-1819 [BK-08] the agent-readable booking surface |
 | `src/api/booking/admission.rs` | src | m | 2 crate-vis | — | — |
 | `src/api/booking/constants.rs` | src | s | 14 crate-vis | — | — |
@@ -26,7 +27,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/booking/public_availability_tests.rs` | test | s | — | — | — |
 | `src/api/booking/public_fixture.rs` | src | m | 30 crate-vis | — | Shared fixtures for tests that enter the real public router |
 | `src/api/booking/public_lifecycle_tests.rs` | test | m | — | — | — |
-| `src/api/booking/public_tests.rs` | test | m | — | — | — |
+| `src/api/booking/public_tests.rs` | test | L | — | — | — |
 | `src/api/booking/subject.rs` | src | s | 3 crate-vis | — | — |
 | `src/api/booking/transport.rs` | src | s | 1 crate-vis | — | — |
 | `src/api/booking/validate.rs` | src | s | 2 crate-vis | — | — |
@@ -172,7 +173,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/tests/support_mcp.rs` | test | m | 32 crate-vis | — | Shared MCP test harness: legacy adapter, tool-first endpoints, scoping, code-run fixtures |
 | `src/api/tests/support_mcp_credentials.rs` | test | s | 3 crate-vis | — | Paired MCP fixture credentials |
 | `src/api/tests/surface_events.rs` | test | m | — | — | Surface-event submit/replay/receipts, scope enforcement, idempotency + durability, malformed-input mapping |
-| `src/api/tests/surface_routes.rs` | test | L | — | — | Health/runtime/discover redaction, outbound capability contracts, local artifact serving, context-board seed… |
+| `src/api/tests/surface_routes.rs` | test | XL | — | — | Health/runtime/discover redaction, outbound capability contracts, local artifact serving, context-board seed… |
 | `src/api/tests/vad_and_error_mapping.rs` | test | m | — | — | Turn/message VAD annotate routes plus core-engine-error to HTTP status mapping matrix |
 | `src/api/vad.rs` | src | m | 9 crate-vis | — | — |
 | `src/auth.rs` | src | m | 31 crate-vis | — | HTTP authentication for log-backed version-two capability slips |
@@ -282,8 +283,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/mcp/oauth_client.rs` | src | s | 3 struct · 2 enum · 5 fn · 1 const | AuthorizationResponse, ClientApplication, OAuthClientError, OAuthTokenCache, TokenCacheKey | Issuer-bound OAuth client state and pinned client metadata (ARCH-0028) |
 | `src/mcp/oauth_client/tests.rs` | test | s | — | — | — |
 | `src/mcp/paging.rs` | src | m | 2 struct · 3 enum · 19 fn · 1 const · 4 crate-vis | McpPageBudget, McpPageCursorError, McpPageSource, McpResultEnd, McpRetrievalHealth | MCP page budgets, cursors, snapshots, and canonical-JSON digests |
-| `src/mcp/qualification.rs` | src | m | 10 struct · 3 enum · 3 trait · 2 fn | GroundingOracle, ProbeCitation, ProbeDisposition, ProbeReply, ProbeRequest, ProbeTool, ProbeTraceEvent, ProbeTraceKind +8 | Connector qualification probes |
-| `src/mcp/qualification/tests.rs` | test | m | — | — | — |
+| `src/mcp/qualification.rs` | src | s | 1 re-export | — | Public MCP qualification API, implemented at the vault boundary |
 | `src/mcp/quickjs_provider.rs` | src | s | 1 struct · 1 fn | McpQuickJsProvider | Production MCP provider over the hash-pinned engine QuickJS component |
 | `src/mcp/registry.rs` | src | m | 1 struct · 19 fn · 3 crate-vis | McpConnectorActorRegistry | MCP connector actor registry: cursors, board epochs, and stream proxy |
 | `src/mcp/results.rs` | src | s | 3 struct · 1 enum · 9 fn | McpBoardKeyframe, McpResultMetadata, McpSetupPayload, McpSetupPayloadError | MCP result envelopes: metadata, board keyframes, and setup payloads |
