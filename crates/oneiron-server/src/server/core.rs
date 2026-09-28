@@ -1,5 +1,5 @@
 //! Core server state: the `SyncServer` struct, construction, and shared helpers.
-use std::collections::HashSet;
+use std::collections::{BTreeMap, HashSet};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, Ordering};
 
@@ -33,6 +33,15 @@ pub(crate) enum BroadcastPayload {
     Frame(u32, Vec<u8>),
     /// A producer lost notifications before they reached this channel.
     Resync { missed: u64 },
+}
+
+/// One host-resolved agent run and the prefix this session actually emitted.
+/// The host advances the epoch only after a real fold; an HTTP request cannot.
+pub(crate) struct HostSelfBriefSession {
+    pub(crate) state: oneiron::context_board::SelfBriefState,
+    pub(crate) render: oneiron::context_board::SelfBriefSession,
+    pub(crate) epoch: u64,
+    pub(crate) emitted_epoch: Option<u64>,
 }
 
 /// Core sync server state shared across all connections.
@@ -74,6 +83,9 @@ pub struct SyncServer {
     pub(crate) mcp_code_host: Option<Arc<dyn crate::mcp::McpCodeExecutionHost>>,
     /// Actor/session read observations share the server lifetime, never a process global.
     pub(crate) memories_cursors: Mutex<crate::api::MemoriesCursorStore>,
+    /// Host-resolved run briefs, keyed by authenticated actor and session.
+    pub(crate) self_brief_sessions:
+        Mutex<BTreeMap<(oneiron::EntityId, String), HostSelfBriefSession>>,
     /// ONE-207: the optional deep-retrieval host.
     ///
     /// `None` on every server [`SyncServer::new`] builds, and that is the
@@ -221,6 +233,7 @@ impl SyncServer {
             mcp_registry,
             mcp_code_host: None,
             memories_cursors: Mutex::new(crate::api::MemoriesCursorStore::default()),
+            self_brief_sessions: Mutex::new(BTreeMap::new()),
             deep_retrieval: None,
             embedder: None,
             llm: None,
@@ -228,6 +241,38 @@ impl SyncServer {
             #[cfg(test)]
             booking_test_now_secs: None,
         })
+    }
+
+    /// Install an already resolved run snapshot from the trusted host. The
+    /// HTTP request never supplies scope, class verdicts, or budget. Advancing
+    /// `epoch` happens only when the host has completed a real fold.
+    pub async fn install_self_brief_session(
+        &self,
+        actor: oneiron::EntityId,
+        session_id: String,
+        epoch: u64,
+        state: oneiron::context_board::SelfBriefState,
+    ) -> oneiron::Result<()> {
+        if state.self_ref != actor || session_id.is_empty() || session_id.len() > 256 {
+            return Err(oneiron::Error::InvariantViolation(
+                "self brief actor or session mismatch",
+            ));
+        }
+        let mut runs = self.self_brief_sessions.lock().await;
+        let entry = runs
+            .entry((actor, session_id))
+            .or_insert_with(|| HostSelfBriefSession {
+                state: state.clone(),
+                render: oneiron::context_board::SelfBriefSession::default(),
+                epoch,
+                emitted_epoch: None,
+            });
+        if epoch < entry.epoch {
+            return Err(oneiron::Error::InvariantViolation("stale self brief epoch"));
+        }
+        entry.state = state;
+        entry.epoch = epoch;
+        Ok(())
     }
 
     /// Bind a readiness-verified QuickJS provider before exposing this vault's

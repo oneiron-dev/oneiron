@@ -167,10 +167,11 @@ impl LinearEgress for FakeEgress {
         })
     }
 
-    fn update_issue(
+    fn update_issue_conditional(
         &mut self,
         operation_id: [u8; 32],
         issue: &LinearIssueRef,
+        _expected_base: &BTreeMap<String, [u8; 32]>,
         fields: &MirroredTaskFields,
     ) -> LinearSyncResult<LinearIssueChange> {
         self.updated += 1;
@@ -905,14 +906,146 @@ fn the_adapter_registers_field_ownership_and_needs_no_credential() {
 
     let registration = LINEAR_SYNC_REGISTRATION;
     assert_eq!(registration.adapter_id, LINEAR_SYNC_ADAPTER_ID);
-    // v3: event identity is non-evicting and every link row carries its CAS
-    // revision, so the row key namespace moves with the shape.
-    assert_eq!(registration.schema_version, 3);
-    assert!(LINEAR_SYNC_LINK_KEY_PREFIX.ends_with(b"v3:"));
+    // v4: event identity and link CAS remain, with a separate remote snapshot
+    // hashes, so the row key namespace moves with the shape.
+    assert_eq!(registration.schema_version, 4);
+    assert!(LINEAR_SYNC_LINK_KEY_PREFIX.ends_with(b"v4:"));
     assert_eq!(registration.mirrored_fields.len(), 5);
     let engine_owned = registration.engine_authoritative_fields;
     assert!(engine_owned.contains(&"blocked_by"));
     let key = linear_sync_link_key(task_ref);
     assert!(key.starts_with(LINEAR_SYNC_LINK_KEY_PREFIX));
     assert_eq!(key.len(), LINEAR_SYNC_LINK_KEY_PREFIX.len() + 16);
+}
+
+/// Unlike the older counter-only fake, this egress enforces the production
+/// bridge contract against its actual current remote fields on every update.
+#[derive(Clone)]
+struct CasEgress {
+    remote: std::rc::Rc<std::cell::RefCell<MirroredTaskFields>>,
+    updates: std::rc::Rc<std::cell::Cell<usize>>,
+}
+
+impl LinearEgress for CasEgress {
+    fn create_issue(
+        &mut self,
+        _operation_id: [u8; 32],
+        _task_ref: EntityId,
+        fields: &MirroredTaskFields,
+    ) -> LinearSyncResult<LinearIssueChange> {
+        *self.remote.borrow_mut() = fields.clone();
+        Ok(change("cas-created", 1_000, fields.clone()))
+    }
+
+    fn update_issue_conditional(
+        &mut self,
+        _operation_id: [u8; 32],
+        issue: &LinearIssueRef,
+        expected_remote: &BTreeMap<String, [u8; 32]>,
+        fields: &MirroredTaskFields,
+    ) -> LinearSyncResult<LinearIssueChange> {
+        if &self.remote.borrow().field_hashes() != expected_remote {
+            return Err(LinearSyncError::RemoteChanged);
+        }
+        *self.remote.borrow_mut() = fields.clone();
+        self.updates.set(self.updates.get() + 1);
+        Ok(LinearIssueChange {
+            event_id: format!("cas-update-{}", self.updates.get()),
+            issue: issue.clone(),
+            updated_at_ms: 10_000 + self.updates.get() as u64,
+            fields: fields.clone(),
+        })
+    }
+}
+
+#[test]
+fn resolved_conflict_uses_remote_snapshot_not_old_merge_base_for_cas() {
+    for (seed, resolution, unrelated_event) in [
+        (0xa1, "Tracker", false),
+        (0xa2, "Agreed", true),
+        (0xa3, "Ship the wave", false),
+        (0xa4, "Ship the wave", true),
+    ] {
+        let task = task_id(seed);
+        let initial = task_fields();
+        let remote = std::rc::Rc::new(std::cell::RefCell::new(initial.clone()));
+        let updates = std::rc::Rc::new(std::cell::Cell::new(0));
+        let egress = CasEgress {
+            remote: remote.clone(),
+            updates: updates.clone(),
+        };
+        let mut adapter = LinearSyncAdapter::new(
+            FakeStore::with_task(task, initial.clone()),
+            FakeSource::default(),
+            egress,
+        );
+        adapter.push_task(task, 10).expect("initial link");
+        adapter
+            .tasks_mut()
+            .edit(task, |fields| fields.title = "Engine".into());
+        let mut incoming = initial.clone();
+        incoming.title = "Tracker".into();
+        *remote.borrow_mut() = incoming.clone();
+        let conflict = adapter
+            .apply_issue_change(change("title-conflict", 5_000, incoming.clone()), 20)
+            .expect("record conflict");
+        assert_eq!(conflict.status, LinearMirrorStatus::Conflict);
+        let pinned = adapter.tasks().stored_link(task);
+        assert_eq!(
+            pinned.base_field_hashes[LINEAR_FIELD_TITLE],
+            initial.field_hashes()[LINEAR_FIELD_TITLE]
+        );
+        assert_eq!(pinned.remote_field_hashes, incoming.field_hashes());
+
+        adapter
+            .tasks_mut()
+            .edit(task, |fields| fields.title = resolution.into());
+        if unrelated_event {
+            // An unrelated tracker event must neither re-pin a third-value
+            // resolution nor overwrite a return to the original common base.
+            incoming.status = "in_review".into();
+            *remote.borrow_mut() = incoming.clone();
+            adapter
+                .apply_issue_change(
+                    change("status-after-resolution", 6_000, incoming.clone()),
+                    21,
+                )
+                .expect("merge unrelated event");
+            let pending = adapter.tasks().stored_link(task);
+            assert_eq!(
+                pending.unresolved_conflicts.len(),
+                1,
+                "pending resolution keeps its witness"
+            );
+            assert_eq!(
+                pending.base_field_hashes[LINEAR_FIELD_TITLE],
+                initial.field_hashes()[LINEAR_FIELD_TITLE]
+            );
+            assert_eq!(pending.remote_field_hashes, incoming.field_hashes());
+            assert_eq!(
+                adapter.tasks().snapshot(task).fields.title,
+                resolution,
+                "unrelated inbound event must preserve local resolution"
+            );
+            assert_eq!(adapter.tasks().snapshot(task).fields.status, "in_review");
+        }
+        let receipt = adapter
+            .push_task(task, 30)
+            .expect("conditional resolution push");
+        assert_eq!(receipt.status, LinearMirrorStatus::Applied);
+        assert_eq!(updates.get(), 1);
+        assert_eq!(remote.borrow().title, resolution);
+        let settled = adapter.tasks().stored_link(task);
+        assert!(settled.unresolved_conflicts.is_empty());
+        assert_eq!(settled.base_field_hashes, remote.borrow().field_hashes());
+        assert_eq!(settled.remote_field_hashes, remote.borrow().field_hashes());
+        let replay = adapter
+            .apply_issue_change(change("title-conflict", 5_000, incoming), 31)
+            .expect("stale event replay");
+        assert_eq!(replay.status, LinearMirrorStatus::Noop);
+        assert_eq!(
+            adapter.tasks().stored_link(task).remote_field_hashes,
+            remote.borrow().field_hashes()
+        );
+    }
 }

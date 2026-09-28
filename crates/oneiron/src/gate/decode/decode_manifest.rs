@@ -36,6 +36,10 @@ use crate::gate::constants::{
 use crate::gate::docedit_resource::DoceditResourcePolicy;
 use crate::gate::grants::PolicyScopedGrant;
 use crate::gate::hosted_tts_policy::HostedTtsPolicy;
+use crate::gate::operational_policy::{
+    LINEAR_MIRROR_KEY, LINEAR_SYNC_KEY, LinearMirrorPolicy, LinearSyncBudget, PRECEDENCE_KEY,
+    PolicyPrecedence, WAVE_HANDOFF_KEY, WaveHandoffPolicy,
+};
 use crate::gate::pack_install_policy::KEY as PACK_INSTALL_POLICY_KEY;
 use crate::gate::policy_values::{PolicyValueRow, parse_policy_values};
 use crate::gate::resolution::{
@@ -119,6 +123,10 @@ pub(in crate::gate) struct DecodedPolicyManifest {
     pub(in crate::gate) sheet_answer_limits: Vec<crate::gate::resolution::SheetAnswerLimitRow>,
     pub(in crate::gate) sheet_answer_precedence:
         Option<crate::gate::resolution::SheetAnswerPrecedence>,
+    pub(in crate::gate) linear_mirror: Option<LinearMirrorPolicy>,
+    pub(in crate::gate) linear_sync: Option<LinearSyncBudget>,
+    pub(in crate::gate) wave_handoff: Option<WaveHandoffPolicy>,
+    pub(in crate::gate) operational_precedence: Option<PolicyPrecedence>,
     pub(in crate::gate) weave_correction_policy: Option<crate::gate::WeaveCorrectionPolicy>,
     pub(in crate::gate) attribution_limits: Option<AttributionLimits>,
     pub(in crate::gate) ask_policy: Option<crate::gate::ask_policy::AskOperationalPolicy>,
@@ -136,6 +144,8 @@ pub(in crate::gate) struct DecodedPolicyManifest {
     pub(in crate::gate) unknown_axis_seen: bool,
 }
 
+// One decode per manifest row, mirroring default_policy_manifest: splitting it would scatter one manifest.
+#[allow(clippy::too_many_lines)]
 pub(in crate::gate) fn decode_policy_manifest(data: &[u8]) -> Option<DecodedPolicyManifest> {
     let mut cursor = Cursor::new(data);
     let value = rmpv::decode::read_value(&mut cursor).ok()?;
@@ -204,6 +214,10 @@ pub(in crate::gate) fn decode_policy_manifest(data: &[u8]) -> Option<DecodedPoli
                 | "voice_ref_limits"
                 | POLICY_SHEET_ANSWER_LIMITS_KEY
                 | POLICY_SHEET_ANSWER_PRECEDENCE_KEY
+                | LINEAR_MIRROR_KEY
+                | LINEAR_SYNC_KEY
+                | WAVE_HANDOFF_KEY
+                | PRECEDENCE_KEY
                 | POLICY_WEAVE_CORRECTION_POLICY_KEY
                 | POLICY_ATTRIBUTION_LIMITS_KEY
                 | POLICY_ASK_POLICY_KEY
@@ -520,6 +534,26 @@ pub(in crate::gate) fn decode_policy_manifest(data: &[u8]) -> Option<DecodedPoli
         }
         _ => return None,
     };
+    let linear_mirror = match single_map_value(&entries, LINEAR_MIRROR_KEY) {
+        MapValue::Missing => None,
+        MapValue::Duplicate => return None,
+        MapValue::Present(value) => Some(LinearMirrorPolicy::decode(value)?),
+    };
+    let linear_sync = match single_map_value(&entries, LINEAR_SYNC_KEY) {
+        MapValue::Missing => None,
+        MapValue::Duplicate => return None,
+        MapValue::Present(value) => Some(LinearSyncBudget::decode(value)?),
+    };
+    let wave_handoff = match single_map_value(&entries, WAVE_HANDOFF_KEY) {
+        MapValue::Missing => None,
+        MapValue::Duplicate => return None,
+        MapValue::Present(value) => Some(WaveHandoffPolicy::decode(value)?),
+    };
+    let operational_precedence = match single_map_value(&entries, PRECEDENCE_KEY) {
+        MapValue::Missing => None,
+        MapValue::Duplicate => return None,
+        MapValue::Present(value) => Some(PolicyPrecedence::decode(value)?),
+    };
     let weave_correction_policy =
         match single_map_value(&entries, POLICY_WEAVE_CORRECTION_POLICY_KEY) {
             MapValue::Missing => None,
@@ -637,6 +671,10 @@ pub(in crate::gate) fn decode_policy_manifest(data: &[u8]) -> Option<DecodedPoli
         voice_ref_limits,
         sheet_answer_limits,
         sheet_answer_precedence,
+        linear_mirror,
+        linear_sync,
+        wave_handoff,
+        operational_precedence,
         weave_correction_policy,
         attribution_limits,
         ask_policy,
