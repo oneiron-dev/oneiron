@@ -17,7 +17,14 @@ use std::{
     path::Path,
 };
 
-pub(super) fn files(root: &Path) -> Result<Vec<SandboxFileWriteProposal>> {
+/// Snapshot bytes plus the checked tree they came from, empty directories
+/// included, so proposals can be admitted against the same shape.
+pub(super) struct Snapshot {
+    pub files: Vec<SandboxFileWriteProposal>,
+    pub shape: WorkspaceShape,
+}
+
+pub(super) fn files(root: &Path) -> Result<Snapshot> {
     let root = fs::OpenOptions::new()
         .read(true)
         .custom_flags(libc::O_DIRECTORY | libc::O_NOFOLLOW | libc::O_CLOEXEC)
@@ -88,7 +95,7 @@ pub(super) fn files(root: &Path) -> Result<Vec<SandboxFileWriteProposal>> {
         }
     }
     files.sort_by(|a, b| a.path.as_str().cmp(b.path.as_str()));
-    Ok(files)
+    Ok(Snapshot { files, shape })
 }
 
 #[cfg(test)]
