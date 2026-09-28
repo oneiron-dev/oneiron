@@ -325,6 +325,7 @@ pub(crate) struct PolicyManifestResolution {
     pub(crate) weave_report_policy: Vec<crate::gate::weave_policy::Row>,
     pub(crate) weave_report_policy_empty: bool,
     pub(crate) weave_report_precedence: crate::gate::weave_policy::Precedence,
+    pub(super) skill_edit_goal: Vec<crate::gate::SkillEditGoalPolicy>,
     pub(crate) federation_grant_rows: Vec<crate::federation::grant_policy::GrantPolicyRow>,
     pub(crate) room_policy_rows: Vec<crate::gate::room_policy::RoomPolicyRow>,
     pub(super) owner_policy_rows: Vec<PolicyOwnerPolicyRow>,

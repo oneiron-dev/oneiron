@@ -9,6 +9,8 @@ pub(super) const POLICY_PACK_VERSION_KEY: &str = "pack_version";
 pub(super) const POLICY_MIN_ENGINE_VERSION_KEY: &str = "min_engine_version";
 pub(super) const POLICY_DEFAULTS_KEY: &str = "defaults";
 pub(super) const POLICY_RULES_KEY: &str = "rules";
+/// Separate from claim axes: optimizer goals are typed admission policy rows.
+pub(super) const POLICY_SKILL_EDIT_GOAL_KEY: &str = "skill_edit_goal_policy";
 pub(super) const POLICY_ACTOR_CEILINGS_KEY: &str = "actor_ceilings";
 pub(super) const POLICY_DELEGATED_GRANTS_KEY: &str = "delegated_grants";
 pub(super) const MAX_DELEGATION_DEPTH: u8 = 8;
