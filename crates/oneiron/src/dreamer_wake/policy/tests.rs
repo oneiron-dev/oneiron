@@ -660,13 +660,10 @@ fn recipe_priority_requires_an_owner_and_rejects_unknown_rows() -> Result<()> {
         let mut row = serde_json::to_value(policy)
             .map_err(|_| Error::InvalidConfig("encode policy".into()))?;
         row["weave_recipe_priority"] = replacement;
-        let raw: crate::side_table::SideTable<(), Vec<u8>, crate::side_table::Raw> =
-            crate::side_table::SideTable::new(&crate::side_table::DREAMER_WAKE_POLICY);
         vault.with_write_txn(|txn| {
-            raw.put(
-                &vault.store,
+            vault.store.vault_meta.put(
                 txn,
-                &(),
+                crate::side_table::DREAMER_WAKE_POLICY.prefix,
                 &serde_json::to_vec(&row)
                     .map_err(|_| Error::InvalidConfig("encode policy".into()))?,
             )

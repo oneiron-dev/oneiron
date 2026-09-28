@@ -1,6 +1,7 @@
 //! Host-interpreted workflow skill at the Dreamer wake boundary.
 //! Skill bytes supply behavior, never actor identity, read rights or gate authority.
 
+use crate::attempt_queue::AttemptId;
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::claim::{
     ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSource, ClaimSubject,
@@ -13,6 +14,7 @@ use crate::dreamer_runner::{
     DREAMER_WEAVE_RECIPE_ATTEMPT_KIND, DreamerAdmittedAttempt, WeaveRecipePin,
 };
 use crate::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_TURN};
+use crate::side_table::{self, LegacyJson, SideTable};
 use crate::write_envelope::{SourceLineage, WriteActor, WriteEnvelope, WriteProvenance};
 use crate::{ClaimCandidate, EdgeActorClass, EntityId, Error, Result, TimeRange, Vault};
 use rmpv::Value;
@@ -67,11 +69,9 @@ struct RecipeResult {
     evidence_hash: [u8; 32],
     claim_hash: [u8; 32],
 }
-const RESULT_PREFIX: &[u8] = b"dreamer:weave:result:v1:";
-
-fn result_key(attempt: &DreamerAdmittedAttempt) -> Vec<u8> {
-    [RESULT_PREFIX, attempt.status.attempt.id.as_bytes()].concat()
-}
+/// Committed result per attempt, written with its claim in one transaction.
+const RESULT: SideTable<AttemptId, RecipeResult, LegacyJson> =
+    SideTable::new(&side_table::DREAMER_WEAVE_RECIPE_RESULT);
 fn claim_id(attempt: &DreamerAdmittedAttempt) -> Result<EntityId> {
     crate::codebase::entity_id_from_hash_material(
         b"oneiron:dreamer:weave-recipe-claim:v1",
@@ -140,12 +140,11 @@ fn cached_result(
     actor: WriteActor,
     id: &EntityId,
 ) -> Result<bool> {
-    let raw = vault.store.vault_meta.get(txn, &result_key(attempt))?;
+    let result = RESULT.get(&vault.store, txn, &attempt.status.attempt.id)?;
     let body = vault.get_claim_in_txn(txn, id)?;
-    match (raw, body) {
+    match (result, body) {
         (None, None) => Ok(false),
-        (Some(raw), Some(body)) => {
-            let result: RecipeResult = serde_json::from_slice(&raw).map_err(|_| invalid())?;
+        (Some(result), Some(body)) => {
             let source = ClaimSource::parse(&result.source).ok_or_else(invalid)?;
             let stamped = envelope(
                 actor,
@@ -330,12 +329,7 @@ impl<E: DreamerAttemptExecutor, R: WeaveRecipeRuntime> DreamerAttemptExecutor
                 evidence_hash: read_hash,
                 claim_hash: claim_hash(&body)?,
             };
-            vault.store.vault_meta.put(
-                txn,
-                &result_key(attempt),
-                &serde_json::to_vec(&result).map_err(|_| invalid())?,
-            )?;
-            Ok(())
+            RESULT.put(&vault.store, txn, &attempt.status.attempt.id, &result)
         })?;
         Ok(DreamerAttemptExecution::Completed { completed_units: 0 })
     }
