@@ -63,6 +63,12 @@ pub(super) fn hash_policy_frontier_v0(
         let value = policy.encode();
         hash_opt_value(hasher, Some(&value))?;
     }
+    if !resolution.booking_conversion_rows.is_empty() {
+        hash_str(hasher, "booking_conversion");
+        let bytes = rmp_serde::to_vec_named(&resolution.booking_conversion_rows)
+            .expect("validated booking policy rows encode");
+        hash_bytes(hasher, &bytes);
+    }
     // An absent/empty hosted policy changes no decision and keeps the
     // established frontier bytes for manifests that never named this knob.
     if !resolution.hosted_tts.rows.is_empty() {
