@@ -23,6 +23,53 @@ fn source(connector: bool) -> Result<PackSource> {
         HubFile::new("skills/format/SKILL.md", b"---\nname: alice.format\ndescription: format\nversion: 1\n---\nKeep facts exact.\n".to_vec()),
     ])
 }
+fn assert_bundled_source_line(
+    vault: &Vault,
+    pack_ref: &HubRef,
+    skill: &EntityId,
+    lifecycle: &str,
+    outcome: &str,
+) -> Result<()> {
+    let record = vault.get_skill_record(skill)?.expect("bundled skill");
+    let reference = super::pack_skill_hub_ref(
+        pack_ref,
+        "format",
+        record.content_hash.expect("bundled skill hash"),
+    )?;
+    let receipt = vault
+        .hub_import_receipt(skill, &reference)?
+        .expect("source receipt");
+    assert_eq!(receipt.installed_as.as_str(), lifecycle);
+    assert_eq!(receipt.disposition.as_str(), outcome);
+    assert_eq!(receipt.hub_id, pack_ref.hub_id.to_hex());
+    assert_eq!(receipt.ref_string, reference.ref_string);
+    crate::test_util::authorize_readers(vault, &["pack-reader"]);
+    let read = vault.scoped_read(crate::claim::ScopedReadActorKey::new("pack-reader").unwrap());
+    let changed = crate::context_board::SessionReadSet::default().refresh(&read, 16)?;
+    let rendered = crate::context_board::render_board_block(
+        &crate::context_board::BoardFrame {
+            header: &crate::context_board::BoardBlockHeader {
+                epoch: 1,
+                scope: "base".into(),
+            },
+            legend: &crate::context_board::BoardLegend::canonical(),
+            sections: &[],
+            changes: Some(&changed),
+        },
+        crate::context_board::BoardBudgetRequest {
+            harness_default_tok: 0,
+            caller_limit_tok: None,
+            explicit_override_tok: None,
+        },
+    )
+    .expect("board render");
+    assert!(rendered.text.contains("changed_install["));
+    assert!(rendered.text.contains(&receipt.hub_id));
+    assert!(rendered.text.contains(&reference.ref_string));
+    assert!(rendered.text.contains(&format!("{lifecycle}/{outcome}")));
+    Ok(())
+}
+
 struct Policy {
     rules_hit: bool,
     code_auto_install: bool,
@@ -138,9 +185,10 @@ fn installed_inventory_skips_deleted_source_but_refuses_corrupt_receipt() -> Res
         HubPin::ContentHash(second.content_hash().to_hex()),
     )?;
     let next = install(&second, &next_ref, 4)?;
-    assert_eq!(vault.installed_packs()?.len(), 2);
+    assert_eq!(vault.installed_packs()?.len(), 2 + 4);
     assert!(vault.delete_entity(&EntityId::from_hex(&old.source_id)?)?);
-    assert_eq!(vault.installed_packs()?, vec![next]);
+    assert!(vault.installed_packs()?.contains(&next));
+    assert_eq!(vault.installed_packs()?.len(), 1 + 4);
     vault.with_write_txn(|txn| {
         vault
             .store
@@ -248,6 +296,9 @@ fn code_free_pack_installs_active_without_qualification_or_consent() -> Result<(
             panic!("post-fit install");
         };
         assert_eq!(receipt.status, PackInstallStatus::Active);
+        assert_eq!(receipt.kind, PackKind::Capability);
+        assert_eq!(receipt.adapter, None);
+        assert_eq!(receipt.engine_version, None);
         assert_eq!(receipt.hub_ref, "pack");
         assert_eq!(receipt.pin_value, source.content_hash().to_hex());
         assert_eq!(
@@ -266,6 +317,7 @@ fn code_free_pack_installs_active_without_qualification_or_consent() -> Result<(
             vault.get_skill_record(&skill)?.unwrap().lifecycle_status,
             crate::skill::SkillLifecycle::Active
         );
+        assert_bundled_source_line(&vault, &reference, &skill, "active", "installed")?;
         // The resident can load and attribute the pack's exact authored skill
         // through the ordinary attempt door, not only inspect Active metadata.
         let queue = crate::attempt_queue::AttemptQueue::new(&vault);
@@ -441,6 +493,17 @@ fn code_flag_and_rule_hits_keep_candidate_inert() -> Result<()> {
             vault.get_skill_record(&skill)?.unwrap().lifecycle_status,
             crate::skill::SkillLifecycle::Candidate
         );
+        assert_bundled_source_line(
+            &vault,
+            &reference,
+            &skill,
+            "candidate",
+            if rules_hit {
+                "rules_hit"
+            } else {
+                "code_auto_install_off"
+            },
+        )?;
         let resumed = vault.prepare_pack_install(id, &reference, &publisher, &policy())?;
         assert!(matches!(
             vault.install_pack(&resumed)?,
@@ -495,7 +558,7 @@ fn code_free_pack_is_candidate_only_on_rules_hit() -> Result<()> {
     Ok(())
 }
 #[test]
-fn pinned_bundled_skill_verdict_keeps_pack_candidate() -> Result<()> {
+fn pinned_bundled_skill_scanner_signal_does_not_override_fit() -> Result<()> {
     use crate::skill_hub::{
         ScanCompleteness, ScanRiskLevel, ScanVerdict, SkillGovernance, SkillScanReceipt,
     };
@@ -532,18 +595,21 @@ fn pinned_bundled_skill_verdict_keeps_pack_candidate() -> Result<()> {
     )?;
     vault.ingest_skill_scan_verdict(&skill, hash, &verdict, TimeRange { start: 5, end: 5 }, 5)?;
     let fit = vault.prepare_pack_install(id, &reference, &publisher, &policy())?;
-    let PackInstallDisposition::Candidate(receipt) = vault.install_pack(&fit)? else {
-        panic!("scanner rules hit");
+    let PackInstallDisposition::Installed(receipt) = vault.install_pack(&fit)? else {
+        panic!("fit-ready pack installs despite advisory scanner signal");
     };
+    assert_eq!(receipt.candidate_reason, None);
+    assert!(vault.installed_pack("alice.tools")?.is_some());
+    let stored = vault.get_skill_record(&skill)?.unwrap();
     assert_eq!(
-        receipt.candidate_reason,
-        Some(PackCandidateReason::RulesHit)
+        stored.lifecycle_status,
+        crate::skill::SkillLifecycle::Active
     );
-    assert!(vault.installed_pack("alice.tools")?.is_none());
     assert_eq!(
-        vault.get_skill_record(&skill)?.unwrap().lifecycle_status,
-        crate::skill::SkillLifecycle::Candidate
+        stored.approval_status,
+        crate::claim::ClaimApprovalStatus::Auto
     );
+    assert_bundled_source_line(&vault, &reference, &skill, "active", "installed")?;
     Ok(())
 }
 #[test]
