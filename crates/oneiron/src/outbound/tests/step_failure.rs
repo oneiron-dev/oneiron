@@ -87,6 +87,7 @@ fn request() -> LlmRequest {
                 &CallPurpose::Consolidation,
                 ModelTierRef("consolidation".into()),
             ),
+            seat_effort: None,
             response_format: ResponseFormat::Text,
             locality: ModelLocality::OwnServer,
         },
