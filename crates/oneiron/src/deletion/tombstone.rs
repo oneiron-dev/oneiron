@@ -317,6 +317,13 @@ pub(crate) fn local_hard_delete_key(id: &EntityId) -> String {
     format!("{LOCAL_HARD_DELETE_PREFIX}{}", id.to_hex())
 }
 
+/// Local evidence that a soft delete was applied. Unlike the temporary
+/// `pt:` propagation intent, this survives publication so an out-of-order
+/// proposal cancellation cannot become effective against a live entity.
+pub(crate) fn identity_soft_delete_key(id: &EntityId) -> String {
+    format!("it:deleted:{}", id.to_hex())
+}
+
 // ─── Cleanup-archive marker (`ac:`) — durable LOCAL archive truth ───────────
 //
 // ARCH-0073 / ONE-1931. Key = `ac:{entity_id_hex}` (32-char lowercase hex,

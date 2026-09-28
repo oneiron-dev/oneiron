@@ -16,6 +16,79 @@ use super::op_vocabulary::IdentityTopologyOp;
 use super::stored_event::{StoredIdentityOpAction, StoredIdentityOpEvent};
 use super::transition_table::IdentityTopologyRejection;
 
+/// Generic batch deletion has no reason/tombstone/receipt transaction. Refuse
+/// every active merge participant or author and every open proposal participant
+/// before `deindex_entity` can remove a shell edge or silently strand a park.
+pub(crate) fn guard_batch_identity_delete_in_txn(
+    store: &Store,
+    rtxn: &heed::RoTxn<'_>,
+    id: &EntityId,
+) -> Result<()> {
+    let effective =
+        super::ledger_fold::fold_effective_identity_topology_events_for_store_in_txn(store, rtxn)?;
+    let fold = super::ledger_fold::fold_identity_topology_log(&effective);
+    // A deferred proposal is still an open proposal. It cannot appear in
+    // the effective projection until its missing peer arrives, so read raw
+    // records as well when deciding whether a generic delete may tear one.
+    for event in identity_topology_events_for_store_in_txn(store, rtxn)? {
+        let Some(record) = identity_topology_event_for_store_in_txn(store, rtxn, &event.event_id)?
+        else {
+            return Err(Error::CorruptedIndex("identity topology event index"));
+        };
+        if let super::ledger_fold::IdentityTopologyAction::Apply(ref op) = event.action
+            && op.participants().contains(id)
+            && let Some(kind) = identity_topology_entity_type_for_store_in_txn(store, rtxn, id)?
+            && (!is_structural_kind(kind)
+                || (matches!(op, IdentityTopologyOp::Merge(_)) && kind == ENTITY_TYPE_FACET))
+            && !super::admission_disposition::joined_verdict_for_store_in_txn(
+                store,
+                rtxn,
+                &event.event_id,
+                &record,
+            )?
+            .is_some_and(|verdict| verdict != super::AdmissionVerdict::Validated)
+        {
+            return Err(Error::Sync(
+                crate::error::SyncError::InvalidIdentityTopologyEventBody(
+                    "invalid topology participant requires signed refusal before deletion",
+                ),
+            ));
+        }
+        if let StoredIdentityOpAction::Merge { sources, survivor } = &record.action
+            && sources
+                .iter()
+                .any(|source| fold.current_event.get(source) == Some(&event.event_id))
+            && (*id == *survivor
+                || sources.contains(id)
+                || super::effective_author_in_txn(store, rtxn, event.event_id)?
+                    .is_some_and(|actor| actor.entity_ref() == *id))
+        {
+            return Err(Error::Sync(
+                crate::error::SyncError::IdentityTopologyRejected(
+                    IdentityTopologyRejection::ActiveMergeParticipantDeletion { entity: *id },
+                ),
+            ));
+        }
+        if record.approval == crate::claim::ClaimApprovalStatus::Proposed
+            && !fold.resolved_proposals.contains_key(&event.event_id)
+            && !fold.moot_proposals.contains(&event.event_id)
+            && let super::ledger_fold::IdentityTopologyAction::Apply(op) = event.action
+            && matches!(
+                op,
+                IdentityTopologyOp::Merge(_) | IdentityTopologyOp::Split(_)
+            )
+            && op.participants().contains(id)
+        {
+            return Err(Error::Sync(
+                crate::error::SyncError::IdentityTopologyRejected(
+                    IdentityTopologyRejection::ActiveMergeParticipantDeletion { entity: *id },
+                ),
+            ));
+        }
+    }
+    Ok(())
+}
+
 pub(super) fn topology_edge_weight(kind: EdgeKind) -> Result<f32> {
     kind.default_weight().ok_or(Error::InvariantViolation(
         "identity topology edge missing default weight",
@@ -60,6 +133,14 @@ pub(super) fn identity_topology_events_for_store_in_txn(
         let event_id = entry?;
         let record = identity_topology_event_for_store_in_txn(store, rtxn, &event_id)?
             .ok_or(Error::CorruptedIndex("identity topology event index"))?;
+        if matches!(
+            record.action,
+            StoredIdentityOpAction::AdmissionDisposition(_)
+                | StoredIdentityOpAction::AuthorAttribution { .. }
+                | StoredIdentityOpAction::AuthorRedaction { .. }
+        ) {
+            continue;
+        }
         events.push(IdentityTopologyEvent {
             event_id,
             seq: record.seq,
@@ -102,23 +183,6 @@ pub(super) fn validate_identity_op_participants_for_store_in_txn(
     Ok(validation)
 }
 
-pub(super) fn identity_topology_actor_complete_for_store_in_txn(
-    store: &Store,
-    rtxn: &heed::RoTxn<'_>,
-    record: &StoredIdentityOpEvent,
-) -> Result<bool> {
-    let Some(actor) = record.actor else {
-        return Ok(true);
-    };
-    let Some(actor_type) =
-        identity_topology_entity_type_for_store_in_txn(store, rtxn, &actor.entity_ref())?
-    else {
-        return Ok(false);
-    };
-    crate::provenance::validate_actor_class(actor_type, actor.actor_class())?;
-    Ok(true)
-}
-
 pub(super) fn desired_shell_edges_for_store_entity_in_txn(
     store: &Store,
     rtxn: &heed::RoTxn<'_>,
@@ -130,7 +194,12 @@ pub(super) fn desired_shell_edges_for_store_entity_in_txn(
         .get(entity)
         .copied()
         .unwrap_or(EntityLifecycleState::Active);
-    if state == EntityLifecycleState::Active {
+    if state == EntityLifecycleState::Active
+        || store
+            .sync_state
+            .get(rtxn, &crate::deletion::local_hard_delete_key(entity))?
+            .is_some()
+    {
         return Ok(Vec::new());
     }
     let event_id = fold
@@ -141,7 +210,15 @@ pub(super) fn desired_shell_edges_for_store_entity_in_txn(
         .ok_or(Error::CorruptedIndex("identity topology event index"))?;
     Ok(match (&record.action, state) {
         (StoredIdentityOpAction::Merge { survivor, .. }, EntityLifecycleState::Merged) => {
-            vec![(EdgeKind::MergedInto, *survivor, record.at)]
+            if store
+                .sync_state
+                .get(rtxn, &crate::deletion::local_hard_delete_key(survivor))?
+                .is_some()
+            {
+                Vec::new()
+            } else {
+                vec![(EdgeKind::MergedInto, *survivor, record.at)]
+            }
         }
         (StoredIdentityOpAction::Split { heads, .. }, EntityLifecycleState::Split) => heads
             .iter()

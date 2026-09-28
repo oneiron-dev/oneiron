@@ -19,6 +19,7 @@ pub(super) fn reject_engine_authored_delete(
     crate::conversation::guard_room_message_delete(store, wtxn, *id)?;
     crate::blob_artifact::esign::reject_event_delete(store, wtxn, id)?;
     crate::origin::lfs::reject_direct_lfs_chunk_delete(store, wtxn, id)?;
+    crate::identity_topology::guard_batch_identity_delete_in_txn(store, wtxn, id)?;
     let Some(raw) = store.entities.get(wtxn, id.as_bytes())? else {
         return Ok(());
     };

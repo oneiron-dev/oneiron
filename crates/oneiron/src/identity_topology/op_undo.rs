@@ -62,7 +62,11 @@ impl Vault {
             // ruling again on a fresh proposal, never by erasing the record
             // that a review happened.
             StoredIdentityOpAction::Undo { .. }
-            | StoredIdentityOpAction::ProposalResolution { .. } => {
+            | StoredIdentityOpAction::ProposalResolution { .. }
+            | StoredIdentityOpAction::ProposalCancellation { .. }
+            | StoredIdentityOpAction::AdmissionDisposition(_)
+            | StoredIdentityOpAction::AuthorAttribution { .. }
+            | StoredIdentityOpAction::AuthorRedaction { .. } => {
                 return Err(Error::Sync(SyncError::IdentityTopologyRejected(
                     IdentityTopologyRejection::NotUndoable { event: *event },
                 )));

@@ -2140,18 +2140,39 @@ fn malformed_person_bodies_do_not_wedge_party_resolution() -> CommResult<()> {
     Ok(())
 }
 
-fn count_identity_topology_events(vault: &Vault) -> CommResult<usize> {
+/// Topology DECISION event ids. Each applied decision also stores a separate
+/// admission-disposition fact (and, when attributed, an attribution fact) in
+/// the same engine-owned family; those are not decisions.
+fn identity_topology_decision_ids(vault: &Vault) -> CommResult<Vec<EntityId>> {
+    use crate::identity_topology::StoredIdentityOpAction;
     let rtxn = vault.store.env.read_txn()?;
-    let mut count = 0;
+    let mut ids = Vec::new();
     for entry in vault
         .store
         .type_index
         .prefix_iter(&rtxn, &[ENTITY_TYPE_IDENTITY_TOPOLOGY_EVENT])?
     {
-        entry?;
-        count += 1;
+        let (key, _) = entry?;
+        let id = entity_id_from_type_index_key(&key)?;
+        let is_decision = vault
+            .identity_topology_event_in_txn(&rtxn, &id)?
+            .is_some_and(|event| {
+                !matches!(
+                    event.action,
+                    StoredIdentityOpAction::AdmissionDisposition(_)
+                        | StoredIdentityOpAction::AuthorAttribution { .. }
+                        | StoredIdentityOpAction::AuthorRedaction { .. }
+                )
+            });
+        if is_decision {
+            ids.push(id);
+        }
     }
-    Ok(count)
+    Ok(ids)
+}
+
+fn count_identity_topology_events(vault: &Vault) -> CommResult<usize> {
+    Ok(identity_topology_decision_ids(vault)?.len())
 }
 
 #[test]
@@ -2207,16 +2228,7 @@ fn twin_merge_records_sorted_evidence_and_the_stable_rationale_token() -> CommRe
     run_comm_projector(&vault)?;
 
     let event_id = {
-        let rtxn = vault.store.env.read_txn()?;
-        let mut ids = Vec::new();
-        for entry in vault
-            .store
-            .type_index
-            .prefix_iter(&rtxn, &[ENTITY_TYPE_IDENTITY_TOPOLOGY_EVENT])?
-        {
-            let (key, _) = entry?;
-            ids.push(entity_id_from_type_index_key(&key)?);
-        }
+        let ids = identity_topology_decision_ids(&vault)?;
         assert_eq!(ids.len(), 1);
         ids[0]
     };

@@ -8,6 +8,7 @@ use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::write_envelope::WriteActor;
 
+use super::admission_disposition::AdmissionDisposition;
 use super::event_body_codec::{
     decode_action, decode_actor, decode_evidence, decode_str_field, decode_u64_field,
     encode_action_entries, id_value, ids_value, map_field,
@@ -21,8 +22,9 @@ use super::reassignment_map::{ReassignmentMap, ReassignmentStats};
 use super::transition_table::{ProposalOutcome, ProposalScope};
 use super::wire_keys::{
     BODY_KEY_ACTOR, BODY_KEY_ACTOR_CLASS, BODY_KEY_APPROVAL, BODY_KEY_AT, BODY_KEY_CONFIDENCE,
-    BODY_KEY_EVIDENCE, BODY_KEY_KIND, BODY_KEY_SEQ, BODY_KEY_SOURCE, EVENT_KIND_ASSERT_DISTINCT,
-    EVENT_KIND_FACET, EVENT_KIND_MERGE, EVENT_KIND_PROPOSAL_RESOLUTION, EVENT_KIND_SPLIT,
+    BODY_KEY_EVIDENCE, BODY_KEY_INVALIDATED, BODY_KEY_KIND, BODY_KEY_SEQ, BODY_KEY_SOURCE,
+    BODY_KEY_VERIFIED, EVENT_KIND_ASSERT_DISTINCT, EVENT_KIND_FACET, EVENT_KIND_MERGE,
+    EVENT_KIND_PROPOSAL_CANCELLATION, EVENT_KIND_PROPOSAL_RESOLUTION, EVENT_KIND_SPLIT,
     EVENT_KIND_UNDO, EVIDENCE_KEY_RATIONALE, EVIDENCE_KEY_REFS,
 };
 use crate::error::SyncError;
@@ -86,12 +88,32 @@ pub enum StoredIdentityOpAction {
         /// The reverted ledger event.
         target: EntityId,
     },
+    /// A participant-delete cancellation, not a human rejection or a ramp
+    /// outcome. The proposal is retained as history, but no longer open.
+    ProposalCancellation {
+        /// The parked op retired by this deletion.
+        proposal: EntityId,
+        /// The deleted participant (never the proposing author alone).
+        participant: EntityId,
+    },
     /// The r7 resolution of a parked `Proposed` event (ONE-1747). Appending
     /// this row IS the retirement of the park: a proposal carrying one is
     /// already resolved and refuses a second ruling. The resolution itself
     /// moves no lifecycle state — on an approving ruling the APPLIED op is
     /// recorded as its own ordinary event, and this row records the
     /// decision about it.
+    AdmissionDisposition(AdmissionDisposition),
+    /// Erasable attribution carrier (never part of the decision core).
+    AuthorAttribution {
+        target: EntityId,
+        core_digest: [u8; 32],
+        actor: WriteActor,
+    },
+    /// Permanent, independent redaction fact dominating late attribution.
+    AuthorRedaction {
+        target: EntityId,
+        core_digest: [u8; 32],
+    },
     ProposalResolution {
         /// The resolved type-76 `Proposed` event.
         proposal: EntityId,
@@ -116,7 +138,11 @@ impl StoredIdentityOpAction {
             Self::Facet { .. } => EVENT_KIND_FACET,
             Self::AssertDistinct { .. } => EVENT_KIND_ASSERT_DISTINCT,
             Self::Undo { .. } => EVENT_KIND_UNDO,
+            Self::ProposalCancellation { .. } => EVENT_KIND_PROPOSAL_CANCELLATION,
             Self::ProposalResolution { .. } => EVENT_KIND_PROPOSAL_RESOLUTION,
+            Self::AdmissionDisposition(_) => super::wire_keys::EVENT_KIND_ADMISSION_DISPOSITION,
+            Self::AuthorAttribution { .. } => super::wire_keys::EVENT_KIND_AUTHOR_ATTRIBUTION,
+            Self::AuthorRedaction { .. } => super::wire_keys::EVENT_KIND_AUTHOR_REDACTION,
         }
     }
 
@@ -131,7 +157,11 @@ impl StoredIdentityOpAction {
             Self::Merge { .. }
             | Self::AssertDistinct { .. }
             | Self::Undo { .. }
-            | Self::ProposalResolution { .. } => None,
+            | Self::ProposalCancellation { .. }
+            | Self::ProposalResolution { .. }
+            | Self::AdmissionDisposition(_)
+            | Self::AuthorAttribution { .. }
+            | Self::AuthorRedaction { .. } => None,
         }
     }
 
@@ -160,7 +190,11 @@ impl StoredIdentityOpAction {
             Self::Merge { .. }
             | Self::AssertDistinct { .. }
             | Self::Undo { .. }
-            | Self::ProposalResolution { .. } => None,
+            | Self::ProposalCancellation { .. }
+            | Self::ProposalResolution { .. }
+            | Self::AdmissionDisposition(_)
+            | Self::AuthorAttribution { .. }
+            | Self::AuthorRedaction { .. } => None,
         }
     }
 
@@ -221,6 +255,12 @@ impl StoredIdentityOpAction {
                 }),
             ),
             Self::Undo { target } => IdentityTopologyAction::Undo { target: *target },
+            Self::ProposalCancellation { proposal, .. } => IdentityTopologyAction::CancelProposal {
+                proposal: *proposal,
+            },
+            Self::AdmissionDisposition(_)
+            | Self::AuthorAttribution { .. }
+            | Self::AuthorRedaction { .. } => IdentityTopologyAction::Disposition,
             Self::ProposalResolution {
                 proposal, outcome, ..
             } => IdentityTopologyAction::ResolveProposal {
@@ -242,6 +282,14 @@ impl StoredIdentityOpAction {
 pub struct StoredIdentityOpEvent {
     /// Engine-stamped monotonic causality sequence.
     pub seq: u64,
+    /// Engine-authored admission stamp. `true` means the producer validated
+    /// every participant and actor before applying this op. A receiver still
+    /// rejects available mismatches and defers never-materialized ids; a
+    /// deleted participant can be read from history after its local marker.
+    pub validated_at_write: bool,
+    /// Non-personal refusal discovered before erasure. A scrubbed event that
+    /// never passed admission must remain ineffective on every replica.
+    pub invalidated: bool,
     /// Caller-supplied event time (Unix seconds) — data, never ordering.
     pub at: u64,
     /// Deciding actor, validated at the door when bound (r1).
@@ -259,28 +307,6 @@ pub struct StoredIdentityOpEvent {
 }
 
 impl StoredIdentityOpEvent {
-    /// ARCH-0055 §9 author-stamp rider: this record with its deciding actor
-    /// dropped, or `None` when it carries no stamp to drop.
-    ///
-    /// ONLY the stamp goes. `seq`, `at`, source, approval, confidence,
-    /// evidence and the action all ride through verbatim, so a scrubbed
-    /// record folds to exactly the lifecycle state it folded to before — an
-    /// event with no bound actor is actor-complete by definition, which is
-    /// what keeps an erasure from silently rewriting topology history while
-    /// removing an authorship it is obliged to remove.
-    ///
-    /// Choosing WHICH records this is applied to is the caller's, and is
-    /// deliberately narrow: the ARCH-0038 erase walk scrubs the events whose
-    /// payloads it touched, never the family at large.
-    #[must_use]
-    pub(crate) fn without_author_stamp(&self) -> Option<Self> {
-        self.actor?;
-        Some(Self {
-            actor: None,
-            ..self.clone()
-        })
-    }
-
     /// Encodes the record into its pinned MessagePack map value. Split
     /// reassignment entries are canonicalized (sorted by item bytes).
     #[must_use]
@@ -291,6 +317,12 @@ impl StoredIdentityOpEvent {
             Value::from(self.action.kind_str()),
         ));
         entries.push((Value::from(BODY_KEY_SEQ), Value::from(self.seq)));
+        if self.validated_at_write {
+            entries.push((Value::from(BODY_KEY_VERIFIED), Value::Boolean(true)));
+        }
+        if self.invalidated {
+            entries.push((Value::from(BODY_KEY_INVALIDATED), Value::Boolean(true)));
+        }
         entries.push((Value::from(BODY_KEY_AT), Value::from(self.at)));
         if let Some(actor) = self.actor {
             entries.push((Value::from(BODY_KEY_ACTOR), id_value(&actor.entity_ref())));
@@ -337,6 +369,24 @@ impl StoredIdentityOpEvent {
                 )))?;
         let kind = decode_str_field(map, BODY_KEY_KIND, "identity topology event kind")?;
         let seq = decode_u64_field(map, BODY_KEY_SEQ, "identity topology event seq")?;
+        let validated_at_write = match map_field(map, BODY_KEY_VERIFIED) {
+            None => false,
+            Some(Value::Boolean(true)) => true,
+            _ => {
+                return Err(Error::Sync(SyncError::InvalidIdentityTopologyEventBody(
+                    "identity topology event verification stamp",
+                )));
+            }
+        };
+        let invalidated = match map_field(map, BODY_KEY_INVALIDATED) {
+            None => false,
+            Some(Value::Boolean(true)) => true,
+            _ => {
+                return Err(Error::Sync(SyncError::InvalidIdentityTopologyEventBody(
+                    "identity topology event invalidation stamp",
+                )));
+            }
+        };
         let at = decode_u64_field(map, BODY_KEY_AT, "identity topology event at")?;
         let actor = decode_actor(map)?;
         let source = map_field(map, BODY_KEY_SOURCE)
@@ -367,6 +417,8 @@ impl StoredIdentityOpEvent {
         };
         Ok(Self {
             seq,
+            validated_at_write,
+            invalidated,
             at,
             actor,
             source,

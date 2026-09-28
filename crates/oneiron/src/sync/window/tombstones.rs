@@ -223,7 +223,23 @@ pub fn replay_pending_tombstones(
                 update,
             )?;
         }
-        for (marker_key, _, _) in &markers {
+        for (marker_key, entity, value) in &markers {
+            // A pending tombstone is also a crash-replay path for an owned
+            // topology deletion. Release only this exact request, and only
+            // after snapshot/export persistence in the same transaction.
+            // The helper retains Published hard intents without a matching
+            // completed dt: purge witness, so a replay cannot unblock a
+            // topology write while the hard delete remains unfinished.
+            let tombstone = decode_tombstone_value(value);
+            if let Some(request_id) = tombstone.request_id {
+                crate::deletion::topology_delete_intent::complete_replayed_topology_delete_in_txn(
+                    &vault.store,
+                    wtxn,
+                    entity,
+                    &request_id,
+                    tombstone.is_hard(),
+                )?;
+            }
             vault.store.sync_state.delete(wtxn, marker_key)?;
         }
         // svf LAST (ONE-1151): the hard branch scrubbed the merged u:w:

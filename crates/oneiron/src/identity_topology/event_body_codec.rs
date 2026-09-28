@@ -25,9 +25,9 @@ use super::wire_keys::{
     BODY_KEY_MAP, BODY_KEY_OUTCOME, BODY_KEY_PAIR_A, BODY_KEY_PAIR_B, BODY_KEY_PLAN,
     BODY_KEY_PROPOSAL, BODY_KEY_SCOPE_ACTOR, BODY_KEY_SCOPE_OP_KIND, BODY_KEY_SCOPE_TARGET_CLASS,
     BODY_KEY_SOURCES, BODY_KEY_SURVIVOR, BODY_KEY_TARGET, EVENT_KIND_ASSERT_DISTINCT,
-    EVENT_KIND_FACET, EVENT_KIND_MERGE, EVENT_KIND_PROPOSAL_RESOLUTION, EVENT_KIND_SPLIT,
-    EVENT_KIND_UNDO, EVIDENCE_KEY_RATIONALE, EVIDENCE_KEY_REFS,
-    IDENTITY_TOPOLOGY_REPLICATED_SEQ_LIMIT, PLAN_READ_THROUGH,
+    EVENT_KIND_FACET, EVENT_KIND_MERGE, EVENT_KIND_PROPOSAL_CANCELLATION,
+    EVENT_KIND_PROPOSAL_RESOLUTION, EVENT_KIND_SPLIT, EVENT_KIND_UNDO, EVIDENCE_KEY_RATIONALE,
+    EVIDENCE_KEY_REFS, IDENTITY_TOPOLOGY_REPLICATED_SEQ_LIMIT, PLAN_READ_THROUGH,
 };
 use super::{
     IDENTITY_TOPOLOGY_REPLICATED_SEQ_CEILING, MAX_IDENTITY_TOPOLOGY_EVENT_BODY_BYTES,
@@ -85,6 +85,45 @@ pub(super) fn encode_action_entries(
         }
         StoredIdentityOpAction::Undo { target } => {
             entries.push((Value::from(BODY_KEY_TARGET), id_value(target)));
+        }
+        StoredIdentityOpAction::ProposalCancellation {
+            proposal,
+            participant,
+        } => {
+            entries.push((Value::from(BODY_KEY_PROPOSAL), id_value(proposal)));
+            entries.push((Value::from(BODY_KEY_ENTITY), id_value(participant)));
+        }
+        StoredIdentityOpAction::AdmissionDisposition(disposition) => {
+            disposition.encode_entries(entries);
+        }
+        StoredIdentityOpAction::AuthorAttribution {
+            target,
+            core_digest,
+            actor,
+        } => {
+            entries.push((super::wire_keys::BODY_KEY_TARGET.into(), id_value(target)));
+            entries.push((
+                super::wire_keys::BODY_KEY_CORE_DIGEST.into(),
+                Value::Binary(core_digest.to_vec()),
+            ));
+            entries.push((
+                super::wire_keys::BODY_KEY_ATTR_ACTOR.into(),
+                id_value(&actor.entity_ref()),
+            ));
+            entries.push((
+                super::wire_keys::BODY_KEY_ATTR_CLASS.into(),
+                actor.actor_class().gate_actor_class().into(),
+            ));
+        }
+        StoredIdentityOpAction::AuthorRedaction {
+            target,
+            core_digest,
+        } => {
+            entries.push((super::wire_keys::BODY_KEY_TARGET.into(), id_value(target)));
+            entries.push((
+                super::wire_keys::BODY_KEY_CORE_DIGEST.into(),
+                Value::Binary(core_digest.to_vec()),
+            ));
         }
         StoredIdentityOpAction::ProposalResolution {
             proposal,
@@ -158,6 +197,45 @@ fn decode_applied_counts(map: &[(Value, Value)]) -> Result<(u64, u64)> {
 /// inverse, shared by the ledger event body and the amendment codec.
 pub(super) fn decode_action(kind: &str, map: &[(Value, Value)]) -> Result<StoredIdentityOpAction> {
     match kind {
+        super::wire_keys::EVENT_KIND_ADMISSION_DISPOSITION => {
+            Ok(StoredIdentityOpAction::AdmissionDisposition(
+                super::admission_disposition::AdmissionDisposition::decode(map)?,
+            ))
+        }
+        super::wire_keys::EVENT_KIND_AUTHOR_ATTRIBUTION
+        | super::wire_keys::EVENT_KIND_AUTHOR_REDACTION => {
+            let target =
+                decode_id_field(map, BODY_KEY_TARGET, "identity topology attribution target")?;
+            let digest = map_field(map, super::wire_keys::BODY_KEY_CORE_DIGEST)
+                .and_then(Value::as_slice)
+                .and_then(|bytes| <[u8; 32]>::try_from(bytes).ok())
+                .ok_or(Error::Sync(SyncError::InvalidIdentityTopologyEventBody(
+                    "identity topology attribution digest",
+                )))?;
+            if kind == super::wire_keys::EVENT_KIND_AUTHOR_REDACTION {
+                Ok(StoredIdentityOpAction::AuthorRedaction {
+                    target,
+                    core_digest: digest,
+                })
+            } else {
+                let actor_ref = decode_id_field(
+                    map,
+                    super::wire_keys::BODY_KEY_ATTR_ACTOR,
+                    "identity topology attribution actor",
+                )?;
+                let class = map_field(map, super::wire_keys::BODY_KEY_ATTR_CLASS)
+                    .and_then(Value::as_str)
+                    .and_then(parse_actor_class)
+                    .ok_or(Error::Sync(SyncError::InvalidIdentityTopologyEventBody(
+                        "identity topology attribution actor class",
+                    )))?;
+                Ok(StoredIdentityOpAction::AuthorAttribution {
+                    target,
+                    core_digest: digest,
+                    actor: WriteActor::new(actor_ref, class),
+                })
+            }
+        }
         EVENT_KIND_MERGE => {
             let plan = decode_str_field(map, BODY_KEY_PLAN, "identity topology event plan")?;
             if plan != PLAN_READ_THROUGH {
@@ -229,6 +307,14 @@ pub(super) fn decode_action(kind: &str, map: &[(Value, Value)]) -> Result<Stored
         }
         EVENT_KIND_UNDO => Ok(StoredIdentityOpAction::Undo {
             target: decode_id_field(map, BODY_KEY_TARGET, "identity topology event target")?,
+        }),
+        EVENT_KIND_PROPOSAL_CANCELLATION => Ok(StoredIdentityOpAction::ProposalCancellation {
+            proposal: decode_id_field(map, BODY_KEY_PROPOSAL, "proposal cancellation proposal")?,
+            participant: decode_id_field(
+                map,
+                BODY_KEY_ENTITY,
+                "proposal cancellation participant",
+            )?,
         }),
         EVENT_KIND_PROPOSAL_RESOLUTION => {
             const RESOLUTION_CONTEXT: &str = "identity topology proposal resolution";
@@ -351,7 +437,40 @@ fn validate_identity_topology_event_stateless(record: &StoredIdentityOpEvent) ->
             "rejected identity topology decisions are not stored",
         )));
     }
+    if let StoredIdentityOpAction::ProposalCancellation {
+        proposal,
+        participant,
+    } = &record.action
+        && (proposal == participant
+            || record.approval != ClaimApprovalStatus::Auto
+            || record.actor.is_some())
+    {
+        return Err(Error::Sync(SyncError::InvalidIdentityTopologyEventBody(
+            "proposal cancellation requires automatic consent and a distinct participant",
+        )));
+    }
     validate_resolution_scope_stateless(record)?;
+    if matches!(
+        record.action,
+        StoredIdentityOpAction::AdmissionDisposition(_)
+            | StoredIdentityOpAction::AuthorAttribution { .. }
+            | StoredIdentityOpAction::AuthorRedaction { .. }
+    ) {
+        if record.actor.is_some()
+            || record.approval != ClaimApprovalStatus::Auto
+            || record.evidence.is_some()
+        {
+            return Err(Error::Sync(SyncError::InvalidIdentityTopologyEventBody(
+                "identity topology sidecar envelope",
+            )));
+        }
+        return Ok(());
+    }
+    if record.actor.is_some() {
+        return Err(Error::Sync(SyncError::InvalidIdentityTopologyEventBody(
+            "identity topology decision author belongs in a separate attribution carrier",
+        )));
+    }
     let effective = is_effective_approval(record.approval);
 
     // ONE-1745: the applied counts are an AUDIT record of what a door

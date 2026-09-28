@@ -56,6 +56,11 @@ pub fn reverse_rematerialize(vault: &Vault, doc: &LoroDoc, window_key: &WindowKe
 
     super::egress::scrub_local_claim_carriers(vault, window_key, doc)?;
     super::egress::scrub_local_only_carriers(vault, window_key, doc)?;
+    super::egress::scrub_redacted_attribution_carriers(vault, window_key, doc)?;
+    let redacted_authors = {
+        let rtxn = vault.store.env.read_txn()?;
+        crate::identity_topology::redacted_keys_in_txn(&vault.store, &rtxn)?
+    };
     let entities_in_range = vault.entities_in_learned_range(start_ts, end_ts)?;
     let device_only = {
         let rtxn = vault.store.env.read_txn()?;
@@ -149,6 +154,17 @@ pub fn reverse_rematerialize(vault: &Vault, doc: &LoroDoc, window_key: &WindowKe
         let Some((raw, source_revision)) = vault.get_raw_and_revision_unsealed(id)? else {
             continue;
         };
+
+        if crate::identity_topology::attribution_carrier_key(&raw)
+            .is_some_and(|key| redacted_authors.contains(&key))
+        {
+            let removed = remove_entity_crdt_carriers(&entities_map, &edges_map, id)?;
+            if removed {
+                super::egress::require_history_free_window(vault, window_key)?;
+            }
+            wrote_any |= removed;
+            continue;
+        }
 
         // Excluded credentials and the local default manifest have no live
         // carrier or incident edge. Scrub history as well as the live map when

@@ -11,6 +11,7 @@ use super::super::tombstone::{
     DecodedTombstoneValue, TombstoneReason, TombstoneValueV2, archive_tombstone_key,
     decode_tombstone_value, pending_tombstone_key,
 };
+use super::super::topology_delete_intent::clear_own_topology_delete_in_txn;
 
 impl Vault {
     /// Archives a checked PERSON/SUMMARY in the cleanup decision transaction.
@@ -117,12 +118,26 @@ impl Vault {
         Ok(())
     }
 
-    /// Clears the pending-tombstone marker. Only called once the CRDT
-    /// commit + snapshot persistence have succeeded — never before.
-    pub(super) fn clear_pending_tombstone(&self, window_label: &str, id: &EntityId) -> Result<()> {
+    /// Retire this request's propagation marker and reservation together,
+    /// only after both CRDT publication and local deletion have committed.
+    /// Do not consume a later request's `pt:` row at the same window/entity.
+    pub(super) fn finish_published_topology_delete(
+        &self,
+        window_label: &str,
+        id: &EntityId,
+        value: &TombstoneValueV2,
+    ) -> Result<()> {
         self.with_write_txn(|wtxn| {
             let key = pending_tombstone_key(window_label, id);
-            self.store.sync_state.delete(wtxn, &key)?;
+            if self
+                .store
+                .sync_state
+                .get(wtxn, &key)?
+                .is_some_and(|raw| *raw == value.encode())
+            {
+                self.store.sync_state.delete(wtxn, &key)?;
+            }
+            clear_own_topology_delete_in_txn(&self.store, wtxn, id, &value.request_id, false)?;
             Ok(())
         })
     }

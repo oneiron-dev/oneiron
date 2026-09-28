@@ -82,6 +82,7 @@ pub(crate) mod edge_prov_lifecycle;
 pub(crate) mod embedding;
 pub(crate) mod entity_edge_kinds;
 pub(crate) mod graph_topology;
+pub(crate) mod identity_topology_delete_interlock;
 pub(crate) mod open_gates;
 pub(crate) mod prov_deletes;
 pub(crate) mod reput_phonetic;

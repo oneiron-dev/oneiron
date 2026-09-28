@@ -1761,6 +1761,10 @@ fn forward_rematerialization_routes_type_76_through_the_ingest_door() -> Result<
     let event_id = EntityId::from_bytes([0x70; 16])?;
     let record = StoredIdentityOpEvent {
         seq: 50,
+
+        validated_at_write: false,
+
+        invalidated: false,
         at: 200,
         actor: None,
         source: ClaimSource::Inferred,
@@ -1783,6 +1787,18 @@ fn forward_rematerialization_routes_type_76_through_the_ingest_door() -> Result<
             crate::registry::ENTITY_TYPE_IDENTITY_TOPOLOGY_EVENT,
             200,
             &body,
+        ),
+    )?;
+    let (fact_id, fact) =
+        crate::identity_topology::signed_validated_row_for_test(&vault, event_id, &record)?;
+    let fact_body = crate::identity_topology::encode_identity_topology_event_body(&fact)?;
+    map_insert_bytes(
+        &entities,
+        &fact_id.to_hex(),
+        &make_entity_blob(
+            crate::registry::ENTITY_TYPE_IDENTITY_TOPOLOGY_EVENT,
+            200,
+            &fact_body,
         ),
     )?;
     // A forged reserved-kind row no ledger event mandates.
@@ -2239,7 +2255,11 @@ fn reverse_rematerialization_restores_protected_row_against_hostile_tombstone() 
     map_insert_bytes(&doc.get_map("tombstones"), &event.to_hex(), &tombstone)?;
     doc.commit();
 
-    assert_eq!(reverse_rematerialize(&vault, &doc, &window_key)?, 1);
+    assert_eq!(
+        reverse_rematerialize(&vault, &doc, &window_key)?,
+        2,
+        "the immutable decision and its signed admission fact are both recovered"
+    );
     assert_eq!(
         map_get_bytes(&doc.get_map("entities"), &event.to_hex()),
         Some(raw),
@@ -2304,6 +2324,10 @@ fn forward_rematerialization_quarantines_concurrent_type_76_tombstone() -> Resul
     let event_id = EntityId::from_bytes([0x70; 16])?;
     let record = StoredIdentityOpEvent {
         seq: 50,
+
+        validated_at_write: false,
+
+        invalidated: false,
         at: 200,
         actor: None,
         source: ClaimSource::Inferred,
@@ -4244,5 +4268,124 @@ fn packing_withholds_edges_that_touch_a_device_only_world_row() -> Result<()> {
     });
 
     assert!(!named);
+    Ok(())
+}
+
+/// An erased author is absent from LMDB, revisions, live CRDT state, and both
+/// empty/populated outbound snapshots. The immutable topology decision stays.
+#[test]
+fn identity_author_redaction_scrubs_personal_carriers_and_loro_history() -> Result<()> {
+    use crate::identity_topology::{
+        IdentityOpEvidence, IdentityOpOutcome, IdentityOpWrite, IdentityTopologyOp, MergeOp,
+        StoredIdentityOpAction, SurvivorshipPlan,
+    };
+    use crate::write_envelope::WriteActor;
+
+    let (_dir, vault) = test_vault();
+    let key = WindowKey::new("2026-03");
+    let at = key.start_timestamp().unwrap() + 60;
+    let author = EntityId::from_bytes([0x91; 16])?;
+    let source = EntityId::from_bytes([0x92; 16])?;
+    let survivor = EntityId::from_bytes([0x93; 16])?;
+    for id in [author, source, survivor] {
+        vault.put_entity(
+            &id,
+            crate::registry::ENTITY_TYPE_PERSON,
+            TimeRange { start: 1, end: 1 },
+            1,
+            b"person fixture",
+        )?;
+    }
+    let outcome = vault.apply_identity_topology_op(
+        &IdentityTopologyOp::Merge(MergeOp {
+            sources: vec![source],
+            survivor,
+            evidence: IdentityOpEvidence::default(),
+            survivorship_plan: SurvivorshipPlan::ReadThrough,
+        }),
+        &IdentityOpWrite::auto(ClaimSource::Inferred)
+            .with_actor(WriteActor::new(author, EdgeActorClass::Human)),
+        at,
+    )?;
+    let IdentityOpOutcome::Applied { event, .. } = outcome else {
+        panic!("authored merge must apply");
+    };
+    let decision_before = vault.get_raw(&event)?.expect("decision row");
+    let (carrier_id, carrier_bytes) = {
+        let txn = vault.store.env.read_txn()?;
+        let mut found = None;
+        for entry in vault.store.type_index.prefix_iter(
+            &txn,
+            &[crate::registry::ENTITY_TYPE_IDENTITY_TOPOLOGY_EVENT],
+        )? {
+            let (index_key, _) = entry?;
+            let id = crate::vault::entity_id_from_type_index_key(&index_key)?;
+            let raw = vault
+                .store
+                .entities
+                .get(&txn, id.as_bytes())?
+                .expect("indexed row");
+            let row = crate::identity_topology::decode_identity_topology_event_body(
+                &raw[crate::batch::ENTITY_METADATA_HEADER_LEN..],
+            )?;
+            if matches!(row.action, StoredIdentityOpAction::AuthorAttribution { target, .. } if target == event)
+            {
+                found = Some((id, raw.to_vec()));
+            }
+        }
+        found.expect("independent author carrier")
+    };
+    let revision = vault.pin_entity_revision(&carrier_id)?;
+    vault.with_write_txn(|txn| {
+        crate::identity_topology::redact_author_attribution_in_txn(&vault, txn, event, at + 1)?;
+        Ok(())
+    })?;
+    assert!(vault.get_raw(&carrier_id)?.is_none());
+    assert_eq!(vault.get_raw(&event)?, Some(decision_before.clone()));
+    assert!(vault.edge_exists(&source, EdgeKind::MergedInto, &survivor)?);
+    let txn = vault.store.env.read_txn()?;
+    assert!(
+        crate::identity_topology::effective_author_in_txn(&vault.store, &txn, event)?.is_none()
+    );
+    drop(txn);
+    assert!(
+        vault
+            .get_raw_with_mode(&carrier_id, crate::vault::ReadMode::Pinned(revision))?
+            .is_none()
+    );
+
+    // Simulate a pre-erasure mirror, including a personal row in old Loro
+    // history. The full snapshot and subsequent empty-live-state delta must
+    // never carry that history to a fresh peer.
+    let doc = create_window_doc("source", &key);
+    map_insert_bytes(&doc.get_map("entities"), &event.to_hex(), &decision_before)?;
+    map_insert_bytes(
+        &doc.get_map("entities"),
+        &carrier_id.to_hex(),
+        &carrier_bytes,
+    )?;
+    doc.commit();
+    for populated in [true, false] {
+        let bytes =
+            export_window_updates_since(&vault, &key, &doc, &VersionVector::default().encode())?;
+        let peer = LoroDoc::new();
+        import_doc(&peer, &bytes)?;
+        assert!(peer.is_shallow());
+        assert!(map_get_bytes(&peer.get_map("entities"), &carrier_id.to_hex()).is_none());
+        assert_eq!(
+            map_get_bytes(&peer.get_map("entities"), &event.to_hex()),
+            populated.then(|| decision_before.clone())
+        );
+        assert!(
+            !bytes
+                .windows(carrier_bytes.len())
+                .any(|window| window == carrier_bytes)
+        );
+        if populated {
+            map_delete(&doc.get_map("entities"), &event.to_hex())?;
+            doc.commit();
+        }
+    }
+    assert!(history_free_window_required(&vault, &key)?);
     Ok(())
 }

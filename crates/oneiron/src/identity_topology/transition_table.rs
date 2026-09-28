@@ -102,6 +102,11 @@ pub struct ProposalScope {
 /// cells (`NotCurrent`, `NotUndoable`) from undo evaluation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum IdentityTopologyRejection {
+    /// Deletion of a current merge source or survivor requires undo first.
+    ActiveMergeParticipantDeletion {
+        /// The protected participant.
+        entity: EntityId,
+    },
     /// merge names zero sources.
     EmptySources,
     /// facet names zero facet specs.

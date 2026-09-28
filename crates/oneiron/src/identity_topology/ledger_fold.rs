@@ -6,7 +6,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use crate::claim::ClaimApprovalStatus;
 use crate::entity_id::EntityId;
-use crate::error::{Error, Result};
+use crate::error::Result;
 use crate::registry::ENTITY_TYPE_IDENTITY_TOPOLOGY_EVENT;
 use crate::store::Store;
 use crate::vault::Vault;
@@ -15,16 +15,16 @@ use super::lifecycle_state::EntityLifecycleState;
 use super::op_apply::IdentityTopologyParticipantValidation;
 use super::op_vocabulary::IdentityTopologyOp;
 use super::store_entity_helpers::{
-    identity_topology_actor_complete_for_store_in_txn,
-    identity_topology_entity_type_for_store_in_txn, identity_topology_event_for_store_in_txn,
-    identity_topology_events_for_store_in_txn, validate_identity_op_participants_for_store_in_txn,
+    identity_topology_entity_type_for_store_in_txn, identity_topology_events_for_store_in_txn,
+    validate_identity_op_participants_for_store_in_txn,
 };
 use super::transition_table::{IdentityTopologyRejection, ProposalOutcome, evaluate_transition};
-use crate::error::ClaimError;
 
 /// One ledger action: apply an op, or undo a previously applied event.
 #[derive(Debug, Clone, PartialEq)]
 pub enum IdentityTopologyAction {
+    /// A signed admission statement; processed by the joined projection.
+    Disposition,
     /// Apply the op through the transition table.
     Apply(IdentityTopologyOp),
     /// Counter-event reverting a previously applied event (r1: undo is an
@@ -32,6 +32,11 @@ pub enum IdentityTopologyAction {
     Undo {
         /// The ledger event being reverted.
         target: EntityId,
+    },
+    /// Automatic participant-delete retirement (never a human verdict).
+    CancelProposal {
+        /// The parked proposal being mooted.
+        proposal: EntityId,
     },
     /// Resolution of a parked `Proposed` event (r7, ONE-1747). Carries ZERO
     /// lifecycle effects of its own: an approving ruling applies the op as
@@ -74,6 +79,8 @@ pub struct IdentityTopologyFold {
     /// First resolution wins: a resolution naming an already-resolved
     /// proposal is a fold rejection, never a silent overwrite.
     pub resolved_proposals: BTreeMap<EntityId, ProposalOutcome>,
+    /// Open proposals retired by a participant delete, without a ramp verdict.
+    pub moot_proposals: BTreeSet<EntityId>,
     /// Per-event rejections, in fold order.
     pub rejections: Vec<(EntityId, IdentityTopologyRejection)>,
 }
@@ -100,6 +107,7 @@ pub fn fold_identity_topology_log(events: &[IdentityTopologyEvent]) -> IdentityT
             continue;
         }
         match &event.action {
+            IdentityTopologyAction::Disposition => {}
             IdentityTopologyAction::Apply(op) => match evaluate_transition(&fold.states, op) {
                 Ok(transitions) => {
                     for (entity, state) in transitions {
@@ -129,12 +137,26 @@ pub fn fold_identity_topology_log(events: &[IdentityTopologyEvent]) -> IdentityT
                     }
                 }
             }
+            IdentityTopologyAction::CancelProposal { proposal } => {
+                if fold.resolved_proposals.contains_key(proposal)
+                    || !fold.moot_proposals.insert(*proposal)
+                {
+                    fold.rejections.push((
+                        event.event_id,
+                        IdentityTopologyRejection::ProposalAlreadyResolved {
+                            proposal: *proposal,
+                        },
+                    ));
+                }
+            }
             // A resolution carries no lifecycle effect of its own (the
             // approved op rides its own event). It only retires the park —
             // first resolution in `(seq, event_id)` order wins, so a
             // duplicate is a deterministic rejection on every replica.
             IdentityTopologyAction::ResolveProposal { proposal, outcome } => {
-                if fold.resolved_proposals.contains_key(proposal) {
+                if fold.resolved_proposals.contains_key(proposal)
+                    || fold.moot_proposals.contains(proposal)
+                {
                     fold.rejections.push((
                         event.event_id,
                         IdentityTopologyRejection::ProposalAlreadyResolved {
@@ -193,11 +215,77 @@ pub(super) fn fold_effective_identity_topology_events_for_store_in_txn(
     let events = identity_topology_events_for_store_in_txn(store, rtxn)?;
     let mut effective = Vec::with_capacity(events.len());
     for event in events {
+        let record = super::store_entity_helpers::identity_topology_event_for_store_in_txn(
+            store,
+            rtxn,
+            &event.event_id,
+        )?
+        .ok_or(crate::error::Error::CorruptedIndex(
+            "identity topology event index",
+        ))?;
+        if matches!(
+            record.action,
+            super::StoredIdentityOpAction::AdmissionDisposition(_)
+                | super::StoredIdentityOpAction::AuthorAttribution { .. }
+                | super::StoredIdentityOpAction::AuthorRedaction { .. }
+        ) {
+            continue;
+        }
+        let verdict = super::admission_disposition::joined_verdict_for_store_in_txn(
+            store,
+            rtxn,
+            &event.event_id,
+            &record,
+        )?;
+        if verdict.is_some_and(|v| v != super::AdmissionVerdict::Validated) {
+            continue;
+        }
+        let sealed = verdict == Some(super::AdmissionVerdict::Validated);
+        // A complete row set is not a validation witness. Applied history
+        // remains pending until a signed, core-bound admission fact arrives;
+        // no delete marker or missing author can manufacture that fact.
+        if !sealed
+            && matches!(
+                event.approval,
+                ClaimApprovalStatus::Auto | ClaimApprovalStatus::Approved
+            )
+        {
+            continue;
+        }
         let references_complete = match &event.action {
-            IdentityTopologyAction::Apply(op) => matches!(
-                validate_identity_op_participants_for_store_in_txn(store, rtxn, op)?,
-                IdentityTopologyParticipantValidation::Complete
-            ),
+            IdentityTopologyAction::Disposition => false,
+            IdentityTopologyAction::Apply(op) => {
+                match validate_identity_op_participants_for_store_in_txn(store, rtxn, op)? {
+                    IdentityTopologyParticipantValidation::Complete => true,
+                    IdentityTopologyParticipantValidation::Invalid(_) => false,
+                    IdentityTopologyParticipantValidation::Deferred if sealed => {
+                        // Signed history survives deletion, but does not
+                        // authorize a partial shell for a merely late row.
+                        let mut accounted = true;
+                        for participant in op.participants() {
+                            if identity_topology_entity_type_for_store_in_txn(
+                                store,
+                                rtxn,
+                                &participant,
+                            )?
+                            .is_none()
+                                && store
+                                    .sync_state
+                                    .get(
+                                        rtxn,
+                                        &crate::deletion::local_hard_delete_key(&participant),
+                                    )?
+                                    .is_none()
+                            {
+                                accounted = false;
+                                break;
+                            }
+                        }
+                        accounted
+                    }
+                    IdentityTopologyParticipantValidation::Deferred => false,
+                }
+            }
             IdentityTopologyAction::Undo { target } => {
                 identity_topology_entity_type_for_store_in_txn(store, rtxn, target)?
                     .is_some_and(|kind| kind == ENTITY_TYPE_IDENTITY_TOPOLOGY_EVENT)
@@ -206,15 +294,84 @@ pub(super) fn fold_effective_identity_topology_events_for_store_in_txn(
                 identity_topology_entity_type_for_store_in_txn(store, rtxn, proposal)?
                     .is_some_and(|kind| kind == ENTITY_TYPE_IDENTITY_TOPOLOGY_EVENT)
             }
+            IdentityTopologyAction::CancelProposal { proposal } => {
+                // A deferred reference may later materialize as a *different*
+                // kind. That invalid cancellation stays ineffective rather
+                // than making every unrelated fold fail to decode a PERSON.
+                if identity_topology_entity_type_for_store_in_txn(store, rtxn, proposal)?
+                    != Some(ENTITY_TYPE_IDENTITY_TOPOLOGY_EVENT)
+                {
+                    false
+                } else {
+                    let proposed =
+                        super::store_entity_helpers::identity_topology_event_for_store_in_txn(
+                            store, rtxn, proposal,
+                        )?
+                        .ok_or(crate::error::Error::CorruptedIndex(
+                            "identity topology event index",
+                        ))?;
+                    match (proposed.action.to_fold_action(), &record.action) {
+                        (
+                            IdentityTopologyAction::Apply(op),
+                            super::stored_event::StoredIdentityOpAction::ProposalCancellation {
+                                participant,
+                                ..
+                            },
+                        ) => {
+                            proposed.approval == ClaimApprovalStatus::Proposed
+                                && matches!(
+                                    op,
+                                    IdentityTopologyOp::Merge(_) | IdentityTopologyOp::Split(_)
+                                )
+                                && op.participants().contains(participant)
+                                && (store
+                                    .sync_state
+                                    .get(
+                                        rtxn,
+                                        &crate::deletion::identity_soft_delete_key(participant),
+                                    )?
+                                    .is_some()
+                                    || store
+                                        .sync_state
+                                        .get(
+                                            rtxn,
+                                            &crate::deletion::local_hard_delete_key(participant),
+                                        )?
+                                        .is_some())
+                        }
+                        _ => false,
+                    }
+                }
+            }
         };
-        let record = identity_topology_event_for_store_in_txn(store, rtxn, &event.event_id)?
-            .ok_or(Error::CorruptedIndex("identity topology event index"))?;
-        let actor_complete =
-            match identity_topology_actor_complete_for_store_in_txn(store, rtxn, &record) {
-                Ok(complete) => complete,
-                Err(Error::Claim(ClaimError::ActorClassMismatch { .. })) => false,
-                Err(err) => return Err(err),
-            };
+        // The author is not embedded in the immutable decision. A bound
+        // attribution that later materializes with the wrong class is an
+        // observed admission failure, even if its producer supplied a signed
+        // positive fact. A missing actor is historical only when the same
+        // replica has deletion evidence; a merely late actor still defers.
+        let actor = super::effective_author_in_txn(store, rtxn, event.event_id)?.or(record.actor);
+        let actor_complete = match actor {
+            None => true,
+            Some(actor) => match identity_topology_entity_type_for_store_in_txn(
+                store,
+                rtxn,
+                &actor.entity_ref(),
+            )? {
+                Some(kind) => {
+                    crate::provenance::validate_actor_class(kind, actor.actor_class()).is_ok()
+                }
+                None => {
+                    sealed
+                        && store
+                            .sync_state
+                            .get(
+                                rtxn,
+                                &crate::deletion::local_hard_delete_key(&actor.entity_ref()),
+                            )?
+                            .is_some()
+                }
+            },
+        };
         if references_complete && actor_complete {
             effective.push(event);
         }
@@ -223,46 +380,12 @@ pub(super) fn fold_effective_identity_topology_events_for_store_in_txn(
 }
 
 impl Vault {
-    /// Event projection used wherever topology authority is consumed.
-    /// Stored records remain immutable ledger evidence, but an apply record
-    /// with an available invalid participant (or an undo naming an
-    /// available non-event) is excluded from the effective fold. Missing
-    /// references remain deferred and are reconsidered on materialization.
-    /// `pub(crate)`: the receipt projection folds the same projection to
-    /// suppress fold-rejected duplicate rulings.
+    /// The same effective projection used by sync ingest and local apply/undo.
+    /// Neither caller can drift on actor or participant deletion semantics.
     pub(crate) fn fold_effective_identity_topology_events_in_txn(
         &self,
         rtxn: &heed::RoTxn<'_>,
     ) -> Result<Vec<IdentityTopologyEvent>> {
-        let events = self.identity_topology_events_in_txn(rtxn)?;
-        let mut effective = Vec::with_capacity(events.len());
-        for event in events {
-            let references_complete = match &event.action {
-                IdentityTopologyAction::Apply(op) => matches!(
-                    self.validate_identity_op_participants_in_txn(rtxn, op)?,
-                    IdentityTopologyParticipantValidation::Complete
-                ),
-                IdentityTopologyAction::Undo { target } => self
-                    .get_entity_type_in_txn(rtxn, target)?
-                    .is_some_and(|entity_type| entity_type == ENTITY_TYPE_IDENTITY_TOPOLOGY_EVENT),
-                IdentityTopologyAction::ResolveProposal { proposal, .. } => self
-                    .get_entity_type_in_txn(rtxn, proposal)?
-                    .is_some_and(|entity_type| entity_type == ENTITY_TYPE_IDENTITY_TOPOLOGY_EVENT),
-            };
-            let actor_complete = match self.identity_topology_event_in_txn(rtxn, &event.event_id)? {
-                Some(record) => {
-                    match self.validate_replicated_identity_topology_actor_in_txn(rtxn, &record) {
-                        Ok(complete) => complete,
-                        Err(Error::Claim(ClaimError::ActorClassMismatch { .. })) => false,
-                        Err(err) => return Err(err),
-                    }
-                }
-                None => return Err(Error::CorruptedIndex("identity topology event index")),
-            };
-            if references_complete && actor_complete {
-                effective.push(event);
-            }
-        }
-        Ok(effective)
+        fold_effective_identity_topology_events_for_store_in_txn(&self.store, rtxn)
     }
 }
