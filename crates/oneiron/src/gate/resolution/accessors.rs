@@ -61,10 +61,33 @@ impl PolicyManifestResolution {
             .map(|policy| policy.limit_for(holder))
     }
 
+    /// Resolve the required vault ceiling and every matching actor/scope row.
+    pub(crate) fn retry_budget_for(
+        &self,
+        actor: crate::EntityId,
+        scope: Option<&crate::llm::Scope>,
+    ) -> crate::Result<crate::gate::retry_source_policy::ResolvedRetryBudget> {
+        crate::gate::retry_source_policy::resolve(&self.retry_source_policy, actor, scope)
+    }
+
     #[must_use]
     pub(crate) fn proposal_check_threshold(&self) -> u64 {
         self.proposal_check_threshold
             .unwrap_or(crate::gate::proposal_observation::DEFAULT_PROPOSAL_CHECK_THRESHOLD)
+    }
+
+    /// Trusted vault policy narrowed by the holder's own limits and shipped defaults.
+    pub(crate) fn voice_ref_limits(
+        &self,
+        owner: &crate::EntityId,
+    ) -> Option<crate::voice_identity::ref_limits::VoiceRefLimits> {
+        if self.diagnostics.loaded_manifest_forces_fail_closed() {
+            None
+        } else {
+            self.voice_ref_defaults
+                .as_ref()
+                .and_then(|defaults| self.voice_ref_limits.effective(defaults, owner))
+        }
     }
 
     #[must_use]
