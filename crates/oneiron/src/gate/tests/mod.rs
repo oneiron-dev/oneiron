@@ -66,6 +66,7 @@ mod posture_override;
 mod scoped_read;
 mod special_doors;
 mod support;
+mod tracker_limits;
 mod trust_boundary;
 mod vad_vetting;
 mod witness_message;

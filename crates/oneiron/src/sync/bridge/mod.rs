@@ -23,6 +23,10 @@ mod companion_identity;
 mod edges;
 mod entities;
 mod observers;
+mod provenance;
+pub use provenance::RevisionEvent;
+pub(in crate::sync) use provenance::origin_for_mirrors;
+
 mod parent_retry;
 pub(crate) use parent_retry::has_unresolved_parent_for_source_in_txn;
 pub(in crate::sync) use parent_retry::{

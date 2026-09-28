@@ -251,6 +251,8 @@ async fn write(f: &Fixture, world: &str, value: u64) {
         &MaterializedDiffSummary {
             containers: vec![path.clone()],
             bytes: 1,
+
+            revision_events: Vec::new(),
         },
         &OriginMark::default(),
     );

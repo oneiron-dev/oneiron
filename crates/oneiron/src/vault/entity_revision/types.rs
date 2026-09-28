@@ -7,6 +7,37 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct RevisionRef(pub [u8; 16]);
 
+/// A published view of an entity's revision state after a change.
+///
+/// `previous_revision` is the tracked frontier before the change. `revision`
+/// is the new live frontier, or `None` when the entity no longer has one.
+/// `indexed_revision` is the frontier currently published to retrieval, when
+/// one is available; it may lag `revision` until idle publication completes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct EntityRevisionChange {
+    /// Entity whose revision state changed.
+    pub entity: EntityId,
+    /// Live revision before the change, if the entity had a tracked revision.
+    pub previous_revision: Option<RevisionRef>,
+    /// Live revision after the change, or `None` if it was removed.
+    pub revision: Option<RevisionRef>,
+    /// Revision currently represented by the retrieval indexes, if available.
+    pub indexed_revision: Option<RevisionRef>,
+}
+
+/// An idle transaction that successfully advanced an entity's indexed frontier.
+///
+/// The notification is delivered only after the index transaction commits.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct IndexedPublication {
+    /// Entity whose index was advanced.
+    pub entity: EntityId,
+    /// Indexed frontier before this transaction committed.
+    pub previous_indexed: RevisionRef,
+    /// Exact revision made visible to indexed reads by this transaction.
+    pub indexed: RevisionRef,
+}
+
 impl RevisionRef {
     /// Stable lowercase wire form; not an entity identity.
     pub fn to_hex(self) -> String {
