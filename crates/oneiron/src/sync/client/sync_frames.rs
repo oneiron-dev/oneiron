@@ -3,7 +3,7 @@
 use loro::{LoroDoc, VersionVector};
 
 use super::base::SyncClient;
-use super::types::{SVF_FRESH, SyncEvent};
+use super::types::{SVF_FRESH, SyncEvent, SyncResidenceMode};
 use crate::error::Result;
 use crate::sync::loro_support::doc_version_vector;
 use crate::sync::transport;
@@ -51,6 +51,7 @@ impl SyncClient {
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .clear();
         self.root_bootstrapped = false;
+        self.residence_acks.clear();
         let root_doc = LoroDoc::new();
         let _meta = root_doc.get_map("meta");
         // Same peer-id pinning as `new`: the client never authors root ops,
@@ -109,7 +110,14 @@ impl SyncClient {
         // on the same connection; authentication uses a paired capability.
         // Device lease requests are retired (C07); the NOTE session bind
         // (HEAD) still rides along when configured.
-        let mut messages = vec![transport::encode_chunk_full_window_protocol_hello()];
+        let mut messages = vec![if self.config.federation_peer.is_some() {
+            transport::encode_protocol_hello()
+        } else {
+            match self.config.residence_mode {
+                SyncResidenceMode::Opened => transport::encode_residence_protocol_hello(),
+                SyncResidenceMode::All => transport::encode_chunk_full_window_protocol_hello(),
+            }
+        }];
         if let Some(session) = &self.config.note_session {
             messages.push(super::note_session::bind_frame(session)?);
         }
@@ -143,41 +151,57 @@ impl SyncClient {
 
         let effective_worlds = self.effective_worlds()?;
         let mut keys: Vec<WindowKey> = Vec::new();
-        let mut next = Some(WindowKey::from_timestamp(now_secs));
-        for _ in 0..self.config.default_window_count {
-            let Some(key) = next else { break };
-            next = key.previous_month();
-            if let Some(worlds) = &effective_worlds {
-                for world in worlds {
-                    let scoped = WindowKey::for_month_world(&key, *world);
-                    if !keys.contains(&scoped) {
-                        keys.push(scoped);
+        if self.config.residence_mode == SyncResidenceMode::All {
+            let mut next = Some(WindowKey::from_timestamp(now_secs));
+            for _ in 0..self.config.default_window_count {
+                let Some(key) = next else { break };
+                next = key.previous_month();
+                if let Some(worlds) = &effective_worlds {
+                    for world in worlds {
+                        let scoped = WindowKey::for_month_world(&key, *world);
+                        if !keys.contains(&scoped) {
+                            keys.push(scoped);
+                        }
                     }
                 }
-            }
-            keys.push(key);
-        }
-        for key in self.manager.loaded_keys() {
-            if Self::follows_window(&key, &effective_worlds) && !keys.contains(&key) {
                 keys.push(key);
             }
-        }
-        // The home/sync-all replica requests every root and local partition,
-        // including historical base months and world claims not yet indexed
-        // by a fresh server. A followed world also needs its base month.
-        let mut discovered = crate::sync::schema::read_window_list(&self.root_doc);
-        if effective_worlds
-            .as_ref()
-            .is_none_or(|worlds| !worlds.is_empty())
-        {
-            discovered.extend(
-                crate::sync::discover_local_window_keys(&self.vault)
-                    .map_err(|error| TransportError::Storage(error.to_string()))?,
-            );
-        }
-        for key in Self::selected_discovered_windows(discovered, &effective_worlds) {
-            if !keys.contains(&key) {
-                keys.push(key);
+            for key in self.manager.loaded_keys() {
+                if Self::follows_window(&key, &effective_worlds) && !keys.contains(&key) {
+                    keys.push(key);
+                }
+            }
+            // The home/sync-all replica requests every root and local partition,
+            // including historical base months and world claims not yet indexed
+            // by a fresh server. A followed world also needs its base month.
+            let mut discovered = crate::sync::schema::read_window_list(&self.root_doc);
+            if effective_worlds
+                .as_ref()
+                .is_none_or(|worlds| !worlds.is_empty())
+            {
+                discovered.extend(
+                    crate::sync::discover_local_window_keys(&self.vault)
+                        .map_err(|error| TransportError::Storage(error.to_string()))?,
+                );
+            }
+            for key in Self::selected_discovered_windows(discovered, &effective_worlds) {
+                if !keys.contains(&key) {
+                    keys.push(key);
+                }
+            }
+        } else {
+            for marker in self
+                .vault
+                .sync_state_keys_with_prefix("rp:w:")
+                .map_err(|e| TransportError::Storage(e.to_string()))?
+            {
+                let key = marker
+                    .strip_prefix("rp:w:")
+                    .and_then(WindowKey::try_new)
+                    .ok_or(TransportError::InvalidWindowKey)?;
+                if !keys.contains(&key) {
+                    keys.push(key);
+                }
             }
         }
         for key in extra_windows {
@@ -199,6 +223,23 @@ impl SyncClient {
                 .then_with(|| left.as_str().cmp(right.as_str()))
         });
         for key in keys {
+            if self.config.residence_mode == SyncResidenceMode::Opened
+                && self.config.federation_peer.is_none()
+            {
+                let selector = self.config.residence_selector.as_ref().ok_or(
+                    TransportError::InvalidPayload("promoted window has no selector"),
+                )?;
+                let bytes = crate::sync::encode_sync_selector(selector)
+                    .map_err(|_| TransportError::InvalidPayload("invalid promotion selector"))?;
+                messages.push(
+                    transport::encode_window_sync(
+                        key.as_str(),
+                        window_sub_tags::PROMOTION_REQUEST,
+                        &bytes,
+                    )
+                    .into_result()?,
+                );
+            }
             if key.world().is_some() {
                 // The server sends root first, but initial frames are already
                 // queued on this socket. Wait for that root response, request
@@ -284,8 +325,17 @@ impl SyncClient {
         &mut self,
     ) -> std::result::Result<Vec<Vec<u8>>, TransportError> {
         let effective_worlds = self.effective_worlds()?;
-        let mut discovered = crate::sync::schema::read_window_list(&self.root_doc);
-        discovered.extend(self.manager.loaded_keys());
+        // Opened residence exchanges full VVs only for promoted windows; the
+        // deferred set holds only those, so an advertised key never enrolls.
+        let opened = self.config.residence_mode == SyncResidenceMode::Opened
+            && self.config.federation_peer.is_none();
+        let mut discovered = if opened {
+            Vec::new()
+        } else {
+            let mut listed = crate::sync::schema::read_window_list(&self.root_doc);
+            listed.extend(self.manager.loaded_keys());
+            listed
+        };
         discovered.extend(
             self.pending_world_windows
                 .lock()
@@ -293,7 +343,8 @@ impl SyncClient {
                 .iter()
                 .cloned(),
         );
-        if !self.root_bootstrapped
+        if !opened
+            && !self.root_bootstrapped
             && effective_worlds
                 .as_ref()
                 .is_none_or(|worlds| !worlds.is_empty())
@@ -303,7 +354,14 @@ impl SyncClient {
                     .map_err(|error| TransportError::Storage(error.to_string()))?,
             );
         }
-        let mut keys = Self::selected_discovered_windows(discovered, &effective_worlds);
+        // A promoted world window is requested alone: the device opened it,
+        // whether or not its world is followed, and its base month is not
+        // promoted, so the home would refuse that month's full exchange.
+        let mut keys = if opened {
+            discovered
+        } else {
+            Self::selected_discovered_windows(discovered, &effective_worlds)
+        };
         keys.sort_by(|left, right| {
             left.world()
                 .is_some()

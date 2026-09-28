@@ -43,6 +43,7 @@
 //!   lock while holding the materializer lock.
 
 mod document_api;
+mod promotion;
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, MutexGuard, Weak};
@@ -79,6 +80,9 @@ pub struct WindowManager {
     /// routes its persisted local updates here (connection channel when
     /// attached, durable `SyncQueue` otherwise).
     outbound: Arc<OutboundSink>,
+    /// Window promotion notices for the one live sync socket. Markers remain
+    /// durable when there is no receiver; reconnect replays them from rp:w:.
+    promotions: tokio::sync::broadcast::Sender<WindowKey>,
     /// Test-only handle-issue pause slot (ONE-1608), owned by THIS manager.
     ///
     /// The hook that parks a caller between issuing a window `Arc` and
@@ -122,6 +126,7 @@ impl WindowManager {
             windows: Mutex::new(HashMap::new()),
             issued_handles: Mutex::new(HashMap::new()),
             outbound: Arc::new(OutboundSink::new()),
+            promotions: tokio::sync::broadcast::channel(64).0,
             #[cfg(test)]
             handle_issue_pause: Mutex::new(None),
         }
