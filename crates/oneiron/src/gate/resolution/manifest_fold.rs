@@ -107,6 +107,9 @@ pub(crate) fn resolve_policy_manifest(
                     merge_teacher_probe_row(&mut resolution, row);
                 }
                 resolution.source_trust.merge(decoded.source_trust);
+                resolution
+                    .experiment_selection
+                    .extend(decoded.experiment_selection);
                 resolution.actor_ceilings.extend(decoded.actor_ceilings);
                 delegated_rows.extend(decoded.delegated_grants);
                 resolution.scoped_grants.extend(decoded.scoped_grants);
