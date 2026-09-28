@@ -26,7 +26,9 @@ pub(crate) use ruling_integrity::{
 };
 mod pending_act;
 mod shared_creation;
-pub use pending_act::{PendingActStarted, PendingAuthorityAct, SharedActPolicy};
+pub use pending_act::{
+    PendingActStarted, PendingAuthorityAct, SharedActPolicy, SharedActPrecedence,
+};
 pub use rulings::{AdminRuling, AdminRulingReceipt, fold_admin_rulings};
 pub use shared_creation::{InitialSharedMember, SharedVaultCreation, SharedVaultPreset};
 mod guest;

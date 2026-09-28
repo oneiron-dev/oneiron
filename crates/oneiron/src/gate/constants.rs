@@ -41,6 +41,9 @@ pub(super) const POLICY_COMM_OPT_OUT_POSTURE_KEY: &str = "comm_opt_out_posture";
 /// different checkers, both fail the gate closed; two manifests naming the
 /// same checker are one configuration stated twice.
 pub(super) const POLICY_AUTO_CHECKER_KEY: &str = "auto_checker";
+/// Optional table of shared-vault act-policy rows, keyed by act name. Only a
+/// trusted manifest contributes rows; two differing tables fail closed.
+pub(crate) const POLICY_SHARED_ACT_POLICIES_KEY: &str = "shared_act_policies";
 /// Optional top-level manifest key whose value is an ordered MessagePack
 /// array of row maps. Each row selects exactly one call set — one `purpose`
 /// string (a pinned `CallPurpose` snake-case name, or any other non-empty

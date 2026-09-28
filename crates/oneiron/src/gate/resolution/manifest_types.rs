@@ -93,6 +93,8 @@ pub(crate) struct PolicyManifestResolution {
     pub(super) single_valued_predicates: std::collections::BTreeSet<String>,
     pub(super) scoped_grants: Vec<PolicyScopedGrant>,
     pub(crate) federation_grant_rows: Vec<crate::federation::grant_policy::GrantPolicyRow>,
+    pub(crate) shared_act_policies:
+        Option<std::collections::BTreeMap<String, crate::federation::SharedActPolicy>>,
     pub(super) owner_policy_rows: Vec<PolicyOwnerPolicyRow>,
     pub(super) owner_policy_rows_dropped: bool,
     pub(super) owner_policy_enabled: bool,

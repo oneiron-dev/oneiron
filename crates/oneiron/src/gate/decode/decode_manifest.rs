@@ -18,8 +18,8 @@ use crate::gate::constants::{
     POLICY_OWNER_POLICY_OUTPUT_CONTRACT_KEY, POLICY_OWNER_POLICY_PATTERNS_KEY,
     POLICY_OWNER_POLICY_ROWS_KEY, POLICY_PACK_ID_KEY, POLICY_PACK_VERSION_KEY, POLICY_RULES_KEY,
     POLICY_SCHEMA_VERSION, POLICY_SCHEMA_VERSION_KEY, POLICY_SCOPED_GRANTS_KEY,
-    POLICY_SIGNATURE_KEY, POLICY_SIGNATURES_KEY, POLICY_SOURCE_TRUST_KEY,
-    POLICY_WEAVE_CORRECTION_POLICY_KEY,
+    POLICY_SHARED_ACT_POLICIES_KEY, POLICY_SIGNATURE_KEY, POLICY_SIGNATURES_KEY,
+    POLICY_SOURCE_TRUST_KEY, POLICY_WEAVE_CORRECTION_POLICY_KEY,
 };
 use crate::gate::grants::PolicyScopedGrant;
 use crate::gate::hosted_tts_policy::HostedTtsPolicy;
@@ -35,7 +35,7 @@ use super::decode_map_util::{
 };
 use super::decode_policy_tables::{
     parse_actor_ceilings, parse_axes, parse_delegated_grants, parse_owner_policy_patterns,
-    parse_owner_policy_rows, parse_rules, parse_scoped_grants,
+    parse_owner_policy_rows, parse_rules, parse_scoped_grants, parse_shared_act_policies,
 };
 use super::decode_trust_budget::{
     parse_budget_exhaustion_policy, parse_budget_policy, parse_comm_opt_out_posture,
@@ -50,6 +50,8 @@ pub(in crate::gate) struct DecodedPolicyManifest {
     pub(in crate::gate) single_valued_predicates: std::collections::BTreeSet<String>,
     pub(in crate::gate) scoped_grants: Vec<PolicyScopedGrant>,
     pub(in crate::gate) federation_grant_rows: Vec<crate::federation::grant_policy::GrantPolicyRow>,
+    pub(in crate::gate) shared_act_policies:
+        Option<std::collections::BTreeMap<String, crate::federation::SharedActPolicy>>,
     pub(in crate::gate) owner_policy_rows: Vec<PolicyOwnerPolicyRow>,
     pub(in crate::gate) owner_policy_rows_dropped: bool,
     pub(in crate::gate) owner_policy_enabled: bool,
@@ -108,6 +110,7 @@ pub(in crate::gate) fn decode_policy_manifest(data: &[u8]) -> Option<DecodedPoli
                 | "single_valued_predicates"
                 | POLICY_SCOPED_GRANTS_KEY
                 | crate::federation::grant_policy::ROWS_KEY
+                | POLICY_SHARED_ACT_POLICIES_KEY
                 | POLICY_OWNER_POLICY_ROWS_KEY
                 | POLICY_OWNER_POLICY_ENABLED_KEY
                 | POLICY_OWNER_POLICY_DOCUMENT_KEY
@@ -181,6 +184,11 @@ pub(in crate::gate) fn decode_policy_manifest(data: &[u8]) -> Option<DecodedPoli
             MapValue::Duplicate => return None,
             MapValue::Present(value) => crate::federation::grant_policy::parse_rows(value)?,
         };
+    let shared_act_policies = match single_map_value(&entries, POLICY_SHARED_ACT_POLICIES_KEY) {
+        MapValue::Missing => None,
+        MapValue::Duplicate => return None,
+        MapValue::Present(value) => Some(parse_shared_act_policies(value)?),
+    };
     let owner_policy_enabled = match single_map_value(&entries, POLICY_OWNER_POLICY_ENABLED_KEY) {
         MapValue::Missing => false,
         MapValue::Duplicate => return None,
@@ -349,6 +357,7 @@ pub(in crate::gate) fn decode_policy_manifest(data: &[u8]) -> Option<DecodedPoli
         source_trust,
         scoped_grants,
         federation_grant_rows,
+        shared_act_policies,
         single_valued_predicates,
         owner_policy_rows,
         owner_policy_rows_dropped,
