@@ -102,17 +102,11 @@ npm install @oneiron/client   # or: bun add @oneiron/client
 It ships TypeScript source with no build step, so the runtime must load TypeScript:
 Bun 1.3+; plain `node` without a TS loader cannot import it.
 
-```ts
-import { HttpBaseClient } from "@oneiron/client";
-
-const client = new HttpBaseClient({
-  baseUrl: "http://127.0.0.1:3000",
-  secret: process.env.ONEIRON_SECRET, // placeholder credential, never a literal
-});
-
-const response = await client.discover();
-console.log(response.status, await response.text()); // status, headers, body as sent
-```
+`HttpBaseClient` is a low-level fetch wrapper. For a protected request, supply
+`Authorization: Bearer <v2.slip.*>` and a **fresh** signed
+`x-oneiron-binding` proof with that request. Its old `secret` option only sets a
+static bearer header; an issuer secret is not a credential, and one static proof
+cannot be reused across requests. Public endpoints need neither header.
 
 `request`, `discover`, `searchText`, `getEntity`, and `callVerb` all return
 `Promise<Response>`; every other route in the catalog is one
@@ -129,7 +123,8 @@ and plain `curl` is equivalent wherever the binary is absent.
 
 ```bash
 export ONEIRON_URL=http://127.0.0.1:3000
-export ONEIRON_SECRET=placeholder-dev-secret   # placeholder; never commit a real one
+export ONEIRON_SECRET='<logged-v2.slip-token>'  # the `api` CLI bearer environment
+export ONEIRON_BINDING_KEY='<64-hex-holder-seed>'  # keep outside argv and commits
 
 oneiron api discover
 oneiron api search "project kickoff notes" --limit 5
@@ -138,24 +133,11 @@ oneiron api call <verb> --data @request.json    # or --data - to read stdin
 oneiron api raw GET /api/health
 ```
 
-```bash
-curl --disable --config - "$ONEIRON_URL/api/core/discover" <<CONFIG_EOF
-silent
-show-error
-fail-with-body
-header = "Authorization: Bearer $ONEIRON_SECRET"
-CONFIG_EOF
-```
-
-The credential rides curl's config channel on stdin — the heredoc is unquoted so the
-shell expands `$ONEIRON_SECRET` into it — rather than a `--header` argument, so it
-stays out of argv and out of `ps`. `--disable` comes first and keeps a host
-`~/.curlrc` from adding a transfer that would be handed that same credential.
-
-The secret is read from `ONEIRON_SECRET`, never taken as an argument and never
-printed. Success bodies reach stdout byte for byte, curl diagnostics stay on
-stderr, and a 4xx or 5xx keeps its body and still exits non-zero. The verb
-grammar returned by `setup_oneiron` names the verbs `oneiron api call` accepts.
+The `oneiron api` command signs a fresh holder proof for each slip request and
+hands both headers to curl on its config stdin, never argv. Plain `curl` callers
+must generate a fresh `x-oneiron-binding` on every protected request and send it
+beside the logged slip. Issuer secrets, historical lease keys, and MAC tokens
+never authenticate protected routes.
 
 ## Lane: tool-first-mcp
 
@@ -168,18 +150,50 @@ which endpoint a connector reaches is a registration the operator makes.
 
 ## Authentication
 
-One credential travels, in the standard header: `Authorization: Bearer <credential>`.
+Protected requests carry a logged `v2.slip.*` capability slip in
+`Authorization: Bearer` **and** a fresh `x-oneiron-binding` holder proof
+`{"timestamp","nonce","signature"}` signed over the slip's request transcript.
+The configured issuer secret and device-lease keys are not bearer credentials.
 
-- **Owner-grade** — the configured trust-root secret sent verbatim, or a minted token carrying no narrowing claims. Required by the legacy `/api/*` routes and the `/ws` sync upgrade, which read the whole vault.
-- **Scoped** — a paired slip `v2.slip.<hex>`, sent with a fresh `x-oneiron-binding` holder proof `{"timestamp","nonce","signature"}` signed by its connection key on every request. Accepted on `/v1/core/*` and companion control-plane routes with exactly the verbs it carries. Create a one-hour pairing link with `oneiron-server token pair --scope core:read[,…] --principal-ref <hex32> [--actor-class human]` and redeem it once at `POST /v1/core/pairing/redeem`; the SDKs' `pair(link)` does both halves.
+- **Owner-grade** — an unattenuated, verified top-scope slip. Required by the
+  legacy `/api/*` routes and the `/ws` sync upgrade, which read the whole vault.
+- **Scoped** — a paired slip whose verbs restrict `/v1/core/*` and companion
+  control-plane routes. Create a one-hour pairing link with
+  `oneiron-server token pair --scope core:read --principal-ref <hex32>` using an
+  existing owner slip (`ONEIRON_TOKEN`) and its binding seed
+  (`ONEIRON_BINDING_KEY`); redeem it once at `POST /v1/core/pairing/redeem`.
+  A fresh self-host has no client slip yet: stop the daemon and run
+  `ONEIRON_AUTH_SECRET=… oneiron token bootstrap --config <config> --url <origin>`
+  locally. This prints a one-time link for the existing embedded owner; it
+  never sends or prints the issuer secret. Start the daemon, then redeem the
+  link with a new holder key. Non-loopback origins must use HTTPS. The optional
+  `--lifetime-secs` can only shorten the trusted vault policy's initial-owner
+  ceiling (default one year); the link itself still expires after one hour.
+  A configured OAuth JWT is valid only at `POST /v1/core/pairing/oauth` with
+  a signed holder-key exchange request. Send `Authorization: Bearer <JWT>` and
+  JSON `{ "binding_key": "<64 lowercase hex>", "nonce": "<32 hex>",
+  "signature": "<128 lowercase hex>", "lifetime_secs": <optional positive seconds> }`.
+  Sign the byte transcript
+  `b"oneiron/oauth-slip-pair/v1" || BLAKE3(JWT bytes) || binding_key bytes || nonce UTF-8`
+  with the holder's Ed25519 key. The JWT subject must name an existing actor;
+  the returned logged slip carries only its `read`/`propose` verbs and no longer
+  than the JWT's remaining lifetime, the trusted vault policy's OAuth
+  ceiling (default one hour), or the optional caller-narrowed lifetime.
+  The `credential_lifetimes` policy-manifest map contains positive
+  `oauth_exchange_secs` and `initial_owner_secs` maxima. Trusted packs meet at
+  the shortest lifetime; malformed policies refuse issuance, not fall back.
+  The JWT itself is not
+  a data-route credential.
 
-The claims are visible but not editable: they are authenticated by a MAC keyed on the server's secret, which appears in no token. Editing, widening, or deleting the claims invalidates the token. Every authentication failure — absent, malformed, wrong MAC, unknown claim, revoked — returns the same `UNAUTHORIZED`; the response never says which.
+A slip is verified against the issuing host's public key and the authority log.
+Every production authentication failure returns `UNAUTHORIZED`. The explicit
+unauthenticated development mode is not a production credential.
 
 Every paired slip carries a slip id, its identity. Two pairings of identical claims produce two distinct slips, so one can be revoked without touching the other. A slip without its connection key authenticates nothing: the holder proof, not the slip, is what each request spends.
 
-**Revoking one token.** `oneiron token revoke --jti <hex32>`. Its own explicit act, on one named token, effective immediately on every route including the owner-grade ones; idempotent, and it reports `{"revoked": false}` when the id was already revoked. It does not affect any other token, whatever claims they share.
+**Revoking one slip.** `oneiron token revoke --jti <hex64>`. Its own explicit act, on one named token, effective immediately on every route including the owner-grade ones; idempotent, and it reports `{"revoked": false}` when the id was already revoked. It does not affect any other token, whatever claims they share.
 
-**Rotating the secret.** Replace the configured value and restart. Rotation rewraps the key the tokens are MAC'd under, so previously minted tokens and derived credential hashes stop resolving and must be reissued; credentials minted under the new secret work immediately. Rotation is the all-at-once lever; revoking an individual token is the separate, explicit act above, never a side effect of rotation.
+**Rotating credentials.** Rotate or revoke the logged slips. The issuer key is not a bearer token; replacing it alone is not a device-lease rotation ceremony. Receipt-attestation device keys remain verification records, not access credentials (ONE-2294 tracks slip-backed receipt attestation).
 ## Tier-1: Endpoint Activation Index
 
 Fetch Tier-1 first. It contains one endpoint block per live route literal and no Tier-2 parameters or Tier-3 schemas.
@@ -675,7 +689,7 @@ Example response:
 
 Method: `GET`
 
-Authentication: Core auth with read scope, either scoped bearer or the configured shared secret.
+Authentication: a logged slip carrying read scope, with a fresh holder proof.
 
 Query parameters:
 
@@ -1008,11 +1022,11 @@ Example response for an empty request body:
 }
 ```
 
-### Lease Revoke
+### Receipt-Key Revocation
 
 Method: `POST`
 
-Authentication: owner-grade credential required — the configured trust-root secret sent verbatim, or a minted token carrying no narrowing claims. This is a legacy `/api/*` route: a scoped bearer authenticates but is refused here with the same `UNAUTHORIZED` as an absent one, however wide its scopes. Unauthenticated only when development config explicitly allows it.
+Authentication: an unattenuated owner-grade slip plus a fresh holder proof. The issuer secret and historical lease keys do not authorize this route; scoped slips are refused. Explicit unauthenticated development mode remains separate.
 
 Headers:
 

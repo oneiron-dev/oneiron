@@ -52,6 +52,7 @@ tower-http = { version = "0.6", features = ["cors"] }
 anyhow = "1"
 serde_bytes = "0.11"
 blake3 = { workspace = true }
+ed25519-dalek = { workspace = true }
 subtle = "2"
 libc = "0.2"
 jsonwebtoken = { version = "9", default-features = false, features = ["use_pem"] }
@@ -131,7 +132,6 @@ production-ws-codec = { package = "tokio-tungstenite", version = "0.29" }
 # mirror-failure injection seam used by the root-snapshot/`ls:`-mirror
 # atomicity test (ONE-1140); no production effect. `test-support` compiles in
 # the fixture that mints a foreign principal's Grant through the owner verb.
-ed25519-dalek = { workspace = true }
 oneiron = { version = "0.1.0", path = "../oneiron", features = ["sync", "test-hooks", "test-support"] }
 
 [lints]

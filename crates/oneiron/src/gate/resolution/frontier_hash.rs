@@ -395,6 +395,13 @@ pub(super) fn hash_policy_frontier_v0(
         hash_u64(hasher, u64::from(policy.max_context_bytes));
     }
 
+    hash_str(hasher, "credential_lifetimes");
+    hash_bool(hasher, resolution.credential_lifetimes.is_some());
+    if let Some(lifetimes) = resolution.credential_lifetimes {
+        hash_str(hasher, lifetimes.precedence.as_str());
+        hash_u64(hasher, lifetimes.oauth_exchange_secs);
+        hash_u64(hasher, lifetimes.initial_owner_secs);
+    }
     hash_len(hasher, resolution.packs.len());
     for pack in &resolution.packs {
         hash_str(hasher, &pack._pack_id);

@@ -125,7 +125,9 @@ pub use self::owner_policy_mutation::{
     PolicyRowAction, PolicyRowChange, PolicyRowScope, PolicyWhySource,
 };
 pub(crate) use self::repair::{evaluate_repair_consent, repair_criticality};
-pub(crate) use self::resolution::{PolicyManifestResolution, resolve_policy_manifest};
+pub(crate) use self::resolution::{
+    PolicyManifestResolution, resolve_credential_lifetimes, resolve_policy_manifest,
+};
 pub use self::retrieval_filter::RetrievalFilter;
 pub(crate) use self::retrieval_filter::{
     ResolvedRetrievalFilter, RetrievalPolicyFloor, narrow_retrieval_filter,

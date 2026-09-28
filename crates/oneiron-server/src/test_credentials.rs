@@ -174,6 +174,22 @@ pub(crate) fn bind_slip_request(
     );
     request
 }
+/// Signs a real top-scope slip for a WebSocket upgrade test.
+pub(crate) fn bind_ws_request(server: &SyncServer, request: &mut Request<()>, recipe: &str) {
+    let (slip, key) = credential(server, recipe);
+    let signed = bind_slip_request(
+        server,
+        &slip,
+        &key,
+        Request::builder().body(Body::empty()).unwrap(),
+    );
+    for name in ["authorization", "x-oneiron-binding"] {
+        request
+            .headers_mut()
+            .insert(name, signed.headers()[name].clone());
+    }
+}
+
 /// Engine-level reads carry the logged host root, as the authenticated server
 /// does. A plain actor key reads nothing until a trusted manifest grants it.
 pub(crate) fn host_reader(vault: &oneiron::Vault) -> oneiron::claim::ScopedReadActorKey {

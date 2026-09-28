@@ -19,8 +19,9 @@ use crate::gate::constants::{
     ATTRIBUTION_REASON_MAX_BYTES_KEY, ATTRIBUTION_RECEIPTS_PER_PASS_KEY, POLICY_ACTOR_CEILINGS_KEY,
     POLICY_ASK_POLICY_KEY, POLICY_ATTRIBUTION_LIMITS_KEY, POLICY_AUTO_CHECKER_KEY,
     POLICY_BUDGET_POLICY_KEY, POLICY_CONNECTOR_CLASS_CARRY_KEY,
-    POLICY_CONNECTOR_CLASS_PRECEDENCE_KEY, POLICY_CONNECTOR_CLASS_ROLE_KEY, POLICY_DEFAULTS_KEY,
-    POLICY_DELEGATED_GRANTS_KEY, POLICY_DOCEDIT_RESOURCE_KEY, POLICY_DOCX_ARCHIVE_LIMITS_KEY,
+    POLICY_CONNECTOR_CLASS_PRECEDENCE_KEY, POLICY_CONNECTOR_CLASS_ROLE_KEY,
+    POLICY_CREDENTIAL_LIFETIMES_KEY, POLICY_DEFAULTS_KEY, POLICY_DELEGATED_GRANTS_KEY,
+    POLICY_DOCEDIT_RESOURCE_KEY, POLICY_DOCX_ARCHIVE_LIMITS_KEY,
     POLICY_DREAMER_FAILURE_PRECEDENCE_KEY, POLICY_DREAMER_FAILURE_RULES_KEY, POLICY_HOSTED_TTS_KEY,
     POLICY_LEGAL_FLOOR_ROWS_KEY, POLICY_MIN_ENGINE_VERSION_KEY, POLICY_ON_BUDGET_EXHAUSTED_KEY,
     POLICY_OWNER_POLICY_DOCUMENT_KEY, POLICY_OWNER_POLICY_ENABLED_KEY,
@@ -38,7 +39,10 @@ use crate::gate::grants::PolicyScopedGrant;
 use crate::gate::hosted_tts_policy::HostedTtsPolicy;
 use crate::gate::pack_install_policy::KEY as PACK_INSTALL_POLICY_KEY;
 use crate::gate::policy_values::{PolicyValueRow, parse_policy_values};
-use crate::gate::resolution::{AttributionLimits, ConnectorClassPrecedence, TeacherProbeRow};
+use crate::gate::resolution::{
+    AttributionLimits, ConnectorClassPrecedence, CredentialLifetimePolicy,
+    CredentialLifetimePrecedence, TeacherProbeRow,
+};
 use crate::gate::retrieval_retention::{
     RETRIEVAL_RETENTION_ROWS_KEY, RetrievalRetentionRows, parse_retrieval_retention_rows,
 };
@@ -133,6 +137,7 @@ pub(in crate::gate) struct DecodedPolicyManifest {
         Option<crate::gate::carry_forward_policy::CarryForwardPolicy>,
     pub(in crate::gate) judge_calibration:
         Option<crate::skill_optimize::policy::JudgeCalibrationPolicy>,
+    pub(in crate::gate) credential_lifetimes: Option<CredentialLifetimePolicy>,
     pub(in crate::gate) unsupported_schema: bool,
     pub(in crate::gate) engine_version_floor: bool,
     pub(in crate::gate) unknown_axis_seen: bool,
@@ -156,6 +161,7 @@ pub(in crate::gate) fn decode_policy_manifest(data: &[u8]) -> Option<DecodedPoli
                 | POLICY_PACK_VERSION_KEY
                 | POLICY_MIN_ENGINE_VERSION_KEY
                 | POLICY_DEFAULTS_KEY
+                | POLICY_CREDENTIAL_LIFETIMES_KEY
                 | POLICY_RULES_KEY
                 | POLICY_ACTOR_CEILINGS_KEY
                 | POLICY_DELEGATED_GRANTS_KEY
@@ -234,6 +240,40 @@ pub(in crate::gate) fn decode_policy_manifest(data: &[u8]) -> Option<DecodedPoli
     let min_engine_version = required_string(&entries, POLICY_MIN_ENGINE_VERSION_KEY)?;
     let engine_version_floor = version_gt(&min_engine_version, env!("CARGO_PKG_VERSION"))?;
     let defaults = parse_axes(required_value(&entries, POLICY_DEFAULTS_KEY)?)?;
+    let credential_lifetimes = match single_map_value(&entries, POLICY_CREDENTIAL_LIFETIMES_KEY) {
+        MapValue::Missing => None,
+        MapValue::Duplicate => return None,
+        MapValue::Present(Value::Map(rows)) => {
+            if rows.len() != 3
+                || rows.iter().any(|(key, _)| {
+                    !matches!(
+                        key.as_str(),
+                        Some("oauth_exchange_secs" | "initial_owner_secs" | "precedence")
+                    )
+                })
+            {
+                return None;
+            }
+            let duration = |name| match single_map_value(rows, name) {
+                MapValue::Present(value) => value.as_u64().filter(|secs| *secs > 0),
+                MapValue::Missing | MapValue::Duplicate => None,
+            };
+            let precedence = match single_map_value(rows, "precedence") {
+                MapValue::Present(Value::String(value))
+                    if value.as_str() == Some("vault_ceiling_holder_narrows") =>
+                {
+                    CredentialLifetimePrecedence::VaultCeilingHolderNarrows
+                }
+                _ => return None,
+            };
+            Some(CredentialLifetimePolicy {
+                oauth_exchange_secs: duration("oauth_exchange_secs")?,
+                initial_owner_secs: duration("initial_owner_secs")?,
+                precedence,
+            })
+        }
+        MapValue::Present(_) => return None,
+    };
     let rules = parse_rules(required_value(&entries, POLICY_RULES_KEY)?)?;
     let actor_ceilings =
         parse_actor_ceilings(required_value(&entries, POLICY_ACTOR_CEILINGS_KEY)?)?;
@@ -672,6 +712,7 @@ pub(in crate::gate) fn decode_policy_manifest(data: &[u8]) -> Option<DecodedPoli
         experiment_selection,
         carry_forward_confidence,
         judge_calibration,
+        credential_lifetimes,
         unsupported_schema,
         engine_version_floor,
         unknown_axis_seen,

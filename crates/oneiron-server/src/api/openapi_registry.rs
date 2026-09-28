@@ -16,16 +16,15 @@ use super::{
     __path_get_core_outbound_capability, __path_get_core_outbound_verb_contract,
     __path_get_core_summary_covers, __path_get_core_surface_event, __path_get_core_turn,
     __path_get_edges, __path_get_entity, __path_get_thread, __path_get_usage_rollup, __path_health,
-    __path_lease_register, __path_lease_revoke, __path_lease_rotate, __path_list_access_requests,
-    __path_list_core_conversation_turns, __path_list_core_conversations,
-    __path_list_core_outbound_capabilities, __path_list_core_sub_sessions, __path_list_personas,
-    __path_migrate_core_dag, __path_mint_core_scope_summary, __path_move_core_head,
-    __path_openapi_json, __path_read_turn_vad_annotation, __path_record_usage_event,
-    __path_refresh_companion_profile, __path_reply_in_thread, __path_resolve_core_scope,
-    __path_revoke_companion_access_grant, __path_search_semantic, __path_search_text,
-    __path_search_vector, __path_skills_pack, __path_spawn_core_sub_session,
-    __path_submit_core_surface_event, __path_summarize_thread, AccessRequestListRow,
-    AccessRequestsListResponse, BoundContext, CompanionAccessGrantResponse,
+    __path_lease_revoke, __path_list_access_requests, __path_list_core_conversation_turns,
+    __path_list_core_conversations, __path_list_core_outbound_capabilities,
+    __path_list_core_sub_sessions, __path_list_personas, __path_migrate_core_dag,
+    __path_mint_core_scope_summary, __path_move_core_head, __path_openapi_json,
+    __path_read_turn_vad_annotation, __path_record_usage_event, __path_refresh_companion_profile,
+    __path_reply_in_thread, __path_resolve_core_scope, __path_revoke_companion_access_grant,
+    __path_search_semantic, __path_search_text, __path_search_vector, __path_skills_pack,
+    __path_spawn_core_sub_session, __path_submit_core_surface_event, __path_summarize_thread,
+    AccessRequestListRow, AccessRequestsListResponse, BoundContext, CompanionAccessGrantResponse,
     CompanionAccessGrantScopePayload, CompanionCreateAccessGrantRequest, CompanionProfileAccess,
     CompanionProfileConfidencePayload, CompanionProfileDriftAnchor, CompanionProfileNextAction,
     CompanionProfilePayload, CompanionProfileRefreshRequest, CompanionProfileResponse,
@@ -150,9 +149,7 @@ use utoipa::OpenApi;
         record_usage_event,
         get_usage_rollup,
 
-        lease_revoke,
-        lease_register,
-        lease_rotate
+        lease_revoke
     ),
     components(schemas(
         DagActorClass,
@@ -335,7 +332,7 @@ use utoipa::OpenApi;
     info(
         title = "Oneiron Server API",
         version = "0.1.0",
-        description = "Local Oneiron sync daemon HTTP API for search, entity reads, context-pack requests, and lease recovery."
+        description = "Local Oneiron sync daemon HTTP API for search, entity reads, context-pack requests, and receipt-key revocation."
     )
 )]
 pub(crate) struct ApiDoc;

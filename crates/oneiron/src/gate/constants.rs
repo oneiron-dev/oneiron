@@ -8,6 +8,7 @@ pub(super) const POLICY_PACK_ID_KEY: &str = "pack_id";
 pub(super) const POLICY_PACK_VERSION_KEY: &str = "pack_version";
 pub(super) const POLICY_MIN_ENGINE_VERSION_KEY: &str = "min_engine_version";
 pub(super) const POLICY_DEFAULTS_KEY: &str = "defaults";
+pub(super) const POLICY_CREDENTIAL_LIFETIMES_KEY: &str = "credential_lifetimes";
 pub(super) const POLICY_RULES_KEY: &str = "rules";
 /// Separate from claim axes: optimizer goals are typed admission policy rows.
 pub(super) const POLICY_SKILL_EDIT_GOAL_KEY: &str = "skill_edit_goal_policy";
