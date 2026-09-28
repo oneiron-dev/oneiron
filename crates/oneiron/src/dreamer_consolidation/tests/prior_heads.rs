@@ -223,6 +223,7 @@ fn execute_at_pin<'a>(
         actor: fx.run.agent_actor,
         model: crate::ModelId::new("test/model@r1").unwrap(),
         sink,
+        inference: test_inference_host(),
         scope: Some(scope),
     };
     block_on_ready(executor.execute(
@@ -408,6 +409,7 @@ fn pinned_extraction_persists_parent_verified_locators_taint_and_integrity_marke
         actor: vault.dreamer_authority()?,
         model: crate::ModelId::new("test/model@r1").expect("model"),
         sink: &mut sink,
+        inference: test_inference_host(),
         scope: None,
     };
     vault.set_consolidation_selection(&selection::SelectionConfig {
@@ -543,6 +545,7 @@ fn exact_persisted_head_attaches_evidence_without_judge_or_duplicate_and_survive
     drop(sink);
     drop(vault);
     let vault = Vault::open(dir.path(), VaultConfig::device())?;
+    authorize_test_inference(&vault)?;
     assert_eq!(vault.get_raw(&fx.head)?.as_ref(), Some(&before));
     assert_eq!(names(&vault, fx.subject)?, vec![fx.head]);
     assert_eq!(
@@ -731,6 +734,7 @@ fn saved_execution_scope_pins_claim_across_retry_wakes() -> Result<()> {
         actor: vault.dreamer_authority()?,
         model: crate::ModelId::new("test/model@r1").expect("model"),
         sink: &mut sink,
+        inference: test_inference_host(),
         scope: None,
     };
     let mut ctx = WakeAttemptContext {
@@ -814,6 +818,7 @@ fn wrapper_first_wake_consumes_explicit_host_claim_scope() -> Result<()> {
         actor: vault.dreamer_authority()?,
         model: crate::ModelId::new("test/model@r1").expect("model"),
         sink: &mut sink,
+        inference: test_inference_host(),
         scope: None,
     };
     let mut wrapper = crate::commitment_wake::CommitmentWakeExecutor::new(
