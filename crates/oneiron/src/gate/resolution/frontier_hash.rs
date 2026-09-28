@@ -27,6 +27,17 @@ pub(super) fn hash_policy_frontier_v0(
     for predicate in &resolution.single_valued_predicates {
         hash_str(hasher, predicate);
     }
+    // Hashed only when a manifest names a class row, so a manifest that never
+    // did keeps its frontier and every consent binding taken against it.
+    if let Some(carry) = resolution.connector_class_carry.as_ref() {
+        hash_str(hasher, "connector_class_policy.v1");
+        hash_str(hasher, resolution.connector_class_precedence.as_str());
+        hash_len(hasher, carry.len());
+        for (from, to) in carry {
+            hash_str(hasher, from);
+            hash_str(hasher, to);
+        }
+    }
     // A teacher floor change changes admission and invalidates approval
     // snapshots; include the resolved row in the policy frontier too.
     if let Some(vault_min) = resolution.teacher_probe_vault_min {
@@ -134,6 +145,12 @@ pub(super) fn hash_policy_frontier_v0(
             }
         }
     }
+    if !resolution.booking_conversion_rows.is_empty() {
+        hash_str(hasher, "booking_conversion");
+        let bytes = rmp_serde::to_vec_named(&resolution.booking_conversion_rows)
+            .expect("validated booking policy rows encode");
+        hash_bytes(hasher, &bytes);
+    }
     // An absent/empty hosted policy changes no decision and keeps the
     // established frontier bytes for manifests that never named this knob.
     if !resolution.hosted_tts.rows.is_empty() {
@@ -174,11 +191,60 @@ pub(super) fn hash_policy_frontier_v0(
             }
         }
     }
+    // A row resolving to shipped defaults has the historical frontier bytes.
+    // Only a behavior-changing override contributes new hash material.
+    if resolution.carry_forward_authored
+        || resolution.carry_forward_confidence
+            != crate::gate::carry_forward_policy::CarryForwardPolicy::default()
+    {
+        hash_str(hasher, "carry_forward_confidence");
+        hash_str(
+            hasher,
+            resolution.carry_forward_confidence.precedence.as_str(),
+        );
+        hash_bytes(
+            hasher,
+            &resolution
+                .carry_forward_confidence
+                .vault
+                .ordinary
+                .to_bits()
+                .to_be_bytes(),
+        );
+        hash_bytes(
+            hasher,
+            &resolution
+                .carry_forward_confidence
+                .vault
+                .care
+                .to_bits()
+                .to_be_bytes(),
+        );
+        let mut holders = resolution.carry_forward_confidence.holders.clone();
+        holders.sort_by_key(|row| row.actor);
+        hash_len(hasher, holders.len());
+        for row in holders {
+            hash_bytes(hasher, row.actor.as_bytes());
+            if let Some(parent) = row.parent {
+                hash_bytes(hasher, parent.as_bytes());
+            }
+            hash_bytes(hasher, &row.floors.ordinary.to_bits().to_be_bytes());
+            hash_bytes(hasher, &row.floors.care.to_bits().to_be_bytes());
+        }
+    }
     if let Some(bounds) = resolution.diagnostic_bounds {
         hash_str(hasher, "diagnostic_bounds");
         hash_u64(hasher, bounds.window_secs);
         hash_u64(hasher, bounds.consent_depth);
         hash_u64(hasher, bounds.actor_writes);
+    }
+
+    if let Some(limits) = resolution.goal_limits {
+        hash_str(hasher, "goal_limits");
+        hash_str(hasher, limits.precedence.as_str());
+        for field in limits.fields() {
+            hash_u64(hasher, field);
+        }
     }
 
     // Attribution limits bound post-terminal receipt capture, not Gate authority.

@@ -5,6 +5,8 @@ use std::io::Cursor;
 use rmpv::Value;
 
 use super::decode_docedit_resource::parse_docedit_resource_policy;
+use super::experiment_selection::parse_experiment_selection;
+use crate::autoreason_campaign::selection::SelectionPolicyRow;
 use crate::gate::PackInstallPolicy;
 use crate::gate::ceiling::{
     ActorCeiling, DelegationGrantRecord, PolicyOwnerPatternRow, PolicyOwnerPolicyRow, PolicyPack,
@@ -15,7 +17,8 @@ use crate::gate::constants::{
     ATTRIBUTION_HOLDER_REASON_BYTES_KEY, ATTRIBUTION_PRECEDENCE_KEY,
     ATTRIBUTION_REASON_MAX_BYTES_KEY, ATTRIBUTION_RECEIPTS_PER_PASS_KEY, POLICY_ACTOR_CEILINGS_KEY,
     POLICY_ASK_POLICY_KEY, POLICY_ATTRIBUTION_LIMITS_KEY, POLICY_AUTO_CHECKER_KEY,
-    POLICY_BUDGET_POLICY_KEY, POLICY_COMM_OPT_OUT_POSTURE_KEY, POLICY_DEFAULTS_KEY,
+    POLICY_BUDGET_POLICY_KEY, POLICY_COMM_OPT_OUT_POSTURE_KEY, POLICY_CONNECTOR_CLASS_CARRY_KEY,
+    POLICY_CONNECTOR_CLASS_PRECEDENCE_KEY, POLICY_CONNECTOR_CLASS_ROLE_KEY, POLICY_DEFAULTS_KEY,
     POLICY_DELEGATED_GRANTS_KEY, POLICY_DOCEDIT_RESOURCE_KEY, POLICY_DOCX_ARCHIVE_LIMITS_KEY,
     POLICY_HOSTED_TTS_KEY, POLICY_LEGAL_FLOOR_ROWS_KEY, POLICY_MIN_ENGINE_VERSION_KEY,
     POLICY_ON_BUDGET_EXHAUSTED_KEY, POLICY_OWNER_POLICY_DOCUMENT_KEY,
@@ -33,7 +36,12 @@ use crate::gate::hosted_tts_policy::HostedTtsPolicy;
 use crate::gate::pack_install_policy::KEY as PACK_INSTALL_POLICY_KEY;
 use crate::gate::project_conversion::{ProjectConversionPolicy, parse_project_conversion};
 
-use crate::gate::resolution::{AttributionLimits, CommOptOutPosture, TeacherProbeRow};
+use crate::gate::resolution::{
+    AttributionLimits, CommOptOutPosture, ConnectorClassPrecedence, TeacherProbeRow,
+};
+use crate::gate::retrieval_retention::{
+    RETRIEVAL_RETENTION_ROWS_KEY, RetrievalRetentionRows, parse_retrieval_retention_rows,
+};
 use crate::llm::{BudgetExhaustionPolicy, BudgetPolicyTable};
 use crate::voice_identity::ref_limits::VoiceRefLimitPolicy;
 
@@ -49,6 +57,13 @@ use super::decode_trust_budget::{
     parse_budget_exhaustion_policy, parse_budget_policy, parse_comm_opt_out_posture,
     parse_source_trust,
 };
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub(in crate::gate) enum ConnectorClassRole {
+    #[default]
+    Vault,
+    Holder,
+}
 
 pub(in crate::gate) struct DecodedPolicyManifest {
     pub(in crate::gate) pack: PolicyPack,
@@ -77,7 +92,11 @@ pub(in crate::gate) struct DecodedPolicyManifest {
     pub(in crate::gate) room_thread: Option<crate::gate::RoomThreadManifest>,
     pub(in crate::gate) pptx_comment_limits:
         Option<crate::edit_roundtrip::pptx::PptxOperationalLimits>,
+    pub(in crate::gate) booking_conversion_rows: Vec<crate::booking::BookingConversionPolicyRow>,
     pub(in crate::gate) hosted_tts: HostedTtsPolicy,
+    pub(in crate::gate) connector_class_carry: Option<std::collections::BTreeSet<(String, String)>>,
+    pub(in crate::gate) connector_class_role: ConnectorClassRole,
+    pub(in crate::gate) connector_class_precedence: Option<ConnectorClassPrecedence>,
 
     pub(in crate::gate) slide_review_policy: crate::llm::decision::SlideReviewPolicy,
     pub(in crate::gate) docedit_resource_policy: Option<DoceditResourcePolicy>,
@@ -87,6 +106,8 @@ pub(in crate::gate) struct DecodedPolicyManifest {
     pub(in crate::gate) livequery_tracker_limits:
         Option<crate::gate::tracker_limits::PolicyTrackerLimits>,
     pub(in crate::gate) proposal_check_threshold: Option<u64>,
+    pub(in crate::gate) retrieval_retention: Option<RetrievalRetentionRows>,
+    pub(in crate::gate) goal_limits: Option<crate::workspace_roster::GoalLimits>,
     pub(in crate::gate) voice_ref_limits: Option<VoiceRefLimitPolicy>,
     pub(in crate::gate) sheet_answer_limits: Vec<crate::gate::resolution::SheetAnswerLimitRow>,
     pub(in crate::gate) sheet_answer_precedence:
@@ -98,6 +119,9 @@ pub(in crate::gate) struct DecodedPolicyManifest {
         Vec<crate::gate::retry_source_policy::RetrySourcePolicyRow>,
     pub(in crate::gate) compilation_policy: Option<crate::edit_distance::miner::CompilationPolicy>,
     pub(in crate::gate) teacher_probe: Option<TeacherProbeRow>,
+    pub(in crate::gate) experiment_selection: Vec<SelectionPolicyRow>,
+    pub(in crate::gate) carry_forward_confidence:
+        Option<crate::gate::carry_forward_policy::CarryForwardPolicy>,
     pub(in crate::gate) unsupported_schema: bool,
     pub(in crate::gate) engine_version_floor: bool,
     pub(in crate::gate) unknown_axis_seen: bool,
@@ -146,7 +170,11 @@ pub(in crate::gate) fn decode_policy_manifest(data: &[u8]) -> Option<DecodedPoli
                 | POLICY_PROJECT_CONVERSION_KEY
                 | "room_thread"
                 | POLICY_PPTX_COMMENT_LIMITS_KEY
+                | "booking_conversion"
                 | POLICY_HOSTED_TTS_KEY
+                | POLICY_CONNECTOR_CLASS_CARRY_KEY
+                | POLICY_CONNECTOR_CLASS_ROLE_KEY
+                | POLICY_CONNECTOR_CLASS_PRECEDENCE_KEY
 
                 | POLICY_SLIDE_REVIEW_KEY
                 | POLICY_DOCEDIT_RESOURCE_KEY
@@ -155,6 +183,8 @@ pub(in crate::gate) fn decode_policy_manifest(data: &[u8]) -> Option<DecodedPoli
                 | "diagnostic_bounds"
                 | "livequery_tracker_limits"
                 | "proposal_check_threshold"
+                | RETRIEVAL_RETENTION_ROWS_KEY
+                | "goal_limits"
                 | "voice_ref_limits"
                 | POLICY_SHEET_ANSWER_LIMITS_KEY
                 | POLICY_SHEET_ANSWER_PRECEDENCE_KEY
@@ -164,6 +194,8 @@ pub(in crate::gate) fn decode_policy_manifest(data: &[u8]) -> Option<DecodedPoli
                 | "retry_source_policy"
                 | "compilation_policy"
                 | POLICY_TEACHER_PROBE_KEY
+                | "experiment_selection"
+                | crate::gate::carry_forward_policy::KEY
         ) {
             return None;
         }
@@ -318,11 +350,70 @@ pub(in crate::gate) fn decode_policy_manifest(data: &[u8]) -> Option<DecodedPoli
         MapValue::Duplicate => return None,
         MapValue::Present(value) => Some(crate::gate::docx_budget::parse(value)?),
     };
+    let booking_conversion_rows = match single_map_value(&entries, "booking_conversion") {
+        MapValue::Missing => Vec::new(),
+        MapValue::Duplicate => return None,
+        MapValue::Present(Value::Array(rows)) if rows.len() <= 128 => rows
+            .iter()
+            .map(|row| {
+                let json: serde_json::Value = rmpv::ext::from_value(row.clone()).ok()?;
+                let parsed: crate::booking::BookingConversionPolicyRow =
+                    serde_json::from_value(json).ok()?;
+                parsed.validate().ok()?;
+                Some(parsed)
+            })
+            .collect::<Option<Vec<_>>>()?,
+        MapValue::Present(_) => return None,
+    };
     let hosted_tts = match single_map_value(&entries, POLICY_HOSTED_TTS_KEY) {
         MapValue::Missing => HostedTtsPolicy::default(),
         MapValue::Duplicate => return None,
         MapValue::Present(value) => HostedTtsPolicy::parse(value)?,
     };
+    let connector_class_carry = match single_map_value(&entries, POLICY_CONNECTOR_CLASS_CARRY_KEY) {
+        MapValue::Missing => None,
+        MapValue::Duplicate => return None,
+        MapValue::Present(Value::Array(rows)) => {
+            let mut result = std::collections::BTreeSet::new();
+            for row in rows {
+                let Value::Array(pair) = row else {
+                    return None;
+                };
+                let [Value::String(from), Value::String(to)] = pair.as_slice() else {
+                    return None;
+                };
+                let (Some(from), Some(to)) = (from.as_str(), to.as_str()) else {
+                    return None;
+                };
+                // Typed class names, not an engine-fixed precedence or pair list.
+                if !matches!(from, "public" | "personal" | "secret" | "header")
+                    || !matches!(to, "public" | "personal" | "secret" | "header")
+                    || from == to
+                    || !result.insert((from.to_owned(), to.to_owned()))
+                {
+                    return None;
+                }
+            }
+            Some(result)
+        }
+        MapValue::Present(_) => return None,
+    };
+    let connector_class_role = match single_map_value(&entries, POLICY_CONNECTOR_CLASS_ROLE_KEY) {
+        MapValue::Missing | MapValue::Present(Value::Nil) => ConnectorClassRole::Vault,
+        MapValue::Duplicate => return None,
+        MapValue::Present(Value::String(role)) => match role.as_str()? {
+            "vault" => ConnectorClassRole::Vault,
+            "holder" => ConnectorClassRole::Holder,
+            _ => return None,
+        },
+        MapValue::Present(_) => return None,
+    };
+    let connector_class_precedence =
+        match single_map_value(&entries, POLICY_CONNECTOR_CLASS_PRECEDENCE_KEY) {
+            MapValue::Missing => None,
+            MapValue::Duplicate => return None,
+            MapValue::Present(value) => Some(ConnectorClassPrecedence::parse(value.as_str()?)?),
+        };
     let livequery_tracker_limits = match single_map_value(&entries, "livequery_tracker_limits") {
         MapValue::Missing => None,
         MapValue::Duplicate => return None,
@@ -354,6 +445,16 @@ pub(in crate::gate) fn decode_policy_manifest(data: &[u8]) -> Option<DecodedPoli
         MapValue::Present(value) => Some(value.as_u64().filter(|value| *value > 0)?),
     };
 
+    let retrieval_retention = match single_map_value(&entries, RETRIEVAL_RETENTION_ROWS_KEY) {
+        MapValue::Missing => None,
+        MapValue::Duplicate => return None,
+        MapValue::Present(value) => Some(parse_retrieval_retention_rows(value)?),
+    };
+    let goal_limits = match single_map_value(&entries, "goal_limits") {
+        MapValue::Missing => None,
+        MapValue::Duplicate => return None,
+        MapValue::Present(value) => Some(crate::workspace_roster::GoalLimits::decode(value)?),
+    };
     let voice_ref_limits = match single_map_value(&entries, "voice_ref_limits") {
         MapValue::Missing => None,
         MapValue::Duplicate => return None,
@@ -419,6 +520,11 @@ pub(in crate::gate) fn decode_policy_manifest(data: &[u8]) -> Option<DecodedPoli
             value,
         )?),
     };
+    let experiment_selection = match single_map_value(&entries, "experiment_selection") {
+        MapValue::Missing => Vec::new(),
+        MapValue::Duplicate => return None,
+        MapValue::Present(value) => parse_experiment_selection(value)?,
+    };
 
     let teacher_probe = match single_map_value(&entries, POLICY_TEACHER_PROBE_KEY) {
         MapValue::Missing => None,
@@ -426,6 +532,14 @@ pub(in crate::gate) fn decode_policy_manifest(data: &[u8]) -> Option<DecodedPoli
         MapValue::Present(value) => Some(parse_teacher_probe_row(value)?),
     };
 
+    let carry_forward_confidence =
+        match single_map_value(&entries, crate::gate::carry_forward_policy::KEY) {
+            MapValue::Missing => None,
+            MapValue::Duplicate => return None,
+            MapValue::Present(value) => {
+                Some(crate::gate::carry_forward_policy::CarryForwardPolicy::parse(value)?)
+            }
+        };
     let unknown_axis_seen =
         defaults.unknown_axis_seen || rules.iter().any(|rule| rule.axes.unknown_axis_seen);
 
@@ -459,13 +573,19 @@ pub(in crate::gate) fn decode_policy_manifest(data: &[u8]) -> Option<DecodedPoli
         project_conversion,
         room_thread,
         pptx_comment_limits,
+        booking_conversion_rows,
         hosted_tts,
+        connector_class_carry,
+        connector_class_role,
+        connector_class_precedence,
         slide_review_policy,
         docedit_resource_policy,
         docx_archive_limits,
         diagnostic_bounds,
         livequery_tracker_limits,
         proposal_check_threshold,
+        retrieval_retention,
+        goal_limits,
         voice_ref_limits,
         sheet_answer_limits,
         sheet_answer_precedence,
@@ -475,6 +595,8 @@ pub(in crate::gate) fn decode_policy_manifest(data: &[u8]) -> Option<DecodedPoli
         retry_source_policy,
         compilation_policy,
         teacher_probe,
+        experiment_selection,
+        carry_forward_confidence,
         unsupported_schema,
         engine_version_floor,
         unknown_axis_seen,

@@ -19,7 +19,9 @@ use super::types::{
 };
 use crate::booking::config::ClaimClassDescriptorRow;
 use crate::booking::{BookingError, ConstraintObject, EventTypeKey};
-use crate::calendar::claims::{CalendarStatus, CalendarStatusBasis};
+use crate::calendar::claims::{
+    CalendarStatus, CalendarStatusBasis, PREDICATE_CALENDAR_STATUS, decode_status_value,
+};
 use crate::claim::{
     ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSource, ClaimSubject,
 };
@@ -40,9 +42,14 @@ pub fn is_booking_lifecycle_claim_predicate(predicate: &str) -> bool {
 #[serde(deny_unknown_fields)]
 pub struct BookingConfirmationContext {
     pub owner_refs: Vec<String>,
+    /// IANA zone per selected host, in `owner_refs` order, frozen at confirm.
+    pub host_zones: Vec<String>,
     pub booker_ref: String,
     pub visitor_tz: String,
     pub constraint: Option<ConstraintObject>,
+    /// The short answers given before confirm, bound to this EVENT's receipt.
+    #[serde(default)]
+    pub intake: Vec<crate::booking::agent_api::BookingIntakeAnswer>,
 }
 
 /// Reads only this booking's persisted confirmation context. Missing old data
@@ -62,6 +69,51 @@ fn confirmation_context_in(
 ) -> Result<Option<BookingConfirmationContext>, BookingError> {
     Ok(confirmation_receipt_in(vault, rtxn, event_ref)?
         .and_then(|(_, receipt)| receipt.confirmation))
+}
+
+/// Current start of a live confirmed booking, for BK-07 reminder wake checks.
+/// This reads status and occurrence in one snapshot. A missing or malformed
+/// booking fails closed rather than causing an outbound message.
+pub(in crate::booking) fn confirmed_start_for_reminder(
+    vault: &Vault,
+    event_ref: &EntityId,
+) -> Result<Option<u64>, BookingError> {
+    let rtxn = read_txn(vault)?;
+    // Soft deletion keeps the EVENT header, occurrence, claims, and receipt.
+    // Resolve deletion metadata in this SAME snapshot before any of those
+    // retained facts can authorize a due reminder.
+    if !matches!(
+        crate::vault::live_entity_row_in_txn(&vault.store, &rtxn, event_ref)
+            .map_err(|error| engine_failure("booking EVENT liveness", error))?,
+        crate::vault::LiveEntityRow::Live {
+            entity_type: ENTITY_TYPE_EVENT,
+            ..
+        }
+    ) {
+        return Ok(None);
+    }
+    let facts = read_booking_facts(vault, &rtxn, event_ref)?;
+    if facts.status != BookingStatus::Confirmed {
+        return Ok(None);
+    }
+    // An inbound calendar-provider cancellation need not change booking.status.
+    // Check the effective CAL head in the same snapshot as the booking and
+    // occurrence, never an unapproved or superseded claim.
+    for claim_id in claims_for_subject(vault, &rtxn, event_ref)? {
+        let body = vault
+            .get_claim_in_txn(&rtxn, &claim_id)
+            .map_err(|error| engine_failure("calendar status read", error))?;
+        if let Some(body) = body.filter(crate::claim::claim_surfaceable)
+            && body.predicate == PREDICATE_CALENDAR_STATUS
+            && decode_status_value(&body.value)
+                .map_err(|error| engine_failure("calendar status decode", error))?
+                .status
+                == CalendarStatus::Cancelled
+        {
+            return Ok(None);
+        }
+    }
+    Ok(Some(facts.slot.start))
 }
 
 /// Creates the EVENT and its four exact booking claims.
