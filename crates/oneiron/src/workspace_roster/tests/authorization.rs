@@ -258,6 +258,88 @@ fn journal_completion_rechecks_authority_after_an_authorized_roster_write() -> R
 }
 
 #[test]
+fn admin_without_named_add_member_power_cannot_enter_workspace_write_door() {
+    let (_dir, vault, _intent) = fixture("Antevon");
+    let owner = writer(WRITER);
+    let mut grant = FederationGrant::new(
+        FederationGrantScope::vault(VAULT_ID),
+        owner.entity_ref(),
+        FederationGrantRole::Admin,
+        FederationGrantPreset::Admin,
+    );
+    grant.authority_scope.verbs =
+        crate::federation::ScopeAxis::Some(std::collections::BTreeSet::from([
+            "read".to_owned(),
+            "write".to_owned(),
+            "admin".to_owned(),
+        ]));
+    seed_federation_grant(&vault, ADMIN_GRANT, &grant);
+    assert_eq!(
+        require_workspace_authority(&vault, VAULT_ID, &owner)
+            .expect_err("the Admin role is not an implicit grant of AddMember")
+            .kind(),
+        ErrorKind::InvalidClaimBody,
+    );
+    assert!(
+        vault
+            .authorize_shared_vault_write(
+                VAULT_ID,
+                &owner,
+                &crate::federation::SharedVaultWrite::RuleConflict,
+            )
+            .is_ok()
+    );
+}
+
+#[test]
+fn enrollment_only_admin_can_enroll_without_read_but_cannot_rename() -> Result<()> {
+    let (_dir, vault, intent) = fixture("Antevon");
+    let owner = writer(WRITER);
+    vault.onboard_workspace_member(intent.clone(), &owner, None)?;
+    let before = read_preset(&vault, &intent.workspace.workspace_ref)?.unwrap();
+    let mut grant = FederationGrant::new(
+        FederationGrantScope::vault(VAULT_ID),
+        owner.entity_ref(),
+        FederationGrantRole::Admin,
+        FederationGrantPreset::Admin,
+    );
+    grant.authority_scope.verbs =
+        crate::federation::ScopeAxis::Some(std::collections::BTreeSet::from([
+            "org:add-member".to_owned()
+        ]));
+    seed_federation_grant(&vault, ADMIN_GRANT, &grant);
+    require_workspace_authority(&vault, VAULT_ID, &owner)?;
+    assert!(
+        vault
+            .set_workspace_house_display_name(
+                &intent.workspace.workspace_ref,
+                Some("not allowed".into()),
+                &owner,
+            )
+            .is_err()
+    );
+    assert_eq!(
+        read_preset(&vault, &intent.workspace.workspace_ref)?,
+        Some(before)
+    );
+    grant.authority_scope.verbs =
+        crate::federation::ScopeAxis::Some(std::collections::BTreeSet::from(["write".to_owned()]));
+    seed_federation_grant(&vault, ADMIN_GRANT, &grant);
+    vault.set_workspace_house_display_name(
+        &intent.workspace.workspace_ref,
+        Some("allowed".into()),
+        &owner,
+    )?;
+    assert_eq!(
+        read_preset(&vault, &intent.workspace.workspace_ref)?
+            .unwrap()
+            .house_display_name,
+        Some("allowed".into()),
+    );
+    Ok(())
+}
+
+#[test]
 fn grant_demotion_blocks_roster_and_rename_but_reauthorization_resumes() -> Result<()> {
     let (_dir, vault, intent) = fixture("Antevon");
     let owner = writer(WRITER);

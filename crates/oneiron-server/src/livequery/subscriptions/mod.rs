@@ -6,7 +6,6 @@ use super::*;
 use loro::{ExportMode, LoroDoc, VersionVector};
 use oneiron::sync::bridge::{LiveQueryTee, MaterializedDiffSummary, OriginMark};
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -28,6 +27,13 @@ pub(crate) struct DerivedView {
 /// must not return raw full-window updates as app-tier data.
 pub(crate) trait LiveQuerySource: Send + Sync {
     fn derive(&self, view: &ScopedView, channel: Channel) -> Result<DerivedView, AppError>;
+    /// Entities already ahead of their index when this logical session opens.
+    fn pending_at_open(
+        &self,
+        _dependencies: &BTreeSet<String>,
+    ) -> Result<Vec<oneiron::EntityId>, AppError> {
+        Ok(Vec::new())
+    }
     /// Probe insertions and changed memberships not yet in the served read set.
     fn membership_changed(
         &self,
@@ -195,8 +201,7 @@ pub(crate) struct LiveQueries {
     session_budget: Arc<Budget>,
     hub_budget: Arc<Budget>,
     state: Mutex<State>,
-    invalidations: Mutex<VecDeque<(String, MaterializedDiffSummary, OriginMark)>>,
-    invalidation_gap: AtomicBool,
+    tracker: super::publication::PublicationTracker,
     last_owner_feed_poll: Mutex<Instant>,
 }
 
@@ -239,7 +244,13 @@ impl LiveQueries {
         source: Arc<dyn LiveQuerySource>,
         hub_budget: Arc<Budget>,
     ) -> Self {
-        Self::with_budgets(conn_id, source, Budget::new(SESSION_BYTES), hub_budget)
+        Self::with_budgets(
+            conn_id,
+            source,
+            Budget::new(SESSION_BYTES),
+            hub_budget,
+            oneiron::memory::LiveQueryTrackerLimits::default(),
+        )
     }
 
     pub(super) fn with_budgets(
@@ -247,6 +258,7 @@ impl LiveQueries {
         source: Arc<dyn LiveQuerySource>,
         session_budget: Arc<Budget>,
         hub_budget: Arc<Budget>,
+        limits: oneiron::memory::LiveQueryTrackerLimits,
     ) -> Self {
         Self {
             source,
@@ -258,8 +270,7 @@ impl LiveQueries {
                 subs: BTreeMap::new(),
                 index: BTreeMap::new(),
             }),
-            invalidations: Mutex::new(VecDeque::new()),
-            invalidation_gap: AtomicBool::new(false),
+            tracker: super::publication::PublicationTracker::with_limits(limits),
             last_owner_feed_poll: Mutex::new(Instant::now()),
         }
     }
@@ -323,6 +334,8 @@ impl LiveQueries {
                 .map_err(|_| AppError::bad_request("invalid worldRef", Some("scopedView")))?;
         }
         let mut state = self.state.lock().map_err(|_| state_error())?;
+        let new_subscription = !state.subs.contains_key(&id);
+        let mut latest = None;
         // Owner-feed snapshots contain claim bodies. Never replay a retained
         // body after a reconnect: policy may have narrowed while this slip
         // remained live. A gap + newly scoped snapshot is the safe resume.
@@ -352,22 +365,27 @@ impl LiveQueries {
                 ));
             }
             if let Some(cursor) = cursor {
-                // Consult the source on reconnect even when the ring has
-                // the cursor; retention and authority can both change.
+                // A retained ring may predate an indexed publication. Re-read
+                // the authorized view before returning it, even for an acked
+                // cursor: the hub may not have drained the notice yet.
                 if self.source.can_resume(cursor)? && !sub.needs_resync {
-                    if sub.acked.as_ref() == Some(cursor) {
-                        sub.origin = origin;
-                        return Ok(sub.ring.iter().cloned().collect());
+                    let derived = self.source.derive(&view, channel)?;
+                    if fingerprint(&derived.value)? == sub.current {
+                        if sub.acked.as_ref() == Some(cursor) {
+                            sub.origin = origin;
+                            return Ok(sub.ring.iter().cloned().collect());
+                        }
+                        if let Some(position) = sub.ring.iter().rposition(|p| &p.cursor == cursor) {
+                            sub.origin = origin;
+                            sub.ring.drain(..=position);
+                            sub.bytes = push_bytes(sub.ring.make_contiguous())?;
+                            sub.budget
+                                .resize(sub.bytes.max(4096) + sub.metadata_bytes)?;
+                            sub.acked = Some(cursor.clone());
+                            return Ok(sub.ring.iter().cloned().collect());
+                        }
                     }
-                    if let Some(position) = sub.ring.iter().rposition(|p| &p.cursor == cursor) {
-                        sub.origin = origin;
-                        sub.ring.drain(..=position);
-                        sub.bytes = push_bytes(sub.ring.make_contiguous())?;
-                        sub.budget
-                            .resize(sub.bytes.max(4096) + sub.metadata_bytes)?;
-                        sub.acked = Some(cursor.clone());
-                        return Ok(sub.ring.iter().cloned().collect());
-                    }
+                    latest = Some(derived);
                 }
             } else {
                 return Err(AppError::bad_request(
@@ -381,7 +399,20 @@ impl LiveQueries {
                 Some("subscriptionId"),
             ));
         }
-        let derived = self.source.derive(&view, channel)?;
+        // The old ring must release its budget before replay plus the fresh
+        // indexed tail reserve theirs. A failed replay leaves no stale owner.
+        if state.subs.remove(&id).is_some() {
+            state.reindex();
+        }
+        let derived = if let Some(derived) = latest {
+            derived
+        } else {
+            self.source.derive(&view, channel)?
+        };
+        if new_subscription && channel == Channel::View {
+            let missing = self.source.pending_at_open(&derived.dependencies)?;
+            self.tracker.mark_unavailable_at_open(&missing);
+        }
         if channel != Channel::OwnerFeed
             && let Some(cursor) = cursor
             && self.source.can_resume(cursor)?
@@ -636,14 +667,14 @@ impl LiveQueries {
 
     fn materialized(
         &self,
-        changes: &[(String, MaterializedDiffSummary, OriginMark)],
+        changes: &[(String, MaterializedDiffSummary, Vec<OriginMark>, bool)],
     ) -> Result<(), AppError> {
         let mut state = self.state.lock().map_err(|_| state_error())?;
         // Coarse re-derive sees CURRENT state, not intermediate event
         // states. Suppress only when EVERY affecting invalidation is our
         // own; an earlier own write must not swallow a later foreign one.
         let mut affected = BTreeMap::<u64, bool>::new();
-        for (path, diff, by) in changes {
+        for (path, diff, contributors, live_only) in changes {
             for (dependency, ids) in &state.index {
                 let relevant = dependency == path
                     || path
@@ -658,6 +689,9 @@ impl LiveQueries {
                     continue;
                 }
                 for id in ids {
+                    if *live_only && state.subs[id].channel == Channel::View {
+                        continue;
+                    }
                     // The synthetic local-LMDB poll is not a Loro change.
                     // It must never re-derive unrelated recall/receipt subs.
                     if path == "owner-feed" && state.subs[id].channel != Channel::OwnerFeed {
@@ -672,8 +706,11 @@ impl LiveQueries {
                     {
                         continue;
                     }
-                    let own = by.conn_id == Some(state.conn_id)
-                        || (by.origin.is_some() && by.origin == state.subs[id].origin);
+                    let own = !contributors.is_empty()
+                        && contributors.iter().all(|by| {
+                            by.conn_id == Some(state.conn_id)
+                                || (by.origin.is_some() && by.origin == state.subs[id].origin)
+                        });
                     affected
                         .entry(*id)
                         .and_modify(|echo| *echo &= own)

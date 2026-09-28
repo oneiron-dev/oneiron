@@ -80,6 +80,9 @@ pub(crate) fn resolve_policy_manifest(
                 delegated_rows.extend(decoded.delegated_grants);
                 resolution.scoped_grants.extend(decoded.scoped_grants);
                 resolution
+                    .federation_grant_rows
+                    .extend(decoded.federation_grant_rows);
+                resolution
                     .owner_policy_rows
                     .extend(decoded.owner_policy_rows);
                 resolution.owner_policy_rows_dropped |= decoded.owner_policy_rows_dropped;
@@ -146,13 +149,42 @@ pub(crate) fn resolve_policy_manifest(
                         resolution.pack_install_policy = Some(policy);
                     }
                 }
+                if let Some(settings) = decoded.room_thread {
+                    resolution.room_thread = match resolution.room_thread.take() {
+                        None => Some(settings),
+                        Some(current) => match current.restrict(settings) {
+                            Some(folded) => Some(folded),
+                            None => {
+                                resolution.diagnostics.malformed_manifest_seen = true;
+                                None
+                            }
+                        },
+                    };
+                }
                 resolution.hosted_tts.rows.extend(decoded.hosted_tts.rows);
 
+                if let Some(limits) = decoded.livequery_tracker_limits {
+                    if let Some(existing) = &mut resolution.livequery_tracker_limits {
+                        existing.restrict(limits);
+                    } else {
+                        resolution.livequery_tracker_limits = Some(limits);
+                    }
+                }
                 if let Some(bounds) = decoded.diagnostic_bounds {
                     match resolution.diagnostic_bounds {
                         None => resolution.diagnostic_bounds = Some(bounds),
                         Some(existing) if existing == bounds => {}
                         Some(_) => resolution.diagnostics.malformed_manifest_seen = true,
+                    }
+                }
+                if let Some(ask_policy) = decoded.ask_policy {
+                    match &mut resolution.ask_policy {
+                        Some(current) => {
+                            if current.restrict(&ask_policy).is_none() {
+                                resolution.diagnostics.malformed_manifest_seen = true;
+                            }
+                        }
+                        None => resolution.ask_policy = Some(ask_policy),
                     }
                 }
                 // Advisory threshold composition is deterministic and never
