@@ -371,9 +371,7 @@ impl crate::Vault {
         let binding = ConnectorManifestBinding {
             key_ref: key_ref.to_hex(),
             manifest_hash: manifest.hash()?,
-            protocol_revision: key
-                .negotiated_protocol_revision
-                .ok_or_else(invalid_schema)?,
+            protocol_revision: key.protocol_revision.ok_or_else(invalid_schema)?,
         };
         prepare_tool_call(call, descriptor, arguments, mutation)?.with_manifest_binding(binding)
     }

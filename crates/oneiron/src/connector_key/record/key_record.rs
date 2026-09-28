@@ -12,9 +12,10 @@ use crate::error::RecordError;
 
 /// ConnectorKeyRecord lifecycle status.
 ///
-/// v1 reachable states: `Active ⇄ Suspended`, `→ Revoked` (terminal).
-/// Per-grant scoped keys mint `Pending` until the qualification suite and
-/// owner stamp pin a resolved manifest and negotiated revision.
+/// Catalogued keys and per-grant scoped keys start Pending; only the
+/// qualification suite can activate them, and a protocol-revision change
+/// returns them to Pending. Legacy catalog-free budget keys retain their
+/// Active registration door.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum ConnectorKeyStatus {
     Pending,
@@ -148,7 +149,7 @@ impl ConnectorCatalogEntry {
 
 /// The key half of a composed [`crate::Vault::register_connector`] call: what
 /// the catalogued connector's governing key should be minted as. The status is
-/// not a parameter — a composed registration always mints an Active,
+/// not a parameter — composed registration mints a Pending,
 /// charter-free, generation-0 key.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ConnectorKeySpec {
@@ -162,6 +163,10 @@ pub struct ConnectorKeySpec {
     /// pre-write. Value-less by construction: this names a record, it never
     /// carries the secret.
     pub secret_ref: Option<String>,
+    /// Owner-authored grant slate, required before qualification can activate.
+    pub slate_ref: Option<EntityId>,
+    /// Negotiated MCP revision, pinned at registration for drift detection.
+    pub protocol_revision: Option<String>,
 }
 
 impl ConnectorKeySpec {
@@ -173,6 +178,8 @@ impl ConnectorKeySpec {
             actor_entity_ref: None,
             budgets: Vec::new(),
             secret_ref: None,
+            slate_ref: None,
+            protocol_revision: None,
         }
     }
 }
@@ -212,8 +219,17 @@ pub struct ConnectorKeyRecord {
     /// so the executor keeps the ARCH-0054 default (scoped-MCP tool calls
     /// unbudgeted). Only the composed registration door mints one.
     pub catalog: Option<ConnectorCatalogEntry>,
-    /// Negotiated admission revision, pinned alongside schema_version on disk.
-    pub negotiated_protocol_revision: Option<String>,
+    /// Typed slate whose owner stamp must precede qualification.
+    pub slate_ref: Option<EntityId>,
+    /// Pinned negotiated revision, beside schema_version on disk; any change
+    /// sends the key back to Pending.
+    pub protocol_revision: Option<String>,
+    /// Slate revision accepted at the last qualification.
+    pub slate_revision: Option<u64>,
+    /// Monotonic admission generation, invalidating probes on every revision change.
+    pub admission_epoch: u64,
+    /// Whether this admission requires a new owner decision on expanded rows.
+    pub consent_required: bool,
     /// Last approved fully resolved manifest; never overwritten by a proposal.
     pub retained_manifest: Option<ResolvedConnectorManifest>,
     /// Candidate awaiting qualification and graded owner re-consent.
@@ -254,7 +270,11 @@ impl ConnectorKeyRecord {
             secret_ref: None,
             key_generation: 0,
             catalog: None,
-            negotiated_protocol_revision: None,
+            slate_ref: None,
+            protocol_revision: None,
+            slate_revision: None,
+            admission_epoch: 0,
+            consent_required: false,
             retained_manifest: None,
             pending_manifest: None,
         }
@@ -333,11 +353,36 @@ impl ConnectorKeyRecord {
         if let Some(secret_ref) = self.secret_ref.as_deref() {
             validate_secret_ref(secret_ref)?;
         }
-        if self.retained_manifest.is_some() != self.negotiated_protocol_revision.is_some() {
+        // The retained snapshot is always paired with the revision it was
+        // approved at. A catalog key pins its revision at registration, before
+        // any manifest is retained.
+        if self.retained_manifest.is_some() && self.protocol_revision.is_none() {
             return Err(invalid_body("manifest and protocol pin must be paired"));
         }
-        if let Some(revision) = self.negotiated_protocol_revision.as_deref() {
+        if let Some(revision) = self.protocol_revision.as_deref() {
             validate_protocol_revision(revision)?;
+        }
+        // A catalog-free scoped key pins its revision only beside an approved
+        // manifest; the slate admission fields belong to catalog keys.
+        if self.catalog.is_none()
+            && (self.slate_ref.is_some()
+                || self.protocol_revision.is_some() && self.retained_manifest.is_none()
+                || self.slate_revision.is_some()
+                || self.admission_epoch != 0
+                || self.consent_required)
+        {
+            return Err(invalid_body("qualification fields require a catalog"));
+        }
+        // An Active catalog route without an admission pin is never a valid
+        // stored body, including when it enters through decode/import.
+        if self.catalog.is_some()
+            && self.status == ConnectorKeyStatus::Active
+            && (self.slate_ref.is_none()
+                || self.protocol_revision.is_none()
+                || self.slate_revision.is_none()
+                || self.consent_required)
+        {
+            return Err(invalid_body("active catalog key lacks qualification"));
         }
         if let Some(manifest) = &self.retained_manifest {
             manifest.validate_snapshot()?;
@@ -350,13 +395,17 @@ impl ConnectorKeyRecord {
             if pending.candidate_id == [0; 32] {
                 return Err(invalid_body("manifest candidate id missing"));
             }
-            let expected = match (&self.retained_manifest, &self.negotiated_protocol_revision) {
+            let expected = match (&self.retained_manifest, &self.protocol_revision) {
                 (Some(old), Some(revision)) => ConnectorManifestDrift::between(
                     old,
                     &pending.manifest,
                     revision,
                     &pending.protocol_revision,
                 ),
+                // A catalog key's first manifest is staged at its pinned revision.
+                (None, Some(revision)) if *revision == pending.protocol_revision => {
+                    ConnectorManifestDrift::first_registration(&pending.manifest)
+                }
                 (None, None) => ConnectorManifestDrift::first_registration(&pending.manifest),
                 _ => return Err(invalid_body("manifest pin incomplete")),
             };
@@ -371,9 +420,8 @@ impl ConnectorKeyRecord {
             {
                 return Err(invalid_body("manifest drift is inconsistent"));
             }
-            if pending.drift.requires_reregistration && self.status != ConnectorKeyStatus::Suspended
-            {
-                return Err(invalid_body("revision drift must suspend key"));
+            if pending.drift.requires_reregistration && self.status != ConnectorKeyStatus::Pending {
+                return Err(invalid_body("revision drift must hold key pending"));
             }
         }
         if let Some(catalog) = self.catalog.as_ref() {

@@ -17,6 +17,7 @@ pub mod events;
 mod lifecycle;
 mod manifest_drift;
 mod meter;
+pub mod qualification;
 mod record;
 mod slate;
 mod txn;
@@ -32,7 +33,10 @@ pub use self::codec::{
     CONNECTOR_KEY_BODY_KEYS, CONNECTOR_KEY_SCHEMA_VERSION, decode_connector_key_body,
     encode_connector_key_body,
 };
-pub use self::lifecycle::{ConnectorCallRoute, ConnectorDescription, ConnectorManifestQualifier};
+pub use self::lifecycle::{
+    ConnectorCallRoute, ConnectorDescription, ConnectorManifestQualifier,
+    ConnectorQualificationError, ProbeManifestQualifier,
+};
 pub use self::meter::{
     CONNECTOR_KEY_CHARTER_ROW_BASE, ConnectorDispatchTelemetry, ConnectorKeyDispatchTally,
     EFFECTOR_BUDGET_LAND_PROMPT_TEMPLATE, EFFECTOR_BUDGET_LAND_PROMPT_TEMPLATE_ID,

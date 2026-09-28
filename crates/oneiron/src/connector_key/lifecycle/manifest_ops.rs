@@ -1,6 +1,11 @@
 //! Manifest updates: qualify immutable resolved input, retain the approved
 //! snapshot, and bind an owner stamp to the exact candidate and suite report.
-use super::super::manifest_drift::{ConnectorManifestDrift, ResolvedConnectorManifest};
+use super::super::manifest_drift::{
+    ConnectorManifestDrift, ConnectorToolSchema, ResolvedConnectorManifest,
+};
+use super::super::qualification::{
+    GroundingOracle, ProbeTool, QualificationConnector, QualificationPlan, qualify_connector,
+};
 use super::super::record::{
     ConnectorKeyRecord, ConnectorKeyStatus, PendingConnectorManifest, invalid_body,
     validate_protocol_revision,
@@ -19,10 +24,80 @@ pub trait ConnectorManifestQualifier {
     fn qualify(&self, manifest: &ResolvedConnectorManifest, revision: &str) -> Result<String>;
 }
 
+/// The engine suite behind [`ConnectorManifestQualifier`]: the ARCH-0028
+/// probe runner. The connector's resolved declarations must equal the exact
+/// candidate before any effectful probe runs, and again in the runner's own
+/// listing, so a report never vouches for a different surface.
+pub struct ProbeManifestQualifier<'a> {
+    pub connector: &'a dyn QualificationConnector,
+    pub plan: &'a QualificationPlan,
+    pub oracle: &'a dyn GroundingOracle,
+}
+
+impl ConnectorManifestQualifier for ProbeManifestQualifier<'_> {
+    fn qualify(&self, manifest: &ResolvedConnectorManifest, revision: &str) -> Result<String> {
+        let declared = self
+            .connector
+            .connect()
+            .and_then(|mut connection| connection.tools_list())
+            .map_err(|_| probe_failure())?;
+        ensure_declared(manifest, &declared)?;
+        let report = qualify_connector(self.connector, self.plan, self.oracle)
+            .map_err(|_| probe_failure())?;
+        ensure_declared(manifest, &report.tools)?;
+        let mut hasher = blake3::Hasher::new();
+        hasher.update(b"connector-manifest-qualification-v1");
+        hasher.update(&manifest.hash()?);
+        hasher.update(revision.as_bytes());
+        hasher.update(
+            &u64::try_from(report.calls)
+                .unwrap_or(u64::MAX)
+                .to_le_bytes(),
+        );
+        for result_type in &report.exercised_result_types {
+            hasher.update(result_type.as_bytes());
+            hasher.update(&[0]);
+        }
+        Ok(hasher.finalize().to_hex().to_string())
+    }
+}
+
+fn probe_failure() -> Error {
+    invalid_body("connector qualification probes failed")
+}
+
+/// Probe listings are literal declarations: compare them only after the same
+/// resolution the candidate went through. Listings carry no permission rows,
+/// so those come from the candidate by tool name.
+fn ensure_declared(manifest: &ResolvedConnectorManifest, tools: &[ProbeTool]) -> Result<()> {
+    let observed = ResolvedConnectorManifest::resolve(
+        tools
+            .iter()
+            .map(|tool| ConnectorToolSchema {
+                name: tool.name.clone(),
+                permissions: manifest
+                    .tools()
+                    .iter()
+                    .find(|candidate| candidate.name == tool.name)
+                    .map(|candidate| candidate.permissions.clone())
+                    .unwrap_or_default(),
+                triggers: tool.trigger.iter().cloned().collect(),
+                input_schema: tool.input_schema.clone(),
+            })
+            .collect(),
+    )?;
+    if observed != *manifest {
+        return Err(invalid_body("connector declarations differ from candidate"));
+    }
+    Ok(())
+}
+
 impl Vault {
     /// Stage an exact qualified candidate without replacing the approved
-    /// manifest. Revision changes suspend; other drift only marks affected
-    /// tool rows for confirm-first. No-op changes do not manufacture an ask.
+    /// manifest. Revision changes return the key to Pending; other drift only
+    /// marks affected tool rows for confirm-first. No-op changes do not
+    /// manufacture an ask. A catalog key changes revision only through
+    /// `revise_connector_protocol`, which re-binds its owner slate.
     pub fn stage_connector_manifest(
         &self,
         id: &EntityId,
@@ -53,20 +128,23 @@ impl Vault {
         }
         let holder = record.actor_entity_ref.as_ref().map(EntityId::to_hex);
         manifest.validate_admission(policy.connector_admission.effective(holder.as_deref()))?;
-        let drift = match (
-            &record.retained_manifest,
-            &record.negotiated_protocol_revision,
-        ) {
+        let drift = match (&record.retained_manifest, &record.protocol_revision) {
             (Some(old), Some(old_revision)) => {
                 ConnectorManifestDrift::between(old, &manifest, old_revision, revision)
             }
+            (None, Some(pinned)) if pinned == revision => {
+                ConnectorManifestDrift::first_registration(&manifest)
+            }
             (None, None) => ConnectorManifestDrift::first_registration(&manifest),
-            _ => return Err(invalid_body("connector manifest pin incomplete")),
+            (None, Some(_)) => return Err(catalog_revision_change()),
+            (Some(_), None) => return Err(invalid_body("connector manifest pin incomplete")),
         };
+        if record.catalog.is_some() && drift.requires_reregistration {
+            return Err(catalog_revision_change());
+        }
         if !drift.has_change() {
             if let Some(previous) = record.pending_manifest.as_ref() {
-                let held_revision = record.status == ConnectorKeyStatus::Suspended
-                    && record.suspended_reason.as_deref() == Some("protocol_revision_drift")
+                let held_revision = record.status == ConnectorKeyStatus::Pending
                     && previous.drift.requires_reregistration;
                 if held_revision {
                     // A return to the approved revision is not an expansion,
@@ -87,10 +165,9 @@ impl Vault {
                         .as_ref()
                         .map(|candidate| candidate.candidate_id)
                         != Some(candidate_id)
-                        || current.status != ConnectorKeyStatus::Suspended
-                        || current.suspended_reason.as_deref() != Some("protocol_revision_drift")
+                        || current.status != ConnectorKeyStatus::Pending
                         || current.retained_manifest.as_ref() != Some(&manifest)
-                        || current.negotiated_protocol_revision.as_deref() != Some(revision)
+                        || current.protocol_revision.as_deref() != Some(revision)
                     {
                         return Err(Error::ConcurrentWrite("connector manifest candidate"));
                     }
@@ -134,21 +211,18 @@ impl Vault {
             }
             return Ok(None);
         }
-        if record.status == ConnectorKeyStatus::Suspended
-            && record.suspended_reason.as_deref() == Some("protocol_revision_drift")
+        if record.status == ConnectorKeyStatus::Pending
+            && record
+                .pending_manifest
+                .as_ref()
+                .is_some_and(|pending| pending.drift.requires_reregistration)
             && !drift.requires_reregistration
         {
             return Err(invalid_body(
                 "protocol revision drift still needs re-registration",
             ));
         }
-        if drift.requires_reregistration
-            && record.status == ConnectorKeyStatus::Suspended
-            && record
-                .pending_manifest
-                .as_ref()
-                .is_none_or(|p| !p.drift.requires_reregistration)
-        {
+        if drift.requires_reregistration && record.status == ConnectorKeyStatus::Suspended {
             return Err(invalid_body(
                 "resume an independently suspended key before revision update",
             ));
@@ -170,9 +244,7 @@ impl Vault {
                 drift: drift.clone(),
                 qualification_report_hash: None,
             }),
-            status: if drift.requires_reregistration {
-                ConnectorKeyStatus::Suspended
-            } else if first {
+            status: if drift.requires_reregistration || first {
                 ConnectorKeyStatus::Pending
             } else {
                 record.status
@@ -181,11 +253,6 @@ impl Vault {
                 Some(at)
             } else {
                 record.status_changed_at
-            },
-            suspended_reason: if drift.requires_reregistration {
-                Some("protocol_revision_drift".to_owned())
-            } else {
-                record.suspended_reason.clone()
             },
             ..record
         };
@@ -223,7 +290,7 @@ impl Vault {
             // It takes effect after successful qualification, without an
             // unnecessary owner re-consent prompt.
             record.retained_manifest = Some(pending.manifest.clone());
-            record.negotiated_protocol_revision = Some(pending.protocol_revision.clone());
+            record.protocol_revision = Some(pending.protocol_revision.clone());
             record.pending_manifest = None;
         }
         rewrite_connector_key_in_txn(&self.store, &mut txn, id, &record)?;
@@ -285,7 +352,7 @@ impl Vault {
             return Err(invalid_body("connector qualification report changed"));
         }
         let approved = ConnectorKeyRecord {
-            negotiated_protocol_revision: Some(pending.protocol_revision.clone()),
+            protocol_revision: Some(pending.protocol_revision.clone()),
             retained_manifest: Some(pending.manifest.clone()),
             pending_manifest: None,
             status: if pending.drift.requires_reregistration
@@ -301,11 +368,6 @@ impl Vault {
                 Some(at)
             } else {
                 record.status_changed_at
-            },
-            suspended_reason: if pending.drift.requires_reregistration {
-                None
-            } else {
-                record.suspended_reason.clone()
             },
             ..record
         };
@@ -336,6 +398,10 @@ impl Vault {
         }
         Ok(record.tool_requires_confirmation(tool))
     }
+}
+
+fn catalog_revision_change() -> Error {
+    invalid_body("catalog protocol changes go through revise_connector_protocol")
 }
 
 fn valid_report_hash(value: &str) -> bool {

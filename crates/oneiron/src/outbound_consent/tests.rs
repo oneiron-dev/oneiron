@@ -2408,7 +2408,7 @@ fn failed_revision_revert_stays_closed_for_preparation_admission_and_recovery() 
     );
     assert_eq!(
         vault.get_connector_key(&key_id).unwrap().unwrap().status,
-        crate::connector_key::ConnectorKeyStatus::Suspended
+        crate::connector_key::ConnectorKeyStatus::Pending
     );
     let descriptor = tool_call::ToolCallDescriptor {
         schema: &serde_json::json!({"properties":{}}),
@@ -2442,7 +2442,7 @@ fn failed_revision_revert_stays_closed_for_preparation_admission_and_recovery() 
     .unwrap();
     assert_eq!(
         admission.decision,
-        ScopedMcpConsentDecision::Escalate(ScopedMcpEscalationReason::ConnectorKeySuspended)
+        ScopedMcpConsentDecision::Escalate(ScopedMcpEscalationReason::ConnectorKeyPending)
     );
     assert_eq!(admission.effectful_sends, 0);
     let connector = scoped_capability_connector("files", &grant_id);

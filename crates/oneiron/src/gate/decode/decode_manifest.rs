@@ -10,19 +10,20 @@ use crate::gate::ceiling::{
 };
 use crate::gate::constants::{
     POLICY_ACTOR_CEILINGS_KEY, POLICY_AUTO_CHECKER_KEY, POLICY_BUDGET_POLICY_KEY,
-    POLICY_COMM_OPT_OUT_POSTURE_KEY, POLICY_CONNECTOR_ADMISSION_KEY, POLICY_DEFAULTS_KEY,
-    POLICY_DELEGATED_GRANTS_KEY, POLICY_HOSTED_TTS_KEY, POLICY_LEGAL_FLOOR_ROWS_KEY,
-    POLICY_MIN_ENGINE_VERSION_KEY, POLICY_ON_BUDGET_EXHAUSTED_KEY,
-    POLICY_OWNER_POLICY_DOCUMENT_KEY, POLICY_OWNER_POLICY_ENABLED_KEY,
-    POLICY_OWNER_POLICY_OUTPUT_CONTRACT_KEY, POLICY_OWNER_POLICY_PATTERNS_KEY,
-    POLICY_OWNER_POLICY_ROWS_KEY, POLICY_PACK_ID_KEY, POLICY_PACK_VERSION_KEY, POLICY_RULES_KEY,
-    POLICY_SCHEMA_VERSION, POLICY_SCHEMA_VERSION_KEY, POLICY_SCOPED_GRANTS_KEY,
-    POLICY_SIGNATURE_KEY, POLICY_SIGNATURES_KEY, POLICY_SOURCE_TRUST_KEY,
+    POLICY_COMM_OPT_OUT_POSTURE_KEY, POLICY_CONNECTOR_ADMISSION_KEY,
+    POLICY_CONNECTOR_CLASS_CARRY_KEY, POLICY_CONNECTOR_CLASS_PRECEDENCE_KEY,
+    POLICY_CONNECTOR_CLASS_ROLE_KEY, POLICY_DEFAULTS_KEY, POLICY_DELEGATED_GRANTS_KEY,
+    POLICY_HOSTED_TTS_KEY, POLICY_LEGAL_FLOOR_ROWS_KEY, POLICY_MIN_ENGINE_VERSION_KEY,
+    POLICY_ON_BUDGET_EXHAUSTED_KEY, POLICY_OWNER_POLICY_DOCUMENT_KEY,
+    POLICY_OWNER_POLICY_ENABLED_KEY, POLICY_OWNER_POLICY_OUTPUT_CONTRACT_KEY,
+    POLICY_OWNER_POLICY_PATTERNS_KEY, POLICY_OWNER_POLICY_ROWS_KEY, POLICY_PACK_ID_KEY,
+    POLICY_PACK_VERSION_KEY, POLICY_RULES_KEY, POLICY_SCHEMA_VERSION, POLICY_SCHEMA_VERSION_KEY,
+    POLICY_SCOPED_GRANTS_KEY, POLICY_SIGNATURE_KEY, POLICY_SIGNATURES_KEY, POLICY_SOURCE_TRUST_KEY,
     POLICY_WEAVE_CORRECTION_POLICY_KEY,
 };
 use crate::gate::grants::PolicyScopedGrant;
 use crate::gate::hosted_tts_policy::HostedTtsPolicy;
-use crate::gate::resolution::CommOptOutPosture;
+use crate::gate::resolution::{CommOptOutPosture, ConnectorClassPrecedence};
 use crate::llm::{BudgetExhaustionPolicy, BudgetPolicyTable};
 
 use super::decode_map_util::{
@@ -37,6 +38,13 @@ use super::decode_trust_budget::{
     parse_budget_exhaustion_policy, parse_budget_policy, parse_comm_opt_out_posture,
     parse_source_trust,
 };
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub(in crate::gate) enum ConnectorClassRole {
+    #[default]
+    Vault,
+    Holder,
+}
 
 pub(in crate::gate) struct DecodedPolicyManifest {
     pub(in crate::gate) pack: PolicyPack,
@@ -62,7 +70,9 @@ pub(in crate::gate) struct DecodedPolicyManifest {
     pub(in crate::gate) connector_admission:
         Option<crate::gate::connector_admission::ConnectorAdmissionPolicy>,
     pub(in crate::gate) hosted_tts: HostedTtsPolicy,
-
+    pub(in crate::gate) connector_class_carry: Option<std::collections::BTreeSet<(String, String)>>,
+    pub(in crate::gate) connector_class_role: ConnectorClassRole,
+    pub(in crate::gate) connector_class_precedence: Option<ConnectorClassPrecedence>,
     pub(in crate::gate) diagnostic_bounds: Option<crate::self_heal::tripwires::TripwireBounds>,
     pub(in crate::gate) proposal_check_threshold: Option<u64>,
     pub(in crate::gate) weave_correction_policy: Option<crate::gate::WeaveCorrectionPolicy>,
@@ -111,7 +121,9 @@ pub(in crate::gate) fn decode_policy_manifest(data: &[u8]) -> Option<DecodedPoli
                 | POLICY_BUDGET_POLICY_KEY
                 | POLICY_CONNECTOR_ADMISSION_KEY
                 | POLICY_HOSTED_TTS_KEY
-
+                | POLICY_CONNECTOR_CLASS_CARRY_KEY
+                | POLICY_CONNECTOR_CLASS_ROLE_KEY
+                | POLICY_CONNECTOR_CLASS_PRECEDENCE_KEY
                 | "diagnostic_bounds"
                 | "proposal_check_threshold"
                 | POLICY_WEAVE_CORRECTION_POLICY_KEY
@@ -248,6 +260,50 @@ pub(in crate::gate) fn decode_policy_manifest(data: &[u8]) -> Option<DecodedPoli
         MapValue::Duplicate => return None,
         MapValue::Present(value) => HostedTtsPolicy::parse(value)?,
     };
+    let connector_class_carry = match single_map_value(&entries, POLICY_CONNECTOR_CLASS_CARRY_KEY) {
+        MapValue::Missing => None,
+        MapValue::Duplicate => return None,
+        MapValue::Present(Value::Array(rows)) => {
+            let mut result = std::collections::BTreeSet::new();
+            for row in rows {
+                let Value::Array(pair) = row else {
+                    return None;
+                };
+                let [Value::String(from), Value::String(to)] = pair.as_slice() else {
+                    return None;
+                };
+                let (Some(from), Some(to)) = (from.as_str(), to.as_str()) else {
+                    return None;
+                };
+                // Typed class names, not an engine-fixed precedence or pair list.
+                if !matches!(from, "public" | "personal" | "secret" | "header")
+                    || !matches!(to, "public" | "personal" | "secret" | "header")
+                    || from == to
+                    || !result.insert((from.to_owned(), to.to_owned()))
+                {
+                    return None;
+                }
+            }
+            Some(result)
+        }
+        MapValue::Present(_) => return None,
+    };
+    let connector_class_role = match single_map_value(&entries, POLICY_CONNECTOR_CLASS_ROLE_KEY) {
+        MapValue::Missing | MapValue::Present(Value::Nil) => ConnectorClassRole::Vault,
+        MapValue::Duplicate => return None,
+        MapValue::Present(Value::String(role)) => match role.as_str()? {
+            "vault" => ConnectorClassRole::Vault,
+            "holder" => ConnectorClassRole::Holder,
+            _ => return None,
+        },
+        MapValue::Present(_) => return None,
+    };
+    let connector_class_precedence =
+        match single_map_value(&entries, POLICY_CONNECTOR_CLASS_PRECEDENCE_KEY) {
+            MapValue::Missing => None,
+            MapValue::Duplicate => return None,
+            MapValue::Present(value) => Some(ConnectorClassPrecedence::parse(value.as_str()?)?),
+        };
     let diagnostic_bounds = match single_map_value(&entries, "diagnostic_bounds") {
         MapValue::Missing => None,
         MapValue::Duplicate => return None,
@@ -299,7 +355,9 @@ pub(in crate::gate) fn decode_policy_manifest(data: &[u8]) -> Option<DecodedPoli
         budget_policy,
         connector_admission,
         hosted_tts,
-
+        connector_class_carry,
+        connector_class_role,
+        connector_class_precedence,
         diagnostic_bounds,
         proposal_check_threshold,
         weave_correction_policy,

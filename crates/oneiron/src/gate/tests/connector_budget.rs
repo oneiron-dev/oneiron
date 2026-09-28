@@ -795,7 +795,7 @@ fn retained_manifest_change_holds_ordinary_connector_verb_too() -> Result<()> {
     };
     let mut key = vault.get_connector_key(&key_id)?.unwrap();
     key.retained_manifest = Some(manifest("read"));
-    key.negotiated_protocol_revision = Some("r1".into());
+    key.protocol_revision = Some("r1".into());
     vault.with_write_txn(|txn| {
         crate::connector_key::rewrite_connector_key_in_txn(&vault.store, txn, &key_id, &key)
     })?;

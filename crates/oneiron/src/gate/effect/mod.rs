@@ -377,7 +377,7 @@ pub(crate) fn evaluate_external_effect_policy(
                     binding.key_ref != _key_id.to_hex()
                         || binding.manifest_hash != current_hash
                         || Some(binding.protocol_revision.as_str())
-                            != key.negotiated_protocol_revision.as_deref()
+                            != key.protocol_revision.as_deref()
                 })
             {
                 charter_wall = Some(

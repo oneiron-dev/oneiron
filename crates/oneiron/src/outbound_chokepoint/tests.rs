@@ -48,7 +48,7 @@ fn register_scoped_key(
         ])
         .unwrap(),
     );
-    key.negotiated_protocol_revision = Some("R1".into());
+    key.protocol_revision = Some("R1".into());
     vault
         .with_write_txn(|txn| {
             crate::connector_key::rewrite_connector_key_in_txn(&vault.store, txn, key_id, &key)

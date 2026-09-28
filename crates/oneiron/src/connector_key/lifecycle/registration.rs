@@ -96,10 +96,15 @@ impl Vault {
         );
         normalize_budget_channel_classes(&mut record.budgets);
         record.secret_ref = key_spec.secret_ref;
+        record.status = ConnectorKeyStatus::Pending;
+        record.consent_required = true;
+        record.slate_ref = key_spec.slate_ref;
+        record.protocol_revision = key_spec.protocol_revision;
         record.catalog = Some(entry);
-        let txn = self.store.env.read_txn()?;
-        if scoped_grant_matches(&self.store, &txn, &record.connector)? {
-            record.status = ConnectorKeyStatus::Pending;
+        if record.slate_ref.is_none() || record.protocol_revision.is_none() {
+            return Err(invalid_body(
+                "catalog registration requires slate and protocol revision",
+            ));
         }
         // `validate` binds the entry to the key: a catalog naming a different
         // connector than the key governs is rejected here, pre-write.
@@ -125,19 +130,28 @@ impl Vault {
         record: &ConnectorKeyRecord,
     ) -> Result<()> {
         record.validate()?;
-        let required_status = if scoped_grant_matches(&self.store, &*wtxn, &record.connector)? {
+        // Catalogued keys and live per-grant scoped keys wait for the
+        // qualification suite; ordinary keys keep the Active door.
+        let required_status = if record.catalog.is_some()
+            || scoped_grant_matches(&self.store, &*wtxn, &record.connector)?
+        {
             ConnectorKeyStatus::Pending
         } else {
             ConnectorKeyStatus::Active
         };
         if record.status != required_status {
+            return Err(invalid_body("invalid registration status"));
+        }
+        if record.catalog.is_some()
+            && (record.slate_ref.is_none() || record.protocol_revision.is_none())
+        {
             return Err(invalid_body(
-                "registration requires unqualified scoped keys pending, ordinary keys active",
+                "catalog registration requires slate and protocol revision",
             ));
         }
         if record.retained_manifest.is_some()
             || record.pending_manifest.is_some()
-            || record.negotiated_protocol_revision.is_some()
+            || record.catalog.is_none() && record.protocol_revision.is_some()
         {
             return Err(invalid_body(
                 "manifest must enter through qualified staging",
@@ -152,6 +166,9 @@ impl Vault {
             return Err(invalid_body("registration mints generation 0"));
         }
 
+        if let Some(slate_ref) = record.slate_ref {
+            super::super::slate::bind_connector_slate_in_txn(self, wtxn, slate_ref, id)?;
+        }
         let data = encode_connector_key_body(record)?;
         if self.store.port_entity_record(&*wtxn, id)?.is_some() {
             return Err(Error::Record(RecordError::ConnectorKeyAlreadyExists));

@@ -15,12 +15,8 @@ use super::record::{
 
 /// Current ConnectorKeyRecord body schema version.
 ///
-/// v3 (ONE-1886) appends `secret_ref` / `key_generation` / `catalog` as
-/// OPTIONAL keys. The append is purely additive: positions 0-10 below never
-/// move, decode still accepts every prior version, and a stored v1/v2 body
-/// reads back as `secret_ref = None`, `key_generation = 0`, `catalog = None`
-/// — re-encoding to v3 only on the row's next natural write, never as a bulk
-/// migration.
+/// v3 carries optional custody, catalog, and qualification fields. Earlier
+/// fields keep their positions; missing optional fields decode as None.
 pub const CONNECTOR_KEY_SCHEMA_VERSION: u64 = 3;
 
 /// Pinned on-disk MessagePack key set for ConnectorKeyRecord bodies.
@@ -28,7 +24,7 @@ pub const CONNECTOR_KEY_SCHEMA_VERSION: u64 = 3;
 /// APPEND-ONLY and position-addressed by the `KEY_*` consts below: an existing
 /// index must never move, or every stored body silently re-reads as a
 /// different field.
-pub const CONNECTOR_KEY_BODY_KEYS: [&str; 17] = [
+pub const CONNECTOR_KEY_BODY_KEYS: [&str; 21] = [
     "schema_version",
     "connector",
     "actor_entity_ref",
@@ -43,7 +39,11 @@ pub const CONNECTOR_KEY_BODY_KEYS: [&str; 17] = [
     "secret_ref",
     "key_generation",
     "catalog",
-    "negotiated_protocol_revision",
+    "slate_ref",
+    "protocol_revision",
+    "slate_revision",
+    "admission_epoch",
+    "consent_required",
     "retained_manifest",
     "pending_manifest",
 ];
@@ -62,15 +62,23 @@ const KEY_SUGGESTED_BUDGETS: &str = CONNECTOR_KEY_BODY_KEYS[10];
 const KEY_SECRET_REF: &str = CONNECTOR_KEY_BODY_KEYS[11];
 const KEY_KEY_GENERATION: &str = CONNECTOR_KEY_BODY_KEYS[12];
 const KEY_CATALOG: &str = CONNECTOR_KEY_BODY_KEYS[13];
-const KEY_PROTOCOL_REVISION: &str = CONNECTOR_KEY_BODY_KEYS[14];
-const KEY_RETAINED_MANIFEST: &str = CONNECTOR_KEY_BODY_KEYS[15];
-const KEY_PENDING_MANIFEST: &str = CONNECTOR_KEY_BODY_KEYS[16];
-const OPTIONAL_CONNECTOR_KEY_BODY_KEYS: [&str; 7] = [
+const KEY_SLATE_REF: &str = CONNECTOR_KEY_BODY_KEYS[14];
+const KEY_PROTOCOL_REVISION: &str = CONNECTOR_KEY_BODY_KEYS[15];
+const KEY_SLATE_REVISION: &str = CONNECTOR_KEY_BODY_KEYS[16];
+const KEY_ADMISSION_EPOCH: &str = CONNECTOR_KEY_BODY_KEYS[17];
+const KEY_CONSENT_REQUIRED: &str = CONNECTOR_KEY_BODY_KEYS[18];
+const KEY_RETAINED_MANIFEST: &str = CONNECTOR_KEY_BODY_KEYS[19];
+const KEY_PENDING_MANIFEST: &str = CONNECTOR_KEY_BODY_KEYS[20];
+const OPTIONAL_CONNECTOR_KEY_BODY_KEYS: [&str; 11] = [
     KEY_SUGGESTED_BUDGETS,
     KEY_SECRET_REF,
     KEY_KEY_GENERATION,
     KEY_CATALOG,
+    KEY_SLATE_REF,
     KEY_PROTOCOL_REVISION,
+    KEY_SLATE_REVISION,
+    KEY_ADMISSION_EPOCH,
+    KEY_CONSENT_REQUIRED,
     KEY_RETAINED_MANIFEST,
     KEY_PENDING_MANIFEST,
 ];
@@ -194,8 +202,27 @@ pub fn encode_connector_key_body(record: &ConnectorKeyRecord) -> Result<Vec<u8>>
                 .map_or(Value::Nil, encode_catalog_entry),
         ),
         (
+            Value::from(KEY_SLATE_REF),
+            record
+                .slate_ref
+                .as_ref()
+                .map_or(Value::Nil, |id| Value::Binary(id.as_bytes().to_vec())),
+        ),
+        (
             Value::from(KEY_PROTOCOL_REVISION),
-            option_string_value(record.negotiated_protocol_revision.as_deref()),
+            option_string_value(record.protocol_revision.as_deref()),
+        ),
+        (
+            Value::from(KEY_SLATE_REVISION),
+            record.slate_revision.map_or(Value::Nil, Value::from),
+        ),
+        (
+            Value::from(KEY_ADMISSION_EPOCH),
+            Value::from(record.admission_epoch),
+        ),
+        (
+            Value::from(KEY_CONSENT_REQUIRED),
+            Value::from(record.consent_required),
         ),
         (
             Value::from(KEY_RETAINED_MANIFEST),
@@ -448,8 +475,16 @@ fn decode_connector_key_value(value: &Value) -> Result<ConnectorKeyRecord> {
             .map_or_else(|| Ok(0), decode_key_generation)?,
         catalog: optional_value(entries, KEY_CATALOG)
             .map_or_else(|| Ok(None), decode_optional_catalog_entry)?,
-        negotiated_protocol_revision: optional_value(entries, KEY_PROTOCOL_REVISION)
+        slate_ref: optional_value(entries, KEY_SLATE_REF)
+            .map_or_else(|| Ok(None), decode_optional_entity_id)?,
+        protocol_revision: optional_value(entries, KEY_PROTOCOL_REVISION)
             .map_or_else(|| Ok(None), decode_optional_string)?,
+        slate_revision: optional_value(entries, KEY_SLATE_REVISION)
+            .map_or_else(|| Ok(None), decode_optional_u64)?,
+        admission_epoch: optional_value(entries, KEY_ADMISSION_EPOCH)
+            .map_or(Ok(0), |v| v.as_u64().ok_or_else(malformed))?,
+        consent_required: optional_value(entries, KEY_CONSENT_REQUIRED)
+            .map_or(Ok(false), |v| v.as_bool().ok_or_else(malformed))?,
         retained_manifest: optional_value(entries, KEY_RETAINED_MANIFEST)
             .map_or_else(|| Ok(None), decode_json_option)?,
         pending_manifest: optional_value(entries, KEY_PENDING_MANIFEST)

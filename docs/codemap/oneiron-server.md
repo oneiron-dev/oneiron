@@ -42,7 +42,8 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/companion/access_grants.rs` | src | s | 9 crate-vis | — | Companion access-grant routes and DTOs |
 | `src/api/companion/auth.rs` | src | s | 5 crate-vis | — | Companion authorization helpers |
 | `src/api/companion/errors.rs` | src | s | 3 crate-vis | — | Companion error constructors |
-| `src/api/companion/mod.rs` | src | s | 5 crate-vis | — | Companion control-plane surface: access grants and psych-mirror profiles |
+| `src/api/companion/lists.rs` | src | s | 8 crate-vis | — | Bounded, authorization-checked companion list projections |
+| `src/api/companion/mod.rs` | src | s | 6 crate-vis | — | Companion control-plane surface: access grants and psych-mirror profiles |
 | `src/api/companion/profiles.rs` | src | m | 24 crate-vis | — | Companion profile routes, DTOs, and state builders |
 | `src/api/consumer_usage.rs` | src | s | 4 crate-vis | — | Per-vault usage facts |
 | `src/api/context_board/cursor.rs` | src | s | 12 crate-vis | — | Server-owned MEMORIES cursors and session read sets, keyed by principal and session |
@@ -57,16 +58,17 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/context_pack/mod.rs` | src | s | 5 crate-vis | — | Core context-pack assembly: POST /v1/core/context-pack validates the request, runs scoped retrieval through… |
 | `src/api/context_pack/resolve.rs` | src | m | 15 crate-vis | — | Route handler plus depth/policy/time/budget resolution for context-pack assembly |
 | `src/api/context_pack/response.rs` | src | m | 27 crate-vis | — | Response DTOs and engine-to-wire mapping functions for context-pack assembly |
-| `src/api/conversation_dag/mod.rs` | src | m | 14 crate-vis | — | HTTP adapters for transactional conversation DAG and summary doors |
-| `src/api/conversation_dag/types.rs` | src | s | 24 crate-vis | — | Closed wire inputs for conversation topology and merge operations |
+| `src/api/conversation_dag/mod.rs` | src | m | 15 crate-vis | — | HTTP adapters for transactional conversation DAG and summary doors |
+| `src/api/conversation_dag/types.rs` | src | s | 27 crate-vis | — | Closed wire inputs for conversation topology and merge operations |
 | `src/api/conversation_members.rs` | src | s | 5 crate-vis | — | Room membership routes |
-| `src/api/conversations.rs` | src | m | 10 crate-vis | — | — |
+| `src/api/conversations.rs` | src | m | 12 crate-vis | — | — |
 | `src/api/core/batch.rs` | src | s | 11 crate-vis | — | Batch-write DTOs, route handler, and entity-put staging |
 | `src/api/core/hydrate.rs` | src | m | 21 crate-vis | — | Hydrate and short-id hydrate DTOs, routes, and mappers |
-| `src/api/core/mod.rs` | src | s | 6 crate-vis | — | — |
+| `src/api/core/mod.rs` | src | s | 7 crate-vis | — | — |
 | `src/api/core/propose.rs` | src | s | 3 crate-vis | — | Proposal-only cloud leg |
-| `src/api/core/query.rs` | src | m | 17 crate-vis | — | Query/list/capability routes and their paging helpers |
+| `src/api/core/query.rs` | src | m | 16 crate-vis | — | Query/list/capability routes and their paging helpers |
 | `src/api/core/read_receipt.rs` | src | s | 4 crate-vis | — | OpenAPI shape for the engine-owned mandatory read receipt |
+| `src/api/core/widen.rs` | src | s | 3 crate-vis | — | Host-only landing of a frozen widen proposal |
 | `src/api/core/write_shape.rs` | src | s | 19 crate-vis | — | Create-entity DTOs, announcement normalization, and body field helpers |
 | `src/api/discover.rs` | src | m | 25 crate-vis | — | — |
 | `src/api/entity.rs` | src | m | 3 crate-vis | — | — |
@@ -144,9 +146,9 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/tests/context_pack_disclosure.rs` | test | L | — | — | Context-pack telemetry, interlocutor echo/stamps, owner-absence clamping, scope-smuggling resistance |
 | `src/api/tests/context_pack_v4.rs` | test | L | — | — | Context-board memories/cursor/companion/assets, session scoping, evidence run-id omission |
 | `src/api/tests/contract_snapshots.rs` | test | L | — | — | v1 core OpenAPI/success/error contract fixture snapshots plus generated-OpenAPI spec assertions |
-| `src/api/tests/conversation_dag.rs` | test | m | — | — | Wire-level DAG, summary and reply-strip acceptance |
+| `src/api/tests/conversation_dag.rs` | test | L | — | — | Wire-level DAG, summary and reply-strip acceptance |
 | `src/api/tests/conversation_rooms.rs` | test | s | — | — | Room, membership, addressing, thread and listing routes through the HTTP router |
-| `src/api/tests/core_memory_conversations.rs` | test | L | — | — | Batch/query/hydrate smoke, memory timeline + verbs, conversations/turns, platform announcements |
+| `src/api/tests/core_memory_conversations.rs` | test | XL | — | — | Batch/query/hydrate smoke, memory timeline + verbs, conversations/turns, platform announcements |
 | `src/api/tests/depth_quality.rs` | test | m | 1 crate-vis | — | — |
 | `src/api/tests/depth_spend.rs` | test | s | — | — | — |
 | `src/api/tests/mcp_memory.rs` | test | s | — | — | Memory tool projections exercise the same scoped reads as native clients |
@@ -161,6 +163,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/tests/mod.rs` | test | L | 64 crate-vis | — | — |
 | `src/api/tests/org_admin.rs` | test | s | — | — | Organization credentials expose only their fixed administrative action list |
 | `src/api/tests/reactive.rs` | test | m | — | — | Local-first reactive read sync/refresh/ignore/lag/origins plus engine-observer vault write path |
+| `src/api/tests/relay_widen.rs` | test | m | — | — | Route-level separation: proposal is inert, and only the human holder's host-bound slip lands it |
 | `src/api/tests/retrieval_depth_quality.rs` | test | m | — | — | Memory-reason route depths/spend/validation, raw-search depth tiers, retrieval-quality markers + snapshots |
 | `src/api/tests/retrieval_shaping.rs` | test | m | — | — | Search count-modes, context-pack budgets/response controls, text-search shape, snapshot/sort unit tests |
 | `src/api/tests/run_tree.rs` | test | m | — | — | Run-tree attempt-queue reads, agent_id projection, intervene effects, unbounded-read rejection |
@@ -261,12 +264,12 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/managed/ctl_shed_tests.rs` | test | s | — | — | — |
 | `src/managed/host.rs` | src | s | 3 crate-vis | — | Managed process entry behind the shared six-verb Host contract |
 | `src/managed/isolation.rs` | src | s | 4 crate-vis | — | Fail-closed Linux fscrypt and root-owned UID allocation probes |
-| `src/managed/ledger.rs` | src | m | 1 struct · 7 fn · 1 const · 1 crate-vis | WakeLedger | Managed wake ledger: entries, revision, and supervisor pushes |
+| `src/managed/ledger.rs` | src | m | 1 struct · 7 fn · 1 const · 2 crate-vis | WakeLedger | Managed wake ledger: entries, revision, and supervisor pushes |
 | `src/managed/listener.rs` | src | m | 1 struct · 2 enum · 10 fn · 1 const · 1 crate-vis | BoundServeListener, ManagedCtl, ServeListener | Managed sockets: listener resolution and binding, the ctl plane, and readiness |
-| `src/managed/mod.rs` | src | s | 5 re-export · 1 crate-vis | — | Managed serve mode: the vault engine as a supervised child process |
+| `src/managed/mod.rs` | src | s | 5 re-export · 2 crate-vis | — | Managed serve mode: the vault engine as a supervised child process |
 | `src/managed/peer.rs` | src | s | 2 crate-vis | — | Kernel-verified local transport peer, not a public caller IP |
 | `src/managed/shed.rs` | src | s | 1 crate-vis | — | Mapping the engine's shed transaction to the managed ctl contract |
-| `src/managed/state_serve.rs` | src | m | 3 struct · 20 fn · 1 type · 1 const | ManagedShutdown, ManagedState, ObservedAlarm | Managed runtime state, the reap freeze gate, and the supervised serve loop |
+| `src/managed/state_serve.rs` | src | m | 3 struct · 20 fn · 1 type · 1 const · 1 crate-vis | ManagedShutdown, ManagedState, ObservedAlarm | Managed runtime state, the reap freeze gate, and the supervised serve loop |
 | `src/managed/vault_gates.rs` | src | s | 3 fn · 3 const · 1 crate-vis | — | Managed vault open gates: credentials, the canary marker, and the DEK MAC |
 | `src/mcp/actors.rs` | src | s | 5 struct · 3 enum · 16 fn · 6 crate-vis | McpBoardSnapshot, McpConnectorActorRecord, McpConnectorActorRegistrationError, McpConnectorActorResolutionError, McpConnectorActorRevokeStatus, McpConnectorScope, McpCredentialHashKey, McpResolvedActor | MCP connector actor types: credentials, scopes, records, and resolution |
 | `src/mcp/args.rs` | src | m | 17 struct · 7 enum · 7 fn | McpActorClass, McpActorMetadata, McpAskEffort, McpAskRoute, McpAskToolArgs, McpBookOperation, McpBookToolArgs, McpCalendarOperation +16 | MCP tool argument envelopes: the request shapes for every tool verb |
@@ -314,7 +317,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/server/windows.rs` | src | s | 7 crate-vis | — | Window serving: snapshots, exports, and the local-change broadcast bridge |
 | `src/server/windows/tests.rs` | test | s | — | — | — |
 | `src/skills_pack.rs` | src | s | 5 crate-vis | — | — |
-| `src/test_credentials.rs` | src | s | 9 crate-vis | — | Request fixtures mint real logged slips before crossing the production router |
+| `src/test_credentials.rs` | src | m | 13 crate-vis | — | Request fixtures mint real logged slips before crossing the production router |
 | `src/usage/codec.rs` | src | s | 1 enum · 1 fn · 4 crate-vis | UsageError | Msgpack codec for durable meter facts |
 | `src/usage/keys.rs` | src | s | 9 crate-vis | — | Owner/vault keys and validation for the durable meter queue |
 | `src/usage/ledger.rs` | src | s | 1 struct · 3 fn · 1 crate-vis | UsageLedger | Durable idempotent provider-list meters, aggregated only per owner and vault |

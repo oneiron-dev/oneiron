@@ -814,7 +814,7 @@ fn resolved_manifest_drift_holds_scoped_tool_at_gate() -> Result<()> {
     };
     let mut record = vault.get_connector_key(&key_id)?.unwrap();
     record.retained_manifest = Some(manifest("safe"));
-    record.negotiated_protocol_revision = Some("r1".into());
+    record.protocol_revision = Some("r1".into());
     vault.with_write_txn(|txn| {
         crate::connector_key::rewrite_connector_key_in_txn(&vault.store, txn, &key_id, &record)
     })?;

@@ -7,6 +7,53 @@ use crate::registry::{
     validate_public_entity_type,
 };
 
+fn register_catalog(
+    vault: &Vault,
+    entry: ConnectorCatalogEntry,
+    mut spec: ConnectorKeySpec,
+    registered_at: u64,
+) -> Result<(EntityId, ConnectorKeyRecord)> {
+    use super::{SlateDataClass, SlateToolManifest, draft_connector_slate};
+    let manifest: Vec<_> = entry
+        .verbs
+        .iter()
+        .map(|name| SlateToolManifest {
+            name: name.clone(),
+            data_class: SlateDataClass::Personal,
+            header_parameters: Vec::new(),
+            resolved_input_schema: Some(serde_json::json!({"type":"object"})),
+            trigger: None,
+            destroys: false,
+            spends: false,
+            sends_outward: false,
+            legacy_ask: false,
+        })
+        .collect();
+    let manifest = if manifest.is_empty() {
+        vec![SlateToolManifest {
+            name: "read".into(),
+            data_class: SlateDataClass::Personal,
+            header_parameters: Vec::new(),
+            resolved_input_schema: Some(serde_json::json!({"type":"object"})),
+            trigger: None,
+            destroys: false,
+            spends: false,
+            sends_outward: false,
+            legacy_ask: false,
+        }]
+    } else {
+        manifest
+    };
+    let slate = vault.store_connector_slate(
+        &manifest,
+        &serde_json::to_string(&draft_connector_slate(&manifest))
+            .map_err(|_| Error::InvariantViolation("test slate encoding"))?,
+    )?;
+    spec.slate_ref = Some(slate);
+    spec.protocol_revision = Some("2026-09-01".into());
+    vault.register_connector(entry, spec, registered_at)
+}
+
 fn temp_vault() -> (tempfile::TempDir, Vault) {
     let tmp = tempfile::tempdir().expect("temp dir");
     let vault = Vault::open(tmp.path(), VaultConfig::default()).expect("open vault");
@@ -2748,6 +2795,18 @@ fn send_admit_row_count(vault: &Vault, id: &EntityId) -> Result<usize> {
 }
 
 #[test]
+fn catalog_key_cannot_encode_active_without_qualification() {
+    let record = ConnectorKeyRecord {
+        catalog: Some(catalog_entry("unqualified", "unqualified")),
+        ..ConnectorKeyRecord::active("unqualified", None, Vec::new(), 1_000)
+    };
+    assert!(matches!(
+        encode_connector_key_body(&record),
+        Err(Error::Record(RecordError::InvalidConnectorKeyBody(_)))
+    ));
+}
+
+#[test]
 fn secret_ref_round_trip_additive() -> Result<()> {
     let record = ConnectorKeyRecord {
         secret_ref: Some("slack/bot_token".to_owned()),
@@ -2756,6 +2815,7 @@ fn secret_ref_round_trip_additive() -> Result<()> {
             registered_at: 1_000,
             ..catalog_entry("herald_slack", "slack")
         }),
+        status: ConnectorKeyStatus::Pending,
         ..ConnectorKeyRecord::active("slack", None, all_dimension_budgets(), 1_000)
     };
     let encoded = encode_connector_key_body(&record)?;
@@ -2811,7 +2871,11 @@ fn secret_ref_round_trip_additive() -> Result<()> {
                 "secret_ref"
                     | "key_generation"
                     | "catalog"
-                    | "negotiated_protocol_revision"
+                    | "slate_ref"
+                    | "protocol_revision"
+                    | "slate_revision"
+                    | "admission_epoch"
+                    | "consent_required"
                     | "retained_manifest"
                     | "pending_manifest"
             )
@@ -2850,7 +2914,8 @@ fn registration_fails_on_unresolved_secret_ref() -> Result<()> {
 
     // Composed door: unresolved custody must not reserve catalog state.
     assert!(matches!(
-        vault.register_connector(
+        register_catalog(
+            &vault,
             catalog_entry("herald_slack", "slack"),
             ConnectorKeySpec {
                 secret_ref: Some("missing_secret".to_owned()),
@@ -2874,7 +2939,8 @@ fn registration_fails_on_unresolved_secret_ref() -> Result<()> {
         },
     )?;
     assert_eq!(registered.secret_ref.as_deref(), Some("live_secret"));
-    let (composed_id, composed) = vault.register_connector(
+    let (composed_id, composed) = register_catalog(
+        &vault,
         catalog_entry("herald_line", "line"),
         ConnectorKeySpec {
             secret_ref: Some("live_secret".to_owned()),
@@ -2895,12 +2961,74 @@ fn registration_fails_on_unresolved_secret_ref() -> Result<()> {
 }
 
 #[test]
+fn replicated_existing_pending_key_cannot_activate() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    let (id, pending) = register_catalog(
+        &vault,
+        catalog_entry("peer", "peer"),
+        ConnectorKeySpec::new("peer"),
+        1_000,
+    )?;
+    let original = vault.get_connector_key(&id)?.expect("pending key");
+    let forged = ConnectorKeyRecord {
+        status: ConnectorKeyStatus::Active,
+        slate_revision: Some(1),
+        consent_required: false,
+        ..pending
+    };
+    let data = encode_connector_key_body(&forged)?;
+    assert!(
+        vault
+            .batch()
+            .put_replicated(
+                &id,
+                ENTITY_TYPE_CONNECTOR_KEY,
+                crate::TimeRange {
+                    start: 2_000,
+                    end: 2_000
+                },
+                2_000,
+                &data
+            )
+            .commit()
+            .is_err()
+    );
+    assert_eq!(vault.get_connector_key(&id)?, Some(original));
+    assert!(vault.route_connector_call("peer")?.is_none());
+    Ok(())
+}
+
+#[test]
+fn incomplete_catalog_registration_does_not_reserve_name() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    assert!(
+        vault
+            .register_connector(
+                catalog_entry("unready", "unready"),
+                ConnectorKeySpec::new("unready"),
+                1_000,
+            )
+            .is_err()
+    );
+    assert!(vault.describe_connector("unready")?.is_none());
+    assert!(catalog_name_index_row(&vault, "unready")?.is_none());
+    register_catalog(
+        &vault,
+        catalog_entry("unready", "unready"),
+        ConnectorKeySpec::new("unready"),
+        1_001,
+    )?;
+    Ok(())
+}
+
+#[test]
 fn register_connector_is_atomic() -> Result<()> {
     let (_tmp, vault) = temp_vault();
     register_test_secret(&vault, "slack_token")?;
 
     // Hyphen/underscore are the same registration.
-    let (id, record) = vault.register_connector(
+    let (id, record) = register_catalog(
+        &vault,
         catalog_entry("My-Connector", "My-Connector"),
         ConnectorKeySpec {
             secret_ref: Some("slack_token".to_owned()),
@@ -2936,7 +3064,8 @@ fn register_connector_is_atomic() -> Result<()> {
 
     // The name is taken across vault history.
     assert!(matches!(
-        vault.register_connector(
+        register_catalog(
+            &vault,
             catalog_entry("my-connector", "other"),
             ConnectorKeySpec::new("other"),
             1_010,
@@ -2947,7 +3076,8 @@ fn register_connector_is_atomic() -> Result<()> {
     // Blank / NUL names fail pre-write.
     for bad in ["   ", "bad\u{0}name"] {
         assert!(matches!(
-            vault.register_connector(
+            register_catalog(
+                &vault,
                 catalog_entry(bad, "line"),
                 ConnectorKeySpec::new("line"),
                 1_011,
@@ -2959,7 +3089,8 @@ fn register_connector_is_atomic() -> Result<()> {
 
     // A forced leg failure (the tuple is already governed) reserves NOTHING.
     assert!(matches!(
-        vault.register_connector(
+        register_catalog(
+            &vault,
             catalog_entry("second_name", "my_connector"),
             ConnectorKeySpec::new("my_connector"),
             1_020,
@@ -3004,7 +3135,8 @@ fn rotate_connector_key_receipted_and_value_free() -> Result<()> {
     register_test_secret(&vault, "token_v1")?;
     register_test_secret(&vault, "token_v2")?;
 
-    let (id, _) = vault.register_connector(
+    let (id, _) = register_catalog(
+        &vault,
         catalog_entry("herald_slack", "slack"),
         ConnectorKeySpec {
             secret_ref: Some("token_v1".to_owned()),
@@ -3113,7 +3245,8 @@ fn rotate_connector_key_receipted_and_value_free() -> Result<()> {
 #[test]
 fn remove_connector_key_is_revoke_plus_permanent_catalog_history() -> Result<()> {
     let (_tmp, vault) = temp_vault();
-    let (id, _) = vault.register_connector(
+    let (id, _) = register_catalog(
+        &vault,
         catalog_entry("herald_slack", "slack"),
         ConnectorKeySpec::new("slack"),
         1_000,
@@ -3154,7 +3287,8 @@ fn remove_connector_key_is_revoke_plus_permanent_catalog_history() -> Result<()>
 
     // The name can never be recycled onto a different connector.
     assert!(matches!(
-        vault.register_connector(
+        register_catalog(
+            &vault,
             catalog_entry("herald_slack", "line"),
             ConnectorKeySpec::new("line"),
             3_000,
@@ -3189,7 +3323,8 @@ fn remove_connector_key_is_revoke_plus_permanent_catalog_history() -> Result<()>
 fn catalog_meta_verbs() -> Result<()> {
     let (_tmp, vault) = temp_vault();
     register_test_secret(&vault, "slack_token")?;
-    let (slack_id, _) = vault.register_connector(
+    let (slack_id, _) = register_catalog(
+        &vault,
         ConnectorCatalogEntry {
             summary: "Talks to the Slack WORKSPACE".to_owned(),
             verbs: vec!["send".to_owned(), "read".to_owned()],
@@ -3201,7 +3336,8 @@ fn catalog_meta_verbs() -> Result<()> {
         },
         1_000,
     )?;
-    vault.register_connector(
+    register_catalog(
+        &vault,
         ConnectorCatalogEntry {
             summary: "Read-only market feed".to_owned(),
             call_class: ConnectorCallClass::ReadOnly,
@@ -3211,17 +3347,13 @@ fn catalog_meta_verbs() -> Result<()> {
         1_001,
     )?;
 
-    // A hyphenated query finds the underscored name.
-    let hits = vault.search_connector_catalog("herald-slack")?;
-    assert_eq!(hits.len(), 1);
-    assert_eq!(hits[0].name, "herald_slack");
-    // The summary matches case-insensitively.
-    let hits = vault.search_connector_catalog("workspace")?;
-    assert_eq!(hits.len(), 1);
-    assert_eq!(hits[0].name, "herald_slack");
-    // A blank query lists the live catalog.
-    assert_eq!(vault.search_connector_catalog("")?.len(), 2);
+    // Installed catalog entries remain discoverable to the history lens,
+    // but Pending keys never enter the live discovery or execution lenses.
+    assert!(vault.search_connector_catalog("herald-slack")?.is_empty());
+    assert!(vault.search_connector_catalog("workspace")?.is_empty());
+    assert!(vault.search_connector_catalog("")?.is_empty());
     assert!(vault.search_connector_catalog("nothing_here")?.is_empty());
+    assert!(vault.describe_connector("market_feed")?.is_some());
 
     // describe: the entry plus VALUE-LESS key metadata.
     let described = vault
@@ -3229,7 +3361,7 @@ fn catalog_meta_verbs() -> Result<()> {
         .expect("describe normalizes its query");
     assert_eq!(described.key_ref, slack_id);
     assert_eq!(described.connector, "slack");
-    assert_eq!(described.status, ConnectorKeyStatus::Active);
+    assert_eq!(described.status, ConnectorKeyStatus::Pending);
     assert_eq!(described.secret_ref.as_deref(), Some("slack_token"));
     assert_eq!(described.key_generation, 0);
     assert_eq!(described.registered_at, 1_000);
@@ -3239,16 +3371,18 @@ fn catalog_meta_verbs() -> Result<()> {
             .contains(std::str::from_utf8(CUSTODY_VALUE_FIXTURE).expect("utf8 fixture"))
     );
 
-    // route: entry-wide classification, no verb parameter.
-    let route = vault.route_connector_call("herald_slack")?.expect("route");
-    assert_eq!(route.key_ref, slack_id);
-    assert_eq!(route.call_class, ConnectorCallClass::CounterpartyComm);
-    assert!(route.budgeted_as_sends);
-    assert_eq!(route.verbs, vec!["send".to_owned(), "read".to_owned()]);
+    // The pending key still describes its entry-wide classification, but
+    // execution has no route until qualification activates it.
+    assert_eq!(
+        described.entry.verbs,
+        vec!["send".to_owned(), "read".to_owned()]
+    );
+    assert!(vault.route_connector_call("herald_slack")?.is_none());
+    assert!(vault.route_connector_call("market_feed")?.is_none());
     assert!(
         !vault
-            .route_connector_call("market_feed")?
-            .expect("route")
+            .describe_connector("market_feed")?
+            .unwrap()
             .budgeted_as_sends
     );
 
@@ -3288,7 +3422,8 @@ fn budget_rider_send_is_counterparty_only() -> Result<()> {
     // A mixed-verb counterparty connector budgets its read-only verbs as
     // sends too: the classification is entry-wide, and over-budgeting is the
     // safe direction.
-    vault.register_connector(
+    register_catalog(
+        &vault,
         ConnectorCatalogEntry {
             verbs: vec!["send".to_owned(), "search".to_owned()],
             ..catalog_entry("herald_slack", "slack")
@@ -3296,12 +3431,18 @@ fn budget_rider_send_is_counterparty_only() -> Result<()> {
         ConnectorKeySpec::new("slack"),
         1_000,
     )?;
-    let route = vault.route_connector_call("herald_slack")?.expect("route");
-    assert!(route.budgeted_as_sends);
-    assert_eq!(route.verbs.len(), 2, "no verb narrows the classification");
+    let described = vault.describe_connector("herald_slack")?.expect("history");
+    assert!(described.budgeted_as_sends);
+    assert_eq!(
+        described.entry.verbs.len(),
+        2,
+        "no verb narrows the classification"
+    );
+    assert!(vault.route_connector_call("herald_slack")?.is_none());
 
     // A scoped-MCP connector stays unbudgeted for Sends.
-    vault.register_connector(
+    register_catalog(
+        &vault,
         ConnectorCatalogEntry {
             call_class: ConnectorCallClass::ScopedMcp,
             ..catalog_entry("mcp_tools", "mcp")
@@ -3311,10 +3452,11 @@ fn budget_rider_send_is_counterparty_only() -> Result<()> {
     )?;
     assert!(
         !vault
-            .route_connector_call("mcp_tools")?
-            .expect("route")
+            .describe_connector("mcp_tools")?
+            .expect("history")
             .budgeted_as_sends
     );
+    assert!(vault.route_connector_call("mcp_tools")?.is_none());
 
     // UNCLASSIFIED is unbudgeted: a catalog-free key has no route, so the
     // executor keeps the canon default. This says nothing about the
@@ -3630,11 +3772,8 @@ fn manifest_stage_retains_prior_and_revision_halts_until_owner() -> Result<()> {
         .unwrap();
     assert!(revision.requires_reregistration);
     let pending = vault.get_connector_key(&id)?.unwrap();
-    assert_eq!(pending.status, ConnectorKeyStatus::Suspended);
-    assert_eq!(
-        pending.negotiated_protocol_revision.as_deref(),
-        Some("2026-07-28")
-    );
+    assert_eq!(pending.status, ConnectorKeyStatus::Pending);
+    assert_eq!(pending.protocol_revision.as_deref(), Some("2026-07-28"));
     assert_eq!(pending.retained_manifest.as_ref(), Some(&source()));
     assert!(vault.connector_tool_requires_confirmation(&id, "read")?);
     assert!(vault.resume_connector_key(&id, 103).is_err());
@@ -3763,7 +3902,7 @@ fn failed_suite_retains_hold_revert_clears_candidate_and_revision_is_exact() -> 
     let r3_record = vault.get_connector_key(&id)?.unwrap();
     let r3 = r3_record.pending_manifest.as_ref().unwrap().candidate_id;
     assert_ne!(r2, r3);
-    assert_eq!(r3_record.status, ConnectorKeyStatus::Suspended);
+    assert_eq!(r3_record.status, ConnectorKeyStatus::Pending);
     assert!(
         vault
             .approve_connector_manifest(&auth, &id, r2, a.hash()?, &"a".repeat(64), 20)
@@ -3771,7 +3910,7 @@ fn failed_suite_retains_hold_revert_clears_candidate_and_revision_is_exact() -> 
     );
     let approved =
         vault.approve_connector_manifest(&auth, &id, r3, a.hash()?, &"a".repeat(64), 20)?;
-    assert_eq!(approved.negotiated_protocol_revision.as_deref(), Some("R3"));
+    assert_eq!(approved.protocol_revision.as_deref(), Some("R3"));
     assert_eq!(approved.status, ConnectorKeyStatus::Active);
     assert!(
         vault
@@ -3779,11 +3918,8 @@ fn failed_suite_retains_hold_revert_clears_candidate_and_revision_is_exact() -> 
             .is_err()
     );
     let failed_revision = vault.get_connector_key(&id)?.unwrap();
-    assert_eq!(failed_revision.status, ConnectorKeyStatus::Suspended);
-    assert_eq!(
-        failed_revision.negotiated_protocol_revision.as_deref(),
-        Some("R3")
-    );
+    assert_eq!(failed_revision.status, ConnectorKeyStatus::Pending);
+    assert_eq!(failed_revision.protocol_revision.as_deref(), Some("R3"));
     assert!(
         failed_revision
             .pending_manifest
@@ -3842,19 +3978,19 @@ fn replicated_connector_key_replacement_and_manifest_clear_are_rejected() -> Res
     vault.register_connector_key(&id, ConnectorKeyRecord::active("line", None, vec![], 10))?;
     let approved = ConnectorKeyRecord {
         retained_manifest: Some(drift_fixture_manifest("read", 0)),
-        negotiated_protocol_revision: Some("R1".into()),
+        protocol_revision: Some("R1".into()),
         ..vault.get_connector_key(&id)?.unwrap()
     };
     vault.with_write_txn(|txn| rewrite_connector_key_in_txn(&vault.store, txn, &id, &approved))?;
     for attempted in [
         ConnectorKeyRecord {
             retained_manifest: Some(drift_fixture_manifest("write", 0)),
-            negotiated_protocol_revision: Some("R2".into()),
+            protocol_revision: Some("R2".into()),
             ..approved.clone()
         },
         ConnectorKeyRecord {
             retained_manifest: None,
-            negotiated_protocol_revision: None,
+            protocol_revision: None,
             ..approved.clone()
         },
     ] {
@@ -3877,6 +4013,45 @@ fn replicated_connector_key_replacement_and_manifest_clear_are_rejected() -> Res
         ));
         assert_eq!(vault.get_connector_key(&id)?, Some(approved.clone()));
     }
+    Ok(())
+}
+
+#[test]
+fn catalog_key_manifest_stays_on_its_pinned_revision() -> Result<()> {
+    struct Suite;
+    impl ConnectorManifestQualifier for Suite {
+        fn qualify(&self, _: &ResolvedConnectorManifest, _: &str) -> Result<String> {
+            Ok("a".repeat(64))
+        }
+    }
+    let (_dir, vault) = temp_vault();
+    let (id, _) = register_catalog(
+        &vault,
+        catalog_entry("herald", "herald"),
+        ConnectorKeySpec::new("herald"),
+        1_000,
+    )?;
+    let registered = vault.get_connector_key(&id)?.expect("pending key");
+    // A catalog revision change re-binds the owner slate through
+    // `revise_connector_protocol`, never through manifest staging.
+    assert!(
+        vault
+            .stage_connector_manifest(&id, drift_fixture_manifest("read", 0), "R2", &Suite, 1_001)
+            .is_err()
+    );
+    assert_eq!(vault.get_connector_key(&id)?, Some(registered));
+    vault.stage_connector_manifest(
+        &id,
+        drift_fixture_manifest("read", 0),
+        "2026-09-01",
+        &Suite,
+        1_002,
+    )?;
+    let staged = vault.get_connector_key(&id)?.expect("staged key");
+    assert_eq!(staged.status, ConnectorKeyStatus::Pending);
+    assert_eq!(staged.protocol_revision.as_deref(), Some("2026-09-01"));
+    assert!(staged.retained_manifest.is_none());
+    assert!(staged.pending_manifest.is_some());
     Ok(())
 }
 
@@ -4046,7 +4221,7 @@ fn failed_or_malformed_revision_revert_keeps_the_qualified_hold() -> Result<()> 
     );
     let held = vault.get_connector_key(&id)?.unwrap();
     let candidate = held.pending_manifest.as_ref().unwrap().candidate_id;
-    assert_eq!(held.status, ConnectorKeyStatus::Suspended);
+    assert_eq!(held.status, ConnectorKeyStatus::Pending);
     assert!(
         vault
             .stage_connector_manifest(
@@ -4076,7 +4251,7 @@ fn failed_or_malformed_revision_revert_keeps_the_qualified_hold() -> Result<()> 
             .is_err()
     );
     let still_held = vault.get_connector_key(&id)?.unwrap();
-    assert_eq!(still_held.status, ConnectorKeyStatus::Suspended);
+    assert_eq!(still_held.status, ConnectorKeyStatus::Pending);
     assert_eq!(
         still_held.pending_manifest.as_ref().unwrap().candidate_id,
         candidate

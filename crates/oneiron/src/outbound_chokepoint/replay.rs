@@ -316,8 +316,7 @@ pub(super) fn recovery_governance(
         if frozen.is_none_or(|binding| {
             binding.key_ref != key_ref.to_hex()
                 || current_hash != binding.manifest_hash
-                || Some(binding.protocol_revision.as_str())
-                    != key.negotiated_protocol_revision.as_deref()
+                || Some(binding.protocol_revision.as_str()) != key.protocol_revision.as_deref()
         }) {
             return Ok(RecoveryGovernance::Block("connector_manifest_stale"));
         }

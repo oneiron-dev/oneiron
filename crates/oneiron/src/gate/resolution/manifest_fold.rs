@@ -11,11 +11,13 @@ use crate::store::Store;
 use crate::vault::Vault;
 use crate::write_envelope::{SourceLineage, WriteActor};
 
+use super::manifest_types::ConnectorClassPrecedence;
 use super::manifest_types::PolicyManifestResolution;
 use crate::gate::ceiling::{
     DelegationFoldCache, DelegationGrantRecord, PolicyOwnerPolicyRow, check_source_trust,
     fold_delegated_grants,
 };
+use crate::gate::decode::ConnectorClassRole;
 use crate::gate::decode::decode_policy_manifest;
 
 pub(crate) fn resolve_policy_manifest(
@@ -25,6 +27,9 @@ pub(crate) fn resolve_policy_manifest(
     let mut resolution = PolicyManifestResolution::default();
     let mut untrusted_source_rows = Vec::new();
     let mut delegated_rows: Vec<DelegationGrantRecord> = Vec::new();
+    let mut vault_class_carry: Option<BTreeSet<(String, String)>> = None;
+    let mut holder_class_carry: Vec<BTreeSet<(String, String)>> = Vec::new();
+    let mut vault_precedence: Option<ConnectorClassPrecedence> = None;
 
     for index_entry in store.port_entity_ids_by_type(txn, ENTITY_TYPE_POLICY_MANIFEST, None)? {
         let id = match index_entry {
@@ -138,6 +143,31 @@ pub(crate) fn resolve_policy_manifest(
                 // Deterministic resolved order: type-index manifest scan
                 // order, then row order inside each manifest. Row indices in
                 // ladder events index this concatenation.
+                match decoded.connector_class_role {
+                    ConnectorClassRole::Vault => {
+                        if let Some(rows) = decoded.connector_class_carry {
+                            match &mut vault_class_carry {
+                                None => vault_class_carry = Some(rows),
+                                Some(existing) => existing.retain(|row| rows.contains(row)),
+                            }
+                        }
+                        if let Some(precedence) = decoded.connector_class_precedence {
+                            match vault_precedence {
+                                None => vault_precedence = Some(precedence),
+                                Some(existing) if existing == precedence => {}
+                                Some(_) => resolution.diagnostics.malformed_manifest_seen = true,
+                            }
+                        }
+                    }
+                    ConnectorClassRole::Holder => {
+                        if decoded.connector_class_precedence.is_some() {
+                            resolution.diagnostics.malformed_manifest_seen = true;
+                        }
+                        if let Some(rows) = decoded.connector_class_carry {
+                            holder_class_carry.push(rows);
+                        }
+                    }
+                }
                 resolution.budget_policy.extend_rows(decoded.budget_policy);
                 if let Some(admission) = decoded.connector_admission {
                     resolution.connector_admission.restrict(admission);
@@ -173,6 +203,29 @@ pub(crate) fn resolve_policy_manifest(
             }
         }
     }
+
+    // `None` only when no trusted manifest names a class row, so the frontier
+    // of such manifests keeps its established bytes.
+    let class_policy_named =
+        vault_class_carry.is_some() || vault_precedence.is_some() || !holder_class_carry.is_empty();
+    resolution.connector_class_precedence = vault_precedence.unwrap_or_default();
+    let mut carry = vault_class_carry.unwrap_or_default();
+    match resolution.connector_class_precedence {
+        ConnectorClassPrecedence::Nested => {
+            for holder in holder_class_carry {
+                carry.retain(|row| holder.contains(row));
+            }
+        }
+        ConnectorClassPrecedence::HolderOverride => {
+            if holder_class_carry.len() > 1 {
+                resolution.diagnostics.malformed_manifest_seen = true;
+                carry.clear();
+            } else if let Some(holder) = holder_class_carry.pop() {
+                carry.retain(|row| holder.contains(row));
+            }
+        }
+    }
+    resolution.connector_class_carry = class_policy_named.then_some(carry);
 
     for contribution in untrusted_source_rows {
         resolution.source_trust.restrict_only(contribution);
