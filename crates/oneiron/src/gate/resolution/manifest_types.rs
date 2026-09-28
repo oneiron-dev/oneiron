@@ -215,6 +215,7 @@ pub(crate) struct PolicyManifestResolution {
     pub(crate) pack_install_policy: Option<crate::gate::PackInstallPolicy>,
     pub(super) pptx_comment_limits: Option<crate::edit_roundtrip::pptx::PptxOperationalLimits>,
     pub(super) docx_archive_limits: Vec<crate::gate::docx_budget::DocxArchivePolicy>,
+    pub(super) booking_conversion_rows: Vec<crate::booking::BookingConversionPolicyRow>,
     pub(super) hosted_tts: HostedTtsPolicy,
     pub(crate) connector_class_carry: Option<std::collections::BTreeSet<(String, String)>>,
     pub(crate) connector_class_precedence: ConnectorClassPrecedence,

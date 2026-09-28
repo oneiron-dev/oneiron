@@ -233,6 +233,9 @@ pub(crate) fn resolve_policy_manifest(
                     };
                     *slot = Some(slot.map_or(limits, |previous| previous.narrow(limits)));
                 }
+                resolution
+                    .booking_conversion_rows
+                    .extend(decoded.booking_conversion_rows);
                 resolution.hosted_tts.rows.extend(decoded.hosted_tts.rows);
                 if let Some(bounds) = decoded.docedit_resource_policy {
                     let baseline = crate::gate::docedit_resource::DoceditResourcePolicy::shipped();
@@ -396,7 +399,9 @@ pub(crate) fn resolve_policy_manifest(
     if resolution.hosted_tts.rows.len() > usize::from(u16::MAX) + 1 {
         resolution.diagnostics.malformed_manifest_seen = true;
     }
-    if resolution.budget_policy.rows().len() > usize::from(u16::MAX) + 1 {
+    if resolution.budget_policy.rows().len() > usize::from(u16::MAX) + 1
+        || resolution.booking_conversion_rows.len() > 128
+    {
         resolution.diagnostics.malformed_manifest_seen = true;
     }
 
