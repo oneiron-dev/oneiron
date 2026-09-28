@@ -946,20 +946,40 @@ fn seed_disclosure_claim_in_world(
 pub(super) fn seed_surface_identity(server: &SyncServer, counter: u128, address: &str) -> String {
     let identity_ref = seeded_test_entity_id(counter);
     let agent_ref = seeded_test_entity_id(counter + 1);
-    let mut identity = oneiron::channel_identity::ChannelIdentity::requested(
+    let identity = oneiron::channel_identity::ChannelIdentity::requested(
         "email",
         address,
         oneiron::channel_identity::SelfHeldShape::DedicatedAddress,
         oneiron::channel_identity::ChannelIdentityBinding::agent(agent_ref),
         1_782_357_000,
     );
-    identity.state = oneiron::channel_identity::ChannelIdentityState::Active;
-    identity.pending_fulfillment = None;
     server
         .vault
         .create_channel_identity(&identity_ref, &identity)
         .expect("seed channel identity");
+    // ACTIVE is reached by walking the machine, not by assigning the state: the
+    // fixture goes through the same two steps a provisioned identity does.
+    activate_seeded_identity(server, identity_ref, 1_782_357_000);
     agent_ref.to_hex()
+}
+
+/// Walks a freshly created self-held row `Requested -> Pending -> Active`.
+pub(super) fn activate_seeded_identity(
+    server: &SyncServer,
+    identity_ref: oneiron::EntityId,
+    at: u64,
+) {
+    for step in [
+        oneiron::channel_identity::ChannelIdentityStep::Bind(
+            oneiron::channel_identity::ChannelIdentityFulfillment::Api,
+        ),
+        oneiron::channel_identity::ChannelIdentityStep::Fulfill,
+    ] {
+        server
+            .vault
+            .step_channel_identity(&identity_ref, step, at)
+            .expect("activate seeded identity");
+    }
 }
 
 pub(super) fn surface_event_body(address: &str, correlation_id: &str) -> Value {

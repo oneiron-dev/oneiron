@@ -2297,7 +2297,7 @@ fn human_no_reply_to_soft_confirm_uses_normal_answer_intake() -> Result<()> {
 #[test]
 fn pending_soft_confirm_recovers_route_and_remains_gated_without_authorization() -> Result<()> {
     use crate::channel_identity::{
-        ChannelIdentity, ChannelIdentityBinding, ChannelIdentityFulfillment, ChannelIdentityState,
+        ChannelIdentity, ChannelIdentityBinding, ChannelIdentityFulfillment, ChannelIdentityStep,
         SelfHeldShape,
     };
     use crate::counterparty_contact::CounterpartyContactRecord;
@@ -2381,20 +2381,12 @@ fn pending_soft_confirm_recovers_route_and_remains_gated_without_authorization()
                 1_000,
             ),
         )?;
-        reopened.transition_channel_identity(
+        reopened.step_channel_identity(
             &identity_ref,
-            ChannelIdentityState::PendingFulfillment,
-            Some(ChannelIdentityFulfillment::Api),
+            ChannelIdentityStep::Bind(ChannelIdentityFulfillment::Api),
             1_000,
-            None,
         )?;
-        reopened.transition_channel_identity(
-            &identity_ref,
-            ChannelIdentityState::Active,
-            None,
-            1_000,
-            None,
-        )?;
+        reopened.step_channel_identity(&identity_ref, ChannelIdentityStep::Fulfill, 1_000)?;
         reopened.create_counterparty_contact(
             &EntityId::now(),
             &CounterpartyContactRecord::user_introduction(

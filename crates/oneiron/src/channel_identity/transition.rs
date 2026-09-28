@@ -1,23 +1,22 @@
 //! ChannelIdentity transition admission, custody re-proof, and uniqueness scan.
 
-use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
+use crate::batch::EntityMetadataHeader;
 use crate::ports::EntityStoreRead;
 
 use crate::entity_id::EntityId;
 
 use crate::error::{Error, Result};
 
-use crate::registry::ENTITY_TYPE_CHANNEL_IDENTITY;
-
 use crate::store::Store;
 
 use super::binding::ChannelIdentityBinding;
-
-use super::codec::decode_channel_identity_body;
-
 use super::custody::{DelegatedGrant, verify_delegated_custody_in_txn};
 
-use super::lifecycle::ChannelIdentityState;
+use super::keys::{
+    DEFAULT_CHANNEL_IDENTITY_QUARANTINE_MIN_SECS, WAIT_CLASS_CHANNEL_IDENTITY_QUARANTINE,
+};
+use super::lifecycle::{ChannelIdentityState, ChannelIdentityStep, IdentityEdge};
+use crate::gate::class_policy::WaitResolution;
 
 use super::record::ChannelIdentity;
 use crate::error::RecordError;
@@ -99,7 +98,8 @@ impl IdentityTransition<'_> {
 /// preceded the write, so a grant revoked in between would otherwise stand up a
 /// row that claims a mailbox this device can no longer read. The wall is kept
 /// exactly for the states that assert a live grant
-/// ([`ChannelIdentityState::asserts_delegated_custody`]); the retirement lane is
+/// ([`Custody::asserts_delegated_custody`](super::custody::Custody::asserts_delegated_custody));
+/// the retirement lane is
 /// deliberately exempt, because retirement after a member revokes is precisely
 /// when custody can no longer be proved and must stay possible.
 ///
@@ -119,7 +119,7 @@ pub(crate) fn admit_channel_identity_transition_in_txn(
 ) -> Result<()> {
     let next = transition.next();
     next.validate()?;
-    if let Some(facet_ref) = next.binding.facet_ref() {
+    if let Some(facet_ref) = next.binding().facet_ref() {
         let facet_type = store
             .port_entity_record(txn, &facet_ref)?
             .map(|row| row.encode())
@@ -132,7 +132,7 @@ pub(crate) fn admit_channel_identity_transition_in_txn(
     }
     match transition {
         IdentityTransition::Birth { next } => {
-            if next.is_delegated() && next.state != ChannelIdentityState::Requested {
+            if next.is_delegated() && next.state() != ChannelIdentityState::Requested {
                 return Err(Error::Record(RecordError::InvalidChannelIdentityBody(
                     "a delegated_grant identity is born Requested; every later state is a \
                      checked lifecycle step from a row that already exists",
@@ -147,10 +147,106 @@ pub(crate) fn admit_channel_identity_transition_in_txn(
             }
         }
     }
-    if channel_identity_assignment_conflict_in_txn(store, txn, id, next)? {
+    if super::assignment::conflicts(store, txn, id, next)? {
         return Err(Error::Record(RecordError::ChannelIdentityAlreadyExists));
     }
     reprove_delegated_custody_in_txn(store, txn, next)
+}
+
+/// Lowers one lifecycle ACT to the next row, proving custody IN this
+/// transaction when the act asserts a live delegated grant.
+///
+/// This is where the delegated machine's two proof-carrying edges get their
+/// proof, and why they are unreachable without one: the proof borrows `txn`, so
+/// the only way to build a `Bind` or `Fulfill` delegated edge is inside the
+/// transaction that read the custody record — which is the transaction that
+/// writes the row. A caller cannot verify, wait, and then step.
+///
+/// Retirement (`Release`, `Close`) deliberately mints no proof. A member who
+/// revokes their grant is exactly the case where custody can no longer be
+/// proved, and the row must still be closable.
+///
+/// # Errors
+///
+/// [`RecordError::InvalidChannelIdentityBody`](crate::error::RecordError::InvalidChannelIdentityBody)
+/// when the act is not on this row's machine (a delegated `Rotate` or
+/// `Quarantine`) or not on its current state's table;
+/// [`SecretError::SecretRefNotFound`](crate::error::SecretError::SecretRefNotFound) /
+/// [`SecretError::SecretCustodyNotActive`](crate::error::SecretError::SecretCustodyNotActive) /
+/// [`SecretError::SecretBindingDenied`](crate::error::SecretError::SecretBindingDenied)
+/// when a live delegated act cannot re-prove custody for its own mailbox.
+pub(crate) fn step_channel_identity_in_txn(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    current: &ChannelIdentity,
+    step: ChannelIdentityStep,
+    at: u64,
+) -> Result<ChannelIdentity> {
+    let Some(grant) = current.grant() else {
+        // Only the Quarantine edge consumes a duration. Other edges must not
+        // be refused because a wait row is missing: they make no wait choice.
+        let min_quarantine_secs = if matches!(step, ChannelIdentityStep::Quarantine { .. }) {
+            resolve_quarantine_floor_in_txn(store, txn, current)?
+        } else {
+            DEFAULT_CHANNEL_IDENTITY_QUARANTINE_MIN_SECS
+        };
+        return current.step_with_wait(step, at, min_quarantine_secs);
+    };
+    let proof = if step.asserts_live_custody() {
+        Some(verify_delegated_custody_in_txn(
+            store,
+            txn,
+            current.channel(),
+            current.address_or_handle(),
+            grant,
+        )?)
+    } else {
+        None
+    };
+    // A delegated row has no quarantine edge to reach, so the floor it would
+    // pass is unreachable; the shipped default is handed through rather than
+    // resolving a row this machine cannot use.
+    current.step_edge(
+        IdentityEdge::delegated(step, proof)?,
+        at,
+        DEFAULT_CHANNEL_IDENTITY_QUARANTINE_MIN_SECS,
+    )
+}
+
+/// The quarantine hold floor for `identity`, resolved from the manifest in THIS
+/// transaction (DEC-0005: policy resolves in the same snapshot as the row it
+/// governs).
+///
+/// The holder is the actor the identity is bound to, so a holder-scoped row can
+/// ask this vault to hold one agent's addresses longer — capped by the vault
+/// row, which is the only place a widen can live.
+///
+/// # Errors
+///
+/// [`RecordError::InvalidChannelIdentityBody`](crate::error::RecordError::InvalidChannelIdentityBody)
+/// when the resolved rows contradict each other or the manifest is fail-closed:
+/// an unreadable policy is never read as a shorter hold.
+pub(crate) fn resolve_quarantine_floor_in_txn(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    identity: &ChannelIdentity,
+) -> Result<u64> {
+    let policy = crate::gate::resolve_policy_manifest(store, txn)?;
+    match policy.resolved_wait(
+        WAIT_CLASS_CHANNEL_IDENTITY_QUARANTINE,
+        identity.binding().actor_ref(),
+    ) {
+        WaitResolution::Resolved(wait) => Ok(wait.min_secs),
+        // Absence is not a zero-second wait or permission to fall back to an
+        // engine constant. The seeded default manifest supplies this row;
+        // losing it makes the lifecycle act fail closed in this snapshot.
+        WaitResolution::Ungoverned | WaitResolution::Contradictory => {
+            Err(Error::Record(RecordError::InvalidChannelIdentityBody(
+                "channel_identity.quarantine wait policy is unresolvable; refusing to step a \
+                 lifecycle act under a policy this vault cannot read",
+            )))
+        }
+    }
 }
 
 /// Law C, for the row a birth or a step is about to store.
@@ -159,50 +255,17 @@ fn reprove_delegated_custody_in_txn(
     txn: &heed::RoTxn<'_>,
     identity: &ChannelIdentity,
 ) -> Result<()> {
-    let Some(grant) = &identity.grant else {
+    let Some(grant) = identity.grant() else {
         return Ok(());
     };
-    if identity.state.asserts_delegated_custody() {
+    if identity.custody().asserts_delegated_custody() {
         verify_delegated_custody_in_txn(
             store,
             txn,
-            &identity.channel,
-            &identity.address_or_handle,
+            identity.channel(),
+            identity.address_or_handle(),
             grant,
         )?;
     }
     Ok(())
-}
-
-/// Whether another row already OCCUPIES this row's assignment key.
-fn channel_identity_assignment_conflict_in_txn(
-    store: &Store,
-    txn: &heed::RoTxn<'_>,
-    id: &EntityId,
-    identity: &ChannelIdentity,
-) -> Result<bool> {
-    if !identity.occupies_assignment_key() {
-        return Ok(false);
-    }
-    let key = identity.assignment_key();
-    for entry in store.port_entity_ids_by_type(txn, ENTITY_TYPE_CHANNEL_IDENTITY, None)? {
-        let existing_id = entry?;
-        if existing_id == *id {
-            continue;
-        }
-        let raw = store
-            .port_entity_record(txn, &existing_id)?
-            .map(|row| row.encode())
-            .ok_or(Error::CorruptedIndex("type index row without entity"))?;
-        let header =
-            EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity header"))?;
-        if header.entity_type != ENTITY_TYPE_CHANNEL_IDENTITY {
-            return Err(Error::CorruptedIndex("type index row kind mismatch"));
-        }
-        let stored = decode_channel_identity_body(&raw[ENTITY_METADATA_HEADER_LEN..])?;
-        if stored.occupies_assignment_key() && stored.assignment_key() == key {
-            return Ok(true);
-        }
-    }
-    Ok(false)
 }

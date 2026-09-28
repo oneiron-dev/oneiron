@@ -198,6 +198,7 @@ pub(super) fn deindex_entity_without_lexical_query_hint_cascade(
             Err(error) => return Err(error),
         }
     }
+    crate::channel_identity::clear_assignment_for_delete(store, wtxn, id, entity_type)?;
     let mut cleanup = crate::affect::VadAnnotationCleanup::default();
     crate::affect::delete_vad_annotation_metadata_for_type_in_txn(
         store,

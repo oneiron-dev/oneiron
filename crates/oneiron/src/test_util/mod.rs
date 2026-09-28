@@ -12,6 +12,9 @@
 /// integration binaries mount the same file through `tests/common`.
 pub(crate) mod source_scan;
 
+mod channel_identity;
+pub(crate) use channel_identity::self_held_identity_in_state;
+
 use crate::batch::ENTITY_METADATA_HEADER_LEN;
 use crate::config::VaultConfig;
 use crate::entity_id::EntityId;

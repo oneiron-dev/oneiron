@@ -15,17 +15,17 @@ use crate::temporal::TimeRange;
 
 use super::address::{AssignmentAddress, AssignmentKey, ChannelKey};
 
-use super::binding::ChannelIdentityFulfillment;
-
 use super::codec::{decode_channel_identity_body, encode_channel_identity_body};
 
 use super::custody::{DelegatedGrant, verify_delegated_custody_in_txn};
 
-use super::lifecycle::ChannelIdentityState;
+use super::lifecycle::ChannelIdentityStep;
 
 use super::record::ChannelIdentity;
 
-use super::transition::{IdentityTransition, admit_channel_identity_transition_in_txn};
+use super::transition::{
+    IdentityTransition, admit_channel_identity_transition_in_txn, step_channel_identity_in_txn,
+};
 
 use super::transition::DelegatedProvisionRequest;
 use crate::error::RecordError;
@@ -49,7 +49,7 @@ impl Vault {
             id,
             IdentityTransition::Birth { next: identity },
         )?;
-        self.apply_channel_identity_body(&mut wtxn, id, identity.state_changed_at, data)?;
+        self.apply_channel_identity_body(&mut wtxn, id, identity.state_changed_at(), data)?;
         wtxn.commit()?;
         Ok(())
     }
@@ -179,33 +179,39 @@ impl Vault {
         .map(|_| ())
     }
 
-    /// Applies a checked ChannelIdentity lifecycle transition in place.
-    pub fn transition_channel_identity(
+    /// Applies ONE checked lifecycle act to a stored ChannelIdentity.
+    ///
+    /// The act is the whole request: `(next_state, pending_fulfillment,
+    /// quarantine_until)` was three independent arguments whose lawful
+    /// combinations the record then had to re-derive — a caller could ask for
+    /// PENDING with no lane, or ACTIVE with a quarantine window, and the door's
+    /// job was to notice. [`ChannelIdentityStep`] carries the payload inside the
+    /// act that decides it, so those requests have no spelling.
+    ///
+    /// A delegated row's live acts re-prove custody in THIS write transaction:
+    /// the proof borrows `wtxn`, so a grant a member revoked between a caller's
+    /// check and this write cannot stand the row up.
+    ///
+    /// # Errors
+    ///
+    /// [`Error::EntityNotFound`] when `id` holds no row,
+    /// [`Error::InvalidEntityType`] when it holds another kind,
+    /// [`RecordError::InvalidChannelIdentityBody`](crate::error::RecordError::InvalidChannelIdentityBody)
+    /// when the act is not on this row's machine or its state's table, and the
+    /// custody arms of [`Self::provision_delegated_identity`] when a live
+    /// delegated act cannot re-prove custody.
+    pub fn step_channel_identity(
         &self,
         id: &EntityId,
-        next_state: ChannelIdentityState,
-        pending_fulfillment: Option<ChannelIdentityFulfillment>,
+        step: ChannelIdentityStep,
         state_changed_at: u64,
-        quarantine_until: Option<u64>,
     ) -> Result<ChannelIdentity> {
         let mut wtxn = self.store.env.write_txn()?;
-        let raw = self
-            .store
-            .port_entity_record(&wtxn, id)?
-            .map(|row| row.encode())
+        let current = self
+            .get_channel_identity_in_txn(&wtxn, id)?
             .ok_or(Error::EntityNotFound)?;
-        let header =
-            EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity header"))?;
-        if header.entity_type != ENTITY_TYPE_CHANNEL_IDENTITY {
-            return Err(Error::InvalidEntityType(header.entity_type));
-        }
-        let current = decode_channel_identity_body(&raw[ENTITY_METADATA_HEADER_LEN..])?;
-        let next = current.transition(
-            next_state,
-            pending_fulfillment,
-            state_changed_at,
-            quarantine_until,
-        )?;
+        let next =
+            step_channel_identity_in_txn(&self.store, &wtxn, &current, step, state_changed_at)?;
         admit_channel_identity_transition_in_txn(
             &self.store,
             &wtxn,
@@ -247,19 +253,7 @@ impl Vault {
         decode_channel_identity_body(&raw[ENTITY_METADATA_HEADER_LEN..]).map(Some)
     }
 
-    /// Reads the ChannelIdentity holding a `(channel, address)` key.
-    ///
-    /// The lookup canonicalizes BOTH sides through [`AssignmentKey`], so a
-    /// caller spelling the mailbox the way its provider did finds the row a
-    /// normalizing writer stored, and a row decoded verbatim off disk is found
-    /// under the key it means rather than the bytes it holds.
-    ///
-    /// A row that no longer OCCUPIES its key is skipped: a released or
-    /// tombstoned delegated row has withdrawn its claim on a mailbox the
-    /// product never owned, so it must not shadow the row a lawful re-consent
-    /// stands up. Self-held rows occupy forever and are still found here in
-    /// every state, which is what keeps a tombstoned address routing to its own
-    /// rejection instead of looking unknown.
+    /// Reads the explicit two-slot assignment projection, not a scored scan.
     pub fn channel_identity_by_assignment(
         &self,
         channel: &str,
@@ -269,36 +263,23 @@ impl Vault {
         self.channel_identity_by_assignment_in_txn(&rtxn, channel, address_or_handle)
     }
 
-    /// One-snapshot assignment lookup for a caller that also commits its
-    /// routed event under this transaction.
+    /// One-snapshot assignment lookup, backed by the two-slot index.
     pub(crate) fn channel_identity_by_assignment_in_txn(
         &self,
         rtxn: &heed::RoTxn<'_>,
         channel: &str,
         address_or_handle: &str,
     ) -> Result<Option<(EntityId, ChannelIdentity)>> {
-        let wanted = AssignmentKey::of(channel, address_or_handle);
-        for entry in self
-            .store
-            .port_entity_ids_by_type(rtxn, ENTITY_TYPE_CHANNEL_IDENTITY, None)?
-        {
-            let id = entry?;
-            let raw = self
-                .store
-                .port_entity_record(rtxn, &id)?
-                .map(|row| row.encode())
-                .ok_or(Error::CorruptedIndex("type index row without entity"))?;
-            let header =
-                EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity header"))?;
-            if header.entity_type != ENTITY_TYPE_CHANNEL_IDENTITY {
-                return Err(Error::CorruptedIndex("type index row kind mismatch"));
-            }
-            let identity = decode_channel_identity_body(&raw[ENTITY_METADATA_HEADER_LEN..])?;
-            if identity.occupies_assignment_key() && identity.assignment_key() == wanted {
-                return Ok(Some((id, identity)));
-            }
-        }
-        Ok(None)
+        let key = AssignmentKey::of(channel, address_or_handle);
+        super::assignment::by_assignment(&self.store, rtxn, &key)
+    }
+
+    /// Rebuilds the assignment projection explicitly after index loss.
+    pub fn rebuild_channel_identity_assignment_index(&self) -> Result<()> {
+        let mut txn = self.store.env.write_txn()?;
+        super::assignment::rebuild(&self.store, &mut txn)?;
+        txn.commit()?;
+        Ok(())
     }
 
     pub(crate) fn apply_channel_identity_body(
