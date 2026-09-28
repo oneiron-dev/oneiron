@@ -31,7 +31,7 @@ use loro::{ExportMode, LoroDoc, LoroMap, LoroValue, ValueOrContainer};
 use oneiron::affect::Vad;
 use oneiron::edge::EdgeKind;
 use oneiron::sync::bridge::{Materializer, encode_edge_value_for_crdt, format_edge_key};
-use oneiron::sync::client::{SyncClient, SyncClientConfig, SyncEvent};
+use oneiron::sync::client::{SyncClient, SyncClientConfig, SyncEvent, SyncResidenceMode};
 use oneiron::sync::manager::WindowManager;
 use oneiron::sync::quarantine::{QuarantineContainer, quarantined_records};
 use oneiron::sync::{WindowKey, drain_reassert_markers, pending_reassert_windows, transport};
@@ -72,7 +72,14 @@ fn make_manager(vault: &Arc<Vault>) -> Arc<WindowManager> {
 }
 
 fn make_client(manager: &Arc<WindowManager>) -> (SyncClient, UnboundedReceiver<SyncEvent>) {
-    SyncClient::new(Arc::clone(manager), SyncClientConfig::default()).unwrap()
+    SyncClient::new(
+        Arc::clone(manager),
+        SyncClientConfig {
+            residence_mode: SyncResidenceMode::All,
+            ..Default::default()
+        },
+    )
+    .unwrap()
 }
 
 fn put_task(vault: &Vault, id: &EntityId, data: &[u8]) {

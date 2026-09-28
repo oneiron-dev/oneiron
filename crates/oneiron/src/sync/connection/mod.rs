@@ -84,6 +84,151 @@ impl SyncConnection {
         })
     }
 
+    /// Fetch one grant-selected item into this device's observed CRDT window.
+    pub async fn fetch_item(
+        &self,
+        window: &crate::sync::WindowKey,
+        item: crate::EntityId,
+    ) -> Result<(), crate::sync::TransportError> {
+        let (mut client, _events) = crate::sync::SyncClient::new(
+            Arc::clone(&self.manager),
+            self.config.client_config.clone(),
+        )
+        .map_err(|e| crate::sync::TransportError::Storage(e.to_string()))?;
+        client.fetch_item(window, item).await
+    }
+
+    /// Promote an opened item's whole window into the canonical Loro unit
+    /// before a write. Grant checks run at the home before any full bytes ship.
+    pub async fn promote_window(
+        &self,
+        window: &crate::sync::WindowKey,
+        item: crate::EntityId,
+    ) -> Result<(), crate::sync::TransportError> {
+        let (mut client, _events) = crate::sync::SyncClient::new(
+            Arc::clone(&self.manager),
+            self.config.client_config.clone(),
+        )
+        .map_err(|e| crate::sync::TransportError::Storage(e.to_string()))?;
+        client.promote_window(window, item).await
+    }
+
+    /// The first write to a thin item promotes its canonical window before
+    /// changing the ledger. After that, the ordinary local Loro mirror and
+    /// queued CRDT path carry the edit. Other write doors refuse thin IDs.
+    pub async fn edit_opened_item(
+        &self,
+        window: &crate::sync::WindowKey,
+        item: crate::EntityId,
+        entity_type: u8,
+        occurred: crate::TimeRange,
+        learned_at: u64,
+        body: &[u8],
+    ) -> Result<(), crate::sync::TransportError> {
+        let already_promoted = self
+            .manager
+            .vault()
+            .sync_state_get(&format!("rp:w:{window}"))
+            .map_err(|e| crate::sync::TransportError::Storage(e.to_string()))?
+            .is_some();
+        if !already_promoted && self.thin_item(item)?.is_some() {
+            self.promote_window(window, item).await?;
+        }
+        if self
+            .manager
+            .vault()
+            .sync_state_get(&format!("rp:w:{window}"))
+            .map_err(|e| crate::sync::TransportError::Storage(e.to_string()))?
+            .is_none()
+        {
+            return Err(crate::sync::TransportError::InvalidPayload(
+                "item write requires causal window promotion",
+            ));
+        }
+        if window
+            .start_timestamp()
+            .is_none_or(|start| learned_at < start)
+            || window.end_timestamp().is_some_and(|end| learned_at >= end)
+        {
+            return Err(crate::sync::TransportError::InvalidWindowKey);
+        }
+        self.manager
+            .vault()
+            .put_entity(&item, entity_type, occurred, learned_at, body)
+            .map_err(|e| crate::sync::TransportError::Storage(e.to_string()))?;
+        let loaded = self
+            .manager
+            .open_window(window)
+            .map_err(|e| crate::sync::TransportError::Storage(e.to_string()))?;
+        let raw = self
+            .manager
+            .vault()
+            .get_raw_unsealed(&item)
+            .map_err(|e| crate::sync::TransportError::Storage(e.to_string()))?
+            .ok_or(crate::sync::TransportError::InvalidPayload(
+                "edited item absent",
+            ))?;
+        crate::sync::loro_support::map_insert_bytes(
+            &loaded.doc.get_map("entities"),
+            &item.to_hex(),
+            &raw,
+        )
+        .map_err(|e| crate::sync::TransportError::Storage(e.to_string()))?;
+        loaded.doc.commit();
+        Ok(())
+    }
+
+    /// Read the cached item without materializing it as a writable replica.
+    pub fn thin_item(
+        &self,
+        item: crate::EntityId,
+    ) -> Result<Option<crate::sync::ThinItem>, crate::sync::TransportError> {
+        let (client, _events) = crate::sync::SyncClient::new(
+            Arc::clone(&self.manager),
+            self.config.client_config.clone(),
+        )
+        .map_err(|e| crate::sync::TransportError::Storage(e.to_string()))?;
+        client.thin_item(item)
+    }
+
+    /// Search on the home node when reachable, or return explicitly partial
+    /// local-only results over items previously opened on this device.
+    pub async fn search_resident(
+        &self,
+        query: &str,
+        limit: usize,
+    ) -> Result<crate::sync::ResidenceSearch, crate::sync::TransportError> {
+        let (client, _events) = crate::sync::SyncClient::new(
+            Arc::clone(&self.manager),
+            self.config.client_config.clone(),
+        )
+        .map_err(|e| crate::sync::TransportError::Storage(e.to_string()))?;
+        client.search_resident(query, limit).await
+    }
+
+    /// Clear only the contiguous queued updates whose bytes the home has
+    /// durably acknowledged. A different digest or a missing earlier ACK
+    /// retains the whole unconfirmed suffix, including delete markers.
+    fn clear_residence_acks(&self, client: &mut crate::sync::SyncClient) -> Result<(), String> {
+        let mut through = None;
+        for queued in self.queue.drain_updates().map_err(|e| e.to_string())? {
+            let Some(ack) = client.residence_acks.get(&queued.seq) else {
+                break;
+            };
+            if *ack != *blake3::hash(&queued.encoded).as_bytes() {
+                return Err("home residence acknowledgment digest mismatch".into());
+            }
+            through = Some(queued.seq);
+        }
+        if let Some(seq) = through {
+            self.queue
+                .clear_through_confirmed(seq)
+                .map_err(|e| e.to_string())?;
+            client.residence_acks.retain(|key, _| *key > seq);
+        }
+        Ok(())
+    }
+
     /// Returns a reference to the offline queue for external inspection.
     pub fn queue(&self) -> &SyncQueue {
         &self.queue

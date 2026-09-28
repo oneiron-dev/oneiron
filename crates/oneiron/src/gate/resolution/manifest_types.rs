@@ -317,6 +317,7 @@ pub(crate) struct PolicyManifestResolution {
     pub(crate) room_thread: Option<crate::gate::RoomThreadManifest>,
     pub(crate) diagnostic_bounds: Option<crate::self_heal::tripwires::TripwireBounds>,
     pub(crate) failure_signal_policy: Vec<crate::failure_signals::policy::Row>,
+    pub(crate) residence_operation_budgets: ResidenceOperationBudgetLimits,
     pub(crate) livequery_tracker_limits: Option<crate::gate::tracker_limits::PolicyTrackerLimits>,
     pub(in crate::gate) teacher_probe_trusted: bool,
     pub(in crate::gate) teacher_probe_vault_min: Option<u32>,
@@ -410,4 +411,86 @@ impl PolicyManifestResolution {
             decide_failure(&self.dreamer_failure_rules, class, precedence)
         }
     }
+}
+
+/// Hard-bounded residence-operation limits carried by a typed policy map.
+///
+/// `Default` is the shipped vault ceiling. Manifest maps can only narrow it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct ResidenceOperationBudgetLimits {
+    pub(crate) rpc_timeout_ms: u64,
+    pub(crate) index_page_limit: usize,
+    pub(crate) max_index_pages: usize,
+    pub(crate) current_window_count: usize,
+    pub(crate) title_max_chars: usize,
+    pub(crate) search_limit: usize,
+    pub(crate) search_query_max_bytes: usize,
+    pub(crate) offline_candidate_multiplier: usize,
+    pub(crate) ack_timeout_ms: u64,
+    pub(crate) index_cache_bytes: usize,
+}
+
+impl ResidenceOperationBudgetLimits {
+    pub(crate) const DEFAULT_RPC_TIMEOUT_MS: u64 = 12_000;
+    pub(crate) const MAX_RPC_TIMEOUT_MS: u64 = 60_000;
+    pub(crate) const DEFAULT_INDEX_PAGE_LIMIT: usize = 256;
+    pub(crate) const DEFAULT_MAX_INDEX_PAGES: usize = 1_024;
+    pub(crate) const DEFAULT_CURRENT_WINDOW_COUNT: usize = 2;
+    pub(crate) const DEFAULT_TITLE_MAX_CHARS: usize = 128;
+    pub(crate) const DEFAULT_SEARCH_LIMIT: usize = 100;
+    pub(crate) const DEFAULT_SEARCH_QUERY_MAX_BYTES: usize = 4_096;
+    pub(crate) const DEFAULT_OFFLINE_CANDIDATE_MULTIPLIER: usize = 10;
+    pub(crate) const DEFAULT_ACK_TIMEOUT_MS: u64 = 30_000;
+    pub(crate) const DEFAULT_INDEX_CACHE_BYTES: usize = 16 * 1024 * 1024;
+    pub(crate) const MAX_INDEX_CACHE_BYTES: usize = 32 * 1024 * 1024;
+
+    /// Restrictive composition. Policy rows never raise a shipped limit.
+    pub(crate) fn restrict(&mut self, other: Self) {
+        self.rpc_timeout_ms = self.rpc_timeout_ms.min(other.rpc_timeout_ms);
+        self.index_page_limit = self.index_page_limit.min(other.index_page_limit);
+        self.max_index_pages = self.max_index_pages.min(other.max_index_pages);
+        self.current_window_count = self.current_window_count.min(other.current_window_count);
+        self.title_max_chars = self.title_max_chars.min(other.title_max_chars);
+        self.search_limit = self.search_limit.min(other.search_limit);
+        self.search_query_max_bytes = self
+            .search_query_max_bytes
+            .min(other.search_query_max_bytes);
+        self.offline_candidate_multiplier = self
+            .offline_candidate_multiplier
+            .min(other.offline_candidate_multiplier);
+        self.ack_timeout_ms = self.ack_timeout_ms.min(other.ack_timeout_ms);
+        self.index_cache_bytes = self.index_cache_bytes.min(other.index_cache_bytes);
+    }
+}
+
+impl Default for ResidenceOperationBudgetLimits {
+    fn default() -> Self {
+        Self {
+            rpc_timeout_ms: Self::DEFAULT_RPC_TIMEOUT_MS,
+            index_page_limit: Self::DEFAULT_INDEX_PAGE_LIMIT,
+            max_index_pages: Self::DEFAULT_MAX_INDEX_PAGES,
+            current_window_count: Self::DEFAULT_CURRENT_WINDOW_COUNT,
+            title_max_chars: Self::DEFAULT_TITLE_MAX_CHARS,
+            search_limit: Self::DEFAULT_SEARCH_LIMIT,
+            search_query_max_bytes: Self::DEFAULT_SEARCH_QUERY_MAX_BYTES,
+            offline_candidate_multiplier: Self::DEFAULT_OFFLINE_CANDIDATE_MULTIPLIER,
+            ack_timeout_ms: Self::DEFAULT_ACK_TIMEOUT_MS,
+            index_cache_bytes: Self::DEFAULT_INDEX_CACHE_BYTES,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub(crate) enum ResidenceOperationBudgetPrecedence {
+    /// Holder-level budgets can narrow, but never widen, the vault-level cap.
+    #[default]
+    NestedNarrowing,
+}
+
+/// One manifest's optional vault and holder narrowing maps.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct ResidenceOperationBudgetRow {
+    pub(crate) precedence: ResidenceOperationBudgetPrecedence,
+    pub(crate) vault: ResidenceOperationBudgetLimits,
+    pub(crate) holder: Option<ResidenceOperationBudgetLimits>,
 }

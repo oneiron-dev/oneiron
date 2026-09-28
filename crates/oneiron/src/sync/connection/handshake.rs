@@ -15,7 +15,9 @@ use crate::sync::client::{SyncClient, SyncEvent, SyncStatus, next_backoff};
 use crate::sync::transport::{self, window_sub_tags};
 use crate::sync::types::parse_window_key_str;
 
-use super::session::{FULL_RESYNC_MARKER_PREFIX, FullResyncMarker};
+use super::session::{
+    FULL_RESYNC_MARKER_PREFIX, FullResyncMarker, WsSink, WsSource, residence_update_frame,
+};
 use super::{LocalUpdate, LoopExit, SyncConnection};
 
 impl SyncConnection {
@@ -35,6 +37,12 @@ impl SyncConnection {
         is_full: crate::error::Result<bool>,
     ) {
         match is_full {
+            Ok(true) if client.config.residence_mode == crate::sync::SyncResidenceMode::Opened => {
+                let _ = event_tx.send(SyncEvent::Error(
+                    "Opened-item queue full — updates retained; explicit sync-all recovery required"
+                        .to_owned(),
+                ));
+            }
             Ok(true) => {
                 let _ = event_tx.send(SyncEvent::Error(
                     "Queue overflow — performing re-bootstrap".to_string(),
@@ -100,6 +108,7 @@ impl SyncConnection {
         self.manager.outbound().attach(local_tx);
 
         let mut backoff_ms = self.config.client_config.reconnect_initial_ms;
+        let mut promotion_rx = self.manager.subscribe_promotions();
 
         loop {
             // Attempt connection
@@ -119,6 +128,7 @@ impl SyncConnection {
                             &mut client,
                             &event_tx,
                             &mut local_rx,
+                            &mut promotion_rx,
                             &mut shutdown_rx,
                         )
                         .await;
@@ -337,6 +347,19 @@ impl SyncConnection {
             }
         }
 
+        // Opened-item enrol finishes only after the grant-filtered thin index
+        // is durable. A missing actor grant/session is a failure, never an
+        // excuse to fall back to full-window sync.
+        if client.config.residence_mode == crate::sync::SyncResidenceMode::Opened {
+            let now_secs = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map_or(0, |duration| duration.as_secs());
+            client
+                .fetch_current_index(now_secs)
+                .await
+                .map_err(|e| format!("Fetch residence index failed: {e}"))?;
+        }
+
         // Phase 3: Drain offline queue
         let queued = self.queue.drain_updates().map_err(|e| format!("{e}"))?;
         let full_resync_markers = self.full_resync_markers()?;
@@ -344,6 +367,11 @@ impl SyncConnection {
             .iter()
             .map(|marker| marker.window_key.clone())
             .collect();
+        if client.config.residence_mode == crate::sync::SyncResidenceMode::Opened
+            && !full_resync_markers.is_empty()
+        {
+            return Err("opened-item full-resync requires explicit sync-all recovery".into());
+        }
         if !full_resync_markers.is_empty() {
             tracing::info!(
                 marker_count = full_resync_markers.len(),
@@ -369,12 +397,17 @@ impl SyncConnection {
                     )));
                 }
                 // Re-encode as WindowSync wire message
-                let msg = transport::encode_window_sync(
-                    &update.window_key,
-                    window_sub_tags::UPDATE,
-                    &update.encoded,
-                )
-                .into_result()
+                let msg = if client.config.residence_mode == crate::sync::SyncResidenceMode::Opened
+                {
+                    residence_update_frame(update.seq, &update.window_key, &update.encoded)
+                } else {
+                    transport::encode_window_sync(
+                        &update.window_key,
+                        window_sub_tags::UPDATE,
+                        &update.encoded,
+                    )
+                    .into_result()
+                }
                 .map_err(|e| format!("Queue replay encode failed: {e}"))?;
                 write
                     .send(Message::Binary(msg.into()))
@@ -384,15 +417,20 @@ impl SyncConnection {
 
             // ARCH-0023b Fig. 2 convergence dance. Any error here leaves the
             // queue intact (fail-closed) and surfaces as a connection failure.
-            self.run_convergence(
-                &mut write,
-                &mut read,
-                client,
-                event_tx,
-                &queued,
-                &force_resync,
-            )
-            .await?;
+            if client.config.residence_mode == crate::sync::SyncResidenceMode::Opened {
+                self.wait_residence_acks(&mut write, &mut read, client)
+                    .await?;
+            } else {
+                self.run_convergence(
+                    &mut write,
+                    &mut read,
+                    client,
+                    event_tx,
+                    &queued,
+                    &force_resync,
+                )
+                .await?;
+            }
             self.clear_full_resync_markers(&full_resync_markers)?;
         } else if !full_resync_markers.is_empty() {
             self.re_bootstrap(&mut write, &mut read, client, event_tx, &force_resync)
@@ -420,6 +458,51 @@ impl SyncConnection {
         }
 
         Ok(ws_stream)
+    }
+
+    /// A home acknowledgment is sent only after persistence. A missing ACK
+    /// leaves every unconfirmed queue row intact for the next reconnect.
+    async fn wait_residence_acks(
+        &self,
+        write: &mut WsSink,
+        read: &mut WsSource,
+        client: &mut SyncClient,
+    ) -> Result<(), String> {
+        let budgets = self
+            .manager
+            .vault()
+            .residence_operation_budgets()
+            .map_err(|error| error.to_string())?
+            .ok_or_else(|| "residence policy unavailable".to_string())?;
+        tokio::time::timeout(Duration::from_millis(budgets.ack_timeout_ms), async {
+            while !self
+                .queue
+                .drain_updates()
+                .map_err(|e| e.to_string())?
+                .is_empty()
+            {
+                let message = read
+                    .next()
+                    .await
+                    .ok_or_else(|| "home closed before residence ACK".to_string())?
+                    .map_err(|e| e.to_string())?;
+                if let Message::Binary(data) = message {
+                    for response in client
+                        .handle_server_message(&data)
+                        .map_err(|e| e.to_string())?
+                    {
+                        write
+                            .send(Message::Binary(response.into()))
+                            .await
+                            .map_err(|e| e.to_string())?;
+                    }
+                    self.clear_residence_acks(client)?;
+                }
+            }
+            Ok::<(), String>(())
+        })
+        .await
+        .map_err(|_| "home residence acknowledgment timed out".to_string())?
     }
 
     fn full_resync_markers(&self) -> Result<Vec<FullResyncMarker>, String> {

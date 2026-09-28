@@ -26,7 +26,14 @@ fn test_manager() -> Arc<WindowManager> {
 }
 
 fn test_client(manager: &Arc<WindowManager>) -> (SyncClient, mpsc::UnboundedReceiver<SyncEvent>) {
-    SyncClient::new(Arc::clone(manager), SyncClientConfig::default()).unwrap()
+    SyncClient::new(
+        Arc::clone(manager),
+        SyncClientConfig {
+            residence_mode: SyncResidenceMode::All,
+            ..Default::default()
+        },
+    )
+    .unwrap()
 }
 
 fn test_federated_client(
@@ -860,9 +867,114 @@ fn sync_client_rejects_invalid_window_creation() {
 }
 
 #[test]
+fn thin_item_writes_refuse_until_canonical_window_promotion() {
+    let manager = test_manager();
+    let vault = manager.vault();
+    let id = crate::test_util::entity(0x5e);
+    let at = WindowKey::new("2026-09").start_timestamp().unwrap();
+    vault
+        .sync_state_put(&format!("ro:e:{}", id.to_hex()), b"2026-09")
+        .unwrap();
+    let err = vault
+        .put_entity(
+            &id,
+            crate::registry::ENTITY_TYPE_PERSON,
+            TimeRange { start: at, end: at },
+            at,
+            b"edit",
+        )
+        .unwrap_err();
+    assert_matches!(
+        err,
+        crate::Error::Sync(crate::error::SyncError::SyncProtocolError {
+            context: SyncProtocolValidation::ThinItemRequiresPromotion
+        })
+    );
+    assert!(vault.get_raw(&id).unwrap().is_none());
+    let err = vault
+        .batch()
+        .put(
+            &id,
+            crate::registry::ENTITY_TYPE_PERSON,
+            TimeRange { start: at, end: at },
+            at,
+            b"edit",
+        )
+        .commit()
+        .unwrap_err();
+    assert_matches!(
+        err,
+        crate::Error::Sync(crate::error::SyncError::SyncProtocolError {
+            context: SyncProtocolValidation::ThinItemRequiresPromotion
+        })
+    );
+    vault.sync_state_put("rp:w:2026-09", &[1]).unwrap();
+    vault
+        .put_entity(
+            &id,
+            crate::registry::ENTITY_TYPE_PERSON,
+            TimeRange { start: at, end: at },
+            at,
+            b"edit",
+        )
+        .unwrap();
+    assert!(vault.get_raw(&id).unwrap().is_some());
+}
+
+#[test]
+fn new_device_enrols_without_requesting_full_month_windows() {
+    let manager = test_manager();
+    let (client, _rx) = SyncClient::new(manager.clone(), SyncClientConfig::default()).unwrap();
+    let frames = client.generate_initial_sync();
+    assert_eq!(
+        frames.len(),
+        2,
+        "enrol must only request the root, not full windows"
+    );
+    assert_eq!(frames[0], transport::encode_residence_protocol_hello());
+    assert_eq!(frames[1][0], TAG_VERSION_VECTOR);
+    assert!(manager.loaded_keys().is_empty());
+}
+
+#[test]
+fn opened_item_residence_never_requests_a_loaded_full_window_on_connect() {
+    let manager = test_manager();
+    manager.open_window(&WindowKey::new("2026-09")).unwrap();
+    let (client, _rx) = SyncClient::new(manager, SyncClientConfig::default()).unwrap();
+    let frames = client.generate_initial_sync();
+    assert_eq!(frames.len(), 2);
+    assert_eq!(frames[1][0], TAG_VERSION_VECTOR);
+}
+
+#[test]
+fn opened_item_residence_rejects_unsolicited_full_window_updates() {
+    let manager = test_manager();
+    let (mut client, _rx) = SyncClient::new(manager.clone(), SyncClientConfig::default()).unwrap();
+    let doc = server_window_doc();
+    doc.get_map("entities")
+        .insert("large", vec![7; 1024])
+        .unwrap();
+    doc.commit();
+    let update = doc.export(ExportMode::all_updates()).unwrap();
+    let frame = transport::encode_window_sync("2026-09", window_sub_tags::UPDATE, &update);
+    assert_matches!(
+        client.handle_server_message(&frame),
+        Err(TransportError::InvalidPayload(_))
+    );
+    assert!(manager.loaded_keys().is_empty());
+}
+
+#[test]
 fn sync_client_generate_initial_sync() {
     let manager = test_manager();
-    let (client, _rx) = test_client(&manager);
+    let (client, _rx) = SyncClient::new(
+        manager,
+        SyncClientConfig {
+            residence_mode: SyncResidenceMode::All,
+            ..Default::default()
+        },
+    )
+    .unwrap();
     let messages = client.generate_initial_sync();
     // hello + root VV + 2 window VV requests (current + prev).
     // Device lease requests are retired; authentication uses a paired

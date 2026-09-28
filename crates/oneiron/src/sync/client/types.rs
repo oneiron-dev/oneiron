@@ -1,8 +1,23 @@
 //! Sync client configuration, events, and sync_state key constants.
 
+/// How an own device keeps ledger windows resident.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum SyncResidenceMode {
+    /// Root and index at enrol; items are fetched on demand.
+    #[default]
+    Opened,
+    /// Explicit opt-in to full month-window replication.
+    All,
+}
+
 /// Client-side sync configuration.
 #[derive(Debug, Clone)]
 pub struct SyncClientConfig {
+    /// Non-home devices default to opened items; full replication is opt-in.
+    pub residence_mode: SyncResidenceMode,
+    /// Grant selector supplied by the authenticated host for index, first touch,
+    /// and local opened-item filtering. Never inferred from root or peer bytes.
+    pub residence_selector: Option<crate::sync::SyncSelector>,
     /// Federation principal/grant supplied by the authenticated transport host.
     /// Never inferred from `auth_token` or untrusted CRDT peer ids.
     pub federation_peer: Option<crate::sync::federation_burst::FederationPeer>,
@@ -39,6 +54,8 @@ pub struct SyncClientConfig {
 impl Default for SyncClientConfig {
     fn default() -> Self {
         Self {
+            residence_mode: SyncResidenceMode::Opened,
+            residence_selector: None,
             federation_peer: None,
             federation_admission_role: crate::sync::FederationAdmissionRole::Guest,
             server_url: String::new(),

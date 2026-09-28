@@ -15,6 +15,13 @@ fn test_manager() -> Arc<WindowManager> {
     ))
 }
 
+fn full_client_config() -> SyncClientConfig {
+    SyncClientConfig {
+        residence_mode: crate::sync::SyncResidenceMode::All,
+        ..Default::default()
+    }
+}
+
 #[test]
 fn flush_to_queue_skips_invalid_window_keys() {
     let conn = SyncConnection::new(test_manager(), ConnectionConfig::default()).unwrap();
@@ -59,10 +66,50 @@ async fn queue_push_and_drain_roundtrip() {
 }
 
 #[test]
+fn residence_ack_clears_only_contiguous_durable_queue_prefix() {
+    let manager = test_manager();
+    let conn = SyncConnection::new(manager.clone(), ConnectionConfig::default()).unwrap();
+    let (mut client, _events) = SyncClient::new(manager, SyncClientConfig::default()).unwrap();
+    let first = b"first";
+    let second = b"second";
+    let seq1 = conn.queue().push("2026-03", first).unwrap();
+    let seq2 = conn.queue().push("2026-03", second).unwrap();
+    let ack = |seq: u64, bytes: &[u8]| {
+        let mut payload = seq.to_be_bytes().to_vec();
+        payload.extend_from_slice(blake3::hash(bytes).as_bytes());
+        transport::encode_window_sync("2026-03", window_sub_tags::RESIDENCE_ACK, &payload)
+            .into_result()
+            .unwrap()
+    };
+    client.handle_server_message(&ack(seq2, second)).unwrap();
+    conn.clear_residence_acks(&mut client).unwrap();
+    assert_eq!(conn.queue().drain_updates().unwrap().len(), 2);
+    client.handle_server_message(&ack(seq1, first)).unwrap();
+    conn.clear_residence_acks(&mut client).unwrap();
+    assert!(conn.queue().drain_updates().unwrap().is_empty());
+}
+
+#[test]
+fn residence_ack_for_different_bytes_never_confirms_a_queued_write() {
+    let manager = test_manager();
+    let conn = SyncConnection::new(manager.clone(), ConnectionConfig::default()).unwrap();
+    let (mut client, _events) = SyncClient::new(manager, SyncClientConfig::default()).unwrap();
+    let seq = conn.queue().push("2026-03", b"delete-worthy").unwrap();
+    let mut payload = seq.to_be_bytes().to_vec();
+    payload.extend_from_slice(blake3::hash(b"other").as_bytes());
+    let frame = transport::encode_window_sync("2026-03", window_sub_tags::RESIDENCE_ACK, &payload)
+        .into_result()
+        .unwrap();
+    client.handle_server_message(&frame).unwrap();
+    assert!(conn.clear_residence_acks(&mut client).is_err());
+    assert_eq!(conn.queue().drain_updates().unwrap().len(), 1);
+}
+
+#[test]
 fn queue_inspection_error_does_not_clear_queue() {
     let manager = test_manager();
     let conn = SyncConnection::new(Arc::clone(&manager), ConnectionConfig::default()).unwrap();
-    let (mut client, _client_rx) = SyncClient::new(manager, SyncClientConfig::default()).unwrap();
+    let (mut client, _client_rx) = SyncClient::new(manager, full_client_config()).unwrap();
     conn.queue().push("2026-03", &[1, 2, 3]).unwrap();
     client.ensure_window("2026-03").unwrap();
 
@@ -85,7 +132,7 @@ fn queue_inspection_error_does_not_clear_queue() {
 #[test]
 fn convergence_round_propagates_invalid_window_key_without_frame() {
     let manager = test_manager();
-    let (mut client, _client_rx) = SyncClient::new(manager, SyncClientConfig::default()).unwrap();
+    let (mut client, _client_rx) = SyncClient::new(manager, full_client_config()).unwrap();
     let mut pending = BTreeSet::new();
     pending.insert("2026-003".to_string());
     let mut session = ConvergenceSession {
@@ -326,6 +373,7 @@ async fn sync_socket_disconnect_and_restart_do_not_fail_over_macro_home() {
                 client_config: SyncClientConfig {
                     server_url,
                     home_node_topology: Some(topology.clone()),
+                    residence_mode: crate::sync::SyncResidenceMode::All,
                     ..Default::default()
                 },
                 auto_reconnect: false,
@@ -514,8 +562,7 @@ fn replay(queued: &[QueuedUpdate], client: &mut SyncClient, server: &mut FakeSer
 fn convergence_clears_queue_only_after_all_windows_vv_confirm() {
     let manager = test_manager();
     let conn = SyncConnection::new(Arc::clone(&manager), ConnectionConfig::default()).unwrap();
-    let (mut client, _rx) =
-        SyncClient::new(Arc::clone(&manager), SyncClientConfig::default()).unwrap();
+    let (mut client, _rx) = SyncClient::new(Arc::clone(&manager), full_client_config()).unwrap();
     let mut server = FakeServer::new();
 
     let queued = seed_offline_queue(&conn);
@@ -568,8 +615,7 @@ fn convergence_clears_queue_only_after_all_windows_vv_confirm() {
 #[test]
 fn full_resync_marker_is_never_dropped_by_vv_equality() {
     let manager = test_manager();
-    let (mut client, _rx) =
-        SyncClient::new(Arc::clone(&manager), SyncClientConfig::default()).unwrap();
+    let (mut client, _rx) = SyncClient::new(Arc::clone(&manager), full_client_config()).unwrap();
     let mut server = FakeServer::new();
     let mut force_resync = BTreeSet::new();
     force_resync.insert(FULL_RESYNC_TEST_WINDOW.to_string());
@@ -621,14 +667,14 @@ async fn full_resync_marker_recovers_deferred_post_delete_op() {
         ConnectionConfig {
             client_config: SyncClientConfig {
                 server_url,
+                residence_mode: crate::sync::SyncResidenceMode::All,
                 ..Default::default()
             },
             auto_reconnect: false,
         },
     )
     .unwrap();
-    let (mut client, _rx) =
-        SyncClient::new(Arc::clone(&manager), SyncClientConfig::default()).unwrap();
+    let (mut client, _rx) = SyncClient::new(Arc::clone(&manager), full_client_config()).unwrap();
     let (event_tx, _event_rx) = mpsc::unbounded_channel();
 
     let ws_stream = conn.connect_and_sync(&mut client, &event_tx).await.unwrap();
@@ -675,14 +721,14 @@ async fn full_resync_marker_retained_when_rebootstrap_errors() {
         ConnectionConfig {
             client_config: SyncClientConfig {
                 server_url,
+                residence_mode: crate::sync::SyncResidenceMode::All,
                 ..Default::default()
             },
             auto_reconnect: false,
         },
     )
     .unwrap();
-    let (mut client, _rx) =
-        SyncClient::new(Arc::clone(&manager), SyncClientConfig::default()).unwrap();
+    let (mut client, _rx) = SyncClient::new(Arc::clone(&manager), full_client_config()).unwrap();
     let (event_tx, _event_rx) = mpsc::unbounded_channel();
 
     let result = conn.connect_and_sync(&mut client, &event_tx).await;
@@ -714,8 +760,7 @@ fn forgetful_server_blocks_clear_and_round_six_forces_re_bootstrap() {
     let manager = test_manager();
     let vault = Arc::clone(manager.vault());
     let conn = SyncConnection::new(Arc::clone(&manager), ConnectionConfig::default()).unwrap();
-    let (mut client, _rx) =
-        SyncClient::new(Arc::clone(&manager), SyncClientConfig::default()).unwrap();
+    let (mut client, _rx) = SyncClient::new(Arc::clone(&manager), full_client_config()).unwrap();
     let mut server = FakeServer::new();
     server.forget_window = Some("2026-03".to_string());
 
@@ -851,12 +896,25 @@ fn forgetful_server_blocks_clear_and_round_six_forces_re_bootstrap() {
 /// docs dropped + queue cleared (h:/m:/x: preserved); Phase 1-3 then
 /// re-runs naturally on the next connect.
 #[test]
+fn opened_item_queue_overflow_retains_unconfirmed_writes() {
+    let manager = test_manager();
+    let conn = SyncConnection::new(manager.clone(), ConnectionConfig::default()).unwrap();
+    let (mut client, _events) = SyncClient::new(manager, SyncClientConfig::default()).unwrap();
+    conn.queue().push("2026-03", b"unconfirmed").unwrap();
+    client.ensure_window("2026-03").unwrap();
+    let (events, mut rx) = mpsc::unbounded_channel();
+    conn.handle_queue_overflow_check(&mut client, &events, Ok(true));
+    assert_eq!(conn.queue().drain_updates().unwrap().len(), 1);
+    assert!(client.window("2026-03").is_some());
+    assert_matches!(rx.try_recv().unwrap(), SyncEvent::Error(_));
+}
+
+#[test]
 fn queue_overflow_triggers_real_re_bootstrap() {
     let manager = test_manager();
     let vault = Arc::clone(manager.vault());
     let conn = SyncConnection::new(Arc::clone(&manager), ConnectionConfig::default()).unwrap();
-    let (mut client, _rx) =
-        SyncClient::new(Arc::clone(&manager), SyncClientConfig::default()).unwrap();
+    let (mut client, _rx) = SyncClient::new(Arc::clone(&manager), full_client_config()).unwrap();
 
     conn.queue().push("2026-03", &[1, 2, 3]).unwrap();
     client.ensure_window("2026-03").unwrap();

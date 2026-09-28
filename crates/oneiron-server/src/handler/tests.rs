@@ -316,6 +316,310 @@ async fn hosted_lease_production_path_isolates_same_client_id_by_configured_vaul
 }
 
 #[tokio::test]
+async fn residence_update_ack_is_exact_and_follows_durable_import() {
+    let (_dir, server) = test_server();
+    let key = "1970-01";
+    let id = entity_id(90);
+    let member = entity_id(91);
+    server
+        .vault
+        .put_entity(
+            &id,
+            oneiron::registry::ENTITY_TYPE_PERSON,
+            oneiron::TimeRange { start: 1, end: 1 },
+            1,
+            b"base",
+        )
+        .unwrap();
+    let grant_id = entity_id(92);
+    let grant = oneiron::federation::FederationGrant::new(
+        selector_grant_scope(),
+        member,
+        oneiron::federation::FederationGrantRole::Member,
+        oneiron::federation::FederationGrantPreset::Member,
+    );
+    oneiron::sync::put_selector_test_federation_grant(&server.vault, &grant_id, &grant, 1).unwrap();
+    let server_doc = server
+        .get_or_create_window(&WindowKey::new(key))
+        .await
+        .unwrap();
+    let base_vv = server_doc.oplog_vv();
+    let update_doc =
+        loro::LoroDoc::from_snapshot(&server_doc.export(ExportMode::Snapshot).unwrap()).unwrap();
+    update_doc
+        .get_map("entities")
+        .insert(
+            &id.to_hex(),
+            entity_blob(oneiron::registry::ENTITY_TYPE_PERSON, b"resident").as_slice(),
+        )
+        .unwrap();
+    update_doc.commit();
+    let update = update_doc.export(ExportMode::updates(&base_vv)).unwrap();
+    let seq = 23_u64;
+    let mut payload = seq.to_be_bytes().to_vec();
+    payload.extend_from_slice(&update);
+    let (tx, mut rx) = mpsc::unbounded_channel();
+    let mut state = ConnState::new(protocol::RESIDENCE_PROTOCOL_VERSION);
+    let selector = oneiron::sync::SyncSelector::new(
+        grant_id,
+        member,
+        oneiron::sync::SyncSelectorWorld::All,
+        vec![],
+        vec![],
+    );
+    state.promoted_windows.insert(WindowKey::new(key), selector);
+    let params = crate::test_credentials::bind_payload(
+        &server,
+        &format!(
+            "scope=core:read,core:write;principal_ref={};actor_class=human",
+            member.to_hex()
+        ),
+    );
+    let bind = crate::livequery::test_wire::request(
+        protocol::TAG_RPC,
+        serde_json::json!({"requestId": 77, "method": "auth.bind", "params": params}),
+    );
+    handle_app_message(&server, &mut state, protocol::TAG_RPC, &bind[1..], &tx).unwrap();
+    let _ = rx.try_recv().unwrap();
+    handle_window_sync(
+        &server,
+        1,
+        key,
+        window_sub_tags::RESIDENCE_UPDATE,
+        &payload,
+        &tx,
+        &mut state,
+    )
+    .await
+    .unwrap();
+    assert_eq!(state.window_sync_mode, WindowSyncMode::Residence);
+    assert!(
+        !server
+            .vault
+            .sync_state_keys_with_prefix("u:w:1970-01:")
+            .unwrap()
+            .is_empty()
+    );
+    let (ack_key, tag, ack) = expect_window_sync(&rx.try_recv().unwrap());
+    assert_eq!(ack_key, key);
+    assert_eq!(tag, window_sub_tags::RESIDENCE_ACK);
+    assert_eq!(&ack[..8], &seq.to_be_bytes());
+    assert_eq!(&ack[8..], blake3::hash(&update).as_bytes());
+    assert!(
+        rx.try_recv().is_err(),
+        "no full-window vector or payload may be sent"
+    );
+    state.promoted_windows.clear();
+    let denied = handle_window_sync(
+        &server,
+        1,
+        key,
+        window_sub_tags::VV_REQUEST,
+        &loro::VersionVector::new().encode(),
+        &tx,
+        &mut state,
+    )
+    .await;
+    assert!(matches!(denied, Err(ProtocolError::InvalidPayload(_))));
+}
+
+#[tokio::test]
+async fn residence_write_requires_the_authors_scope_write_right() {
+    let (_dir, server) = test_server();
+    let key = "1970-01";
+    let id = oneiron::EntityId::now();
+    let member = oneiron::EntityId::now();
+    let grant_id = oneiron::EntityId::now();
+    server
+        .vault
+        .put_entity(
+            &id,
+            oneiron::registry::ENTITY_TYPE_PERSON,
+            oneiron::TimeRange { start: 1, end: 1 },
+            1,
+            b"base",
+        )
+        .unwrap();
+    let grant = oneiron::federation::FederationGrant::new(
+        selector_grant_scope(),
+        member,
+        oneiron::federation::FederationGrantRole::Viewer,
+        oneiron::federation::FederationGrantPreset::ReadOnly,
+    );
+    oneiron::sync::put_selector_test_federation_grant(&server.vault, &grant_id, &grant, 1).unwrap();
+    let home = server
+        .get_or_create_window(&WindowKey::new(key))
+        .await
+        .unwrap();
+    let before = home.oplog_vv();
+    let device = loro::LoroDoc::from_snapshot(&home.export(ExportMode::Snapshot).unwrap()).unwrap();
+    device
+        .get_map("entities")
+        .insert(
+            &id.to_hex(),
+            entity_blob(oneiron::registry::ENTITY_TYPE_PERSON, b"not authorized").as_slice(),
+        )
+        .unwrap();
+    device.commit();
+    let update = device.export(ExportMode::updates(&before)).unwrap();
+    let mut payload = 1u64.to_be_bytes().to_vec();
+    payload.extend_from_slice(&update);
+    let (tx, mut rx) = mpsc::unbounded_channel();
+    let mut state = ConnState::new(protocol::RESIDENCE_PROTOCOL_VERSION);
+    state.promoted_windows.insert(
+        WindowKey::new(key),
+        oneiron::sync::SyncSelector::new(
+            grant_id,
+            member,
+            oneiron::sync::SyncSelectorWorld::All,
+            vec![],
+            vec![],
+        ),
+    );
+    let params = crate::test_credentials::bind_payload(
+        &server,
+        &format!(
+            "scope=core:read,core:write;principal_ref={};actor_class=human",
+            member.to_hex()
+        ),
+    );
+    let bind = crate::livequery::test_wire::request(
+        protocol::TAG_RPC,
+        serde_json::json!({"requestId": 78, "method": "auth.bind", "params": params}),
+    );
+    handle_app_message(&server, &mut state, protocol::TAG_RPC, &bind[1..], &tx).unwrap();
+    let _ = rx.try_recv().unwrap();
+    let error = handle_window_sync(
+        &server,
+        1,
+        key,
+        window_sub_tags::RESIDENCE_UPDATE,
+        &payload,
+        &tx,
+        &mut state,
+    )
+    .await;
+    assert!(
+        matches!(error, Err(ProtocolError::InvalidPayload(_))),
+        "{error:?}"
+    );
+    assert!(
+        rx.try_recv().is_err(),
+        "denied edit receives no durable ACK"
+    );
+    assert_eq!(home.oplog_vv(), before);
+    assert!(
+        server
+            .vault
+            .get_raw(&id)
+            .unwrap()
+            .unwrap()
+            .ends_with(b"base")
+    );
+    assert!(
+        server
+            .vault
+            .sync_state_keys_with_prefix("u:w:1970-01:")
+            .unwrap()
+            .is_empty()
+    );
+}
+
+#[tokio::test]
+async fn residence_replay_refuses_a_birth_scope_restamp() {
+    let (_dir, server) = test_server();
+    let key = "1970-01";
+    let id = entity_id(0xb1);
+    let member = entity_id(0xb2);
+    let grant_id = entity_id(0xb3);
+    let public = rmp_serde::to_vec_named(&serde_json::json!({"sensitivity":"public"})).unwrap();
+    let private = rmp_serde::to_vec_named(&serde_json::json!({"sensitivity":"private"})).unwrap();
+    server
+        .vault
+        .put_entity(
+            &id,
+            oneiron::registry::ENTITY_TYPE_FACET,
+            oneiron::TimeRange { start: 1, end: 1 },
+            1,
+            &public,
+        )
+        .unwrap();
+    let grant = oneiron::federation::FederationGrant::new(
+        selector_grant_scope(),
+        member,
+        oneiron::federation::FederationGrantRole::Member,
+        oneiron::federation::FederationGrantPreset::Member,
+    );
+    oneiron::sync::put_selector_test_federation_grant(&server.vault, &grant_id, &grant, 1).unwrap();
+    let home = server
+        .get_or_create_window(&WindowKey::new(key))
+        .await
+        .unwrap();
+    let before = home.oplog_vv();
+    let device = loro::LoroDoc::from_snapshot(&home.export(ExportMode::Snapshot).unwrap()).unwrap();
+    device
+        .get_map("entities")
+        .insert(
+            &id.to_hex(),
+            entity_blob(oneiron::registry::ENTITY_TYPE_FACET, &private).as_slice(),
+        )
+        .unwrap();
+    device.commit();
+    let update = device.export(ExportMode::updates(&before)).unwrap();
+    let mut payload = 1u64.to_be_bytes().to_vec();
+    payload.extend_from_slice(&update);
+    let (tx, mut rx) = mpsc::unbounded_channel();
+    let mut state = ConnState::new(protocol::RESIDENCE_PROTOCOL_VERSION);
+    state.promoted_windows.insert(
+        WindowKey::new(key),
+        oneiron::sync::SyncSelector::new(
+            grant_id,
+            member,
+            oneiron::sync::SyncSelectorWorld::All,
+            vec![],
+            vec![],
+        ),
+    );
+    let params = crate::test_credentials::bind_payload(
+        &server,
+        &format!(
+            "scope=core:read,core:write;principal_ref={};actor_class=human",
+            member.to_hex()
+        ),
+    );
+    let bind = crate::livequery::test_wire::request(
+        protocol::TAG_RPC,
+        serde_json::json!({"requestId": 79, "method": "auth.bind", "params": params}),
+    );
+    handle_app_message(&server, &mut state, protocol::TAG_RPC, &bind[1..], &tx).unwrap();
+    let _ = rx.try_recv().unwrap();
+    let error = handle_window_sync(
+        &server,
+        1,
+        key,
+        window_sub_tags::RESIDENCE_UPDATE,
+        &payload,
+        &tx,
+        &mut state,
+    )
+    .await;
+    assert!(
+        matches!(error, Err(ProtocolError::InvalidPayload(_))),
+        "{error:?}"
+    );
+    assert!(rx.try_recv().is_err());
+    assert_eq!(home.oplog_vv(), before);
+    assert!(
+        server
+            .vault
+            .get_raw(&id)
+            .unwrap()
+            .unwrap()
+            .ends_with(&public)
+    );
+}
+
+#[tokio::test]
 async fn vv_request_sends_delta_and_vv_response() {
     let (_dir, server) = test_server();
     let key = "2026-03";
@@ -1308,6 +1612,11 @@ fn selector_protocol_drops_window_sync_broadcasts() {
     assert!(
         !should_forward_broadcast(protocol::PROTOCOL_VERSION, &window_update),
         "selector-capable clients must not receive full-window WindowSync broadcasts"
+    );
+
+    assert!(
+        !should_forward_broadcast(protocol::RESIDENCE_PROTOCOL_VERSION, &window_update),
+        "an opened-item device must not receive full-window broadcasts"
     );
 
     let root_update = protocol::encode_root_update(b"root");
@@ -2387,6 +2696,10 @@ fn protocol_hello_validation_literals() {
         validate_protocol_hello(&[3, 11]),
         Ok(protocol::CHUNK_FULL_WINDOW_PROTOCOL_VERSION)
     );
+    assert_eq!(
+        validate_protocol_hello(&[3, 12]),
+        Ok(protocol::RESIDENCE_PROTOCOL_VERSION)
+    );
 
     assert_eq!(
         validate_protocol_hello(&[3, 7]),
@@ -2399,7 +2712,7 @@ fn protocol_hello_validation_literals() {
         ("old_full_window_v4_peer", &[3, 4]),
         ("old_selector_v5_peer", &[3, 5]),
         ("retired_owner_v10", &[3, 10]),
-        ("future_version", &[3, 12]),
+        ("future_version", &[3, 13]),
         ("zero_version", &[3, 0]),
         ("wrong_tag", &[2, 7]),
         ("empty", &[]),

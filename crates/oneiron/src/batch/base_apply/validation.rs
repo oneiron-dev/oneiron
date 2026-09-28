@@ -111,6 +111,11 @@ pub(super) fn validate_put_type(
     } else {
         store.validate_public_entity_type(entity_type)?;
     }
+    // A local write to a thin-cached id waits for its window's promotion.
+    #[cfg(feature = "sync")]
+    if !(allow_maintenance && allow_reserved_predicate) {
+        crate::sync::residence::require_promoted_for_cached_id(store, wtxn, id)?;
+    }
     Ok(entity_type)
 }
 
