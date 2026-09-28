@@ -25,7 +25,7 @@ use std::sync::Arc;
 use crate::sync_harness::make_entity_blob;
 use loro::{ExportMode, LoroDoc, LoroMap, LoroValue, ValueOrContainer, VersionVector};
 use oneiron::sync::bridge::Materializer;
-use oneiron::sync::client::{SyncClient, SyncClientConfig, SyncEvent};
+use oneiron::sync::client::{SyncClient, SyncClientConfig, SyncEvent, SyncResidenceMode};
 use oneiron::sync::manager::WindowManager;
 use oneiron::sync::queue::SyncQueue;
 use oneiron::sync::schema::{add_window_to_root, create_root_doc, create_window_doc};
@@ -61,7 +61,14 @@ fn make_manager(vault: &Arc<Vault>) -> Arc<WindowManager> {
 }
 
 fn make_client(manager: &Arc<WindowManager>) -> (SyncClient, UnboundedReceiver<SyncEvent>) {
-    SyncClient::new(Arc::clone(manager), SyncClientConfig::default()).unwrap()
+    SyncClient::new(
+        Arc::clone(manager),
+        SyncClientConfig {
+            residence_mode: SyncResidenceMode::All,
+            ..Default::default()
+        },
+    )
+    .unwrap()
 }
 
 fn map_get_bytes(map: &LoroMap, key: &str) -> Option<Vec<u8>> {

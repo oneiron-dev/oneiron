@@ -221,6 +221,17 @@ async fn connect_root(
     server: &SyncServer,
     secret: &str,
 ) -> Result<WsStream, tokio_tungstenite::tungstenite::Error> {
+    let mut ws = connect_root_without_hello(addr, server, secret).await?;
+    send_protocol_hello(&mut ws).await?;
+    Ok(ws)
+}
+
+/// Host-root upgrade with no protocol hello, for tests that pick their own.
+async fn connect_root_without_hello(
+    addr: SocketAddr,
+    server: &SyncServer,
+    secret: &str,
+) -> Result<WsStream, tokio_tungstenite::tungstenite::Error> {
     let mut request = format!("ws://{addr}/ws").into_client_request().unwrap();
     let headers = root_auth_headers(server, secret);
     for line in headers.lines() {
@@ -232,8 +243,7 @@ async fn connect_root(
             value.parse().unwrap(),
         );
     }
-    let (mut ws, _response) = tokio_tungstenite::connect_async(request).await?;
-    send_protocol_hello(&mut ws).await?;
+    let (ws, _response) = tokio_tungstenite::connect_async(request).await?;
     Ok(ws)
 }
 
@@ -250,6 +260,35 @@ async fn send_protocol_hello(
     .await
 }
 
+/// Current owner protocol requires an explicit per-window VV subscription.
+/// These fixtures intentionally test broadcast delivery, not legacy v6.
+async fn subscribe_owner_window(ws: &mut WsStream, key: &str) {
+    send_window_vv_request(ws, key).await;
+    drain_vv_request_responses(ws, key).await;
+    // The first request also announces its new key in the root manifest.
+    let root = next_binary(ws).await;
+    assert_eq!(root[0], TAG_SYNC_UPDATE);
+}
+
+async fn connect_subscribed_owner(
+    addr: SocketAddr,
+    server: &SyncServer,
+    secret: &str,
+    key: &str,
+) -> WsStream {
+    let mut ws = connect_root_without_hello(addr, server, secret)
+        .await
+        .unwrap();
+    ws.send(Message::Binary(
+        transport::encode_chunk_full_window_protocol_hello().into(),
+    ))
+    .await
+    .unwrap();
+    assert_eq!(next_binary(&mut ws).await[0], TAG_SYNC_UPDATE);
+    subscribe_owner_window(&mut ws, key).await;
+    ws
+}
+
 async fn next_binary(ws: &mut WsStream) -> Vec<u8> {
     loop {
         let msg = tokio::time::timeout(Duration::from_secs(10), ws.next())
@@ -261,6 +300,19 @@ async fn next_binary(ws: &mut WsStream) -> Vec<u8> {
             Message::Binary(data) => return data.to_vec(),
             Message::Ping(_) | Message::Pong(_) => continue,
             other => panic!("unexpected WebSocket message: {other:?}"),
+        }
+    }
+}
+
+/// A first window touch also advertises its new root-index entry. Legacy
+/// window assertions drain that distinct root notice before the update.
+async fn next_window_frame(ws: &mut WsStream) -> Vec<u8> {
+    loop {
+        let frame = next_binary(ws).await;
+        match frame.first().copied() {
+            Some(TAG_SYNC_UPDATE) => continue,
+            Some(TAG_WINDOW_SYNC) => return frame,
+            _ => panic!("unexpected frame while waiting for window sync"),
         }
     }
 }
@@ -463,8 +515,7 @@ async fn send_window_vv_request(ws: &mut WsStream, key: &str) {
 
 async fn drain_vv_request_responses(ws: &mut WsStream, expected_key: &str) {
     for _ in 0..2 {
-        let frame = next_binary(ws).await;
-        assert_eq!(frame[0], TAG_WINDOW_SYNC);
+        let frame = next_window_frame(ws).await;
         let (window_key, _sub_tag, _payload) = transport::decode_window_sync(&frame[1..]).unwrap();
         assert_eq!(window_key, expected_key);
     }
@@ -882,8 +933,7 @@ async fn revoked_token_stops_serving_its_already_open_socket() {
     // Both are drained here, so the post-revocation assertion below cannot
     // pass on a frame that was merely still in flight from the baseline.
     for expected_sub_tag in [window_sub_tags::UPDATE, window_sub_tags::VV_RESPONSE] {
-        let served = next_binary(&mut ws).await;
-        assert_eq!(served[0], TAG_WINDOW_SYNC);
+        let served = next_window_frame(&mut ws).await;
         let (_key, sub_tag, _payload) = transport::decode_window_sync(&served[1..]).unwrap();
         assert_eq!(
             sub_tag, expected_sub_tag,
@@ -891,6 +941,11 @@ async fn revoked_token_stops_serving_its_already_open_socket() {
         );
     }
 
+    // A first window touch also publishes a root-index delta. The direct
+    // catch-up is deliberately sent first; drain that pre-revocation delta
+    // before asserting the socket serves nothing after revocation.
+    let index_notice = next_binary(&mut ws).await;
+    assert_eq!(index_notice[0], TAG_SYNC_UPDATE);
     // The operator revokes THIS token while the socket stays open.
     revoke_owner_slip(&server, "live-revoke-secret", &jti);
 
@@ -925,11 +980,18 @@ async fn revoked_token_stops_broadcast_fan_out_to_its_open_socket() {
 
     // A holds the token that gets revoked; B holds the trust root and stays
     // live, so it keeps authoring the updates A must stop receiving.
-    let mut client_a = connect_bound(addr, &revoked_token, true).await.unwrap();
+    let mut client_a = connect_bound(addr, &revoked_token, false).await.unwrap();
+    client_a
+        .send(Message::Binary(
+            transport::encode_chunk_full_window_protocol_hello().into(),
+        ))
+        .await
+        .unwrap();
     let mut client_b = connect_root(addr, &server, "fanout-revoke-secret")
         .await
         .unwrap();
     let _ = next_binary(&mut client_a).await;
+    subscribe_owner_window(&mut client_a, "2026-02").await;
     let _ = next_binary(&mut client_b).await;
 
     let author = LoroDoc::new();
@@ -947,7 +1009,7 @@ async fn revoked_token_stops_broadcast_fan_out_to_its_open_socket() {
         .unwrap();
 
     // Baseline: A is on the fan-out path before the revocation.
-    let relayed = next_binary(&mut client_a).await;
+    let relayed = next_window_frame(&mut client_a).await;
     assert_eq!(
         relayed[0], TAG_WINDOW_SYNC,
         "A receives relayed updates while its token is live"
@@ -2110,9 +2172,8 @@ async fn ephemeral_frames_coexist_with_window_sync_updates() {
     .await;
 
     let mut client_a = connect_root(addr, &server, "coexist-secret").await.unwrap();
-    let mut client_b = connect_root(addr, &server, "coexist-secret").await.unwrap();
+    let mut client_b = connect_subscribed_owner(addr, &server, "coexist-secret", "2026-02").await;
     let _ = next_binary(&mut client_a).await; // root snapshot
-    let _ = next_binary(&mut client_b).await; // root snapshot
 
     client_a
         .send(Message::Binary(
@@ -2138,13 +2199,144 @@ async fn ephemeral_frames_coexist_with_window_sync_updates() {
         .await
         .unwrap();
 
-    let relayed = next_binary(&mut client_b).await;
-    assert_eq!(relayed[0], TAG_WINDOW_SYNC);
+    let relayed = next_window_frame(&mut client_b).await;
     let (key, sub_tag, payload) = transport::decode_window_sync(&relayed[1..]).unwrap();
     assert_eq!(key, "2026-02");
     assert_eq!(sub_tag, window_sub_tags::UPDATE);
     assert_eq!(payload, update.as_slice());
 
+    handle.abort();
+}
+
+#[tokio::test]
+async fn fresh_home_root_advertises_unopened_world_and_historical_base() {
+    let dir = tempfile::tempdir().unwrap();
+    let vault = open_vault(dir.path());
+    let world = seeded_entity(0x91);
+    let person = seeded_entity(0x92);
+    let claim = seeded_entity(0x93);
+    let older = 1_763_000_000;
+    let learned = 1_771_027_200;
+    vault
+        .put_entity(
+            &person,
+            oneiron::registry::ENTITY_TYPE_PERSON,
+            test_range(older),
+            older,
+            b"person",
+        )
+        .unwrap();
+    vault
+        .put_entity(
+            &world,
+            oneiron::registry::ENTITY_TYPE_WORLD,
+            test_range(learned),
+            learned,
+            b"world",
+        )
+        .unwrap();
+    let mut body = oneiron::ClaimBody::new(
+        "test.world_discovery",
+        oneiron::ClaimSubject::Entity(person),
+        rmpv::Value::from("fact"),
+        1.0,
+        oneiron::ClaimApprovalStatus::Proposed,
+        oneiron::ClaimLifecycleStatus::Active,
+    );
+    body.world = Some(world);
+    vault
+        .put_claim(&claim, &body, test_range(learned), learned)
+        .unwrap();
+    let world_key = oneiron::sync::WindowKey::for_world(learned, world);
+    assert!(
+        vault
+            .sync_state_get(&format!("d:w:{world_key}"))
+            .unwrap()
+            .is_none()
+    );
+    let (addr, server, handle) =
+        spawn_server(vault, config_with_secret(Some("world-root-secret"))).await;
+    let mut client = connect_root(addr, &server, "world-root-secret")
+        .await
+        .unwrap();
+    let root = next_binary(&mut client).await;
+    assert_eq!(root[0], TAG_SYNC_UPDATE);
+    let doc = LoroDoc::from_snapshot(&root[1..]).unwrap();
+    let keys = oneiron::sync::schema::read_window_list(&doc);
+    assert!(keys.contains(&world_key));
+    assert!(keys.contains(&oneiron::sync::WindowKey::from_timestamp(older)));
+    handle.abort();
+}
+
+#[tokio::test]
+async fn subscribed_window_catchup_prefix_precedes_concurrent_live_delta() {
+    let dir = tempfile::tempdir().unwrap();
+    let vault = open_vault(dir.path());
+    let (addr, server, handle) =
+        spawn_server(vault.clone(), config_with_secret(Some("causal-secret"))).await;
+    let mut writer = connect_root_without_hello(addr, &server, "causal-secret")
+        .await
+        .unwrap();
+    writer
+        .send(Message::Binary(
+            transport::encode_chunk_full_window_protocol_hello().into(),
+        ))
+        .await
+        .unwrap();
+    let _ = next_binary(&mut writer).await; // root
+    let author = LoroDoc::new();
+    author
+        .get_map("entities")
+        .insert("prefix", b"before".as_slice())
+        .unwrap();
+    author.commit();
+    let prefix = author.export(ExportMode::all_updates()).unwrap();
+    writer
+        .send(Message::Binary(
+            transport::encode_window_sync("2026-02", window_sub_tags::UPDATE, &prefix).into(),
+        ))
+        .await
+        .unwrap();
+    wait_for_sync_state_key(&vault, "u:w:2026-02:00000001").await;
+    let mut follower = connect_root_without_hello(addr, &server, "causal-secret")
+        .await
+        .unwrap();
+    follower
+        .send(Message::Binary(
+            transport::encode_chunk_full_window_protocol_hello().into(),
+        ))
+        .await
+        .unwrap();
+    let _ = next_binary(&mut follower).await; // root with the known window
+    send_window_vv_request(&mut follower, "2026-02").await;
+    let first = next_window_frame(&mut follower).await;
+    let (_, first_tag, first_bytes) = transport::decode_window_sync(&first[1..]).unwrap();
+    assert_eq!(first_tag, window_sub_tags::UPDATE);
+    let received = LoroDoc::new();
+    assert!(received.import(first_bytes).unwrap().pending.is_none());
+    // The catch-up VV response was queued before subscription. A live update
+    // arriving now must not overtake it on the single socket.
+    let before = author.oplog_vv();
+    author
+        .get_map("entities")
+        .insert("later", b"after".as_slice())
+        .unwrap();
+    author.commit();
+    let later = author.export(ExportMode::updates(&before)).unwrap();
+    writer
+        .send(Message::Binary(
+            transport::encode_window_sync("2026-02", window_sub_tags::UPDATE, &later).into(),
+        ))
+        .await
+        .unwrap();
+    let response = next_window_frame(&mut follower).await;
+    let (_, tag, _) = transport::decode_window_sync(&response[1..]).unwrap();
+    assert_eq!(tag, window_sub_tags::VV_RESPONSE);
+    let live = next_window_frame(&mut follower).await;
+    let (_, tag, bytes) = transport::decode_window_sync(&live[1..]).unwrap();
+    assert_eq!(tag, window_sub_tags::UPDATE);
+    assert!(received.import(bytes).unwrap().pending.is_none());
+    assert!(received.get_map("entities").get("later").is_some());
     handle.abort();
 }
 
@@ -2156,11 +2348,10 @@ async fn imported_update_relays_to_second_client_and_persists_contract_keys() {
         spawn_server(vault.clone(), config_with_secret(Some("relay-secret"))).await;
 
     let mut client_a = connect_root(addr, &server, "relay-secret").await.unwrap();
-    let mut client_b = connect_root(addr, &server, "relay-secret").await.unwrap();
+    let mut client_b = connect_subscribed_owner(addr, &server, "relay-secret", "2026-02").await;
     // Drain the Phase-1 root snapshot on both connections; once B has its
     // snapshot, B's broadcast subscription is live.
     let _ = next_binary(&mut client_a).await;
-    let _ = next_binary(&mut client_b).await;
 
     // Author an update in a local Loro doc.
     let author = LoroDoc::new();
@@ -2175,7 +2366,7 @@ async fn imported_update_relays_to_second_client_and_persists_contract_keys() {
     client_a.send(Message::Binary(msg.into())).await.unwrap();
 
     // B receives the relayed WindowSync UPDATE with the exact payload.
-    let relayed = next_binary(&mut client_b).await;
+    let relayed = next_window_frame(&mut client_b).await;
     assert_eq!(relayed[0], TAG_WINDOW_SYNC);
     let (key, sub_tag, payload) = transport::decode_window_sync(&relayed[1..]).unwrap();
     assert_eq!(key, "2026-02");
@@ -2277,9 +2468,10 @@ async fn relayed_update_and_tombstone_survive_server_restart() {
     let (mut sync_client, _events) =
         SyncClient::new(open_manager(client_vault), SyncClientConfig::default()).unwrap();
     sync_client.handle_server_message(&root_msg).unwrap();
-    assert_eq!(
-        sync_client.server_windows(),
-        vec!["2026-02".to_string()],
+    assert!(
+        sync_client
+            .server_windows()
+            .contains(&"2026-02".to_string()),
         "restarted server must still announce the persisted window in meta.windows"
     );
 
@@ -2534,6 +2726,7 @@ async fn run_sync_connection_once(
             server_url,
             auth_token: auth_token.to_string(),
             transport_credential,
+            residence_mode: oneiron::sync::SyncResidenceMode::All,
             ..Default::default()
         },
         auto_reconnect: false,
@@ -2615,11 +2808,9 @@ async fn diagnostic_update_is_refused_before_live_state_persistence_and_relay() 
     let mut sender = connect_root(addr, &server, "diagnostic-secret")
         .await
         .unwrap();
-    let mut receiver = connect_root(addr, &server, "diagnostic-secret")
-        .await
-        .unwrap();
+    let mut receiver =
+        connect_subscribed_owner(addr, &server, "diagnostic-secret", "2026-02").await;
     let _ = next_binary(&mut sender).await;
-    let _ = next_binary(&mut receiver).await;
 
     let author = LoroDoc::new();
     author
@@ -2630,7 +2821,7 @@ async fn diagnostic_update_is_refused_before_live_state_persistence_and_relay() 
     let ordinary = author.export(ExportMode::all_updates()).unwrap();
     let frame = transport::encode_window_sync("2026-02", window_sub_tags::UPDATE, &ordinary);
     sender.send(Message::Binary(frame.into())).await.unwrap();
-    let relayed = next_binary(&mut receiver).await;
+    let relayed = next_window_frame(&mut receiver).await;
     let (_, _, payload) = transport::decode_window_sync(&relayed[1..]).unwrap();
     assert_eq!(payload, ordinary.as_slice());
     let before = author.oplog_vv();

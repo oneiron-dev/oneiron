@@ -8,7 +8,9 @@ use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::llm::{BudgetExhaustionPolicy, BudgetPolicySelector, BudgetPolicyTable};
 
-use super::manifest_types::{PolicyManifestDiagnostics, PolicyManifestResolution};
+use super::manifest_types::{
+    PolicyManifestDiagnostics, PolicyManifestResolution, ResidenceOperationBudgetLimits,
+};
 use crate::gate::ask_policy::AskPolicySurface;
 use crate::gate::ceiling::{
     DelegationGrantRecord, PolicyApprovalCeiling, PolicyAxes, PolicyCriticality,
@@ -324,6 +326,17 @@ pub(super) fn hash_policy_frontier_v0(
             hash_bytes(hasher, &row.floors.care.to_bits().to_be_bytes());
         }
     }
+    if let Some(default_all) = resolution.sync_world_default {
+        hash_str(hasher, "sync_world_default");
+        hash_bool(hasher, default_all);
+    }
+    if let Some(worlds) = &resolution.sync_world_ceiling {
+        hash_str(hasher, "sync_world_ceiling");
+        hash_len(hasher, worlds.len());
+        for world in worlds {
+            hash_bytes(hasher, world.as_bytes());
+        }
+    }
     if let Some(bounds) = resolution.diagnostic_bounds {
         hash_str(hasher, "diagnostic_bounds");
         hash_u64(hasher, bounds.window_secs);
@@ -365,6 +378,26 @@ pub(super) fn hash_policy_frontier_v0(
                 crate::gate::policy_values::WhySource::Drafted => "drafted",
             }),
         );
+    }
+
+    // Residence operation limits are resolved restrictive caps. Hash the
+    // effective vault/holder intersection, not raw manifest representation:
+    // absent holder maps inherit vault limits, and equivalent nested policies
+    // must produce the same read frontier. The shipped defaults change no
+    // decision and keep the established frontier bytes.
+    let residence = resolution.residence_operation_budgets;
+    if residence != ResidenceOperationBudgetLimits::default() {
+        hash_str(hasher, "residence_operation_budgets");
+        hash_u64(hasher, residence.rpc_timeout_ms);
+        hash_len(hasher, residence.index_page_limit);
+        hash_len(hasher, residence.max_index_pages);
+        hash_len(hasher, residence.current_window_count);
+        hash_len(hasher, residence.title_max_chars);
+        hash_len(hasher, residence.search_limit);
+        hash_len(hasher, residence.search_query_max_bytes);
+        hash_len(hasher, residence.offline_candidate_multiplier);
+        hash_u64(hasher, residence.ack_timeout_ms);
+        hash_len(hasher, residence.index_cache_bytes);
     }
 
     // An absent row and the shipped 4096 vault row have identical effective

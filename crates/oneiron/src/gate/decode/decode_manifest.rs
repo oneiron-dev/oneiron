@@ -34,8 +34,8 @@ use crate::gate::constants::{
     POLICY_RULES_KEY, POLICY_SCHEMA_VERSION, POLICY_SCHEMA_VERSION_KEY, POLICY_SCOPED_GRANTS_KEY,
     POLICY_SHEET_ANSWER_LIMITS_KEY, POLICY_SHEET_ANSWER_PRECEDENCE_KEY, POLICY_SIGNATURE_KEY,
     POLICY_SIGNATURES_KEY, POLICY_SKILL_EDIT_GOAL_KEY, POLICY_SLIDE_REVIEW_KEY,
-    POLICY_SOURCE_TRUST_KEY, POLICY_TEACHER_PROBE_KEY, POLICY_WAIT_POLICY_KEY,
-    POLICY_WEAVE_CORRECTION_POLICY_KEY,
+    POLICY_SOURCE_TRUST_KEY, POLICY_SYNC_WORLD_CEILING_KEY, POLICY_SYNC_WORLD_DEFAULT_KEY,
+    POLICY_TEACHER_PROBE_KEY, POLICY_WAIT_POLICY_KEY, POLICY_WEAVE_CORRECTION_POLICY_KEY,
 };
 use crate::gate::docedit_resource::DoceditResourcePolicy;
 use crate::gate::grants::PolicyScopedGrant;
@@ -49,7 +49,8 @@ use crate::gate::policy_values::{PolicyValueRow, parse_policy_values};
 use crate::gate::project_conversion::{ProjectConversionPolicy, parse_project_conversion};
 use crate::gate::resolution::{
     AttributionLimits, ConnectorClassPrecedence, CredentialLifetimePolicy,
-    CredentialLifetimePrecedence, GateDecisionRetentionPolicy, TeacherProbeRow,
+    CredentialLifetimePrecedence, GateDecisionRetentionPolicy, ResidenceOperationBudgetRow,
+    TeacherProbeRow,
 };
 use crate::gate::retrieval_retention::{
     RETRIEVAL_RETENTION_ROWS_KEY, RetrievalRetentionRows, parse_retrieval_retention_rows,
@@ -73,6 +74,7 @@ use super::decode_trust_budget::{
     parse_budget_exhaustion_policy, parse_budget_policy, parse_gate_decision_retention,
     parse_source_trust,
 };
+use super::parse_residence_operation_budgets;
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub(in crate::gate) enum ConnectorClassRole {
@@ -137,6 +139,7 @@ pub(in crate::gate) struct DecodedPolicyManifest {
 
     pub(in crate::gate) diagnostic_bounds: Option<crate::self_heal::tripwires::TripwireBounds>,
     pub(in crate::gate) failure_signal_policy: Vec<crate::failure_signals::policy::Row>,
+    pub(in crate::gate) residence_operation_budgets: Option<ResidenceOperationBudgetRow>,
     pub(in crate::gate) livequery_tracker_limits:
         Option<crate::gate::tracker_limits::PolicyTrackerLimits>,
     pub(in crate::gate) retrieval_retention: Option<RetrievalRetentionRows>,
@@ -162,6 +165,8 @@ pub(in crate::gate) struct DecodedPolicyManifest {
     pub(in crate::gate) judge_calibration:
         Option<crate::skill_optimize::policy::JudgeCalibrationPolicy>,
     pub(in crate::gate) credential_lifetimes: Option<CredentialLifetimePolicy>,
+    pub(in crate::gate) sync_world_ceiling: Option<std::collections::BTreeSet<crate::EntityId>>,
+    pub(in crate::gate) sync_world_default: Option<bool>,
     pub(in crate::gate) unsupported_schema: bool,
     pub(in crate::gate) engine_version_floor: bool,
     pub(in crate::gate) unknown_axis_seen: bool,
@@ -265,6 +270,7 @@ pub(in crate::gate) fn decode_policy_manifest(data: &[u8]) -> Option<DecodedPoli
                 | "livequery_tracker_limits"
                 | crate::gate::weave_policy::KEY
                 | crate::gate::weave_policy::PRECEDENCE_KEY
+                | super::POLICY_RESIDENCE_OPERATION_BUDGETS_KEY
                 | RETRIEVAL_RETENTION_ROWS_KEY
                 | "goal_limits"
                 | "voice_ref_limits"
@@ -283,6 +289,8 @@ pub(in crate::gate) fn decode_policy_manifest(data: &[u8]) -> Option<DecodedPoli
                 | "experiment_selection"
                 | crate::gate::carry_forward_policy::KEY
                 | crate::skill_optimize::policy::MANIFEST_KEY
+                | POLICY_SYNC_WORLD_CEILING_KEY
+                | POLICY_SYNC_WORLD_DEFAULT_KEY
         ) {
             return None;
         }
@@ -613,6 +621,13 @@ pub(in crate::gate) fn decode_policy_manifest(data: &[u8]) -> Option<DecodedPoli
     };
 
     let (project_depth_default, project_depth_max) = parse_project_depth_rows(&entries)?;
+    let residence_operation_budgets =
+        match single_map_value(&entries, super::POLICY_RESIDENCE_OPERATION_BUDGETS_KEY) {
+            MapValue::Missing => None,
+            MapValue::Duplicate => return None,
+            MapValue::Present(value) => Some(parse_residence_operation_budgets(value)?),
+        };
+
     let failure_signal_policy =
         match single_map_value(&entries, crate::failure_signals::policy::POLICY_KEY) {
             MapValue::Missing => Vec::new(),
@@ -768,6 +783,33 @@ pub(in crate::gate) fn decode_policy_manifest(data: &[u8]) -> Option<DecodedPoli
             }
         };
 
+    let sync_world_ceiling = match single_map_value(&entries, POLICY_SYNC_WORLD_CEILING_KEY) {
+        MapValue::Missing => None,
+        MapValue::Duplicate => return None,
+        MapValue::Present(Value::Array(worlds)) => {
+            let mut ids = std::collections::BTreeSet::new();
+            for value in worlds {
+                let Value::Binary(bytes) = value else {
+                    return None;
+                };
+                let id = crate::EntityId::from_bytes(bytes.as_slice().try_into().ok()?).ok()?;
+                if !ids.insert(id) {
+                    return None;
+                }
+            }
+            Some(ids)
+        }
+        MapValue::Present(_) => return None,
+    };
+
+    let sync_world_default = match single_map_value(&entries, POLICY_SYNC_WORLD_DEFAULT_KEY) {
+        MapValue::Missing => None,
+        MapValue::Duplicate => return None,
+        MapValue::Present(Value::String(mode)) if mode.as_str() == Some("opened") => Some(false),
+        MapValue::Present(Value::String(mode)) if mode.as_str() == Some("all") => Some(true),
+        MapValue::Present(_) => return None,
+    };
+
     let unknown_axis_seen =
         defaults.unknown_axis_seen || rules.iter().any(|rule| rule.axes.unknown_axis_seen);
 
@@ -827,6 +869,7 @@ pub(in crate::gate) fn decode_policy_manifest(data: &[u8]) -> Option<DecodedPoli
         docx_archive_limits,
         diagnostic_bounds,
         failure_signal_policy,
+        residence_operation_budgets,
         livequery_tracker_limits,
         retrieval_retention,
         goal_limits,
@@ -847,6 +890,8 @@ pub(in crate::gate) fn decode_policy_manifest(data: &[u8]) -> Option<DecodedPoli
         carry_forward_confidence,
         judge_calibration,
         credential_lifetimes,
+        sync_world_ceiling,
+        sync_world_default,
         unsupported_schema,
         engine_version_floor,
         unknown_axis_seen,
