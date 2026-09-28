@@ -113,14 +113,14 @@ fn resident_revisits_identical_inbox_event_after_project_depth_edit() -> Result<
         .get_seeded_agent_definition_by_logical_id("sys.team_lead")?
         .unwrap();
     let inbox = EntityId::now();
-    let mut identity = crate::channel_identity::ChannelIdentity::requested(
+    let identity = crate::test_util::self_held_identity_in_state(
         "email",
         "resident@example.test",
         crate::channel_identity::SelfHeldShape::DedicatedAddress,
         crate::channel_identity::ChannelIdentityBinding::agent(agent),
+        crate::channel_identity::ChannelIdentityState::Active,
         1,
     );
-    identity.state = crate::channel_identity::ChannelIdentityState::Active;
     vault.create_channel_identity(&inbox, &identity)?;
     let room = EntityId::now();
     let node = EntityId::now();
