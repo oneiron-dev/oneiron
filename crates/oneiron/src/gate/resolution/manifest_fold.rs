@@ -366,6 +366,13 @@ pub(crate) fn resolve_policy_manifest(
                         *target = Some(confidence);
                     }
                 }
+                if let Some(policy) = decoded.judge_calibration {
+                    resolution.judge_calibration = Some(
+                        resolution
+                            .judge_calibration
+                            .map_or(policy, |old| old.restrict(policy)),
+                    );
+                }
                 resolution.packs.push(decoded.pack);
             }
             None => {

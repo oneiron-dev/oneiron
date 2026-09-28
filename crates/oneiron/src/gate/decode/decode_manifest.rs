@@ -121,6 +121,8 @@ pub(in crate::gate) struct DecodedPolicyManifest {
     pub(in crate::gate) experiment_selection: Vec<SelectionPolicyRow>,
     pub(in crate::gate) carry_forward_confidence:
         Option<crate::gate::carry_forward_policy::CarryForwardPolicy>,
+    pub(in crate::gate) judge_calibration:
+        Option<crate::skill_optimize::policy::JudgeCalibrationPolicy>,
     pub(in crate::gate) unsupported_schema: bool,
     pub(in crate::gate) engine_version_floor: bool,
     pub(in crate::gate) unknown_axis_seen: bool,
@@ -195,6 +197,7 @@ pub(in crate::gate) fn decode_policy_manifest(data: &[u8]) -> Option<DecodedPoli
                 | POLICY_TEACHER_PROBE_KEY
                 | "experiment_selection"
                 | crate::gate::carry_forward_policy::KEY
+                | crate::skill_optimize::policy::MANIFEST_KEY
         ) {
             return None;
         }
@@ -541,6 +544,15 @@ pub(in crate::gate) fn decode_policy_manifest(data: &[u8]) -> Option<DecodedPoli
                 Some(crate::gate::carry_forward_policy::CarryForwardPolicy::parse(value)?)
             }
         };
+    let judge_calibration =
+        match single_map_value(&entries, crate::skill_optimize::policy::MANIFEST_KEY) {
+            MapValue::Missing => None,
+            MapValue::Duplicate => return None,
+            MapValue::Present(value) => {
+                Some(crate::skill_optimize::policy::JudgeCalibrationPolicy::decode(value)?)
+            }
+        };
+
     let unknown_axis_seen =
         defaults.unknown_axis_seen || rules.iter().any(|rule| rule.axes.unknown_axis_seen);
 
@@ -598,6 +610,7 @@ pub(in crate::gate) fn decode_policy_manifest(data: &[u8]) -> Option<DecodedPoli
         teacher_probe,
         experiment_selection,
         carry_forward_confidence,
+        judge_calibration,
         unsupported_schema,
         engine_version_floor,
         unknown_axis_seen,
