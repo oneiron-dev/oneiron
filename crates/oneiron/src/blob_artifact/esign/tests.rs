@@ -1945,14 +1945,14 @@ fn transition_mail_is_staged_then_denied_held_retried_and_allowed_via_outbound_g
         &rmp_serde::to_vec_named(&manifest).unwrap(),
     )?;
     let put_sender = |sender_id: EntityId| {
-        let mut identity = crate::channel_identity::ChannelIdentity::requested(
+        let identity = crate::test_util::self_held_identity_in_state(
             "email",
-            format!("sender-{}@example.com", sender_id.to_hex()),
+            &format!("sender-{}@example.com", sender_id.to_hex()),
             crate::channel_identity::SelfHeldShape::DedicatedAddress,
             crate::channel_identity::ChannelIdentityBinding::actor(sender),
+            crate::channel_identity::ChannelIdentityState::Active,
             1_000,
         );
-        identity.state = crate::channel_identity::ChannelIdentityState::Active;
         vault.create_channel_identity(&sender_id, &identity)
     };
     let original_sender = EntityId::now();

@@ -176,6 +176,9 @@ pub enum SandboxImportClass {
     Determinism,
     DurableWait,
     WriteTrap,
+    /// Agent-definition authoring is an audited, lease-bound configuration
+    /// write, not one of the four memory write traps.
+    AgentAuthoring,
     /// The `self.speak` family (ONE-1686): an explicit host effect that emits
     /// one durable MESSAGE bubble through the run's bound witness route.
     ///
@@ -189,7 +192,7 @@ pub enum SandboxImportClass {
 impl SandboxImportClass {
     #[must_use]
     pub const fn is_write(self) -> bool {
-        matches!(self, Self::WriteTrap)
+        matches!(self, Self::WriteTrap | Self::AgentAuthoring)
     }
 }
 
@@ -250,6 +253,9 @@ const CLOCK_NOW_UNIX_MS_IMPORT: SandboxLinkedImport =
 const RANDOM_BYTES_IMPORT: SandboxLinkedImport =
     SandboxLinkedImport::new("oneiron.random.bytes", SandboxImportClass::Determinism);
 
+const VAULT_AGENTS_PUT_IMPORT: SandboxLinkedImport =
+    SandboxLinkedImport::new("vault.agents.put", SandboxImportClass::AgentAuthoring);
+
 const SELF_JSON_VALIDATE_IMPORT: SandboxLinkedImport =
     SandboxLinkedImport::new("self.json.validate", SandboxImportClass::ReadOnly);
 
@@ -292,6 +298,7 @@ const FIRST_PARTY_IMPORTS: &[SandboxLinkedImport] = &[
     CREDENTIAL_CALL_IMPORT,
     CLOCK_NOW_UNIX_MS_IMPORT,
     RANDOM_BYTES_IMPORT,
+    VAULT_AGENTS_PUT_IMPORT,
     SELF_JSON_VALIDATE_IMPORT,
     SELF_MEMORY_SEARCH_IMPORT,
     SELF_MEMORY_PUT_CLAIM_IMPORT,

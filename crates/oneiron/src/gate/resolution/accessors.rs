@@ -15,6 +15,8 @@ use super::manifest_types::{
     AttributionLimits, CommOptOutPosture, PolicyManifestDiagnostics, PolicyManifestResolution,
     SheetAnswerPrecedence,
 };
+use crate::gate::class_policy::{ActPosture, WaitResolution};
+
 use crate::gate::ceiling::{
     PolicyAxes, PolicyCriticality, PolicyOwnerPatternRow, PolicyOwnerPolicyRow, PolicySensitivity,
     PolicySignature,
@@ -448,6 +450,33 @@ impl PolicyManifestResolution {
             ));
         }
         crate::gate::voice_serving::resolve(&self.voice_serving, holder)
+    }
+
+    /// The resolved wait window, or a fail-closed contradiction.
+    #[must_use]
+    pub(crate) fn resolved_wait(
+        &self,
+        wait_class: &str,
+        holder: Option<EntityId>,
+    ) -> WaitResolution {
+        if self.diagnostics.loaded_manifest_forces_fail_closed() {
+            return WaitResolution::Contradictory;
+        }
+        self.wait_policy.resolve(wait_class, holder)
+    }
+
+    /// The resolved act posture, fail-closed on an unreadable manifest.
+    #[must_use]
+    pub(crate) fn resolved_act_posture(
+        &self,
+        act_class: &str,
+        subject_class: &str,
+        holder: Option<EntityId>,
+    ) -> Option<ActPosture> {
+        if self.diagnostics.loaded_manifest_forces_fail_closed() {
+            return Some(ActPosture::Deny);
+        }
+        self.act_policy.resolve(act_class, subject_class, holder)
     }
 
     /// Effective trusted per-vault limits. Malformed loaded policy refuses
