@@ -90,8 +90,9 @@ pub const LEASE_STATUS_REJECTED: u8 = 0x00;
 pub const PROTOCOL_VERSION: u8 = 9;
 /// Content-addressed chunk negotiation, outside the Loro op stream.
 pub const TAG_LFS_CHUNK_SYNC: u8 = 22;
-/// Full-window owner lane with document and chunk sync, distinct from selector v9.
-pub const CHUNK_FULL_WINDOW_PROTOCOL_VERSION: u8 = 10;
+/// Full-window owner lane with world-month keys and subscribed broadcasts.
+/// v11 rejects v10's month-only decoder at hello; selector v9 stays distinct.
+pub const CHUNK_FULL_WINDOW_PROTOCOL_VERSION: u8 = 11;
 /// Sync version that introduces app-tier tags and their close codes.
 pub const APP_TIER_PROTOCOL_VERSION_VERSION: u8 = 8;
 /// Selector-capable sync-only peers retain the v7 wire semantics.
@@ -144,8 +145,8 @@ pub mod window_sub_tags {
     pub const SELECTOR_RETRY: u8 = 6;
 }
 
-/// Maximum window key length (YYYY-MM = 7 bytes).
-pub const MAX_WINDOW_KEY_LEN: usize = 7;
+/// Maximum key length (YYYY-MM@<32 lowercase world hex> = 40 bytes).
+pub const MAX_WINDOW_KEY_LEN: usize = 40;
 
 /// Encoded sync wire frame, preserving typed encoder failures.
 ///

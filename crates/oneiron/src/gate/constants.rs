@@ -223,3 +223,7 @@ pub(super) const POLICY_CONNECTOR_CLASS_ROLE_KEY: &str = "connector_class_role";
 pub(super) const POLICY_CONNECTOR_CLASS_PRECEDENCE_KEY: &str = "connector_class_precedence";
 /// Trusted policy rows for cross-vault ask limits, surface and retry cadence.
 pub(super) const POLICY_ASK_POLICY_KEY: &str = "ask_policy";
+
+/// Optional trusted manifest ceiling for device world-window subscriptions.
+pub(crate) const POLICY_SYNC_WORLD_CEILING_KEY: &str = "sync_world_ceiling";
+pub(crate) const POLICY_SYNC_WORLD_DEFAULT_KEY: &str = "sync_world_default";

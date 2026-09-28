@@ -262,7 +262,35 @@ impl Vault {
             gate.context
                 .decision_record(*request_uuid.as_bytes(), id, reason, requested_at)
         });
-        let window_label = window_label_from_timestamp(header.learned_at);
+        let mut window_label = window_label_from_timestamp(header.learned_at);
+        // Capture the world before soft erasure or hard purge removes the
+        // CLAIM body. The cfg-off pending marker and sync publication must
+        // address the same world-month document.
+        if header.entity_type == crate::registry::ENTITY_TYPE_CLAIM {
+            match self.get_raw_unsealed(id)? {
+                Some(raw) if raw.len() > crate::batch::ENTITY_METADATA_HEADER_LEN => {
+                    let body = crate::claim::decode_claim_body(
+                        &raw[crate::batch::ENTITY_METADATA_HEADER_LEN..],
+                        true,
+                    )?;
+                    if let Some(world) = body.world {
+                        window_label.push('@');
+                        window_label.push_str(&world.to_hex());
+                    }
+                }
+                _ => {
+                    // A repeated soft delete sees only a shell; a concurrent
+                    // purge can remove even that after the header probe.
+                    let txn = self.store.env.read_txn()?;
+                    window_label = super::super::timeline::deletion_window_label(
+                        &self.store,
+                        &txn,
+                        id,
+                        header.learned_at,
+                    )?;
+                }
+            }
+        }
 
         // ARCH-0038 DELETE interplay: an `edge.provenance` Claim's subject
         // EdgeRef and sweep refs are only readable PRE-purge (SoftErase
@@ -311,6 +339,13 @@ impl Vault {
                 )?;
             }
             if existed {
+                if window_label.contains('@') {
+                    self.store.sync_state.put(
+                        &mut wtxn,
+                        &format!("m:dw:{}", id.to_hex()),
+                        window_label.as_bytes(),
+                    )?;
+                }
                 if reason.publishes_crdt_tombstone() {
                     // OWNER-DECISION (cfg-off durability): the pending-tombstone
                     // marker rides the SAME txn as the shell scrub.
@@ -371,6 +406,7 @@ impl Vault {
                 let crdt_persisted = self.write_crdt_tombstone(
                     id,
                     header.learned_at,
+                    &window_label,
                     &tombstone,
                     None,
                     gate.as_ref(),
@@ -396,6 +432,7 @@ impl Vault {
         let crdt_persisted = self.write_crdt_tombstone(
             id,
             header.learned_at,
+            &window_label,
             &tombstone,
             gate_decision.as_ref(),
             gate.as_ref(),
@@ -523,6 +560,15 @@ impl Vault {
                 // `scrub_is_the_linearization_point` is `!authority_settled`, so
                 // there the flag is already `true` and stays untouched.
                 authority_settled = true;
+            }
+            if existed && window_label.contains('@') {
+                // The shell loses its world body in this commit. Preserve the
+                // address with the scrub, not in the later hard-purge txn.
+                self.store.sync_state.put(
+                    &mut wtxn,
+                    &format!("m:dw:{}", id.to_hex()),
+                    window_label.as_bytes(),
+                )?;
             }
             wtxn.commit()?;
             self.store.clock.now_recorded_at()
@@ -655,6 +701,13 @@ impl Vault {
         // shape (publishing arms, `user_hard_delete`, a scrub that found
         // nothing) reaches here with no marker on disk and writes the first one.
         self.put_pending_tombstone_in_txn(&mut wtxn, &window_label, id, &tombstone)?;
+        if window_label.contains('@') {
+            self.store.sync_state.put(
+                &mut wtxn,
+                &format!("m:dw:{}", id.to_hex()),
+                window_label.as_bytes(),
+            )?;
+        }
         self.append_deletion_gate_decision_in_purge_txn(
             &mut wtxn,
             crdt_persisted,

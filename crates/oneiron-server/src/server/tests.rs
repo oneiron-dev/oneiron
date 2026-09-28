@@ -68,11 +68,108 @@ fn deep_map_has_map(doc: &LoroDoc, map: &str, key: &str) -> bool {
     inner.get(key).and_then(LoroValue::as_map).is_some()
 }
 
+fn with_window(mut keys: Vec<WindowKey>, key: WindowKey) -> Vec<WindowKey> {
+    if !keys.contains(&key) {
+        keys.push(key);
+    }
+    keys.sort_by(|left, right| left.as_str().cmp(right.as_str()));
+    keys
+}
+
 #[test]
 fn window_key_for_known_timestamps() {
     assert_eq!(SyncServer::window_key_for_timestamp(1771027200), "2026-02");
     assert_eq!(SyncServer::window_key_for_timestamp(1764547200), "2025-12");
     assert_eq!(SyncServer::window_key_for_timestamp(0), "1970-01");
+}
+
+#[tokio::test]
+async fn world_window_creation_announces_root_index_after_persistence() {
+    let (_dir, vault) = test_vault();
+    let server = SyncServer::new(vault, SyncServerConfig::default()).unwrap();
+    let world = oneiron::EntityId::from_bytes([0x42; 16]).unwrap();
+    let key = WindowKey::for_world(1_771_027_200, world);
+    let replica = LoroDoc::from_snapshot(&server.export_root_snapshot().unwrap()).unwrap();
+    let before = read_window_list(&replica);
+    let mut updates = server.broadcast_tx.subscribe();
+    server.get_or_create_window(&key).await.unwrap();
+    let message = tokio::time::timeout(std::time::Duration::from_secs(5), updates.recv())
+        .await
+        .unwrap()
+        .unwrap();
+    let BroadcastPayload::Frame(0, frame) = message else {
+        panic!("expected root index notice");
+    };
+    assert_eq!(frame[0], crate::protocol::TAG_SYNC_UPDATE);
+    replica.import(&frame[1..]).unwrap();
+    assert_eq!(read_window_list(&replica), with_window(before, key.clone()));
+    assert!(server.vault.sync_state_get("d:root").unwrap().is_some());
+}
+
+#[test]
+fn fresh_server_root_indexes_unopened_world_claim_and_older_base_row() {
+    let (_dir, vault) = test_vault();
+    let world = oneiron::EntityId::now();
+    let claim = oneiron::EntityId::now();
+    let person = oneiron::EntityId::now();
+    let old_at = 1_763_000_000;
+    let world_at = 1_771_027_200;
+    vault
+        .put_entity(
+            &person,
+            oneiron::registry::ENTITY_TYPE_PERSON,
+            oneiron::TimeRange {
+                start: old_at,
+                end: old_at,
+            },
+            old_at,
+            b"person",
+        )
+        .unwrap();
+    vault
+        .put_entity(
+            &world,
+            oneiron::registry::ENTITY_TYPE_WORLD,
+            oneiron::TimeRange {
+                start: world_at,
+                end: world_at,
+            },
+            world_at,
+            b"world",
+        )
+        .unwrap();
+    let mut body = oneiron::ClaimBody::new(
+        "test.server_world_inventory",
+        oneiron::ClaimSubject::Entity(person),
+        rmpv::Value::from("fact"),
+        1.0,
+        oneiron::ClaimApprovalStatus::Proposed,
+        oneiron::ClaimLifecycleStatus::Active,
+    );
+    body.world = Some(world);
+    vault
+        .put_claim(
+            &claim,
+            &body,
+            oneiron::TimeRange {
+                start: world_at,
+                end: world_at,
+            },
+            world_at,
+        )
+        .unwrap();
+    let world_key = WindowKey::for_world(world_at, world);
+    assert!(
+        vault
+            .sync_state_get(&format!("d:w:{world_key}"))
+            .unwrap()
+            .is_none()
+    );
+    let server = SyncServer::new(vault, SyncServerConfig::default()).unwrap();
+    let keys = read_window_list(&server.root_doc);
+    assert!(keys.contains(&world_key));
+    assert!(keys.contains(&WindowKey::from_timestamp(old_at)));
+    assert!(server.reassert_manager.loaded_keys().is_empty());
 }
 
 #[test]
@@ -87,7 +184,10 @@ fn root_doc_initialization() {
         schema_version_bytes()
     );
     assert!(deep_map_has_map(&server.root_doc, "meta", "windows"));
-    assert!(read_window_list(&server.root_doc).is_empty());
+    assert_eq!(
+        read_window_list(&server.root_doc),
+        vec![WindowKey::new("1970-01")]
+    );
 }
 
 #[test]
@@ -145,6 +245,7 @@ async fn window_creation() {
 async fn window_creation_persists_snapshot_and_registers_in_root() {
     let (_dir, vault) = test_vault();
     let server = SyncServer::new(vault.clone(), SyncServerConfig::default()).unwrap();
+    let before = read_window_list(&server.root_doc);
 
     server
         .get_or_create_window(&WindowKey::new("2026-03"))
@@ -161,7 +262,7 @@ async fn window_creation_persists_snapshot_and_registers_in_root() {
     assert!(vault.sync_state_get("d:root").unwrap().is_some());
 
     let windows = read_window_list(&server.root_doc);
-    assert_eq!(windows, vec![WindowKey::new("2026-03")]);
+    assert_eq!(windows, with_window(before, WindowKey::new("2026-03")));
 }
 
 #[tokio::test]
@@ -170,6 +271,7 @@ async fn window_open_root_write_serializes_with_lease_registrar() {
 
     let (_dir, vault) = test_vault();
     let server = SyncServer::new(vault.clone(), SyncServerConfig::default()).unwrap();
+    let before = read_window_list(&server.root_doc);
     let guard = server.lease_registrar.lock().await;
     let key = WindowKey::new("2026-07");
     let open = server.get_or_create_window(&key);
@@ -189,7 +291,7 @@ async fn window_open_root_write_serializes_with_lease_registrar() {
     }
 
     assert!(
-        read_window_list(&server.root_doc).is_empty(),
+        read_window_list(&server.root_doc) == before,
         "the root_doc write must wait behind lease_registrar"
     );
     drop(guard);
@@ -201,7 +303,10 @@ async fn window_open_root_write_serializes_with_lease_registrar() {
     let deep = doc.get_deep_value();
     let map = deep.as_map().unwrap();
     assert!(map.contains_key("entities"));
-    assert_eq!(read_window_list(&server.root_doc), vec![key.clone()]);
+    assert_eq!(
+        read_window_list(&server.root_doc),
+        with_window(before, key.clone())
+    );
 }
 
 #[tokio::test]
@@ -236,10 +341,7 @@ async fn imported_updates_and_root_windows_survive_server_recreation() {
     let server = SyncServer::new(vault.clone(), SyncServerConfig::default()).unwrap();
 
     // Root doc reloaded from d:root — meta.windows still lists the key.
-    assert_eq!(
-        read_window_list(&server.root_doc),
-        vec![WindowKey::new("2026-02")]
-    );
+    assert!(read_window_list(&server.root_doc).contains(&WindowKey::new("2026-02")));
 
     // Window doc reloaded from d:w: + pending u:w: — the relayed entity
     // AND the tombstone (delete propagation) survive the restart.
@@ -360,6 +462,7 @@ async fn imported_update_vv_and_content_survive_server_recreation_without_commit
 #[tokio::test]
 async fn boot_reconciles_root_windows_with_persisted_snapshots() {
     let (_dir, vault) = test_vault();
+    let before = oneiron::sync::discover_local_window_keys(&vault).unwrap();
 
     // Simulate a crash between window-snapshot persistence and root
     // persistence: a d:w: snapshot exists but meta.windows never
@@ -378,7 +481,7 @@ async fn boot_reconciles_root_windows_with_persisted_snapshots() {
     let server = SyncServer::new(vault, SyncServerConfig::default()).unwrap();
     assert_eq!(
         read_window_list(&server.root_doc),
-        vec![WindowKey::new("2026-06")],
+        with_window(before, WindowKey::new("2026-06")),
         "boot must self-heal meta.windows from persisted d:w:* snapshots"
     );
 }
