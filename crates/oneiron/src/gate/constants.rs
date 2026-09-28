@@ -82,6 +82,14 @@ pub(super) const ATTRIBUTION_HOLDER_MAX_BYTES_KEY: &str = "max_bytes";
 /// floors only narrow it, and independent trusted packs compose by max.
 pub(super) const POLICY_TEACHER_PROBE_KEY: &str = "teacher_probe";
 pub(super) const POLICY_BUDGET_POLICY_KEY: &str = "budget_policy";
+/// Optional trusted DEC-0005 manifest setting for gate-decision age pruning.
+/// The seeded default has a null horizon (no pruning), and an owner-authored
+/// row overrides it. Conflicting owner rows are ambiguous and fail closed.
+pub(super) const POLICY_GATE_DECISION_RETENTION_KEY: &str = "gate_decision_retention";
+pub(super) const GATE_RETENTION_HORIZON_SECS_KEY: &str = "horizon_secs";
+pub(super) const GATE_RETENTION_MAX_SWEEP_ROWS_KEY: &str = "max_sweep_rows";
+pub(super) const GATE_RETENTION_PRECEDENCE_KEY: &str = "precedence";
+pub(super) const GATE_RETENTION_HOLDER_OVERRIDE_CEILING_KEY: &str = "holder_override_ceiling";
 /// Per-format edit resource budgets; precedence is a required manifest row.
 pub(crate) const POLICY_PPTX_COMMENT_LIMITS_KEY: &str = "pptx_comment_limits";
 /// Ordered restrict-only rows: vault, artifact, and named sheet caps compose
