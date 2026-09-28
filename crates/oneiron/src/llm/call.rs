@@ -23,7 +23,7 @@ pub struct CallEnvelope {
     pub locality: ModelLocality,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum CallPurpose {
     Extraction,

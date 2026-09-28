@@ -10,9 +10,10 @@ use super::constants::{
     ACTOR_CEILING_KEY, ACTOR_CLASS_KEY, ACTOR_REF_KEY, AXIS_CRITICALITY_KEY, AXIS_SENSITIVITY_KEY,
     LOCAL_WRITE_ACTOR_CLASS, POLICY_ACTOR_CEILINGS_KEY, POLICY_DEFAULTS_KEY, POLICY_HOSTED_TTS_KEY,
     POLICY_MIN_ENGINE_VERSION_KEY, POLICY_ON_BUDGET_EXHAUSTED_KEY, POLICY_OWNER_POLICY_ENABLED_KEY,
-    POLICY_OWNER_POLICY_ROWS_KEY, POLICY_PACK_ID_KEY, POLICY_PACK_VERSION_KEY, POLICY_RULES_KEY,
-    POLICY_SCHEMA_VERSION, POLICY_SCHEMA_VERSION_KEY, POLICY_SIGNATURES_KEY,
-    POLICY_SOURCE_TRUST_KEY, POLICY_WEAVE_CORRECTION_POLICY_KEY, RULE_AXES_KEY, RULE_EXACT_KEY,
+    POLICY_OWNER_POLICY_ROWS_KEY, POLICY_PACK_ID_KEY, POLICY_PACK_VERSION_KEY,
+    POLICY_PPTX_COMMENT_LIMITS_KEY, POLICY_RULES_KEY, POLICY_SCHEMA_VERSION,
+    POLICY_SCHEMA_VERSION_KEY, POLICY_SIGNATURES_KEY, POLICY_SOURCE_TRUST_KEY,
+    POLICY_TEACHER_PROBE_KEY, POLICY_WEAVE_CORRECTION_POLICY_KEY, RULE_AXES_KEY, RULE_EXACT_KEY,
     RULE_PREFIX_KEY, SIGNATURE_ALG_KEY, SIGNATURE_KEY_ID_KEY, SIGNATURE_SIG_KEY,
     SOURCE_TRUST_MAX_AUTO_SENSITIVITY_KEY, SOURCE_TRUST_RECEIPTED_KEY, SOURCE_TRUST_WARNED_KEY,
 };
@@ -79,6 +80,41 @@ pub(crate) fn default_policy_manifest() -> Vec<u8> {
         (
             Value::from(POLICY_MIN_ENGINE_VERSION_KEY),
             Value::from(env!("CARGO_PKG_VERSION")),
+        ),
+        (
+            Value::from("room_thread"),
+            Value::Map(vec![
+                (
+                    Value::from("base"),
+                    Value::Map(vec![
+                        (Value::from("fresh_for_secs"), Value::from(7 * 86_400_u64)),
+                        (Value::from("rows_per_list"), Value::from(8)),
+                        (Value::from("tokens_per_list"), Value::from(512)),
+                        (Value::from("fill"), Value::from("stage")),
+                        (Value::from("waits_per_thread"), Value::from(8)),
+                    ]),
+                ),
+                (
+                    Value::from("vault_ceiling"),
+                    Value::Map(vec![
+                        (Value::from("fresh_for_secs"), Value::from(30 * 86_400_u64)),
+                        (Value::from("rows_per_list"), Value::from(1_000)),
+                        (Value::from("tokens_per_list"), Value::from(65_536)),
+                        (Value::from("fill"), Value::from("stage")),
+                        (Value::from("waits_per_thread"), Value::from(128)),
+                    ]),
+                ),
+                (Value::from("precedence"), Value::from("nested_narrowing")),
+                (
+                    Value::from("allowed_fills"),
+                    Value::Array(vec![
+                        Value::from("recency"),
+                        Value::from("nudge_due"),
+                        Value::from("stage"),
+                    ]),
+                ),
+                (Value::from("holder_rows"), Value::Array(Vec::new())),
+            ]),
         ),
         (
             Value::from(POLICY_DEFAULTS_KEY),
@@ -493,8 +529,23 @@ pub(crate) fn default_policy_manifest() -> Vec<u8> {
             federation_grant_default_rows(),
         ),
         (
+            Value::from(POLICY_TEACHER_PROBE_KEY),
+            Value::Map(vec![
+                (
+                    Value::from("probe_id"),
+                    Value::from(crate::llm::manifest::TEACHER_PROBE_ID),
+                ),
+                (Value::from("min_f1_millionths"), Value::from(800_000_u64)),
+                (Value::from("holders"), Value::Array(Vec::new())),
+            ]),
+        ),
+        (
             Value::from(POLICY_ON_BUDGET_EXHAUSTED_KEY),
             Value::from("suspend"),
+        ),
+        (
+            Value::from(POLICY_PPTX_COMMENT_LIMITS_KEY),
+            crate::edit_roundtrip::pptx::PptxOperationalLimits::default().policy_row(),
         ),
         // The owner policy plane ships OFF with zero rows: a fresh vault
         // classifies nothing and calls no safeguard model until its owner

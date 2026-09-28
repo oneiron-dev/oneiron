@@ -33,6 +33,9 @@ mod tracker_limits;
 pub use tracker_limits::LiveQueryTrackerLimits;
 mod retrieval_filter;
 pub(crate) mod retry_source_policy;
+mod room_thread;
+pub use room_thread::RoomThreadFill;
+pub(crate) use room_thread::{RoomThreadManifest, RoomThreadSettings};
 mod share;
 mod weave_correction_policy;
 mod witness_message;
@@ -61,8 +64,9 @@ pub(crate) use self::confirm::{
 pub(crate) use self::constants::{
     FIRST_PARTY_CONNECTOR_ACTOR_ID, POLICY_LEGAL_FLOOR_ROWS_KEY, POLICY_OWNER_POLICY_DOCUMENT_KEY,
     POLICY_OWNER_POLICY_ENABLED_KEY, POLICY_OWNER_POLICY_OUTPUT_CONTRACT_KEY,
-    POLICY_OWNER_POLICY_PATTERNS_KEY, POLICY_OWNER_POLICY_ROWS_KEY, POLICY_ROW_ACTION_KEY,
-    POLICY_ROW_ACTIVE_KEY, POLICY_ROW_REF_KEY, POLICY_ROW_TEXT_KEY, POLICY_ROW_WORLD_REF_KEY,
+    POLICY_OWNER_POLICY_PATTERNS_KEY, POLICY_OWNER_POLICY_ROWS_KEY, POLICY_PPTX_COMMENT_LIMITS_KEY,
+    POLICY_ROW_ACTION_KEY, POLICY_ROW_ACTIVE_KEY, POLICY_ROW_REF_KEY, POLICY_ROW_TEXT_KEY,
+    POLICY_ROW_WORLD_REF_KEY,
 };
 pub(crate) use self::constants::{POLICY_SCHEMA_VERSION, SCOPED_READ_EFFECTOR_CORE_READ};
 #[cfg(test)]
