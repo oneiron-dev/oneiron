@@ -13,8 +13,8 @@ use crate::gate::ceiling::{
 use crate::gate::constants::{
     POLICY_ACTOR_CEILINGS_KEY, POLICY_AUTO_CHECKER_KEY, POLICY_BUDGET_POLICY_KEY,
     POLICY_COMM_OPT_OUT_POSTURE_KEY, POLICY_DEFAULTS_KEY, POLICY_DELEGATED_GRANTS_KEY,
-    POLICY_DOCEDIT_RESOURCE_KEY, POLICY_HOSTED_TTS_KEY, POLICY_LEGAL_FLOOR_ROWS_KEY,
-    POLICY_MIN_ENGINE_VERSION_KEY, POLICY_ON_BUDGET_EXHAUSTED_KEY,
+    POLICY_DOCEDIT_RESOURCE_KEY, POLICY_DOCX_ARCHIVE_LIMITS_KEY, POLICY_HOSTED_TTS_KEY,
+    POLICY_LEGAL_FLOOR_ROWS_KEY, POLICY_MIN_ENGINE_VERSION_KEY, POLICY_ON_BUDGET_EXHAUSTED_KEY,
     POLICY_OWNER_POLICY_DOCUMENT_KEY, POLICY_OWNER_POLICY_ENABLED_KEY,
     POLICY_OWNER_POLICY_OUTPUT_CONTRACT_KEY, POLICY_OWNER_POLICY_PATTERNS_KEY,
     POLICY_OWNER_POLICY_ROWS_KEY, POLICY_PACK_ID_KEY, POLICY_PACK_VERSION_KEY,
@@ -73,6 +73,8 @@ pub(in crate::gate) struct DecodedPolicyManifest {
 
     pub(in crate::gate) slide_review_policy: crate::llm::decision::SlideReviewPolicy,
     pub(in crate::gate) docedit_resource_policy: Option<DoceditResourcePolicy>,
+    pub(in crate::gate) docx_archive_limits: Option<crate::gate::docx_budget::DocxArchivePolicy>,
+
     pub(in crate::gate) diagnostic_bounds: Option<crate::self_heal::tripwires::TripwireBounds>,
     pub(in crate::gate) proposal_check_threshold: Option<u64>,
     pub(in crate::gate) voice_ref_limits: Option<VoiceRefLimitPolicy>,
@@ -132,6 +134,8 @@ pub(in crate::gate) fn decode_policy_manifest(data: &[u8]) -> Option<DecodedPoli
 
                 | POLICY_SLIDE_REVIEW_KEY
                 | POLICY_DOCEDIT_RESOURCE_KEY
+                | POLICY_DOCX_ARCHIVE_LIMITS_KEY
+
                 | "diagnostic_bounds"
                 | "proposal_check_threshold"
                 | "voice_ref_limits"
@@ -273,6 +277,11 @@ pub(in crate::gate) fn decode_policy_manifest(data: &[u8]) -> Option<DecodedPoli
             Some(crate::edit_roundtrip::pptx::PptxOperationalLimits::from_policy_row(value)?)
         }
     };
+    let docx_archive_limits = match single_map_value(&entries, POLICY_DOCX_ARCHIVE_LIMITS_KEY) {
+        MapValue::Missing => None,
+        MapValue::Duplicate => return None,
+        MapValue::Present(value) => Some(crate::gate::docx_budget::parse(value)?),
+    };
     let hosted_tts = match single_map_value(&entries, POLICY_HOSTED_TTS_KEY) {
         MapValue::Missing => HostedTtsPolicy::default(),
         MapValue::Duplicate => return None,
@@ -388,6 +397,7 @@ pub(in crate::gate) fn decode_policy_manifest(data: &[u8]) -> Option<DecodedPoli
         hosted_tts,
         slide_review_policy,
         docedit_resource_policy,
+        docx_archive_limits,
         diagnostic_bounds,
         proposal_check_threshold,
         voice_ref_limits,
