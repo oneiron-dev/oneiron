@@ -60,7 +60,8 @@ fn registration_resolves_and_is_reserved_from_public_writes() {
         1.0,
         ClaimApprovalStatus::Auto,
         ClaimLifecycleStatus::Active,
-    );
+    )
+    .unwrap();
     let err = vault
         .put_claim(&EntityId::now(), &body, TimeRange { start: 1, end: 1 }, 1)
         .expect_err("public claim door must reject the reserved predicate");
@@ -348,7 +349,7 @@ fn write_binding_at(
                 1.0,
                 ClaimApprovalStatus::Auto,
                 ClaimLifecycleStatus::Active,
-            );
+            )?;
             body.valid_from = Some(valid_from);
             body.valid_to = valid_to;
             body.source = Some(ClaimSource::Observed);

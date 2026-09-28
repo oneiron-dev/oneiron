@@ -706,7 +706,7 @@ fn no_effort_widens_what_the_actor_keyed_door_admits() -> TestResult {
         0.9,
         ClaimApprovalStatus::Auto,
         ClaimLifecycleStatus::Active,
-    );
+    )?;
     let open = encode_claim_body(&body)?;
     body.approval = ClaimApprovalStatus::Proposed;
     let closed = encode_claim_body(&body)?;

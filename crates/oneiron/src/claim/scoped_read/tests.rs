@@ -14,7 +14,8 @@ fn claim(subject: EntityId, world: Option<EntityId>, text: &str) -> ClaimBody {
         1.0,
         ClaimApprovalStatus::Approved,
         ClaimLifecycleStatus::Active,
-    );
+    )
+    .unwrap();
     body.world = world;
     body.source = Some(ClaimSource::UserStated);
     body
@@ -68,7 +69,7 @@ fn grant_world(vault: &crate::Vault, reader: &str, world: EntityId) -> Result<()
         (Value::from("receipt_required"), Value::Boolean(false)),
     ]);
     let Value::Map(mut entries) = rmpv::decode::read_value(&mut std::io::Cursor::new(
-        crate::gate::default_policy_manifest(),
+        crate::gate::default_policy_manifest()?,
     ))
     .map_err(|_| Error::InvalidClaimBody("default manifest"))?
     else {

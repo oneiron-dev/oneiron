@@ -113,7 +113,7 @@ pub(super) fn install_exact_actor_ceiling(
     ceiling: &str,
 ) -> Result<()> {
     clear_policy_manifests_for_test(vault)?;
-    let mut cursor = std::io::Cursor::new(crate::gate::default_policy_manifest());
+    let mut cursor = std::io::Cursor::new(crate::gate::default_policy_manifest()?);
     let Value::Map(mut entries) = rmpv::decode::read_value(&mut cursor)
         .map_err(|_| Error::InvariantViolation("default policy manifest failed to decode"))?
     else {

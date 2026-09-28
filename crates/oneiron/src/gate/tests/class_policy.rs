@@ -363,7 +363,7 @@ fn the_shipped_default_manifest_carries_both_class_rows() -> Result<()> {
     put_policy_manifest_bytes(
         &vault,
         crate::gate::default_policy_manifest_id()?,
-        &crate::gate::default_policy_manifest(),
+        &crate::gate::default_policy_manifest().unwrap(),
     )?;
     let policy = resolve(&vault)?;
     // GATE-009: the restrictive starting values are DATA in the vault, not

@@ -96,7 +96,8 @@ fn project(vault: &Vault, parent: EntityId, project: EntityId) -> Result<()> {
     let leader = EntityId::from_hex(&vault.project(parent)?.ok_or(Error::EntityNotFound)?.leader)?;
     vault.put_project(
         project,
-        &crate::workspace_roster::ProjectRecord::new(project, Some(parent), parent, leader),
+        &crate::workspace_roster::ProjectRecord::new(project, Some(parent), parent, leader)
+            .unwrap(),
         1,
     )
 }
@@ -114,7 +115,7 @@ fn project_with_owner(
     let signing = ed25519_dalek::SigningKey::from_bytes(&[seed; 32]);
     vault.create_project_with_owner(
         id,
-        &crate::workspace_roster::ProjectRecord::new(id, Some(parent), parent, leader),
+        &crate::workspace_roster::ProjectRecord::new(id, Some(parent), parent, leader).unwrap(),
         writer,
         at,
         crate::authority::AuthorityKey::Ed25519(signing.verifying_key().to_bytes()),
@@ -289,7 +290,7 @@ fn predecessor_and_owner_history_can_arrive_after_edits_without_widening() -> Re
     let leader = EntityId::from_hex(&target.project(parent)?.unwrap().leader)?;
     target.put_project(
         id,
-        &crate::workspace_roster::ProjectRecord::new(id, Some(parent), parent, leader),
+        &crate::workspace_roster::ProjectRecord::new(id, Some(parent), parent, leader).unwrap(),
         3,
     )?;
     put_manifest_for_test(&target, second.0, &second.1, 4)?;
@@ -335,7 +336,7 @@ fn predecessor_and_owner_history_can_arrive_after_edits_without_widening() -> Re
     let lead = EntityId::from_hex(&fresh.project(parent)?.unwrap().leader)?;
     fresh.put_project(
         id,
-        &crate::workspace_roster::ProjectRecord::new(id, Some(parent), parent, lead),
+        &crate::workspace_roster::ProjectRecord::new(id, Some(parent), parent, lead).unwrap(),
         11,
     )?;
     assert_eq!(fresh.project(id)?.unwrap().depth, 12);
@@ -478,7 +479,8 @@ fn unsigned_seed_birth_cannot_reset_an_owner_changed_creation_default() -> Resul
     // turn this unsigned birth into a human-authorized project creation.
     put_manifest_for_test(&vault, id, &body, 3)?;
     let leader = EntityId::from_hex(&vault.project(root)?.unwrap().leader)?;
-    let record = crate::workspace_roster::ProjectRecord::new(project, Some(root), root, leader);
+    let record =
+        crate::workspace_roster::ProjectRecord::new(project, Some(root), root, leader).unwrap();
     assert_eq!(
         vault.put_project(project, &record, 4).unwrap_err().kind(),
         crate::error::ErrorKind::InvalidProjectBody
@@ -563,7 +565,7 @@ fn signed_birth_cannot_use_an_orphan_default_edit_as_its_source() -> Result<()> 
     let leader = EntityId::from_hex(&vault.project(root)?.unwrap().leader)?;
     vault.put_project(
         project,
-        &crate::workspace_roster::ProjectRecord::new(project, Some(root), root, leader),
+        &crate::workspace_roster::ProjectRecord::new(project, Some(root), root, leader).unwrap(),
         4,
     )?;
     assert_eq!(
@@ -576,7 +578,8 @@ fn signed_birth_cannot_use_an_orphan_default_edit_as_its_source() -> Result<()> 
         vault
             .create_project_with_owner(
                 other,
-                &crate::workspace_roster::ProjectRecord::new(other, Some(root), root, leader,),
+                &crate::workspace_roster::ProjectRecord::new(other, Some(root), root, leader,)
+                    .unwrap(),
                 &owner,
                 5,
                 key,
@@ -653,7 +656,8 @@ fn vault_written_before_depth_rows_upgrades_without_stored_births() -> Result<()
         reopened
             .put_project(
                 fresh,
-                &crate::workspace_roster::ProjectRecord::new(fresh, Some(root), root, leader),
+                &crate::workspace_roster::ProjectRecord::new(fresh, Some(root), root, leader)
+                    .unwrap(),
                 6,
             )
             .unwrap_err()

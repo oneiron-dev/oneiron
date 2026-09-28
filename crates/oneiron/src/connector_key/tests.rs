@@ -4283,7 +4283,7 @@ fn connector_admission_quota_policy_vault_and_holder_rows_narrow_without_poisoni
     }
     let (_dir, vault) = temp_vault();
     let holder = test_id(0xC9);
-    let mut cursor = std::io::Cursor::new(crate::gate::default_policy_manifest());
+    let mut cursor = std::io::Cursor::new(crate::gate::default_policy_manifest().unwrap());
     let Value::Map(mut entries) = rmpv::decode::read_value(&mut cursor).unwrap() else {
         panic!("policy map")
     };

@@ -99,7 +99,7 @@ fn source_bundles_all_five_formats_and_native_json_reimport() -> Result<()> {
             0.7,
             ClaimApprovalStatus::Approved,
             ClaimLifecycleStatus::Active,
-        ),
+        )?,
         time(),
         130,
     )?;
@@ -296,7 +296,8 @@ fn fork_hash_matches_unchanged_parent_with_selected_knowledge() -> Result<()> {
             1.0,
             ClaimApprovalStatus::Approved,
             ClaimLifecycleStatus::Active,
-        ),
+        )
+        .unwrap(),
         time(),
         130,
     )?;
@@ -716,7 +717,7 @@ fn install_native_agent_pack(
     crate::test_util::put_policy_manifest_bytes(
         vault,
         policy_id,
-        &crate::gate::default_policy_manifest(),
+        &crate::gate::default_policy_manifest().unwrap(),
     )?;
     let installed =
         vault.install_pack_from_adapter(&adapter, &reference, &publisher, &Fit, time(), 133);

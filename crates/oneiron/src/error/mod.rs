@@ -304,6 +304,7 @@ pub enum ErrorKind {
     ResidentOwnerDependencyPending,
     SideTableRow,
     SideTableKeyUndeclared,
+    ScopedReadOwnerNotLive,
 }
 
 /// Crate error type.

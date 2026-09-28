@@ -35,7 +35,7 @@ fn permit_room_reads_with_types(
     actors: &[EntityId],
     types: Option<&[u8]>,
 ) -> Result<()> {
-    let bytes = crate::gate::default_policy_manifest();
+    let bytes = crate::gate::default_policy_manifest().unwrap();
     let mut manifest: serde_json::Value = rmp_serde::from_slice(&bytes).expect("policy");
     manifest["scoped_grants"] = serde_json::Value::Array(actors.iter().map(|actor| {
         let mut row = serde_json::json!({
@@ -75,7 +75,7 @@ fn mention_claim_speech_scope_and_thread_head() -> Result<()> {
         Some(vault.root_project()?),
         vault.root_project()?,
         owner,
-    );
+    )?;
     spec.roster.extend([a.to_hex(), b.to_hex()]);
     vault.put_project(project, &spec, 1)?;
     let room = EntityId::from_hex(&spec.home_room)?;
@@ -152,11 +152,11 @@ fn room_history_is_bounded_paged_and_removed_with_its_project() -> Result<()> {
     )?;
     let root = vault.root_project()?;
     let project = EntityId::now();
-    let record = ProjectRecord::new(project, Some(root), root, owner);
+    let record = ProjectRecord::new(project, Some(root), root, owner)?;
     vault.put_project(project, &record, 1)?;
     let room = EntityId::from_hex(&record.home_room)?;
     let other_project = EntityId::now();
-    let other_record = ProjectRecord::new(other_project, Some(root), root, owner);
+    let other_record = ProjectRecord::new(other_project, Some(root), root, owner)?;
     vault.put_project(other_project, &other_record, 1)?;
     let other_room = EntityId::from_hex(&other_record.home_room)?;
     let memory = vault.memory(owner, EdgeActorClass::Human);
@@ -274,7 +274,8 @@ fn room_projection_reads_task_register_and_reply_without_stored_liveness() -> Re
         Some(vault.root_project()?),
         vault.root_project()?,
         owner,
-    );
+    )
+    .unwrap();
     record.roster.push(agent.to_hex());
     vault.put_project(project, &record, 1)?;
     let room = EntityId::from_hex(&record.home_room)?;
@@ -511,7 +512,8 @@ fn room_projection_reads_task_register_and_reply_without_stored_liveness() -> Re
         1.0,
         crate::claim::ClaimApprovalStatus::Approved,
         crate::claim::ClaimLifecycleStatus::Active,
-    );
+    )
+    .unwrap();
     claim.world = Some(foreign_world);
     vault
         .batch()
@@ -535,7 +537,7 @@ fn room_projection_reads_task_register_and_reply_without_stored_liveness() -> Re
         )
         .unwrap();
     let mut manifest: serde_json::Value =
-        rmp_serde::from_slice(&crate::gate::default_policy_manifest()).unwrap();
+        rmp_serde::from_slice(&crate::gate::default_policy_manifest().unwrap()).unwrap();
     let full = serde_json::to_value(crate::federation::scope_codec::read_preset()).unwrap();
     manifest["scoped_grants"] = serde_json::json!([
         {"actor_ref":owner.to_hex(),"effector":"core:read","scope":full,
@@ -614,7 +616,8 @@ fn consult_question_turn_projects_an_open_wait_without_a_room_state_row() -> Res
         Some(vault.root_project()?),
         vault.root_project()?,
         owner,
-    );
+    )
+    .unwrap();
     record.roster.extend([asker.to_hex(), peer.to_hex()]);
     vault.put_project(project, &record, 1)?;
     let room = EntityId::from_hex(&record.home_room)?;
@@ -732,7 +735,8 @@ fn peer_ask_wait_projects_its_existing_followup_ladder() -> Result<()> {
         Some(vault.root_project()?),
         vault.root_project()?,
         owner,
-    );
+    )
+    .unwrap();
     record.roster.push(peer.to_hex());
     vault.put_project(project, &record, 1)?;
     let room = EntityId::from_hex(&record.home_room)?;
@@ -817,7 +821,8 @@ fn settled_multi_recipient_ask_drops_unanswered_sibling_wait() -> Result<()> {
         Some(vault.root_project()?),
         vault.root_project()?,
         owner,
-    );
+    )
+    .unwrap();
     record
         .roster
         .extend(responders.iter().map(EntityId::to_hex));
@@ -890,7 +895,8 @@ fn room_manifest_changes_selected_rows_and_cannot_be_widened_by_caller() -> Resu
         Some(vault.root_project()?),
         vault.root_project()?,
         owner,
-    );
+    )
+    .unwrap();
     vault.put_project(project, &record, 1)?;
     let room = EntityId::from_hex(&record.home_room)?;
     let memory = vault.memory(owner, EdgeActorClass::Human);
@@ -928,7 +934,7 @@ fn room_manifest_changes_selected_rows_and_cannot_be_widened_by_caller() -> Resu
         2
     );
     let mut manifest: serde_json::Value =
-        rmp_serde::from_slice(&crate::gate::default_policy_manifest()).unwrap();
+        rmp_serde::from_slice(&crate::gate::default_policy_manifest().unwrap()).unwrap();
     manifest["room_thread"]["base"] = serde_json::json!({"fresh_for_secs":1,
         "rows_per_list":1, "tokens_per_list":256, "fill":"recency","waits_per_thread":4});
     crate::test_util::put_policy_manifest_bytes(
@@ -997,7 +1003,7 @@ fn exact_project_and_room_batch_still_has_a_roster_audience() -> Result<()> {
     }
     let project = EntityId::now();
     let root = vault.root_project()?;
-    let mut record = ProjectRecord::new(project, Some(root), root, leader);
+    let mut record = ProjectRecord::new(project, Some(root), root, leader).unwrap();
     record.roster.push(peer.to_hex());
     let room = EntityId::from_hex(&record.home_room)?;
     let room_body = crate::workspace_roster::ProjectRoom {

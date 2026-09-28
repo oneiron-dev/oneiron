@@ -511,7 +511,7 @@ fn malformed_authority_row_fails_the_read_closed() -> Result<()> {
         1.0,
         ClaimApprovalStatus::Approved,
         ClaimLifecycleStatus::Active,
-    );
+    )?;
     malformed.source = Some(ClaimSource::UserStated);
     vault.put_claim(
         &entity_id(0xB0),
@@ -719,6 +719,7 @@ pub(super) fn world_access_body(value: rmpv::Value) -> ClaimBody {
         ClaimApprovalStatus::Approved,
         ClaimLifecycleStatus::Active,
     )
+    .unwrap()
 }
 
 /// The canonical three-key value map, with every part caller-supplied.
@@ -1121,7 +1122,7 @@ fn closed_malformed_world_access_values_are_ignored() -> Result<()> {
                 1.0,
                 approval,
                 lifecycle,
-            );
+            )?;
             malformed.source = Some(ClaimSource::UserStated);
             malformed.evidence = Some(world_default_evidence(fixture.agent)?);
             malformed.stale = stale;

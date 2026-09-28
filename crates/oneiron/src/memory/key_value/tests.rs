@@ -869,7 +869,7 @@ fn replacement_keeps_source_trust_and_refuses_generated_over_user_truth_atomical
     // A real actor-bound generated auto permit lets the put reach the
     // supersession guard. It does not grant generated output user provenance.
     let mut manifest: rmpv::Value = rmpv::decode::read_value(&mut std::io::Cursor::new(
-        crate::gate::default_policy_manifest(),
+        crate::gate::default_policy_manifest().unwrap(),
     ))
     .unwrap();
     let rmpv::Value::Map(entries) = &mut manifest else {

@@ -94,7 +94,7 @@ fn prior_head_disagreement_opens_one_persistent_marker_and_close_audit() -> Resu
     let marker =
         super::super::persistence::open_marker(&sets[0], &[&c], &priors, run.attempt_id, 10)?;
     let id = marker.claim_id;
-    assert_eq!(id, conflict_open_marker_id(&sets[0], run.attempt_id));
+    assert_eq!(id, conflict_open_marker_id(&sets[0], run.attempt_id)?);
     for _ in 0..2 {
         let outcome = promote_consolidated_claims(&vault, &run, vec![marker.clone()])?;
         assert_eq!(outcome.pended, vec![id], "{:?}", outcome.rejected);

@@ -148,3 +148,40 @@ fn strict_edge_record_parser_normalizes_corruption_errors() {
         parse_strict_edge_record(&key, &value).expect_err("reserved target id must fail closed");
     assert!(matches!(err, crate::error::Error::CorruptedIndex(_)));
 }
+
+/// Every kind in the one list round-trips its name, its stored byte and its
+/// host-boundary number, so no name or number lookup can drift from the enum.
+#[test]
+fn every_edge_kind_round_trips_its_name() {
+    assert_eq!(EdgeKind::ALL.len(), 31);
+    for &kind in EdgeKind::ALL {
+        assert_eq!(EdgeKind::from_name(kind.name()), Some(kind), "{kind:?}");
+        assert_eq!(EdgeKind::try_from_u8(kind as u8), Some(kind), "{kind:?}");
+        assert_eq!(EdgeKind::from_wire(u32::from(kind as u8)), Some(kind));
+    }
+    assert_eq!(EdgeKind::from_name("blockedBy"), None);
+    assert_eq!(EdgeKind::from_name(""), None);
+    assert_eq!(EdgeKind::from_wire(256), None);
+}
+
+/// Canon's structural edge kinds: oneiron-docs
+/// `site/src/data/oneiron-contracts.ts`, `edgeValueLayouts[structural].kinds`
+/// (the ARCH-0034 structural 12 B row), as of docs commit 0f8e58e0a1d4
+/// (2026-09-26), which extended the row from 11 names to all 20 the engine
+/// classifies.
+const CANON_STRUCTURAL_KINDS: &str = "authored_by · scoped_to · part_of · supersedes · belongs_to · claim_of · child_of · assigned_to · derived_from · same_as · merged_into · split_into · blocked_by · blocks · fulfills · discharged_by · parent · spawned_by · addressed_to · replies_to";
+
+/// The kinds the engine writes with the 12-byte structural layout are exactly
+/// canon's structural list, name for name and in stored-byte order.
+#[test]
+fn the_structural_edge_names_match_canon() {
+    let engine = EdgeKind::ALL
+        .iter()
+        .filter(|&&kind| {
+            super::edge_value_layout_for_kind(kind, false) == super::EdgeValueLayout::Structural
+        })
+        .map(|kind| kind.name())
+        .collect::<Vec<_>>();
+    let canon = CANON_STRUCTURAL_KINDS.split(" · ").collect::<Vec<_>>();
+    assert_eq!(engine, canon);
+}

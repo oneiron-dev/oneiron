@@ -2699,7 +2699,8 @@ fn whole_vault_provenance_references_are_preserved_only_in_the_typed_value() {
         0.75,
         ClaimApprovalStatus::Proposed,
         ClaimLifecycleStatus::Active,
-    );
+    )
+    .unwrap();
     claim.scope = Some(rmpv::Value::Map(vec![(
         rmpv::Value::from("substrate_ref"),
         rmpv::Value::Binary(vec![128; 16]),

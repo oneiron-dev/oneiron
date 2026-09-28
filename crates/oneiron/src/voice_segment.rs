@@ -172,6 +172,7 @@ mod tests {
             ClaimApprovalStatus::Approved,
             ClaimLifecycleStatus::Active,
         )
+        .unwrap()
     }
 
     /// Replaces one key's value in place, keeping key order.
@@ -280,7 +281,8 @@ mod tests {
             1.0,
             ClaimApprovalStatus::Approved,
             ClaimLifecycleStatus::Active,
-        );
+        )
+        .unwrap();
         assert!(validate_voice_segment_claim_structure(&body).is_err());
     }
 }

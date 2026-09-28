@@ -40,7 +40,7 @@ fn substrate_sync_missing_person_retries_through_observer_and_remat() -> Result<
             Value::from("model"),
             writer(),
             100,
-        );
+        )?;
         let claim_blob = blob(ENTITY_TYPE_CLAIM, &encode_claim_body(&body)?);
         map_insert_bytes(&entities, &id.to_hex(), &claim_blob)?;
         doc.commit();
@@ -106,7 +106,7 @@ fn substrate_sync_rejects_invalid_value_and_wrong_type_without_overwrite() -> Re
                 Value::from(value),
                 writer(),
                 100,
-            );
+            )?;
             let claim_blob = blob(ENTITY_TYPE_CLAIM, &encode_claim_body(&body)?);
             let doc = LoroDoc::new();
             let materializer = Arc::new(Materializer::new());
@@ -145,7 +145,7 @@ fn substrate_sync_wrong_type_arrival_rejects_pending_claim() -> Result<()> {
         Value::from("model"),
         writer(),
         100,
-    );
+    )?;
     map_insert_bytes(
         &doc.get_map("entities"),
         &id.to_hex(),
@@ -176,7 +176,7 @@ fn substrate_sync_edge_outcomes_cannot_discharge_a_missing_person_retry() -> Res
             Value::from("model"),
             writer(),
             100,
-        );
+        )?;
         // A claim's facet is set at birth; the replayed body keeps it.
         body.scope_facet = vault.get_claim(&id)?.expect("stored claim").scope_facet;
         let doc = LoroDoc::new();

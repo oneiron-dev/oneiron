@@ -109,7 +109,7 @@ fn pending_event_keeps_its_source_key_in_the_derived_claim_after_bridge() -> Com
     run_comm_projector(&vault)?;
     assert_eq!(
         vault.get_claim(&expected_id)?,
-        Some(source_value.claim_body())
+        Some(source_value.claim_body()?)
     );
     assert_eq!(
         count_active_thread_member_claims(&vault, &canonical, "party@x")?,

@@ -302,8 +302,7 @@ pub enum CommClaimValue {
 
 impl CommClaimValue {
     /// Builds a fully governed claim body for this value.
-    #[must_use]
-    pub fn claim_body(&self) -> ClaimBody {
+    pub fn claim_body(&self) -> Result<ClaimBody> {
         let (predicate, subject, value, valid_from) = match self {
             Self::OptOut {
                 party_ref,
@@ -445,7 +444,7 @@ impl CommClaimValue {
             1.0,
             ClaimApprovalStatus::Auto,
             ClaimLifecycleStatus::Active,
-        );
+        )?;
         body.valid_from = valid_from;
         body.source = Some(ClaimSource::Observed);
         let mut scope = vec![(Value::from("sensitivity"), Value::from(2_u64))];
@@ -453,7 +452,7 @@ impl CommClaimValue {
             scope.push((Value::from("criticality"), Value::from("critical")));
         }
         body.scope = Some(Value::Map(scope));
-        body
+        Ok(body)
     }
 }
 

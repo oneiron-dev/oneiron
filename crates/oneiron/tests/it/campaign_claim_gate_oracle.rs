@@ -114,7 +114,7 @@ fn write_do_not_contact(
         1.0,
         ClaimApprovalStatus::Approved,
         ClaimLifecycleStatus::Active,
-    );
+    )?;
     vault.put_claim(id, &claim, TimeRange { start: 1, end: 1 }, 1)
 }
 

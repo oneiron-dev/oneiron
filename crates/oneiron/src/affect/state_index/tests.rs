@@ -36,7 +36,7 @@ fn composite_is_provenanced_idempotent_and_neutral_when_unknown() -> Result<()> 
             1.0,
             ClaimApprovalStatus::Auto,
             ClaimLifecycleStatus::Active,
-        );
+        )?;
         body.source = Some(ClaimSource::Observed);
         vault.put_claim(&id, &body, time, 10)?;
         Ok(id)
@@ -60,7 +60,7 @@ fn composite_is_provenanced_idempotent_and_neutral_when_unknown() -> Result<()> 
         1.0,
         ClaimApprovalStatus::Auto,
         ClaimLifecycleStatus::Active,
-    );
+    )?;
     forged.source = Some(ClaimSource::Observed);
     forged.valid_from = Some(1000);
     vault.put_claim(

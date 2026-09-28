@@ -449,7 +449,8 @@ fn accept_rechecks_an_uncommitted_person_claim_and_receipts_the_skip() {
         1.0,
         ClaimApprovalStatus::Auto,
         ClaimLifecycleStatus::Active,
-    );
+    )
+    .unwrap();
     let accepted = vault
         .with_write_txn(|txn| {
             vault.put_claim_in_txn(txn, &EntityId::now(), &body, t(2), 2)?;

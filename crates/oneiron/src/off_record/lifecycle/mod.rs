@@ -68,6 +68,7 @@ mod types;
 mod vault_api;
 
 pub(crate) use self::registry::OffRecordSessionRegistry;
+pub(crate) use self::session::OverlayShellReservation;
 pub use self::session::{OffRecordSession, OffRecordSessionVault};
 pub(crate) use self::telemetry::SessionRetrievalTelemetry;
 pub use self::types::{

@@ -63,7 +63,7 @@ fn put_claim_with_value(
         1.0,
         ClaimApprovalStatus::Auto,
         ClaimLifecycleStatus::Active,
-    );
+    )?;
     body.world = world;
     vault.put_claim(&id, &body, time_range(learned_at), learned_at)
 }
@@ -233,7 +233,7 @@ fn large_day_shard_returns_first_page_and_more_under_byte_cap() -> Result<()> {
             1.0,
             ClaimApprovalStatus::Auto,
             ClaimLifecycleStatus::Active,
-        );
+        )?;
         body.valid_from = Some(learned_at);
         let data = crate::claim::encode_claim_body(&body)?;
         ops.push(BatchOp::Put {

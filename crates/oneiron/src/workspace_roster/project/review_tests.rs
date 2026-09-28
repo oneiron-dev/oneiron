@@ -26,7 +26,7 @@ fn room_fixture() -> Result<(
     )?;
     let source_id = EntityId::now();
     let root = vault.root_project()?;
-    let source = ProjectRecord::new(source_id, Some(root), root, host);
+    let source = ProjectRecord::new(source_id, Some(root), root, host).unwrap();
     vault.put_project(source_id, &source, 1)?;
     let room = EntityId::from_hex(&source.home_room)?;
     let trunk = EntityId::now();
@@ -209,7 +209,8 @@ fn replicated_project_body_indexes_origin_and_blocks_later_local_conversion() ->
         Some(source_id),
         EntityId::from_hex(&source.claims_scope_ref)?,
         host,
-    );
+    )
+    .unwrap();
     record.born_from = Some(message.to_hex());
     record.origin_room = Some(room.to_hex());
     record.origin_thread = Some(thread.to_hex());
@@ -380,7 +381,8 @@ fn conversion_task_cap_does_not_limit_ordinary_project_edit_or_replay() -> Resul
         Some(source_id),
         EntityId::from_hex(&source.claims_scope_ref)?,
         host,
-    );
+    )
+    .unwrap();
     ordinary.tasks = vec![task(2).to_hex(), task(3).to_hex()];
     vault.put_project(ordinary_id, &ordinary, 3)?;
     vault.bind_room_thread_task(room, thread, task(4))?;

@@ -246,7 +246,7 @@ fn write_actor_subject_anchor(
         1.0,
         ClaimApprovalStatus::Auto,
         ClaimLifecycleStatus::Active,
-    );
+    )?;
     body.valid_from = Some(at);
     body.source = Some(ClaimSource::Observed);
     body.evidence = Some(writer_evidence(writer));
@@ -355,7 +355,7 @@ pub fn set_person_substrate(
         1.0,
         ClaimApprovalStatus::Auto,
         ClaimLifecycleStatus::Active,
-    );
+    )?;
     body.valid_from = Some(at);
     body.source = Some(ClaimSource::Observed);
     body.evidence = Some(writer_evidence(writer));
@@ -426,7 +426,7 @@ pub(crate) fn ensure_actor_subject_in_txn(
             Value::from(subject.to_hex()),
             writer,
             at,
-        ),
+        )?,
         at,
     )
 }
@@ -451,7 +451,7 @@ pub(crate) fn ensure_model_person_in_txn(
             Value::from(PersonSubstrate::Model.as_str()),
             writer,
             at,
-        ),
+        )?,
         at,
     )
 }
@@ -500,7 +500,7 @@ fn subject_fact(
     value: Value,
     writer: WriteActor,
     at: u64,
-) -> ClaimBody {
+) -> Result<ClaimBody> {
     let mut body = ClaimBody::new(
         predicate,
         ClaimSubject::Entity(subject),
@@ -508,11 +508,11 @@ fn subject_fact(
         1.0,
         ClaimApprovalStatus::Auto,
         ClaimLifecycleStatus::Active,
-    );
+    )?;
     body.valid_from = Some(at);
     body.source = Some(ClaimSource::Observed);
     body.evidence = Some(writer_evidence(writer));
-    body
+    Ok(body)
 }
 
 /// The substrate recorded for `person_ref`, if any, through identity redirects.

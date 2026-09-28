@@ -229,7 +229,8 @@ fn forged_human_claim_and_generic_or_replicated_project_changes_are_refused() ->
         1.0,
         ClaimApprovalStatus::Approved,
         ClaimLifecycleStatus::Active,
-    );
+    )
+    .unwrap();
     forged_raw.source = Some(ClaimSource::UserStated);
     assert!(
         vault
@@ -356,7 +357,8 @@ fn intake_does_not_supersede_a_claim_named_by_a_corrupt_project_pointer() -> Res
         1.0,
         ClaimApprovalStatus::Approved,
         ClaimLifecycleStatus::Active,
-    );
+    )
+    .unwrap();
     body.source = Some(ClaimSource::UserStated);
     vault
         .batch()
@@ -443,7 +445,7 @@ fn goal_limits_are_policy_rows_and_narrow_only_at_admission() -> Result<()> {
     let mut narrowed = defaults;
     narrowed.preferences = 1;
     let mut manifest = rmpv::decode::read_value(&mut std::io::Cursor::new(
-        crate::gate::default_policy_manifest(),
+        crate::gate::default_policy_manifest().unwrap(),
     ))
     .map_err(|_| invalid())?;
     let Value::Map(ref mut rows) = manifest else {
@@ -503,7 +505,8 @@ fn goal_owner_delete_uses_soft_and_hard_rails_without_stranding_project() -> Res
                 Some(root),
                 root,
                 EntityId::from_hex(&root_record.leader)?,
-            ),
+            )
+            .unwrap(),
             1,
         )?;
         let owner = vault.authenticate_owner(
@@ -677,7 +680,7 @@ fn superseded_goal_erases_after_its_project_is_deleted() -> Result<()> {
         let project = EntityId::now();
         vault.put_project(
             project,
-            &ProjectRecord::new(project, Some(root), root, leader),
+            &ProjectRecord::new(project, Some(root), root, leader).unwrap(),
             1,
         )?;
         let owner = vault.authenticate_owner(
@@ -767,7 +770,7 @@ fn goal_limits_precedence_is_a_strict_manifest_row() -> Result<()> {
     type Fields = Vec<(Value, Value)>;
     let manifest = || -> Result<Value> {
         rmpv::decode::read_value(&mut std::io::Cursor::new(
-            crate::gate::default_policy_manifest(),
+            crate::gate::default_policy_manifest().unwrap(),
         ))
         .map_err(|_| invalid())
     };

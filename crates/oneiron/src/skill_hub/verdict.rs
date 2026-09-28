@@ -267,7 +267,7 @@ impl Vault {
             1.0,
             ClaimApprovalStatus::Auto,
             ClaimLifecycleStatus::Active,
-        );
+        )?;
         body.source = Some(ClaimSource::Observed);
         self.put_reserved_claim_in_txn(wtxn, &claim_id, &body, occurred, learned_at)?;
 

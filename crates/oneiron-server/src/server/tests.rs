@@ -145,7 +145,8 @@ fn fresh_server_root_indexes_unopened_world_claim_and_older_base_row() {
         1.0,
         oneiron::ClaimApprovalStatus::Proposed,
         oneiron::ClaimLifecycleStatus::Active,
-    );
+    )
+    .unwrap();
     body.world = Some(world);
     vault
         .put_claim(

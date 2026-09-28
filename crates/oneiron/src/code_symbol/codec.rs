@@ -598,13 +598,6 @@ pub(super) fn sha256_bytes(bytes: &[u8]) -> [u8; 32] {
     hasher.finalize().into()
 }
 
-pub(super) fn hash_len(hasher: &mut Sha256, len: usize) -> Result<()> {
-    let len = u64::try_from(len)
-        .map_err(|_| Error::ArithmeticOverflow("code symbol hash material length overflow"))?;
-    hasher.update(len.to_le_bytes());
-    Ok(())
-}
-
 fn encode_operations(ops: &[CodeProducingOperation]) -> Result<Value> {
     if ops.len() > 1024 {
         return Err(Error::Code(CodeError::InvalidCodeSymbolManifestBody(

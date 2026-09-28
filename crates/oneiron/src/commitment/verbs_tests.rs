@@ -23,7 +23,7 @@ fn commitment_claim_structure_requires_entity_obligor_and_valid_time() -> Result
         1.0,
         ClaimApprovalStatus::Auto,
         ClaimLifecycleStatus::Active,
-    );
+    )?;
     body.valid_from = Some(20);
     body.valid_to = Some(30);
     assert!(matches!(
@@ -377,7 +377,7 @@ fn status_verbs_reject_non_commitment_claims_without_rewriting() -> Result<()> {
         1.0,
         ClaimApprovalStatus::Auto,
         ClaimLifecycleStatus::Active,
-    );
+    )?;
     vault.put_claim(&id, &body, time(10, 20), 1)?;
     let raw = vault.get_raw(&id)?;
     let env = envelope(actor)?;
@@ -416,7 +416,7 @@ fn commitment_dispatch_rejects_structurally_invalid_body() -> Result<()> {
         1.0,
         ClaimApprovalStatus::Auto,
         ClaimLifecycleStatus::Active,
-    );
+    )?;
     let bytes = crate::claim::encode_claim_body(&body)?;
     assert!(matches!(
         crate::claim::validate_claim_body_and_decode(&bytes, false),

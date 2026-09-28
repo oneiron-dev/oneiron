@@ -116,7 +116,7 @@ fn substrate_is_reserved_at_every_generic_claim_write_door() -> Result<()> {
             1.0,
             ClaimApprovalStatus::Auto,
             ClaimLifecycleStatus::Active,
-        );
+        )?;
         let err = generic_write(&vault, door, &id, &body).expect_err("owned predicate");
         assert_eq!(err.kind(), ErrorKind::ReservedPredicate, "{door:?}");
         assert!(vault.get(&id)?.is_none(), "{door:?}");
@@ -154,7 +154,7 @@ fn generic_predicate_cannot_disguise_an_owned_claim_id_overwrite() -> Result<()>
                 1.0,
                 ClaimApprovalStatus::Auto,
                 ClaimLifecycleStatus::Active,
-            );
+            )?;
             let err = generic_write(&vault, door, &id, &body).expect_err("old id is owned");
             assert_eq!(
                 err.kind(),
@@ -191,7 +191,7 @@ fn other_person_predicates_remain_writable_through_generic_doors() -> Result<()>
                 1.0,
                 ClaimApprovalStatus::Auto,
                 ClaimLifecycleStatus::Active,
-            );
+            )?;
             generic_write(&vault, door, &id, &body)?;
             assert_eq!(
                 vault.get_claim(&id)?.expect("public person fact").predicate,
@@ -215,7 +215,7 @@ fn substrate_lifecycle_is_closed_to_generic_retract_supersede_and_demotion() -> 
         1.0,
         ClaimApprovalStatus::Auto,
         ClaimLifecycleStatus::Active,
-    );
+    )?;
     vault.put_claim(
         &other,
         &body,
@@ -299,7 +299,7 @@ fn substrate_replica_fixture_rematerializes_through_the_existing_reserved_door()
         Value::from("model"),
         writer(),
         100,
-    );
+    )?;
     let data = encode_claim_body(&body)?;
     // This fixture door runs without sync too; no production replay exemption is widened.
     vault

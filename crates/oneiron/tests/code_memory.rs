@@ -109,7 +109,8 @@ fn claim(vault: &Vault, byte: u8, subject: EntityId) -> EntityId {
         0.9,
         ClaimApprovalStatus::Auto,
         ClaimLifecycleStatus::Active,
-    );
+    )
+    .expect("fixture");
     vault
         .put_claim(&claim_id, &body, range(1_780_000_000), 1_780_000_000)
         .expect("seed CLAIM through the public door");

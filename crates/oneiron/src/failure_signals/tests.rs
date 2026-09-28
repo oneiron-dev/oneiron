@@ -658,7 +658,7 @@ fn policy_default_override_narrowing_and_resolution_changes_keep_separate_bucket
     )?;
     let policy_id = crate::gate::default_policy_manifest_id()?;
     let mut manifest =
-        rmpv::decode::read_value(&mut crate::gate::default_policy_manifest().as_slice())
+        rmpv::decode::read_value(&mut crate::gate::default_policy_manifest().unwrap().as_slice())
             .expect("shipped manifest");
     let Value::Map(ref mut entries) = manifest else {
         panic!("manifest map")
@@ -853,7 +853,7 @@ fn trusted_default_replacement_is_not_clamped_by_compiled_fallback() -> Result<(
     let vault = crate::Vault::open(dir.path(), config)?;
     let id = on_record_diagnostic(&vault, 1)?;
     let mut manifest =
-        rmpv::decode::read_value(&mut crate::gate::default_policy_manifest().as_slice())
+        rmpv::decode::read_value(&mut crate::gate::default_policy_manifest().unwrap().as_slice())
             .expect("shipped manifest");
     let Value::Map(ref mut entries) = manifest else {
         panic!("manifest map")

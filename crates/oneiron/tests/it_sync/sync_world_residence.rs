@@ -117,7 +117,8 @@ fn fresh_follow_uses_wire_request_order_for_same_and_older_base_edges() {
             1.0,
             ClaimApprovalStatus::Proposed,
             ClaimLifecycleStatus::Active,
-        );
+        )
+        .expect("fixture");
         body.world = Some(world);
         source
             .put_claim(
@@ -268,7 +269,8 @@ fn cross_month_world_edges_in_both_directions_stage_until_the_other_month_arrive
             1.0,
             ClaimApprovalStatus::Proposed,
             ClaimLifecycleStatus::Active,
-        );
+        )
+        .expect("fixture");
         body.world = Some(world);
         source
             .put_claim(&id, &body, TimeRange { start: at, end: at }, at)
@@ -363,7 +365,8 @@ fn late_follow_accepts_valid_soft_and_hard_deleted_world_history() {
                 1.0,
                 ClaimApprovalStatus::Proposed,
                 ClaimLifecycleStatus::Active,
-            );
+            )
+            .expect("fixture");
             body.world = Some(world);
             source.put_claim(&claim, &body, occurred, at).unwrap();
         }
@@ -461,7 +464,8 @@ fn canonical_soft_world_recovery_restores_shell_edge_and_address() {
         1.0,
         ClaimApprovalStatus::Proposed,
         ClaimLifecycleStatus::Active,
-    );
+    )
+    .expect("fixture");
     body.world = Some(world);
     source.put_claim(&claim, &body, occurred, at).unwrap();
     source

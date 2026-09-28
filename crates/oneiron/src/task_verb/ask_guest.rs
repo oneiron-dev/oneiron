@@ -160,10 +160,9 @@ pub(super) fn mint_guest_grants(
                 asker,
                 refs,
             )?;
-            let grant_id = super::ask_record::derived_id(
-                b"oneiron.tasks.ask.guest.v1",
-                group_ref,
-                person.as_bytes(),
+            let grant_id = crate::EntityId::derive(
+                crate::entity_id::derived_domains::TASK_ASK_GUEST_GRANT,
+                &[group_ref.as_bytes(), person.as_bytes()],
             )?;
             let encoded = crate::federation::encode_federation_grant_body(&grant)?;
             if let Some(raw) = vault.get_raw_in(txn, &grant_id)? {

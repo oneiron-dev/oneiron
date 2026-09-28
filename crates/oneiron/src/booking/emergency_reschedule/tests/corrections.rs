@@ -193,7 +193,8 @@ fn exact_booker_not_live_attendee_receives_actions() {
                 1.0,
                 ClaimApprovalStatus::Approved,
                 ClaimLifecycleStatus::Active,
-            ),
+            )
+            .unwrap(),
             TimeRange {
                 start: NOW,
                 end: NOW,
@@ -257,7 +258,8 @@ fn owner_first_enumeration_and_per_item_fact_refusals_do_not_poison_the_batch() 
                     1.0,
                     ClaimApprovalStatus::Approved,
                     ClaimLifecycleStatus::Active,
-                ),
+                )
+                .unwrap(),
                 TimeRange {
                     start: NOW,
                     end: NOW,

@@ -1114,7 +1114,7 @@ fn put_test_docx_archive_policy(
     vault: &Vault,
     limits: oneiron_docedit::ArchiveLimits,
 ) -> Result<()> {
-    let raw = crate::gate::default_policy_manifest();
+    let raw = crate::gate::default_policy_manifest().unwrap();
     let mut cursor = std::io::Cursor::new(raw.as_slice());
     let mut value = rmpv::decode::read_value(&mut cursor).unwrap();
     let rmpv::Value::Map(entries) = &mut value else {

@@ -28,12 +28,10 @@ const PACKS: [(&str, &str); 4] = [
 ];
 
 fn engine_hub_id() -> Result<EntityId> {
-    let hash = blake3::hash(b"oneiron/built-in-connector-packs/v1");
-    let mut bytes = [0; 16];
-    bytes.copy_from_slice(&hash.as_bytes()[..16]);
-    bytes[6] = (bytes[6] & 0x0f) | 0x80;
-    bytes[8] = (bytes[8] & 0x3f) | 0x80;
-    EntityId::from_bytes(bytes)
+    EntityId::derive(
+        crate::entity_id::derived_domains::BUILTIN_CONNECTOR_PACK_HUB,
+        &[],
+    )
 }
 
 pub(crate) fn seed_builtin_packs(vault: &Vault) -> Result<()> {

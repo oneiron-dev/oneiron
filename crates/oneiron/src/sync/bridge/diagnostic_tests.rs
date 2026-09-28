@@ -5,6 +5,7 @@ use crate::self_heal::{
     diagnostic_event_id, encode_diagnostic_event_body,
 };
 use crate::sync::{
+    ingest::{EntityStep, IngestCtx, ingest_entity_in_txn},
     loro_support::map_insert_bytes,
     types::WindowKey,
     window::{forward_rematerialize, reverse_rematerialize},
@@ -44,16 +45,11 @@ fn peer_diagnostic_output_is_silent_at_live_and_forward_replay() -> Result<()> {
     let (_dir, vault) = open_test_vault_with(VaultConfig::device());
     let (id, blob) = diagnostic_fixture(4, None)?;
     let doc = LoroDoc::new();
+    let tombstones = doc.get_map("tombstones");
+    let ingest = IngestCtx::new(&vault, "2026-03", 0, &tombstones);
     vault.with_write_txn(|txn| {
-        assert!(!materialize_entity_blob_in_txn(
-            &vault,
-            txn,
-            &doc.get_map("tombstones"),
-            "2026-03",
-            &id.to_hex(),
-            &blob,
-            0
-        )?);
+        let step = ingest_entity_in_txn(&ingest, txn, &id.to_hex(), Some(&blob))?;
+        assert!(matches!(step, EntityStep::Skip), "got {step:?}");
         Ok(())
     })?;
     map_insert_bytes(&doc.get_map("entities"), &id.to_hex(), &blob)?;

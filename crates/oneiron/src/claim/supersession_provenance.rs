@@ -1,5 +1,6 @@
 //! Runner-owned companion claims; structural taint mirrors also run on replay.
 use super::{ClaimApprovalStatus, ClaimBody, ClaimSource, ClaimSubject, claim_evidence_taint};
+use crate::entity_id::derived_domains::SUPERSESSION_COMPANION;
 use crate::write_envelope::{
     ClaimCandidate, SourceLineage, WriteActor, WriteEnvelope, WriteProvenance,
 };
@@ -54,17 +55,11 @@ pub(super) fn envelope(body: &ClaimBody) -> Result<WriteEnvelope> {
         lineage,
     ))
 }
-fn companion_id(new: &EntityId, old: &EntityId, predicate: &str) -> EntityId {
-    let mut h = blake3::Hasher::new();
-    h.update(b"oneiron.supersession.companion.v1");
-    h.update(new.as_bytes());
-    h.update(old.as_bytes());
-    h.update(predicate.as_bytes());
-    let mut raw = [0; 16];
-    raw.copy_from_slice(&h.finalize().as_bytes()[..16]);
-    raw[6] = (raw[6] & 0x0f) | 0x70;
-    raw[8] = (raw[8] & 0x3f) | 0x80;
-    EntityId::from_bytes(raw).expect("valid content-addressed entity id")
+fn companion_id(new: &EntityId, old: &EntityId, predicate: &str) -> Result<EntityId> {
+    EntityId::derive(
+        SUPERSESSION_COMPANION,
+        &[new.as_bytes(), old.as_bytes(), predicate.as_bytes()],
+    )
 }
 #[expect(
     clippy::too_many_arguments,
@@ -109,7 +104,7 @@ pub(super) fn write_companion(
     write(
         vault,
         txn,
-        companion_id(new, old, PREDICATE),
+        companion_id(new, old, PREDICATE)?,
         body,
         ClaimCandidate::new(PREDICATE, ClaimSubject::Entity(*new), value, 1.0)
             .with_evidence(Value::Map(vec![(
@@ -166,7 +161,7 @@ pub(super) fn write_coaching(
     write(
         vault,
         txn,
-        companion_id(new, old, super::PREDICATE_CONFLICT_OPEN),
+        companion_id(new, old, super::PREDICATE_CONFLICT_OPEN)?,
         body,
         candidate,
         &envelope,
@@ -186,7 +181,7 @@ fn write(
         candidate = candidate.with_world(world);
     }
     if let Some(existing) = vault.get_claim_in_txn(txn, &id)? {
-        let mut expected = candidate.into_claim_body(envelope, vault.default_facet_in_txn(txn)?);
+        let mut expected = candidate.into_claim_body(envelope, vault.default_facet_in_txn(txn)?)?;
         // Approval is the gate's result, not part of the deterministic candidate.
         expected.approval = existing.approval;
         if existing != expected {

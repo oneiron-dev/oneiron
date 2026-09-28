@@ -57,7 +57,7 @@ fn fixture() -> Result<(tempfile::TempDir, crate::Vault, ClaimBody, WriteEnvelop
         1.0,
         ClaimApprovalStatus::Auto,
         ClaimLifecycleStatus::Active,
-    );
+    )?;
     body.source = Some(ClaimSource::Generated);
     body.scope = Some(Value::Map(vec![(
         Value::from("sensitivity"),

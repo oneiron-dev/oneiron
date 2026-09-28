@@ -66,7 +66,8 @@ fn install_page_and_config(vault: &Vault, page: EntityId, event_type: &EventType
         1.0,
         ClaimApprovalStatus::Auto,
         ClaimLifecycleStatus::Active,
-    );
+    )
+    .unwrap();
     // Every page's configuration rewrites one claim id, whose facet is set at
     // its birth.
     body.scope_facet = vault.default_facet().expect("default facet");

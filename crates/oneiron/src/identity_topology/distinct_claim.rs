@@ -149,7 +149,7 @@ impl Vault {
             write.confidence,
             write.approval,
             ClaimLifecycleStatus::Active,
-        );
+        )?;
         body.source = Some(write.source);
         self.put_reserved_claim_in_txn(
             wtxn,

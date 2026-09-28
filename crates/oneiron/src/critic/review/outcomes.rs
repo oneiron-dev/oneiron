@@ -118,7 +118,7 @@ pub fn record_review_outcome(
             1.0,
             ClaimApprovalStatus::Auto,
             ClaimLifecycleStatus::Active,
-        );
+        )?;
         body.source = Some(ClaimSource::Observed);
         body.evidence = Some(Value::from(outcome_key));
         body.scope = Some(Value::from(super::findings::finding_key(artifact)));

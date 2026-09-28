@@ -26,7 +26,7 @@ fn install_default_manifest_with(
     vault: &Vault,
     edit: impl FnOnce(&mut Vec<(PolicyValue, PolicyValue)>),
 ) -> Result<()> {
-    let bytes = crate::gate::default_policy_manifest();
+    let bytes = crate::gate::default_policy_manifest().unwrap();
     let PolicyValue::Map(mut entries) =
         rmpv::decode::read_value(&mut bytes.as_slice()).expect("default manifest decodes")
     else {

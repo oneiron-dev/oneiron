@@ -70,7 +70,7 @@ fn ensure_docs_corpus(vault: &crate::Vault, leader: EntityId, docs: &DocsExport)
         return Ok(());
     }
     let root = vault.root_project()?;
-    let mut project = ProjectRecord::new(docs.project_id, Some(root), root, leader);
+    let mut project = ProjectRecord::new(docs.project_id, Some(root), root, leader).unwrap();
     project.role = ProjectRole::Corpus;
     vault.put_project(docs.project_id, &project, 1)
 }
@@ -154,7 +154,7 @@ impl<F: Fn(&DocsSegment) -> Result<()>> DocsDeepExtractor for CallbackNer<F> {
 
 fn grant_core_read(vault: &crate::Vault, actor_ref: &str) -> Result<()> {
     use rmpv::Value;
-    let default = crate::gate::default_policy_manifest();
+    let default = crate::gate::default_policy_manifest()?;
     let Value::Map(mut entries) = rmpv::decode::read_value(&mut default.as_slice()).unwrap() else {
         panic!("default policy manifest is a map");
     };
@@ -836,7 +836,8 @@ fn project_corpus_import_deep_ingest_and_query_select_exact_project_set() -> Res
         1.0,
         ClaimApprovalStatus::Approved,
         ClaimLifecycleStatus::Active,
-    );
+    )
+    .unwrap();
     vault.put_claim(&default_claim, &body, TimeRange { start: 4, end: 4 }, 4)?;
     // Import also writes consent/owner control claims in the default project.
     // Restrict this retrieval to the three fixture audiences under test.
@@ -891,7 +892,7 @@ fn docs_import_refuses_missing_or_non_corpus_project() -> Result<()> {
             .is_err()
     );
     let root = vault.root_project()?;
-    let project = ProjectRecord::new(doc.project_id, Some(root), root, owner.actor());
+    let project = ProjectRecord::new(doc.project_id, Some(root), root, owner.actor()).unwrap();
     vault.put_project(doc.project_id, &project, 3)?;
     assert!(
         vault
@@ -994,7 +995,7 @@ fn docs_deep_on_read_rechecks_reader_and_observed_source_after_model_work() -> R
             crate::test_util::put_policy_manifest_bytes(
                 &vault,
                 crate::gate::default_policy_manifest_id()?,
-                &crate::gate::default_policy_manifest(),
+                &crate::gate::default_policy_manifest().unwrap(),
             )?;
         }
         Ok(())

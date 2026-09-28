@@ -233,7 +233,7 @@ pub(crate) fn write_provider_prior_in_txn(
         1.0,
         ClaimApprovalStatus::Auto,
         ClaimLifecycleStatus::Active,
-    );
+    )?;
     body.evidence = Some(Value::from(evidence));
     body.valid_from = Some(now);
     body.source = Some(ClaimSource::Observed);
@@ -323,7 +323,7 @@ pub fn write_enrichment_claim(vault: &Vault, provider: &str, confidence: f32) ->
             confidence,
             ClaimApprovalStatus::Auto,
             ClaimLifecycleStatus::Active,
-        );
+        )?;
         body.valid_from = Some(now);
         body.source = Some(ClaimSource::Observed);
         vault.put_claim_in_txn(

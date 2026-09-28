@@ -266,7 +266,8 @@ fn preset_vault() -> (tempfile::TempDir, Vault) {
                 1.0,
                 ClaimApprovalStatus::Approved,
                 ClaimLifecycleStatus::Active,
-            ),
+            )
+            .unwrap(),
             TimeRange { start: 1, end: 1 },
             1,
         )

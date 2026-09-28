@@ -723,7 +723,8 @@ fn scratchpad_is_persisted_actor_scoped_board_state_under_live_registration() {
         1.0,
         ClaimApprovalStatus::Approved,
         ClaimLifecycleStatus::Active,
-    );
+    )
+    .unwrap();
     vault
         .batch()
         .put_replicated(

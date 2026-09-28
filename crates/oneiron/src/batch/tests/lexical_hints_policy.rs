@@ -60,7 +60,7 @@ fn raw_lexical_hint_put_does_not_bypass_policy_gate() -> Result<()> {
         1.0,
         ClaimApprovalStatus::Approved,
         ClaimLifecycleStatus::Active,
-    );
+    )?;
     body.stale = true;
     let data = crate::claim::encode_claim_body(&body)?;
 
@@ -85,7 +85,7 @@ fn lexical_hint_write_door_rejects_self_and_synthetic_targets() -> Result<()> {
         1.0,
         ClaimApprovalStatus::Approved,
         ClaimLifecycleStatus::Active,
-    );
+    )?;
     self_body.stale = true;
     let self_data = crate::claim::encode_claim_body(&self_body)?;
     let mut wtxn = vault.store.env.write_txn()?;
@@ -121,7 +121,7 @@ fn lexical_hint_write_door_rejects_self_and_synthetic_targets() -> Result<()> {
         0.9,
         ClaimApprovalStatus::Approved,
         ClaimLifecycleStatus::Active,
-    );
+    )?;
     seed_raw_claim_record(&vault, &source, source_body)?;
     let synthetic_target = lexical_query_hint_claim_id(&source, "synthetic target")?;
     let mut synthetic_target_body = ClaimBody::new(
@@ -131,7 +131,7 @@ fn lexical_hint_write_door_rejects_self_and_synthetic_targets() -> Result<()> {
         1.0,
         ClaimApprovalStatus::Approved,
         ClaimLifecycleStatus::Active,
-    );
+    )?;
     synthetic_target_body.stale = true;
     seed_raw_claim_record(&vault, &synthetic_target, synthetic_target_body)?;
     let outer_hint = lexical_query_hint_claim_id(&source, "outer target")?;
@@ -142,7 +142,7 @@ fn lexical_hint_write_door_rejects_self_and_synthetic_targets() -> Result<()> {
         1.0,
         ClaimApprovalStatus::Approved,
         ClaimLifecycleStatus::Active,
-    );
+    )?;
     synthetic_body.stale = true;
     let synthetic_data = crate::claim::encode_claim_body(&synthetic_body)?;
     let mut wtxn = vault.store.env.write_txn()?;
@@ -191,7 +191,7 @@ fn lexical_hint_write_door_rejects_non_claim_targets() -> Result<()> {
         1.0,
         ClaimApprovalStatus::Approved,
         ClaimLifecycleStatus::Active,
-    );
+    )?;
     body.stale = true;
     let data = crate::claim::encode_claim_body(&body)?;
 
@@ -253,7 +253,7 @@ fn replicated_lexical_hint_put_indexes_query_text_and_deletes_without_claim_of()
         1.0,
         ClaimApprovalStatus::Approved,
         ClaimLifecycleStatus::Active,
-    );
+    )?;
     body.stale = true;
     let data = crate::claim::encode_claim_body(&body)?;
     assert!(
@@ -322,7 +322,7 @@ fn replicated_lexical_hint_put_defers_until_target_claim_materializes() -> Resul
         1.0,
         ClaimApprovalStatus::Approved,
         ClaimLifecycleStatus::Active,
-    );
+    )?;
     hint_body.stale = true;
     let hint_data = crate::claim::encode_claim_body(&hint_body)?;
 
@@ -333,7 +333,7 @@ fn replicated_lexical_hint_put_defers_until_target_claim_materializes() -> Resul
         0.9,
         ClaimApprovalStatus::Approved,
         ClaimLifecycleStatus::Active,
-    );
+    )?;
     let claim_data = crate::claim::encode_claim_body(&claim_body)?;
 
     let mut wtxn = vault.store.env.write_txn()?;
@@ -394,7 +394,7 @@ fn deferred_lexical_hint_materialization_fails_closed_when_text_index_untrusted(
         1.0,
         ClaimApprovalStatus::Approved,
         ClaimLifecycleStatus::Active,
-    );
+    )?;
     hint_body.stale = true;
     let hint_data = crate::claim::encode_claim_body(&hint_body)?;
 
@@ -405,7 +405,7 @@ fn deferred_lexical_hint_materialization_fails_closed_when_text_index_untrusted(
         0.9,
         ClaimApprovalStatus::Approved,
         ClaimLifecycleStatus::Active,
-    );
+    )?;
     let claim_data = crate::claim::encode_claim_body(&claim_body)?;
 
     {
@@ -526,7 +526,7 @@ fn bm25_drops_orphan_and_inactive_lexical_hint_postings() -> Result<()> {
         1.0,
         ClaimApprovalStatus::Approved,
         ClaimLifecycleStatus::Active,
-    );
+    )?;
     orphan_body.stale = true;
     seed_raw_claim_record(&vault, &orphan_hint, orphan_body)?;
     vault
@@ -562,7 +562,7 @@ fn bm25_drops_orphan_and_inactive_lexical_hint_postings() -> Result<()> {
         1.0,
         ClaimApprovalStatus::Approved,
         ClaimLifecycleStatus::Superseded,
-    );
+    )?;
     inactive_body.stale = true;
     seed_raw_claim_record(&vault, &inactive_hint, inactive_body)?;
     vault

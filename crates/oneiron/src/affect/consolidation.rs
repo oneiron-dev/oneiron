@@ -238,7 +238,7 @@ impl Vault {
                     1.0,
                     ClaimApprovalStatus::Auto,
                     ClaimLifecycleStatus::Active,
-                );
+                )?;
                 body.evidence = Some(evidence);
                 body.source = Some(ClaimSource::Inferred);
                 body.valid_from = Some(now);
@@ -606,7 +606,7 @@ impl Vault {
     ) -> Result<VadAnnotation> {
         annotation.vad.validate()?;
         let claim_id = vad_annotation_claim_id(expected_type, id)?;
-        let claim_body = vad_annotation_claim_body(id, &annotation);
+        let claim_body = vad_annotation_claim_body(id, &annotation)?;
         let data = encode_claim_body(&claim_body)?;
         validate_claim_body_bytes(&data, false)?;
 

@@ -272,7 +272,7 @@ fn test_publisher(vault: &Vault) -> Result<WriteActor> {
     crate::test_util::put_policy_manifest_bytes(
         vault,
         EntityId::from_bytes([0x35; 16])?,
-        &crate::gate::default_policy_manifest(),
+        &crate::gate::default_policy_manifest().unwrap(),
     )?;
     Ok(WriteActor::new(id, crate::edge::EdgeActorClass::Human))
 }

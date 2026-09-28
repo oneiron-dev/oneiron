@@ -248,7 +248,8 @@ fn put_claim(vault: &Vault, claim_id: EntityId, subject: EntityId, predicate: &s
                 1.0,
                 ClaimApprovalStatus::Approved,
                 ClaimLifecycleStatus::Active,
-            ),
+            )
+            .expect("fixture"),
             TimeRange { start: 1, end: 1 },
             1,
         )

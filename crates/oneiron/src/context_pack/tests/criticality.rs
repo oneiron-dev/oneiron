@@ -4,7 +4,7 @@ use crate::serialize::{SerializeConfig, project_pack_for_json_response, serializ
 use crate::tokenizer::DEFAULT_CONTEXT_PACK_TOKENIZER;
 
 fn set_policy(vault: &Vault, critical: bool) {
-    let bytes = crate::gate::default_policy_manifest();
+    let bytes = crate::gate::default_policy_manifest().unwrap();
     let rmpv::Value::Map(mut fields) = rmpv::decode::read_value(&mut bytes.as_slice()).unwrap()
     else {
         panic!("manifest map");

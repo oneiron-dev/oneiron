@@ -307,7 +307,7 @@ fn missing_manifest_denies_plain_scoped_actor_but_preserves_trusted_owner_defaul
 #[test]
 fn floor_uses_resolved_manifest_projection_and_its_fail_closed_diagnostics() -> Result<()> {
     let (_tmp, vault) = crate::test_util::open_test_vault_with(Default::default());
-    let bytes = crate::gate::default_policy_manifest();
+    let bytes = crate::gate::default_policy_manifest()?;
     let Value::Map(mut entries) =
         rmpv::decode::read_value(&mut bytes.as_slice()).expect("decode manifest fixture")
     else {

@@ -16,6 +16,7 @@ use std::path::Path;
 use crate::claim::{ClaimBody, ClaimSource, ClaimSubject};
 use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;
+use crate::entity_id::derived_domains::{LINKEDIN_CLAIM, LINKEDIN_ENTITY};
 use crate::error::Error;
 use crate::ingest::{
     ImportedEvidenceAdmission, ImportedEvidenceEntityResolution, NormalizedIngestClaim,
@@ -173,24 +174,13 @@ impl LinkedInLeadPreloadReport {
     }
 }
 
-fn derived_id(domain: &[u8], parts: &[&str]) -> crate::Result<EntityId> {
-    let mut hasher = blake3::Hasher::new();
-    hasher.update(domain);
-    for part in parts {
-        hasher.update(part.as_bytes());
-    }
-    let mut bytes = [0; 16];
-    bytes.copy_from_slice(&hasher.finalize().as_bytes()[..16]);
-    EntityId::from_bytes(bytes)
-}
-
 pub(crate) fn resolve_linkedin_entity(
     vault: &Vault,
     key: LinkedInExternalKey,
 ) -> Result<(EntityId, Disposition), LinkedInResolutionError> {
     // Revalidate even a crate-local caller's directly constructed key.
     let key = LinkedInExternalKey::new(key.kind, &key.external_id)?;
-    let id = derived_id(b"oneiron.linkedin.entity.v1", &[&key.source_ref()])?;
+    let id = EntityId::derive(LINKEDIN_ENTITY, &[key.source_ref().as_bytes()])?;
     let disposition =
         vault.with_write_txn(|wtxn| source_binding::resolve_in_txn(vault, wtxn, &id, &key))?;
     Ok((id, disposition))
@@ -332,7 +322,10 @@ fn admit_facts(
     let mut admitted = 0;
     for &(predicate, value) in facts {
         let Some(value) = value else { continue };
-        let claim_id = derived_id(b"oneiron.linkedin.claim.v1", &[&source_ref, predicate])?;
+        let claim_id = EntityId::derive(
+            LINKEDIN_CLAIM,
+            &[source_ref.as_bytes(), predicate.as_bytes()],
+        )?;
         // The typed read also refuses a non-CLAIM squatting at this id.
         if let Some(stored) = vault.get_claim(&claim_id)? {
             if !matches_imported_fact(&stored, subject, predicate, &source_ref) {
@@ -379,9 +372,9 @@ fn resolve_employment(
 ) -> Result<Disposition, LinkedInResolutionError> {
     let kind = EdgeKind::EmployedBy;
     let source_ref = key.source_ref();
-    let claim_id = derived_id(
-        b"oneiron.linkedin.claim.v1",
-        &[&source_ref, "linkedin.employed_by"],
+    let claim_id = EntityId::derive(
+        LINKEDIN_CLAIM,
+        &[source_ref.as_bytes(), b"linkedin.employed_by"],
     )?;
     let evidence = rmpv::Value::Map(vec![
         (

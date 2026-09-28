@@ -14,7 +14,7 @@ fn anchor_decoder_rejects_non_ids_sentinels_and_edge_subjects() -> Result<()> {
         Value::from(person.to_hex()),
         writer(),
         100,
-    );
+    )?;
     for value in [
         Value::Nil,
         Value::from(1),
@@ -74,7 +74,7 @@ fn anchor_admission_rejects_wrong_types_and_values_without_overwriting_history()
             (wrong_actor, Value::from(person.to_hex())),
             (place, Value::from(person.to_hex())),
         ] {
-            let body = subject_fact(PREDICATE_ACTOR_SUBJECT_REF, subject, value, writer(), 100);
+            let body = subject_fact(PREDICATE_ACTOR_SUBJECT_REF, subject, value, writer(), 100)?;
             for target in [id, new_id] {
                 let error = admit(&vault, door, &target, &body).expect_err("hostile actor anchor");
                 assert_eq!(error.kind(), ErrorKind::InvalidClaimBody, "{door:?}");
@@ -111,7 +111,7 @@ fn anchor_admission_requires_both_entities_and_accepts_the_actor_kind_matrix() -
                         Value::from(subject.to_hex()),
                         writer(),
                         100,
-                    );
+                    )?;
                     assert!(admit(&vault, door, &id, &body).is_err());
                     let dependencies = if actor_first {
                         [(actor, actor_kind), (subject, subject_kind)]
@@ -160,7 +160,7 @@ fn anchor_replicated_batch_validates_at_each_op_and_rolls_back_earlier_dependenc
                 Value::from(subject.to_hex()),
                 writer(),
                 100,
-            );
+            )?;
             let data = encode_claim_body(&body)?;
             let occurred = TimeRange {
                 start: 100,

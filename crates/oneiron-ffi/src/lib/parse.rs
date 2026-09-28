@@ -49,8 +49,7 @@ pub(super) fn parse_u8(value: u32) -> Result<u8, OneironStatus> {
 }
 
 pub(super) fn parse_edge_kind(kind: u32) -> Result<EdgeKind, OneironStatus> {
-    let byte = parse_u8(kind)?;
-    EdgeKind::try_from_u8(byte).ok_or(OneironStatus::InvalidArg)
+    EdgeKind::from_wire(kind).ok_or(OneironStatus::InvalidArg)
 }
 
 pub(super) fn parse_search_limit(limit: u32) -> Result<usize, OneironStatus> {

@@ -277,7 +277,8 @@ fn promote_one(
     let probe_body = candidate
         .candidate
         .clone()
-        .into_claim_body(&envelope, default_facet);
+        .into_claim_body(&envelope, default_facet)
+        .map_err(|error| error.to_string())?;
     let claim_candidate = candidate
         .candidate
         .with_evidence(evidence_value)
@@ -294,6 +295,7 @@ fn promote_one(
         claim_candidate
             .clone()
             .into_claim_body(&envelope, default_facet)
+            .map_err(|error| error.to_string())?
             .source
             .expect("consolidation envelope must stamp a source"),
         computed_meet

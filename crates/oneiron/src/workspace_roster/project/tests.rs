@@ -39,7 +39,7 @@ fn project_root_child_members_and_home_room_are_atomic() -> Result<()> {
     );
     let child_id = EntityId::now();
     let leader = EntityId::from_hex(&root.leader)?;
-    let mut child = ProjectRecord::new(child_id, Some(root_id), root_id, leader);
+    let mut child = ProjectRecord::new(child_id, Some(root_id), root_id, leader)?;
     child.sessions = vec![EntityId::now().to_hex()];
     child.tasks = vec![EntityId::now().to_hex()];
     child.branches = vec![EntityId::now().to_hex()];
@@ -149,7 +149,7 @@ fn deleting_project_removes_derived_room_and_member_access() -> Result<()> {
             b"member",
         )?;
         let id = EntityId::now();
-        let project = ProjectRecord::new(id, Some(root), root, owner);
+        let project = ProjectRecord::new(id, Some(root), root, owner)?;
         vault.put_project(id, &project, 2)?;
         let room = EntityId::from_hex(&project.home_room)?;
         let memory = vault.memory(owner, crate::edge::EdgeActorClass::Human);
@@ -207,13 +207,13 @@ fn root_and_parent_projects_cannot_be_deleted_at_any_door() -> Result<()> {
         let parent = EntityId::now();
         vault.put_project(
             parent,
-            &ProjectRecord::new(parent, Some(root), root, leader),
+            &ProjectRecord::new(parent, Some(root), root, leader)?,
             1,
         )?;
         let child = EntityId::now();
         vault.put_project(
             child,
-            &ProjectRecord::new(child, Some(parent), root, leader),
+            &ProjectRecord::new(child, Some(parent), root, leader)?,
             2,
         )?;
         for id in [root, parent] {
@@ -256,7 +256,7 @@ fn erased_parent_is_invalid_not_a_pending_dependency() -> Result<()> {
         let parent = EntityId::now();
         vault.put_project(
             parent,
-            &ProjectRecord::new(parent, Some(root), root, leader),
+            &ProjectRecord::new(parent, Some(root), root, leader)?,
             1,
         )?;
         if hard {
@@ -268,7 +268,7 @@ fn erased_parent_is_invalid_not_a_pending_dependency() -> Result<()> {
             vault.delete_entity_with_reason(&parent, crate::DeleteReason::UserDelete)?;
         }
         let child = EntityId::now();
-        let body = ProjectRecord::new(child, Some(parent), root, leader);
+        let body = ProjectRecord::new(child, Some(parent), root, leader)?;
         let error = vault.put_project(child, &body, 2).unwrap_err();
         assert_eq!(error.kind(), crate::error::ErrorKind::InvalidProjectBody);
         assert!(vault.get(&child)?.is_none());
@@ -307,7 +307,8 @@ fn mint_fixture(
         Some(vault.root_project()?),
         vault.root_project()?,
         person,
-    );
+    )
+    .unwrap();
     vault.put_project(staging, &staging_project, 20)?;
     let room = EntityId::from_hex(&staging_project.home_room)?;
     vault
@@ -546,7 +547,7 @@ fn project_depth_is_person_editable_and_round_trips_with_member_refs() -> Result
     );
     let leader = EntityId::from_hex(&vault.project(root)?.unwrap().leader)?;
     let child = EntityId::now();
-    let mut body = ProjectRecord::new(child, Some(root), root, leader);
+    let mut body = ProjectRecord::new(child, Some(root), root, leader).unwrap();
     body.sessions.push(EntityId::now().to_hex());
     vault.put_project(child, &body, 1)?;
     assert_eq!(vault.project(child)?, Some(body.clone()));
@@ -687,7 +688,7 @@ fn project_born_from_is_message_at_typed_batch_and_replay_doors() -> Result<()> 
     let root = vault.root_project()?;
     let leader = EntityId::from_hex(&vault.project(root)?.unwrap().leader)?;
     let id = EntityId::now();
-    let mut project = ProjectRecord::new(id, Some(root), root, leader);
+    let mut project = ProjectRecord::new(id, Some(root), root, leader).unwrap();
     let at = TimeRange { start: 21, end: 21 };
     for source in [root, crate::test_util::entity(0x79)] {
         project.born_from = Some(source.to_hex());
@@ -766,8 +767,8 @@ fn leaders_open_direct_chat_under_own_scopes_and_root_rule_narrows() -> Result<(
     }
     let a = EntityId::now();
     let b = EntityId::now();
-    vault.put_project(a, &ProjectRecord::new(a, Some(root), a, alice), 2)?;
-    vault.put_project(b, &ProjectRecord::new(b, Some(root), b, bob), 2)?;
+    vault.put_project(a, &ProjectRecord::new(a, Some(root), a, alice).unwrap(), 2)?;
+    vault.put_project(b, &ProjectRecord::new(b, Some(root), b, bob).unwrap(), 2)?;
     let chat = EntityId::now();
     let opened = vault.open_leader_chat(
         chat,
@@ -954,7 +955,8 @@ fn leaders_open_direct_chat_under_own_scopes_and_root_rule_narrows() -> Result<(
         1.0,
         ClaimApprovalStatus::Approved,
         ClaimLifecycleStatus::Active,
-    );
+    )
+    .unwrap();
     claim.scope_project = root;
     claim.valid_from = Some(6);
     // The test-only rule is authored through the ordinary CLAIM gate. Supply
@@ -1062,8 +1064,16 @@ fn cross_project_widen_asks_the_shared_ancestor_board_not_the_other_leader() -> 
     );
     let left = EntityId::now();
     let right = EntityId::now();
-    vault.put_project(left, &ProjectRecord::new(left, Some(root), left, alice), 2)?;
-    vault.put_project(right, &ProjectRecord::new(right, Some(root), right, bob), 2)?;
+    vault.put_project(
+        left,
+        &ProjectRecord::new(left, Some(root), left, alice).unwrap(),
+        2,
+    )?;
+    vault.put_project(
+        right,
+        &ProjectRecord::new(right, Some(root), right, bob).unwrap(),
+        2,
+    )?;
     assert_eq!(vault.project(root)?.unwrap().board, [board_member.to_hex()]);
 
     let scope = crate::federation::scope_codec::read_preset();
@@ -1189,8 +1199,8 @@ fn leader_chat_membership_keeps_binding_but_allows_history_leave_and_rejoin() ->
     }
     let a = EntityId::now();
     let b = EntityId::now();
-    vault.put_project(a, &ProjectRecord::new(a, Some(root), a, alice), 2)?;
-    vault.put_project(b, &ProjectRecord::new(b, Some(root), b, bob), 2)?;
+    vault.put_project(a, &ProjectRecord::new(a, Some(root), a, alice).unwrap(), 2)?;
+    vault.put_project(b, &ProjectRecord::new(b, Some(root), b, bob).unwrap(), 2)?;
     for (leaver, other) in [(alice, bob), (bob, alice)] {
         let room = EntityId::now();
         let writer = crate::WriteActor::new(alice, EdgeActorClass::Human);
@@ -1243,8 +1253,8 @@ fn raw_turn_and_edge_cannot_attach_to_leader_chat_before_or_after_dag_adoption()
     }
     let a = EntityId::now();
     let b = EntityId::now();
-    vault.put_project(a, &ProjectRecord::new(a, Some(root), a, alice), 2)?;
-    vault.put_project(b, &ProjectRecord::new(b, Some(root), b, bob), 2)?;
+    vault.put_project(a, &ProjectRecord::new(a, Some(root), a, alice).unwrap(), 2)?;
+    vault.put_project(b, &ProjectRecord::new(b, Some(root), b, bob).unwrap(), 2)?;
     let chat = EntityId::now();
     vault.open_leader_chat(
         chat,
@@ -1333,12 +1343,12 @@ fn project_dag_accepts_two_parents_and_diamond_but_rejects_secondary_cycles() ->
     for parent in [left, right] {
         vault.put_project(
             parent,
-            &ProjectRecord::new(parent, Some(root), root, leader),
+            &ProjectRecord::new(parent, Some(root), root, leader).unwrap(),
             1,
         )?;
     }
     let shared = EntityId::now();
-    let mut child = ProjectRecord::new(shared, Some(left), root, leader);
+    let mut child = ProjectRecord::new(shared, Some(left), root, leader).unwrap();
     child.role = ProjectRole::Corpus;
     child.parents.push(right.to_hex());
     vault.put_project(shared, &child, 2)?;
@@ -1397,7 +1407,8 @@ fn stored_claim(vault: &Vault) -> Result<EntityId> {
             0.9,
             ClaimApprovalStatus::Auto,
             ClaimLifecycleStatus::Active,
-        ),
+        )
+        .unwrap(),
         TimeRange { start: 2, end: 2 },
         2,
     )?;
@@ -1413,7 +1424,7 @@ fn generic_edges_cannot_invent_or_retire_project_parents() -> Result<()> {
     let child = EntityId::now();
     vault.put_project(
         child,
-        &ProjectRecord::new(child, Some(root), root, leader),
+        &ProjectRecord::new(child, Some(root), root, leader).unwrap(),
         1,
     )?;
     for result in [
@@ -1441,7 +1452,7 @@ fn generic_edges_cannot_invent_or_retire_project_parents() -> Result<()> {
     let other = EntityId::now();
     vault.put_project(
         other,
-        &ProjectRecord::new(other, Some(root), root, leader),
+        &ProjectRecord::new(other, Some(root), root, leader).unwrap(),
         2,
     )?;
     let mut new_body = vault.project(child)?.unwrap();
@@ -1583,7 +1594,7 @@ fn generic_and_replay_edges_cannot_link_claims_to_hubs() -> Result<()> {
         vault
             .put_project(
                 future,
-                &ProjectRecord::new(future, Some(root), root, leader),
+                &ProjectRecord::new(future, Some(root), root, leader).unwrap(),
                 3,
             )
             .unwrap_err()
@@ -1638,11 +1649,11 @@ fn project_body_updates_preserve_venture_org_edge_and_retire_only_old_project_pa
     let second_parent = EntityId::now();
     vault.put_project(
         second_parent,
-        &ProjectRecord::new(second_parent, Some(root), root, leader),
+        &ProjectRecord::new(second_parent, Some(root), root, leader).unwrap(),
         1,
     )?;
     let venture = EntityId::now();
-    let original = ProjectRecord::new(venture, Some(root), root, leader);
+    let original = ProjectRecord::new(venture, Some(root), root, leader).unwrap();
     vault.put_project(venture, &original, 2)?;
     let org = EntityId::now();
     vault.put_entity(
@@ -1705,7 +1716,7 @@ fn updating_project_cannot_recreate_its_soft_deleted_home_room() -> Result<()> {
     let root = vault.root_project()?;
     let leader = EntityId::from_hex(&vault.project(root)?.unwrap().leader)?;
     let id = EntityId::now();
-    let project = ProjectRecord::new(id, Some(root), root, leader);
+    let project = ProjectRecord::new(id, Some(root), root, leader).unwrap();
     vault.put_project(id, &project, 1)?;
     let room = EntityId::from_hex(&project.home_room)?;
     let changes = vault.project_room_changes(id)?;
@@ -1716,6 +1727,40 @@ fn updating_project_cannot_recreate_its_soft_deleted_home_room() -> Result<()> {
     assert_eq!(vault.project(id)?, Some(project));
     assert!(vault.project_room(room)?.is_none());
     assert_eq!(vault.project_room_changes(id)?, changes);
+    Ok(())
+}
+
+#[test]
+fn a_project_whose_home_room_id_sorts_first_reimports() -> Result<()> {
+    // The home-room id is derived (T50), so it can sort before its project's
+    // id; the whole-vault import resolves the project first either way.
+    let (_source_dir, source) = crate::test_util::open_test_vault_with(Default::default());
+    let root_id = source.root_project()?;
+    let leader = EntityId::from_hex(&source.project(root_id)?.expect("root").leader)?;
+    let (child_id, child) = (1u64..)
+        .map(|n| -> Result<_> {
+            let mut bytes = [0xF0; 16];
+            bytes[8..].copy_from_slice(&n.to_be_bytes());
+            let id = EntityId::from_bytes(bytes)?;
+            Ok((id, ProjectRecord::new(id, Some(root_id), root_id, leader)?))
+        })
+        .find(|candidate| {
+            candidate
+                .as_ref()
+                .map_or(true, |(id, record)| record.home_room < id.to_hex())
+        })
+        .expect("the search is unbounded")?;
+    source.put_project(child_id, &child, 10)?;
+    let artifact = source.export_whole_vault(crate::context_pack::PackFormat::Json)?;
+    let (_destination_dir, destination) =
+        crate::test_util::open_test_vault_with(Default::default());
+    destination.import_whole_vault_json(artifact.bytes())?;
+    assert_eq!(destination.project(child_id)?, Some(child.clone()));
+    let room_id = EntityId::from_hex(&child.home_room)?;
+    assert_eq!(
+        destination.project_room(room_id)?.expect("room").project_id,
+        child_id.to_hex()
+    );
     Ok(())
 }
 
@@ -1745,7 +1790,7 @@ fn in_range_depth_cannot_be_changed_through_generic_or_replicated_puts() -> Resu
 
     let child = EntityId::now();
     let leader = EntityId::from_hex(&original.leader)?;
-    let mut nondefault_birth = ProjectRecord::new(child, Some(root), root, leader);
+    let mut nondefault_birth = ProjectRecord::new(child, Some(root), root, leader).unwrap();
     nondefault_birth.depth = 12;
     vault.put_project(child, &nondefault_birth, 9)?;
     assert_eq!(
@@ -1804,7 +1849,7 @@ fn delete_recreate_cannot_reset_owner_depth_for_existing_attempt() -> Result<()>
     let root = vault.root_project()?;
     let leader = EntityId::from_hex(&vault.project(root)?.unwrap().leader)?;
     let id = EntityId::now();
-    let born = ProjectRecord::new(id, Some(root), root, leader);
+    let born = ProjectRecord::new(id, Some(root), root, leader).unwrap();
     vault.put_project(id, &born, 1)?;
     let (agent, _) = vault
         .get_seeded_agent_definition_by_logical_id("sys.default")?
@@ -1904,16 +1949,24 @@ fn secondary_parent_rule_narrows_cross_project_leader_chat() -> Result<()> {
     }
     let left = EntityId::now();
     let right = EntityId::now();
-    vault.put_project(left, &ProjectRecord::new(left, Some(root), left, alice), 2)?;
-    vault.put_project(right, &ProjectRecord::new(right, Some(root), right, bob), 2)?;
+    vault.put_project(
+        left,
+        &ProjectRecord::new(left, Some(root), left, alice).unwrap(),
+        2,
+    )?;
+    vault.put_project(
+        right,
+        &ProjectRecord::new(right, Some(root), right, bob).unwrap(),
+        2,
+    )?;
     let first = EntityId::now();
     let second = EntityId::now();
-    let mut branch = ProjectRecord::new(first, Some(left), first, alice);
+    let mut branch = ProjectRecord::new(first, Some(left), first, alice).unwrap();
     branch.parents.push(right.to_hex()); // shared ancestor only on the second path
     vault.put_project(first, &branch, 3)?;
     vault.put_project(
         second,
-        &ProjectRecord::new(second, Some(right), second, bob),
+        &ProjectRecord::new(second, Some(right), second, bob).unwrap(),
         3,
     )?;
     vault.open_leader_chat(
@@ -1942,7 +1995,8 @@ fn secondary_parent_rule_narrows_cross_project_leader_chat() -> Result<()> {
         1.0,
         ClaimApprovalStatus::Approved,
         ClaimLifecycleStatus::Active,
-    );
+    )
+    .unwrap();
     claim.scope_project = right;
     vault.put_claim(&rule, &claim, TimeRange { start: 5, end: 5 }, 5)?;
     let refusal = vault

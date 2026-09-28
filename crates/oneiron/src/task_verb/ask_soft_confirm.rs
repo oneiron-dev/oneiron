@@ -10,10 +10,9 @@ pub(super) fn notice(
     group: EntityId,
     person: EntityId,
 ) -> Result<Option<super::TaskAskSoftConfirmNotice>> {
-    let id = super::ask_record::derived_id(
-        b"oneiron.tasks.ask.soft_confirm.v1",
-        group,
-        person.as_bytes(),
+    let id = crate::EntityId::derive(
+        crate::entity_id::derived_domains::TASK_ASK_SOFT_CONFIRM,
+        &[group.as_bytes(), person.as_bytes()],
     )?;
     let Some(notice): Option<super::TaskAskSoftConfirmNotice> =
         super::ask_record::read(vault, txn, id, SOFT_CONFIRM)?
@@ -61,10 +60,9 @@ pub(super) fn put_notice(
     now: u64,
 ) -> Result<()> {
     let (group, person) = subject;
-    let id = super::ask_record::derived_id(
-        b"oneiron.tasks.ask.soft_confirm.v1",
-        group,
-        person.as_bytes(),
+    let id = crate::EntityId::derive(
+        crate::entity_id::derived_domains::TASK_ASK_SOFT_CONFIRM,
+        &[group.as_bytes(), person.as_bytes()],
     )?;
     if super::ask_record::read::<super::TaskAskSoftConfirmNotice>(vault, txn, id, SOFT_CONFIRM)?
         .is_some()
@@ -104,10 +102,9 @@ pub(super) fn validate_confirmation(
         .confirmation
         .as_ref()
         .ok_or_else(super::ask_record::invalid)?;
-    let id = super::ask_record::derived_id(
-        b"oneiron.tasks.ask.soft_confirm.v1",
-        group,
-        person.as_bytes(),
+    let id = crate::EntityId::derive(
+        crate::entity_id::derived_domains::TASK_ASK_SOFT_CONFIRM,
+        &[group.as_bytes(), person.as_bytes()],
     )?;
     let notice: super::TaskAskSoftConfirmNotice =
         super::ask_record::read(vault, txn, id, SOFT_CONFIRM)?
@@ -149,10 +146,9 @@ pub(crate) fn validate_dispatch(
     let (Ok(group), Ok(person)) = (EntityId::from_hex(group), EntityId::from_hex(person)) else {
         return Ok(false);
     };
-    let expected = super::ask_record::derived_id(
-        b"oneiron.tasks.ask.soft_confirm.v1",
-        group,
-        person.as_bytes(),
+    let expected = crate::EntityId::derive(
+        crate::entity_id::derived_domains::TASK_ASK_SOFT_CONFIRM,
+        &[group.as_bytes(), person.as_bytes()],
     )?;
     if request.intent.content_ref.as_deref() != Some(expected.to_hex().as_str()) {
         return Ok(false);

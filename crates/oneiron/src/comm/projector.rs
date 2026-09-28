@@ -131,14 +131,11 @@ fn import_delivered_send_receipts(vault: &Vault) -> CommResult<()> {
                 .ok_or(CommError::InvalidRecord)?,
         )
         .map_err(|_| CommError::InvalidRecord)?;
-        let mut hash = blake3::Hasher::new();
-        hash.update(b"oneiron.comm.connector_send_event.v1\0");
-        hash.update(task_ref.as_bytes());
-        let mut bytes = [0_u8; 16];
-        bytes.copy_from_slice(&hash.finalize().as_bytes()[..16]);
-        bytes[6] = (bytes[6] & 0x0f) | 0x70;
-        bytes[8] = (bytes[8] & 0x3f) | 0x80;
-        let event_id = EntityId::from_bytes(bytes).map_err(|_| CommError::InvalidRecord)?;
+        let event_id = EntityId::derive(
+            crate::entity_id::derived_domains::COMM_CONNECTOR_SEND_EVENT,
+            &[task_ref.as_bytes()],
+        )
+        .map_err(|_| CommError::InvalidRecord)?;
         vault.try_with_write_txn(|txn| {
             // Check the immutable source event BEFORE resolving today's party.
             // A merged shell keeps its original body, and a deleted subject has

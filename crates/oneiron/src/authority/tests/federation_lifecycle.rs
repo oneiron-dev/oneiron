@@ -143,10 +143,7 @@ fn federation_connect_digest_mismatch_never_activates() {
     let fixture = pact_fixture(126);
     let genesis_hash = authority_entry_hash(&fixture.genesis).unwrap();
     let mut action = connect_action(&fixture);
-    action.pact_scope = Some(symmetric_scope(
-        crate::federation::FederationScopeFacets::Bottom,
-        crate::federation::FederationScopeBands::All,
-    ));
+    action.pact_scope = Some(symmetric_scope(ScopeAxis::Bottom, ScopeAxis::All));
     let entry = lifecycle_entry(&fixture, vec![genesis_hash], 1, action);
     let entry_hash = authority_entry_hash(&entry).unwrap();
     let fold = fold_authority_log_without_seen_time_delay(&[fixture.genesis.clone(), entry]);
@@ -163,14 +160,9 @@ fn federation_connect_digest_mismatch_never_activates() {
 
 #[test]
 fn federation_rescope_narrow_and_repact_rules() {
-    let ceiling_facets = crate::federation::FederationScopeFacets::Some(vec![
-        scope_entity(0x21),
-        scope_entity(0x22),
-    ]);
-    let fixture = pact_fixture_with_scope(
-        128,
-        symmetric_scope(ceiling_facets, crate::federation::FederationScopeBands::All),
-    );
+    let ceiling_facets =
+        ScopeAxis::from_iter([scope_entity(0x21), scope_entity(0x22)].map(ScopeId));
+    let fixture = pact_fixture_with_scope(128, symmetric_scope(ceiling_facets, ScopeAxis::All));
     let genesis_hash = authority_entry_hash(&fixture.genesis).unwrap();
     let connect = lifecycle_entry(&fixture, vec![genesis_hash], 1, connect_action(&fixture));
     let connect_hash = authority_entry_hash(&connect).unwrap();
@@ -186,9 +178,9 @@ fn federation_rescope_narrow_and_repact_rules() {
             fixture.grant_ref,
             1,
             FederationDirectionScope {
-                worlds: crate::federation::FederationScopeWorlds::All,
-                facets: crate::federation::FederationScopeFacets::All,
-                bands: crate::federation::FederationScopeBands::All,
+                worlds: ScopeAxis::All,
+                facets: ScopeAxis::All,
+                bands: ScopeAxis::All,
             },
         ),
     );
@@ -210,9 +202,9 @@ fn federation_rescope_narrow_and_repact_rules() {
 
     // Narrowing rescope (⊑ ceiling, epoch == cur) replaces effective_scope.
     let narrowed = FederationDirectionScope {
-        worlds: crate::federation::FederationScopeWorlds::Base,
-        facets: crate::federation::FederationScopeFacets::Some(vec![scope_entity(0x21)]),
-        bands: crate::federation::FederationScopeBands::Some(vec![SelectorRange::Semantic]),
+        worlds: base_world_axis(),
+        facets: ScopeAxis::from_iter([scope_entity(0x21)].map(ScopeId)),
+        bands: ScopeAxis::from_iter([SelectorRange::Semantic]),
     };
     let narrow = lifecycle_entry(
         &fixture,
@@ -239,8 +231,8 @@ fn federation_rescope_narrow_and_repact_rules() {
 
     // Dual-signed repact at epoch+1 replaces ceiling + digest wholesale.
     let new_scope = symmetric_scope(
-        crate::federation::FederationScopeFacets::Some(vec![scope_entity(0x23)]),
-        crate::federation::FederationScopeBands::All,
+        ScopeAxis::from_iter([scope_entity(0x23)].map(ScopeId)),
+        ScopeAxis::All,
     );
     let new_nonce = [0x5A; 16];
     let repact = lifecycle_entry(
@@ -632,12 +624,12 @@ fn federation_suspended_pact_heals_via_fresh_repact() {
     let connect = lifecycle_entry(&fixture, vec![genesis_hash], 1, connect_action(&fixture));
     let connect_hash = authority_entry_hash(&connect).unwrap();
     let left_scope = symmetric_scope(
-        crate::federation::FederationScopeFacets::Some(vec![scope_entity(0x21)]),
-        crate::federation::FederationScopeBands::All,
+        ScopeAxis::from_iter([scope_entity(0x21)].map(ScopeId)),
+        ScopeAxis::All,
     );
     let right_scope = symmetric_scope(
-        crate::federation::FederationScopeFacets::Some(vec![scope_entity(0x22)]),
-        crate::federation::FederationScopeBands::All,
+        ScopeAxis::from_iter([scope_entity(0x22)].map(ScopeId)),
+        ScopeAxis::All,
     );
     let left = lifecycle_entry(
         &fixture,
@@ -714,8 +706,8 @@ fn federation_suspended_pact_heals_via_fresh_repact() {
 
     // A fresh dual-signed repact at epoch+1 heals the suspension.
     let heal_scope = symmetric_scope(
-        crate::federation::FederationScopeFacets::Some(vec![scope_entity(0x23)]),
-        crate::federation::FederationScopeBands::All,
+        ScopeAxis::from_iter([scope_entity(0x23)].map(ScopeId)),
+        ScopeAxis::All,
     );
     let heal_nonce = [0x6D; 16];
     let heal = lifecycle_entry(

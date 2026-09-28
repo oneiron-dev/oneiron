@@ -31,7 +31,8 @@ fn quiet_claim(start_minute: u64, end_minute: u64) -> ClaimBody {
         1.0,
         ClaimApprovalStatus::Approved,
         ClaimLifecycleStatus::Active,
-    );
+    )
+    .unwrap();
     body.source = Some(ClaimSource::UserStated);
     body
 }
@@ -55,6 +56,7 @@ fn context_claim(condition: DeliveryWindowContextCondition) -> ClaimBody {
         ClaimApprovalStatus::Approved,
         ClaimLifecycleStatus::Active,
     )
+    .unwrap()
 }
 
 fn channel_claim(channel: &str, start_minute: u64, end_minute: u64, reason: &str) -> ClaimBody {
@@ -81,6 +83,7 @@ fn channel_claim(channel: &str, start_minute: u64, end_minute: u64, reason: &str
         ClaimApprovalStatus::Approved,
         ClaimLifecycleStatus::Active,
     )
+    .unwrap()
 }
 
 fn push_claim_value(body: &mut ClaimBody, key: &str, value: Value) {
@@ -299,7 +302,7 @@ fn delivery_window_evaluator_holds_interrupt_to_latest_window_end() -> Result<()
         1.0,
         ClaimApprovalStatus::Approved,
         ClaimLifecycleStatus::Active,
-    );
+    )?;
     channel_claim.source = Some(ClaimSource::UserStated);
     let channel = DeliveryWindowPolicyClaim::from_claim_body(&channel_claim)?;
     let context = DeliveryWindowEvaluationContext::new(
@@ -398,7 +401,7 @@ fn delivery_window_evaluator_caps_apns_critical_and_degrades_closed_window() -> 
         1.0,
         ClaimApprovalStatus::Approved,
         ClaimLifecycleStatus::Active,
-    );
+    )?;
     let context_policy = DeliveryWindowPolicyClaim::from_claim_body(&context_claim)?;
     let passive_with_context_block =
         DeliveryWindowEvaluationContext::new(1_000, 23 * 60, DeliveryWindowVerbClass::Interrupt)?

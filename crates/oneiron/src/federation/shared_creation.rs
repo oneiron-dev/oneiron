@@ -164,7 +164,7 @@ impl Vault {
         }
         if preset.is_some() {
             let id = crate::gate::default_policy_manifest_id()?;
-            let default = crate::gate::default_policy_manifest();
+            let default = crate::gate::default_policy_manifest()?;
             match crate::ports::EntityStoreRead::port_entity_raw(&self.store, &txn, &id)? {
                 Some(raw)
                     if raw.get(crate::batch::ENTITY_METADATA_HEADER_LEN..)

@@ -358,7 +358,7 @@ fn mediation_scope_keeps_its_read_receipt() -> Result<()> {
             0.75,
             ClaimApprovalStatus::Approved,
             ClaimLifecycleStatus::Active,
-        );
+        )?;
         body.world = Some(world);
         vault.put_claim(&id, &body, crate::TimeRange { start: at, end: at }, at + 1)?;
     }

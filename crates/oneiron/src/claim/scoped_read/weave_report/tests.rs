@@ -13,7 +13,8 @@ fn put(vault: &Vault, id: u8, predicate: &str, subject: ClaimSubject) -> Result<
         1.0,
         ClaimApprovalStatus::Approved,
         ClaimLifecycleStatus::Active,
-    );
+    )
+    .unwrap();
     if let ClaimSubject::Entity(target) = subject
         && vault.get_entity_type(&target)? == Some(vault.project_type_byte()?)
     {
@@ -69,7 +70,7 @@ fn person_sees_only_self_and_member_project_rows_and_touching_live_links() -> Re
     let root_record = vault.project(root)?.unwrap();
     let leader = EntityId::from_hex(&root_record.leader)?;
     for (id, member) in [(project, person), (outsider_project, stranger)] {
-        let mut row = ProjectRecord::new(id, Some(root), root, leader);
+        let mut row = ProjectRecord::new(id, Some(root), root, leader).unwrap();
         row.roster.push(member.to_hex());
         // No goal pointer: only the goal-intake interview may set one.
         vault.put_project(id, &row, 2)?;
@@ -203,7 +204,7 @@ fn owner_and_agent_have_distinct_sections_and_actor_bound_reads() -> Result<()> 
     let project = entity(0x57);
     let root = vault.root_project()?;
     let leader = EntityId::from_hex(&vault.project(root)?.unwrap().leader)?;
-    let mut row = ProjectRecord::new(project, Some(root), root, leader);
+    let mut row = ProjectRecord::new(project, Some(root), root, leader).unwrap();
     row.budget = Some(budget_ref.to_hex());
     vault.put_project(project, &row, 2)?;
     let owner = vault.authenticate_owner(
@@ -291,7 +292,8 @@ fn report_cannot_widen_world_scoped_grant_or_count_hidden_rows() -> Result<()> {
             1.0,
             ClaimApprovalStatus::Approved,
             ClaimLifecycleStatus::Active,
-        );
+        )
+        .unwrap();
         body.world = Some(world);
         vault.put_claim(&id, &body, TimeRange { start: 1, end: 1 }, 1)?;
         Ok(id)
@@ -301,7 +303,7 @@ fn report_cannot_widen_world_scoped_grant_or_count_hidden_rows() -> Result<()> {
     let authority = crate::federation::scope_codec::encode_scope_value(
         &crate::federation::scope_codec::read_preset(),
     )?;
-    let bytes = crate::gate::default_policy_manifest();
+    let bytes = crate::gate::default_policy_manifest().unwrap();
     let Value::Map(mut entries) =
         rmpv::decode::read_value(&mut bytes.as_slice()).expect("default manifest")
     else {
@@ -440,7 +442,7 @@ fn session_weave_uses_composed_claim_and_project_candidates_without_changing_bas
     let project_change = entity(0x95);
     let root = vault.root_project()?;
     let leader = EntityId::from_hex(&vault.project(root)?.unwrap().leader)?;
-    let mut project_record = ProjectRecord::new(project, Some(root), root, leader);
+    let mut project_record = ProjectRecord::new(project, Some(root), root, leader).unwrap();
     project_record.roster.push(person.to_hex());
     let kind = vault.project_type_byte()?;
     let project_body = rmp_serde::to_vec_named(&project_record).expect("project encodes");
@@ -487,7 +489,8 @@ fn session_weave_uses_composed_claim_and_project_candidates_without_changing_bas
             1.0,
             ClaimApprovalStatus::Approved,
             ClaimLifecycleStatus::Active,
-        );
+        )
+        .unwrap();
         overlay.put(
             OverlayKeyspace::Entities,
             id.as_bytes(),

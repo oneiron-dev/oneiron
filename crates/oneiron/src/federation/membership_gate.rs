@@ -179,7 +179,7 @@ impl Vault {
                 // position. Never use this fallback for another record kind.
                 Ok(super::record_scope::default_stamp(
                     header.entity_type,
-                    crate::claim::substrate_facet_id(id),
+                    crate::claim::substrate_facet_id(id)?,
                 ))
             }
             None => Err(denied()),

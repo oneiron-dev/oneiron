@@ -31,7 +31,7 @@ fn put_rule(
         1.0,
         ClaimApprovalStatus::Approved,
         ClaimLifecycleStatus::Active,
-    );
+    )?;
     body.source = Some(ClaimSource::UserStated);
     body.scope = reader.map(|reader| {
         Value::Map(vec![(

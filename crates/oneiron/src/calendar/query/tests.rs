@@ -59,7 +59,8 @@ fn put_family_claim(
         1.0,
         ClaimApprovalStatus::Approved,
         ClaimLifecycleStatus::Active,
-    );
+    )
+    .unwrap();
     body.world = world;
     vault
         .put_claim(&claim_id, &body, at(1, 1), 1)
@@ -463,7 +464,8 @@ fn calendar_windows_expand_series_and_honor_live_systems() {
                     1.0,
                     ClaimApprovalStatus::Approved,
                     ClaimLifecycleStatus::Active,
-                ),
+                )
+                .unwrap(),
                 TimeRange { start: 1, end: 1 },
                 1,
             )

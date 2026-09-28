@@ -707,7 +707,7 @@ fn seed_mailbox_bind_policy(vault: &Vault) -> Result<()> {
     else {
         panic!("fixture policy must be a map")
     };
-    let default = crate::gate::default_policy_manifest();
+    let default = crate::gate::default_policy_manifest().unwrap();
     let rmpv::Value::Map(default_entries) =
         rmpv::decode::read_value(&mut default.as_slice()).expect("seeded manifest")
     else {

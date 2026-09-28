@@ -1742,14 +1742,17 @@ fn an_unmeasurable_pair_records_the_gap_instead_of_raising() {
         vec![INBOX_REASON_AMEND_DELTA_UNCAPTURED.to_owned()]
     );
 
-    let good = crate::claim::encode_claim_body(&ClaimBody::new(
-        "core.role",
-        ClaimSubject::Entity(entity(0xB8)),
-        Value::from("v"),
-        1.0,
-        ClaimApprovalStatus::Approved,
-        ClaimLifecycleStatus::Active,
-    ))
+    let good = crate::claim::encode_claim_body(
+        &ClaimBody::new(
+            "core.role",
+            ClaimSubject::Entity(entity(0xB8)),
+            Value::from("v"),
+            1.0,
+            ClaimApprovalStatus::Approved,
+            ClaimLifecycleStatus::Active,
+        )
+        .unwrap(),
+    )
     .expect("encode body");
     let (delta, reasons) = captured_amendment_delta(&good, &good);
     assert!(delta.is_some());
@@ -2046,8 +2049,9 @@ fn duplicate_hash_ignores_writer_substrate_but_keeps_explicit_scopes() -> Result
     );
     let first = candidate
         .clone()
-        .into_claim_body(&dreamer_envelope(entity(0xB1), "first"), entity(0xD0));
-    let second = candidate.into_claim_body(&dreamer_envelope(entity(0xB2), "second"), entity(0xD0));
+        .into_claim_body(&dreamer_envelope(entity(0xB1), "first"), entity(0xD0))?;
+    let second =
+        candidate.into_claim_body(&dreamer_envelope(entity(0xB2), "second"), entity(0xD0))?;
     let hash = inbox_claim_hash(&first)?;
     assert_eq!(hash, inbox_claim_hash(&second)?);
     let mut named = second.clone();

@@ -35,7 +35,7 @@ fn fixture() -> Result<(tempfile::TempDir, Vault, WriteActor)> {
 
 fn permit(vault: &Vault, actor: EntityId, sources: &[ClaimSource]) -> Result<()> {
     let mut manifest =
-        rmpv::decode::read_value(&mut crate::gate::default_policy_manifest().as_slice())
+        rmpv::decode::read_value(&mut crate::gate::default_policy_manifest()?.as_slice())
             .expect("manifest");
     let Value::Map(entries) = &mut manifest else {
         panic!("manifest map");

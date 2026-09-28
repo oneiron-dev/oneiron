@@ -891,7 +891,8 @@ fn manifest_seeded_before_room_rows_uses_shipped_room_defaults() {
     // An existing vault keeps the manifest it was first seeded with; open
     // never reseeds one that predates `room_policy_rows`.
     let rmpv::Value::Map(fields) =
-        rmpv::decode::read_value(&mut crate::gate::default_policy_manifest().as_slice()).unwrap()
+        rmpv::decode::read_value(&mut crate::gate::default_policy_manifest().unwrap().as_slice())
+            .unwrap()
     else {
         unreachable!()
     };

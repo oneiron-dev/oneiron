@@ -615,7 +615,7 @@ fn substrate_reader_refuses_generic_claims_with_invalid_value_or_subject() -> Re
             1.0,
             ClaimApprovalStatus::Auto,
             ClaimLifecycleStatus::Active,
-        );
+        )?;
         body.source = Some(ClaimSource::Observed);
         let mut seed_body = body.clone();
         seed_body.predicate = "person.corruption_fixture".to_owned();
@@ -977,7 +977,7 @@ fn agreeing_same_stored_subject_heads_project_and_all_supersede() -> Result<()> 
                 Value::from("model"),
                 writer(),
                 100,
-            );
+            )?;
             body.approval = approval;
             put_subject_fixture(&vault, &id, &body)?;
         }
@@ -1046,7 +1046,7 @@ fn conflicting_or_malformed_active_substrates_fail_closed() -> Result<()> {
             Value::from(value),
             writer(),
             100,
-        );
+        )?;
         put_subject_fixture(&vault, &id, &body)?;
     }
     let history = vault.claims_for_subject(&person)?;
@@ -1089,7 +1089,7 @@ fn conflicting_or_malformed_active_substrates_fail_closed() -> Result<()> {
         Value::from("unknown"),
         writer(),
         100,
-    );
+    )?;
     let id = entity(0x6C);
     assert_eq!(
         put_subject_fixture(&vault, &id, &body)

@@ -26,7 +26,8 @@ fn passport_body(identity: EntityId, message: &str) -> ClaimBody {
         1.0,
         ClaimApprovalStatus::Auto,
         ClaimLifecycleStatus::Active,
-    );
+    )
+    .unwrap();
     body.source = Some(ClaimSource::Observed);
     body.valid_from = Some(OBSERVED_AT);
     body

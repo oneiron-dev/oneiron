@@ -67,7 +67,8 @@ fn put_claim_about(
         1.0,
         ClaimApprovalStatus::Auto,
         ClaimLifecycleStatus::Active,
-    );
+    )
+    .unwrap();
     body.source = source;
     vault.put_claim(claim, &body, t(1), 1).expect("put claim");
 }

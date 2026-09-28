@@ -117,7 +117,7 @@ fn deferred_judge_import_with_capability(
     put_policy_manifest_bytes(
         &vault,
         crate::gate::default_policy_manifest_id()?,
-        &crate::gate::default_policy_manifest(),
+        &crate::gate::default_policy_manifest().unwrap(),
     )?;
     let imported = EntityId::now();
     let (name, markdown) = FILES[1];
@@ -250,7 +250,7 @@ fn foreign_import_at_seed_id_is_not_activated_or_rewritten_on_open() -> Result<(
     put_policy_manifest_bytes(
         &vault,
         crate::gate::default_policy_manifest_id()?,
-        &crate::gate::default_policy_manifest(),
+        &crate::gate::default_policy_manifest().unwrap(),
     )?;
     let (name, markdown) = FILES[1];
     let id = stable_id(name)?;
@@ -323,7 +323,7 @@ fn different_content_at_seed_id_does_not_prevent_open_or_rewrite_holder() -> Res
     put_policy_manifest_bytes(
         &vault,
         crate::gate::default_policy_manifest_id()?,
-        &crate::gate::default_policy_manifest(),
+        &crate::gate::default_policy_manifest().unwrap(),
     )?;
     let id = stable_id("judge")?;
     let other = package(
@@ -459,7 +459,7 @@ fn later_normal_import_keeps_the_fresh_restored_source_holder() -> Result<()> {
     put_policy_manifest_bytes(
         &vault,
         crate::gate::default_policy_manifest_id()?,
-        &crate::gate::default_policy_manifest(),
+        &crate::gate::default_policy_manifest().unwrap(),
     )?;
     let (name, markdown) = FILES[1];
     let package = package(name, markdown)?;

@@ -90,7 +90,8 @@ fn through_chokepoint(predicate: &str, subject: EntityId, value: &Value) {
         1.0,
         ClaimApprovalStatus::Approved,
         ClaimLifecycleStatus::Active,
-    );
+    )
+    .unwrap();
     let bytes = encode_claim_body(&body).expect("encode calendar claim");
     validate_claim_body_bytes(&bytes, false).expect("calendar claim passes the chokepoint");
 }

@@ -69,7 +69,8 @@ fn conversion_default_is_seeded_and_absent_fixture_stays_valid() -> Result<()> {
         Some(ProjectConversionPolicy::default())
     );
     assert_eq!(absent_hash, explicit.read_frontier_hash()?);
-    let decoded = decode_policy_manifest(&default_policy_manifest()).expect("seeded policy parses");
+    let decoded =
+        decode_policy_manifest(&default_policy_manifest().unwrap()).expect("seeded policy parses");
     assert_eq!(
         decoded.project_conversion,
         Some(ProjectConversionPolicy::default())

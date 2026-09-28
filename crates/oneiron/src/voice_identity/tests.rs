@@ -1080,7 +1080,7 @@ fn print_enrollment_and_pruning_preserve_render_refs_until_withdrawal() -> Resul
 }
 
 fn install_voice_ref_policy(vault: &Vault, id: EntityId, row: Value) -> Result<()> {
-    let raw = crate::gate::default_policy_manifest();
+    let raw = crate::gate::default_policy_manifest().unwrap();
     let Value::Map(mut entries) = rmpv::decode::read_value(&mut std::io::Cursor::new(&raw))
         .expect("shipped manifest decodes")
     else {

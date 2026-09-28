@@ -350,7 +350,8 @@ fn claim_world_scope_admission_mirrors_the_gate_rule() {
             1.0,
             ClaimApprovalStatus::Approved,
             ClaimLifecycleStatus::Active,
-        );
+        )
+        .unwrap();
         body.world = world;
         body
     };
@@ -386,6 +387,7 @@ fn only_effective_claims_count_as_evidence() {
             ClaimApprovalStatus::Approved,
             ClaimLifecycleStatus::Active,
         )
+        .unwrap()
     };
     assert!(claim_effective_at(&base(), 1_000));
 
@@ -639,7 +641,8 @@ fn memory_watch_is_durable_owner_bound_and_reversible() {
         1.0,
         ClaimApprovalStatus::Approved,
         ClaimLifecycleStatus::Active,
-    );
+    )
+    .unwrap();
     vault
         .put_claim(&anchor, &body, TimeRange { start: 1, end: 1 }, 1)
         .expect("claim");
@@ -684,4 +687,24 @@ fn memory_watch_is_durable_owner_bound_and_reversible() {
         memory_watch::set_memory_watch(&reopened, owner, anchor, true, 13).expect("reenable"),
         Some(watch)
     );
+}
+
+/// A saved query names every edge kind by its list name except `same_as`,
+/// which stays refused: coreference links are never traversed (ONE-1414).
+#[test]
+fn a_saved_query_names_every_edge_kind_but_same_as() {
+    for &kind in crate::edge::EdgeKind::ALL {
+        let parsed = parse_filter_ast(&json!({"op": "edge_exists", "edge_kind": kind.name()}));
+        if kind == crate::edge::EdgeKind::SameAs {
+            assert!(matches!(parsed, Err(Error::InvalidConfig(_))), "{kind:?}");
+        } else {
+            assert_eq!(
+                parsed.expect("a listed edge kind parses"),
+                FilterAst::EdgeExists {
+                    edge_kind: kind.name().to_owned(),
+                    target: None,
+                },
+            );
+        }
+    }
 }

@@ -607,6 +607,7 @@ mod tests {
             crate::claim::ClaimApprovalStatus::Auto,
             ClaimLifecycleStatus::Active,
         )
+        .unwrap()
     }
 
     #[test]

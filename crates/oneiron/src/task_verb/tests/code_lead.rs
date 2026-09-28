@@ -20,7 +20,7 @@ fn code_mode_lead_spawns_bounded_worker_then_blind_panel_judge_synthesis() {
     // The definition is Auto-capable, but the owner's live manifest must also
     // grant this exact actor. The role label itself is not authorization.
     let mut policy = rmpv::decode::read_value(&mut std::io::Cursor::new(
-        crate::gate::default_policy_manifest(),
+        crate::gate::default_policy_manifest().unwrap(),
     ))
     .unwrap();
     let Value::Map(entries) = &mut policy else {

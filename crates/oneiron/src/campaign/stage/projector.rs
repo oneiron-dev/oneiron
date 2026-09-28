@@ -109,7 +109,7 @@ pub(super) fn project_stage_transition(
     if input.value.evidence_refs.is_empty() {
         return Err(invalid("crm.stage transition requires evidence"));
     }
-    let body = stage_claim_body(input, mode);
+    let body = stage_claim_body(input, mode)?;
     let new_id = vault.store.clock.entity_id()?;
     let recorded_at = input.value.recorded_at;
     match mode {
@@ -141,7 +141,7 @@ pub(super) fn project_stage_transition(
     }
 }
 
-fn stage_claim_body(input: &StageProjectorInput, mode: PromotionMode) -> ClaimBody {
+fn stage_claim_body(input: &StageProjectorInput, mode: PromotionMode) -> Result<ClaimBody> {
     let mut body = ClaimBody::new(
         PREDICATE_CRM_STAGE,
         ClaimSubject::Entity(input.party_ref),
@@ -152,13 +152,13 @@ fn stage_claim_body(input: &StageProjectorInput, mode: PromotionMode) -> ClaimBo
             PromotionMode::Propose => ClaimApprovalStatus::Proposed,
         },
         ClaimLifecycleStatus::Active,
-    );
+    )?;
     body.source = Some(match input.value.basis {
         EvidenceBasis::Machine => ClaimSource::Observed,
         EvidenceBasis::OwnerAttested => ClaimSource::UserStated,
     });
     body.evidence = Some(evidence_value(&input.value.evidence_refs));
-    body
+    Ok(body)
 }
 
 /// The compare half of the head CAS, without the swap.

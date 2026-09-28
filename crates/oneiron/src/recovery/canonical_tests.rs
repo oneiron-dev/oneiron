@@ -422,7 +422,8 @@ fn world_month_canonical_snapshot_round_trips_and_rebuilds() -> Result<()> {
         1.0,
         crate::claim::ClaimApprovalStatus::Proposed,
         crate::claim::ClaimLifecycleStatus::Active,
-    );
+    )
+    .unwrap();
     body.world = Some(world);
     vault.put_claim(&claim, &body, occurred, at)?;
     let window = format!("2026-02@{}", world.to_hex());
@@ -504,7 +505,8 @@ fn soft_deleted_world_claim_canonical_recovery_keeps_shell_edge_and_address() ->
         1.0,
         crate::claim::ClaimApprovalStatus::Proposed,
         crate::claim::ClaimLifecycleStatus::Active,
-    );
+    )
+    .unwrap();
     body.world = Some(world);
     vault.put_claim(&claim, &body, occurred, at)?;
     vault
@@ -1544,14 +1546,10 @@ fn canonical_roundtrip_keeps_suppression_record_over_quarantined_tombstone() -> 
     let source = Vault::open(dir.path(), VaultConfig::default())?;
     let at = 1_788_220_800_u64; // 2026-09-01, within the canonical window.
     let intent_id = [0x92_u8; 32];
-    let mut hash = blake3::Hasher::new();
-    hash.update(b"oneiron.outbound.receipt_record.v1\0");
-    hash.update(&intent_id);
-    let mut id_bytes = [0_u8; 16];
-    id_bytes.copy_from_slice(&hash.finalize().as_bytes()[..16]);
-    id_bytes[6] = (id_bytes[6] & 0x0f) | 0x70;
-    id_bytes[8] = (id_bytes[8] & 0x3f) | 0x80;
-    let receipt_id = EntityId::from_bytes(id_bytes)?;
+    let receipt_id = EntityId::derive(
+        crate::entity_id::derived_domains::OUTBOUND_RECEIPT_RECORD,
+        &[&intent_id],
+    )?;
     let receipt = ReceiptRecord {
         receipt_id: format!(
             "outbound:suppression:{}",

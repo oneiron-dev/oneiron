@@ -37,7 +37,8 @@ pub use widen::{ProjectWidenAsk, ProjectWidenAxis};
 #[cfg(test)]
 mod tests;
 pub(crate) use projection::{
-    normalize_project_body, reconcile_project_rooms, validate_project_body, validate_room_body,
+    normalize_project_body, project_room_dependency, reconcile_project_rooms,
+    validate_project_body, validate_room_body,
 };
 #[cfg(all(test, feature = "sync"))]
 pub(crate) use tests::create_project_signed_for_test;
@@ -45,6 +46,7 @@ pub(crate) use tests::create_project_signed_for_test;
 pub(crate) use tests::set_project_depth_signed_for_test;
 
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
+use crate::entity_id::derived_domains::PROJECT_HOME_ROOM;
 use crate::error::{Error, Result};
 use crate::registry::{ENTITY_TYPE_CONVERSATION, TypeByteZone};
 use crate::side_table::{self, Named, Raw, SideTable};
@@ -125,8 +127,8 @@ impl ProjectRecord {
         parent: Option<EntityId>,
         claims_scope_ref: EntityId,
         leader: EntityId,
-    ) -> Self {
-        Self {
+    ) -> Result<Self> {
+        Ok(Self {
             schema_version: 1,
             role: ProjectRole::Project,
             // Fixture/host convenience only. The write door replaces this
@@ -148,11 +150,11 @@ impl ProjectRecord {
             budget: None,
             budget_share: None,
             asks: vec![],
-            home_room: home_room_id(id).to_hex(),
+            home_room: home_room_id(id)?.to_hex(),
             origin_room: None,
             origin_thread: None,
             origin_at: None,
-        }
+        })
     }
 
     /// The thread this project was converted from. A card mint on a plain
@@ -209,12 +211,8 @@ pub(super) fn encode<T: Serialize>(value: &T) -> Result<Vec<u8>> {
 pub(super) fn decode<T: for<'a> Deserialize<'a>>(bytes: &[u8]) -> Result<T> {
     rmp_serde::from_slice(bytes).map_err(|_| invalid())
 }
-fn home_room_id(project: EntityId) -> EntityId {
-    let hash = blake3::hash(&[b"project.home_room.v1/", project.as_bytes().as_slice()].concat());
-    let mut bytes = [0u8; 16];
-    bytes.copy_from_slice(&hash.as_bytes()[..16]);
-    bytes[0] = 0xB7;
-    EntityId::from_bytes(bytes).expect("non-reserved deterministic room id")
+fn home_room_id(project: EntityId) -> Result<EntityId> {
+    EntityId::derive(PROJECT_HOME_ROOM, &[project.as_bytes()])
 }
 pub(super) fn record<T: for<'a> Deserialize<'a>>(
     store: &crate::store::Store,
@@ -531,7 +529,7 @@ pub(crate) fn seed_root_project(vault: &Vault) -> Result<()> {
         // derives that birth from the root marker, also in an owner-rooted
         // vault that predates root seeding.
         ROOT.put(&vault.store, txn, &(), &id)?;
-        let mut body = ProjectRecord::new(id, None, id, leader);
+        let mut body = ProjectRecord::new(id, None, id, leader)?;
         // The owner already exists at this point in vault open. A fresh root
         // board must be able to receive the first cross-project widen ask.
         body.board

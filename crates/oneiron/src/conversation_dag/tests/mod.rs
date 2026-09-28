@@ -21,7 +21,7 @@ fn dag_test_policy_keeps_the_default_manifest() {
         .unwrap();
     assert_eq!(
         &raw[crate::batch::ENTITY_METADATA_HEADER_LEN..],
-        crate::gate::default_policy_manifest()
+        crate::gate::default_policy_manifest().unwrap()
     );
 }
 

@@ -461,7 +461,7 @@ fn put_claim_text_entity_with_status(
         0.9,
         appr,
         life,
-    );
+    )?;
     let payload = crate::claim::encode_claim_body(&body)?;
     vault
         .batch()
@@ -488,7 +488,7 @@ fn put_world_claim(
         0.9,
         crate::claim::ClaimApprovalStatus::Auto,
         crate::claim::ClaimLifecycleStatus::Active,
-    );
+    )?;
     body.world = world;
     let payload = crate::claim::encode_claim_body(&body)?;
     vault
@@ -559,7 +559,7 @@ fn put_claim_text_entity_with_subject(
         0.9,
         crate::claim::ClaimApprovalStatus::Auto,
         crate::claim::ClaimLifecycleStatus::Active,
-    );
+    )?;
     let payload = crate::claim::encode_claim_body(&body)?;
     vault
         .batch()
@@ -1588,7 +1588,7 @@ fn put_claim_with_status(
         0.9,
         appr,
         life,
-    );
+    )?;
     body.stale = stale;
     let payload = crate::claim::encode_claim_body(&body)?;
     vault
@@ -1803,7 +1803,7 @@ fn pack_validation_rejects_missing_required_evidence() -> Result<()> {
         0.75,
         crate::claim::ClaimApprovalStatus::Auto,
         crate::claim::ClaimLifecycleStatus::Active,
-    );
+    )?;
     let payload = crate::claim::encode_claim_body(&body)?;
     let raw = raw_entity_record(ENTITY_TYPE_CLAIM, 1, 1, 1, &payload);
     overwrite_raw_entity(&vault, &id, &raw)?;
@@ -1945,7 +1945,7 @@ fn pack_validation_rejects_missing_affect_trigger_ref() -> Result<()> {
         trigger_value.confidence(),
         crate::claim::ClaimApprovalStatus::Auto,
         crate::claim::ClaimLifecycleStatus::Active,
-    );
+    )?;
     let payload = crate::claim::encode_claim_body(&body)?;
     vault
         .batch()
@@ -3185,7 +3185,8 @@ fn put_disclosure_claim_in_world(
         1.0,
         crate::claim::ClaimApprovalStatus::Auto,
         crate::claim::ClaimLifecycleStatus::Active,
-    );
+    )
+    .unwrap();
     body.world = world;
     if let Some(band) = band {
         body.scope = Some(rmpv::Value::Map(vec![(

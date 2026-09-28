@@ -57,7 +57,7 @@ pub(super) fn persist_review(
             1.0,
             ClaimApprovalStatus::Auto,
             ClaimLifecycleStatus::Active,
-        );
+        )?;
         body.session_tag = Some(request.session.to_hex());
         body.evidence = Some(Value::from(request.run_id.clone()));
         write_claim(vault, txn, &id, &body, request.actor, request.at)?;
@@ -74,7 +74,7 @@ pub(super) fn persist_review(
                 1.0,
                 ClaimApprovalStatus::Auto,
                 ClaimLifecycleStatus::Active,
-            );
+            )?;
             body.session_tag = Some(request.session.to_hex());
             body.evidence = Some(Value::from(finding.key.clone()));
             write_claim(vault, txn, &outcome_id, &body, request.actor, request.at)?;

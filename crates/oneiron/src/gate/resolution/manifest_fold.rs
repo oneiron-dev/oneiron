@@ -64,10 +64,10 @@ pub(crate) fn resolve_policy_manifest(
     let mut resolution = PolicyManifestResolution::default();
     // The shipped manifest supplies bootstrap policy even when a replacement
     // omits optional count rows; a peer cannot replace these trusted defaults.
-    let shipped = decode_policy_manifest(&crate::gate::default_manifest::default_policy_manifest())
-        .ok_or(Error::InvariantViolation(
-            "shipped sheet-answer policy manifest invalid",
-        ))?;
+    let shipped =
+        decode_policy_manifest(&crate::gate::default_manifest::default_policy_manifest()?).ok_or(
+            Error::InvariantViolation("shipped sheet-answer policy manifest invalid"),
+        )?;
     resolution.sheet_answer_default_max_count = shipped
         .sheet_answer_limits
         .iter()
@@ -277,7 +277,7 @@ pub(crate) fn resolve_policy_manifest(
                     // at that same ID as another copy of the seeded default.
                     if id == default_manifest_id
                         && body.as_slice()
-                            == crate::gate::default_manifest::default_policy_manifest().as_slice()
+                            == crate::gate::default_manifest::default_policy_manifest()?.as_slice()
                     {
                         default_retention = Some(retention);
                     } else {
@@ -695,7 +695,7 @@ pub(crate) fn retention_edit_target(
         "gate decision retention manifest missing".into(),
     ))?;
     let default_id = crate::gate::default_manifest::default_policy_manifest_id()?;
-    let seeded = crate::gate::default_manifest::default_policy_manifest();
+    let seeded = crate::gate::default_manifest::default_policy_manifest()?;
     let mut owner_ids = Vec::new();
     let mut default_present = false;
     for index_entry in store.port_entity_ids_by_type(txn, ENTITY_TYPE_POLICY_MANIFEST, None)? {

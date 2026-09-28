@@ -168,7 +168,8 @@ fn page(vault: &Vault, page_seed: u8, host_seed: u8) {
         1.0,
         ClaimApprovalStatus::Approved,
         ClaimLifecycleStatus::Active,
-    );
+    )
+    .unwrap();
     vault
         .put_claim(&EntityId::now(), &body, TimeRange { start: 1, end: 1 }, 1)
         .unwrap();

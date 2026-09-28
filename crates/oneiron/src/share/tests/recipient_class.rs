@@ -255,7 +255,7 @@ fn class_scoped_reads_refuse_missing_invalid_or_unverifiable_identity() -> Resul
         1.0,
         ClaimApprovalStatus::Approved,
         ClaimLifecycleStatus::Active,
-    );
+    )?;
     let bytes = encode_claim_body(&body)?;
     vault.with_write_txn(|txn| {
         let raw = entity_record(ENTITY_TYPE_CLAIM, time(1), 1, &bytes);

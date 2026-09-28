@@ -47,6 +47,7 @@ use crate::claim::{ClaimApprovalStatus, ClaimSource};
 use crate::commitment::CommitmentStatus;
 use crate::edge::EdgeActorClass;
 use crate::entity_id::EntityId;
+use crate::entity_id::derived_domains::{COMMITMENT_INSTANCE, COMMITMENT_PROJECTION_ACTOR};
 use crate::temporal::TimeRange;
 use crate::write_envelope::{WriteActor, WriteEnvelope, WriteProvenance};
 
@@ -69,16 +70,8 @@ pub const CAL_RRULE_ROUTE: &str = "oneiron::calendar::expand_window";
 /// Byte bound on every string inside a schedule payload (tz names, rrule text).
 pub(crate) const COMMITMENT_SCHEDULE_STRING_MAX_BYTES: usize = 1_024;
 
-/// BLAKE3 domain for the pinned System actor that owns engine projection
-/// writes. Derived, not minted: the projector's identity must survive a reopen
-/// and be the same on every device.
-const COMMITMENT_PROJECTION_ACTOR_DOMAIN: &[u8] = b"oneiron.commitment.projection.actor.v1\0";
-
 /// Provenance string stamped on every instance the projector mints.
 pub const COMMITMENT_PROJECTION_PROVENANCE: &str = "oneiron.commitment.projection.v1";
-
-/// BLAKE3 domain for deterministic instance ids.
-const COMMITMENT_INSTANCE_ID_DOMAIN: &[u8] = b"oneiron.commitment.instance.v1\0";
 
 /// Everything that can go wrong evaluating or projecting a schedule.
 ///
@@ -346,15 +339,13 @@ impl CommitmentInstanceOutcome {
 
 /// The pinned System actor for engine projection writes.
 ///
-/// Derived from a fixed domain string so every device and every reopen agrees,
-/// with the same sentinel-perturbation fallback the rest of the crate uses for
-/// derived ids.
-#[must_use]
-pub fn commitment_projection_actor() -> WriteActor {
-    WriteActor::new(
-        derive_entity_id(COMMITMENT_PROJECTION_ACTOR_DOMAIN, &[]),
+/// Derived, not minted (`EntityId::derive` over a fixed domain): the
+/// projector's identity must survive a reopen and be the same on every device.
+pub fn commitment_projection_actor() -> crate::Result<WriteActor> {
+    Ok(WriteActor::new(
+        EntityId::derive(COMMITMENT_PROJECTION_ACTOR, &[])?,
         EdgeActorClass::System,
-    )
+    ))
 }
 
 /// The pinned envelope every projected instance is written under: System actor,
@@ -366,7 +357,7 @@ pub fn commitment_projection_actor() -> WriteActor {
 /// pending-consent row is created for a mint.
 pub fn commitment_projection_envelope() -> crate::Result<WriteEnvelope> {
     Ok(WriteEnvelope::new(
-        commitment_projection_actor(),
+        commitment_projection_actor()?,
         ClaimSource::Generated,
         WriteProvenance::new(rmpv::Value::from(COMMITMENT_PROJECTION_PROVENANCE))?,
         ClaimApprovalStatus::Auto,
@@ -375,37 +366,23 @@ pub fn commitment_projection_envelope() -> crate::Result<WriteEnvelope> {
 
 /// The deterministic id of one occurrence of one series.
 ///
-/// The transcript is pinned: domain ‖ series_ref(16) ‖ due_at(u64 BE) ‖
-/// window.start(BE) ‖ window.end(BE) ‖ ordinal(u32 BE), and the id is the FIRST
-/// 16 raw BLAKE3 bytes — no RFC-4122 version/variant rewrite, because a rewrite
-/// would make the id unreproducible from the transcript alone. A prefix landing
-/// on a reserved sentinel (~2^-120) is perturbed by XOR-ing `0x01` into bytes 0
-/// and 15 rather than falling back to a random id.
-#[must_use]
+/// `EntityId::derive` over the pinned parts series_ref(16), due_at(u64 BE),
+/// window.start(BE), window.end(BE) and ordinal(u32 BE). A reserved result is
+/// refused with an error rather than perturbed or replaced by a random id.
 pub fn commitment_instance_id(
     series_ref: &EntityId,
     occurrence: &CommitmentOccurrence,
-) -> EntityId {
-    let mut transcript = Vec::with_capacity(16 + 8 + 8 + 8 + 4);
-    transcript.extend_from_slice(series_ref.as_bytes());
-    transcript.extend_from_slice(&occurrence.due_at.to_be_bytes());
-    transcript.extend_from_slice(&occurrence.window.start.to_be_bytes());
-    transcript.extend_from_slice(&occurrence.window.end.to_be_bytes());
-    transcript.extend_from_slice(&occurrence.ordinal.to_be_bytes());
-    derive_entity_id(COMMITMENT_INSTANCE_ID_DOMAIN, &transcript)
-}
-
-fn derive_entity_id(domain: &[u8], body: &[u8]) -> EntityId {
-    let mut hasher = blake3::Hasher::new();
-    hasher.update(domain);
-    hasher.update(body);
-    let mut raw = [0_u8; 16];
-    raw.copy_from_slice(&hasher.finalize().as_bytes()[..16]);
-    EntityId::from_bytes(raw).unwrap_or_else(|_| {
-        raw[0] ^= 0x01;
-        raw[15] ^= 0x01;
-        EntityId::from_bytes(raw).expect("perturbed derived commitment id is non-reserved")
-    })
+) -> crate::Result<EntityId> {
+    EntityId::derive(
+        COMMITMENT_INSTANCE,
+        &[
+            series_ref.as_bytes(),
+            &occurrence.due_at.to_be_bytes(),
+            &occurrence.window.start.to_be_bytes(),
+            &occurrence.window.end.to_be_bytes(),
+            &occurrence.ordinal.to_be_bytes(),
+        ],
+    )
 }
 
 /// The next instant this schedule is owed, given everything already known

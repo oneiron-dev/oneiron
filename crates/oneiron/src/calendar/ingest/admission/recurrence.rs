@@ -2,6 +2,7 @@
 use super::*;
 use crate::calendar::claims::{PREDICATE_CALENDAR_SERIES_EXCEPTION, decode_series_exception_value};
 use crate::calendar::passport::{classify_event_passport, resolve_event_by_uid};
+use crate::entity_id::derived_domains::CALENDAR_SERIES_EXCEPTION;
 impl PollAdmission<'_> {
     pub(super) fn apply_exception(
         &mut self,
@@ -114,9 +115,8 @@ impl PollAdmission<'_> {
 }
 
 pub(super) fn exception_id(master: EntityId, original: u64) -> Result<EntityId, CalendarError> {
-    let key = [&master.as_bytes()[..], &original.to_be_bytes()[..]].concat();
-    Ok(derive_entity_id(
-        b"oneiron:calendar-series-exception:v1",
-        &key,
+    Ok(EntityId::derive(
+        CALENDAR_SERIES_EXCEPTION,
+        &[master.as_bytes(), &original.to_be_bytes()],
     )?)
 }

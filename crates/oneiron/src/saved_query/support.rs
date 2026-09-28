@@ -224,41 +224,11 @@ pub(super) fn invalid(reason: &str) -> Error {
     Error::InvalidConfig(reason.to_owned())
 }
 
-/// snake_case `EdgeKind` names, the same spelling the facade uses on the wire.
+/// The edge kinds a saved query may name, by their snake_case `EdgeKind` name.
+///
+/// Every kind except `same_as`: a coreference link is never traversed
+/// (ONE-1414), so no query filters on it or walks it. Naming a door-reserved
+/// kind here opens no write door: a saved query only filters and traverses.
 pub(super) fn edge_kind_from_name(value: &str) -> Option<EdgeKind> {
-    let kind = match value {
-        "authored_by" => EdgeKind::AuthoredBy,
-        "scoped_to" => EdgeKind::ScopedTo,
-        "part_of" => EdgeKind::PartOf,
-        "supersedes" => EdgeKind::Supersedes,
-        "belongs_to" => EdgeKind::BelongsTo,
-        "claim_of" => EdgeKind::ClaimOf,
-        "child_of" => EdgeKind::ChildOf,
-        "assigned_to" => EdgeKind::AssignedTo,
-        "derived_from" => EdgeKind::DerivedFrom,
-        "mentions" => EdgeKind::Mentions,
-        "about" => EdgeKind::About,
-        "supports" => EdgeKind::Supports,
-        "opposes" => EdgeKind::Opposes,
-        "participates_in" => EdgeKind::ParticipatesIn,
-        "attached" => EdgeKind::Attached,
-        "employed_by" => EdgeKind::EmployedBy,
-        "has_facet" => EdgeKind::HasFacet,
-        "facet_of" => EdgeKind::FacetOf,
-        "in_world" => EdgeKind::InWorld,
-        "set_in" => EdgeKind::SetIn,
-        "merged_into" => EdgeKind::MergedInto,
-        "split_into" => EdgeKind::SplitInto,
-        // ONE-1541 (CMT-4): read-side mapping only. A saved query filters and
-        // traverses; it never mints an edge, so naming the reserved
-        // fulfillment pair here opens no write door.
-        "fulfills" => EdgeKind::Fulfills,
-        "discharged_by" => EdgeKind::DischargedBy,
-        "parent" => EdgeKind::Parent,
-        "spawned_by" => EdgeKind::SpawnedBy,
-        "addressed_to" => EdgeKind::AddressedTo,
-        "replies_to" => EdgeKind::RepliesTo,
-        _ => return None,
-    };
-    Some(kind)
+    EdgeKind::from_name(value).filter(|kind| *kind != EdgeKind::SameAs)
 }

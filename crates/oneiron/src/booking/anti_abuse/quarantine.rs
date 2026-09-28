@@ -120,7 +120,8 @@ fn quarantine_borderline_submission_in_txn(
         1.0,
         ClaimApprovalStatus::Proposed,
         ClaimLifecycleStatus::Active,
-    );
+    )
+    .map_err(|error| engine_failure("quarantine claim body", error))?;
     body.source = Some(ClaimSource::Observed);
     body.valid_from = Some(created_at);
     let decision_id = GateDecisionId::from_bytes(claim_id);

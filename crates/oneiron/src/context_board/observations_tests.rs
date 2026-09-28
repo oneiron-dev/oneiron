@@ -31,7 +31,7 @@ fn served_snapshot_resolves_real_supersession_and_loaded_requires_a_body() -> Re
                 0.8,
                 ClaimApprovalStatus::Approved,
                 ClaimLifecycleStatus::Active,
-            ),
+            )?,
             TimeRange { start: 1, end: 1 },
             1,
         )?;
@@ -58,7 +58,7 @@ fn served_snapshot_resolves_real_supersession_and_loaded_requires_a_body() -> Re
             0.8,
             ClaimApprovalStatus::Proposed,
             ClaimLifecycleStatus::Active,
-        ),
+        )?,
         TimeRange { start: 1, end: 1 },
         1,
     )?;
@@ -134,6 +134,7 @@ fn board_observations_keep_their_read_receipt() -> Result<()> {
             approval,
             lifecycle,
         )
+        .unwrap()
     };
     for (id, value, approval) in [
         (served, "tea", ClaimApprovalStatus::Approved),

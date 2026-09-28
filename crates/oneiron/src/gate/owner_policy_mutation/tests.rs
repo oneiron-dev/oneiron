@@ -166,7 +166,7 @@ fn malformed_or_untrusted_manifest_cannot_be_reauthored_by_mutation() -> Result<
             ENTITY_TYPE_POLICY_MANIFEST,
             TimeRange { start: 3, end: 3 },
             3,
-            &super::super::default_policy_manifest(),
+            &super::super::default_policy_manifest().unwrap(),
         )
         .commit()?;
     let before = manifest(&vault)?;

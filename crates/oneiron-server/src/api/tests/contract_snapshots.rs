@@ -403,12 +403,20 @@ async fn v1_core_success_contract_snapshot_matches_fixture() {
         .project(root_id)
         .expect("read root")
         .expect("root exists");
-    let home = body["items"]
-        .as_array_mut()
-        .expect("conversation items")
-        .iter_mut()
-        .find(|row| row["id"].as_str() == Some(root.home_room.as_str()))
+    let items = body["items"].as_array_mut().expect("conversation items");
+    // Rows come in id order. The derived home-room id falls on either side of
+    // the fixture conversation's, so hold the order here and snapshot the
+    // per-vault room last.
+    assert!(
+        items
+            .windows(2)
+            .all(|pair| pair[0]["id"].as_str() < pair[1]["id"].as_str())
+    );
+    let at = items
+        .iter()
+        .position(|row| row["id"].as_str() == Some(root.home_room.as_str()))
         .expect("house room is projected");
+    let mut home = items.remove(at);
     assert_eq!(home["project_id"], json!(root_id.to_hex()));
     assert_eq!(home["memberIds"], json!(root.roster));
     assert_eq!(home["claims_scope_ref"], json!(root.claims_scope_ref));
@@ -417,6 +425,7 @@ async fn v1_core_success_contract_snapshot_matches_fixture() {
     home["label"] = json!("<home-room-id>");
     home["project_id"] = json!("<root-project-id>");
     home["claims_scope_ref"] = json!("<root-project-id>");
+    items.push(home);
     exchanges.push(contract_exchange(
         "list_core_conversations",
         "GET",

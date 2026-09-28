@@ -631,7 +631,7 @@ fn coping_outcome_claim_validation_requires_bitemporal_confidence() -> Result<()
         value.confidence(),
         ClaimApprovalStatus::Auto,
         ClaimLifecycleStatus::Active,
-    );
+    )?;
     let err = vault
         .put_claim(
             &outcome,
@@ -649,7 +649,7 @@ fn coping_outcome_claim_validation_requires_bitemporal_confidence() -> Result<()
         0.6,
         ClaimApprovalStatus::Auto,
         ClaimLifecycleStatus::Active,
-    );
+    )?;
     mismatched_confidence.valid_from = Some(10);
     let err = vault
         .put_claim(

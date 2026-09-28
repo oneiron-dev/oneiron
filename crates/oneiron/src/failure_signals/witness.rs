@@ -164,7 +164,7 @@ impl Vault {
             return Ok(());
         }
         let (owner, claim_id, attempt_id, run_ref, request_hash, model, at_ms) = witness.parts();
-        if !std::ptr::eq(self, owner) {
+        if self.vault_id() != owner.vault_id() {
             return Err(Error::InvariantViolation(
                 "step completion belongs to another vault",
             ));

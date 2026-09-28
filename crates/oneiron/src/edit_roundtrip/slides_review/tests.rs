@@ -1102,7 +1102,7 @@ fn resident_dial_cannot_widen_owner_dial_or_change_band() {
 fn vault_review_uses_manifest_limits_and_route_not_a_wider_request() {
     let input = deck(2);
     let (_dir, vault, artifact, _actor) = vault_with_deck(&input);
-    let mut manifest = crate::gate::default_policy_manifest();
+    let mut manifest = crate::gate::default_policy_manifest().unwrap();
     let rmpv::Value::Map(mut entries) = rmpv::decode::read_value(&mut manifest.as_slice()).unwrap()
     else {
         unreachable!()

@@ -10,7 +10,7 @@ impl<'a> PipelineBuilder<'a> {
         vault: &'a Vault,
         execution: &crate::code_run::HostSelfDispatcher<'_>,
     ) -> Result<Self> {
-        if !std::ptr::eq(execution.store_identity(), &vault.store) {
+        if execution.vault_id() != vault.vault_id() {
             return Err(Error::InvalidConfig(
                 "query execution capability belongs to a different vault".to_owned(),
             ));

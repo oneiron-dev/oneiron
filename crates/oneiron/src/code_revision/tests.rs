@@ -94,7 +94,7 @@ fn put_claim_entity_with_source_and_approval(
         0.9,
         approval,
         ClaimLifecycleStatus::Active,
-    );
+    )?;
     let mut body = body;
     body.source = source;
     let data = encode_claim_body(&body)?;
@@ -1473,7 +1473,7 @@ fn code_integrity_generated_non_code_claim_reports_user_stated_code_revision_tru
         0.9,
         ClaimApprovalStatus::Proposed,
         ClaimLifecycleStatus::Active,
-    );
+    )?;
     generated_body.source = Some(ClaimSource::Generated);
     let data = encode_claim_body(&generated_body)?;
     put_claim_entity_unchecked(&vault, generated_non_code, 300, &data)?;

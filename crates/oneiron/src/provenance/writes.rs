@@ -456,7 +456,7 @@ impl Vault {
             body.confidence,
             ClaimApprovalStatus::Auto,
             ClaimLifecycleStatus::Active,
-        );
+        )?;
         claim_body.valid_from = body.valid_from;
         claim_body.valid_to = body.valid_to;
         if let Some(evidence) = imported_evidence {

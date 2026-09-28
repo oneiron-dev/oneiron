@@ -218,7 +218,7 @@ mod tests {
         // The host scheduler is a stored Machine, but its Auto ceiling is a
         // separate owner policy choice. A grant alone cannot lift a Proposed
         // actor ceiling. Seed that exact policy row before minting grants.
-        let default = crate::gate::default_policy_manifest();
+        let default = crate::gate::default_policy_manifest().unwrap();
         let mut cursor = std::io::Cursor::new(default);
         let mut value = rmpv::decode::read_value(&mut cursor).unwrap();
         let rmpv::Value::Map(entries) = &mut value else {

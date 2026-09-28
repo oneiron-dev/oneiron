@@ -527,7 +527,7 @@ impl Vault {
             updated_value.confidence(),
             prior_body.approval,
             ClaimLifecycleStatus::Active,
-        );
+        )?;
         updated_body.salience = prior_body.salience;
         updated_body.evidence = Some(coping_outcome_evidence_value(
             turn_id, vad_delta, confidence,

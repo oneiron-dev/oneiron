@@ -690,7 +690,7 @@ fn child_of_chain_carries_no_ppr_mass() -> Result<()> {
                 .iter()
                 .map(|s| s.id)
                 .collect::<std::collections::BTreeSet<_>>(),
-            std::collections::BTreeSet::from([e, crate::claim::substrate_facet_id(e)]),
+            std::collections::BTreeSet::from([e, crate::claim::substrate_facet_id(e)?]),
             "ChildOf must not propagate beyond the seed and its own substrate facet"
         );
         assert_eq!(scores[0].id, e);

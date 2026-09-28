@@ -16,7 +16,7 @@ pub(super) fn park_open_conflict(
     fence: &super::resources::ConsolidationFence,
     now: u64,
 ) -> Result<EntityId> {
-    let id = conflict_open_marker_id(conflict, attempt);
+    let id = conflict_open_marker_id(conflict, attempt)?;
     let mut verified: Option<VerifiedEvidenceSet> = None;
     for member in members {
         verified = Some(verified.map_or_else(

@@ -288,7 +288,7 @@ impl Vault {
                 1.0,
                 ClaimApprovalStatus::Auto,
                 ClaimLifecycleStatus::Active,
-            );
+            )?;
             body.source = Some(ClaimSource::Observed);
             self.put_reserved_claim_in_txn(wtxn, &replacement_id, &body, occurred, learned_at)?;
             replacement_id
@@ -338,7 +338,7 @@ impl Vault {
             1.0,
             ClaimApprovalStatus::Auto,
             ClaimLifecycleStatus::Active,
-        );
+        )?;
         body.source = Some(ClaimSource::Observed);
         self.put_reserved_claim_in_txn(wtxn, &replacement_id, &body, occurred, learned_at)?;
         for (prior_id, prior_start) in prior_rows {

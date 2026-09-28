@@ -168,7 +168,7 @@ impl Vault {
             1.0,
             ClaimApprovalStatus::Auto,
             ClaimLifecycleStatus::Active,
-        );
+        )?;
         body.scope = Some(Value::Map(vec![(
             Value::from("sensitivity"),
             Value::from("public"),

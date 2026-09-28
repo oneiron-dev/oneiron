@@ -2,9 +2,9 @@
 
 mod preflight;
 mod recurrence;
+use super::ingest;
 #[cfg(test)]
 use super::poll::IcsFeedPollConfig;
-use super::{derive_entity_id, ingest};
 use crate::calendar::CalendarError;
 use crate::calendar::claims::{
     CalendarOrigin, CalendarPassportDirection, CalendarPassportPresence, CalendarPassportValue,
@@ -19,6 +19,7 @@ use crate::calendar::passport::{
 use crate::calendar::safeguard::{CalendarBodyScreener, CalendarInboundBody, screen_then_claim};
 use crate::claim::ClaimLifecycleStatus;
 use crate::entity_id::EntityId;
+use crate::entity_id::derived_domains::CALENDAR_ICS_IMPORT_ACTOR;
 use crate::ingest::{
     ICS_FEED_SOURCE_ID, ImportedEvidenceAdmission, ImportedEvidenceEntityResolution,
 };
@@ -32,9 +33,6 @@ use crate::write_envelope::WriteActor;
 use super::fetch::{IcsFeedFetcher, IcsFetchResponse};
 #[cfg(test)]
 use super::poll::run_ics_feed_poll;
-
-/// Id-derivation domain for the adapter's import actor MACHINE entity.
-const ICS_IMPORT_ACTOR_ID_DOMAIN: &[u8] = b"oneiron:calendar-ics-import-actor:v1";
 
 /// Per-poll admission context: everything the claim-writing steps share.
 pub(super) struct PollAdmission<'a> {
@@ -626,7 +624,7 @@ pub(in crate::calendar) fn admit_calendar_import_claim(
 /// The adapter's write actor: one deterministic MACHINE entity, minted on
 /// first use. Imported claims attribute to it as `EdgeActorClass::System`.
 pub fn ics_import_actor_id() -> crate::Result<EntityId> {
-    derive_entity_id(ICS_IMPORT_ACTOR_ID_DOMAIN, &[])
+    EntityId::derive(CALENDAR_ICS_IMPORT_ACTOR, &[])
 }
 
 pub(in crate::calendar) fn ensure_ics_import_actor(

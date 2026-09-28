@@ -127,7 +127,8 @@ fn evidence_keeps_the_ranked_revision_when_idle_publication_wins_the_race() {
             1.0,
             oneiron::ClaimApprovalStatus::Auto,
             oneiron::ClaimLifecycleStatus::Active,
-        );
+        )
+        .unwrap();
         vault
             .put_claim(&id, &body, oneiron::TimeRange { start: at, end: at }, at)
             .unwrap();

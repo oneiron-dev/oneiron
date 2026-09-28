@@ -4222,7 +4222,7 @@ fn device_only_world_fixture(vault: &Vault, window: &WindowKey) -> Result<(Entit
         1.0,
         ClaimApprovalStatus::Proposed,
         crate::claim::ClaimLifecycleStatus::Active,
-    );
+    )?;
     body.world = Some(world);
     vault.put_claim(&claim, &body, occurred, at)?;
     vault
@@ -4363,7 +4363,8 @@ fn signed_owner_project_depth_replays_to_existing_and_new_replicas() -> Result<(
         let leader = EntityId::from_hex(&b.project(root_b)?.unwrap().leader)?;
         b.put_project(
             root_a,
-            &crate::workspace_roster::ProjectRecord::new(root_a, Some(root_b), root_b, leader),
+            &crate::workspace_roster::ProjectRecord::new(root_a, Some(root_b), root_b, leader)
+                .unwrap(),
             1,
         )?;
         b.put_entity(
@@ -4399,7 +4400,8 @@ fn signed_owner_project_depth_replays_to_existing_and_new_replicas() -> Result<(
             })?;
             b.put_project(
                 project,
-                &crate::workspace_roster::ProjectRecord::new(project, Some(root_a), root_a, leader),
+                &crate::workspace_roster::ProjectRecord::new(project, Some(root_a), root_a, leader)
+                    .unwrap(),
                 1,
             )?;
         }
@@ -4487,7 +4489,8 @@ fn project_depth_edit_waits_for_owner_binding_through_retry_drain() -> Result<()
     let id = EntityId::now();
     source.put_project(
         id,
-        &crate::workspace_roster::ProjectRecord::new(id, Some(source_root), source_root, leader),
+        &crate::workspace_roster::ProjectRecord::new(id, Some(source_root), source_root, leader)
+            .unwrap(),
         1,
     )?;
     let human = EntityId::now();
@@ -4525,7 +4528,8 @@ fn project_depth_edit_waits_for_owner_binding_through_retry_drain() -> Result<()
             Some(target_root),
             target_root,
             target_leader,
-        ),
+        )
+        .unwrap(),
         1,
     )?;
     target.put_project(
@@ -4535,7 +4539,8 @@ fn project_depth_edit_waits_for_owner_binding_through_retry_drain() -> Result<()
             Some(source_root),
             source_root,
             target_leader,
-        ),
+        )
+        .unwrap(),
         1,
     )?;
     target.put_entity(
@@ -4590,12 +4595,14 @@ fn concurrent_signed_project_depth_facts_follow_loro_winner_in_either_exchange_o
                     Some(root_b),
                     root_b,
                     leader_b,
-                ),
+                )
+                .unwrap(),
                 1,
             )?;
             let project = EntityId::now();
             let base =
-                crate::workspace_roster::ProjectRecord::new(project, Some(root_a), root_a, leader);
+                crate::workspace_roster::ProjectRecord::new(project, Some(root_a), root_a, leader)
+                    .unwrap();
             let owner_id = EntityId::now();
             let writer = crate::write_envelope::WriteActor::new(owner_id, EdgeActorClass::Human);
             for vault in [&a, &b] {
@@ -4717,7 +4724,8 @@ fn concurrent_signed_project_depth_facts_follow_loro_winner_in_either_exchange_o
             let lead_f = EntityId::from_hex(&fresh.project(root_f)?.unwrap().leader)?;
             fresh.put_project(
                 root_a,
-                &crate::workspace_roster::ProjectRecord::new(root_a, Some(root_f), root_f, lead_f),
+                &crate::workspace_roster::ProjectRecord::new(root_a, Some(root_f), root_f, lead_f)
+                    .unwrap(),
                 1,
             )?;
             fresh.put_entity(
@@ -4904,7 +4912,8 @@ fn pre_regrant_depth_edit_stays_refused_through_both_replay_doors() -> Result<()
         let leader = EntityId::from_hex(&b.project(root_b)?.unwrap().leader)?;
         b.put_project(
             root_a,
-            &crate::workspace_roster::ProjectRecord::new(root_a, Some(root_b), root_b, leader),
+            &crate::workspace_roster::ProjectRecord::new(root_a, Some(root_b), root_b, leader)
+                .unwrap(),
             1,
         )?;
         b.put_entity(
@@ -4994,7 +5003,8 @@ fn signed_project_edit_before_predecessor_survives_forward_retry_drain() -> Resu
             Some(local_root),
             local_root,
             local_leader,
-        ),
+        )
+        .unwrap(),
         1,
     )?;
     target.put_entity(
@@ -5211,7 +5221,8 @@ fn world_month_recovery_mirrors_only_its_project_and_base_excludes_world_claims(
             1.0,
             ClaimApprovalStatus::Proposed,
             crate::claim::ClaimLifecycleStatus::Active,
-        );
+        )
+        .unwrap();
         body.world = Some(world);
         vault.put_claim(&claim, &body, occurred, at)?;
         vault
@@ -5256,7 +5267,8 @@ fn world_window_admission_refuses_other_project_even_hidden_history() -> Result<
         1.0,
         ClaimApprovalStatus::Proposed,
         crate::claim::ClaimLifecycleStatus::Active,
-    );
+    )
+    .unwrap();
     body.world = Some(world_b);
     let raw = make_entity_blob(
         crate::registry::ENTITY_TYPE_CLAIM,
@@ -5320,7 +5332,8 @@ fn foreign_and_unknown_world_tombstones_do_not_delete_or_poison_other_projects()
         1.0,
         ClaimApprovalStatus::Proposed,
         crate::claim::ClaimLifecycleStatus::Active,
-    );
+    )
+    .unwrap();
     body.world = Some(world_b);
     vault.put_claim(&existing, &body, occurred, at)?;
     let window = LoadedWindow::new("owner", key, &vault, &materializer);
@@ -5393,7 +5406,8 @@ fn world_window_admission_rejects_cross_project_edges_before_relay() -> Result<(
             1.0,
             ClaimApprovalStatus::Proposed,
             crate::claim::ClaimLifecycleStatus::Active,
-        );
+        )
+        .unwrap();
         body.world = Some(world);
         vault.put_claim(&claim, &body, occurred, at)?;
     }
@@ -5459,7 +5473,8 @@ fn world_export_does_not_pick_up_a_shared_note_from_the_same_month() -> Result<(
         1.0,
         ClaimApprovalStatus::Proposed,
         crate::claim::ClaimLifecycleStatus::Active,
-    );
+    )
+    .unwrap();
     body.world = Some(world);
     source.put_claim(&claim, &body, occurred, at)?;
     let world_key = WindowKey::for_world(at, world);
@@ -5538,7 +5553,8 @@ fn late_follow_accepts_deleted_world_claim_edge_history_without_foreign_edges() 
                 1.0,
                 ClaimApprovalStatus::Proposed,
                 crate::claim::ClaimLifecycleStatus::Active,
-            );
+            )
+            .unwrap();
             body.world = Some(world);
             source.put_claim(&id, &body, occurred, at)?;
         }

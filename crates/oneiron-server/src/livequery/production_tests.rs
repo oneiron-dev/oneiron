@@ -1744,7 +1744,8 @@ fn owner_feed_fixture() -> (
         1.0,
         oneiron::ClaimApprovalStatus::Auto,
         oneiron::ClaimLifecycleStatus::Active,
-    );
+    )
+    .unwrap();
     server
         .vault()
         .put_claim(

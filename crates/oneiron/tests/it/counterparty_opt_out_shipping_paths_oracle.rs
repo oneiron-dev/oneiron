@@ -209,7 +209,7 @@ fn write_do_not_contact(
         1.0,
         approval,
         ClaimLifecycleStatus::Active,
-    );
+    )?;
     vault.put_claim(&test_id(seed), &claim, TimeRange { start: at, end: at }, at)
 }
 

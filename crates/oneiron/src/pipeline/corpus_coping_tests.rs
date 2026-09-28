@@ -26,7 +26,7 @@ fn put_corpus_coping_outcome(
         0.9,
         ClaimApprovalStatus::Auto,
         ClaimLifecycleStatus::Active,
-    );
+    )?;
     body.source = Some(crate::claim::ClaimSource::Inferred);
     body.valid_from = Some(learned_at);
     if let Some(scope) = scope {

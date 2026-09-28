@@ -278,7 +278,7 @@ fn operational_resolution(store: &Store) -> Result<super::resolution::PolicyMani
 /// the shipped, signed default manifest; only the page allowance changes.
 #[cfg(test)]
 pub(crate) fn default_manifest_with_linear_sync_pages_for_test(pages: u64) -> Vec<u8> {
-    let data = super::default_policy_manifest();
+    let data = super::default_policy_manifest().unwrap();
     let mut cursor = std::io::Cursor::new(data);
     let Value::Map(mut entries) =
         rmpv::decode::read_value(&mut cursor).expect("default manifest map")

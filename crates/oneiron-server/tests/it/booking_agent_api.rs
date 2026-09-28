@@ -151,7 +151,8 @@ fn install_event_type(vault: &Vault, page: EntityId, claim_byte: u8, key: &str) 
         1.0,
         ClaimApprovalStatus::Auto,
         ClaimLifecycleStatus::Active,
-    );
+    )
+    .expect("fixture");
     vault
         .put_claim(&seeded_id(claim_byte), &body, at(1), 1)
         .unwrap();

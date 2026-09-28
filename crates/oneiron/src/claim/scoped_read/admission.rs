@@ -100,7 +100,11 @@ impl<'a> ScopedRead<'a> {
                     crate::memory::verify_owner_actor_binding_in_txn(self.vault, txn, owner)
                 }
             })
-            .map_err(|_| Error::InvalidClaimBody("scoped read owner binding no longer live"))
+            .map_err(|error| {
+                Error::Claim(crate::error::ClaimError::ScopedReadOwnerNotLive(Box::new(
+                    error,
+                )))
+            })
     }
 
     pub(super) fn proof_live_in(&self, txn: &heed::RoTxn<'_>) -> Result<bool> {

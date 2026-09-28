@@ -188,7 +188,7 @@ pub(super) fn scoped_read_actor_key() -> crate::claim::ScopedReadActorKey {
 
 pub(in crate::branch_store_oracle) fn authorize_scoped_reader(vault: &Vault) -> Result<()> {
     use rmpv::Value;
-    let bytes = crate::gate::default_policy_manifest();
+    let bytes = crate::gate::default_policy_manifest()?;
     let Value::Map(mut entries) = rmpv::decode::read_value(&mut bytes.as_slice()).unwrap() else {
         unreachable!()
     };

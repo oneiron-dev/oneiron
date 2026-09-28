@@ -99,7 +99,7 @@ fn trusted_manifest_rows_change_actual_conversion_answers() {
     put_policy_manifest_bytes(
         &vault,
         crate::gate::default_policy_manifest_id().expect("default id"),
-        &crate::gate::default_policy_manifest(),
+        &crate::gate::default_policy_manifest().unwrap(),
     )
     .expect("shipped manifest");
     let shipped = vault

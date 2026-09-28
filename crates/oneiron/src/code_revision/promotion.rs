@@ -58,7 +58,7 @@ impl Vault {
             1.0,
             ClaimApprovalStatus::Approved,
             ClaimLifecycleStatus::Active,
-        );
+        )?;
         // This typed host door records a run's provenance, not a code approval.
         // File promotion still requires independent review and authenticated folds.
         body.source = Some(crate::claim::ClaimSource::Observed);

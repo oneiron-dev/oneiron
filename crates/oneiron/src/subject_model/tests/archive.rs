@@ -76,7 +76,7 @@ fn a_stale_subject_review_never_supersedes_an_unreviewed_owner_change() -> Resul
         Value::from(proposed.to_hex()),
         writer(),
         100,
-    ))?;
+    )?)?;
     vault.with_write_txn(|txn| {
         vault.restore_subject_claim_in_txn(
             txn,
@@ -134,7 +134,7 @@ fn revoked_owner_cannot_complete_a_prepared_subject_restore() -> Result<()> {
         Value::from("model"),
         writer(),
         100,
-    ))?;
+    )?)?;
     vault.with_write_txn(|txn| {
         vault.restore_subject_claim_in_txn(
             txn,
