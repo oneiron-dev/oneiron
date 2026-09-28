@@ -255,3 +255,73 @@ fn socket_protocol_rejects_delete_of_unknown_and_rename_over_existing_base() -> 
     }
     Ok(())
 }
+
+#[test]
+fn socket_protocol_refuses_file_ancestors_existing_directories_and_cross_proposal_conflicts()
+-> Result<()> {
+    let dir = tempfile::tempdir().expect("fixture");
+    let base_root = dir.path().join("base");
+    std::fs::create_dir_all(base_root.join("directory")).expect("fixture");
+    for file in ["a", "b", "directory/child"] {
+        std::fs::write(base_root.join(file), b"source").expect("fixture");
+    }
+    let vm = MicroVmHandle::new(
+        "protocol-tree",
+        crate::code_sandbox::SandboxGuestTier::Foreign,
+        &base_root,
+        dir.path().join("upper"),
+        dir.path().join("egress.sock"),
+    )?;
+    let base = super::super::snapshot::files(&base_root)?;
+    let resolver = Arc::new(Resolver {
+        calls: Mutex::new(vec![]),
+    });
+    let mut proxy = CredentialEgressProxy::new(CredentialAllowlist::new(), resolver);
+    proxy.arm();
+    for frames in [
+        vec![json!({"type":"rename","from":"/mnt/workspace/a","to":"/mnt/workspace/b/child"})],
+        vec![json!({"type":"rename","from":"/mnt/workspace/a","to":"/mnt/workspace/directory"})],
+        vec![json!({"type":"rename","from":"/mnt/workspace/a","to":"/mnt/workspace/b"})],
+        vec![
+            json!({"type":"rename","from":"/mnt/workspace/a","to":"/mnt/workspace/directory/child/new"}),
+        ],
+        vec![
+            json!({"type":"write","path":"/mnt/workspace/destination/child","bytes":[1]}),
+            json!({"type":"rename","from":"/mnt/workspace/a","to":"/mnt/workspace/destination"}),
+        ],
+        vec![
+            json!({"type":"rename","from":"/mnt/workspace/a","to":"/mnt/workspace/destination"}),
+            json!({"type":"write","path":"/mnt/workspace/destination/child","bytes":[1]}),
+        ],
+    ] {
+        let (host, mut guest) = UnixStream::pair().expect("fixture");
+        std::thread::scope(|scope| {
+            scope.spawn(move || {
+                let count = frames.len();
+                for (index, frame) in frames.into_iter().enumerate() {
+                    send(&mut guest, frame);
+                    if index + 1 < count {
+                        assert_eq!(
+                            receive(&mut guest),
+                            json!({"type":"receipt","accepted":true})
+                        );
+                    }
+                }
+            });
+            assert!(
+                receive_proposals(
+                    host,
+                    &vm,
+                    &base,
+                    Instant::now() + Duration::from_secs(3),
+                    &proxy,
+                    None
+                )
+                .is_err(),
+                "a structurally impossible tree must be refused"
+            );
+        });
+    }
+    assert_eq!(std::fs::read(base_root.join("a")).expect("base"), b"source");
+    Ok(())
+}

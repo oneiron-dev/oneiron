@@ -15,7 +15,7 @@ use crate::{
 };
 use serde::{Deserialize, Serialize};
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, BTreeSet},
     io::{Read, Write},
     os::unix::net::UnixStream,
     time::Instant,
@@ -129,7 +129,7 @@ pub(super) fn exchange(
     // Snapshot bytes only. There is no host mount device inside the VM and
     // no path from a guest overlay file to the original source directory.
     let base = super::snapshot::files(vm.base_root())?;
-    for file in &base {
+    for file in &base.files {
         write_frame(
             &mut stream,
             &HostFrame::File {
@@ -146,6 +146,7 @@ pub(super) fn exchange(
         match write {
             SandboxProposalWrite::FileWrite(file) => {
                 let old = base
+                    .files
                     .iter()
                     .find(|entry| entry.path == file.path)
                     .map_or(b"".as_slice(), |entry| entry.bytes.as_slice());
@@ -166,13 +167,13 @@ pub(super) fn exchange(
 fn receive_proposals(
     mut stream: UnixStream,
     vm: &MicroVmHandle,
-    base: &[SandboxFileWriteProposal],
+    base: &super::snapshot::Snapshot,
     deadline: Instant,
     proxy: &CredentialEgressProxy,
     transport: Option<&dyn CredentialReadTransport>,
 ) -> Result<(MicroVmExit, Vec<SandboxProposalWrite>)> {
     let mut writes = BTreeMap::new();
-    let mut occupied = std::collections::BTreeSet::new();
+    let mut occupied = BTreeSet::new();
     let mut total = 0_usize;
     for _ in 0..MAX_REQUESTS {
         match read_frame(&mut stream, deadline)? {
@@ -200,6 +201,7 @@ fn receive_proposals(
             GuestFrame::Write { path, bytes } => {
                 let path = SandboxVirtualPath::try_new(path)?;
                 if !proposal_path(&path)
+                    || !valid_tree_path(&path, base, &occupied)
                     || !occupied.insert(path.as_str().to_owned())
                     || writes.len() >= MAX_FILES
                     || bytes.len() > MAX_FILE
@@ -225,7 +227,7 @@ fn receive_proposals(
             GuestFrame::Delete { path } => {
                 let path = SandboxVirtualPath::try_new(path)?;
                 if !proposal_path(&path)
-                    || !base.iter().any(|file| file.path == path)
+                    || !base.files.iter().any(|file| file.path == path)
                     || !occupied.insert(path.as_str().to_owned())
                     || writes.len() >= MAX_FILES
                 {
@@ -247,8 +249,10 @@ fn receive_proposals(
                 if !proposal_path(&from)
                     || !proposal_path(&to)
                     || from == to
-                    || !base.iter().any(|file| file.path == from)
-                    || base.iter().any(|file| file.path == to)
+                    || !base.files.iter().any(|file| file.path == from)
+                    || base.files.iter().any(|file| file.path == to)
+                    || !valid_tree_path(&to, base, &occupied)
+                    || base.directories.contains(to.as_str())
                     || occupied.contains(from.as_str())
                     || occupied.contains(to.as_str())
                     || writes.len() >= MAX_FILES
@@ -330,4 +334,30 @@ fn proposal_path(path: &SandboxVirtualPath) -> bool {
     path.mount() == SandboxMount::Workspace
         && !path.relative_path().is_empty()
         && path.as_str().len() <= 4096
+}
+
+/// Check a proposed file against the pinned snapshot tree and prior proposals.
+/// Neither a file nor a directory can also occupy its ancestor/descendant.
+fn valid_tree_path(
+    path: &SandboxVirtualPath,
+    base: &super::snapshot::Snapshot,
+    occupied: &BTreeSet<String>,
+) -> bool {
+    let candidate = path.as_str();
+    !base.directories.contains(candidate)
+        && !base
+            .files
+            .iter()
+            .any(|file| tree_conflict(candidate, file.path.as_str()))
+        && !occupied.iter().any(|other| tree_conflict(candidate, other))
+}
+
+fn tree_conflict(candidate: &str, other: &str) -> bool {
+    candidate != other
+        && (candidate
+            .strip_prefix(other)
+            .is_some_and(|rest| rest.starts_with('/'))
+            || other
+                .strip_prefix(candidate)
+                .is_some_and(|rest| rest.starts_with('/')))
 }

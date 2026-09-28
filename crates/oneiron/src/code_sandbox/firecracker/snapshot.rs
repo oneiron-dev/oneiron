@@ -6,6 +6,7 @@ use crate::{
     code_sandbox::{SandboxFileWriteProposal, SandboxVirtualPath},
 };
 use std::{
+    collections::BTreeSet,
     ffi::CString,
     fs::{self, File},
     io::Read,
@@ -16,7 +17,12 @@ use std::{
     path::Path,
 };
 
-pub(super) fn files(root: &Path) -> Result<Vec<SandboxFileWriteProposal>> {
+pub(super) struct Snapshot {
+    pub files: Vec<SandboxFileWriteProposal>,
+    pub directories: BTreeSet<String>,
+}
+
+pub(super) fn files(root: &Path) -> Result<Snapshot> {
     let root = fs::OpenOptions::new()
         .read(true)
         .custom_flags(libc::O_DIRECTORY | libc::O_NOFOLLOW | libc::O_CLOEXEC)
@@ -24,7 +30,7 @@ pub(super) fn files(root: &Path) -> Result<Vec<SandboxFileWriteProposal>> {
         .map_err(|_| refused("source snapshot root unavailable"))?;
     let mut stack = vec![(root, String::new(), 0_usize)];
     let mut files = Vec::new();
-    let mut directories = 0;
+    let mut directories = BTreeSet::new();
     let mut total = 0;
     while let Some((directory, prefix, depth)) = stack.pop() {
         // /proc/self/fd names the directory descriptor, not a mutable pathname.
@@ -64,10 +70,10 @@ pub(super) fn files(root: &Path) -> Result<Vec<SandboxFileWriteProposal>> {
                 .metadata()
                 .map_err(|_| refused("source snapshot metadata unavailable"))?;
             if metadata.is_dir() {
-                directories += 1;
-                if directories > 8192 || depth >= 64 {
+                if directories.len() >= 8192 || depth >= 64 {
                     return Err(refused("source snapshot directory limit"));
                 }
+                directories.insert(format!("/mnt/workspace/{path}"));
                 stack.push((file, path, depth + 1));
             } else if metadata.is_file() {
                 if metadata.len() > 1024 * 1024 || files.len() >= 8192 {
@@ -91,7 +97,7 @@ pub(super) fn files(root: &Path) -> Result<Vec<SandboxFileWriteProposal>> {
         }
     }
     files.sort_by(|a, b| a.path.as_str().cmp(b.path.as_str()));
-    Ok(files)
+    Ok(Snapshot { files, directories })
 }
 
 #[cfg(test)]

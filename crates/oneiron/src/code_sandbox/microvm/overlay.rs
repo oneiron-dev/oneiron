@@ -206,7 +206,7 @@ pub fn collect_overlay_writes(
         )));
     }
 
-    let mut files = BTreeMap::<String, SandboxProposalWrite>::new();
+    let mut files = BTreeMap::<OverlayKey, SandboxProposalWrite>::new();
     let mut bounds = OverlayWalkBounds::default();
     let mut stack = vec![(upper_root.to_path_buf(), String::new(), 0_usize)];
     while let Some((dir, prefix, depth)) = stack.pop() {
@@ -224,12 +224,20 @@ pub fn collect_overlay_writes(
     Ok(files.into_values().collect())
 }
 
+/// Keep directory effects separate from file effects, even if a real file is
+/// literally named `.opaque` in that directory.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub(super) enum OverlayKey {
+    File(String),
+    Opaque(String),
+}
+
 pub(super) fn walk_overlay_dir(
     dir: &Path,
     prefix: &str,
     depth: usize,
     mount: SandboxMount,
-    files: &mut BTreeMap<String, SandboxProposalWrite>,
+    files: &mut BTreeMap<OverlayKey, SandboxProposalWrite>,
     stack: &mut Vec<(PathBuf, String, usize)>,
     bounds: &mut OverlayWalkBounds,
 ) -> Result<()> {
@@ -242,7 +250,7 @@ pub(super) fn walk_overlay_dir(
             format!("{}/{prefix}", mount.root())
         })?;
         files.insert(
-            format!("{}/{prefix}/.opaque", mount.root()),
+            OverlayKey::Opaque(path.as_str().to_owned()),
             SandboxProposalWrite::DirectoryOpaque(SandboxDirectoryOpaqueProposal { path }),
         );
     }
@@ -284,7 +292,7 @@ pub(super) fn walk_overlay_dir(
                 format!("{}/{prefix}", mount.root())
             })?;
             files.insert(
-                format!("{}/{prefix}/.opaque", mount.root()),
+                OverlayKey::Opaque(path.as_str().to_owned()),
                 SandboxProposalWrite::DirectoryOpaque(SandboxDirectoryOpaqueProposal { path }),
             );
             count_entry(bounds, &relative)?;
@@ -393,7 +401,7 @@ pub(super) fn walk_overlay_dir(
         let path = SandboxVirtualPath::try_new(format!("{}/{relative}", mount.root()))?;
         if files
             .insert(
-                path.as_str().to_owned(),
+                OverlayKey::File(path.as_str().to_owned()),
                 SandboxProposalWrite::FileWrite(SandboxFileWriteProposal::new(path, bytes)),
             )
             .is_some()
@@ -427,12 +435,12 @@ fn count_entry(bounds: &mut OverlayWalkBounds, path: &str) -> Result<()> {
 fn add_delete(
     relative: &str,
     mount: SandboxMount,
-    files: &mut BTreeMap<String, SandboxProposalWrite>,
+    files: &mut BTreeMap<OverlayKey, SandboxProposalWrite>,
 ) -> Result<()> {
     let path = SandboxVirtualPath::try_new(format!("{}/{relative}", mount.root()))?;
     if files
         .insert(
-            path.as_str().to_owned(),
+            OverlayKey::File(path.as_str().to_owned()),
             SandboxProposalWrite::FileDelete(SandboxFileDeleteProposal { path }),
         )
         .is_some()

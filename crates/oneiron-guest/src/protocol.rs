@@ -58,6 +58,13 @@ enum GuestFrame<'a> {
         path: &'a str,
         bytes: &'a [u8],
     },
+    Delete {
+        path: &'a str,
+    },
+    Rename {
+        from: &'a str,
+        to: &'a str,
+    },
     Finish {
         status: i32,
     },
@@ -172,6 +179,20 @@ impl<T: Read + Write> Session<T> {
     pub(crate) fn write(&mut self, path: &str, bytes: &[u8]) -> Result<()> {
         if !self.request(&GuestFrame::Write { path, bytes })? {
             return Err(Error::Protocol("host refused proposal"));
+        }
+        Ok(())
+    }
+
+    pub(crate) fn delete(&mut self, path: &str) -> Result<()> {
+        if !self.request(&GuestFrame::Delete { path })? {
+            return Err(Error::Protocol("host refused deletion proposal"));
+        }
+        Ok(())
+    }
+
+    pub(crate) fn rename(&mut self, from: &str, to: &str) -> Result<()> {
+        if !self.request(&GuestFrame::Rename { from, to })? {
+            return Err(Error::Protocol("host refused rename proposal"));
         }
         Ok(())
     }

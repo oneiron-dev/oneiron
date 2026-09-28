@@ -18,11 +18,23 @@ pub(super) type ScratchHandle = Arc<ScratchCustody>;
 pub(super) struct ScratchCustody {
     path: PathBuf,
     #[cfg(unix)]
+    root: PathBuf,
+    #[cfg(unix)]
+    backend: &'static str,
+    #[cfg(unix)]
     _lock: fs::File,
 }
 
 impl Drop for ScratchCustody {
     fn drop(&mut self) {
+        // Serialize deletion with every scan of the same scratch root. If
+        // locking fails, leave an orphan for the next successful startup reap.
+        #[cfg(unix)]
+        let Ok(Some(_root_lock)) =
+            locked_file(&self.root.join(".owner.lock"), true, true, self.backend)
+        else {
+            return;
+        };
         // The root is host-owned and private. Never follow a replaced VM root.
         if fs::symlink_metadata(&self.path).is_ok_and(|m| m.is_dir() && !m.is_symlink()) {
             let _ = fs::remove_dir_all(&self.path);
@@ -54,6 +66,8 @@ pub(super) fn provision(
         };
         let custody = Arc::new(ScratchCustody {
             path: vm_root.clone(),
+            root: root.to_path_buf(),
+            backend,
             _lock: lock,
         });
         Ok((vm_root, custody))
