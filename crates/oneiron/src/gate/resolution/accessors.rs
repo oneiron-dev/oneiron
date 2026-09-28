@@ -31,6 +31,15 @@ impl PolicyManifestResolution {
         self.pack_install_policy.as_ref()
     }
 
+    /// Trusted manifest rows, intersected across packs. Header is not a
+    /// content class; without a policy row no cross-class carry is allowed.
+    pub(crate) fn connector_class_carry(&self) -> std::collections::BTreeSet<(String, String)> {
+        if self.is_fail_closed() {
+            return Default::default();
+        }
+        self.connector_class_carry.clone().unwrap_or_default()
+    }
+
     pub(crate) fn is_single_valued_predicate(&self, predicate: &str) -> bool {
         !self.is_fail_closed() && self.single_valued_predicates.contains(predicate)
     }
@@ -157,6 +166,10 @@ impl PolicyManifestResolution {
     }
 
     #[must_use]
+    pub(crate) fn goal_limits(&self) -> crate::workspace_roster::GoalLimits {
+        self.goal_limits.unwrap_or_default()
+    }
+
     pub(crate) fn proposal_check_threshold(&self) -> u64 {
         self.proposal_check_threshold
             .unwrap_or(crate::gate::proposal_observation::DEFAULT_PROPOSAL_CHECK_THRESHOLD)

@@ -10,15 +10,17 @@ use super::constants::{
     ACTOR_CEILING_KEY, ACTOR_CLASS_KEY, ACTOR_REF_KEY, ATTRIBUTION_PRECEDENCE_KEY,
     ATTRIBUTION_REASON_MAX_BYTES_KEY, ATTRIBUTION_RECEIPTS_PER_PASS_KEY, AXIS_CRITICALITY_KEY,
     AXIS_SENSITIVITY_KEY, LOCAL_WRITE_ACTOR_CLASS, POLICY_ACTOR_CEILINGS_KEY,
-    POLICY_ATTRIBUTION_LIMITS_KEY, POLICY_DEFAULTS_KEY, POLICY_HOSTED_TTS_KEY,
-    POLICY_MIN_ENGINE_VERSION_KEY, POLICY_ON_BUDGET_EXHAUSTED_KEY, POLICY_OWNER_POLICY_ENABLED_KEY,
-    POLICY_OWNER_POLICY_ROWS_KEY, POLICY_PACK_ID_KEY, POLICY_PACK_VERSION_KEY,
-    POLICY_PPTX_COMMENT_LIMITS_KEY, POLICY_RULES_KEY, POLICY_SCHEMA_VERSION,
-    POLICY_SCHEMA_VERSION_KEY, POLICY_SHEET_ANSWER_LIMITS_KEY, POLICY_SHEET_ANSWER_PRECEDENCE_KEY,
-    POLICY_SIGNATURES_KEY, POLICY_SLIDE_REVIEW_KEY, POLICY_SOURCE_TRUST_KEY,
-    POLICY_TEACHER_PROBE_KEY, POLICY_WEAVE_CORRECTION_POLICY_KEY, RULE_AXES_KEY, RULE_EXACT_KEY,
-    RULE_PREFIX_KEY, SIGNATURE_ALG_KEY, SIGNATURE_KEY_ID_KEY, SIGNATURE_SIG_KEY,
-    SOURCE_TRUST_MAX_AUTO_SENSITIVITY_KEY, SOURCE_TRUST_RECEIPTED_KEY, SOURCE_TRUST_WARNED_KEY,
+    POLICY_ATTRIBUTION_LIMITS_KEY, POLICY_CONNECTOR_CLASS_CARRY_KEY,
+    POLICY_CONNECTOR_CLASS_PRECEDENCE_KEY, POLICY_CONNECTOR_CLASS_ROLE_KEY, POLICY_DEFAULTS_KEY,
+    POLICY_HOSTED_TTS_KEY, POLICY_MIN_ENGINE_VERSION_KEY, POLICY_ON_BUDGET_EXHAUSTED_KEY,
+    POLICY_OWNER_POLICY_ENABLED_KEY, POLICY_OWNER_POLICY_ROWS_KEY, POLICY_PACK_ID_KEY,
+    POLICY_PACK_VERSION_KEY, POLICY_PPTX_COMMENT_LIMITS_KEY, POLICY_RULES_KEY,
+    POLICY_SCHEMA_VERSION, POLICY_SCHEMA_VERSION_KEY, POLICY_SHEET_ANSWER_LIMITS_KEY,
+    POLICY_SHEET_ANSWER_PRECEDENCE_KEY, POLICY_SIGNATURES_KEY, POLICY_SLIDE_REVIEW_KEY,
+    POLICY_SOURCE_TRUST_KEY, POLICY_TEACHER_PROBE_KEY, POLICY_WEAVE_CORRECTION_POLICY_KEY,
+    RULE_AXES_KEY, RULE_EXACT_KEY, RULE_PREFIX_KEY, SIGNATURE_ALG_KEY, SIGNATURE_KEY_ID_KEY,
+    SIGNATURE_SIG_KEY, SOURCE_TRUST_MAX_AUTO_SENSITIVITY_KEY, SOURCE_TRUST_RECEIPTED_KEY,
+    SOURCE_TRUST_WARNED_KEY,
 };
 use super::definition_ceiling::first_party_connector_actor_ref;
 use super::pack_install_policy::{KEY as PACK_INSTALL_POLICY_KEY, PackInstallPolicy};
@@ -171,6 +173,10 @@ pub(crate) fn default_policy_manifest() -> Vec<u8> {
             ]),
         ),
         (
+            Value::from("goal_limits"),
+            crate::workspace_roster::GoalLimits::default().encode(),
+        ),
+        (
             Value::from(POLICY_RULES_KEY),
             Value::Array(vec![
                 Value::Map(vec![
@@ -203,6 +209,23 @@ pub(crate) fn default_policy_manifest() -> Vec<u8> {
                     (
                         Value::from(RULE_PREFIX_KEY),
                         Value::from(crate::commitment::PREDICATE_COMMITMENT_RECORD),
+                    ),
+                    (Value::from(RULE_EXACT_KEY), Value::Boolean(true)),
+                    (
+                        Value::from(RULE_AXES_KEY),
+                        Value::Map(vec![
+                            (Value::from(AXIS_CRITICALITY_KEY), Value::from("normal")),
+                            (Value::from(AXIS_SENSITIVITY_KEY), Value::from("normal")),
+                        ]),
+                    ),
+                ]),
+                // A goal-intake candidate still needs a human-authenticated
+                // write door; the ordinary claim gate must not strand that
+                // confirmed interview at the unrelated critical-consent floor.
+                Value::Map(vec![
+                    (
+                        Value::from(RULE_PREFIX_KEY),
+                        Value::from("project.goal_intake"),
                     ),
                     (Value::from(RULE_EXACT_KEY), Value::Boolean(true)),
                     (
@@ -562,6 +585,22 @@ pub(crate) fn default_policy_manifest() -> Vec<u8> {
         (
             Value::from(crate::federation::grant_policy::ROWS_KEY),
             federation_grant_default_rows(),
+        ),
+        (
+            Value::from(POLICY_CONNECTOR_CLASS_ROLE_KEY),
+            Value::from("vault"),
+        ),
+        (
+            Value::from(POLICY_CONNECTOR_CLASS_PRECEDENCE_KEY),
+            Value::from("nested"),
+        ),
+        (
+            Value::from(POLICY_CONNECTOR_CLASS_CARRY_KEY),
+            Value::Array(vec![
+                Value::Array(vec![Value::from("public"), Value::from("personal")]),
+                Value::Array(vec![Value::from("public"), Value::from("secret")]),
+                Value::Array(vec![Value::from("personal"), Value::from("secret")]),
+            ]),
         ),
         (
             Value::from(POLICY_TEACHER_PROBE_KEY),
