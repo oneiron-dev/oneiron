@@ -6151,3 +6151,40 @@ fn gate_retention_holder_override_requires_authenticated_owner_stamp() -> Result
     assert_eq!(vault.gate_decision_retention_secs()?, Some(60));
     Ok(())
 }
+
+#[test]
+fn batch_delete_of_a_held_claim_is_refused_and_keeps_its_decisions() -> Result<()> {
+    let (_dir, vault) = open_test_vault();
+    let id = EntityId::now();
+    vault.put_entity(&id, 1, TimeRange { start: 1, end: 1 }, 1, b"held")?;
+    let bound = claim_bound_gate_decision(synthetic_gate_decision_id(0xD9, 1), 1, id.as_bytes());
+    append_gate_decisions(&vault, std::slice::from_ref(&bound))?;
+    vault.set_gate_decision_partition_hold(Some(*id.as_bytes()), true)?;
+    assert!(matches!(
+        vault.batch().delete(&id).commit(),
+        Err(Error::InvalidConfig(_))
+    ));
+    assert_eq!(vault.get(&id)?.as_deref(), Some(b"held".as_slice()));
+    let rtxn = vault.store.env.read_txn()?;
+    assert_eq!(
+        vault.store.gate_decision_in_txn(&rtxn, bound.decision_id)?,
+        Some(bound.clone())
+    );
+    assert_eq!(
+        vault
+            .store
+            .verify_claim_erasure_by_scan_in_txn(&rtxn, id.as_bytes())?,
+        vec![bound.decision_id]
+    );
+    drop(rtxn);
+    vault.set_gate_decision_partition_hold(Some(*id.as_bytes()), false)?;
+    vault.batch().delete(&id).commit()?;
+    let rtxn = vault.store.env.read_txn()?;
+    assert!(
+        vault
+            .store
+            .verify_claim_erasure_by_scan_in_txn(&rtxn, id.as_bytes())?
+            .is_empty()
+    );
+    Ok(())
+}

@@ -344,6 +344,22 @@ impl Vault {
         Ok(())
     }
 
+    /// Live state that re-reads a claim-bound receipt as its current
+    /// authority. A missing proof is a refusal, so pruning it would revoke
+    /// the authority; keep it while the referencing state exists.
+    fn live_claim_proof_in_txn(
+        &self,
+        txn: &RoTxn<'_>,
+        record: &GateDecisionRecord,
+    ) -> Result<bool> {
+        Ok(
+            crate::memory::skill_author_proof_is_live_in_txn(self, txn, record)?
+                || crate::dreamer_runner::maintenance::representation::representation_approval_is_live_in_txn(
+                    self, txn, record,
+                )?,
+        )
+    }
+
     /// Remove decisions strictly older than the owner-selected horizon.
     /// Sidecars and primaries leave together. A key is destroyed only when
     /// *every* decision it decrypts is gone; a held partition is untouched.
@@ -364,11 +380,20 @@ impl Vault {
         let retain_until = now.saturating_add(seconds);
         // An admission that still names its original allowing receipt is an
         // operational dependency, including revoked shares and publishes with
-        // removed pointers. Scan source-of-truth rows, not an unproven index.
+        // removed pointers, and so are durable mint taps and conflict rulings
+        // that replay from their decision. Scan source-of-truth rows, not an
+        // unproven index.
         let mut operational_refs =
             crate::share::share_gate_decision_refs_in_txn(&self.store, &txn)?;
         operational_refs.extend(crate::artifact_hosting::artifact_publish_gate_refs_in_txn(
             self, &txn,
+        )?);
+        operational_refs.extend(crate::workspace_roster::project_mint_gate_refs_in_txn(
+            self, &txn,
+        )?);
+        operational_refs.extend(crate::memory::claim_conflict_ruling_gate_refs_in_txn(
+            &self.store,
+            &txn,
         )?);
         // Decode BEFORE mutating. A corrupt ciphertext/key aborts the entire
         // sweep instead of quietly miscounting the rows that share that key.
@@ -391,7 +416,9 @@ impl Vault {
                 .is_some_and(|horizon| record.created_at < now.saturating_sub(horizon))
                 && eligible.len() < policy.max_sweep_rows
             {
-                if operational_refs.contains(&record.decision_id) {
+                if operational_refs.contains(&record.decision_id)
+                    || self.live_claim_proof_in_txn(&txn, &record)?
+                {
                     if let Some(claim) = claim {
                         live_claims.insert(claim);
                     }

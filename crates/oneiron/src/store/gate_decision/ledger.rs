@@ -357,13 +357,16 @@ impl Store {
     /// inside the caller's destructive transaction. The claim index is retained
     /// for discovery of skeletons; the grant-ref index is removed because its
     /// source field is scrubbed. Discovery falls back to a full scan until the
-    /// durable claim-index backfill has completed.
+    /// durable claim-index backfill has completed. A held key partition keeps
+    /// its rows, so every door that tears a held claim (facade, batch, cascade
+    /// or replay) is refused here, before anything is rewritten.
     pub(crate) fn redact_gate_decisions_for_claim_in_txn(
         &self,
         wtxn: &mut RwTxn<'_>,
         claim_id: &[u8; 16],
         redacted_at: u64,
     ) -> Result<bool> {
+        self.reject_held_gate_partition_in_txn(&*wtxn, claim_id)?;
         let id = crate::entity_id::EntityId::from_bytes(*claim_id)
             .map_err(|_| Error::CorruptedIndex("gate decision claim id"))?;
         let pending = self.pending_gate_consent_in_txn(&*wtxn, &id)?.is_some();
