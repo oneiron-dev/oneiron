@@ -184,6 +184,7 @@ pub(crate) fn execute_outbound_call<S: OutboundSender + ?Sized>(
         idempotency_key,
         idempotency_supported,
         authorization_binding: Some(authorization_binding),
+        admitted_approval: None,
         binding_version: OUTBOUND_BINDING_VERSION,
         resolved_endpoint: call.resolved_endpoint.clone(),
         capability_provenance: call.capability_provenance.clone(),

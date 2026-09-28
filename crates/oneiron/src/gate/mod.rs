@@ -29,6 +29,7 @@ mod foreign_agent;
 mod grants;
 mod hosted_tts_policy;
 mod input;
+pub(crate) mod mail_policy;
 mod operational_policy;
 mod owner_policy_mutation;
 mod pack_install_policy;
@@ -113,8 +114,9 @@ use self::dreamer_precommit::{
     validate_dreamer_precommit,
 };
 pub(crate) use self::effect::{
-    ExternalEffectGovernance, check_external_effect_policy, check_external_effect_policy_pair,
-    evaluate_external_effect_policy, external_effect_approval_digest,
+    ApprovalContext, ExternalEffectGovernance, check_external_effect_policy,
+    check_external_effect_policy_pair, evaluate_external_effect_policy,
+    external_effect_approval_digest, native_mail_cold_approval_digest,
     record_external_effect_policy,
 };
 pub(crate) use self::grants::{

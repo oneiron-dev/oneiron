@@ -54,6 +54,15 @@ pub(super) fn hash_policy_frontier_v0(
     // opted-out send holds or ships, so flipping it must move the frontier and
     // invalidate every standing grant bound to the old one.
     hash_str(hasher, resolution.comm_opt_out_posture().as_str());
+    // Absent native-mail rows do not alter an unrelated manifest's frontier.
+    // Present rows do: an owner policy edit must rebind affected authority.
+    if !resolution.native_mail_policy.is_empty() {
+        hash_str(hasher, "native_mail_policy");
+        hash_len(hasher, resolution.native_mail_policy.len());
+        for row in &resolution.native_mail_policy {
+            hash_bytes(hasher, &row.frontier_bytes());
+        }
+    }
     // ONE-1296: hashed ONLY when the knob is present, so a manifest that never
     // names a checker keeps its exact no-checker frontier hash — and every
     // consent binding taken against it stays valid. A domain tag rides with

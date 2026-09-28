@@ -38,6 +38,9 @@ pub(crate) struct OutboundEffectResult {
 #[allow(clippy::large_enum_variant)]
 pub(crate) enum OutboundEffectCommand {
     New(PreparedEffect),
+    /// Ledger-first, governance-only disposition: never starts transport or
+    /// charges a budget, but returns terminal history or preserves Pending.
+    Park(PreparedEffect),
     Resume(IntentId),
 }
 
