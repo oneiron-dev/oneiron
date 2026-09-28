@@ -122,6 +122,9 @@ side_tables! {
     /// This device's 32-byte Ed25519 signing-key seed, stored plaintext and used to sign receipt
     /// attestations. Key: ().
     IDENTITY_DEVICE_SK: SyncState b"m:device_sk" Raw;
+    /// The world-month window label a deleted world claim was addressed under, kept past its purge
+    /// so every reader still finds its tombstone. Key: hex32 (entity id).
+    DELETION_WINDOW_LABEL: SyncState b"m:dw:" Raw;
     /// Client-only: last Unix-seconds timestamp this device reached fully-synced status. Key: ().
     SYNC_M_LAST_SYNC: SyncState b"m:last_sync" Raw;
     /// Monotonic counter allocating the next u:e: sequence number for one entity's text document.
@@ -179,6 +182,9 @@ side_tables! {
     /// Deduplicated marker (single byte) recording which sync window a promoted turn's replayed
     /// closure spans, picked up by later sync replay. Key: yyyy-mm ":" hex32.
     OFF_RECORD_PROMOTE_PICKUP_MARKER: SyncState b"pm:" Raw;
+    /// Digest of the project-depth birth contribution this vault minted locally. Key: hex32
+    /// (contribution id).
+    PROJECT_DEPTH_LOCAL_BIRTH: SyncState b"project:birth:local:" Raw;
     /// Source index for a deferred Parent candidate. Key: hex32 ":" full dp:w: key.
     DEFERRED_PARENT_SOURCE: SyncState b"ps:" Raw;
     /// Pending tombstone propagation marker. Key: yyyy-mm ":" hex32.
@@ -192,12 +198,22 @@ side_tables! {
     /// Queued tombstone re-assertion for an entity whose local hard-delete residue reappeared in a
     /// window doc. Key: yyyy-mm ":" hex32 (entity id).
     SYNC_REASSERT_MARKER: SyncState b"ra:w:" Raw;
+    /// A thin-residence item's opened entity blob. Key: hex32 (entity id).
+    SYNC_RESIDENCE_ITEM_BLOB: SyncState b"ri:b:" Raw;
+    /// A thin-residence item's opened document state. Key: hex32 (entity id).
+    SYNC_RESIDENCE_ITEM_DOCUMENT: SyncState b"ri:d:" Raw;
+    /// The thin-residence index rows fetched for one window. Key: window key ":" item tag.
+    SYNC_RESIDENCE_INDEX: SyncState b"ri:w:" Raw;
     /// Entity-scoped needs-rematerialization retry flag, set when a CRDT-tombstone purge or a
     /// materialization batch fails. Key: yyyy-mm ":" hex32 (entity id).
     SYNC_REMAT_MARKER: SyncState b"rm:w:" Raw;
     /// Sidecar on a rm:w: marker proving it originated from replay/quarantine (not a delete-safety
     /// purge failure), so terminal quarantine may discharge it. Key: yyyy-mm ":" hex32 (entity id).
     SYNC_REPLAY_REMAT_MARKER_PROVENANCE: SyncState b"rmp:w:" Raw;
+    /// The window an opened thin-residence item came from. Key: hex32 (entity id).
+    SYNC_RESIDENCE_OPENED_ITEM: SyncState b"ro:e:" Raw;
+    /// A window promoted from thin to canonical residence; reconnect replays it. Key: window key.
+    SYNC_RESIDENCE_PROMOTED_WINDOW: SyncState b"rp:w:" Raw;
     /// Deferred SpawnedBy anchor, keyed by window, session and turn. Key: yyyy-mm ":" hex32 ":" hex32.
     DEFERRED_SPAWNED_BY: SyncState b"sa:w:" Raw;
     /// Endpoint index for a deferred SpawnedBy anchor. Key: hex32 ":" full sa:w: key.

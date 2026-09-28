@@ -245,9 +245,21 @@ side_tables! {
     /// Permit for one goal-pointer change: old goal id16, new goal id16 (zeros for none), project
     /// body hash32. Key: id16 (project).
     PROJECT_GOAL_INTAKE_POINTER_WRITE: VaultMeta b"project.goal_intake.pointer_write/" Raw;
+    /// A record admitted into a leader chat before its batch settles. Key: id16 (record id).
+    PROJECT_LEADER_CHAT_PERMIT: VaultMeta b"project.leader_chat.permit.v1/" Raw;
+    /// The authenticated speaker proof one leader-chat record carries. Key: id16 (record id).
+    PROJECT_LEADER_CHAT_PROOF: VaultMeta b"project.leader_chat.proof.v1/" Raw;
+    /// Marks a conversation as a project's direct leader chat. Key: id16 (conversation id).
+    PROJECT_LEADER_CHAT: VaultMeta b"project.leader_chat.v1/" Raw;
     /// Durable owner tap of one project card: (tap digest, mint receipt). Key: blake3 hash32 of
     /// the card id.
     PROJECT_MINT_TAP: VaultMeta b"project.mint.tap.v1/" Named;
+    /// The project converted from one room thread's message. Key: id16 (project id).
+    PROJECT_ORIGIN_BY_PROJECT: VaultMeta b"project.origin_by_project.v1/" Raw;
+    /// Projects minted from one room message. Key: id16 (message id) + id16 (project id).
+    PROJECT_ORIGIN_MESSAGE: VaultMeta b"project.origin_message.v1/" Raw;
+    /// The project a room thread was converted into. Key: id16 (room id) + id16 (thread id).
+    PROJECT_ORIGIN_THREAD: VaultMeta b"project.origin_thread.v1/" Raw;
     /// Change-log event recording a project's home-room membership transition. Key: id16 (project) +
     /// id16 (change event id).
     PROJECT_ROOM_CHANGES: VaultMeta b"project.room_changes.v1/" Named;
@@ -256,6 +268,8 @@ side_tables! {
     PROJECT_ROOM_OWNER: VaultMeta b"project.room_owner.v1/" Raw;
     /// The root project's entity id, seeded once at first boot. Key: ().
     PROJECT_ROOT: VaultMeta b"project.root.v1" Raw;
+    /// A cross-project widen ask a project raised on another board. Key: id16 (ask id).
+    PROJECT_WIDEN_ASK: VaultMeta b"project.widen_ask.v1/" Raw;
     /// Number and first threshold-crossing for one actor. Key: id16.
     PROPOSAL_ACTOR_COUNT: VaultMeta b"proposal:actor_count:v1:" Named;
     /// Immutable receipt for one actor and monotonically increasing submission count. Key: id16 ":" u64be.
