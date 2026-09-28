@@ -87,6 +87,10 @@ pub(crate) fn default_policy_manifest() -> Vec<u8> {
         ),
         (Value::from(POLICY_PACK_VERSION_KEY), Value::from("v1")),
         (
+            Value::from(super::voice_serving::KEY),
+            super::voice_serving::VoiceServingRows::seeded(),
+        ),
+        (
             Value::from(POLICY_WEAVE_CORRECTION_POLICY_KEY),
             Value::Map(vec![
                 (Value::from("vault_max"), Value::from(10_000)),

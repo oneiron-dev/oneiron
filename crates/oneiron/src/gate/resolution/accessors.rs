@@ -338,6 +338,20 @@ impl PolicyManifestResolution {
         (!self.diagnostics.loaded_manifest_forces_fail_closed()).then_some(self.retrieval_retention)
     }
 
+    /// The trusted, nested-narrow voice limits. A malformed or absent policy
+    /// never falls back to compiled operational allowances.
+    pub(crate) fn voice_serving_limits(
+        &self,
+        holder: Option<crate::EntityId>,
+    ) -> Result<crate::gate::VoiceServingLimits> {
+        if self.diagnostics.is_fail_closed() {
+            return Err(crate::error::Error::InvalidConfig(
+                "voice serving policy unavailable".into(),
+            ));
+        }
+        crate::gate::voice_serving::resolve(&self.voice_serving, holder)
+    }
+
     /// Effective trusted per-vault limits. Malformed loaded policy refuses
     /// edits; a loaded policy missing the row refuses. Only an unseeded
     /// bootstrap vault uses the same shipped default as the persisted row.

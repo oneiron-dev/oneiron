@@ -456,6 +456,10 @@ impl Vault {
         let body = encode_consent_event(&event)?;
         let consent_key = voice_consent_key(&event.subject_ref, &event.event_id);
 
+        let _guard = self
+            .voice_ref_guard
+            .write()
+            .map_err(|_| Error::InvariantViolation("voice reference guard poisoned"))?;
         let store = &self.store;
         let subject = request.subject_ref;
         let (tally, replayed) = self.with_write_txn(|wtxn| {

@@ -579,6 +579,7 @@ impl Vault {
             wake_policy_timer_owned: std::sync::atomic::AtomicBool::new(false),
             conversation_presence: Default::default(),
             message_streams: Default::default(),
+            voice_ref_guard: Default::default(),
             #[cfg(feature = "sync")]
             entity_docs: std::sync::Mutex::new(crate::entity_doc::EntityDocRegistry::default()),
             #[cfg(feature = "sync")]
