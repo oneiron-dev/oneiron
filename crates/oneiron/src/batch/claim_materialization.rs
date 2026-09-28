@@ -133,6 +133,19 @@ impl ClaimMaterialization {
         Ok(Some(binding))
     }
 
+    /// Canonical lifecycle validator supplies both an optional author binding
+    /// and a sealed confidence-transition proof. Raw claims need no author
+    /// binding, but still carry the proof of their exact closure operation.
+    pub(crate) fn verified_lifecycle(
+        store: &Store,
+        txn: &heed::RoTxn<'_>,
+        op: &BatchOp,
+    ) -> Result<(Option<Self>, super::VerifiedClaimTransition)> {
+        let binding = Self::lifecycle(store, txn, op)?;
+        let proof = super::VerifiedClaimTransition::after_validation(store, txn, op)?;
+        Ok((binding, proof))
+    }
+
     /// Admit only a current-row demotion and its exact ClaimOf weight update.
     /// This does not widen the operation allowlist of other materializations.
     pub(crate) fn apply_demotion(
@@ -171,6 +184,8 @@ impl ClaimMaterialization {
         if encode_claim_body(&expected)? != *data {
             return Err(binding_error());
         }
+        let transition =
+            super::VerifiedClaimTransition::after_validated_demotion(&vault.store, txn, &ops)?;
         let mut bindings = Vec::new();
         if let Some(envelope) = lifecycle_envelope(&vault.store, txn, id, &prior)? {
             let binding = Self {
@@ -198,7 +213,9 @@ impl ClaimMaterialization {
             vault
                 .text_index_trusted
                 .load(std::sync::atomic::Ordering::Acquire),
-            ApplyOpsGateMode::new(false, false).with_claim_materializations(bindings),
+            ApplyOpsGateMode::new(false, false)
+                .with_claim_materializations(bindings)
+                .with_verified_claim_transitions(vec![transition]),
         )
     }
 
@@ -262,6 +279,7 @@ impl ClaimMaterialization {
                 envelope: Some(&binding.envelope),
                 auto_checker: checker,
                 defer_metrics_until_commit: true,
+                transition: None,
             },
             &policy,
             crate::gate::GateWriteMode {
@@ -366,6 +384,7 @@ impl ClaimMaterialization {
         if encode_claim_body(&expected)? != *data {
             return Err(binding_error());
         }
+        let transition = super::VerifiedClaimTransition::after_validation(&vault.store, txn, &op)?;
         let mut bindings = Vec::new();
         if let Some(envelope) = lifecycle_envelope(&vault.store, txn, id, &prior)? {
             let binding = Self {
@@ -393,9 +412,11 @@ impl ClaimMaterialization {
             match proof {
                 Some(proof) => ApplyOpsGateMode::new(false, persist_pending)
                     .with_claim_materializations(bindings)
+                    .with_verified_claim_transitions(vec![transition])
                     .with_refinement_admission(proof),
                 None => ApplyOpsGateMode::new(false, persist_pending)
-                    .with_claim_materializations(bindings),
+                    .with_claim_materializations(bindings)
+                    .with_verified_claim_transitions(vec![transition]),
             },
         )
     }
@@ -709,6 +730,24 @@ pub(crate) fn apply_owner_bound_claim_puts(
     bindings: Vec<ClaimMaterialization>,
     persist_pending: bool,
 ) -> Result<()> {
+    apply_owner_bound_claim_puts_with_transitions(
+        vault,
+        txn,
+        ops,
+        bindings,
+        Vec::new(),
+        persist_pending,
+    )
+}
+
+pub(crate) fn apply_owner_bound_claim_puts_with_transitions(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    ops: Vec<BatchOp>,
+    bindings: Vec<ClaimMaterialization>,
+    transitions: Vec<super::VerifiedClaimTransition>,
+    persist_pending: bool,
+) -> Result<()> {
     let mut remaining = bindings.iter();
     for op in &ops {
         if matches!(
@@ -749,7 +788,9 @@ pub(crate) fn apply_owner_bound_claim_puts(
         vault
             .text_index_trusted
             .load(std::sync::atomic::Ordering::Acquire),
-        ApplyOpsGateMode::new(false, persist_pending).with_claim_materializations(bindings),
+        ApplyOpsGateMode::new(false, persist_pending)
+            .with_claim_materializations(bindings)
+            .with_verified_claim_transitions(transitions),
     )
 }
 

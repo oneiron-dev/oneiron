@@ -142,6 +142,7 @@ fn check_claim_policy_for_write_with_record_inner(
         envelope,
         auto_checker,
         defer_metrics_until_commit,
+        transition,
     } = write;
     *recorded_decision = None;
     if let Some(envelope) = envelope {
@@ -261,6 +262,27 @@ fn check_claim_policy_for_write_with_record_inner(
             && let Some(isolation_class) = dreamer_isolation_class(&body.predicate)
         {
             decision = dreamer_isolation_decision(store, &*wtxn, body, isolation_class);
+        }
+        // The subtype confidence floor is a Gate decision, not merely a
+        // writer convention. A generic candidate can neither turn a held
+        // proposal into Auto nor bypass the stricter care threshold.
+        if decision.outcome() == GateOutcome::Allow
+            && let Some(kind) =
+                crate::write_envelope::carry_forward::CarryForwardKind::from_predicate(
+                    &body.predicate,
+                )
+            && body.confidence
+                < policy.carry_forward_floor(
+                    kind,
+                    envelope.map(|envelope| envelope.actor().entity_ref()),
+                )
+            && (body.approval == ClaimApprovalStatus::Proposed
+                || body.approval == ClaimApprovalStatus::Auto
+                    && !transition.is_some_and(|proof| {
+                        proof.matches_body(store, &*wtxn, id, body).unwrap_or(false)
+                    }))
+        {
+            decision = GateDecision::pending(vec![GateReasonCode::PendingCarryForwardConfidence]);
         }
         let attach_critical_confirm = body.approval == ClaimApprovalStatus::Auto
             && critical_claim_can_land_auto_with_confirm(

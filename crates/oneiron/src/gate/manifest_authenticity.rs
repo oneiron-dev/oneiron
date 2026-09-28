@@ -13,6 +13,23 @@ fn key(id: &EntityId, prefix: &str) -> String {
 pub(crate) fn trusted_manifest_key(id: &EntityId) -> String {
     key(id, "trusted")
 }
+/// Body-bound seed origin, distinct from trust. An owner write clears this key.
+pub(crate) fn seeded_manifest_key(id: &EntityId) -> String {
+    key(id, "seeded_confidence")
+}
+
+pub(crate) fn manifest_is_seeded_default(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    id: &EntityId,
+    body: &[u8],
+) -> Result<bool> {
+    Ok(store
+        .sync_state
+        .get(txn, &seeded_manifest_key(id))?
+        .is_some_and(|hash| hash.as_ref() == blake3::hash(body).as_bytes()))
+}
+
 pub(crate) fn stamp_manifest_origin(
     store: &Store,
     txn: &mut heed::RwTxn<'_>,
@@ -22,7 +39,11 @@ pub(crate) fn stamp_manifest_origin(
 ) -> Result<()> {
     let hash = blake3::hash(body);
     let origin_key = trusted_manifest_key(id);
+    let seed_key = seeded_manifest_key(id);
     if !replicated {
+        // Every local re-authoring is authored even if it keeps the seeded ID,
+        // pack name or byte-identical default value.
+        store.sync_state.delete(txn, &seed_key)?;
         store.sync_state.put(txn, &origin_key, hash.as_bytes())?;
     } else {
         let existing_matches = store.entities.get(txn, id.as_bytes())?.is_some_and(|raw| {
@@ -30,6 +51,14 @@ pub(crate) fn stamp_manifest_origin(
                 .is_some_and(|h| h.entity_type == ENTITY_TYPE_POLICY_MANIFEST)
                 && raw.get(ENTITY_METADATA_HEADER_LEN..) == Some(body)
         });
+        if !existing_matches
+            || store
+                .sync_state
+                .get(txn, &seed_key)?
+                .is_none_or(|old| old.as_ref() != hash.as_bytes())
+        {
+            store.sync_state.delete(txn, &seed_key)?;
+        }
         if !existing_matches
             || store
                 .sync_state

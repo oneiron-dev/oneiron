@@ -486,13 +486,14 @@ impl Vault {
                 provenance: None,
             },
         ];
-        let binding = crate::batch::ClaimMaterialization::lifecycle(&self.store, &*wtxn, &ops[0])?;
+        let (binding, transition) =
+            crate::batch::ClaimMaterialization::verified_lifecycle(&self.store, &*wtxn, &ops[0])?;
         let decision = match (closure_granted, checker, binding) {
-            (true, Some(checker), Some(binding)) => {
-                self.apply_checked_deferred_closure_in_txn(wtxn, ops, binding, &old_body, checker)?
-            }
+            (true, Some(checker), Some(binding)) => self.apply_checked_deferred_closure_in_txn(
+                wtxn, ops, binding, transition, &old_body, checker,
+            )?,
             (_, _, binding) => {
-                self.apply_lifecycle_materialization(wtxn, ops, binding, true)?;
+                self.apply_lifecycle_materialization(wtxn, ops, binding, transition, true)?;
                 None
             }
         };
@@ -649,7 +650,8 @@ impl Vault {
             allow_reserved_predicate: false,
             hub_sync_imported: false,
         }];
-        let binding = crate::batch::ClaimMaterialization::lifecycle(&self.store, &*wtxn, &ops[0])?;
+        let (binding, transition) =
+            crate::batch::ClaimMaterialization::verified_lifecycle(&self.store, &*wtxn, &ops[0])?;
 
         let mut write_receipt = None;
         if consent_receipt.is_none() {
@@ -667,6 +669,7 @@ impl Vault {
                     // claim, not a candidate seeking Auto; nothing consults.
                     auto_checker: None,
                     defer_metrics_until_commit: false,
+                    transition: Some(&transition),
                 },
                 &policy,
                 crate::gate::GateWriteMode {
@@ -680,7 +683,7 @@ impl Vault {
             )?;
         }
 
-        self.apply_lifecycle_materialization(wtxn, ops, binding, false)?;
+        self.apply_lifecycle_materialization(wtxn, ops, binding, transition, false)?;
         Ok(consent_receipt
             .or(write_receipt.map(crate::gate::RecordedClaimGateDecision::into_record)))
     }
@@ -695,6 +698,7 @@ impl Vault {
         txn: &mut heed::RwTxn<'_>,
         ops: Vec<BatchOp>,
         binding: crate::batch::ClaimMaterialization,
+        transition: crate::batch::VerifiedClaimTransition,
         old_body: &ClaimBody,
         checker: &crate::llm::BoundedAutoChecker,
     ) -> Result<Option<crate::gate::RecordedClaimGateDecision>> {
@@ -714,6 +718,7 @@ impl Vault {
                 envelope: Some(binding.envelope()),
                 auto_checker: Some(checker),
                 defer_metrics_until_commit: true,
+                transition: Some(&transition),
             },
             &policy,
             crate::gate::GateWriteMode {
@@ -741,6 +746,7 @@ impl Vault {
                 .load(std::sync::atomic::Ordering::Acquire),
             crate::batch::ApplyOpsGateMode::new(false, true)
                 .with_claim_materializations(vec![binding])
+                .with_verified_claim_transitions(vec![transition])
                 .with_preflight_gate_decision_ids(ids),
         )?;
         Ok(decision)
@@ -751,20 +757,22 @@ impl Vault {
         wtxn: &mut heed::RwTxn<'_>,
         ops: Vec<BatchOp>,
         binding: Option<crate::batch::ClaimMaterialization>,
+        transition: crate::batch::VerifiedClaimTransition,
         persist_pending: bool,
     ) -> Result<()> {
         if let Some(binding) = binding {
-            crate::batch::apply_owner_bound_claim_puts(
+            crate::batch::apply_owner_bound_claim_puts_with_transitions(
                 self,
                 wtxn,
                 ops,
                 vec![binding],
+                vec![transition],
                 persist_pending,
             )
         } else {
             // Legacy/raw claims have no host-authored actor authority. Keep the
             // unattributed gate path; never infer authority from their evidence.
-            apply_ops(
+            crate::batch::apply_ops_with_gate_mode(
                 &self.store,
                 &self.config,
                 &self.analyzer,
@@ -772,8 +780,8 @@ impl Vault {
                 ops,
                 self.text_index_trusted
                     .load(std::sync::atomic::Ordering::Acquire),
-                false,
-                persist_pending,
+                crate::batch::ApplyOpsGateMode::new(false, persist_pending)
+                    .with_verified_claim_transitions(vec![transition]),
             )
         }
     }

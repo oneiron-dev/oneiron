@@ -72,6 +72,7 @@ pub(in crate::batch) fn apply_put(
     include_source_in_gate_input: bool,
     claim_gate_prechecked: bool,
     preflight_gate_decision_id: Option<crate::store::GateDecisionId>,
+    transition: Option<&crate::batch::VerifiedClaimTransition>,
     origin: BaseWriteOrigin<'_>,
 ) -> Result<AppliedPut> {
     super::super::person_substrate::validate_scope_identity(id)?;
@@ -105,6 +106,7 @@ pub(in crate::batch) fn apply_put(
             allow_reserved_predicate,
             write_envelope,
             replicated,
+            transition,
         },
     )?;
     // ARCH-0052 D2: this is the shared entity materialization choke point for
@@ -209,7 +211,8 @@ pub(in crate::batch) fn apply_put(
                     store,
                     wtxn,
                     &id,
-                    crate::gate::ClaimGateWrite::plain(&body, write_envelope),
+                    crate::gate::ClaimGateWrite::plain(&body, write_envelope)
+                        .with_transition(transition),
                     policy,
                     crate::gate::GateWriteMode {
                         record_decision: record_gate_decisions,

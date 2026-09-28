@@ -166,6 +166,19 @@ impl PolicyManifestResolution {
             .effective(actor))
     }
 
+    /// One snapshot supplies the same carry-forward floor to typed, raw and Gate doors.
+    #[must_use]
+    pub(crate) fn carry_forward_floor(
+        &self,
+        kind: crate::write_envelope::carry_forward::CarryForwardKind,
+        actor: Option<crate::EntityId>,
+    ) -> f32 {
+        if self.diagnostics.loaded_manifest_forces_fail_closed() {
+            return 1.0;
+        }
+        self.carry_forward_confidence.floor(kind, actor)
+    }
+
     #[must_use]
     pub(crate) fn goal_limits(&self) -> crate::workspace_roster::GoalLimits {
         self.goal_limits.unwrap_or_default()

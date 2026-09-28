@@ -617,6 +617,7 @@ pub(crate) fn validate_claim_body_and_decode(
     // predicate-agnostic, so it must not sit behind a predicate-specific
     // branch that only some claims enter.
     validate_claim_source_lineage(&body)?;
+    crate::write_envelope::carry_forward::validate_claim(&body)?;
     crate::blob_artifact::esign::validate_event_claim(&body)?;
     super::supersession_provenance::validate(&body)?;
     if body.predicate.starts_with("world_access.") || body.predicate.starts_with("activated.") {
