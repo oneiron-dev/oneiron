@@ -564,6 +564,7 @@ fn manifest_round_trips_through_msgpack() {
             .collect(),
         mutation_mode: MutationMode::Full,
         warnings: vec![EditWarning::new(WarningCode::SessionReported, "note")],
+        pptx_holder_limits: None,
     };
     let bytes = manifest.to_msgpack().unwrap();
     let decoded = EditManifest::from_msgpack(&bytes).unwrap();

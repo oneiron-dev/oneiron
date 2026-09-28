@@ -137,6 +137,24 @@ impl PolicyManifestResolution {
         self.auto_checker.as_deref()
     }
 
+    /// The quality floor lives in a trusted, seeded POLICY_MANIFEST row.
+    /// Holder overrides are nested restrict-only rows capped at the vault.
+    #[must_use]
+    pub(crate) fn teacher_probe_policy(
+        &self,
+        holder_ref: Option<&str>,
+    ) -> Option<crate::llm::manifest::TeacherProbePolicy> {
+        if self.is_fail_closed() || !self.teacher_probe_trusted {
+            return None;
+        }
+        let vault_min = self.teacher_probe_vault_min?;
+        let effective = holder_ref
+            .and_then(|holder| self.teacher_probe_holders.get(holder).copied())
+            .unwrap_or(vault_min)
+            .max(vault_min);
+        crate::llm::manifest::TeacherProbePolicy::resolved(vault_min, effective, holder_ref).ok()
+    }
+
     /// The resolved `budget_policy` rows, fail-closed: a loaded manifest that
     /// forces fail-closed (malformed, unsupported schema, engine-version
     /// floor, unknown axis, row-count overflow) exposes no usable table, and
@@ -160,6 +178,24 @@ impl PolicyManifestResolution {
         &self,
     ) -> Option<crate::gate::retrieval_retention::RetrievalRetentionPolicy> {
         (!self.diagnostics.loaded_manifest_forces_fail_closed()).then_some(self.retrieval_retention)
+    }
+
+    /// Effective trusted per-vault limits. Malformed loaded policy refuses
+    /// edits; a loaded policy missing the row refuses. Only an unseeded
+    /// bootstrap vault uses the same shipped default as the persisted row.
+    #[must_use]
+    pub(crate) fn pptx_comment_limits(
+        &self,
+    ) -> Option<crate::edit_roundtrip::pptx::PptxOperationalLimits> {
+        if self.diagnostics.loaded_manifest_forces_fail_closed() {
+            None
+        } else if self.diagnostics.manifest_count == 0 {
+            // Unseeded bootstrap/test vaults have no row to read yet; real
+            // opens persist the same shipped default in the trusted manifest.
+            Some(crate::edit_roundtrip::pptx::PptxOperationalLimits::default())
+        } else {
+            self.pptx_comment_limits
+        }
     }
 
     pub(crate) fn hosted_tts_limits(

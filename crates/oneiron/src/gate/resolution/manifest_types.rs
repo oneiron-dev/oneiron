@@ -1,6 +1,7 @@
 //! Resolved-view types plus the `PolicyManifestResolution` struct definition.
 
 use crate::llm::{BudgetExhaustionPolicy, BudgetPolicyTable};
+use std::collections::BTreeMap;
 
 use crate::gate::ceiling::{
     ActorCeiling, DelegationFoldCache, PolicyOwnerPatternRow, PolicyOwnerPolicyRow, PolicyPack,
@@ -73,12 +74,21 @@ impl CommOptOutPosture {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(in crate::gate) struct TeacherProbeRow {
+    pub(in crate::gate) min_f1_millionths: u32,
+    pub(in crate::gate) holders: BTreeMap<String, u32>,
+}
+
 #[derive(Debug, Clone, Default, PartialEq)]
 pub(crate) struct PolicyManifestResolution {
     pub(crate) diagnostics: PolicyManifestDiagnostics,
     pub(crate) room_thread: Option<crate::gate::RoomThreadManifest>,
     pub(crate) diagnostic_bounds: Option<crate::self_heal::tripwires::TripwireBounds>,
     pub(crate) livequery_tracker_limits: Option<crate::gate::tracker_limits::PolicyTrackerLimits>,
+    pub(in crate::gate) teacher_probe_trusted: bool,
+    pub(in crate::gate) teacher_probe_vault_min: Option<u32>,
+    pub(in crate::gate) teacher_probe_holders: BTreeMap<String, u32>,
     pub(crate) proposal_check_threshold: Option<u64>,
     pub(crate) retrieval_retention: crate::gate::retrieval_retention::RetrievalRetentionPolicy,
     pub(crate) voice_ref_defaults: Option<crate::voice_identity::ref_limits::VoiceRefLimitPolicy>,
@@ -111,5 +121,6 @@ pub(crate) struct PolicyManifestResolution {
     pub(super) auto_checker: Option<String>,
     pub(super) budget_policy: BudgetPolicyTable,
     pub(crate) pack_install_policy: Option<crate::gate::PackInstallPolicy>,
+    pub(super) pptx_comment_limits: Option<crate::edit_roundtrip::pptx::PptxOperationalLimits>,
     pub(super) hosted_tts: HostedTtsPolicy,
 }
