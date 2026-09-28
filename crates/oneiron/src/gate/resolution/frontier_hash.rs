@@ -27,6 +27,17 @@ pub(super) fn hash_policy_frontier_v0(
     for predicate in &resolution.single_valued_predicates {
         hash_str(hasher, predicate);
     }
+    // A teacher floor change changes admission and invalidates approval
+    // snapshots; include the resolved row in the policy frontier too.
+    if let Some(vault_min) = resolution.teacher_probe_vault_min {
+        hash_str(hasher, "teacher_probe");
+        hash_u64(hasher, u64::from(vault_min));
+        hash_len(hasher, resolution.teacher_probe_holders.len());
+        for (holder, minimum) in &resolution.teacher_probe_holders {
+            hash_str(hasher, holder);
+            hash_u64(hasher, u64::from(*minimum));
+        }
+    }
     hash_budget_exhaustion_policy(hasher, resolution.on_budget_exhausted());
     // The RESOLVED posture, beside its budget sibling: it decides whether an
     // opted-out send holds or ships, so flipping it must move the frontier and

@@ -46,6 +46,7 @@ mod perf;
 mod retrieval_trace_export;
 mod retrieval_turn_corpus;
 mod swarm;
+mod teacher_probe;
 mod vector;
 
 fn main() -> ExitCode {
@@ -79,6 +80,7 @@ fn main() -> ExitCode {
         [cmd, rest @ ..] if cmd == "vector" => vector::run(rest),
         [cmd, rest @ ..] if cmd == "eval" => eval::run(rest),
         [cmd, rest @ ..] if cmd == "perf" => perf::run(rest),
+        [cmd, rest @ ..] if cmd == "teacher-probe" => teacher_probe::run(rest),
         [cmd, rest @ ..] if cmd == "fleet" => fleet::run(rest),
         [cmd, rest @ ..] if cmd == "swarm" => swarm::run(rest),
         _ => {
@@ -145,6 +147,10 @@ fn print_help() {
                                        emits every axis and is always marked\n\
                                        synthetic_smoke and never a publication\n\
                                        candidate (see `perf --help`)\n\
+          teacher-probe --checkpoint DIR --runner EXECUTABLE\n\
+                                       --manifest CANDIDATE.json --policy RESOLVED.json\n\
+                                       --out APPROVED.json\n\
+                                       score pinned CoNLL BIO spans before releasing a teacher pin\n\
           fleet --help                authenticated fleet load and PPR pair receipts\n\
           swarm --matrix              three seeded trials each of write, recall,\n\
                                        mixed at 1/10/100/300 agents; JSONL\n\

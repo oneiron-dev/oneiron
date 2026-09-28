@@ -9,3 +9,4 @@ pub(super) use self::manifest_fold::check_claim_source_trust;
 pub(crate) use self::manifest_fold::resolve_policy_manifest;
 pub(super) use self::manifest_types::CommOptOutPosture;
 pub(crate) use self::manifest_types::PolicyManifestResolution;
+pub(in crate::gate) use self::manifest_types::TeacherProbeRow;

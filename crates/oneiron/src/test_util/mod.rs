@@ -154,6 +154,24 @@ pub(crate) fn put_policy_manifest_bytes(
     })
 }
 
+/// Copy the shipped teacher-probe policy row into a custom test policy. Tests
+/// that replace the seeded default must preserve this floor before pinning a
+/// teacher, without accidentally replacing their own Gate policy rows.
+pub(crate) fn add_default_teacher_probe_policy(entries: &mut Vec<(rmpv::Value, rmpv::Value)>) {
+    let default = crate::gate::default_policy_manifest();
+    let rmpv::Value::Map(default_entries) =
+        rmpv::decode::read_value(&mut default.as_slice()).expect("seeded policy map")
+    else {
+        panic!("seeded policy map");
+    };
+    entries.push(
+        default_entries
+            .into_iter()
+            .find(|(key, _)| key.as_str() == Some("teacher_probe"))
+            .expect("seeded teacher probe row"),
+    );
+}
+
 /// Installs the shipped default policy manifest carrying one unrestricted
 /// schema-1.2 `core:read` grant per reader. A plain scoped-read key reads
 /// nothing until a trusted manifest grants it.

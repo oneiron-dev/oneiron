@@ -1,0 +1,207 @@
+{
+  "name": "oneiron-conll-bio-v1",
+  "sentences": [
+    {
+      "tokens": [
+        "EU",
+        "rejects",
+        "German",
+        "call",
+        "to",
+        "boycott",
+        "British",
+        "lamb",
+        "."
+      ],
+      "tags": [
+        "B-ORG",
+        "O",
+        "B-MISC",
+        "O",
+        "O",
+        "O",
+        "B-MISC",
+        "O",
+        "O"
+      ]
+    },
+    {
+      "tokens": [
+        "Peter",
+        "Blackburn",
+        "joined",
+        "the",
+        "European",
+        "Commission",
+        "."
+      ],
+      "tags": [
+        "B-PER",
+        "I-PER",
+        "O",
+        "O",
+        "B-ORG",
+        "I-ORG",
+        "O"
+      ]
+    },
+    {
+      "tokens": [
+        "Germany",
+        "hosts",
+        "the",
+        "summit",
+        "in",
+        "Berlin",
+        "."
+      ],
+      "tags": [
+        "B-LOC",
+        "O",
+        "O",
+        "O",
+        "O",
+        "B-LOC",
+        "O"
+      ]
+    },
+    {
+      "tokens": [
+        "John",
+        "Smith",
+        "visited",
+        "New",
+        "York",
+        "on",
+        "Monday",
+        "."
+      ],
+      "tags": [
+        "B-PER",
+        "I-PER",
+        "O",
+        "B-LOC",
+        "I-LOC",
+        "O",
+        "O",
+        "O"
+      ]
+    },
+    {
+      "tokens": [
+        "Apple",
+        "hired",
+        "Mary",
+        "Jones",
+        "in",
+        "London",
+        "."
+      ],
+      "tags": [
+        "B-ORG",
+        "O",
+        "B-PER",
+        "I-PER",
+        "O",
+        "B-LOC",
+        "O"
+      ]
+    },
+    {
+      "tokens": [
+        "The",
+        "United",
+        "Nations",
+        "met",
+        "in",
+        "Geneva",
+        "."
+      ],
+      "tags": [
+        "O",
+        "B-ORG",
+        "I-ORG",
+        "O",
+        "O",
+        "B-LOC",
+        "O"
+      ]
+    },
+    {
+      "tokens": [
+        "Paris",
+        "welcomed",
+        "France",
+        "and",
+        "Spain",
+        "."
+      ],
+      "tags": [
+        "B-LOC",
+        "O",
+        "B-LOC",
+        "O",
+        "B-LOC",
+        "O"
+      ]
+    },
+    {
+      "tokens": [
+        "Microsoft",
+        "opened",
+        "offices",
+        "near",
+        "San",
+        "Francisco",
+        "."
+      ],
+      "tags": [
+        "B-ORG",
+        "O",
+        "O",
+        "O",
+        "B-LOC",
+        "I-LOC",
+        "O"
+      ]
+    },
+    {
+      "tokens": [
+        "Tokyo",
+        "hosted",
+        "the",
+        "Olympic",
+        "Games",
+        "."
+      ],
+      "tags": [
+        "B-LOC",
+        "O",
+        "O",
+        "B-MISC",
+        "I-MISC",
+        "O"
+      ]
+    },
+    {
+      "tokens": [
+        "Alice",
+        "Brown",
+        "left",
+        "IBM",
+        "for",
+        "Canada",
+        "."
+      ],
+      "tags": [
+        "B-PER",
+        "I-PER",
+        "O",
+        "B-ORG",
+        "O",
+        "B-LOC",
+        "O"
+      ]
+    }
+  ]
+}
