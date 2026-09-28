@@ -21,29 +21,42 @@ pub(crate) enum ProjectDepthContribution {
     Edit(ProjectDepthEdit),
 }
 
+/// The seeded creation-default row. It is derived from the shipped default
+/// alone, never stored, and never bound to the whole default manifest's bytes,
+/// so an engine upgrade that adds unrelated manifest rows keeps every birth
+/// sourced from it anchored.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct ProjectDepthDefault {
     pub(crate) version: u8,
     pub(crate) depth: u8,
-    pub(crate) maximum: u8,
-    pub(crate) source_manifest: String,
-    pub(crate) source_hash: [u8; 32],
 }
 
-pub(crate) fn seeded_default() -> Result<ProjectDepthDefault> {
-    Ok(ProjectDepthDefault {
+pub(crate) fn seeded_default() -> ProjectDepthDefault {
+    ProjectDepthDefault {
         version: 1,
         depth: crate::gate::default_manifest::SEEDED_PROJECT_DEPTH_DEFAULT,
-        maximum: crate::gate::default_manifest::SEEDED_PROJECT_DEPTH_MAX,
-        source_manifest: crate::gate::default_policy_manifest_id()?.to_hex(),
-        source_hash: *blake3::hash(&crate::gate::default_policy_manifest()).as_bytes(),
-    })
+    }
 }
 
 pub(crate) fn seeded_default_carrier() -> Result<(EntityId, Vec<u8>)> {
-    let bytes = encode_contribution(&ProjectDepthContribution::Default(seeded_default()?))?;
+    let bytes = encode_contribution(&ProjectDepthContribution::Default(seeded_default()))?;
     Ok((content_id(&bytes)?, bytes))
+}
+
+/// The one birth every replica derives for a project that has no stored
+/// birth: the seeded default, unsigned. Its content address is the same on
+/// every replica, so owner edits can name it as their predecessor.
+pub(crate) fn canonical_birth(project: EntityId) -> Result<ProjectDepthBirth> {
+    let (seed, seed_body) = seeded_default_carrier()?;
+    Ok(ProjectDepthBirth {
+        version: 1,
+        project_ref: project.to_hex(),
+        depth: seeded_default().depth,
+        source_manifest: seed.to_hex(),
+        source_hash: *blake3::hash(&seed_body).as_bytes(),
+        owner: None,
+    })
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -169,7 +182,7 @@ pub(crate) fn decode_contribution(bytes: &[u8]) -> Result<ProjectDepthContributi
         return Err(invalid());
     }
     if let ProjectDepthContribution::Default(default) = &value {
-        if *default != seeded_default()? {
+        if *default != seeded_default() {
             return Err(invalid());
         }
         return Ok(value);
@@ -278,19 +291,6 @@ fn content_id(body: &[u8]) -> Result<EntityId> {
     EntityId::from_bytes(bytes).map_err(|_| invalid())
 }
 
-pub(crate) fn locally_seeded_birth(
-    store: &Store,
-    txn: &heed::RoTxn<'_>,
-    id: EntityId,
-    birth: &ProjectDepthBirth,
-) -> Result<bool> {
-    let bytes = encode_contribution(&ProjectDepthContribution::Birth(birth.clone()))?;
-    Ok(store
-        .sync_state
-        .get(txn, &format!("project:birth:local:{}", id.to_hex()))?
-        .is_some_and(|hash| hash.as_ref() == blake3::hash(&bytes).as_bytes()))
-}
-
 pub(crate) fn birth_id(birth: &ProjectDepthBirth) -> Result<EntityId> {
     content_id(&encode_contribution(&ProjectDepthContribution::Birth(
         birth.clone(),
@@ -315,9 +315,11 @@ pub(crate) fn validate_contribution_put(
     id: EntityId,
     body: &[u8],
     replicated: bool,
+    posture: crate::HostingPrivacyPosture,
 ) -> Result<()> {
     let value = decode_contribution(body)?;
-    if content_id(body)? != id {
+    // The seeded row is derived by every replica and is never a stored fact.
+    if content_id(body)? != id || matches!(value, ProjectDepthContribution::Default(_)) {
         return Err(invalid());
     }
     if let Some(old) = store.entities.get(txn, id.as_bytes())? {
@@ -334,18 +336,11 @@ pub(crate) fn validate_contribution_put(
         if source == id {
             return Err(invalid());
         }
-        if replicated && b.owner.is_none() {
-            let project = EntityId::from_hex(&b.project_ref).map_err(|_| invalid())?;
-            let root = store.vault_meta.get(txn, b"project.root.v1")?.as_deref()
-                == Some(project.as_bytes().as_slice());
-            let marker = format!("project:birth:local:{}", id.to_hex());
-            let locally_born = store
-                .sync_state
-                .get(txn, &marker)?
-                .is_some_and(|hash| hash.as_ref() == blake3::hash(body).as_bytes());
-            if !root && !locally_born {
-                return Err(invalid());
-            }
+        if replicated
+            && b.owner.is_none()
+            && !super::fold::unsigned_birth_trusted(store, txn, posture, &b)?
+        {
+            return Err(invalid());
         }
     }
     Ok(())

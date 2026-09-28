@@ -108,16 +108,20 @@ pub(crate) fn normalize_project_body(
     txn: &heed::RoTxn<'_>,
     id: EntityId,
     bytes: &[u8],
+    posture: crate::HostingPrivacyPosture,
 ) -> Result<Vec<u8>> {
     validate_project_body(id, bytes)?;
     let mut body: ProjectRecord = rmp_serde::from_slice(bytes).map_err(|_| invalid())?;
     if body.parents.contains(&id.to_hex()) {
         return Err(invalid());
     }
-    let Some((_, birth)) = crate::gate::project_depth::birth_for_project(store, txn, id)? else {
-        return Err(RecordError::ProjectDependencyPending.into());
+    body.depth = match crate::gate::project_depth::birth_for_project(store, txn, id)? {
+        Some((_, birth)) => birth.depth,
+        None if crate::gate::project_depth::implicit_birth_applies(store, txn, posture, id)? => {
+            crate::gate::project_depth::canonical_birth(id)?.depth
+        }
+        None => return Err(RecordError::ProjectDependencyPending.into()),
     };
-    body.depth = birth.depth;
     encode(&body)
 }
 

@@ -18,56 +18,16 @@ use crate::gate::ceiling::{
 };
 use crate::gate::decode::{DecodedManifestCarrier, decode_manifest_carrier};
 
-/// The seeded, vault-resident creation default and maximum for project depth.
-/// Missing/malformed policy never silently restores a compiled 10.
+/// The vault ceiling on any project's depth row: the resolved manifest row,
+/// capped by the shipped ceiling. A loaded malformed manifest fails closed to
+/// the most restrictive ceiling (DEC-0005); it never bricks the vault.
 pub(crate) fn resolve_project_depth_max(store: &Store, txn: &heed::RoTxn<'_>) -> Result<u8> {
     let policy = resolve_policy_manifest(store, txn)?;
     if policy.diagnostics.loaded_manifest_forces_fail_closed() {
-        return Err(Error::InvalidConfig(
-            "project-depth policy manifest is not valid".into(),
-        ));
+        return Ok(0);
     }
-    let (id, expected) = crate::gate::project_depth::seeded_default_carrier()?;
-    let raw = store
-        .entities
-        .get(txn, id.as_bytes())?
-        .ok_or_else(|| Error::InvalidConfig("project-depth seed is missing".into()))?;
-    let header = crate::batch::EntityMetadataHeader::parse(&raw)
-        .ok_or(Error::CorruptedIndex("project-depth seed header"))?;
-    if header.entity_type != ENTITY_TYPE_POLICY_MANIFEST
-        || raw.get(crate::batch::ENTITY_METADATA_HEADER_LEN..) != Some(expected.as_slice())
-    {
-        return Err(Error::CorruptedIndex("project-depth seed body"));
-    }
-    let crate::gate::project_depth::ProjectDepthContribution::Default(default) =
-        crate::gate::project_depth::decode_contribution(&expected)?
-    else {
-        return Err(Error::CorruptedIndex("project-depth seed kind"));
-    };
-    Ok(policy
-        .project_depth_max
-        .unwrap_or(default.maximum)
-        .min(default.maximum))
-}
-
-pub(crate) fn resolve_project_depth_config(
-    store: &Store,
-    txn: &heed::RoTxn<'_>,
-    posture: crate::HostingPrivacyPosture,
-) -> Result<(u8, u8)> {
-    let maximum = resolve_project_depth_max(store, txn)?;
-    let default = crate::gate::project_depth::resolve_creation_default(store, txn, posture)?;
-    if default.disposition != crate::gate::project_depth::ProjectDepthDisposition::Authorized {
-        return Err(Error::InvalidConfig(
-            "project-depth default policy is unresolved".into(),
-        ));
-    }
-    if default.depth > maximum {
-        return Err(Error::InvalidConfig(
-            "project-depth default exceeds vault ceiling".into(),
-        ));
-    }
-    Ok((default.depth, maximum))
+    let ceiling = crate::gate::default_manifest::SEEDED_PROJECT_DEPTH_MAX;
+    Ok(policy.project_depth_max.unwrap_or(ceiling).min(ceiling))
 }
 
 pub(crate) fn resolve_policy_manifest(

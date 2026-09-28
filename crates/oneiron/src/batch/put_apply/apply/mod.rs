@@ -73,7 +73,7 @@ pub(in crate::batch) fn apply_put(
     claim_gate_prechecked: bool,
     preflight_gate_decision_id: Option<crate::store::GateDecisionId>,
     origin: BaseWriteOrigin<'_>,
-    _posture: crate::HostingPrivacyPosture,
+    posture: crate::HostingPrivacyPosture,
 ) -> Result<AppliedPut> {
     super::super::person_substrate::validate_scope_identity(id)?;
     // Normalize before body comparison, short-id hashing and scope stamping so
@@ -81,7 +81,7 @@ pub(in crate::batch) fn apply_put(
     // and is diagnosed fail-closed by the policy resolver, never defaulted away.
     let normalized_policy = normalized_policy_body(entity_type, data);
     let data = normalized_policy.as_deref().unwrap_or(data);
-    let project = stage_project_put(store, wtxn, id, entity_type, data, replicated)?;
+    let project = stage_project_put(store, wtxn, id, entity_type, data, replicated, posture)?;
     let data = project.as_deref().unwrap_or(data);
     let carriers = PutCarrierContext::new(entity_type, occurred, learned_at, replicated, origin);
     validate_put_carriers(store, wtxn, id, data, carriers)?;

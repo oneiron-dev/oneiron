@@ -4230,12 +4230,12 @@ fn observer_b_bootstraps_signed_default_birth_and_edit_on_fresh_replica() -> cra
     }
     assert_eq!(b.project(id)?.unwrap().depth, 2);
     assert_eq!(
-        crate::gate::resolve_project_depth_config(
+        crate::gate::project_depth::resolve_creation_default(
             &b.store,
             &b.store.env.read_txn()?,
             b.privacy_posture(),
         )?
-        .0,
+        .depth,
         8
     );
     Ok(())

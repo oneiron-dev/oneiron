@@ -48,6 +48,9 @@ pub struct ProjectRecord {
     /// Corpus is a role of the same PROJECT hub, not a new entity kind.
     pub role: ProjectRole,
     pub schema_version: u8,
+    /// Cache of the live depth row; the policy contributions are authority.
+    /// A body written before the row existed decodes with the seeded default.
+    #[serde(default = "crate::gate::seeded_project_depth_default")]
     pub depth: u8,
     /// Parent projects. A project may belong to more than one venture.
     pub parents: Vec<String>,
@@ -203,41 +206,43 @@ impl Vault {
         project_type(&self.store).ok_or_else(invalid)
     }
     /// Creates or edits membership. Birth policy is separately materialized
-    /// under an immutable, content-addressed POLICY_MANIFEST identity.
+    /// under an immutable, content-addressed POLICY_MANIFEST identity; the
+    /// write door fills the body's depth cache from it.
     pub fn put_project(&self, id: EntityId, record: &ProjectRecord, now: u64) -> Result<()> {
         self.with_write_txn(|txn| {
-            let mut body = record.clone();
+            let body = record.clone();
             if self.store.entities.get(txn, id.as_bytes())?.is_none() {
-                let (_, birth_depth) =
-                    match crate::gate::project_depth::birth_for_project(&self.store, txn, id)? {
-                        Some((birth_id, birth)) => {
-                            if birth.owner.is_none()
-                                && self.authority_fold_readonly_in_txn(txn)?.vault_id.is_some()
-                                && !crate::gate::project_depth::locally_seeded_birth(
-                                    &self.store,
-                                    txn,
-                                    birth_id,
-                                    &birth,
-                                )?
-                            {
-                                return Err(crate::error::RecordError::InvalidProjectBody(
-                                    "unsigned remote project birth is not authorized",
-                                )
-                                .into());
-                            }
-                            (birth_id, birth.depth)
+                let posture = self.privacy_posture();
+                match crate::gate::project_depth::birth_for_project(&self.store, txn, id)? {
+                    Some((_, birth))
+                        if birth.owner.is_none()
+                            && !crate::gate::project_depth::unsigned_birth_trusted(
+                                &self.store,
+                                txn,
+                                posture,
+                                &birth,
+                            )? =>
+                    {
+                        return Err(crate::error::RecordError::InvalidProjectBody(
+                            "unsigned remote project birth is not authorized",
+                        )
+                        .into());
+                    }
+                    Some(_) => {}
+                    None => {
+                        if !crate::gate::project_depth::implicit_birth_applies(
+                            &self.store,
+                            txn,
+                            posture,
+                            id,
+                        )? {
+                            return Err(crate::error::RecordError::InvalidProjectBody(
+                                "a new project requires an owner-signed birth",
+                            )
+                            .into());
                         }
-                        None => {
-                            if self.authority_fold_readonly_in_txn(txn)?.vault_id.is_some() {
-                                return Err(crate::error::RecordError::InvalidProjectBody(
-                                    "a new project requires an owner-signed birth",
-                                )
-                                .into());
-                            }
-                            crate::gate::project_depth::put_birth_in_txn(self, txn, id, now)?
-                        }
-                    };
-                body.depth = birth_depth;
+                    }
+                }
             }
             self.batch_in()
                 .put(
@@ -467,9 +472,12 @@ pub(crate) fn seed_root_project(vault: &Vault) -> Result<()> {
             return Ok(());
         }
         let id = EntityId::now();
-        let mut body = ProjectRecord::new(id, None, id, leader);
-        let (_, depth) = crate::gate::project_depth::put_birth_in_txn(vault, txn, id, 0)?;
-        body.depth = depth;
+        // The root is born from the seeded default on every replica, so it
+        // needs no stored birth row. Name it the root first: the write door
+        // derives that birth from the root marker, also in an owner-rooted
+        // vault that predates root seeding.
+        vault.store.vault_meta.put(txn, ROOT, id.as_bytes())?;
+        let body = ProjectRecord::new(id, None, id, leader);
         vault
             .batch_in()
             .put(
@@ -480,7 +488,6 @@ pub(crate) fn seed_root_project(vault: &Vault) -> Result<()> {
                 &encode(&body)?,
             )
             .apply(txn)?;
-        vault.store.vault_meta.put(txn, ROOT, id.as_bytes())?;
         Ok(())
     })
 }

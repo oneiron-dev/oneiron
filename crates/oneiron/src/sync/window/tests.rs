@@ -4505,6 +4505,137 @@ fn concurrent_signed_project_depth_facts_follow_loro_winner_in_either_exchange_o
     Ok(())
 }
 
+/// ARCH-0040's revoke-then-regrant window: an edit signed before the owner's
+/// revoke stays non-authorizing after the regrant on a replica, through the
+/// forward pass and through Observer B, until an edit that observed the
+/// regrant supersedes it.
+#[test]
+fn pre_regrant_depth_edit_stays_refused_through_both_replay_doors() -> Result<()> {
+    use ed25519_dalek::Signer;
+    let (_a_dir, a) = test_vault();
+    let root_a = a.root_project()?;
+    let owner_id = EntityId::now();
+    a.put_entity(
+        &owner_id,
+        crate::registry::ENTITY_TYPE_PERSON,
+        TimeRange { start: 1, end: 1 },
+        1,
+        b"person",
+    )?;
+    let owner = crate::write_envelope::WriteActor::new(owner_id, EdgeActorClass::Human);
+    crate::subject_model::tests::authorization::root_owner(&a, owner, 0xC7)?;
+    // The root's birth is implicit, so the pre-revoke edit is its only fact.
+    crate::workspace_roster::set_project_depth_signed_for_test(&a, root_a, 12, &owner, 2, 0xC7)?;
+    let stale = crate::gate::project_depth::contributions_for_test(&a, root_a)?;
+    assert_eq!(stale.len(), 1);
+    let signing = ed25519_dalek::SigningKey::from_bytes(&[0xC7; 32]);
+    let bind: crate::authority::AuthorityLogEntry =
+        crate::authority::decode_authority_log_entry_body(&a.export_signed_authority_history()?[1])?;
+    let mut revoke = crate::authority::AuthorityLogEntry {
+        schema_version: bind.schema_version,
+        vault_id: bind.vault_id,
+        seq: 2,
+        parent_hashes: vec![crate::authority::authority_entry_hash(&bind)?],
+        op: crate::authority::AuthorityOp::RevokeActor {
+            authority_key: bind.signer.public_key.clone(),
+            epoch: 1,
+        },
+        signer: bind.signer.clone(),
+        cosigns: Vec::new(),
+        ts: 102,
+    };
+    revoke.signer.signature = signing
+        .sign(&crate::authority::authority_transcript(&revoke)?)
+        .to_bytes()
+        .to_vec();
+    a.put_authority_log_entry(&revoke, TimeRange { start: 102, end: 102 }, 102)?;
+    let mut regrant = crate::authority::AuthorityLogEntry {
+        schema_version: bind.schema_version,
+        vault_id: bind.vault_id,
+        seq: 3,
+        parent_hashes: vec![crate::authority::authority_entry_hash(&revoke)?],
+        op: crate::authority::AuthorityOp::BindActor {
+            authority_key: bind.signer.public_key.clone(),
+            actor_ref: owner_id,
+            actor_class: "human".into(),
+            epoch: 2,
+        },
+        signer: bind.signer.clone(),
+        cosigns: Vec::new(),
+        ts: 103,
+    };
+    regrant.signer.signature = signing
+        .sign(&crate::authority::authority_transcript(&regrant)?)
+        .to_bytes()
+        .to_vec();
+    a.put_authority_log_entry(&regrant, TimeRange { start: 103, end: 103 }, 103)?;
+    let history = a.export_signed_authority_history()?;
+    assert_eq!(a.project(root_a)?.unwrap().depth, 0);
+    let current = a.observed_write_actor(owner)?;
+    crate::workspace_roster::set_project_depth_signed_for_test(&a, root_a, 5, &current, 4, 0xC7)?;
+    assert_eq!(a.project(root_a)?.unwrap().depth, 5);
+    let observed: Vec<_> = crate::gate::project_depth::contributions_for_test(&a, root_a)?
+        .into_iter()
+        .filter(|(id, _)| !stale.iter().any(|(old, _)| old == id))
+        .collect();
+    assert_eq!(observed.len(), 1);
+    let key = WindowKey::new("2026-03");
+    let stamp = key.start_timestamp().expect("window timestamp") + 60;
+    let source = create_window_doc("regrant-source", &key);
+    let insert = |facts: &[(EntityId, Vec<u8>)]| {
+        for (id, bytes) in facts {
+            source
+                .get_map("entities")
+                .insert(
+                    id.to_hex().as_str(),
+                    make_entity_blob(crate::registry::ENTITY_TYPE_POLICY_MANIFEST, stamp, bytes)
+                        .as_slice(),
+                )
+                .expect("policy fact");
+        }
+        source.commit();
+    };
+    insert(&stale);
+    let stage_stale = loro_support::export_all_updates(&source)?;
+    insert(&observed);
+    let stage_observed = loro_support::export_all_updates(&source)?;
+    for observer in [false, true] {
+        let (_b_dir, b) = test_vault();
+        let root_b = b.root_project()?;
+        let leader = EntityId::from_hex(&b.project(root_b)?.unwrap().leader)?;
+        b.put_project(
+            root_a,
+            &crate::workspace_roster::ProjectRecord::new(root_a, Some(root_b), root_b, leader),
+            1,
+        )?;
+        b.put_entity(
+            &owner_id,
+            crate::registry::ENTITY_TYPE_PERSON,
+            TimeRange { start: 1, end: 1 },
+            1,
+            b"person",
+        )?;
+        b.import_signed_authority_history(&history)?;
+        assert_eq!(b.project(root_a)?.unwrap().depth, 10);
+        let live = create_window_doc("regrant-live", &key);
+        let materializer = Arc::new(Materializer::new());
+        let _subscriptions = observer
+            .then(|| bridge::register_observer_b(&live, &b, &materializer, key.as_str()));
+        for (stage, depth) in [(&stage_stale, 0), (&stage_observed, 5)] {
+            import_doc(&live, stage)?;
+            if !observer {
+                forward_rematerialize(&b, &live, &materializer, &key)?;
+            }
+            assert_eq!(
+                b.project(root_a)?.unwrap().depth,
+                depth,
+                "observer={observer}: a regrant never blesses a pre-regrant edit"
+            );
+        }
+    }
+    Ok(())
+}
+
 #[test]
 fn signed_project_edit_before_predecessor_survives_forward_retry_drain() -> Result<()> {
     let (_source_dir, source) = test_vault();

@@ -247,10 +247,11 @@ pub(super) fn stage_project_put(
     entity_type: u8,
     data: &[u8],
     replicated: bool,
+    posture: crate::HostingPrivacyPosture,
 ) -> Result<Option<Vec<u8>>> {
     let project = if crate::workspace_roster::is_project_type(store, entity_type) {
         Some(crate::workspace_roster::normalize_project_body(
-            store, txn, id, data,
+            store, txn, id, data, posture,
         )?)
     } else {
         None
@@ -260,7 +261,9 @@ pub(super) fn stage_project_put(
         && (crate::gate::project_depth::is_project_depth_id(&id)
             || crate::gate::project_depth::is_project_depth_contribution(data))
     {
-        crate::gate::project_depth::validate_contribution_put(store, txn, id, data, replicated)?;
+        crate::gate::project_depth::validate_contribution_put(
+            store, txn, id, data, replicated, posture,
+        )?;
     }
     Ok(project)
 }

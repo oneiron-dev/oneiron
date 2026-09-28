@@ -88,6 +88,10 @@ pub(in crate::gate) struct DecodedPolicyManifest {
 /// A policy carrier is either a complete ordinary pack or one immutable
 /// project-scoped signed contribution. Signed rows never inherit a pack's
 /// local-only trusted marker or its unrelated gate defaults.
+#[expect(
+    clippy::large_enum_variant,
+    reason = "transient per-row decode value, matched once by the manifest fold"
+)]
 pub(in crate::gate) enum DecodedManifestCarrier {
     Pack(DecodedPolicyManifest),
     ProjectDepth(crate::gate::project_depth::ProjectDepthContribution),

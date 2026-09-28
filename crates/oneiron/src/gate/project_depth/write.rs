@@ -52,27 +52,33 @@ fn put_contribution(
     Ok(())
 }
 
-/// Snapshot the governing immutable creation-default fact in a birth.
+/// Snapshot the governing immutable creation-default fact in a birth. The
+/// vault ceiling is applied when the depth is read, not here.
 fn birth_from_policy(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     project: EntityId,
 ) -> Result<ProjectDepthBirth> {
-    let (depth, _) =
-        crate::gate::resolve_project_depth_config(&vault.store, txn, vault.privacy_posture())?;
     let default =
         super::fold::resolve_creation_default(&vault.store, txn, vault.privacy_posture())?;
     if default.disposition != ProjectDepthDisposition::Authorized {
         return Err(invalid());
     }
+    let depth = default.depth;
+    let (seed_id, seed_body) = super::codec::seeded_default_carrier()?;
     let mut source = None;
     for id in default.frontier {
-        let raw = vault
-            .store
-            .entities
-            .get(txn, id.as_bytes())?
-            .ok_or_else(invalid)?;
-        let body = raw.get(ENTITY_METADATA_HEADER_LEN..).ok_or_else(invalid)?;
+        let raw;
+        let body = if id == seed_id {
+            seed_body.as_slice()
+        } else {
+            raw = vault
+                .store
+                .entities
+                .get(txn, id.as_bytes())?
+                .ok_or_else(invalid)?;
+            raw.get(ENTITY_METADATA_HEADER_LEN..).ok_or_else(invalid)?
+        };
         let selected = match super::codec::decode_contribution(body)? {
             ProjectDepthContribution::Default(row) => row.depth,
             ProjectDepthContribution::DefaultEdit(row) => row.depth,
@@ -94,36 +100,31 @@ fn birth_from_policy(
     })
 }
 
-/// Root/bootstrap birth only. An owner-rooted vault creates new projects
-/// through the signed `create_project_with_owner` door instead.
-pub(crate) fn put_birth_in_txn(
+/// Unsigned birth for an owner-authenticated local door (a project card tap)
+/// in an owner-rooted vault. The local marker makes this replica trust it;
+/// every other replica requires a signed birth. Projects that the implicit
+/// seeded birth already covers get no stored row.
+pub(crate) fn put_local_birth_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
     project: EntityId,
     now: u64,
-) -> Result<(EntityId, u8)> {
-    if vault
-        .authority_fold_readonly_in_txn(txn)?
-        .vault_id
-        .is_some()
+) -> Result<()> {
+    if super::fold::birth_for_project(&vault.store, txn, project)?.is_some()
+        || super::fold::implicit_birth_applies(&vault.store, txn, vault.privacy_posture(), project)?
     {
-        return Err(invalid());
+        return Ok(());
     }
     let birth = birth_from_policy(vault, txn, project)?;
-    let depth = birth.depth;
     let id = birth_id(&birth)?;
+    let body = encode_contribution(&ProjectDepthContribution::Birth(birth.clone()))?;
     put_contribution(vault, txn, id, &ProjectDepthContribution::Birth(birth), now)?;
-    let body = vault
-        .store
-        .entities
-        .get(txn, id.as_bytes())?
-        .ok_or_else(invalid)?;
     vault.store.sync_state.put(
         txn,
         &format!("project:birth:local:{}", id.to_hex()),
-        blake3::hash(&body[ENTITY_METADATA_HEADER_LEN..]).as_bytes(),
+        blake3::hash(&body).as_bytes(),
     )?;
-    Ok((id, depth))
+    Ok(())
 }
 
 pub(crate) fn put_signed_birth_in_txn<S>(
@@ -184,6 +185,10 @@ where
     Ok((id, depth))
 }
 
+#[expect(
+    clippy::too_many_arguments,
+    reason = "one owner edit's transaction, subject, signer key and signer"
+)]
 pub(crate) fn put_edit_in_txn<S>(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
@@ -221,6 +226,10 @@ where
     Ok(())
 }
 
+#[expect(
+    clippy::too_many_arguments,
+    reason = "one signed edit's snapshot, subject, heads, signer key and signer"
+)]
 fn signed_edit<S>(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,

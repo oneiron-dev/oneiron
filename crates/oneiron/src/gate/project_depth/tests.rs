@@ -527,7 +527,7 @@ fn signed_birth_cannot_use_an_orphan_default_edit_as_its_source() -> Result<()> 
         codec::encode_contribution(&codec::ProjectDepthContribution::DefaultEdit(orphan))?;
     put_manifest_for_test(&vault, orphan_id, &orphan_body, 2)?;
     assert_eq!(
-        super::resolve_creation_default(
+        super::fold::resolve_creation_default(
             &vault.store,
             &vault.store.env.read_txn()?,
             vault.privacy_posture(),
@@ -585,5 +585,110 @@ fn signed_birth_cannot_use_an_orphan_default_edit_as_its_source() -> Result<()> 
             )
             .is_err()
     );
+    Ok(())
+}
+
+/// A vault written before depth rows existed has project bodies without a
+/// `depth` key and no birth rows. Those bodies still decode and pass the write
+/// door, every project resolves the seeded default, and the projects stay
+/// editable after the vault is owner-rooted. No backfill write is needed: the
+/// implicit birth is the same on every replica.
+#[test]
+fn vault_written_before_depth_rows_upgrades_without_stored_births() -> Result<()> {
+    let dir = tempfile::tempdir()?;
+    let child = EntityId::now();
+    let root = {
+        let vault = Vault::open(dir.path(), crate::VaultConfig::default())?;
+        let root = vault.root_project()?;
+        project(&vault, root, child)?;
+        let kind = vault.project_type_byte()?;
+        for id in [root, child] {
+            let current = rmp_serde::to_vec_named(&vault.project(id)?.unwrap())
+                .map_err(|_| Error::CorruptedIndex("test project body"))?;
+            let rmpv::Value::Map(entries) = rmpv::decode::read_value(&mut current.as_slice())
+                .map_err(|_| Error::CorruptedIndex("test project body"))?
+            else {
+                return Err(Error::CorruptedIndex("test project body"));
+            };
+            let mut legacy = Vec::new();
+            rmpv::encode::write_value(
+                &mut legacy,
+                &rmpv::Value::Map(
+                    entries
+                        .into_iter()
+                        .filter(|(key, _)| key.as_str() != Some("depth"))
+                        .collect(),
+                ),
+            )
+            .map_err(|_| Error::CorruptedIndex("test project body"))?;
+            let decoded: crate::workspace_roster::ProjectRecord = rmp_serde::from_slice(&legacy)
+                .map_err(|_| Error::CorruptedIndex("test project body"))?;
+            assert_eq!(decoded.depth, 10);
+            vault
+                .batch()
+                .put(&id, kind, crate::TimeRange { start: 2, end: 2 }, 2, &legacy)
+                .commit()?;
+        }
+        root
+    };
+    let vault = Vault::open(dir.path(), crate::VaultConfig::default())?;
+    assert_eq!(vault.project(root)?.unwrap().depth, 10);
+    assert_eq!(vault.project(child)?.unwrap().depth, 10);
+    assert!(contributions_for_test(&vault, root)?.is_empty());
+    assert!(contributions_for_test(&vault, child)?.is_empty());
+    let writer = owner(&vault, 0xC8)?;
+    let mut members = vault.project(child)?.unwrap();
+    members.roster.push(EntityId::now().to_hex());
+    vault.put_project(child, &members, 3)?;
+    assert_eq!(vault.project(child)?.unwrap().roster, members.roster);
+    crate::workspace_roster::set_project_depth_signed_for_test(&vault, child, 2, &writer, 4, 0xC8)?;
+    crate::workspace_roster::set_project_depth_signed_for_test(&vault, root, 3, &writer, 5, 0xC8)?;
+    drop(vault);
+    let reopened = Vault::open(dir.path(), crate::VaultConfig::default())?;
+    assert_eq!(reopened.project(child)?.unwrap().depth, 2);
+    assert_eq!(reopened.project(root)?.unwrap().depth, 3);
+    // A new project in the owner-rooted vault still needs a signed birth.
+    let fresh = EntityId::now();
+    let leader = EntityId::from_hex(&reopened.project(root)?.unwrap().leader)?;
+    assert_eq!(
+        reopened
+            .put_project(
+                fresh,
+                &crate::workspace_roster::ProjectRecord::new(fresh, Some(root), root, leader),
+                6,
+            )
+            .unwrap_err()
+            .kind(),
+        crate::error::ErrorKind::InvalidProjectBody
+    );
+    Ok(())
+}
+
+/// A malformed loaded policy manifest fails the project ceiling closed to 0;
+/// it does not stop the vault from opening or seeding its root project.
+#[test]
+fn malformed_policy_fails_the_depth_ceiling_closed_without_bricking_open() -> Result<()> {
+    let dir = tempfile::tempdir()?;
+    let id = crate::gate::default_policy_manifest_id()?;
+    {
+        let vault = Vault::open_unseeded_for_test(dir.path(), crate::VaultConfig::default())?;
+        vault.with_write_txn(|txn| {
+            vault
+                .store
+                .entities
+                .put(txn, id.as_bytes(), &[ENTITY_TYPE_POLICY_MANIFEST])?;
+            vault.store.type_index.put(
+                txn,
+                &crate::store::Store::encode_type_key(ENTITY_TYPE_POLICY_MANIFEST, &id),
+                &[],
+            )?;
+            Ok(())
+        })?;
+    }
+    let vault = Vault::open(dir.path(), crate::VaultConfig::default())?;
+    let root = vault.root_project()?;
+    assert_eq!(vault.project(root)?.unwrap().depth, 0);
+    let txn = vault.store.env.read_txn()?;
+    assert_eq!(crate::gate::resolve_project_depth_max(&vault.store, &txn)?, 0);
     Ok(())
 }

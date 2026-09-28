@@ -45,7 +45,7 @@ fn default_source_disposition(
     posture: HostingPrivacyPosture,
     source: EntityId,
 ) -> Result<ProjectDepthDisposition> {
-    let (seed_id, seed_body) = super::codec::seeded_default_carrier()?;
+    let seed_id = super::codec::seeded_default_carrier()?.0;
     let authority =
         crate::authority::authority_fold_readonly_for_store_in_txn(store, posture, txn)?;
     let mut stack = vec![source];
@@ -59,6 +59,10 @@ fn default_source_disposition(
         }
         if visited.len() > 4096 {
             return Ok(ProjectDepthDisposition::Quarantined);
+        }
+        if next == seed_id {
+            anchored = true;
+            continue;
         }
         let Some(raw) = store.entities.get(txn, next.as_bytes())? else {
             pending = true;
@@ -74,14 +78,6 @@ fn default_source_disposition(
             quarantined = true;
             continue;
         };
-        if next == seed_id {
-            if body == seed_body {
-                anchored = true;
-            } else {
-                quarantined = true;
-            }
-            continue;
-        }
         let ProjectDepthContribution::DefaultEdit(edit) = decode_contribution(body)? else {
             quarantined = true;
             continue;
@@ -116,26 +112,34 @@ fn birth_disposition(
     birth: &ProjectDepthBirth,
 ) -> Result<ProjectDepthDisposition> {
     let source = EntityId::from_hex(&birth.source_manifest)?;
-    let Some(raw) = store.entities.get(txn, source.as_bytes())? else {
-        return Ok(ProjectDepthDisposition::Pending);
-    };
-    if EntityMetadataHeader::parse(&raw)
-        .is_none_or(|h| h.entity_type != ENTITY_TYPE_POLICY_MANIFEST)
-    {
-        return Ok(ProjectDepthDisposition::Quarantined);
-    }
-    let body = &raw[ENTITY_METADATA_HEADER_LEN..];
-    if *blake3::hash(body).as_bytes() != birth.source_hash {
-        return Ok(ProjectDepthDisposition::Quarantined);
-    }
-    let source_status = match decode_contribution(body)? {
-        ProjectDepthContribution::Default(row) if row.depth == birth.depth => {
+    let (seed_id, seed_body) = super::codec::seeded_default_carrier()?;
+    let source_status = if source == seed_id {
+        if *blake3::hash(&seed_body).as_bytes() == birth.source_hash
+            && birth.depth == super::codec::seeded_default().depth
+        {
             ProjectDepthDisposition::Authorized
+        } else {
+            ProjectDepthDisposition::Quarantined
         }
-        ProjectDepthContribution::DefaultEdit(row) if row.depth == birth.depth => {
-            default_source_disposition(store, txn, posture, source)?
+    } else {
+        let Some(raw) = store.entities.get(txn, source.as_bytes())? else {
+            return Ok(ProjectDepthDisposition::Pending);
+        };
+        if EntityMetadataHeader::parse(&raw)
+            .is_none_or(|h| h.entity_type != ENTITY_TYPE_POLICY_MANIFEST)
+        {
+            return Ok(ProjectDepthDisposition::Quarantined);
         }
-        _ => ProjectDepthDisposition::Quarantined,
+        let body = &raw[ENTITY_METADATA_HEADER_LEN..];
+        if *blake3::hash(body).as_bytes() != birth.source_hash {
+            return Ok(ProjectDepthDisposition::Quarantined);
+        }
+        match decode_contribution(body)? {
+            ProjectDepthContribution::DefaultEdit(row) if row.depth == birth.depth => {
+                default_source_disposition(store, txn, posture, source)?
+            }
+            _ => ProjectDepthDisposition::Quarantined,
+        }
     };
     if source_status != ProjectDepthDisposition::Authorized {
         return Ok(source_status);
@@ -159,24 +163,126 @@ fn birth_disposition(
         let fold = crate::authority::authority_fold_readonly_for_store_in_txn(store, posture, txn)?;
         return edit_disposition(&signer, &fold);
     }
-    let id = super::codec::birth_id(birth)?;
-    let exact = super::codec::encode_contribution(&ProjectDepthContribution::Birth(birth.clone()))?;
-    let local_key = format!("project:birth:local:{}", id.to_hex());
-    let local = store
-        .sync_state
-        .get(txn, &local_key)?
-        .is_some_and(|hash| hash.as_ref() == blake3::hash(&exact).as_bytes());
-    let root = store.vault_meta.get(txn, b"project.root.v1")?.as_deref()
-        == Some(
-            EntityId::from_hex(&birth.project_ref)?
-                .as_bytes()
-                .as_slice(),
-        );
-    Ok(if local || root {
+    Ok(if unsigned_birth_trusted(store, txn, posture, birth)? {
         ProjectDepthDisposition::Authorized
     } else {
         ProjectDepthDisposition::Quarantined
     })
+}
+
+/// A vault with no authority root has no signer to require.
+fn vault_is_unrooted(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    posture: HostingPrivacyPosture,
+) -> Result<bool> {
+    let fold = crate::authority::authority_fold_readonly_for_store_in_txn(store, posture, txn)?;
+    Ok(fold.vault_id.is_none() && !fold.vault_root_is_conflicted())
+}
+
+/// This replica knew the project before births were signed: its row is
+/// stored here, or an authorized owner edit already builds on its implicit
+/// birth (so delete and recreate keep the owner's row).
+fn predates_signed_birth(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    posture: HostingPrivacyPosture,
+    project: EntityId,
+) -> Result<bool> {
+    if crate::workspace_roster::is_project_entity(store, txn, project)? {
+        return Ok(true);
+    }
+    let implicit = super::codec::birth_id(&super::codec::canonical_birth(project)?)?.to_hex();
+    let project_ref = project.to_hex();
+    let mut anchored = Vec::new();
+    for row in store
+        .type_index
+        .prefix_iter(txn, &[ENTITY_TYPE_POLICY_MANIFEST])?
+    {
+        let (key, _) = row?;
+        let id = EntityId::from_bytes(
+            key[1..]
+                .try_into()
+                .map_err(|_| Error::CorruptedIndex("project-depth type index"))?,
+        )?;
+        if !is_project_depth_id(&id) {
+            continue;
+        }
+        let raw = store
+            .entities
+            .get(txn, id.as_bytes())?
+            .ok_or(Error::CorruptedIndex("project-depth manifest missing"))?;
+        let body = raw
+            .get(ENTITY_METADATA_HEADER_LEN..)
+            .ok_or(Error::CorruptedIndex("project-depth header"))?;
+        if let ProjectDepthContribution::Edit(edit) = decode_contribution(body)?
+            && edit.project_ref == project_ref
+            && edit.predecessors.contains(&implicit)
+        {
+            anchored.push(edit);
+        }
+    }
+    if anchored.is_empty() {
+        return Ok(false);
+    }
+    let authority =
+        crate::authority::authority_fold_readonly_for_store_in_txn(store, posture, txn)?;
+    for edit in &anchored {
+        if edit_disposition(edit, &authority)? == ProjectDepthDisposition::Authorized {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
+/// A project with no stored birth is born from the seeded default when it is
+/// the vault root, when the vault has no authority root, or when this replica
+/// knew it before births were signed. Anything else waits for its stored
+/// birth.
+pub(crate) fn implicit_birth_applies(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    posture: HostingPrivacyPosture,
+    project: EntityId,
+) -> Result<bool> {
+    Ok(
+        store.vault_meta.get(txn, b"project.root.v1")?.as_deref()
+            == Some(project.as_bytes().as_slice())
+            || vault_is_unrooted(store, txn, posture)?
+            || predates_signed_birth(store, txn, posture, project)?,
+    )
+}
+
+/// The same rule for a stored UNSIGNED birth, plus a birth this replica wrote
+/// itself. A peer cannot mint a trusted unsigned birth for a new project in
+/// an owner-rooted vault.
+pub(crate) fn unsigned_birth_trusted(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    posture: HostingPrivacyPosture,
+    birth: &ProjectDepthBirth,
+) -> Result<bool> {
+    let exact = super::codec::encode_contribution(&ProjectDepthContribution::Birth(birth.clone()))?;
+    let local_key = format!(
+        "project:birth:local:{}",
+        super::codec::birth_id(birth)?.to_hex()
+    );
+    if store
+        .sync_state
+        .get(txn, &local_key)?
+        .is_some_and(|hash| hash.as_ref() == blake3::hash(&exact).as_bytes())
+    {
+        return Ok(true);
+    }
+    let project = EntityId::from_hex(&birth.project_ref)?;
+    if store.vault_meta.get(txn, b"project.root.v1")?.as_deref()
+        == Some(project.as_bytes().as_slice())
+        || vault_is_unrooted(store, txn, posture)?
+    {
+        return Ok(true);
+    }
+    Ok(*birth == super::codec::canonical_birth(project)?
+        && predates_signed_birth(store, txn, posture, project)?)
 }
 
 fn edit_disposition(
@@ -229,16 +335,9 @@ pub(crate) fn resolve_creation_default(
     txn: &heed::RoTxn<'_>,
     posture: HostingPrivacyPosture,
 ) -> Result<ProjectDepthResolution> {
-    let (seed_id, seed_body) = super::codec::seeded_default_carrier()?;
-    let raw = store
-        .entities
-        .get(txn, seed_id.as_bytes())?
-        .ok_or_else(|| Error::InvalidConfig("project-depth default seed is missing".into()))?;
-    if raw.get(ENTITY_METADATA_HEADER_LEN..) != Some(seed_body.as_slice()) {
-        return Err(Error::CorruptedIndex("project-depth default seed"));
-    }
+    let seed_id = super::codec::seeded_default_carrier()?.0;
     let mut rows = BTreeMap::new();
-    rows.insert(seed_id, super::codec::seeded_default()?.depth);
+    rows.insert(seed_id, super::codec::seeded_default().depth);
     let mut edits = BTreeMap::new();
     for row in store
         .type_index
@@ -442,6 +541,17 @@ pub(crate) fn resolve_project_depth(
             }
             rows.insert(id, contribution);
         }
+    }
+    if !rows
+        .values()
+        .any(|row| matches!(row, ProjectDepthContribution::Birth(_)))
+        && implicit_birth_applies(store, txn, posture, project)?
+    {
+        let birth = super::codec::canonical_birth(project)?;
+        rows.insert(
+            super::codec::birth_id(&birth)?,
+            ProjectDepthContribution::Birth(birth),
+        );
     }
     let births: Vec<_> = rows
         .iter()

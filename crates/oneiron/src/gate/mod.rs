@@ -113,8 +113,7 @@ pub(crate) use self::input::{
 };
 pub(crate) use self::repair::{evaluate_repair_consent, repair_criticality};
 pub(crate) use self::resolution::{
-    PolicyManifestResolution, resolve_policy_manifest, resolve_project_depth_config,
-    resolve_project_depth_max,
+    PolicyManifestResolution, resolve_policy_manifest, resolve_project_depth_max,
 };
 pub use self::retrieval_filter::RetrievalFilter;
 pub(crate) use self::retrieval_filter::{

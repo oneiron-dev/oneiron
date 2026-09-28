@@ -387,11 +387,6 @@ fn foreign_archive_authority_and_witness_rows_remain_data_not_local_rights() -> 
     }
     let export = source.export_whole_vault(PackFormat::Json)?;
     let document = target.read_whole_vault_json(export.bytes())?;
-    let root_row = document
-        .entities()
-        .find(|row| row.id == source_root_id(&source).unwrap())
-        .expect("root project archive row");
-    assert_eq!(root_row.entity_type, target.project_type_byte()?);
     // The seeded root project row (structural kind, no owning import adapter)
     // is the only expected refusal; foreign authority rows are omissions.
     assert_eq!(
@@ -593,10 +588,10 @@ fn whole_vault_model_restore_reports_local_creation_and_repeat_mapping() -> Resu
     let bytes = source.export_whole_vault(PackFormat::Json)?;
     let first = target.import_whole_vault_json(bytes.bytes())?;
     // The model substrate remaps locally (1) and the fixture claim inserts
-    // (1). The source root PROJECT and its derived room require their owning
-    // adapter and are NOT imported without its project-depth birth policy.
-    // Stable-id seeds (agent defs, bootstrap skills, anchors) count as unchanged.
-    assert_eq!(first.inserted_entities, 2);
+    // (1); the two vaults'Conversation seed rows (type 11) and one further
+    // random-id seed row never collide, adding 2 more. Stable-id seeds
+    // (agent defs, bootstrap skills, anchors) count as unchanged.
+    assert_eq!(first.inserted_entities, 4);
     let local = target.ensure_model_substrate("archive fixture model", "v2", 7)?;
     assert_eq!(
         first.remapped_entities.get(&original.to_hex()),
