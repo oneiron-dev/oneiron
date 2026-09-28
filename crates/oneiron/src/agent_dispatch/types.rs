@@ -65,10 +65,6 @@ pub(super) const KEY_PROJECT_REF: &str = AGENT_DISPATCH_INPUT_KEYS[8];
 pub(super) const KEY_SPAWN_INTENT: &str = AGENT_DISPATCH_INPUT_KEYS[9];
 pub(super) const KEY_SCOPE: &str = AGENT_DISPATCH_INPUT_KEYS[10];
 
-/// The seeded root project's default depth (for existing callers inspecting
-/// the baseline). Dispatch reads the live project row, not this constant.
-pub const AGENT_DISPATCH_ROOT_DEPTH_REMAINING: u8 = 10;
-
 /// The configured compatibility cap for a parent whose persisted depth is
 /// absent or unreadable — a schema-v1 row, or an attempt that is not an
 /// agent dispatch at all. Such a parent yields children at `cap - 1`, so a

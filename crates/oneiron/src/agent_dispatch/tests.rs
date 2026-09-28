@@ -22,6 +22,14 @@ use crate::temporal::TimeRange;
 use crate::test_util::{entity as test_id, put_policy_manifest_bytes};
 use crate::write_envelope::{ClaimCandidate, WriteEnvelope, WriteProvenance};
 
+/// The live root-project depth row a root dispatch is clamped to.
+fn root_project_depth(vault: &Vault) -> Result<u8> {
+    Ok(vault
+        .project(vault.root_project()?)?
+        .ok_or(Error::EntityNotFound)?
+        .depth)
+}
+
 fn open_vault() -> (tempfile::TempDir, Vault) {
     crate::test_util::open_test_vault_with(VaultConfig::device())
 }
@@ -1838,7 +1846,7 @@ fn attenuation_reads_live_rows_not_payload_snapshots() -> Result<()> {
     assert_ne!(child.input.target, AgentDispatchTarget::Custom(child_id));
     assert_eq!(
         persisted_depth(&vault, parent.attempt.id),
-        Some(AGENT_DISPATCH_ROOT_DEPTH_REMAINING)
+        Some(root_project_depth(&vault)?)
     );
     Ok(())
 }
@@ -2457,11 +2465,11 @@ fn roots_persist_a_depth_and_legacy_parents_resolve_the_compat_cap() -> Result<(
     })?);
     assert_eq!(
         persisted_depth(&vault, root.attempt.id),
-        Some(AGENT_DISPATCH_ROOT_DEPTH_REMAINING)
+        Some(root_project_depth(&vault)?)
     );
     assert_eq!(
         dispatcher.child_depth_remaining(root.attempt.id)?,
-        AGENT_DISPATCH_ROOT_DEPTH_REMAINING - 1
+        root_project_depth(&vault)? - 1
     );
 
     // A parent that is not an agent dispatch at all carries no stored depth.
