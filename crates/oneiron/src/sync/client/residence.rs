@@ -1,6 +1,8 @@
 //! Bounded on-demand home reads on an independent short-lived authenticated
 //! socket. The steady sync socket keeps sole ownership of its own reader.
 
+mod index;
+
 use std::collections::HashSet;
 use std::time::Duration;
 
@@ -15,14 +17,22 @@ use tokio_tungstenite::tungstenite::http::header::AUTHORIZATION;
 use super::base::SyncClient;
 use super::types::{SyncClientConfig, SyncResidenceMode};
 use crate::EntityId;
-use crate::sync::residence::WindowIndexEntry;
+use crate::sync::residence_operation_budgets::ResidenceOperationBudgets;
 use crate::sync::selector::encode_sync_selector;
 use crate::sync::transport::{self, TAG_RPC, TransportError};
 use crate::sync::types::WindowKey;
 
-const RPC_TIMEOUT: Duration = Duration::from_secs(12);
+/// The app-tier response encoding has a fixed 32-MiB payload ceiling.
 const MAX_RPC_REPLY_BYTES: usize = 32 * 1024 * 1024;
-const MAX_INDEX_PAGES: usize = 1024;
+
+fn residence_budgets(vault: &crate::Vault) -> Result<ResidenceOperationBudgets, TransportError> {
+    vault
+        .residence_operation_budgets()
+        .map_err(|error| TransportError::Storage(error.to_string()))?
+        .ok_or(TransportError::InvalidPayload(
+            "residence policy unavailable",
+        ))
+}
 
 type Socket =
     tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>;
@@ -70,14 +80,6 @@ struct ReplyEnvelope {
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
-struct IndexReply {
-    window: String,
-    items: Vec<WindowIndexEntry>,
-    next_cursor: Option<String>,
-}
-
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
 struct TouchReply {
     window: String,
     entity_id: String,
@@ -120,12 +122,18 @@ struct SearchHit {
 struct ResidenceRpc {
     socket: Socket,
     next_id: u64,
+    timeout: Duration,
 }
 
 impl ResidenceRpc {
     /// `None` is only a transport outage. A refused bind or malformed reply
     /// is an error, not permission to label the search local-only.
-    async fn connect(config: &SyncClientConfig) -> Result<Option<Self>, TransportError> {
+    async fn connect(
+        config: &SyncClientConfig,
+        budgets: ResidenceOperationBudgets,
+    ) -> Result<Option<Self>, TransportError> {
+        let timeout = Duration::from_millis(budgets.rpc_timeout_ms);
+        let deadline = tokio::time::Instant::now() + timeout;
         let session = config.note_session.as_ref().ok_or_else(refused)?;
         config.residence_selector.as_ref().ok_or_else(refused)?;
         let mut request = config
@@ -139,8 +147,8 @@ impl ResidenceRpc {
                 .map_err(|_| refused())?;
             request.headers_mut().insert(AUTHORIZATION, header);
         }
-        let mut socket = match tokio::time::timeout(
-            RPC_TIMEOUT,
+        let mut socket = match tokio::time::timeout_at(
+            deadline,
             tokio_tungstenite::connect_async(request),
         )
         .await
@@ -149,22 +157,28 @@ impl ResidenceRpc {
             Ok(Err(tokio_tungstenite::tungstenite::Error::Http(_))) => return Err(refused()),
             Ok(Err(_)) | Err(_) => return Ok(None),
         };
-        socket
-            .send(Message::Binary(
+        tokio::time::timeout_at(
+            deadline,
+            socket.send(Message::Binary(
                 transport::encode_residence_protocol_hello().into(),
-            ))
-            .await
-            .map_err(|_| refused())?;
-        socket
-            .send(Message::Binary(
+            )),
+        )
+        .await
+        .map_err(|_| refused())?
+        .map_err(|_| refused())?;
+        tokio::time::timeout_at(
+            deadline,
+            socket.send(Message::Binary(
                 super::note_session::bind_frame(session)?.into(),
-            ))
-            .await
-            .map_err(|_| refused())?;
+            )),
+        )
+        .await
+        .map_err(|_| refused())?
+        .map_err(|_| refused())?;
         // A future server may send an ephemeral snapshot before the bind ack.
         // Only the exact fixed-ID null reply opens the RPC lane.
         for _ in 0..16 {
-            let msg = tokio::time::timeout(RPC_TIMEOUT, socket.next())
+            let msg = tokio::time::timeout_at(deadline, socket.next())
                 .await
                 .map_err(|_| refused())?
                 .ok_or_else(refused)?
@@ -175,7 +189,11 @@ impl ResidenceRpc {
             match frame.first() {
                 Some(&TAG_RPC) => {
                     super::note_session::accept_bind_reply(&frame[1..])?;
-                    return Ok(Some(Self { socket, next_id: 1 }));
+                    return Ok(Some(Self {
+                        socket,
+                        next_id: 1,
+                        timeout,
+                    }));
                 }
                 Some(&transport::TAG_EPHEMERAL) | Some(&transport::TAG_SYNC_UPDATE) => continue,
                 _ => return Err(refused()),
@@ -200,13 +218,14 @@ impl ResidenceRpc {
         }
         let mut frame = vec![TAG_RPC];
         frame.extend(bytes);
-        self.socket
-            .send(Message::Binary(frame.into()))
+        let deadline = tokio::time::Instant::now() + self.timeout;
+        tokio::time::timeout_at(deadline, self.socket.send(Message::Binary(frame.into())))
             .await
+            .map_err(|_| refused())?
             .map_err(|_| refused())?;
         let mut assembled = Vec::new();
         for seq in 0..512u64 {
-            let msg = tokio::time::timeout(RPC_TIMEOUT, self.socket.next())
+            let msg = tokio::time::timeout_at(deadline, self.socket.next())
                 .await
                 .map_err(|_| refused())?
                 .ok_or_else(refused)?
@@ -222,7 +241,17 @@ impl ResidenceRpc {
                 return Err(refused());
             }
             if reply.kind == "rpc.err" {
-                return Err(TransportError::InvalidPayload("home refused residence RPC"));
+                let code = reply.payload.as_map().and_then(|fields| {
+                    fields
+                        .iter()
+                        .find(|(key, _)| key.as_str() == Some("code"))
+                        .and_then(|(_, value)| value.as_str())
+                });
+                return Err(if code == Some("INDEX_REVISION_CHANGED") {
+                    TransportError::IndexRevisionChanged
+                } else {
+                    TransportError::InvalidPayload("home refused residence RPC")
+                });
             }
             if reply.kind != "rpc.res" {
                 return Err(refused());
@@ -245,92 +274,6 @@ fn refused() -> TransportError {
 }
 
 impl SyncClient {
-    /// Fetch the current windows' thin index without a full-window VV exchange.
-    pub async fn fetch_current_index(&self, now_secs: u64) -> Result<usize, TransportError> {
-        if self.config.residence_mode != SyncResidenceMode::Opened {
-            return Err(refused());
-        }
-        let selector = self
-            .config
-            .residence_selector
-            .as_ref()
-            .ok_or_else(refused)?;
-        let selector_bytes = encode_sync_selector(selector).map_err(|_| refused())?;
-        let selector = base64::engine::general_purpose::STANDARD.encode(selector_bytes);
-        let Some(mut rpc) = ResidenceRpc::connect(&self.config).await? else {
-            return Err(TransportError::Storage("home node offline".into()));
-        };
-        let current = WindowKey::from_timestamp(now_secs);
-        let previous = current.previous_month();
-        let mut total = 0;
-        for key in self.server_windows() {
-            let Some(window) = WindowKey::try_new(&key) else {
-                continue;
-            };
-            if window.start_timestamp() != current.start_timestamp()
-                && window.start_timestamp()
-                    != previous.as_ref().and_then(WindowKey::start_timestamp)
-            {
-                continue;
-            }
-            let mut cursor: Option<String> = None;
-            let mut items = Vec::new();
-            let mut finished = false;
-            for _ in 0..MAX_INDEX_PAGES {
-                let reply: IndexReply = serde_json::from_value(
-                    rpc.request(
-                        "residence.index",
-                        json!({
-                            "window": key, "selector": selector, "after": cursor, "limit": 256
-                        }),
-                    )
-                    .await?,
-                )
-                .map_err(|_| refused())?;
-                if reply.window != key {
-                    return Err(refused());
-                }
-                let next = reply.next_cursor;
-                items.extend(reply.items);
-                match next {
-                    Some(next) if cursor.as_ref() != Some(&next) => cursor = Some(next),
-                    Some(_) => return Err(refused()),
-                    None => {
-                        finished = true;
-                        break;
-                    }
-                }
-            }
-            if !finished {
-                return Err(refused());
-            }
-            let prefix = format!("ri:w:{key}:");
-            self.vault
-                .with_write_txn(|txn| {
-                    let old: Vec<_> = self
-                        .vault
-                        .store
-                        .sync_state
-                        .prefix_iter(txn, &prefix)?
-                        .map(|row| row.map(|(key, _)| key.to_string()))
-                        .collect::<std::result::Result<_, _>>()?;
-                    for key in old {
-                        self.vault.store.sync_state.delete(txn, &key)?;
-                    }
-                    for entry in &items {
-                        let key = format!("{prefix}{}", entry.entity_id);
-                        let bytes = rmp_serde::to_vec_named(entry)
-                            .map_err(|_| crate::Error::InvariantViolation("index codec"))?;
-                        self.vault.store.sync_state.put(txn, &key, &bytes)?;
-                    }
-                    Ok(())
-                })
-                .map_err(|e| TransportError::Storage(e.to_string()))?;
-            total += items.len();
-        }
-        Ok(total)
-    }
-
     /// Resolve and import one grant-selected ledger item on first touch.
     pub async fn fetch_item(
         &mut self,
@@ -340,6 +283,29 @@ impl SyncClient {
         if self.config.residence_mode != SyncResidenceMode::Opened {
             return Err(refused());
         }
+        let budgets = residence_budgets(&self.vault)?;
+        // A promoted window is a canonical equal CRDT copy. Reopening its
+        // resident row must never recreate a thin cache or ask for another
+        // promotion. A newly born row waits for the promoted VV exchange.
+        if self
+            .vault
+            .sync_state_get(&format!("rp:w:{window}"))
+            .map_err(|e| TransportError::Storage(e.to_string()))?
+            .is_some()
+        {
+            return if self
+                .vault
+                .get_raw(&item)
+                .map_err(|e| TransportError::Storage(e.to_string()))?
+                .is_some()
+            {
+                Ok(())
+            } else {
+                Err(TransportError::InvalidPayload(
+                    "promoted item needs window resync",
+                ))
+            };
+        }
         let selector = self
             .config
             .residence_selector
@@ -347,7 +313,7 @@ impl SyncClient {
             .ok_or_else(refused)?;
         let selector = base64::engine::general_purpose::STANDARD
             .encode(encode_sync_selector(selector).map_err(|_| refused())?);
-        let Some(mut rpc) = ResidenceRpc::connect(&self.config).await? else {
+        let Some(mut rpc) = ResidenceRpc::connect(&self.config, budgets).await? else {
             return Err(TransportError::Storage("home node offline".into()));
         };
         let reply: TouchReply = serde_json::from_value(
@@ -399,6 +365,24 @@ impl SyncClient {
         // tables until the canonical window is promoted before a write.
         self.vault
             .with_write_txn(|txn| {
+                if self
+                    .vault
+                    .store
+                    .sync_state
+                    .get(txn, &format!("rp:w:{window}"))?
+                    .is_some()
+                {
+                    if self
+                        .vault
+                        .store
+                        .entities
+                        .get(txn, item.as_bytes())?
+                        .is_none()
+                    {
+                        return Err(crate::Error::InvalidKey);
+                    }
+                    return Ok(());
+                }
                 self.vault
                     .store
                     .sync_state
@@ -429,6 +413,7 @@ impl SyncClient {
         if self.config.residence_mode != SyncResidenceMode::Opened {
             return Err(refused());
         }
+        let budgets = residence_budgets(&self.vault)?;
         let cache = self.thin_item(item)?.ok_or_else(refused)?;
         if &cache.window != window {
             return Err(refused());
@@ -440,7 +425,7 @@ impl SyncClient {
             .ok_or_else(refused)?;
         let selector = base64::engine::general_purpose::STANDARD
             .encode(encode_sync_selector(selector).map_err(|_| refused())?);
-        let Some(mut rpc) = ResidenceRpc::connect(&self.config).await? else {
+        let Some(mut rpc) = ResidenceRpc::connect(&self.config, budgets).await? else {
             return Err(TransportError::Storage("home node offline".into()));
         };
         let reply: PromotionReply = serde_json::from_value(
@@ -537,6 +522,16 @@ impl SyncClient {
             .ok()
             .and_then(WindowKey::try_new)
             .ok_or_else(refused)?;
+        if self
+            .vault
+            .store
+            .sync_state
+            .get(&txn, &format!("rp:w:{window}"))
+            .map_err(|e| TransportError::Storage(e.to_string()))?
+            .is_some()
+        {
+            return Ok(None);
+        }
         let raw = self
             .vault
             .store
@@ -565,19 +560,34 @@ impl SyncClient {
         query: &str,
         limit: usize,
     ) -> Result<ResidenceSearch, TransportError> {
-        if self.config.residence_mode != SyncResidenceMode::Opened
-            || query.trim().is_empty()
-            || query.len() > 4096
+        if self.config.residence_mode != SyncResidenceMode::Opened {
+            return Err(refused());
+        }
+        let budgets = residence_budgets(&self.vault)?;
+        if query.trim().is_empty()
+            || query.len() > budgets.search_query_max_bytes
             || limit == 0
-            || limit > 100
+            || limit > budgets.search_limit
         {
             return Err(refused());
         }
-        match ResidenceRpc::connect(&self.config).await? {
+        let selector = self
+            .config
+            .residence_selector
+            .as_ref()
+            .ok_or_else(refused)?;
+        let selector = base64::engine::general_purpose::STANDARD
+            .encode(encode_sync_selector(selector).map_err(|_| refused())?);
+        match ResidenceRpc::connect(&self.config, budgets).await? {
             Some(mut rpc) => {
                 let reply: SearchReply = serde_json::from_value(
-                    rpc.request("residence.search", json!({"query": query, "limit": limit}))
-                        .await?,
+                    rpc.request(
+                        "residence.search",
+                        json!({
+                            "query": query, "limit": limit, "selector": selector
+                        }),
+                    )
+                    .await?,
                 )
                 .map_err(|_| refused())?;
                 if reply.source != "home" || !reply.complete || reply.hits.len() > limit {
@@ -631,7 +641,12 @@ impl SyncClient {
                 }
                 for hit in self
                     .vault
-                    .search_text(query, 1000)
+                    .search_text(
+                        query,
+                        budgets
+                            .search_limit
+                            .saturating_mul(budgets.offline_candidate_multiplier),
+                    )
                     .map_err(|e| TransportError::Storage(e.to_string()))?
                 {
                     let Some(raw) = self

@@ -24,6 +24,40 @@ use super::schema::create_window_doc;
 use super::selector::{SyncSelector, filtered_window_doc};
 use super::types::WindowKey;
 
+/// Collect the actor-readable lexical candidate set before applying a
+/// residence grant. The underlying scoped search already scores the full
+/// indexed corpus; requesting the same candidate count prevents a narrowed
+/// residence grant from exhausting a smaller top-k before intersection.
+pub fn home_search_candidates(
+    vault: &Vault,
+    proof: &crate::authority::VerifiedSlip,
+    query: &str,
+    limit: usize,
+) -> Result<Vec<(EntityId, f32, WindowKey)>> {
+    let actor = crate::claim::ScopedReadActorKey::from_verified_slip(proof).ok_or(
+        Error::sync_protocol(SyncProtocolValidation::DocumentAdmissionDenied),
+    )?;
+    let candidates = vault.scoped_read_search_candidate_limit(limit, true, false)?;
+    let mut results = Vec::new();
+    for hit in vault
+        .scoped_read(actor)
+        .search_text(query, candidates, None)?
+        .value
+    {
+        let Some(raw) = vault.get_raw(&hit.id)? else {
+            continue;
+        };
+        let header = EntityMetadataHeader::parse(&raw)
+            .ok_or(Error::CorruptedIndex("home search entity header"))?;
+        results.push((
+            hit.id,
+            hit.score,
+            WindowKey::from_timestamp(header.learned_at),
+        ));
+    }
+    Ok(results)
+}
+
 /// The maximum number of metadata rows returned in one index page.
 pub const INDEX_PAGE_MAX: usize = 256;
 /// A bounded promotion snapshot fits inside the app RPC result after base64
@@ -38,7 +72,8 @@ pub struct WindowIndexEntry {
     pub learned_at: u64,
 }
 
-/// Pagination over a grant-filtered window index.
+/// Pagination over an already selected metadata projection. No Loro history
+/// is exported when moving from one page to the next.
 #[derive(Debug, Clone, Copy)]
 pub struct IndexPage {
     /// Exclusive entity ID cursor, never an offset into an unfiltered window.
@@ -46,51 +81,83 @@ pub struct IndexPage {
     pub limit: usize,
 }
 
-/// A grant-filtered page of a window's item index.
-pub fn window_index_page(
+/// Lightweight cross-page revision of read policy and the materialized
+/// graph. Neither ordinary clock reads nor app RPC bookkeeping move these.
+/// A change to a facet edge or retrieval floor invalidates cached selection.
+pub fn index_selection_revision(vault: &Vault) -> Result<([u8; 32], u64, u64)> {
+    let txn = vault.store.env.read_txn()?;
+    let policy = crate::gate::resolve_policy_manifest(&vault.store, &txn)?;
+    Ok((
+        policy.read_frontier_hash()?,
+        crate::ppr::read_graph_version(&vault.store, &txn)?,
+        crate::federation::record_scope::read_scope_revision(&vault.store, &txn)?,
+    ))
+}
+
+/// Authorize one window and build a metadata-only, sorted projection ONCE.
+/// The server retains it for a bounded socket session; every later page
+/// rechecks the grant, snapshot revision and live actor read floor.
+pub fn window_index_projection(
     vault: &Vault,
     source: &LoroDoc,
     window: &WindowKey,
     scope: FederationGrantScope,
     selector: &SyncSelector,
-    page: IndexPage,
+    title_max_chars: usize,
     mut readable: impl FnMut(EntityId) -> Result<bool>,
+) -> Result<Vec<WindowIndexEntry>> {
+    let selected = filtered_window_doc(vault, source, window, scope, selector)?;
+    let mut entries = Vec::new();
+    let mut result = Ok(());
+    map_for_each_value_bytes(&selected.get_map("entities"), |key, blob| {
+        if result.is_err() {
+            return;
+        }
+        let (Ok(id), Some(blob)) = (EntityId::from_hex(key), blob) else {
+            return;
+        };
+        if id.to_hex() != key {
+            return;
+        }
+        let Some(header) = EntityMetadataHeader::parse(blob) else {
+            return;
+        };
+        match readable(id) {
+            Ok(true) => entries.push(WindowIndexEntry {
+                entity_id: key.to_owned(),
+                title: title_from_body(&blob[ENTITY_METADATA_HEADER_LEN..], title_max_chars),
+                learned_at: header.learned_at,
+            }),
+            Ok(false) => {}
+            Err(error) => result = Err(error),
+        }
+    });
+    result?;
+    entries.sort_unstable_by(|a, b| a.entity_id.cmp(&b.entity_id));
+    Ok(entries)
+}
+
+/// Slice a previously authorized projection in O(log N + page size), with no
+/// full-window Loro export or selector rebuild.
+pub fn window_index_page(
+    entries: &[WindowIndexEntry],
+    page: IndexPage,
 ) -> Result<Vec<WindowIndexEntry>> {
     if page.limit == 0 || page.limit > INDEX_PAGE_MAX {
         return Err(Error::sync_protocol(
             SyncProtocolValidation::DocumentAdmissionDenied,
         ));
     }
-    let selected = filtered_window_doc(vault, source, window, scope, selector)?;
-    let mut entries = Vec::new();
-    map_for_each_value_bytes(&selected.get_map("entities"), |key, blob| {
-        let (Ok(id), Some(blob)) = (EntityId::from_hex(key), blob) else {
-            return;
-        };
-        if id.to_hex() != key || page.after.is_some_and(|cursor| id <= cursor) {
-            return;
-        }
-        let Some(header) = EntityMetadataHeader::parse(blob) else {
-            return;
-        };
-        entries.push(WindowIndexEntry {
-            entity_id: key.to_owned(),
-            title: title_from_body(&blob[ENTITY_METADATA_HEADER_LEN..]),
-            learned_at: header.learned_at,
-        });
+    let start = page.after.map_or(0, |cursor| {
+        let after = cursor.to_hex();
+        entries.partition_point(|entry| entry.entity_id <= after)
     });
-    entries.sort_unstable_by(|a, b| a.entity_id.cmp(&b.entity_id));
-    let mut visible = Vec::with_capacity(page.limit);
-    for entry in entries {
-        let id = EntityId::from_hex(&entry.entity_id)?;
-        if readable(id)? {
-            visible.push(entry);
-            if visible.len() == page.limit {
-                break;
-            }
-        }
-    }
-    Ok(visible)
+    Ok(entries
+        .iter()
+        .skip(start)
+        .take(page.limit)
+        .cloned()
+        .collect())
 }
 
 /// Read one grant-selected body without creating any Loro operations on the
@@ -276,7 +343,7 @@ fn same_nonempty_roots(selected: &LoroDoc, source: &LoroDoc) -> bool {
     roots(selected).is_some_and(|selected| roots(source) == Some(selected))
 }
 
-fn title_from_body(body: &[u8]) -> Option<String> {
+fn title_from_body(body: &[u8], max_chars: usize) -> Option<String> {
     // The generic ledger cannot assume each registered kind has a title.
     // Only a literal string `title` in a MessagePack map is index metadata.
     let mut cursor = std::io::Cursor::new(body);
@@ -294,5 +361,5 @@ fn title_from_body(body: &[u8]) -> Option<String> {
         return None;
     }
     let value = titles[0].1.as_str()?.trim();
-    (!value.is_empty()).then(|| value.chars().take(128).collect())
+    (!value.is_empty() && max_chars > 0).then(|| value.chars().take(max_chars).collect())
 }

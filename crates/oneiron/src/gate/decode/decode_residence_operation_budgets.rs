@@ -6,7 +6,8 @@ use crate::gate::{
     ResidenceOperationBudgetLimits, ResidenceOperationBudgetPrecedence, ResidenceOperationBudgetRow,
 };
 
-pub(super) const POLICY_RESIDENCE_OPERATION_BUDGETS_KEY: &str = "residence_operation_budgets";
+pub(in crate::gate) const POLICY_RESIDENCE_OPERATION_BUDGETS_KEY: &str =
+    "residence_operation_budgets";
 
 const PRECEDENCE_KEY: &str = "precedence";
 const VAULT_KEY: &str = "vault";
@@ -15,7 +16,7 @@ const NESTED_NARROWING: &str = "nested_narrowing";
 
 /// Parses the closed `{precedence, vault, holder?}` row. Each budget map may
 /// name a subset of the shipped fields; omissions retain the shipped value.
-pub(super) fn parse_residence_operation_budgets(
+pub(in crate::gate) fn parse_residence_operation_budgets(
     value: &Value,
 ) -> Option<ResidenceOperationBudgetRow> {
     let Value::Map(entries) = value else {
@@ -63,7 +64,7 @@ fn parse_budget_map(value: &Value) -> Option<ResidenceOperationBudgetLimits> {
         return None;
     };
     let mut limits = ResidenceOperationBudgetLimits::default();
-    let mut seen = [false; 8];
+    let mut seen = [false; 10];
 
     for (key, value) in entries {
         match key.as_str()? {
@@ -106,6 +107,18 @@ fn parse_budget_map(value: &Value) -> Option<ResidenceOperationBudgetLimits> {
                 }
                 limits.search_limit = parse_positive_bounded_usize(value, 100)?;
             }
+            "search_query_max_bytes" => {
+                if mark_seen(&mut seen, 8) {
+                    return None;
+                }
+                limits.search_query_max_bytes = parse_positive_bounded_usize(value, 4_096)?;
+            }
+            "offline_candidate_multiplier" => {
+                if mark_seen(&mut seen, 9) {
+                    return None;
+                }
+                limits.offline_candidate_multiplier = parse_positive_bounded_usize(value, 10)?;
+            }
             "ack_timeout_ms" => {
                 if mark_seen(&mut seen, 6) {
                     return None;
@@ -128,7 +141,7 @@ fn parse_budget_map(value: &Value) -> Option<ResidenceOperationBudgetLimits> {
     Some(limits)
 }
 
-fn mark_seen(seen: &mut [bool; 8], index: usize) -> bool {
+fn mark_seen(seen: &mut [bool; 10], index: usize) -> bool {
     let was_seen = seen[index];
     seen[index] = true;
     was_seen

@@ -22,6 +22,8 @@ pub(super) struct ConnState {
     pub(super) protocol_version: u8,
     /// App-tier authority is established only by a successful in-band bind.
     pub(super) bound_auth: Option<CoreAuth>,
+    /// A single revision-bound, metadata-only index projection for this socket.
+    pub(super) residence_index: Option<crate::livequery::ResidenceIndexCache>,
 }
 
 impl ConnState {
@@ -35,6 +37,7 @@ impl ConnState {
             lfs_owner_mode: false,
             protocol_version,
             bound_auth: None,
+            residence_index: None,
         }
     }
 

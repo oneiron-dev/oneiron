@@ -125,7 +125,13 @@ impl SyncConnection {
         learned_at: u64,
         body: &[u8],
     ) -> Result<(), crate::sync::TransportError> {
-        if self.thin_item(item)?.is_some() {
+        let already_promoted = self
+            .manager
+            .vault()
+            .sync_state_get(&format!("rp:w:{window}"))
+            .map_err(|e| crate::sync::TransportError::Storage(e.to_string()))?
+            .is_some();
+        if !already_promoted && self.thin_item(item)?.is_some() {
             self.promote_window(window, item).await?;
         }
         if self

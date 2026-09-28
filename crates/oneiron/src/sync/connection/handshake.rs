@@ -436,7 +436,13 @@ impl SyncConnection {
         read: &mut WsSource,
         client: &mut SyncClient,
     ) -> Result<(), String> {
-        tokio::time::timeout(Duration::from_secs(30), async {
+        let budgets = self
+            .manager
+            .vault()
+            .residence_operation_budgets()
+            .map_err(|error| error.to_string())?
+            .ok_or_else(|| "residence policy unavailable".to_string())?;
+        tokio::time::timeout(Duration::from_millis(budgets.ack_timeout_ms), async {
             while !self
                 .queue
                 .drain_updates()

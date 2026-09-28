@@ -614,6 +614,8 @@ pub fn encode_lfs_chunk_sync(payload: &[u8]) -> EncodedFrame {
 pub enum TransportError {
     InvalidWindowKey,
     InvalidPayload(&'static str),
+    /// A paged, grant-scoped metadata projection changed; restart at page one.
+    IndexRevisionChanged,
     UnknownTag(u8),
     FrameTooLarge {
         size: usize,
@@ -640,6 +642,7 @@ impl std::fmt::Display for TransportError {
         match self {
             Self::InvalidWindowKey => write!(f, "invalid window key"),
             Self::InvalidPayload(msg) => write!(f, "invalid payload: {msg}"),
+            Self::IndexRevisionChanged => write!(f, "window index revision changed"),
             Self::UnknownTag(tag) => write!(f, "unknown tag: {tag}"),
             Self::FrameTooLarge { size, max } => write!(f, "frame too large: {size} (max {max})"),
             Self::VersionVectorDecode => write!(f, "version vector decode failure"),

@@ -261,6 +261,7 @@ pub(crate) fn transport_err_msg(e: oneiron::sync::TransportError) -> &'static st
     match e {
         oneiron::sync::TransportError::InvalidWindowKey => "invalid window key",
         oneiron::sync::TransportError::InvalidPayload(msg) => msg,
+        oneiron::sync::TransportError::IndexRevisionChanged => "index revision changed",
         oneiron::sync::TransportError::UnknownTag(_) => "unknown tag",
         oneiron::sync::TransportError::FrameTooLarge { .. } => "frame too large",
         oneiron::sync::TransportError::VersionVectorDecode => "version vector decode failure",

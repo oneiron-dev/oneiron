@@ -127,6 +127,7 @@ async fn phone_enrols_with_index_then_opens_one_item_and_searches_home() {
         residence_selector: Some(selector),
         ..Default::default()
     };
+    let driver_config = config.clone();
     let (mut client, _events) = SyncClient::new(manager.clone(), config).unwrap();
     let mut request = url.as_str().into_client_request().unwrap();
     request.headers_mut().insert(
@@ -184,6 +185,55 @@ async fn phone_enrols_with_index_then_opens_one_item_and_searches_home() {
     assert_eq!(remote.source, SearchSource::Home);
     assert!(remote.complete);
     assert!(!remote.hits.is_empty());
+
+    // Exercise the real connection owner, not only SyncClient frame builders:
+    // enrol reaches Synced with the bound actor session and selector and still
+    // materializes no full month window.
+    use oneiron::sync::{ConnectionConfig, SyncConnection, SyncEvent, SyncStatus};
+    let driver_dir = tempfile::tempdir().unwrap();
+    let driver_vault = Arc::new(Vault::open(driver_dir.path(), VaultConfig::device()).unwrap());
+    let driver_manager = Arc::new(WindowManager::new(
+        driver_vault.clone(),
+        Arc::new(Materializer::new()),
+        "enrolling-phone",
+    ));
+    let driver = SyncConnection::new(
+        driver_manager.clone(),
+        ConnectionConfig {
+            client_config: driver_config,
+            auto_reconnect: false,
+        },
+    )
+    .unwrap();
+    let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel();
+    let task = tokio::spawn(async move { driver.run(shutdown_rx).await.unwrap() });
+    tokio::time::timeout(std::time::Duration::from_secs(30), async {
+        let mut tick = tokio::time::interval(std::time::Duration::from_millis(25));
+        tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+        loop {
+            if driver_vault
+                .sync_state_get(&format!("ri:w:{}:{}", window, item.to_hex()))
+                .unwrap()
+                .is_some()
+            {
+                break;
+            }
+            tick.tick().await;
+        }
+    })
+    .await
+    .unwrap();
+    assert!(driver_manager.loaded_keys().is_empty());
+    shutdown_tx.send(()).unwrap();
+    let mut events = tokio::time::timeout(std::time::Duration::from_secs(15), task)
+        .await
+        .unwrap()
+        .unwrap();
+    let mut synced = false;
+    while let Ok(event) = events.try_recv() {
+        synced |= matches!(event, SyncEvent::StatusChanged(SyncStatus::Synced));
+    }
+    assert!(synced, "bound opened-item enrol must reach Synced");
     server_task.abort();
     let _ = server_task.await;
     let offline = client
@@ -209,6 +259,7 @@ async fn thin_first_edit_promotes_causally_and_concurrent_home_edit_converges() 
     let home = Arc::new(Vault::open(server_dir.path(), VaultConfig::device()).unwrap());
     let actor = EntityId::now();
     let item = EntityId::now();
+    let second_item = EntityId::now();
     let grant_id = EntityId::now();
     let now = oneiron_vault_contract::now_ts();
     home.put_entity(
@@ -222,6 +273,17 @@ async fn thin_first_edit_promotes_causally_and_concurrent_home_edit_converges() 
     let original = rmp_serde::to_vec_named(&serde_json::json!({"title":"base"})).unwrap();
     home.put_entity(
         &item,
+        oneiron::registry::ENTITY_TYPE_PERSON,
+        TimeRange {
+            start: now,
+            end: now,
+        },
+        now,
+        &original,
+    )
+    .unwrap();
+    home.put_entity(
+        &second_item,
         oneiron::registry::ENTITY_TYPE_PERSON,
         TimeRange {
             start: now,
@@ -351,6 +413,27 @@ async fn thin_first_edit_promotes_causally_and_concurrent_home_edit_converges() 
             .is_some()
     );
     assert!(client.thin_item(item).unwrap().is_none());
+    // Reopening A and first-touching B after the window is promoted must
+    // use its canonical copy, never mint another ro:e: cache or re-promote.
+    client.fetch_item(&window, item).await.unwrap();
+    client.fetch_item(&window, second_item).await.unwrap();
+    assert!(client.thin_item(item).unwrap().is_none());
+    assert!(client.thin_item(second_item).unwrap().is_none());
+    let second_edit =
+        rmp_serde::to_vec_named(&serde_json::json!({"title":"second device edit"})).unwrap();
+    conn.edit_opened_item(
+        &window,
+        second_item,
+        oneiron::registry::ENTITY_TYPE_PERSON,
+        TimeRange {
+            start: now,
+            end: now,
+        },
+        now,
+        &second_edit,
+    )
+    .await
+    .unwrap();
     let loaded = manager.open_window(&window).unwrap();
     let proof = transport::encode_window_sync(
         window.as_str(),
@@ -471,6 +554,11 @@ async fn thin_first_edit_promotes_causally_and_concurrent_home_edit_converges() 
             loaded.doc.oplog_vv()
         );
     }
+    assert!(
+        home.get_raw(&second_item)
+            .unwrap()
+            .is_some_and(|raw| raw.ends_with(&second_edit))
+    );
     let home_doc = server.get_or_create_window(&window).await.unwrap();
     let device_doc = loaded.doc.clone();
     let before_home = home_doc.oplog_vv();

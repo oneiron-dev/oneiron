@@ -56,17 +56,17 @@ fn paged_index_is_metadata_only_and_first_touch_is_one_granted_item() {
     }
     source.commit();
     let selector = SyncSelector::new(grant_id, actor, SyncSelectorWorld::All, vec![], vec![]);
+    let projection =
+        window_index_projection(&vault, &source, &window, scope, &selector, 128, |id| {
+            Ok(id == visible)
+        })
+        .unwrap();
     let index = window_index_page(
-        &vault,
-        &source,
-        &window,
-        scope,
-        &selector,
+        &projection,
         IndexPage {
             after: None,
             limit: 256,
         },
-        |id| Ok(id == visible),
     )
     .unwrap();
     assert_eq!(

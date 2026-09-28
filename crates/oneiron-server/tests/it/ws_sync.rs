@@ -2413,6 +2413,7 @@ async fn run_sync_connection_once(server_url: String, auth_token: &str) -> Vec<S
         client_config: SyncClientConfig {
             server_url,
             auth_token: auth_token.to_string(),
+            residence_mode: oneiron::sync::SyncResidenceMode::All,
             ..Default::default()
         },
         auto_reconnect: false,

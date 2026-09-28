@@ -38,6 +38,29 @@ struct Stamp {
     birth_facet: [u8; 16],
     scope: Scope,
 }
+const RECORD_SCOPE_REVISION_KEY: &[u8] = b"scope:record:revision:v1";
+
+pub(crate) fn read_scope_revision(store: &impl ManifestDbs, txn: &heed::RoTxn<'_>) -> Result<u64> {
+    match store.vault_meta().get(txn, RECORD_SCOPE_REVISION_KEY)? {
+        None => Ok(0),
+        Some(bytes) => {
+            Ok(u64::from_le_bytes(bytes.as_ref().try_into().map_err(
+                |_| Error::CorruptedIndex("record scope revision"),
+            )?))
+        }
+    }
+}
+
+fn bump_scope_revision(store: &Store, txn: &mut heed::RwTxn<'_>) -> Result<()> {
+    let next = read_scope_revision(store, txn)?
+        .checked_add(1)
+        .ok_or(Error::IndexOverflow("record scope revision"))?;
+    store
+        .vault_meta
+        .put(txn, RECORD_SCOPE_REVISION_KEY, &next.to_le_bytes())?;
+    Ok(())
+}
+
 fn key(id: EntityId) -> Vec<u8> {
     let mut key = b"scope:record:v2:".to_vec();
     key.extend_from_slice(id.as_bytes());
@@ -47,7 +70,7 @@ fn key(id: EntityId) -> Vec<u8> {
 /// A later same-id write never inherits the deleted record's birth position.
 pub(crate) fn retire_stamp(store: &Store, txn: &mut heed::RwTxn<'_>, id: EntityId) -> Result<()> {
     store.vault_meta.delete(txn, &key(id))?;
-    Ok(())
+    bump_scope_revision(store, txn)
 }
 fn singleton<T: Ord>(v: T) -> ScopeAxis<T> {
     ScopeAxis::Some(BTreeSet::from([v]))
@@ -91,6 +114,7 @@ pub(crate) fn stamp_put(
     data: &[u8],
     replicated: bool,
 ) -> Result<()> {
+    bump_scope_revision(store, txn)?;
     let prior = store
         .vault_meta
         .get(txn, &key(id))?

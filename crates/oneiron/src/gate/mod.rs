@@ -94,7 +94,8 @@ pub(crate) use self::input::{
 };
 pub(crate) use self::repair::{evaluate_repair_consent, repair_criticality};
 pub(crate) use self::resolution::{
-    PolicyManifestResolution, ResidenceOperationBudgetLimits, resolve_policy_manifest,
+    PolicyManifestResolution, ResidenceOperationBudgetLimits, ResidenceOperationBudgetPrecedence,
+    ResidenceOperationBudgetRow, resolve_policy_manifest,
 };
 pub use self::retrieval_filter::RetrievalFilter;
 pub(crate) use self::retrieval_filter::{

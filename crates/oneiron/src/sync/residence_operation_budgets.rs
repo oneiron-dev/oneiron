@@ -32,8 +32,12 @@ pub struct ResidenceOperationBudgets {
     pub current_window_count: usize,
     /// Maximum title characters retained in index metadata.
     pub title_max_chars: usize,
+    /// Maximum query input bytes accepted by home search.
+    pub search_query_max_bytes: usize,
     /// Maximum search results returned by one operation.
     pub search_limit: usize,
+    /// Candidate overfetch factor for explicitly partial offline search.
+    pub offline_candidate_multiplier: usize,
     /// Timeout while waiting for a residence acknowledgement, in milliseconds.
     pub ack_timeout_ms: u64,
     /// Maximum bytes held by the residence index cache.
@@ -49,7 +53,9 @@ impl ResidenceOperationBudgets {
             max_index_pages: limits.max_index_pages,
             current_window_count: limits.current_window_count,
             title_max_chars: limits.title_max_chars,
+            search_query_max_bytes: limits.search_query_max_bytes,
             search_limit: limits.search_limit,
+            offline_candidate_multiplier: limits.offline_candidate_multiplier,
             ack_timeout_ms: limits.ack_timeout_ms,
             index_cache_bytes: limits
                 .index_cache_bytes

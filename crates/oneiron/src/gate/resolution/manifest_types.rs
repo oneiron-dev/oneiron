@@ -113,6 +113,8 @@ pub(crate) struct ResidenceOperationBudgetLimits {
     pub(crate) current_window_count: usize,
     pub(crate) title_max_chars: usize,
     pub(crate) search_limit: usize,
+    pub(crate) search_query_max_bytes: usize,
+    pub(crate) offline_candidate_multiplier: usize,
     pub(crate) ack_timeout_ms: u64,
     pub(crate) index_cache_bytes: usize,
 }
@@ -125,6 +127,8 @@ impl ResidenceOperationBudgetLimits {
     pub(crate) const DEFAULT_CURRENT_WINDOW_COUNT: usize = 2;
     pub(crate) const DEFAULT_TITLE_MAX_CHARS: usize = 128;
     pub(crate) const DEFAULT_SEARCH_LIMIT: usize = 100;
+    pub(crate) const DEFAULT_SEARCH_QUERY_MAX_BYTES: usize = 4_096;
+    pub(crate) const DEFAULT_OFFLINE_CANDIDATE_MULTIPLIER: usize = 10;
     pub(crate) const DEFAULT_ACK_TIMEOUT_MS: u64 = 30_000;
     pub(crate) const DEFAULT_INDEX_CACHE_BYTES: usize = 16 * 1024 * 1024;
     pub(crate) const MAX_INDEX_CACHE_BYTES: usize = 32 * 1024 * 1024;
@@ -137,6 +141,12 @@ impl ResidenceOperationBudgetLimits {
         self.current_window_count = self.current_window_count.min(other.current_window_count);
         self.title_max_chars = self.title_max_chars.min(other.title_max_chars);
         self.search_limit = self.search_limit.min(other.search_limit);
+        self.search_query_max_bytes = self
+            .search_query_max_bytes
+            .min(other.search_query_max_bytes);
+        self.offline_candidate_multiplier = self
+            .offline_candidate_multiplier
+            .min(other.offline_candidate_multiplier);
         self.ack_timeout_ms = self.ack_timeout_ms.min(other.ack_timeout_ms);
         self.index_cache_bytes = self.index_cache_bytes.min(other.index_cache_bytes);
     }
@@ -151,6 +161,8 @@ impl Default for ResidenceOperationBudgetLimits {
             current_window_count: Self::DEFAULT_CURRENT_WINDOW_COUNT,
             title_max_chars: Self::DEFAULT_TITLE_MAX_CHARS,
             search_limit: Self::DEFAULT_SEARCH_LIMIT,
+            search_query_max_bytes: Self::DEFAULT_SEARCH_QUERY_MAX_BYTES,
+            offline_candidate_multiplier: Self::DEFAULT_OFFLINE_CANDIDATE_MULTIPLIER,
             ack_timeout_ms: Self::DEFAULT_ACK_TIMEOUT_MS,
             index_cache_bytes: Self::DEFAULT_INDEX_CACHE_BYTES,
         }

@@ -67,6 +67,21 @@ fn budget_maps_are_closed_positive_bounded_and_duplicate_free() {
         budget_row(map(vec![("surprise", Value::from(1_u64))]), None, None),
         budget_row(map(vec![("search_limit", Value::from(0_u64))]), None, None),
         budget_row(
+            map(vec![("search_query_max_bytes", Value::from(0_u64))]),
+            None,
+            None,
+        ),
+        budget_row(
+            map(vec![("search_query_max_bytes", Value::from(4_097_u64))]),
+            None,
+            None,
+        ),
+        budget_row(
+            map(vec![("offline_candidate_multiplier", Value::from(11_u64))]),
+            None,
+            None,
+        ),
+        budget_row(
             map(vec![("search_limit", Value::from(101_u64))]),
             None,
             None,
@@ -139,6 +154,8 @@ fn trusted_vault_and_holder_rows_compose_by_min_and_holder_cannot_widen() -> Res
                 ("current_window_count", Value::from(1_u64)),
                 ("title_max_chars", Value::from(64_u64)),
                 ("search_limit", Value::from(80_u64)),
+                ("search_query_max_bytes", Value::from(2_048_u64)),
+                ("offline_candidate_multiplier", Value::from(8_u64)),
                 ("ack_timeout_ms", Value::from(10_000_u64)),
                 ("index_cache_bytes", Value::from(8_u64 * 1024 * 1024)),
             ]),
@@ -195,6 +212,8 @@ fn trusted_vault_and_holder_rows_compose_by_min_and_holder_cannot_widen() -> Res
     assert_eq!(budgets.current_window_count, 1);
     assert_eq!(budgets.title_max_chars, 64);
     assert_eq!(budgets.search_limit, 70);
+    assert_eq!(budgets.search_query_max_bytes, 2_048);
+    assert_eq!(budgets.offline_candidate_multiplier, 8);
     assert_eq!(budgets.ack_timeout_ms, 10_000);
     assert_eq!(budgets.index_cache_bytes, 8 * 1024 * 1024);
     Ok(())

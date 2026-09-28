@@ -237,7 +237,8 @@ pub(super) fn handle_app_message_with_connection(
                 request.params,
             )?]
         } else if request.method.starts_with("residence.") {
-            crate::livequery::residence_rpc(server, auth, request)?
+            let bound = auth.clone();
+            crate::livequery::residence_rpc(server, &bound, request, &mut state.residence_index)?
         } else {
             crate::livequery::bound_rpc(server.vault(), auth, request)?
         };
