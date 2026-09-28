@@ -371,6 +371,9 @@ pub enum LinearSyncError {
     /// must leave the remote issue untouched and retry after another pull.
     #[error("linear remote issue changed before conditional update")]
     RemoteChanged,
+    /// Missing or revoked actor/host grant, or an unattributed TASK write.
+    #[error("linear external effect lacks current actor and host authority")]
+    AuthorizationDenied,
     /// Engine storage or invariant failure.
     #[error(transparent)]
     Store(#[from] crate::error::Error),
@@ -503,6 +506,16 @@ pub trait LinearEgress {
     ) -> LinearSyncResult<LinearIssueChange> {
         Err(LinearSyncError::RemoteChanged)
     }
+}
+
+/// Writer provenance stamped only by the verified TASK facade after its
+/// write. Raw/replayed generic puts never receive this mark.
+#[derive(serde::Serialize, serde::Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct LinearWriteActor {
+    #[serde(with = "super::storage_codec::entity_ref")]
+    pub actor_ref: EntityId,
+    pub actor_class: u8,
 }
 
 /// Engine-side storage the mirror reads and writes.
