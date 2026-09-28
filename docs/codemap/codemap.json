@@ -8422,9 +8422,9 @@
      "path": "src/code_run/actions.rs",
      "purpose": "One named verb registry for validated UI events and agent calls",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 3,
       "enum": 2,
-      "fn": 8,
+      "fn": 9,
       "struct": 4,
       "type": 1
      }
@@ -8716,7 +8716,9 @@
      "notable": [],
      "path": "src/code_run/tests.rs",
      "purpose": "—",
-     "surface": {}
+     "surface": {
+      "crate-vis": 1
+     }
     },
     {
      "bucket": "m",
@@ -19509,7 +19511,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "AllowedWordCorrection",
@@ -19547,7 +19549,7 @@
      "purpose": "Typed host ports for file decoding, inference, routing and explicit import consent",
      "surface": {
       "enum": 4,
-      "fn": 2,
+      "fn": 3,
       "struct": 24,
       "trait": 2
      }
@@ -21207,17 +21209,34 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
-      "PurposeDefault"
+      "ExtractionEgressPredicate",
+      "PurposeDefault",
+      "PurposeDefaultTable",
+      "ValidatedPurposeDefaults",
+      "VoiceBackendBinding",
+      "VoiceLane",
+      "VoicePrecedence"
      ],
      "path": "src/llm/defaults.rs",
-     "purpose": "Central purpose policy",
+     "purpose": "Vault-local inference defaults",
      "surface": {
-      "fn": 3,
-      "struct": 1
+      "crate-vis": 4,
+      "enum": 2,
+      "fn": 16,
+      "struct": 4,
+      "trait": 1
      }
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "src/llm/defaults/tests.rs",
+     "purpose": "Purpose policy and binding regressions",
+     "surface": {}
     },
     {
      "bucket": "s",
@@ -21292,6 +21311,24 @@
      "surface": {}
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "AuthorizedInference",
+      "BoundInference",
+      "HostInferenceBinding",
+      "HostInferenceContext",
+      "InferencePolicySnapshot"
+     ],
+     "path": "src/llm/inference_admission.rs",
+     "purpose": "One snapshot and one admission for policy-managed inference calls",
+     "surface": {
+      "enum": 1,
+      "fn": 12,
+      "struct": 4
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [
@@ -21309,9 +21346,9 @@
      "purpose": "Manifest v2 role bindings, per-vault narrow-only route dials, and verdict floors",
      "surface": {
       "const": 1,
-      "crate-vis": 2,
+      "crate-vis": 3,
       "enum": 5,
-      "fn": 10,
+      "fn": 9,
       "struct": 4
      }
     },
@@ -21332,7 +21369,7 @@
      "surface": {
       "crate-vis": 6,
       "mod": 8,
-      "re-export": 18
+      "re-export": 19
      }
     },
     {
@@ -21378,7 +21415,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "CatalogSeed",
@@ -21391,7 +21428,7 @@
      "path": "src/llm/registry.rs",
      "purpose": "Vault-persisted, priced model catalogs",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 3,
       "enum": 1,
       "fn": 10,
       "struct": 5
@@ -35705,6 +35742,14 @@
      "bucket": "s",
      "kind": "test",
      "notable": [],
+     "path": "tests/inference_default_bind.rs",
+     "purpose": "Public no-manifest local binding must use one registry snapshot, not a nested reader",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
      "path": "tests/it/analyzer_asset_policy.rs",
      "purpose": "License + asset governance gate for the analyzer (plan ONE-317 §11)",
      "surface": {}
@@ -36020,7 +36065,7 @@
      "surface": {}
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "test",
      "notable": [],
      "path": "tests/it/prompt_blocks.rs",
@@ -37123,7 +37168,7 @@
      "purpose": "Deterministic LinkedIn entity resolution and explicit runtime-path corpus preload"
     },
     "llm": {
-     "files": 83,
+     "files": 85,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -37678,8 +37723,8 @@
    },
    "over_bar": 5,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2238,
-   "test_files": 765
+   "source_files": 2239,
+   "test_files": 767
   },
   "oneiron-android": {
    "files": [
@@ -44745,7 +44790,7 @@
      "purpose": "Core server state: the `SyncServer` struct, construction, and shared helpers",
      "surface": {
       "crate-vis": 8,
-      "fn": 4,
+      "fn": 5,
       "struct": 1
      }
     },
@@ -45076,6 +45121,22 @@
      "surface": {}
     },
     {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/inference_defaults.rs",
+     "purpose": "Owner-grade HTTP edit/read proof for resident inference policy rows",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/inference_egress.rs",
+     "purpose": "Extraction default changes require a host gate at storage and dispatch",
+     "surface": {}
+    },
+    {
      "bucket": "XL",
      "kind": "test",
      "notable": [],
@@ -45367,7 +45428,7 @@
    "over_bar": 1,
    "purpose": "Oneiron CRDT sync server library",
    "source_files": 238,
-   "test_files": 99
+   "test_files": 101
   },
   "oneiron-uniffi": {
    "files": [
