@@ -11,9 +11,8 @@ use crate::error::RecordError;
 
 /// ConnectorKeyRecord lifecycle status.
 ///
-/// v1 reachable states: `Active ⇄ Suspended`, `→ Revoked` (terminal).
-/// `Pending` is accepted by decode for forward-compat with the ARCH-0028
-/// qualification suite but is never minted by v1 registration.
+/// Catalogued keys start Pending; only the qualification suite can activate them.
+/// Legacy catalog-free budget keys retain their Active registration door.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum ConnectorKeyStatus {
     Pending,
@@ -147,7 +146,7 @@ impl ConnectorCatalogEntry {
 
 /// The key half of a composed [`crate::Vault::register_connector`] call: what
 /// the catalogued connector's governing key should be minted as. The status is
-/// not a parameter — a composed registration always mints an Active,
+/// not a parameter — composed registration mints a Pending,
 /// charter-free, generation-0 key.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ConnectorKeySpec {
@@ -161,6 +160,10 @@ pub struct ConnectorKeySpec {
     /// pre-write. Value-less by construction: this names a record, it never
     /// carries the secret.
     pub secret_ref: Option<String>,
+    /// Owner-authored grant slate, required before qualification can activate.
+    pub slate_ref: Option<EntityId>,
+    /// Negotiated MCP revision, pinned at registration for drift detection.
+    pub protocol_revision: Option<String>,
 }
 
 impl ConnectorKeySpec {
@@ -172,6 +175,8 @@ impl ConnectorKeySpec {
             actor_entity_ref: None,
             budgets: Vec::new(),
             secret_ref: None,
+            slate_ref: None,
+            protocol_revision: None,
         }
     }
 }
@@ -211,6 +216,16 @@ pub struct ConnectorKeyRecord {
     /// so the executor keeps the ARCH-0054 default (scoped-MCP tool calls
     /// unbudgeted). Only the composed registration door mints one.
     pub catalog: Option<ConnectorCatalogEntry>,
+    /// Typed slate whose owner stamp must precede qualification.
+    pub slate_ref: Option<EntityId>,
+    /// Pinned negotiated revision; any change sends the key back to Pending.
+    pub protocol_revision: Option<String>,
+    /// Slate revision accepted at the last qualification.
+    pub slate_revision: Option<u64>,
+    /// Monotonic admission generation, invalidating probes on every revision change.
+    pub admission_epoch: u64,
+    /// Whether this admission requires a new owner decision on expanded rows.
+    pub consent_required: bool,
 }
 
 impl ConnectorKeyRecord {
@@ -236,6 +251,11 @@ impl ConnectorKeyRecord {
             secret_ref: None,
             key_generation: 0,
             catalog: None,
+            slate_ref: None,
+            protocol_revision: None,
+            slate_revision: None,
+            admission_epoch: 0,
+            consent_required: false,
         }
     }
 
@@ -288,6 +308,33 @@ impl ConnectorKeyRecord {
         }
         if let Some(secret_ref) = self.secret_ref.as_deref() {
             validate_secret_ref(secret_ref)?;
+        }
+        if let Some(revision) = self.protocol_revision.as_deref()
+            && (revision.trim().is_empty()
+                || revision.len() > 128
+                || revision.as_bytes().contains(&0))
+        {
+            return Err(invalid_body("invalid connector protocol revision"));
+        }
+        if self.catalog.is_none()
+            && (self.slate_ref.is_some()
+                || self.protocol_revision.is_some()
+                || self.slate_revision.is_some()
+                || self.admission_epoch != 0
+                || self.consent_required)
+        {
+            return Err(invalid_body("qualification fields require a catalog"));
+        }
+        // An Active catalog route without an admission pin is never a valid
+        // stored body, including when it enters through decode/import.
+        if self.catalog.is_some()
+            && self.status == ConnectorKeyStatus::Active
+            && (self.slate_ref.is_none()
+                || self.protocol_revision.is_none()
+                || self.slate_revision.is_none()
+                || self.consent_required)
+        {
+            return Err(invalid_body("active catalog key lacks qualification"));
         }
         if let Some(catalog) = self.catalog.as_ref() {
             catalog.validate()?;
