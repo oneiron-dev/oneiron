@@ -151,6 +151,13 @@ pub(crate) fn resolve_policy_manifest(
                 }
                 resolution.hosted_tts.rows.extend(decoded.hosted_tts.rows);
 
+                if let Some(limits) = decoded.livequery_tracker_limits {
+                    if let Some(existing) = &mut resolution.livequery_tracker_limits {
+                        existing.restrict(limits);
+                    } else {
+                        resolution.livequery_tracker_limits = Some(limits);
+                    }
+                }
                 if let Some(bounds) = decoded.diagnostic_bounds {
                     match resolution.diagnostic_bounds {
                         None => resolution.diagnostic_bounds = Some(bounds),
