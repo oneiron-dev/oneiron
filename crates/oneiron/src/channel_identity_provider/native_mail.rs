@@ -89,8 +89,8 @@ impl<H: NativeMailHost> NativeMailAdapter<H> {
             .ok_or_else(invalid)?;
         if request.intent.channel != "email"
             || request.intent.verb != "send"
-            || identity.address_or_handle != self.address_for_identity(identity_ref)
-            || identity.binding.actor_ref() != request.actor.actor_entity_ref
+            || identity.address_or_handle() != self.address_for_identity(identity_ref)
+            || identity.binding().actor_ref() != request.actor.actor_entity_ref
         {
             return Err(invalid().into());
         }
@@ -120,9 +120,9 @@ impl<H: NativeMailHost> NativeMailAdapter<H> {
         if request.intent.channel != "email"
             || request.intent.verb != "send"
             || request.intent_ref.trim().is_empty()
-            || identity.address_or_handle != self.address_for_identity(identity_ref)
+            || identity.address_or_handle() != self.address_for_identity(identity_ref)
             || !identity.may_send()
-            || identity.binding.actor_ref() != Some(actor)
+            || identity.binding().actor_ref() != Some(actor)
             || request.actor.actor_ref.as_deref() != Some(actor.to_hex().as_str())
         {
             return Err(invalid());
@@ -172,12 +172,12 @@ impl<H: NativeMailHost> NativeMailAdapter<H> {
         let Some(identity) = identity else {
             return Ok(None);
         };
-        if identity.address_or_handle != self.address_for_identity(identity_ref)
+        if identity.address_or_handle() != self.address_for_identity(identity_ref)
             || !identity.may_send()
         {
             return Ok(None);
         }
-        let Some(actor) = identity.binding.actor_ref() else {
+        let Some(actor) = identity.binding().actor_ref() else {
             return Ok(None);
         };
         if !native_mail_reputation_earned(vault, &txn, identity_ref)? {
@@ -493,7 +493,7 @@ pub(crate) fn native_mail_actor_may_send_in_txn(
     actor: Option<EntityId>,
 ) -> Result<bool> {
     Ok(native_mail_identity_in_txn(store, txn, identity_ref)?
-        .is_some_and(|identity| identity.may_send() && identity.binding.actor_ref() == actor))
+        .is_some_and(|identity| identity.may_send() && identity.binding().actor_ref() == actor))
 }
 
 /// Structural sender binding survives Released/Quarantine for terminal replay,
@@ -523,9 +523,9 @@ fn native_mail_identity_in_txn(
         return Ok(None);
     }
     let identity = decode_channel_identity_body(&raw[ENTITY_METADATA_HEADER_LEN..])?;
-    if identity.channel != "email"
+    if identity.channel() != "email"
         || !identity
-            .address_or_handle
+            .address_or_handle()
             .starts_with(&format!("mail-{}@", identity_ref.to_hex()))
     {
         return Ok(None);
@@ -561,7 +561,7 @@ pub(crate) fn native_mail_cold_send_in_txn(
     let Some(identity) = native_mail_identity_in_txn(store, txn, identity_ref)? else {
         return Ok(false);
     };
-    if identity.binding.actor_ref() != Some(actor) || !identity.may_send() {
+    if identity.binding().actor_ref() != Some(actor) || !identity.may_send() {
         return Ok(false);
     }
     Ok(policy
@@ -614,7 +614,8 @@ pub(crate) fn native_mail_reputation_earned(
         return Ok(false);
     };
     let policy = crate::gate::resolve_policy_manifest(&vault.store, txn)?;
-    let Some(row) = policy.native_mail_policy_for(identity.binding.actor_ref(), Some(identity_ref))
+    let Some(row) =
+        policy.native_mail_policy_for(identity.binding().actor_ref(), Some(identity_ref))
     else {
         return Ok(false);
     };

@@ -33,10 +33,10 @@ fn native_mail_offer_is_earned(
     let Some(record) = vault.get_channel_identity_in_txn(txn, &identity)? else {
         return Ok(false);
     };
-    if record.channel != "email"
+    if record.channel() != "email"
         || !record.may_send()
         || record
-            .binding
+            .binding()
             .actor_ref()
             .map(|actor| actor.to_hex())
             .as_deref()

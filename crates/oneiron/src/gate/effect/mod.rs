@@ -650,8 +650,15 @@ pub(crate) fn check_external_effect_policy_pair(
     policy: &PolicyManifestResolution,
     new_effect: bool,
 ) -> Result<Option<GateDecisionId>> {
-    let mut host = evaluate_external_effect_policy(store, wtxn, scheduler, policy, None, None)?;
-    let mut authored = evaluate_external_effect_policy(store, wtxn, writer, policy, None, None)?;
+    let context = if new_effect {
+        ApprovalContext::FirstAdmission
+    } else {
+        ApprovalContext::Observe
+    };
+    let mut host =
+        evaluate_external_effect_policy(store, wtxn, scheduler, policy, None, None, context)?;
+    let mut authored =
+        evaluate_external_effect_policy(store, wtxn, writer, policy, None, None, context)?;
     if host.outcome() != GateOutcome::Allow || authored.outcome() != GateOutcome::Allow {
         record_external_effect_policy(store, wtxn, host)?;
         record_external_effect_policy(store, wtxn, authored)?;

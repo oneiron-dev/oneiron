@@ -196,6 +196,7 @@ impl OutboundDispatchPipeline {
             payload,
             replay,
             native_mail_recipient,
+            step_binding: _,
         } = prepared;
         let effect = super::govern::gate_input(&request, verb_contract, policy_risk);
         let parked = match admission.decision {
