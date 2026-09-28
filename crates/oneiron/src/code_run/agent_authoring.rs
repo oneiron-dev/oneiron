@@ -12,6 +12,9 @@ use crate::{EntityId, Error, Result, TimeRange};
 
 use super::SelfAgentDefinitionPutCall;
 
+#[cfg(test)]
+mod tests;
+
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 struct Draft {
