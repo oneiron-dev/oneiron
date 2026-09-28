@@ -193,18 +193,12 @@ async fn home_search_requires_a_bound_grant_and_never_claims_local_completeness(
     );
     assert_eq!(scoped["result"]["hits"], json!([]), "{scoped:?}");
 
-    let mut headers = axum::http::HeaderMap::new();
-    headers.insert(
-        "authorization",
-        format!("Bearer {}", production_tests::SECRET)
-            .parse()
-            .unwrap(),
-    );
-    let owner = CoreAuth::from_headers(&headers, &server.config, server.vault.as_ref()).unwrap();
+    // An owner-grade slip names no actor, so it is not an actor grant.
+    let owner = crate::test_credentials::authenticate(&server, "jti=residence-search-owner");
     let denied = reply(&server, &owner, "residence.search", request(&encoded));
     assert!(
         denied.get("error").is_some(),
-        "owner bearer alone is not an actor grant"
+        "owner credential alone is not an actor grant"
     );
 
     // Revocation of the residence grant invalidates search even while the

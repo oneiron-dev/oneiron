@@ -48,7 +48,8 @@ use crate::gate::pack_install_policy::KEY as PACK_INSTALL_POLICY_KEY;
 use crate::gate::policy_values::{PolicyValueRow, parse_policy_values};
 use crate::gate::resolution::{
     AttributionLimits, ConnectorClassPrecedence, CredentialLifetimePolicy,
-    CredentialLifetimePrecedence, GateDecisionRetentionPolicy, ResidenceOperationBudgetRow, TeacherProbeRow,
+    CredentialLifetimePrecedence, GateDecisionRetentionPolicy, ResidenceOperationBudgetRow,
+    TeacherProbeRow,
 };
 use crate::gate::retrieval_retention::{
     RETRIEVAL_RETENTION_ROWS_KEY, RetrievalRetentionRows, parse_retrieval_retention_rows,

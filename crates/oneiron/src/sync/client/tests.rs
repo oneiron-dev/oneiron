@@ -718,6 +718,7 @@ fn sync_all_discovers_unopened_world_and_old_base_windows_between_independent_va
     let (mut home, _) = SyncClient::new(
         source_manager.clone(),
         SyncClientConfig {
+            residence_mode: SyncResidenceMode::All,
             followed_worlds: None,
             ..Default::default()
         },
@@ -744,6 +745,7 @@ fn sync_all_discovers_unopened_world_and_old_base_windows_between_independent_va
         let (mut peer_client, _) = SyncClient::new(
             peer_manager,
             SyncClientConfig {
+                residence_mode: SyncResidenceMode::All,
                 followed_worlds,
                 ..Default::default()
             },

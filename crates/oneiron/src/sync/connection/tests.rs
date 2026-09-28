@@ -992,13 +992,28 @@ async fn out_of_order_window_delta_disconnects_instead_of_losing_the_update() {
         },
     )
     .unwrap();
-    let (mut client, _) = SyncClient::new(manager.clone(), SyncClientConfig::default()).unwrap();
+    let (mut client, _) = SyncClient::new(
+        manager.clone(),
+        SyncClientConfig {
+            residence_mode: crate::sync::SyncResidenceMode::All,
+            ..Default::default()
+        },
+    )
+    .unwrap();
     let (event_tx, mut events) = mpsc::unbounded_channel();
     let (_local_tx, mut local_rx) = mpsc::unbounded_channel();
     let (_shutdown_tx, mut shutdown_rx) = tokio::sync::oneshot::channel();
+    let mut promotion_rx = manager.subscribe_promotions();
     let outcome = tokio::time::timeout(
         std::time::Duration::from_secs(10),
-        conn.steady_state(ws, &mut client, &event_tx, &mut local_rx, &mut shutdown_rx),
+        conn.steady_state(
+            ws,
+            &mut client,
+            &event_tx,
+            &mut local_rx,
+            &mut promotion_rx,
+            &mut shutdown_rx,
+        ),
     )
     .await
     .unwrap();
