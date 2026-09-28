@@ -1353,6 +1353,7 @@ fn manifest_verdict_floor_enforces_proposed_or_logs_shadow_on_real_write() -> Re
                 floor: ConfidenceBand::High,
                 mode,
             }),
+            seat_policy: None,
         };
         let approval = TeacherProbeApproval::for_scored_checkpoint(
             &manifest,

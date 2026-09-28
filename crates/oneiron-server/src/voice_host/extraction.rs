@@ -66,6 +66,7 @@ impl TinyExtractor {
         LlmRequest {
             model: self.model.clone(),
             envelope: CallEnvelope {
+                seat_effort: None,
                 scope: oneiron::llm::Scope::default(),
                 purpose: CallPurpose::Extraction,
                 class: CallClass::BestEffort,
