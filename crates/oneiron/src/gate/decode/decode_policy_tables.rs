@@ -262,7 +262,8 @@ pub(super) fn parse_owner_policy_rows(value: &Value) -> Option<Vec<PolicyOwnerPo
                 | POLICY_ROW_ACTIVE_KEY
                 | POLICY_ROW_WORLD_REF_KEY
                 | POLICY_ROW_ACTION_KEY
-                | "human" => {}
+                | "human"
+                | "why" => {}
                 _ => return None,
             }
         }
@@ -271,6 +272,7 @@ pub(super) fn parse_owner_policy_rows(value: &Value) -> Option<Vec<PolicyOwnerPo
         let active = optional_bool_default(entries, POLICY_ROW_ACTIVE_KEY, true)?;
         let world_ref = optional_string(entries, POLICY_ROW_WORLD_REF_KEY)?;
         let human = optional_string(entries, "human")?;
+        let why = super::super::policy_values::parse_optional_why(entries)?;
         if human.as_ref().is_some_and(|name| name.trim().is_empty()) {
             return None;
         }
@@ -301,6 +303,7 @@ pub(super) fn parse_owner_policy_rows(value: &Value) -> Option<Vec<PolicyOwnerPo
             active,
             world_ref,
             human,
+            why,
             action,
         });
     }

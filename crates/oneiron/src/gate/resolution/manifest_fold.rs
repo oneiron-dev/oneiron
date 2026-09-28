@@ -185,18 +185,6 @@ pub(crate) fn resolve_policy_manifest(
                         Some(_) => resolution.diagnostics.malformed_manifest_seen = true,
                     }
                 }
-                // Unlike `on_budget_exhausted`, disagreement here is NOT
-                // malformed: the posture has a restrictive pole, so two packs
-                // that disagree have a deterministic, safe answer — hold the
-                // send. Marking that malformed would fail the whole vault
-                // closed over a question the axis can answer itself.
-                if let Some(posture) = decoded.comm_opt_out_posture {
-                    resolution.comm_opt_out_posture = Some(
-                        resolution
-                            .comm_opt_out_posture
-                            .map_or(posture, |existing| existing.restrict(posture)),
-                    );
-                }
                 // One checker per vault (ONE-1296), folded exactly like the
                 // budget policy above: the first value wins, a second manifest
                 // stating the SAME ref is one configuration written twice, and
@@ -316,6 +304,7 @@ pub(crate) fn resolve_policy_manifest(
                         Some(_) => resolution.diagnostics.malformed_manifest_seen = true,
                     }
                 }
+                resolution.policy_values.extend(decoded.policy_values);
                 if let Some(ask_policy) = decoded.ask_policy {
                     match &mut resolution.ask_policy {
                         Some(current) => {
@@ -326,8 +315,6 @@ pub(crate) fn resolve_policy_manifest(
                         None => resolution.ask_policy = Some(ask_policy),
                     }
                 }
-                // Advisory threshold composition is deterministic and never
-                // authorizes or refuses a write. The earliest question wins.
                 if let Some(limits) = decoded.attribution_limits {
                     if resolution.attribution_limits_set {
                         resolution.attribution_limits.restrict(limits);
@@ -339,13 +326,6 @@ pub(crate) fn resolve_policy_manifest(
                 resolution
                     .sheet_answer_limits
                     .extend(decoded.sheet_answer_limits);
-                if let Some(threshold) = decoded.proposal_check_threshold {
-                    resolution.proposal_check_threshold = Some(
-                        resolution
-                            .proposal_check_threshold
-                            .map_or(threshold, |old| old.min(threshold)),
-                    );
-                }
                 if let Some(limits) = decoded.goal_limits {
                     resolution.goal_limits = Some(
                         resolution
@@ -477,6 +457,30 @@ pub(crate) fn resolve_policy_manifest(
     // the teacher policy by themselves or lower an existing holder floor.
     for row in untrusted_teacher_rows {
         merge_teacher_probe_row(&mut resolution, row);
+    }
+
+    // Two manifests carrying the identical row (a copy of the shipped defaults,
+    // say) state one value and keep one copy. Different rows for one key/scope
+    // slot cannot silently depend on entity scan order, and a stored row at a
+    // level its key's door cannot resolve fails closed.
+    let mut value_slots = std::collections::BTreeMap::new();
+    let mut value_rows = Vec::with_capacity(resolution.policy_values.len());
+    for row in std::mem::take(&mut resolution.policy_values) {
+        match value_slots.get(&(row.key, row.scope)) {
+            Some(&index) if value_rows[index] == row => {}
+            Some(_) => {
+                resolution.diagnostics.malformed_manifest_seen = true;
+                value_rows.push(row);
+            }
+            None => {
+                value_slots.insert((row.key, row.scope), value_rows.len());
+                value_rows.push(row);
+            }
+        }
+    }
+    resolution.policy_values = value_rows;
+    if crate::gate::policy_values::unadmitted_row(&resolution.policy_values).is_some() {
+        resolution.diagnostics.malformed_manifest_seen = true;
     }
 
     // Duplicate owner rows are refused per manifest by

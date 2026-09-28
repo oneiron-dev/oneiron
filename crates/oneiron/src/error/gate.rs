@@ -300,6 +300,13 @@ pub enum GateError {
     /// read-frontier different from the original pending Gate decision.
     #[error("gate consent approval is stale for claim {}", claim_id.to_hex())]
     GateConsentStale { claim_id: EntityId },
+    /// A policy value row names a scope level whose selector its key's door
+    /// cannot resolve from store truth. Nothing was written.
+    #[error("policy value {key} is not admitted at {level} level")]
+    PolicyValueLevelNotAdmitted {
+        key: &'static str,
+        level: &'static str,
+    },
 }
 
 impl GateError {
@@ -352,6 +359,7 @@ impl GateError {
             Self::GateWriteRejected { .. } => ErrorKind::GateWriteRejected,
             Self::GateConsentStale { .. } => ErrorKind::GateConsentStale,
             Self::FamilyRequiresAutoGrant { .. } => ErrorKind::FamilyRequiresAutoGrant,
+            Self::PolicyValueLevelNotAdmitted { .. } => ErrorKind::InvalidConfig,
         }
     }
 }

@@ -71,6 +71,7 @@ mod operational_policy;
 mod policy_inputs;
 mod posture_override;
 mod pptx_limits;
+mod scoped_policy_values;
 mod scoped_read;
 mod slide_review_policy;
 mod special_doors;

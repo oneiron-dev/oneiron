@@ -147,10 +147,30 @@ fn set_proposal_threshold(vault: &Vault, threshold: u64) {
     let Value::Map(entries) = &mut manifest else {
         panic!("manifest map")
     };
-    entries.push((
-        Value::from("proposal_check_threshold"),
-        Value::from(threshold),
-    ));
+    let (_, Value::Array(rows)) = entries
+        .iter_mut()
+        .find(|(key, _)| key.as_str() == Some("policy_values"))
+        .unwrap()
+    else {
+        panic!("value rows")
+    };
+    let Value::Map(fields) = rows
+        .iter_mut()
+        .find(|row| match row {
+            Value::Map(fields) => fields.iter().any(|(key, value)| {
+                key.as_str() == Some("key") && value.as_str() == Some("proposal_check_threshold")
+            }),
+            _ => false,
+        })
+        .unwrap()
+    else {
+        panic!("threshold row")
+    };
+    fields
+        .iter_mut()
+        .find(|(key, _)| key.as_str() == Some("value"))
+        .unwrap()
+        .1 = Value::from(threshold);
     let mut bytes = Vec::new();
     rmpv::encode::write_value(&mut bytes, &manifest).unwrap();
     crate::test_util::put_policy_manifest_bytes(vault, id, &bytes).unwrap();

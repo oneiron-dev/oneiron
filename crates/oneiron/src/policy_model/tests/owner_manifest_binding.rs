@@ -42,6 +42,44 @@ fn reads_vault_manifest_not_caller_config() -> Result<()> {
 }
 
 #[test]
+fn safeguard_request_receives_applied_row_why_without_rewriting_owner_document() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    let Value::Map(mut row) = owner_row("owner:spoilers", "Avoid spoilers.") else {
+        unreachable!()
+    };
+    row.push((
+        Value::from("why"),
+        Value::Map(vec![
+            (Value::from("text"), Value::from("Owner protects surprise.")),
+            (Value::from("source"), Value::from("owner")),
+        ]),
+    ));
+    put_policy_manifest_bytes(
+        &vault,
+        test_id(0x3e),
+        &documented_owner_manifest(vec![Value::Map(row)], Vec::new()),
+    )?;
+    let request = PolicyClassifyRequest::outbound_content("ending revealed");
+    let llm = vault
+        .policy_model_llm_request(&request, &PolicyModelConfig::default())?
+        .unwrap();
+    assert_eq!(llm.messages.len(), 3);
+    let texts: Vec<_> = llm
+        .messages
+        .iter()
+        .map(|message| match &message.content[0] {
+            crate::llm::ContentPart::Text { text } => text.as_str(),
+            _ => panic!("text policy request"),
+        })
+        .collect();
+    assert_eq!(texts[0], OWNER_DOCUMENT);
+    assert!(texts[1].contains("Owner protects surprise."));
+    assert!(texts[1].contains("owner:spoilers"));
+    assert_eq!(texts[2], "ending revealed");
+    Ok(())
+}
+
+#[test]
 fn active_owner_rows_resolve_scoped_world_override() -> Result<()> {
     let (_tmp, vault) = temp_vault();
     put_policy_manifest_bytes(

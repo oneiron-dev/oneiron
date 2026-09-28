@@ -322,8 +322,19 @@ fn knob_roundtrip_and_unset_is_identity() -> Result<()> {
 
 fn posture_entry(value: &str) -> (Value, Value) {
     (
-        Value::from(POLICY_COMM_OPT_OUT_POSTURE_KEY),
-        Value::from(value),
+        Value::from("policy_values"),
+        Value::Array(vec![Value::Map(vec![
+            (
+                Value::from("row_ref"),
+                Value::from("fixture.comm_opt_out_posture"),
+            ),
+            (Value::from("key"), Value::from("comm_opt_out_posture")),
+            (Value::from("value"), Value::from(value)),
+            (
+                Value::from("scope"),
+                Value::Map(vec![(Value::from("level"), Value::from("vault"))]),
+            ),
+        ])]),
     )
 }
 
@@ -383,10 +394,21 @@ fn both_manifest_keys_parse_and_fold_independently() -> Result<()> {
                     put_policy_manifest_bytes(&folded, id, &manifests[index])?;
                 }
                 let policy = resolve(&folded)?;
-                assert_eq!(policy.comm_opt_out_posture(), expected_posture);
-                assert_eq!(policy.diagnostics().malformed_manifest_seen, malformed);
-                assert_eq!(policy.is_fail_closed(), malformed);
-                if !malformed {
+                let conflicting_vault_rows = left_posture.is_some() && right_posture.is_some();
+                assert_eq!(
+                    policy.comm_opt_out_posture(),
+                    if malformed || conflicting_vault_rows {
+                        CommOptOutPosture::Escalate
+                    } else {
+                        expected_posture
+                    }
+                );
+                assert_eq!(
+                    policy.diagnostics().malformed_manifest_seen,
+                    malformed || conflicting_vault_rows
+                );
+                assert_eq!(policy.is_fail_closed(), malformed || conflicting_vault_rows);
+                if !malformed && !conflicting_vault_rows {
                     assert_eq!(policy.auto_checker(), Some(CHECKER_REF));
                 }
             }
@@ -404,13 +426,21 @@ fn either_manifest_key_rejects_malformed_values_and_duplicates() -> Result<()> {
         (POLICY_AUTO_CHECKER_KEY, vec![Value::from(" \t ")]),
         (POLICY_AUTO_CHECKER_KEY, vec![Value::from(oversized)]),
         (POLICY_AUTO_CHECKER_KEY, vec![Value::from(CHECKER_REF); 2]),
-        (POLICY_COMM_OPT_OUT_POSTURE_KEY, vec![Value::Nil]),
-        (POLICY_COMM_OPT_OUT_POSTURE_KEY, vec![Value::from(1)]),
-        (POLICY_COMM_OPT_OUT_POSTURE_KEY, vec![Value::from("allow")]),
+        ("policy_values", vec![Value::Nil]),
+        ("policy_values", vec![Value::from(1)]),
         (
-            POLICY_COMM_OPT_OUT_POSTURE_KEY,
-            vec![Value::from("escalate"); 2],
+            "policy_values",
+            vec![Value::Array(vec![Value::Map(vec![
+                (Value::from("row_ref"), Value::from("invalid")),
+                (Value::from("key"), Value::from("comm_opt_out_posture")),
+                (Value::from("value"), Value::from("allow")),
+                (
+                    Value::from("scope"),
+                    Value::Map(vec![(Value::from("level"), Value::from("vault"))]),
+                ),
+            ])])],
         ),
+        ("policy_values", vec![posture_entry("escalate").1; 2]),
     ] {
         // The other key is valid and present, not omitted as a shortcut.
         let mut entries = vec![if key == POLICY_AUTO_CHECKER_KEY {
@@ -474,6 +504,9 @@ fn integrated_no_checker_frontier(posture: &str) -> [u8; 32] {
     text(&mut bytes, "suspend");
     text(&mut bytes, posture);
     len(&mut bytes, 0); // budget-policy rows
+    text(&mut bytes, "scope_precedence_effective");
+    text(&mut bytes, "nested_narrowing"); // shipped-data fallback
+    len(&mut bytes, 0); // policy value rows
     len(&mut bytes, 1); // one pack
     text(&mut bytes, "gate-test");
     text(&mut bytes, "v1");
@@ -528,7 +561,7 @@ fn checker_posture_frontier_matrix_preserves_main_and_rebinds_authority() -> Res
             let resolved_posture = posture.unwrap_or("escalate");
             assert_eq!(policy.comm_opt_out_posture().as_str(), resolved_posture);
             let hash = policy.read_frontier_hash()?;
-            if checker.is_none() {
+            if checker.is_none() && posture.is_none() {
                 assert_eq!(hash, integrated_no_checker_frontier(resolved_posture));
             }
             let rtxn = vault.store.env.read_txn()?;
@@ -536,7 +569,7 @@ fn checker_posture_frontier_matrix_preserves_main_and_rebinds_authority() -> Res
             let grant = standing_outbound_grant_binding_parts(&intent, &policy)?;
             assert_eq!(consent.1, hash);
             assert_eq!(grant.1, hash);
-            bindings.push((resolved_posture, checker, hash, consent.0, grant.0));
+            bindings.push((posture, checker, hash, consent.0, grant.0));
         }
     }
     for left in &bindings {

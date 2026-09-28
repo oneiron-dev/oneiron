@@ -4063,6 +4063,47 @@ fn checker_and_comm_send_override_receipts_keep_charset_and_length_bounds() -> R
 }
 
 #[test]
+fn policy_row_receipt_tokens_are_bounded_and_vetted_on_append_and_read() -> Result<()> {
+    let (_dir, vault) = open_test_vault();
+    let mut record = gate_decision(synthetic_gate_decision_id(0x6E, 1), 3, None);
+    record.receipt_reasons = vec![
+        "policy_row_default.comm_opt_out_posture".to_owned(),
+        "policy_precedence_row_default.scope_precedence".to_owned(),
+        "policy_precedence_shipped_default".to_owned(),
+    ];
+    vault.with_write_txn(|wtxn| vault.store.append_gate_decision_in_txn(wtxn, &record))?;
+    assert_eq!(
+        gate_decision_primary(&vault, record.decision_id)?,
+        Some(record.clone())
+    );
+    for (index, bad) in [
+        "policy_row_Uppercase".to_owned(),
+        "policy_precedence_row_".to_owned(),
+        "policy_row_../hidden".to_owned(),
+        format!("policy_row_{}", "a".repeat(128)),
+        "policy_precedence_shipped_default_more".to_owned(),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let invalid = GateDecisionRecord {
+            decision_id: synthetic_gate_decision_id(0x6F, index as u64),
+            receipt_reasons: vec![bad],
+            ..record.clone()
+        };
+        assert!(matches!(
+            decode_gate_decision(&encode_gate_decision(&invalid)?),
+            Err(Error::CorruptedIndex("gate decision ledger"))
+        ));
+        assert!(matches!(
+            vault.with_write_txn(|wtxn| vault.store.append_gate_decision_in_txn(wtxn, &invalid)),
+            Err(Error::CorruptedIndex("gate decision ledger"))
+        ));
+    }
+    Ok(())
+}
+
+#[test]
 fn gate_notice_accepts_what_the_in_crate_writers_produce() {
     for notice in [
         policy_notice_record(Some("owner_policy"), None, None),

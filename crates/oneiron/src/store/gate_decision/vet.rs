@@ -226,6 +226,25 @@ pub(in crate::store) fn valid_gate_receipt_reason(reason: &str) -> bool {
             });
     }
 
+    // Policy-row IDs are bounded, lowercase manifest tokens. Keep them exact
+    // on the durable receipt, not a lossy hash; only these three shapes enter
+    // the new family. A malformed identifier cannot poison a ledger read.
+    if let Some(row) = reason
+        .strip_prefix("policy_row_")
+        .or_else(|| reason.strip_prefix("policy_precedence_row_"))
+    {
+        return !row.is_empty()
+            && reason.len() <= GATE_RECEIPT_REASON_MAX_LEN
+            && row.bytes().all(|byte| {
+                byte.is_ascii_lowercase()
+                    || byte.is_ascii_digit()
+                    || matches!(byte, b'_' | b'.' | b'-')
+            });
+    }
+    if reason == "policy_precedence_shipped_default" {
+        return true;
+    }
+
     // Accepted receipt-reason prefix FAMILIES (everything else is rejected):
     // counterparty_* (OF-347 contact/consent), connector_key_* and
     // effector_budget_* (OF-277 GOV-01 status wall / budget exhaustion),
