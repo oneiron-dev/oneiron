@@ -149,6 +149,15 @@ pub(crate) fn resolve_policy_manifest(
                 // order, then row order inside each manifest. Row indices in
                 // ladder events index this concatenation.
                 resolution.budget_policy.extend_rows(decoded.budget_policy);
+                if let Some(policy) = decoded.pack_install_policy {
+                    if let Some(existing) = &mut resolution.pack_install_policy {
+                        existing.restrict(policy);
+                    } else {
+                        resolution.pack_install_policy = Some(policy);
+                    }
+                }
+                resolution.hosted_tts.rows.extend(decoded.hosted_tts.rows);
+
                 if let Some(bounds) = decoded.diagnostic_bounds {
                     match resolution.diagnostic_bounds {
                         None => resolution.diagnostic_bounds = Some(bounds),
@@ -165,6 +174,29 @@ pub(crate) fn resolve_policy_manifest(
                             .map_or(threshold, |old| old.min(threshold)),
                     );
                 }
+                if let Some(limits) = decoded.voice_ref_limits {
+                    if id == crate::gate::default_policy_manifest_id()? {
+                        resolution.voice_ref_defaults = Some(limits);
+                    } else {
+                        if let Some(precedence) = limits.precedence {
+                            match resolution.voice_ref_limits.precedence {
+                                None => resolution.voice_ref_limits.precedence = Some(precedence),
+                                Some(existing) if existing == precedence => {}
+                                Some(_) => resolution.diagnostics.malformed_manifest_seen = true,
+                            }
+                        }
+                        resolution.voice_ref_limits.narrow(limits);
+                    }
+                }
+                if let Some(quota) = decoded.weave_correction_policy {
+                    match &mut resolution.weave_correction_policy {
+                        Some(existing) => existing.restrict(quota),
+                        slot @ None => *slot = Some(quota),
+                    }
+                }
+                resolution
+                    .retry_source_policy
+                    .extend(decoded.retry_source_policy);
                 resolution.packs.push(decoded.pack);
             }
             None => {
@@ -196,6 +228,9 @@ pub(crate) fn resolve_policy_manifest(
     // resolution malformed, fail-closing the write gate exactly like any
     // malformed manifest and refusing the budget-policy accessor. Never wrap
     // or silently truncate a row index.
+    if resolution.hosted_tts.rows.len() > usize::from(u16::MAX) + 1 {
+        resolution.diagnostics.malformed_manifest_seen = true;
+    }
     if resolution.budget_policy.rows().len() > usize::from(u16::MAX) + 1 {
         resolution.diagnostics.malformed_manifest_seen = true;
     }

@@ -211,6 +211,12 @@ impl WindowManager {
         let mut registry = self.lock_registry();
         if let Some(existing) = registry.get(key) {
             let existing = Arc::clone(existing);
+            // A resident SKILL may have arrived before its actor. Observer B
+            // kept its entity-scoped replay marker; an already-loaded window
+            // must retry it too, not only the cold-open recovery path.
+            if !super::quarantine::pending_remat_entities(&self.vault, key.as_str())?.is_empty() {
+                forward_rematerialize(&self.vault, &existing.doc, &self.materializer, key)?;
+            }
             #[cfg(test)]
             self.maybe_pause_handle_issue();
             self.track_issued_handle(key, &existing);

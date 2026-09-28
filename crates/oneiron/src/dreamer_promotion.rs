@@ -45,6 +45,7 @@ use crate::claim::{
     CLAIM_SCOPE_EVIDENCE_TAINT_KEY, ClaimApprovalStatus, ClaimSource, claim_evidence_admissible,
     claim_evidence_taint, claim_source_widens_beyond,
 };
+use crate::dreamer_consolidation::evidence::VerifiedEvidenceSet;
 use crate::dreamer_consolidation::{
     ConsolidationEvidenceEnvelope, ConsolidationProvenanceHop, encode_consolidation_evidence,
     source_meet,
@@ -135,7 +136,7 @@ pub fn promote_consolidated_claims_with_checker(
 
     for candidate in candidates {
         let claim_id = candidate.claim_id;
-        match promote_one(vault, run, candidate, checker, None) {
+        match promote_one(vault, run, candidate, checker, None, None) {
             // Ordinary creates roll back unless granted Auto. Replacements
             // explicitly stage Proposed; any other status is a rejection.
             Ok(ClaimApprovalStatus::Auto) => outcome.landed.push(claim_id),
@@ -163,6 +164,7 @@ fn promote_one(
     candidate: PromotionCandidate,
     checker: Option<&BoundedAutoChecker>,
     fence: Option<&crate::dreamer_consolidation::resources::ConsolidationFence>,
+    verified: Option<&VerifiedEvidenceSet>,
 ) -> std::result::Result<ClaimApprovalStatus, String> {
     let default_facet = vault
         .default_facet()
@@ -178,6 +180,9 @@ fn promote_one(
             Ok(false) => dropped.push(*entry),
             Err(error) => return Err(format!("evidence resolution failed: {error}")),
         }
+    }
+    if verified.is_some_and(|evidence| evidence.refs() != surviving) {
+        return Err("scoped evidence differs from verified parent refs".into());
     }
     if surviving.is_empty() {
         let mut reason = "no admissible evidence refs".to_owned();
@@ -203,7 +208,10 @@ fn promote_one(
             .and_then(claim_evidence_taint),
         None => None,
     };
-    let computed_meet = effective_evidence_source(candidate.evidence_meet, old_head_taint);
+    let computed_meet = effective_evidence_source(
+        verified.map_or(candidate.evidence_meet, VerifiedEvidenceSet::meet),
+        old_head_taint,
+    );
     let source = computed_meet;
 
     // 3. Envelope — constructed HERE; callers cannot pass one. Provenance
@@ -251,11 +259,18 @@ fn promote_one(
     // candidate_evidence entry that GATE-12's evidence floor reads, and the
     // machine-readable record of WHICH answer TURN and consult TASK the
     // claim descends from. `refs` is exactly the post-admission survivors.
-    let evidence_value = encode_consolidation_evidence(&ConsolidationEvidenceEnvelope {
-        refs: surviving,
-        chain: candidate.provenance_chain,
-        source_meet: source,
-    });
+    let evidence_value = if let Some(verified) = verified {
+        verified
+            .clone()
+            .restrict(source)
+            .envelope(candidate.provenance_chain.clone())
+    } else {
+        encode_consolidation_evidence(&ConsolidationEvidenceEnvelope {
+            refs: surviving,
+            chain: candidate.provenance_chain.clone(),
+            source_meet: source,
+        })
+    };
 
     // `ClaimCandidate` exposes no scope accessor, so the probe body is how
     // the writer reads the candidate's own scope before re-stamping it.

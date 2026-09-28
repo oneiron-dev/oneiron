@@ -1,0 +1,8 @@
+# Shipped per-vault local embedder auto-device policy. A host may copy this
+# row to [embedder.policy] in its vault's server config and narrow or reorder
+# the candidates. Only these listed devices are ever tried by `auto`.
+auto_devices = ["metal", "cuda", "cpu"]
+# Default: every layer can only reorder/narrow its parent. The alternative
+# "vault-capped-holder-override" lets CLI holder candidates override the
+# environment's selection, but never exceed the vault file's candidate set.
+precedence = "nested-narrowing"

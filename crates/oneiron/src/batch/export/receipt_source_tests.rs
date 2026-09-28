@@ -32,6 +32,7 @@ fn fixture(vault: &Vault) -> Result<(EntityId, ReceiptRecord)> {
     else {
         panic!("new attempt")
     };
+    vault.bind_actor_attempt(row.id, &actor)?;
     queue.append_manifest_entry(
         row.id,
         ManifestEntry::new(ManifestKind::Skill, "archive.fixture.skill", "1.0.0", 11),
@@ -46,6 +47,7 @@ fn fixture(vault: &Vault) -> Result<(EntityId, ReceiptRecord)> {
     else {
         panic!("leased")
     };
+    queue.set_executor_model(row.id, "host", leased.attempt_count, "fixture/model@1")?;
     queue.complete(CompleteAttempt {
         id: row.id,
         lease_owner: "host".into(),
