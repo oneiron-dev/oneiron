@@ -17849,7 +17849,7 @@
      "path": "src/gate/resolution/accessors.rs",
      "purpose": "Read-only resolved-field accessors plus the frontier-hash entry",
      "surface": {
-      "crate-vis": 40
+      "crate-vis": 41
      }
     },
     {
@@ -35919,6 +35919,76 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "GoalAxis",
+      "GoalExplorationBudget",
+      "GoalPreference",
+      "GoalRecord"
+     ],
+     "path": "src/workspace_roster/project/goal.rs",
+     "purpose": "Human-authenticated project goal intake; proposals never write this record",
+     "surface": {
+      "crate-vis": 5,
+      "fn": 1,
+      "re-export": 1,
+      "struct": 4
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/workspace_roster/project/goal/admission.rs",
+     "purpose": "Vault-private, exact-byte admission for goal claims and project goal pointers",
+     "surface": {
+      "crate-vis": 12
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "GoalInterviewTurns"
+     ],
+     "path": "src/workspace_roster/project/goal/interview.rs",
+     "purpose": "Room-backed completion of a loaded goal-intake skill interview",
+     "surface": {
+      "crate-vis": 2,
+      "fn": 3,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "src/workspace_roster/project/goal/interview/tests.rs",
+     "purpose": "—",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/workspace_roster/project/goal/limits.rs",
+     "purpose": "DEC-0005 admission limits",
+     "surface": {
+      "crate-vis": 7
+     }
+    },
+    {
+     "bucket": "L",
+     "kind": "test",
+     "notable": [],
+     "path": "src/workspace_roster/project/goal/tests.rs",
+     "purpose": "—",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [
@@ -35946,10 +36016,10 @@
      "purpose": "Project responsibility records and their derived home-room membership",
      "surface": {
       "const": 1,
-      "crate-vis": 13,
+      "crate-vis": 15,
       "enum": 1,
       "fn": 8,
-      "re-export": 1,
+      "re-export": 2,
       "struct": 3
      }
     },
@@ -36044,7 +36114,7 @@
      "path": "src/workspace_roster/rooms/mod.rs",
      "purpose": "Room participation and addressed turn claims",
      "surface": {
-      "crate-vis": 4,
+      "crate-vis": 6,
       "enum": 1,
       "fn": 5,
       "re-export": 1,
@@ -38201,7 +38271,7 @@
      "purpose": "OF-444 web acquisition primitive: one HTTP(S) URL in, one fixed six-field [`FetchResult`] out, produced by a…"
     },
     "workspace_roster": {
-     "files": 23,
+     "files": 29,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -38217,8 +38287,8 @@
    },
    "over_bar": 8,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2266,
-   "test_files": 781
+   "source_files": 2270,
+   "test_files": 783
   },
   "oneiron-android": {
    "files": [
