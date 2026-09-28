@@ -633,7 +633,7 @@
      "path": "src/agent_dispatch/dispatch.rs",
      "purpose": "Core dispatch admission: dispatchability, depth bound, enqueue, dedupe",
      "surface": {
-      "crate-vis": 7,
+      "crate-vis": 8,
       "fn": 5,
       "struct": 1
      }
@@ -747,10 +747,10 @@
      "path": "src/agent_dispatch/types.rs",
      "purpose": "Dispatch domain types, outcome enums, and pinned key/sentinel constants",
      "surface": {
-      "const": 7,
-      "crate-vis": 12,
+      "const": 6,
+      "crate-vis": 14,
       "enum": 5,
-      "fn": 6,
+      "fn": 7,
       "struct": 7
      }
     },
@@ -779,7 +779,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/agent_dispatch/workflow.rs",
@@ -819,14 +819,14 @@
      "path": "src/agent_dispatch/workflow_record.rs",
      "purpose": "Durable, inert workflow admission and result provenance",
      "surface": {
-      "crate-vis": 11,
+      "crate-vis": 12,
       "enum": 1,
       "fn": 1,
       "struct": 2
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "test",
      "notable": [],
      "path": "src/agent_dispatch/workflow_tests.rs",
@@ -1447,7 +1447,7 @@
      "path": "src/attempt_queue/engine/reads.rs",
      "purpose": "Point/list/dedupe reads plus retry-chain and dreamer-root walks",
      "surface": {
-      "crate-vis": 17,
+      "crate-vis": 18,
       "fn": 4
      }
     },
@@ -3198,6 +3198,16 @@
      "surface": {}
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/batch/leader_chat_admission.rs",
+     "purpose": "Final-state leader-chat TURN candidates, independent of batch op order",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
@@ -3356,7 +3366,7 @@
      "path": "src/batch/put_apply/put_staging.rs",
      "purpose": "Body/index/edge row staging helpers shared by the put and update paths",
      "surface": {
-      "crate-vis": 20
+      "crate-vis": 21
      }
     },
     {
@@ -12644,7 +12654,7 @@
      "path": "src/conversation/body.rs",
      "purpose": "Forward-compatible room body codec and the all-writer membership guard",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 4,
       "enum": 2,
       "fn": 8,
       "struct": 1
@@ -17642,7 +17652,7 @@
      "path": "src/federation/record_scope.rs",
      "purpose": "Birth-facet-bound record-position stamps and scoped read/delete/export doors",
      "surface": {
-      "crate-vis": 8,
+      "crate-vis": 9,
       "enum": 1,
       "fn": 4,
       "struct": 1
@@ -18039,7 +18049,7 @@
      "path": "src/gate/constants.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 122
+      "crate-vis": 124
      }
     },
     {
@@ -18079,7 +18089,7 @@
      "path": "src/gate/decode/decode_manifest.rs",
      "purpose": "Manifest envelope plus DecodedPolicyManifest assembly",
      "surface": {
-      "crate-vis": 7
+      "crate-vis": 9
      }
     },
     {
@@ -18161,13 +18171,23 @@
      "surface": {}
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/gate/decode/project_collaboration.rs",
+     "purpose": "Exact project coordination policy row decoder",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
      "bucket": "L",
      "kind": "src",
      "notable": [],
      "path": "src/gate/default_manifest.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 9
      }
     },
     {
@@ -18392,7 +18412,7 @@
      "path": "src/gate/mod.rs",
      "purpose": "DEC-0005 Gate policy manifest resolver",
      "surface": {
-      "crate-vis": 46,
+      "crate-vis": 48,
       "re-export": 7
      }
     },
@@ -18463,6 +18483,67 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [],
+     "path": "src/gate/project_conversion.rs",
+     "purpose": "Typed project-conversion policy, parsed from a trusted policy manifest",
+     "surface": {
+      "crate-vis": 11
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/gate/project_depth/codec.rs",
+     "purpose": "Exact, content-addressed POLICY_MANIFEST carrier and signature grammar",
+     "surface": {
+      "crate-vis": 18
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/gate/project_depth/fold.rs",
+     "purpose": "Read-snapshot causal head fold for independently keyed project-depth policy facts",
+     "surface": {
+      "crate-vis": 7
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/gate/project_depth/mod.rs",
+     "purpose": "Immutable project-scoped policy-manifest contributions",
+     "surface": {
+      "crate-vis": 6
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "src/gate/project_depth/tests.rs",
+     "purpose": "—",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/gate/project_depth/write.rs",
+     "purpose": "Transaction-bound project-policy birth and owner edit doors",
+     "surface": {
+      "crate-vis": 4,
+      "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [
       "ProposalPolicySource",
       "ProposalSubmissionCheck",
@@ -18502,7 +18583,7 @@
      "path": "src/gate/resolution/accessors.rs",
      "purpose": "Read-only resolved-field accessors plus the frontier-hash entry",
      "surface": {
-      "crate-vis": 62
+      "crate-vis": 64
      }
     },
     {
@@ -18532,7 +18613,7 @@
      "path": "src/gate/resolution/manifest_fold.rs",
      "purpose": "Store-scanning manifest fold plus budget-guard and trust adapters",
      "surface": {
-      "crate-vis": 5,
+      "crate-vis": 6,
       "fn": 2
      }
     },
@@ -18543,7 +18624,7 @@
      "path": "src/gate/resolution/manifest_types.rs",
      "purpose": "Resolved-view types plus the `PolicyManifestResolution` struct definition",
      "surface": {
-      "crate-vis": 46
+      "crate-vis": 52
      }
     },
     {
@@ -18947,6 +19028,22 @@
      "bucket": "s",
      "kind": "test",
      "notable": [],
+     "path": "src/gate/tests/project_collaboration.rs",
+     "purpose": "Manifest-resident project talk and widening defaults",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/gate/tests/project_conversion.rs",
+     "purpose": "Project-conversion manifest policy: default, strict parse, narrowing and frontier",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
      "path": "src/gate/tests/residence_operation_budgets.rs",
      "purpose": "Residence operation budget manifest parsing and restrictive resolution tests",
      "surface": {}
@@ -19198,7 +19295,7 @@
      "surface": {
       "const": 1,
       "crate-vis": 2,
-      "fn": 5,
+      "fn": 7,
       "struct": 4
      }
     },
@@ -34907,7 +35004,7 @@
      "path": "src/task_verb/ask_facade.rs",
      "purpose": "Async scope-authority asks over existing consult TASKs",
      "surface": {
-      "crate-vis": 6,
+      "crate-vis": 7,
       "fn": 7
      }
     },
@@ -35351,7 +35448,7 @@
      "path": "src/task_verb/mod.rs",
      "purpose": "Typed, actor-bound verbs over the Context Board TASKS section",
      "surface": {
-      "crate-vis": 16,
+      "crate-vis": 18,
       "mod": 1,
       "re-export": 18
      }
@@ -37218,8 +37315,22 @@
      "path": "src/workspace_roster/mod.rs",
      "purpose": "Workspace roster preset + member onboarding (ONEIRON-ARCH-0065)",
      "surface": {
-      "crate-vis": 4,
+      "crate-vis": 5,
       "re-export": 5
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "MessageHangs"
+     ],
+     "path": "src/workspace_roster/project/conversion.rs",
+     "purpose": "Atomic conversion of a room thread into a project and its origin card",
+     "surface": {
+      "crate-vis": 1,
+      "fn": 6,
+      "struct": 1
      }
     },
     {
@@ -37316,6 +37427,21 @@
      "bucket": "m",
      "kind": "src",
      "notable": [
+      "LeaderChat"
+     ],
+     "path": "src/workspace_roster/project/leader_chat.rs",
+     "purpose": "Direct leader chats: same-vault routing, shared-ancestor rule clamp and speaker scope",
+     "surface": {
+      "const": 1,
+      "crate-vis": 11,
+      "fn": 2,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
       "ProjectBudgetShare",
       "ProjectGoalRecord",
       "ProjectMintReceipt"
@@ -37335,17 +37461,28 @@
       "ProjectRecord",
       "ProjectRole",
       "ProjectRoom",
-      "ProjectRoomChange"
+      "ProjectRoomChange",
+      "RoomOriginCard"
      ],
      "path": "src/workspace_roster/project/mod.rs",
      "purpose": "Project responsibility records and their derived home-room membership",
      "surface": {
       "const": 1,
-      "crate-vis": 16,
+      "crate-vis": 21,
       "enum": 1,
-      "fn": 8,
-      "re-export": 2,
-      "struct": 3
+      "fn": 10,
+      "re-export": 5,
+      "struct": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/workspace_roster/project/origin.rs",
+     "purpose": "Durable origin proof and local secondary indexes for converted projects",
+     "surface": {
+      "crate-vis": 8
      }
     },
     {
@@ -37355,16 +37492,51 @@
      "path": "src/workspace_roster/project/projection.rs",
      "purpose": "The write-time projector shared by local batches and sync materialization",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 4
      }
     },
     {
-     "bucket": "L",
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "src/workspace_roster/project/review_tests.rs",
+     "purpose": "Acceptance regressions for indexed project origin and policy narrowing",
+     "surface": {}
+    },
+    {
+     "bucket": "XL",
      "kind": "test",
      "notable": [],
      "path": "src/workspace_roster/project/tests.rs",
      "purpose": "—",
-     "surface": {}
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/workspace_roster/project/tests/support.rs",
+     "purpose": "—",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "ProjectWidenAsk",
+      "ProjectWidenAxis"
+     ],
+     "path": "src/workspace_roster/project/widen.rs",
+     "purpose": "Cross-project widening routes to an ordinary ask on the common board",
+     "surface": {
+      "enum": 1,
+      "fn": 2,
+      "struct": 1
+     }
     },
     {
      "bucket": "s",
@@ -37392,8 +37564,8 @@
      "path": "src/workspace_roster/rooms/history.rs",
      "purpose": "Bounded room-local history and transactional auxiliary-row cleanup",
      "surface": {
-      "crate-vis": 3,
-      "fn": 9
+      "crate-vis": 4,
+      "fn": 10
      }
     },
     {
@@ -37434,13 +37606,14 @@
       "RoomThreadPage",
       "RoomTrunk",
       "RoomTrunkHeader",
+      "RoomTrunkItem",
       "RoomTurn"
      ],
      "path": "src/workspace_roster/rooms/mod.rs",
      "purpose": "Room participation and addressed turn claims",
      "surface": {
-      "crate-vis": 6,
-      "enum": 1,
+      "crate-vis": 10,
+      "enum": 2,
       "fn": 5,
       "re-export": 1,
       "struct": 6
@@ -38038,6 +38211,14 @@
      "bucket": "m",
      "kind": "test",
      "notable": [],
+     "path": "tests/it_project_conversion.rs",
+     "purpose": "—",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
      "path": "tests/it_sync/ask_option_link_replication.rs",
      "purpose": "A real Loro exchange preserves issuer-verified foreign-stated ask evidence",
      "surface": {}
@@ -38442,7 +38623,7 @@
      "purpose": "Engine-side AR-3 campaign reports and read-only experiment selection"
     },
     "batch": {
-     "files": 92,
+     "files": 93,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -38988,7 +39169,7 @@
      "purpose": "—"
     },
     "gate": {
-     "files": 119,
+     "files": 128,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -39660,7 +39841,7 @@
      "purpose": "OF-444 web acquisition primitive: one HTTP(S) URL in, one fixed six-field [`FetchResult`] out, produced by a…"
     },
     "workspace_roster": {
-     "files": 29,
+     "files": 35,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -39676,8 +39857,8 @@
    },
    "over_bar": 22,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2346,
-   "test_files": 823
+   "source_files": 2357,
+   "test_files": 829
   },
   "oneiron-android": {
    "files": [
@@ -45462,9 +45643,9 @@
      "kind": "test",
      "notable": [],
      "path": "src/api/tests/support_mcp_credentials.rs",
-     "purpose": "Paired MCP fixture credentials",
+     "purpose": "Paired MCP fixture credentials and the host-signed owner binding",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 6
      }
     },
     {

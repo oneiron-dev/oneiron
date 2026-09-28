@@ -171,7 +171,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/tests/slips.rs` | test | L | — | — | Log-backed v2 credentials at the HTTP boundary |
 | `src/api/tests/support_contract.rs` | test | s | 11 crate-vis | — | Shared contract/OpenAPI projection helpers for the API tests |
 | `src/api/tests/support_mcp.rs` | test | m | 32 crate-vis | — | Shared MCP test harness: legacy adapter, tool-first endpoints, scoping, code-run fixtures |
-| `src/api/tests/support_mcp_credentials.rs` | test | s | 4 crate-vis | — | Paired MCP fixture credentials |
+| `src/api/tests/support_mcp_credentials.rs` | test | s | 6 crate-vis | — | Paired MCP fixture credentials and the host-signed owner binding |
 | `src/api/tests/surface_events.rs` | test | m | — | — | Surface-event submit/replay/receipts, scope enforcement, idempotency + durability, malformed-input mapping |
 | `src/api/tests/surface_routes.rs` | test | XL | — | — | Health/runtime/discover redaction, outbound capability contracts, local artifact serving, context-board seed… |
 | `src/api/tests/vad_and_error_mapping.rs` | test | m | — | — | Turn/message VAD annotate routes plus core-engine-error to HTTP status mapping matrix |
