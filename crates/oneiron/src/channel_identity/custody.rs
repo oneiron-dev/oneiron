@@ -337,7 +337,7 @@ impl Custody {
     /// Capability-only preflight for callers that do not own a policy snapshot.
     ///
     /// This NEVER authorizes an effect: the dispatch door must also resolve
-    /// the vault's `act_policy` in its transaction via [`Self::may_send_under`].
+    /// the vault's `act_policy` in its transaction via `Self::may_send_under`.
     /// In particular there is no permanent delegated-class ban here. Current
     /// delegated grants are read-only, so they lack the send capability, but a
     /// future outbound grant would still need the manifest row and gate.

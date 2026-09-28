@@ -18,6 +18,7 @@ pub(crate) fn signed_depth(
 }
 
 /// Person-authorized child birth whose immutable policy fact can cross sync.
+#[cfg(feature = "sync")]
 pub(crate) fn signed_birth(
     vault: &Vault,
     id: EntityId,
