@@ -207,6 +207,23 @@ impl PolicyManifestResolution {
         }
         self.hosted_tts.limits(provider, holder)
     }
+    /// Effective artifact-review limits from trusted manifest rows; a holder
+    /// may only narrow the vault setting, never widen it.
+    pub(crate) fn slide_review_limits(
+        &self,
+        holder: crate::EntityId,
+    ) -> Option<crate::llm::decision::SlideReviewLimits> {
+        (!self.diagnostics.loaded_manifest_forces_fail_closed())
+            .then(|| self.slide_review_policy.resolve(holder))
+    }
+
+    pub(crate) fn slide_review_route(
+        &self,
+        holder: crate::EntityId,
+    ) -> Option<crate::llm::decision::SlideReviewRoute> {
+        (!self.diagnostics.loaded_manifest_forces_fail_closed())
+            .then(|| self.slide_review_policy.resolve_route(holder))
+    }
 
     /// Rendering pins follow declared critical classes, not the fail-closed
     /// write fallback for unknown predicates. Only trusted folded policy can pin.
