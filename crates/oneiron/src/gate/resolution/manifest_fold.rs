@@ -11,7 +11,7 @@ use crate::store::Store;
 use crate::vault::Vault;
 use crate::write_envelope::{SourceLineage, WriteActor};
 
-use super::manifest_types::PolicyManifestResolution;
+use super::manifest_types::{PolicyManifestResolution, TeacherProbeRow};
 use crate::gate::ceiling::{
     DelegationFoldCache, DelegationGrantRecord, PolicyOwnerPolicyRow, check_source_trust,
     fold_delegated_grants,
@@ -24,7 +24,10 @@ pub(crate) fn resolve_policy_manifest(
 ) -> Result<PolicyManifestResolution> {
     let mut resolution = PolicyManifestResolution::default();
     let mut untrusted_source_rows = Vec::new();
+    let mut untrusted_teacher_rows = Vec::new();
     let mut delegated_rows: Vec<DelegationGrantRecord> = Vec::new();
+    let mut shipped_pptx_limits: Option<crate::edit_roundtrip::pptx::PptxOperationalLimits> = None;
+    let mut owner_pptx_limits: Option<crate::edit_roundtrip::pptx::PptxOperationalLimits> = None;
 
     for index_entry in store.port_entity_ids_by_type(txn, ENTITY_TYPE_POLICY_MANIFEST, None)? {
         let id = match index_entry {
@@ -60,6 +63,9 @@ pub(crate) fn resolve_policy_manifest(
                 resolution.diagnostics.manifest_count += 1;
                 if !trusted {
                     untrusted_source_rows.push(decoded.source_trust);
+                    if let Some(row) = decoded.teacher_probe {
+                        untrusted_teacher_rows.push(row);
+                    }
                     continue;
                 }
                 // Only trusted packs can authorize the no-LLM lane. Each must agree.
@@ -75,6 +81,10 @@ pub(crate) fn resolve_policy_manifest(
                 resolution.diagnostics.unsupported_schema_seen |= decoded.unsupported_schema;
                 resolution.diagnostics.engine_version_floor_seen |= decoded.engine_version_floor;
                 resolution.diagnostics.unknown_axis_seen |= decoded.unknown_axis_seen;
+                if let Some(row) = decoded.teacher_probe {
+                    resolution.teacher_probe_trusted = true;
+                    merge_teacher_probe_row(&mut resolution, row);
+                }
                 resolution.source_trust.merge(decoded.source_trust);
                 resolution.actor_ceilings.extend(decoded.actor_ceilings);
                 delegated_rows.extend(decoded.delegated_grants);
@@ -164,6 +174,17 @@ pub(crate) fn resolve_policy_manifest(
                         },
                     };
                 }
+                if let Some(limits) = decoded.pptx_comment_limits {
+                    // The shipped row is a DEFAULT, not a permanent ceiling:
+                    // an authenticated vault row may adjust it up or down.
+                    // Multiple owner rows and holder caps compose restrictively.
+                    let slot = if id == crate::gate::default_policy_manifest_id()? {
+                        &mut shipped_pptx_limits
+                    } else {
+                        &mut owner_pptx_limits
+                    };
+                    *slot = Some(slot.map_or(limits, |previous| previous.narrow(limits)));
+                }
                 resolution.hosted_tts.rows.extend(decoded.hosted_tts.rows);
 
                 if let Some(limits) = decoded.livequery_tracker_limits {
@@ -233,8 +254,15 @@ pub(crate) fn resolve_policy_manifest(
         }
     }
 
+    resolution.pptx_comment_limits = owner_pptx_limits.or(shipped_pptx_limits);
+
     for contribution in untrusted_source_rows {
         resolution.source_trust.restrict_only(contribution);
+    }
+    // Untrusted manifests may only RAISE a trusted vault floor, never seed
+    // the teacher policy by themselves or lower an existing holder floor.
+    for row in untrusted_teacher_rows {
+        merge_teacher_probe_row(&mut resolution, row);
     }
 
     // Duplicate owner rows are refused per manifest by
@@ -276,6 +304,15 @@ pub(crate) fn resolve_policy_manifest(
     }
 
     Ok(resolution)
+}
+
+fn merge_teacher_probe_row(resolution: &mut PolicyManifestResolution, row: TeacherProbeRow) {
+    let vault_min = resolution.teacher_probe_vault_min.get_or_insert(0);
+    *vault_min = (*vault_min).max(row.min_f1_millionths);
+    for (holder, minimum) in row.holders {
+        let floor = resolution.teacher_probe_holders.entry(holder).or_insert(0);
+        *floor = (*floor).max(minimum);
+    }
 }
 
 /// Folds a once-per-vault owner string across manifests. A second manifest

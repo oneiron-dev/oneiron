@@ -27,6 +27,17 @@ pub(super) fn hash_policy_frontier_v0(
     for predicate in &resolution.single_valued_predicates {
         hash_str(hasher, predicate);
     }
+    // A teacher floor change changes admission and invalidates approval
+    // snapshots; include the resolved row in the policy frontier too.
+    if let Some(vault_min) = resolution.teacher_probe_vault_min {
+        hash_str(hasher, "teacher_probe");
+        hash_u64(hasher, u64::from(vault_min));
+        hash_len(hasher, resolution.teacher_probe_holders.len());
+        for (holder, minimum) in &resolution.teacher_probe_holders {
+            hash_str(hasher, holder);
+            hash_u64(hasher, u64::from(*minimum));
+        }
+    }
     hash_budget_exhaustion_policy(hasher, resolution.on_budget_exhausted());
     // The RESOLVED posture, beside its budget sibling: it decides whether an
     // opted-out send holds or ships, so flipping it must move the frontier and
@@ -96,6 +107,20 @@ pub(super) fn hash_policy_frontier_v0(
         hash_str(hasher, "pack_install_policy");
         let value = policy.encode();
         hash_opt_value(hasher, Some(&value))?;
+    }
+    if let Some(limits) = resolution.pptx_comment_limits {
+        hash_str(hasher, "pptx_comment_limits:nested_narrowing");
+        for value in [
+            limits.max_patches,
+            limits.max_author_name_bytes,
+            limits.max_xml_bytes,
+            limits.max_xml_attributes,
+            limits.max_xml_namespaces,
+            limits.max_xml_depth,
+            limits.max_xml_nodes,
+        ] {
+            hash_u64(hasher, value as u64);
+        }
     }
     // An absent/empty hosted policy changes no decision and keeps the
     // established frontier bytes for manifests that never named this knob.
