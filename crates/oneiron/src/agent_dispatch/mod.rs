@@ -51,11 +51,10 @@ pub use self::codec::{
 pub use self::dispatch::AgentDispatcher;
 pub use self::types::{
     AGENT_DISPATCH_ATTEMPT_TYPE, AGENT_DISPATCH_COMPAT_DEPTH_CAP, AGENT_DISPATCH_INPUT_KEYS,
-    AGENT_DISPATCH_INPUT_SCHEMA_VERSION, AGENT_DISPATCH_MILESTONE_AGENT_KEY,
-    AgentDispatchInput, AgentDispatchOutcome,
-    AgentDispatchStatus, AgentDispatchTarget, AgentSpawnContext, AttenuatedDispatchTarget,
-    DEFAULT_BASE_LOGICAL_ID, DispatchAgent, DispatchHealer, HealerSlot, HealerSlotOutcome,
-    KillOutcome, KillProposal, restrict_agent_ceiling,
+    AGENT_DISPATCH_INPUT_SCHEMA_VERSION, AGENT_DISPATCH_MILESTONE_AGENT_KEY, AgentDispatchInput,
+    AgentDispatchOutcome, AgentDispatchStatus, AgentDispatchTarget, AgentSpawnContext,
+    AttenuatedDispatchTarget, DEFAULT_BASE_LOGICAL_ID, DispatchAgent, DispatchHealer, HealerSlot,
+    HealerSlotOutcome, KillOutcome, KillProposal, restrict_agent_ceiling,
 };
 
 #[cfg(test)]

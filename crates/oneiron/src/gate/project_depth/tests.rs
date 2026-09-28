@@ -689,6 +689,9 @@ fn malformed_policy_fails_the_depth_ceiling_closed_without_bricking_open() -> Re
     let root = vault.root_project()?;
     assert_eq!(vault.project(root)?.unwrap().depth, 0);
     let txn = vault.store.env.read_txn()?;
-    assert_eq!(crate::gate::resolve_project_depth_max(&vault.store, &txn)?, 0);
+    assert_eq!(
+        crate::gate::resolve_project_depth_max(&vault.store, &txn)?,
+        0
+    );
     Ok(())
 }

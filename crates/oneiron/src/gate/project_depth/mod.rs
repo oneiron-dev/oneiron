@@ -4,12 +4,12 @@ mod codec;
 mod fold;
 mod write;
 
+#[cfg(all(test, feature = "sync"))]
+pub(crate) use codec::seeded_default_carrier;
 pub(crate) use codec::{
     ProjectDepthContribution, canonical_birth, decode_contribution, is_project_depth_contribution,
     is_project_depth_id, validate_contribution_put,
 };
-#[cfg(all(test, feature = "sync"))]
-pub(crate) use codec::seeded_default_carrier;
 #[cfg(all(test, feature = "sync"))]
 pub(crate) use fold::resolve_creation_default;
 pub(crate) use fold::{

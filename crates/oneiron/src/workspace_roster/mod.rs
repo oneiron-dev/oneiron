@@ -110,8 +110,6 @@ pub use self::records::{
 mod tests;
 
 mod project;
-#[cfg(test)]
-pub(crate) use project::{create_project_signed_for_test, set_project_depth_signed_for_test};
 pub(crate) use project::{
     HUB_BELONGS_TO_LAMBDA, deindex_project_room, is_project_entity, is_project_type,
     normalize_project_body, reconcile_project_rooms, seed_root_project, validate_project_body,
@@ -122,6 +120,8 @@ pub use project::{
     PROJECT_TYPE_BYTE, ProjectBudgetShare, ProjectGoalRecord, ProjectMintReceipt, ProjectRecord,
     ProjectRole, ProjectRoom, ProjectRoomChange,
 };
+#[cfg(test)]
+pub(crate) use project::{create_project_signed_for_test, set_project_depth_signed_for_test};
 
 mod rooms;
 pub(crate) use rooms::admit_witness as admit_room_witness;

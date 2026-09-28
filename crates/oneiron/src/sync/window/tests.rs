@@ -4530,7 +4530,9 @@ fn pre_regrant_depth_edit_stays_refused_through_both_replay_doors() -> Result<()
     assert_eq!(stale.len(), 1);
     let signing = ed25519_dalek::SigningKey::from_bytes(&[0xC7; 32]);
     let bind: crate::authority::AuthorityLogEntry =
-        crate::authority::decode_authority_log_entry_body(&a.export_signed_authority_history()?[1])?;
+        crate::authority::decode_authority_log_entry_body(
+            &a.export_signed_authority_history()?[1],
+        )?;
     let mut revoke = crate::authority::AuthorityLogEntry {
         schema_version: bind.schema_version,
         vault_id: bind.vault_id,
@@ -4548,7 +4550,14 @@ fn pre_regrant_depth_edit_stays_refused_through_both_replay_doors() -> Result<()
         .sign(&crate::authority::authority_transcript(&revoke)?)
         .to_bytes()
         .to_vec();
-    a.put_authority_log_entry(&revoke, TimeRange { start: 102, end: 102 }, 102)?;
+    a.put_authority_log_entry(
+        &revoke,
+        TimeRange {
+            start: 102,
+            end: 102,
+        },
+        102,
+    )?;
     let mut regrant = crate::authority::AuthorityLogEntry {
         schema_version: bind.schema_version,
         vault_id: bind.vault_id,
@@ -4568,7 +4577,14 @@ fn pre_regrant_depth_edit_stays_refused_through_both_replay_doors() -> Result<()
         .sign(&crate::authority::authority_transcript(&regrant)?)
         .to_bytes()
         .to_vec();
-    a.put_authority_log_entry(&regrant, TimeRange { start: 103, end: 103 }, 103)?;
+    a.put_authority_log_entry(
+        &regrant,
+        TimeRange {
+            start: 103,
+            end: 103,
+        },
+        103,
+    )?;
     let history = a.export_signed_authority_history()?;
     assert_eq!(a.project(root_a)?.unwrap().depth, 0);
     let current = a.observed_write_actor(owner)?;
@@ -4619,8 +4635,8 @@ fn pre_regrant_depth_edit_stays_refused_through_both_replay_doors() -> Result<()
         assert_eq!(b.project(root_a)?.unwrap().depth, 10);
         let live = create_window_doc("regrant-live", &key);
         let materializer = Arc::new(Materializer::new());
-        let _subscriptions = observer
-            .then(|| bridge::register_observer_b(&live, &b, &materializer, key.as_str()));
+        let _subscriptions =
+            observer.then(|| bridge::register_observer_b(&live, &b, &materializer, key.as_str()));
         for (stage, depth) in [(&stage_stale, 0), (&stage_observed, 5)] {
             import_doc(&live, stage)?;
             if !observer {

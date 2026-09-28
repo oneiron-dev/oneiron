@@ -245,12 +245,10 @@ pub(crate) fn implicit_birth_applies(
     posture: HostingPrivacyPosture,
     project: EntityId,
 ) -> Result<bool> {
-    Ok(
-        store.vault_meta.get(txn, b"project.root.v1")?.as_deref()
-            == Some(project.as_bytes().as_slice())
-            || vault_is_unrooted(store, txn, posture)?
-            || predates_signed_birth(store, txn, posture, project)?,
-    )
+    Ok(store.vault_meta.get(txn, b"project.root.v1")?.as_deref()
+        == Some(project.as_bytes().as_slice())
+        || vault_is_unrooted(store, txn, posture)?
+        || predates_signed_birth(store, txn, posture, project)?)
 }
 
 /// The same rule for a stored UNSIGNED birth, plus a birth this replica wrote
