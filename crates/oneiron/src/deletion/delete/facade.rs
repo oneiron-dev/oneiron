@@ -73,10 +73,12 @@ impl Vault {
         Ok(outcome)
     }
 
-    /// Mechanical replay fixture for testing ARCH-0038 reason transitions on
-    /// a DAG record without claiming to exercise the actor-bound room door.
+    /// Mechanical ARCH-0038 deletion of a room record without the actor-bound
+    /// room door: for replay reason transitions and for legacy fixtures that
+    /// hold no policy manifest (where the door fails closed). Never evidence
+    /// of room authority.
     #[cfg(test)]
-    pub(crate) fn delete_room_record_unchecked_for_replay_test(
+    pub(crate) fn delete_room_record_unchecked_for_test(
         &self,
         id: &EntityId,
         reason: DeleteReason,

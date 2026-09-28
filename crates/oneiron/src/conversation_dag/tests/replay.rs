@@ -277,7 +277,7 @@ fn typed_dag_records_refuse_generic_overwrite_and_delete_recreation() {
         ErrorKind::InvalidConversationDag,
     );
     vault
-        .delete_room_record_unchecked_for_replay_test(&root, crate::DeleteReason::UserHardDelete)
+        .delete_room_record_unchecked_for_test(&root, crate::DeleteReason::UserHardDelete)
         .unwrap();
     drop(vault);
     let vault = crate::Vault::open(dir.path(), crate::VaultConfig::default()).unwrap();
@@ -329,7 +329,7 @@ fn adoption_pins_an_imported_root_without_freezing_unadopted_turns() {
         ErrorKind::InvalidConversationDag,
     );
     vault
-        .delete_room_record_unchecked_for_replay_test(&root, crate::DeleteReason::UserHardDelete)
+        .delete_room_record_unchecked_for_test(&root, crate::DeleteReason::UserHardDelete)
         .unwrap();
     assert_eq!(
         vault
@@ -348,10 +348,10 @@ fn gdpr_delete_after_user_delete_purges_a_dag_record() {
         .unwrap()
         .id;
     vault
-        .delete_room_record_unchecked_for_replay_test(&id, crate::DeleteReason::UserDelete)
+        .delete_room_record_unchecked_for_test(&id, crate::DeleteReason::UserDelete)
         .unwrap();
     vault
-        .delete_room_record_unchecked_for_replay_test(&id, crate::DeleteReason::GdprDelete)
+        .delete_room_record_unchecked_for_test(&id, crate::DeleteReason::GdprDelete)
         .unwrap();
     assert!(vault.get(&id).unwrap().is_none());
 }
