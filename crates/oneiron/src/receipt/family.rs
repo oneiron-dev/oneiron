@@ -461,15 +461,7 @@ fn gate_receipts(vault: &Vault, query: &ReceiptQuery) -> Result<Vec<ReceiptRecor
         let page_len = decisions.len();
         before = decisions.last().map(|decision| decision.decision_id);
         for decision in decisions {
-            let mut receipt = gate_decision_receipt(&decision);
-            if let Some(predicate) = decision
-                .receipt_reasons
-                .iter()
-                .find_map(|token| crate::self_heal::tripwires::normal_baseline_predicate(token))
-            {
-                receipt.fields.insert("predicate".into(), predicate.into());
-                receipt.fields.insert("criticality".into(), "normal".into());
-            }
+            let receipt = gate_decision_receipt_from_base(&decision);
             if query.matches(&receipt) {
                 if query.job_ref.is_none() {
                     // Decision ids define ledger traversal, but connector-key
@@ -490,6 +482,21 @@ fn gate_receipts(vault: &Vault, query: &ReceiptQuery) -> Result<Vec<ReceiptRecor
         }
     }
     Ok(receipts)
+}
+
+/// Exact base-ledger Gate projection shared by receipt queries and the
+/// tier-1 producer witness, including the normal-baseline annotations.
+pub(crate) fn gate_decision_receipt_from_base(record: &GateDecisionRecord) -> ReceiptRecord {
+    let mut receipt = gate_decision_receipt(record);
+    if let Some(predicate) = record
+        .receipt_reasons
+        .iter()
+        .find_map(|token| crate::self_heal::tripwires::normal_baseline_predicate(token))
+    {
+        receipt.fields.insert("predicate".into(), predicate.into());
+        receipt.fields.insert("criticality".into(), "normal".into());
+    }
+    receipt
 }
 
 pub(crate) fn gate_decision_receipt(record: &GateDecisionRecord) -> ReceiptRecord {

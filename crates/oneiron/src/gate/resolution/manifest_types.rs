@@ -169,6 +169,7 @@ pub(crate) struct PolicyManifestResolution {
     pub(crate) diagnostics: PolicyManifestDiagnostics,
     pub(crate) room_thread: Option<crate::gate::RoomThreadManifest>,
     pub(crate) diagnostic_bounds: Option<crate::self_heal::tripwires::TripwireBounds>,
+    pub(crate) failure_signal_policy: Vec<crate::failure_signals::policy::Row>,
     pub(crate) livequery_tracker_limits: Option<crate::gate::tracker_limits::PolicyTrackerLimits>,
     pub(in crate::gate) teacher_probe_trusted: bool,
     pub(in crate::gate) teacher_probe_vault_min: Option<u32>,

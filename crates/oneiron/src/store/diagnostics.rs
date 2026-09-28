@@ -16,6 +16,7 @@
 
 use crate::attempt_queue::{AttemptQueueCleanupMetrics, AttemptQueueCleanupMetricsSnapshot};
 use crate::bm25::{Bm25Diagnostics, Bm25DiagnosticsSnapshot};
+use crate::failure_signals::FailureSignalCounts;
 use crate::gate::GateMetrics;
 
 /// The diagnostic counters of one open vault.
@@ -33,6 +34,8 @@ pub struct Diagnostics {
     pub(crate) gate: GateMetrics,
     /// Attempt-queue lease-cleanup runs, stale requeues and retry reasons.
     pub(crate) attempt_queue: AttemptQueueCleanupMetrics,
+    /// Versioned tier-1 failure counts for this open vault.
+    pub(crate) failure_signals: FailureSignalCounts,
 }
 
 impl Diagnostics {

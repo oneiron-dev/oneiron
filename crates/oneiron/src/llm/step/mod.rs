@@ -27,6 +27,7 @@ mod types;
 // one level deeper `super` is this module, so it re-exports them unchanged.
 use super::{BudgetLease, BudgetSettlement, LlmUsage};
 
+pub(crate) use self::execute::ExecutedModelWitness;
 pub use self::execute::{call_as_step, call_as_step_with_fallbacks};
 pub use self::peer_wait::{
     PeerResultWaitBinding, reconcile_peer_result_signals, register_peer_result_wait,
@@ -48,7 +49,9 @@ pub(crate) use self::step_only::{
     signal_step_wait_in_txn,
 };
 
-pub(crate) use self::step_claim::{deindex_dreamer_step_claim, index_dreamer_step_claim_for_put};
+pub(crate) use self::step_claim::{
+    deindex_dreamer_step_claim, index_dreamer_step_claim_for_put, terminal_step_identity,
+};
 
 #[cfg(test)]
 mod step_only_tests;
