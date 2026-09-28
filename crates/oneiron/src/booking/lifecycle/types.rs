@@ -147,6 +147,10 @@ pub struct ConfirmSpec {
     pub session_key: SessionKey,
     #[serde(with = "entity_ref_serde")]
     pub booker_contact: EntityId,
+    /// Short pre-confirm intake; persisted with the confirmation context so
+    /// delivery and later progressive intake can read the same answers.
+    #[serde(default)]
+    pub intake: Vec<crate::booking::agent_api::BookingIntakeAnswer>,
     /// Retry hygiene only.
     pub idempotency_key: Option<String>,
 }

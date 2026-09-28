@@ -633,6 +633,7 @@ async fn execute_confirm(
             hold_token: OpaqueLifecycleToken(input.hold_token),
             session_key,
             booker_contact,
+            intake: input.intake,
             idempotency_key: Some(input.idempotency_key),
         }),
         Some(session_key),

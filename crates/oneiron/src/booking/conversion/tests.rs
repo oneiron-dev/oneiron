@@ -88,6 +88,7 @@ fn snippet_requires_solved_slots_and_explicit_real_zone() {
             Some(BookingSnippetSelection {
                 event_type: mask.event_type.clone(),
                 start_utc: start,
+                end_utc: start + 1_800,
                 visitor_tz: "America/Vancouver".to_owned(),
             })
         );
@@ -96,7 +97,7 @@ fn snippet_requires_solved_slots_and_explicit_real_zone() {
         vec![],
         vec![selected[0], selected[0]],
         vec![1],
-        vec![selected[0], selected[1], mask.slots[3].start_utc],
+        vec![selected[0], selected[1], 1],
     ] {
         assert!(booking_snippet_links(&mask, &rejected, "America/Vancouver", &page, &url).is_err());
     }
@@ -172,6 +173,7 @@ fn snippet_disambiguates_the_two_instants_in_a_fall_back_fold() {
             Some(BookingSnippetSelection {
                 event_type: mask.event_type.clone(),
                 start_utc: start,
+                end_utc: start + 1_800,
                 visitor_tz: "America/New_York".to_owned(),
             })
         );

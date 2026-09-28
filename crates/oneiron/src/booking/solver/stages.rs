@@ -366,6 +366,7 @@ pub(super) fn route_host_masks(
                 start_utc,
                 end_utc,
                 host_refs,
+                host_zones: Vec::new(),
             })
         })
         .collect()
@@ -423,6 +424,22 @@ pub(super) fn rank_and_emit(
             ranked
                 .iter()
                 .any(|slot| slot.start_utc == binding.start_utc && slot.end_utc == binding.end_utc)
+        })
+        .filter_map(|mut binding| {
+            // Bind the exact host zones chosen by routing to this solve.
+            // Missing configuration is not a reason to emit an unzoned offer.
+            binding.host_zones = binding
+                .host_refs
+                .iter()
+                .map(|reference| {
+                    config
+                        .hosts
+                        .iter()
+                        .find(|host| host.host_ref.to_hex() == *reference)
+                        .map(|host| host.host_tz.clone())
+                })
+                .collect::<Option<Vec<_>>>()?;
+            Some(binding)
         })
         .collect();
     SolveResult {

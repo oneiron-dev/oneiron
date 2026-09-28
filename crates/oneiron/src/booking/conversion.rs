@@ -132,10 +132,12 @@ pub struct BookingSnippetLink {
 pub struct BookingSnippetSelection {
     pub event_type: EventTypeKey,
     pub start_utc: u64,
+    /// Exact half-open end, so a query cannot swap duration or event type.
+    pub end_utc: u64,
     pub visitor_tz: String,
 }
 
-/// Generate one or two concrete linked times, never a naked URL or an
+/// Generate bounded concrete linked times, never a naked URL or an
 /// unverified wall-clock guess. This does not reserve the selected slots.
 /// The trusted host supplies the public-face URL and renders copy around these
 /// links; the engine supplies no product prose or per-vault JSON route.
@@ -146,8 +148,14 @@ pub fn booking_snippet_links(
     page_token: &PublicBookingPageToken,
     public_page_url: &str,
 ) -> Result<Vec<BookingSnippetLink>, BookingError> {
-    if !(1..=2).contains(&selected_start_utc.len())
-        || selected_start_utc.len() == 2 && selected_start_utc[0] == selected_start_utc[1]
+    if selected_start_utc.is_empty()
+        || selected_start_utc.len() > mask.slots.len().min(128)
+        || selected_start_utc
+            .iter()
+            .copied()
+            .collect::<std::collections::BTreeSet<_>>()
+            .len()
+            != selected_start_utc.len()
     {
         return Err(BookingError::Surface(
             "invalid booking snippet selection".to_owned(),
@@ -196,9 +204,10 @@ pub fn booking_snippet_links(
                     utc.y, utc.mo, utc.d, utc.h, utc.mi
                 ),
                 href: format!(
-                    "{public_page_url}?event_type={}&start_utc={}&visitor_tz={}",
+                    "{public_page_url}?event_type={}&start_utc={}&end_utc={}&visitor_tz={}",
                     encode_component(&mask.event_type.0),
                     slot.start_utc,
+                    slot.end_utc,
                     encode_component(visitor_tz),
                 ),
             })
@@ -218,14 +227,26 @@ pub fn booking_snippet_selection_from_url(
     if !valid_public_page_url(page_url, page_token) {
         return None;
     }
+    parse_booking_snippet_query(query)
+}
+
+/// The one closed query parser shared by host public-face links and the
+/// engine's JSON model route. A query is a hint, never booking authority.
+#[must_use]
+pub fn parse_booking_snippet_query(query: &str) -> Option<BookingSnippetSelection> {
+    if query.len() > 512 {
+        return None;
+    }
     let mut parts = query.split('&');
     let event_type = decode_component(parts.next()?.strip_prefix("event_type=")?)?;
     let start_utc = parts.next()?.strip_prefix("start_utc=")?.parse().ok()?;
+    let end_utc = parts.next()?.strip_prefix("end_utc=")?.parse().ok()?;
     let visitor_tz = decode_component(parts.next()?.strip_prefix("visitor_tz=")?)?;
     if parts.next().is_some()
         || event_type.trim().is_empty()
         || event_type.len() > 64
         || visitor_tz.len() > 64
+        || start_utc >= end_utc
         || utc_to_wall(start_utc, &visitor_tz).is_err()
     {
         return None;
@@ -233,6 +254,7 @@ pub fn booking_snippet_selection_from_url(
     Some(BookingSnippetSelection {
         event_type: EventTypeKey(event_type),
         start_utc,
+        end_utc,
         visitor_tz,
     })
 }
@@ -298,3 +320,21 @@ fn decode_component(value: &str) -> Option<String> {
 #[cfg(test)]
 #[path = "conversion/tests.rs"]
 mod tests;
+// BK-07's strict slot hint, configurable wake and live-vault due door extend
+// the owner-authored landing/preview data without duplicating its authority.
+#[path = "conversion/policy.rs"]
+mod policy;
+#[path = "conversion/ux.rs"]
+mod ux;
+pub use self::policy::{
+    BookingConversionPolicy, BookingConversionPolicyRow, BookingPolicyPrecedence,
+    BookingPolicyScope, resolve_booking_conversion_rows,
+};
+pub use self::ux::{
+    BookingIntakeStages, BookingReminder, BookingShortlist, BookingSlotLinkHint,
+    BookingSnippetCopy, ConfigurableReminderWake, ConversionError, MeetingLocation, ReminderAction,
+    ReminderStep, RepeatNoShowOffer, ZonedBookingTime, booking_display_zones, booking_due_reminder,
+    booking_intake_stages, booking_reminder_wakes, booking_reminders, booking_shortlist,
+    booking_slots_snippet, booking_suggested_slot, booking_zoned_time, parse_booking_slot_link,
+    repeat_no_show_offer,
+};

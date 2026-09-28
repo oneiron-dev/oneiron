@@ -73,6 +73,16 @@ pub struct ImipEmitRequest {
 /// [`CalendarError::TimestampOutOfRange`]) when the zone label or an instant
 /// does not resolve.
 pub fn emit_imip_ics(request: &ImipEmitRequest) -> Result<Vec<u8>, CalendarError> {
+    emit_imip_ics_with_organizer_zones(request, &[])
+}
+
+/// Adds the selected organizer-side IANA zones to an otherwise ordinary iMIP
+/// document. The attendee's selected zone remains `request.tz_label`; all
+/// instants stay UTC. Every zone is validated by the same calendar border.
+pub(crate) fn emit_imip_ics_with_organizer_zones(
+    request: &ImipEmitRequest,
+    organizer_zones: &[String],
+) -> Result<Vec<u8>, CalendarError> {
     let uid = require_emit_text(&request.uid, "UID")?;
     let organizer = require_emit_text(&request.organizer, "ORGANIZER")?;
     if request.starts_at_utc > request.ends_at_utc {
@@ -82,6 +92,15 @@ pub fn emit_imip_ics(request: &ImipEmitRequest) -> Result<Vec<u8>, CalendarError
     // Validate the label against the IANA database BEFORE anything is
     // rendered: an unknown zone is a typed refusal, never a silent UTC event.
     super::tz::utc_to_wall(request.starts_at_utc, &tz_label)?;
+    let mut organizer_zones = organizer_zones
+        .iter()
+        .map(|zone| require_emit_text(zone, "organizer time zone"))
+        .collect::<Result<Vec<_>, _>>()?;
+    organizer_zones.sort();
+    organizer_zones.dedup();
+    for zone in &organizer_zones {
+        super::tz::utc_to_wall(request.starts_at_utc, zone)?;
+    }
 
     let mut attendees = request
         .attendees
@@ -109,6 +128,12 @@ pub fn emit_imip_ics(request: &ImipEmitRequest) -> Result<Vec<u8>, CalendarError
         format!("DTEND:{}", ics_utc_timestamp(request.ends_at_utc)?),
         format!("{IMIP_EVENT_TZID_PROPERTY}:{}", escape_ics_text(&tz_label)),
     ];
+    for zone in &organizer_zones {
+        lines.push(format!(
+            "X-ONEIRON-ORGANIZER-TZID:{}",
+            escape_ics_text(zone)
+        ));
+    }
     // SUMMARY is the one optional property: an empty one renders no line at
     // all rather than an empty value, and a present one is bounded like every
     // other rendered value.
@@ -276,6 +301,33 @@ mod tests {
             tz_label: "Europe/Warsaw".to_owned(),
             dtstamp_utc: 1_800_000_000,
         }
+    }
+
+    #[test]
+    fn organizer_zones_render_explicitly_and_fail_closed() {
+        let request = emit_request(CalendarInviteMethod::Request, 0);
+        let text = String::from_utf8(
+            emit_imip_ics_with_organizer_zones(
+                &request,
+                &["America/New_York".to_owned(), "America/New_York".to_owned()],
+            )
+            .expect("zones"),
+        )
+        .unwrap();
+        assert!(text.contains("X-WR-TIMEZONE:Europe/Warsaw\r\n"));
+        assert_eq!(
+            text.matches("X-ONEIRON-ORGANIZER-TZID:America/New_York\r\n")
+                .count(),
+            1
+        );
+        assert!(matches!(
+            emit_imip_ics_with_organizer_zones(&request, &["Unknown/Zone".to_owned()]),
+            Err(CalendarError::UnknownTimeZone { .. })
+        ));
+        assert!(matches!(
+            emit_imip_ics_with_organizer_zones(&request, &["UTC\r\nATTENDEE:evil".to_owned()]),
+            Err(CalendarError::ImipEmit { .. })
+        ));
     }
 
     #[test]

@@ -65,6 +65,7 @@ mod types;
 #[cfg(test)]
 mod tests;
 
+pub(in crate::booking) use self::claim::confirmed_start_for_reminder;
 pub use self::claim::{
     BookingConfirmationContext, booking_claim_class_descriptors, booking_confirmation_context,
     claim_class_descriptors, is_booking_family_claim_predicate,
