@@ -2804,8 +2804,11 @@ async fn diagnostic_update_is_refused_before_live_state_persistence_and_relay() 
     let vault = open_vault(dir.path());
     let (addr, server, handle) =
         spawn_server(vault.clone(), config_with_secret(Some("diagnostic-secret"))).await;
-    let mut sender = connect_root(addr, &server, "diagnostic-secret").await.unwrap();
-    let mut receiver = connect_subscribed_owner(addr, &server, "diagnostic-secret", "2026-02").await;
+    let mut sender = connect_root(addr, &server, "diagnostic-secret")
+        .await
+        .unwrap();
+    let mut receiver =
+        connect_subscribed_owner(addr, &server, "diagnostic-secret", "2026-02").await;
     let _ = next_binary(&mut sender).await;
 
     let author = LoroDoc::new();
