@@ -5237,6 +5237,29 @@ fn context_recipe_workflow_keeps_manifest_attribution_after_improver_edit() -> R
                 0.40
             })
         }
+        fn structural_audit(&self, _task: &str, _instructions: &str) -> Result<f32> {
+            Ok(0.5)
+        }
+        fn blind_preference(
+            &self,
+            _task: &str,
+            _receipts: &[String],
+        ) -> Result<Vec<BlindPreference>> {
+            Ok(vec![BlindPreference {
+                pair_ref: "fixture-pair".to_owned(),
+                preferred: PreferredResponse::First,
+            }])
+        }
+        fn contrastive_audit(
+            &self,
+            _case: &HeldOutReplayCase<'_>,
+            _blind: &[BlindPreference],
+        ) -> Result<f32> {
+            Ok(0.5)
+        }
+        fn predict_task_success(&self, case: &HeldOutReplayCase<'_>) -> Result<Vec<f32>> {
+            Ok(vec![0.5; case.held_out_receipts.len()])
+        }
     }
     let (_tmp, vault) = temp_vault();
     let skill = EntityId::now();

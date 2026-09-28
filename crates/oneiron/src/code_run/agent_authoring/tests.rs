@@ -121,7 +121,10 @@ fn guest_agents_put_reaches_the_leased_host_and_fences_stale_leases() -> Result<
         1.0,
         false,
         true,
-        Value::Map(Vec::new()),
+        Value::Map(vec![(
+            Value::from("definedVia"),
+            Value::from("define_agent"),
+        )]),
         None,
         true,
         None,

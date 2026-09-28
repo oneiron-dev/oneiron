@@ -223,6 +223,7 @@ fn callable_sweep_projects_pair_claim_and_shared_selection_from_real_invocations
         else {
             panic!("leased callable attempt")
         };
+        vault.bind_actor_attempt(row.id, &actor)?;
         execute_callable_skill(
             &vault,
             &leased,

@@ -375,6 +375,14 @@ pub(crate) fn attributed_outcome_results(
         outcomes.push((receipt.to_owned(), decode_outcome_win(&raw)?));
     }
     outcomes.sort_by(|a, b| a.0.cmp(&b.0));
+    // One receipt is one outcome for the split, even when several executors
+    // invoked a callable under it; a loss outranks a win, as in the ledger.
+    outcomes.dedup_by(|next, kept| {
+        next.0 == kept.0 && {
+            kept.1 &= next.1;
+            true
+        }
+    });
     Ok(outcomes)
 }
 
