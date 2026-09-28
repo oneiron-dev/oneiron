@@ -155,3 +155,5 @@ pub(crate) const FIRST_PARTY_CONNECTOR_ACTOR_ID: [u8; ENTITY_ID_LEN] = [0xE1; EN
 pub(super) const POLICY_CONNECTOR_CLASS_CARRY_KEY: &str = "connector_class_carry";
 pub(super) const POLICY_CONNECTOR_CLASS_ROLE_KEY: &str = "connector_class_role";
 pub(super) const POLICY_CONNECTOR_CLASS_PRECEDENCE_KEY: &str = "connector_class_precedence";
+/// Trusted policy rows for cross-vault ask limits, surface and retry cadence.
+pub(super) const POLICY_ASK_POLICY_KEY: &str = "ask_policy";

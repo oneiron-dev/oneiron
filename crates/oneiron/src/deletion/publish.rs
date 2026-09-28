@@ -267,6 +267,8 @@ impl Vault {
                         Vec::new()
                     },
                     bytes: 0,
+
+                    revision_events: Vec::new(),
                 },
                 &crate::sync::bridge::OriginMark {
                     conn_id: None,
