@@ -2524,6 +2524,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/batch/actor_content.rs",
+     "purpose": "One actor-bound batch effect set, derived from normalized local operations",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/batch/agent_definition_create.rs",
      "purpose": "—",
      "surface": {
@@ -3106,7 +3116,7 @@
      "path": "src/batch/mod.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 23,
+      "crate-vis": 24,
       "mod": 1,
       "re-export": 2
      }
@@ -3416,7 +3426,7 @@
      "path": "src/batch/txn_builder.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 14,
+      "crate-vis": 15,
       "fn": 15,
       "struct": 1
      }
@@ -16592,6 +16602,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/federation/content_write.rs",
+     "purpose": "Actor-bound content transaction interface",
+     "surface": {
+      "crate-vis": 15
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [
@@ -16627,7 +16647,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [
       "FederationGrant",
@@ -16645,6 +16665,25 @@
       "fn": 18,
       "struct": 2
      }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/federation/grant_policy.rs",
+     "purpose": "Vault-resident default capability rows for member-grant minting",
+     "surface": {
+      "crate-vis": 7,
+      "fn": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "src/federation/grant_policy/tests.rs",
+     "purpose": "—",
+     "surface": {}
     },
     {
      "bucket": "s",
@@ -16674,13 +16713,35 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [
+      "SharedVaultWrite"
+     ],
+     "path": "src/federation/membership_gate.rs",
+     "purpose": "Transaction-bound shared-vault membership write authorization",
+     "surface": {
+      "crate-vis": 5,
+      "enum": 1,
+      "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/federation/membership_gate_tests.rs",
+     "purpose": "—",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [],
      "path": "src/federation/mod.rs",
      "purpose": "Federation grant record substrate",
      "surface": {
-      "crate-vis": 9,
+      "crate-vis": 12,
       "mod": 2,
-      "re-export": 11
+      "re-export": 12
      }
     },
     {
@@ -16744,11 +16805,19 @@
      "path": "src/federation/record_scope.rs",
      "purpose": "Digest-bound record-position stamps and scoped read/delete/export doors",
      "surface": {
-      "crate-vis": 5,
+      "crate-vis": 7,
       "enum": 1,
       "fn": 4,
       "struct": 1
      }
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/federation/record_scope/tests.rs",
+     "purpose": "—",
+     "surface": {}
     },
     {
      "bucket": "m",
@@ -16853,6 +16922,7 @@
      "path": "src/federation/shared_creation.rs",
      "purpose": "Creation-time membership defaults, materialized once as explicit grant/policy rows",
      "surface": {
+      "crate-vis": 1,
       "enum": 1,
       "fn": 3,
       "struct": 2
@@ -17386,7 +17456,7 @@
      "purpose": "DEC-0005 Gate policy manifest resolver",
      "surface": {
       "crate-vis": 31,
-      "re-export": 4
+      "re-export": 5
      }
     },
     {
@@ -17787,6 +17857,14 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/gate/tests/tracker_limits.rs",
+     "purpose": "Policy rows bound the server's revision-provenance lifecycle",
+     "surface": {}
+    },
+    {
      "bucket": "m",
      "kind": "test",
      "notable": [],
@@ -17809,6 +17887,20 @@
      "path": "src/gate/tests/witness_message.rs",
      "purpose": "Witness messages: ceilings, envelope binding, and replicated refusal",
      "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "LiveQueryTrackerLimits"
+     ],
+     "path": "src/gate/tracker_limits.rs",
+     "purpose": "Policy-manifest operating budgets for retained live-query provenance",
+     "surface": {
+      "crate-vis": 4,
+      "fn": 1,
+      "struct": 1
+     }
     },
     {
      "bucket": "s",
@@ -22115,7 +22207,7 @@
      "surface": {
       "crate-vis": 8,
       "mod": 2,
-      "re-export": 21
+      "re-export": 23
      }
     },
     {
@@ -22395,7 +22487,7 @@
      "path": "src/memory/support.rs",
      "purpose": "Shared facade plumbing: [`Memory`] itself, actor/scope verification, JSON<->MessagePack wire encoding, and…",
      "surface": {
-      "crate-vis": 23,
+      "crate-vis": 25,
       "fn": 6,
       "struct": 1
      }
@@ -22409,7 +22501,7 @@
      "surface": {}
     },
     {
-     "bucket": "L",
+     "bucket": "XL",
      "kind": "test",
      "notable": [],
      "path": "src/memory/tests/commit_claims.rs",
@@ -22464,6 +22556,14 @@
      "notable": [],
      "path": "src/memory/tests/session_witness.rs",
      "purpose": "Session overlay witness, room-shell claims, flip/replay races, and promoted turns",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "src/memory/tests/shared_effects.rs",
+     "purpose": "Shared-vault cross-door content effects, independent of facade spelling",
      "surface": {}
     },
     {
@@ -23243,6 +23343,14 @@
      "surface": {
       "crate-vis": 3
      }
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/note/shared_membership_tests.rs",
+     "purpose": "Caller-observable shared-vault NOTE write-denial regressions",
+     "surface": {}
     },
     {
      "bucket": "s",
@@ -31893,7 +32001,7 @@
      "path": "src/sync/bridge/entities.rs",
      "purpose": "Entity-delta materialization and the per-entity blob writer",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 7
      }
     },
     {
@@ -31903,8 +32011,8 @@
      "path": "src/sync/bridge/mod.rs",
      "purpose": "Entity bridge: CRDT ↔ LMDB materialization observers",
      "surface": {
-      "crate-vis": 9,
-      "re-export": 3
+      "crate-vis": 10,
+      "re-export": 4
      }
     },
     {
@@ -31936,6 +32044,19 @@
      "purpose": "Transactional Parent admission, exact pending work and dependency wake-up",
      "surface": {
       "crate-vis": 7
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "RevisionEvent"
+     ],
+     "path": "src/sync/bridge/provenance.rs",
+     "purpose": "Commit-bound identity for LMDB-to-Loro entity mirrors",
+     "surface": {
+      "crate-vis": 3,
+      "enum": 1
      }
     },
     {
@@ -34231,7 +34352,7 @@
      "path": "src/vault/entities.rs",
      "purpose": "Vault entity, vector, short-id and type-index reads and writes",
      "surface": {
-      "crate-vis": 13,
+      "crate-vis": 14,
       "fn": 17,
       "struct": 1
      }
@@ -34255,7 +34376,7 @@
      "purpose": "Idle debounce and atomic BM25/vector/frontier publication",
      "surface": {
       "crate-vis": 1,
-      "fn": 5
+      "fn": 6
      }
     },
     {
@@ -34320,6 +34441,8 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
+      "EntityRevisionChange",
+      "IndexedPublication",
       "IndexedRefreshReport",
       "IndexedRevisionEmbedder",
       "IndexedRevisionInput",
@@ -34333,7 +34456,7 @@
      "surface": {
       "enum": 1,
       "fn": 3,
-      "struct": 5,
+      "struct": 7,
       "trait": 1
      }
     },
@@ -34346,7 +34469,7 @@
      "path": "src/vault/mod.rs",
      "purpose": "Top-level `Vault` API: the crate's main entry point for all LMDB-backed entity / vector / edge / text /…",
      "surface": {
-      "crate-vis": 6,
+      "crate-vis": 7,
       "re-export": 5,
       "struct": 1
      }
@@ -35395,7 +35518,7 @@
      "surface": {}
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "test",
      "notable": [],
      "path": "src/workspace_roster/tests/authorization.rs",
@@ -36270,7 +36393,7 @@
      "purpose": "Engine-side AR-3 autoreason campaign configuration and report join"
     },
     "batch": {
-     "files": 89,
+     "files": 90,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -36788,9 +36911,9 @@
      "purpose": "ES-07: the learned AUTO-mode decider behind ONE-1719's fan-out seam"
     },
     "federation": {
-     "files": 22,
+     "files": 28,
      "impl_vault": true,
-     "largest_src_bucket": "m",
+     "largest_src_bucket": "L",
      "layout": "dir",
      "purpose": "Federation grant record substrate"
     },
@@ -36809,7 +36932,7 @@
      "purpose": "—"
     },
     "gate": {
-     "files": 82,
+     "files": 84,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -36963,7 +37086,7 @@
      "purpose": "—"
     },
     "memory": {
-     "files": 92,
+     "files": 93,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -36977,7 +37100,7 @@
      "purpose": "Durable batched speculation over real detached worktrees"
     },
     "note": {
-     "files": 33,
+     "files": 34,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "file+dir",
@@ -37362,7 +37485,7 @@
      "purpose": "ARCH-0038 historical-carrier sweep executor — ONE-1087 / ONE-1091 phase 1 (manual trigger via…"
     },
     "sync": {
-     "files": 104,
+     "files": 105,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -37495,10 +37618,10 @@
      "purpose": "Write-path stamping: `WriteActor`/`WriteProvenance`/`WriteEnvelope`/`ClaimCandidate` + evidence stamping"
     }
    },
-   "over_bar": 4,
+   "over_bar": 5,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2229,
-   "test_files": 758
+   "source_files": 2235,
+   "test_files": 764
   },
   "oneiron-android": {
    "files": [
@@ -43747,7 +43870,7 @@
      "path": "src/livequery/connection.rs",
      "purpose": "Socket attachment and bounded reconnect retention",
      "surface": {
-      "crate-vis": 12
+      "crate-vis": 13
      }
     },
     {
@@ -43765,7 +43888,7 @@
      "kind": "src",
      "notable": [],
      "path": "src/livequery/history.rs",
-     "purpose": "Retained scoped app payloads live in the cursor document, not the delivery ring",
+     "purpose": "Retained scoped app payloads live in a separate journal, not the cursor document",
      "surface": {
       "crate-vis": 6
      }
@@ -43789,13 +43912,23 @@
      "surface": {}
     },
     {
-     "bucket": "L",
+     "bucket": "XL",
      "kind": "test",
      "notable": [],
      "path": "src/livequery/production_tests.rs",
      "purpose": "Real vault, verified slips and production facade/source; no injected read source",
      "surface": {
       "crate-vis": 8
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/livequery/publication.rs",
+     "purpose": "Revision-keyed publication lifecycle; one bounded owner per logical session",
+     "surface": {
+      "crate-vis": 7
      }
     },
     {
@@ -43851,11 +43984,11 @@
      "path": "src/livequery/subscriptions/delivery.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 2
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [],
      "path": "src/livequery/subscriptions/mod.rs",
@@ -44559,7 +44692,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/server/embedding.rs",
@@ -45082,9 +45215,9 @@
      "purpose": "—"
     },
     "livequery": {
-     "files": 18,
+     "files": 19,
      "impl_vault": false,
-     "largest_src_bucket": "m",
+     "largest_src_bucket": "L",
      "layout": "file+dir",
      "purpose": "App-tier framing and coarse live-query state, separate from WindowSync"
     },
@@ -45173,9 +45306,9 @@
      "purpose": "RC42 observation-only wire counters"
     }
    },
-   "over_bar": 0,
+   "over_bar": 1,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 237,
+   "source_files": 238,
    "test_files": 99
   },
   "oneiron-uniffi": {
