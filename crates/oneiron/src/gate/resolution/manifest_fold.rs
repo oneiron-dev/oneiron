@@ -112,6 +112,9 @@ pub(crate) fn resolve_policy_manifest(
                     merge_teacher_probe_row(&mut resolution, row);
                 }
                 resolution.source_trust.merge(decoded.source_trust);
+                resolution
+                    .experiment_selection
+                    .extend(decoded.experiment_selection);
                 resolution.actor_ceilings.extend(decoded.actor_ceilings);
                 delegated_rows.extend(decoded.delegated_grants);
                 resolution.scoped_grants.extend(decoded.scoped_grants);
@@ -236,6 +239,9 @@ pub(crate) fn resolve_policy_manifest(
                     };
                     *slot = Some(slot.map_or(limits, |previous| previous.narrow(limits)));
                 }
+                resolution
+                    .booking_conversion_rows
+                    .extend(decoded.booking_conversion_rows);
                 resolution.hosted_tts.rows.extend(decoded.hosted_tts.rows);
                 if let Some(bounds) = decoded.docedit_resource_policy {
                     let baseline = crate::gate::docedit_resource::DoceditResourcePolicy::shipped();
@@ -299,6 +305,13 @@ pub(crate) fn resolve_policy_manifest(
                         resolution
                             .proposal_check_threshold
                             .map_or(threshold, |old| old.min(threshold)),
+                    );
+                }
+                if let Some(limits) = decoded.goal_limits {
+                    resolution.goal_limits = Some(
+                        resolution
+                            .goal_limits
+                            .map_or(limits, |old| old.restrict(limits)),
                     );
                 }
                 if let Some(limits) = decoded.voice_ref_limits {
@@ -392,7 +405,9 @@ pub(crate) fn resolve_policy_manifest(
     if resolution.hosted_tts.rows.len() > usize::from(u16::MAX) + 1 {
         resolution.diagnostics.malformed_manifest_seen = true;
     }
-    if resolution.budget_policy.rows().len() > usize::from(u16::MAX) + 1 {
+    if resolution.budget_policy.rows().len() > usize::from(u16::MAX) + 1
+        || resolution.booking_conversion_rows.len() > 128
+    {
         resolution.diagnostics.malformed_manifest_seen = true;
     }
 

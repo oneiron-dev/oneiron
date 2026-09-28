@@ -6,10 +6,10 @@
 //! `calendar.tz` claims CAL-00 stores. This module is the single place those
 //! two representations meet.
 //!
-//! It is therefore also the single place an IANA database lives. `chrono` and
-//! `chrono-tz` are private implementation details here: no third-party type
-//! appears in a public signature or a public field, so swapping the database
-//! is a change to this file and nothing else.
+//! It is therefore also the single place an IANA database lives. The embedded
+//! 2026c TZif data and its parser are private implementation details here: no
+//! third-party type appears in a public signature or a public field. Unlike
+//! the older `chrono-tz` tables, these data include BC's 2026 permanent UTC-7.
 //!
 //! # Gap and fold policy
 //!
@@ -40,121 +40,105 @@
 //! hands out is therefore always one [`wall_to_utc`] takes back. Falling off
 //! the range is never reported as a zone transition.
 
-use chrono::{DateTime, Datelike, MappedLocalTime, NaiveDate, Offset, TimeZone, Timelike};
-use chrono_tz::Tz;
+use chrono::{DateTime, NaiveDate};
+use tz::datetime::FoundDateTimeKind;
+use tz::timezone::TimeZone;
 
 use super::CalendarError;
 
+/// Last instant in the existing chrono conversion range (262142-12-31 UTC).
+/// Keep CAL-01's established range even though the TZif parser supports more.
+const MAX_SUPPORTED_UTC: u64 = 8_210_266_876_799;
+
 /// A civil (local) date and time: no zone, no offset, no instant.
-///
-/// Field-for-field the scalar shape a `calendar.wall_time` claim stores. The
-/// zone travels separately as the `calendar.tz` string, exactly as it is
-/// stored, so nothing has to carry a third-party datetime type to cross this
-/// border.
+/// The IANA zone travels separately as `calendar.tz`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct WallTime {
-    /// Proleptic Gregorian year.
     pub y: i32,
-    /// Month, 1-12.
     pub mo: u8,
-    /// Day of month, 1-31.
     pub d: u8,
-    /// Hour, 0-23.
     pub h: u8,
-    /// Minute, 0-59.
     pub mi: u8,
-    /// Second, 0-59.
     pub s: u8,
 }
 
-/// Resolves an IANA zone name exactly as written.
-///
-/// Case-sensitive and alias-free on purpose: an unrecognised name is an error,
-/// never a silent UTC fallback.
-fn resolve_zone(tz: &str) -> Result<Tz, CalendarError> {
-    tz.parse::<Tz>()
-        .map_err(|_| CalendarError::UnknownTimeZone { tz: tz.to_owned() })
+/// Resolve the exact IANA identifier from the embedded database. The lookup
+/// library is case-insensitive, so insist on its canonical spelling here.
+fn resolve_zone(name: &str) -> Result<TimeZone, CalendarError> {
+    let (canonical, bytes) = jiff_tzdb::get(name)
+        .filter(|(canonical, _)| *canonical == name)
+        .ok_or_else(|| CalendarError::UnknownTimeZone {
+            tz: name.to_owned(),
+        })?;
+    TimeZone::from_tz_data(bytes).map_err(|_| CalendarError::UnknownTimeZone {
+        tz: canonical.to_owned(),
+    })
 }
 
-/// Converts a civil wall time in an IANA zone to UNIX seconds.
-///
-/// A fall-back fold resolves to the earlier of its two UTC instants.
+/// Converts a civil wall time in an IANA zone to UNIX seconds. A fold picks
+/// its earlier instant. A gap is refused rather than shifted to a nearby hour.
 ///
 /// # Errors
-///
-/// - [`CalendarError::UnknownTimeZone`] — `tz` is not an IANA zone name.
-/// - [`CalendarError::InvalidWallTime`] — the fields are not a real civil
-///   date/time (a day the month does not have, a leap second), or the civil
-///   time is real in `tz` but its instant is outside the supported range:
-///   pre-epoch, and so outside the engine's `u64` time model, or past the top
-///   of the conversion library's range.
-/// - [`CalendarError::NonexistentWallTime`] — the civil time falls in a
-///   spring-forward gap in `tz`. A range failure is never reported this way:
-///   the gap error is what callers apply skip-vs-shift policy to.
+/// Unknown zones, invalid or out-of-range wall times, and gaps have their
+/// own [`CalendarError`] variants; no branch silently chooses UTC.
 pub fn wall_to_utc(w: &WallTime, tz: &str) -> Result<u64, CalendarError> {
     let zone = resolve_zone(tz)?;
-    let civil = NaiveDate::from_ymd_opt(w.y, u32::from(w.mo), u32::from(w.d))
+    // `tz-rs` admits leap seconds; the stored civil calendar does not map
+    // them to a UNIX instant. Preserve CAL-01's exact input range.
+    NaiveDate::from_ymd_opt(w.y, u32::from(w.mo), u32::from(w.d))
         .and_then(|date| date.and_hms_opt(u32::from(w.h), u32::from(w.mi), u32::from(w.s)))
         .ok_or(CalendarError::InvalidWallTime)?;
-    let instant = match zone.from_local_datetime(&civil) {
-        MappedLocalTime::None => {
-            // Two unrelated failures answer `None` here: a civil time the zone
-            // skipped, and a civil time the zone maps fine but whose instant
-            // falls off the top of the supported range. Only the first is a
-            // gap, and only the first is what skip-vs-shift policy is for, so
-            // ask the offset alone — it resolves without leaving the range.
-            return Err(match zone.offset_from_local_datetime(&civil) {
-                MappedLocalTime::None => CalendarError::NonexistentWallTime {
-                    wall: *w,
-                    tz: tz.to_owned(),
-                },
-                // The zone does map this civil time; applying the offset is
-                // what left the range.
-                _ => CalendarError::InvalidWallTime,
+    let candidates = tz::DateTime::find(w.y, w.mo, w.d, w.h, w.mi, w.s, 0, zone.as_ref())
+        .map_err(|_| CalendarError::InvalidWallTime)?;
+    let earliest = candidates.into_inner().into_iter().next();
+    let instant = match earliest {
+        Some(FoundDateTimeKind::Normal(instant)) => instant,
+        Some(FoundDateTimeKind::Skipped { .. }) => {
+            return Err(CalendarError::NonexistentWallTime {
+                wall: *w,
+                tz: tz.to_owned(),
             });
         }
-        MappedLocalTime::Single(instant) => instant,
-        // Fall-back fold. `Ambiguous`'s first value is the earlier of the two
-        // UTC instants — the pre-transition offset. Policy, not a caller
-        // choice, so no ambiguity ever reaches the return type.
-        MappedLocalTime::Ambiguous(earlier, _later) => earlier,
+        None => return Err(CalendarError::InvalidWallTime),
     };
-    // Pre-epoch instants are negative here and have no `u64` image.
-    u64::try_from(instant.timestamp()).map_err(|_| CalendarError::InvalidWallTime)
+    let utc = u64::try_from(instant.unix_time()).map_err(|_| CalendarError::InvalidWallTime)?;
+    if utc > MAX_SUPPORTED_UTC {
+        return Err(CalendarError::InvalidWallTime);
+    }
+    Ok(utc)
 }
 
 /// Converts UNIX seconds to the civil wall time observed in an IANA zone.
 ///
 /// # Errors
-///
-/// - [`CalendarError::UnknownTimeZone`] — `tz` is not an IANA zone name.
-/// - [`CalendarError::TimestampOutOfRange`] — `utc` is past the supported
-///   conversion range, either on its own or once `tz`'s offset is applied to
-///   it.
+/// Unknown zones and instants outside CAL-01's supported range are refused.
 pub fn utc_to_wall(utc: u64, tz: &str) -> Result<WallTime, CalendarError> {
     let zone = resolve_zone(tz)?;
+    if utc > MAX_SUPPORTED_UTC {
+        return Err(CalendarError::TimestampOutOfRange { utc });
+    }
     let seconds = i64::try_from(utc).map_err(|_| CalendarError::TimestampOutOfRange { utc })?;
-    let instant = DateTime::from_timestamp(seconds, 0)
-        .ok_or(CalendarError::TimestampOutOfRange { utc })?
-        .with_timezone(&zone);
-    // The supported range is a *UTC* range, so a positive offset can carry the
-    // last instants of it onto a civil date past the civil maximum. A
-    // datetime's field accessors read that overflowed value happily; adding
-    // the offset through the checked door instead is what keeps this direction
-    // closed over the same range `wall_to_utc` accepts.
-    let local = instant
+    let local = tz::DateTime::from_timespec(seconds, 0, zone.as_ref())
+        .map_err(|_| CalendarError::TimestampOutOfRange { utc })?;
+    // Preserve the earlier calendar border's closure over its range: a
+    // positive offset near the upper bound must not yield a civil time that
+    // `wall_to_utc` cannot accept. Checking through chrono avoids treating a
+    // TZif parser's wider year range as a new storage ABI.
+    let instant =
+        DateTime::from_timestamp(seconds, 0).ok_or(CalendarError::TimestampOutOfRange { utc })?;
+    instant
         .naive_utc()
-        .checked_add_offset(instant.offset().fix())
+        .checked_add_signed(chrono::Duration::seconds(i64::from(
+            local.local_time_type().ut_offset(),
+        )))
         .ok_or(CalendarError::TimestampOutOfRange { utc })?;
-    // Every cast below is lossless: the accessors are documented as 1-12,
-    // 1-31, 0-23, 0-59 and 0-59 respectively.
     Ok(WallTime {
         y: local.year(),
-        mo: local.month() as u8,
-        d: local.day() as u8,
-        h: local.hour() as u8,
-        mi: local.minute() as u8,
-        s: local.second() as u8,
+        mo: local.month(),
+        d: local.month_day(),
+        h: local.hour(),
+        mi: local.minute(),
+        s: local.second(),
     })
 }
 
@@ -338,8 +322,7 @@ mod tests {
         // Closure as a law rather than a fixture: across every zone the
         // database ships, and at both ends of the range, anything
         // `utc_to_wall` admits is something `wall_to_utc` takes back.
-        for zone in chrono_tz::TZ_VARIANTS {
-            let tz = zone.name();
+        for tz in jiff_tzdb::available() {
             for utc in [
                 0,
                 JAN_15_0930Z,
