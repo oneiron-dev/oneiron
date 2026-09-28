@@ -37315,7 +37315,7 @@
      "path": "src/workspace_roster/mod.rs",
      "purpose": "Workspace roster preset + member onboarding (ONEIRON-ARCH-0065)",
      "surface": {
-      "crate-vis": 5,
+      "crate-vis": 6,
       "re-export": 5
      }
     },
@@ -37468,7 +37468,7 @@
      "purpose": "Project responsibility records and their derived home-room membership",
      "surface": {
       "const": 1,
-      "crate-vis": 21,
+      "crate-vis": 22,
       "enum": 1,
       "fn": 10,
       "re-export": 5,
@@ -37510,7 +37510,7 @@
      "path": "src/workspace_roster/project/tests.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 2
      }
     },
     {
