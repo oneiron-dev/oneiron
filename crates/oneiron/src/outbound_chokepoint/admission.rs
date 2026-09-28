@@ -24,6 +24,28 @@ use crate::outbound_intent_ledger::{
     OutboundCallRequest, RecordedOutboundOutcome, force_sync, insert_pending_in_txn,
     insert_suppressed_in_txn, read_intent_for_attempt_in_txn, read_intent_record_in_txn,
 };
+use crate::ports::TombstoneStore;
+
+/// The governance-only gate for a parked, already-admitted operation, as for a
+/// fresh park: no debit. Only a Deny is recorded and returned; any other verdict
+/// rolls back, so the parked row keeps its admission untouched.
+fn parked_refusal(
+    vault: &Vault,
+    intent_id: crate::outbound_intent_ledger::IntentId,
+    prepared: &PreparedEffect,
+) -> Result<Option<OutboundEffectResult>, OutboundEffectError> {
+    let mut wtxn = vault.store.env.write_txn().map_err(Error::from)?;
+    let effect = vault.space_posting_gate_in_txn(&wtxn, &prepared.payload, &prepared.gate)?;
+    let policy = gate::resolve_policy_manifest(&vault.store, &wtxn)?;
+    let (decision_id, decision, _) =
+        gate::check_external_effect_policy(&vault.store, &mut wtxn, &effect, &policy, false)?;
+    if decision.outcome() != GateOutcome::Deny {
+        return Ok(None);
+    }
+    wtxn.commit().map_err(Error::from)?;
+    vault.store.notify_attempt_observers();
+    Ok(Some(gate_rejection(intent_id, decision_id, decision)))
+}
 
 /// Executes every outbound effect in ledger-read → replay → gate → debit →
 /// durable-Pending → transport order.
@@ -52,6 +74,9 @@ pub(crate) fn execute_outbound_effect<T: OutboundTransport>(
     let mut wtxn = vault.store.env.write_txn().map_err(Error::from)?;
     if let OutboundEffectCommand::New(prepared) | OutboundEffectCommand::Park(prepared) = &command {
         if let Some((actor, actor_class)) = prepared.verified_actor {
+            if vault.port_tombstone_is_deleted(&wtxn, &actor)? {
+                return Err(IntentLedgerError::InvalidBoundActor);
+            }
             let entity_type = vault
                 .get_entity_type_in_txn(&wtxn, &actor)?
                 .ok_or(IntentLedgerError::InvalidBoundActor)?;
@@ -81,11 +106,16 @@ pub(crate) fn execute_outbound_effect<T: OutboundTransport>(
         }
         drop(wtxn);
         force_sync(vault)?;
-        if matches!(&command, OutboundEffectCommand::Park(_))
+        if let OutboundEffectCommand::Park(prepared) = &command
             && record.state == IntentState::Pending
         {
             // Today's window parks this already-admitted operation. Its
             // paid admission and typed approval remain on the same ledger row.
+            // A refusal still ends the attempt, so the ledger can settle the
+            // logical send instead of re-arming a send the gate now denies.
+            if let Some(refusal) = parked_refusal(vault, intent_id, prepared)? {
+                return Ok(refusal);
+            }
             return Ok(effect_result(&record, None, true, None));
         }
         let prepared = match &command {

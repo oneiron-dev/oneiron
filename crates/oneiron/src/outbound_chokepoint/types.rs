@@ -8,7 +8,7 @@ use crate::gate::ExternalEffectGateInput;
 use crate::outbound_consent::tool_call::PreparedToolCall;
 use crate::outbound_intent_ledger::{
     BudgetClass, FrozenOutboundCall, IntentDispatchResult, IntentId, IntentLedgerError,
-    OutboundSendOutcome, derive_intent_id, hash_frozen_payload,
+    IntentResolution, OutboundSendOutcome, derive_intent_id, hash_frozen_payload,
 };
 use crate::receipt::ReceiptRecord;
 
@@ -24,6 +24,7 @@ std::thread_local! {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct OutboundEffectResult {
     pub(crate) dispatch: IntentDispatchResult,
+    pub(crate) resolution: Option<IntentResolution>,
     pub(crate) gate_decision_id: Option<String>,
     pub(crate) gate_outcome: Option<String>,
     pub(crate) gate_reason_codes: Vec<String>,

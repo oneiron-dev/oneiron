@@ -13,7 +13,7 @@ use oneiron::{
 fn outbound_intent_ledger_exposes_one_complete_greenfield_format() {
     assert_eq!(INTENT_LEDGER_SCHEMA_VERSION, 3);
     assert_eq!(OUTBOUND_BINDING_VERSION, 2);
-    assert_eq!(INTENT_LEDGER_VALUE_KEYS.len(), 21);
+    assert_eq!(INTENT_LEDGER_VALUE_KEYS.len(), 22);
     assert_eq!(
         INTENT_LEDGER_VALUE_KEYS
             .iter()
@@ -32,6 +32,7 @@ fn outbound_intent_ledger_exposes_one_complete_greenfield_format() {
         "budget_accounting",
         "admitted_approval",
         "recorded_outcome",
+        "delivery_uncertain",
     ] {
         assert!(INTENT_LEDGER_VALUE_KEYS.contains(&required));
     }

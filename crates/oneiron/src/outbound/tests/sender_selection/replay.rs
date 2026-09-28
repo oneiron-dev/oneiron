@@ -30,7 +30,14 @@ fn admitted_sender_replays_after_new_facet_without_another_effect_or_debit()
             ..Default::default()
         };
         let admitted = vault.dispatch_outbound_intent(request.clone(), &mut sink)?;
-        assert_eq!(admitted.outcome, OutboundDispatchOutcome::Failed);
+        assert_eq!(
+            admitted.outcome,
+            if uncertain_first {
+                OutboundDispatchOutcome::Ambiguous
+            } else {
+                OutboundDispatchOutcome::Failed
+            }
+        );
         let pending = intent_ledger_records(&vault)?;
         assert!(pending.corrupt.is_empty());
         assert_eq!(pending.records.len(), 1);
@@ -139,7 +146,14 @@ fn pending_sender_retry_rechecks_policy_without_changing_frozen_admission()
             ..Default::default()
         };
         let first = vault.dispatch_outbound_intent(request.clone(), &mut sink)?;
-        assert_eq!(first.outcome, OutboundDispatchOutcome::Failed);
+        assert_eq!(
+            first.outcome,
+            if uncertain_first {
+                OutboundDispatchOutcome::Ambiguous
+            } else {
+                OutboundDispatchOutcome::Failed
+            }
+        );
         let pending = intent_ledger_records(&vault)?;
         assert!(pending.corrupt.is_empty());
         assert_eq!(pending.records.len(), 1);
@@ -235,7 +249,7 @@ fn pending_sender_retry_honors_live_counterparty_opt_out()
         ..Default::default()
     };
     let first = vault.dispatch_outbound_intent(request.clone(), &mut sink)?;
-    assert_eq!(first.outcome, OutboundDispatchOutcome::Failed);
+    assert_eq!(first.outcome, OutboundDispatchOutcome::Ambiguous);
     let pending = intent_ledger_records(&vault)?;
     assert!(pending.corrupt.is_empty());
     assert_eq!(pending.records.len(), 1);
@@ -408,7 +422,7 @@ fn stable_sender_retry_cannot_borrow_authority_for_a_different_request()
         assert_eq!(
             retried.outcome,
             if state == IntentState::Abandoned {
-                OutboundDispatchOutcome::Failed
+                OutboundDispatchOutcome::Ambiguous
             } else {
                 OutboundDispatchOutcome::DeliveredToChannel
             }
@@ -534,7 +548,7 @@ fn sender_replay_keeps_non_idempotent_and_revoked_connector_stops()
             ..Default::default()
         };
         let first = vault.dispatch_outbound_intent(request.clone(), &mut sink)?;
-        assert_eq!(first.outcome, OutboundDispatchOutcome::Failed);
+        assert_eq!(first.outcome, OutboundDispatchOutcome::Ambiguous);
         let before = intent_ledger_records(&vault)?;
         assert_eq!(before.records.len(), 1);
         put_sending_identity(
@@ -559,7 +573,7 @@ fn sender_replay_keeps_non_idempotent_and_revoked_connector_stops()
             assert_eq!(before[0].state, IntentState::Abandoned);
         }
         let stopped = vault.dispatch_outbound_intent(request, &mut sink)?;
-        assert_eq!(stopped.outcome, OutboundDispatchOutcome::Failed);
+        assert_eq!(stopped.outcome, OutboundDispatchOutcome::Ambiguous);
         assert_eq!(sink.senders, vec![Some(entity(0x93))]);
         assert_eq!(sink.effects.len(), 1);
         let after = intent_ledger_records(&vault)?;

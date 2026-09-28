@@ -3,7 +3,7 @@
 use super::authority_state::TaskRenderState;
 use super::render::{bare_job_row, intent_row};
 use crate::consult_ladder::LadderTerminalDisposition;
-use crate::outbound::ConnectorSendTask;
+use crate::outbound::{ConnectorSendTask, ConnectorSendTaskOutcome};
 use crate::run_tree::{RunTreeNode, RunTreeStatus};
 use crate::task_verb::{ConsultResultPresence, TaskKind, TaskTerminalDisposition};
 use crate::{EntityId, Result, Vault};
@@ -87,6 +87,9 @@ pub struct TaskRow {
     pub kind: Option<TaskKind>,
     pub assignee: Option<String>,
     pub terminal_disposition: Option<TaskTerminalDisposition>,
+    /// Synced connector result, separate from the board's five-state status.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub connector_outcome: Option<ConnectorSendTaskOutcome>,
     pub result_ref: Option<String>,
     /// ONE-1888 ladder outcome, when the row carries one. It NARROWS the
     /// ONE-1699 axis (approved vs overridden on `done`, rejected-with-counter
@@ -113,6 +116,7 @@ impl TaskRow {
             kind: intent.kind,
             assignee: intent.assignee.clone(),
             terminal_disposition: intent.terminal_disposition,
+            connector_outcome: intent.connector_outcome,
             result_ref: intent.result_ref.clone(),
             ladder_disposition: intent.ladder_disposition,
             counter_task_ref: intent.counter_task_ref.clone(),
@@ -363,6 +367,7 @@ pub struct TaskIntentPresence {
     /// Resolved DISPLAY handle for the assignee; storage stays actor-addressed.
     pub assignee: Option<String>,
     pub terminal_disposition: Option<TaskTerminalDisposition>,
+    pub connector_outcome: Option<ConnectorSendTaskOutcome>,
     pub result_ref: Option<String>,
     pub consult_result: Option<ConsultResultPresence>,
     /// ONE-1888 ladder projection. `None` throughout is the ONE-1699 default.
@@ -392,6 +397,7 @@ impl TaskIntentPresence {
             kind: None,
             assignee: None,
             terminal_disposition: None,
+            connector_outcome: None,
             result_ref: None,
             consult_result: None,
             ladder_disposition: None,
@@ -421,13 +427,22 @@ impl TaskIntentPresence {
         realizing_jobs: Vec<JobPresence>,
         acked: bool,
     ) -> TaskIntentPresence {
-        Self::new(
+        let status = match task.outcome {
+            Some(ConnectorSendTaskOutcome::Delivered) => TaskBoardStatus::Done,
+            Some(ConnectorSendTaskOutcome::Failed | ConnectorSendTaskOutcome::Ambiguous) => {
+                TaskBoardStatus::Failed
+            }
+            None => status,
+        };
+        let mut presence = Self::new(
             task.task_ref.to_hex(),
             status,
             Some(task.intent.verb.clone()),
             acked,
             realizing_jobs,
-        )
+        );
+        presence.connector_outcome = task.outcome;
+        presence
     }
 
     /// Failed rows stay surfaced until acked (08b §3); an acked failure has

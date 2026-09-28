@@ -87,6 +87,7 @@ fn persist_pending(
             accounted_at_ms: now_ms,
         },
         recorded_outcome: None,
+        delivery_uncertain: false,
         state: IntentState::Pending,
         created_ms: now_ms,
         updated_ms: now_ms,
@@ -970,6 +971,7 @@ fn greenfield_row_rejects_every_missing_chokepoint_field() {
         KEY_CAPABILITY_PROVENANCE,
         KEY_BUDGET_ACCOUNTING,
         KEY_RECORDED_OUTCOME,
+        KEY_DELIVERY_UNCERTAIN,
     ] {
         let Value::Map(mut entries) =
             rmpv::decode::read_value(&mut std::io::Cursor::new(&original))
@@ -1504,6 +1506,22 @@ fn row_with_content_digest(encoded: &[u8], digest: [u8; 32]) -> Vec<u8> {
 }
 
 #[test]
+fn greenfield_row_rejects_non_boolean_delivery_uncertainty() {
+    let (_dir, vault) = open_vault();
+    let record = persist_pending(&vault, attempt(40), 0, b"uncertainty shape", 100, true);
+    let key = intent_ledger_key(&record.id);
+    let mut entries = row_entries(&raw_row(&vault, &key));
+    let (_, value) = entries
+        .iter_mut()
+        .find(|(candidate, _)| candidate.as_str() == Some(KEY_DELIVERY_UNCERTAIN))
+        .expect("pinned uncertainty key");
+    *value = Value::from("true");
+    let error = decode_record(&key, &encode_entries(entries))
+        .expect_err("only a typed boolean can carry uncertainty");
+    assert!(matches!(error, IntentLedgerError::InvalidRecord(_)));
+}
+
+#[test]
 fn content_digest_is_hash_of_msgpack_minus_digest_key() {
     // The preimage IS the stored body minus one key. Rebuilding it here from
     // the persisted bytes — without calling the production digest — is what
@@ -1526,11 +1544,11 @@ fn content_digest_is_hash_of_msgpack_minus_digest_key() {
         panic!("the stored content digest must be binary");
     };
     assert_eq!(stored_digest.len(), 32);
-    assert_eq!(entries.len(), 20);
+    assert_eq!(entries.len(), 21);
 
     let preimage = encode_entries(entries);
-    // A 20-entry map is `map16`: the map header itself is inside the preimage.
-    assert_eq!(preimage[..3], [0xde, 0x00, 0x14]);
+    // A 21-entry map is `map16`: the map header itself is inside the preimage.
+    assert_eq!(preimage[..3], [0xde, 0x00, 0x15]);
     let width = payload.len();
     assert!(
         preimage.windows(width).any(|window| window == payload),
@@ -1552,7 +1570,7 @@ fn content_digest_is_hash_of_msgpack_minus_digest_key() {
 /// encoder: producer and expectation must be able to disagree, or a co-drifting
 /// change would rewrite both sides at once. Pre-launch, a deliberate ABI change
 /// re-pins them with a stated rationale.
-const GOLDEN_ROW_KEYS: [&str; 21] = [
+const GOLDEN_ROW_KEYS: [&str; 22] = [
     "schema_version",
     "id",
     "attempt_id",
@@ -1569,6 +1587,7 @@ const GOLDEN_ROW_KEYS: [&str; 21] = [
     "capability_provenance",
     "budget_accounting",
     "recorded_outcome",
+    "delivery_uncertain",
     "state",
     "created_ms",
     "updated_ms",
@@ -1583,9 +1602,9 @@ const GOLDEN_NOW_MS: u64 = 1_700_000_000_000;
 /// hash derive, in lowercase hex.
 const GOLDEN_INTENT_ID_HEX: &str =
     "311135d83a39aeef442248566c71583daf41968a7e78ca7688da8119259086d3";
-/// BLAKE3 of the 20-entry MessagePack body of that row at schema version 3.
+/// BLAKE3 of the 21-entry MessagePack body of that row at schema version 3.
 const GOLDEN_CONTENT_DIGEST_HEX: &str =
-    "519b4bd25e976760c57d185ad0648a0790b9abac08cd877b0dcb5d5800950625";
+    "dbb70caa8e247714991d3bd22b2357677ecd472c9370bbedc603b4b4569e3d74";
 
 #[test]
 fn storage_abi_golden_fixture() {
@@ -1806,6 +1825,12 @@ fn every_body_field_is_digest_bound() {
             }),
         ),
         (
+            "delivery_uncertain",
+            vec![KEY_DELIVERY_UNCERTAIN],
+            base.clone(),
+            mutated(&base, |record| record.delivery_uncertain = true),
+        ),
+        (
             "state and recorded_outcome",
             vec![KEY_STATE, KEY_RECORDED_OUTCOME],
             base.clone(),
@@ -1852,7 +1877,7 @@ fn every_body_field_is_digest_bound() {
     for (label, keys, case_base, case_mutated) in cases {
         for key in keys {
             assert!(
-                INTENT_LEDGER_VALUE_KEYS[..20].contains(&key),
+                INTENT_LEDGER_VALUE_KEYS[..21].contains(&key),
                 "{label} names a key outside the digest preimage"
             );
             covered.insert(key);
@@ -1900,13 +1925,13 @@ fn every_body_field_is_digest_bound() {
         );
     }
 
-    let expected: HashSet<&str> = INTENT_LEDGER_VALUE_KEYS[..20]
+    let expected: HashSet<&str> = INTENT_LEDGER_VALUE_KEYS[..21]
         .iter()
         .copied()
         .filter(|key| *key != KEY_SCHEMA_VERSION && *key != KEY_BINDING_VERSION)
         .collect();
     assert_eq!(covered, expected, "every body key needs a mutation case");
-    assert_eq!(covered.len(), 18, "20 body keys minus 2 structural ones");
+    assert_eq!(covered.len(), 19, "21 body keys minus 2 structural ones");
 }
 
 /// The FORMER canonical-JSON content digest, reconstructed locally. Production
@@ -2475,4 +2500,55 @@ fn strict_targeted_reads_remain_strict() {
     assert_eq!(listing[0].id, neighbour.id);
     assert_eq!(listing.corrupt.len(), 1);
     assert_eq!(&*listing.corrupt[0].key, key.as_slice());
+}
+
+#[test]
+fn logical_resolution_matrix_keeps_delivery_separate_from_retry_and_stop() {
+    use super::resolution::{IntentResolution, RetryDisposition, UnconfirmedDelivery};
+    let (_dir, vault) = open_vault();
+    let mut record = persist_pending(&vault, attempt(0x96), 0, b"resolution matrix", 100, true);
+    record.recorded_outcome = Some(RecordedOutboundOutcome::DefiniteNonDelivery);
+    assert_eq!(
+        IntentResolution::from_record(&record).unwrap(),
+        IntentResolution::Pending {
+            delivery: UnconfirmedDelivery::DefiniteNonDelivery,
+            retry: RetryDisposition::Idempotent,
+        }
+    );
+    record.delivery_uncertain = true;
+    assert_eq!(
+        IntentResolution::from_record(&record).unwrap(),
+        IntentResolution::Pending {
+            delivery: UnconfirmedDelivery::Unresolved,
+            retry: RetryDisposition::Idempotent,
+        }
+    );
+    record.state = IntentState::Abandoned;
+    record.recorded_outcome = Some(RecordedOutboundOutcome::Abandoned(
+        IntentEscalationReason::DedupeReservationReplaced,
+    ));
+    assert_eq!(
+        IntentResolution::from_record(&record).unwrap(),
+        IntentResolution::Stopped {
+            delivery: UnconfirmedDelivery::Unresolved,
+            reason: IntentEscalationReason::DedupeReservationReplaced,
+        }
+    );
+    record.delivery_uncertain = false;
+    assert_eq!(
+        IntentResolution::from_record(&record).unwrap(),
+        IntentResolution::Stopped {
+            delivery: UnconfirmedDelivery::DefiniteNonDelivery,
+            reason: IntentEscalationReason::DedupeReservationReplaced,
+        }
+    );
+    for historical_uncertainty in [false, true] {
+        record.state = IntentState::Done;
+        record.recorded_outcome = Some(RecordedOutboundOutcome::Acked);
+        record.delivery_uncertain = historical_uncertainty;
+        assert_eq!(
+            IntentResolution::from_record(&record).unwrap(),
+            IntentResolution::Delivered
+        );
+    }
 }

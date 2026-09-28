@@ -5,6 +5,7 @@ use super::projection::{
     JobPresence, TaskBoardStatus, TaskIntentPresence, TaskRow, TasksSection,
     intent_cancel_pathology, ladder_board_projection,
 };
+use crate::outbound::ConnectorSendTaskOutcome;
 use crate::task_verb::ConsultResultPresence;
 
 /// Renders provided task presence into stable, collapsed rows — intent rows
@@ -121,6 +122,9 @@ pub(super) fn intent_row(intent: &TaskIntentPresence) -> TaskRow {
 /// finer vocabulary over the same terminal, so rendering both would duplicate
 /// the cause. A token identical to the status is dropped for the same reason.
 fn cause_tokens(intent: &TaskIntentPresence) -> Vec<String> {
+    if intent.connector_outcome == Some(ConnectorSendTaskOutcome::Ambiguous) {
+        return vec!["ambiguous".to_owned()];
+    }
     if let Some(disposition) = intent.ladder_disposition {
         return ladder_board_projection(disposition)
             .tokens
@@ -168,6 +172,7 @@ pub(super) fn bare_job_row(job: &JobPresence) -> TaskRow {
         kind: None,
         assignee: None,
         terminal_disposition: None,
+        connector_outcome: None,
         result_ref: None,
         ladder_disposition: None,
         counter_task_ref: None,

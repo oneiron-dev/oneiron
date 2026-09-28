@@ -5,7 +5,7 @@ use super::store::decode_record_in_txn;
 #[cfg(test)]
 use super::store::{
     abandon_record, complete_record, force_sync, hash_frozen_payload, insert_pending_or_read,
-    read_intent_record,
+    read_intent_record, record_possible_delivery,
 };
 #[cfg(test)]
 use super::types::{
@@ -196,6 +196,7 @@ pub(crate) fn execute_outbound_call<S: OutboundSender + ?Sized>(
             accounted_at_ms: now_ms,
         },
         recorded_outcome: None,
+        delivery_uncertain: false,
         state: IntentState::Pending,
         created_ms: now_ms,
         updated_ms: now_ms,
@@ -471,9 +472,11 @@ fn finish_send(
             (Some(done.state), None)
         }
         OutboundSendOutcome::Ambiguous if record.idempotency_supported => {
+            record_possible_delivery(vault, record.id, now_ms)?;
             (Some(IntentState::Pending), None)
         }
         OutboundSendOutcome::Ambiguous => {
+            record_possible_delivery(vault, record.id, now_ms)?;
             let abandoned = abandon_record(
                 vault,
                 record.id,
