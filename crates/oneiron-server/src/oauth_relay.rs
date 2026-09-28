@@ -420,6 +420,13 @@ mod tests {
             (
                 true,
                 "propose",
+                "/v1/core/consent/widen/accept",
+                serde_json::json!({"proposal_ref":"deadbeef","expected_delta":"00"}),
+                StatusCode::FORBIDDEN,
+            ),
+            (
+                true,
+                "propose",
                 "/v1/core/batch",
                 serde_json::json!({"entities":[]}),
                 StatusCode::FORBIDDEN,
