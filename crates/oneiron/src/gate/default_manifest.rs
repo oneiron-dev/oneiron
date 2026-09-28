@@ -715,6 +715,8 @@ pub(crate) fn default_policy_manifest() -> Vec<u8> {
             Value::from(POLICY_OWNER_POLICY_ROWS_KEY),
             Value::Array(Vec::new()),
         ),
+        crate::gate::weave_policy::default_entry(),
+        crate::gate::weave_policy::default_precedence_entry(),
         (
             Value::from(POLICY_SIGNATURES_KEY),
             Value::Array(vec![Value::Map(vec![
