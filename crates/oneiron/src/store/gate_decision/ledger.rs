@@ -20,7 +20,35 @@ use super::types::{
 };
 use super::vet::vet_gate_decision_record;
 
+#[cfg(test)]
+thread_local! {
+    static BEFORE_GATE_PAGE_DECODE: std::cell::RefCell<Option<Box<dyn FnOnce()>>> =
+        std::cell::RefCell::new(None);
+    static BEFORE_GATE_GRANT_DECODE: std::cell::RefCell<Option<Box<dyn FnOnce()>>> =
+        std::cell::RefCell::new(None);
+}
+
+#[cfg(test)]
+pub(in crate::store) fn arm_before_gate_page_decode(callback: impl FnOnce() + 'static) {
+    BEFORE_GATE_PAGE_DECODE.with(|slot| *slot.borrow_mut() = Some(Box::new(callback)));
+}
+
+#[cfg(test)]
+pub(in crate::store) fn arm_before_gate_grant_decode(callback: impl FnOnce() + 'static) {
+    BEFORE_GATE_GRANT_DECODE.with(|slot| *slot.borrow_mut() = Some(Box::new(callback)));
+}
+
 impl Store {
+    /// Readers acquire this BEFORE opening an LMDB snapshot. Retirement takes
+    /// the write half BEFORE the exterior marker/unlink, so no healthy live
+    /// snapshot loses custody between its key check and file open.
+    pub(crate) fn gate_custody_read_guard(&self) -> Result<std::sync::RwLockReadGuard<'_, ()>> {
+        self.core
+            .gate_retirement_lock
+            .read()
+            .map_err(|_| Error::InvariantViolation("gate decision custody lock poisoned"))
+    }
+
     /// Decode one row against its key, decrypting only claim-bound ORCB values.
     pub(in crate::store) fn decode_gate_decision_value(
         &self,
@@ -255,13 +283,14 @@ impl Store {
     /// Both sidecar deletes are safe no-ops for a record without a `grant_ref`
     /// or `claim_id`. Takes a decoded record because the grant-ref and claim
     /// index keys are only reconstructible from the primary's bytes.
-    fn delete_gate_decision_record_in_txn(
+    pub(in crate::store) fn delete_gate_decision_record_in_txn(
         &self,
         wtxn: &mut RwTxn<'_>,
         record: &GateDecisionRecord,
     ) -> Result<()> {
         self.delete_gate_decision_grant_ref_index_in_txn(wtxn, record)?;
         self.delete_gate_decision_claim_index_in_txn(wtxn, record)?;
+        self.delete_gate_retention_context_in_txn(wtxn, record.decision_id)?;
         self.delete_gate_decision_claim_refs_in_txn(wtxn, record.decision_id)?;
         self.vault_meta
             .delete(wtxn, &gate_decision_key(record.decision_id))?;
@@ -328,13 +357,16 @@ impl Store {
     /// inside the caller's destructive transaction. The claim index is retained
     /// for discovery of skeletons; the grant-ref index is removed because its
     /// source field is scrubbed. Discovery falls back to a full scan until the
-    /// durable claim-index backfill has completed.
+    /// durable claim-index backfill has completed. A held key partition keeps
+    /// its rows, so every door that tears a held claim (facade, batch, cascade
+    /// or replay) is refused here, before anything is rewritten.
     pub(crate) fn redact_gate_decisions_for_claim_in_txn(
         &self,
         wtxn: &mut RwTxn<'_>,
         claim_id: &[u8; 16],
         redacted_at: u64,
     ) -> Result<bool> {
+        self.reject_held_gate_partition_in_txn(&*wtxn, claim_id)?;
         let id = crate::entity_id::EntityId::from_bytes(*claim_id)
             .map_err(|_| Error::CorruptedIndex("gate decision claim id"))?;
         let pending = self.pending_gate_consent_in_txn(&*wtxn, &id)?.is_some();
@@ -401,7 +433,14 @@ impl Store {
         &self,
         grant_ref: &str,
     ) -> Result<Vec<GateDecisionRecord>> {
+        let _custody = self.gate_custody_read_guard()?;
         let rtxn = self.env.read_txn()?;
+        #[cfg(test)]
+        BEFORE_GATE_GRANT_DECODE.with(|slot| {
+            if let Some(callback) = slot.borrow_mut().take() {
+                callback();
+            }
+        });
         let prefix = gate_decision_grant_ref_index_prefix(grant_ref);
         let mut records = Vec::new();
         for row in self.vault_meta.prefix_iter(&rtxn, &prefix)? {
@@ -670,8 +709,40 @@ impl Store {
         before: Option<GateDecisionId>,
         limit: usize,
     ) -> Result<Vec<GateDecisionRecord>> {
+        let _custody = self.gate_custody_read_guard()?;
         let rtxn = self.env.read_txn()?;
-        self.gate_decisions_page_in_txn(&rtxn, before, limit)
+        match self.gate_decisions_page_in_txn(&rtxn, before, limit) {
+            Ok(rows) => Ok(rows),
+            Err(error @ Error::CorruptedIndex("gate decision ORCB")) => {
+                // Collect retirement witnesses while the old read snapshot is
+                // alive, then drop it BEFORE opening a fresh LMDB read slot.
+                let mut retired_keys = Vec::new();
+                for row in self
+                    .vault_meta
+                    .prefix_iter(&rtxn, GATE_DECISION_KEY_PREFIX)?
+                {
+                    let (key, raw) = row?;
+                    if orcb::raw_key_retired(&self.core.gate_custody_root, &raw)? {
+                        retired_keys.push(key.into_owned());
+                    }
+                }
+                drop(rtxn);
+                if retired_keys.is_empty() {
+                    return Err(error);
+                }
+                let current = self.env.read_txn()?;
+                let mut removed = false;
+                for key in retired_keys {
+                    removed |= self.vault_meta.get(&current, &key)?.is_none();
+                }
+                if removed {
+                    self.gate_decisions_page_in_txn(&current, before, limit)
+                } else {
+                    Err(error)
+                }
+            }
+            Err(error) => Err(error),
+        }
     }
 
     pub(crate) fn gate_decisions_page_in_txn(
@@ -680,6 +751,12 @@ impl Store {
         before: Option<GateDecisionId>,
         limit: usize,
     ) -> Result<Vec<GateDecisionRecord>> {
+        #[cfg(test)]
+        BEFORE_GATE_PAGE_DECODE.with(|slot| {
+            if let Some(callback) = slot.borrow_mut().take() {
+                callback();
+            }
+        });
         if limit == 0 {
             return Ok(Vec::new());
         }
@@ -738,12 +815,24 @@ fn append_gate_decision_row_in_txn(
     if store.vault_meta().get(wtxn, &key)?.is_some() {
         return Err(Error::InvariantViolation("gate decision id collision"));
     }
-    let value = if record.claim_id.is_some() {
+    let value = if let Some(claim) = record.claim_id {
+        // A committed age sweep may still be retiring this partition's
+        // exterior key. No new ciphertext may reuse it in that interval.
+        if store
+            .vault_meta()
+            .get(&*wtxn, &super::retention::pending_key(&claim))?
+            .is_some()
+        {
+            return Err(Error::InvalidConfig(
+                "gate decision partition is retiring".into(),
+            ));
+        }
         orcb::encode_hot(store.gate_key_root(), record)?
     } else {
         encode_gate_decision(record)?
     };
     store.vault_meta().put(wtxn, &key, &value)?;
+    super::retention_scope::append_context_in_txn(store, wtxn, record)?;
     if let Some(grant_ref) = record.grant_ref.as_deref() {
         store.vault_meta().put(
             wtxn,

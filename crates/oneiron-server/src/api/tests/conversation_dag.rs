@@ -663,7 +663,7 @@ async fn list_preview_traverses_deleted_selected_shells_without_losing_other_roo
             let id = EntityId::from_hex(&id).unwrap();
             server
                 .vault
-                .delete_entity_with_reason(&id, oneiron::DeleteReason::UserDelete)
+                .delete_own_room_record(id, oneiron::DeleteReason::UserDelete)
                 .unwrap();
             assert!(server.vault.is_deleted_shell(&id).unwrap());
         }
@@ -726,7 +726,7 @@ async fn list_preview_walks_deleted_ordinary_session_turns_and_keeps_other_rooms
             let id = EntityId::from_hex(id.as_str().unwrap()).unwrap();
             server
                 .vault
-                .delete_entity_with_reason(&id, oneiron::DeleteReason::UserDelete)
+                .delete_own_room_record(id, oneiron::DeleteReason::UserDelete)
                 .unwrap();
             assert!(server.vault.is_deleted_shell(&id).unwrap());
         }
@@ -825,8 +825,8 @@ async fn selected_preview_lifecycle_matrix_keeps_retained_shape_separate_from_co
                     if deleted {
                         server
                             .vault
-                            .delete_entity_with_reason(
-                                &EntityId::from_hex(row["id"].as_str().unwrap()).unwrap(),
+                            .delete_own_room_record(
+                                EntityId::from_hex(row["id"].as_str().unwrap()).unwrap(),
                                 oneiron::DeleteReason::UserDelete,
                             )
                             .unwrap();
@@ -914,7 +914,7 @@ async fn room_with_only_deleted_childof_turns_lists_after_dag_migration() {
     let turn_id = EntityId::from_hex(turn["id"].as_str().unwrap()).unwrap();
     server
         .vault
-        .delete_entity_with_reason(&turn_id, oneiron::DeleteReason::UserDelete)
+        .delete_room_record_unchecked_for_test(&turn_id, oneiron::DeleteReason::UserDelete)
         .unwrap();
     assert!(server.vault.is_deleted_shell(&turn_id).unwrap());
     let healthy = post(&server, "/v1/core/conversations", json!({"body": {}})).await;

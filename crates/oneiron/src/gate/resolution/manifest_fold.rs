@@ -12,7 +12,9 @@ use crate::vault::Vault;
 use crate::write_envelope::{SourceLineage, WriteActor};
 
 use super::manifest_types::ConnectorClassPrecedence;
-use super::manifest_types::{PolicyManifestResolution, TeacherProbeRow};
+use super::manifest_types::{
+    GateDecisionRetentionPolicy, PolicyManifestResolution, TeacherProbeRow,
+};
 use crate::gate::ceiling::{
     DelegationFoldCache, DelegationGrantRecord, PolicyOwnerPolicyRow, check_source_trust,
     fold_delegated_grants,
@@ -21,7 +23,7 @@ use crate::gate::decode::ConnectorClassRole;
 use crate::gate::decode::decode_policy_manifest;
 
 pub(crate) fn resolve_policy_manifest(
-    store: &Store,
+    store: &impl crate::store::ManifestDbs,
     txn: &heed::RoTxn<'_>,
 ) -> Result<PolicyManifestResolution> {
     let mut resolution = PolicyManifestResolution::default();
@@ -48,6 +50,9 @@ pub(crate) fn resolve_policy_manifest(
     let mut untrusted_teacher_rows = Vec::new();
     let mut untrusted_sheet_limits = Vec::new();
     let mut delegated_rows: Vec<DelegationGrantRecord> = Vec::new();
+    let mut default_retention = None;
+    let mut owner_retention = None;
+    let default_manifest_id = crate::gate::default_manifest::default_policy_manifest_id()?;
     let mut vault_class_carry: Option<BTreeSet<(String, String)>> = None;
     let mut holder_class_carry: Vec<BTreeSet<(String, String)>> = Vec::new();
     let mut vault_precedence: Option<ConnectorClassPrecedence> = None;
@@ -121,6 +126,7 @@ pub(crate) fn resolve_policy_manifest(
                 resolution.actor_ceilings.extend(decoded.actor_ceilings);
                 delegated_rows.extend(decoded.delegated_grants);
                 resolution.scoped_grants.extend(decoded.scoped_grants);
+                resolution.room_policy_rows.extend(decoded.room_policy_rows);
                 resolution
                     .weave_report_policy
                     .extend(decoded.weave_report_policy);
@@ -163,6 +169,30 @@ pub(crate) fn resolve_policy_manifest(
                     &mut resolution.diagnostics.malformed_manifest_seen,
                 );
                 resolution.signatures.extend(decoded.signatures);
+                if let Some(retention) = decoded.gate_decision_retention {
+                    if retention.rows.iter().any(|row| row.override_parent)
+                        && !crate::gate::manifest_authenticity::retention_holder_verified(
+                            store, txn, &id, body,
+                        )?
+                    {
+                        resolution.diagnostics.malformed_manifest_seen = true;
+                    }
+                    // The seeded D7 row is a FALLBACK, not an owner vote.
+                    // Byte-exact matching avoids treating a later owner update
+                    // at that same ID as another copy of the seeded default.
+                    if id == default_manifest_id
+                        && body.as_slice()
+                            == crate::gate::default_manifest::default_policy_manifest().as_slice()
+                    {
+                        default_retention = Some(retention);
+                    } else {
+                        match owner_retention.as_ref() {
+                            None => owner_retention = Some(retention),
+                            Some(existing) if *existing == retention => {}
+                            Some(_) => resolution.diagnostics.malformed_manifest_seen = true,
+                        }
+                    }
+                }
                 if let Some(on_budget_exhausted) = decoded.on_budget_exhausted {
                     match resolution.on_budget_exhausted {
                         None => resolution.on_budget_exhausted = Some(on_budget_exhausted),
@@ -254,6 +284,9 @@ pub(crate) fn resolve_policy_manifest(
                 resolution
                     .booking_conversion_rows
                     .extend(decoded.booking_conversion_rows);
+                // Resolve class policy restrictively across trusted manifests.
+                resolution.wait_policy.extend_rows(decoded.wait_policy);
+                resolution.act_policy.extend_rows(decoded.act_policy);
                 resolution.hosted_tts.rows.extend(decoded.hosted_tts.rows);
                 if let Some(bounds) = decoded.docedit_resource_policy {
                     let baseline = crate::gate::docedit_resource::DoceditResourcePolicy::shipped();
@@ -379,6 +412,10 @@ pub(crate) fn resolve_policy_manifest(
         }
     }
 
+    // A trusted owner-authored row wins over the immutable shipped fallback.
+    // A conflict among owner rows never silently picks a pruning horizon.
+    resolution.gate_decision_retention = owner_retention.or(default_retention);
+
     // `None` only when no trusted manifest names a class row, so the frontier
     // of such manifests keeps its established bytes.
     let class_policy_named =
@@ -484,6 +521,73 @@ pub(crate) fn resolve_policy_manifest(
     }
 
     Ok(resolution)
+}
+
+/// Resolve the trusted retention setting in the caller's transaction, so a
+/// sweep observes the same committed owner setting as the rows it examines.
+/// A missing setting never authorizes age pruning; a malformed or ambiguous
+/// manifest is an error, not a silent fallback to a different horizon.
+pub(crate) fn resolve_gate_decision_retention(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+) -> Result<Option<GateDecisionRetentionPolicy>> {
+    let resolution = resolve_policy_manifest(store, txn)?;
+    if resolution.diagnostics.is_fail_closed() {
+        return Err(Error::InvalidConfig(
+            "gate decision retention policy manifest is fail-closed".into(),
+        ));
+    }
+    Ok(resolution.gate_decision_retention)
+}
+
+/// The only carrier a narrow owner retention edit may rewrite. Determine the
+/// effective trusted row in the same snapshot as resolution, never by a fixed
+/// ID whose body may have been replaced by an untrusted peer contribution.
+pub(crate) fn retention_edit_target(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+) -> Result<(GateDecisionRetentionPolicy, crate::EntityId)> {
+    let policy = resolve_gate_decision_retention(store, txn)?.ok_or(Error::InvalidConfig(
+        "gate decision retention manifest missing".into(),
+    ))?;
+    let default_id = crate::gate::default_manifest::default_policy_manifest_id()?;
+    let seeded = crate::gate::default_manifest::default_policy_manifest();
+    let mut owner_ids = Vec::new();
+    let mut default_present = false;
+    for index_entry in store.port_entity_ids_by_type(txn, ENTITY_TYPE_POLICY_MANIFEST, None)? {
+        let id = index_entry?;
+        let Some(raw) = store.port_entity_record(txn, &id)? else {
+            continue;
+        };
+        if raw.entity_type != ENTITY_TYPE_POLICY_MANIFEST
+            || crate::gate::manifest_authenticity::manifest_is_quarantined(
+                store, txn, &id, &raw.body,
+            )?
+            || !crate::gate::manifest_authenticity::manifest_is_trusted(store, txn, &id, &raw.body)?
+        {
+            continue;
+        }
+        let decoded = decode_policy_manifest(&raw.body)
+            .ok_or(Error::CorruptedIndex("trusted retention manifest"))?;
+        if decoded.gate_decision_retention.is_none() {
+            continue;
+        }
+        if id == default_id && raw.body == seeded {
+            default_present = true;
+        } else {
+            owner_ids.push(id);
+        }
+    }
+    let target = match owner_ids.as_slice() {
+        [one] => *one,
+        [] if default_present => default_id,
+        _ => {
+            return Err(Error::InvalidConfig(
+                "retention edit has no unique trusted carrier".into(),
+            ));
+        }
+    };
+    Ok((policy, target))
 }
 
 fn merge_teacher_probe_row(resolution: &mut PolicyManifestResolution, row: TeacherProbeRow) {

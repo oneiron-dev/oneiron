@@ -81,6 +81,11 @@ pub fn project_skill_reliability(
         let Some(record) = vault.get_skill_record(&judgment.subject)? else {
             continue;
         };
+        // A callable's loss belongs to the executors that invoked it, which
+        // the attempt stamp may not name; the sweep charges those pairs.
+        if record.role == crate::skill::SkillRole::Callable {
+            continue;
+        }
         // A judgment with nothing to cite cannot be counted: the row it would
         // write has no key, and a loss with no trace is the thing the doctrine
         // header exists to refuse.
