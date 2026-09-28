@@ -101,7 +101,15 @@ pub(crate) fn validate_goal_birth_in_txn(
     if parent == *id {
         return Err(invalid("optimizer skill cannot revise itself"));
     }
-    let Some(raw) = store.entities.get(txn, parent.as_bytes())? else {
+    // A user delete keeps the parent's header as a shell whose body is gone
+    // (ARCH-0038); that parent is erased, not a record to decode.
+    let parent_raw =
+        if crate::ports::TombstoneStoreRead::port_deletion_state(store, txn, &parent)?.deleted {
+            None
+        } else {
+            store.entities.get(txn, parent.as_bytes())?
+        };
+    let Some(raw) = parent_raw else {
         if !replicated {
             return Err(invalid("local optimizer predecessor is missing"));
         }

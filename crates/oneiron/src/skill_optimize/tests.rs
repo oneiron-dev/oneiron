@@ -5909,7 +5909,10 @@ fn optimizer_goal_identity_is_strict_on_birth_update_and_same_id_recreate() -> R
         );
     }
     let saved = crate::skill::encode_skill_record(&born)?;
-    assert!(vault.delete_entity(&b)?);
+    // Internal removal, as in the birth-marker tests: a user delete keeps a
+    // shell and an owner hard delete retires the ID, so neither re-presents it.
+    vault.batch().delete(&b).commit()?;
+    assert!(vault.get_skill_record(&b)?.is_none(), "the body is gone");
     assert_eq!(
         vault
             .batch()
