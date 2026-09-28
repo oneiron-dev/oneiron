@@ -215,7 +215,8 @@ fn lowered_tier_floor_and_its_descendant_land_at_once() {
     let entries = vec![genesis, lower, enroll];
     let now = 10_000_000;
 
-    let fold = fold_legacy_authority_log_with_seen_times(&entries, &all_first_seen_at(&entries, now), now);
+    let fold =
+        fold_legacy_authority_log_with_seen_times(&entries, &all_first_seen_at(&entries, now), now);
     assert_eq!(fold.tier_floor, Some(AuthorityTier::Software));
     assert!(fold.valid_entries.contains(&lower_hash));
     assert!(
@@ -249,7 +250,8 @@ fn rotation_lands_at_once_and_retires_the_old_key() {
     let entries = vec![genesis, bind, rotate];
     let now = 10_000_000;
 
-    let fold = fold_legacy_authority_log_with_seen_times(&entries, &all_first_seen_at(&entries, now), now);
+    let fold =
+        fold_legacy_authority_log_with_seen_times(&entries, &all_first_seen_at(&entries, now), now);
     assert!(fold.roster[&owner_key].revoked);
     assert!(
         fold.roster
@@ -282,10 +284,16 @@ fn first_seen_times_do_not_change_the_structural_fold() {
     let enroll_hash = authority_entry_hash(&enroll).unwrap();
     let new_key = authority_key_from_ed(&ed_key(67));
     let entries = [genesis, enroll];
-    let early =
-        fold_legacy_authority_log_with_seen_times(&entries, &BTreeMap::from([(enroll_hash, 0)]), 50);
-    let late =
-        fold_legacy_authority_log_with_seen_times(&entries, &BTreeMap::from([(enroll_hash, 50)]), 50);
+    let early = fold_legacy_authority_log_with_seen_times(
+        &entries,
+        &BTreeMap::from([(enroll_hash, 0)]),
+        50,
+    );
+    let late = fold_legacy_authority_log_with_seen_times(
+        &entries,
+        &BTreeMap::from([(enroll_hash, 50)]),
+        50,
+    );
     assert!(early.roster.contains_key(&new_key));
     assert_eq!(early, late);
     assert_eq!(early, fold_legacy_authority_log(&entries));

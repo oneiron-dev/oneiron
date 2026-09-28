@@ -257,7 +257,7 @@ fn lifecycle_dag() -> LifecycleDag {
 #[test]
 fn federation_lifecycle_dag_merges_pacts_fail_closed() {
     let dag = lifecycle_dag();
-    let fold = fold_authority_log(&dag.entries);
+    let fold = fold_legacy_authority_log(&dag.entries);
     assert!(
         fold.issues.is_empty(),
         "unexpected issues: {:?}",
@@ -398,7 +398,7 @@ proptest! {
         perm in prop::collection::vec(0_usize..17, 17),
     ) {
         let dag = lifecycle_dag();
-        let baseline = fold_authority_log(&dag.entries);
+        let baseline = fold_legacy_authority_log(&dag.entries);
         prop_assert!(baseline.issues.is_empty());
 
         let mut permuted = Vec::new();
@@ -413,7 +413,7 @@ proptest! {
             }
         }
 
-        let folded = fold_authority_log(&permuted);
+        let folded = fold_legacy_authority_log(&permuted);
         // The HEAL TARGET (the grant_ref an epoch+1 repact must name) is
         // anchored to the GLOBAL tie-break winner under every permutation —
         // an absolute check, not just baseline equality, so a consistently

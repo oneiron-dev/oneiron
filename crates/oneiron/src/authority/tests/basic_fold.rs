@@ -232,7 +232,7 @@ fn fold_rejects_entries_signed_by_revoked_key() {
     );
     let invalid_child = enroll_entry(vault_id, &revoke, &revoked_signer, 7, 1, 4);
 
-    let fold = fold_authority_log(&[
+    let fold = fold_legacy_authority_log(&[
         invalid_child.clone(),
         revoke,
         enroll_cosigner,
@@ -266,7 +266,7 @@ fn fold_rejects_revoke_without_surviving_quorum() {
         2,
     );
 
-    let fold = fold_authority_log(&[revoke.clone(), enroll, genesis]);
+    let fold = fold_legacy_authority_log(&[revoke.clone(), enroll, genesis]);
     assert!(fold.issues.iter().any(|issue| matches!(
     issue,
     AuthorityFoldIssue::MissingQuorum(hash)
@@ -284,7 +284,7 @@ fn same_signer_same_sequence_siblings_fold_by_ancestry_without_quarantine() {
     let left_hash = authority_entry_hash(&left).unwrap();
     let right_hash = authority_entry_hash(&right).unwrap();
     let entries = [genesis, left, right];
-    let fold = fold_authority_log(&entries);
+    let fold = fold_legacy_authority_log(&entries);
 
     assert!(fold.valid_entries.contains(&left_hash), "{:?}", fold.issues);
     assert!(
@@ -296,7 +296,7 @@ fn same_signer_same_sequence_siblings_fold_by_ancestry_without_quarantine() {
     assert!(fold.issues.is_empty(), "{:?}", fold.issues);
 
     let reversed: Vec<_> = entries.into_iter().rev().collect();
-    assert_eq!(fold_authority_log(&reversed), fold);
+    assert_eq!(fold_legacy_authority_log(&reversed), fold);
 }
 
 #[test]
@@ -333,7 +333,7 @@ fn fold_allows_newly_enrolled_signer_to_start_at_seq_zero() {
     );
     let first_hash = authority_entry_hash(&first_new_signer_entry).unwrap();
 
-    let fold = fold_authority_log(&[first_new_signer_entry, enroll_admin, genesis]);
+    let fold = fold_legacy_authority_log(&[first_new_signer_entry, enroll_admin, genesis]);
     assert!(fold.valid_entries.contains(&first_hash));
     assert!(!fold.issues.iter().any(|issue| matches!(
         issue,

@@ -485,7 +485,7 @@ fn binding_dies_with_roster_key() {
         bind.clone(),
     ];
     assert!(actor_binding_is_active(
-        &fold_authority_log(&base),
+        &fold_legacy_authority_log(&base),
         &fixture.actor,
         "human"
     ));
@@ -508,7 +508,7 @@ fn binding_dies_with_roster_key() {
     );
     let mut entries = base.clone();
     entries.push(recovery);
-    let fold = fold_authority_log(&entries);
+    let fold = fold_legacy_authority_log(&entries);
     assert_eq!(
         folded_status(&fold, &key),
         Some(ActorBindingStatus::Revoked)
@@ -536,7 +536,7 @@ fn binding_dies_with_roster_key() {
     );
     let mut entries = base.clone();
     entries.push(rotate.clone());
-    let fold = fold_authority_log(&entries);
+    let fold = fold_legacy_authority_log(&entries);
     assert_eq!(
         folded_status(&fold, &key),
         Some(ActorBindingStatus::Revoked)
@@ -563,7 +563,7 @@ fn binding_dies_with_roster_key() {
     let mut entries = base;
     entries.push(rotate);
     entries.push(rebound);
-    let fold = fold_authority_log(&entries);
+    let fold = fold_legacy_authority_log(&entries);
     assert_eq!(
         folded_status(&fold, &rotated_key),
         Some(ActorBindingStatus::Active)
@@ -611,7 +611,7 @@ fn binding_dies_when_key_loses_its_bind_qualification() {
         wide_enroll,
         bind,
     ];
-    let fold = fold_authority_log(&owner_capable);
+    let fold = fold_legacy_authority_log(&owner_capable);
     assert_eq!(
         fold.roster[&third_key].roles & (ROLE_OWNER | ROLE_ADMIN),
         ROLE_OWNER | ROLE_ADMIN,
@@ -635,7 +635,7 @@ fn binding_dies_when_key_loses_its_bind_qualification() {
     );
     let mut stripped = owner_capable;
     stripped.push(narrow_enroll);
-    let fold = fold_authority_log(&stripped);
+    let fold = fold_legacy_authority_log(&stripped);
     assert_eq!(
         fold.roster[&third_key].roles & (ROLE_OWNER | ROLE_ADMIN),
         0,
@@ -685,7 +685,7 @@ fn binding_dies_when_key_loses_its_bind_qualification() {
         bind.clone(),
     ];
     assert_eq!(
-        folded_status(&fold_authority_log(&live), &spare_key),
+        folded_status(&fold_legacy_authority_log(&live), &spare_key),
         Some(ActorBindingStatus::Active),
         "control: a live agent key backs an agent-class binding"
     );
@@ -700,7 +700,7 @@ fn binding_dies_when_key_loses_its_bind_qualification() {
     );
     let mut revoked = live;
     revoked.push(revoke_device);
-    let fold = fold_authority_log(&revoked);
+    let fold = fold_legacy_authority_log(&revoked);
     assert!(
         fold.issues.is_empty(),
         "revoke fixture must fold cleanly: {:?}",
@@ -1176,7 +1176,7 @@ fn verified_revoke_survives_concurrent_signer_enrollment() {
     );
     let revoke_hash = authority_entry_hash(&revoke).unwrap();
     let mut entries = vec![genesis, enroll_consent, bind, loser, revoke];
-    let before = fold_authority_log(&entries);
+    let before = fold_legacy_authority_log(&entries);
     assert!(
         before.issues.is_empty(),
         "valid revoke fixture: {:?}",
@@ -1189,7 +1189,7 @@ fn verified_revoke_survives_concurrent_signer_enrollment() {
     );
 
     entries.push(winner);
-    let after = fold_authority_log(&entries);
+    let after = fold_legacy_authority_log(&entries);
     assert!(after.valid_entries.contains(&winner_hash));
     assert!(after.valid_entries.contains(&loser_hash));
     assert!(after.valid_entries.contains(&revoke_hash));
@@ -1205,13 +1205,13 @@ fn verified_revoke_survives_concurrent_signer_enrollment() {
     );
     let mut bad_entries = entries.clone();
     bad_entries[4].cosigns[0].signature[0] ^= 1;
-    let bad = fold_authority_log(&bad_entries);
+    let bad = fold_legacy_authority_log(&bad_entries);
     assert_eq!(
         folded_status(&bad, &consent_key),
         Some(ActorBindingStatus::Active)
     );
     entries.reverse();
-    assert_eq!(fold_authority_log(&entries), after);
+    assert_eq!(fold_legacy_authority_log(&entries), after);
 }
 
 #[test]
@@ -1309,7 +1309,7 @@ fn verified_revoke_survives_invalid_grant_and_concurrent_enrollment() {
     );
     let revoke_hash = authority_entry_hash(&revoke).unwrap();
     let mut entries = vec![genesis, enroll_consent, bind, loser, invalid_grant, revoke];
-    let before = fold_authority_log(&entries);
+    let before = fold_legacy_authority_log(&entries);
     assert!(
         before
             .issues
@@ -1326,7 +1326,7 @@ fn verified_revoke_survives_invalid_grant_and_concurrent_enrollment() {
     );
 
     entries.push(winner);
-    let after = fold_authority_log(&entries);
+    let after = fold_legacy_authority_log(&entries);
     assert!(after.valid_entries.contains(&winner_hash));
     assert!(after.valid_entries.contains(&loser_hash));
     assert!(!after.valid_entries.contains(&revoke_hash));
@@ -1347,11 +1347,11 @@ fn verified_revoke_survives_invalid_grant_and_concurrent_enrollment() {
     );
     let mut bad_entries = entries.clone();
     bad_entries[5].cosigns[0].signature[0] ^= 1;
-    let bad = fold_authority_log(&bad_entries);
+    let bad = fold_legacy_authority_log(&bad_entries);
     assert_eq!(
         folded_status(&bad, &consent_key),
         Some(ActorBindingStatus::Active)
     );
     entries.reverse();
-    assert_eq!(fold_authority_log(&entries), after);
+    assert_eq!(fold_legacy_authority_log(&entries), after);
 }

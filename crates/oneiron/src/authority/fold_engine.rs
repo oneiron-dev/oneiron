@@ -523,8 +523,30 @@ fn fold_authority_log_once(
         }
         if !progressed && !rejected_retired.is_empty() {
             // The round made no progress, so every hash still pending is stuck
-            // for good. Only here may an actor revocation resolve against the
+            // for good. Only here may a signed withdrawal resolve against the
             // ancestry above a retired client enrollment it descends from.
+            // Retiring a client-key op does not erase a withdrawal its old
+            // root authorized: the rejected row must still fold under the
+            // historical rule (signature, signer, quorum, ancestry), but its
+            // granted key is never installed.
+            let crossable: BTreeSet<_> = rejected_retired
+                .iter()
+                .copied()
+                .filter(|hash| {
+                    matches!(
+                        fold_entry_state(
+                            &by_hash[hash],
+                            *hash,
+                            &states,
+                            FoldContext {
+                                pre_handoff_entries: None,
+                                ..context
+                            },
+                        ),
+                        EntryFold::Ready(_)
+                    )
+                })
+                .collect();
             let stalled: Vec<_> = pending.iter().copied().collect();
             for hash in stalled {
                 if let EntryFold::Ready(state) = super::ancestry_evaluator::evaluate_entry(
@@ -533,7 +555,7 @@ fn fold_authority_log_once(
                     &by_hash,
                     &states,
                     context,
-                    super::ancestry_evaluator::EvaluationPhase::Stalled(&rejected_retired),
+                    super::ancestry_evaluator::EvaluationPhase::Stalled(&crossable),
                 ) {
                     states.insert(hash, state);
                     pending.remove(&hash);

@@ -172,8 +172,16 @@ fn host_signed_agent_enrollment_is_not_a_retired_device_op() {
             fold_authority_log_with_seen_times(&entries, &BTreeMap::from([(enroll_hash, 1)]), 1),
             fold_peer_authority_log(&entries),
         ] {
-            assert_eq!(fold.valid_entries.contains(&enroll_hash), !retired, "{roles:#x}");
-            assert_eq!(fold.roster.contains_key(&enrolled_key), !retired, "{roles:#x}");
+            assert_eq!(
+                fold.valid_entries.contains(&enroll_hash),
+                !retired,
+                "{roles:#x}"
+            );
+            assert_eq!(
+                fold.roster.contains_key(&enrolled_key),
+                !retired,
+                "{roles:#x}"
+            );
         }
         assert!(
             fold_legacy_authority_log(&entries)

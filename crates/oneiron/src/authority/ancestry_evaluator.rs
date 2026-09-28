@@ -12,7 +12,9 @@ use super::*;
 
 /// One entry-progress rule for the ordinary fold and signed-branch proof.
 /// During normal rounds no ancestry is bypassed. After a full stalled round,
-/// only a RevokeActor may cross proven-rejected permissive parents.
+/// only a signed withdrawal may cross proven-rejected permissive parents: a
+/// RevokeActor, or a slip revoke or consume (the ordinary fold passes only
+/// retired client enrollments; the signed-branch proof rescues only revokes).
 pub(super) enum EvaluationPhase<'a> {
     Normal,
     Stalled(&'a BTreeSet<AuthorityEntryHash>),
@@ -49,7 +51,7 @@ pub(super) fn skippable_permissive(op: &AuthorityOp) -> bool {
     )
 }
 
-/// Try a stalled actor revoke against explicitly rejected parents, which
+/// Try a stalled withdrawal against explicitly rejected parents, which
 /// signed-history verification passes as its own rejected ancestors.
 fn stalled_actor_revoke(
     entry: &AuthorityLogEntry,
@@ -59,7 +61,12 @@ fn stalled_actor_revoke(
     rejected: &BTreeSet<AuthorityEntryHash>,
     context: FoldContext<'_>,
 ) -> Option<FoldState> {
-    if !matches!(entry.op, AuthorityOp::RevokeActor { .. }) {
+    if !matches!(
+        entry.op,
+        AuthorityOp::RevokeActor { .. }
+            | AuthorityOp::SlipRevoke { .. }
+            | AuthorityOp::SlipConsume { .. }
+    ) {
         return None;
     }
     let mut scratch = states.clone();

@@ -693,7 +693,8 @@ fn a_slip_revoke_signed_by_a_revoked_owner_device_folds_invalid() {
         )
         .unwrap();
     let hash = authority_entry_hash(&revoked).unwrap();
-    let fold = super::super::fold_engine::fold_authority_log(&[genesis, mint, rotation, revoked]);
+    let fold =
+        super::super::fold_engine::fold_legacy_authority_log(&[genesis, mint, rotation, revoked]);
     assert!(fold.valid_entries.contains(&rotation_hash));
     assert!(fold.roster[&issuer.public_key()].revoked);
     assert!(!fold.valid_entries.contains(&hash));
@@ -1807,6 +1808,7 @@ fn signed_withdrawals_cross_rejected_enrollment_without_granting_its_key() {
         let (_, mint) = rooted_log(&vault, &root);
         let binding = SigningKey::from_bytes(&[202; 32]);
         let client_key = AuthorityKey::Ed25519(binding.verifying_key().to_bytes());
+        // A client role: the host's agent-only MACHINE enrollment is not retired.
         let enroll = issuer
             .sign_entry(
                 Some(root.claims.vault_id),
@@ -1821,7 +1823,7 @@ fn signed_withdrawals_cross_rejected_enrollment_without_granting_its_key() {
                             evidence: Vec::new(),
                         },
                         tier: AuthorityTier::Software,
-                        roles: ROLE_AGENT,
+                        roles: ROLE_ADMIN,
                     },
                 },
                 root.claims.issued_at,

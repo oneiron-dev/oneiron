@@ -105,19 +105,20 @@ fn authority_enroll_fixture(
     )
 }
 
-/// A signed re-root child. A retired enrollment folds only as verified
-/// pre-handoff ancestry, so this child keeps the enrollment's delay, and
-/// therefore its first-seen sidecar, load-bearing.
+/// A signed re-root child, cosigned by the enrolled key the two-owner roster
+/// needs. A retired enrollment folds only as verified pre-handoff ancestry,
+/// and with the widen delay dead it lands at once.
 #[cfg(feature = "sync")]
 fn authority_re_root_fixture(
     vault_id: crate::authority::AuthorityVaultId,
     parent: &crate::authority::AuthorityLogEntry,
     signer: &SigningKey,
+    cosigner: &SigningKey,
     new_seed: u8,
     seq: u64,
 ) -> crate::authority::AuthorityLogEntry {
     let new_key = authority_key_from_signing(&authority_test_key(new_seed));
-    authority_child_fixture(
+    let mut entry = authority_child_fixture(
         vault_id,
         parent,
         signer,
@@ -126,7 +127,17 @@ fn authority_re_root_fixture(
         crate::authority::AuthorityOp::ReRoot {
             new_device: authority_test_device(new_key),
         },
-    )
+    );
+    let cosigner_key = authority_key_from_signing(cosigner);
+    entry.cosigns.push(crate::authority::AuthoritySignature {
+        suite: cosigner_key.suite(),
+        public_key: cosigner_key,
+        signature: vec![0; 64],
+    });
+    let transcript = crate::authority::authority_transcript(&entry).expect("transcript");
+    entry.signer.signature = signer.sign(&transcript).to_bytes().to_vec();
+    entry.cosigns[0].signature = cosigner.sign(&transcript).to_bytes().to_vec();
+    entry
 }
 
 #[cfg(feature = "sync")]
@@ -150,7 +161,8 @@ fn authority_log_first_seen_sidecar_drives_live_fold() -> Result<()> {
     let enroll_hash = crate::authority::authority_entry_hash(&enroll)?;
     let enroll_sidecar = crate::authority::authority_first_seen_sync_key(&enroll_hash);
     let enroll_key = authority_key_from_signing(&authority_test_key(75));
-    let handoff = authority_re_root_fixture(vault_id, &enroll, &owner, 76, 2);
+    let handoff =
+        authority_re_root_fixture(vault_id, &enroll, &owner, &authority_test_key(75), 76, 2);
 
     vault.put_authority_log_entry(&genesis, test_time_range(1, 1), 1)?;
     let enroll_id = vault.put_authority_log_entry(&enroll, test_time_range(2, 2), 2)?;
@@ -1118,7 +1130,8 @@ fn authority_fold_backfills_legacy_missing_first_seen_sidecars_once() -> Result<
     let enroll_hash = crate::authority::authority_entry_hash(&enroll)?;
     let enroll_sidecar = crate::authority::authority_first_seen_sync_key(&enroll_hash);
     let enroll_key = authority_key_from_signing(&authority_test_key(85));
-    let handoff = authority_re_root_fixture(vault_id, &enroll, &owner, 86, 2);
+    let handoff =
+        authority_re_root_fixture(vault_id, &enroll, &owner, &authority_test_key(85), 86, 2);
 
     vault.put_authority_log_entry(&genesis, test_time_range(1, 1), 1)?;
     vault.put_authority_log_entry(&enroll, test_time_range(2, 2), 2)?;

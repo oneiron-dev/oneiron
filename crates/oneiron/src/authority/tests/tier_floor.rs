@@ -96,7 +96,7 @@ fn hardware_floor_rejects_software_signer_under_every_arrival_order() {
     let weak = signed(action(1), 1, true);
     let strong = signed(action(2), 3, false);
     let mut entries = vec![genesis, enroll, floor, weak.clone(), strong.clone()];
-    let expected = fold_authority_log(&entries);
+    let expected = fold_legacy_authority_log(&entries);
     assert!(
         !expected
             .valid_entries
@@ -109,7 +109,7 @@ fn hardware_floor_rejects_software_signer_under_every_arrival_order() {
     );
     assert_eq!(expected.tier_floor, Some(AuthorityTier::Hardware));
     entries.reverse();
-    assert_eq!(expected, fold_authority_log(&entries));
+    assert_eq!(expected, fold_legacy_authority_log(&entries));
 }
 
 #[test]

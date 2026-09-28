@@ -321,11 +321,14 @@ fn machine_enrollment_and_signed_claim_verify_at_all_write_doors() {
             public_key: stranger.verifying_key().to_bytes(),
             signature: stranger.sign(&unbound_transcript).to_bytes(),
         });
-    let unbound_body = candidate.clone().into_claim_body(
-        &unbound,
-        crate::claim::default_facet_in(&vault.store, &vault.store.env.read_txn().unwrap()).unwrap(),
-    )
-    .unwrap();
+    let unbound_body = candidate
+        .clone()
+        .into_claim_body(
+            &unbound,
+            crate::claim::default_facet_in(&vault.store, &vault.store.env.read_txn().unwrap())
+                .unwrap(),
+        )
+        .unwrap();
     let unbound_bytes = crate::claim::encode_claim_body(&unbound_body).unwrap();
     vault
         .batch()
