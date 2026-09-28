@@ -94,9 +94,19 @@ pub(crate) fn topology_delete_reservation_in_txn(
     }))
 }
 
+/// A hard request subsumes a different request's soft deletion of the same
+/// entity: the soft reservation already fences topology, and the hard
+/// tombstone dominates the soft one on every replica.
+fn hard_request_subsumes(existing: &TopologyDeleteIntent, value: &TombstoneValueV2) -> bool {
+    existing.request_id != value.request_id && value.reason.is_hard() && !existing.reason.is_hard()
+}
+
 /// Source eligibility must be checked BEFORE calling this under the same
 /// writer. A retry can advance its own phase, but cannot replace a different
-/// request's reservation or move a committed request backwards.
+/// request's reservation or move a committed request backwards. The one
+/// exception is a hard request over a soft one: it takes the reservation over
+/// once it has published or committed, never while merely Prepared, so a
+/// failed hard attempt leaves the soft request's intent in place.
 pub(super) fn reserve_topology_delete_in_txn(
     store: &Store,
     txn: &mut heed::RwTxn<'_>,
@@ -106,14 +116,17 @@ pub(super) fn reserve_topology_delete_in_txn(
     phase: TopologyDeletePhase,
 ) -> Result<()> {
     if let Some(existing) = topology_delete_reservation_in_txn(store, txn, entity)? {
-        if existing.request_id != value.request_id
+        if hard_request_subsumes(&existing, value) {
+            if phase == TopologyDeletePhase::Prepared {
+                return Ok(());
+            }
+        } else if existing.request_id != value.request_id
             || existing.reason != value.reason
             || existing.deleted_at != value.deleted_at
             || existing.window_ts != window_ts
         {
             return Err(conflict(entity));
-        }
-        if existing.phase.byte() >= phase.byte() {
+        } else if existing.phase.byte() >= phase.byte() {
             return Ok(());
         }
     }
@@ -127,15 +140,20 @@ pub(super) fn reserve_topology_delete_in_txn(
     Ok(())
 }
 
+/// Whether this request may publish: it owns the reservation, or it is a hard
+/// request that will take a soft request's reservation over at publication.
 #[cfg(feature = "sync")]
-pub(super) fn owns_topology_delete_in_txn(
+pub(super) fn may_publish_topology_delete_in_txn(
     store: &Store,
     txn: &heed::RoTxn<'_>,
     entity: &EntityId,
-    request_id: &[u8; 16],
+    value: &TombstoneValueV2,
 ) -> Result<bool> {
-    Ok(topology_delete_reservation_in_txn(store, txn, entity)?
-        .is_some_and(|intent| intent.request_id == *request_id))
+    Ok(
+        topology_delete_reservation_in_txn(store, txn, entity)?.is_some_and(|intent| {
+            intent.request_id == value.request_id || hard_request_subsumes(&intent, value)
+        }),
+    )
 }
 
 /// Only an already published (or destructively committed) matching request
@@ -223,7 +241,8 @@ pub(crate) fn complete_replayed_topology_delete_in_txn(
 /// Recover an interrupted deletion before a Vault handle becomes observable.
 /// Prepared with no published/propagation witness can be withdrawn. A
 /// persisted matching tombstone (or committed `pt:` intent) is completed under
-/// the caller's LMDB writer using the same reason-aware replay eraser. No
+/// the caller's LMDB writer using the same reason-aware replay eraser; a
+/// refused completion keeps its reservation for the ordinary replay. No
 /// timeout or guessed-owner cleanup is allowed; ambiguous evidence fails
 /// open rather than releasing an interlock a peer might already obey.
 pub(crate) fn recover_topology_delete_intents_on_open(vault: &crate::Vault) -> Result<()> {
@@ -270,11 +289,13 @@ pub(crate) fn recover_topology_delete_intents_on_open(vault: &crate::Vault) -> R
             wtxn.commit()?;
             continue;
         };
-        let mut wtxn = vault.store.env.write_txn()?;
         // A crash after d:w: persistence cannot ordinarily leave Prepared,
         // because phase advances in the same publish commit. Handle it
-        // defensively without re-deciding already published eligibility.
+        // defensively without re-deciding already published eligibility. The
+        // witness proves publication on its own, so this commits even when
+        // the completion below is refused.
         if intent.phase == TopologyDeletePhase::Prepared {
+            let mut wtxn = vault.store.env.write_txn()?;
             reserve_topology_delete_in_txn(
                 &vault.store,
                 &mut wtxn,
@@ -287,9 +308,25 @@ pub(crate) fn recover_topology_delete_intents_on_open(vault: &crate::Vault) -> R
                 intent.window_ts,
                 TopologyDeletePhase::Published,
             )?;
+            wtxn.commit()?;
         }
-        vault.apply_replayed_tombstone_in_txn(&mut wtxn, &entity, &raw)?;
-        wtxn.commit()?;
+        // Completion here is best effort. A refused replay (a purge-time
+        // guard, an incomplete authority sidecar) rolls back and keeps the
+        // reservation, which alone fences topology until the ordinary window
+        // or pending-tombstone replay completes it under its own fail-closed
+        // handling. Failing the open would wedge the vault instead.
+        let mut wtxn = vault.store.env.write_txn()?;
+        match vault.apply_replayed_tombstone_in_txn(&mut wtxn, &entity, &raw) {
+            Ok(_) => wtxn.commit()?,
+            Err(error) => {
+                drop(wtxn);
+                tracing::warn!(
+                    entity = %entity.to_hex(),
+                    %error,
+                    "topology delete completion deferred to replay"
+                );
+            }
+        }
     }
     Ok(())
 }
@@ -452,6 +489,86 @@ mod tests {
             None
         );
     }
+    #[test]
+    fn hard_request_takes_over_a_soft_reservation_only_once_published() {
+        let dir = tempfile::tempdir().unwrap();
+        let vault = Vault::open(dir.path(), VaultConfig::device()).unwrap();
+        let entity = EntityId::from_hex("33333333333333333333333333333333").unwrap();
+        let soft = TombstoneValueV2 {
+            reason: TombstoneReason::UserDelete,
+            ..tombstone([6; 16])
+        };
+        let hard = tombstone([7; 16]);
+        let mut txn = vault.store.env.write_txn().unwrap();
+        reserve_topology_delete_in_txn(
+            &vault.store,
+            &mut txn,
+            &entity,
+            &soft,
+            1_772_000_000,
+            TopologyDeletePhase::Committed,
+        )
+        .unwrap();
+        reserve_topology_delete_in_txn(
+            &vault.store,
+            &mut txn,
+            &entity,
+            &hard,
+            1_772_000_000,
+            TopologyDeletePhase::Prepared,
+        )
+        .unwrap();
+        let owner = |txn: &heed::RwTxn<'_>| {
+            topology_delete_reservation_in_txn(&vault.store, txn, &entity)
+                .unwrap()
+                .map(|intent| (intent.request_id, intent.phase))
+        };
+        assert_eq!(
+            owner(&txn),
+            Some((soft.request_id, TopologyDeletePhase::Committed)),
+            "a merely prepared hard attempt leaves the soft intent in place"
+        );
+        assert!(
+            !clear_own_topology_delete_in_txn(
+                &vault.store,
+                &mut txn,
+                &entity,
+                &hard.request_id,
+                true,
+            )
+            .unwrap()
+        );
+        reserve_topology_delete_in_txn(
+            &vault.store,
+            &mut txn,
+            &entity,
+            &hard,
+            1_772_000_000,
+            TopologyDeletePhase::Published,
+        )
+        .unwrap();
+        assert_eq!(
+            owner(&txn),
+            Some((hard.request_id, TopologyDeletePhase::Published))
+        );
+        let later_soft = TombstoneValueV2 {
+            reason: TombstoneReason::UserDelete,
+            ..tombstone([8; 16])
+        };
+        assert!(
+            reserve_topology_delete_in_txn(
+                &vault.store,
+                &mut txn,
+                &entity,
+                &later_soft,
+                1_772_000_000,
+                TopologyDeletePhase::Committed,
+            )
+            .is_err(),
+            "a soft request never displaces a hard one"
+        );
+    }
+
     #[test]
     fn pending_replay_only_retires_matching_completed_hard_delete() {
         let dir = tempfile::tempdir().unwrap();

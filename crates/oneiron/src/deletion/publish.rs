@@ -23,7 +23,7 @@ use super::rendezvous::{DeleteRendezvous, signal_delete_rendezvous};
 use super::tombstone::TombstoneValueV2;
 #[cfg(feature = "sync")]
 use super::topology_delete_intent::{
-    TopologyDeletePhase, clear_own_topology_delete_in_txn, owns_topology_delete_in_txn,
+    TopologyDeletePhase, clear_own_topology_delete_in_txn, may_publish_topology_delete_in_txn,
     reserve_topology_delete_in_txn,
 };
 // The `pt:` withdrawal helper is part of the sync persistence transaction.
@@ -385,7 +385,7 @@ impl Vault {
                 .and_then(|()| reverify_deletion_authority_before_publication(gate, &wtxn))
                 .and_then(|()| crate::federation::reject_ruling_delete(&self.store, &wtxn, id))
                 .and_then(|()| {
-                    if owns_topology_delete_in_txn(&self.store, &wtxn, id, &value.request_id)? {
+                    if may_publish_topology_delete_in_txn(&self.store, &wtxn, id, value)? {
                         Ok(())
                     } else {
                         Err(crate::error::Error::CorruptedIndex(
