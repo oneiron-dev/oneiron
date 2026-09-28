@@ -60,8 +60,12 @@ fn fixture(
 )> {
     let mut config = VaultConfig::device();
     config.dimensions = 4;
-    config.map_size = 16 * 1024 * 1024;
-    let (dir, vault) = crate::test_util::open_test_vault_with(config);
+    // Boundary fixtures stage a full 16 MiB source plus its catalog indexes.
+    config.map_size = 128 * 1024 * 1024;
+    // Install admission resolves the seeded policy manifest. The generic
+    // legacy helper deindexes it and cannot serve this fixture.
+    let dir = tempfile::tempdir()?;
+    let vault = Vault::open(dir.path(), config)?;
     let owner = EntityId::now();
     let at = TimeRange { start: 1, end: 1 };
     vault.put_entity(&owner, crate::registry::ENTITY_TYPE_PERSON, at, 1, b"owner")?;
@@ -276,7 +280,24 @@ fn code_free_pack_installs_active_without_qualification_or_consent() -> Result<(
         else {
             panic!("attempt")
         };
-        let loaded = vault.load_attempt_skill_pack(attempt.id, &skill, 8)?;
+        let crate::attempt_queue::ClaimOutcome::Claimed(leased) = queue.claim_kind(
+            "pack.runtime",
+            crate::attempt_queue::ClaimAttempt {
+                lease_owner: "worker".into(),
+                now: 8,
+            },
+        )?
+        else {
+            panic!("lease")
+        };
+        let loaded = vault.load_attempt_skill_pack(
+            attempt.id,
+            &skill,
+            "worker",
+            leased.attempt_count,
+            "fixture/model@1",
+            8,
+        )?;
         assert!(
             loaded
                 .source_files
@@ -337,15 +358,39 @@ fn resident_authored_skill_rides_installed_pack_in_one_attempt() -> Result<()> {
     else {
         panic!("attempt")
     };
+    let crate::attempt_queue::ClaimOutcome::Claimed(leased) = queue.claim_kind(
+        "pack.runtime",
+        crate::attempt_queue::ClaimAttempt {
+            lease_owner: "worker".into(),
+            now: 7,
+        },
+    )?
+    else {
+        panic!("lease")
+    };
     assert!(
         vault
-            .load_attempt_skill_pack(attempt.id, &bundled, 7)?
+            .load_attempt_skill_pack(
+                attempt.id,
+                &bundled,
+                "worker",
+                leased.attempt_count,
+                "fixture/model@1",
+                7
+            )?
             .source_files
             .is_some()
     );
     assert_eq!(
         vault
-            .load_attempt_skill_pack(attempt.id, &authored_id, 8)?
+            .load_attempt_skill_pack(
+                attempt.id,
+                &authored_id,
+                "worker",
+                leased.attempt_count,
+                "fixture/model@1",
+                8
+            )?
             .record
             .skill_id,
         "alice.workflow"
@@ -671,7 +716,14 @@ fn bundled_skill_revision_supersedes_old_and_widened_capability_reaches_fit() ->
     );
     assert!(
         vault
-            .load_attempt_skill_pack(crate::attempt_queue::AttemptId::now(), &old_id, 7)
+            .load_attempt_skill_pack(
+                crate::attempt_queue::AttemptId::now(),
+                &old_id,
+                "worker",
+                1,
+                "fixture/model@1",
+                7
+            )
             .is_err()
     );
     Ok(())
@@ -854,14 +906,38 @@ fn last_shared_pack_owner_supersedes_old_revision() -> Result<()> {
     else {
         panic!("attempt")
     };
+    let crate::attempt_queue::ClaimOutcome::Claimed(leased) = queue.claim_kind(
+        "pack.runtime",
+        crate::attempt_queue::ClaimAttempt {
+            lease_owner: "worker".into(),
+            now: 8,
+        },
+    )?
+    else {
+        panic!("lease")
+    };
     assert!(
         vault
-            .load_attempt_skill_pack(attempt.id, &old_id, 8)
+            .load_attempt_skill_pack(
+                attempt.id,
+                &old_id,
+                "worker",
+                leased.attempt_count,
+                "fixture/model@1",
+                8
+            )
             .is_err()
     );
     assert!(
         vault
-            .load_attempt_skill_pack(attempt.id, &new_id, 8)
+            .load_attempt_skill_pack(
+                attempt.id,
+                &new_id,
+                "worker",
+                leased.attempt_count,
+                "fixture/model@1",
+                8
+            )
             .is_ok()
     );
     Ok(())
@@ -1313,5 +1389,197 @@ fn longest_valid_pack_ref_and_long_skill_folder_install_active() -> Result<()> {
         );
         assert_eq!(vault.render_mounted_lens(&lens, || Ok(1))?, Some(1));
     }
+    Ok(())
+}
+
+struct WrongCodeRecipe;
+impl PackFitPolicy for WrongCodeRecipe {
+    fn evaluate(&self, _source: &PackSource, _card: &PackPermissions) -> Result<PackFitVerdict> {
+        Ok(PackFitVerdict {
+            fits: true,
+            rules_hit: false,
+            code_auto_install: true,
+        })
+    }
+    fn qualify_script(&self, source: &PackSource) -> Result<Option<PackQualification>> {
+        let mut qualified = QualifiedScript.qualify(source)?;
+        qualified
+            .runtime
+            .as_mut()
+            .expect("fixture runtime")
+            .runtime_id = "unrelated-runtime".into();
+        Ok(Some(qualified))
+    }
+}
+#[test]
+fn script_install_refuses_a_runtime_other_than_the_code_mode_interpreter() -> Result<()> {
+    let source = PackSource::from_files(echo_script_files())?;
+    let (_dir, vault, _owner, hub, publisher) = fixture(SkillHubTrustTier::Verified, &source)?;
+    let id = fetched_fixture(&vault, &source, &hub, &publisher, 3)?;
+    assert!(
+        vault
+            .prepare_pack_install(id, &hub, &publisher, &WrongCodeRecipe)
+            .is_err()
+    );
+    assert!(vault.installed_pack("fixture.echo")?.is_none());
+    Ok(())
+}
+
+struct QualifiedScript;
+impl PackQualifier for QualifiedScript {
+    fn qualify(&self, source: &PackSource) -> Result<PackQualification> {
+        Ok(PackQualification {
+            suite: "fixture".into(),
+            report_hash: "12".repeat(32),
+            passed: true,
+            advisory_accepted: true,
+            advisory: "fixture".into(),
+            runtime: Some(PackRuntimeRecipe {
+                adapter: source.manifest().adapter.clone().unwrap(),
+                runtime_id: crate::code_sandbox::SANDBOX_JS_COMPONENT_NAME.into(),
+                runtime_hash: "23".repeat(32),
+            }),
+        })
+    }
+}
+impl PackFitPolicy for QualifiedScript {
+    fn evaluate(&self, _source: &PackSource, _card: &PackPermissions) -> Result<PackFitVerdict> {
+        Ok(PackFitVerdict {
+            fits: true,
+            rules_hit: false,
+            code_auto_install: true,
+        })
+    }
+    fn qualify_script(&self, source: &PackSource) -> Result<Option<PackQualification>> {
+        Ok(Some(self.qualify(source)?))
+    }
+}
+fn echo_script_files() -> Vec<HubFile> {
+    vec![
+        HubFile::new(
+            "PACK.md",
+            include_bytes!("../../../tests/fixtures/echo_pack/PACK.md").to_vec(),
+        ),
+        HubFile::new(
+            "scripts/adapter.js",
+            include_bytes!("../../../tests/fixtures/echo_pack/scripts/adapter.js").to_vec(),
+        ),
+        HubFile::new(
+            "scripts/input.json",
+            include_bytes!("../../../tests/fixtures/echo_pack/scripts/input.json").to_vec(),
+        ),
+    ]
+}
+fn assert_unrunnable_script_refused(files: Vec<HubFile>) -> Result<()> {
+    let source = PackSource::from_files(files)?;
+    let (_dir, vault, _owner, hub, publisher) = fixture(SkillHubTrustTier::Verified, &source)?;
+    let id = fetched_fixture(&vault, &source, &hub, &publisher, 3)?;
+    assert!(
+        vault
+            .prepare_pack_install(id, &hub, &publisher, &QualifiedScript)
+            .is_err()
+    );
+    assert!(vault.installed_pack("fixture.echo")?.is_none());
+    Ok(())
+}
+#[test]
+fn script_snapshot_refuses_large_non_executable_knowledge_at_qualification() -> Result<()> {
+    let mut files = echo_script_files();
+    files.push(HubFile::new(
+        "knowledge/reference.txt",
+        vec![b'x'; 1024 * 1024 + 1],
+    ));
+    assert_unrunnable_script_refused(files)
+}
+
+#[test]
+fn script_snapshot_refuses_guest_path_with_65_relative_components() -> Result<()> {
+    let mut files = echo_script_files();
+    let deep_path = format!("knowledge/{}x", "a/".repeat(63));
+    assert_eq!(deep_path.split('/').count(), 65);
+    files.push(HubFile::new(deep_path, b"read-only knowledge".to_vec()));
+    assert_unrunnable_script_refused(files)
+}
+
+#[test]
+fn script_snapshot_reserves_space_for_injected_grants_at_exact_source_limit() -> Result<()> {
+    let mut files = echo_script_files();
+    let script = files
+        .iter_mut()
+        .find(|file| file.path == "scripts/adapter.js")
+        .unwrap();
+    script
+        .content
+        .resize(oneiron_sandbox_contract::MAX_PROGRAM_BYTES, b' ');
+    assert_eq!(script.content.len(), 1024 * 1024);
+    assert_unrunnable_script_refused(files)
+}
+
+#[test]
+fn script_snapshot_accepts_255_byte_filename_components() -> Result<()> {
+    // Multibyte characters count by encoded bytes, not by `chars().count()`.
+    for component in ["x".repeat(255), format!("{}a", "é".repeat(127))] {
+        assert_eq!(component.len(), 255);
+        let mut files = echo_script_files();
+        files.push(HubFile::new(
+            format!("knowledge/{component}"),
+            b"portable knowledge".to_vec(),
+        ));
+        let source = PackSource::from_files(files)?;
+        let (_dir, vault, _owner, hub, publisher) = fixture(SkillHubTrustTier::Verified, &source)?;
+        let id = fetched_fixture(&vault, &source, &hub, &publisher, 3)?;
+        let ask = vault.prepare_pack_install(id, &hub, &publisher, &QualifiedScript)?;
+        assert!(matches!(
+            vault.install_pack(&ask)?,
+            PackInstallDisposition::Installed(_)
+        ));
+        assert!(vault.installed_pack("fixture.echo")?.is_some());
+    }
+    Ok(())
+}
+
+#[test]
+fn script_snapshot_refuses_256_byte_filename_components() -> Result<()> {
+    for component in ["x".repeat(256), "é".repeat(128)] {
+        assert_eq!(component.len(), 256);
+        let mut files = echo_script_files();
+        files.push(HubFile::new(
+            format!("knowledge/{component}"),
+            b"portable knowledge".to_vec(),
+        ));
+        assert_unrunnable_script_refused(files)?;
+    }
+    Ok(())
+}
+
+fn padded_echo_files(total: usize) -> Vec<HubFile> {
+    let mut files = echo_script_files();
+    let used: usize = files.iter().map(|file| file.content.len()).sum();
+    let mut left = total - used;
+    let mut index = 0;
+    while left > 0 {
+        let bytes = left.min(oneiron_sandbox_contract::MAX_FILE_BYTES);
+        files.push(HubFile::new(
+            format!("knowledge/padding-{index}.txt"),
+            vec![b'x'; bytes],
+        ));
+        left -= bytes;
+        index += 1;
+    }
+    files
+}
+
+#[test]
+fn script_snapshot_reserves_the_full_output_from_merged_workspace_budget() -> Result<()> {
+    let full = oneiron_sandbox_contract::MAX_WORKSPACE_BYTES;
+    assert_unrunnable_script_refused(padded_echo_files(full))?;
+    let source = PackSource::from_files(padded_echo_files(full - 64 * 1024))?;
+    let (_dir, vault, _owner, hub, publisher) = fixture(SkillHubTrustTier::Verified, &source)?;
+    let id = fetched_fixture(&vault, &source, &hub, &publisher, 3)?;
+    assert!(
+        vault
+            .prepare_pack_install(id, &hub, &publisher, &QualifiedScript)
+            .is_ok()
+    );
     Ok(())
 }

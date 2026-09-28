@@ -257,6 +257,7 @@ impl<'a> DreamerWakeDriver<'a> {
         // attempt is admitted and outside the budget/lease loop entirely.
         crate::llm::resume_peer_result_steps(self.vault, input.now.saturating_mul(1_000))?;
         crate::human_task::run_human_followups_on_wake(self.vault, input.now)?;
+        self.vault.retry_pending_ask_soft_confirms(usize::MAX)?;
 
         let mut report = WakePassReport {
             admitted: 0,
@@ -268,6 +269,13 @@ impl<'a> DreamerWakeDriver<'a> {
             stop: WakePassStop::QueueEmpty,
         };
 
+        // Keep one MVCC revision for the wake's evidence accounting. Any source
+        // changed before commit is rejected by the existing write fence.
+        let prepared_wake = crate::dreamer_consolidation::PreparedWake::capture_with_grants(
+            self.vault,
+            input.scope,
+            input.host_scope.as_ref(),
+        )?;
         loop {
             // Attempt-boundary yield (ONE-1683): one Pending poll with a
             // self-wake per iteration, so a supervisor selecting over this
@@ -449,12 +457,36 @@ impl<'a> DreamerWakeDriver<'a> {
                 // propagating it directly would leave the admitted attempt
                 // leased and its reservation held.
                 Err(publish_error)
+            } else if admitted.status.attempt.kind == input.scope.attempt_kind()
+                && !prepared_wake.contains_attempt(attempt_id)
+            {
+                // Enqueued after the frozen wake revision: never admit it to
+                // this snapshot or fall back to a newer per-attempt read.
+                Ok(DreamerAttemptExecution::Deferred {
+                    completed_units: 0,
+                    retry_at: input.now.saturating_add(1),
+                })
+            } else if let Some(crate::dreamer_consolidation::AttemptPreparation::Refused {
+                reason,
+                ..
+            }) = prepared_wake.preparation(attempt_id)
+            {
+                Ok(DreamerAttemptExecution::Park {
+                    reason: (*reason).to_owned(),
+                })
             } else {
                 let mut ctx = WakeAttemptContext {
                     vault: self.vault,
                     deadline: &self.deadline,
                     budget_id: &self.budget_id,
                     now_ms: input.now.saturating_mul(1_000),
+                    prepared_wake: Some(&prepared_wake),
+                    prepared_attempt: match prepared_wake.preparation(attempt_id) {
+                        Some(crate::dreamer_consolidation::AttemptPreparation::Ready(plan)) => {
+                            Some(plan)
+                        }
+                        _ => None,
+                    },
                 };
                 // Panic containment at the per-attempt boundary (ONE-1683): a
                 // panicking executor unwinding past the driver would skip

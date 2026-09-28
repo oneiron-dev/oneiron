@@ -18,6 +18,10 @@ impl Vault {
         self.mark_dependent_skills_stale_in_txn(wtxn, id)?;
         crate::note::erase_citations_in_txn(self, wtxn, id)?;
         crate::calendar::origin::invalidate_dependents(self, wtxn, id)?;
+        let had_refinement =
+            crate::skill_hub::erase_claim_refinement_in_txn(&self.store, wtxn, id)?;
+        let had_merge_receipt =
+            crate::skill_hub::erase_refinement_custody_in_txn(&self.store, wtxn, id)?;
         let (existed, had_vector, had_graph_mutation, neighbors) =
             deindex_entity(&self.store, wtxn, id)?;
         crate::codebase::delete_codebase_snapshot_in_txn(&self.store, wtxn, id)?;
@@ -30,19 +34,24 @@ impl Vault {
         if had_vector {
             crate::hnsw::increment_vector_version(&self.store, wtxn)?;
         }
-        Ok(existed || note_removed)
+        Ok(existed || note_removed || had_refinement || had_merge_receipt)
     }
 
     pub(in crate::deletion) fn soft_erase_active_store_in_txn(
         &self,
         wtxn: &mut heed::RwTxn<'_>,
         id: &EntityId,
-    ) -> Result<(bool, bool)> {
+    ) -> Result<(bool, bool, bool)> {
         crate::federation::reject_ruling_delete(&self.store, wtxn, id)?;
         crate::blob_artifact::esign::reject_event_delete(&self.store, wtxn, id)?;
         #[cfg(feature = "sync")]
         crate::entity_doc::erase_in_txn(&self.store, wtxn, id)?;
         self.store.guard_pack_map_carrier_delete_in_txn(wtxn, id)?;
+        let ledger_changed = self.store.redact_gate_decisions_for_claim_in_txn(
+            wtxn,
+            id.as_bytes(),
+            self.store.clock.now_recorded_at(),
+        )?;
         let (room_had_vector, room_had_graph, room_neighbors) =
             crate::workspace_roster::deindex_project_room(&self.store, wtxn, id)?;
         if room_had_graph {
@@ -82,6 +91,12 @@ impl Vault {
             hint_had_vector | entity_had_vector | blob_cleanup.had_vector | room_had_vector;
 
         crate::skill_hub::remove_hub_package_in_txn(&self.store, wtxn, id)?;
+        let had_refinement =
+            crate::skill_hub::erase_claim_refinement_in_txn(&self.store, wtxn, id)?;
+        let had_merge_receipt =
+            crate::skill_hub::erase_refinement_custody_in_txn(&self.store, wtxn, id)?;
+        crate::skill_hub::remove_refinement_carrier_in_txn(&self.store, wtxn, id)?;
+        crate::skill_hub::retire_refinement_holder_in_txn(&self.store, wtxn, id)?;
         crate::agent_def::remove_birth_custody_in_txn(&self.store, wtxn, id)?;
         let Some(entity_record) = self.store.entities.get(wtxn, id.as_bytes())? else {
             let cleanup = delete_vad_annotation_metadata_in_txn(&self.store, wtxn, id)?;
@@ -90,12 +105,21 @@ impl Vault {
                 ppr::invalidate_ppr_for_delete(&self.store, wtxn, id, &cleanup.neighbors)?;
                 ppr::increment_graph_version(&self.store, wtxn)?;
             }
-            return Ok((false, had_vector));
+            return Ok((
+                had_refinement || had_merge_receipt,
+                had_vector,
+                ledger_changed,
+            ));
         };
         let header = EntityMetadataHeader::parse(&entity_record)
             .ok_or(Error::CorruptedIndex("entity metadata"))?;
         let payload = entity_record[..ENTITY_METADATA_HEADER_LEN].to_vec();
         let changed = entity_record.len() > ENTITY_METADATA_HEADER_LEN;
+        // Soft erase keeps the reply edges but removes the TURN body. Both
+        // local UserDelete and replayed soft tombstones pass through here.
+        if header.entity_type == crate::registry::ENTITY_TYPE_TURN {
+            crate::conversation_dag::invalidate_thread_meta_for_turn_put(&self.store, wtxn, *id)?;
+        }
         // Soft-erase truncates the body in place, so unlike the hard-purge path it
         // does not route through `deindex_entity`; drop any content-hash index row
         // here before the body is gone (ONE-1741: scan verdicts anchor to the
@@ -143,6 +167,6 @@ impl Vault {
                 },
             )?;
         }
-        Ok((true, had_vector))
+        Ok((true, had_vector, ledger_changed))
     }
 }

@@ -8,6 +8,7 @@ use crate::{
         Snapshot,
     },
 };
+use oneiron_sandbox_contract::{ShapeError, WorkspacePath};
 use serde::Deserialize;
 use std::{
     collections::BTreeSet,
@@ -106,8 +107,11 @@ fn run<T: Read + Write + 'static>(
     if input.source.len() > MAX_SOURCE || !(1..=4096).contains(&input.pids) {
         return Err(Error::Runtime("source size"));
     }
+    // The pinned QuickJS component consumes over 12 million fuel just for its
+    // first-party readiness probe. Match the bounded code-mode runtime's
+    // 100-million ceiling so the foreign interpreter can actually start.
     store
-        .set_fuel(10_000_000)
+        .set_fuel(100_000_000)
         .map_err(|_| Error::Runtime("fuel setup"))?;
     let mut linker = Linker::new(engine);
     link_imports(&mut linker).map_err(|_| Error::Runtime("read import setup"))?;
@@ -125,7 +129,16 @@ fn run<T: Read + Write + 'static>(
     // Wasmtime performs canonical post-return inside call; either trap refuses proposals.
     let (output,) = run
         .call(&mut *store, (input.source.clone(),))
-        .map_err(|_| Error::Runtime("component trapped"))?;
+        .map_err(|error| {
+            if matches!(
+                error.downcast_ref::<wasmtime::Trap>(),
+                Some(wasmtime::Trap::OutOfFuel)
+            ) {
+                Error::Runtime("component fuel exhausted")
+            } else {
+                Error::Runtime("component trapped")
+            }
+        })?;
     if store.data().poisoned {
         return Err(Error::Protocol("credential transport failed"));
     }
@@ -170,50 +183,56 @@ fn proposals(output: abi::StepResult, base: &Snapshot) -> Result<Vec<GuestPropos
     serde_json::from_str::<serde_json::Value>(&output.result_json)
         .map_err(|_| Error::Runtime("result-json is invalid JSON"))?;
     let mut proposals = Vec::new();
-    let mut changed = base.clone();
+    // The seeded tree with every accepted proposal applied; one effect per
+    // path, as the host admits them.
+    let mut shape = validate_files(base)?;
     let mut occupied = BTreeSet::new();
+    let shape_error = |error: ShapeError| Error::Runtime(error.reason());
     for proposal in output.proposals {
         match proposal {
             abi::ProposalDelta::FileWrite(file) => {
-                crate::filesystem::virtual_relative(&file.path)?;
+                let path = workspace_path(&file.path)?;
                 if !occupied.insert(file.path.clone()) {
                     return Err(Error::Runtime("duplicate file proposal"));
                 }
-                changed.insert(file.path.clone(), file.bytes.clone());
+                shape
+                    .replace_file(&path, file.bytes.len())
+                    .map_err(shape_error)?;
                 proposals.push(GuestProposal::Write(file.path, file.bytes));
             }
             abi::ProposalDelta::FileDelete(delete) => {
-                crate::filesystem::virtual_relative(&delete.path)?;
+                let path = workspace_path(&delete.path)?;
                 if !base.contains_key(&delete.path) || !occupied.insert(delete.path.clone()) {
                     return Err(Error::Runtime("invalid delete proposal"));
                 }
-                changed.remove(&delete.path);
+                shape.remove_file(&path).map_err(shape_error)?;
                 proposals.push(GuestProposal::Delete(delete.path));
             }
             abi::ProposalDelta::FileRename(rename) => {
-                crate::filesystem::virtual_relative(&rename.origin)?;
-                crate::filesystem::virtual_relative(&rename.destination)?;
+                let origin = workspace_path(&rename.origin)?;
+                let destination = workspace_path(&rename.destination)?;
                 if rename.origin == rename.destination
                     || !base.contains_key(&rename.origin)
-                    || base.contains_key(&rename.destination)
                     || !occupied.insert(rename.origin.clone())
                     || !occupied.insert(rename.destination.clone())
                 {
                     return Err(Error::Runtime("invalid rename proposal"));
                 }
-                let bytes = changed
-                    .remove(&rename.origin)
-                    .ok_or(Error::Runtime("missing rename source"))?;
-                changed.insert(rename.destination.clone(), bytes);
+                shape
+                    .rename_file(&origin, &destination)
+                    .map_err(shape_error)?;
                 proposals.push(GuestProposal::Rename(rename.origin, rename.destination));
             }
             abi::ProposalDelta::ClaimCandidate(_) => {
                 return Err(Error::UnsupportedClaimCandidate);
             }
         }
-        validate_files(&changed)?;
     }
     Ok(proposals)
+}
+
+fn workspace_path(path: &str) -> Result<WorkspacePath> {
+    WorkspacePath::parse(path).map_err(|error| Error::Filesystem(error.reason()))
 }
 
 fn link_imports<T: Read + Write + 'static>(linker: &mut Linker<State<T>>) -> wasmtime::Result<()> {

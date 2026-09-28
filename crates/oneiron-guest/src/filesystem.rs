@@ -2,10 +2,10 @@
 
 use crate::{
     Error, Result,
-    protocol::{MAX_FILE, MAX_FILES, MAX_TOTAL, Snapshot},
+    protocol::{MAX_FILE, Snapshot},
 };
+use oneiron_sandbox_contract::{MAX_WORKSPACE_DIRECTORIES, WorkspacePath, WorkspaceShape};
 use std::{
-    collections::BTreeSet,
     ffi::{CStr, CString},
     fs::File,
     io::{Read, Write},
@@ -17,53 +17,22 @@ use std::{
 };
 
 pub(crate) fn virtual_relative(path: &str) -> Result<&str> {
-    let relative = path
-        .strip_prefix("/mnt/workspace/")
-        .ok_or(Error::Filesystem("not a workspace file"))?;
-    if path.len() > 4096
-        || relative.split('/').count() > 64
-        || relative.split('/').any(|part| {
-            part.is_empty()
-                || part == "."
-                || part == ".."
-                || part.len() > 255
-                || part.contains(['\\', '\0'])
-        })
-    {
-        return Err(Error::Filesystem("noncanonical or excessive path"));
-    }
-    Ok(relative)
+    WorkspacePath::parse(path).map_err(|error| Error::Filesystem(error.reason()))?;
+    path.strip_prefix("/mnt/workspace/")
+        .ok_or(Error::Filesystem("not a workspace file"))
 }
 
-pub(crate) fn validate_files(files: &Snapshot) -> Result<()> {
-    if files.len() > MAX_FILES {
-        return Err(Error::Filesystem("file count"));
-    }
-    let mut total = 0;
-    let mut directories = BTreeSet::new();
+/// Checks a file set against the shared tree rules and returns its shape.
+pub(crate) fn validate_files(files: &Snapshot) -> Result<WorkspaceShape> {
+    let mut shape = WorkspaceShape::new();
     for (path, bytes) in files {
-        let relative = virtual_relative(path)?;
-        total += bytes.len();
-        if bytes.len() > MAX_FILE || total > MAX_TOTAL {
-            return Err(Error::Filesystem("file byte budget"));
-        }
-        let mut prefix = String::from("/mnt/workspace");
-        let mut parts = relative.split('/').peekable();
-        while let Some(part) = parts.next() {
-            prefix.push('/');
-            prefix.push_str(part);
-            if parts.peek().is_some() {
-                if files.contains_key(&prefix) {
-                    return Err(Error::Filesystem("file/directory conflict"));
-                }
-                directories.insert(prefix.clone());
-                if directories.len() > MAX_FILES {
-                    return Err(Error::Filesystem("directory count"));
-                }
-            }
-        }
+        let checked =
+            WorkspacePath::parse(path).map_err(|error| Error::Filesystem(error.reason()))?;
+        shape
+            .add_file(&checked, bytes.len())
+            .map_err(|error| Error::Filesystem(error.reason()))?;
     }
-    Ok(())
+    Ok(shape)
 }
 
 pub(crate) struct Workspace {
@@ -151,17 +120,22 @@ impl Workspace {
 
     pub(crate) fn snapshot(&self) -> Result<Snapshot> {
         let mut files = Snapshot::new();
-        let mut bytes = 0;
+        let mut shape = WorkspaceShape::new();
         self.walk(|file, path, directory| {
-            if !directory {
-                if files.len() >= MAX_FILES {
-                    return Err(Error::Filesystem("snapshot file count"));
-                }
+            if directory && path == "/mnt/workspace" {
+                return Ok(());
+            }
+            let checked =
+                WorkspacePath::parse(&path).map_err(|error| Error::Filesystem(error.reason()))?;
+            if directory {
+                shape
+                    .add_directory(&checked)
+                    .map_err(|error| Error::Filesystem(error.reason()))?;
+            } else {
                 let contents = read_regular(file)?;
-                bytes += contents.len();
-                if bytes > MAX_TOTAL {
-                    return Err(Error::Filesystem("snapshot aggregate bytes"));
-                }
+                shape
+                    .add_file(&checked, contents.len())
+                    .map_err(|error| Error::Filesystem(error.reason()))?;
                 files.insert(path, contents);
             }
             Ok(())
@@ -204,7 +178,7 @@ impl Workspace {
                 let kind = entry_kind(&directory, &name)?;
                 if kind == libc::S_IFDIR {
                     directories += 1;
-                    if directories > MAX_FILES {
+                    if directories > MAX_WORKSPACE_DIRECTORIES {
                         return Err(Error::Filesystem("snapshot directory count"));
                     }
                     stack.push(path);

@@ -13,6 +13,7 @@ use crate::{
         },
     },
 };
+use oneiron_sandbox_contract::{MAX_COMPONENT_BYTES, MAX_PROGRAM_BYTES, WorkspacePath};
 use serde::{Deserialize, Serialize};
 use std::{
     collections::{BTreeMap, BTreeSet},
@@ -21,11 +22,8 @@ use std::{
     time::Instant,
 };
 
-const MAX_FRAME: usize = 8 * 1024 * 1024;
-const MAX_FILE: usize = 1024 * 1024;
-const MAX_TOTAL: usize = 16 * 1024 * 1024;
-const MAX_FILES: usize = 8192;
-const MAX_REQUESTS: usize = 16_384;
+const MAX_FRAME: usize = oneiron_sandbox_contract::MAX_FRAME_BYTES;
+const MAX_REQUESTS: usize = oneiron_sandbox_contract::MAX_REQUESTS;
 
 #[derive(Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
@@ -95,8 +93,11 @@ pub(super) fn exchange(
     transport: Option<&dyn CredentialReadTransport>,
 ) -> Result<(MicroVmExit, Vec<SandboxProposalWrite>)> {
     let GuestProgram { component, source } = program;
-    if source.len() > MAX_FILE {
+    if source.len() > MAX_PROGRAM_BYTES {
         return Err(refused("guest source exceeds message budget"));
+    }
+    if component.is_empty() || component.len() > MAX_COMPONENT_BYTES {
+        return Err(refused("guest component size refused"));
     }
     if !matches!(
         read_frame(&mut stream, deadline)?,
@@ -173,8 +174,12 @@ fn receive_proposals(
     transport: Option<&dyn CredentialReadTransport>,
 ) -> Result<(MicroVmExit, Vec<SandboxProposalWrite>)> {
     let mut writes = BTreeMap::new();
+    // One effect per path: a deleted file or a rename endpoint is not
+    // written again in the same run.
     let mut occupied = BTreeSet::new();
-    let mut total = 0_usize;
+    // The snapshot tree (empty directories included) with every accepted
+    // proposal applied, under the same rules as the guest and the walker.
+    let mut shape = base.shape.clone();
     for _ in 0..MAX_REQUESTS {
         match read_frame(&mut stream, deadline)? {
             GuestFrame::Hello { .. } => return Err(refused("duplicate guest hello")),
@@ -200,20 +205,14 @@ fn receive_proposals(
             }
             GuestFrame::Write { path, bytes } => {
                 let path = SandboxVirtualPath::try_new(path)?;
-                if !proposal_path(&path)
-                    || !valid_tree_path(&path, base, &occupied)
+                if path.mount() != SandboxMount::Workspace
                     || !occupied.insert(path.as_str().to_owned())
-                    || writes.len() >= MAX_FILES
-                    || bytes.len() > MAX_FILE
                 {
-                    return Err(refused("guest proposal path, count or size refused"));
+                    return Err(refused("guest proposal path or duplicate refused"));
                 }
-                total = total
-                    .checked_add(bytes.len())
-                    .ok_or_else(|| refused("proposal byte overflow"))?;
-                if total > MAX_TOTAL {
-                    return Err(refused("guest proposal aggregate budget exceeded"));
-                }
+                shape
+                    .replace_file(&workspace_path(&path)?, bytes.len())
+                    .map_err(|error| refused(error.reason()))?;
                 writes.insert(
                     path.as_str().to_owned(),
                     SandboxProposalWrite::FileWrite(SandboxFileWriteProposal::new(path, bytes)),
@@ -226,13 +225,15 @@ fn receive_proposals(
             }
             GuestFrame::Delete { path } => {
                 let path = SandboxVirtualPath::try_new(path)?;
-                if !proposal_path(&path)
+                if path.mount() != SandboxMount::Workspace
                     || !base.files.iter().any(|file| file.path == path)
                     || !occupied.insert(path.as_str().to_owned())
-                    || writes.len() >= MAX_FILES
                 {
-                    return Err(refused("guest delete path or count refused"));
+                    return Err(refused("guest delete path refused"));
                 }
+                shape
+                    .remove_file(&workspace_path(&path)?)
+                    .map_err(|error| refused(error.reason()))?;
                 writes.insert(
                     path.as_str().to_owned(),
                     SandboxProposalWrite::FileDelete(SandboxFileDeleteProposal { path }),
@@ -246,19 +247,18 @@ fn receive_proposals(
             GuestFrame::Rename { from, to } => {
                 let from = SandboxVirtualPath::try_new(from)?;
                 let to = SandboxVirtualPath::try_new(to)?;
-                if !proposal_path(&from)
-                    || !proposal_path(&to)
+                if from.mount() != SandboxMount::Workspace
+                    || to.mount() != SandboxMount::Workspace
                     || from == to
                     || !base.files.iter().any(|file| file.path == from)
-                    || base.files.iter().any(|file| file.path == to)
-                    || !valid_tree_path(&to, base, &occupied)
-                    || base.directories.contains(to.as_str())
                     || occupied.contains(from.as_str())
                     || occupied.contains(to.as_str())
-                    || writes.len() >= MAX_FILES
                 {
-                    return Err(refused("guest rename path or count refused"));
+                    return Err(refused("guest rename path refused"));
                 }
+                shape
+                    .rename_file(&workspace_path(&from)?, &workspace_path(&to)?)
+                    .map_err(|error| refused(error.reason()))?;
                 occupied.insert(from.as_str().to_owned());
                 occupied.insert(to.as_str().to_owned());
                 writes.insert(
@@ -327,37 +327,9 @@ fn write_frame(stream: &mut UnixStream, value: &HostFrame<'_>, deadline: Instant
         .map_err(|_| refused("host frame write failed"))
 }
 
+fn workspace_path(path: &SandboxVirtualPath) -> Result<WorkspacePath> {
+    WorkspacePath::parse(path.as_str()).map_err(|error| refused(error.reason()))
+}
+
 #[cfg(test)]
 mod tests;
-
-fn proposal_path(path: &SandboxVirtualPath) -> bool {
-    path.mount() == SandboxMount::Workspace
-        && !path.relative_path().is_empty()
-        && path.as_str().len() <= 4096
-}
-
-/// Check a proposed file against the pinned snapshot tree and prior proposals.
-/// Neither a file nor a directory can also occupy its ancestor/descendant.
-fn valid_tree_path(
-    path: &SandboxVirtualPath,
-    base: &super::snapshot::Snapshot,
-    occupied: &BTreeSet<String>,
-) -> bool {
-    let candidate = path.as_str();
-    !base.directories.contains(candidate)
-        && !base
-            .files
-            .iter()
-            .any(|file| tree_conflict(candidate, file.path.as_str()))
-        && !occupied.iter().any(|other| tree_conflict(candidate, other))
-}
-
-fn tree_conflict(candidate: &str, other: &str) -> bool {
-    candidate != other
-        && (candidate
-            .strip_prefix(other)
-            .is_some_and(|rest| rest.starts_with('/'))
-            || other
-                .strip_prefix(candidate)
-                .is_some_and(|rest| rest.starts_with('/')))
-}

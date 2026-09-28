@@ -213,6 +213,7 @@ fn query_request(query: &str) -> CoreQueryRequest {
 
 fn context_pack_request() -> CoreContextPackRequest {
     CoreContextPackRequest {
+        executor_model: None,
         query: None,
         query_vector: None,
         limit: default_limit(),
@@ -1147,6 +1148,7 @@ fn response_retrieval_budget_caps_claims_after_filtering() {
         ScopedReadActorKey::new("reader").expect("actor key"),
     );
     let request = |claims: Option<usize>| CoreContextPackRequest {
+        executor_model: None,
         query: None,
         query_vector: Some(vec![1.0, 0.0, 0.0, 0.0]),
         limit: 10,
@@ -1264,6 +1266,7 @@ fn seed_scoped_pack_vault(vault: &Vault) -> (EntityId, EntityId) {
 
 fn vector_pack_request() -> CoreContextPackRequest {
     CoreContextPackRequest {
+        executor_model: None,
         query: None,
         query_vector: Some(vec![1.0, 0.0, 0.0, 0.0]),
         limit: 10,

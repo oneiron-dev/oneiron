@@ -16,6 +16,7 @@ mod cancel;
 mod completion;
 mod encoding;
 mod engine;
+mod executor;
 mod observe;
 mod ports;
 mod result;
@@ -23,6 +24,8 @@ mod settlement;
 mod telemetry;
 mod types;
 mod validate;
+#[cfg(test)]
+pub(crate) use validate::validate_lease_owner;
 
 #[cfg(test)]
 mod tests;

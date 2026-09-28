@@ -9,20 +9,12 @@ pub(super) fn guard_storage_owned_body(
     store: &Store,
     wtxn: &RoTxn<'_>,
     id: &EntityId,
-    entity_type: u8,
-    occurred: TimeRange,
+    metadata: (u8, TimeRange, u64),
     data: &[u8],
     replicated: bool,
 ) -> Result<()> {
-    crate::conversation_dag::guard_record_put(
-        store,
-        wtxn,
-        id,
-        entity_type,
-        occurred,
-        data,
-        replicated,
-    )?;
+    let (entity_type, _, _) = metadata;
+    crate::conversation_dag::guard_record_put(store, wtxn, id, metadata, data, replicated)?;
     crate::scope_summary::validate_summary_put(store, wtxn, id, entity_type, data)?;
     crate::origin::lfs::guard_lfs_asset_put(store, wtxn, id, entity_type, data)?;
     #[cfg(feature = "sync")]
