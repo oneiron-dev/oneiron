@@ -1,7 +1,9 @@
 //! Vault-resident policy rows for the skill tradeoff ladder.
 //!
-//! Trusted POLICY_MANIFEST rows decide the limits. The shipped default row
-//! lives in `default_manifest`; this code only checks shape and composes rows.
+//! Trusted POLICY_MANIFEST rows decide how many preference rules a goal may
+//! hold. The goal axes themselves are the `skill_edit_goal_policy` rows. The
+//! shipped default row lives in `default_manifest`; this code only checks
+//! shape and composes rows.
 use super::resolution::resolve_policy_manifest;
 use crate::store::Store;
 use crate::{
@@ -15,16 +17,12 @@ const MODE: &str = "nested_narrowing_holder_override_capped_vault";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct SkillTradeoffLimits {
-    pub(crate) max_axes: u64,
-    pub(crate) max_axis_name_bytes: u64,
     pub(crate) max_authored_rules: u64,
     pub(crate) max_learned_rules: Option<u64>,
 }
 impl SkillTradeoffLimits {
     fn restrict(self, other: Self) -> Self {
         Self {
-            max_axes: self.max_axes.min(other.max_axes),
-            max_axis_name_bytes: self.max_axis_name_bytes.min(other.max_axis_name_bytes),
             max_authored_rules: self.max_authored_rules.min(other.max_authored_rules),
             max_learned_rules: match (self.max_learned_rules, other.max_learned_rules) {
                 (Some(a), Some(b)) => Some(a.min(b)),
@@ -56,12 +54,7 @@ pub(super) fn parse_rows(value: &Value) -> Option<Vec<SkillTradeoffPolicyRow>> {
                 if !seen.insert(name)
                     || !matches!(
                         name,
-                        "holder"
-                            | "max_axes"
-                            | "max_axis_name_bytes"
-                            | "max_authored_rules"
-                            | "max_learned_rules"
-                            | "precedence"
+                        "holder" | "max_authored_rules" | "max_learned_rules" | "precedence"
                     )
                 {
                     return None;
@@ -81,8 +74,6 @@ pub(super) fn parse_rows(value: &Value) -> Option<Vec<SkillTradeoffPolicyRow>> {
                 return None;
             }
             let limits = SkillTradeoffLimits {
-                max_axes: get("max_axes")?.as_u64().filter(|v| *v > 0)?,
-                max_axis_name_bytes: get("max_axis_name_bytes")?.as_u64().filter(|v| *v > 0)?,
                 max_authored_rules: get("max_authored_rules")?.as_u64()?,
                 max_learned_rules: match get("max_learned_rules") {
                     None | Some(Value::Nil) => None,

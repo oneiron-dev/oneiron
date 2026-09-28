@@ -116,6 +116,8 @@ fn forks_rewrite_canonical_and_preserve_old_branch_and_pages() {
         [root, trunk, thread].into()
     );
     vault.move_head(&conv, &thread).unwrap();
+    // A selected fork is a canonical child, never a thread root.
+    assert!(vault.thread_roots(root).unwrap().is_empty());
     assert_eq!(
         vault
             .resolve_dag_scope(&scope(conv, ScopePath::Canonical, false))
@@ -176,6 +178,107 @@ proptest! {
         }
         prop_assert_eq!(vault.resolve_dag_scope(&scope(conv, ScopePath::Canonical, false)).unwrap().records, trunk);
     }
+}
+
+#[test]
+fn addressing_is_stamped_and_validated_atomically() {
+    let (_dir, vault, conv, actor) = fixture();
+    let recipient = EntityId::now();
+    let another = EntityId::now();
+    for id in [recipient, another] {
+        vault
+            .put_entity(
+                &id,
+                crate::registry::ENTITY_TYPE_PERSON,
+                time(1),
+                1,
+                &body("person"),
+            )
+            .unwrap();
+    }
+    let mut direct_input = input(conv, None, true, actor);
+    direct_input.address = AddressMode::Direct;
+    for recipients in [
+        vec![],
+        vec![recipient, recipient],
+        vec![EntityId::now()],
+        vec![conv],
+    ] {
+        direct_input.recipients = recipients;
+        assert_eq!(
+            vault.append_dag_record(&direct_input).unwrap_err().kind(),
+            if direct_input.recipients.len() == 1 && direct_input.recipients[0] != conv {
+                ErrorKind::EntityNotFound
+            } else {
+                ErrorKind::InvalidConversationDag
+            }
+        );
+        assert!(
+            vault
+                .sources(&conv, EdgeKind::ChildOf, None)
+                .unwrap()
+                .is_empty()
+        );
+    }
+    direct_input.recipients = vec![recipient, another];
+    let direct = vault.append_dag_record(&direct_input).unwrap().id;
+    let txn = vault.store.env.read_txn().unwrap();
+    let body = super::graph::require_type(&vault.store, &txn, &direct, ENTITY_TYPE_TURN).unwrap();
+    let decoded: serde_json::Value = rmp_serde::from_slice(&body).unwrap();
+    assert_eq!(decoded["addr"], "direct");
+    assert_eq!(
+        decoded["to"],
+        serde_json::json!([recipient.to_hex(), another.to_hex()])
+    );
+    drop(txn);
+    assert_eq!(
+        vault
+            .targets(&direct, EdgeKind::AddressedTo, None)
+            .unwrap()
+            .into_iter()
+            .collect::<std::collections::BTreeSet<_>>(),
+        [recipient, another].into()
+    );
+    let mut reply = input(conv, Some(direct), true, actor);
+    reply.reply_to = Some(direct);
+    reply.recipients = vec![recipient];
+    let reply_id = vault.append_dag_record(&reply).unwrap().id;
+    let txn = vault.store.env.read_txn().unwrap();
+    let body = super::graph::require_type(&vault.store, &txn, &reply_id, ENTITY_TYPE_TURN).unwrap();
+    let decoded: serde_json::Value = rmp_serde::from_slice(&body).unwrap();
+    assert_eq!(decoded["addr"], "reply");
+    assert_eq!(decoded["to"], serde_json::json!([recipient.to_hex()]));
+    drop(txn);
+    assert_eq!(
+        vault
+            .targets(&reply_id, EdgeKind::AddressedTo, None)
+            .unwrap(),
+        [recipient]
+    );
+    assert_eq!(
+        vault.targets(&reply_id, EdgeKind::RepliesTo, None).unwrap(),
+        [direct]
+    );
+    let mut broadcast = input(conv, Some(reply_id), true, actor);
+    broadcast.recipients = vec![recipient];
+    assert_eq!(
+        vault.append_dag_record(&broadcast).unwrap_err().kind(),
+        ErrorKind::InvalidConversationDag
+    );
+    broadcast.recipients.clear();
+    let next = vault.append_dag_record(&broadcast).unwrap().id;
+    let txn = vault.store.env.read_txn().unwrap();
+    let body = super::graph::require_type(&vault.store, &txn, &next, ENTITY_TYPE_TURN).unwrap();
+    let decoded: serde_json::Value = rmp_serde::from_slice(&body).unwrap();
+    assert_eq!(decoded["addr"], "broadcast");
+    assert_eq!(decoded["to"], serde_json::json!([]));
+    drop(txn);
+    assert!(
+        vault
+            .targets(&next, EdgeKind::AddressedTo, None)
+            .unwrap()
+            .is_empty()
+    );
 }
 
 #[test]
@@ -904,5 +1007,603 @@ fn head_cannot_select_a_thread_or_escape_through_its_descendant() {
     assert_eq!(
         vault.move_head(&conversation, &next).unwrap_err().kind(),
         ErrorKind::InvalidConversationDag
+    );
+}
+
+#[test]
+fn thread_roots_metadata_rebuild_and_summary_cover_the_exact_branch() {
+    let (_dir, vault, conversation, actor) = fixture();
+    let root = vault
+        .append_dag_record(&input(conversation, None, true, actor))
+        .unwrap()
+        .id;
+    let trunk = vault
+        .append_dag_record(&input(conversation, Some(root), true, actor))
+        .unwrap()
+        .id;
+    assert!(vault.thread_roots(root).unwrap().is_empty());
+    assert_eq!(vault.thread_meta(root).unwrap(), None);
+    let mut reply = input(conversation, None, false, actor);
+    reply.occurred = time(21);
+    let first = vault.reply_in_thread(root, &reply).unwrap().id;
+    let at_head = vault.reply_in_thread(trunk, &reply).unwrap().id;
+    assert_eq!(vault.head(&conversation).unwrap(), Some(trunk));
+    assert_eq!(vault.thread_roots(trunk).unwrap(), [at_head]);
+    reply.occurred = time(23);
+    let second = vault.reply_in_thread(root, &reply).unwrap().id;
+    reply.occurred = time(22);
+    let third = vault.reply_in_thread(root, &reply).unwrap().id;
+    assert_eq!(vault.head(&conversation).unwrap(), Some(trunk));
+    assert_eq!(vault.thread_roots(root).unwrap(), [first]);
+    assert_eq!(vault.thread_roots(root).unwrap(), [first]);
+    let meta = vault.thread_meta(root).unwrap().unwrap();
+    assert_eq!(meta.root, first);
+    assert_eq!(meta.count, 3);
+    assert_eq!(meta.last_at, 23);
+    assert_eq!(vault.rebuild_thread_meta(root).unwrap(), Some(meta));
+    assert_eq!(vault.thread(root).unwrap().replies, [first, second, third]);
+    let (summary, header) = vault
+        .mint_and_land_thread_summary(root, "summary", actor)
+        .unwrap();
+    assert_eq!(
+        vault.scope_summary_covers(&summary).unwrap(),
+        [first, second, third]
+    );
+    assert_eq!(vault.drill(&header.claim).unwrap(), [first, second, third]);
+    assert_eq!(
+        vault.get_claim(&header.claim).unwrap().unwrap().subject,
+        crate::claim::ClaimSubject::Entity(root)
+    );
+    assert_eq!(vault.head(&conversation).unwrap(), Some(trunk));
+    let mut canonical_reply = input(conversation, Some(trunk), true, actor);
+    canonical_reply.reply_to = Some(root);
+    let canonical = vault.append_dag_record(&canonical_reply).unwrap().id;
+    assert_eq!(vault.thread_roots(root).unwrap(), [first]);
+    assert_eq!(vault.head(&conversation).unwrap(), Some(canonical));
+}
+
+#[test]
+fn thread_depth_two_and_another_root_are_not_refused() {
+    let (_dir, vault, conversation, actor) = fixture();
+    let trunk = vault
+        .append_dag_record(&input(conversation, None, true, actor))
+        .unwrap()
+        .id;
+    let first = vault
+        .reply_in_thread(trunk, &input(conversation, None, false, actor))
+        .unwrap()
+        .id;
+    let nested = vault
+        .reply_in_thread(first, &input(conversation, None, false, actor))
+        .unwrap()
+        .id;
+    assert_eq!(vault.thread(trunk).unwrap().replies, [first, nested]);
+    assert_eq!(vault.thread_meta(trunk).unwrap().unwrap().count, 2);
+    let session = vault.spawn_dag_sub_session(&trunk, actor).unwrap();
+    let mut other = input(conversation, None, false, actor);
+    other.session = Some(session);
+    let second_root = vault.reply_in_thread(trunk, &other).unwrap().id;
+    assert_eq!(vault.thread_roots(trunk).unwrap().len(), 2);
+    assert!(vault.thread_roots(trunk).unwrap().contains(&second_root));
+    // Listing, cached meta and summary all select the first root's chain.
+    let selected = vault.thread(trunk).unwrap();
+    assert_eq!(selected.replies, [first, nested]);
+    assert_eq!(selected.count, 2);
+    assert_eq!(
+        vault.thread_meta(trunk).unwrap().unwrap().count,
+        selected.count
+    );
+    let second_descendant = vault.reply_in_thread(second_root, &other).unwrap().id;
+    assert_eq!(vault.thread_roots(trunk).unwrap().len(), 2);
+    assert_eq!(vault.thread(trunk).unwrap().replies, [first, nested]);
+    assert_eq!(vault.thread_meta(trunk).unwrap().unwrap().count, 2);
+    assert_eq!(
+        vault.thread(second_root).unwrap().replies,
+        [second_descendant]
+    );
+    let (summary, header) = vault
+        .mint_and_land_thread_summary(trunk, "first chain", actor)
+        .unwrap();
+    assert_eq!(
+        vault.scope_summary_covers(&summary).unwrap(),
+        [first, nested]
+    );
+    assert_eq!(vault.drill(&header.claim).unwrap(), [first, nested]);
+    assert_eq!(vault.head(&conversation).unwrap(), Some(trunk));
+}
+
+#[test]
+fn nested_continuation_refreshes_its_actual_parent_and_delete_repairs_meta() {
+    let (_dir, vault, conv, actor) = fixture();
+    let trunk = vault
+        .append_dag_record(&input(conv, None, true, actor))
+        .unwrap()
+        .id;
+    let a = vault
+        .reply_in_thread(trunk, &input(conv, None, false, actor))
+        .unwrap()
+        .id;
+    let b = vault
+        .reply_in_thread(a, &input(conv, None, false, actor))
+        .unwrap()
+        .id;
+    assert_eq!(vault.thread_meta(a).unwrap().unwrap().count, 1);
+    let c = vault
+        .reply_in_thread(trunk, &input(conv, None, false, actor))
+        .unwrap()
+        .id;
+    assert_eq!(vault.thread(a).unwrap().replies, [b, c]);
+    assert_eq!(vault.thread_meta(a).unwrap().unwrap().count, 2);
+    assert_eq!(vault.thread_meta(trunk).unwrap().unwrap().count, 3);
+    vault
+        .delete_own_room_record(c, crate::DeleteReason::UserDelete)
+        .unwrap();
+    assert_eq!(
+        vault.thread_meta(a).unwrap().unwrap().count,
+        vault.thread(a).unwrap().count
+    );
+    vault
+        .delete_own_room_record(b, crate::DeleteReason::UserDelete)
+        .unwrap();
+    assert_eq!(vault.thread_meta(a).unwrap(), None);
+    vault
+        .delete_own_room_record(a, crate::DeleteReason::UserDelete)
+        .unwrap();
+    assert!(vault.thread(trunk).unwrap().replies.is_empty());
+    assert_eq!(vault.thread_meta(trunk).unwrap(), None);
+}
+
+#[test]
+fn worker_root_summary_uses_its_session_without_changing_head() {
+    let (_dir, vault, conv, actor) = fixture();
+    let trunk = vault
+        .append_dag_record(&input(conv, None, true, actor))
+        .unwrap()
+        .id;
+    let session = vault.spawn_dag_sub_session(&trunk, actor).unwrap();
+    let mut input = input(conv, None, false, actor);
+    input.session = Some(session);
+    let root = vault.reply_in_thread(trunk, &input).unwrap().id;
+    let next = vault.reply_in_thread(trunk, &input).unwrap().id;
+    assert_eq!(vault.thread(trunk).unwrap().replies, [root, next]);
+    let (summary, header) = vault
+        .mint_and_land_thread_summary(trunk, "worker chain", actor)
+        .unwrap();
+    assert_eq!(vault.scope_summary_covers(&summary).unwrap(), [root, next]);
+    assert_eq!(vault.drill(&header.claim).unwrap(), [root, next]);
+    assert_eq!(
+        vault.get_claim(&header.claim).unwrap().unwrap().subject,
+        crate::claim::ClaimSubject::Entity(trunk)
+    );
+    assert_eq!(vault.head(&conv).unwrap(), Some(trunk));
+}
+
+#[test]
+fn soft_delete_of_interior_and_last_reply_repairs_thread_meta() {
+    let (_dir, vault, conv, actor) = fixture();
+    let trunk = vault
+        .append_dag_record(&input(conv, None, true, actor))
+        .unwrap()
+        .id;
+    let first = vault
+        .reply_in_thread(trunk, &input(conv, None, false, actor))
+        .unwrap()
+        .id;
+    let interior = vault
+        .reply_in_thread(trunk, &input(conv, None, false, actor))
+        .unwrap()
+        .id;
+    let descendant = vault
+        .reply_in_thread(trunk, &input(conv, None, false, actor))
+        .unwrap()
+        .id;
+    assert_eq!(
+        vault.thread(trunk).unwrap().replies,
+        [first, interior, descendant]
+    );
+    assert_eq!(vault.thread_meta(trunk).unwrap().unwrap().count, 3);
+    vault
+        .delete_own_room_record(interior, crate::DeleteReason::UserDelete)
+        .unwrap();
+    assert_eq!(vault.thread(trunk).unwrap().replies, [first]);
+    assert_eq!(vault.thread_meta(trunk).unwrap().unwrap().count, 1);
+    assert_eq!(vault.thread_meta(first).unwrap(), None);
+    vault
+        .delete_own_room_record(first, crate::DeleteReason::UserDelete)
+        .unwrap();
+    assert!(vault.thread(trunk).unwrap().replies.is_empty());
+    assert_eq!(vault.thread_meta(trunk).unwrap(), None);
+    assert_eq!(vault.head(&conv).unwrap(), Some(trunk));
+}
+
+#[test]
+fn inner_worker_thread_summary_excludes_outer_session_ancestry() {
+    let (_dir, vault, conv, actor) = fixture();
+    let trunk = vault
+        .append_dag_record(&input(conv, None, true, actor))
+        .unwrap()
+        .id;
+    let outer = vault.spawn_dag_sub_session(&trunk, actor).unwrap();
+    let mut outer_input = input(conv, Some(trunk), false, actor);
+    outer_input.session = Some(outer);
+    let worker = vault.append_dag_record(&outer_input).unwrap().id;
+    let inner = vault.spawn_dag_sub_session(&worker, actor).unwrap();
+    let mut inner_input = input(conv, None, false, actor);
+    inner_input.session = Some(inner);
+    let root = vault.reply_in_thread(worker, &inner_input).unwrap().id;
+    let next = vault.reply_in_thread(worker, &inner_input).unwrap().id;
+    assert_eq!(vault.thread(worker).unwrap().replies, [root, next]);
+    let (summary, header) = vault
+        .mint_and_land_thread_summary(worker, "inner worker", actor)
+        .unwrap();
+    assert_eq!(vault.scope_summary_covers(&summary).unwrap(), [root, next]);
+    assert_eq!(vault.drill(&header.claim).unwrap(), [root, next]);
+    assert_eq!(
+        vault.get_claim(&header.claim).unwrap().unwrap().subject,
+        crate::claim::ClaimSubject::Entity(worker)
+    );
+    assert_eq!(vault.head(&conv).unwrap(), Some(trunk));
+}
+
+#[test]
+fn bounded_thread_summary_excludes_room_prefix_and_pins_historic_replies() {
+    let (_dir, vault, conv, actor) = fixture();
+    let root = vault
+        .append_dag_record(&input(conv, None, true, actor))
+        .unwrap()
+        .id;
+    let before = vault
+        .append_dag_record(&input(conv, Some(root), true, actor))
+        .unwrap()
+        .id;
+    let trunk = vault
+        .append_dag_record(&input(conv, Some(before), true, actor))
+        .unwrap()
+        .id;
+    let first = vault
+        .reply_in_thread(trunk, &input(conv, None, false, actor))
+        .unwrap()
+        .id;
+    let second = vault
+        .reply_in_thread(trunk, &input(conv, None, false, actor))
+        .unwrap()
+        .id;
+    let span = scope(
+        conv,
+        ScopePath::BranchSpan {
+            after: trunk,
+            through: second,
+        },
+        false,
+    );
+    assert_eq!(
+        vault.resolve_dag_scope(&span).unwrap().records,
+        [first, second]
+    );
+    let (summary, header) = vault
+        .mint_and_land_thread_summary(trunk, "pinned replies", actor)
+        .unwrap();
+    assert_eq!(
+        vault.scope_summary_covers(&summary).unwrap(),
+        [first, second]
+    );
+    assert_eq!(vault.drill(&header.claim).unwrap(), [first, second]);
+    assert_eq!(
+        vault.get_claim(&header.claim).unwrap().unwrap().subject,
+        crate::claim::ClaimSubject::Entity(trunk)
+    );
+    assert_eq!(vault.head(&conv).unwrap(), Some(trunk));
+    let third = vault
+        .reply_in_thread(trunk, &input(conv, None, false, actor))
+        .unwrap()
+        .id;
+    let worker_session = vault.spawn_dag_sub_session(&trunk, actor).unwrap();
+    let mut sibling_input = input(conv, None, false, actor);
+    sibling_input.session = Some(worker_session);
+    let sibling = vault.reply_in_thread(trunk, &sibling_input).unwrap().id;
+    assert_eq!(vault.thread(trunk).unwrap().replies, [first, second, third]);
+    assert!(vault.thread_roots(trunk).unwrap().contains(&sibling));
+    vault.move_head(&conv, &root).unwrap();
+    assert_eq!(
+        vault.scope_summary_covers(&summary).unwrap(),
+        [first, second]
+    );
+    assert_eq!(vault.drill(&header.claim).unwrap(), [first, second]);
+}
+
+#[test]
+fn same_worker_session_thread_summary_excludes_earlier_session_turns() {
+    let (_dir, vault, conv, actor) = fixture();
+    let trunk = vault
+        .append_dag_record(&input(conv, None, true, actor))
+        .unwrap()
+        .id;
+    let session = vault.spawn_dag_sub_session(&trunk, actor).unwrap();
+    let mut input = input(conv, Some(trunk), false, actor);
+    input.session = Some(session);
+    let worker = vault.append_dag_record(&input).unwrap().id;
+    let root = vault.reply_in_thread(worker, &input).unwrap().id;
+    let (summary, header) = vault
+        .mint_and_land_thread_summary(worker, "same session", actor)
+        .unwrap();
+    assert_eq!(vault.thread(worker).unwrap().replies, [root]);
+    assert_eq!(vault.scope_summary_covers(&summary).unwrap(), [root]);
+    assert_eq!(vault.drill(&header.claim).unwrap(), [root]);
+    assert_eq!(
+        vault.get_claim(&header.claim).unwrap().unwrap().subject,
+        crate::claim::ClaimSubject::Entity(worker)
+    );
+    assert_eq!(vault.head(&conv).unwrap(), Some(trunk));
+}
+
+#[test]
+fn bounded_thread_allows_ordinary_sitting_transition() {
+    let (_dir, vault, conv, actor) = fixture();
+    let trunk = vault
+        .append_dag_record(&input(conv, None, true, actor))
+        .unwrap()
+        .id;
+    let session = EntityId::now();
+    vault
+        .put_entity(
+            &session,
+            ENTITY_TYPE_SESSION,
+            time(1),
+            1,
+            &body("ordinary sitting"),
+        )
+        .unwrap();
+    let mut reply = input(conv, None, false, actor);
+    reply.session = Some(session);
+    let record = vault.reply_in_thread(trunk, &reply).unwrap().id;
+    assert_eq!(vault.thread(trunk).unwrap().replies, [record]);
+    let (summary, header) = vault
+        .mint_and_land_thread_summary(trunk, "new sitting", actor)
+        .unwrap();
+    assert_eq!(vault.scope_summary_covers(&summary).unwrap(), [record]);
+    assert_eq!(vault.drill(&header.claim).unwrap(), [record]);
+    assert_eq!(vault.head(&conv).unwrap(), Some(trunk));
+}
+
+#[test]
+fn retained_preview_refuses_wrong_type_owner_cycle_and_canonical_mark() {
+    let (_dir, vault, conversation, actor) = fixture();
+    let root = vault
+        .append_dag_record(&input(conversation, None, true, actor))
+        .unwrap()
+        .id;
+    let child = vault
+        .append_dag_record(&input(conversation, Some(root), true, actor))
+        .unwrap()
+        .id;
+    assert_eq!(
+        vault
+            .conversation_last_message_snippet(&conversation)
+            .unwrap(),
+        Some("record".into())
+    );
+    vault
+        .with_write_txn(|txn| {
+            vault.store.vault_meta.put(
+                txn,
+                &super::graph::key(super::graph::HEAD, &conversation),
+                actor.entity_ref().as_bytes(),
+            )?;
+            Ok(())
+        })
+        .unwrap();
+    assert_eq!(
+        vault
+            .conversation_last_message_snippet(&conversation)
+            .unwrap_err()
+            .kind(),
+        ErrorKind::InvalidConversationDag
+    );
+    vault
+        .with_write_txn(|txn| {
+            vault.store.vault_meta.put(
+                txn,
+                &super::graph::key(super::graph::HEAD, &conversation),
+                child.as_bytes(),
+            )?;
+            Ok(())
+        })
+        .unwrap();
+    let foreign = EntityId::now();
+    vault
+        .put_entity(
+            &foreign,
+            ENTITY_TYPE_CONVERSATION,
+            time(1),
+            1,
+            &body("other room"),
+        )
+        .unwrap();
+    let other_root = vault
+        .append_dag_record(&input(foreign, None, true, actor))
+        .unwrap()
+        .id;
+    vault
+        .with_write_txn(|txn| {
+            vault.store.vault_meta.put(
+                txn,
+                &super::graph::key(super::graph::HEAD, &conversation),
+                other_root.as_bytes(),
+            )?;
+            Ok(())
+        })
+        .unwrap();
+    assert_eq!(
+        vault
+            .conversation_last_message_snippet(&conversation)
+            .unwrap_err()
+            .kind(),
+        ErrorKind::InvalidConversationDag
+    );
+    vault
+        .with_write_txn(|txn| {
+            vault.store.vault_meta.put(
+                txn,
+                &super::graph::key(super::graph::HEAD, &conversation),
+                child.as_bytes(),
+            )?;
+            vault.store.vault_meta.put(
+                txn,
+                &super::graph::key(super::graph::CANONICAL, &root),
+                root.as_bytes(),
+            )?;
+            Ok(())
+        })
+        .unwrap();
+    assert_eq!(
+        vault
+            .conversation_last_message_snippet(&conversation)
+            .unwrap_err()
+            .kind(),
+        ErrorKind::CorruptedIndex
+    );
+    vault
+        .with_write_txn(|txn| {
+            vault.store.vault_meta.put(
+                txn,
+                &super::graph::key(super::graph::CANONICAL, &root),
+                child.as_bytes(),
+            )?;
+            Ok(())
+        })
+        .unwrap();
+    vault
+        .batch()
+        .edge_with_value_fields(&root, EdgeKind::Parent, &child, super::writes::value(1))
+        .commit()
+        .unwrap();
+    assert_eq!(
+        vault
+            .conversation_last_message_snippet(&conversation)
+            .unwrap_err()
+            .kind(),
+        ErrorKind::CycleDetected
+    );
+}
+
+#[test]
+fn retained_preview_refuses_unresolved_spawn_but_not_live_empty_legacy_turn() {
+    let (_dir, vault, conversation, _actor) = fixture();
+    let legacy = EntityId::now();
+    vault
+        .batch()
+        .put(&legacy, ENTITY_TYPE_TURN, time(20), 20, b"")
+        .edge_checked(&legacy, &conversation, 1.0)
+        .commit()
+        .unwrap();
+    assert!(!vault.is_deleted_shell(&legacy).unwrap());
+    assert_eq!(
+        vault
+            .conversation_last_message_snippet(&conversation)
+            .unwrap(),
+        None
+    );
+    // A separate room keeps the valid zero-byte legacy row from being
+    // adopted as the next DAG append's selected HEAD.
+    let (_dir, vault, conversation, actor) = fixture();
+    let session = match vault.mint_session(100).unwrap() {
+        crate::session_lifecycle::SessionMintOutcome::Minted(id) => id,
+        other => panic!("expected ordinary session, got {other:?}"),
+    };
+    let root = vault
+        .append_dag_record(&AppendRecord {
+            session: Some(session),
+            ..input(conversation, None, true, actor)
+        })
+        .unwrap()
+        .id;
+    // An injected live session declaration without its SpawnedBy edge is not
+    // ordinary. The preview must refuse rather than quietly broaden the path.
+    vault
+        .with_write_txn(|txn| {
+            let mut raw = vault
+                .store
+                .entities
+                .get(txn, session.as_bytes())?
+                .unwrap()
+                .to_vec();
+            raw.truncate(crate::batch::ENTITY_METADATA_HEADER_LEN);
+            raw.extend(
+                rmp_serde::to_vec_named(&serde_json::json!({"dag_spawning_turn": root.to_hex()}))
+                    .unwrap(),
+            );
+            vault.store.entities.put(txn, session.as_bytes(), &raw)?;
+            Ok(())
+        })
+        .unwrap();
+    assert_eq!(
+        vault
+            .conversation_last_message_snippet(&conversation)
+            .unwrap_err()
+            .kind(),
+        ErrorKind::InvalidConversationDag
+    );
+}
+
+#[test]
+fn headless_adopted_room_refuses_childof_preview_even_with_newer_thread() {
+    let (_dir, vault, conversation, actor) = fixture();
+    let root = vault
+        .append_dag_record(&input(conversation, None, false, actor))
+        .unwrap()
+        .id;
+    assert_eq!(
+        vault
+            .conversation_last_message_snippet(&conversation)
+            .unwrap_err()
+            .kind(),
+        ErrorKind::InvalidConversationDag
+    );
+    let thread = vault
+        .reply_in_thread(root, &input(conversation, Some(root), false, actor))
+        .unwrap();
+    assert!(thread.head.is_none());
+    assert_eq!(
+        vault
+            .conversation_last_message_snippet(&conversation)
+            .unwrap_err()
+            .kind(),
+        ErrorKind::InvalidConversationDag,
+        "an off-line thread must not become an unselected room's preview"
+    );
+}
+
+#[test]
+fn migrated_room_with_only_deleted_childof_shells_has_no_preview() {
+    let (_dir, vault, conversation, actor) = fixture();
+    let turn = EntityId::now();
+    // A room TURN soft-deletes only through its author's room door.
+    let authored = rmp_serde::to_vec_named(
+        &serde_json::json!({"txt": "deleted text", "actor": actor.entity_ref().to_hex()}),
+    )
+    .unwrap();
+    vault
+        .batch()
+        .put(&turn, ENTITY_TYPE_TURN, time(20), 20, &authored)
+        .edge_checked(&turn, &conversation, 1.0)
+        .commit()
+        .unwrap();
+    vault
+        .delete_own_room_record(turn, crate::DeleteReason::UserDelete)
+        .unwrap();
+    assert!(vault.is_deleted_shell(&turn).unwrap());
+    let page = vault
+        .main_line(
+            &conversation,
+            crate::conversation_dag::DagPageRequest::default(),
+        )
+        .unwrap();
+    assert!(page.head.is_none());
+    assert!(page.main_line.is_empty());
+    assert_eq!(
+        vault
+            .conversation_last_message_snippet(&conversation)
+            .unwrap(),
+        None
     );
 }

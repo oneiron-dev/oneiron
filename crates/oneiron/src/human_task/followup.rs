@@ -96,7 +96,7 @@ fn resolve_native_human_route_with_sender_in(
         let Some(identity) = vault.get_channel_identity_in_txn(txn, &channel_identity_ref)? else {
             continue;
         };
-        if identity.state != ChannelIdentityState::Active || vetoed.contains(&identity.channel) {
+        if identity.state() != ChannelIdentityState::Active || vetoed.contains(identity.channel()) {
             continue;
         }
         if let Some(owner) = owner_ref {
@@ -107,7 +107,7 @@ fn resolve_native_human_route_with_sender_in(
                 || crate::outbound::resolve_channel_identity_ref_for_connector(
                     &vault.store,
                     txn,
-                    &identity.channel,
+                    identity.channel(),
                     Some(&owner),
                 )? != Some(channel_identity_ref)
             {
@@ -116,7 +116,7 @@ fn resolve_native_human_route_with_sender_in(
         }
         // A channel the connector manifest does not serve is not a route,
         // however well connected the person is on it.
-        if outbound_verb_contract(&identity.channel, HUMAN_FOLLOWUP_VERB).is_err() {
+        if outbound_verb_contract(identity.channel(), HUMAN_FOLLOWUP_VERB).is_err() {
             continue;
         }
         let Some((_, contact)) =
@@ -130,7 +130,7 @@ fn resolve_native_human_route_with_sender_in(
         return Ok(NativeHumanRoute {
             person_ref,
             channel_identity_ref,
-            channel: identity.channel,
+            channel: identity.channel().to_owned(),
             target: contact.counterparty,
         });
     }
@@ -318,7 +318,11 @@ impl<'a> HumanTaskFollowupDriver<'a> {
                     .tasks_ask_status_for_task(record.task_ref)
                     .map_err(|_| Error::InvalidClaimBody("ask follow-up projection"))?
                     .is_some_and(|status| {
-                        !matches!(status, crate::task_verb::TaskAskStatus::Pending { .. })
+                        !matches!(
+                            status,
+                            crate::task_verb::TaskAskStatus::Pending { .. }
+                                | crate::task_verb::TaskAskStatus::Changed { .. }
+                        )
                     })
             } else {
                 false
@@ -541,6 +545,10 @@ impl<'a> HumanTaskFollowupDriver<'a> {
 
 /// Drives every due human follow-up on one Dreamer wake pass.
 pub(crate) fn run_human_followups_on_wake(vault: &Vault, now: u64) -> Result<()> {
+    // A policy change lands without waiting for contact routing. Link its
+    // durable holder-push intent when a route becomes available, then let the
+    // ordinary human follow-up ladder drive the resulting TASK.
+    vault.drive_policy_notification_queue(now, FOLLOWUP_WAKE_LIMIT)?;
     HumanTaskFollowupDriver::new(vault)
         .run_due(now, FOLLOWUP_WAKE_LIMIT)
         .map(|_| ())

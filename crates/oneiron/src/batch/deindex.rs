@@ -15,8 +15,11 @@ pub(super) fn reject_engine_authored_delete(
     wtxn: &mut RwTxn<'_>,
     id: &EntityId,
 ) -> Result<()> {
+    crate::conversation_dag::guard_room_turn_delete(store, wtxn, id)?;
+    crate::conversation::guard_room_message_delete(store, wtxn, *id)?;
     crate::blob_artifact::esign::reject_event_delete(store, wtxn, id)?;
     crate::origin::lfs::reject_direct_lfs_chunk_delete(store, wtxn, id)?;
+    crate::identity_topology::guard_batch_identity_delete_in_txn(store, wtxn, id)?;
     let Some(raw) = store.entities.get(wtxn, id.as_bytes())? else {
         return Ok(());
     };
@@ -93,7 +96,16 @@ pub(super) fn deindex_entity_without_lexical_query_hint_cascade(
     wtxn: &mut RwTxn<'_>,
     id: &EntityId,
 ) -> Result<(bool, bool, bool, Vec<EntityId>)> {
+    crate::workspace_roster::guard_goal_delete(store, wtxn, *id)?;
     crate::federation::reject_ruling_delete(store, wtxn, id)?;
+    // The shared physical tear is reached by facade deletes, public batch
+    // deletes and lexical-hint cascades. Every one must erase claim decisions
+    // and the pending tray before the entity bytes leave this transaction.
+    store.redact_gate_decisions_for_claim_in_txn(
+        wtxn,
+        id.as_bytes(),
+        store.clock.now_recorded_at(),
+    )?;
     #[cfg(feature = "sync")]
     crate::entity_doc::erase_in_txn(store, wtxn, id)?;
     store
@@ -150,6 +162,7 @@ pub(super) fn deindex_entity_without_lexical_query_hint_cascade(
     store.clear_pending_embedding(wtxn, id)?;
     had_vector |= store.vectors.delete(wtxn, id.as_bytes())?;
     crate::hnsw::hnsw_deindex(store, wtxn, id)?;
+    crate::conversation_dag::invalidate_thread_meta_for_turn_put(store, wtxn, *id)?;
     let related_neighbors = delete_related_edges(store, wtxn, id)?;
     had_graph_mutation |= !related_neighbors.is_empty();
     neighbors.extend(related_neighbors);
@@ -188,6 +201,7 @@ pub(super) fn deindex_entity_without_lexical_query_hint_cascade(
             Err(error) => return Err(error),
         }
     }
+    crate::channel_identity::clear_assignment_for_delete(store, wtxn, id, entity_type)?;
     let mut cleanup = crate::affect::VadAnnotationCleanup::default();
     crate::affect::delete_vad_annotation_metadata_for_type_in_txn(
         store,
@@ -212,6 +226,12 @@ pub(super) fn deindex_entity_without_lexical_query_hint_cascade(
     store
         .sync_state
         .delete(wtxn, &crate::gate::trusted_manifest_key(id))?;
+    store
+        .sync_state
+        .delete(wtxn, &crate::gate::seeded_manifest_key(id))?;
+    store
+        .sync_state
+        .delete(wtxn, &crate::gate::seeded_manifest_key(id))?;
     crate::claim::remove_claim_projection_index(store, wtxn, *id)?;
     store.entities.delete(wtxn, id.as_bytes())?;
     crate::ports::audit_mutation_in_txn(

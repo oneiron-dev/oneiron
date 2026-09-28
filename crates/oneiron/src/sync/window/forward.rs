@@ -26,6 +26,7 @@ struct RematCtx<'a> {
     doc: &'a LoroDoc,
     window_key: &'a WindowKey,
     lease_vault_id: u64,
+    trusted: Option<&'a crate::recovery::CanonicalSnapshot>,
     entities_map: LoroMap,
     edges_map: LoroMap,
     tombstones_map: LoroMap,
@@ -76,6 +77,7 @@ fn forward_with_recovery(
     if trusted.is_none() && !native_notes {
         for name in [
             "documents",
+            "entity_documents",
             "document_heads",
             "head_move_receipts",
             "note_forks",
@@ -112,6 +114,7 @@ fn forward_with_recovery(
         doc,
         window_key,
         lease_vault_id,
+        trusted,
         entities_map,
         edges_map,
         tombstones_map,
@@ -129,6 +132,9 @@ fn forward_with_recovery(
     // tombstones, then the marker settle below. The tombstone call has no
     // `?`: its error stays deferred past the marker txn (Trap 2).
     entity_pass::run(&ctx, &mut ledger)?;
+    // A redaction can arrive after its attribution in this same entity pass;
+    // clear the now-dominated live carrier and force history-free egress.
+    super::egress::scrub_redacted_attribution_carriers(vault, window_key, doc)?;
     if let Some(documents) = native_documents {
         ledger.healed.extend(crate::sync::note::apply(
             vault,

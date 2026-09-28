@@ -246,6 +246,7 @@ impl Memory<'_> {
                 return Ok(false);
             };
             Ok(claim_surfaceable(&body)
+                && crate::claim::has_live_support_in_txn(store, txn, &body)?
                 && body.world == world
                 && predicate.is_none_or(|predicate| body.predicate == predicate))
         };
@@ -748,12 +749,28 @@ impl Memory<'_> {
                     }
                     Some(crate::claim::decode_claim_body(&bytes, true)?)
                 }
-                None => self.vault.get_claim(&id)?,
+                None => {
+                    let txn = self
+                        .vault
+                        .store
+                        .env
+                        .read_txn()
+                        .map_err(crate::Error::from)?;
+                    self.vault.get_claim_in_txn(&txn, &id)?
+                }
             };
             let Some(body) = body else {
                 continue;
             };
-            if !claim_surfaceable(&body) {
+            let txn = self
+                .vault
+                .store
+                .env
+                .read_txn()
+                .map_err(crate::Error::from)?;
+            if !claim_surfaceable(&body)
+                || !crate::claim::has_live_support_in_txn(&self.vault.store, &txn, &body)?
+            {
                 continue;
             }
             if let Some(world) = body.world

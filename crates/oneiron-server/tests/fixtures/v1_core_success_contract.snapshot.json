@@ -454,7 +454,7 @@
             "10": 1,
             "103": 1,
             "13": 1,
-            "30": 4,
+            "30": 8,
             "4": 1,
             "40": 4,
             "41": 7,
@@ -594,6 +594,7 @@
             "id": "7e000000000000000000000012210002",
             "kind": "CONVERSATION",
             "label": "Contract dream",
+            "lastMessageSnippet": null,
             "name": "Contract dream",
             "type": 4,
             "updatedAt": 1782357735
@@ -603,6 +604,7 @@
             "id": "<home-room-id>",
             "kind": "CONVERSATION",
             "label": "<home-room-id>",
+            "lastMessageSnippet": null,
             "memberIds": [
               "aaaaaaaaaaaaaaaaaaaaaaaaaaaa1709"
             ],

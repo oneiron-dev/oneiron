@@ -158,7 +158,12 @@ impl Memory<'_> {
                 "a new witnessed turn needs one non-system speaker",
             ));
         };
-        let turn_body = encode_witness_turn_body(turn_speaker)?;
+        // The transaction below verifies this class against the stored actor
+        // kind before any journal entry is installed.
+        let expected_person = (self.vault.get_entity_type(&self.actor)?
+            == Some(crate::registry::ENTITY_TYPE_PERSON))
+        .then_some(self.actor);
+        let turn_body = encode_witness_turn_body(turn_speaker, expected_person)?;
 
         let mut entries = Vec::new();
         let scope = JournalScope::new(conversation_id, turn_id);
@@ -302,6 +307,16 @@ impl Memory<'_> {
         let (segment, short_refs) = self.vault.try_with_write_txn(
             |wtxn| -> MemoryResult<(crate::session_overlay::TxnSegmentGuard, Vec<(String, u8)>)> {
                 verify_actor_binding_in_txn(self.vault, &*wtxn, self.actor, self.actor_class)?;
+                let person_author = super::person_author_in_txn(self.vault, wtxn, self.actor)?;
+                if person_author != expected_person {
+                    return Err(MemoryError::bad_request("witness author is not a PERSON"));
+                }
+                super::reject_erased_person_in_txn(
+                    self.vault,
+                    wtxn,
+                    conversation_id,
+                    person_author,
+                )?;
                 // ONE-1686 (RT-04): the SAME approval-ceiling door the base
                 // witness runs, on the same envelopes, before ANY row stages.
                 // The room is not a weaker door: a promote replays this journal
@@ -332,6 +347,7 @@ impl Memory<'_> {
                     &turn_id,
                     &conversation_id,
                     Some(turn_speaker),
+                    person_author,
                 )?;
                 let mut existing_messages = HashSet::new();
                 for ((message, id), (_, body)) in

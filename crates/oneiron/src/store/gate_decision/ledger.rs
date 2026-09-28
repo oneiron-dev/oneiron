@@ -9,9 +9,10 @@ use super::keys::{
     GATE_DECISION_CLAIM_INDEX_BACKFILL_COMPLETE_KEY,
     GATE_DECISION_CLAIM_INDEX_BACKFILL_COMPLETE_VALUE, GATE_DECISION_KEY_PREFIX,
     attempt_run_index_key, attempt_run_index_prefix, gate_decision_claim_index_key,
-    gate_decision_claim_index_prefix, gate_decision_grant_ref_index_key,
+    gate_decision_claim_index_prefix, gate_decision_claim_ref_key, gate_decision_claim_ref_prefix,
+    gate_decision_claim_refs_key, gate_decision_grant_ref_index_key,
     gate_decision_grant_ref_index_prefix, gate_decision_id_from_key, gate_decision_key,
-    gate_decision_upper_bound, logical_uuid_v7_successor,
+    gate_decision_unapplied_preflight_key, gate_decision_upper_bound, logical_uuid_v7_successor,
 };
 use super::orcb;
 use super::types::{
@@ -19,7 +20,35 @@ use super::types::{
 };
 use super::vet::vet_gate_decision_record;
 
+#[cfg(test)]
+thread_local! {
+    static BEFORE_GATE_PAGE_DECODE: std::cell::RefCell<Option<Box<dyn FnOnce()>>> =
+        std::cell::RefCell::new(None);
+    static BEFORE_GATE_GRANT_DECODE: std::cell::RefCell<Option<Box<dyn FnOnce()>>> =
+        std::cell::RefCell::new(None);
+}
+
+#[cfg(test)]
+pub(in crate::store) fn arm_before_gate_page_decode(callback: impl FnOnce() + 'static) {
+    BEFORE_GATE_PAGE_DECODE.with(|slot| *slot.borrow_mut() = Some(Box::new(callback)));
+}
+
+#[cfg(test)]
+pub(in crate::store) fn arm_before_gate_grant_decode(callback: impl FnOnce() + 'static) {
+    BEFORE_GATE_GRANT_DECODE.with(|slot| *slot.borrow_mut() = Some(Box::new(callback)));
+}
+
 impl Store {
+    /// Readers acquire this BEFORE opening an LMDB snapshot. Retirement takes
+    /// the write half BEFORE the exterior marker/unlink, so no healthy live
+    /// snapshot loses custody between its key check and file open.
+    pub(crate) fn gate_custody_read_guard(&self) -> Result<std::sync::RwLockReadGuard<'_, ()>> {
+        self.core
+            .gate_retirement_lock
+            .read()
+            .map_err(|_| Error::InvariantViolation("gate decision custody lock poisoned"))
+    }
+
     /// Decode one row against its key, decrypting only claim-bound ORCB values.
     pub(in crate::store) fn decode_gate_decision_value(
         &self,
@@ -148,6 +177,75 @@ impl Store {
         append_gate_decision_row_in_txn(self, wtxn, record)
     }
 
+    /// Appends an inbox bundle and its blind per-constituent claim references
+    /// atomically. A bundle has no singular claim_id; its content digest alone
+    /// cannot be reversed to find the claims it describes on deletion.
+    pub(crate) fn append_gate_decision_with_claim_refs_in_txn(
+        &self,
+        wtxn: &mut RwTxn<'_>,
+        record: &GateDecisionRecord,
+        claim_refs: &[[u8; 16]],
+    ) -> Result<()> {
+        if record.claim_id.is_some() || claim_refs.is_empty() {
+            return Err(Error::InvariantViolation("bundle claim references"));
+        }
+        let mut refs = claim_refs.to_vec();
+        refs.sort_unstable();
+        refs.dedup();
+        self.append_gate_decision_in_txn(wtxn, record)?;
+        self.vault_meta.put(
+            wtxn,
+            &gate_decision_claim_refs_key(record.decision_id),
+            &rmp_serde::to_vec(&refs)
+                .map_err(|_| Error::InvariantViolation("bundle claim references encode"))?,
+        )?;
+        for claim_id in &refs {
+            self.vault_meta.put(
+                wtxn,
+                &gate_decision_claim_ref_key(claim_id, record.decision_id),
+                b"",
+            )?;
+        }
+        Ok(())
+    }
+
+    /// Reads the complete association, independent of the secondary index.
+    fn gate_decision_claim_refs_in_txn(
+        &self,
+        txn: &RoTxn<'_>,
+        id: GateDecisionId,
+    ) -> Result<Vec<[u8; 16]>> {
+        let Some(raw) = self
+            .vault_meta
+            .get(txn, &gate_decision_claim_refs_key(id))?
+        else {
+            return Ok(Vec::new());
+        };
+        let refs: Vec<[u8; 16]> = rmp_serde::from_slice(&raw)
+            .map_err(|_| Error::CorruptedIndex("gate decision claim references"))?;
+        if refs.is_empty() || refs.windows(2).any(|pair| pair[0] >= pair[1]) {
+            return Err(Error::CorruptedIndex("gate decision claim references"));
+        }
+        Ok(refs)
+    }
+
+    /// Shreds all constituent refs with the primary. A redacted bundle keeps
+    /// its accountability skeleton but no pointer to any member claim.
+    fn delete_gate_decision_claim_refs_in_txn(
+        &self,
+        wtxn: &mut RwTxn<'_>,
+        id: GateDecisionId,
+    ) -> Result<()> {
+        let refs = self.gate_decision_claim_refs_in_txn(&*wtxn, id)?;
+        for claim_id in refs {
+            self.vault_meta
+                .delete(wtxn, &gate_decision_claim_ref_key(&claim_id, id))?;
+        }
+        self.vault_meta
+            .delete(wtxn, &gate_decision_claim_refs_key(id))?;
+        Ok(())
+    }
+
     /// Appends a collision-checked logical UUIDv7 successor. A fixed clock can
     /// reproduce a UUIDv7 seed after reopen, so collisions advance from the
     /// durable same-timestamp tail rather than replacing UUIDv7 bits with a hash.
@@ -185,13 +283,15 @@ impl Store {
     /// Both sidecar deletes are safe no-ops for a record without a `grant_ref`
     /// or `claim_id`. Takes a decoded record because the grant-ref and claim
     /// index keys are only reconstructible from the primary's bytes.
-    fn delete_gate_decision_record_in_txn(
+    pub(in crate::store) fn delete_gate_decision_record_in_txn(
         &self,
         wtxn: &mut RwTxn<'_>,
         record: &GateDecisionRecord,
     ) -> Result<()> {
         self.delete_gate_decision_grant_ref_index_in_txn(wtxn, record)?;
         self.delete_gate_decision_claim_index_in_txn(wtxn, record)?;
+        self.delete_gate_retention_context_in_txn(wtxn, record.decision_id)?;
+        self.delete_gate_decision_claim_refs_in_txn(wtxn, record.decision_id)?;
         self.vault_meta
             .delete(wtxn, &gate_decision_key(record.decision_id))?;
         Ok(())
@@ -210,13 +310,137 @@ impl Store {
         self.delete_gate_decision_record_in_txn(wtxn, &record)
     }
 
+    /// Marks a preflight decision that belongs to an unapplied batch op.
+    /// These markers exist only within the batch's write transaction: every
+    /// successful op consumes its marker before commit; errors abort the txn.
+    pub(crate) fn mark_unapplied_preflight_decision_in_txn(
+        &self,
+        wtxn: &mut RwTxn<'_>,
+        decision_id: GateDecisionId,
+    ) -> Result<()> {
+        self.vault_meta.put(
+            wtxn,
+            &gate_decision_unapplied_preflight_key(decision_id),
+            b"1",
+        )?;
+        Ok(())
+    }
+
+    pub(crate) fn consume_unapplied_preflight_decision_in_txn(
+        &self,
+        wtxn: &mut RwTxn<'_>,
+        decision_id: GateDecisionId,
+    ) -> Result<()> {
+        if !self
+            .vault_meta
+            .delete(wtxn, &gate_decision_unapplied_preflight_key(decision_id))?
+        {
+            return Err(Error::InvariantViolation(
+                "unapplied preflight marker missing",
+            ));
+        }
+        Ok(())
+    }
+
+    fn is_unapplied_preflight_decision_in_txn(
+        &self,
+        txn: &RoTxn<'_>,
+        decision_id: GateDecisionId,
+    ) -> Result<bool> {
+        Ok(self
+            .vault_meta
+            .get(txn, &gate_decision_unapplied_preflight_key(decision_id))?
+            .is_some())
+    }
+
+    /// Rewrites every live row for a deleted claim to its retention skeleton
+    /// inside the caller's destructive transaction. The claim index is retained
+    /// for discovery of skeletons; the grant-ref index is removed because its
+    /// source field is scrubbed. Discovery falls back to a full scan until the
+    /// durable claim-index backfill has completed. A held key partition keeps
+    /// its rows, so every door that tears a held claim (facade, batch, cascade
+    /// or replay) is refused here, before anything is rewritten.
+    pub(crate) fn redact_gate_decisions_for_claim_in_txn(
+        &self,
+        wtxn: &mut RwTxn<'_>,
+        claim_id: &[u8; 16],
+        redacted_at: u64,
+    ) -> Result<bool> {
+        self.reject_held_gate_partition_in_txn(&*wtxn, claim_id)?;
+        let id = crate::entity_id::EntityId::from_bytes(*claim_id)
+            .map_err(|_| Error::CorruptedIndex("gate decision claim id"))?;
+        let pending = self.pending_gate_consent_in_txn(&*wtxn, &id)?.is_some();
+        let mut records = self.gate_decisions_for_claim_in_txn(&*wtxn, claim_id)?;
+        records.extend(self.bundle_gate_decisions_for_claim_in_txn(&*wtxn, claim_id)?);
+        let mut changed = pending;
+        for mut record in records {
+            // Batch preflight stages receipts for *future* ops in this same
+            // txn. Their marker is consumed only after their op applies; a
+            // delete before that op must not scrub its future receipt.
+            if self.is_unapplied_preflight_decision_in_txn(&*wtxn, record.decision_id)? {
+                continue;
+            }
+            if record.redacted_at.is_some() {
+                if !self
+                    .gate_decision_claim_refs_in_txn(&*wtxn, record.decision_id)?
+                    .is_empty()
+                {
+                    return Err(Error::CorruptedIndex(
+                        "redacted gate decision claim references",
+                    ));
+                }
+                continue;
+            }
+            changed = true;
+            self.delete_gate_decision_grant_ref_index_in_txn(wtxn, &record)?;
+            self.delete_gate_decision_claim_refs_in_txn(wtxn, record.decision_id)?;
+            record.version = super::types::GATE_DECISION_LEDGER_VERSION_REDACTED;
+            // v0 records a caller's empty class on an auditable denial; v1
+            // requires a non-empty retention label.
+            if record.actor_class.is_empty() {
+                record.actor_class = "unspecified".to_owned();
+            }
+            record.reason_codes.clear();
+            record.receipt_reasons.clear();
+            record.system_notices.clear();
+            record.actor_ref = None;
+            record.grant_ref = None;
+            record.diff_handle.clear();
+            // An injected clock at epoch zero must still produce a valid v1 row.
+            record.redacted_at = Some(redacted_at.max(1));
+            super::vet::vet_gate_decision_record(&record)?;
+            self.vault_meta.put(
+                wtxn,
+                &gate_decision_key(record.decision_id),
+                &encode_gate_decision(&record)?,
+            )?;
+        }
+        // The tray carries the original content binding and can mint a fresh
+        // live v0 resolution from a v1 skeleton. Remove it and every index
+        // inside this same destructive transaction, before verification.
+        self.delete_pending_gate_consent_in_txn(wtxn, &id)?;
+        for decision_id in self.verify_claim_erasure_by_scan_in_txn(&*wtxn, claim_id)? {
+            if !self.is_unapplied_preflight_decision_in_txn(&*wtxn, decision_id)? {
+                return Err(Error::CorruptedIndex("gate decision claim erasure"));
+            }
+        }
+        Ok(changed)
+    }
+
     /// Returns every gate decision carrying this grant reference, newest
     /// first, without scanning the global decision ledger.
     pub(crate) fn gate_decisions_for_grant_ref(
         &self,
         grant_ref: &str,
     ) -> Result<Vec<GateDecisionRecord>> {
+        let _custody = self.gate_custody_read_guard()?;
         let rtxn = self.env.read_txn()?;
+        #[cfg(test)]
+        BEFORE_GATE_GRANT_DECODE.with(|slot| {
+            if let Some(callback) = slot.borrow_mut().take() {
+                callback();
+            }
+        });
         let prefix = gate_decision_grant_ref_index_prefix(grant_ref);
         let mut records = Vec::new();
         for row in self.vault_meta.prefix_iter(&rtxn, &prefix)? {
@@ -243,8 +467,10 @@ impl Store {
         Ok(records)
     }
 
-    /// Per-claim discovery for the erase coupling (ONE-1638) and any per-claim
-    /// receipt read. Index-accelerated ONLY when the durable backfill flag is
+    /// Singular-claim decision discovery for erasure and per-claim receipt
+    /// reads. Bundle receipts are deliberately excluded: callers selecting the
+    /// latest claim verdict must never receive a multi-claim bundle instead.
+    /// Index-accelerated ONLY when the durable backfill flag is
     /// set; otherwise a full keyspace scan, so a vault mid-backfill can never
     /// hide rows from an erase. Both paths return records ascending by
     /// decision_id and are result-identical.
@@ -252,7 +478,6 @@ impl Store {
     /// Redacted (version 1) skeletons ARE returned — they retain `claim_id` by
     /// design. Completeness is decided by
     /// [`Store::verify_claim_erasure_by_scan_in_txn`], never by this reader.
-    #[cfg_attr(not(test), allow(dead_code))] // seam for the ONE-1638 erase coupling
     pub(crate) fn gate_decisions_for_claim_in_txn(
         &self,
         txn: &RoTxn<'_>,
@@ -281,9 +506,45 @@ impl Store {
         Ok(records)
     }
 
+    /// Per-constituent discovery used ONLY by erasure; ordinary claim
+    /// receipt readers must not mistake a bundle receipt for a claim verdict.
+    pub(crate) fn bundle_gate_decisions_for_claim_in_txn(
+        &self,
+        txn: &RoTxn<'_>,
+        claim_id: &[u8; 16],
+    ) -> Result<Vec<GateDecisionRecord>> {
+        let mut records = Vec::new();
+        // Bundle refs have a separate index because a decision may describe
+        // many claims. The primary's complete refs sidecar checks each hit.
+        let refs_prefix = gate_decision_claim_ref_prefix(claim_id);
+        for row in self.vault_meta.prefix_iter(txn, &refs_prefix)? {
+            let (key, value) = row?;
+            let decision_id = GateDecisionId::from_bytes(index_suffix_id(
+                &key,
+                &refs_prefix,
+                "gate decision claim ref index",
+            )?);
+            if !value.is_empty()
+                || !self
+                    .gate_decision_claim_refs_in_txn(txn, decision_id)?
+                    .contains(claim_id)
+            {
+                return Err(Error::CorruptedIndex("gate decision claim ref index"));
+            }
+            let Some(record) = self.gate_decision_in_txn(txn, decision_id)? else {
+                return Err(Error::CorruptedIndex("gate decision claim ref index"));
+            };
+            if record.redacted_at.is_some() {
+                return Err(Error::CorruptedIndex("gate decision claim ref index"));
+            }
+            records.push(record);
+        }
+        records.sort_by_key(|record| record.decision_id.as_bytes());
+        Ok(records)
+    }
+
     /// Full-keyspace per-claim discovery: the fallback path taken while the
     /// backfill flag is unset, and directly callable for parity checks.
-    #[cfg_attr(not(test), allow(dead_code))] // seam for the ONE-1638 erase coupling
     pub(in crate::store) fn scan_gate_decisions_for_claim_in_txn(
         &self,
         txn: &RoTxn<'_>,
@@ -305,15 +566,19 @@ impl Store {
     /// the erase cannot also certify it complete. An empty result means erasure
     /// is complete for this claim. Deliberately uncapped: a correctness scan
     /// takes no query-budget shortcut.
-    #[cfg_attr(not(test), allow(dead_code))] // seam for the ONE-1638 erase coupling
-    pub(in crate::store) fn verify_claim_erasure_by_scan_in_txn(
+    pub(crate) fn verify_claim_erasure_by_scan_in_txn(
         &self,
         txn: &RoTxn<'_>,
         claim_id: &[u8; 16],
     ) -> Result<Vec<GateDecisionId>> {
         let mut remaining = Vec::new();
         self.for_each_gate_decision_in_txn(txn, |record| {
-            if record.claim_id == Some(*claim_id) && record.redacted_at.is_none() {
+            if record.redacted_at.is_none()
+                && (record.claim_id == Some(*claim_id)
+                    || self
+                        .gate_decision_claim_refs_in_txn(txn, record.decision_id)?
+                        .contains(claim_id))
+            {
                 remaining.push(record.decision_id);
             }
             Ok(())
@@ -444,8 +709,40 @@ impl Store {
         before: Option<GateDecisionId>,
         limit: usize,
     ) -> Result<Vec<GateDecisionRecord>> {
+        let _custody = self.gate_custody_read_guard()?;
         let rtxn = self.env.read_txn()?;
-        self.gate_decisions_page_in_txn(&rtxn, before, limit)
+        match self.gate_decisions_page_in_txn(&rtxn, before, limit) {
+            Ok(rows) => Ok(rows),
+            Err(error @ Error::CorruptedIndex("gate decision ORCB")) => {
+                // Collect retirement witnesses while the old read snapshot is
+                // alive, then drop it BEFORE opening a fresh LMDB read slot.
+                let mut retired_keys = Vec::new();
+                for row in self
+                    .vault_meta
+                    .prefix_iter(&rtxn, GATE_DECISION_KEY_PREFIX)?
+                {
+                    let (key, raw) = row?;
+                    if orcb::raw_key_retired(&self.core.gate_custody_root, &raw)? {
+                        retired_keys.push(key.into_owned());
+                    }
+                }
+                drop(rtxn);
+                if retired_keys.is_empty() {
+                    return Err(error);
+                }
+                let current = self.env.read_txn()?;
+                let mut removed = false;
+                for key in retired_keys {
+                    removed |= self.vault_meta.get(&current, &key)?.is_none();
+                }
+                if removed {
+                    self.gate_decisions_page_in_txn(&current, before, limit)
+                } else {
+                    Err(error)
+                }
+            }
+            Err(error) => Err(error),
+        }
     }
 
     pub(crate) fn gate_decisions_page_in_txn(
@@ -454,6 +751,12 @@ impl Store {
         before: Option<GateDecisionId>,
         limit: usize,
     ) -> Result<Vec<GateDecisionRecord>> {
+        #[cfg(test)]
+        BEFORE_GATE_PAGE_DECODE.with(|slot| {
+            if let Some(callback) = slot.borrow_mut().take() {
+                callback();
+            }
+        });
         if limit == 0 {
             return Ok(Vec::new());
         }
@@ -512,12 +815,24 @@ fn append_gate_decision_row_in_txn(
     if store.vault_meta().get(wtxn, &key)?.is_some() {
         return Err(Error::InvariantViolation("gate decision id collision"));
     }
-    let value = if record.claim_id.is_some() {
+    let value = if let Some(claim) = record.claim_id {
+        // A committed age sweep may still be retiring this partition's
+        // exterior key. No new ciphertext may reuse it in that interval.
+        if store
+            .vault_meta()
+            .get(&*wtxn, &super::retention::pending_key(&claim))?
+            .is_some()
+        {
+            return Err(Error::InvalidConfig(
+                "gate decision partition is retiring".into(),
+            ));
+        }
         orcb::encode_hot(store.gate_key_root(), record)?
     } else {
         encode_gate_decision(record)?
     };
     store.vault_meta().put(wtxn, &key, &value)?;
+    super::retention_scope::append_context_in_txn(store, wtxn, record)?;
     if let Some(grant_ref) = record.grant_ref.as_deref() {
         store.vault_meta().put(
             wtxn,

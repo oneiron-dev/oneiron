@@ -22,7 +22,9 @@ fn sub_session_records(
     if scope.session.is_some_and(|id| id != session) {
         return Err(invalid("conflicting session selectors"));
     }
-    let spawned = edge_ids(&vault.store, txn, &session, EdgeKind::SpawnedBy, false, 2)?;
+    let spawned = super::redacted::spawned_by(&vault.store, txn, &session)?
+        .into_iter()
+        .collect::<Vec<_>>();
     if spawned.len() != 1 {
         return Err(invalid("SubSession requires exactly one SpawnedBy edge"));
     }
@@ -48,11 +50,16 @@ fn sub_session_records(
                 .map_err(|_| Error::CorruptedIndex("session turns index"))?,
         )?;
         match live_entity_row_in_txn(&vault.store, txn, &id)? {
-            LiveEntityRow::DeletedShell | LiveEntityRow::Absent => continue,
+            LiveEntityRow::DeletedShell | LiveEntityRow::Absent
+                if super::redacted::read(&vault.store, txn, &id)?.is_none() =>
+            {
+                continue;
+            }
             _ => {}
         }
         require_member(&vault.store, txn, &scope.conversation, &id)?;
         if crate::compaction::turn_session_membership_in_txn(&vault.store, txn, &id)?
+            .or(super::redacted::read(&vault.store, txn, &id)?.and_then(|pin| pin.session))
             != Some(session)
         {
             return Err(Error::CorruptedIndex("session turns index"));
@@ -86,7 +93,13 @@ fn sub_session_records(
     if ordered.len() != records.len() {
         return Err(crate::error::RegistryError::CycleDetected.into());
     }
-    Ok(ordered)
+    let mut visible = Vec::new();
+    for id in ordered {
+        if live_entity_row_in_txn(&vault.store, txn, &id)?.is_live() {
+            visible.push(id);
+        }
+    }
+    Ok(visible)
 }
 
 pub(crate) fn resolve_in_txn(
@@ -107,12 +120,47 @@ pub(crate) fn resolve_in_txn(
     let mut records = match scope.path {
         ScopePath::Canonical => graph::canonical_chain(&vault.store, txn, &scope.conversation)?,
         ScopePath::Branch(id) => chain(&vault.store, txn, &scope.conversation, id)?,
+        ScopePath::BranchSpan { after, through } => {
+            return Ok(ResolvedScope {
+                scope: scope.clone(),
+                records: super::branch_scope::prove_branch_span(
+                    &vault.store,
+                    txn,
+                    scope,
+                    after,
+                    through,
+                )?,
+            });
+        }
         ScopePath::SubSession(_) => unreachable!("handled above"),
     };
-    // Branch paths must use the dedicated SubSession selector rather than
-    // pulling a retained worker's records into the parent conversation.
+    // A generic Branch keeps its historic ancestry semantics. Its worker
+    // anchor is proven by the same helper used at stored-summary reads.
+    let worker_branch = if let ScopePath::Branch(anchor) = scope.path {
+        super::branch_scope::prove_branch_anchor(&vault.store, txn, scope, anchor)?
+    } else {
+        None
+    };
+    if let Some(session) = worker_branch {
+        let mut selected = Vec::new();
+        for id in records {
+            if crate::compaction::turn_session_membership_in_txn(&vault.store, txn, &id)?
+                == Some(session)
+            {
+                selected.push(id);
+            }
+        }
+        records = selected;
+    }
+    // Plain branches must use the dedicated SubSession selector rather than
+    // pulling retained worker records into the parent conversation.
     for id in &records {
-        if graph::is_sub_session_record(&vault.store, txn, id)? {
+        if graph::is_sub_session_record(&vault.store, txn, id)?
+            && !(matches!(scope.path, ScopePath::Branch(_))
+                && worker_branch.is_some()
+                && crate::compaction::turn_session_membership_in_txn(&vault.store, txn, id)?
+                    == worker_branch)
+        {
             return Err(invalid("use SubSession to select sub-session records"));
         }
     }
@@ -121,21 +169,28 @@ pub(crate) fn resolve_in_txn(
         let mut queue: VecDeque<_> = records.iter().copied().collect();
         let mut examined = records.len();
         while let Some(parent) = queue.pop_front() {
-            let children = edge_ids(
+            let budget = MAX_ANCESTOR_DEPTH.saturating_sub(examined);
+            let mut children =
+                edge_ids(&vault.store, txn, &parent, EdgeKind::Parent, true, budget)?;
+            examined += children.len();
+            let retained = super::redacted::children(
                 &vault.store,
                 txn,
                 &parent,
-                EdgeKind::Parent,
-                true,
                 MAX_ANCESTOR_DEPTH.saturating_sub(examined),
             )?;
-            examined += children.len();
+            examined += retained.len();
+            children.extend(retained);
             for child in children {
                 if seen.contains(&child) {
                     continue;
                 }
                 match live_entity_row_in_txn(&vault.store, txn, &child)? {
-                    LiveEntityRow::Absent | LiveEntityRow::DeletedShell => continue,
+                    LiveEntityRow::Absent | LiveEntityRow::DeletedShell
+                        if super::redacted::read(&vault.store, txn, &child)?.is_none() =>
+                    {
+                        continue;
+                    }
                     _ => {}
                 }
                 require_member(&vault.store, txn, &scope.conversation, &child)?;
@@ -162,6 +217,13 @@ pub(crate) fn resolve_in_txn(
         }
         records = filtered;
     }
+    let mut visible = Vec::with_capacity(records.len());
+    for id in records {
+        if live_entity_row_in_txn(&vault.store, txn, &id)?.is_live() {
+            visible.push(id);
+        }
+    }
+    let records = visible;
     Ok(ResolvedScope {
         scope: scope.clone(),
         records,

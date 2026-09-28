@@ -31,24 +31,15 @@ impl RecordKind {
 }
 
 pub(crate) fn record_kind(body: &[u8]) -> Result<Option<RecordKind>> {
-    let mut bytes = body;
-    let Ok(rmpv::Value::Map(fields)) = rmpv::decode::read_value(&mut bytes) else {
-        return Ok(None);
-    };
-    let mut kinds = fields
-        .iter()
-        .filter(|(key, _)| key.as_str() == Some("dag_kind"));
-    let Some((_, value)) = kinds.next() else {
-        return Ok(None);
-    };
-    if !bytes.is_empty() || kinds.next().is_some() {
-        return Err(invalid("invalid DAG record kind"));
-    }
-    match value.as_str() {
-        Some("record") => Ok(Some(RecordKind::Record)),
-        Some("thread") => Ok(Some(RecordKind::Thread)),
-        _ => Err(invalid("invalid DAG record kind")),
-    }
+    // The typed DAG marker and its addressing carrier are one admission
+    // unit. Every topology reader must see the same refusal as entity put.
+    Ok(
+        super::admission::addressing(body)?.map(|(kind, _)| match kind {
+            "record" => RecordKind::Record,
+            "thread" => RecordKind::Thread,
+            _ => unreachable!("addressing decoder admits only typed DAG kinds"),
+        }),
+    )
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -206,12 +197,26 @@ pub(crate) fn classify_session(
         }
         _ => None,
     };
-    let spawned = graph::edge_ids(store, txn, &session, EdgeKind::SpawnedBy, false, 2)?;
+    // HardErase removes an anchor TURN's incident SpawnedBy edge. Only the
+    // content-free pin captured from that previously validated topology may
+    // restore its placement; a merely absent edge never invents an anchor.
+    let spawned = super::redacted::spawned_by(store, txn, &session)?
+        .into_iter()
+        .collect::<Vec<_>>();
     match (declaration, spawned.as_slice()) {
         (None, []) => Ok(Fact::Known(SessionPlacement::Ordinary { session })),
         (Some(_), []) => Ok(Fact::Wait(Dependency::SessionAnchor(session))),
         (declared, [anchor]) if declared.is_none_or(|expected| expected == *anchor) => {
-            match owner(store, txn, *anchor)? {
+            let anchor_owner = match live_entity_row_in_txn(store, txn, anchor)? {
+                LiveEntityRow::Absent | LiveEntityRow::DeletedShell => {
+                    match super::redacted::read(store, txn, anchor)? {
+                        Some(pin) => Fact::Known(pin.room),
+                        None => owner(store, txn, *anchor)?,
+                    }
+                }
+                _ => owner(store, txn, *anchor)?,
+            };
+            match anchor_owner {
                 Fact::Known(actual) if actual == conversation => {
                     Ok(Fact::Known(SessionPlacement::Spawned {
                         session,

@@ -96,6 +96,40 @@ fn provider_options_parse_typed_fields_and_preserve_raw_escape_hatch() {
 }
 
 #[test]
+fn pinned_seat_effort_wins_over_raw_provider_controls_on_wire() {
+    let config = OpenAiCompatConfig::new(catalog_with([
+        LlmCapability::JsonResponse,
+        LlmCapability::Reasoning,
+    ]));
+    let mut request = sample_request();
+    request
+        .params
+        .insert("reasoning_effort".into(), json!("high"));
+    request
+        .params
+        .insert("reasoning".into(), json!({"effort":"high"}));
+    request.provider_options.insert(
+        "openai".into(),
+        json!({
+            "reasoning_effort": "xhigh", "reasoning": {"effort":"high", "summary":"auto"},
+            "parallel_tool_calls": false
+        }),
+    );
+    request.envelope.seat_effort = Some(oneiron::llm::ReasoningEffort::Low);
+    let wire = build_openai_chat_request(&config, &request, false).unwrap();
+    assert_eq!(wire.body["reasoning_effort"], json!("low"));
+    assert_eq!(wire.body["reasoning"], json!({"summary":"auto"}));
+    assert_eq!(wire.body["parallel_tool_calls"], json!(false));
+
+    // None is a PIN too: stale raw controls must not turn reasoning back on.
+    request.envelope.seat_effort = Some(oneiron::llm::ReasoningEffort::None);
+    let config = OpenAiCompatConfig::new(catalog_with([LlmCapability::JsonResponse]));
+    let wire = build_openai_chat_request(&config, &request, false).unwrap();
+    assert!(wire.body.get("reasoning_effort").is_none());
+    assert!(wire.body.get("reasoning").is_none());
+}
+
+#[test]
 fn abort_retains_partial_text_and_settles_usage() {
     let mut accumulator = OpenAiCompatStreamAccumulator::new();
     let events = accumulator
@@ -151,6 +185,7 @@ fn sample_request() -> LlmRequest {
     LlmRequest {
         model: ModelId::new("openai/gpt-4.1@2026-07-02").unwrap(),
         envelope: CallEnvelope {
+            seat_effort: None,
             scope: oneiron::llm::Scope::default(),
             purpose: CallPurpose::AnswerGen,
             class: CallClass::Durable {
@@ -159,12 +194,10 @@ fn sample_request() -> LlmRequest {
                     config: None,
                 },
             },
-            tier: TierPrecedence {
-                per_seat: None,
-                vault_policy: None,
-                purpose_default: None,
-                global_default: ModelTierRef("standard".to_owned()),
-            },
+            tier: TierPrecedence::for_purpose(
+                &CallPurpose::AnswerGen,
+                ModelTierRef("standard".into()),
+            ),
             response_format: ResponseFormat::Json {
                 schema: json!({ "type": "object" }),
             },
@@ -457,4 +490,111 @@ fn none_effort_seat_admits_a_real_non_reasoning_adapter_request() {
     assert_eq!(seat.effort, oneiron::llm::ReasoningEffort::None);
     assert!(wire.body.get("reasoning_effort").is_none());
     assert_eq!(wire.body["temperature"], json!(0.2));
+}
+
+#[test]
+fn schema_verdict_replaces_generating_seat_effort_on_final_openai_wire() {
+    use oneiron::llm::ReasoningEffort;
+    use oneiron::llm::registry::ModelWireFormat;
+    use oneiron::llm::routing::{
+        DescriptionJudge, DescriptionJudgment, DescriptionPolicy,
+        ModelDescription as RoutedDescription, OwnerModelLine, SeatBirth, SeatSettings,
+        VerdictPayload,
+    };
+    struct Judge;
+    impl DescriptionJudge for Judge {
+        fn judge(&self, _: &str, _: &ModelId, _: &str, _: ReasoningEffort) -> DescriptionJudgment {
+            DescriptionJudgment {
+                fitness: 1,
+                reason: "matched task".into(),
+            }
+        }
+    }
+    let dir = tempfile::tempdir().unwrap();
+    let vault = oneiron::Vault::open(dir.path(), oneiron::VaultConfig::device()).unwrap();
+    let old = sample_request().model;
+    let verdict = ModelId::new("openai/verdict@r2").unwrap();
+    let row = |model: ModelId, effort_ladder| RoutedDescription {
+        owner: Some(OwnerModelLine {
+            model: model.clone(),
+            text: "can judge a current task".into(),
+            expected_quality: 750_000,
+        }),
+        model,
+        wire: ModelWireFormat::OpenaiCompat,
+        locality: ModelLocality::ThirdParty,
+        public_benchmark: None,
+        vendor: None,
+        effort_ladder,
+    };
+    vault
+        .set_description_policy(&DescriptionPolicy {
+            models: vec![
+                row(old.clone(), vec![ReasoningEffort::Low]),
+                row(
+                    verdict.clone(),
+                    vec![ReasoningEffort::None, ReasoningEffort::High],
+                ),
+            ],
+            contradiction_margin_millionths: 50_000,
+            vault_effort: None,
+            purpose_effort: BTreeMap::new(),
+            global_effort: None,
+        })
+        .unwrap();
+    let seat = vault
+        .route_seat(
+            SeatBirth {
+                id: "generating",
+                role: "writer",
+                task: "initial generation",
+                purpose: &CallPurpose::AnswerGen,
+                settings: &SeatSettings {
+                    allowed_models: Some(vec![old]),
+                    ..SeatSettings::default()
+                },
+                tier: &sample_request().envelope.tier,
+            },
+            &Judge,
+        )
+        .unwrap();
+    for effort in [ReasoningEffort::High, ReasoningEffort::None] {
+        let mut input = sample_request();
+        seat.bind(&mut input).unwrap();
+        assert_eq!(input.envelope.seat_effort, Some(ReasoningEffort::Low));
+        let routed = vault
+            .routed_verdict_request(
+                "schema verdict",
+                &Judge,
+                &SeatSettings {
+                    allowed_models: Some(vec![verdict.clone()]),
+                    effort: Some(effort),
+                    ..SeatSettings::default()
+                },
+                input,
+                VerdictPayload {
+                    instructions: Some("current verdict".into()),
+                    input: vec![ContentPart::Text {
+                        text: "current evidence".into(),
+                    }],
+                },
+            )
+            .unwrap();
+        assert_eq!(routed.envelope.seat_effort, Some(effort));
+        let mut catalog = catalog_with([LlmCapability::JsonResponse, LlmCapability::Reasoning]);
+        catalog.model = verdict.clone();
+        let wire =
+            build_openai_chat_request(&OpenAiCompatConfig::new(catalog), &routed, false).unwrap();
+        assert_eq!(wire.body["model"], json!("verdict"));
+        assert_eq!(
+            wire.body["messages"][1]["content"],
+            json!("current evidence")
+        );
+        match effort {
+            ReasoningEffort::High => assert_eq!(wire.body["reasoning_effort"], json!("high")),
+            ReasoningEffort::None => assert!(wire.body.get("reasoning_effort").is_none()),
+            _ => unreachable!(),
+        }
+        assert_eq!(seat.effort, ReasoningEffort::Low);
+    }
 }

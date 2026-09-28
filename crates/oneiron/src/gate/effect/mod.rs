@@ -438,6 +438,15 @@ pub(crate) fn record_external_effect_policy(
             .receipt_reasons()
             .iter()
             .map(|reason| (*reason).to_owned())
+            .chain(
+                decision
+                    .policy_row_ref()
+                    .map(|row| format!("policy_row_{row}")),
+            )
+            .chain(decision.precedence_row_ref().map(|row| match row {
+                Some(row) => format!("policy_precedence_row_{row}"),
+                None => "policy_precedence_shipped_default".to_owned(),
+            }))
             .collect(),
         system_notices: Vec::new(),
         actor_class: input.actor.actor_class.clone(),
@@ -470,6 +479,85 @@ pub(crate) fn record_external_effect_policy(
     store.diagnostics.gate.record_decision(&decision);
 
     Ok((decision_id, decision))
+}
+
+/// Two actor-bound effects for one logical external mutation. Both live
+/// grants and connector budgets must allow it. Budget keys are preflighted
+/// together, then debited once per distinct key inside this one write txn;
+/// an exhausted second key never consumes the first key's allowance.
+pub(crate) fn check_external_effect_policy_pair(
+    store: &Store,
+    wtxn: &mut heed::RwTxn<'_>,
+    scheduler: &ExternalEffectGateInput,
+    writer: &ExternalEffectGateInput,
+    policy: &PolicyManifestResolution,
+    new_effect: bool,
+) -> Result<Option<GateDecisionId>> {
+    let mut host = evaluate_external_effect_policy(store, wtxn, scheduler, policy, None, None)?;
+    let mut authored = evaluate_external_effect_policy(store, wtxn, writer, policy, None, None)?;
+    if host.outcome() != GateOutcome::Allow || authored.outcome() != GateOutcome::Allow {
+        record_external_effect_policy(store, wtxn, host)?;
+        record_external_effect_policy(store, wtxn, authored)?;
+        return Ok(None);
+    }
+    let same_key = matches!(
+        (host.budget_target.as_ref(), authored.budget_target.as_ref()),
+        (Some(a), Some(b)) if a.key_id == b.key_id
+    );
+    if new_effect {
+        let now = crate::ports::recorded_at_in_txn(store, wtxn)?;
+        for index in 0..2 {
+            if index == 1 && same_key {
+                continue;
+            }
+            let exhausted_preflight = {
+                let governance = if index == 0 { &host } else { &authored };
+                match governance.budget_target.as_ref() {
+                    Some(target) => connector_key::preflight_effector_budgets(
+                        store,
+                        wtxn,
+                        &target.key_id,
+                        &target.key,
+                        &target.governing_connector,
+                        true,
+                        now,
+                    )?
+                    .is_some(),
+                    None => false,
+                }
+            };
+            if exhausted_preflight {
+                // The regular charger applies suspend-on-exhaust without
+                // debiting an exhausted key. No other key has been charged.
+                let denied = if index == 0 { &mut host } else { &mut authored };
+                let (_, exhausted) = charge_admitted_external_effect(store, wtxn, denied, true)?;
+                if !exhausted {
+                    return Err(crate::error::Error::InvariantViolation(
+                        "linear effect budget preflight diverged",
+                    ));
+                }
+                denied.deny_budget_exhausted();
+                record_external_effect_policy(store, wtxn, host)?;
+                record_external_effect_policy(store, wtxn, authored)?;
+                return Ok(None);
+            }
+        }
+        for (index, governance) in [&mut host, &mut authored].into_iter().enumerate() {
+            if index == 1 && same_key {
+                continue;
+            }
+            let (_, exhausted) = charge_admitted_external_effect(store, wtxn, governance, true)?;
+            if exhausted {
+                // Fail the transaction rather than persisting a partial debit.
+                return Err(crate::error::Error::InvariantViolation(
+                    "linear effect budget changed inside admission transaction",
+                ));
+            }
+        }
+    }
+    let (id, _) = record_external_effect_policy(store, wtxn, host)?;
+    record_external_effect_policy(store, wtxn, authored)?;
+    Ok(Some(id))
 }
 
 /// Governance surface for external-effect callers that finalize the decision in

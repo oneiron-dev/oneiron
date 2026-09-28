@@ -1,11 +1,20 @@
 //! Room bodies, membership windows, session presence and audience visibility.
 mod body;
+mod deletion;
 mod membership;
+mod preview;
+mod roles;
 mod session;
 mod visibility;
 
-pub use body::{ConversationBody, ConversationKind};
+pub use body::{ConversationBody, ConversationKind, RoomRole};
 pub(crate) use body::{fresh_id_in_txn, validate_put_in_txn};
+#[cfg(test)]
+pub(crate) use deletion::erasure_key;
+pub(crate) use deletion::{
+    guard_room_message_delete, pin_room_message_edge, replay_room_message_tombstone,
+    room_message_owner_in, room_person_write_allowed,
+};
 pub use membership::{HistoryChoice, MembershipAction, MembershipRow, MembershipWindow};
 pub use session::{SessionMode, SessionPresence};
 pub(crate) use visibility::AudienceCache;

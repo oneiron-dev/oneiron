@@ -39,6 +39,7 @@ pub(super) struct PreparedOutboundDispatch {
     pub(super) space_posting: Option<crate::channel_identity_autonomy::FrozenSpacePosting>,
     pub(super) policy_risk: ExternalEffectPolicyRisk,
     pub(super) verified_actor: Option<(EntityId, EdgeActorClass)>,
+    pub(super) step_binding: Option<crate::llm::StepEffectBinding>,
     pub(super) payload: Option<Vec<u8>>,
 }
 impl PreparedOutboundDispatch {
@@ -46,8 +47,12 @@ impl PreparedOutboundDispatch {
         vault: &Vault,
         mut request: OutboundDispatchRequest,
         verified_actor: Option<(EntityId, EdgeActorClass)>,
+        step_binding: Option<crate::llm::StepEffectBinding>,
     ) -> Result<Self, OutboundDispatchError> {
         crate::dreamer_runner::maintenance::representation::validate_dispatch(vault, &request)?;
+        if !crate::task_verb::validate_ask_soft_confirm_dispatch(vault, &request)? {
+            return Err(OutboundDispatchError::ObsoleteAskConfirmation);
+        }
         // OF-326 talk-only (ONE-1546): an intent originating from a session
         // currently in off-record mode is rejected before verb resolution —
         // the typed error carries the exit-prompt semantics. Intents from a
@@ -127,6 +132,7 @@ impl PreparedOutboundDispatch {
             space_posting,
             policy_risk,
             verified_actor,
+            step_binding,
             payload: None,
         })
     }
@@ -149,6 +155,9 @@ impl PreparedOutboundDispatch {
         let payload = serde_json::to_vec(&FrozenOutboundPayload {
             intent: &request.intent,
             hygiene_headers,
+            dreamer_step: self
+                .step_binding
+                .map(crate::llm::StepEffectBinding::frozen_value),
             calendar_invite: request.calendar_invite.as_ref(),
             space_posting: self.space_posting.as_ref(),
             actor_class: &request.actor.actor_class,

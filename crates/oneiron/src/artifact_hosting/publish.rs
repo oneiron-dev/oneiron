@@ -25,7 +25,9 @@ impl OutboundDispatchPipeline {
             let pointer = vault
                 .artifact_pointer(&request.artifact, request.channel)?
                 .filter(|pointer| {
-                    pointer.export == admission.export && owner == Some(admission.export_entity_id)
+                    pointer.export == admission.export
+                        && pointer.serve_tier == admission.serve_tier
+                        && owner == Some(admission.export_entity_id)
                 });
             return Ok(ArtifactPublishVerbOutcome {
                 status: ArtifactPublishVerbStatus::Published,
@@ -67,13 +69,20 @@ impl OutboundDispatchPipeline {
             });
         }
         let pointer = if let Some(snapshot) = &snapshot {
-            publish_artifact_pointer_in_txn(vault, &mut wtxn, snapshot, request.channel)?
+            publish_artifact_pointer_in_txn(
+                vault,
+                &mut wtxn,
+                snapshot,
+                request.channel,
+                request.serve_tier,
+            )?
         } else {
             vault.publish_export_pointer_in_txn(
                 &mut wtxn,
                 &request.artifact,
                 request.channel,
                 request.export,
+                request.serve_tier,
             )?
         };
         let admission = ArtifactPublishAdmission {
@@ -86,6 +95,7 @@ impl OutboundDispatchPipeline {
             gate_id,
             occurred_at: request.occurred_at,
             stale_taint_override: pointer.stale_taint_override,
+            serve_tier: request.serve_tier,
         };
         let bytes = serde_json::to_vec(&admission)
             .map_err(|_| Error::InvariantViolation("artifact publish admission encode"))?;
@@ -119,6 +129,12 @@ pub(super) fn artifact_publish_approval_digest(
 }
 
 fn publish_effect(request: &ArtifactPublishVerbRequest) -> ExternalEffectGateInput {
+    let tier = match request.serve_tier {
+        ArtifactServeTier::Private => "private".to_owned(),
+        ArtifactServeTier::Public => "public".to_owned(),
+        ArtifactServeTier::LinkToken(capability) => format!("link:{}", artifact_hex(&capability.0)),
+        ArtifactServeTier::WorldMembers(world_id) => format!("world:{world_id}"),
+    };
     let export_ref = match request.export {
         ArtifactExportRef::ForkHash(hash) => artifact_hex(&hash),
         ArtifactExportRef::BlobVersion {
@@ -143,18 +159,20 @@ fn publish_effect(request: &ArtifactPublishVerbRequest) -> ExternalEffectGateInp
         channel_identity_ref: None,
         counterparty: Some(request.artifact.clone()),
         brief_ref: Some(format!(
-            "artifact:{}:{}:{}:{}",
+            "artifact:{}:{}:{}:{}:{}",
             request.publish_id.to_hex(),
             request.artifact,
             request.channel.as_str(),
             export_ref,
+            tier,
         )),
         send_ref: Some(format!(
-            "artifact:{}:{}:{}:{}",
+            "artifact:{}:{}:{}:{}:{}",
             request.publish_id.to_hex(),
             request.artifact,
             request.channel.as_str(),
             export_ref,
+            tier,
         )),
         standing_grant_ref: None,
         scoped_mcp_call: None,
@@ -172,6 +190,7 @@ pub(super) fn publish_artifact_pointer_in_txn(
     wtxn: &mut RwTxn<'_>,
     snapshot: &ArtifactSnapshotRef,
     channel: ArtifactPointerChannel,
+    serve_tier: ArtifactServeTier,
 ) -> Result<ArtifactPointer> {
     if !crate::codebase::codebase_artifact_snapshot_matches_in_txn(
         &vault.store,
@@ -201,12 +220,14 @@ pub(super) fn publish_artifact_pointer_in_txn(
         channel,
         ArtifactExportRef::ForkHash(snapshot.fork_hash),
         stale_taint_override,
+        serve_tier,
     )?;
     Ok(ArtifactPointer {
         artifact: snapshot.artifact.clone(),
         channel,
         export: ArtifactExportRef::ForkHash(snapshot.fork_hash),
         stale_taint_override,
+        serve_tier,
     })
 }
 
@@ -243,6 +264,7 @@ fn check_replay_binding(
         || admission.actor != request.actor.entity_ref()
         || admission.actor_class != request.actor.actor_class().gate_actor_class()
         || admission.occurred_at != request.occurred_at
+        || admission.serve_tier != request.serve_tier
     {
         return Err(Error::InvariantViolation("artifact publish id rebound"));
     }
@@ -287,6 +309,10 @@ fn publish_receipt(
         ),
         ("gate_receipt_ref".to_owned(), gate_ref.clone()),
         (
+            "serve_tier".to_owned(),
+            format!("{:?}", admission.serve_tier),
+        ),
+        (
             "stale_taint_override".to_owned(),
             admission.stale_taint_override.to_string(),
         ),
@@ -321,6 +347,30 @@ fn publish_receipt(
             .collect(),
         fields,
     }
+}
+
+/// The admitted publish's original decision remains necessary for idempotent
+/// replay and its receipt even after pointer removal or snapshot eviction.
+pub(crate) fn artifact_publish_gate_refs_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+) -> Result<std::collections::HashSet<crate::store::GateDecisionId>> {
+    let mut ids = std::collections::HashSet::new();
+    for row in vault
+        .store
+        .vault_meta
+        .prefix_iter(txn, ARTIFACT_PUBLISH_ADMISSION_PREFIX)?
+    {
+        let (key, raw) = row?;
+        let id = key
+            .strip_prefix(ARTIFACT_PUBLISH_ADMISSION_PREFIX)
+            .ok_or(Error::CorruptedIndex("artifact publish admission key"))?;
+        let _: [u8; 16] = id
+            .try_into()
+            .map_err(|_| Error::CorruptedIndex("artifact publish admission key"))?;
+        ids.insert(decode_publish_admission(&raw)?.gate_id);
+    }
+    Ok(ids)
 }
 
 pub(crate) fn artifact_publish_receipts(

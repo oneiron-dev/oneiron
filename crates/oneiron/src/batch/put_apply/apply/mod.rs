@@ -39,6 +39,11 @@ use self::claim::reconcile_replicated_critical_confirm;
 use self::validation::{
     decode_previous_skill_record, validate_note_birth_put, validate_witness_message_body,
 };
+fn normalized_policy_body(entity_type: u8, data: &[u8]) -> Option<Vec<u8>> {
+    (entity_type == crate::registry::ENTITY_TYPE_POLICY_MANIFEST)
+        .then(|| crate::gate::normalize_policy_manifest_scope(data))
+        .flatten()
+}
 
 #[expect(
     clippy::too_many_arguments,
@@ -67,17 +72,14 @@ pub(in crate::batch) fn apply_put(
     include_source_in_gate_input: bool,
     claim_gate_prechecked: bool,
     preflight_gate_decision_id: Option<crate::store::GateDecisionId>,
+    transition: Option<&crate::batch::VerifiedClaimTransition>,
     origin: BaseWriteOrigin<'_>,
 ) -> Result<AppliedPut> {
     super::super::person_substrate::validate_scope_identity(id)?;
     // Normalize before body comparison, short-id hashing and scope stamping so
     // every index names the bytes actually stored. Malformed policy stays intact
     // and is diagnosed fail-closed by the policy resolver, never defaulted away.
-    let normalized_policy = if entity_type == crate::registry::ENTITY_TYPE_POLICY_MANIFEST {
-        crate::gate::normalize_policy_manifest_scope(data)
-    } else {
-        None
-    };
+    let normalized_policy = normalized_policy_body(entity_type, data);
     let data = normalized_policy.as_deref().unwrap_or(data);
     let carriers = PutCarrierContext::new(entity_type, occurred, learned_at, replicated, origin);
     validate_put_carriers(store, wtxn, id, data, carriers)?;
@@ -104,6 +106,7 @@ pub(in crate::batch) fn apply_put(
             allow_reserved_predicate,
             write_envelope,
             replicated,
+            transition,
         },
     )?;
     // ARCH-0052 D2: this is the shared entity materialization choke point for
@@ -208,7 +211,8 @@ pub(in crate::batch) fn apply_put(
                     store,
                     wtxn,
                     &id,
-                    crate::gate::ClaimGateWrite::plain(&body, write_envelope),
+                    crate::gate::ClaimGateWrite::plain(&body, write_envelope)
+                        .with_transition(transition),
                     policy,
                     crate::gate::GateWriteMode {
                         record_decision: record_gate_decisions,
@@ -252,14 +256,13 @@ pub(in crate::batch) fn apply_put(
         crate::federation::validate_federation_grant_body_bytes(data)?;
     } else if entity_type == crate::registry::ENTITY_TYPE_ACCESS_GRANT {
         crate::access_grant::validate_access_grant_body_bytes(data)?;
-    } else if entity_type == ENTITY_TYPE_CHANNEL_IDENTITY {
-        crate::channel_identity::validate_channel_identity_body_bytes(data)?;
     } else if entity_type == ENTITY_TYPE_COUNTERPARTY_CONTACT {
         crate::counterparty_contact::validate_counterparty_contact_body_bytes(data)?;
     } else if entity_type == ENTITY_TYPE_COMM_RECORD {
         crate::comm::validate_comm_record_body_bytes(data)?;
     } else if entity_type == ENTITY_TYPE_DIAGNOSTIC {
         crate::self_heal::validate_diagnostic_event_admission(&id, occurred, data)?;
+        crate::self_heal::reject_off_record_diagnostic_sources(store, data)?;
     } else if entity_type == ENTITY_TYPE_OUTBOUND_GRANT {
         crate::outbound_grant::validate_standing_outbound_grant_body_bytes(data)?;
     } else if entity_type == ENTITY_TYPE_PSYCH_PROFILE {
@@ -366,8 +369,7 @@ pub(in crate::batch) fn apply_put(
     let escalated_skill_body;
     let data = match new_skill_record.as_mut() {
         Some(updated) if !replicated && !hub_sync_imported => {
-            if crate::skill_scan::escalate_activation_approval_in_txn(store, &*wtxn, &id, updated)?
-            {
+            if crate::skill_hub::scan_skill_admission(store, &*wtxn, &id, updated, hub_admission)? {
                 escalated_skill_body = crate::skill::encode_skill_record(updated)?;
                 &escalated_skill_body[..]
             } else {
@@ -588,7 +590,7 @@ pub(in crate::batch) fn apply_put(
         // same rule a local recreate is, which is a remote rejection the sync
         // door quarantines rather than a divergence it hides.
         optimizer_birth_marker = crate::skill_optimize::optimizer_birth_marker_for_create_in_txn(
-            store, &*wtxn, &id, created,
+            store, &*wtxn, &id, created, replicated,
         )?;
         // The birth law itself is LOCAL-only, and stays that way: sync remat
         // keeps writing already-lifecycled records.
@@ -639,6 +641,9 @@ pub(in crate::batch) fn apply_put(
         new_skill_record.as_ref(),
     )?;
     crate::skill_hub::stage_refinement_carrier_put(store, wtxn, &id, entity_type, data)?;
+    if entity_type == ENTITY_TYPE_CHANNEL_IDENTITY {
+        crate::channel_identity::maintain_assignment_put(store, wtxn, &id, data)?;
+    }
     stage_entity_body_row(store, wtxn, &id, entity_type, occurred, learned_at, data)?;
     crate::skill_hub::stage_refinement_origin(
         store,

@@ -333,6 +333,9 @@ pub struct SlotHostBinding {
     pub end_utc: u64,
     /// One host for Either, every participating host for Both; canonical hex.
     pub host_refs: Vec<String>,
+    /// IANA zone per host, in the same order as `host_refs`. This travels
+    /// with the solver choice into confirmation, not the public slot mask.
+    pub host_zones: Vec<String>,
 }
 
 /// What the oracle returned. Host bindings belong to this solve, never to a
@@ -586,6 +589,7 @@ fn constraint_parse_llm_request(
     Ok(LlmRequest {
         model: config.model_id()?,
         envelope: CallEnvelope {
+            seat_effort: None,
             scope: crate::llm::Scope::default(),
             purpose: CallPurpose::Other {
                 name: CONSTRAINT_PARSE_CALL_PURPOSE.to_owned(),

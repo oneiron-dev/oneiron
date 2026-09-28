@@ -105,11 +105,13 @@
       "name": "describe",
       "input": "DescribeRequest",
       "output": "crate::task_verb::TaskDescription",
-      "call": "memory.describe(input.task_ref.as_deref().map(crate::EntityId::from_hex).transpose()?)?",
+      "call": "if input.self_target { Err(MemoryError::bad_request(\"describe(self) requires a bound run session\"))? } else { memory.describe(input.task_ref.as_deref().map(crate::EntityId::from_hex).transpose()?)? }",
       "scope": "Read",
       "mcp": "tool-first",
       "mcp_fields": {
-        "task_ref": "task_ref"
+        "task_ref": "task_ref",
+        "self": "self",
+        "session_id": "session_id"
       },
       "mcp_required_fields": [],
       "mcp_result": "mcp_describe_result(server, actor, output)?",
@@ -625,6 +627,56 @@
         "rows": "rows",
         "cursor": "next_after"
       },
+      "mcp_scope": "unrestricted",
+      "section": false
+    },
+    {
+      "name": "rooms.render",
+      "input": "RoomRefRequest",
+      "output": "Vec<String>",
+      "call": "memory.rooms_render_threads(crate::EntityId::from_hex(&input.room_ref)?, crate::workspace_roster::RoomThreadPolicy::default())?",
+      "scope": "Read",
+      "admission": {"unrestricted_record_scope": true},
+      "mcp_fields": {"room_ref": "room_ref"},
+      "mcp": "tool-first",
+      "mcp_scope": "unrestricted",
+      "section": false
+    },
+    {
+      "name": "rooms.find",
+      "input": "RoomRequest",
+      "output": "crate::workspace_roster::RoomThreadPage",
+      "call": "memory.rooms_find_threads_page(crate::EntityId::from_hex(&input.room_ref)?, input.after.as_deref().map(crate::EntityId::from_hex).transpose()?, input.limit.unwrap_or(256))?",
+      "scope": "Read",
+      "admission": {"unrestricted_record_scope": true},
+      "mcp_fields": {"room_ref": "room_ref", "turn_ref": "after"},
+      "mcp_required_fields": ["room_ref"],
+      "mcp": "tool-first",
+      "page": {"rows": "rows", "cursor": "next_after"},
+      "mcp_scope": "unrestricted",
+      "section": false
+    },
+    {
+      "name": "rooms.get",
+      "input": "RoomTurnRequest",
+      "output": "Option<crate::workspace_roster::RoomThread>",
+      "call": "memory.rooms_get_thread(crate::EntityId::from_hex(&input.room_ref)?, crate::EntityId::from_hex(&input.turn_ref)?)?",
+      "scope": "Read",
+      "admission": {"unrestricted_record_scope": true},
+      "mcp_fields": {"room_ref": "room_ref", "turn_ref": "turn_ref"},
+      "mcp": "tool-first",
+      "mcp_scope": "unrestricted",
+      "section": false
+    },
+    {
+      "name": "rooms.trunk",
+      "input": "RoomTurnRequest",
+      "output": "crate::workspace_roster::RoomTrunk",
+      "call": "memory.rooms_trunk(crate::EntityId::from_hex(&input.room_ref)?, crate::EntityId::from_hex(&input.turn_ref)?)?",
+      "scope": "Read",
+      "admission": {"unrestricted_record_scope": true},
+      "mcp_fields": {"room_ref": "room_ref", "turn_ref": "turn_ref"},
+      "mcp": "tool-first",
       "mcp_scope": "unrestricted",
       "section": false
     },

@@ -5,8 +5,18 @@ impl Vault {
         &self,
         wtxn: &mut heed::RwTxn<'_>,
         id: &EntityId,
+        request_id: Option<&[u8; 16]>,
     ) -> Result<bool> {
         crate::blob_artifact::esign::reject_event_delete(&self.store, wtxn, id)?;
+        let settled = match request_id {
+            Some(request) => settled_topology_delete_in_txn(&self.store, wtxn, id, request)?,
+            None => false,
+        };
+        if !settled {
+            self.guard_active_merge_hard_delete_in_txn(wtxn, id)?;
+        }
+        self.record_invalid_participant_dispositions_for_delete_in_txn(wtxn, id)?;
+        crate::workspace_roster::retire_goal_for_delete(self, wtxn, *id)?;
         #[cfg(feature = "sync")]
         crate::entity_doc::erase_in_txn(&self.store, wtxn, id)?;
         // The content-hash index row is dropped by `deindex_entity` below;
@@ -18,10 +28,13 @@ impl Vault {
         self.mark_dependent_skills_stale_in_txn(wtxn, id)?;
         crate::note::erase_citations_in_txn(self, wtxn, id)?;
         crate::calendar::origin::invalidate_dependents(self, wtxn, id)?;
+        self.moot_identity_proposals_for_participant_in_txn(wtxn, id)?;
+        self.scrub_identity_op_actor_in_txn(wtxn, id)?;
         let had_refinement =
             crate::skill_hub::erase_claim_refinement_in_txn(&self.store, wtxn, id)?;
         let had_merge_receipt =
             crate::skill_hub::erase_refinement_custody_in_txn(&self.store, wtxn, id)?;
+        crate::conversation_dag::capture_before_erase(self, wtxn, id, true)?;
         let (existed, had_vector, had_graph_mutation, neighbors) =
             deindex_entity(&self.store, wtxn, id)?;
         crate::codebase::delete_codebase_snapshot_in_txn(&self.store, wtxn, id)?;
@@ -41,12 +54,21 @@ impl Vault {
         &self,
         wtxn: &mut heed::RwTxn<'_>,
         id: &EntityId,
-    ) -> Result<(bool, bool)> {
+    ) -> Result<(bool, bool, bool)> {
+        crate::conversation_dag::capture_before_erase(self, wtxn, id, false)?;
         crate::federation::reject_ruling_delete(&self.store, wtxn, id)?;
         crate::blob_artifact::esign::reject_event_delete(&self.store, wtxn, id)?;
+        self.record_invalid_participant_dispositions_for_delete_in_txn(wtxn, id)?;
+        self.moot_identity_proposals_for_participant_in_txn(wtxn, id)?;
+        crate::workspace_roster::retire_goal_for_delete(self, wtxn, *id)?;
         #[cfg(feature = "sync")]
         crate::entity_doc::erase_in_txn(&self.store, wtxn, id)?;
         self.store.guard_pack_map_carrier_delete_in_txn(wtxn, id)?;
+        let ledger_changed = self.store.redact_gate_decisions_for_claim_in_txn(
+            wtxn,
+            id.as_bytes(),
+            self.store.clock.now_recorded_at(),
+        )?;
         let (room_had_vector, room_had_graph, room_neighbors) =
             crate::workspace_roster::deindex_project_room(&self.store, wtxn, id)?;
         if room_had_graph {
@@ -100,12 +122,27 @@ impl Vault {
                 ppr::invalidate_ppr_for_delete(&self.store, wtxn, id, &cleanup.neighbors)?;
                 ppr::increment_graph_version(&self.store, wtxn)?;
             }
-            return Ok((had_refinement || had_merge_receipt, had_vector));
+            return Ok((
+                had_refinement || had_merge_receipt,
+                had_vector,
+                ledger_changed,
+            ));
         };
         let header = EntityMetadataHeader::parse(&entity_record)
             .ok_or(Error::CorruptedIndex("entity metadata"))?;
         let payload = entity_record[..ENTITY_METADATA_HEADER_LEN].to_vec();
         let changed = entity_record.len() > ENTITY_METADATA_HEADER_LEN;
+        // Soft erase keeps the reply edges but removes the TURN body. Both
+        // local UserDelete and replayed soft tombstones pass through here.
+        if header.entity_type == crate::registry::ENTITY_TYPE_TURN {
+            crate::conversation_dag::invalidate_thread_meta_for_turn_put(&self.store, wtxn, *id)?;
+        }
+        crate::channel_identity::clear_assignment_for_delete(
+            &self.store,
+            wtxn,
+            id,
+            header.entity_type,
+        )?;
         // Soft-erase truncates the body in place, so unlike the hard-purge path it
         // does not route through `deindex_entity`; drop any content-hash index row
         // here before the body is gone (ONE-1741: scan verdicts anchor to the
@@ -139,6 +176,11 @@ impl Vault {
         crate::llm::deindex_dreamer_step_claim(&self.store, wtxn, id)?;
         crate::federation::record_scope::retire_stamp(&self.store, wtxn, *id)?;
         self.store.entities.put(wtxn, id.as_bytes(), &payload)?;
+        self.store.sync_state.put(
+            wtxn,
+            &super::super::tombstone::identity_soft_delete_key(id),
+            &[],
+        )?;
         if changed {
             crate::ports::audit_mutation_in_txn(
                 &self.store,
@@ -153,6 +195,6 @@ impl Vault {
                 },
             )?;
         }
-        Ok((true, had_vector))
+        Ok((true, had_vector, ledger_changed))
     }
 }

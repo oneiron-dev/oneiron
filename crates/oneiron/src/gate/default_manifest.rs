@@ -1,31 +1,124 @@
 use rmpv::Value;
 
+use crate::channel_identity::{
+    ACT_CLASS_CHANNEL_IDENTITY_OUTBOUND_SEND, ChannelIdentityShape,
+    DEFAULT_CHANNEL_IDENTITY_QUARANTINE_MIN_SECS, SUBJECT_CLASS_SELF_HELD,
+    WAIT_CLASS_CHANNEL_IDENTITY_QUARANTINE,
+};
 use crate::claim::{ClaimSource, UNSTAMPED_CLAIM_SENSITIVITY_BAND};
 use crate::commitment_schedule::commitment_projection_actor;
 use crate::entity_id::{ENTITY_ID_LEN, EntityId};
 use crate::error::{Error, Result};
 use crate::provenance::PREDICATE_EDGE_PROVENANCE;
 
+use super::class_policy::ActPosture;
 use super::constants::{
-    ACTOR_CEILING_KEY, ACTOR_CLASS_KEY, ACTOR_REF_KEY, AXIS_CRITICALITY_KEY, AXIS_SENSITIVITY_KEY,
-    LOCAL_WRITE_ACTOR_CLASS, POLICY_ACTOR_CEILINGS_KEY, POLICY_DEFAULTS_KEY, POLICY_HOSTED_TTS_KEY,
-    POLICY_MIN_ENGINE_VERSION_KEY, POLICY_ON_BUDGET_EXHAUSTED_KEY, POLICY_OWNER_POLICY_ENABLED_KEY,
-    POLICY_OWNER_POLICY_ROWS_KEY, POLICY_PACK_ID_KEY, POLICY_PACK_VERSION_KEY, POLICY_RULES_KEY,
-    POLICY_SCHEMA_VERSION, POLICY_SCHEMA_VERSION_KEY, POLICY_SIGNATURES_KEY,
-    POLICY_SOURCE_TRUST_KEY, POLICY_WEAVE_CORRECTION_POLICY_KEY, RULE_AXES_KEY, RULE_EXACT_KEY,
+    ACT_POLICY_CLASS_KEY, ACT_POLICY_POSTURE_KEY, ACT_POLICY_SUBJECT_CLASS_KEY, ACTOR_CEILING_KEY,
+    ACTOR_CLASS_KEY, ACTOR_REF_KEY, ATTRIBUTION_PRECEDENCE_KEY, ATTRIBUTION_REASON_MAX_BYTES_KEY,
+    ATTRIBUTION_RECEIPTS_PER_PASS_KEY, AXIS_CRITICALITY_KEY, AXIS_SENSITIVITY_KEY,
+    GATE_RETENTION_HOLDER_OVERRIDE_CEILING_KEY, GATE_RETENTION_HORIZON_SECS_KEY,
+    GATE_RETENTION_MAX_SWEEP_ROWS_KEY, GATE_RETENTION_PRECEDENCE_KEY, LOCAL_WRITE_ACTOR_CLASS,
+    POLICY_ACT_POLICY_KEY, POLICY_ACTOR_CEILINGS_KEY, POLICY_ATTRIBUTION_LIMITS_KEY,
+    POLICY_CONNECTOR_CLASS_CARRY_KEY, POLICY_CONNECTOR_CLASS_PRECEDENCE_KEY,
+    POLICY_CONNECTOR_CLASS_ROLE_KEY, POLICY_CREDENTIAL_LIFETIMES_KEY, POLICY_DEFAULTS_KEY,
+    POLICY_DREAMER_FAILURE_PRECEDENCE_KEY, POLICY_DREAMER_FAILURE_RULES_KEY,
+    POLICY_GATE_DECISION_RETENTION_KEY, POLICY_HOSTED_TTS_KEY, POLICY_MIN_ENGINE_VERSION_KEY,
+    POLICY_ON_BUDGET_EXHAUSTED_KEY, POLICY_OWNER_POLICY_ENABLED_KEY,
+    POLICY_OWNER_POLICY_PRECEDENCE_KEY, POLICY_OWNER_POLICY_ROWS_KEY, POLICY_PACK_ID_KEY,
+    POLICY_PACK_VERSION_KEY, POLICY_PPTX_COMMENT_LIMITS_KEY, POLICY_RULES_KEY,
+    POLICY_SCHEMA_VERSION, POLICY_SCHEMA_VERSION_KEY, POLICY_SHEET_ANSWER_LIMITS_KEY,
+    POLICY_SHEET_ANSWER_PRECEDENCE_KEY, POLICY_SIGNATURES_KEY, POLICY_SKILL_EDIT_GOAL_KEY,
+    POLICY_SLIDE_REVIEW_KEY, POLICY_SOURCE_TRUST_KEY, POLICY_TEACHER_PROBE_KEY,
+    POLICY_WAIT_POLICY_KEY, POLICY_WEAVE_CORRECTION_POLICY_KEY, RULE_AXES_KEY, RULE_EXACT_KEY,
     RULE_PREFIX_KEY, SIGNATURE_ALG_KEY, SIGNATURE_KEY_ID_KEY, SIGNATURE_SIG_KEY,
     SOURCE_TRUST_MAX_AUTO_SENSITIVITY_KEY, SOURCE_TRUST_RECEIPTED_KEY, SOURCE_TRUST_WARNED_KEY,
+    WAIT_POLICY_CLASS_KEY, WAIT_POLICY_MIN_SECS_KEY,
 };
 use super::definition_ceiling::first_party_connector_actor_ref;
+use super::operational_policy::{
+    LINEAR_MIRROR_KEY, LINEAR_SYNC_KEY, PRECEDENCE_KEY, WAVE_HANDOFF_KEY,
+};
+use super::pack_install_policy::{KEY as PACK_INSTALL_POLICY_KEY, PackInstallPolicy};
+use super::resolution::{
+    DEFAULT_ATTRIBUTION_REASON_MAX_BYTES, DEFAULT_ATTRIBUTION_RECEIPTS_PER_PASS,
+};
+use super::retrieval_retention::{RETRIEVAL_RETENTION_ROWS_KEY, default_retrieval_retention_rows};
 
 const DEFAULT_POLICY_MANIFEST_ID: [u8; ENTITY_ID_LEN] = [0xD7; ENTITY_ID_LEN];
 pub(crate) const DEFAULT_POLICY_MANIFEST_TIMESTAMP: u64 = 0;
+
+/// Shipped policy data; organ users resolve this row or supply their own
+/// positive budgets. No fallback numbers live in the XML/ZIP implementation.
+pub(in crate::gate) fn default_docedit_resource_row() -> Value {
+    Value::Map(vec![
+        (
+            Value::from("archive_bytes"),
+            Value::from(512 * 1024 * 1024u64),
+        ),
+        (Value::from("entries"), Value::from(10_000u64)),
+        (Value::from("part_bytes"), Value::from(64 * 1024 * 1024u64)),
+        (
+            Value::from("expanded_bytes"),
+            Value::from(512 * 1024 * 1024u64),
+        ),
+        (Value::from("xml_depth"), Value::from(256u64)),
+        (Value::from("xml_nodes"), Value::from(1_000_000u64)),
+    ])
+}
 
 pub(crate) fn default_policy_manifest_id() -> Result<EntityId> {
     EntityId::from_bytes(DEFAULT_POLICY_MANIFEST_ID)
         .map_err(|_| Error::InvariantViolation("invalid default policy manifest id"))
 }
 
+/// The shipped notification rules are manifest data, also used to complete
+/// owner-authenticated manifests that omit this optional rule table.
+pub(super) fn default_owner_policy_change_notifications() -> Value {
+    Value::Array(vec![
+        Value::Map(vec![
+            (Value::from("scope"), Value::from("vault")),
+            (Value::from("delivery"), Value::from("push_other_holders")),
+            (Value::from("digest_interval_seconds"), Value::from(86_400)),
+        ]),
+        Value::Map(vec![
+            (Value::from("scope"), Value::from("override")),
+            (Value::from("delivery"), Value::from("log_only")),
+            (Value::from("digest_interval_seconds"), Value::from(86_400)),
+        ]),
+    ])
+}
+
+/// Complete the owner-authenticated manifest before storage. The raw decoder
+/// still accepts older custom manifests without notification rules.
+pub(super) fn with_default_owner_policy_notifications(data: Vec<u8>) -> Result<Vec<u8>> {
+    use std::io::Cursor;
+    let mut cursor = Cursor::new(&data);
+    let value = rmpv::decode::read_value(&mut cursor)
+        .map_err(|_| Error::InvalidConfig("malformed policy manifest".into()))?;
+    if cursor.position() != data.len() as u64 {
+        return Err(Error::InvalidConfig("malformed policy manifest".into()));
+    }
+    let Value::Map(mut fields) = value else {
+        return Err(Error::InvalidConfig("malformed policy manifest".into()));
+    };
+    if fields
+        .iter()
+        .any(|(key, _)| key.as_str() == Some(super::constants::POLICY_OWNER_POLICY_NOTIFY_KEY))
+    {
+        return Ok(data);
+    }
+    fields.push((
+        Value::from(super::constants::POLICY_OWNER_POLICY_NOTIFY_KEY),
+        default_owner_policy_change_notifications(),
+    ));
+    let mut encoded = Vec::new();
+    rmpv::encode::write_value(&mut encoded, &Value::Map(fields))
+        .map_err(|_| Error::InvariantViolation("policy manifest notification encode"))?;
+    Ok(encoded)
+}
+
+// One row per default policy entry: the manifest is a data table, and splitting it would scatter one manifest.
+#[allow(clippy::too_many_lines)]
 pub(crate) fn default_policy_manifest() -> Vec<u8> {
     let first_party_actor_ref = first_party_connector_actor_ref();
     // Per a provisional architectural ruling (owner batch pending): the
@@ -34,16 +127,51 @@ pub(crate) fn default_policy_manifest() -> Vec<u8> {
     // behind the derivation ever moves, the row dangles and mints pend —
     // fail-closed, never silently re-aimed.
     let commitment_projection_actor_ref = commitment_projection_actor().entity_ref().to_hex();
+    let policy_values: serde_json::Value =
+        serde_json::from_str(include_str!("policy_value_defaults.json"))
+            .expect("valid shipped policy values");
+    let bytes = rmp_serde::to_vec_named(&policy_values).expect("encode shipped policy values");
+    let policy_values =
+        rmpv::decode::read_value(&mut bytes.as_slice()).expect("decode shipped policy values");
     let manifest = Value::Map(vec![
+        (Value::from("policy_values"), policy_values),
+        (
+            Value::from(crate::failure_signals::policy::POLICY_KEY),
+            crate::failure_signals::policy::default_row(),
+        ),
         (
             Value::from(POLICY_SCHEMA_VERSION_KEY),
             Value::from(POLICY_SCHEMA_VERSION),
         ),
         (
+            Value::from(super::constants::POLICY_ASK_POLICY_KEY),
+            super::ask_policy::AskOperationalPolicy::default_manifest_value(),
+        ),
+        (
+            Value::from("retry_source_policy"),
+            Value::Array(vec![Value::Map(vec![
+                (Value::from("selector"), Value::from("vault")),
+                (Value::from("max_sources"), Value::from(1_024_u64)),
+                (Value::from("precedence"), Value::from("nested_narrowing")),
+            ])]),
+        ),
+        (
             Value::from(POLICY_PACK_ID_KEY),
             Value::from("oneiron-default-policy"),
         ),
+        (
+            Value::from(crate::skill_optimize::policy::MANIFEST_KEY),
+            Value::Map(vec![
+                (Value::from("ask_minutes"), Value::from(1)),
+                (Value::from("max_context_bytes"), Value::from(512)),
+            ]),
+        ),
         (Value::from(POLICY_PACK_VERSION_KEY), Value::from("v1")),
+        skill_edit_goal_entry(),
+        (
+            Value::from(super::voice_serving::KEY),
+            super::voice_serving::VoiceServingRows::seeded(),
+        ),
         (
             Value::from(POLICY_WEAVE_CORRECTION_POLICY_KEY),
             Value::Map(vec![
@@ -60,12 +188,79 @@ pub(crate) fn default_policy_manifest() -> Vec<u8> {
             Value::from(POLICY_MIN_ENGINE_VERSION_KEY),
             Value::from(env!("CARGO_PKG_VERSION")),
         ),
+        (Value::from("room_thread"), room_thread_default_row()),
+        (
+            Value::from(super::carry_forward_policy::KEY),
+            Value::Map(vec![
+                (Value::from("precedence"), Value::from("nested_narrowing")),
+                (
+                    Value::from("vault"),
+                    Value::Map(vec![
+                        (
+                            Value::from("ordinary"),
+                            Value::F32(super::carry_forward_policy::DEFAULT_ORDINARY),
+                        ),
+                        (
+                            Value::from("care"),
+                            Value::F32(super::carry_forward_policy::DEFAULT_CARE),
+                        ),
+                    ]),
+                ),
+            ]),
+        ),
+        (
+            Value::from(POLICY_CREDENTIAL_LIFETIMES_KEY),
+            Value::Map(vec![
+                (Value::from("oauth_exchange_secs"), Value::from(3600_u64)),
+                (
+                    Value::from("initial_owner_secs"),
+                    Value::from(365_u64 * 24 * 60 * 60),
+                ),
+                (
+                    Value::from("precedence"),
+                    Value::from("vault_ceiling_holder_narrows"),
+                ),
+            ]),
+        ),
         (
             Value::from(POLICY_DEFAULTS_KEY),
             Value::Map(vec![
                 (Value::from(AXIS_CRITICALITY_KEY), Value::from("critical")),
                 (Value::from(AXIS_SENSITIVITY_KEY), Value::from("normal")),
             ]),
+        ),
+        // Shipped voice-reference limits are editable policy data. Owner packs
+        // replace named defaults; the default precedence keeps holders under
+        // the vault ceiling and narrows multiple trusted contributions.
+        (
+            Value::from("voice_ref_limits"),
+            Value::Map(vec![
+                (Value::from("precedence"), Value::from("nested_narrowing")),
+                (
+                    Value::from("vault"),
+                    Value::Map(vec![
+                        (Value::from("max_clips_per_pack"), Value::from(32u64)),
+                        (
+                            Value::from("max_audio_bytes_per_pack"),
+                            Value::from(16u64 * 1024 * 1024),
+                        ),
+                        (Value::from("max_register_bytes"), Value::from(128u64)),
+                        (Value::from("max_transcript_bytes"), Value::from(16_384u64)),
+                        (
+                            Value::from("max_design_vendor_bytes"),
+                            Value::from(4_096u64),
+                        ),
+                        (
+                            Value::from("max_vendor_voice_id_bytes"),
+                            Value::from(4_096u64),
+                        ),
+                    ]),
+                ),
+            ]),
+        ),
+        (
+            Value::from("goal_limits"),
+            crate::workspace_roster::GoalLimits::default().encode(),
         ),
         (
             Value::from(POLICY_RULES_KEY),
@@ -100,6 +295,23 @@ pub(crate) fn default_policy_manifest() -> Vec<u8> {
                     (
                         Value::from(RULE_PREFIX_KEY),
                         Value::from(crate::commitment::PREDICATE_COMMITMENT_RECORD),
+                    ),
+                    (Value::from(RULE_EXACT_KEY), Value::Boolean(true)),
+                    (
+                        Value::from(RULE_AXES_KEY),
+                        Value::Map(vec![
+                            (Value::from(AXIS_CRITICALITY_KEY), Value::from("normal")),
+                            (Value::from(AXIS_SENSITIVITY_KEY), Value::from("normal")),
+                        ]),
+                    ),
+                ]),
+                // A goal-intake candidate still needs a human-authenticated
+                // write door; the ordinary claim gate must not strand that
+                // confirmed interview at the unrelated critical-consent floor.
+                Value::Map(vec![
+                    (
+                        Value::from(RULE_PREFIX_KEY),
+                        Value::from("project.goal_intake"),
                     ),
                     (Value::from(RULE_EXACT_KEY), Value::Boolean(true)),
                     (
@@ -369,22 +581,29 @@ pub(crate) fn default_policy_manifest() -> Vec<u8> {
                 ),
             ]),
         ),
-        // Shipped vault policy, not compiled admission logic. A trusted
-        // manifest may replace or narrow these values; holders remain capped
-        // by the resolved vault row. No lifetime cap on human learning.
+        skill_tradeoff_limits_entry(),
+        (Value::from(PRECEDENCE_KEY), Value::from("nested_narrowing")),
         (
-            Value::from(super::skill_tradeoff_policy::KEY),
-            Value::Array(vec![Value::Map(vec![
-                (Value::from("holder"), Value::from("vault")),
-                (Value::from("max_axes"), Value::from(32_u64)),
-                (Value::from("max_axis_name_bytes"), Value::from(128_u64)),
-                (Value::from("max_authored_rules"), Value::from(128_u64)),
-                (Value::from("max_learned_rules"), Value::Nil),
-                (
-                    Value::from("precedence"),
-                    Value::from("nested_narrowing_holder_override_capped_vault"),
-                ),
-            ])]),
+            Value::from(LINEAR_MIRROR_KEY),
+            Value::Map(vec![
+                (Value::from("poll_interval_secs"), Value::from(30_u64)),
+                (Value::from("request_timeout_secs"), Value::from(15_u64)),
+            ]),
+        ),
+        (
+            Value::from(LINEAR_SYNC_KEY),
+            Value::Map(vec![(
+                Value::from("max_pull_pages_per_pass"),
+                Value::from(64_u64),
+            )]),
+        ),
+        (
+            Value::from(WAVE_HANDOFF_KEY),
+            Value::Map(vec![
+                (Value::from("scan_limit"), Value::from(256_u64)),
+                (Value::from("retry_floor_ms"), Value::from(500_u64)),
+                (Value::from("retry_cap_ms"), Value::from(60_000_u64)),
+            ]),
         ),
         // Hosted render resource limits are shipped POLICY rows, not adapter
         // constants. Holder rows in other trusted manifests can narrow them.
@@ -414,8 +633,161 @@ pub(crate) fn default_policy_manifest() -> Vec<u8> {
             ]),
         ),
         (
+            Value::from(PACK_INSTALL_POLICY_KEY),
+            PackInstallPolicy::shipped().encode(),
+        ),
+        // OF-379 compilation is policy, not a Rust-owned language heuristic.
+        // A holder row can narrow this vault row, never widen it.
+        (
+            Value::from("compilation_policy"),
+            Value::Map(vec![
+                (
+                    Value::from("precedence"),
+                    Value::from("nested_narrowing_holder_capped_at_vault"),
+                ),
+                (
+                    Value::from("order"),
+                    Value::Array(vec![
+                        Value::from("style_rule"),
+                        Value::from("charter_line"),
+                        Value::from("brief_update"),
+                        Value::from("ban"),
+                    ]),
+                ),
+                (
+                    Value::from("rows"),
+                    Value::Array(vec![Value::Map(vec![(
+                        Value::from("routes"),
+                        Value::Array(vec![
+                            compilation_route(
+                                "style_rule",
+                                "expression.style:",
+                                true,
+                                "",
+                                "",
+                                true,
+                            ),
+                            compilation_route("charter_line", "charter:", true, "", "", false),
+                            compilation_route("brief_update", "brief:", true, "", "", false),
+                            compilation_route("ban", "", false, "never ", "never ", false),
+                        ]),
+                    )])]),
+                ),
+            ]),
+        ),
+        (
+            Value::from(RETRIEVAL_RETENTION_ROWS_KEY),
+            default_retrieval_retention_rows(),
+        ),
+        attribution_limits_default_entry(),
+        (
+            Value::from(crate::federation::grant_policy::ROWS_KEY),
+            federation_grant_default_rows(),
+        ),
+        (
+            Value::from(POLICY_CONNECTOR_CLASS_ROLE_KEY),
+            Value::from("vault"),
+        ),
+        (
+            Value::from(POLICY_CONNECTOR_CLASS_PRECEDENCE_KEY),
+            Value::from("nested"),
+        ),
+        (
+            Value::from(POLICY_CONNECTOR_CLASS_CARRY_KEY),
+            Value::Array(vec![
+                Value::Array(vec![Value::from("public"), Value::from("personal")]),
+                Value::Array(vec![Value::from("public"), Value::from("secret")]),
+                Value::Array(vec![Value::from("personal"), Value::from("secret")]),
+            ]),
+        ),
+        teacher_probe_default_entry(),
+        (
+            Value::from(POLICY_SHEET_ANSWER_PRECEDENCE_KEY),
+            Value::Map(vec![(
+                Value::from("mode"),
+                Value::from("nested_narrowing_holder_capped_at_vault"),
+            )]),
+        ),
+        (
+            Value::from(POLICY_SHEET_ANSWER_LIMITS_KEY),
+            Value::Array(vec![Value::Map(vec![(
+                Value::from("max_count"),
+                Value::from(4096u64),
+            )])]),
+        ),
+        (
+            Value::from(super::constants::POLICY_DOCEDIT_RESOURCE_KEY),
+            default_docedit_resource_row(),
+        ),
+        (
+            Value::from("experiment_selection"),
+            default_experiment_selection_rows(),
+        ),
+        (
             Value::from(POLICY_ON_BUDGET_EXHAUSTED_KEY),
             Value::from("suspend"),
+        ),
+        super::room_policy::default_entry(),
+        default_gate_decision_retention_entry(),
+        (
+            Value::from(POLICY_PPTX_COMMENT_LIMITS_KEY),
+            crate::edit_roundtrip::pptx::PptxOperationalLimits::default().policy_row(),
+        ),
+        (
+            Value::from(POLICY_SLIDE_REVIEW_KEY),
+            crate::llm::decision::SlideReviewPolicy::default_rows(),
+        ),
+        super::docx_budget::default_entry(),
+        (
+            Value::from("booking_conversion"),
+            Value::Array(vec![
+                rmpv::ext::to_value(
+                    serde_json::to_value(crate::booking::BookingConversionPolicyRow {
+                        scope: crate::booking::BookingPolicyScope::Vault,
+                        holder_ref: None,
+                        policy: crate::booking::BookingConversionPolicy::default(),
+                    })
+                    .expect("default booking conversion row encodes"),
+                )
+                .expect("default booking conversion JSON becomes MessagePack"),
+            ]),
+        ),
+        // Shipped policy DATA: no failed output is eligible without an
+        // authenticated choice. Fatal ceilings leave room for a holder choice;
+        // a true ceiling is never by itself an authority grant.
+        (
+            Value::from(POLICY_DREAMER_FAILURE_PRECEDENCE_KEY),
+            Value::from("nested_narrowing"),
+        ),
+        (
+            Value::from(POLICY_DREAMER_FAILURE_RULES_KEY),
+            Value::Array(
+                ["retryable", "fatal", "budget"]
+                    .into_iter()
+                    .map(|failure| {
+                        let route = match failure {
+                            "retryable" => "retry",
+                            "fatal" => "fallback",
+                            _ => "budget_trap",
+                        };
+                        let cap = failure == "fatal";
+                        Value::Map(vec![
+                            (Value::from("failure"), Value::from(failure)),
+                            (Value::from("route"), Value::from(route)),
+                            (Value::from("consolidation_eligible"), Value::Boolean(cap)),
+                            (Value::from("effector_eligible"), Value::Boolean(cap)),
+                            (
+                                Value::from("default_consolidation_eligible"),
+                                Value::Boolean(false),
+                            ),
+                            (
+                                Value::from("default_effector_eligible"),
+                                Value::Boolean(false),
+                            ),
+                        ])
+                    })
+                    .collect(),
+            ),
         ),
         // The owner policy plane ships OFF with zero rows: a fresh vault
         // classifies nothing and calls no safeguard model until its owner
@@ -427,6 +799,27 @@ pub(crate) fn default_policy_manifest() -> Vec<u8> {
         (
             Value::from(POLICY_OWNER_POLICY_ROWS_KEY),
             Value::Array(Vec::new()),
+        ),
+        crate::gate::weave_policy::default_entry(),
+        crate::gate::weave_policy::default_precedence_entry(),
+        // GATE-009: the restrictive STARTING values for the two class
+        // tables ship here, in the vault-resident default manifest, rather
+        // than as engine constants (DEC-0005; owner rule 2026-09-27). Both
+        // rows state today's behavior — they change nothing on a fresh vault
+        // and everything about who owns the decision.
+        wait_policy_default_entry(),
+        act_policy_default_entry(),
+        (
+            Value::from(POLICY_OWNER_POLICY_PRECEDENCE_KEY),
+            Value::Map(vec![
+                (Value::from("composition"), Value::from("nested_narrowing")),
+                (Value::from("vault_cap"), Value::Boolean(true)),
+            ]),
+        ),
+        // Delivery is policy DATA, not a baked-in routing rule.
+        (
+            Value::from(super::constants::POLICY_OWNER_POLICY_NOTIFY_KEY),
+            default_owner_policy_change_notifications(),
         ),
         (
             Value::from(POLICY_SIGNATURES_KEY),
@@ -443,4 +836,289 @@ pub(crate) fn default_policy_manifest() -> Vec<u8> {
     let mut data = Vec::new();
     rmpv::encode::write_value(&mut data, &manifest).expect("encode default policy manifest");
     data
+}
+
+/// Shipped project-room thread liveness data: base budgets, the vault
+/// ceiling, precedence and allowed fills.
+fn room_thread_default_row() -> Value {
+    Value::Map(vec![
+        (
+            Value::from("base"),
+            Value::Map(vec![
+                (Value::from("fresh_for_secs"), Value::from(7 * 86_400_u64)),
+                (Value::from("rows_per_list"), Value::from(8)),
+                (Value::from("tokens_per_list"), Value::from(512)),
+                (Value::from("fill"), Value::from("stage")),
+                (Value::from("waits_per_thread"), Value::from(8)),
+            ]),
+        ),
+        (
+            Value::from("vault_ceiling"),
+            Value::Map(vec![
+                (Value::from("fresh_for_secs"), Value::from(30 * 86_400_u64)),
+                (Value::from("rows_per_list"), Value::from(1_000)),
+                (Value::from("tokens_per_list"), Value::from(65_536)),
+                (Value::from("fill"), Value::from("stage")),
+                (Value::from("waits_per_thread"), Value::from(128)),
+            ]),
+        ),
+        (Value::from("precedence"), Value::from("nested_narrowing")),
+        (
+            Value::from("allowed_fills"),
+            Value::Array(vec![
+                Value::from("recency"),
+                Value::from("nudge_due"),
+                Value::from("stage"),
+            ]),
+        ),
+        (Value::from("holder_rows"), Value::Array(Vec::new())),
+    ])
+}
+
+/// The shipped skill-edit goal policy row, kept as data beside this file.
+fn skill_edit_goal_entry() -> (Value, Value) {
+    let policy = rmpv::ext::to_value(
+        serde_json::from_str::<serde_json::Value>(include_str!("skill_edit_goal_default.json"))
+            .expect("shipped skill edit goal policy parses"),
+    )
+    .expect("shipped skill edit goal policy encodes");
+    (Value::from(POLICY_SKILL_EDIT_GOAL_KEY), policy)
+}
+
+/// Shipped vault limits for the skill tradeoff ladder, not compiled admission
+/// logic. A trusted manifest may replace or narrow these values; holders stay
+/// capped by the resolved vault row. No lifetime cap on human learning.
+fn skill_tradeoff_limits_entry() -> (Value, Value) {
+    (
+        Value::from(super::skill_tradeoff_policy::KEY),
+        Value::Array(vec![Value::Map(vec![
+            (Value::from("holder"), Value::from("vault")),
+            (Value::from("max_authored_rules"), Value::from(128_u64)),
+            (Value::from("max_learned_rules"), Value::Nil),
+            (
+                Value::from("precedence"),
+                Value::from("nested_narrowing_holder_override_capped_vault"),
+            ),
+        ])]),
+    )
+}
+
+/// The shipped attribution limits: precedence and the two byte/count caps.
+fn attribution_limits_default_entry() -> (Value, Value) {
+    (
+        Value::from(POLICY_ATTRIBUTION_LIMITS_KEY),
+        Value::Map(vec![
+            (
+                Value::from(ATTRIBUTION_PRECEDENCE_KEY),
+                Value::from("nested_narrowing"),
+            ),
+            (
+                Value::from(ATTRIBUTION_REASON_MAX_BYTES_KEY),
+                Value::from(DEFAULT_ATTRIBUTION_REASON_MAX_BYTES),
+            ),
+            (
+                Value::from(ATTRIBUTION_RECEIPTS_PER_PASS_KEY),
+                Value::from(DEFAULT_ATTRIBUTION_RECEIPTS_PER_PASS),
+            ),
+        ]),
+    )
+}
+
+/// The shipped teacher probe floor, with no holder rows.
+fn teacher_probe_default_entry() -> (Value, Value) {
+    (
+        Value::from(POLICY_TEACHER_PROBE_KEY),
+        Value::Map(vec![
+            (
+                Value::from("probe_id"),
+                Value::from(crate::llm::manifest::TEACHER_PROBE_ID),
+            ),
+            (Value::from("min_f1_millionths"), Value::from(800_000_u64)),
+            (Value::from("holders"), Value::Array(Vec::new())),
+        ]),
+    )
+}
+
+/// The shipped `wait_policy` entry (GATE-009): today's quarantine floor as
+/// vault-resident data.
+fn wait_policy_default_entry() -> (Value, Value) {
+    let rows = Value::Array(vec![Value::Map(vec![
+        (
+            Value::from(WAIT_POLICY_CLASS_KEY),
+            Value::from(WAIT_CLASS_CHANNEL_IDENTITY_QUARANTINE),
+        ),
+        (
+            Value::from(WAIT_POLICY_MIN_SECS_KEY),
+            Value::from(DEFAULT_CHANNEL_IDENTITY_QUARANTINE_MIN_SECS),
+        ),
+    ])]);
+    (Value::from(POLICY_WAIT_POLICY_KEY), rows)
+}
+
+/// The shipped `act_policy` entry (GATE-009): the starting outbound posture
+/// for each channel identity subject class.
+fn act_policy_default_entry() -> (Value, Value) {
+    let rows = Value::Array(vec![
+        // A delegated row is the member's own mailbox under an OAuth
+        // grant. ARCH-0063 R3 says identity picks the STARTING posture
+        // only and a grant may authorize send-as-owner, so the ban is
+        // a default and not a class property. Raising this row to
+        // `require_capability` does not by itself enable sending: the
+        // grant must carry an outbound scope, and the read-only scope
+        // classes cannot express one.
+        Value::Map(vec![
+            (
+                Value::from(ACT_POLICY_CLASS_KEY),
+                Value::from(ACT_CLASS_CHANNEL_IDENTITY_OUTBOUND_SEND),
+            ),
+            (
+                Value::from(ACT_POLICY_SUBJECT_CLASS_KEY),
+                Value::from(ChannelIdentityShape::DelegatedGrant.as_str()),
+            ),
+            (
+                Value::from(ACT_POLICY_POSTURE_KEY),
+                Value::from(ActPosture::Deny.as_str()),
+            ),
+        ]),
+        // A self-held row is an account the product minted, so the
+        // class is not barred; the substrate check still asks whether
+        // this row is live.
+        Value::Map(vec![
+            (
+                Value::from(ACT_POLICY_CLASS_KEY),
+                Value::from(ACT_CLASS_CHANNEL_IDENTITY_OUTBOUND_SEND),
+            ),
+            (
+                Value::from(ACT_POLICY_SUBJECT_CLASS_KEY),
+                Value::from(SUBJECT_CLASS_SELF_HELD),
+            ),
+            (
+                Value::from(ACT_POLICY_POSTURE_KEY),
+                Value::from(ActPosture::RequireCapability.as_str()),
+            ),
+        ]),
+    ]);
+    (Value::from(POLICY_ACT_POLICY_KEY), rows)
+}
+
+/// Engine-authored vault policy DATA for grant creation. The grant codec and
+/// write gate do not consult this list; they resolve the stored manifest rows
+/// in the same writer that mints each membership grant.
+/// A fresh vault never age-prunes its gate decisions. Only the owner can
+/// replace this null horizon with a positive retention period.
+fn default_gate_decision_retention_entry() -> (Value, Value) {
+    (
+        Value::from(POLICY_GATE_DECISION_RETENTION_KEY),
+        Value::Map(vec![
+            (Value::from(GATE_RETENTION_HORIZON_SECS_KEY), Value::Nil),
+            (
+                Value::from(GATE_RETENTION_MAX_SWEEP_ROWS_KEY),
+                Value::from(256_u64),
+            ),
+            (
+                Value::from(GATE_RETENTION_PRECEDENCE_KEY),
+                Value::from("nested_narrowing"),
+            ),
+            (
+                Value::from(GATE_RETENTION_HOLDER_OVERRIDE_CEILING_KEY),
+                Value::from("vault"),
+            ),
+            (Value::from("rows"), Value::Array(Vec::new())),
+        ]),
+    )
+}
+
+fn federation_grant_default_rows() -> Value {
+    use crate::federation::grant_policy::{GrantPolicyRow as Row, encode_row};
+    use crate::federation::{FederationGrantRole as Role, Scope, ScopeAxis};
+    let scope = |verbs: &[&str]| {
+        let mut scope = Scope::top();
+        scope.verbs = ScopeAxis::Some(verbs.iter().map(|verb| (*verb).to_owned()).collect());
+        scope
+    };
+    Value::Array(
+        [
+            Row::PrecedenceNestedNarrowing,
+            Row::RoleDefault {
+                role: Role::Owner,
+                scope: Scope::top(),
+            },
+            Row::RoleDefault {
+                role: Role::Admin,
+                scope: scope(&[
+                    "read",
+                    "write",
+                    "admin",
+                    "org:add-member",
+                    "org:remove-member",
+                    "org:assign-role",
+                    "org:reset-shared-project-access",
+                ]),
+            },
+            Row::RoleDefault {
+                role: Role::Member,
+                scope: scope(&["read", "write"]),
+            },
+            Row::RoleDefault {
+                role: Role::Viewer,
+                scope: scope(&["read"]),
+            },
+            Row::RoleDefault {
+                role: Role::Delegate,
+                scope: scope(&["read"]),
+            },
+        ]
+        .iter()
+        .map(|row| encode_row(row).expect("default grant policy row"))
+        .collect(),
+    )
+}
+
+/// Shipped OF-379 row data. Engines read these selectors through the same
+/// validated manifest path as owner-edited rows.
+fn compilation_route(
+    family: &str,
+    scope_prefix: &str,
+    require_scope_suffix: bool,
+    to_prefix: &str,
+    from_not_prefix: &str,
+    style_atom: bool,
+) -> Value {
+    Value::Map(vec![
+        (Value::from("family"), Value::from(family)),
+        (Value::from("enabled"), Value::Boolean(true)),
+        (Value::from("scope_prefix"), Value::from(scope_prefix)),
+        (
+            Value::from("scope_not_prefixes"),
+            Value::Array(if family == "ban" {
+                vec![
+                    Value::from("expression.style:"),
+                    Value::from("charter:"),
+                    Value::from("brief:"),
+                ]
+            } else {
+                Vec::new()
+            }),
+        ),
+        (
+            Value::from("require_scope_suffix"),
+            Value::Boolean(require_scope_suffix),
+        ),
+        (Value::from("to_prefix"), Value::from(to_prefix)),
+        (Value::from("from_not_prefix"), Value::from(from_not_prefix)),
+        (Value::from("style_atom"), Value::Boolean(style_atom)),
+    ])
+}
+
+/// The vault-wide search policy ships as data, not a Rust threshold or
+/// hard-coded stagnation branch. The manifest resolver composes edits by scope.
+fn default_experiment_selection_rows() -> Value {
+    let rows: Vec<crate::autoreason_campaign::selection::SelectionPolicyRow> =
+        serde_json::from_str(include_str!(
+            "../autoreason_campaign/selection_defaults.json"
+        ))
+        .expect("valid shipped experiment selection rows");
+    let bytes = rmp_serde::to_vec_named(&rows).expect("encode shipped experiment selection rows");
+    rmpv::decode::read_value(&mut bytes.as_slice())
+        .expect("decode shipped experiment selection rows")
 }

@@ -49,6 +49,10 @@
 mod codec;
 mod conversation;
 mod model;
+mod pptx_reanchor;
+mod pptx_settle;
+#[cfg(test)]
+mod pptx_tests;
 mod reanchor;
 mod threads;
 

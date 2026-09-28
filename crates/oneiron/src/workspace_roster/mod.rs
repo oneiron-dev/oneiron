@@ -110,17 +110,29 @@ pub use self::records::{
 mod tests;
 
 mod project;
-pub(crate) use project::{
-    HUB_BELONGS_TO_LAMBDA, deindex_project_room, is_project_entity, is_project_type,
-    reconcile_project_rooms, seed_root_project, validate_project_body,
-    validate_project_edge_delete, validate_project_edge_put, validate_project_graph,
-    validate_room_body,
-};
 pub use project::{
+    GoalAxis, GoalExplorationBudget, GoalInterviewTurns, GoalPreference, GoalRecord,
     PROJECT_TYPE_BYTE, ProjectBudgetShare, ProjectGoalRecord, ProjectMintReceipt, ProjectRecord,
     ProjectRole, ProjectRoom, ProjectRoomChange,
+};
+pub(crate) use project::{
+    GoalLimits, HUB_BELONGS_TO_LAMBDA, deindex_project_room, guard_goal_claim_put,
+    guard_goal_delete, guard_goal_pointer_put, is_project_entity, is_project_type,
+    precheck_goal_delete, project_mint_gate_refs_in_txn, reconcile_project_rooms,
+    retire_goal_for_delete, seed_root_project, validate_project_body, validate_project_edge_delete,
+    validate_project_edge_put, validate_project_graph, validate_room_body,
 };
 
 mod rooms;
 pub(crate) use rooms::admit_witness as admit_room_witness;
-pub use rooms::{RoomClaimOutcome, RoomClaimReceipt, RoomPage, RoomTurn};
+pub use rooms::{
+    RoomClaimOutcome, RoomClaimReceipt, RoomPage, RoomThread, RoomThreadList, RoomThreadPage,
+    RoomThreadPolicy, RoomThreadWait, RoomThreads, RoomTrunk, RoomTrunkHeader, RoomTurn,
+    RoomWaitKind,
+};
+
+pub(crate) use rooms::RoomThreadTask;
+
+pub(crate) use rooms::project_room_audience_in;
+
+pub use crate::gate::RoomThreadFill;

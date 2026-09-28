@@ -47,7 +47,7 @@ pub(crate) use self::direct_dispatch::record as record_direct_dispatch_receipt;
 pub(crate) use self::dispatch_observation::{
     DispatchObservationKey, append_dispatch_observation_in_txn, read_dispatch_observation,
 };
-pub(crate) use self::family::gate_decision_receipt;
+pub(crate) use self::family::{gate_decision_receipt, gate_decision_receipt_from_base};
 pub(crate) use self::kernel::{
     FIELD_AMENDMENT_DELTA, FIELD_AMENDMENT_DELTA_UNCAPTURED, FIELD_DEMOTION_REASON,
     FIELD_ESCALATION_BAND_CEILING, FIELD_ESCALATION_BUDGET_BAND, FIELD_ESCALATION_CITED_RECEIPTS,
@@ -57,13 +57,13 @@ pub(crate) use self::kernel::{
     FIELD_PREFILTER_PHASE, FIELD_PREFILTER_ROUND, FIELD_PREFILTER_SCANNED, FIELD_PREFILTER_SCORE,
     FIELD_PREFILTER_SKIPPED, FIELD_PREFILTER_THRESHOLD, FIELD_PREFILTER_TOKENS_SAVED,
     FIELD_PREFILTER_TURN, FIELD_SCOPE_ACTOR, FIELD_SKILL_EDIT_ACCEPTED_VERDICT,
-    FIELD_SKILL_EDIT_CYCLE, FIELD_SKILL_EDIT_DISPOSITION, FIELD_SKILL_EDIT_HELD_OUT_COUNT,
-    FIELD_SKILL_EDIT_HELD_OUT_DIGEST, FIELD_SKILL_EDIT_HELD_OUT_RECEIPTS,
-    FIELD_SKILL_EDIT_HELD_OUT_TRUNCATED, FIELD_SKILL_EDIT_MEASUREMENTS,
-    FIELD_SKILL_EDIT_MISSING_SOURCES, FIELD_SKILL_EDIT_PROPOSAL, FIELD_SKILL_EDIT_PROPOSAL_DIGEST,
-    FIELD_SKILL_EDIT_SCORE_AFTER, FIELD_SKILL_EDIT_SCORE_BEFORE, FIELD_SKILL_EDIT_SKILL,
-    FIELD_SKILL_EDIT_TARGET_DIGEST, FIELD_TARGET_CLASS, MAX_RECEIPT_QUERY_SCAN, hex_lower,
-    retain_newest_receipt,
+    FIELD_SKILL_EDIT_CYCLE, FIELD_SKILL_EDIT_DISPOSITION, FIELD_SKILL_EDIT_GOAL_AXES,
+    FIELD_SKILL_EDIT_HELD_OUT_COUNT, FIELD_SKILL_EDIT_HELD_OUT_DIGEST,
+    FIELD_SKILL_EDIT_HELD_OUT_RECEIPTS, FIELD_SKILL_EDIT_HELD_OUT_TRUNCATED,
+    FIELD_SKILL_EDIT_MEASUREMENTS, FIELD_SKILL_EDIT_MISSING_SOURCES, FIELD_SKILL_EDIT_PROPOSAL,
+    FIELD_SKILL_EDIT_PROPOSAL_DIGEST, FIELD_SKILL_EDIT_SCORE_AFTER, FIELD_SKILL_EDIT_SCORE_BEFORE,
+    FIELD_SKILL_EDIT_SKILL, FIELD_SKILL_EDIT_TARGET_DIGEST, FIELD_SKILL_EDIT_TRADEOFF_RESOLUTION,
+    FIELD_TARGET_CLASS, MAX_RECEIPT_QUERY_SCAN, hex_lower, retain_newest_receipt,
 };
 pub(crate) use self::ledgers::{
     SendReceiptOutcome, delivered_send_receipt_for_task, durable_send_receipts,
@@ -71,7 +71,8 @@ pub(crate) use self::ledgers::{
 };
 #[cfg(test)]
 pub(crate) use self::ledgers::{
-    overwrite_attempt_pack_receipt_for_test, put_attempt_pack_receipt_for_test,
+    make_attempt_receipt_legacy_for_tests, overwrite_attempt_pack_receipt_for_test,
+    put_attempt_pack_receipt_for_test,
 };
 pub(crate) use self::projection::{COMMITMENT_TRIGGER_PREFIX, commitment_trigger_ref};
 pub(crate) use self::record::{

@@ -462,10 +462,16 @@ pub struct OutboundDispatchResult {
 
 #[derive(Debug, thiserror::Error)]
 pub enum OutboundDispatchError {
+    #[error("the ask confirmation is no longer active at this revision")]
+    ObsoleteAskConfirmation,
     #[error(transparent)]
     UnsupportedCapability(#[from] Box<UnsupportedOutboundCapability>),
     #[error("the facade-bound actor is no longer valid")]
     InvalidBoundActor,
+    #[error("the resident failure rule makes this step result ineligible for effects")]
+    FailureResultIneligible,
+    #[error(transparent)]
+    Step(#[from] crate::llm::DurableStepError),
     #[error(transparent)]
     Engine(#[from] Error),
     #[error(transparent)]

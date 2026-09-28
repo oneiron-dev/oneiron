@@ -31,6 +31,7 @@ mod codec_core;
 mod codec_records;
 mod math_keys;
 pub mod ref_bank;
+pub(crate) mod ref_limits;
 mod storage_admission;
 mod types;
 mod vault;

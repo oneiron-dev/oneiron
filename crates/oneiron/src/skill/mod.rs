@@ -5,6 +5,7 @@
 //! its Vault doors. The three birth roads enter through `put_skill_record`:
 //! `skill_convert`, `skill_hub`, and `skill_optimize`.
 
+mod call;
 mod codec;
 mod doors;
 mod identity;
@@ -12,11 +13,13 @@ mod lifecycle;
 mod pack_load;
 mod record;
 pub(crate) mod resident;
+mod role;
 mod validate;
 
 #[cfg(test)]
 mod tests;
 
+pub use self::call::execute_callable_skill;
 pub use self::codec::{decode_skill_record, encode_skill_record};
 pub(crate) use self::codec::{is_legacy_opaque_skill_body, validate_skill_record_bytes};
 pub use self::identity::{
@@ -25,11 +28,13 @@ pub use self::identity::{
 };
 pub use self::lifecycle::{SkillGovernanceTier, SkillLifecycle};
 pub use self::pack_load::LoadedSkillPack;
+pub(crate) use self::pack_load::skill_loadable;
 pub use self::record::{
     SKILL_DEPENDENCY_KEYS, SKILL_DESC_MAX_BYTES, SKILL_ID_MAX_BYTES, SKILL_MAX_DEPENDENCIES,
     SKILL_RECORD_BODY_KEYS, SKILL_VERSION_MAX_BYTES, SkillDependency, SkillRecord,
 };
 pub(crate) use self::resident::resident_of;
+pub use self::role::{SkillCallContract, SkillRole};
 pub(crate) use self::validate::{validate_hub_sync_skill_update, validate_skill_update};
 
 // The flat skill.rs module provided these names to the sibling test module

@@ -38,6 +38,9 @@ pub(super) fn authorize_in_txn(
         return Err(selector_err(SelectorError::GrantWrongType));
     }
     let grant = decode_federation_grant_body(&raw[crate::batch::ENTITY_METADATA_HEADER_LEN..])?;
+    if grant.role.is_guest() || !matches!(grant.scope, FederationGrantScope::Vault { .. }) {
+        return Err(selector_err(SelectorError::GrantScopeMismatch));
+    }
     if grant.scope != scope {
         return Err(selector_err(SelectorError::GrantScopeMismatch));
     }
@@ -49,7 +52,10 @@ pub(super) fn authorize_in_txn(
     if writer.is_some()
         && !matches!(
             grant.role,
-            FederationGrantRole::Owner | FederationGrantRole::Admin | FederationGrantRole::Member
+            FederationGrantRole::Owner
+                | FederationGrantRole::Admin
+                | FederationGrantRole::Member
+                | FederationGrantRole::Delegate
         )
     {
         return Err(denied());
@@ -170,6 +176,12 @@ impl StoredSelection<'_, '_> {
         else {
             return Ok(None);
         };
+        // Role verbs gate peer writes on top of the stored authority scope.
+        if self.admission.verb == "write"
+            && !crate::federation::grant_allows_content_write(&self.admission.grant, &record)
+        {
+            return Ok(None);
+        }
         record.verbs = crate::federation::ScopeAxis::Some(std::collections::BTreeSet::from([self
             .admission
             .verb

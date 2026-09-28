@@ -194,6 +194,8 @@ pub(super) struct ScoredBasis {
     pub(super) evidence_count: u64,
     pub(super) evidence_digest: String,
     pub(super) world_digest: String,
+    pub(super) goal_revision: String,
+    pub(super) goal_id: EntityId,
     /// The PROPOSAL's own effective governance tier, resolved in the snapshot
     /// this basis was taken in ([`super::tier_verdict_in_txn`] over the
     /// proposal id and record).
@@ -217,6 +219,8 @@ impl ScoredBasis {
         held_out: &[String],
         outcomes: &[(String, bool)],
         proposal_tier: Option<SkillGovernanceTier>,
+        goal_revision: String,
+        goal_id: EntityId,
     ) -> Result<Self> {
         let (evidence_count, evidence_digest) = evidence_identity(held_out);
         Ok(Self {
@@ -225,6 +229,8 @@ impl ScoredBasis {
             evidence_count,
             evidence_digest,
             world_digest: world_labels_digest(outcomes),
+            goal_revision,
+            goal_id,
             proposal_tier,
         })
     }
@@ -237,6 +243,8 @@ impl ScoredBasis {
             && verdict.held_out_count == self.evidence_count
             && verdict.held_out_digest == self.evidence_digest
             && verdict.proposal_tier == self.proposal_tier
+            && verdict.goal_revision == self.goal_revision
+            && verdict.goal_id == Some(self.goal_id)
             && verdict
                 .measurements
                 .as_ref()
@@ -278,6 +286,9 @@ pub struct HeldOutReplayCase<'a> {
 /// optimizer grading its own edit, which is the one thing the gate exists to
 /// prevent — so the seam is a required argument rather than a defaulted one.
 pub trait HeldOutReplayScorer {
+    /// Immutable skill revision that owns these candidate scores.
+    fn judge_revision(&self) -> &str;
+
     /// Scores `case` on `0.0..=1.0`, higher is better.
     ///
     /// # Errors
@@ -286,16 +297,26 @@ pub trait HeldOutReplayScorer {
     /// than guess: an invented scalar is a silent accept.
     fn score(&self, case: &HeldOutReplayCase<'_>) -> Result<f32>;
 
-    /// Goal-axis scores on the same held-out basis. Required when a goal is configured.
-    fn goal_axes(&self, _case: &HeldOutReplayCase<'_>) -> Result<Option<BTreeMap<String, f32>>> {
-        Ok(None)
+    /// Optional scorer-declared goal axes. Empty means this is a scalar-only
+    /// judge, which may score only a manifest selecting one primary axis.
+    /// Neither the axis name nor the goal definition lives in this trait.
+    fn goal_axes(&self, _case: &HeldOutReplayCase<'_>) -> Result<Vec<GoalAxisSpec>> {
+        Ok(Vec::new())
     }
 
-    /// Jev answers only a rule-miss tradeoff, outside the write transaction.
+    /// A vector scorer must judge each declared axis explicitly. The scalar
+    /// single-primary path calls `score` at the gate and never invokes this.
+    fn score_goal_axis(&self, _case: &HeldOutReplayCase<'_>, _axis: &GoalAxisSpec) -> Result<f32> {
+        Err(invalid("no goal-axis scorer is registered for this axis"))
+    }
+
+    /// Jev answers a pending tradeoff no preference rule matched, outside any
+    /// write transaction. `None` gives no model verdict, and the responsible
+    /// person is asked.
     fn jev_tradeoff(
         &self,
-        _question: &super::SkillTradeoffQuestion,
-    ) -> Result<Option<super::JevTradeoffVerdict>> {
+        _question: &SkillTradeoffQuestion,
+    ) -> Result<Option<JevTradeoffVerdict>> {
         Ok(None)
     }
 

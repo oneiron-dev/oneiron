@@ -132,6 +132,8 @@ fn rule_on_proposal(
     cycle: &SkillEditCycle,
     at: u64,
 ) -> Result<HeldOutVerdict> {
+    let judge_revision = scorer.judge_revision();
+    validate_judge_revision(judge_revision)?;
     // The lock-free pre-read. Sequential, never nested: LMDB allows one read
     // transaction per thread, so a snapshot opened around a call that opens its
     // own is a `BadRslot`, not a consistency win. Nothing here decides
@@ -146,6 +148,7 @@ fn rule_on_proposal(
     race_hook();
 
     let prepared = vault.with_write_txn(|wtxn| {
+        ensure_current_judge_in_txn(vault, &*wtxn, judge_revision)?;
         let staged = vault.read_skill_record_in_txn(&*wtxn, proposal)?;
         require_open_optimizer_proposal(&staged)?;
         let target = target_of(&staged)?;
@@ -188,6 +191,8 @@ fn rule_on_proposal(
                     &held_out,
                     &outcomes,
                     tier_verdict_in_txn(vault, &*wtxn, proposal, &staged)?.tier(),
+                    goal_definition_in_txn(vault, wtxn, &target)?.revision,
+                    goal_definition_in_txn(vault, wtxn, &target)?.goal_id,
                 )?;
                 // Idempotence, before the LLM tier rather than after it. A gate
                 // call is a DELIVERY, and deliveries are retried; asking the
@@ -195,7 +200,7 @@ fn rule_on_proposal(
                 // would answer differently, because the first ruling has by
                 // then moved the cap the second call is measured against.
                 let standing =
-                    standing_ruling_in_txn(vault, &*wtxn, proposal, &basis, cycle)?;
+                    standing_ruling_in_txn(vault, &*wtxn, proposal, &basis, cycle, judge_revision)?;
                 if let Some(standing) = standing {
                     return Ok(Prepared::Ruled(Box::new(standing)));
                 }
@@ -206,6 +211,7 @@ fn rule_on_proposal(
                     target_record: current,
                     held_out,
                     basis,
+                    goal_definition: goal_definition_in_txn(vault, wtxn, &target)?,
                 })))
             }
             _ => Err(retry(
@@ -242,21 +248,24 @@ fn rule_on_proposal(
         &inputs.outcomes,
         &blind,
     )?;
-    let before = validate_score(scorer.score(&current_case)?)?;
-    let after = validate_score(scorer.score(&proposed_case)?)?;
-    let tradeoff = if after > before {
-        tradeoff::plan(
-            vault,
-            &inputs.target,
-            proposal,
-            &inputs.basis,
-            scorer,
-            &current_case,
-            &proposed_case,
-        )?
-    } else {
-        tradeoff::TradeoffPlan::None
-    };
+    let goal_axes = score_goal_axes(
+        scorer,
+        &current_case,
+        &proposed_case,
+        &inputs.goal_definition,
+    )?;
+    if scorer.judge_revision() != judge_revision {
+        return Err(retry("candidate judge revision moved during scoring"));
+    }
+    let headline = goal_axes
+        .values()
+        .find(|axis| axis.kind == GoalAxisKind::Primary)
+        .expect("validated primary axis");
+    let before = headline.before;
+    let after = headline.after;
+    // A pending tradeoff climbs the preference ladder here, outside any write
+    // transaction, because its Jev rung is a model call.
+    let ladder = tradeoff::plan(vault, proposal, &inputs.basis, &goal_axes, scorer)?;
 
     // The scored set has done its work; what the row keeps of it is the bounded
     // display list, and the basis keeps the rest.
@@ -269,18 +278,35 @@ fn rule_on_proposal(
         // Re-read at the write door, exactly as ONE-1448's draft path does: the
         // scorer ran outside this transaction, so the target may have been
         // superseded and either tier may have been re-marked while it thought.
+        ensure_current_judge_in_txn(vault, &*wtxn, judge_revision)?;
         let staged = vault.read_skill_record_in_txn(&*wtxn, proposal)?;
         let current = readable_target(vault.read_skill_record_in_txn(&*wtxn, &target).map(Some))?;
+        // A changed goal cannot return an old standing acceptance even if the
+        // bodies and evidence stayed fixed while the judge was thinking.
+        if goal_definition_in_txn(vault, wtxn, &target)?.revision != basis.goal_revision
+            || goal_definition_in_txn(vault, wtxn, &target)?.goal_id != basis.goal_id
+        {
+            return Err(retry("goal definition moved while the scorer was thinking"));
+        }
         // The concurrent duplicate: two deliveries that both got past the read
         // above serialize HERE, and the second one finds the first's row.
-        if let Some(standing) = standing_ruling_in_txn(vault, &*wtxn, proposal, &basis, cycle)? {
+        if let Some(standing) =
+            standing_ruling_in_txn(vault, &*wtxn, proposal, &basis, cycle, judge_revision)?
+        {
             return Ok(standing);
         }
         let mut verdict = HeldOutVerdict {
             before,
             after,
+            goal_axes: goal_axes.clone(),
+            goal_revision: basis.goal_revision.clone(),
+            goal_id: Some(basis.goal_id),
+            tradeoff_resolution: None,
+            tradeoff_jev: None,
             measurements: Some(measurements),
             accepted: false,
+            judge_revision: Some(judge_revision.to_owned()),
+            displaced_by_revision: None,
             id: vault.store.clock.entity_id()?,
             proposal: *proposal,
             skill: target,
@@ -293,8 +319,6 @@ fn rule_on_proposal(
             proposal_digest: basis.proposal_digest.clone(),
             target_digest: basis.target_digest.clone(),
             proposal_tier: basis.proposal_tier,
-            goal_binding: None,
-            tradeoff_jev: tradeoff::jev_of(&tradeoff),
             accepted_verdict: None,
             missing_sources: Vec::new(),
             at,
@@ -307,15 +331,20 @@ fn rule_on_proposal(
             current.as_ref(),
             cycle,
             &basis,
-            before,
-            after,
-            &tradeoff,
+            &goal_axes,
         )?;
+        let settled = tradeoff::apply_in_txn(vault, wtxn, cycle, &mut verdict, &ladder)?;
         verdict.accepted = verdict.disposition.admits();
-        verdict.goal_binding = tradeoff::binding_in_txn(vault, wtxn, &target)?;
         record_verdict_in_txn(vault, wtxn, &verdict)?;
         if verdict.disposition.closes_proposal() {
             close_answered_proposal_in_txn(vault, wtxn, proposal, at)?;
+        }
+        // A rule or confident Jev answered the pending row just written: the
+        // decision door records the transition out of it.
+        if let Some((choice, resolution)) = settled {
+            return record_tradeoff_resolution_in_txn(
+                vault, wtxn, verdict, resolution, choice, cycle, at,
+            );
         }
         Ok(verdict)
     })?;
@@ -338,6 +367,7 @@ struct ScoreInputs {
     held_out: Vec<String>,
     outcomes: Vec<(String, bool)>,
     basis: ScoredBasis,
+    goal_definition: GoalDefinition,
 }
 
 /// The one place a durable ruling becomes the caller's answer.
@@ -450,15 +480,13 @@ const fn race_hook() {}
 )]
 fn decide_in_txn(
     vault: &Vault,
-    wtxn: &mut heed::RwTxn<'_>,
+    wtxn: &heed::RwTxn<'_>,
     proposal: &EntityId,
     staged: &SkillRecord,
     current: Option<&SkillRecord>,
     cycle: &SkillEditCycle,
     basis: &ScoredBasis,
-    before: f32,
-    after: f32,
-    tradeoff: &tradeoff::TradeoffPlan,
+    goal_axes: &BTreeMap<String, GoalAxisScore>,
 ) -> Result<SkillEditDisposition> {
     require_open_optimizer_proposal(staged)?;
     // The predecessor was readable when the basis was taken; if it is not
@@ -516,13 +544,19 @@ fn decide_in_txn(
             "world outcome labels moved while the judge was measuring",
         ));
     }
-    // Strict improvement, and evaluated BEFORE the tier and cap arms so a
-    // regression is reported as the regression it is rather than as whatever
-    // else was also wrong. No epsilon (blueprint note: the anti-Goodhart
-    // floor), and a TIE lives on this branch. Written as `<=` rather than a
-    // negated `>` because both scalars are already validated finite, so the
-    // two are equivalent and this one reads as the rule it is.
-    if after <= before {
+    if goal_definition_in_txn(vault, wtxn, &target_of(staged)?)?.revision != basis.goal_revision
+        || goal_definition_in_txn(vault, wtxn, &target_of(staged)?)?.goal_id != basis.goal_id
+    {
+        return Err(retry("goal definition moved while the scorer was thinking"));
+    }
+    // A floor regression never votes as a tradeoff, regardless of gains on
+    // other axes. Pure ties and dominated vectors are final rejections.
+    // Mixed non-floor gains and losses need a separate preference decision;
+    // only strict vector dominance reaches automatic admission.
+    if floor_regressed(goal_axes) {
+        return Ok(SkillEditDisposition::Rejected);
+    }
+    if !dominates(goal_axes) && !is_tradeoff(goal_axes) {
         return Ok(SkillEditDisposition::Rejected);
     }
     // Accept-time recheck. ONE-1448 already excluded protected tiers at
@@ -552,8 +586,10 @@ fn decide_in_txn(
     if !bound {
         return Ok(SkillEditDisposition::RefusedProtectedTier);
     }
-    if let Some(decision) = tradeoff::apply(vault, wtxn, &target_of(staged)?, tradeoff)? {
-        return Ok(decision);
+    // A mixed vector may reach the preference ladder only after both tier
+    // checks. Otherwise a protected candidate could remain open indefinitely.
+    if is_tradeoff(goal_axes) {
+        return Ok(SkillEditDisposition::NeedsTradeoffDecision);
     }
     let cap = cycle_cap_in_txn(vault, wtxn)?;
     if accepted_in_cycle_in_txn(vault, wtxn, cycle, proposal)? >= cap {
@@ -574,7 +610,7 @@ fn decide_in_txn(
 /// `spending` is excluded for the same reason from the other side: a proposal
 /// re-ruled over moved evidence must not be deferred by its own earlier
 /// acceptance.
-fn accepted_in_cycle_in_txn(
+pub(super) fn accepted_in_cycle_in_txn(
     vault: &Vault,
     rtxn: &heed::RoTxn<'_>,
     cycle: &SkillEditCycle,
@@ -585,6 +621,7 @@ fn accepted_in_cycle_in_txn(
         if verdict.disposition.admits()
             && verdict.cycle == cycle.as_str()
             && verdict.proposal != *spending
+            && verdict.displaced_by_revision.is_none()
         {
             accepted.insert(verdict.proposal);
         }
@@ -598,21 +635,21 @@ fn accepted_in_cycle_in_txn(
 /// then refused at the admission door has been answered, and the superseded
 /// acceptance is history rather than a live permission.
 ///
-/// Three rulings qualify, and each is an answer a REDELIVERY must return
+/// Three rulings qualify, and each is a result a REDELIVERY must return
 /// rather than re-earn:
 ///
 /// - a standing ACCEPTANCE over exactly this basis, whatever cycle it was ruled
 ///   in — an acceptance keeps the cycle it was ruled in, and a duplicate
 ///   arriving under another label must not revoke it;
+/// - a tradeoff needing a decision, on the same basis in any cycle, while it
+///   still waits on its own terms ([`tradeoff::pending_waits_in_txn`]): asking
+///   the judge again cannot replace the pending preference with another score;
 /// - a standing CAP DEFERRAL over exactly this basis AND this same cycle. The
 ///   cycle equality is load-bearing in the other direction: a deferral from
 ///   wake X says nothing about wake Y, so a genuine later-cycle pickup still
-///   re-scores and is counted against the cycle that picked it up;
-/// - a pending TRADEOFF ASK over the same scored basis and goal/preference
-///   frontier while the same bound question is still pending. A human pick
-///   changes the frontier and makes the next delivery rule again.
+///   re-scores and is counted against the cycle that picked it up.
 ///
-/// Returning the standing row makes delivery idempotent on all three arms:
+/// Returning the standing row is what makes delivery idempotent on all arms:
 /// no second replay is paid, no second row is appended, and the cap is neither
 /// re-spent nor re-measured.
 fn standing_ruling_in_txn(
@@ -621,25 +658,26 @@ fn standing_ruling_in_txn(
     proposal: &EntityId,
     basis: &ScoredBasis,
     cycle: &SkillEditCycle,
+    judge_revision: &str,
 ) -> Result<Option<HeldOutVerdict>> {
-    let standing = standing_verdict_in_txn(vault, rtxn, proposal)?;
-    if let Some(verdict) = &standing
-        && verdict.goal_binding != tradeoff::binding_in_txn(vault, rtxn, &verdict.skill)?
-    {
-        return Ok(None);
+    let standing = standing_verdict_in_txn(vault, rtxn, proposal)?.filter(|verdict| {
+        basis.matches(verdict)
+            && verdict.displaced_by_revision.is_none()
+            && verdict.judge_revision.as_deref() == Some(judge_revision)
+            && (verdict.disposition.admits()
+                || verdict.disposition == SkillEditDisposition::NeedsTradeoffDecision
+                || (verdict.disposition == SkillEditDisposition::DeferredCycleCap
+                    && verdict.cycle == cycle.as_str()))
+    });
+    match standing {
+        Some(pending)
+            if pending.disposition == SkillEditDisposition::NeedsTradeoffDecision
+                && !tradeoff::pending_waits_in_txn(vault, rtxn, &pending)? =>
+        {
+            Ok(None)
+        }
+        standing => Ok(standing),
     }
-    let Some(verdict) = standing else {
-        return Ok(None);
-    };
-    if !basis.matches(&verdict) {
-        return Ok(None);
-    }
-    let reusable = verdict.disposition.admits()
-        || (verdict.disposition == SkillEditDisposition::DeferredCycleCap
-            && verdict.cycle == cycle.as_str())
-        || (verdict.disposition == SkillEditDisposition::DeferredTradeoffAsk
-            && tradeoff::ask_matches_verdict_in_txn(vault, rtxn, &verdict)?);
-    Ok(reusable.then_some(verdict))
 }
 
 /// The most recent ruling on one proposal, whatever it said.
@@ -675,8 +713,15 @@ fn refusal(
     HeldOutVerdict {
         before: 0.0,
         after: 0.0,
+        goal_axes: BTreeMap::new(),
+        goal_revision: String::new(),
+        goal_id: None,
+        tradeoff_resolution: None,
+        tradeoff_jev: None,
         measurements: None,
         accepted: false,
+        judge_revision: None,
+        displaced_by_revision: None,
         id,
         proposal: *proposal,
         skill: *skill,
@@ -689,8 +734,6 @@ fn refusal(
         proposal_digest: String::new(),
         target_digest: String::new(),
         proposal_tier: None,
-        goal_binding: None,
-        tradeoff_jev: None,
         accepted_verdict: None,
         missing_sources: Vec::new(),
         at,

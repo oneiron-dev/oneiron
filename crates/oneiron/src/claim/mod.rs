@@ -50,6 +50,7 @@ mod core_types;
 mod decay;
 mod deferred;
 mod demotion;
+mod evidence_support;
 mod expression_archive;
 mod expression_preference;
 mod lexical_query_hint;
@@ -58,8 +59,8 @@ mod predicate_grammar;
 mod predicate_validators;
 mod projection_index;
 pub(crate) use projection_index::{
-    claim_ids_for_predicate_in_txn, maintain_claim_projection_index, producer_prefix,
-    remove_claim_projection_index,
+    claim_ids_for_predicate_bounded_in_txn, claim_ids_for_predicate_in_txn,
+    maintain_claim_projection_index, producer_prefix, remove_claim_projection_index,
 };
 mod put;
 mod read;
@@ -74,6 +75,7 @@ mod write_target;
 
 pub use core_types::*;
 pub use decay::*;
+pub(crate) use evidence_support::has_live_support_in_txn;
 pub(crate) use expression_archive::{ArchivedExpressionPreference, ExpressionPreferenceArchive};
 pub use lexical_query_hint::*;
 pub use predicate_grammar::*;
@@ -84,6 +86,7 @@ pub use scope_stamp::{
     PREDICATE_VAULT_DEFAULT_FACET, base_world_id, default_project_id, substrate_facet_id,
 };
 pub(crate) use scope_stamp::{default_facet_in, upgrade_pre_scope_body};
+pub(crate) use scoped_read::invalidate_weave_digest_source_in_txn;
 pub use scoped_read::*;
 pub(crate) use scoped_read::{ReadAdmission, admit_stored_edge_in};
 pub use source_trust::*;

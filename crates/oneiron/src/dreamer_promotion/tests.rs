@@ -1357,6 +1357,7 @@ fn auto_checker_manifest(checker_ref: &str) -> Vec<u8> {
         panic!("the promotion test manifest is a map");
     };
     entries.push((Mp::from("auto_checker"), Mp::from(checker_ref)));
+    crate::test_util::add_default_teacher_probe_policy(entries);
     let mut out = Vec::new();
     rmpv::encode::write_value(&mut out, &manifest).expect("encode the policy manifest");
     out
@@ -1503,13 +1504,13 @@ fn deferred_dreamer_grant_consults_checker_and_closes_only_on_allow() -> Result<
 fn verdict_bound_deferred_closure_keeps_prior_until_calibrated_auto_grant() -> Result<()> {
     use crate::llm::manifest::{
         CalibratedVerdict, ConfidenceBand, MODEL_ROLES, ModelBinding, ModelManifest, ModelSlot,
-        VerdictBasis, VerdictBinding, VerdictMode,
+        TeacherProbeApproval, VerdictBasis, VerdictBinding, VerdictMode,
     };
     use crate::llm::{ModelId, ModelLocality, ModelTierRef};
     for mode in [VerdictMode::Shadow, VerdictMode::Enforce] {
         let (_dir, vault) = open_auto_checker_vault();
         let model = ModelId::new("test/deferred-verdict@1").expect("model");
-        vault.set_model_manifest(&ModelManifest {
+        let manifest = ModelManifest {
             version: 2,
             roles: MODEL_ROLES
                 .into_iter()
@@ -1535,7 +1536,15 @@ fn verdict_bound_deferred_closure_keeps_prior_until_calibrated_auto_grant() -> R
                 floor: ConfidenceBand::High,
                 mode,
             }),
-        })?;
+            seat_policy: None,
+        };
+        assert!(vault.set_model_manifest(&manifest).is_err());
+        let approval = TeacherProbeApproval::for_scored_checkpoint(
+            &manifest,
+            &vault.teacher_probe_policy(None)?,
+            1_000_000,
+        )?;
+        vault.set_model_manifest_with_teacher_approval(&manifest, &approval)?;
         let fx = fixture(&vault)?;
         let allow = CountingAutoChecker::new(AutoCheckOutcome::Verdict(CalibratedVerdict {
             model,

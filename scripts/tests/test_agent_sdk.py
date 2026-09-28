@@ -9,6 +9,15 @@ import unittest
 ROOT = Path(__file__).resolve().parents[2]
 
 class AgentSdkProjectionTests(unittest.TestCase):
+    def test_describe_self_is_in_generated_mcp_and_typescript_contract(self):
+        spec = importlib.util.spec_from_file_location("sdk_generator", ROOT / "scripts/sdk/generate.py")
+        generator = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(generator)
+        outputs = generator.outputs()
+        self.assertIn('"self".to_owned()', outputs["crates/oneiron/src/task_verb/sdk_generated.rs"])
+        self.assertIn('"session_id".to_owned()', outputs["crates/oneiron/src/task_verb/sdk_generated.rs"])
+        self.assertIn('kind: "self_card"; tail: string', outputs["packages/oneiron/src/agent-verbs.ts"])
+
     def test_facade_handler_decodes_each_call_once(self):
         spec = importlib.util.spec_from_file_location("sdk_generator", ROOT / "scripts/sdk/generate.py")
         generator = importlib.util.module_from_spec(spec)
@@ -128,6 +137,27 @@ class AgentSdkProjectionTests(unittest.TestCase):
         create = {"spec": {"goal": "review"}, "label": "review"}
         tasks.create(create)
         self.assertEqual(calls, [("tasks_update", request), ("tasks_create", create)])
+
+    def test_room_thread_verbs_forward_callable_scoped_handles(self):
+        spec = importlib.util.spec_from_file_location("room_agent_verbs", ROOT / "crates/oneiron-py/python/oneiron/agent_verbs.py")
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        calls = []
+        rooms = module.RoomsVerbs(lambda name, value: calls.append((name, value)))
+        rooms.render("room")
+        rooms.find("room", "cursor", 1)
+        rooms.get("room", "thread")
+        rooms.trunk("room", "trunk")
+        self.assertEqual(calls, [
+            ("rooms_render", {"room_ref": "room"}),
+            ("rooms_find", {"room_ref": "room", "after": "cursor", "limit": 1}),
+            ("rooms_get", {"room_ref": "room", "turn_ref": "thread"}),
+            ("rooms_trunk", {"room_ref": "room", "turn_ref": "trunk"}),
+        ])
+        ts = (ROOT / "packages/oneiron/src/agent-verbs.ts").read_text()
+        self.assertIn('find(roomRef: string, after?: string, limit?: number)', ts)
+        self.assertIn('get(roomRef: string, turnRef: string)', ts)
+        self.assertIn('trunk(roomRef: string, turnRef: string)', ts)
 
     def test_retired_task_names_leave_every_generated_output(self):
         spec = importlib.util.spec_from_file_location("sdk_generator", ROOT / "scripts/sdk/generate.py")

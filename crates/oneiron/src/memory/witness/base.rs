@@ -262,6 +262,8 @@ impl Memory<'_> {
                 None => {}
             }
             let conversation_is_absent = current_conversation.is_none();
+            let person_author = super::person_author_in_txn(self.vault, wtxn, self.actor)?;
+            super::reject_erased_person_in_txn(self.vault, wtxn, conversation_id, person_author)?;
             crate::workspace_roster::admit_room_witness(
                 self.vault,
                 wtxn,
@@ -359,7 +361,7 @@ impl Memory<'_> {
                             "a new witnessed turn needs one non-system speaker",
                         ));
                     };
-                    let turn_body = encode_witness_turn_body(speaker)?;
+                    let turn_body = encode_witness_turn_body(speaker, person_author)?;
                     // The structural TURN → CONVERSATION edge, minted with
                     // the row: `ChildOf` is the ONLY reader-side answer to
                     // "which conversation is this turn in", so a turn minted
@@ -375,6 +377,7 @@ impl Memory<'_> {
                         &turn_id,
                         &conversation_id,
                         incoming_speaker,
+                        person_author,
                     )? {
                         return Err(Error::InvariantViolation(
                             "transaction-authoritative TURN disappeared during witness validation",

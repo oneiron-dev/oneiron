@@ -60,6 +60,12 @@ struct Search {
 }
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
+struct AgentPut {
+    id: String,
+    definition: Value,
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 struct Speech {
     text: String,
 }
@@ -201,6 +207,14 @@ pub(super) fn dispatch(state: &mut Bridge<'_>, name: &str, input: &str) -> Resul
 
 fn self_call(name: &str, input: &str, now: u64) -> Result<SelfCall> {
     Ok(match name {
+        "vault.agents.put" => {
+            let args: AgentPut = parse(input)?;
+            SelfCall::AgentsPut(Box::new(crate::code_run::parse_agent_put_request(
+                &args.id,
+                args.definition,
+                now,
+            )?))
+        }
         "tasks.ask" => SelfCall::TasksAsk(Box::new(parse::<crate::task_verb::TaskAskSpec>(input)?)),
         "tasks.wait" => SelfCall::TasksWait(parse::<crate::task_verb::TaskAskHandle>(input)?),
         "self.memory.put_claim" => {
@@ -284,6 +298,9 @@ fn response(response: SelfDispatchResponse) -> Result<String> {
             json!({"denied":value.outcome,"reasonCodes":value.reason_codes})
         }
         SelfDispatchOutcome::Failed(_) => json!({"failed":true}),
+        SelfDispatchOutcome::AgentDefinitionPut(value) => {
+            json!({"id":value.id.to_hex(),"disposition":value.disposition.as_str()})
+        }
         SelfDispatchOutcome::AgentSpawn(value) => match value {
             crate::code_run::SelfAgentSpawnResult::Queued { attempt_ref } => {
                 json!({"kind":"agent_spawn","state":"queued","attempt":crate::entity_id::bytes_to_hex_lower(attempt_ref.as_bytes())})
@@ -299,6 +316,9 @@ fn response(response: SelfDispatchResponse) -> Result<String> {
             crate::task_verb::TaskAskStatus::Pending { hold } => {
                 json!({"kind":"task_ask_status","state":"pending","hold":hold.as_ref().map(|_|"no_live_route")})
             }
+            crate::task_verb::TaskAskStatus::Changed { voided, generation } => {
+                json!({"kind":"task_ask_status","state":"changed","voided":voided.iter().map(crate::entity_id::EntityId::to_hex).collect::<Vec<_>>(),"generation":generation})
+            }
             crate::task_verb::TaskAskStatus::Settled(result) => {
                 json!({"kind":"task_ask_status","state":"settled","result":result})
             }
@@ -309,6 +329,7 @@ fn response(response: SelfDispatchResponse) -> Result<String> {
         SelfDispatchOutcome::ReportBlocked { receipt } => {
             json!({"receipt":receipt.to_hex()})
         }
+        SelfDispatchOutcome::InferenceDefaults(json) => json!({"json": json}),
         SelfDispatchOutcome::Context(_) => {
             return Err(failure("context is not a linked component import"));
         }
@@ -452,6 +473,11 @@ fn owner_policy_action_is_unreachable_from_the_guest_imports() {
     let reply = SelfDispatchResponse {
         outcome: SelfDispatchOutcome::WakePolicyWritten(crate::dreamer_wake::DreamerWakePolicy {
             wake_grain_turns: 1,
+            agent_cadence: serde_json::from_str::<crate::dreamer_wake::DreamerWakePolicy>(
+                include_str!("../../dreamer_wake/wake_policy_defaults.json"),
+            )
+            .expect("shipped wake policy")
+            .agent_cadence,
             new_records: 50,
             longest_wait_secs: 28_800,
             nightly_secs: 86_400,

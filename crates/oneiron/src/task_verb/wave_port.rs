@@ -1,6 +1,7 @@
 //! Vault-backed, atomic wave plan application through the ordinary TASK doors.
 use super::create_validation::ValidatedTaskCreate;
 use super::{TaskAssignee, TaskKind};
+use crate::attempt_queue::{AttemptQueue, ClaimAttempt, ClaimOutcome, CompleteAttempt};
 use crate::edge::EdgeActorClass;
 use crate::error::Error;
 use crate::gate::PolicyApprovalCeiling;
@@ -9,6 +10,29 @@ use crate::memory::{MemoryError, facade_provenance};
 use crate::wave_orchestration::*;
 use crate::{EntityId, Vault};
 use std::collections::BTreeMap;
+
+/// Bounded scan of durable, still-live TASKs minted by a wave plan.
+/// The cursor advances across RAW inspected TASK ids, even when this page
+/// contains no wave TASKs, so non-wave rows cannot strand later work.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WaveDispatchPage {
+    pub task_refs: Vec<EntityId>,
+    pub next_after: Option<EntityId>,
+    pub exhausted: bool,
+}
+
+/// Dispatch identity for one live wave TASK. A callback is idempotent by TASK
+/// for external assignees and by attempt plus generation for local work.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WaveDispatchGeneration {
+    External,
+    Attempt {
+        id: crate::attempt_queue::AttemptId,
+        generation: u32,
+    },
+    /// Scheduled retry: do not dispatch before its due time, but arm a wake.
+    DueAt(u64),
+}
 
 pub struct VaultWaveTaskPort<'a> {
     vault: &'a Vault,
@@ -223,9 +247,28 @@ impl WaveTaskPort for VaultWaveTaskPort<'_> {
                     .store
                     .vault_meta
                     .put(txn, &seal_key, &fingerprint)?;
+                if let Some(attempt) = &self.attempt {
+                    let owner = attempt.lease_owner.as_ref().ok_or_else(|| {
+                        MemoryError::bad_request("wave planner lease has no owner")
+                    })?;
+                    AttemptQueue::new(self.vault).complete_in_txn(
+                        txn,
+                        CompleteAttempt {
+                            id: attempt.id,
+                            lease_owner: owner.clone(),
+                            attempt_count: attempt.attempt_count,
+                            now,
+                        },
+                    )?;
+                }
                 Ok(writes)
             })
             .map_err(engine_error)
+            .inspect(|_| {
+                if self.attempt.is_some() {
+                    self.vault.store.notify_attempt_observers();
+                }
+            })
     }
 
     fn task_terminal_success(&self, task: EntityId) -> WaveResult<bool> {
@@ -245,6 +288,152 @@ impl WaveTaskPort for VaultWaveTaskPort<'_> {
 }
 
 impl Vault {
+    /// Scan one bounded slice of durable TASKs for unfinished wave work.
+    /// No readiness bit is stored: the running host checks the live graph
+    /// again before handing these refs to its executor.
+    pub fn wave_dispatch_page(
+        &self,
+        after: Option<EntityId>,
+        limit: usize,
+    ) -> crate::Result<WaveDispatchPage> {
+        const MAX_PAGE: usize = 256;
+        let limit = limit.clamp(1, MAX_PAGE);
+        let scanned =
+            self.entities_by_type_page(crate::registry::ENTITY_TYPE_TASK, after.as_ref(), limit)?;
+        let mut task_refs = Vec::new();
+        for id in &scanned {
+            let Some(body) = super::wire_decode::task_verb_body(self, *id)? else {
+                continue;
+            };
+            if body.provenance == facade_provenance(WAVE_PLAN_ATTEMPT_KIND)
+                && body.terminal().is_none()
+                && body.settled_ladder_disposition().is_none()
+            {
+                task_refs.push(*id);
+            }
+        }
+        Ok(WaveDispatchPage {
+            task_refs,
+            next_after: scanned.last().copied(),
+            exhausted: scanned.len() < limit,
+        })
+    }
+
+    /// Point-read a TASK's current handoff identity. A queued retry has a
+    /// new id; lease reclaim retains its id but raises its generation. Leased
+    /// attempts are owned already and cannot be handed off a second time.
+    pub fn wave_dispatch_generation(
+        &self,
+        task: EntityId,
+        now: u64,
+    ) -> crate::Result<Option<WaveDispatchGeneration>> {
+        let body = super::wire_decode::task_verb_body(self, task)?.ok_or(Error::EntityNotFound)?;
+        if body.provenance != facade_provenance(WAVE_PLAN_ATTEMPT_KIND)
+            || body.terminal().is_some()
+            || body.settled_ladder_disposition().is_some()
+        {
+            return Ok(None);
+        }
+        let route_key = super::create_validation::task_route_dedupe_key(task);
+        let route = match body.assignee {
+            None | Some(TaskAssignee::Dreamer) => Some(("tasks.realize", route_key)),
+            Some(TaskAssignee::AgentDef { .. }) => Some((
+                crate::dreamer_runner::DREAMER_RUNNER_ATTEMPT_KIND,
+                format!(
+                    "{}:{route_key}",
+                    crate::agent_dispatch::AGENT_DISPATCH_ATTEMPT_TYPE
+                ),
+            )),
+            Some(TaskAssignee::Peer { .. }) | Some(TaskAssignee::Child { .. }) => None,
+            Some(TaskAssignee::Human { .. }) => return Ok(None),
+        };
+        let Some((kind, key)) = route else {
+            return Ok(Some(WaveDispatchGeneration::External));
+        };
+        let Some(row) = AttemptQueue::new(self).pending_task_route(kind, &key, task)? else {
+            return Ok(None);
+        };
+        match row.state {
+            crate::attempt_queue::AttemptState::Queued => {
+                Ok(Some(WaveDispatchGeneration::Attempt {
+                    id: row.id,
+                    generation: row.attempt_count,
+                }))
+            }
+            crate::attempt_queue::AttemptState::Scheduled => {
+                let due = row.scheduled_at.or(row.backoff_until).unwrap_or(now);
+                if due > now {
+                    Ok(Some(WaveDispatchGeneration::DueAt(due)))
+                } else {
+                    Ok(Some(WaveDispatchGeneration::Attempt {
+                        id: row.id,
+                        generation: row.attempt_count,
+                    }))
+                }
+            }
+            _ => Ok(None),
+        }
+    }
+
+    /// Atomically claim ONLY this TASK's expected attempt generation. A stale
+    /// candidate never consumes another TASK's ready queue row. The ordinary
+    /// point-claim still checks readiness, placement, blockers and symbols.
+    pub fn claim_wave_dispatch_attempt(
+        &self,
+        task: EntityId,
+        id: crate::attempt_queue::AttemptId,
+        generation: u32,
+        lease_owner: &str,
+        now: u64,
+    ) -> crate::Result<Option<crate::attempt_queue::AttemptRecord>> {
+        let queue = AttemptQueue::new(self);
+        let mut txn = self.store.env.write_txn()?;
+        let Some(body) = super::wire_decode::task_verb_body_in(self, &txn, task)? else {
+            return Ok(None);
+        };
+        if body.provenance != facade_provenance(WAVE_PLAN_ATTEMPT_KIND)
+            || body.terminal().is_some()
+            || body.settled_ladder_disposition().is_some()
+        {
+            return Ok(None);
+        }
+        let expected_kind = match body.assignee {
+            None | Some(TaskAssignee::Dreamer) => "tasks.realize",
+            Some(TaskAssignee::AgentDef { .. }) => {
+                crate::dreamer_runner::DREAMER_RUNNER_ATTEMPT_KIND
+            }
+            _ => return Ok(None),
+        };
+        let Some(row) = queue.get_in_write_txn(&txn, id)? else {
+            return Ok(None);
+        };
+        if row.task_ref.as_deref() != Some(task.to_hex().as_str())
+            || row.kind != expected_kind
+            || row.attempt_count != generation
+            || !matches!(
+                row.state,
+                crate::attempt_queue::AttemptState::Queued
+                    | crate::attempt_queue::AttemptState::Scheduled
+            )
+        {
+            return Ok(None);
+        }
+        let claimed = queue.claim_id_in_txn(
+            &mut txn,
+            id,
+            ClaimAttempt {
+                lease_owner: lease_owner.to_owned(),
+                now,
+            },
+        )?;
+        let ClaimOutcome::Claimed(row) = claimed else {
+            return Ok(None);
+        };
+        txn.commit()?;
+        self.store.notify_attempt_observers();
+        Ok(Some(row))
+    }
+
     /// Queue a planning attempt. Planning itself remains host/agent code.
     pub fn enqueue_wave_plan(
         &self,
@@ -270,9 +459,9 @@ impl Vault {
         })
     }
 
-    /// Apply a host-produced cut against the current planning lease. Retries
-    /// recover the same TASK ids through the plan index. Completing the attempt
-    /// remains the executor's existing queue operation.
+    /// Apply a host-produced cut and complete its planning attempt in one
+    /// transaction. A crash cannot leave TASKs committed under a reclaimable
+    /// lease, even if the agent would propose a different cut on retry.
     pub fn apply_wave_plan_attempt(
         &self,
         actor: EntityId,

@@ -283,6 +283,8 @@ impl Vault {
         }
         fork.forked_from = Some(*parent_id);
         fork.governance_tier = parent.governance_tier;
+        fork.role = parent.role;
+        fork.call = parent.call.clone();
         let package = self.fork_skill_package_in_txn(wtxn, parent_id, &parent, &mut fork)?;
         if let Some(hash) = fork.content_hash
             && self
@@ -385,8 +387,7 @@ impl Vault {
                 old_id,
                 EdgeKind::Supersedes.default_weight().unwrap_or(0.3),
             )
-            .apply(wtxn)?;
-        crate::skill_optimize::reconcile_goal_on_supersession_in_txn(self, wtxn, old_id, new_id)
+            .apply(wtxn)
     }
 
     /// Typed SKILL update door. Rejects transitions INTO `superseded`:
@@ -515,7 +516,7 @@ impl Vault {
 
     pub(crate) fn read_skill_record_in_txn(
         &self,
-        txn: &heed::RwTxn<'_>,
+        txn: &heed::RoTxn<'_>,
         id: &EntityId,
     ) -> Result<SkillRecord> {
         let raw = self

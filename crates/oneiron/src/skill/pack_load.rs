@@ -1,7 +1,7 @@
 //! Attempt-bound pack reads stamp their actual revision in the same transaction.
 
 use super::{SkillLifecycle, SkillRecord};
-use crate::attempt_queue::{AttemptId, AttemptQueue, ManifestEntry, ManifestKind};
+use crate::attempt_queue::{AttemptId, AttemptQueue, AttemptRecord, ManifestEntry, ManifestKind};
 use crate::claim::{ClaimApprovalStatus, ClaimBody, claim_surfaceable, encode_claim_body};
 use crate::{EntityId, Error, Result, Vault};
 
@@ -10,6 +10,16 @@ use crate::{EntityId, Error, Result, Vault};
 pub struct LoadedSkillPack {
     pub record: SkillRecord,
     pub source_files: Option<Vec<crate::skill_hub::HubFile>>,
+}
+
+/// The one runtime admission invariant used by the load door and hub installs.
+#[must_use]
+pub(crate) fn skill_loadable(record: &SkillRecord) -> bool {
+    record.lifecycle_status == SkillLifecycle::Active
+        && matches!(
+            record.approval_status,
+            ClaimApprovalStatus::Auto | ClaimApprovalStatus::Approved
+        )
 }
 
 impl Vault {
@@ -38,9 +48,21 @@ impl Vault {
         &self,
         attempt: AttemptId,
         skill: &EntityId,
+        lease_owner: &str,
+        attempt_count: u32,
+        executor_model: &str,
         at: u64,
     ) -> Result<SkillRecord> {
-        Ok(self.load_attempt_skill_pack(attempt, skill, at)?.record)
+        Ok(self
+            .load_attempt_skill_pack(
+                attempt,
+                skill,
+                lease_owner,
+                attempt_count,
+                executor_model,
+                at,
+            )?
+            .record)
     }
 
     /// Loads the exact stored SKILL.md/scripts when present and stamps one row
@@ -49,28 +71,61 @@ impl Vault {
         &self,
         attempt: AttemptId,
         skill: &EntityId,
+        lease_owner: &str,
+        attempt_count: u32,
+        executor_model: &str,
         at: u64,
     ) -> Result<LoadedSkillPack> {
-        self.load_skill_pack_bound(attempt, skill, None, at)
+        self.load_skill_pack_bound(
+            attempt,
+            skill,
+            None,
+            lease_owner,
+            attempt_count,
+            Some(executor_model),
+            at,
+        )
     }
 
     /// Loads a resident fork only for its named owner. The check and manifest
     /// stamp share a transaction; an unscoped load cannot use a bound fork.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "the load door binds the resident, skill, lease generation, executor revision and timestamp atomically"
+    )]
     pub fn load_resident_skill_pack(
         &self,
         attempt: AttemptId,
         resident: &EntityId,
         skill: &EntityId,
+        lease_owner: &str,
+        attempt_count: u32,
+        executor_model: &str,
         at: u64,
     ) -> Result<LoadedSkillPack> {
-        self.load_skill_pack_bound(attempt, skill, Some(*resident), at)
+        self.load_skill_pack_bound(
+            attempt,
+            skill,
+            Some(*resident),
+            lease_owner,
+            attempt_count,
+            Some(executor_model),
+            at,
+        )
     }
 
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "the load door binds the resident, skill, lease generation, executor revision and timestamp atomically"
+    )]
     fn load_skill_pack_bound(
         &self,
         attempt: AttemptId,
         skill: &EntityId,
         resident: Option<EntityId>,
+        lease_owner: &str,
+        attempt_count: u32,
+        executor_model: Option<&str>,
         at: u64,
     ) -> Result<LoadedSkillPack> {
         self.with_write_txn(|txn| {
@@ -83,12 +138,7 @@ impl Vault {
                     "skill belongs to a different resident",
                 ));
             }
-            if record.lifecycle_status != SkillLifecycle::Active
-                || !matches!(
-                    record.approval_status,
-                    ClaimApprovalStatus::Auto | ClaimApprovalStatus::Approved
-                )
-            {
+            if !skill_loadable(&record) {
                 return Err(Error::InvalidClaimBody(
                     "pack load requires an active approved skill",
                 ));
@@ -96,12 +146,23 @@ impl Vault {
             let source_files = self
                 .runtime_skill_package_in_txn(txn, skill, &record)?
                 .map(|package| package.files);
+            let queue = AttemptQueue::new(self);
+            queue.require_skill_load_lease_in_txn(txn, attempt, lease_owner, attempt_count)?;
+            if let Some(executor_model) = executor_model {
+                queue.set_executor_model_in_txn(
+                    txn,
+                    attempt,
+                    lease_owner,
+                    attempt_count,
+                    executor_model,
+                )?;
+            }
             if let Some(resident) = resident {
                 let receipt = crate::receipt::attempt_pack_receipt_id(&attempt);
                 super::resident::bind_receipt_in_txn(self, txn, &receipt, &resident)?;
                 super::resident::bind_skill_in_txn(self, txn, &receipt, skill)?;
             }
-            AttemptQueue::new(self).append_manifest_entry_in_txn(
+            queue.append_manifest_entry_in_txn(
                 txn,
                 attempt,
                 ManifestEntry::new(ManifestKind::Skill, &record.skill_id, &record.version, at),
@@ -113,25 +174,76 @@ impl Vault {
         })
     }
 
+    /// The callable door runs the shared load in the caller's own lease
+    /// generation, so a stale worker cannot append a manifest entry on a
+    /// re-leased or terminal attempt. The first executor stamps the attempt;
+    /// a later step's executor is bound per invocation instead of rebinding it.
+    pub(crate) fn load_leased_callable_skill_pack(
+        &self,
+        leased: &AttemptRecord,
+        skill: &EntityId,
+        executor: &str,
+        at: u64,
+    ) -> Result<LoadedSkillPack> {
+        let lease_owner = leased
+            .lease_owner
+            .as_deref()
+            .ok_or(Error::InvalidClaimBody(
+                "callable execution requires the caller's live attempt lease",
+            ))?;
+        let stamped = AttemptQueue::new(self)
+            .get(leased.id)?
+            .ok_or(Error::EntityNotFound)?
+            .executor_model
+            .is_some();
+        self.load_skill_pack_bound(
+            leased.id,
+            skill,
+            None,
+            lease_owner,
+            leased.attempt_count,
+            (!stamped).then_some(executor),
+            at,
+        )
+    }
+
     /// Pick a resident's best version with the shared UCB bandit and stamp
     /// exactly that entity's manifest/evidence binding in one pack-load call.
     /// A winner that is no longer active refuses at the load door rather than
     /// silently loading a runner-up under an out-of-date candidate ranking.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "the load door binds the resident, skill, lease generation, executor revision and timestamp atomically"
+    )]
     pub fn select_and_load_resident_skill_pack(
         &self,
         attempt: AttemptId,
         resident: &EntityId,
         versions: &[EntityId],
+        lease_owner: &str,
+        attempt_count: u32,
+        executor_model: &str,
         at: u64,
     ) -> Result<Option<(EntityId, LoadedSkillPack)>> {
-        let Some((winner, _)) =
-            crate::skill_reliability::rank_resident_skill_versions(self, resident, versions)?
-                .into_iter()
-                .next()
-        else {
+        let Some((winner, _)) = crate::skill_reliability::rank_resident_skill_versions(
+            self,
+            resident,
+            versions,
+            executor_model,
+        )?
+        .into_iter()
+        .next() else {
             return Ok(None);
         };
-        let pack = self.load_resident_skill_pack(attempt, resident, &winner, at)?;
+        let pack = self.load_resident_skill_pack(
+            attempt,
+            resident,
+            &winner,
+            lease_owner,
+            attempt_count,
+            executor_model,
+            at,
+        )?;
         Ok(Some((winner, pack)))
     }
 

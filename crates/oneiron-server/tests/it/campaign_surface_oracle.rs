@@ -118,6 +118,14 @@ fn token_for(vault: &Vault, principal: EntityId, scopes: &str) -> String {
 fn owner_token(vault: &Vault, principal: EntityId) -> String {
     token_for(vault, principal, "core:read,core:write")
 }
+fn host_root_token(vault: &Vault) -> String {
+    let issuer = oneiron::authority::HostSlipIssuer::from_secret(SECRET.as_bytes()).unwrap();
+    vault
+        .ensure_host_root_slip(&issuer)
+        .unwrap()
+        .to_token()
+        .unwrap()
+}
 fn authorization(token: &str) -> String {
     use ed25519_dalek::Signer;
     let mut headers = format!("Authorization: Bearer {token}\r\n");
@@ -129,12 +137,16 @@ fn authorization(token: &str) -> String {
             .as_secs();
         let nonce = EntityId::now().to_hex();
         let challenge = format!("oneiron-request:{timestamp}:{nonce}");
-        let signature: String = ed25519_dalek::SigningKey::from_bytes(&[73; 32])
-            .sign(&slip.binding_transcript(challenge.as_bytes()).unwrap())
-            .to_bytes()
-            .iter()
-            .map(|b| format!("{b:02x}"))
-            .collect();
+        let issuer = oneiron::authority::HostSlipIssuer::from_secret(SECRET.as_bytes()).unwrap();
+        let signature = if slip.claims.binding_key == issuer.binding_key() {
+            issuer.binding_proof(&slip, challenge.as_bytes()).unwrap()
+        } else {
+            ed25519_dalek::SigningKey::from_bytes(&[73; 32])
+                .sign(&slip.binding_transcript(challenge.as_bytes()).unwrap())
+                .to_bytes()
+                .to_vec()
+        };
+        let signature: String = signature.iter().map(|b| format!("{b:02x}")).collect();
         let proof = json!({"timestamp":timestamp,"nonce":nonce,"signature":signature});
         headers.push_str(&format!("x-oneiron-binding: {proof}\r\n"));
     }
@@ -1118,7 +1130,7 @@ async fn campaign_surface_error_parity() {
     assert_eq!(status, 403, "{gated}");
     assert_eq!(gated["code"], "FORBIDDEN");
 
-    // FORBIDDEN: an un-narrowed root secret owns no principal entity.
+    // UNAUTHORIZED: the issuer secret itself is not a bearer credential.
     let (status, rootless) = request(
         addr,
         "POST",
@@ -1127,7 +1139,7 @@ async fn campaign_surface_error_parity() {
         Some(&json!({ "name": "root" })),
     )
     .await;
-    assert_eq!(status, 403, "{rootless}");
+    assert_eq!(status, 401, "{rootless}");
 
     // UNAUTHORIZED: no credential at all.
     let (status, anonymous) = request(
@@ -1162,7 +1174,14 @@ async fn campaign_discovery_lists_self_verbs_once() {
     let (_dir, vault, _principal) = oracle_vault();
     let (addr, handle) = spawn_server(Arc::clone(&vault)).await;
 
-    let (status, discovered) = request(addr, "GET", "/api/core/discover", Some(SECRET), None).await;
+    let (status, discovered) = request(
+        addr,
+        "GET",
+        "/api/core/discover",
+        Some(&host_root_token(&vault)),
+        None,
+    )
+    .await;
     assert_eq!(status, 200, "{discovered}");
     let capabilities: Vec<&str> = discovered["feature_flags"]["capabilities"]
         .as_array()

@@ -639,9 +639,9 @@ fn put_structural_carries_text_index_fields_and_edges() {
         .expect_err("CLAIM kind must go through commit");
     assert_eq!(err.code, MEMORY_CODE_BAD_REQUEST);
 
-    // Entities land with correct type bytes. The four bootstrap seed skills
-    // each persist one source carrier ASSET alongside the fixture ASSET.
-    assert_eq!(vault.entities_by_type(ENTITY_TYPE_ASSET).unwrap().len(), 5);
+    // Entities land with correct type bytes. Four bootstrap skill carriers and
+    // four built-in pack sources persist alongside the fixture ASSET.
+    assert_eq!(vault.entities_by_type(ENTITY_TYPE_ASSET).unwrap().len(), 9);
 }
 
 #[test]
@@ -783,8 +783,8 @@ fn put_structural_mints_but_never_overwrites_typed_entities() {
     }
 
     // Exactly one entity of each checked fixture kind exists, and no
-    // refusal minted a second row. The four bootstrap seed skills each persist
-    // one source carrier ASSET alongside the fixture ASSET.
+    // refusal minted a second row. Four bootstrap skill carriers and four
+    // built-in pack sources persist alongside the fixture ASSET.
     assert_eq!(
         vault
             .entities_by_type(ENTITY_TYPE_TASK)
@@ -797,7 +797,7 @@ fn put_structural_mints_but_never_overwrites_typed_entities() {
             .entities_by_type(ENTITY_TYPE_ASSET)
             .expect("asset entities")
             .len(),
-        5
+        9
     );
 }
 
@@ -1496,4 +1496,254 @@ fn relationship_upserts_do_not_supersede_another_relationship() {
             ClaimLifecycleStatus::Active
         );
     }
+}
+
+#[test]
+fn shared_vault_structural_and_claim_content_mutations_obey_role_and_scope() {
+    use crate::federation::{
+        FederationGrantPreset, FederationGrantRole, InitialSharedMember, ScopeAxis, ScopeId,
+        decode_federation_grant_body, encode_federation_grant_body,
+    };
+    use crate::registry::ENTITY_TYPE_FEDERATION_GRANT;
+    use std::collections::BTreeSet;
+
+    let (_dir, vault) = open_vault();
+    let owner = put_person(&vault, 0xB1);
+    let member = put_person(&vault, 0xB2);
+    let viewer = put_person(&vault, 0xB3);
+    let authenticated = vault
+        .authenticate_owner(
+            owner,
+            &owner.to_hex(),
+            true,
+            crate::store::GateDecisionId::now(),
+        )
+        .unwrap();
+    let created = vault
+        .initialize_shared_vault(
+            &authenticated,
+            42,
+            None,
+            &[
+                InitialSharedMember {
+                    member_ref: owner,
+                    role: Some(FederationGrantRole::Owner),
+                },
+                InitialSharedMember {
+                    member_ref: member,
+                    role: Some(FederationGrantRole::Member),
+                },
+                InitialSharedMember {
+                    member_ref: viewer,
+                    role: Some(FederationGrantRole::Viewer),
+                },
+            ],
+            1,
+        )
+        .unwrap();
+    let task = || StructuralPutInput {
+        id: None,
+        kind: "TASK".into(),
+        body: serde_json::json!({"role": 4, "content": "shared task"}),
+        text_fields: None,
+        edges: None,
+        occurred_at: 10,
+        learned_at: None,
+    };
+    let member_facade = facade_for(&vault, member);
+    let habit = member_facade
+        .put_structural(&task())
+        .expect("in-scope member task");
+    let habit_id = EntityId::from_hex(&habit.id_hex).unwrap();
+    for at in [11, 12] {
+        let checkin = member_facade
+            .put_habit_checkin(&HabitCheckinInput {
+                habit_ref: habit.id_hex.clone(),
+                id: None,
+                data: Some(serde_json::json!({"note": "done"})),
+                occurred_at: at,
+                learned_at: None,
+            })
+            .expect("successive in-scope check-ins");
+        let child = EntityId::from_hex(&checkin.id_hex).unwrap();
+        assert!(
+            vault
+                .edges_out(&child)
+                .unwrap()
+                .iter()
+                .any(|edge| { edge.kind == EdgeKind::ChildOf && edge.target == habit_id })
+        );
+        assert!(vault.record_scope(&habit_id).unwrap().is_some());
+    }
+    let habit_body = member_facade
+        .get_entity(&habit.id_hex)
+        .unwrap()
+        .unwrap()
+        .body
+        .unwrap();
+    assert_eq!(habit_body["currentStreak"], serde_json::json!(1));
+    assert_eq!(habit_body["longestStreak"], serde_json::json!(1));
+    let accepted = member_facade
+        .claim_upsert(&claim_input(
+            "profile.name",
+            &member,
+            "user_stated",
+            serde_json::json!("in scope"),
+        ))
+        .expect("in-scope member claim");
+    let claim_id = vault
+        .claims_for_subject(&member)
+        .unwrap()
+        .into_iter()
+        .find(|id| {
+            vault
+                .get_claim(id)
+                .unwrap()
+                .is_some_and(|body| body.predicate == "profile.name")
+        })
+        .unwrap();
+    let before_tasks = vault.entities_by_type(ENTITY_TYPE_TASK).unwrap().len();
+    let before_claims = vault.entities_by_type(ENTITY_TYPE_CLAIM).unwrap().len();
+    let viewer_facade = facade_for(&vault, viewer);
+    assert!(viewer_facade.put_structural(&task()).is_err());
+    let refused_checkin = EntityId::now();
+    assert!(
+        viewer_facade
+            .put_habit_checkin(&HabitCheckinInput {
+                habit_ref: habit.id_hex,
+                id: Some(refused_checkin.to_hex()),
+                data: Some(serde_json::json!({"note": "forbidden"})),
+                occurred_at: 11,
+                learned_at: None,
+            })
+            .is_err()
+    );
+    assert!(vault.get_raw(&refused_checkin).unwrap().is_none());
+    assert!(vault.edges_out(&refused_checkin).unwrap().is_empty());
+    assert!(
+        viewer_facade
+            .claim_upsert(&claim_input(
+                "profile.color",
+                &member,
+                "user_stated",
+                serde_json::json!("denied"),
+            ))
+            .is_err()
+    );
+    assert_eq!(
+        vault.entities_by_type(ENTITY_TYPE_TASK).unwrap().len(),
+        before_tasks
+    );
+    assert_eq!(
+        vault.entities_by_type(ENTITY_TYPE_CLAIM).unwrap().len(),
+        before_claims
+    );
+
+    let (id, mut grant) = created
+        .grant_refs
+        .iter()
+        .find_map(|hex| {
+            let id = EntityId::from_hex(hex).unwrap();
+            let raw = vault.get_raw(&id).unwrap().unwrap();
+            let grant = decode_federation_grant_body(&raw[ENTITY_METADATA_HEADER_LEN..]).unwrap();
+            (grant.member_ref == member).then_some((id, grant))
+        })
+        .unwrap();
+    let project_b = EntityId::now();
+    grant.authority_scope.audience = ScopeAxis::Some(BTreeSet::from([ScopeId(project_b)]));
+    vault
+        .batch()
+        .put_replicated(
+            &id,
+            ENTITY_TYPE_FEDERATION_GRANT,
+            test_time(1),
+            1,
+            &encode_federation_grant_body(&grant).unwrap(),
+        )
+        .commit()
+        .unwrap();
+    assert!(member_facade.put_structural(&task()).is_err());
+    assert!(
+        member_facade
+            .claim_upsert(&claim_input(
+                "profile.color",
+                &member,
+                "user_stated",
+                serde_json::json!("outside"),
+            ))
+            .is_err()
+    );
+    assert_eq!(
+        vault.entities_by_type(ENTITY_TYPE_TASK).unwrap().len(),
+        before_tasks
+    );
+    assert_eq!(
+        vault.entities_by_type(ENTITY_TYPE_CLAIM).unwrap().len(),
+        before_claims
+    );
+    // The new body is in project B, but the same ID still holds project A.
+    // Reject before replacing A, including its lookup indexes and receipts.
+    let mut replacement = claim_input(
+        "profile.name",
+        &member,
+        "user_stated",
+        serde_json::json!("replacement B"),
+    );
+    replacement.id = Some(claim_id.to_hex());
+    replacement.scope = Some(serde_json::json!({"scopeProjectId": project_b.to_hex()}));
+    let old_raw = vault.get_raw(&claim_id).unwrap();
+    let old_index = vault.claims_for_subject(&member).unwrap();
+    let old_receipts = member_facade.receipts(100).unwrap();
+    assert!(member_facade.claim_upsert(&replacement).is_err());
+    assert_eq!(vault.get_raw(&claim_id).unwrap(), old_raw);
+    assert_eq!(vault.claims_for_subject(&member).unwrap(), old_index);
+    assert_eq!(member_facade.receipts(100).unwrap(), old_receipts);
+
+    // Same-ID replacement remains possible when BOTH positions are in B.
+    let mut in_b = claim_input(
+        "profile.color",
+        &member,
+        "user_stated",
+        serde_json::json!("first"),
+    );
+    let in_b_id = EntityId::now();
+    in_b.id = Some(in_b_id.to_hex());
+    in_b.scope = Some(serde_json::json!({"scopeProjectId": project_b.to_hex()}));
+    member_facade.claim_upsert(&in_b).expect("project B claim");
+    in_b.value = serde_json::json!("second");
+    member_facade
+        .claim_upsert(&in_b)
+        .expect("project B replacement");
+    assert_eq!(
+        vault.get_claim(&in_b_id).unwrap().unwrap().value.as_str(),
+        Some("second")
+    );
+
+    grant.role = FederationGrantRole::Viewer;
+    grant.preset = FederationGrantPreset::ReadOnly;
+    grant.authority_scope = crate::federation::scope_codec::read_preset();
+    vault
+        .batch()
+        .put_replicated(
+            &id,
+            ENTITY_TYPE_FEDERATION_GRANT,
+            test_time(1),
+            1,
+            &encode_federation_grant_body(&grant).unwrap(),
+        )
+        .commit()
+        .unwrap();
+    let prior_claim = vault.get_raw(&claim_id).unwrap();
+    let prior_receipts = member_facade.receipts(100).unwrap();
+    assert!(
+        member_facade
+            .claim_retract(&accepted.claim_short_id)
+            .is_err()
+    );
+    assert_eq!(vault.get_raw(&claim_id).unwrap(), prior_claim);
+    assert_eq!(
+        vault.get_claim(&claim_id).unwrap().unwrap().lifecycle,
+        ClaimLifecycleStatus::Active
+    );
+    assert_eq!(member_facade.receipts(100).unwrap(), prior_receipts);
 }

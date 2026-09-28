@@ -105,15 +105,14 @@ fn request_fixture() -> LlmRequest {
     LlmRequest {
         model: ModelId::new("test/model@r1").expect("model id"),
         envelope: CallEnvelope {
+            seat_effort: None,
             scope: crate::llm::Scope::default(),
             purpose: CallPurpose::Consolidation,
             class: CallClass::BestEffort,
-            tier: TierPrecedence {
-                per_seat: None,
-                vault_policy: None,
-                purpose_default: None,
-                global_default: ModelTierRef("default".to_owned()),
-            },
+            tier: TierPrecedence::for_purpose(
+                &CallPurpose::Consolidation,
+                ModelTierRef("default".into()),
+            ),
             response_format: ResponseFormat::Text,
             locality: ModelLocality::OwnServer,
         },
@@ -429,6 +428,7 @@ fn durable_fatal_unknown_fallback_is_typed() -> Result<()> {
 #[test]
 fn budget_denied_opens_budget_trap_and_parks() -> Result<()> {
     let (_dir, vault) = open_vault();
+    install_failure_rules(&vault, &[("budget", "budget_trap", true, false)])?;
     let fixture = step_fixture(&vault, 10)?;
     let ctx = ctx(&vault, &fixture, 10_000);
     let backend = ScriptedBackend::new(Vec::new()); // must never be called
@@ -436,10 +436,24 @@ fn budget_denied_opens_budget_trap_and_parks() -> Result<()> {
 
     let outcome = block_on(call_as_step(&ctx, &backend, &guard, request_fixture()))
         .expect("trap outcome is Ok");
-    let StepOutcome::Trapped(trap) = outcome else {
+    let StepOutcome::Trapped {
+        trap,
+        failure_policy,
+    } = outcome
+    else {
         panic!("expected trapped step");
     };
     assert_eq!(trap.kind, DreamerTrapKind::Budget);
+    assert_eq!(
+        failure_policy.class,
+        crate::llm::DreamerFailureClass::Budget
+    );
+    assert_eq!(
+        failure_policy.route,
+        crate::llm::DreamerFailureRoute::BudgetTrap
+    );
+    assert!(failure_policy.consolidation_eligible);
+    assert!(!failure_policy.effector_eligible);
     assert_eq!(backend.calls(), 0);
 
     // The created trap claim exists and decodes.
@@ -1168,6 +1182,7 @@ fn admitted_call_finishes_after_deadline_and_refuses_next_step() -> Result<()> {
         response,
         memoized,
         legibility,
+        ..
     } = outcome
     else {
         panic!("expected finished step");
@@ -1971,6 +1986,42 @@ fn untrusted_active_step_claim_is_not_memo_indexed() -> Result<()> {
         Some(trusted),
         "the runner's own terminal claim is indexed"
     );
+    assert!(
+        vault.tier1_observation(trusted)?.is_none(),
+        "an ordinary indexed claim never attests model execution"
+    );
+
+    // Replaying the same well-shaped claim into another vault copies bytes,
+    // not the provider-completion event. The replay may create a memo index
+    // but must never register a tier-1 execution witness.
+    let (_replay_dir, replay) = open_vault();
+    replay.put_entity(
+        &fixture.subject,
+        ENTITY_TYPE_PERSON,
+        occurred(10),
+        10,
+        b"subject",
+    )?;
+    replay.put_entity(
+        &fixture.actor.entity_ref(),
+        ENTITY_TYPE_PERSON,
+        occurred(10),
+        10,
+        b"actor",
+    )?;
+    let bytes = vault.get(&trusted)?.expect("terminal claim body");
+    replay
+        .batch()
+        .put_replicated(
+            &trusted,
+            crate::registry::ENTITY_TYPE_CLAIM,
+            occurred(10_000),
+            10_000,
+            &bytes,
+        )
+        .commit()?;
+    assert!(replay.get_claim(&trusted)?.is_some());
+    assert!(replay.tier1_observation(trusted)?.is_none());
 
     // (1) No runner provenance: the identical value under a foreign envelope.
     let foreign_envelope = WriteEnvelope::new(
@@ -2031,6 +2082,7 @@ fn fatal_runs_declared_rule_and_memoizes_nonempty_outcome() -> Result<()> {
     let StepOutcome::Finished {
         response,
         memoized: false,
+        failure_policy: Some(policy),
         ..
     } = first
     else {
@@ -2045,12 +2097,127 @@ fn fatal_runs_declared_rule_and_memoizes_nonempty_outcome() -> Result<()> {
     assert!(
         matches!(response.finish_reason, FinishReason::Other { name } if name.starts_with("fallback:json_rules_v1:"))
     );
+    assert_eq!(policy.class, crate::llm::DreamerFailureClass::Fatal);
+    assert_eq!(policy.route, crate::llm::DreamerFailureRoute::Fallback);
+    assert!(!policy.consolidation_eligible && !policy.effector_eligible);
     assert_eq!(guard.read().reserved_units, 0);
     assert!(matches!(
         block_on(call_as_step(&ctx, &backend, &guard, request)).expect("memo"),
-        StepOutcome::Finished { memoized: true, .. }
+        StepOutcome::Finished { memoized: true, failure_policy: Some(replayed), .. }
+            if replayed == policy
     ));
     assert_eq!(backend.calls(), 1);
+    Ok(())
+}
+
+fn install_failure_rules(vault: &Vault, rows: &[(&str, &str, bool, bool)]) -> Result<()> {
+    let mut manifest =
+        rmpv::decode::read_value(&mut crate::gate::default_policy_manifest().as_slice())
+            .expect("default manifest");
+    let rmpv::Value::Map(entries) = &mut manifest else {
+        panic!("manifest map")
+    };
+    entries.retain(|(key, _)| key.as_str() != Some("dreamer_failure_rules"));
+    entries.push((
+        rmpv::Value::from("dreamer_failure_rules"),
+        rmpv::Value::Array(
+            rows.iter()
+                .map(|(class, route, consolidation, effector)| {
+                    rmpv::Value::Map(vec![
+                        (rmpv::Value::from("failure"), rmpv::Value::from(*class)),
+                        (rmpv::Value::from("route"), rmpv::Value::from(*route)),
+                        (
+                            rmpv::Value::from("consolidation_eligible"),
+                            rmpv::Value::Boolean(*consolidation),
+                        ),
+                        (
+                            rmpv::Value::from("effector_eligible"),
+                            rmpv::Value::Boolean(*effector),
+                        ),
+                        (
+                            rmpv::Value::from("default_consolidation_eligible"),
+                            rmpv::Value::Boolean(*consolidation),
+                        ),
+                        (
+                            rmpv::Value::from("default_effector_eligible"),
+                            rmpv::Value::Boolean(*effector),
+                        ),
+                    ])
+                })
+                .collect(),
+        ),
+    ));
+    let mut data = Vec::new();
+    rmpv::encode::write_value(&mut data, &manifest).expect("encode policy");
+    crate::test_util::put_policy_manifest_bytes(
+        vault,
+        crate::gate::default_policy_manifest_id()?,
+        &data,
+    )
+}
+
+#[test]
+fn retryable_exhaustion_returns_resident_decision_after_one_retry_authority() -> Result<()> {
+    let (_dir, vault) = open_vault();
+    install_failure_rules(&vault, &[("retryable", "retry", false, true)])?;
+    let fixture = step_fixture(&vault, 10)?;
+    let ctx = ctx(&vault, &fixture, 10_000);
+    let backend = ScriptedBackend::new(vec![Err(RetryableLlmError::ServerError.into()); 4]);
+    let guard = guard_with_limit(10_000);
+    let error = block_on(call_as_step(&ctx, &backend, &guard, request_fixture()))
+        .expect_err("retry authority exhausted");
+    let DurableStepError::ClassifiedLlm {
+        source: LlmError::Retryable(RetryableLlmError::ServerError),
+        failure_policy,
+    } = error
+    else {
+        panic!("expected classified retryable error")
+    };
+    assert_eq!(
+        failure_policy.class,
+        crate::llm::DreamerFailureClass::Retryable
+    );
+    assert_eq!(failure_policy.route, crate::llm::DreamerFailureRoute::Retry);
+    assert!(!failure_policy.consolidation_eligible);
+    assert!(failure_policy.effector_eligible);
+    assert_eq!(backend.calls(), 4);
+    assert_eq!(guard.read().reserved_units, 0);
+    Ok(())
+}
+
+#[test]
+fn fatal_fallback_carries_resident_policy_on_first_run_and_replay() -> Result<()> {
+    let (_dir, vault) = open_vault();
+    install_failure_rules(&vault, &[("fatal", "fallback", true, false)])?;
+    let fixture = step_fixture(&vault, 10)?;
+    let ctx = ctx(&vault, &fixture, 10_000);
+    let backend = ScriptedBackend::new(vec![Err(FatalLlmError::Auth.into())]);
+    let guard = guard_with_limit(10_000);
+    let mut request = request_fixture();
+    request.envelope.class = CallClass::Durable {
+        fallback: DeterministicFallback {
+            name: "json_rules_v1".into(),
+            config: Some(
+                json!({"version":1,"rows":[{"failure":"fatal","value":{"verdict":"hold"}}]}),
+            ),
+        },
+    };
+    for (memoized, expected_calls) in [(false, 1), (true, 1)] {
+        let result = block_on(call_as_step(&ctx, &backend, &guard, request.clone()))
+            .expect("durable fallback");
+        let StepOutcome::Finished {
+            memoized: replay,
+            failure_policy: Some(policy),
+            ..
+        } = result
+        else {
+            panic!("fallback result")
+        };
+        assert_eq!(replay, memoized);
+        assert_eq!(backend.calls(), expected_calls);
+        assert!(policy.consolidation_eligible);
+        assert!(!policy.effector_eligible);
+    }
     Ok(())
 }
 
@@ -2094,9 +2261,14 @@ fn schema_correction_rechecks_budget_before_another_paid_call() -> Result<()> {
     };
     assert!(matches!(
         block_on(call_as_step(&ctx, &backend, &guard, request.clone())),
-        Err(DurableStepError::Llm(LlmError::BudgetDenied(
-            crate::llm::BudgetDenied::Exhausted
-        )))
+        Err(DurableStepError::ClassifiedLlm {
+            source: LlmError::BudgetDenied(crate::llm::BudgetDenied::Exhausted),
+            failure_policy: crate::llm::DreamerFailureDecision {
+                class: crate::llm::DreamerFailureClass::Budget,
+                route: crate::llm::DreamerFailureRoute::BudgetTrap,
+                ..
+            }
+        })
     ));
     assert_eq!(backend.calls(), 1);
     assert_eq!(guard.read().used_units, 150);
@@ -2350,6 +2522,68 @@ fn corrective_spend_survives_fatal_fallback_and_memo_replay() -> Result<()> {
     assert_eq!(response, replay);
     assert_eq!(backend.calls(), 2);
     assert_eq!(guard.read().used_units, 150);
+    Ok(())
+}
+
+#[test]
+fn policy_read_failure_replays_saved_fallback_without_spending_again() -> Result<()> {
+    let (_dir, vault) = open_vault();
+    let fixture = step_fixture(&vault, 10)?;
+    let ctx = ctx(&vault, &fixture, 10_000);
+    let guard = guard_with_limit(10_000);
+    let backend = ScriptedBackend::new(vec![
+        Ok(response_fixture("not json")),
+        Err(FatalLlmError::Auth.into()),
+    ]);
+    let mut request = request_fixture();
+    request.envelope.response_format = ResponseFormat::Json {
+        schema: json!({"type":"object"}),
+    };
+    request.envelope.class = CallClass::Durable {
+        fallback: DeterministicFallback {
+            name: "json_rules_v1".into(),
+            config: Some(
+                json!({"version":1,"rows":[{"failure":"auth","value":{"verdict":"hold"}}]}),
+            ),
+        },
+    };
+    let hash = request.canonical_hash().expect("hash");
+    vault
+        .test_hooks()
+        .arm_fail_next_dreamer_failure_policy_read();
+    assert!(matches!(
+        block_on(call_as_step(&ctx, &backend, &guard, request.clone())),
+        Err(DurableStepError::Engine(Error::InvariantViolation(
+            "injected dreamer failure policy read"
+        )))
+    ));
+    let saved = step_state_read(&vault, fixture.attempt_id, &hash)?.expect("recoverable step");
+    assert_eq!(saved.progression, StepProgression::ResponseReceived);
+    assert!(saved.response_payload.is_some());
+    assert_eq!(backend.calls(), 2);
+    assert_eq!(guard.read().used_units, 150);
+    assert_eq!(guard.read().reserved_units, 0);
+
+    let StepOutcome::Finished {
+        response,
+        memoized: true,
+        failure_policy: Some(policy),
+        ..
+    } = block_on(call_as_step(&ctx, &backend, &guard, request.clone())).expect("saved response")
+    else {
+        panic!("stored fallback did not replay");
+    };
+    assert_eq!(response.usage.input.total, 100);
+    assert_eq!(response.usage.output.total, 50);
+    assert_eq!(policy.class, crate::llm::DreamerFailureClass::Fatal);
+    assert_eq!(backend.calls(), 2);
+    assert_eq!(guard.read().used_units, 150);
+    assert!(step_state_read(&vault, fixture.attempt_id, &hash)?.is_none());
+    assert!(matches!(
+        block_on(call_as_step(&ctx, &backend, &guard, request)),
+        Ok(StepOutcome::Finished { memoized: true, .. })
+    ));
+    assert_eq!(backend.calls(), 2);
     Ok(())
 }
 
@@ -2844,4 +3078,224 @@ fn schema_compartment_evaluation_has_its_own_fuel_ceiling() {
         Outcome::LimitExceeded
     );
     assert!(super::validate_json_schema(&schema, &value).is_ok());
+}
+
+#[test]
+fn failure_signals_use_executed_model_revisions_and_role_override() -> Result<()> {
+    use crate::consent::{ComposedEffect, EffectFacts};
+    use crate::failure_signals::{
+        AgentKind, AgentSurface, FailureClassV1, FailureSignalInput, FailureTaxonomy,
+        VersionedComponent,
+    };
+    use crate::receipt::{ReceiptKind, ReceiptQuery};
+    use crate::self_heal::{
+        decode_diagnostic_event_body, diagnostic_event_id, encode_diagnostic_event_body,
+    };
+    use crate::store::GateDecisionId;
+
+    let mut config = VaultConfig::device();
+    config.failure_signals.export_opt_in = true;
+    let (_dir, vault) = crate::test_util::open_test_vault_with(config);
+    let owner_id = EntityId::now();
+    vault.put_entity(&owner_id, ENTITY_TYPE_PERSON, occurred(1), 1, b"owner")?;
+    let owner =
+        vault.authenticate_owner(owner_id, "principal:owner", true, GateDecisionId::now())?;
+    let effect =
+        ComposedEffect::new(EffectFacts::new("channel.send")?.with_external_observers(true));
+    vault.approve_once(&owner, effect.digest())?;
+    vault.deny_consent(&owner, effect.digest())?;
+    let query = ReceiptQuery::new(16)
+        .with_kind(ReceiptKind::Gate)
+        .with_actor(owner_id.to_hex());
+    let source_id = vault.run_consent_denied_detector("run-test", query)?[0];
+    let source = decode_diagnostic_event_body(&vault.get(&source_id)?.expect("diagnostic"))?;
+    let fixture = step_fixture(&vault, 10)?;
+    let ctx = ctx(&vault, &fixture, 10_000);
+    let backend = ScriptedBackend::new(vec![
+        Ok(response_fixture("first")),
+        Ok(response_fixture("second")),
+    ]);
+    let guard = guard_with_limit(10_000);
+    let mut observed = Vec::new();
+    for version in ["r1", "r2"] {
+        let actual =
+            ModelId::new(format!("test/model@{version}")).expect("validated model identity");
+        let selected = crate::llm::RoleModelDefaults::new()
+            .with_override(crate::llm::LlmRole::Orchestrator, actual.clone())
+            .resolve(crate::llm::LlmRole::Orchestrator);
+        assert_eq!(selected, actual);
+        let mut request = request_fixture();
+        request.model = selected;
+        let hash = request.canonical_hash().expect("step hash");
+        let outcome =
+            block_on(call_as_step(&ctx, &backend, &guard, request)).expect("executed step");
+        assert!(matches!(
+            outcome,
+            StepOutcome::Finished {
+                memoized: false,
+                ..
+            }
+        ));
+        let step_id =
+            step_index_lookup(&vault, fixture.attempt_id, &hash)?.expect("terminal step claim");
+        // Editing an otherwise real diagnostic to cite an unrelated step
+        // cannot attach that model: only the producer may register a source.
+        let mut event = source.clone();
+        event.evidence_refs.push(step_id);
+        event.evidence_refs.sort_unstable();
+        event.replay.checkpoint_ref = Some(step_id.to_hex());
+        let body = encode_diagnostic_event_body(&event)?;
+        let diagnostic_id = diagnostic_event_id(&event.detector_id, &body);
+        vault.emit_diagnostic_event(&diagnostic_id, &event)?;
+        assert!(vault.tier1_observation(diagnostic_id)?.is_none());
+        let signal = FailureSignalInput {
+            taxonomy: FailureTaxonomy::V1(FailureClassV1::TaskFailure),
+            agent_surface: AgentSurface::Task,
+            agent_kind: AgentKind::Custom,
+            agent: VersionedComponent {
+                name: "custom".into(),
+                version: "v1".into(),
+            },
+            agent_ref: None,
+        };
+        let witnessed_step = vault
+            .tier1_observation(step_id)?
+            .expect("actual execution witness");
+        vault.record_failure_signal(&witnessed_step, signal)?;
+        observed.push(step_id);
+    }
+    assert_eq!(observed.len(), 2);
+    let rows = vault.export_tier1_failure_counts()?;
+    assert_eq!(
+        rows.len(),
+        2,
+        "the same role must not merge distinct actual revisions"
+    );
+    let wire = rows
+        .iter()
+        .map(|row| serde_json::to_value(row).expect("tier-1 row"))
+        .collect::<Vec<_>>();
+    assert_eq!(wire[0]["model"]["name"], wire[1]["model"]["name"]);
+    assert_ne!(wire[0]["model"]["version"], wire[1]["model"]["version"]);
+    for row in &wire {
+        assert_ne!(row["model"]["name"], "openai/gpt-4.1");
+        assert_ne!(row["model"]["version"], "unattributed");
+    }
+    Ok(())
+}
+
+#[test]
+fn option_link_void_wakes_a_parked_code_mode_peer_wait_without_settling_ask()
+-> std::result::Result<(), Box<dyn std::error::Error>> {
+    use crate::task_verb::{
+        ConsultPayloadRef, TaskAskOptionId, TaskAskQuestion, TaskAskSpec, TaskAskStatus,
+        TaskAskTarget, TaskAskWait,
+    };
+    let dir = tempfile::tempdir()?;
+    let vault = Vault::open(dir.path(), VaultConfig::default())?;
+    let owner = vault.ensure_embedded_owner_actor()?;
+    let friend = EntityId::now();
+    vault.put_entity(&friend, ENTITY_TYPE_PERSON, occurred(1), 1, b"friend")?;
+    let question = EntityId::now();
+    let question_body =
+        rmp_serde::to_vec_named(&std::collections::BTreeMap::from([("role", "question")]))?;
+    vault.put_entity(
+        &question,
+        crate::registry::ENTITY_TYPE_TURN,
+        occurred(1),
+        1,
+        &question_body,
+    )?;
+    let mut what = TaskAskQuestion::new(ConsultPayloadRef::Turn(question));
+    what.options
+        .insert(TaskAskOptionId::new("yes").unwrap(), "Yes".into());
+    let memory = vault.memory(owner, EdgeActorClass::Human);
+    let spec = |key: &str, what: TaskAskQuestion| {
+        let mut spec = TaskAskSpec::shorthand(
+            Some(TaskAskTarget::People([friend].into())),
+            what,
+            Some(u64::MAX),
+            Default::default(),
+        );
+        spec.intent_key = key.into();
+        spec
+    };
+    let first = memory
+        .tasks_ask(&spec("void-after-park", what.clone()))?
+        .handle;
+    let link = memory.tasks_ask_option_link(first, friend)?;
+    assert!(matches!(
+        memory.tasks_wait(first, None)?,
+        TaskAskWait::Park(_)
+    ));
+    let fixture = step_fixture(&vault, 10)?;
+    let step_hash = request_fixture().canonical_hash().expect("hash");
+    let trap = open_peer_wait(&vault, &fixture, first.group_ref, step_hash)?;
+    let runner = DreamerRunnerStore::new(&vault);
+    let other_status = match runner.enqueue(EnqueueDreamerAttempt {
+        attempt_type: "consolidation-step-test".into(),
+        input: rmpv::Value::from("other wait"),
+        parent_attempt: None,
+        dedupe_key: None,
+        run_id: Some("void-run-b".into()),
+        now: 10,
+    })? {
+        EnqueueDreamerAttemptOutcome::Enqueued(status)
+        | EnqueueDreamerAttemptOutcome::Existing(status) => status,
+    };
+    let other_fixture = StepFixture {
+        attempt_id: other_status.attempt.id,
+        actor: fixture.actor,
+        subject: fixture.subject,
+    };
+    let other_trap = open_peer_wait(&vault, &other_fixture, first.group_ref, [0xB4; 32])?;
+    for wait in [&trap, &other_trap] {
+        assert_eq!(
+            trap_head(&vault, &wait.trap_claim_id)?.1.state,
+            DreamerTrapState::Waiting
+        );
+    }
+    vault.void_ask_option_link(&link.token)?;
+    for wait in [&trap, &other_trap] {
+        assert_eq!(
+            trap_head(&vault, &wait.trap_claim_id)?.1.state,
+            DreamerTrapState::Sent
+        );
+    }
+    // Run A consumes and durably acknowledges the group generation before
+    // B's recovery. B's own Sent trap is still a valid signal.
+    let sent_at = trap_head(&vault, &trap.trap_claim_id)?
+        .1
+        .at
+        .max(trap_head(&vault, &other_trap.trap_claim_id)?.1.at);
+    consume_trap_signal(&vault, &runner, &trap, sent_at + 1)?;
+    crate::task_verb::ack_option_void_generation(&vault, first.group_ref, 1)?;
+    assert!(!crate::task_verb::has_option_link_void(
+        &vault,
+        first.group_ref
+    )?);
+    assert_eq!(reconcile_peer_result_signals(&vault, sent_at + 2)?, 0);
+    assert_eq!(resume_peer_result_steps(&vault, sent_at + 2)?, 1);
+    assert_eq!(runner.parked_attempt(other_fixture.attempt_id)?, None);
+    assert_eq!(
+        DreamerRunnerStore::new(&vault).parked_attempt(fixture.attempt_id)?,
+        None
+    );
+    assert!(
+        matches!(memory.tasks_wait(first, None)?, TaskAskWait::Changed { voided, .. } if voided == vec![friend])
+    );
+    assert!(matches!(
+        memory.tasks_ask_status(first)?,
+        TaskAskStatus::Pending { .. }
+    ));
+
+    // If the void commits before the engine opens a wait, the next call
+    // observes it directly rather than parking behind a terminal-only signal.
+    let second = memory.tasks_ask(&spec("void-before-park", what))?.handle;
+    let second_link = memory.tasks_ask_option_link(second, friend)?;
+    vault.void_ask_option_link(&second_link.token)?;
+    assert!(
+        matches!(memory.tasks_wait(second, None)?, TaskAskWait::Changed { voided, .. } if voided == vec![friend])
+    );
+    Ok(())
 }

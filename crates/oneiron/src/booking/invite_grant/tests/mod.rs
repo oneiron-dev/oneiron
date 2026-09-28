@@ -14,7 +14,7 @@ use crate::campaign::claims::{
     CommDoNotContactValue, DO_NOT_CONTACT_SCOPE_ALL, PREDICATE_COMM_DO_NOT_CONTACT,
     encode_do_not_contact_value,
 };
-use crate::channel_identity::{ChannelIdentity, SelfHeldShape};
+use crate::channel_identity::SelfHeldShape;
 use crate::claim::{ClaimApprovalStatus, ClaimBody, ClaimSource, ClaimSubject};
 use crate::config::VaultConfig;
 use crate::outbound_consent::DataClass;
@@ -245,14 +245,14 @@ fn put_booking_claims(
 }
 
 fn identity(vault: &Vault, seed: u8, actor: EntityId, channel: &str, address: &str) {
-    let mut identity = ChannelIdentity::requested(
+    let identity = crate::test_util::self_held_identity_in_state(
         channel,
         address,
         SelfHeldShape::DedicatedAddress,
         ChannelIdentityBinding::agent(actor),
+        ChannelIdentityState::Active,
         NOW,
     );
-    identity.state = ChannelIdentityState::Active;
     vault
         .create_channel_identity(&entity(seed), &identity)
         .expect("create sending identity");
@@ -268,7 +268,7 @@ fn ics_blob(vault: &Vault, seed: u8, actor: EntityId, uid: &str, sequence: u32) 
         summary: EVENT_TYPE.to_owned(),
         starts_at_utc: SLOT_START,
         ends_at_utc: SLOT_END,
-        tz_label: CONFIRM_INVITE_TZ_LABEL.to_owned(),
+        tz_label: "UTC".to_owned(),
         dtstamp_utc: NOW,
     })
     .expect("emit invite document");
@@ -872,7 +872,8 @@ fn confirm_invite_uses_frozen_calendar_payload_contract() {
 #[test]
 fn confirm_invite_uses_once_minted_uid_and_current_sequence() {
     let fixture = fixture();
-    fixture.grant();
+    let grant = fixture.grant();
+    let blob = ics_blob(&fixture.vault, 0x7b, fixture.actor, &fixture.uid, 0);
     let receipt = ConfirmReceipt {
         calendar: CalendarRevision {
             event_ref: fixture.booking,
@@ -883,9 +884,20 @@ fn confirm_invite_uses_once_minted_uid_and_current_sequence() {
         cancel_token: OpaqueLifecycleToken("cancel".to_owned()),
     };
     let mut sink = SpySink::default();
-    let first =
-        dispatch_confirm_booking_invite(&fixture.vault, fixture.actor, &receipt, &mut sink, NOW)
-            .expect("the first confirm emits one REQUEST");
+    let first = enqueue_confirm_invite(
+        &fixture.vault,
+        fixture.actor,
+        grant,
+        &ConfirmedBookingInvite {
+            booking_ref: fixture.booking,
+            uid: &receipt.calendar.uid,
+            sequence: receipt.calendar.sequence,
+            ics_blob_ref: &blob,
+        },
+        &mut sink,
+        NOW,
+    )
+    .expect("the first confirm emits one REQUEST");
     let frozen = frozen_invite(&fixture.vault, first);
     assert_eq!(
         frozen.uid, receipt.calendar.uid,
@@ -895,9 +907,20 @@ fn confirm_invite_uses_once_minted_uid_and_current_sequence() {
 
     // An idempotent confirm replay answers with the intent the first pass
     // recorded: no second UID, no second REQUEST, no bumped SEQUENCE.
-    let second =
-        dispatch_confirm_booking_invite(&fixture.vault, fixture.actor, &receipt, &mut sink, NOW)
-            .expect("a replay resolves to the recorded intent");
+    let second = enqueue_confirm_invite(
+        &fixture.vault,
+        fixture.actor,
+        grant,
+        &ConfirmedBookingInvite {
+            booking_ref: fixture.booking,
+            uid: &receipt.calendar.uid,
+            sequence: receipt.calendar.sequence,
+            ics_blob_ref: &blob,
+        },
+        &mut sink,
+        NOW,
+    )
+    .expect("a replay resolves to the recorded intent");
     assert_eq!(first, second);
     assert_eq!(sink.calls, 1, "one booking earns one REQUEST");
     assert_eq!(invite_ledger_records(&fixture.vault).len(), 1);

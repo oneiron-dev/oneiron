@@ -30,6 +30,9 @@ const HOLD_REASON: &str = "checker: hedged verdict";
 /// ENGINE's family marker and is always applied, so the host's own leading
 /// "checker:" word renders into the slug after it; the WHY stays legible.
 const HOLD_RECEIPT_REASON: &str = "checker_checker_hedged_verdict";
+const BASE_OAUTH_EXCHANGE_SECS: u64 = 3_600;
+const BASE_INITIAL_OWNER_SECS: u64 = 365 * 24 * 60 * 60;
+const LIFETIME_PRECEDENCE: &str = "vault_ceiling_holder_narrows";
 
 /// Counts every consult and records what it was shown.
 struct RecordingAutoChecker {
@@ -118,6 +121,7 @@ fn checker_manifest(extra: Vec<(Value, Value)>) -> Vec<u8> {
         signatures_entry(),
     ];
     entries.extend(extra);
+    crate::test_util::add_default_teacher_probe_policy(&mut entries);
     let mut data = encode_policy_manifest(entries);
     append_actor_ceiling(
         &mut data,
@@ -204,6 +208,7 @@ fn gate_claim_write(
             envelope: Some(envelope),
             auto_checker: checker,
             defer_metrics_until_commit: false,
+            transition: None,
         },
         &policy,
         GateWriteMode {
@@ -320,17 +325,61 @@ fn knob_roundtrip_and_unset_is_identity() -> Result<()> {
 
 fn posture_entry(value: &str) -> (Value, Value) {
     (
-        Value::from(POLICY_COMM_OPT_OUT_POSTURE_KEY),
-        Value::from(value),
+        Value::from("policy_values"),
+        Value::Array(vec![Value::Map(vec![
+            (
+                Value::from("row_ref"),
+                Value::from("fixture.comm_opt_out_posture"),
+            ),
+            (Value::from("key"), Value::from("comm_opt_out_posture")),
+            (Value::from("value"), Value::from(value)),
+            (
+                Value::from("scope"),
+                Value::Map(vec![(Value::from("level"), Value::from("vault"))]),
+            ),
+        ])]),
+    )
+}
+
+fn credential_lifetimes_entry(oauth_exchange_secs: u64, initial_owner_secs: u64) -> (Value, Value) {
+    (
+        Value::from(POLICY_CREDENTIAL_LIFETIMES_KEY),
+        Value::Map(vec![
+            (Value::from("precedence"), Value::from(LIFETIME_PRECEDENCE)),
+            (
+                Value::from("oauth_exchange_secs"),
+                Value::from(oauth_exchange_secs),
+            ),
+            (
+                Value::from("initial_owner_secs"),
+                Value::from(initial_owner_secs),
+            ),
+        ]),
     )
 }
 
 fn combined_manifest(posture: Option<&str>, checker: Option<&str>) -> Vec<u8> {
-    let entries = posture
-        .map(posture_entry)
-        .into_iter()
-        .chain(checker.map(checker_entry))
-        .collect();
+    combined_manifest_with_lifetimes(
+        posture,
+        checker,
+        BASE_OAUTH_EXCHANGE_SECS,
+        BASE_INITIAL_OWNER_SECS,
+    )
+}
+
+fn combined_manifest_with_lifetimes(
+    posture: Option<&str>,
+    checker: Option<&str>,
+    oauth_exchange_secs: u64,
+    initial_owner_secs: u64,
+) -> Vec<u8> {
+    let entries = std::iter::once(credential_lifetimes_entry(
+        oauth_exchange_secs,
+        initial_owner_secs,
+    ))
+    .chain(posture.map(posture_entry))
+    .chain(checker.map(checker_entry))
+    .collect();
     encode_policy_manifest(entries)
 }
 
@@ -381,10 +430,21 @@ fn both_manifest_keys_parse_and_fold_independently() -> Result<()> {
                     put_policy_manifest_bytes(&folded, id, &manifests[index])?;
                 }
                 let policy = resolve(&folded)?;
-                assert_eq!(policy.comm_opt_out_posture(), expected_posture);
-                assert_eq!(policy.diagnostics().malformed_manifest_seen, malformed);
-                assert_eq!(policy.is_fail_closed(), malformed);
-                if !malformed {
+                let conflicting_vault_rows = left_posture.is_some() && right_posture.is_some();
+                assert_eq!(
+                    policy.comm_opt_out_posture(),
+                    if malformed || conflicting_vault_rows {
+                        CommOptOutPosture::Escalate
+                    } else {
+                        expected_posture
+                    }
+                );
+                assert_eq!(
+                    policy.diagnostics().malformed_manifest_seen,
+                    malformed || conflicting_vault_rows
+                );
+                assert_eq!(policy.is_fail_closed(), malformed || conflicting_vault_rows);
+                if !malformed && !conflicting_vault_rows {
                     assert_eq!(policy.auto_checker(), Some(CHECKER_REF));
                 }
             }
@@ -402,13 +462,21 @@ fn either_manifest_key_rejects_malformed_values_and_duplicates() -> Result<()> {
         (POLICY_AUTO_CHECKER_KEY, vec![Value::from(" \t ")]),
         (POLICY_AUTO_CHECKER_KEY, vec![Value::from(oversized)]),
         (POLICY_AUTO_CHECKER_KEY, vec![Value::from(CHECKER_REF); 2]),
-        (POLICY_COMM_OPT_OUT_POSTURE_KEY, vec![Value::Nil]),
-        (POLICY_COMM_OPT_OUT_POSTURE_KEY, vec![Value::from(1)]),
-        (POLICY_COMM_OPT_OUT_POSTURE_KEY, vec![Value::from("allow")]),
+        ("policy_values", vec![Value::Nil]),
+        ("policy_values", vec![Value::from(1)]),
         (
-            POLICY_COMM_OPT_OUT_POSTURE_KEY,
-            vec![Value::from("escalate"); 2],
+            "policy_values",
+            vec![Value::Array(vec![Value::Map(vec![
+                (Value::from("row_ref"), Value::from("invalid")),
+                (Value::from("key"), Value::from("comm_opt_out_posture")),
+                (Value::from("value"), Value::from("allow")),
+                (
+                    Value::from("scope"),
+                    Value::Map(vec![(Value::from("level"), Value::from("vault"))]),
+                ),
+            ])])],
         ),
+        ("policy_values", vec![posture_entry("escalate").1; 2]),
     ] {
         // The other key is valid and present, not omitted as a shortcut.
         let mut entries = vec![if key == POLICY_AUTO_CHECKER_KEY {
@@ -472,6 +540,14 @@ fn integrated_no_checker_frontier(posture: &str) -> [u8; 32] {
     text(&mut bytes, "suspend");
     text(&mut bytes, posture);
     len(&mut bytes, 0); // budget-policy rows
+    text(&mut bytes, "scope_precedence_effective");
+    text(&mut bytes, "nested_narrowing"); // shipped-data fallback
+    len(&mut bytes, 0); // policy value rows
+    text(&mut bytes, "credential_lifetimes");
+    bytes.push(1); // present
+    text(&mut bytes, LIFETIME_PRECEDENCE);
+    bytes.extend_from_slice(&BASE_OAUTH_EXCHANGE_SECS.to_le_bytes());
+    bytes.extend_from_slice(&BASE_INITIAL_OWNER_SECS.to_le_bytes());
     len(&mut bytes, 1); // one pack
     text(&mut bytes, "gate-test");
     text(&mut bytes, "v1");
@@ -481,9 +557,14 @@ fn integrated_no_checker_frontier(posture: &str) -> [u8; 32] {
     bytes.push(1);
     text(&mut bytes, "normal"); // default sensitivity
     bytes.push(0); // unknown axis
-    for _ in 0..5 {
-        len(&mut bytes, 0); // rules, actor ceilings, delegations, revokes, scoped grants
+    for _ in 0..4 {
+        len(&mut bytes, 0); // rules, actor ceilings, delegations, revokes
     }
+    text(&mut bytes, "weave_report_policy");
+    bytes.push(0); // absent, not an explicitly empty policy table
+    text(&mut bytes, "nested_narrowing");
+    len(&mut bytes, 0); // no weave rows
+    len(&mut bytes, 0); // scoped grants
     bytes.extend_from_slice(&[0; 2]); // owner-policy enabled / rows dropped
     len(&mut bytes, 0); // owner-policy rows
     bytes.extend_from_slice(&[0; 3]); // document, output contract, patterns dropped
@@ -526,7 +607,7 @@ fn checker_posture_frontier_matrix_preserves_main_and_rebinds_authority() -> Res
             let resolved_posture = posture.unwrap_or("escalate");
             assert_eq!(policy.comm_opt_out_posture().as_str(), resolved_posture);
             let hash = policy.read_frontier_hash()?;
-            if checker.is_none() {
+            if checker.is_none() && posture.is_none() {
                 assert_eq!(hash, integrated_no_checker_frontier(resolved_posture));
             }
             let rtxn = vault.store.env.read_txn()?;
@@ -534,7 +615,7 @@ fn checker_posture_frontier_matrix_preserves_main_and_rebinds_authority() -> Res
             let grant = standing_outbound_grant_binding_parts(&intent, &policy)?;
             assert_eq!(consent.1, hash);
             assert_eq!(grant.1, hash);
-            bindings.push((resolved_posture, checker, hash, consent.0, grant.0));
+            bindings.push((posture, checker, hash, consent.0, grant.0));
         }
     }
     for left in &bindings {
@@ -553,6 +634,25 @@ fn checker_posture_frontier_matrix_preserves_main_and_rebinds_authority() -> Res
             assert_eq!((&left.4, left.2) == (&right.4, right.2), same_policy);
         }
     }
+    Ok(())
+}
+
+#[test]
+fn changed_effective_credential_lifetime_moves_read_frontier() -> Result<()> {
+    let (_dir, vault) = temp_vault();
+    let write = |oauth_secs| {
+        let manifest =
+            combined_manifest_with_lifetimes(None, None, oauth_secs, BASE_INITIAL_OWNER_SECS);
+        put_policy_manifest_bytes(&vault, test_id(0x29), &manifest)
+    };
+    write(BASE_OAUTH_EXCHANGE_SECS)?;
+    let before = resolve(&vault)?.read_frontier_hash()?;
+    write(BASE_OAUTH_EXCHANGE_SECS / 2)?;
+    let after = resolve(&vault)?.read_frontier_hash()?;
+    assert_ne!(
+        before, after,
+        "a changed resolved lifetime must invalidate bound frontiers"
+    );
     Ok(())
 }
 
@@ -1287,7 +1387,7 @@ fn manifest_verdict_floor_enforces_proposed_or_logs_shadow_on_real_write() -> Re
             ClaimApprovalStatus::Proposed
         );
         let model = ModelId::new("test/verdict@1").expect("model");
-        vault.set_model_manifest(&ModelManifest {
+        let manifest = ModelManifest {
             version: 2,
             roles: MODEL_ROLES
                 .into_iter()
@@ -1313,7 +1413,14 @@ fn manifest_verdict_floor_enforces_proposed_or_logs_shadow_on_real_write() -> Re
                 floor: ConfidenceBand::High,
                 mode,
             }),
-        })?;
+            seat_policy: None,
+        };
+        let approval = TeacherProbeApproval::for_scored_checkpoint(
+            &manifest,
+            &vault.teacher_probe_policy(None)?,
+            1_000_000,
+        )?;
+        vault.set_model_manifest_with_teacher_approval(&manifest, &approval)?;
         let checker = bounded(RecordingAutoChecker::new(AutoCheckOutcome::Verdict(
             CalibratedVerdict {
                 model,
@@ -1457,5 +1564,34 @@ fn rate_and_streak_are_soft_inputs_to_the_existing_verdict() -> Result<()> {
             ClaimApprovalStatus::Auto
         );
     }
+    Ok(())
+}
+
+#[test]
+fn authored_weave_policy_and_precedence_move_gate_frontier() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    let id = test_id(0x22);
+    let base = combined_manifest(None, None);
+    put_policy_manifest_bytes(&vault, id, &base)?;
+    let original = resolve(&vault)?.read_frontier_hash()?;
+    let mut rows = base;
+    rewrite_policy_manifest_entries(&mut rows, |entries| {
+        entries.push((
+            Value::from(crate::gate::weave_policy::KEY),
+            crate::gate::weave_policy::default_value(),
+        ));
+    });
+    put_policy_manifest_bytes(&vault, id, &rows)?;
+    let changed_rows = resolve(&vault)?.read_frontier_hash()?;
+    assert_ne!(original, changed_rows);
+    rewrite_policy_manifest_entries(&mut rows, |entries| {
+        entries.push((
+            Value::from(crate::gate::weave_policy::PRECEDENCE_KEY),
+            Value::from("holder_required"),
+        ));
+    });
+    put_policy_manifest_bytes(&vault, id, &rows)?;
+    let changed_precedence = resolve(&vault)?.read_frontier_hash()?;
+    assert_ne!(changed_rows, changed_precedence);
     Ok(())
 }

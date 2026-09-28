@@ -251,8 +251,7 @@ pub(super) fn validate_put_carriers(
         store,
         txn,
         &id,
-        context.entity_type,
-        context.occurred,
+        (context.entity_type, context.occurred, context.learned_at),
         data,
         context.replicated,
     )?;
@@ -302,21 +301,28 @@ pub(super) fn observe_claim_proposal_after_put(
     input: ProposalObservation<'_>,
 ) -> Result<()> {
     if !input.replicated
-        && input
+        && let Some(body) = input
             .body
-            .is_some_and(|body| body.approval == crate::claim::ClaimApprovalStatus::Proposed)
+            .filter(|body| body.approval == crate::claim::ClaimApprovalStatus::Proposed)
         && let Some(envelope) = input.envelope
     {
-        let threshold = match input.policy {
-            Some(policy) => policy.proposal_check_threshold(),
-            None => crate::gate::resolve_policy_manifest(store, &*wtxn)?.proposal_check_threshold(),
+        // The stored claim's scope, never a caller-selected policy position.
+        let scope = crate::gate::policy_values::PolicyEvaluationScope {
+            world: Some(body.world.unwrap_or_else(crate::claim::base_world_id)),
+            project: Some(body.scope_project),
+            ..Default::default()
+        };
+        let policy_source = match input.policy {
+            Some(policy) => policy.proposal_check_threshold_source(&scope),
+            None => crate::gate::resolve_policy_manifest(store, &*wtxn)?
+                .proposal_check_threshold_source(&scope),
         };
         crate::gate::proposal_observation::observe_submission_in_txn(
             store,
             wtxn,
             envelope.actor().entity_ref(),
             &format!("claim:{}", id.to_hex()),
-            threshold,
+            policy_source,
             input.body_changed,
         )?;
     }
@@ -341,6 +347,7 @@ pub(super) fn stage_task_and_turn_post_put(
     }
     if entity_type == crate::registry::ENTITY_TYPE_TURN {
         crate::conversation_dag::stage_session_carrier(store, wtxn, *id, data)?;
+        crate::conversation_dag::invalidate_thread_meta_for_turn_put(store, wtxn, *id)?;
     }
     Ok(())
 }
@@ -401,6 +408,10 @@ pub(super) fn validate_domain_carriers(
     data: &[u8],
     replicated: bool,
 ) -> Result<()> {
+    if entity_type == crate::registry::ENTITY_TYPE_CHANNEL_IDENTITY {
+        // Admission is shared by typed writes and replay, before put effects.
+        crate::channel_identity::validate_channel_identity_put_carrier(data, replicated)?;
+    }
     if entity_type == crate::registry::ENTITY_TYPE_TASK {
         crate::task_verb::guard_ask_fact_put(store, txn, id, timestamps.0, timestamps.1, data)?;
     }
