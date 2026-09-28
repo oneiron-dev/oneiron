@@ -141,4 +141,5 @@ pub(crate) struct PolicyManifestResolution {
     pub(crate) pack_install_policy: Option<crate::gate::PackInstallPolicy>,
     pub(super) pptx_comment_limits: Option<crate::edit_roundtrip::pptx::PptxOperationalLimits>,
     pub(super) hosted_tts: HostedTtsPolicy,
+    pub(super) slide_review_policy: crate::llm::decision::SlideReviewPolicy,
 }

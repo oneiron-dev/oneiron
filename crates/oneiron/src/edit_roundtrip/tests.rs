@@ -124,7 +124,7 @@ fn propose(session: &FixtureSession, input: &[u8], plan: &EditPlan, run_ref: &st
     match run_edit_roundtrip(session, input, OfficeFormat::Xlsx, plan, run_ref)
         .expect("pipeline runs")
     {
-        EditOutcome::Proposed(proposal) => proposal,
+        EditOutcome::Proposed(proposal) => *proposal,
         EditOutcome::Rejected { report, .. } => {
             panic!("expected a proposal, got rejection: {report:?}")
         }
@@ -565,6 +565,7 @@ fn manifest_round_trips_through_msgpack() {
         mutation_mode: MutationMode::Full,
         warnings: vec![EditWarning::new(WarningCode::SessionReported, "note")],
         pptx_holder_limits: None,
+        slide_judgments: Vec::new(),
     };
     let bytes = manifest.to_msgpack().unwrap();
     let decoded = EditManifest::from_msgpack(&bytes).unwrap();

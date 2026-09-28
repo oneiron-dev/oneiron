@@ -127,6 +127,8 @@ pub struct SettlementRecord {
     pub pptx_slide_creation_id_mints: Vec<(u64, u32)>,
     /// Each exported review comment's asker and answerer, independent of its author name.
     pub pptx_review_identities: Vec<PptxReviewIdentity>,
+    /// Per-unit typed decisions for a comment review, retained with the settle.
+    pub pptx_judgments: Vec<crate::edit_roundtrip::slides_review::SlideJudgment>,
     /// The anchor set that moved on select (empty for a discard).
     pub anchors: Vec<SettledAnchor>,
     /// Why the proposal was discarded (discard only).

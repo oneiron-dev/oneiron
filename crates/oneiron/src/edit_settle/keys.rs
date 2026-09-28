@@ -4,7 +4,7 @@
 pub const SETTLEMENT_SCHEMA_VERSION: u64 = 2;
 
 /// Pinned on-disk MessagePack key set for a [`SettlementRecord`](crate::edit_settle::SettlementRecord) body.
-pub const SETTLEMENT_RECORD_KEYS: [&str; 16] = [
+pub const SETTLEMENT_RECORD_KEYS: [&str; 17] = [
     "schema_version",
     "proposal_ref",
     "outcome",
@@ -21,6 +21,7 @@ pub const SETTLEMENT_RECORD_KEYS: [&str; 16] = [
     "pptx_slide_creation_id_mints",
     "pptx_review_identities",
     "sheet_answers",
+    "pptx_judgments",
 ];
 
 /// Pinned on-disk MessagePack key set for one [`SettledAnchor`](crate::edit_settle::SettledAnchor) entry.
@@ -99,6 +100,8 @@ pub(super) const FIELD_ANCHOR_MOVES: &str = "anchor_moves";
 
 pub(super) const FIELD_ANCHOR_DRIFTS: &str = "anchor_drifts";
 
+pub(super) const FIELD_SLIDE_JUDGMENTS: &str = "slide_judgments";
+
 pub(super) const FIELD_REASON: &str = "reason";
 
 pub(super) const KEY_PPTX_MINTS: &str = SETTLEMENT_RECORD_KEYS[13];
@@ -107,3 +110,5 @@ pub(super) const KEY_PPTX_REVIEW_IDENTITIES: &str = SETTLEMENT_RECORD_KEYS[14];
 pub(super) const FIELD_SHEET_ANSWER_COUNT: &str = "sheet_answer_count";
 
 pub(super) const FIELD_QUESTION_VERSION: &str = "question_version";
+
+pub(super) const KEY_PPTX_JUDGMENTS: &str = SETTLEMENT_RECORD_KEYS[16];
