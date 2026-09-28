@@ -17394,7 +17394,7 @@
      "path": "src/gate/constants.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 85
+      "crate-vis": 86
      }
     },
     {
@@ -17405,6 +17405,16 @@
      "purpose": "—",
      "surface": {
       "crate-vis": 28
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/gate/decode/decode_docedit_resource.rs",
+     "purpose": "Strict six-field document resource policy row decoder",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -17454,7 +17464,7 @@
      "path": "src/gate/decode/mod.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 4
      }
     },
     {
@@ -17482,7 +17492,7 @@
      "path": "src/gate/default_manifest.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 4
      }
     },
     {
@@ -17493,6 +17503,16 @@
      "purpose": "—",
      "surface": {
       "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/gate/docedit_resource.rs",
+     "purpose": "Vault-wide document resource ceilings, decoded from policy manifest data",
+     "surface": {
+      "crate-vis": 5
      }
     },
     {
@@ -17735,7 +17755,7 @@
      "path": "src/gate/resolution/accessors.rs",
      "purpose": "Read-only resolved-field accessors plus the frontier-hash entry",
      "surface": {
-      "crate-vis": 36
+      "crate-vis": 37
      }
     },
     {
@@ -17766,7 +17786,7 @@
      "purpose": "Store-scanning manifest fold plus budget-guard and trust adapters",
      "surface": {
       "crate-vis": 2,
-      "fn": 1
+      "fn": 2
      }
     },
     {
@@ -17954,6 +17974,14 @@
      "notable": [],
      "path": "src/gate/tests/delegation.rs",
      "purpose": "Delegated grants: fold, revoke dominance, depth cap, and cross-manifest chains",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/gate/tests/docedit_resource.rs",
+     "purpose": "Docedit resource-policy decode, trusted fold and engine-to-organ factory",
      "surface": {}
     },
     {
@@ -37305,7 +37333,7 @@
      "purpose": "—"
     },
     "gate": {
-     "files": 87,
+     "files": 90,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -37993,8 +38021,8 @@
    },
    "over_bar": 5,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2255,
-   "test_files": 773
+   "source_files": 2257,
+   "test_files": 774
   },
   "oneiron-android": {
    "files": [
@@ -39284,6 +39312,131 @@
    "purpose": "oneiron-bench — benchmark harness skeleton",
    "source_files": 101,
    "test_files": 20
+  },
+  "oneiron-docedit": {
+   "files": [
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/lib.rs",
+     "purpose": "Native document editing organ crate and retained OPC substrate",
+     "surface": {
+      "mod": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "Error"
+     ],
+     "path": "src/retained_opc/mod.rs",
+     "purpose": "Bounded, retained OPC archives",
+     "surface": {
+      "enum": 1,
+      "re-export": 2,
+      "type": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "Editability",
+      "Limits",
+      "Package"
+     ],
+     "path": "src/retained_opc/package.rs",
+     "purpose": "ZIP central-directory reader and copy-through writer",
+     "surface": {
+      "enum": 1,
+      "fn": 6,
+      "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/retained_opc/xml/ffi.rs",
+     "purpose": "Minimal Expat C ABI",
+     "surface": {
+      "crate-vis": 17
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/retained_opc/xml/mod.rs",
+     "purpose": "Bounded source-indexed XML part, with checked semantic patches",
+     "surface": {
+      "crate-vis": 1,
+      "re-export": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/retained_opc/xml/patch.rs",
+     "purpose": "Private checked edit authority",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "XmlLimits"
+     ],
+     "path": "src/retained_opc/xml/retained.rs",
+     "purpose": "One authoritative parse",
+     "surface": {
+      "crate-vis": 4,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/adversarial.rs",
+     "purpose": "—",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/breaker.rs",
+     "purpose": "—",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/identity.rs",
+     "purpose": "—",
+     "surface": {}
+    }
+   ],
+   "modules": {
+    "retained_opc": {
+     "files": 6,
+     "impl_vault": false,
+     "largest_src_bucket": "m",
+     "layout": "dir",
+     "purpose": "Bounded, retained OPC archives"
+    }
+   },
+   "over_bar": 0,
+   "purpose": "Native document editing organ crate and retained OPC substrate",
+   "source_files": 7,
+   "test_files": 3
   },
   "oneiron-driver": {
    "files": [
