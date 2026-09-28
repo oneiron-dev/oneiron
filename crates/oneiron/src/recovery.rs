@@ -16,11 +16,13 @@ mod document;
 mod ladder;
 mod quarantine;
 mod redaction;
+mod snapshot_writer;
 #[cfg(feature = "sync")]
 mod soft_shell;
 mod validation;
 #[cfg(feature = "sync")]
 pub(crate) use soft_shell::{materialize_retained_shells, retained_soft_shell};
+pub(crate) use validation::trusted_soft_addressing_edge;
 
 pub use canonical::*;
 pub use document::{CanonicalDocument, CanonicalHead, CanonicalHeadMove};
@@ -28,6 +30,7 @@ pub use document::{CanonicalDocument, CanonicalHead, CanonicalHeadMove};
 pub(crate) use document::{materialize_window_documents, validate_window_documents};
 pub use ladder::*;
 use quarantine::quarantine_invalid_artifact;
+pub use snapshot_writer::write_canonical_window_snapshot;
 
 use crate::error::{ArtifactError, Error, Result};
 
