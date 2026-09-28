@@ -122,6 +122,10 @@ pub(super) const ACT_POLICY_POSTURE_KEY: &str = "posture";
 pub(super) const CLASS_POLICY_HOLDER_REF_KEY: &str = "holder_ref";
 pub(super) const CLASS_POLICY_PRECEDENCE_KEY: &str = "holder_precedence";
 pub(crate) const POLICY_OWNER_POLICY_ROWS_KEY: &str = "owner_policy_rows";
+/// Manifest-authored owner row composition. Absence resolves to nested narrowing.
+pub(crate) const POLICY_OWNER_POLICY_PRECEDENCE_KEY: &str = "owner_policy_precedence";
+/// Manifest-resident delivery rule for owner-policy change receipts.
+pub(crate) const POLICY_OWNER_POLICY_NOTIFY_KEY: &str = "owner_policy_change_notifications";
 pub(crate) const POLICY_OWNER_POLICY_ENABLED_KEY: &str = "owner_policy_enabled";
 /// The owner plane's POLICY DOCUMENT: the text the vault owner wrote, sent to
 /// their safeguard model verbatim as the system message. Absent by default —

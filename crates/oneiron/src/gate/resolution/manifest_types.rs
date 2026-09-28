@@ -10,8 +10,8 @@ use std::collections::BTreeMap;
 use crate::gate::class_policy::{ActPolicyTable, WaitPolicyTable};
 
 use crate::gate::ceiling::{
-    ActorCeiling, DelegationFoldCache, PolicyOwnerPatternRow, PolicyOwnerPolicyRow, PolicyPack,
-    PolicySignature, SourceTrustCeiling,
+    ActorCeiling, DelegationFoldCache, PolicyOwnerPatternRow, PolicyOwnerPolicyRow,
+    PolicyOwnerPrecedence, PolicyPack, PolicySignature, SourceTrustCeiling,
 };
 use crate::gate::grants::PolicyScopedGrant;
 use crate::gate::hosted_tts_policy::HostedTtsPolicy;
@@ -321,6 +321,7 @@ pub(crate) struct PolicyManifestResolution {
     pub(crate) federation_grant_rows: Vec<crate::federation::grant_policy::GrantPolicyRow>,
     pub(crate) room_policy_rows: Vec<crate::gate::room_policy::RoomPolicyRow>,
     pub(super) owner_policy_rows: Vec<PolicyOwnerPolicyRow>,
+    pub(super) owner_policy_precedence: PolicyOwnerPrecedence,
     pub(super) owner_policy_rows_dropped: bool,
     pub(super) owner_policy_enabled: bool,
     pub(super) owner_policy_document: Option<String>,

@@ -32,7 +32,7 @@ pub use self::followup::{
 };
 pub(crate) use self::followup::{
     register_human_followup_in_txn, resolve_native_human_route_for_actor_in,
-    run_human_followups_on_wake,
+    resolve_native_human_route_in, run_human_followups_on_wake,
 };
 pub use self::model::{
     HUMAN_FOLLOWUP_STAGE_DIGEST, HUMAN_FOLLOWUP_STAGE_ESCALATION, HUMAN_FOLLOWUP_STAGE_REMINDER,

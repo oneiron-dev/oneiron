@@ -63,6 +63,43 @@ fn human_named_match_holds_queues_and_notifies_both_readers_without_plaintext() 
     Ok(())
 }
 
+#[test]
+fn project_scoped_human_override_queues_the_project_assignee() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    let mut vault_row = owner_row("owner:review", "Vault warning.");
+    let Value::Map(ref mut fields) = vault_row else {
+        unreachable!()
+    };
+    fields.push((Value::from("human"), Value::from("moderator:vault")));
+    let mut project_row = owner_row("owner:review", "Project warning.");
+    let Value::Map(ref mut fields) = project_row else {
+        unreachable!()
+    };
+    fields.push((Value::from("project_ref"), Value::from("p-1")));
+    fields.push((Value::from("human"), Value::from("moderator:project")));
+    put_policy_manifest_bytes(
+        &vault,
+        test_id(0x99),
+        &patterned_owner_manifest(
+            vec![vault_row, project_row],
+            vec![owner_pattern(
+                "owner.review",
+                "review-needed",
+                "owner:review",
+                Some("decide"),
+            )],
+        ),
+    )?;
+    let request = PolicyClassifyRequest::outbound_content("review-needed").with_project_ref("p-1");
+    let held = vault.enforce_policy_model(request)?;
+    assert_eq!(held.action, PolicyEnforcementAction::Hold);
+    let queue = vault.policy_holds(5)?;
+    assert_eq!(queue.len(), 1);
+    assert_eq!(queue[0].human, "moderator:project");
+    assert_eq!(queue[0].content_hash, held.verdict.binding.content_hash);
+    Ok(())
+}
+
 fn moderator(
     vault: &Vault,
     seed: u8,

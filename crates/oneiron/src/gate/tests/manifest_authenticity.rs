@@ -394,6 +394,68 @@ fn product_band_permit_needs_explicit_owner_reauthoring() -> Result<()> {
 }
 
 #[test]
+fn authenticated_install_without_optional_notification_table_remains_editable() -> Result<()> {
+    use crate::batch::ENTITY_METADATA_HEADER_LEN;
+    let (_dir, vault) = temp_vault();
+    let owner_ref = test_id(0x59);
+    vault.put_entity(
+        &owner_ref,
+        crate::registry::ENTITY_TYPE_PERSON,
+        test_time(1),
+        1,
+        b"owner",
+    )?;
+    let owner = vault.authenticate_owner(
+        owner_ref,
+        &owner_ref.to_hex(),
+        true,
+        crate::store::GateDecisionId::now(),
+    )?;
+    let data = crate::gate::default_policy_manifest();
+    let mut manifest =
+        rmpv::decode::read_value(&mut data.as_slice()).expect("default policy decodes");
+    let Value::Map(ref mut fields) = manifest else {
+        unreachable!("default policy map")
+    };
+    fields.retain(|(key, _)| key.as_str() != Some(crate::gate::POLICY_OWNER_POLICY_NOTIFY_KEY));
+    let mut without_notifications = Vec::new();
+    rmpv::encode::write_value(&mut without_notifications, &Value::Map(fields.clone()))
+        .expect("manifest encodes");
+    vault.install_owner_policy_manifest(
+        &owner,
+        crate::gate::default_policy_manifest_id()?,
+        without_notifications,
+        2,
+    )?;
+    let change = crate::gate::PolicyRowChange::Add {
+        row_ref: "owner:boundary".into(),
+        text: "Do not send unapproved content.".into(),
+        action: crate::gate::PolicyRowAction::Block,
+        scope: crate::gate::PolicyRowScope::Vault,
+    };
+    vault.with_write_txn(|txn| {
+        crate::gate::owner_policy_mutation::apply_owner_policy_row_change_in_txn(
+            &vault, &owner, txn, &change, 3,
+        )
+    })?;
+    let txn = vault.store.env.read_txn()?;
+    let raw = vault
+        .store
+        .entities
+        .get(&txn, crate::gate::default_policy_manifest_id()?.as_bytes())?
+        .expect("default manifest");
+    let Value::Map(fields) = rmpv::decode::read_value(&mut &raw[ENTITY_METADATA_HEADER_LEN..])
+        .expect("edited manifest decodes")
+    else {
+        unreachable!("manifest map")
+    };
+    assert!(fields.iter().any(|(key, value)| key.as_str()
+        == Some(crate::gate::POLICY_OWNER_POLICY_NOTIFY_KEY)
+        && matches!(value, Value::Array(rows) if rows.len() == 2)));
+    Ok(())
+}
+
+#[test]
 fn owner_mints_one_foreign_principal_grant_into_the_trusted_default_policy() -> Result<()> {
     let tmp = tempfile::tempdir()?;
     let vault = crate::Vault::open(tmp.path(), crate::config::VaultConfig::default())?;
