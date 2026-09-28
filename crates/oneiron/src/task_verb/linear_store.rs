@@ -1,4 +1,5 @@
 //! Vault storage for the tracker mirror: replicated fields, local OCC and CAS links.
+use super::TaskExecutionState;
 use super::wire_decode::{task_body_has_typed_subkind, task_verb_body_in};
 use super::wire_encode::encode_task_verb_body;
 use crate::edge::EdgeActorClass;
@@ -11,8 +12,6 @@ const REVISION: &[u8] = b"linear.task_revision.v1/";
 const DIRTY: &[u8] = b"linear.task_dirty.v1/";
 const WRITER: &[u8] = b"linear.task_writer.v1/";
 const ISSUE: &[u8] = b"linear.issue.v1/";
-const CREATE_INTENT: &[u8] = b"linear.create_intent.v1/";
-const INBOUND_REFUSAL: &[u8] = b"linear.inbound_refusal.v1/";
 fn key(prefix: &[u8], id: EntityId) -> Vec<u8> {
     [prefix, id.as_bytes()].concat()
 }
@@ -107,9 +106,6 @@ pub(crate) fn note_task_write(
     store.vault_meta.delete(txn, &key(WRITER, id))?;
     Ok(())
 }
-fn inbound_refusal_key(issue: &LinearIssueRef) -> Vec<u8> {
-    [INBOUND_REFUSAL, issue.issue_id.as_bytes()].concat()
-}
 fn issue_key(issue: &LinearIssueRef) -> Vec<u8> {
     // issue ids are globally scoped; identifiers and teams may change.
     [ISSUE, issue.issue_id.as_bytes()].concat()
@@ -132,15 +128,16 @@ pub(crate) struct LinearEffectState {
     pub revision: u64,
     pub dirty_revision: Option<u64>,
     pub link: Option<TaskIssueLink>,
-    pub create_intent: Option<LinearCreateIntent>,
     pub writer: Option<LinearWriteActor>,
+    /// The outbound snapshot as of this transaction.
+    pub snapshot: TaskMirrorSnapshot,
 }
 
 pub(crate) fn linear_effect_state_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     task: EntityId,
-) -> Result<LinearEffectState> {
+) -> LinearSyncResult<LinearEffectState> {
     let dirty_revision = vault
         .store
         .vault_meta
@@ -152,20 +149,12 @@ pub(crate) fn linear_effect_state_in_txn(
                 .map_err(|_| Error::CorruptedIndex("linear dirty revision"))
         })
         .transpose()?;
-    let create_intent = vault
-        .store
-        .vault_meta
-        .get(txn, &key(CREATE_INTENT, task))?
-        .map(|raw| {
-            serde_json::from_slice(&raw).map_err(|_| Error::CorruptedIndex("linear create intent"))
-        })
-        .transpose()?;
     Ok(LinearEffectState {
         revision: revision(&vault.store, txn, task)?,
         dirty_revision,
         link: read_link(vault, txn, task)?,
-        create_intent,
         writer: writer_in_txn(&vault.store, txn, task)?,
+        snapshot: VaultLinearTaskStore::new(vault).snapshot(txn, task)?,
     })
 }
 
@@ -183,42 +172,6 @@ impl<'v> VaultLinearTaskStore<'v> {
         let txn = self.vault.store.env.read_txn().map_err(Error::from)?;
         Ok(writer_in_txn(&self.vault.store, &txn, task)?)
     }
-
-    /// Operator-visible pending tracker issues whose assignees cannot yet be
-    /// mapped. Cursor retention guarantees replay; these rows name the cause.
-    pub fn inbound_refusals(&self) -> Result<Vec<LinearIssueRef>> {
-        let txn = self.vault.store.env.read_txn()?;
-        self.vault
-            .store
-            .vault_meta
-            .prefix_iter(&txn, INBOUND_REFUSAL)?
-            .map(|row| {
-                let (_, raw) = row?;
-                let (issue, _event): (LinearIssueRef, String) = serde_json::from_slice(&raw)
-                    .map_err(|_| Error::CorruptedIndex("linear inbound refusal"))?;
-                Ok(issue)
-            })
-            .collect()
-    }
-
-    /// Frozen first-create intent, retained through lost responses and removed
-    /// in the same transaction that creates the link.
-    pub fn create_intent_for(
-        &self,
-        task: EntityId,
-    ) -> LinearSyncResult<Option<LinearCreateIntent>> {
-        let txn = self.vault.store.env.read_txn().map_err(Error::from)?;
-        self.vault
-            .store
-            .vault_meta
-            .get(&txn, &key(CREATE_INTENT, task))?
-            .map(|raw| {
-                serde_json::from_slice(&raw)
-                    .map_err(|_| Error::CorruptedIndex("linear create intent").into())
-            })
-            .transpose()
-    }
-
     fn snapshot(
         &self,
         txn: &heed::RoTxn<'_>,
@@ -239,16 +192,13 @@ impl<'v> VaultLinearTaskStore<'v> {
             status: "queued".to_owned(),
         });
         fields.title = body.label.clone().unwrap_or_default();
+        // Execution facts win over the last imported tracker token. Inbound
+        // status remains a mirror field; it never authors Working or Terminal.
         fields.status = match body.state.as_ref() {
-            Some(super::TaskExecutionState::Working { .. }) => "working".to_owned(),
-            Some(super::TaskExecutionState::Interrupted { .. }) => "interrupted".to_owned(),
-            Some(super::TaskExecutionState::Terminal(record)) => {
-                record.disposition.as_str().to_owned()
-            }
-            Some(super::TaskExecutionState::Queued) | None => body
-                .mirror_fields
-                .as_ref()
-                .map_or_else(|| "queued".to_owned(), |mirror| mirror.status.clone()),
+            Some(TaskExecutionState::Working { .. }) => "working".to_owned(),
+            Some(TaskExecutionState::Interrupted { .. }) => "interrupted".to_owned(),
+            Some(TaskExecutionState::Terminal(record)) => record.disposition.as_str().to_owned(),
+            None | Some(TaskExecutionState::Queued) => fields.status,
         };
         Ok(TaskMirrorSnapshot {
             task_ref: task,
@@ -306,72 +256,6 @@ impl<'v> VaultLinearTaskStore<'v> {
     }
 }
 impl LinearTaskStore for VaultLinearTaskStore<'_> {
-    fn refuse_inbound_issue(
-        &mut self,
-        issue: &LinearIssueRef,
-        event_id: &str,
-    ) -> LinearSyncResult<()> {
-        if event_id.trim().is_empty() {
-            return Err(Error::InvalidConfig("unidentifiable Linear issue".into()).into());
-        }
-        let raw = serde_json::to_vec(&(issue, event_id))
-            .map_err(|_| Error::InvariantViolation("linear inbound refusal encoding"))?;
-        self.vault.with_write_txn(|txn| {
-            self.vault
-                .store
-                .vault_meta
-                .put(txn, &inbound_refusal_key(issue), &raw)?;
-            Ok(())
-        })?;
-        Ok(())
-    }
-    fn clear_inbound_refusal(&mut self, issue: &LinearIssueRef) -> LinearSyncResult<()> {
-        self.vault.with_write_txn(|txn| {
-            self.vault
-                .store
-                .vault_meta
-                .delete(txn, &inbound_refusal_key(issue))?;
-            Ok(())
-        })?;
-        Ok(())
-    }
-    fn create_intent(
-        &mut self,
-        draft: &LinearCreateIntent,
-    ) -> LinearSyncResult<LinearCreateIntent> {
-        self.vault.try_with_write_txn(|txn| {
-            self.snapshot(txn, draft.task_ref)?;
-            if let Some(link) = read_link(self.vault, txn, draft.task_ref)? {
-                return Err(LinearSyncError::LinkConflict {
-                    expected: None,
-                    found: Some(link.link_revision),
-                });
-            }
-            let key = key(CREATE_INTENT, draft.task_ref);
-            if let Some(raw) = self.vault.store.vault_meta.get(txn, &key)? {
-                let stored: LinearCreateIntent = serde_json::from_slice(&raw)
-                    .map_err(|_| Error::CorruptedIndex("linear create intent"))?;
-                if stored.task_ref != draft.task_ref
-                    || stored.operation_id == [0; 32]
-                    || stored.writer.is_none()
-                {
-                    return Err(Error::CorruptedIndex("linear create intent identity").into());
-                }
-                return Ok(stored);
-            }
-            let writer = writer_in_txn(&self.vault.store, txn, draft.task_ref)?
-                .ok_or(LinearSyncError::AuthorizationDenied)?;
-            let created = LinearCreateIntent {
-                writer: Some(writer),
-                ..draft.clone()
-            };
-            let raw = serde_json::to_vec(&created)
-                .map_err(|_| Error::InvariantViolation("linear create intent encoding"))?;
-            self.vault.store.vault_meta.put(txn, &key, &raw)?;
-            Ok(created)
-        })
-    }
-
     fn task_snapshot(&self, task: EntityId) -> LinearSyncResult<TaskMirrorSnapshot> {
         let txn = self.vault.store.env.read_txn().map_err(Error::from)?;
         self.snapshot(&txn, task)
@@ -487,12 +371,6 @@ impl LinearTaskStore for VaultLinearTaskStore<'_> {
                 .store
                 .vault_meta
                 .put(txn, &reverse, link.task_ref.as_bytes())?;
-            if expected.is_none() {
-                self.vault
-                    .store
-                    .vault_meta
-                    .delete(txn, &key(CREATE_INTENT, link.task_ref))?;
-            }
             Ok(())
         })
     }
@@ -500,20 +378,20 @@ impl LinearTaskStore for VaultLinearTaskStore<'_> {
 
 const PULL_CURSOR: &[u8] = b"linear.pull_cursor.v1";
 impl<I: LinearChangeSource, O: LinearEgress> LinearSyncAdapter<VaultLinearTaskStore<'_>, I, O> {
-    /// Pull one source page, then preflight each dirty linked issue against
-    /// its current remote snapshot before pushing. A cursor page alone cannot
-    /// prove an issue on a later page unchanged. Pending pages defer outbound.
-    /// Errors retain dirty revisions/cursor for retry. The injected egress is
-    /// still the authenticated OF-327 rail, never a credential in core.
+    /// Scheduled host entry: reconcile every available inbound page BEFORE
+    /// publishing any dirty TASK snapshot. A rejected outbound item retains
+    /// its revision without starving later items or the pull cursor.
     pub fn synchronize(
         &mut self,
         now: u64,
+        max_pull_pages_per_pass: usize,
     ) -> LinearSyncResult<(Vec<LinearMirrorReceipt>, LinearPullReceipt)> {
-        // Pull first. Pushing a dirty TASK before observing a remote edit
-        // would overwrite the tracker field before the conflict barrier has a
-        // chance to see it. A pending source page defers outbound writes;
-        // even a final nonempty page still carries a durable checkpoint.
-        let cursor = {
+        if !(1..=1024).contains(&max_pull_pages_per_pass) {
+            return Err(
+                Error::InvalidConfig("linear pull page policy is out of bounds".into()).into(),
+            );
+        }
+        let mut cursor = {
             let txn = self
                 .tasks()
                 .vault
@@ -532,75 +410,66 @@ impl<I: LinearChangeSource, O: LinearEgress> LinearSyncAdapter<VaultLinearTaskSt
                 })
                 .transpose()?
         };
-        let mut pulled = self.pull_page(cursor.as_deref(), now)?;
-        if pulled.has_more && pulled.new_cursor.is_none() {
-            return Err(LinearSyncError::Store(Error::InvariantViolation(
-                "linear page continuation without checkpoint",
-            )));
-        }
-        if let Some(cursor) = &pulled.new_cursor {
+        let mut pulled = LinearPullReceipt {
+            applied: 0,
+            skipped_echo: 0,
+            conflicts: Vec::new(),
+            new_cursor: cursor.clone(),
+            pulled_at: now,
+        };
+        // A malicious or broken source cannot keep the pass inside pagination
+        // forever. The cursor of each completed page is durable before reading
+        // the next; no outbound write occurs until a terminal page is reached.
+        let mut seen = std::collections::BTreeSet::new();
+        let mut caught_up = false;
+        for _ in 0..max_pull_pages_per_pass {
+            let page = self.pull_page(cursor.as_deref(), now)?;
+            pulled.applied += page.applied;
+            pulled.skipped_echo += page.skipped_echo;
+            pulled.conflicts.extend(page.conflicts);
+            let Some(next) = page.new_cursor else {
+                caught_up = true;
+                break;
+            };
+            if cursor.as_deref() == Some(next.as_str()) || !seen.insert(next.clone()) {
+                return Err(
+                    Error::InvalidConfig("linear source repeated its cursor".into()).into(),
+                );
+            }
             self.tasks().vault.with_write_txn(|txn| {
                 self.tasks()
                     .vault
                     .store
                     .vault_meta
-                    .put(txn, PULL_CURSOR, cursor.as_bytes())?;
+                    .put(txn, PULL_CURSOR, next.as_bytes())?;
                 Ok(())
             })?;
+            cursor = Some(next);
+            pulled.new_cursor = cursor.clone();
         }
-        if pulled.has_more {
-            return Ok((Vec::new(), pulled));
+        if !caught_up {
+            return Err(Error::InvalidConfig("linear source page bound exceeded".into()).into());
         }
+
         let mut pushed = Vec::new();
+        let mut first_failure = None;
         for (task, revision) in self.tasks().dirty_tasks()? {
-            if let Some(link) = self.tasks().link(task)? {
-                let current = match self.inbound_mut().current_issue(&link.issue) {
-                    Ok(current) => current,
-                    Err(LinearSyncError::AssigneeUnmapped) => {
-                        self.tasks_mut()
-                            .refuse_inbound_issue(&link.issue, "current_issue")?;
-                        pulled.refused_inbound.push(link.issue);
-                        continue;
-                    }
-                    Err(error) => return Err(error),
-                };
-                if current.unmapped_assignee {
-                    self.tasks_mut()
-                        .refuse_inbound_issue(&link.issue, &current.event_id)?;
-                    pulled.refused_inbound.push(link.issue);
-                    continue;
-                }
-                self.apply_issue_change(current, now)?;
-                self.tasks_mut().clear_inbound_refusal(&link.issue)?;
-            }
             match self.push_task(task, now) {
                 Ok(receipt) => {
-                    let created_snapshot_matches = if receipt.status == LinearMirrorStatus::Linked {
-                        let link = self
-                            .tasks()
-                            .link(task)?
-                            .ok_or(Error::InvariantViolation("linked Linear TASK missing link"))?;
-                        self.tasks().task_snapshot(task)?.fields.field_hashes()
-                            == link.base_field_hashes
-                    } else {
-                        true
-                    };
-                    if receipt.status != LinearMirrorStatus::Conflict && created_snapshot_matches {
-                        self.tasks().acknowledge_push(task, revision)?;
+                    if receipt.status != LinearMirrorStatus::Conflict
+                        && let Err(error) = self.tasks().acknowledge_push(task, revision)
+                    {
+                        first_failure.get_or_insert_with(|| error.into());
                     }
                     pushed.push(receipt);
                 }
-                Err(
-                    LinearSyncError::AssigneeUnmapped
-                    | LinearSyncError::CreateConflict
-                    | LinearSyncError::AuthorizationDenied,
-                ) => {
-                    // One unmirrorable TASK cannot hold every later dirty row.
-                    // Keep this exact revision in the durable outbox for repair.
-                    pulled.refused_outbound.push(task);
+                Err(error) => {
+                    first_failure.get_or_insert(error);
                 }
-                Err(error) => return Err(error),
             }
+        }
+        if let Some(error) = first_failure {
+            return Err(error);
         }
         Ok((pushed, pulled))
     }
@@ -613,15 +482,11 @@ pub(crate) fn forget_task_mirror(
 ) -> Result<()> {
     store.vault_meta.delete(txn, &key(DIRTY, id))?;
     store.vault_meta.delete(txn, &key(WRITER, id))?;
-    store.vault_meta.delete(txn, &key(CREATE_INTENT, id))?;
     let link_key = linear_sync_link_key(id);
     if let Some(raw) = store.vault_meta.get(txn, &link_key)? {
         let link: TaskIssueLink =
             serde_json::from_slice(&raw).map_err(|_| Error::CorruptedIndex("linear link"))?;
         store.vault_meta.delete(txn, &issue_key(&link.issue))?;
-        store
-            .vault_meta
-            .delete(txn, &inbound_refusal_key(&link.issue))?;
         store.vault_meta.delete(txn, &link_key)?;
     }
     Ok(())

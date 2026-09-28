@@ -139,20 +139,21 @@ pub(crate) fn resolve_policy_manifest(
                 // order, then row order inside each manifest. Row indices in
                 // ladder events index this concatenation.
                 resolution.budget_policy.extend_rows(decoded.budget_policy);
+                if let Some(policy) = decoded.pack_install_policy {
+                    if let Some(existing) = &mut resolution.pack_install_policy {
+                        existing.restrict(policy);
+                    } else {
+                        resolution.pack_install_policy = Some(policy);
+                    }
+                }
                 resolution.hosted_tts.rows.extend(decoded.hosted_tts.rows);
+
                 if let Some(bounds) = decoded.diagnostic_bounds {
                     match resolution.diagnostic_bounds {
                         None => resolution.diagnostic_bounds = Some(bounds),
                         Some(existing) if existing == bounds => {}
                         Some(_) => resolution.diagnostics.malformed_manifest_seen = true,
                     }
-                }
-                if let Some(host_policy) = decoded.linear_host_policy {
-                    resolution.linear_host_policy =
-                        Some(resolution.linear_host_policy.as_ref().map_or_else(
-                            || host_policy.clone(),
-                            |prior| prior.restrict(&host_policy),
-                        ));
                 }
                 // Advisory threshold composition is deterministic and never
                 // authorizes or refuses a write. The earliest question wins.
@@ -162,6 +163,28 @@ pub(crate) fn resolve_policy_manifest(
                             .proposal_check_threshold
                             .map_or(threshold, |old| old.min(threshold)),
                     );
+                }
+                if let Some(row) = decoded.linear_mirror {
+                    resolution.linear_mirror = Some(
+                        resolution
+                            .linear_mirror
+                            .map_or(row, |old| old.restrict(row)),
+                    );
+                }
+                if let Some(row) = decoded.linear_sync {
+                    resolution.linear_sync =
+                        Some(resolution.linear_sync.map_or(row, |old| old.restrict(row)));
+                }
+                if let Some(row) = decoded.wave_handoff {
+                    resolution.wave_handoff =
+                        Some(resolution.wave_handoff.map_or(row, |old| old.restrict(row)));
+                }
+                if let Some(precedence) = decoded.operational_precedence {
+                    match resolution.operational_precedence {
+                        None => resolution.operational_precedence = Some(precedence),
+                        Some(existing) if existing == precedence => {}
+                        Some(_) => resolution.diagnostics.malformed_manifest_seen = true,
+                    }
                 }
                 if let Some(quota) = decoded.weave_correction_policy {
                     match &mut resolution.weave_correction_policy {

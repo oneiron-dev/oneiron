@@ -10467,7 +10467,7 @@
      "purpose": "—",
      "surface": {
       "const": 5,
-      "crate-vis": 18,
+      "crate-vis": 17,
       "struct": 5
      }
     },
@@ -17001,7 +17001,7 @@
      "path": "src/gate/constants.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 80
+      "crate-vis": 79
      }
     },
     {
@@ -17219,7 +17219,7 @@
      "path": "src/gate/effect/mod.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 12
+      "crate-vis": 11
      }
     },
     {
@@ -17267,25 +17267,6 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
-      "LinearHostPolicy",
-      "LinearMissedTick",
-      "LinearPermission",
-      "LinearPolicyPrecedence",
-      "LinearPolicyRisk"
-     ],
-     "path": "src/gate/linear_policy.rs",
-     "purpose": "Narrowable host policy rows stored in the trusted Gate manifest",
-     "surface": {
-      "crate-vis": 2,
-      "enum": 4,
-      "fn": 4,
-      "struct": 1
-     }
-    },
-    {
-     "bucket": "s",
-     "kind": "src",
-     "notable": [
       "ManifestContribution"
      ],
      "path": "src/gate/manifest_authenticity.rs",
@@ -17304,7 +17285,7 @@
      "purpose": "DEC-0005 Gate policy manifest resolver",
      "surface": {
       "crate-vis": 28,
-      "re-export": 4
+      "re-export": 3
      }
     },
     {
@@ -20127,21 +20108,6 @@
      "bucket": "m",
      "kind": "src",
      "notable": [
-      "LinearEffectKind",
-      "LinearEffectRequest"
-     ],
-     "path": "src/linear_sync/effect.rs",
-     "purpose": "External-effect admission for Linear mirror mutations",
-     "surface": {
-      "enum": 1,
-      "fn": 2,
-      "struct": 1
-     }
-    },
-    {
-     "bucket": "m",
-     "kind": "src",
-     "notable": [
       "LinearSyncAdapter"
      ],
      "path": "src/linear_sync/engine.rs",
@@ -20159,7 +20125,7 @@
      "path": "src/linear_sync/mod.rs",
      "purpose": "Issue-tracker mirror adapter: one TASK ↔ one Linear issue, bidirectional, conflict-surfacing (ONE-1905…",
      "surface": {
-      "re-export": 6
+      "re-export": 4
      }
     },
     {
@@ -20168,7 +20134,6 @@
      "notable": [
       "LinearChangePage",
       "LinearChangeSource",
-      "LinearCreateIntent",
       "LinearEgress",
       "LinearFieldConflict",
       "LinearIssueChange",
@@ -20180,7 +20145,6 @@
       "LinearSyncError",
       "LinearSyncRegistration",
       "LinearTaskStore",
-      "LinearWriteActor",
       "MirroredTaskFields",
       "TaskIssueLink",
       "TaskMirrorSnapshot"
@@ -20192,7 +20156,7 @@
       "crate-vis": 7,
       "enum": 3,
       "fn": 5,
-      "struct": 12,
+      "struct": 10,
       "trait": 3,
       "type": 2
      }
@@ -23680,7 +23644,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "test",
      "notable": [],
      "path": "src/origin/smart_http/checkout_tests.rs",
@@ -33190,8 +33154,8 @@
      "path": "src/task_verb/linear_store.rs",
      "purpose": "Vault storage for the tracker mirror: replicated fields, local OCC and CAS links",
      "surface": {
-      "crate-vis": 6,
-      "fn": 7,
+      "crate-vis": 2,
+      "fn": 4,
       "struct": 1
      }
     },
@@ -33247,7 +33211,7 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "m",
      "kind": "test",
      "notable": [],
      "path": "src/task_verb/production_ports_tests.rs",
@@ -36534,7 +36498,7 @@
      "purpose": "—"
     },
     "gate": {
-     "files": 79,
+     "files": 78,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -36646,8 +36610,8 @@
      "purpose": "—"
     },
     "linear_sync": {
-     "files": 7,
-     "impl_vault": true,
+     "files": 6,
+     "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
      "purpose": "Issue-tracker mirror adapter: one TASK ↔ one Linear issue, bidirectional, conflict-surfacing (ONE-1905…"
@@ -37222,7 +37186,7 @@
    },
    "over_bar": 2,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2207,
+   "source_files": 2205,
    "test_files": 754
   },
   "oneiron-android": {
@@ -43418,24 +43382,6 @@
      }
     },
     {
-     "bucket": "m",
-     "kind": "src",
-     "notable": [],
-     "path": "src/linear_host.rs",
-     "purpose": "Opt-in authenticated Linear host for the vault TASK mirror",
-     "surface": {
-      "crate-vis": 4
-     }
-    },
-    {
-     "bucket": "m",
-     "kind": "test",
-     "notable": [],
-     "path": "src/linear_host/tests.rs",
-     "purpose": "Live HTTP fixture at the host transport; no provider token leaves this process",
-     "surface": {}
-    },
-    {
      "bucket": "s",
      "kind": "src",
      "notable": [],
@@ -44795,13 +44741,6 @@
      "layout": "file+dir",
      "purpose": "—"
     },
-    "linear_host": {
-     "files": 2,
-     "impl_vault": false,
-     "largest_src_bucket": "m",
-     "layout": "file+dir",
-     "purpose": "Opt-in authenticated Linear host for the vault TASK mirror"
-    },
     "livequery": {
      "files": 18,
      "impl_vault": false,
@@ -44896,8 +44835,8 @@
    },
    "over_bar": 0,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 236,
-   "test_files": 99
+   "source_files": 235,
+   "test_files": 98
   },
   "oneiron-uniffi": {
    "files": [

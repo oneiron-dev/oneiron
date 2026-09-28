@@ -60,6 +60,7 @@ mod hosted_tts_policy;
 mod isolation_persona;
 mod manifest_authenticity;
 mod manifest_auto;
+mod operational_policy;
 mod policy_inputs;
 mod posture_override;
 mod scoped_read;

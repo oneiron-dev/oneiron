@@ -9,15 +9,18 @@ use crate::provenance::PREDICATE_EDGE_PROVENANCE;
 use super::constants::{
     ACTOR_CEILING_KEY, ACTOR_CLASS_KEY, ACTOR_REF_KEY, AXIS_CRITICALITY_KEY, AXIS_SENSITIVITY_KEY,
     LOCAL_WRITE_ACTOR_CLASS, POLICY_ACTOR_CEILINGS_KEY, POLICY_DEFAULTS_KEY, POLICY_HOSTED_TTS_KEY,
-    POLICY_LINEAR_HOST_KEY, POLICY_MIN_ENGINE_VERSION_KEY, POLICY_ON_BUDGET_EXHAUSTED_KEY,
-    POLICY_OWNER_POLICY_ENABLED_KEY, POLICY_OWNER_POLICY_ROWS_KEY, POLICY_PACK_ID_KEY,
-    POLICY_PACK_VERSION_KEY, POLICY_RULES_KEY, POLICY_SCHEMA_VERSION, POLICY_SCHEMA_VERSION_KEY,
-    POLICY_SIGNATURES_KEY, POLICY_SOURCE_TRUST_KEY, POLICY_WEAVE_CORRECTION_POLICY_KEY,
-    RULE_AXES_KEY, RULE_EXACT_KEY, RULE_PREFIX_KEY, SIGNATURE_ALG_KEY, SIGNATURE_KEY_ID_KEY,
-    SIGNATURE_SIG_KEY, SOURCE_TRUST_MAX_AUTO_SENSITIVITY_KEY, SOURCE_TRUST_RECEIPTED_KEY,
-    SOURCE_TRUST_WARNED_KEY,
+    POLICY_MIN_ENGINE_VERSION_KEY, POLICY_ON_BUDGET_EXHAUSTED_KEY, POLICY_OWNER_POLICY_ENABLED_KEY,
+    POLICY_OWNER_POLICY_ROWS_KEY, POLICY_PACK_ID_KEY, POLICY_PACK_VERSION_KEY, POLICY_RULES_KEY,
+    POLICY_SCHEMA_VERSION, POLICY_SCHEMA_VERSION_KEY, POLICY_SIGNATURES_KEY,
+    POLICY_SOURCE_TRUST_KEY, POLICY_WEAVE_CORRECTION_POLICY_KEY, RULE_AXES_KEY, RULE_EXACT_KEY,
+    RULE_PREFIX_KEY, SIGNATURE_ALG_KEY, SIGNATURE_KEY_ID_KEY, SIGNATURE_SIG_KEY,
+    SOURCE_TRUST_MAX_AUTO_SENSITIVITY_KEY, SOURCE_TRUST_RECEIPTED_KEY, SOURCE_TRUST_WARNED_KEY,
 };
 use super::definition_ceiling::first_party_connector_actor_ref;
+use super::operational_policy::{
+    LINEAR_MIRROR_KEY, LINEAR_SYNC_KEY, PRECEDENCE_KEY, WAVE_HANDOFF_KEY,
+};
+use super::pack_install_policy::{KEY as PACK_INSTALL_POLICY_KEY, PackInstallPolicy};
 
 const DEFAULT_POLICY_MANIFEST_ID: [u8; ENTITY_ID_LEN] = [0xD7; ENTITY_ID_LEN];
 pub(crate) const DEFAULT_POLICY_MANIFEST_TIMESTAMP: u64 = 0;
@@ -36,10 +39,6 @@ pub(crate) fn default_policy_manifest() -> Vec<u8> {
     // fail-closed, never silently re-aimed.
     let commitment_projection_actor_ref = commitment_projection_actor().entity_ref().to_hex();
     let manifest = Value::Map(vec![
-        (
-            Value::from(POLICY_LINEAR_HOST_KEY),
-            super::linear_policy::LinearHostPolicy::shipped_default().as_value(),
-        ),
         (
             Value::from(POLICY_SCHEMA_VERSION_KEY),
             Value::from(POLICY_SCHEMA_VERSION),
@@ -374,6 +373,29 @@ pub(crate) fn default_policy_manifest() -> Vec<u8> {
                 ),
             ]),
         ),
+        (Value::from(PRECEDENCE_KEY), Value::from("nested_narrowing")),
+        (
+            Value::from(LINEAR_MIRROR_KEY),
+            Value::Map(vec![
+                (Value::from("poll_interval_secs"), Value::from(30_u64)),
+                (Value::from("request_timeout_secs"), Value::from(15_u64)),
+            ]),
+        ),
+        (
+            Value::from(LINEAR_SYNC_KEY),
+            Value::Map(vec![(
+                Value::from("max_pull_pages_per_pass"),
+                Value::from(64_u64),
+            )]),
+        ),
+        (
+            Value::from(WAVE_HANDOFF_KEY),
+            Value::Map(vec![
+                (Value::from("scan_limit"), Value::from(256_u64)),
+                (Value::from("retry_floor_ms"), Value::from(500_u64)),
+                (Value::from("retry_cap_ms"), Value::from(60_000_u64)),
+            ]),
+        ),
         // Hosted render resource limits are shipped POLICY rows, not adapter
         // constants. Holder rows in other trusted manifests can narrow them.
         (
@@ -400,6 +422,10 @@ pub(crate) fn default_policy_manifest() -> Vec<u8> {
                     ),
                 ),
             ]),
+        ),
+        (
+            Value::from(PACK_INSTALL_POLICY_KEY),
+            PackInstallPolicy::shipped().encode(),
         ),
         (
             Value::from(POLICY_ON_BUDGET_EXHAUSTED_KEY),

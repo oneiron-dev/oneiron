@@ -115,48 +115,53 @@ lms load text-embedding-harrier-oss-v1-0.6b --context-length 4096 -y
 llama-server -m harrier-oss-v1-0.6b.f16.gguf --embeddings --pooling last -c 4096 --port 8089
 ```
 
-## Optional Linear TASK mirror
+## Linear mirror host bridge (opt-in)
 
-The **bare** `oneiron-server serve` host can run a vault's Linear mirror. It
-is off by default. Supply these five required variables in the host's
-secret-bearing environment, not in a repository, checkout, or vault row:
+The server starts a mirror pass only when both
+`ONEIRON_LINEAR_BRIDGE_URL` and `ONEIRON_LINEAR_BRIDGE_TOKEN` are set. The URL
+must be HTTPS (or loopback HTTP for a local bridge). A partial or blank config
+stops startup. An enabled mirror also requires authenticated core writes (an
+`auth_secret`, and no `--insecure-allow-unauthenticated`), and
+`ONEIRON_LINEAR_SCHEDULER_ACTOR`: the entity id of the stored Machine actor the
+scheduler acts as. Before the bridge receives any create or update, the vault's
+ExternalEffect Gate must admit it for both that scheduler and the verified
+writer of the TASK revision (live standing grants and `linear` connector
+budgets); a raw or replayed TASK write has no verified writer and is never
+sent. Poll wait and request timeout resolve from vault policy manifest rows
+`linear_mirror_policy` (seeded 30s/15s), and the page allowance from
+`linear_sync_budget` (seeded 64); allowed holder selectors may only narrow
+the resolved vault bounds. The daemon re-resolves these at each pass. The
+token is sent only as an `Authorization: Bearer` header; it
+is not stored in the vault. Unmanaged `serve` starts the pass. A failed pass
+keeps the TASK outbox revision and inbound cursor for retry.
 
-- `ONEIRON_LINEAR_SYNC_ENABLED=true`
-- `ONEIRON_LINEAR_API_KEY` — a Linear API key for the intended workspace
-- `ONEIRON_LINEAR_TEAM_ID` — the team's opaque Linear ID
-- `ONEIRON_LINEAR_SCHEDULER_ACTOR` — a registered vault Machine/System actor with an
-  active owner-consented outbound grant for the team and both Linear issue verbs;
-  the owner policy must separately give this Machine/System actor an Auto ceiling
-- `ONEIRON_LINEAR_STATUS_NAMES` — a JSON map from TASK status tokens to exact
-  Linear workflow state names for that team, e.g.
-  `{"queued":"Backlog", "working":"In Progress", "interrupted":"Blocked", "completed":"Done"}`.
-  Names must be unique. Unmapped inbound or outbound states fail closed.
+The bridge is a host-owned authenticated provider/OF-327 outbound-door adapter,
+not a direct Linear GraphQL client. A snapshot poll of current issues cannot
+supply stable per-change event IDs or the historical field values needed for
+safe echo and conflict handling. The bridge must preserve those from its
+authenticated Linear event source (for example a webhook inbox), and must
+collapse repeated `operation_id` values before making provider writes.
 
-Optional `ONEIRON_LINEAR_ASSIGNEE_IDS` is a JSON map of local actor/agent
-entity IDs (32 lowercase hex) to Linear user UUIDs. Mapping must be one-to-one.
-Unmapped outbound assignees remain dirty with a typed refusal, not a
-provider call. A linked inbound issue with an unmapped provider assignee stays
-unapplied at its saved cursor; unrelated issues and outbound TASKs still run.
-The scheduler AND the attributed TASK writer each need a live grant for the exact
-`linear_issue_create` and `linear_issue_update` verbs. An owner can narrow each
-grant with a `BriefVerbClass` scope bound to the team ID. A raw or replicated
-TASK write has no verified writer stamp and is never sent. No Linear worker
-starts when unauthenticated core writes are enabled or no auth secret exists.
+It exposes three JSON operations below the configured URL:
 
-A partial configuration refuses server startup. The trusted vault policy
-manifest supplies the `linear_host_policy` row with these shipped defaults:
-`precedence=nested_narrowing`, `interval_secs=60`, `missed_tick=skip`,
-`page_size=50`, `timeout_secs=15`, `max_response_bytes=4194304`,
-`permission=conditional`, and `risk=normal`. A full TOML row in host variable
-`ONEIRON_LINEAR_POLICY_MANIFEST` may narrow but never widen the current vault
-row (a longer interval, smaller limits, denied permission, or held risk). The
-preference mode is itself pinned to `nested_narrowing`. The server resolves this
-trusted row before it starts the worker; the engine rechecks permission and
-risk at each external-effect Gate decision. The adapter uses only
-`https://api.linear.app/graphql`, no redirects or ambient proxy, and bounds
-requests/responses by the resolved policy. The key stays in the host process; no
-credential is persisted in the engine. A pass pulls one change page first.
-Only after the page stream catches up does it push dirty TASK rows. Failed
-passes retain their cursor and dirty revisions for the next tick. Conflicts
-leave the affected dirty TASK queued for resolution, not silently overwritten.
-The supervised managed child does not read these variables or start this worker.
+- `GET changes?cursor=<opaque>` returns `LinearChangePage` (`changes` plus
+  `next_cursor`), ordered by `updated_at_ms`; each `LinearIssueChange` contains
+  stable nonempty `event_id`, `issue`, `updated_at_ms`, and `fields`.
+- `POST issues` accepts `operation_id` (64 lowercase hex), `task_ref` (entity
+  hex), and `fields`; returns `LinearIssueChange` for the created issue.
+- `POST issues/update` accepts `operation_id`, `issue` (`LinearIssueRef`),
+  `expected_base_field_hashes` (all five canonical field names to 64-hex
+  hashes), and `fields`. It must atomically compare the CURRENT remote fields
+  against every expected hash before applying the full snapshot. A mismatch
+  returns 409/412 without writing; the daemon retains that TASK's dirty row.
+  Replayed `operation_id`s return their original receipt before the compare;
+  otherwise a lost response after a successful write would look like a new
+  remote conflict on retry. A bridge that cannot provide an atomic compare
+  must refuse linked updates rather than publish best-effort last-write-wins. Linear's public GraphQL
+  `issueUpdate` alone is not a CAS primitive, so a bridge must not claim this
+  guarantee by merely reading the issue immediately before a mutation.
+
+The bridge must return non-2xx on transport or authority failure, not an empty
+success page. The pass reads one page at a time and stores its cursor only
+following successful application. Host deployments without a bridge do not
+start any mirror or make a tracker request.

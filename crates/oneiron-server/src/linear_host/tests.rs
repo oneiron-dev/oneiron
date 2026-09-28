@@ -1,190 +1,100 @@
-//! Live HTTP fixture at the host transport; no provider token leaves this process.
 use super::*;
 use std::io::{Read, Write};
 use std::net::TcpListener;
-use std::thread;
 
-fn host() -> LinearHttp {
-    LinearHttp::new(
-        LinearHostConfig {
-            token: "fixture-private-key".into(),
-            team_id: "team-id".into(),
-            status_names: BTreeMap::from([("queued".into(), "Backlog".into())]),
-            assignee_ids: BTreeMap::new(),
-            scheduler_actor: EntityId::from_bytes([3; 16]).unwrap(),
-            policy_override: None,
-            endpoint: None,
+#[test]
+fn bridge_authenticates_pull_and_idempotent_push_with_normalized_receipts() {
+    // The isolated integration target also compiles the scheduler; keep its
+    // entry functions live without starting a global timer or reading env.
+    let _ = LinearBridge::configured;
+    let _ = spawn;
+    let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
+    let addr = listener.local_addr().expect("address");
+    let expected = LinearIssueChange {
+        event_id: "event-1".into(),
+        issue: LinearIssueRef {
+            issue_id: "issue-1".into(),
+            team_id: "team-1".into(),
+            identifier: "TEAM-1".into(),
         },
-        LinearHostPolicy::shipped_default(),
-    )
-    .unwrap()
-}
-fn mock_http(replies: Vec<Value>) -> (String, thread::JoinHandle<Vec<String>>) {
-    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
-    let url = format!("http://{}/graphql", listener.local_addr().unwrap());
-    let handle = thread::spawn(move || {
-        replies.into_iter().map(|reply| {
-        let (mut stream, _) = listener.accept().unwrap();
-        stream.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
-        let mut bytes = Vec::new();
-        let mut buffer = [0_u8; 4096];
-        let headers_end = loop {
-            let n = stream.read(&mut buffer).unwrap();
-            assert_ne!(n, 0);
-            bytes.extend_from_slice(&buffer[..n]);
-            if let Some(end) = bytes.windows(4).position(|b| b == b"\r\n\r\n") {
-                break end + 4;
-            }
-        };
-        let headers = String::from_utf8(bytes[..headers_end].to_vec()).unwrap();
-        let length: usize = headers.lines().find_map(|line| {
-            line.to_ascii_lowercase().strip_prefix("content-length: ")
-                .and_then(|n| n.trim().parse().ok())
-        }).unwrap();
-        while bytes.len() - headers_end < length {
-            let n = stream.read(&mut buffer).unwrap();
-            assert_ne!(n, 0);
-            bytes.extend_from_slice(&buffer[..n]);
-        }
-        let body = reply.to_string();
-        write!(stream, "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len()).unwrap();
-        format!("{headers}{}", String::from_utf8_lossy(&bytes[headers_end..headers_end + length]))
-    }).collect()
-    });
-    (url, handle)
-}
-fn issue(title: &str) -> Value {
-    json!({"id":"issue-1","identifier":"TEST-1","updatedAt":"2026-09-26T12:00:00.000Z",
-        "title":title,"description":null,"priority":2,"team":{"id":"team-id"},
-        "assignee":null,"state":{"name":"Backlog"}})
-}
-#[test]
-fn unprioritized_provider_issue_matches_an_unset_local_priority() {
-    let mut provider = issue("Build one");
-    provider["priority"] = json!(0);
-    assert_eq!(parse_issue(&provider).unwrap().fields.priority, None);
-}
-
-#[test]
-fn authenticated_page_has_stable_identity_and_carries_cursor() {
-    let (url, log) = mock_http(vec![json!({"data":{"issues":{
-        "nodes":[issue("Build one")],"pageInfo":{"endCursor":"next-page","hasNextPage":false}}}})]);
-    let mut http = host();
-    http.endpoint = Arc::from(url);
-    let mut port = LinearPort::unchecked_for_test(http, None);
-    let page = port.changes_since(Some("before-page")).unwrap();
-    assert_eq!(page.next_cursor.as_deref(), Some("next-page"));
-    assert!(!page.has_more, "final nonempty page is already caught up");
-    assert_eq!(page.changes[0].fields.status, "queued");
-    assert_eq!(page.changes[0].fields.title, "Build one");
-    assert!(!page.changes[0].event_id.is_empty());
-    let wire = log.join().unwrap().remove(0);
-    assert!(
-        wire.contains("Authorization: fixture-private-key")
-            || wire.contains("authorization: fixture-private-key")
-    );
-    assert!(wire.contains("before-page"));
-    assert!(
-        wire.contains("Ascending"),
-        "poll cursor must advance oldest-first"
-    );
-}
-#[test]
-fn unknown_tracker_state_refuses_page_before_advancing_cursor() {
-    let mut unknown = issue("Build one");
-    unknown["state"]["name"] = json!("Unknown");
-    let (url, log) = mock_http(vec![json!({"data":{"issues":{
-        "nodes":[unknown],"pageInfo":{"endCursor":"unsafe-cursor","hasNextPage":false}}}})]);
-    let mut http = host();
-    http.endpoint = Arc::from(url);
-    assert!(
-        LinearPort::unchecked_for_test(http, None)
-            .changes_since(None)
-            .is_err()
-    );
-    log.join().unwrap();
-}
-#[test]
-fn snapshot_identity_distinguishes_equal_timestamp_changes() {
-    let first = parse_issue(&issue("old")).unwrap();
-    let second = parse_issue(&issue("new")).unwrap();
-    assert_eq!(first.updated_at_ms, second.updated_at_ms);
-    assert_ne!(first.event_id, second.event_id);
-}
-
-#[test]
-fn create_uses_stable_issue_id_and_retries_without_a_second_mutation() {
-    let operation = [0x11_u8; 32];
-    let task = EntityId::from_bytes([1; 16]).unwrap();
-    let uuid = stable_issue_uuid(task, "team-id");
-    let mut created = issue("Build one");
-    created["id"] = json!(uuid);
-    let (url, calls) = mock_http(vec![
-        json!({"data":null,"errors":[{"message":"Entity not found: Issue",
-            "path":["issue"],"extensions":{"code":"INPUT_ERROR"}}]}),
-        json!({"data":{"team":{"states":{"nodes":[{"id":"state-backlog","name":"Backlog"}]}}}}),
-        json!({"data":{"issueCreate":{"success":true,"issue":created}}}),
-    ]);
-    let mut http = host();
-    http.endpoint = Arc::from(url);
-    let mut port = LinearPort::unchecked_for_test(http, None);
-    let fields = MirroredTaskFields {
-        title: "Build one".into(),
-        description: None,
-        priority: Some(2),
-        assignee_ref: None,
-        status: "queued".into(),
+        updated_at_ms: 1000,
+        fields: MirroredTaskFields {
+            title: "work".into(),
+            description: None,
+            priority: None,
+            assignee_ref: None,
+            status: "queued".into(),
+        },
     };
-    let linked = port.create_issue(operation, task, &fields).unwrap();
-    assert_eq!(linked.issue.issue_id, uuid);
-    assert_eq!(linked.fields, fields);
-    let calls = calls.join().unwrap();
-    assert_eq!(calls.len(), 3);
-    assert!(calls[2].contains(&uuid));
-    assert!(calls[2].contains("state-backlog"));
-
-    let mut existing = issue("Build one");
-    existing["id"] = json!(uuid);
-    let (url, calls) = mock_http(vec![json!({"data":{"issue":existing}})]);
-    port.http.endpoint = Arc::from(url);
-    assert_eq!(port.create_issue(operation, task, &fields).unwrap(), linked);
-    assert_eq!(calls.join().unwrap().len(), 1);
-
-    // The TASK can move between a lost response and retry. The remote UUID
-    // remains the original one and a mismatched payload never becomes a link.
-    let mut edited = fields.clone();
-    edited.title = "new local revision".into();
-    let mut previous_remote = issue("Build one");
-    previous_remote["id"] = json!(uuid);
-    let (url, calls) = mock_http(vec![json!({"data":{"issue":previous_remote}})]);
-    port.http.endpoint = Arc::from(url);
-    assert!(matches!(
-        port.create_issue([0x22; 32], task, &edited),
-        Err(LinearSyncError::CreateConflict)
-    ));
-    let requests = calls.join().unwrap();
-    assert_eq!(requests.len(), 1, "must not create a second issue");
-    assert!(requests[0].contains(&uuid));
-    let mut foreign = issue("foreign tracker edit");
-    foreign["id"] = json!(uuid);
-    let (url, calls) = mock_http(vec![json!({"data":{"issue":foreign}})]);
-    port.http.endpoint = Arc::from(url);
-    assert!(matches!(
-        port.create_issue(operation, task, &fields),
-        Err(LinearSyncError::CreateConflict)
-    ));
-    assert_eq!(calls.join().unwrap().len(), 1);
+    let receipt = serde_json::to_vec(&expected).expect("receipt");
+    let changes = serde_json::to_vec(&LinearChangePage {
+        changes: vec![expected.clone()],
+        next_cursor: Some("next".into()),
+    })
+    .expect("changes");
+    let server = std::thread::spawn(move || {
+        for (index, response) in [changes, receipt].into_iter().enumerate() {
+            let (mut socket, _) = listener.accept().expect("accept");
+            socket
+                .set_read_timeout(Some(Duration::from_secs(3)))
+                .expect("timeout");
+            let mut data = Vec::new();
+            let mut buffer = [0u8; 4096];
+            loop {
+                let count = socket.read(&mut buffer).expect("request");
+                assert!(count > 0);
+                data.extend_from_slice(&buffer[..count]);
+                if let Some(end) = data.windows(4).position(|bytes| bytes == b"\r\n\r\n") {
+                    let headers = String::from_utf8_lossy(&data[..end]).to_lowercase();
+                    let content_length = headers
+                        .lines()
+                        .find_map(|line| line.strip_prefix("content-length: "))
+                        .map_or(0, |value| value.parse::<usize>().expect("length"));
+                    if data.len() >= end + 4 + content_length {
+                        break;
+                    }
+                }
+            }
+            let request = String::from_utf8_lossy(&data).to_lowercase();
+            assert!(request.contains("authorization: bearer test-token\r\n"));
+            if index == 0 {
+                assert!(request.starts_with("get /changes?cursor=old%2fcursor "));
+            } else {
+                assert!(request.starts_with("post /issues "));
+                assert!(request.contains("\"operation_id\":\""));
+                assert!(request.contains("\"task_ref\":\""));
+            }
+            write!(socket, "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n", response.len()).expect("headers");
+            socket.write_all(&response).expect("body");
+        }
+    });
+    let mut bridge = LinearBridge {
+        client: Client::builder()
+            .timeout(Duration::from_secs(3))
+            .build()
+            .expect("client"),
+        base: reqwest::Url::parse(&format!("http://{addr}/")).expect("URL"),
+        credential: reqwest::header::HeaderValue::from_static("Bearer test-token"),
+        request_timeout: Duration::from_secs(3),
+    };
+    let page = bridge.changes_since(Some("old/cursor")).expect("page");
+    assert_eq!(page.next_cursor.as_deref(), Some("next"));
+    assert_eq!(page.changes, vec![expected.clone()]);
+    let created = bridge
+        .create_issue([5u8; 32], EntityId::now(), &expected.fields)
+        .expect("create");
+    assert_eq!(created, expected);
+    server.join().expect("requests authenticated");
 }
 
 #[test]
-fn tracker_change_blocks_update_and_lost_response_retry_is_read_only() {
-    use oneiron::TimeRange;
-    use oneiron::edge::EdgeActorClass;
-    use oneiron::linear_sync::{LinearSyncDirection, TaskIssueLink};
-    use oneiron::task_verb::TaskCreateSpec;
-    use std::collections::BTreeSet;
-    let dir = tempfile::tempdir().unwrap();
-    let vault = Arc::new(Vault::open(dir.path(), oneiron::VaultConfig::default()).unwrap());
+fn scheduled_pass_pushes_dirty_task_then_applies_inbound_page() {
+    use oneiron::task_verb::{TaskAssignee, TaskCreateSpec};
+    use oneiron::{
+        EdgeActorClass, LinearMirrorStatus, LinearTaskStore, TimeRange, Vault, VaultConfig,
+    };
+    let dir = tempfile::tempdir().expect("tempdir");
+    let vault = Vault::open(dir.path(), VaultConfig::default()).expect("vault");
     let owner = EntityId::now();
     vault
         .put_entity(
@@ -194,163 +104,262 @@ fn tracker_change_blocks_update_and_lost_response_retry_is_read_only() {
             1,
             b"owner",
         )
-        .unwrap();
+        .expect("actor");
     let task = vault
         .memory(owner, EdgeActorClass::Human)
-        .tasks_create(&TaskCreateSpec::new(
-            rmpv::Value::from("work"),
-            Some("base".into()),
-            None,
-            Some(100),
-        ))
-        .unwrap()
-        .task_ref
-        .unwrap();
-    let mut store = VaultLinearTaskStore::new(&vault);
-    let snapshot = store.task_snapshot(task).unwrap();
-    let base = snapshot.fields;
-    let issue_ref = LinearIssueRef {
-        issue_id: "issue-1".into(),
-        team_id: "team-id".into(),
-        identifier: "TEST-1".into(),
-    };
-    store
-        .put_link(
-            None,
-            &TaskIssueLink {
-                task_ref: task,
-                issue: issue_ref.clone(),
-                task_revision: snapshot.revision,
-                issue_updated_at_ms: 1_790_424_000_000,
-                seen_event_digests: BTreeSet::new(),
-                last_operation_id: [0; 32],
-                last_direction: LinearSyncDirection::TaskToIssue,
-                base_field_hashes: base.field_hashes(),
-                unresolved_conflicts: vec![],
-                link_revision: 0,
-                updated_at: 100,
-            },
+        .tasks_create(
+            &TaskCreateSpec::new(
+                rmpv::Value::from("work"),
+                Some("work".into()),
+                None,
+                Some(100),
+            )
+            .with_assignee(TaskAssignee::Peer { actor_ref: owner }),
         )
-        .unwrap();
-    let mut desired = base;
-    desired.title = "local-changed".into();
-    let mut remote = issue("remote-changed");
-    remote["priority"] = Value::Null;
-    let (url, calls) = mock_http(vec![json!({"data":{"issue":remote}})]);
-    let mut http = host();
-    http.endpoint = Arc::from(url);
-    let mut port = LinearPort::unchecked_for_test(http, Some(Arc::clone(&vault)));
-    assert!(port.update_issue([1; 32], &issue_ref, &desired).is_err());
-    assert_eq!(
-        calls.join().unwrap().len(),
-        1,
-        "remote change forbids mutation"
-    );
-    let mut already_applied = issue("local-changed");
-    already_applied["priority"] = Value::Null;
-    let (url, calls) = mock_http(vec![json!({"data":{"issue":already_applied}})]);
-    port.http.endpoint = Arc::from(url);
-    assert_eq!(
-        port.update_issue([1; 32], &issue_ref, &desired)
-            .unwrap()
-            .fields,
-        desired
-    );
-    assert_eq!(
-        calls.join().unwrap().len(),
-        1,
-        "retry must not mutate again"
-    );
-}
-
-#[test]
-fn other_graphql_errors_do_not_masquerade_as_a_missing_issue() {
-    let (url, calls) = mock_http(vec![json!({"data":null,"errors":[{
-        "message":"Entity not found: Issue", "path":["issue"],
-        "extensions":{"code":"UNAUTHENTICATED"}}]})]);
-    let mut http = host();
-    http.endpoint = Arc::from(url);
-    assert!(http.issue("issue-id").is_err());
-    assert_eq!(calls.join().unwrap().len(), 1);
-}
-
-#[tokio::test(flavor = "current_thread")]
-async fn enabled_worker_initializes_off_runtime_and_polls_local_transport() {
-    let (url, calls) = mock_http(vec![json!({"data":{"issues":{
-        "nodes":[], "pageInfo":{"endCursor":null,"hasNextPage":false}}}})]);
-    let dir = tempfile::tempdir().unwrap();
-    let vault = Arc::new(Vault::open(dir.path(), oneiron::VaultConfig::default()).unwrap());
-    let config = LinearHostConfig {
-        token: "fixture-private-key".into(),
-        team_id: "team-id".into(),
-        status_names: BTreeMap::from([("queued".into(), "Backlog".into())]),
-        assignee_ids: BTreeMap::new(),
-        scheduler_actor: EntityId::from_bytes([3; 16]).unwrap(),
-        policy_override: None,
-        endpoint: Some(url),
+        .expect("task")
+        .task_ref
+        .expect("task id");
+    let initial = VaultLinearTaskStore::new(&vault)
+        .task_snapshot(task)
+        .expect("snapshot")
+        .fields;
+    let issue = LinearIssueRef {
+        issue_id: "issue-2".into(),
+        team_id: "team".into(),
+        identifier: "TEAM-2".into(),
     };
-    // A valid opt-in must not panic while constructing reqwest's blocking
-    // client from an async server path, and the first scheduled tick must run.
-    let handle = spawn_linear_sync(Arc::clone(&vault), config).await.unwrap();
-    let requests = tokio::time::timeout(
-        Duration::from_secs(5),
-        tokio::task::spawn_blocking(move || calls.join().unwrap()),
+    let created = LinearIssueChange {
+        event_id: "create-event".into(),
+        issue: issue.clone(),
+        updated_at_ms: 1000,
+        fields: initial.clone(),
+    };
+    let mut changed = initial;
+    changed.description = Some("from Linear".into());
+    let page = LinearChangePage {
+        changes: vec![LinearIssueChange {
+            event_id: "remote-event".into(),
+            issue,
+            updated_at_ms: 1001,
+            fields: changed.clone(),
+        }],
+        next_cursor: None,
+    };
+    let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
+    let addr = listener.local_addr().expect("address");
+    let server = std::thread::spawn(move || {
+        for response in [
+            serde_json::to_vec(&LinearChangePage {
+                changes: vec![],
+                next_cursor: None,
+            })
+            .unwrap(),
+            serde_json::to_vec(&created).unwrap(),
+            serde_json::to_vec(&page).unwrap(),
+        ] {
+            let (mut socket, _) = listener.accept().expect("accept");
+            socket
+                .set_read_timeout(Some(Duration::from_secs(3)))
+                .expect("timeout");
+            let mut buffer = [0u8; 4096];
+            let count = socket.read(&mut buffer).expect("request");
+            assert!(count > 0);
+            assert!(
+                String::from_utf8_lossy(&buffer[..count])
+                    .to_lowercase()
+                    .contains("authorization: bearer test-token")
+            );
+            write!(socket, "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n", response.len()).expect("headers");
+            socket.write_all(&response).expect("body");
+        }
+    });
+    let bridge = LinearBridge {
+        client: Client::builder()
+            .timeout(Duration::from_secs(3))
+            .build()
+            .expect("client"),
+        base: reqwest::Url::parse(&format!("http://{addr}/")).expect("URL"),
+        credential: reqwest::header::HeaderValue::from_static("Bearer test-token"),
+        request_timeout: Duration::from_secs(3),
+    };
+    let (push, initial_pull) =
+        synchronize_once(&vault, bridge.clone(), bridge.clone(), 100, 64).expect("link pass");
+    assert_eq!(push.len(), 1);
+    assert_eq!(push[0].status, LinearMirrorStatus::Linked);
+    assert_eq!(initial_pull.applied, 0);
+    let (_push, pulled) =
+        synchronize_once(&vault, bridge.clone(), bridge, 101, 64).expect("pull pass");
+    assert_eq!(pulled.applied, 1);
+    assert_eq!(
+        VaultLinearTaskStore::new(&vault)
+            .task_snapshot(task)
+            .expect("after poll")
+            .fields,
+        changed
+    );
+    server.join().expect("provider exchange");
+}
+
+#[tokio::test]
+async fn configured_bridge_builds_inside_tokio_without_blocking_client_panic() {
+    let bridge = build_bridge(
+        Some("http://127.0.0.1:12345/".to_owned()),
+        Some("test-token".to_owned()),
+        15,
     )
     .await
-    .unwrap()
-    .unwrap();
-    assert_eq!(requests.len(), 1);
-    assert!(
-        requests[0].contains("Authorization: fixture-private-key")
-            || requests[0].contains("authorization: fixture-private-key")
+    .expect("construct blocking client off runtime thread")
+    .expect("configured");
+    assert_eq!(bridge.base.scheme(), "http");
+    assert_eq!(
+        bridge.credential,
+        reqwest::header::HeaderValue::from_static("Bearer test-token")
     );
-    handle.abort();
-    let _ = handle.await;
 }
 
 #[test]
-fn assigned_task_maps_both_identity_namespaces_and_refuses_unknown_ids() {
-    let actor = EntityId::from_bytes([8; 16]).unwrap().to_hex();
-    let user = "12345678-1234-4234-8234-123456789abc";
-    let (url, calls) = mock_http(vec![json!({"data":{"team":{
-        "states":{"nodes":[{"id":"state-backlog","name":"Backlog"}]}}}})]);
-    let mut http = host();
-    http.endpoint = Arc::from(url);
-    http.assignee_ids = Arc::new(BTreeMap::from([(actor.clone(), user.into())]));
+fn linked_update_sends_expected_base_and_refuses_remote_precondition_miss() {
+    let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
+    let addr = listener.local_addr().expect("addr");
     let fields = MirroredTaskFields {
-        title: "assigned".into(),
+        title: "task".into(),
         description: None,
-        priority: Some(2),
-        assignee_ref: Some(actor.clone()),
+        priority: None,
+        assignee_ref: None,
         status: "queued".into(),
     };
-    let input = http.fields_input(&fields).unwrap();
-    assert_eq!(input["assigneeId"], user);
-    assert_ne!(input["assigneeId"], actor);
-    assert_eq!(calls.join().unwrap().len(), 1);
-    let mut inbound = issue("assigned");
-    inbound["assignee"] = json!({"id":user});
-    assert_eq!(
-        http.parse_issue(&inbound).unwrap().fields.assignee_ref,
-        Some(actor)
-    );
-    inbound["assignee"] = json!({"id":"99999999-9999-4999-8999-999999999999"});
-    let unknown = http.parse_issue(&inbound).unwrap();
-    assert!(unknown.unmapped_assignee);
-    assert_eq!(
-        unknown.fields.assignee_ref.as_deref(),
-        Some("99999999-9999-4999-8999-999999999999")
-    );
-    let mut unmapped = fields;
-    unmapped.assignee_ref = Some(EntityId::from_bytes([9; 16]).unwrap().to_hex());
+    let expected = fields.field_hashes();
+    let title_hash = hex_operation_id(expected["title"]);
+    let server = std::thread::spawn(move || {
+        let (mut socket, _) = listener.accept().expect("accept");
+        socket
+            .set_read_timeout(Some(Duration::from_secs(3)))
+            .expect("timeout");
+        let mut raw = Vec::new();
+        let mut buf = [0u8; 4096];
+        loop {
+            let size = socket.read(&mut buf).expect("read");
+            assert!(size > 0);
+            raw.extend_from_slice(&buf[..size]);
+            if let Some(end) = raw.windows(4).position(|chunk| chunk == b"\r\n\r\n") {
+                let header = String::from_utf8_lossy(&raw[..end]).to_lowercase();
+                let len: usize = header
+                    .lines()
+                    .find_map(|line| line.strip_prefix("content-length: "))
+                    .expect("body length")
+                    .parse()
+                    .expect("valid length");
+                if raw.len() >= end + 4 + len {
+                    break;
+                }
+            }
+        }
+        let request = String::from_utf8_lossy(&raw);
+        assert!(request.starts_with("POST /issues/update "));
+        assert!(request.contains("Bearer test-token"));
+        assert!(request.contains("expected_base_field_hashes"));
+        assert!(request.contains(&title_hash));
+        socket.write_all(b"HTTP/1.1 412 Precondition Failed\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
+            .expect("reject without a remote write");
+    });
+    let mut bridge = LinearBridge {
+        client: Client::builder()
+            .timeout(Duration::from_secs(3))
+            .build()
+            .expect("client"),
+        base: reqwest::Url::parse(&format!("http://{addr}/")).expect("url"),
+        credential: reqwest::header::HeaderValue::from_static("Bearer test-token"),
+        request_timeout: Duration::from_secs(3),
+    };
+    let issue = LinearIssueRef {
+        issue_id: "opaque".into(),
+        team_id: "team".into(),
+        identifier: "TEAM-1".into(),
+    };
     assert!(matches!(
-        LinearPort::unchecked_for_test(http, None).create_issue(
-            [1; 32],
-            EntityId::from_bytes([2; 16]).unwrap(),
-            &unmapped
-        ),
-        Err(LinearSyncError::AssigneeUnmapped)
+        bridge.update_issue_conditional([1u8; 32], &issue, &expected, &fields),
+        Err(LinearSyncError::RemoteChanged)
     ));
+    server.join().expect("provider checked precondition");
+}
+
+#[tokio::test]
+async fn narrowed_vault_timeout_controls_authenticated_bridge_request() {
+    use oneiron::{LinearChangeSource, Vault, VaultConfig};
+    let dir = tempfile::tempdir().expect("tempdir");
+    let vault = Vault::open(dir.path(), VaultConfig::default()).expect("vault");
+    let policy = vault.linear_mirror_policy().expect("seeded manifest");
+    let mut holder = policy;
+    holder.request_timeout_secs = 1;
+    holder.poll_interval_secs = policy.poll_interval_secs + 1;
+    let narrowed = policy.with_holder(Some(holder)).expect("holder narrowing");
+    assert!(narrowed.request_timeout_secs < policy.request_timeout_secs);
+    assert!(narrowed.poll_interval_secs > policy.poll_interval_secs);
+
+    let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
+    let addr = listener.local_addr().expect("addr");
+    let server = std::thread::spawn(move || {
+        for pass in 0..2 {
+            let (mut socket, _) = listener.accept().expect("accept");
+            socket
+                .set_read_timeout(Some(Duration::from_secs(4)))
+                .expect("read timeout");
+            let mut request = [0u8; 2048];
+            let size = socket.read(&mut request).expect("request");
+            assert!(size > 0);
+            assert!(
+                String::from_utf8_lossy(&request[..size])
+                    .to_lowercase()
+                    .contains("authorization: bearer test-token")
+            );
+            if pass == 0 {
+                std::thread::sleep(Duration::from_millis(1_200));
+            }
+            let payload = b"{\"changes\":[],\"next_cursor\":null}";
+            let _ = write!(
+                socket,
+                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                payload.len()
+            );
+            let _ = socket.write_all(payload);
+        }
+    });
+    let url = format!("http://{addr}/");
+    let short = build_bridge(
+        Some(url.clone()),
+        Some("test-token".into()),
+        narrowed.request_timeout_secs,
+    )
+    .await
+    .expect("bridge")
+    .expect("configured");
+    let short_result = tokio::task::spawn_blocking(move || {
+        let mut short = short;
+        short.changes_since(None)
+    })
+    .await
+    .expect("blocking task");
+    assert!(
+        matches!(short_result, Err(LinearSyncError::Transport(_))),
+        "one-second policy must time out the slow response"
+    );
+    let long = build_bridge(
+        Some(url),
+        Some("test-token".into()),
+        policy.request_timeout_secs,
+    )
+    .await
+    .expect("bridge")
+    .expect("configured");
+    let page = tokio::task::spawn_blocking(move || {
+        let mut long = long;
+        long.changes_since(None)
+    })
+    .await
+    .expect("blocking task")
+    .expect("longer policy succeeds");
+    assert!(page.changes.is_empty());
+    server.join().expect("requests");
 }
 
 #[test]
@@ -358,38 +367,32 @@ fn enabled_linear_host_refuses_unauthenticated_core_writers() {
     assert!(validate_server_auth(true, None, true).is_err());
     assert!(validate_server_auth(true, Some("server-secret"), true).is_err());
     assert!(validate_server_auth(true, None, false).is_err());
+    assert!(validate_server_auth(true, Some(""), false).is_err());
     assert!(validate_server_auth(true, Some("server-secret"), false).is_ok());
     assert!(validate_server_auth(false, None, true).is_ok());
+    assert!(scheduler_actor(None).is_err());
+    assert!(scheduler_actor(Some("not-an-id".into())).is_err());
+    let actor = EntityId::now();
+    assert_eq!(scheduler_actor(Some(actor.to_hex())).unwrap(), actor);
 }
 
 #[test]
 fn missing_effect_grants_refuse_before_any_linear_http_request() {
-    use oneiron::TimeRange;
-    use oneiron::edge::EdgeActorClass;
-    use oneiron::linear_sync::{LinearCreateIntent, LinearSyncDirection, linear_operation_id};
+    use oneiron::linear_sync::{LinearSyncDirection, linear_operation_id};
     use oneiron::task_verb::TaskCreateSpec;
+    use oneiron::{EdgeActorClass, TimeRange, Vault, VaultConfig};
     let dir = tempfile::tempdir().unwrap();
-    let vault = Arc::new(Vault::open(dir.path(), oneiron::VaultConfig::default()).unwrap());
+    let vault = Arc::new(Vault::open(dir.path(), VaultConfig::default()).unwrap());
     let writer = EntityId::now();
     let scheduler = EntityId::now();
-    vault
-        .put_entity(
-            &writer,
-            oneiron::registry::ENTITY_TYPE_PERSON,
-            TimeRange { start: 1, end: 1 },
-            1,
-            b"writer",
-        )
-        .unwrap();
-    vault
-        .put_entity(
-            &scheduler,
-            oneiron::registry::ENTITY_TYPE_MACHINE,
-            TimeRange { start: 1, end: 1 },
-            1,
-            b"host",
-        )
-        .unwrap();
+    for (id, kind) in [
+        (writer, oneiron::registry::ENTITY_TYPE_PERSON),
+        (scheduler, oneiron::registry::ENTITY_TYPE_MACHINE),
+    ] {
+        vault
+            .put_entity(&id, kind, TimeRange { start: 1, end: 1 }, 1, b"actor")
+            .unwrap();
+    }
     let task = vault
         .memory(writer, EdgeActorClass::Human)
         .tasks_create(&TaskCreateSpec::new(
@@ -401,8 +404,9 @@ fn missing_effect_grants_refuse_before_any_linear_http_request() {
         .unwrap()
         .task_ref
         .unwrap();
-    let mut store = VaultLinearTaskStore::new(&vault);
-    let snapshot = store.task_snapshot(task).unwrap();
+    let snapshot = VaultLinearTaskStore::new(&vault)
+        .task_snapshot(task)
+        .unwrap();
     let op = linear_operation_id(
         LinearSyncDirection::TaskToIssue,
         task,
@@ -411,104 +415,35 @@ fn missing_effect_grants_refuse_before_any_linear_http_request() {
         None,
         None,
     );
-    store
-        .create_intent(&LinearCreateIntent {
-            task_ref: task,
-            task_revision: snapshot.revision,
-            operation_id: op,
-            fields: snapshot.fields.clone(),
-            writer: None,
-        })
-        .unwrap();
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     listener.set_nonblocking(true).unwrap();
-    let mut http = host();
-    http.scheduler_actor = scheduler;
-    http.endpoint = Arc::from(format!("http://{}/graphql", listener.local_addr().unwrap()));
-    let mut port = LinearPort::new(http, Some(Arc::clone(&vault)));
+    let mut egress = GatedEgress {
+        bridge: LinearBridge {
+            client: Client::builder().build().unwrap(),
+            base: reqwest::Url::parse(&format!("http://{}/", listener.local_addr().unwrap()))
+                .unwrap(),
+            credential: reqwest::header::HeaderValue::from_static("Bearer test-token"),
+            request_timeout: Duration::from_secs(3),
+        },
+        vault: Arc::clone(&vault),
+        scheduler_actor: scheduler,
+    };
     assert!(matches!(
-        port.create_issue(op, task, &snapshot.fields),
+        egress.create_issue(op, task, &snapshot.fields),
+        Err(LinearSyncError::AuthorizationDenied)
+    ));
+    // An update for an issue the vault never linked has no TASK authority.
+    let issue = LinearIssueRef {
+        issue_id: "issue-9".into(),
+        team_id: "team".into(),
+        identifier: "TEAM-9".into(),
+    };
+    assert!(matches!(
+        egress.update_issue_conditional(op, &issue, &BTreeMap::new(), &snapshot.fields),
         Err(LinearSyncError::AuthorizationDenied)
     ));
     assert_eq!(
         listener.accept().unwrap_err().kind(),
         std::io::ErrorKind::WouldBlock
     );
-}
-
-#[test]
-fn host_policy_manifest_narrows_limits_and_refuses_widening() {
-    let floor = LinearHostPolicy::shipped_default();
-    let mut tighter = floor.clone();
-    tighter.interval_secs = 120;
-    tighter.page_size = 10;
-    tighter.timeout_secs = 5;
-    tighter.max_response_bytes = 1024;
-    let override_toml = toml::to_string(&tighter).unwrap();
-    let parsed: LinearHostPolicy = toml::from_str(&override_toml).unwrap();
-    assert_eq!(floor.narrow(&parsed).unwrap(), tighter);
-    let mut wider = tighter;
-    wider.page_size = 51;
-    assert!(floor.narrow(&wider).is_err());
-}
-
-#[test]
-fn working_and_interrupted_statuses_use_host_state_mapping() {
-    let states = json!({"data":{"team":{"states":{"nodes":[
-        {"id":"state-working","name":"In Progress"},
-        {"id":"state-interrupted","name":"Blocked"}
-    ]}}}});
-    let (url, requests) = mock_http(vec![states.clone(), states]);
-    let mut http = host();
-    http.endpoint = Arc::from(url);
-    http.status_names = Arc::new(BTreeMap::from([
-        ("queued".into(), "Backlog".into()),
-        ("working".into(), "In Progress".into()),
-        ("interrupted".into(), "Blocked".into()),
-    ]));
-    let mut working = MirroredTaskFields {
-        title: "work".into(),
-        description: None,
-        priority: None,
-        assignee_ref: None,
-        status: "working".into(),
-    };
-    assert_eq!(
-        http.fields_input(&working).unwrap()["stateId"],
-        "state-working"
-    );
-    working.status = "interrupted".into();
-    assert_eq!(
-        http.fields_input(&working).unwrap()["stateId"],
-        "state-interrupted"
-    );
-    assert_eq!(requests.join().unwrap().len(), 2);
-    let mut issue = issue("work");
-    issue["state"]["name"] = json!("In Progress");
-    assert_eq!(http.parse_issue(&issue).unwrap().fields.status, "working");
-    issue["state"]["name"] = json!("Blocked");
-    assert_eq!(
-        http.parse_issue(&issue).unwrap().fields.status,
-        "interrupted"
-    );
-}
-
-#[test]
-fn unknown_assignee_on_unlinked_issue_does_not_abort_the_page() {
-    let mut foreign = issue("other team's task");
-    foreign["id"] = json!("unlinked-issue");
-    foreign["assignee"] = json!({"id":"99999999-9999-4999-8999-999999999999"});
-    let (url, calls) = mock_http(vec![json!({"data":{"issues":{
-        "nodes":[foreign,issue("linked")],
-        "pageInfo":{"endCursor":"page-end","hasNextPage":false}
-    }}})]);
-    let mut http = host();
-    http.endpoint = Arc::from(url);
-    let mut port = LinearPort::unchecked_for_test(http, None);
-    let page = port.changes_since(None).unwrap();
-    assert_eq!(page.changes.len(), 2);
-    assert!(page.changes[0].unmapped_assignee);
-    assert!(!page.changes[1].unmapped_assignee);
-    assert_eq!(page.next_cursor.as_deref(), Some("page-end"));
-    assert_eq!(calls.join().unwrap().len(), 1);
 }

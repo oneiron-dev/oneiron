@@ -81,12 +81,11 @@ pub use self::model::{
     LINEAR_FIELD_PRIORITY, LINEAR_FIELD_STATUS, LINEAR_FIELD_TITLE, LINEAR_MIRRORED_FIELDS,
     LINEAR_SYNC_ADAPTER_ID, LINEAR_SYNC_LINK_KEY_PREFIX, LINEAR_SYNC_OPERATION_DOMAIN,
     LINEAR_SYNC_REGISTRATION, LINEAR_SYNC_SCHEMA_VERSION, LinearChangePage, LinearChangeSource,
-    LinearCreateIntent, LinearEgress, LinearFieldConflict, LinearIssueChange, LinearIssueRef,
-    LinearMirrorReceipt, LinearMirrorStatus, LinearPullReceipt, LinearSyncDirection,
-    LinearSyncError, LinearSyncRegistration, LinearSyncResult, LinearTaskStore, LinearWriteActor,
+    LinearEgress, LinearFieldConflict, LinearIssueChange, LinearIssueRef, LinearMirrorReceipt,
+    LinearMirrorStatus, LinearPullReceipt, LinearSyncDirection, LinearSyncError,
+    LinearSyncRegistration, LinearSyncResult, LinearTaskStore, LinearWriteActor,
     MirroredTaskFields, TaskIssueLink, TaskMirrorSnapshot, WaveResult,
 };
-pub use crate::gate::{LinearHostPolicy, LinearMissedTick, LinearPermission, LinearPolicyRisk};
 
 #[cfg(test)]
 mod tests;

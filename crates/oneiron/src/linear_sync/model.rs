@@ -8,20 +8,17 @@ use super::codec::{field_hash, linear_event_digest};
 
 /// Wire version of the mirror link rows and receipts.
 ///
-/// v2 made two correctness facts durable that v1 kept nowhere: the inbound
-/// event history and the unresolved-conflict barrier. v3 (ONE-1959) fixes the
-/// shape of both: the history becomes a NON-EVICTING digest set (a 32-entry
-/// ring forgets identities that are still redeliverable) and every row carries
-/// a [`TaskIssueLink::link_revision`] compare-and-set token. An older row read
-/// as a v3 row would present an empty history and revision zero — that is, it
-/// would silently re-open the replay and the clobber — so the row namespace
-/// moves with the version and the version stays hashed into every operation id.
-pub const LINEAR_SYNC_SCHEMA_VERSION: u8 = 3;
+/// v3 (ONE-1959) made the inbound history non-evicting and the link writes
+/// compare-and-set. v4 separates the REMOTE CAS snapshot from the three-way
+/// merge base: a conflicted field keeps its old merge base but the tracker has
+/// already moved. Old rows cannot supply that separate remote observation, so
+/// the link namespace and operation-id version both move with the shape.
+pub const LINEAR_SYNC_SCHEMA_VERSION: u8 = 4;
 
 /// Durable key prefix of the TASK ↔ issue link row. Versioned with
 /// [`LINEAR_SYNC_SCHEMA_VERSION`], so a row written under the older shape can
 /// never be read back as the newer one.
-pub const LINEAR_SYNC_LINK_KEY_PREFIX: &[u8] = b"linear_sync:link:v3:";
+pub const LINEAR_SYNC_LINK_KEY_PREFIX: &[u8] = b"linear_sync:link:v4:";
 
 /// Domain separator for [`linear_operation_id`](crate::linear_operation_id); pinned, because operation ids
 /// are compared across processes and replicas to suppress duplicate writes.
@@ -207,6 +204,11 @@ pub struct TaskIssueLink {
     /// the divergence, let the next unrelated event clear the barrier, and hand
     /// the following push the overwrite the pull refused (ONE-1959).
     pub base_field_hashes: BTreeMap<String, [u8; 32]>,
+    /// Current tracker values witnessed by the last accepted inbound event or
+    /// outbound receipt. Unlike the common merge base, conflicted fields move
+    /// here with the tracker, so a human resolution can use a sound remote
+    /// conditional-write precondition without declaring the conflict settled.
+    pub remote_field_hashes: BTreeMap<String, [u8; 32]>,
     /// Same-field concurrent edits this link refused to resolve, pinned with
     /// both sides' values.
     ///
@@ -225,8 +227,11 @@ pub struct TaskIssueLink {
     /// the base, so a conflict the tracker has since reverted clears itself.
     ///
     /// Re-derived, never accumulated: an inbound event rewrites this set from
-    /// the base comparison it just performed, so a settled conflict does not
-    /// linger. A settled conflict cannot be RESURRECTED either, which needs two
+    /// the base comparison it just performed. A local third-value resolution
+    /// may retain its prior witness until a conditional outbound write lands;
+    /// `blocking_conflicts` checks the current local value, so that witness
+    /// does NOT bar the deliberate resolution. A settled conflict cannot be
+    /// RESURRECTED either, which needs two
     /// separate guarantees — `seen_event_digests` stops the resolved event's
     /// own redelivery, `task_revision` rejects a pre-resolution full TASK
     /// snapshot, and `link_revision` stops an older in-flight operation from
@@ -313,11 +318,9 @@ impl MirroredTaskFields {
 }
 
 /// One normalized inbound change record.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(serde::Serialize, serde::Deserialize, Debug, Clone, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
 pub struct LinearIssueChange {
-    /// An assignee that is not mapped on this host. The issue may be skipped
-    /// if unlinked; a linked issue is retained as an explicit refusal.
-    pub unmapped_assignee: bool,
     /// Tracker event id; third component of the inbound idempotency key, and
     /// the only component that separates two events sharing an `updated_at` or
     /// recognizes one event redelivered under a new one.
@@ -364,31 +367,26 @@ pub enum LinearSyncError {
         /// Link revision the store actually holds, or `None` when unlinked.
         found: Option<u64>,
     },
+    /// The tracker changed after the base snapshot was observed. The host
+    /// must leave the remote issue untouched and retry after another pull.
+    #[error("linear remote issue changed before conditional update")]
+    RemoteChanged,
     /// Missing or revoked actor/host grant, or an unattributed TASK write.
     #[error("linear external effect lacks current actor and host authority")]
     AuthorizationDenied,
-    /// A host cannot map this TASK or tracker assignee to the other identity namespace.
-    #[error("linear assignee has no configured host mapping")]
-    AssigneeUnmapped,
-    /// A remote issue created by an earlier attempt no longer matches the
-    /// still-dirty local create. Do not acknowledge or create another issue.
-    #[error("linear create replay disagrees with remote issue")]
-    CreateConflict,
     /// Engine storage or invariant failure.
     #[error(transparent)]
     Store(#[from] crate::error::Error),
 }
 
 /// One page of normalized inbound changes.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(serde::Serialize, serde::Deserialize, Debug, Clone, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
 pub struct LinearChangePage {
     /// Changes in ascending `updated_at_ms` order.
     pub changes: Vec<LinearIssueChange>,
-    /// Durable checkpoint after this page, including a final nonempty page.
+    /// Cursor for the next page; `None` means caught up.
     pub next_cursor: Option<String>,
-    /// Whether another page is pending in this source pass. A checkpoint is
-    /// not proof of pending work: the last nonempty page still has a cursor.
-    pub has_more: bool,
 }
 
 /// What one pull pass did.
@@ -406,17 +404,9 @@ pub struct LinearPullReceipt {
     /// its NON-conflicting issue-owned fields — the refusal is per field — so
     /// this is a count of changes, not of untouched TASKs.
     pub conflicts: Vec<LinearMirrorReceipt>,
-    /// Durable source checkpoint after this page.
+    /// Cursor to resume from. `pull_page` returns `None` when caught up;
+    /// `synchronize` reports its last durably committed cursor after draining.
     pub new_cursor: Option<String>,
-    /// Whether the source has another page before outbound work may run.
-    pub has_more: bool,
-    /// Dirty TASKs refused individually by the host (unmapped assignee or a
-    /// mismatched create replay). Later TASKs may still sync; these stay dirty.
-    pub refused_outbound: Vec<EntityId>,
-    /// Linked inbound issues with unmapped identities. They remain unapplied
-    /// and require an operator mapping; unrelated issues and outbound TASKs
-    /// continue without silently replacing their assignees.
-    pub refused_inbound: Vec<LinearIssueRef>,
     /// Wall-clock stamp of the pass.
     pub pulled_at: u64,
 }
@@ -483,17 +473,39 @@ pub trait LinearEgress {
         fields: &MirroredTaskFields,
     ) -> LinearSyncResult<LinearIssueChange>;
 
-    /// Updates an already-linked tracker issue.
+    /// Direct host mutation for a provider adapter with its own authority.
+    /// The engine mirror NEVER calls this unfenced door: it always uses
+    /// [`Self::update_issue_conditional`]. A host without a CAS-capable provider
+    /// must not present this raw mutation as proof of conflict-safe mirroring.
     ///
     /// # Errors
-    ///
-    /// Returns a transport error when the update cannot be performed.
+    /// Refuses when the host supplies no direct mutation implementation.
     fn update_issue(
         &mut self,
-        operation_id: [u8; 32],
-        issue: &LinearIssueRef,
-        fields: &MirroredTaskFields,
-    ) -> LinearSyncResult<LinearIssueChange>;
+        _operation_id: [u8; 32],
+        _issue: &LinearIssueRef,
+        _fields: &MirroredTaskFields,
+    ) -> LinearSyncResult<LinearIssueChange> {
+        Err(LinearSyncError::RemoteChanged)
+    }
+
+    /// Conditionally updates an already-linked issue. The host MUST atomically
+    /// compare its current five remote field hashes against `expected_remote`
+    /// before publishing the whole snapshot. A read-then-write is not atomic;
+    /// when a provider cannot guarantee this comparison, refuse the write.
+    ///
+    /// # Errors
+    /// Returns [`LinearSyncError::RemoteChanged`] without any remote write on
+    /// mismatch or when the provider has no atomic conditional update rail.
+    fn update_issue_conditional(
+        &mut self,
+        _operation_id: [u8; 32],
+        _issue: &LinearIssueRef,
+        _expected_remote: &BTreeMap<String, [u8; 32]>,
+        _fields: &MirroredTaskFields,
+    ) -> LinearSyncResult<LinearIssueChange> {
+        Err(LinearSyncError::RemoteChanged)
+    }
 }
 
 /// Writer provenance stamped only by the verified TASK facade after its
@@ -506,42 +518,8 @@ pub struct LinearWriteActor {
     pub actor_class: u8,
 }
 
-/// Frozen first-create payload, stored before any external HTTP call.
-/// A TASK revision may move while a response is lost; this row keeps the
-/// originally authorized operation and fields stable through reconciliation.
-#[derive(serde::Serialize, serde::Deserialize, Debug, Clone, PartialEq, Eq)]
-#[serde(deny_unknown_fields)]
-pub struct LinearCreateIntent {
-    #[serde(with = "super::storage_codec::entity_ref")]
-    pub task_ref: EntityId,
-    pub task_revision: u64,
-    pub operation_id: [u8; 32],
-    pub fields: MirroredTaskFields,
-    /// Filled by the store from the first typed TASK write, never by caller text.
-    pub writer: Option<LinearWriteActor>,
-}
-
 /// Engine-side storage the mirror reads and writes.
 pub trait LinearTaskStore {
-    /// Retains an unmapped linked issue as durable pending evidence before
-    /// skipping its event. Never acknowledges its inbound event identity.
-    fn refuse_inbound_issue(
-        &mut self,
-        issue: &LinearIssueRef,
-        event_id: &str,
-    ) -> LinearSyncResult<()>;
-    /// Clears pending mapping evidence only after a mapped event was applied
-    /// or adjudicated through the ordinary TASK/link doors.
-    fn clear_inbound_refusal(&mut self, issue: &LinearIssueRef) -> LinearSyncResult<()>;
-
-    /// Store this first-create intent atomically if absent; otherwise return
-    /// the previously frozen intent. `put_link` consumes it in the link CAS.
-    ///
-    /// # Errors
-    /// Returns a store error for corrupt state or a conflicting link.
-    fn create_intent(&mut self, draft: &LinearCreateIntent)
-    -> LinearSyncResult<LinearCreateIntent>;
-
     /// Current mirror state of one TASK.
     ///
     /// # Errors

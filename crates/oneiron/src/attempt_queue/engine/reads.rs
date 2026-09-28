@@ -48,6 +48,28 @@ impl AttemptQueue<'_> {
         decode_record(&raw, id).map(Some)
     }
 
+    /// Point-reads the pending realizing attempt for a typed TASK route.
+    /// No queue scan: retry atomically moves the dedupe index to its successor.
+    pub(crate) fn pending_task_route(
+        &self,
+        kind: &str,
+        dedupe_key: &str,
+        task_ref: crate::EntityId,
+    ) -> Result<Option<AttemptRecord>> {
+        let task = task_ref.to_hex();
+        let dedupe = DedupeIndexKeys::new(kind, None, dedupe_key);
+        let txn = self.store.env.read_txn()?;
+        let record =
+            self.read_existing_dedupe_in_read_txn(&txn, &dedupe.primary, kind, None, dedupe_key)?;
+        if record
+            .as_ref()
+            .is_some_and(|row| row.task_ref.as_deref() != Some(task.as_str()))
+        {
+            return Err(Error::CorruptedIndex("TASK realization dedupe backlink"));
+        }
+        Ok(record)
+    }
+
     /// Counts the retries that precede `id` by walking its `retry_of` lineage.
     ///
     /// A first try is depth 0 and every `retry_of` hop adds one. [`Self::retry`]

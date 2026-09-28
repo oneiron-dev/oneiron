@@ -18,13 +18,14 @@ use super::codec::{
 };
 use super::floor::floor_check_in_txn;
 use super::ledger::{
-    outcome_key, receipt_manifest_names_skill, record_outcome_in_txn, tally_outcomes,
+    outcome_key, receipt_executor, receipt_manifest_names_skill, record_outcome_in_txn,
+    tally_outcomes,
 };
 use super::posterior::{
     KEY_ALPHA, KEY_BETA, SKILL_RELIABILITY_SCHEMA_VERSION, SkillReliabilityPosterior,
 };
 use super::provenance::skill_reliability_prior;
-use super::read::active_reliability_heads_in_txn;
+use super::read::{active_reliability_heads_in_txn, validate_executor};
 
 /// The §G.1 predicate this module projects. Reserved `skill.*` namespace:
 /// public claim writes are rejected, and the rows land through the
@@ -37,6 +38,7 @@ pub const PREDICATE_SKILL_RELIABILITY: &str = "skill.reliability";
 /// reproduce. Node-local like the ledger it completes — this row is a record of
 /// what arrived, not a fact about the skill, so it never travels.
 const IMPORTED_BASE_PREFIX: &[u8] = b"skill_reliability:imported_base:v1:";
+const PAIRED_BASE_PREFIX: &[u8] = b"skill_reliability:imported_base:v2:";
 
 // ---------------------------------------------------------------------------
 // Projector
@@ -68,7 +70,7 @@ pub fn project_skill_reliability(
     judgments: &[AttributionJudgment],
 ) -> Result<Vec<EntityId>> {
     let persisted = persisted_judgments_by_sequence(vault)?;
-    let mut batches: Vec<(EntityId, Vec<&AttributionJudgment>)> = Vec::new();
+    let mut batches: Vec<(EntityId, Option<String>, Vec<&AttributionJudgment>)> = Vec::new();
     for judgment in judgments {
         if judgment.verdict != AttributionVerdict::SkillDefect {
             continue;
@@ -95,21 +97,39 @@ pub fn project_skill_reliability(
         }
         // Grounded — but grounding is not authorization. This row must also BE
         // the row ONE-1737's projector routed at this sequence.
-        if persisted.get(&judgment.sequence) != Some(judgment) {
+        if persisted.get(&judgment.sequence) != Some(judgment)
+            || crate::skill_attribution::judgment_displaced(vault, judgment.sequence)?
+        {
             continue;
         }
-        match batches.iter_mut().find(|(id, _)| *id == judgment.subject) {
-            Some((_, rows)) => rows.push(judgment),
-            None => batches.push((judgment.subject, vec![judgment])),
+        let executor = receipt_executor(&receipt).map(str::to_owned);
+        match batches
+            .iter_mut()
+            .find(|(id, model, _)| *id == judgment.subject && *model == executor)
+        {
+            Some((_, _, rows)) => rows.push(judgment),
+            None => batches.push((judgment.subject, executor, vec![judgment])),
         }
     }
 
+    #[cfg(test)]
+    PRE_WRITE_HOOK.with(|slot| {
+        if let Some(hook) = slot.borrow_mut().take() {
+            hook();
+        }
+    });
     let mut projected = Vec::with_capacity(batches.len());
-    for (skill, rows) in batches {
+    for (skill, executor, rows) in batches {
         let at = rows.iter().map(|row| row.at).max().unwrap_or_default();
         let prior = skill_reliability_prior(vault, &skill)?;
         vault.with_write_txn(|wtxn| {
             for row in &rows {
+                // Close the TOCTOU window: a displacement can commit after the
+                // pre-read but before this writer. Recheck under the same writer
+                // lock as the ledger update and posterior fold.
+                if crate::skill_attribution::judgment_displaced_in_txn(vault, wtxn, row.sequence)? {
+                    continue;
+                }
                 // ONE judgment is ONE attributed outcome, so it writes ONE row.
                 // `evidence_receipts` is a list because the type is general —
                 // SK-04 emits a single receipt per routed outcome — and keying
@@ -119,16 +139,25 @@ pub fn project_skill_reliability(
                     .evidence_receipts
                     .first()
                     .ok_or(invalid("a reliability loss must cite a receipt"))?;
-                record_outcome_in_txn(vault, wtxn, &skill, receipt, false, row.at)?;
+                record_outcome_in_txn(
+                    vault,
+                    wtxn,
+                    &skill,
+                    executor.as_deref(),
+                    receipt,
+                    false,
+                    row.at,
+                )?;
             }
-            project_in_txn(vault, wtxn, &skill, prior, at)
+            project_in_txn(vault, wtxn, &skill, executor.as_deref(), prior, at)
         })?;
         projected.push(skill);
     }
     Ok(projected)
 }
 
-/// Re-projects ONE skill's reliability claim from the outcome ledger.
+/// Re-projects the legacy unknown-executor arm from the outcome ledger.
+/// Named executor wins use [`project_skill_reliability_for_executor`].
 ///
 /// The entry point for skills whose evidence is wins only — a skill that has
 /// never been blamed still has a posterior, and it is not the attribution
@@ -139,19 +168,33 @@ pub fn project_skill_reliability_for(
     at: u64,
 ) -> Result<SkillReliabilityPosterior> {
     let prior = skill_reliability_prior(vault, skill)?;
-    vault.with_write_txn(|wtxn| project_in_txn(vault, wtxn, skill, prior, at))
+    vault.with_write_txn(|wtxn| project_in_txn(vault, wtxn, skill, None, prior, at))
+}
+
+/// Reprojects the named executor's arm; A/B, cutover and held-out runs all
+/// credit this pair through their stamped terminal receipt, never a pooled arm.
+pub fn project_skill_reliability_for_executor(
+    vault: &Vault,
+    skill: &EntityId,
+    executor: &str,
+    at: u64,
+) -> Result<SkillReliabilityPosterior> {
+    validate_executor(executor)?;
+    let prior = skill_reliability_prior(vault, skill)?;
+    vault.with_write_txn(|wtxn| project_in_txn(vault, wtxn, skill, Some(executor), prior, at))
 }
 
 fn project_in_txn(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
     skill: &EntityId,
+    executor: Option<&str>,
     prior: SkillReliabilityPosterior,
     at: u64,
 ) -> Result<SkillReliabilityPosterior> {
-    let heads = active_reliability_heads_in_txn(vault, wtxn, skill)?;
-    let base = projection_base_in_txn(vault, wtxn, skill, prior, &heads)?;
-    let tally = tally_outcomes(vault, wtxn, skill)?;
+    let heads = active_reliability_heads_in_txn(vault, wtxn, skill, executor)?;
+    let base = projection_base_in_txn(vault, wtxn, skill, executor, prior, &heads)?;
+    let tally = tally_outcomes(vault, wtxn, skill, executor)?;
     let posterior = tally.posterior(base);
     let evidence = Value::Array(
         tally
@@ -166,7 +209,8 @@ fn project_in_txn(
     // the winning value is unchanged.
     let unchanged = match heads.as_slice() {
         [(_, body, _)] => {
-            body.value == posterior.to_value() && body.evidence.as_ref() == Some(&evidence)
+            body.value == posterior_value(posterior, executor)
+                && body.evidence.as_ref() == Some(&evidence)
         }
         _ => false,
     };
@@ -175,7 +219,7 @@ fn project_in_txn(
         let mut body = ClaimBody::new(
             PREDICATE_SKILL_RELIABILITY,
             ClaimSubject::Entity(*skill),
-            posterior.to_value(),
+            posterior_value(posterior, executor),
             1.0,
             ClaimApprovalStatus::Auto,
             ClaimLifecycleStatus::Active,
@@ -205,17 +249,22 @@ fn project_in_txn(
     }
 
     // Cache follows truth, in the same transaction that moved truth.
-    vault.refresh_skill_confidence_cache_in_txn(
-        wtxn,
-        skill,
-        posterior.mean(),
-        TimeRange { start: at, end: at },
-        at,
-    )?;
+    // A scalar record cache cannot represent multiple executor arms. Preserve
+    // its legacy/unknown reading; named selection reads pair claims directly.
+    if executor.is_none() {
+        vault.refresh_skill_confidence_cache_in_txn(
+            wtxn,
+            skill,
+            posterior.mean(),
+            TimeRange { start: at, end: at },
+            at,
+        )?;
+    }
     floor_check_in_txn(
         vault,
         wtxn,
         skill,
+        executor,
         posterior,
         attributed_outcomes(prior, posterior),
         at,
@@ -247,13 +296,14 @@ fn projection_base_in_txn(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
     skill: &EntityId,
+    executor: Option<&str>,
     prior: SkillReliabilityPosterior,
     heads: &[(EntityId, ClaimBody, u64)],
 ) -> Result<SkillReliabilityPosterior> {
-    let mut base = read_imported_base_in_txn(vault, wtxn, skill)?;
+    let mut base = read_imported_base_in_txn(vault, wtxn, skill, executor)?;
     let mut imported = None;
     for (_, body, _) in heads {
-        if !cites_receipts_absent_locally(vault, wtxn, skill, body)? {
+        if !cites_receipts_absent_locally(vault, wtxn, skill, executor, body)? {
             continue;
         }
         let candidate = SkillReliabilityPosterior::from_value(&body.value)?;
@@ -266,7 +316,7 @@ fn projection_base_in_txn(
         }
     }
     if let Some(imported) = imported {
-        write_imported_base_in_txn(vault, wtxn, skill, imported)?;
+        write_imported_base_in_txn(vault, wtxn, skill, executor, imported)?;
     }
     Ok(base.unwrap_or(prior))
 }
@@ -277,6 +327,7 @@ fn cites_receipts_absent_locally(
     vault: &Vault,
     rtxn: &heed::RoTxn<'_>,
     skill: &EntityId,
+    executor: Option<&str>,
     body: &ClaimBody,
 ) -> Result<bool> {
     let Some(Value::Array(cited)) = body.evidence.as_ref() else {
@@ -289,7 +340,7 @@ fn cites_receipts_absent_locally(
         if vault
             .store
             .vault_meta
-            .get(rtxn, &outcome_key(skill, receipt))?
+            .get(rtxn, &outcome_key(skill, executor, receipt))?
             .is_none()
         {
             return Ok(true);
@@ -302,11 +353,12 @@ fn read_imported_base_in_txn(
     vault: &Vault,
     rtxn: &heed::RoTxn<'_>,
     skill: &EntityId,
+    executor: Option<&str>,
 ) -> Result<Option<SkillReliabilityPosterior>> {
     let Some(raw) = vault
         .store
         .vault_meta
-        .get(rtxn, &imported_base_key(skill))?
+        .get(rtxn, &imported_base_key(skill, executor))?
     else {
         return Ok(None);
     };
@@ -323,6 +375,7 @@ fn write_imported_base_in_txn(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
     skill: &EntityId,
+    executor: Option<&str>,
     base: SkillReliabilityPosterior,
 ) -> Result<()> {
     let row = Value::Map(vec![
@@ -337,15 +390,37 @@ fn write_imported_base_in_txn(
     vault
         .store
         .vault_meta
-        .put(wtxn, &imported_base_key(skill), &encoded)?;
+        .put(wtxn, &imported_base_key(skill, executor), &encoded)?;
     Ok(())
 }
 
-fn imported_base_key(skill: &EntityId) -> Vec<u8> {
-    let mut key = Vec::with_capacity(IMPORTED_BASE_PREFIX.len() + ENTITY_ID_LEN);
-    key.extend_from_slice(IMPORTED_BASE_PREFIX);
+fn imported_base_key(skill: &EntityId, executor: Option<&str>) -> Vec<u8> {
+    let prefix = if executor.is_some() {
+        PAIRED_BASE_PREFIX
+    } else {
+        IMPORTED_BASE_PREFIX
+    };
+    let mut key =
+        Vec::with_capacity(prefix.len() + ENTITY_ID_LEN + executor.map_or(0, str::len) + 2);
+    key.extend_from_slice(prefix);
     key.extend_from_slice(skill.as_bytes());
+    if let Some(executor) = executor {
+        let length = u16::try_from(executor.len()).expect("executor capped at 256 bytes");
+        key.extend_from_slice(&length.to_be_bytes());
+        key.extend_from_slice(executor.as_bytes());
+    }
     key
+}
+
+pub(super) fn posterior_value(
+    posterior: SkillReliabilityPosterior,
+    executor: Option<&str>,
+) -> Value {
+    let mut value = posterior.to_value();
+    if let (Value::Map(entries), Some(executor)) = (&mut value, executor) {
+        entries.push((Value::from("executor"), Value::from(executor)));
+    }
+    value
 }
 
 /// Attributed outcomes carried by a posterior: the pseudo-observation weight it
@@ -378,4 +453,14 @@ fn persisted_judgments_by_sequence(vault: &Vault) -> Result<HashMap<u64, Attribu
         .into_iter()
         .map(|judgment| (judgment.sequence, judgment))
         .collect())
+}
+
+#[cfg(test)]
+thread_local! {
+    static PRE_WRITE_HOOK: std::cell::RefCell<Option<Box<dyn FnOnce()>>> = const { std::cell::RefCell::new(None) };
+}
+
+#[cfg(test)]
+pub(super) fn set_pre_write_hook(hook: Box<dyn FnOnce()>) {
+    PRE_WRITE_HOOK.with(|slot| *slot.borrow_mut() = Some(hook));
 }

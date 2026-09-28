@@ -8,10 +8,10 @@ use super::codec::{field_hash, linear_event_digest, linear_operation_id};
 use super::model::{
     ERR_BLANK_EVENT_ID, ERR_UNLINKED_ISSUE, FieldDecision, LINEAR_FIELD_ASSIGNEE_REF,
     LINEAR_FIELD_DESCRIPTION, LINEAR_FIELD_PRIORITY, LINEAR_FIELD_STATUS, LINEAR_FIELD_TITLE,
-    LINEAR_MIRRORED_FIELDS, LinearChangeSource, LinearCreateIntent, LinearEgress,
-    LinearFieldConflict, LinearIssueChange, LinearIssueRef, LinearMirrorReceipt,
-    LinearMirrorStatus, LinearPullReceipt, LinearSyncDirection, LinearSyncError, LinearSyncResult,
-    LinearTaskStore, MirroredTaskFields, TaskIssueLink, TaskMirrorSnapshot,
+    LINEAR_MIRRORED_FIELDS, LinearChangeSource, LinearEgress, LinearFieldConflict,
+    LinearIssueChange, LinearIssueRef, LinearMirrorReceipt, LinearMirrorStatus, LinearPullReceipt,
+    LinearSyncDirection, LinearSyncError, LinearSyncResult, LinearTaskStore, MirroredTaskFields,
+    TaskIssueLink, TaskMirrorSnapshot,
 };
 
 /// Mirrors one TASK against one tracker issue.
@@ -99,7 +99,6 @@ impl<T: LinearTaskStore, I: LinearChangeSource, O: LinearEgress> LinearSyncAdapt
         let mut applied = 0;
         let mut skipped_echo = 0;
         let mut conflicts = Vec::new();
-        let mut refused_inbound = Vec::new();
         for change in page.changes {
             // Before the link lookup, not after: an unidentifiable event is
             // rejected by the page it arrived in, and never reaches a store
@@ -109,17 +108,7 @@ impl<T: LinearTaskStore, I: LinearChangeSource, O: LinearEgress> LinearSyncAdapt
                 skipped_echo += 1;
                 continue;
             }
-            if change.unmapped_assignee {
-                // A linked issue needs an operator mapping; do not acknowledge
-                // or apply this event. The source page may advance because the
-                // worker redrives these unresolved links on later ticks.
-                self.tasks
-                    .refuse_inbound_issue(&change.issue, &change.event_id)?;
-                refused_inbound.push(change.issue);
-                continue;
-            }
             let receipt = self.apply_issue_change(change, now)?;
-            self.tasks.clear_inbound_refusal(&receipt.issue)?;
             match receipt.status {
                 LinearMirrorStatus::Applied => applied += 1,
                 LinearMirrorStatus::Conflict => conflicts.push(receipt),
@@ -130,22 +119,7 @@ impl<T: LinearTaskStore, I: LinearChangeSource, O: LinearEgress> LinearSyncAdapt
             applied,
             skipped_echo,
             conflicts,
-            // Do not consume a linked unknown-assignee event. Replay the
-            // page from its prior checkpoint after the mapping is supplied;
-            // processed siblings are deduped by their event digests. Outbound
-            // work can still run instead of being held by this refusal.
-            new_cursor: if refused_inbound.is_empty() {
-                page.next_cursor
-            } else {
-                None
-            },
-            has_more: if refused_inbound.is_empty() {
-                page.has_more
-            } else {
-                false
-            },
-            refused_outbound: Vec::new(),
-            refused_inbound,
+            new_cursor: page.next_cursor,
             pulled_at: now,
         })
     }
@@ -200,7 +174,29 @@ impl<T: LinearTaskStore, I: LinearChangeSource, O: LinearEgress> LinearSyncAdapt
 
         let expected_link_revision = link.link_revision;
         let next_link_revision = link.next_revision()?;
-        let decision = decide_fields(&link.base_field_hashes, &snapshot.fields, &change.fields);
+        let mut decision = decide_fields(&link.base_field_hashes, &snapshot.fields, &change.fields);
+        // A local edit OFF a pinned conflicting value is an intentional
+        // resolution. An unrelated tracker event must not re-pin it while the
+        // tracker still holds the value the conflict witnessed. Keep the old
+        // common base until the conditional outbound publish succeeds.
+        let pending_resolution = pending_resolution_fields(&link, &snapshot.fields, &change.fields);
+        decision
+            .conflicts
+            .retain(|conflict| !pending_resolution.contains(&conflict.field));
+        // Returning to the ORIGINAL common base is still an explicit local
+        // resolution, not an issue-owned edit. Attribution against that old
+        // base alone would otherwise adopt the tracker title and erase it.
+        decision
+            .issue_wins
+            .retain(|field| !pending_resolution.contains(*field));
+        decision.issue_changed = !decision.issue_wins.is_empty();
+        let mut held_base_conflicts = decision.conflicts.clone();
+        held_base_conflicts.extend(
+            link.unresolved_conflicts
+                .iter()
+                .filter(|conflict| pending_resolution.contains(&conflict.field))
+                .cloned(),
+        );
         // `merge_fields` takes the issue value only for the fields the issue
         // OWNS in this change, and a conflicting field is never one of them, so
         // the conflicting task values are carried through untouched even when
@@ -242,12 +238,15 @@ impl<T: LinearTaskStore, I: LinearChangeSource, O: LinearEgress> LinearSyncAdapt
             base_field_hashes: rebased_fields(
                 &link.base_field_hashes,
                 &change.fields,
-                &decision.conflicts,
+                &held_base_conflicts,
             ),
-            // Re-derived from the base this event was just attributed against,
-            // so a conflict the tracker has since reverted clears itself and a
-            // conflict still live stays pinned.
-            unresolved_conflicts: decision.conflicts.clone(),
+            remote_field_hashes: change.fields.field_hashes(),
+            // Keep the prior witness while a third-value local resolution is
+            // pending publication. It no longer blocks (the local value moved
+            // off task_value), but a later unrelated event needs that witness
+            // to avoid re-pinning the intentional resolution against the old
+            // three-way base. The conditional push clears it on success.
+            unresolved_conflicts: held_base_conflicts.clone(),
             link_revision: next_link_revision,
             updated_at: now,
         };
@@ -273,31 +272,21 @@ impl<T: LinearTaskStore, I: LinearChangeSource, O: LinearEgress> LinearSyncAdapt
         snapshot: &TaskMirrorSnapshot,
         now: u64,
     ) -> LinearSyncResult<LinearMirrorReceipt> {
-        let intent = self.tasks.create_intent(&LinearCreateIntent {
-            task_ref: snapshot.task_ref,
-            task_revision: snapshot.revision,
-            operation_id: linear_operation_id(
-                LinearSyncDirection::TaskToIssue,
-                snapshot.task_ref,
-                snapshot.revision,
-                None,
-                None,
-                None,
-            ),
-            fields: snapshot.fields.clone(),
-            writer: None,
-        })?;
-        let operation_id = intent.operation_id;
+        let operation_id = linear_operation_id(
+            LinearSyncDirection::TaskToIssue,
+            snapshot.task_ref,
+            snapshot.revision,
+            None,
+            None,
+            None,
+        );
         let created =
             self.outbound
-                .create_issue(operation_id, snapshot.task_ref, &intent.fields)?;
-        if created.fields != intent.fields {
-            return Err(LinearSyncError::CreateConflict);
-        }
+                .create_issue(operation_id, snapshot.task_ref, &snapshot.fields)?;
         let link = TaskIssueLink {
             task_ref: snapshot.task_ref,
             issue: created.issue.clone(),
-            task_revision: intent.task_revision,
+            task_revision: snapshot.revision,
             issue_updated_at_ms: created.updated_at_ms,
             // Our own create is the first event this issue will ever emit, so
             // seeding the history is what stops it bouncing back inbound.
@@ -309,6 +298,7 @@ impl<T: LinearTaskStore, I: LinearChangeSource, O: LinearEgress> LinearSyncAdapt
             last_operation_id: operation_id,
             last_direction: LinearSyncDirection::TaskToIssue,
             base_field_hashes: created.fields.field_hashes(),
+            remote_field_hashes: created.fields.field_hashes(),
             unresolved_conflicts: Vec::new(),
             link_revision: 0,
             updated_at: now,
@@ -367,7 +357,12 @@ impl<T: LinearTaskStore, I: LinearChangeSource, O: LinearEgress> LinearSyncAdapt
         // not a gate because an inbound merge can retain a pending local edit.
         let stale_snapshot = snapshot.revision < link.task_revision;
         // Base hashes decide whether current fields are already on the tracker.
-        let unchanged = snapshot.fields.field_hashes() == link.base_field_hashes;
+        let pending_resolution = link
+            .unresolved_conflicts
+            .iter()
+            .any(|conflict| snapshot.fields.field_value(&conflict.field) != conflict.task_value);
+        let unchanged =
+            !pending_resolution && snapshot.fields.field_hashes() == link.base_field_hashes;
         let repeat_operation = operation_id == link.last_operation_id;
         if stale_snapshot || unchanged || repeat_operation {
             return Ok(mirror_receipt(
@@ -383,9 +378,12 @@ impl<T: LinearTaskStore, I: LinearChangeSource, O: LinearEgress> LinearSyncAdapt
 
         let expected_link_revision = link.link_revision;
         let next_link_revision = link.next_revision()?;
-        let pushed = self
-            .outbound
-            .update_issue(operation_id, &link.issue, &snapshot.fields)?;
+        let pushed = self.outbound.update_issue_conditional(
+            operation_id,
+            &link.issue,
+            &link.remote_field_hashes,
+            &snapshot.fields,
+        )?;
         let updated = TaskIssueLink {
             task_ref: snapshot.task_ref,
             issue: pushed.issue.clone(),
@@ -401,6 +399,7 @@ impl<T: LinearTaskStore, I: LinearChangeSource, O: LinearEgress> LinearSyncAdapt
             last_operation_id: operation_id,
             last_direction: LinearSyncDirection::TaskToIssue,
             base_field_hashes: pushed.fields.field_hashes(),
+            remote_field_hashes: pushed.fields.field_hashes(),
             // Reached only with an empty barrier, and this push republished
             // every bidirectional field, so nothing is left unresolved.
             unresolved_conflicts: Vec::new(),
@@ -609,6 +608,27 @@ fn decide_fields(
         }
     }
     decision
+}
+
+/// Conflicted fields whose LOCAL side deliberately moved while the REMOTE
+/// side still holds the value of the pinned conflict. They remain pending
+/// local resolutions, not renewed conflicts after an unrelated inbound event.
+fn pending_resolution_fields(
+    link: &TaskIssueLink,
+    task: &MirroredTaskFields,
+    issue: &MirroredTaskFields,
+) -> BTreeSet<String> {
+    let remote_hashes = issue.field_hashes();
+    link.unresolved_conflicts
+        .iter()
+        .filter(|conflict| {
+            task.field_value(&conflict.field) != conflict.task_value
+                && task.field_value(&conflict.field) != issue.field_value(&conflict.field)
+                && link.remote_field_hashes.get(&conflict.field)
+                    == remote_hashes.get(&conflict.field)
+        })
+        .map(|conflict| conflict.field.clone())
+        .collect()
 }
 
 /// The base after one inbound event: the tracker's post-event value for every

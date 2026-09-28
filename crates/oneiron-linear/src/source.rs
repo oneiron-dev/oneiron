@@ -145,7 +145,6 @@ impl LinearTrackerConfig {
             &serde_json::to_vec(&fields).map_err(|_| invalid("Linear issue encoding failed"))?,
         );
         Ok(LinearIssueChange {
-            unmapped_assignee: false,
             event_id: hash.finalize().to_hex().to_string(),
             issue: LinearIssueRef {
                 issue_id,
@@ -241,7 +240,6 @@ impl<R: GraphQlExecutor> LinearChangeSource for LinearHostChangeSource<R> {
         Ok(LinearChangePage {
             changes,
             next_cursor,
-            has_more: has_next,
         })
     }
 }

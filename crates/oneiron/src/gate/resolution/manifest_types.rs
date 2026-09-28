@@ -1,5 +1,8 @@
 //! Resolved-view types plus the `PolicyManifestResolution` struct definition.
 
+use crate::gate::operational_policy::{
+    LinearMirrorPolicy, LinearSyncBudget, PolicyPrecedence, WaveHandoffPolicy,
+};
 use crate::llm::{BudgetExhaustionPolicy, BudgetPolicyTable};
 
 use crate::gate::ceiling::{
@@ -78,7 +81,10 @@ pub(crate) struct PolicyManifestResolution {
     pub(crate) diagnostics: PolicyManifestDiagnostics,
     pub(crate) diagnostic_bounds: Option<crate::self_heal::tripwires::TripwireBounds>,
     pub(crate) proposal_check_threshold: Option<u64>,
-    pub(crate) linear_host_policy: Option<crate::gate::LinearHostPolicy>,
+    pub(super) linear_mirror: Option<LinearMirrorPolicy>,
+    pub(super) linear_sync: Option<LinearSyncBudget>,
+    pub(super) wave_handoff: Option<WaveHandoffPolicy>,
+    pub(super) operational_precedence: Option<PolicyPrecedence>,
     pub(crate) weave_correction_policy: Option<crate::gate::WeaveCorrectionPolicy>,
     pub(super) packs: Vec<PolicyPack>,
     pub(super) actor_ceilings: Vec<ActorCeiling>,
@@ -102,5 +108,6 @@ pub(crate) struct PolicyManifestResolution {
     /// from a resolved manifest.
     pub(super) auto_checker: Option<String>,
     pub(super) budget_policy: BudgetPolicyTable,
+    pub(crate) pack_install_policy: Option<crate::gate::PackInstallPolicy>,
     pub(super) hosted_tts: HostedTtsPolicy,
 }

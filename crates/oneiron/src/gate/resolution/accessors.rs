@@ -19,6 +19,15 @@ use crate::gate::grants::{PolicyScopedGrant, scoped_read_grant_has_read_effector
 
 #[cfg_attr(not(test), allow(dead_code))]
 impl PolicyManifestResolution {
+    /// Fully resolved, trusted install policy. Missing or malformed policy
+    /// never becomes a permissive empty rule set.
+    pub(crate) fn pack_install_policy(&self) -> Option<&crate::gate::PackInstallPolicy> {
+        if self.diagnostics.is_fail_closed() {
+            return None;
+        }
+        self.pack_install_policy.as_ref()
+    }
+
     pub(crate) fn is_single_valued_predicate(&self, predicate: &str) -> bool {
         !self.is_fail_closed() && self.single_valued_predicates.contains(predicate)
     }
@@ -52,6 +61,16 @@ impl PolicyManifestResolution {
     }
 
     #[must_use]
+    pub(in crate::gate) fn linear_mirror(&self) -> crate::gate::LinearMirrorPolicy {
+        self.linear_mirror.unwrap_or_default()
+    }
+    pub(in crate::gate) fn linear_sync(&self) -> crate::gate::LinearSyncBudget {
+        self.linear_sync.unwrap_or_default()
+    }
+    pub(in crate::gate) fn wave_handoff(&self) -> crate::gate::WaveHandoffPolicy {
+        self.wave_handoff.unwrap_or_default()
+    }
+
     pub(crate) fn proposal_check_threshold(&self) -> u64 {
         self.proposal_check_threshold
             .unwrap_or(crate::gate::proposal_observation::DEFAULT_PROPOSAL_CHECK_THRESHOLD)
