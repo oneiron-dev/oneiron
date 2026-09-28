@@ -412,17 +412,20 @@ impl Vault {
                     return Err(denied());
                 }
             } else {
-                // Witness TURNs carry only the speaker bucket. The private
+                // Witness TURNs carry the speaker bucket and, when the writer
+                // is a PERSON, its immutable `actor` author stamp. The private
                 // authenticated proof is their actor/project binding.
                 let mut speakers = fields
                     .iter()
                     .filter(|(key, _)| key.as_str() == Some("speaker"));
+                let stamped = fields.iter().any(|(key, _)| key.as_str() == Some("actor"));
                 if speakers
                     .next()
                     .and_then(|(_, value)| value.as_str())
                     .is_none()
                     || speakers.next().is_some()
-                    || fields.len() != 1
+                    || fields.len() != 1 + usize::from(stamped)
+                    || (stamped && field("actor")? != proof.actor)
                 {
                     return Err(denied());
                 }
