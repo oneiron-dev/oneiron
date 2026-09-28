@@ -16631,6 +16631,7 @@
      "kind": "src",
      "notable": [
       "FederationGrant",
+      "FederationGrantGuestPayload",
       "FederationGrantPreset",
       "FederationGrantRole",
       "FederationGrantScope"
@@ -16638,11 +16639,11 @@
      "path": "src/federation/grant.rs",
      "purpose": "Federation grant record, role/preset policy, and grant body MessagePack codec",
      "surface": {
-      "const": 3,
-      "crate-vis": 16,
+      "const": 4,
+      "crate-vis": 17,
       "enum": 3,
-      "fn": 14,
-      "struct": 1
+      "fn": 18,
+      "struct": 2
      }
     },
     {
@@ -17040,6 +17041,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/gate/ask_policy.rs",
+     "purpose": "Manifest-owned operating policy for cross-vault ask confirmation",
+     "surface": {
+      "crate-vis": 12
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/gate/auto_signals.rs",
      "purpose": "Receipt-derived rate and failure streak supplied to the existing auto checker",
      "surface": {
@@ -17091,7 +17102,7 @@
      "path": "src/gate/constants.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 79
+      "crate-vis": 80
      }
     },
     {
@@ -17374,7 +17385,7 @@
      "path": "src/gate/mod.rs",
      "purpose": "DEC-0005 Gate policy manifest resolver",
      "surface": {
-      "crate-vis": 30,
+      "crate-vis": 31,
       "re-export": 4
      }
     },
@@ -17432,7 +17443,7 @@
      "path": "src/gate/resolution/accessors.rs",
      "purpose": "Read-only resolved-field accessors plus the frontier-hash entry",
      "surface": {
-      "crate-vis": 29
+      "crate-vis": 30
      }
     },
     {
@@ -17533,6 +17544,14 @@
      "notable": [],
      "path": "src/gate/tests/actor_fork.rs",
      "purpose": "Actor identity and fork clamp: resolver mapping, herald fork, and effect-actor binding",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/gate/tests/ask_policy.rs",
+     "purpose": "Ask operating rows: shipped defaults, strict overrides, and precedence",
      "surface": {}
     },
     {
@@ -33043,12 +33062,32 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/task_verb/ask_guest.rs",
+     "purpose": "Ask-scoped guest authority: reuse a person's owner-stamped bounds",
+     "surface": {
+      "crate-vis": 6
+     }
+    },
+    {
      "bucket": "m",
      "kind": "test",
      "notable": [],
      "path": "src/task_verb/ask_outcome_tests.rs",
      "purpose": "—",
      "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/task_verb/ask_policy.rs",
+     "purpose": "Ask policy snapshot chosen at admission from trusted manifest rows",
+     "surface": {
+      "crate-vis": 1
+     }
     },
     {
      "bucket": "s",
@@ -33067,7 +33106,17 @@
      "path": "src/task_verb/ask_record.rs",
      "purpose": "Protected replicated ask facts",
      "surface": {
-      "crate-vis": 21
+      "crate-vis": 22
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/task_verb/ask_record/guard.rs",
+     "purpose": "Shared raw-put and replay validation for immutable ask facts",
+     "surface": {
+      "crate-vis": 3
      }
     },
     {
@@ -33086,6 +33135,44 @@
      "purpose": "Atomic ask cutoffs and the fixed human-word reducers",
      "surface": {
       "crate-vis": 6
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/task_verb/ask_soft_confirm.rs",
+     "purpose": "Durable, once-per-person soft-confirm notice for a companion commitment",
+     "surface": {
+      "crate-vis": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/task_verb/ask_soft_confirm_delivery.rs",
+     "purpose": "Durable soft-confirm outbox, retried independently of answer replay",
+     "surface": {
+      "crate-vis": 1,
+      "fn": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "TaskAskConfirmation",
+      "TaskAskConfirmationDecision",
+      "TaskAskSoftConfirmDelivery",
+      "TaskAskSoftConfirmNotice"
+     ],
+     "path": "src/task_verb/ask_soft_confirm_types.rs",
+     "purpose": "Revision-bound soft-confirm reply, notice, and delivery state",
+     "surface": {
+      "enum": 2,
+      "fn": 1,
+      "struct": 2
      }
     },
     {
@@ -33114,6 +33201,7 @@
       "TaskAskEvidence",
       "TaskAskEvidenceReason",
       "TaskAskFallback",
+      "TaskAskGuest",
       "TaskAskHandle",
       "TaskAskHoldReason",
       "TaskAskLadderPrediction",
@@ -33143,7 +33231,7 @@
       "crate-vis": 2,
       "enum": 16,
       "fn": 5,
-      "struct": 20
+      "struct": 21
      }
     },
     {
@@ -33345,7 +33433,7 @@
      "path": "src/task_verb/lifecycle_facade.rs",
      "purpose": "—",
      "surface": {
-      "fn": 5
+      "fn": 6
      }
     },
     {
@@ -33369,9 +33457,9 @@
      "path": "src/task_verb/mod.rs",
      "purpose": "Typed, actor-bound verbs over the Context Board TASKS section",
      "surface": {
-      "crate-vis": 11,
+      "crate-vis": 12,
       "mod": 1,
-      "re-export": 16
+      "re-export": 17
      }
     },
     {
@@ -36721,7 +36809,7 @@
      "purpose": "—"
     },
     "gate": {
-     "files": 80,
+     "files": 82,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -37288,7 +37376,7 @@
      "purpose": "Replicated TASK authority: owner proof, cancellation, and acknowledgement as immutable companion TASK entities"
     },
     "task_verb": {
-     "files": 60,
+     "files": 66,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -37409,8 +37497,8 @@
    },
    "over_bar": 4,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2222,
-   "test_files": 757
+   "source_files": 2229,
+   "test_files": 758
   },
   "oneiron-android": {
    "files": [
