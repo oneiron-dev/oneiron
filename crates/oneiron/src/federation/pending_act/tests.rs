@@ -474,15 +474,12 @@ impl PactLog {
             AuthorityKey, AuthorityLogEntry, AuthorityOp, AuthoritySignature,
             AuthoritySignatureSuite, FederationLifecycleAction,
         };
-        use crate::federation::{
-            FederationDirectionScope, FederationPactScope, FederationScopeBands,
-            FederationScopeFacets, FederationScopeWorlds,
-        };
+        use crate::federation::{FederationDirectionScope, FederationPactScope, ScopeAxis};
         use ed25519_dalek::Signer;
         let half = FederationDirectionScope {
-            worlds: FederationScopeWorlds::All,
-            facets: FederationScopeFacets::All,
-            bands: FederationScopeBands::All,
+            worlds: ScopeAxis::All,
+            facets: ScopeAxis::All,
+            bands: ScopeAxis::All,
         };
         let scope = FederationPactScope {
             lo_to_hi: half.clone(),
@@ -711,7 +708,7 @@ fn manifest_without_owner_door_does_not_change_wait() -> Result<()> {
         ..vault.shared_act_policy("erase")?.unwrap()
     };
     let body = with_act_table(
-        &crate::gate::default_policy_manifest(),
+        &crate::gate::default_policy_manifest().unwrap(),
         &BTreeMap::from([("erase".to_owned(), fast)]),
     )?;
     // A received manifest at a new id, then a replayed overwrite of the vault's own.
@@ -759,7 +756,7 @@ fn malformed_act_policy_table_refuses_start() -> Result<()> {
         Value::Array(Vec::new()),
     ];
     for table in tables {
-        let mut cursor = std::io::Cursor::new(crate::gate::default_policy_manifest());
+        let mut cursor = std::io::Cursor::new(crate::gate::default_policy_manifest().unwrap());
         let Value::Map(mut entries) = rmpv::decode::read_value(&mut cursor).unwrap() else {
             unreachable!()
         };

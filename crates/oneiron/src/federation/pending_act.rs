@@ -320,13 +320,11 @@ impl Vault {
                 // A pact can further restrict the grant's content ceiling. A
                 // non-universal pact cannot confer base authority operations.
                 if fold.pact_for_grant(&id).is_some_and(|pact| {
-                    !matches!(
-                        pact.effective_scope.worlds,
-                        super::FederationScopeWorlds::All | super::FederationScopeWorlds::Base
-                    ) || !matches!(
-                        pact.effective_scope.facets,
-                        super::FederationScopeFacets::All
-                    ) || !matches!(pact.effective_scope.bands, super::FederationScopeBands::All)
+                    let worlds = &pact.effective_scope.worlds;
+                    !(*worlds == super::ScopeAxis::All
+                        || *worlds == super::pact_scope::base_world_axis())
+                        || pact.effective_scope.facets != super::ScopeAxis::All
+                        || pact.effective_scope.bands != super::ScopeAxis::All
                 }) {
                     continue;
                 }
