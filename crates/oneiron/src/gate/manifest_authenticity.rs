@@ -19,13 +19,13 @@ pub(crate) fn seeded_manifest_key(id: &EntityId) -> String {
 }
 
 pub(crate) fn manifest_is_seeded_default(
-    store: &Store,
+    store: &impl crate::store::ManifestDbs,
     txn: &heed::RoTxn<'_>,
     id: &EntityId,
     body: &[u8],
 ) -> Result<bool> {
     Ok(store
-        .sync_state
+        .sync_state()
         .get(txn, &seeded_manifest_key(id))?
         .is_some_and(|hash| hash.as_ref() == blake3::hash(body).as_bytes()))
 }
@@ -72,25 +72,25 @@ pub(crate) fn stamp_manifest_origin(
 }
 
 pub(crate) fn manifest_is_trusted(
-    store: &Store,
+    store: &impl crate::store::ManifestDbs,
     txn: &heed::RoTxn<'_>,
     id: &EntityId,
     body: &[u8],
 ) -> Result<bool> {
     Ok(store
-        .sync_state
+        .sync_state()
         .get(txn, &key(id, "trusted"))?
         .is_some_and(|hash| hash.as_ref() == blake3::hash(body).as_bytes()))
 }
 
 pub(in crate::gate) fn manifest_is_quarantined(
-    store: &Store,
+    store: &impl crate::store::ManifestDbs,
     txn: &heed::RoTxn<'_>,
     id: &EntityId,
     body: &[u8],
 ) -> Result<bool> {
     Ok(store
-        .sync_state
+        .sync_state()
         .get(txn, &key(id, "quarantined"))?
         .is_some_and(|hash| hash.as_ref() == blake3::hash(body).as_bytes()))
 }

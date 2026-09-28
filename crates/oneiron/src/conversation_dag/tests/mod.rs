@@ -1135,14 +1135,20 @@ fn nested_continuation_refreshes_its_actual_parent_and_delete_repairs_meta() {
     assert_eq!(vault.thread(a).unwrap().replies, [b, c]);
     assert_eq!(vault.thread_meta(a).unwrap().unwrap().count, 2);
     assert_eq!(vault.thread_meta(trunk).unwrap().unwrap().count, 3);
-    vault.delete_entity(&c).unwrap();
+    vault
+        .delete_own_room_record(c, crate::DeleteReason::UserDelete)
+        .unwrap();
     assert_eq!(
         vault.thread_meta(a).unwrap().unwrap().count,
         vault.thread(a).unwrap().count
     );
-    vault.delete_entity(&b).unwrap();
+    vault
+        .delete_own_room_record(b, crate::DeleteReason::UserDelete)
+        .unwrap();
     assert_eq!(vault.thread_meta(a).unwrap(), None);
-    vault.delete_entity(&a).unwrap();
+    vault
+        .delete_own_room_record(a, crate::DeleteReason::UserDelete)
+        .unwrap();
     assert!(vault.thread(trunk).unwrap().replies.is_empty());
     assert_eq!(vault.thread_meta(trunk).unwrap(), None);
 }
@@ -1197,13 +1203,13 @@ fn soft_delete_of_interior_and_last_reply_repairs_thread_meta() {
     );
     assert_eq!(vault.thread_meta(trunk).unwrap().unwrap().count, 3);
     vault
-        .delete_entity_with_reason(&interior, crate::DeleteReason::UserDelete)
+        .delete_own_room_record(interior, crate::DeleteReason::UserDelete)
         .unwrap();
     assert_eq!(vault.thread(trunk).unwrap().replies, [first]);
     assert_eq!(vault.thread_meta(trunk).unwrap().unwrap().count, 1);
     assert_eq!(vault.thread_meta(first).unwrap(), None);
     vault
-        .delete_entity_with_reason(&first, crate::DeleteReason::UserDelete)
+        .delete_own_room_record(first, crate::DeleteReason::UserDelete)
         .unwrap();
     assert!(vault.thread(trunk).unwrap().replies.is_empty());
     assert_eq!(vault.thread_meta(trunk).unwrap(), None);
@@ -1569,16 +1575,21 @@ fn headless_adopted_room_refuses_childof_preview_even_with_newer_thread() {
 
 #[test]
 fn migrated_room_with_only_deleted_childof_shells_has_no_preview() {
-    let (_dir, vault, conversation, _actor) = fixture();
+    let (_dir, vault, conversation, actor) = fixture();
     let turn = EntityId::now();
+    // A room TURN soft-deletes only through its author's room door.
+    let authored = rmp_serde::to_vec_named(
+        &serde_json::json!({"txt": "deleted text", "actor": actor.entity_ref().to_hex()}),
+    )
+    .unwrap();
     vault
         .batch()
-        .put(&turn, ENTITY_TYPE_TURN, time(20), 20, &body("deleted text"))
+        .put(&turn, ENTITY_TYPE_TURN, time(20), 20, &authored)
         .edge_checked(&turn, &conversation, 1.0)
         .commit()
         .unwrap();
     vault
-        .delete_entity_with_reason(&turn, crate::DeleteReason::UserDelete)
+        .delete_own_room_record(turn, crate::DeleteReason::UserDelete)
         .unwrap();
     assert!(vault.is_deleted_shell(&turn).unwrap());
     let page = vault

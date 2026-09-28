@@ -1146,3 +1146,5 @@ fn archived_chat_evidence_preserves_session_and_turn_references_without_distill_
     assert_eq!(third.get_claim(&id)?, Some(imported));
     Ok(())
 }
+
+mod evidence_support;
