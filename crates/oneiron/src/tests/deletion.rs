@@ -276,24 +276,57 @@ fn hard_erase_of_a_merge_head_cascades_to_its_redirect_shell() -> Result<()> {
     assert_eq!(vault.resolve_entity(&loser)?, vec![survivor]);
     assert!(!vault.get(&loser)?.expect("shell body").is_empty());
 
-    let author_pin = vault.pin_entity_revision(&event)?;
+    let attribution = {
+        let txn = vault.store.env.read_txn()?;
+        let mut found = None;
+        for entry in vault.store.type_index.prefix_iter(
+            &txn,
+            &[crate::registry::ENTITY_TYPE_IDENTITY_TOPOLOGY_EVENT],
+        )? {
+            let (key, _) = entry?;
+            let id = crate::vault::entity_id_from_type_index_key(&key)?;
+            let Some(row) = vault.identity_topology_event_in_txn(&txn, &id)? else {
+                continue;
+            };
+            if matches!(row.action,
+                crate::identity_topology::StoredIdentityOpAction::AuthorAttribution { target, .. }
+                if target == event)
+            {
+                found = Some(id);
+                break;
+            }
+        }
+        found.expect("separate author carrier minted beside immutable decision")
+    };
+    let author_pin = vault.pin_entity_revision(&attribution)?;
+    let core_pin = vault.pin_entity_revision(&event)?;
+    let original_core = vault.get_raw_with_mode(
+        &event,
+        crate::vault::entity_revision::ReadMode::Pinned(core_pin),
+    )?;
     let outcome = vault.delete_entity_with_reason(&survivor, DeleteReason::UserHardDelete)?;
-    assert!(matches!(
+    assert_eq!(
         vault.get_raw_with_mode(
-            &event,
-            crate::vault::entity_revision::ReadMode::Pinned(author_pin)
-        ),
-        Err(Error::EntityNotFound)
-    ));
-    let scrubbed_pin = vault.pin_entity_revision(&event)?;
-    assert_ne!(author_pin, scrubbed_pin);
+            &attribution,
+            crate::vault::entity_revision::ReadMode::Pinned(author_pin),
+        )?,
+        None,
+        "the personal carrier is physically absent even through a pinned read",
+    );
+    assert_eq!(
+        vault.get_raw(&attribution)?,
+        None,
+        "active personal attribution must also be erased"
+    );
     assert_eq!(
         vault.get_raw_with_mode(
             &event,
-            crate::vault::entity_revision::ReadMode::Pinned(scrubbed_pin)
+            crate::vault::entity_revision::ReadMode::Pinned(core_pin),
         )?,
-        vault.get_raw_with_mode(&event, crate::vault::entity_revision::ReadMode::Live)?
+        original_core,
+        "the immutable core and its pinned revision survive erasure byte-identically"
     );
+    assert_eq!(vault.get_raw(&event)?, original_core);
     assert!(outcome.existed);
 
     // The leak r6 §9 names: neither the head nor its shell may still read.

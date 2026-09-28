@@ -212,6 +212,50 @@ pub(super) fn scrub_local_claim_carriers(
     Ok(removed)
 }
 
+/// Remove attribution carriers defeated by permanent author-redaction facts.
+/// Check both local LMDB and the document: a redaction newly received in this
+/// window may not yet have been materialized, while its earlier attribution
+/// is already in Loro history. Even an empty live map needs the history-free
+/// pin once a redaction exists, because a prior delete does not erase Loro ops.
+pub(super) fn scrub_redacted_attribution_carriers(
+    vault: &Vault,
+    key: &WindowKey,
+    doc: &LoroDoc,
+) -> Result<bool> {
+    let entities = doc.get_map("entities");
+    let mut redacted = {
+        let rtxn = vault.store.env.read_txn()?;
+        crate::identity_topology::redacted_keys_in_txn(&vault.store, &rtxn)?
+    };
+    map_for_each_value_bytes(&entities, |_, blob| {
+        if let Some(key) = blob.and_then(crate::identity_topology::redaction_carrier_key) {
+            redacted.insert(key);
+        }
+    });
+    if redacted.is_empty() {
+        return Ok(false);
+    }
+    // Pin BEFORE deletion. A failed durable pin cannot leave a scrubbed doc
+    // eligible for an ordinary delta carrying old personal bytes.
+    require_history_free_window(vault, key)?;
+    let mut keys = Vec::new();
+    map_for_each_value_bytes(&entities, |map_key, blob| {
+        if blob
+            .and_then(crate::identity_topology::attribution_carrier_key)
+            .is_some_and(|key| redacted.contains(&key))
+        {
+            keys.push(map_key.to_owned());
+        }
+    });
+    for map_key in &keys {
+        map_delete(&entities, map_key)?;
+    }
+    if !keys.is_empty() {
+        doc.commit_with(CommitOptions::new().origin(BRIDGE_ORIGIN));
+    }
+    Ok(!keys.is_empty())
+}
+
 /// Exports a full-window response without carrying pre-scrub operation bytes.
 /// The peer VV is still decoded first so malformed-VV requests never become a
 /// full-export fallback.
@@ -230,7 +274,8 @@ pub fn export_window_updates_since(
     crate::sync::note::refresh(vault, doc, key)?;
     let secret_scrubbed = scrub_local_only_carriers(vault, key, doc)?;
     let claims_scrubbed = scrub_local_claim_carriers(vault, key, doc)?;
-    let scrubbed = secret_scrubbed || claims_scrubbed;
+    let authors_scrubbed = scrub_redacted_attribution_carriers(vault, key, doc)?;
+    let scrubbed = secret_scrubbed || claims_scrubbed || authors_scrubbed;
     if scrubbed || history_free_window_required(vault, key)? || doc.is_shallow() {
         export_history_free_window_snapshot(doc)
     } else {
@@ -260,6 +305,7 @@ pub(in crate::sync) fn export_scrubbed_window_snapshot(
     crate::sync::note::refresh(vault, doc, key)?;
     scrub_local_claim_carriers(vault, key, doc)?;
     scrub_local_only_carriers(vault, key, doc)?;
+    scrub_redacted_attribution_carriers(vault, key, doc)?;
     if history_free_window_required(vault, key)? || doc.is_shallow() {
         export_history_free_window_snapshot(doc)
     } else {
@@ -290,6 +336,11 @@ pub fn replay_pending_mirrors(vault: &Vault, doc: &LoroDoc, window_key: &WindowK
     drop(rtxn);
 
     scrub_local_claim_carriers(vault, window_key, doc)?;
+    scrub_redacted_attribution_carriers(vault, window_key, doc)?;
+    let redacted_authors = {
+        let rtxn = vault.store.env.read_txn()?;
+        crate::identity_topology::redacted_keys_in_txn(&vault.store, &rtxn)?
+    };
     let entities_map = doc.get_map("entities");
     let tombstones_map = doc.get_map("tombstones");
     let edges_map = doc.get_map("edges");
@@ -332,6 +383,16 @@ pub fn replay_pending_mirrors(vault: &Vault, doc: &LoroDoc, window_key: &WindowK
                 require_history_free_window(vault, window_key)?;
                 doc.commit_with(CommitOptions::new().origin(BRIDGE_ORIGIN));
             }
+            vault.with_write_txn(|wtxn| {
+                vault.store.sync_state.delete(wtxn, marker_key)?;
+                Ok(())
+            })?;
+            continue;
+        }
+
+        if crate::identity_topology::attribution_carrier_key(&raw)
+            .is_some_and(|key| redacted_authors.contains(&key))
+        {
             vault.with_write_txn(|wtxn| {
                 vault.store.sync_state.delete(wtxn, marker_key)?;
                 Ok(())

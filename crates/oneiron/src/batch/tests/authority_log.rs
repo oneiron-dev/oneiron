@@ -426,6 +426,28 @@ fn ingest_replicated_identity_topology_event_for_test(
             vault, wtxn, id, &header, &blob, &body, 7,
         )
         .map(|_| ())
+    })?;
+    let (fact_id, fact) =
+        crate::identity_topology::signed_validated_row_for_test(vault, *id, record)?;
+    let fact_body = crate::identity_topology::encode_identity_topology_event_body(&fact)?;
+    let mut fact_blob = Vec::with_capacity(ENTITY_METADATA_HEADER_LEN + fact_body.len());
+    fact_blob.push(crate::registry::ENTITY_TYPE_IDENTITY_TOPOLOGY_EVENT);
+    for _ in 0..3 {
+        fact_blob.extend_from_slice(&1u64.to_be_bytes());
+    }
+    fact_blob.extend_from_slice(&fact_body);
+    let fact_header = EntityMetadataHeader::parse(&fact_blob).expect("admission fact header");
+    vault.with_write_txn(|wtxn| {
+        crate::sync::bridge::ingest_replicated_identity_topology_event_in_txn(
+            vault,
+            wtxn,
+            &fact_id,
+            &fact_header,
+            &fact_blob,
+            &fact_body,
+            7,
+        )
+        .map(|_| ())
     })
 }
 
@@ -490,6 +512,10 @@ fn authority_log_put_evicts_delete_protected_squatter() -> Result<()> {
     let loser = EntityId::from_bytes([0xD2; 16])?;
     let squatter_record = crate::identity_topology::StoredIdentityOpEvent {
         seq: 50,
+
+        validated_at_write: false,
+
+        invalidated: false,
         at: 1,
         actor: None,
         source: ClaimSource::Inferred,
@@ -600,6 +626,10 @@ fn authority_dominance_unwinds_evicted_type_76_participant_shell_edges() -> Resu
 
     let squatter_record = crate::identity_topology::StoredIdentityOpEvent {
         seq: 50,
+
+        validated_at_write: false,
+
+        invalidated: false,
         at: 1,
         actor: None,
         source: ClaimSource::Inferred,
@@ -713,6 +743,10 @@ fn evicting_an_apply_creates_unlocked_merge_edges_on_undirect_sources() -> Resul
         &derived,
         &crate::identity_topology::StoredIdentityOpEvent {
             seq: 40,
+
+            validated_at_write: false,
+
+            invalidated: false,
             at: 1,
             actor: None,
             source: ClaimSource::Inferred,
@@ -733,6 +767,10 @@ fn evicting_an_apply_creates_unlocked_merge_edges_on_undirect_sources() -> Resul
         &m,
         &crate::identity_topology::StoredIdentityOpEvent {
             seq: 41,
+
+            validated_at_write: false,
+
+            invalidated: false,
             at: 1,
             actor: None,
             source: ClaimSource::Inferred,
@@ -844,6 +882,10 @@ fn evicting_an_undo_removes_relocked_merge_edges_on_undirect_sources() -> Result
         &t,
         &crate::identity_topology::StoredIdentityOpEvent {
             seq: 40,
+
+            validated_at_write: false,
+
+            invalidated: false,
             at: 1,
             actor: None,
             source: ClaimSource::Inferred,
@@ -862,6 +904,10 @@ fn evicting_an_undo_removes_relocked_merge_edges_on_undirect_sources() -> Result
         &derived,
         &crate::identity_topology::StoredIdentityOpEvent {
             seq: 41,
+
+            validated_at_write: false,
+
+            invalidated: false,
             at: 1,
             actor: None,
             source: ClaimSource::Inferred,
@@ -878,6 +924,10 @@ fn evicting_an_undo_removes_relocked_merge_edges_on_undirect_sources() -> Result
         &m,
         &crate::identity_topology::StoredIdentityOpEvent {
             seq: 42,
+
+            validated_at_write: false,
+
+            invalidated: false,
             at: 1,
             actor: None,
             source: ClaimSource::Inferred,
