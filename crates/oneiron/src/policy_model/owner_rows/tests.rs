@@ -352,7 +352,7 @@ fn notification_rule_is_data_default_and_override_dials_win() -> TestResult {
 #[test]
 fn queued_policy_push_enters_the_existing_human_followup_ladder() -> TestResult {
     use crate::channel_identity::{
-        ChannelIdentity, ChannelIdentityBinding, ChannelIdentityFulfillment, ChannelIdentityState,
+        ChannelIdentity, ChannelIdentityBinding, ChannelIdentityFulfillment, ChannelIdentityStep,
         SelfHeldShape,
     };
     use crate::comm::resolve_or_create_comm_party;
@@ -373,14 +373,12 @@ fn queued_policy_push_enters_the_existing_human_followup_ladder() -> TestResult 
             NOW,
         ),
     )?;
-    vault.transition_channel_identity(
+    vault.step_channel_identity(
         &face,
-        ChannelIdentityState::PendingFulfillment,
-        Some(ChannelIdentityFulfillment::Api),
+        ChannelIdentityStep::Bind(ChannelIdentityFulfillment::Api),
         NOW,
-        None,
     )?;
-    vault.transition_channel_identity(&face, ChannelIdentityState::Active, None, NOW, None)?;
+    vault.step_channel_identity(&face, ChannelIdentityStep::Fulfill, NOW)?;
     vault.create_counterparty_contact(
         &EntityId::from_bytes([0x6d; 16])?,
         &CounterpartyContactRecord::user_introduction(face, "policy-holder@example.test", NOW)?,
