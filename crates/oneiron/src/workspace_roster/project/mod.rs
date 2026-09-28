@@ -2,12 +2,19 @@
 //! PROJECT uses the compiled-pack registration door, not a new core kind.
 mod deletion;
 mod edges;
+mod goal;
 mod mint;
 pub use mint::{ProjectBudgetShare, ProjectGoalRecord, ProjectMintReceipt};
 mod projection;
 pub(crate) use deletion::deindex_project_room;
 pub(crate) use edges::{
     validate_project_edge_delete, validate_project_edge_put, validate_project_graph,
+};
+pub(crate) use goal::GoalLimits;
+pub use goal::{GoalAxis, GoalExplorationBudget, GoalInterviewTurns, GoalPreference, GoalRecord};
+pub(crate) use goal::{
+    admitted_claim_of_project, guard_claim_put as guard_goal_claim_put, guard_goal_delete,
+    guard_pointer_put as guard_goal_pointer_put, precheck_goal_delete, retire_goal_for_delete,
 };
 #[cfg(test)]
 mod tests;

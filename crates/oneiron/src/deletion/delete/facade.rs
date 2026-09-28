@@ -91,6 +91,7 @@ impl Vault {
         ) {
             let mut txn = self.store.env.write_txn()?;
             reverify_deletion_authority_before_publication(gate, &txn)?;
+            crate::workspace_roster::precheck_goal_delete(&self.store, &txn, *id, gate.is_some())?;
             if !crate::share::active_brief_shares_for(
                 &self.store,
                 &txn,
@@ -132,6 +133,7 @@ impl Vault {
         {
             let txn = self.store.env.read_txn()?;
             crate::federation::reject_ruling_delete(&self.store, &txn, id)?;
+            crate::workspace_roster::precheck_goal_delete(&self.store, &txn, *id, gate.is_some())?;
             self.store.guard_pack_map_carrier_delete_in_txn(&txn, id)?;
         }
         // Refuse an unsafe explicit hard purge before any tombstone can be
