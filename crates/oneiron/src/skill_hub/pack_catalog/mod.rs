@@ -1,5 +1,7 @@
 //! Exact, inert PACK.md source catalogs. A source blob is never an install grant.
 mod agent_facets;
+mod builtin;
+pub(crate) use builtin::seed_builtin_packs;
 mod codec;
 mod doors;
 mod manifest;

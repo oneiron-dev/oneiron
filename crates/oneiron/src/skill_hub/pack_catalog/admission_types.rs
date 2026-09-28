@@ -1,5 +1,5 @@
 //! Source-bound post-fit decisions and install receipts; install never grants authority.
-use super::{PackManifest, PackSection, PackSource};
+use super::{PackAdapter, PackKind, PackManifest, PackSection, PackSource};
 use crate::skill_hub::{ForeignSkillPublisher, HubAskSurface, HubRef};
 use crate::{entity_id::EntityId, error::Result};
 
@@ -146,6 +146,10 @@ pub struct PackInstallReceipt {
     pub source_id: String,
     pub pack_name: String,
     pub content_hash: String,
+    pub kind: PackKind,
+    pub adapter: Option<PackAdapter>,
+    /// Present only for an engine-embedded source; this is provenance, not authority.
+    pub engine_version: Option<String>,
     pub status: PackInstallStatus,
     pub candidate_reason: Option<PackCandidateReason>,
     pub hub_id: String,

@@ -112,8 +112,8 @@ fn hits_ignore_unrelated_version_metadata_and_do_not_read_content() {
             })
             .collect()
     };
-    // Two fixture blobs plus the four seeded bootstrap source carriers.
-    assert_eq!(assets.len(), 6);
+    // Two fixture blobs plus four bootstrap skill carriers and four built-in pack sources.
+    assert_eq!(assets.len(), 10);
     let mut txn = vault.store.env.write_txn().expect("write txn");
     for (key, _) in unrelated {
         vault
