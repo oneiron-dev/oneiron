@@ -36,6 +36,9 @@ pub enum RecordError {
     ConversationState(&'static str),
     #[error("conversation actor is not authorized")]
     ConversationDenied,
+    /// A live shared-ancestor rule narrowed the default leader-chat admission.
+    #[error("leader chat refused by rule claim {}", rule.to_hex())]
+    LeaderChatRule { rule: EntityId },
 
     #[error("DAG parent is outside the conversation")]
     DagParentOutsideConversation,
@@ -217,7 +220,7 @@ impl RecordError {
             Self::ProjectDependencyPending => ErrorKind::ProjectDependencyPending,
             Self::InvalidConversationBody(_) => ErrorKind::InvalidConversationBody,
             Self::ConversationState(_) => ErrorKind::ConversationState,
-            Self::ConversationDenied => ErrorKind::ConversationDenied,
+            Self::ConversationDenied | Self::LeaderChatRule { .. } => ErrorKind::ConversationDenied,
             Self::MessageStreamRecoveryFailed(_) => ErrorKind::MessageStreamRecoveryFailed,
             Self::DagParentOutsideConversation => ErrorKind::DagParentOutsideConversation,
             Self::HeadAdvanceOffTrunk => ErrorKind::HeadAdvanceOffTrunk,

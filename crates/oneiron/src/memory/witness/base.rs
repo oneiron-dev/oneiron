@@ -274,6 +274,35 @@ impl Memory<'_> {
                 turn,
                 &message_ids,
             )?;
+            let leader_project = crate::workspace_roster::admit_leader_chat_witness(
+                self.vault,
+                wtxn,
+                conversation_id,
+                self.actor,
+                turn.messages
+                    .iter()
+                    .any(|m| m.author == super::WitnessAuthor::System),
+            )?;
+            if let Some(project) = leader_project
+                && self.vault.get_entity_type_in_txn(wtxn, &turn_id)?.is_some()
+            {
+                crate::workspace_roster::verify_existing_leader_chat_turn(
+                    self.vault,
+                    wtxn,
+                    turn_id,
+                    conversation_id,
+                    self.actor,
+                    project,
+                )?;
+            }
+            if leader_project.is_some() {
+                crate::workspace_roster::permit_leader_chat_record(
+                    &self.vault.store,
+                    wtxn,
+                    turn_id,
+                    conversation_id,
+                )?;
+            }
             let mut batch = self.vault.batch_in();
             if conversation_is_absent {
                 batch = batch.put(
@@ -502,6 +531,26 @@ impl Memory<'_> {
             // room has flipped back off record (K10). Every earlier row is
             // rolled back with this `Err`.
             effect(wtxn)?;
+            if let Some(project) = leader_project {
+                crate::workspace_roster::settle_leader_chat_record(
+                    self.vault,
+                    wtxn,
+                    turn_id,
+                    conversation_id,
+                    self.actor,
+                    project,
+                )?;
+                for id in &message_ids {
+                    crate::workspace_roster::settle_leader_chat_record(
+                        self.vault,
+                        wtxn,
+                        *id,
+                        conversation_id,
+                        self.actor,
+                        project,
+                    )?;
+                }
+            }
             if let Some(route) = session_route {
                 route.revalidate()?;
             }
