@@ -1011,3 +1011,114 @@ fn a_citation_row_outliving_its_skill_is_pruned_by_the_sweep() -> Result<()> {
     );
     Ok(())
 }
+
+#[test]
+fn conversion_mints_workflow_and_callable_roles_from_authored_source() -> Result<()> {
+    for (role, call) in [
+        (crate::skill::SkillRole::Workflow, ""),
+        (
+            crate::skill::SkillRole::Callable,
+            "call:\n  reference: scripts/run.js\n  arguments: {\"value\":\"integer\"}\n  returns: {\"value\":\"integer\"}\n",
+        ),
+    ] {
+        let (_tmp, vault) = temp_vault();
+        let turns = witnessed_turns(&vault, &["a morning routine checklist"], 1_775_000_000);
+        let mut files = vec![HubFile::new("SKILL.md", format!(
+            "---\nname: morning-routine-checklist\ndescription: Run the morning routine checklist when the day starts\nrole: {}\n{call}---\nUse it every morning.\n",
+            role.as_str()
+        ).into_bytes())];
+        if role == crate::skill::SkillRole::Callable {
+            files.push(HubFile::new(
+                "scripts/run.js",
+                b"finish(JSON.stringify({value:skillArgs.value}));".to_vec(),
+            ));
+        }
+        let refiner = StubRefiner::minting("morning-routine-checklist", files);
+        let ConvertOutcome::Created(id) =
+            convert_messages_to_skill(&vault, &ConvertRequest::new(turns), &refiner, t(20), 21)?
+        else {
+            panic!("mint must create")
+        };
+        let stored = vault.get_skill_record(&id)?.expect("minted role");
+        assert_eq!(stored.role, role);
+        assert_eq!(
+            stored.call.is_some(),
+            role == crate::skill::SkillRole::Callable
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn conversion_merge_preserves_workflow_and_refuses_callable_metadata_loss() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    let existing = seed_extracted_skill(
+        &vault,
+        "morning-routine-checklist",
+        "The morning routine: blinds, kettle, three priorities",
+        &[("SKILL.md", b"# older morning routine\n")],
+    );
+    let mut target = vault.get_skill_record(&existing)?.expect("target");
+    target.version = "2".into();
+    target.role = crate::skill::SkillRole::Workflow;
+    vault.update_skill_record(&existing, &target, t(12), 13)?;
+    let turns = witnessed_turns(
+        &vault,
+        &["blinds, kettle, then the three priorities"],
+        1_775_000_000,
+    );
+    let refiner = StubRefiner::new(
+        "morning-routine-checklist",
+        tree(REFINED_TREE),
+        RefineVerdict::MergeInto {
+            existing,
+            rationale: "same workflow".into(),
+        },
+    );
+    let ConvertOutcome::MergeProposed { proposal, .. } = convert_messages_to_skill(
+        &vault,
+        &ConvertRequest::new(turns.clone()),
+        &refiner,
+        t(20),
+        21,
+    )?
+    else {
+        panic!("merge proposes")
+    };
+    assert_eq!(
+        vault.get_skill_record(&proposal)?.expect("proposal").role,
+        crate::skill::SkillRole::Workflow
+    );
+
+    let mut callable = target;
+    callable.version = "3".into();
+    callable.role = crate::skill::SkillRole::Callable;
+    callable.call = Some(crate::skill::SkillCallContract {
+        reference: "scripts/run.js".into(),
+        arguments: serde_json::json!({"value":"integer"}),
+        returns: serde_json::json!({"value":"integer"}),
+    });
+    vault.update_skill_record(&existing, &callable, t(22), 23)?;
+    let changed_refiner = StubRefiner::new(
+        "morning-routine-checklist",
+        vec![HubFile::new("SKILL.md", b"---\nname: morning-routine-checklist\n---\nA changed routine without callable contract.\n".to_vec())],
+        RefineVerdict::MergeInto { existing, rationale: "same procedure".into() },
+    );
+    let err = convert_messages_to_skill(
+        &vault,
+        &ConvertRequest::new(turns),
+        &changed_refiner,
+        t(24),
+        25,
+    )
+    .expect_err("a callable merge cannot omit its source contract");
+    assert_eq!(err.kind(), ErrorKind::InvalidSkillBody);
+    assert_eq!(
+        vault
+            .get_skill_record(&existing)?
+            .expect("target after refusal")
+            .role,
+        crate::skill::SkillRole::Callable
+    );
+    Ok(())
+}
