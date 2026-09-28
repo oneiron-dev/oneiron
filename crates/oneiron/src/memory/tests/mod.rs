@@ -871,10 +871,14 @@ fn a_deleted_shell_is_absent_from_every_memory_read() {
             .len(),
         1
     );
+    memory
+        .safe_delete(&id.to_hex(), SafeDeleteReason::UserDelete)
+        .expect("soft delete");
+    // A room MESSAGE is deleted through the room door, as its author.
+    vault
+        .delete_own_room_record(message, crate::DeleteReason::UserDelete)
+        .expect("soft delete");
     for deleted in [id, message] {
-        memory
-            .safe_delete(&deleted.to_hex(), SafeDeleteReason::UserDelete)
-            .expect("soft delete");
         assert!(vault.is_deleted_shell(&deleted).expect("shell"));
     }
     let live = crate::vault::ReadMode::Live;
