@@ -550,38 +550,12 @@ pub(crate) fn default_policy_manifest() -> Vec<u8> {
                 ),
             ]),
         ),
-        (
-            Value::from(POLICY_ATTRIBUTION_LIMITS_KEY),
-            Value::Map(vec![
-                (
-                    Value::from(ATTRIBUTION_PRECEDENCE_KEY),
-                    Value::from("nested_narrowing"),
-                ),
-                (
-                    Value::from(ATTRIBUTION_REASON_MAX_BYTES_KEY),
-                    Value::from(DEFAULT_ATTRIBUTION_REASON_MAX_BYTES),
-                ),
-                (
-                    Value::from(ATTRIBUTION_RECEIPTS_PER_PASS_KEY),
-                    Value::from(DEFAULT_ATTRIBUTION_RECEIPTS_PER_PASS),
-                ),
-            ]),
-        ),
+        attribution_limits_default_entry(),
         (
             Value::from(crate::federation::grant_policy::ROWS_KEY),
             federation_grant_default_rows(),
         ),
-        (
-            Value::from(POLICY_TEACHER_PROBE_KEY),
-            Value::Map(vec![
-                (
-                    Value::from("probe_id"),
-                    Value::from(crate::llm::manifest::TEACHER_PROBE_ID),
-                ),
-                (Value::from("min_f1_millionths"), Value::from(800_000_u64)),
-                (Value::from("holders"), Value::Array(Vec::new())),
-            ]),
-        ),
+        teacher_probe_default_entry(),
         (
             Value::from(POLICY_SHEET_ANSWER_PRECEDENCE_KEY),
             Value::Map(vec![(
@@ -629,14 +603,8 @@ pub(crate) fn default_policy_manifest() -> Vec<u8> {
         // than as engine constants (DEC-0005; owner rule 2026-09-27). Both
         // rows state today's behavior — they change nothing on a fresh vault
         // and everything about who owns the decision.
-        (
-            Value::from(POLICY_WAIT_POLICY_KEY),
-            wait_policy_default_rows(),
-        ),
-        (
-            Value::from(POLICY_ACT_POLICY_KEY),
-            act_policy_default_rows(),
-        ),
+        wait_policy_default_entry(),
+        act_policy_default_entry(),
         (
             Value::from(POLICY_SIGNATURES_KEY),
             Value::Array(vec![Value::Map(vec![
@@ -654,10 +622,46 @@ pub(crate) fn default_policy_manifest() -> Vec<u8> {
     data
 }
 
-/// The shipped `wait_policy` rows (GATE-009): today's quarantine floor as
+/// The shipped attribution limits: precedence and the two byte/count caps.
+fn attribution_limits_default_entry() -> (Value, Value) {
+    (
+        Value::from(POLICY_ATTRIBUTION_LIMITS_KEY),
+        Value::Map(vec![
+            (
+                Value::from(ATTRIBUTION_PRECEDENCE_KEY),
+                Value::from("nested_narrowing"),
+            ),
+            (
+                Value::from(ATTRIBUTION_REASON_MAX_BYTES_KEY),
+                Value::from(DEFAULT_ATTRIBUTION_REASON_MAX_BYTES),
+            ),
+            (
+                Value::from(ATTRIBUTION_RECEIPTS_PER_PASS_KEY),
+                Value::from(DEFAULT_ATTRIBUTION_RECEIPTS_PER_PASS),
+            ),
+        ]),
+    )
+}
+
+/// The shipped teacher probe floor, with no holder rows.
+fn teacher_probe_default_entry() -> (Value, Value) {
+    (
+        Value::from(POLICY_TEACHER_PROBE_KEY),
+        Value::Map(vec![
+            (
+                Value::from("probe_id"),
+                Value::from(crate::llm::manifest::TEACHER_PROBE_ID),
+            ),
+            (Value::from("min_f1_millionths"), Value::from(800_000_u64)),
+            (Value::from("holders"), Value::Array(Vec::new())),
+        ]),
+    )
+}
+
+/// The shipped `wait_policy` entry (GATE-009): today's quarantine floor as
 /// vault-resident data.
-fn wait_policy_default_rows() -> Value {
-    Value::Array(vec![Value::Map(vec![
+fn wait_policy_default_entry() -> (Value, Value) {
+    let rows = Value::Array(vec![Value::Map(vec![
         (
             Value::from(WAIT_POLICY_CLASS_KEY),
             Value::from(WAIT_CLASS_CHANNEL_IDENTITY_QUARANTINE),
@@ -666,13 +670,14 @@ fn wait_policy_default_rows() -> Value {
             Value::from(WAIT_POLICY_MIN_SECS_KEY),
             Value::from(DEFAULT_CHANNEL_IDENTITY_QUARANTINE_MIN_SECS),
         ),
-    ])])
+    ])]);
+    (Value::from(POLICY_WAIT_POLICY_KEY), rows)
 }
 
-/// The shipped `act_policy` rows (GATE-009): the starting outbound posture
+/// The shipped `act_policy` entry (GATE-009): the starting outbound posture
 /// for each channel identity subject class.
-fn act_policy_default_rows() -> Value {
-    Value::Array(vec![
+fn act_policy_default_entry() -> (Value, Value) {
+    let rows = Value::Array(vec![
         // A delegated row is the member's own mailbox under an OAuth
         // grant. ARCH-0063 R3 says identity picks the STARTING posture
         // only and a grant may authorize send-as-owner, so the ban is
@@ -711,7 +716,8 @@ fn act_policy_default_rows() -> Value {
                 Value::from(ActPosture::RequireCapability.as_str()),
             ),
         ]),
-    ])
+    ]);
+    (Value::from(POLICY_ACT_POLICY_KEY), rows)
 }
 
 /// Engine-authored vault policy DATA for grant creation. The grant codec and
