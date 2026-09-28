@@ -66,6 +66,20 @@ pub(super) fn hash_policy_frontier_v0(
     // manifest contributes no decoded rows at all and its malformed-ness is
     // already frontier-relevant through `hash_diagnostics`.
     hash_budget_policy_table(hasher, &resolution.budget_policy);
+    if let Some((vault, holders)) = resolution.connector_admission.rows_for_hash() {
+        hash_str(hasher, "connector_admission");
+        hash_str(hasher, "nested_narrow_holder_override_vault_cap");
+        hash_u64(hasher, vault.max_tools as u64);
+        hash_u64(hasher, vault.max_permissions_per_tool as u64);
+        hash_u64(hasher, vault.max_triggers_per_tool as u64);
+        hash_len(hasher, holders.len());
+        for (holder, quotas) in holders {
+            hash_str(hasher, holder);
+            hash_u64(hasher, quotas.max_tools as u64);
+            hash_u64(hasher, quotas.max_permissions_per_tool as u64);
+            hash_u64(hasher, quotas.max_triggers_per_tool as u64);
+        }
+    }
     if !resolution.voice_serving.is_empty() {
         hash_str(hasher, "voice_serving_nested_narrowing");
         hash_len(hasher, resolution.voice_serving.len());
