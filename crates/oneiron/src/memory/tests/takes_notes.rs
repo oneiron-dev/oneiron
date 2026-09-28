@@ -2,6 +2,14 @@
 
 use super::*;
 
+/// One point read through `read`'s lane, with its receipt.
+fn point(
+    read: &crate::claim::ScopedRead<'_>,
+    target: crate::claim::PointRead<'_>,
+) -> crate::claim::ScopedReadResult<Option<crate::claim::ReadRow>> {
+    read.read(&[target], None).unwrap().single()
+}
+
 /// Two actors, one claim, two takes. Divergence is append-only: two NOTE ids,
 /// two independent `AuthoredBy` edges, no upsert keyed by `(actor, target)`
 /// and no cross-attribution.
@@ -1242,6 +1250,24 @@ fn versioned_notes_gate_historic_private_bodies_when_live_note_is_public() {
     assert!(pack.results.is_empty());
 }
 
+/// A host-rooted human slip for `actor`, verified: the credential its reads carry.
+fn diary_coref_proof(
+    vault: &crate::Vault,
+    issuer: &crate::authority::HostSlipIssuer,
+    root: &crate::authority::CapabilitySlip,
+    actor: EntityId,
+) -> crate::authority::VerifiedSlip {
+    let mut claims = root.claims.clone();
+    claims.slip_id = *blake3::hash(actor.as_bytes()).as_bytes();
+    claims.holder_ref = actor.to_hex();
+    claims.actor_class = Some("human".into());
+    let slip = vault.mint_capability_slip(issuer, claims).unwrap();
+    let sig = issuer.binding_proof(&slip, b"diary-coref").unwrap();
+    vault
+        .verify_capability_slip(&issuer.public_key(), &slip, b"diary-coref", &sig)
+        .unwrap()
+}
+
 #[test]
 fn cross_resident_diary_coreference_requires_both_exact_grants_on_every_read() {
     use crate::claim::ScopedReadActorKey;
@@ -1343,17 +1369,7 @@ fn cross_resident_diary_coreference_requires_both_exact_grants_on_every_read() {
     assert_eq!(note_body_of(&vault, &note_b).author_ref, b);
     let issuer = crate::authority::HostSlipIssuer::from_secret(b"diary coreference read").unwrap();
     let root = vault.ensure_host_root_slip(&issuer).unwrap();
-    let proof_of = |actor: EntityId| {
-        let mut claims = root.claims.clone();
-        claims.slip_id = *blake3::hash(actor.as_bytes()).as_bytes();
-        claims.holder_ref = actor.to_hex();
-        claims.actor_class = Some("human".into());
-        let slip = vault.mint_capability_slip(&issuer, claims).unwrap();
-        let sig = issuer.binding_proof(&slip, b"diary-coref").unwrap();
-        vault
-            .verify_capability_slip(&issuer.public_key(), &slip, b"diary-coref", &sig)
-            .unwrap()
-    };
+    let proof_of = |actor| diary_coref_proof(&vault, &issuer, &root, actor);
     let read_key = |proof: &crate::authority::VerifiedSlip| {
         ScopedReadActorKey::from_verified_slip(proof).unwrap()
     };
@@ -1411,14 +1427,8 @@ fn cross_resident_diary_coreference_requires_both_exact_grants_on_every_read() {
         superseded_by: Vec::new(),
     };
     let assert_opaque = |hidden: EntityId| {
-        let absent = read_a
-            .read(&[crate::claim::PointRead::id(absent_id)], None)
-            .unwrap()
-            .single();
-        let denied = read_a
-            .read(&[crate::claim::PointRead::id(hidden)], None)
-            .unwrap()
-            .single();
+        let absent = point(&read_a, crate::claim::PointRead::id(absent_id));
+        let denied = point(&read_a, crate::claim::PointRead::id(hidden));
         assert!(absent.value.is_none() && denied.value.is_none());
         assert_eq!(denied.receipt, absent.receipt);
         assert_eq!(denied.receipt.suppressed_count, 0);
@@ -1471,14 +1481,8 @@ fn cross_resident_diary_coreference_requires_both_exact_grants_on_every_read() {
     let assert_hidden_short = || {
         let reference = author_b.short_ref_or_hex(&note_b).unwrap();
         let (short, hash) = crate::entity_id::parse_short_ref_syntax(&reference).unwrap();
-        let denied = read_a
-            .read(&[crate::claim::PointRead::short(short, hash)], None)
-            .unwrap()
-            .single();
-        let absent = read_a
-            .read(&[crate::claim::PointRead::short("missing", 0)], None)
-            .unwrap()
-            .single();
+        let denied = point(&read_a, crate::claim::PointRead::short(short, hash));
+        let absent = point(&read_a, crate::claim::PointRead::short("missing", 0));
         assert!(denied.value.is_none() && absent.value.is_none());
         assert_eq!(denied.receipt, absent.receipt);
     };
@@ -1502,14 +1506,9 @@ fn cross_resident_diary_coreference_requires_both_exact_grants_on_every_read() {
             (&read_a, note_a, note_b, "diarycounterpart"),
             (&read_b, note_b, note_a, "diaryalpha"),
         ] {
-            let point = |id| {
-                read.read(&[crate::claim::PointRead::id(id)], None)
-                    .unwrap()
-                    .single()
-                    .value
-            };
-            assert!(point(own).is_some());
-            assert_eq!(point(foreign).is_some(), shared);
+            let row = |id| point(read, crate::claim::PointRead::id(id)).value;
+            assert!(row(own).is_some());
+            assert_eq!(row(foreign).is_some(), shared);
             let search = read.search_text(query, 10, None).unwrap();
             assert_eq!(search.value.iter().any(|hit| hit.id == foreign), shared);
             if !shared {
