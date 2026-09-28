@@ -14,10 +14,12 @@ pub(super) struct FoldContext<'a> {
     pub(super) first_seen_at_secs: &'a BTreeMap<AuthorityEntryHash, u64>,
     pub(super) now_secs: Option<u64>,
     /// Minimum future eligibility observed during ANY fold pass, including a
-    /// a pending widen whose eligibility changes the fold.
+    /// pending widen whose eligibility changes the fold.
     pub(super) deadline_observer: Option<&'a Cell<Option<u64>>>,
     pub(super) sequence_floors: Option<&'a BTreeMap<AuthorityEntryHash, u64>>,
     pub(super) enforce_seen_time_delay: bool,
+    pub(super) entry_ancestors:
+        Option<&'a BTreeMap<AuthorityEntryHash, BTreeSet<AuthorityEntryHash>>>,
     /// Consent roots of every ADMITTED PEER roster, keyed by peer vault id.
     ///
     /// EVIDENCE for FED-01 gesture acceptance, never a local consent
@@ -229,6 +231,7 @@ fn fold_authority_log_inner(
             deadline_observer: local.deadline_observer,
             sequence_floors,
             enforce_seen_time_delay,
+            entry_ancestors: None,
             peer_consent_roots,
             consent_arm,
         },
@@ -277,6 +280,7 @@ fn fold_authority_log_once(
         super::sequence_ancestry::causal_sequence_floors(&by_hash, &entry_ancestors, context);
     let context = FoldContext {
         sequence_floors: causal_floors.as_ref(),
+        entry_ancestors: Some(&entry_ancestors),
         ..context
     };
 

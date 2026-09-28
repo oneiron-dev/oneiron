@@ -170,6 +170,7 @@ pub(in crate::authority) fn entry_folds_on_available_ancestry(
                     first_seen_at_secs: &first_seen_at_secs,
                     now_secs: None,
                     enforce_seen_time_delay: false,
+                    entry_ancestors: Some(ancestors),
                     ..context
                 },
             ) {

@@ -308,6 +308,7 @@ impl LocalFoldContext {
             now_secs: None,
             deadline_observer: None,
             enforce_seen_time_delay: false,
+            entry_ancestors: None,
             peer_consent_roots: &self.peer_consent_roots,
             consent_arm: folded_device_can_authority_consent,
         }
