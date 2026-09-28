@@ -431,11 +431,7 @@ fn self_host_fold_rejects_cloud_consent_roles() {
 
     let entry = sign_ed(entry, &signing);
     assert!(encode_authority_log_entry_body(&entry).is_ok());
-    assert!(
-        fold_authority_log_without_seen_time_delay(&[entry])
-            .valid_entries
-            .is_empty()
-    );
+    assert!(fold_authority_log(&[entry]).valid_entries.is_empty());
 }
 
 #[test]
@@ -540,10 +536,6 @@ fn zero_role_devices_do_not_count_as_quorum_participants() {
         genesis_recovery_dismissed: false,
         recovery_redundancy_established: false,
         tier_floor_events: BTreeMap::new(),
-        pending_widen_delay_secs: DEFAULT_PENDING_WIDEN_DELAY_SECS,
-        pending_widens: BTreeMap::new(),
-        vetoed_widens: BTreeSet::new(),
-        delayed_rotation_veto_revocations: BTreeMap::new(),
         federation_pacts: BTreeMap::new(),
         federation_confirms: BTreeMap::new(),
         critical_write_confirms: BTreeMap::new(),

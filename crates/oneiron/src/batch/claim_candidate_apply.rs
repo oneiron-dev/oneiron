@@ -18,7 +18,8 @@ pub(super) struct AppliedClaimCandidate {
 
 pub(super) fn apply_claim_candidate(
     store: &Store,
-    posture: crate::HostingPrivacyPosture,
+    config: &crate::config::VaultConfig,
+    birth_context: (&crate::analyzer::MultilingualAnalyzer, bool),
     wtxn: &mut RwTxn<'_>,
     request: ClaimCandidateRequest<'_>,
 ) -> Result<AppliedClaimCandidate> {
@@ -34,6 +35,7 @@ pub(super) fn apply_claim_candidate(
         write_policy,
     } = request;
     crate::gate::validate_write_envelope(envelope)?;
+    let (analyzer, text_index_trusted) = birth_context;
 
     let actor = envelope.actor();
     let actor_raw =
@@ -70,21 +72,23 @@ pub(super) fn apply_claim_candidate(
     }
     // The default stamps a birth. A candidate re-put over a stored claim keeps
     // the facet that claim was born with.
-    let stored_facet = crate::ports::EntityStoreRead::port_entity_raw(store, wtxn, &id)?
-        .filter(|raw| {
-            EntityMetadataHeader::parse(raw)
-                .is_some_and(|header| header.entity_type == crate::registry::ENTITY_TYPE_CLAIM)
-        })
-        .and_then(|raw| {
-            crate::claim::decode_claim_body(&raw[ENTITY_METADATA_HEADER_LEN..], true).ok()
-        })
-        .map(|stored| stored.scope_facet);
-    let default_facet = match stored_facet {
-        Some(facet) => facet,
-        None => crate::claim::default_facet_in(store, wtxn)?,
-    };
+    let default_facet = claim_candidate_birth_facet(store, wtxn, &id)?;
+    let had_prior = crate::ports::EntityStoreRead::port_entity_raw(store, wtxn, &id)?.is_some();
     let body = candidate.into_claim_body(envelope, default_facet)?;
     let data = crate::claim::encode_claim_body(&body)?;
+    if had_prior {
+        crate::claim::history_store::close_machine_history_for_successor(
+            store,
+            config,
+            analyzer,
+            wtxn,
+            id,
+            &body,
+            actor,
+            learned_at,
+            text_index_trusted,
+        )?;
+    }
     let applied_put = apply_put(
         store,
         wtxn,
@@ -114,9 +118,23 @@ pub(super) fn apply_claim_candidate(
                 refinement_admission: None,
                 // Carried-forward transitions bind only to exact claim Puts.
                 transition: None,
-                posture,
+                posture: config.privacy.posture,
             },
         },
+    )?;
+
+    crate::claim::history_store::stage_machine_birth_after_candidate(
+        store,
+        config,
+        analyzer,
+        wtxn,
+        id,
+        &body,
+        envelope,
+        occurred,
+        learned_at,
+        text_index_trusted,
+        had_prior,
     )?;
 
     let subject_id = match subject {
@@ -160,6 +178,27 @@ pub(super) fn apply_claim_candidate(
         cleared_pending_embedding: applied_put.cleared_pending_embedding,
         pending_embedding_token: applied_put.pending_embedding_token,
     })
+}
+
+/// The exact birth facet kept by both the final materializer and signer.
+pub(crate) fn claim_candidate_birth_facet(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    id: &EntityId,
+) -> Result<EntityId> {
+    let stored_facet = crate::ports::EntityStoreRead::port_entity_raw(store, txn, id)?
+        .filter(|raw| {
+            EntityMetadataHeader::parse(raw)
+                .is_some_and(|header| header.entity_type == crate::registry::ENTITY_TYPE_CLAIM)
+        })
+        .and_then(|raw| {
+            crate::claim::decode_claim_body(&raw[ENTITY_METADATA_HEADER_LEN..], true).ok()
+        })
+        .map(|stored| stored.scope_facet);
+    match stored_facet {
+        Some(facet) => Ok(facet),
+        None => crate::claim::default_facet_in(store, txn),
+    }
 }
 
 pub(super) fn reconcile_claim_of_edges(

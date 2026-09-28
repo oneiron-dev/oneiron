@@ -75,6 +75,11 @@ impl ScopedRead<'_> {
         body: &ClaimBody,
         filter: &ResolvedRetrievalFilter,
     ) -> Result<bool> {
+        // History controls travel through scoped sync/export, never ordinary
+        // claim recall. Their binary value contains signed birth payloads.
+        if crate::claim::history_store::machine_history_kind(&body.predicate).is_some() {
+            return Ok(false);
+        }
         if !crate::claim::has_live_support_in_txn(&self.vault.store, rtxn, body)? {
             return Ok(false);
         }
@@ -104,11 +109,20 @@ impl ScopedRead<'_> {
                 .lock()
                 .map_err(|_| Error::InvariantViolation("recall authority lock"))?;
             match cached.as_ref() {
-                Some(fold) => crate::authority::claim_causal_admitted(fold, body),
-                None => crate::authority::claim_causal_admitted(
-                    &self.vault.authority_fold_readonly_in_txn(rtxn)?,
+                Some(fold) => crate::authority::claim_causal_admitted(
+                    &self.vault.store,
+                    rtxn,
+                    fold,
+                    id,
                     body,
-                ),
+                )?,
+                None => crate::authority::claim_causal_admitted(
+                    &self.vault.store,
+                    rtxn,
+                    &self.vault.authority_fold_readonly_in_txn(rtxn)?,
+                    id,
+                    body,
+                )?,
             }
         };
         if !causal_admitted {
