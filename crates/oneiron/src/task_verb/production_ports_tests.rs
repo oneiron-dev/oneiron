@@ -847,3 +847,85 @@ fn working_task_pushes_authoritative_status_before_terminal_settlement() -> Line
     assert!(adapter.tasks().dirty_tasks()?.is_empty());
     Ok(())
 }
+
+#[test]
+fn raw_task_write_has_no_verified_mirror_writer() -> LinearSyncResult<()> {
+    let (_dir, vault, owner) = mirror_fixture()?;
+    let raw = mirror_task(&vault, owner, "raw task");
+    let trusted = mirror_task(&vault, owner, "trusted task");
+    let mut body = super::wire_decode::task_verb_body(&vault, raw)?.expect("raw body");
+    body.label = Some("unattributed update".into());
+    vault.put_entity(
+        &raw,
+        crate::registry::ENTITY_TYPE_TASK,
+        TimeRange {
+            start: 101,
+            end: 101,
+        },
+        101,
+        &super::wire_encode::encode_task_verb_body(body),
+    )?;
+    let store = VaultLinearTaskStore::new(&vault);
+    // The generic batch door cleared the facade's stamp: the Linear effect
+    // door has no writer to authorize this revision for.
+    assert!(store.dirty_writer(raw)?.is_none());
+    assert_eq!(
+        store.dirty_writer(trusted)?.map(|w| w.actor_ref),
+        Some(owner)
+    );
+    Ok(())
+}
+
+#[test]
+fn inbound_merge_preserves_verified_writer_for_unsent_local_terminal() -> LinearSyncResult<()> {
+    let (_dir, vault, owner) = mirror_fixture()?;
+    let task = mirror_task(&vault, owner, "title");
+    let tracker = Tracker {
+        changes: Rc::new(RefCell::new(Vec::new())),
+        cursors: Rc::new(RefCell::new(Vec::new())),
+        current: Rc::new(RefCell::new(BTreeMap::new())),
+        updates: Rc::new(RefCell::new(0)),
+    };
+    let mut adapter = LinearSyncAdapter::new(
+        VaultLinearTaskStore::new(&vault),
+        tracker.clone(),
+        tracker.clone(),
+    );
+    assert_eq!(adapter.synchronize(100, 64)?.0.len(), 1);
+    let link = adapter.tasks().link(task)?.expect("linked");
+    terminal_task(&vault, owner, task, 101);
+    assert_eq!(
+        adapter.tasks().dirty_writer(task)?.map(|w| w.actor_ref),
+        Some(owner)
+    );
+    let mut remote = link_fields(&tracker, &link.issue);
+    remote.description = Some("tracker note".into());
+    tracker.changes.borrow_mut().push(LinearIssueChange {
+        event_id: "remote-disjoint".into(),
+        issue: link.issue.clone(),
+        updated_at_ms: 3000,
+        fields: remote.clone(),
+    });
+    tracker
+        .current
+        .borrow_mut()
+        .get_mut(&link.issue.issue_id)
+        .expect("remote issue")
+        .fields = remote;
+    // The inbound disjoint merge writes a new TASK revision through the
+    // generic door; the unsent local terminal keeps its verified writer.
+    assert_eq!(adapter.pull_page(Some("next"), 102)?.applied, 1);
+    assert_eq!(
+        adapter.tasks().dirty_writer(task)?.map(|w| w.actor_ref),
+        Some(owner)
+    );
+    let (pushed, _) = adapter.synchronize(103, 64)?;
+    assert!(pushed.iter().any(|receipt| receipt.task_ref == task));
+    assert_eq!(*tracker.updates.borrow(), 1);
+    assert!(adapter.tasks().dirty_tasks()?.is_empty());
+    Ok(())
+}
+
+fn link_fields(tracker: &Tracker, issue: &LinearIssueRef) -> MirroredTaskFields {
+    tracker.current.borrow()[&issue.issue_id].fields.clone()
+}
