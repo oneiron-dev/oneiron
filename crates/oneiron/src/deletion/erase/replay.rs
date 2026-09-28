@@ -132,6 +132,8 @@ impl Vault {
             });
         }
 
+        self.store
+            .reject_held_gate_partition_in_txn(wtxn, id.as_bytes())?;
         let marker_key = local_hard_delete_key(id);
         let marker_value = decoded.local_hard_delete_marker_value();
         // Probe the FULL delete scope (entity row, vectors, text, phonetic,

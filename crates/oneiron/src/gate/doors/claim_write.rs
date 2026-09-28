@@ -446,6 +446,17 @@ fn check_claim_policy_for_write_with_record_inner(
             // A structural streak follows durable append order, including
             // ordinary receipts created within the same clock millisecond.
             store.append_fresh_gate_decision_in_txn(wtxn, &mut decision_record)?;
+            store.stamp_claim_gate_retention_context_in_txn(
+                wtxn,
+                decision_record.decision_id,
+                id,
+                crate::gate::GateRetentionContext {
+                    world: Some(body.world.unwrap_or_else(crate::claim::base_world_id)),
+                    project: Some(body.scope_project),
+                    sub_project: None,
+                    thread: None,
+                },
+            )?;
             let recorded = RecordedClaimGateDecision {
                 record: decision_record.clone(),
                 decision: decision.clone(),
