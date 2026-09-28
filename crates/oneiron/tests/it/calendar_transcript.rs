@@ -475,6 +475,8 @@ fn note_fallback_uses_l1_note_identifier_without_registry_edit() {
 #[test]
 fn extracted_follow_ups_are_write_envelope_proposals_never_sends() {
     let (_dir, vault) = vault();
+    // The transcript importer is an engine MACHINE: it signs with a host-held key.
+    crate::common::provision_engine_machines(&vault);
     let actor = EntityId::from_bytes(
         sha2::Sha256::digest(b"oneiron:calendar:file-drop-import-machine:v1")[..16]
             .try_into()

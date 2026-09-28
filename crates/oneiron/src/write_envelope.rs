@@ -147,6 +147,15 @@ impl SourceLineage {
     }
 }
 
+/// Ed25519 proof that a MACHINE authored the exact stored claim body.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct MachineWriteSignature {
+    /// Per-vault enrolled software authority key, not a transport key.
+    pub public_key: [u8; 32],
+    /// Signature over the domain-separated machine claim transcript.
+    pub signature: [u8; 64],
+}
+
 /// Required metadata for writing a [`ClaimCandidate`].
 #[derive(Debug, Clone, PartialEq)]
 pub struct WriteEnvelope {
@@ -155,6 +164,7 @@ pub struct WriteEnvelope {
     provenance: WriteProvenance,
     approval: ClaimApprovalStatus,
     session_tag: Option<String>,
+    machine_signature: Option<MachineWriteSignature>,
     /// ONE-1314. Stamped HOST-INTERNALLY only: no public constructor, guest
     /// payload, or API argument reaches this field, and the 4-arity
     /// constructors below can only produce the trivial value.
@@ -176,6 +186,7 @@ impl WriteEnvelope {
             provenance,
             approval,
             session_tag: None,
+            machine_signature: None,
             lineage: SourceLineage::of(source),
         }
     }
@@ -200,6 +211,7 @@ impl WriteEnvelope {
             provenance,
             approval,
             session_tag: None,
+            machine_signature: None,
             lineage,
         }
     }
@@ -230,6 +242,19 @@ impl WriteEnvelope {
         ))?;
 
         Ok(Self::new(actor, source, provenance, approval))
+    }
+
+    /// Carries a machine's signature; the shared write door verifies it against
+    /// the exact stored body, claim id and the vault's folded authority roster.
+    #[must_use]
+    pub fn with_machine_signature(mut self, proof: MachineWriteSignature) -> Self {
+        self.machine_signature = Some(proof);
+        self
+    }
+
+    /// Host-only access to the machine's proof for staging immutable birth.
+    pub(crate) const fn machine_signature(&self) -> Option<MachineWriteSignature> {
+        self.machine_signature
     }
 
     /// Actor stamped into candidate writes.
@@ -567,6 +592,16 @@ pub(crate) fn write_envelope_evidence(
                     .map(|source| Value::from(source.as_str()))
                     .collect(),
             ),
+        ));
+    }
+
+    if let Some(proof) = envelope.machine_signature {
+        entries.push((
+            Value::from("machine_signature"),
+            Value::Array(vec![
+                Value::Binary(proof.public_key.to_vec()),
+                Value::Binary(proof.signature.to_vec()),
+            ]),
         ));
     }
 

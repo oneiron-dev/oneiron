@@ -272,6 +272,24 @@ pub(crate) mod test_support {
         crate::test_util::open_test_vault_with(VaultConfig::default())
     }
 
+    /// Roots the vault and provisions the engine's MACHINE writers, the
+    /// calendar importer among them, with host-held keys. The import actor
+    /// cannot gain claim authority from its transport/connector secret.
+    pub(crate) fn provision_test_calendar_importer(vault: &Vault) {
+        crate::test_util::provision_engine_machines(vault);
+    }
+
+    pub(super) fn open_calendar_vault_with_machine_identity() -> (tempfile::TempDir, Vault) {
+        let clock = crate::ports::ManualClock::new(1_800_000_000);
+        let config = VaultConfig {
+            store_clock: clock.bundle(),
+            ..VaultConfig::default()
+        };
+        let (dir, vault) = crate::test_util::open_test_vault_with(config);
+        provision_test_calendar_importer(&vault);
+        (dir, vault)
+    }
+
     /// Encodes an EVENT body carrying the `name` field the EVENT profile pins.
     pub(super) fn event_name_body(name: &str) -> Vec<u8> {
         let mut out = Vec::new();

@@ -4271,6 +4271,82 @@ fn packing_withholds_edges_that_touch_a_device_only_world_row() -> Result<()> {
     Ok(())
 }
 
+/// Forward rematerialization must apply the same MACHINE origin-proof verdict
+/// as Observer B, without checking whether the signer was locally enrolled.
+#[test]
+fn forward_remat_quarantines_bad_machine_proof_and_commits_signed_sibling() -> Result<()> {
+    use crate::authority::HostSlipIssuer;
+    use crate::claim::ClaimSubject;
+    use crate::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_MACHINE};
+    use crate::write_envelope::{
+        ClaimCandidate, MachineWriteSignature, WriteActor, WriteEnvelope, WriteProvenance,
+    };
+    use ed25519_dalek::{Signer, SigningKey};
+
+    let (_dir, vault) = test_vault();
+    let machine = EntityId::from_bytes([0x40; 16])?;
+    let bad_id = EntityId::from_bytes([0x41; 16])?;
+    let good_id = EntityId::from_bytes([0x42; 16])?;
+    vault.put_entity(
+        &machine,
+        ENTITY_TYPE_MACHINE,
+        TimeRange { start: 1, end: 1 },
+        1,
+        b"stored machine",
+    )?;
+    vault.ensure_host_root_slip(&HostSlipIssuer::from_secret(b"forward machine root")?)?;
+    let signing = SigningKey::from_bytes(&[0x45; 32]);
+    let candidate = ClaimCandidate::new(
+        "test.machine.replay",
+        ClaimSubject::Entity(machine),
+        Value::from("signed fact"),
+        1.0,
+    );
+    let envelope = WriteEnvelope::new(
+        WriteActor::new(machine, EdgeActorClass::System),
+        ClaimSource::Observed,
+        WriteProvenance::new(Value::from("peer observation"))?,
+        ClaimApprovalStatus::Proposed,
+    );
+    let transcript = vault.machine_claim_transcript(&good_id, &candidate, &envelope)?;
+    let signed = envelope.with_machine_signature(MachineWriteSignature {
+        public_key: signing.verifying_key().to_bytes(),
+        signature: signing.sign(&transcript).to_bytes(),
+    });
+    let facet = crate::claim::default_facet_in(&vault.store, &vault.store.env.read_txn()?)?;
+    let body = crate::claim::encode_claim_body(&candidate.into_claim_body(&signed, facet)?)?;
+    let at = 1_772_400_000;
+    let blob = make_entity_blob(ENTITY_TYPE_CLAIM, at, &body);
+    let window_key = WindowKey::new("2026-03");
+    let doc = create_window_doc("remote-machine-proof", &window_key);
+    let entities = doc.get_map("entities");
+    map_insert_bytes(&entities, &bad_id.to_hex(), &blob)?;
+    map_insert_bytes(&entities, &good_id.to_hex(), &blob)?;
+    doc.commit();
+
+    let count = forward_rematerialize(&vault, &doc, &Materializer::new(), &window_key)?;
+    assert_eq!(
+        count, 1,
+        "the sibling must commit despite the rejected proof"
+    );
+    assert!(vault.get_raw(&bad_id)?.is_none());
+    assert_eq!(vault.get_raw(&good_id)?.as_deref(), Some(blob.as_slice()));
+    let records = crate::sync::quarantine::quarantined_records(&vault)?;
+    assert_eq!(records.len(), 1);
+    let rejected = &records[0].1;
+    assert_eq!(rejected.container, QuarantineContainer::Entities);
+    assert_eq!(rejected.reason_code, "InvalidMachineClaimProof");
+    assert_eq!(
+        (rejected.crdt_key_hash, rejected.crdt_key_len),
+        crate::sync::quarantine::crdt_key_metadata(&bad_id.to_hex())
+    );
+    assert_eq!(
+        rejected.payload_hash,
+        crate::sync::quarantine::payload_hash(&blob)
+    );
+    Ok(())
+}
+
 #[test]
 fn forward_rematerialization_quarantines_in_range_project_depth_edit() -> Result<()> {
     let (_dir, vault) = test_vault();

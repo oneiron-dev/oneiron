@@ -42,6 +42,7 @@ mod export;
 mod expression_preference;
 pub mod extraction;
 mod key_value;
+mod machine_write;
 mod notes;
 mod outbound;
 mod read_lane;
@@ -60,7 +61,8 @@ mod tests_regressions;
 pub use archive_purge::{ArchivePurgeEntry, ArchivePurgePreview};
 pub use authorship::MemoryAuthoringAction;
 pub(crate) use authorship::{
-    explicit_claim_override_in_txn, guard_existing_claim_in_txn, require_claim_self_grant_in_txn,
+    claim_author, explicit_claim_override_in_txn, guard_existing_claim_in_txn,
+    require_claim_self_grant_in_txn,
 };
 pub use booking::EmergencyInstructionInput;
 pub use chat::{

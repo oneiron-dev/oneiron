@@ -239,6 +239,7 @@ impl Memory<'_> {
                             ClaimApprovalStatus::Proposed,
                         );
                     }
+                    self.sign_machine_claim_in_txn(content.read(), id, &candidate, &mut envelope)?;
                     let closure_envelope = envelope.clone();
                     content.apply_claim_ops(
                         vec![BatchOp::ClaimCandidate {

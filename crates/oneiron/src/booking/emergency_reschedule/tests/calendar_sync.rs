@@ -40,7 +40,14 @@ impl CalendarRemoteTransport for PullOne {
 
 #[test]
 fn normal_connector_upsert_rewrites_event_without_erasing_confirmation_context() {
-    let (_dir, vault, receipt, plan) = executable(EmergencyActionPolicy::Cancel);
+    let clock = crate::ports::ManualClock::new(NOW);
+    let config = crate::VaultConfig {
+        store_clock: clock.bundle(),
+        ..crate::VaultConfig::default()
+    };
+    let (_dir, vault, receipt, plan) =
+        executable_with_invite_config(EmergencyActionPolicy::Cancel, true, config);
+    crate::calendar::test_support::provision_test_calendar_importer(&vault);
     let context = crate::booking::lifecycle::booking_confirmation_context(
         &vault,
         &receipt.calendar.event_ref,
@@ -102,6 +109,7 @@ fn provider_cancelled_booking_cannot_pass_a_due_reminder_wake() {
     use crate::claim::claim_surfaceable;
 
     let (_dir, vault, receipt, plan) = executable(EmergencyActionPolicy::Cancel);
+    crate::calendar::test_support::provision_test_calendar_importer(&vault);
     let event_ref = receipt.calendar.event_ref;
     let policy = crate::booking::BookingConversionPolicy {
         reminder_leads_secs: vec![1_800, 600],
@@ -157,7 +165,7 @@ fn provider_cancelled_booking_cannot_pass_a_due_reminder_wake() {
             })
         })
         .expect("provider ingestion records a cancellation claim");
-    let mut status = vault.get_claim(&status_id).unwrap().unwrap();
+    let status = vault.get_claim(&status_id).unwrap().unwrap();
     if !claim_surfaceable(&status) {
         // Imported evidence is proposed without an actor-bound source permit.
         // A pending row must not suppress the reminder; owner approval makes
@@ -167,16 +175,14 @@ fn provider_cancelled_booking_cannot_pass_a_due_reminder_wake() {
                 .unwrap()
                 .is_some()
         );
-        status.approval = ClaimApprovalStatus::Approved;
+        // The import is a signed MACHINE claim: the owner approves it with a
+        // signed transition, not a raw re-put.
+        let owner = vault.ensure_embedded_owner_actor().unwrap();
+        crate::test_util::bind_test_owner(&vault, owner);
         vault
-            .put_claim(
-                &status_id,
-                &status,
-                TimeRange {
-                    start: NOW + 1,
-                    end: NOW + 1,
-                },
-                NOW + 1,
+            .approve_machine_claim_as(
+                status_id,
+                crate::WriteActor::new(owner, crate::EdgeActorClass::Human),
             )
             .unwrap();
     }

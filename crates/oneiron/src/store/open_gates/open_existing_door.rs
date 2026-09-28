@@ -151,10 +151,13 @@ impl Store {
             retrieval_blend_tuning_lock: Mutex::new(()),
             retrieval_writes_disabled: std::sync::atomic::AtomicBool::new(false),
             retrieval_telemetry_capture: config.retrieval_telemetry_capture,
+            privacy_posture: config.privacy.posture,
             #[cfg(target_os = "linux")]
             retrieval_telemetry_lease: Mutex::new(None),
             authority_local_clock: Mutex::new(AuthorityLocalClock::default()),
             authority_fold_cache: Mutex::new(None),
+            machine_history_issuer: Mutex::new(None),
+            machine_write_signers: Mutex::new(std::collections::HashMap::new()),
             l2_base_cache: Mutex::new(crate::context_pack::L2BaseCache::default()),
             clock,
             diagnostics: Diagnostics::default(),

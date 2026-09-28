@@ -301,6 +301,33 @@ writes create their own first-seen sidecar. **Discarded population at the ABI
 boundary:** all predecessor-stamped development vaults; this in-version repair
 does not make them openable by ABI 20. No additional open-time migration.
 
+### ONE-1634: authority widen delay removed
+
+**Ruling: no storage change; fold semantics change.** The device-key widen
+ceremony is dead (identity canon, 2026-08-05), so the fold no longer delays
+software-tier widens. `EnrollDevice`, `RotateKey` and a lowered `SetTierFloor`
+land as soon as their ancestry folds, and nothing waits behind them. The
+`Genesis.pending_widen_delay_secs` field stays signed and validated on the wire,
+but the fold never reads it. `VetoPendingWiden` still decodes and hashes. The
+fold now rejects it as `InvalidEntry`, and its descendants fail ancestry.
+First-seen sidecars now feed only the stale-roster window. The read-only fold
+no longer refuses a pre-migration log. A sidecar missing after the backfill
+marker is still corruption. **Discarded population:** development logs that
+carry a veto entry.
+
+### ONE-1634: engine MACHINE writers enrolled at host open
+
+**Ruling: open-time enrollment, no storage-format change.** MACHINE claims must
+carry a signature from an enrolled software key. The host enrolls one key per
+engine writer (commitment projector, ICS importer, transcript file-drop
+importer, e-sign artifact actor) through the authority log each time it opens a
+rooted vault (`provision_engine_machine_identities`, after
+`ensure_host_root_slip`), so an existing vault gets its engine keys before its
+first engine write. A writer that already has a binding is not enrolled again,
+so a revoked writer stays revoked. Unrooted vaults get no engine keys, and
+their engine MACHINE writes are refused. **Discarded population:** unsigned
+MACHINE claims written by earlier development builds; reads withhold them.
+
 ### ONE-1103: REDACTION_AUDIT temporal point index
 
 **Ruling: no-op. Discarded population:** pre-ONE-1103 development vaults

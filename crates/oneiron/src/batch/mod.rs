@@ -7,7 +7,7 @@ mod authority_log;
 mod base_apply;
 mod builder;
 mod child_of_overlay;
-mod claim_candidate_apply;
+pub(crate) mod claim_candidate_apply;
 mod claim_materialization;
 mod verified_claim_transition;
 pub(crate) use verified_claim_transition::VerifiedClaimTransition;

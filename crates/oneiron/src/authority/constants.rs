@@ -112,11 +112,21 @@ pub(super) const MAX_COSIGNS: usize = 8;
 pub(super) const MAX_ATTESTATION_EVIDENCE_BYTES: usize = 4096;
 pub(super) const MAX_ACTOR_CLASS_BYTES: usize = 64;
 
-/// Lower bound for the default software-tier pending-widen delay (24h).
+/// Lower bound (24h) accepted for the legacy signed
+/// `Genesis.pending_widen_delay_secs` field.
+///
+/// Wire validation only: the field has no fold effect. The delayed-widen
+/// ceremony it configured died 2026-08-05 (identity canon, "Device-key widen
+/// ceremony (dead 2026-08-05)"; ARCH-0040 ONE-AUTHLOG-F6); widening is owner
+/// action through the host and lands at once. The band is kept so old and new
+/// peers agree on which genesis entries are valid.
 pub const MIN_DEFAULT_PENDING_WIDEN_DELAY_SECS: u64 = 24 * 60 * 60;
-/// Upper bound for the default software-tier pending-widen delay (48h).
+/// Upper bound (48h) accepted for the legacy signed
+/// `Genesis.pending_widen_delay_secs` field. Wire validation only.
 pub const MAX_DEFAULT_PENDING_WIDEN_DELAY_SECS: u64 = 48 * 60 * 60;
-/// Default local seen-time delay for software-tier widens.
+/// Value new genesis entries write into the legacy
+/// `Genesis.pending_widen_delay_secs` field (and the value the legacy compact
+/// genesis encoding implies). No fold effect.
 pub const DEFAULT_PENDING_WIDEN_DELAY_SECS: u64 = MIN_DEFAULT_PENDING_WIDEN_DELAY_SECS;
 const _: () = assert!(DEFAULT_PENDING_WIDEN_DELAY_SECS >= MIN_DEFAULT_PENDING_WIDEN_DELAY_SECS);
 const _: () = assert!(DEFAULT_PENDING_WIDEN_DELAY_SECS <= MAX_DEFAULT_PENDING_WIDEN_DELAY_SECS);

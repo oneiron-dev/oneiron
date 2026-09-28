@@ -18,7 +18,7 @@ use crate::commitment::{
 use crate::config::{HnswConfig, VaultConfig};
 use crate::edge::EdgeKind;
 use crate::error::{Error, Result};
-use crate::registry::{ENTITY_TYPE_MACHINE, ENTITY_TYPE_PERSON};
+use crate::registry::ENTITY_TYPE_PERSON;
 use crate::store::{
     COMMITMENT_DUE_INDEX_VERSION, commitment_due_primary_key, decode_commitment_due_row,
 };
@@ -110,23 +110,16 @@ fn span(now: u64) -> TimeRange {
 
 /// Seeds the two human parties AND the projector's pinned System actor.
 ///
-/// The last one is load-bearing rather than decorative: the claim-candidate
-/// door resolves `envelope.actor()` against a stored entity and validates its
-/// class, so a vault that expects the projector to mint anything must carry the
-/// derived actor as a MACHINE entity.
+/// The last one is load-bearing rather than decorative: the projector is a
+/// MACHINE, so it mints only with the host-held key the host provisions at
+/// bootstrap (ONE-1634).
 fn seed_world(vault: &Vault) -> Result<(EntityId, EntityId)> {
     let obligor = crate::test_util::entity(0x71);
     let beneficiary = crate::test_util::entity(0x72);
     for id in [obligor, beneficiary] {
         vault.put_entity(&id, ENTITY_TYPE_PERSON, time(1, 1), 1, b"person")?;
     }
-    vault.put_entity(
-        &commitment_projection_actor()?.entity_ref(),
-        ENTITY_TYPE_MACHINE,
-        time(1, 1),
-        1,
-        b"commitment projector",
-    )?;
+    crate::test_util::provision_engine_machines(vault);
     Ok((obligor, beneficiary))
 }
 

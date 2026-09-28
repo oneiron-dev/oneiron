@@ -415,7 +415,7 @@ pub(super) fn filter_window_doc(
         if scope_error.is_some() {
             return;
         }
-        match crate::authority::row_causal_admitted(vault, &rtxn, blob) {
+        match crate::authority::row_causal_admitted(vault, &rtxn, &id, blob) {
             Ok(true) => {}
             Ok(false) => return,
             // An undecodable CLAIM is a withheld row, not a failed export:
@@ -478,7 +478,6 @@ pub(super) fn filter_window_doc(
     if let Some(error) = scope_error {
         return Err(error);
     }
-    drop(rtxn);
     if facets.is_some() {
         kept.extend(seeds.iter().copied());
         map_for_each_value_bytes(&source_edges, |raw_key, maybe_value| {
@@ -506,19 +505,120 @@ pub(super) fn filter_window_doc(
 
     let out_entities = out.get_map("entities");
     map_for_each_value_bytes(&source_entities, |raw_key, maybe_blob| {
-        let Some(blob) = maybe_blob else {
-            return;
-        };
+        let Some(blob) = maybe_blob else { return };
         let Ok(id) = EntityId::from_hex(raw_key) else {
             return;
         };
-        if id.to_hex() != raw_key {
+        if id.to_hex() != raw_key || !kept.contains(&id) || tombstoned.contains(&id) {
             return;
         }
-        if kept.contains(&id) && !tombstoned.contains(&id) {
-            let _ = map_insert_bytes(&out_entities, raw_key, blob);
-        }
+        let _ = map_insert_bytes(&out_entities, raw_key, blob);
     });
+    // A fresh peer may hold a valid selected target but only part of its
+    // scoped birth/event/handoff closure in the source CRDT. Never emit the
+    // target alone: the receiving replica would mistake missing history for
+    // permission. The selector must carry the whole authenticated closure.
+    let mut incomplete = BTreeSet::new();
+    for id in kept.iter().copied() {
+        let Some(blob) = crate::sync::loro_support::map_get_bytes(&source_entities, &id.to_hex())
+        else {
+            continue;
+        };
+        let Some(header) = EntityMetadataHeader::parse(&blob) else {
+            continue;
+        };
+        if header.entity_type != crate::registry::ENTITY_TYPE_CLAIM {
+            continue;
+        }
+        let Ok(body) = crate::claim::decode_claim_body(&blob[ENTITY_METADATA_HEADER_LEN..], true)
+        else {
+            continue;
+        };
+        if !crate::authority::machine_claim_needs_history(&vault.store, &rtxn, &body)? {
+            continue;
+        }
+        let (Ok(rows), Ok(packet)) = (
+            crate::claim::history_projection::machine_history_rows(&vault.store, &rtxn, id),
+            crate::claim::history_projection::trusted_machine_handoff(&vault.store, &rtxn, id),
+        ) else {
+            incomplete.insert(id);
+            continue;
+        };
+        let mut required = vec![rows.birth.event_id()?];
+        for event in &rows.events {
+            required.push(crate::claim::transition::machine_claim_transition_event_id(
+                event,
+            )?);
+        }
+        let mut next = Some(packet);
+        let mut seen = BTreeSet::new();
+        while let Some(handoff) = next {
+            let hash = handoff
+                .content_hash()
+                .map_err(|_| crate::Error::InvalidClaimBody("machine handoff hash"))?;
+            if !seen.insert(hash) {
+                incomplete.insert(id);
+                break;
+            }
+            required.push(EntityId::from_bytes(
+                hash[..16]
+                    .try_into()
+                    .map_err(|_| crate::Error::InvalidClaimBody("machine handoff id"))?,
+            )?);
+            next = if let Some(parent) = handoff.previous_handoff_hash {
+                let parent_id =
+                    EntityId::from_bytes(parent[..16].try_into().map_err(|_| {
+                        crate::Error::InvalidClaimBody("machine handoff parent id")
+                    })?)?;
+                let Some(raw) = vault.store.entities.get(&rtxn, parent_id.as_bytes())? else {
+                    incomplete.insert(id);
+                    break;
+                };
+                let Some(header) = EntityMetadataHeader::parse(&raw) else {
+                    incomplete.insert(id);
+                    break;
+                };
+                if header.entity_type != crate::registry::ENTITY_TYPE_CLAIM {
+                    incomplete.insert(id);
+                    break;
+                }
+                let Ok(body) =
+                    crate::claim::decode_claim_body(&raw[ENTITY_METADATA_HEADER_LEN..], true)
+                else {
+                    incomplete.insert(id);
+                    break;
+                };
+                let Some(rmpv::Value::Binary(bytes)) = Some(body.value) else {
+                    incomplete.insert(id);
+                    break;
+                };
+                let Ok(parent_packet) = crate::claim::ClaimHistoryHandoff::decode(&bytes) else {
+                    incomplete.insert(id);
+                    break;
+                };
+                if parent_packet.content_hash().ok() != Some(parent) {
+                    incomplete.insert(id);
+                    break;
+                }
+                Some(parent_packet)
+            } else {
+                None
+            };
+        }
+        if required.iter().any(|control| {
+            !kept.contains(control)
+                || !crate::sync::loro_support::map_contains_binary(
+                    &source_entities,
+                    &control.to_hex(),
+                )
+        }) {
+            incomplete.insert(id);
+        }
+    }
+    for id in &incomplete {
+        crate::sync::loro_support::map_delete(&out_entities, &id.to_hex())?;
+    }
+    drop(rtxn);
 
     let authorized_base = if key.world().is_some() {
         authorized_base_edge_endpoints(vault, &source_edges, &kept, selector, position)?

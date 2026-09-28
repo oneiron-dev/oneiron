@@ -198,8 +198,8 @@ mod tests {
     use super::*;
     #[test]
     fn resource_render_keeps_master_exception_uid_timezone_and_full_hash() {
-        let dir = tempfile::tempdir().unwrap();
-        let vault = Vault::open(dir.path(), crate::VaultConfig::device()).unwrap();
+        let (_dir, vault) =
+            crate::calendar::test_support::open_calendar_vault_with_machine_identity();
         let text = "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nBEGIN:VEVENT\r\nUID:series@test\r\nDTSTART;TZID=America/New_York:20261030T090000\r\nDTEND;TZID=America/New_York:20261030T100000\r\nRRULE:FREQ=DAILY;COUNT=5\r\nSEQUENCE:3\r\nSUMMARY:Daily END:VEVENT review\r\nEND:VEVENT\r\nBEGIN:VEVENT\r\nUID:series@test\r\nRECURRENCE-ID;TZID=America/New_York:20261031T090000\r\nDTSTART;TZID=America/New_York:20261031T110000\r\nDTEND;TZID=America/New_York:20261031T120000\r\nSEQUENCE:4\r\nSUMMARY:Moved\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n";
         let parsed = crate::calendar::ics::parse_ics_feed(text.as_bytes()).unwrap();
         for event in &parsed.events {

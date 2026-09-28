@@ -330,8 +330,9 @@ impl ClaimMaterialization {
         txn: &mut heed::RwTxn<'_>,
         op: BatchOp,
         persist_pending: bool,
+        approver: Option<crate::WriteActor>,
     ) -> Result<()> {
-        Self::apply_approval_inner(vault, txn, op, persist_pending, None)
+        Self::apply_approval_inner(vault, txn, op, persist_pending, None, approver)
     }
 
     pub(crate) fn apply_refinement_approval(
@@ -340,15 +341,16 @@ impl ClaimMaterialization {
         op: BatchOp,
         proof: crate::skill_hub::RefinementAdmissionProof,
     ) -> Result<()> {
-        Self::apply_approval_inner(vault, txn, op, false, Some(proof))
+        Self::apply_approval_inner(vault, txn, op, false, Some(proof), None)
     }
 
     fn apply_approval_inner(
         vault: &Vault,
         txn: &mut heed::RwTxn<'_>,
-        op: BatchOp,
+        mut op: BatchOp,
         persist_pending: bool,
         proof: Option<crate::skill_hub::RefinementAdmissionProof>,
+        approver: Option<crate::WriteActor>,
     ) -> Result<()> {
         let BatchOp::Put {
             id,
@@ -359,7 +361,7 @@ impl ClaimMaterialization {
             allow_maintenance: false,
             allow_reserved_predicate: false,
             hub_sync_imported: false,
-        } = &op
+        } = &mut op
         else {
             return Err(binding_error());
         };
@@ -379,7 +381,29 @@ impl ClaimMaterialization {
         if encode_claim_body(&expected)? != *data {
             return Err(binding_error());
         }
-        let transition = super::VerifiedClaimTransition::after_validation(&vault.store, txn, &op)?;
+        if crate::authority::machine_claim_needs_history(&vault.store, txn, &prior)? {
+            let now = vault.store.clock.now_recorded_at();
+            let approved = match approver {
+                Some(actor) => crate::claim::transition::stage_machine_transition_as(
+                    vault,
+                    txn,
+                    *id,
+                    crate::claim::transition::ClaimTransitionKind::Approve,
+                    crate::claim::transition::TransitionDelta::None,
+                    actor,
+                    now,
+                )?,
+                None => crate::claim::transition::stage_owner_machine_transition(
+                    vault,
+                    txn,
+                    *id,
+                    crate::claim::transition::ClaimTransitionKind::Approve,
+                    crate::claim::transition::TransitionDelta::None,
+                    now,
+                )?,
+            };
+            *data = encode_claim_body(&approved)?;
+        }
         let mut bindings = Vec::new();
         if let Some(envelope) = lifecycle_envelope(&vault.store, txn, id, &prior)? {
             let binding = Self {
@@ -395,6 +419,7 @@ impl ClaimMaterialization {
             binding.validate_actor(&vault.store, txn)?;
             bindings.push(binding);
         }
+        let transition = super::VerifiedClaimTransition::after_validation(&vault.store, txn, &op)?;
         super::apply_ops_with_gate_mode(
             &vault.store,
             &vault.config,
@@ -486,90 +511,6 @@ pub(super) fn consume_claim_materialization(
     } else {
         Ok(None)
     }
-}
-
-/// Rebuild the permitted body delta instead of trusting caller-supplied axes.
-fn demotion_body(
-    store: &Store,
-    txn: &heed::RoTxn<'_>,
-    id: &EntityId,
-    prior: &ClaimBody,
-    next: &ClaimBody,
-    tail: &[BatchOp],
-) -> Result<ClaimBody> {
-    use crate::claim::{
-        CLAIM_SCOPE_DEMOTION_RUNG_KEY, ClaimDemotionRung, ClaimSubject, claim_demotion_rung,
-    };
-    use crate::edge::{EdgeKind, validate_edge_weight};
-
-    if prior.lifecycle != ClaimLifecycleStatus::Active {
-        return Err(binding_error());
-    }
-    let before = claim_demotion_rung(prior)?;
-    let after = claim_demotion_rung(next)?;
-    let mut expected = prior.clone();
-    let rung = match (before, after, tail) {
-        (
-            None | Some(ClaimDemotionRung::Decayed),
-            Some(ClaimDemotionRung::Decayed),
-            [
-                BatchOp::SetEdgeWeight {
-                    src,
-                    kind: EdgeKind::ClaimOf,
-                    tgt,
-                    weight,
-                },
-            ],
-        ) if src == id && prior.subject == ClaimSubject::Entity(*tgt) => {
-            validate_edge_weight(*weight)?;
-            let mut current = None;
-            for entry in crate::ports::EdgeStoreRead::port_edges(
-                store,
-                txn,
-                id,
-                crate::ports::EdgeDirection::Out,
-                Some(EdgeKind::ClaimOf),
-                None,
-            )? {
-                let edge = entry?;
-                if edge.target == *tgt && current.replace(edge.weight).is_some() {
-                    return Err(binding_error());
-                }
-            }
-            if *weight > current.ok_or(binding_error())? {
-                return Err(binding_error());
-            }
-            "decayed"
-        }
-        (
-            Some(ClaimDemotionRung::Decayed | ClaimDemotionRung::Weakened),
-            Some(ClaimDemotionRung::Weakened),
-            [],
-        ) if next.confidence.is_finite()
-            && (0.0..=1.0).contains(&next.confidence)
-            && next.confidence <= prior.confidence =>
-        {
-            expected.confidence = next.confidence;
-            "weakened"
-        }
-        (Some(ClaimDemotionRung::Weakened), Some(ClaimDemotionRung::Stale), []) => {
-            expected.stale = true;
-            "stale"
-        }
-        _ => return Err(binding_error()),
-    };
-    let mut scope = match expected.scope.take() {
-        None => Vec::new(),
-        Some(Value::Map(entries)) => entries,
-        Some(_) => return Err(binding_error()),
-    };
-    scope.retain(|(key, _)| key.as_str() != Some(CLAIM_SCOPE_DEMOTION_RUNG_KEY));
-    scope.push((
-        Value::from(CLAIM_SCOPE_DEMOTION_RUNG_KEY),
-        Value::from(rung),
-    ));
-    expected.scope = Some(Value::Map(scope));
-    Ok(expected)
 }
 
 fn row_digest(raw: &[u8]) -> [u8; 32] {
@@ -774,6 +715,9 @@ pub(crate) fn apply_owner_bound_claim_puts_with_transitions(
             .with_verified_claim_transitions(transitions),
     )
 }
+
+mod demotion;
+use demotion::demotion_body;
 
 #[cfg(test)]
 mod tests;

@@ -64,10 +64,8 @@ pub enum VaultImportMismatch {
     /// The manifest carries no authority stanza at all.
     MissingAuthorityManifest,
     /// This vault cannot state its chain identity: the fold derives no vault
-    /// id (unrooted, or a conflicted root), or the readonly fold the
-    /// classifier is pinned to refuses because a pending widen's first-seen
-    /// time was never locally observed (`AUTHORITY_FIRST_SEEN_INDETERMINATE`).
-    /// Both are fail-closed: never byte-faithful, never confidently foreign.
+    /// id (unrooted, or a conflicted root). Fail-closed: never byte-faithful,
+    /// never confidently foreign.
     LocalAuthorityMissing,
     /// Both sides state a root and they differ.
     AuthorityVaultId,
@@ -213,9 +211,9 @@ pub(super) fn authority_manifest_for_vault(vault: &Vault) -> Result<ExportAuthor
 /// This is the WRITE-side fold: it backfills first-seen sidecars, stamps the
 /// one-shot migration marker, and advances the observation clock
 /// (`authority.rs`). That is exactly what an export wants — exporting is
-/// owner-initiated and already writes the artifact, and running the migration
-/// here is what lets a legacy vault export a determinate identity at all. The
-/// import classifier must NOT take this path; it uses
+/// owner-initiated and already writes the artifact, so recording this vault's
+/// first-seen observations here costs nothing extra. The import classifier
+/// must NOT take this path; it uses
 /// [`local_authority_identity_readonly`].
 fn local_authority_identity(vault: &Vault) -> Result<Option<AuthorityChainIdentity>> {
     Ok(authority_identity_of_fold(vault.authority_fold()?))
@@ -228,26 +226,11 @@ fn local_authority_identity(vault: &Vault) -> Result<Option<AuthorityChainIdenti
 /// the vault untouched, so this folds inside a caller-owned read transaction
 /// through [`Vault::authority_fold_readonly_in_txn`], which persists nothing —
 /// no sidecar backfill, no migration marker, no observation-clock advance —
-/// and opens no transaction of its own (SOL-ONE-1379-1).
-///
-/// The one divergence from the write fold that matters here is
-/// [`crate::authority::AUTHORITY_FIRST_SEEN_INDETERMINATE`]: on a
-/// pre-migration vault whose pending widen would rest on a never-observed
-/// first-seen time, the readonly fold refuses rather than pick a roster. The
-/// classifier answers that the same way it answers an unrooted vault — local
-/// identity UNKNOWN, surfacing as `LocalAuthorityMissing` and therefore
-/// `ReviewRequired`. That is fail-closed (never byte-faithful, never
-/// confidently foreign), it matches the fold's own refusal semantics, and it
-/// self-heals: one write-path fold records the observation and the next
-/// classification is exact. A corrupt sidecar is not unknown-but-healing, so
-/// it and every other error propagate.
+/// and opens no transaction of its own (SOL-ONE-1379-1). A corrupt first-seen
+/// sidecar, like every other fold error, propagates.
 fn local_authority_identity_readonly(vault: &Vault) -> Result<Option<AuthorityChainIdentity>> {
     let rtxn = vault.store.env.read_txn()?;
-    let fold = match vault.authority_fold_readonly_in_txn(&rtxn) {
-        Ok(fold) => fold,
-        Err(err) if crate::authority::is_indeterminate_first_seen(&err) => return Ok(None),
-        Err(err) => return Err(err),
-    };
+    let fold = vault.authority_fold_readonly_in_txn(&rtxn)?;
     Ok(authority_identity_of_fold(fold))
 }
 

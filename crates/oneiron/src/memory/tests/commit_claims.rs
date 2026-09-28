@@ -1255,32 +1255,13 @@ fn agent_retracts_parked_proposal_without_dismissing_unrelated_stale_consent() {
 
 #[test]
 fn same_id_replacement_cannot_be_retracted_by_the_prior_agent() {
+    use crate::{ClaimCandidate, ClaimSource, ClaimSubject};
     let (_dir, vault) = open_vault();
     let first_agent = put_person(&vault, 0x19);
-    let replacement_agent = put_machine(&vault, 0x1A);
+    let replacement_agent = put_person(&vault, 0x1A);
     let subject = put_person(&vault, 0x1B);
     let first_facade = vault.memory(first_agent, EdgeActorClass::Agent);
-    let replacement_facade = vault.memory(replacement_agent, EdgeActorClass::System);
     let claim_id = EntityId::from_bytes([0x1C; 16]).expect("claim id");
-    let owner = put_person(&vault, 0x1D);
-    root_vault_binding(&vault, 0x1E, owner, "human");
-    let proof = vault
-        .authenticate_owner(
-            owner,
-            &owner.to_hex(),
-            true,
-            crate::store::GateDecisionId::now(),
-        )
-        .expect("owner");
-    facade_for(&vault, owner)
-        .delegate_memory_authoring(
-            &proof,
-            crate::write_envelope::WriteActor::new(replacement_agent, EdgeActorClass::System),
-            MemoryAuthoringAction::EditClaim,
-            claim_id,
-        )
-        .expect("exact delegated edit slice");
-
     let mut first = claim_input(
         "profile.mood",
         &subject,
@@ -1291,25 +1272,36 @@ fn same_id_replacement_cannot_be_retracted_by_the_prior_agent() {
     first_facade
         .claim_upsert(&first)
         .expect("first agent parks proposal");
-
-    let mut replacement = claim_input(
-        "profile.color",
-        &subject,
-        "observed",
-        serde_json::json!("teal"),
+    let replacement_envelope = crate::write_envelope::WriteEnvelope::new(
+        crate::WriteActor::new(replacement_agent, EdgeActorClass::Agent),
+        ClaimSource::Observed,
+        crate::WriteProvenance::new(rmpv::Value::from("replacement actor")).unwrap(),
+        ClaimApprovalStatus::Proposed,
     );
-    replacement.id = Some(claim_id.to_hex());
-    // Reproduce the former split-transaction race deterministically: the
-    // replacement lands after call setup but immediately before the retraction
-    // write transaction begins. The fixed path authorizes only after acquiring
-    // that transaction, so it observes and rejects the replacement author.
+    let replacement = ClaimCandidate::new(
+        "profile.color",
+        ClaimSubject::Entity(subject),
+        rmpv::Value::from("teal"),
+        1.0,
+    );
+    // Reproduce a different, authenticated PERSON author replacing the same
+    // id between preflight and the retraction transaction. MACHINE births
+    // are immutable and instead use distinct claim ids + signed transitions.
     let err = first_facade
         .claim_retract_with_pre_txn_hook(&claim_id.to_hex(), || {
-            replacement_facade
-                .claim_upsert(&replacement)
-                .expect("delegated daemon replaces same id in former race window");
+            vault
+                .batch()
+                .claim_candidate(
+                    &claim_id,
+                    replacement.clone(),
+                    &replacement_envelope,
+                    test_time(1),
+                    1,
+                )
+                .commit()
+                .expect("second actor replaces the same id");
         })
-        .expect_err("prior author has no authority over same-id replacement");
+        .expect_err("prior author has no authority over replacement");
     assert_eq!(err.code, MEMORY_CODE_FORBIDDEN);
     let current = vault
         .get_claim(&claim_id)
@@ -1317,13 +1309,89 @@ fn same_id_replacement_cannot_be_retracted_by_the_prior_agent() {
         .expect("replacement remains");
     assert_eq!(current.predicate, "profile.color");
     assert_eq!(current.lifecycle, ClaimLifecycleStatus::Active);
-    assert!(
+    assert_eq!(
+        crate::claim::session_claim_producer(&current),
+        Some(replacement_agent)
+    );
+}
+
+#[test]
+fn signed_machine_keyed_create_replace_and_delete() {
+    use ed25519_dalek::Signer;
+    let (_dir, vault) = open_vault();
+    let machine = put_machine(&vault, 0x1A);
+    let issuer =
+        crate::authority::HostSlipIssuer::from_secret(b"keyed-machine-history-root").unwrap();
+    vault.ensure_host_root_slip(&issuer).unwrap();
+    let machine_key = ed25519_dalek::SigningKey::from_bytes(&[0x2A; 32]);
+    vault
+        .enroll_machine_identity(
+            &issuer,
+            machine,
+            machine_key.verifying_key().to_bytes(),
+            [17; 32],
+            |transcript| Ok(machine_key.sign(transcript).to_bytes()),
+        )
+        .unwrap();
+    // A host-landed enrollment is live at once: the widen delay is dead.
+    assert_eq!(
+        vault.authority_fold().unwrap().actor_bindings
+            [&crate::authority::AuthorityKey::Ed25519(machine_key.verifying_key().to_bytes())]
+            .status,
+        crate::authority::ActorBindingStatus::Active
+    );
+    append_actor_ceiling_rows(
+        &vault,
+        vec![("system".into(), machine.to_hex(), "auto".into())],
+    );
+    let machine_sign = |transcript: &[u8]| Ok(machine_key.sign(transcript).to_bytes());
+    let facade = vault.memory_signed_machine(
+        machine,
+        machine_key.verifying_key().to_bytes(),
+        &machine_sign,
+    );
+    let key = crate::memory::KeyValuePut {
+        namespace: vec!["machine".into()],
+        key: "signed".into(),
+        value: serde_json::json!({"fact": 1}),
+        request_id: "signed-key-1".into(),
+        source: "user_stated".into(),
+    };
+    let first = facade
+        .key_value_put(&key)
+        .expect("machine-signed keyed create");
+    let mut next = key;
+    next.value = serde_json::json!({"fact": 2});
+    next.request_id = "signed-key-2".into();
+    let second = facade
+        .key_value_put(&next)
+        .expect("signed keyed replacement");
+    assert_ne!(first.item.revision, second.item.revision);
+    assert_eq!(
         vault
-            .pending_gate_consents(10)
-            .expect("pending consent")
-            .iter()
-            .any(|record| record.claim_id == *claim_id.as_bytes()),
-        "replacement agent's consent row remains actionable"
+            .get_claim(&EntityId::from_hex(&first.item.revision).unwrap())
+            .unwrap()
+            .unwrap()
+            .lifecycle,
+        ClaimLifecycleStatus::Superseded
+    );
+    let address = crate::memory::KeyValueAddress {
+        namespace: next.namespace,
+        key: next.key,
+    };
+    assert!(
+        facade
+            .key_value_delete(&address)
+            .expect("signed keyed deletion")
+            .existed
+    );
+    assert_eq!(
+        vault
+            .get_claim(&EntityId::from_hex(&second.item.revision).unwrap())
+            .unwrap()
+            .unwrap()
+            .lifecycle,
+        ClaimLifecycleStatus::Retracted
     );
 }
 

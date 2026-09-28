@@ -125,6 +125,7 @@ impl RefusalRetry {
                 err.kind(),
                 ErrorKind::ProjectDependencyPending
                     | ErrorKind::ResidentOwnerDependencyPending
+                    | ErrorKind::RemoteMachineHistoryPending
                     | ErrorKind::AskDependencyPending
             )
         {

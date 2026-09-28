@@ -13,6 +13,7 @@ pub(super) struct ClaimPutAdmission<'a> {
     pub(super) allow_reserved_predicate: bool,
     pub(super) write_envelope: Option<&'a WriteEnvelope>,
     pub(super) replicated: bool,
+    pub(super) posture: crate::HostingPrivacyPosture,
     pub(super) transition: Option<&'a crate::batch::VerifiedClaimTransition>,
 }
 
@@ -39,6 +40,31 @@ pub(super) fn admit_claim_put(
     } else {
         None
     };
+    crate::claim::history_store::validate_machine_history_put(
+        store,
+        txn,
+        crate::claim::history_store::MachineHistoryPut {
+            id: &id,
+            entity_type: input.entity_type,
+            occurred: input.occurred,
+            learned_at: input.learned_at,
+            data: input.data,
+            body: body.as_ref(),
+            replicated: input.replicated,
+            posture: input.posture,
+        },
+    )?;
+    if let Some(body) = &body {
+        crate::authority::verify_machine_claim_in_txn(
+            store,
+            txn,
+            input.posture,
+            &id,
+            body,
+            input.replicated,
+            input.write_envelope,
+        )?;
+    }
     crate::booking::publication::guard_publication_put(store, txn, id, body.as_ref())?;
     crate::workspace_roster::guard_goal_claim_put(
         store,

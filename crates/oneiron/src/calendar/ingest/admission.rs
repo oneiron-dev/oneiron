@@ -611,7 +611,7 @@ pub(in crate::calendar) fn admit_calendar_import_claim(
         },
         recorded_at,
     );
-    crate::ingest::admit_imported_evidence_claim_typed(
+    crate::ingest::admit_imported_evidence_claim_typed_for_machine(
         vault,
         predicate,
         value,
@@ -627,10 +627,7 @@ pub fn ics_import_actor_id() -> crate::Result<EntityId> {
     EntityId::derive(CALENDAR_ICS_IMPORT_ACTOR, &[])
 }
 
-pub(in crate::calendar) fn ensure_ics_import_actor(
-    vault: &Vault,
-    now: u64,
-) -> crate::Result<EntityId> {
+pub(crate) fn ensure_ics_import_actor(vault: &Vault, now: u64) -> crate::Result<EntityId> {
     let id = ics_import_actor_id()?;
     if vault.get_entity_type(&id)? != Some(ENTITY_TYPE_MACHINE) {
         let mut body = Vec::new();

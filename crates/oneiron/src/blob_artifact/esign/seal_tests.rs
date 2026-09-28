@@ -122,6 +122,10 @@ fn native_seal_verifies_before_atomic_terminal_and_retries_from_pristine_origina
         now,
         b"owner",
     )?;
+    // The artifact actor is a MACHINE: it signs with a host-held key, so the
+    // vault is host-rooted and its owner holds a human binding (ONE-1634).
+    let issuer = crate::test_util::provision_engine_machines(&vault);
+    vault.bind_host_owner_for_test(&issuer, owner)?;
     let id = EntityId::now();
     vault.put_blob_artifact(
         &id,

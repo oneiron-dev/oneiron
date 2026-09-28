@@ -37,7 +37,7 @@ pub(super) fn uncached_reference_fold(
     let peers =
         crate::federation::admitted_peer_consent_roots_for_store_in_txn(&vault.store, txn).unwrap();
     let observations = authority_local_observations_in_txn(&vault.store, txn, &entries).unwrap();
-    fold_authority_log_with_local_observations_and_posture_with_deadline(
+    fold_authority_log_with_local_observations_and_posture(
         &entries,
         &first_seen,
         now,
@@ -45,7 +45,6 @@ pub(super) fn uncached_reference_fold(
         &observations,
         vault.privacy_posture(),
     )
-    .0
 }
 
 #[test]
@@ -168,14 +167,131 @@ fn readonly_fold_matches_full_fold_and_writes_nothing() {
     );
 }
 
+/// Rewinds a vault to the pre-migration shape a legacy rooted store has: every
+/// first-seen sidecar gone and the one-shot backfill marker unset.
+fn strip_first_seen_sidecars(vault: &crate::Vault, drop_backfill_marker: bool) {
+    let rtxn = vault.store.env.read_txn().unwrap();
+    let keys: Vec<String> = vault
+        .store
+        .sync_state
+        .iter(&rtxn)
+        .unwrap()
+        .map(|row| row.unwrap().0.into_owned())
+        .filter(|key| {
+            key.starts_with("authlog:first_seen:")
+                && key != authority_first_seen_clock_sync_key()
+                && (drop_backfill_marker || key != authority_first_seen_backfill_sync_key())
+        })
+        .collect();
+    drop(rtxn);
+    assert!(
+        !keys.is_empty(),
+        "fixture must have written sidecars to strip"
+    );
+    vault
+        .with_write_txn(|wtxn| {
+            for key in &keys {
+                assert!(vault.store.sync_state.delete(wtxn, key.as_str())?);
+            }
+            Ok(())
+        })
+        .unwrap();
+}
+
+#[test]
+fn backfill_ignores_future_learned_at_and_records_local_observation() {
+    let dir = tempfile::tempdir().unwrap();
+    let vault = crate::Vault::open(dir.path(), crate::VaultConfig::device()).unwrap();
+    let owner = ed_key(221);
+    let owner_key = authority_key_from_ed(&owner);
+    let genesis = genesis_entry(221, DEFAULT_PENDING_WIDEN_DELAY_SECS, 1);
+    let genesis_hash = authority_entry_hash(&genesis).unwrap();
+    let vault_id = genesis_vault_id(&genesis).unwrap();
+    let enrolled = ed_key(222);
+    let enrolled_key = authority_key_from_ed(&enrolled);
+    // An agent-only enrollment: the vault door retires client enrollment
+    // (identity canon: enrollment is pairing-only), not the host enrolling a
+    // MACHINE writer.
+    let enroll = sign_ed(
+        unsigned_entry(
+            Some(vault_id),
+            1,
+            vec![genesis_hash],
+            AuthorityOp::EnrollDevice {
+                device: device(enrolled_key.clone(), ROLE_AGENT, AuthorityTier::Software),
+            },
+            owner_key,
+            2,
+        ),
+        &owner,
+    );
+    let enroll_hash = authority_entry_hash(&enroll).unwrap();
+    let far_future = crate::unix_seconds_now() + 3650 * 24 * 60 * 60;
+    vault
+        .put_authority_log_entries(&[
+            (genesis, TimeRange { start: 1, end: 1 }, 1),
+            (
+                enroll,
+                TimeRange {
+                    start: 2,
+                    end: far_future,
+                },
+                far_future,
+            ),
+        ])
+        .unwrap();
+    strip_first_seen_sidecars(&vault, true);
+
+    // Pre-migration, the readonly fold assumes first-seen NOW and still folds:
+    // no op waits on its first-seen time, so the enrollment has landed.
+    let rtxn = vault.store.env.read_txn().unwrap();
+    let pre_migration = vault.authority_fold_readonly_in_txn(&rtxn).unwrap();
+    drop(rtxn);
+    assert!(pre_migration.valid_entries.contains(&enroll_hash));
+    assert!(pre_migration.roster.contains_key(&enrolled_key));
+
+    // Bound the recorded timestamp by local observations, not peer metadata.
+    let observation_before = readonly_observation_secs(&vault);
+    let full = vault.authority_fold().unwrap();
+    let observation_after = readonly_observation_secs(&vault);
+    assert!(observation_after < far_future);
+    assert!(full.roster.contains_key(&enrolled_key));
+    let rtxn = vault.store.env.read_txn().unwrap();
+    let first_seen = vault
+        .store
+        .sync_state
+        .get(&rtxn, authority_first_seen_sync_key(&enroll_hash).as_str())
+        .unwrap()
+        .and_then(|raw| decode_authority_first_seen_secs(&raw))
+        .expect("migration must record a local first-seen time");
+    drop(rtxn);
+    assert!(first_seen >= observation_before);
+    assert!(first_seen <= observation_after);
+}
+
+/// The observation seconds a readonly fold would derive right now, without
+/// disturbing the persisted floor.
+fn readonly_observation_secs(vault: &crate::Vault) -> u64 {
+    let rtxn = vault.store.env.read_txn().unwrap();
+    let floor = vault
+        .store
+        .sync_state
+        .get(&rtxn, authority_first_seen_clock_sync_key())
+        .unwrap()
+        .and_then(|raw| decode_authority_first_seen_secs(&raw))
+        .unwrap_or(0);
+    drop(rtxn);
+    authority_observation_secs(&vault.store, floor, vault.now_recorded_at())
+}
+
 /// A sidecar missing AFTER the one-shot migration ran is unrecoverable, so the
 /// readonly fold must refuse rather than pick a side.
 ///
 /// Synthesis is only sound while the backfill has not run: it reproduces what
 /// the migration WOULD write. Once the marker is set the migration will never
 /// visit that row again, so a re-synthesized `learned_at.min(now)` would silently
-/// disagree with every sidecar its peers kept — and both available guesses are
-/// unsafe (mature early = skipped veto window; stay pending = live retired key).
+/// disagree with every sidecar its peers kept, and omitting the row would let
+/// an approval resting on a revoked roster outlive its stale-roster window.
 /// An undecodable row is the same state and takes the same door.
 #[test]
 fn readonly_fold_rejects_sidecar_lost_after_backfill() {
@@ -242,6 +358,112 @@ fn readonly_fold_rejects_sidecar_lost_after_backfill() {
         assert!(
             is_corrupt_first_seen_sidecar(&err),
             "corrupt_in_place={corrupt_in_place}: {err}"
+        );
+    }
+}
+
+#[test]
+fn applied_rotation_with_corrupt_sidecar_refuses_public_and_snapshot_folds() {
+    for malformed in [false, true] {
+        let dir = tempfile::tempdir().unwrap();
+        let clock = 1_000_000;
+        let vault = open_vault_at(dir.path(), clock);
+        let owner = ed_key(230);
+        let owner_key = authority_key_from_ed(&owner);
+        let actor = scope_entity(0x85);
+        let genesis = genesis_entry(230, DEFAULT_PENDING_WIDEN_DELAY_SECS, 1);
+        let vault_id = genesis_vault_id(&genesis).unwrap();
+        let bind = sign_ed(
+            unsigned_entry(
+                Some(vault_id),
+                1,
+                vec![authority_entry_hash(&genesis).unwrap()],
+                bind_op(&owner_key, actor, "human", 1),
+                owner_key.clone(),
+                2,
+            ),
+            &owner,
+        );
+        let rotate = sign_ed(
+            unsigned_entry(
+                Some(vault_id),
+                2,
+                vec![authority_entry_hash(&bind).unwrap()],
+                AuthorityOp::RotateKey {
+                    old_key: owner_key.clone(),
+                    new_device: device(
+                        authority_key_from_ed(&ed_key(231)),
+                        ROLE_OWNER | ROLE_ADMIN,
+                        AuthorityTier::Software,
+                    ),
+                },
+                owner_key.clone(),
+                3,
+            ),
+            &owner,
+        );
+        let rotate_hash = authority_entry_hash(&rotate).unwrap();
+        // The retired rotation folds only as a signed handoff's ancestry.
+        let successor = ed_key(231);
+        let handoff = sign_ed(
+            unsigned_entry(
+                Some(vault_id),
+                0,
+                vec![rotate_hash],
+                AuthorityOp::ReRoot {
+                    new_device: device(
+                        authority_key_from_ed(&ed_key(232)),
+                        ROLE_OWNER | ROLE_ADMIN,
+                        AuthorityTier::Software,
+                    ),
+                },
+                authority_key_from_ed(&successor),
+                4,
+            ),
+            &successor,
+        );
+        vault
+            .put_authority_log_entries(&[
+                (genesis, TimeRange { start: 1, end: 1 }, 1),
+                (bind, TimeRange { start: 2, end: 2 }, 2),
+                (rotate, TimeRange { start: 3, end: 3 }, 3),
+                (handoff, TimeRange { start: 4, end: 4 }, 4),
+            ])
+            .unwrap();
+        // The rotation lands at once: no delay, no pending state.
+        let settled = vault.authority_fold().unwrap();
+        assert!(!actor_binding_is_active(&settled, &actor, "human"));
+        assert!(
+            !settled
+                .roster
+                .get(&owner_key)
+                .is_some_and(folded_device_can_authority_consent)
+        );
+
+        let sidecar = authority_first_seen_sync_key(&rotate_hash);
+        vault
+            .with_write_txn(|txn| {
+                if malformed {
+                    vault.store.sync_state.put(txn, &sidecar, &[9])?;
+                } else {
+                    assert!(vault.store.sync_state.delete(txn, &sidecar)?);
+                }
+                Ok(())
+            })
+            .unwrap();
+        drop(vault); // A new handle cannot hide the missing evidence behind a warm view.
+        let reopened = open_vault_at(dir.path(), clock);
+        let txn = reopened.store.env.read_txn().unwrap();
+        let readonly_error = reopened.authority_fold_readonly_in_txn(&txn).unwrap_err();
+        drop(txn);
+        let public_error = reopened.authority_fold().unwrap_err();
+        assert!(
+            is_corrupt_first_seen_sidecar(&readonly_error),
+            "{readonly_error}"
+        );
+        assert!(
+            is_corrupt_first_seen_sidecar(&public_error),
+            "{public_error}"
         );
     }
 }
@@ -371,8 +593,12 @@ fn authority_cache_is_bound_to_snapshot_and_abort_does_not_publish_a_mint() {
     ));
 }
 
+/// A retired rotation still folds as a verified re-root's pre-handoff
+/// ancestry, and with the widen delay dead it lands at once: the handoff
+/// retires the old root on first observation, the cached view agrees, and a
+/// reopen keeps it.
 #[test]
-fn pre_handoff_rotation_deadline_rechecks_cached_root_and_survives_reopen() {
+fn pre_handoff_rotation_and_its_handoff_land_at_once_and_survive_reopen() {
     let dir = tempfile::tempdir().unwrap();
     let vault = open_vault_at(dir.path(), 1_000);
     let owner = ed_key(126);
@@ -406,101 +632,23 @@ fn pre_handoff_rotation_deadline_rechecks_cached_root_and_survives_reopen() {
     vault
         .put_authority_log_entries(&[
             (genesis, TimeRange { start: 1, end: 1 }, 1),
-            (rotation.clone(), TimeRange { start: 2, end: 2 }, 2),
+            (rotation, TimeRange { start: 2, end: 2 }, 2),
             (handoff, TimeRange { start: 3, end: 3 }, 3),
         ])
         .unwrap();
     let txn = vault.store.env.read_txn().unwrap();
-    let before = vault.authority_view_readonly_in_txn(&txn).unwrap();
-    assert!(before.pending_widens.contains_key(&rotation_hash));
-    assert!(!before.valid_entries.contains(&handoff_hash));
-    assert!(!before.roster[&owner_key].revoked);
-    assert!(!before.roster.contains_key(&host_key));
-    assert_eq!(
-        *vault.authority_view_readonly_in_txn(&txn).unwrap(),
-        *before
-    );
+    let view = vault.authority_view_readonly_in_txn(&txn).unwrap();
+    assert!(view.valid_entries.contains(&rotation_hash));
+    assert!(view.valid_entries.contains(&handoff_hash));
+    assert!(view.roster[&owner_key].revoked);
+    assert!(view.roster[&replacement_key].revoked);
+    assert!(!view.roster[&host_key].revoked);
+    assert_eq!(*vault.authority_view_readonly_in_txn(&txn).unwrap(), *view);
     drop(txn);
-    mature_observed_widen(&vault, &rotation);
-    let txn = vault.store.env.read_txn().unwrap();
-    let after = vault.authority_view_readonly_in_txn(&txn).unwrap();
-    assert!(after.valid_entries.contains(&handoff_hash));
-    assert!(after.pending_widens.is_empty());
-    assert!(after.roster[&owner_key].revoked);
-    assert!(after.roster[&replacement_key].revoked);
-    assert!(!after.roster[&host_key].revoked);
-    drop(txn);
+    assert_eq!(vault.authority_fold().unwrap(), *view);
     drop(vault);
     let reopened = open_vault_at(dir.path(), 1_000);
-    assert!(
-        reopened
-            .authority_fold()
-            .unwrap()
-            .valid_entries
-            .contains(&handoff_hash)
-    );
-    assert!(reopened.authority_fold().unwrap().roster[&owner_key].revoked);
-}
-
-#[test]
-fn pre_handoff_rotation_without_local_observation_refuses_readonly_authority() {
-    let dir = tempfile::tempdir().unwrap();
-    let vault = open_vault_at(dir.path(), 1_000);
-    let owner = ed_key(129);
-    let replacement = ed_key(130);
-    let genesis = genesis_entry(129, DEFAULT_PENDING_WIDEN_DELAY_SECS, 1);
-    let id = genesis_vault_id(&genesis).unwrap();
-    let rotation = rotate_entry(id, &genesis, &owner, authority_key_from_ed(&owner), 130, 1);
-    let rotation_hash = authority_entry_hash(&rotation).unwrap();
-    let handoff = sign_ed(
-        unsigned_entry(
-            Some(id),
-            0,
-            vec![rotation_hash],
-            AuthorityOp::ReRoot {
-                new_device: device(
-                    authority_key_from_ed(&ed_key(131)),
-                    ROLE_OWNER | ROLE_ADMIN,
-                    AuthorityTier::Software,
-                ),
-            },
-            authority_key_from_ed(&replacement),
-            3,
-        ),
-        &replacement,
-    );
-    vault
-        .put_authority_log_entries(&[
-            (genesis, TimeRange { start: 1, end: 1 }, 1),
-            (rotation, TimeRange { start: 2, end: 2 }, 0),
-            (handoff, TimeRange { start: 3, end: 3 }, 0),
-        ])
-        .unwrap();
-    assert!(
-        vault
-            .authority_fold()
-            .unwrap()
-            .pending_widens
-            .contains_key(&rotation_hash)
-    );
-    vault
-        .with_write_txn(|txn| {
-            vault
-                .store
-                .sync_state
-                .delete(txn, &authority_first_seen_sync_key(&rotation_hash))?;
-            vault
-                .store
-                .sync_state
-                .delete(txn, authority_first_seen_backfill_sync_key())?;
-            advance_authority_cache_generation(&vault.store, txn)?;
-            Ok(())
-        })
-        .unwrap();
-    let txn = vault.store.env.read_txn().unwrap();
-    let err = vault.authority_fold_readonly_in_txn(&txn).unwrap_err();
-    assert!(is_indeterminate_first_seen(&err), "{err}");
-    drop(txn);
-    let backfilled = vault.authority_fold().unwrap();
-    assert!(backfilled.pending_widens.contains_key(&rotation_hash));
+    let fold = reopened.authority_fold().unwrap();
+    assert!(fold.valid_entries.contains(&handoff_hash));
+    assert!(fold.roster[&owner_key].revoked);
 }

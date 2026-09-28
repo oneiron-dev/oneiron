@@ -103,7 +103,6 @@ fn verify_signed_branch(
                 hash,
                 entries,
                 &states,
-                &pending,
                 branch_context,
                 super::ancestry_evaluator::EvaluationPhase::Normal,
             ) {
@@ -132,8 +131,7 @@ fn verify_signed_branch(
         }
         // Pending children of a rejected ancestor are not proof that the child
         // was valid. Only their signed links may be traversed, and their ops
-        // never apply. A frozen entry remains pending for the positive freeze
-        // classifier in the shared evaluator instead.
+        // never apply.
         let skipped: BTreeSet<_> = rejected
             .iter()
             .copied()
@@ -155,7 +153,6 @@ fn verify_signed_branch(
                 hash,
                 entries,
                 &states,
-                &pending,
                 branch_context,
                 super::ancestry_evaluator::EvaluationPhase::Stalled(&skipped),
             ) {

@@ -111,6 +111,7 @@ pub(in crate::batch) fn apply_put(
             allow_reserved_predicate,
             write_envelope,
             replicated,
+            posture,
             transition,
         },
     )?;

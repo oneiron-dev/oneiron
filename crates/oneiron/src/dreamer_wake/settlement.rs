@@ -81,9 +81,16 @@ impl DreamerWakeDriver<'_> {
             end: now,
         };
         self.vault.with_write_txn(|wtxn| {
+            let mut envelope = author.envelope.clone();
+            self.vault.sign_retained_machine_claim_in_txn(
+                &*wtxn,
+                &claim_id,
+                &candidate,
+                &mut envelope,
+            )?;
             self.vault
                 .batch_in()
-                .claim_candidate(&claim_id, candidate, &author.envelope, occurred, now)
+                .claim_candidate(&claim_id, candidate, &envelope, occurred, now)
                 .apply(wtxn)
         })
     }

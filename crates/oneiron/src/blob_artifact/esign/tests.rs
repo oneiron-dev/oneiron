@@ -77,6 +77,9 @@ fn setup_with(
         1,
         b"owner",
     )?;
+    // The artifact actor is a MACHINE: it signs with a host-held key, so the
+    // vault is host-rooted and its owner verbs need a human binding (ONE-1634).
+    crate::test_util::provision_engine_machines(&vault);
     let artifact = EntityId::now();
     vault.put_blob_artifact(
         &artifact,
@@ -117,6 +120,7 @@ fn capability_preview_and_signature_share_injected_time_and_ids() -> Result<()> 
         1,
         b"owner",
     )?;
+    crate::test_util::bind_test_owner(&vault, owner);
     let auth = vault.authenticate_owner(
         owner,
         &owner.to_hex(),
@@ -353,6 +357,7 @@ fn ceremony_setup() -> Result<(
         now,
         b"owner",
     )?;
+    crate::test_util::bind_test_owner(&vault, owner);
     doc.recipients[0].principal_ref = Some(owner.to_hex());
     event(
         &vault,

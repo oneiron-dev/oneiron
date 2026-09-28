@@ -136,6 +136,7 @@ fn temp_vault() -> (tempfile::TempDir, Vault) {
     cfg.dimensions = 4;
     cfg.embedding_model = None;
     let vault = Vault::open_unseeded_for_test(dir.path(), cfg).expect("open vault");
+    crate::common::provision_engine_machines(&vault);
     (dir, vault)
 }
 
@@ -147,6 +148,7 @@ fn temp_vault_seeded() -> (tempfile::TempDir, Vault) {
     cfg.dimensions = 4;
     cfg.embedding_model = None;
     let vault = Vault::open(dir.path(), cfg).expect("open vault");
+    crate::common::provision_engine_machines(&vault);
     (dir, vault)
 }
 

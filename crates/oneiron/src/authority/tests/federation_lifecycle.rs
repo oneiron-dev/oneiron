@@ -9,8 +9,7 @@ fn federation_connect_activates_pact_on_both_sides() {
     let genesis_hash = authority_entry_hash(&fixture.genesis).unwrap();
     let connect = lifecycle_entry(&fixture, vec![genesis_hash], 1, connect_action(&fixture));
 
-    let fold =
-        fold_authority_log_without_seen_time_delay(&[fixture.genesis.clone(), connect.clone()]);
+    let fold = fold_authority_log(&[fixture.genesis.clone(), connect.clone()]);
     assert!(
         fold.valid_entries
             .contains(&authority_entry_hash(&connect).unwrap())
@@ -85,10 +84,7 @@ fn federation_connect_activates_pact_on_both_sides() {
         ),
         &fixture.peer,
     );
-    let peer_fold = fold_authority_log_without_seen_time_delay(&[
-        fixture.peer_genesis.clone(),
-        symmetric_connect,
-    ]);
+    let peer_fold = fold_authority_log(&[fixture.peer_genesis.clone(), symmetric_connect]);
     let peer_pact = peer_fold
         .federation_pacts
         .get(&fixture.pact_id)
@@ -130,7 +126,7 @@ fn federation_connect_digest_mismatch_never_activates() {
     ));
     let entry = lifecycle_entry(&fixture, vec![genesis_hash], 1, action);
     let entry_hash = authority_entry_hash(&entry).unwrap();
-    let fold = fold_authority_log_without_seen_time_delay(&[fixture.genesis.clone(), entry]);
+    let fold = fold_authority_log(&[fixture.genesis.clone(), entry]);
     assert!(fold.federation_pacts.is_empty(), "no pact state may form");
     assert_eq!(fold.pact_for_grant(&fixture.grant_ref), None);
     assert_eq!(
@@ -146,7 +142,7 @@ fn federation_connect_digest_mismatch_never_activates() {
     action.pact_scope = Some(symmetric_scope(ScopeAxis::Bottom, ScopeAxis::All));
     let entry = lifecycle_entry(&fixture, vec![genesis_hash], 1, action);
     let entry_hash = authority_entry_hash(&entry).unwrap();
-    let fold = fold_authority_log_without_seen_time_delay(&[fixture.genesis.clone(), entry]);
+    let fold = fold_authority_log(&[fixture.genesis.clone(), entry]);
     assert!(fold.federation_pacts.is_empty(), "no pact state may form");
     assert_eq!(
         lifecycle_rejection(&fold, entry_hash),
@@ -185,11 +181,7 @@ fn federation_rescope_narrow_and_repact_rules() {
         ),
     );
     let widen_hash = authority_entry_hash(&widen).unwrap();
-    let fold = fold_authority_log_without_seen_time_delay(&[
-        fixture.genesis.clone(),
-        connect.clone(),
-        widen,
-    ]);
+    let fold = fold_authority_log(&[fixture.genesis.clone(), connect.clone(), widen]);
     assert_eq!(
         lifecycle_rejection(&fold, widen_hash),
         Some(FederationLifecycleRejection::WidenWithoutGesture)
@@ -219,11 +211,7 @@ fn federation_rescope_narrow_and_repact_rules() {
         ),
     );
     let narrow_hash = authority_entry_hash(&narrow).unwrap();
-    let fold = fold_authority_log_without_seen_time_delay(&[
-        fixture.genesis.clone(),
-        connect.clone(),
-        narrow.clone(),
-    ]);
+    let fold = fold_authority_log(&[fixture.genesis.clone(), connect.clone(), narrow.clone()]);
     let pact = &fold.federation_pacts[&fixture.pact_id];
     assert_eq!(pact.status, FederationPactStatus::Active);
     assert_eq!(pact.pact_epoch, 1);
@@ -248,12 +236,7 @@ fn federation_rescope_narrow_and_repact_rules() {
             new_nonce,
         ),
     );
-    let fold = fold_authority_log_without_seen_time_delay(&[
-        fixture.genesis.clone(),
-        connect,
-        narrow,
-        repact,
-    ]);
+    let fold = fold_authority_log(&[fixture.genesis.clone(), connect, narrow, repact]);
     let pact = &fold.federation_pacts[&fixture.pact_id];
     assert_eq!(pact.status, FederationPactStatus::Active);
     assert_eq!(pact.pact_epoch, 2);
@@ -282,11 +265,7 @@ fn federation_disconnect_is_terminal_for_every_subsequent_op() {
     );
     let disconnect_hash = authority_entry_hash(&disconnect).unwrap();
 
-    let fold = fold_authority_log_without_seen_time_delay(&[
-        fixture.genesis.clone(),
-        connect.clone(),
-        disconnect.clone(),
-    ]);
+    let fold = fold_authority_log(&[fixture.genesis.clone(), connect.clone(), disconnect.clone()]);
     let pact = &fold.federation_pacts[&fixture.pact_id];
     assert_eq!(pact.status, FederationPactStatus::Disconnected);
     assert_eq!(pact.terminal_epoch, Some(1));
@@ -386,7 +365,7 @@ fn federation_disconnect_is_terminal_for_every_subsequent_op() {
         followup_hashes.push((name, authority_entry_hash(&entry).unwrap()));
         entries.push(entry);
     }
-    let fold = fold_authority_log_without_seen_time_delay(&entries);
+    let fold = fold_authority_log(&entries);
     for (name, hash) in followup_hashes {
         assert_eq!(
             lifecycle_rejection(&fold, hash),
@@ -416,7 +395,7 @@ fn federation_disconnect_is_terminal_for_every_subsequent_op() {
     );
     let rebind_hash = authority_entry_hash(&rebind).unwrap();
     entries.push(rebind);
-    let fold = fold_authority_log_without_seen_time_delay(&entries);
+    let fold = fold_authority_log(&entries);
     assert_eq!(
         lifecycle_rejection(&fold, rebind_hash),
         Some(FederationLifecycleRejection::GrantAlreadyBound)
@@ -444,8 +423,7 @@ fn federation_connect_rejects_rebinding_an_actively_bound_grant() {
     );
     let rebind_hash = authority_entry_hash(&rebind).unwrap();
 
-    let fold =
-        fold_authority_log_without_seen_time_delay(&[fixture.genesis.clone(), connect, rebind]);
+    let fold = fold_authority_log(&[fixture.genesis.clone(), connect, rebind]);
     assert_eq!(
         lifecycle_rejection(&fold, rebind_hash),
         Some(FederationLifecycleRejection::GrantAlreadyBound)
@@ -492,12 +470,7 @@ fn federation_promote_records_successor_and_is_terminal() {
     );
     let after_hash = authority_entry_hash(&after).unwrap();
 
-    let fold = fold_authority_log_without_seen_time_delay(&[
-        fixture.genesis.clone(),
-        connect,
-        promote,
-        after,
-    ]);
+    let fold = fold_authority_log(&[fixture.genesis.clone(), connect, promote, after]);
     let pact = &fold.federation_pacts[&fixture.pact_id];
     assert_eq!(pact.status, FederationPactStatus::Promoted);
     assert_eq!(pact.successor_vault_id, Some(successor));
@@ -531,11 +504,7 @@ fn federation_promote_records_successor_and_is_terminal() {
         ),
     );
     let bad_hash = authority_entry_hash(&bad_promote).unwrap();
-    let fold = fold_authority_log_without_seen_time_delay(&[
-        fixture.genesis.clone(),
-        connect,
-        bad_promote,
-    ]);
+    let fold = fold_authority_log(&[fixture.genesis.clone(), connect, bad_promote]);
     assert_eq!(
         lifecycle_rejection(&fold, bad_hash),
         Some(FederationLifecycleRejection::ScopeDigestMismatch)
@@ -593,7 +562,7 @@ fn federation_dissolve_is_terminal_and_never_recovered() {
     );
     let rebind_hash = authority_entry_hash(&rebind).unwrap();
 
-    let fold = fold_authority_log_without_seen_time_delay(&[
+    let fold = fold_authority_log(&[
         fixture.genesis.clone(),
         connect,
         dissolve,
@@ -660,7 +629,7 @@ fn federation_suspended_pact_heals_via_fresh_repact() {
     let left_hash = authority_entry_hash(&left).unwrap();
     let right_hash = authority_entry_hash(&right).unwrap();
 
-    let fold = fold_authority_log_without_seen_time_delay(&[
+    let fold = fold_authority_log(&[
         fixture.genesis.clone(),
         connect.clone(),
         left.clone(),
@@ -692,7 +661,7 @@ fn federation_suspended_pact_heals_via_fresh_repact() {
         ),
     );
     let narrow_hash = authority_entry_hash(&narrow_on_suspended).unwrap();
-    let fold = fold_authority_log_without_seen_time_delay(&[
+    let fold = fold_authority_log(&[
         fixture.genesis.clone(),
         connect.clone(),
         left.clone(),
@@ -723,13 +692,7 @@ fn federation_suspended_pact_heals_via_fresh_repact() {
             heal_nonce,
         ),
     );
-    let fold = fold_authority_log_without_seen_time_delay(&[
-        fixture.genesis.clone(),
-        connect,
-        left,
-        right,
-        heal,
-    ]);
+    let fold = fold_authority_log(&[fixture.genesis.clone(), connect, left, right, heal]);
     let pact = &fold.federation_pacts[&fixture.pact_id];
     assert_eq!(pact.status, FederationPactStatus::Active);
     assert_eq!(pact.pact_epoch, 3);

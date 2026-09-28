@@ -69,13 +69,6 @@ pub(crate) fn folded_peer_device_is_consent_root(device: &FoldedDevice) -> bool 
     !device.revoked && (device.roles & (ROLE_OWNER | ROLE_ADMIN)) != 0
 }
 
-pub(super) fn folded_device_can_owner_veto(device: &FoldedDevice) -> bool {
-    !device.revoked
-        && (device.roles & ROLE_OWNER) != 0
-        && (device.roles & ROLE_CLOUD) == 0
-        && device.tier != AuthorityTier::CloudCustodial
-}
-
 /// Managed hosts are owner roots; this arm is never used by self-host folds.
 pub(super) fn folded_host_device_can_consent(device: &FoldedDevice) -> bool {
     !device.revoked && (device.roles & (ROLE_OWNER | ROLE_ADMIN)) != 0
