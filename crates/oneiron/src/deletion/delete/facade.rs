@@ -77,8 +77,9 @@ impl Vault {
     /// room door: for replay reason transitions and for legacy fixtures that
     /// hold no policy manifest (where the door fails closed). Never evidence
     /// of room authority.
-    #[cfg(test)]
-    pub(crate) fn delete_room_record_unchecked_for_test(
+    #[cfg(any(test, feature = "test-support"))]
+    #[doc(hidden)]
+    pub fn delete_room_record_unchecked_for_test(
         &self,
         id: &EntityId,
         reason: DeleteReason,

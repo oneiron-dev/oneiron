@@ -593,8 +593,9 @@ impl Vault {
     /// Test seam for suites whose subject is a downstream effect of deletion:
     /// resolves the record's room and recorded author, then deletes through
     /// [`Self::delete_room_record`] as that author. The door's checks all run.
-    #[cfg(test)]
-    pub(crate) fn delete_own_room_record(
+    #[cfg(any(test, feature = "test-support"))]
+    #[doc(hidden)]
+    pub fn delete_own_room_record(
         &self,
         record: EntityId,
         reason: DeleteReason,
