@@ -5,7 +5,7 @@ use super::{
 use crate::Vault;
 use crate::attempt_queue::AttemptQueue;
 use crate::channel_identity::{
-    ChannelIdentity, ChannelIdentityBinding, ChannelIdentityState, SelfHeldShape,
+    ChannelIdentityBinding, ChannelIdentityState, ChannelIdentityStep, SelfHeldShape,
 };
 use crate::connector_key::{
     ConnectorKeyRecord, EffectorBudget, EffectorBudgetOnExhaust, EffectorBudgetWindow,
@@ -40,14 +40,14 @@ fn put_sending_identity(
     id: EntityId,
     binding: ChannelIdentityBinding,
 ) -> crate::Result<()> {
-    let mut identity = ChannelIdentity::requested(
+    let identity = crate::test_util::self_held_identity_in_state(
         "email",
-        format!("sender-{}@example.com", id.to_hex()),
+        &format!("sender-{}@example.com", id.to_hex()),
         SelfHeldShape::DedicatedAddress,
         binding,
+        ChannelIdentityState::Active,
         1_000,
     );
-    identity.state = ChannelIdentityState::Active;
     vault.create_channel_identity(&id, &identity)
 }
 
@@ -155,13 +155,7 @@ fn ambiguous_automatic_sender_refuses_before_dispatch_effects()
         );
 
         // Removing only the competing sender makes automatic faceted sending valid.
-        vault.transition_channel_identity(
-            &second,
-            ChannelIdentityState::Released,
-            None,
-            1_001,
-            None,
-        )?;
+        vault.step_channel_identity(&second, ChannelIdentityStep::Release, 1_001)?;
         let automatic =
             vault.dispatch_outbound_intent(email_send_dispatch_request(actor, 2), &mut sink)?;
         assert_eq!(
@@ -175,6 +169,56 @@ fn ambiguous_automatic_sender_refuses_before_dispatch_effects()
             2
         );
     }
+    Ok(())
+}
+
+#[test]
+fn explicit_retired_self_held_sender_is_refused_before_effects()
+-> std::result::Result<(), Box<dyn std::error::Error>> {
+    let (_tmp, vault) = temp_vault();
+    let actor = auto_agent_actor(&vault)?;
+    let actor_ref = actor.actor_entity_ref.expect("actor entity");
+    put_policy_manifest_bytes(
+        &vault,
+        entity(0xD0),
+        &policy_manifest(&actor_ref.to_hex(), "email", &["send"]),
+    )?;
+    let sender = entity(0xBC);
+    let key_ref = entity(0xBD);
+    vault.register_connector_key(
+        &key_ref,
+        ConnectorKeyRecord::active("email", Some(actor_ref), Vec::new(), 1_000),
+    )?;
+    put_sending_identity(&vault, sender, ChannelIdentityBinding::actor(actor_ref))?;
+    let mut sink = SenderRecordingSink::default();
+    let active = vault.dispatch_outbound_intent(
+        email_send_dispatch_request(actor.clone(), 0).channel_identity_ref(sender),
+        &mut sink,
+    )?;
+    assert_eq!(active.outcome, OutboundDispatchOutcome::DeliveredToChannel);
+    assert_eq!(sink.senders, vec![Some(sender)]);
+
+    vault.step_channel_identity(&sender, ChannelIdentityStep::Release, 1_001)?;
+    let receipts_before = vault.receipts(ReceiptQuery::new(100))?;
+    let ledger_before = intent_ledger_records(&vault)?;
+    let error = vault
+        .dispatch_outbound_intent(
+            email_send_dispatch_request(actor, 1).channel_identity_ref(sender),
+            &mut sink,
+        )
+        .expect_err("an explicit retired identity cannot carry a send");
+    assert!(matches!(
+        error,
+        OutboundDispatchError::Engine(Error::Record(
+            crate::error::RecordError::InvalidChannelIdentityBody(_)
+        ))
+    ));
+    assert_eq!(sink.senders, vec![Some(sender)], "no second sink effect");
+    assert_eq!(vault.receipts(ReceiptQuery::new(100))?, receipts_before);
+    assert_eq!(
+        intent_ledger_records(&vault)?.records.len(),
+        ledger_before.records.len()
+    );
     Ok(())
 }
 

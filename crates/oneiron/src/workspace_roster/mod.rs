@@ -118,9 +118,9 @@ pub use project::{
 pub(crate) use project::{
     GoalLimits, HUB_BELONGS_TO_LAMBDA, deindex_project_room, guard_goal_claim_put,
     guard_goal_delete, guard_goal_pointer_put, is_project_entity, is_project_type,
-    precheck_goal_delete, reconcile_project_rooms, retire_goal_for_delete, seed_root_project,
-    validate_project_body, validate_project_edge_delete, validate_project_edge_put,
-    validate_project_graph, validate_room_body,
+    precheck_goal_delete, project_mint_gate_refs_in_txn, reconcile_project_rooms,
+    retire_goal_for_delete, seed_root_project, validate_project_body, validate_project_edge_delete,
+    validate_project_edge_put, validate_project_graph, validate_room_body,
 };
 
 mod rooms;

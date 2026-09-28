@@ -1,6 +1,25 @@
 use super::*;
 
 impl Vault {
+    /// Refuse the entire head erase when ANY redirect shell in its atomic
+    /// cascade has an accepted hold. Called before local scrub and publication.
+    pub(in crate::deletion) fn reject_held_redirect_shells_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        head: &EntityId,
+    ) -> Result<()> {
+        let shells = crate::identity_redirect::inbound_redirect_shells_in_txn(
+            &self.store,
+            txn,
+            &BTreeSet::from([*head]),
+        )?;
+        for shell in shells {
+            self.store
+                .reject_held_gate_partition_in_txn(txn, shell.as_bytes())?;
+        }
+        Ok(())
+    }
+
     /// ARCH-0055 §9 (r6): "HardErase walks redirects. Erasing a canonical
     /// head erases its redirect shells' payloads too — leaving a shell
     /// readable would leak what erasure hid."
@@ -34,6 +53,10 @@ impl Vault {
         if shells.is_empty() {
             return Ok(shells);
         }
+        for shell in &shells {
+            self.store
+                .reject_held_gate_partition_in_txn(wtxn, shell.as_bytes())?;
+        }
         let mut had_vector = false;
         for shell in &shells {
             // Same pre-scrub capture every SoftErase door pays: the subject
@@ -60,60 +83,5 @@ impl Vault {
         touched.insert(*head);
         self.scrub_identity_op_author_stamps_in_txn(wtxn, &touched)?;
         Ok(shells)
-    }
-
-    /// ARCH-0055 §9 author-stamp rider, STRICTLY scoped: drop the deciding
-    /// actor's stamp from the type-76 merge/split events whose payloads this
-    /// erase walk touched — the records that bound the erased head to the
-    /// shells this transaction just emptied. Erasing the subjects of a
-    /// decision while the ledger keeps reading "X decided this about them"
-    /// leaves the erasure half-done.
-    ///
-    /// The boundary is the walk's own reach and nothing wider. A general
-    /// participant-deletion sweep over the family is a separate obligation
-    /// with its own ticket; a rider that grew into it would erase authorship
-    /// of decisions this erase never read, on a path with no receipt for
-    /// having done so.
-    ///
-    /// Fail-closed on an undecodable body, like every other reader of this
-    /// engine-authored family — and reached only when the head actually had
-    /// shells, so an ordinary delete never enumerates the ledger at all.
-    fn scrub_identity_op_author_stamps_in_txn(
-        &self,
-        wtxn: &mut heed::RwTxn<'_>,
-        touched: &BTreeSet<EntityId>,
-    ) -> Result<()> {
-        let mut scrubbed: Vec<(EntityId, Vec<u8>)> = Vec::new();
-        for entry in self
-            .store
-            .type_index
-            .prefix_iter(&*wtxn, &[ENTITY_TYPE_IDENTITY_TOPOLOGY_EVENT])?
-        {
-            let (key, _) = entry?;
-            let event_id = crate::vault::entity_id_from_type_index_key(&key)?;
-            let Some(raw) = self.store.entities.get(&*wtxn, event_id.as_bytes())? else {
-                continue;
-            };
-            if raw.len() < ENTITY_METADATA_HEADER_LEN {
-                return Err(Error::CorruptedIndex("entity metadata"));
-            }
-            let event = decode_identity_topology_event_body(&raw[ENTITY_METADATA_HEADER_LEN..])
-                .map_err(|_| Error::CorruptedIndex("identity topology event body"))?;
-            if !identity_op_event_touches(&event.action, touched) {
-                continue;
-            }
-            let Some(event) = event.without_author_stamp() else {
-                continue;
-            };
-            let mut record = raw[..ENTITY_METADATA_HEADER_LEN].to_vec();
-            record.extend_from_slice(&encode_identity_topology_event_body(&event)?);
-            scrubbed.push((event_id, record));
-        }
-        for (event_id, record) in &scrubbed {
-            // Erasure must remove the old author stamp from retained history too.
-            crate::vault::entity_revision::remove_entity_revisions(&self.store, wtxn, event_id)?;
-            self.store.entities.put(wtxn, event_id.as_bytes(), record)?;
-        }
-        Ok(())
     }
 }

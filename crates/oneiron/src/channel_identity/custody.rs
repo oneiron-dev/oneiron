@@ -1,5 +1,13 @@
-//! Delegated-grant custody: the grant handle, the txn-bound proof, and the one
-//! verification door.
+//! Custody: WHO holds the account behind a channel identity, the delegated
+//! grant handle, the txn-bound proof, and the one verification door.
+//!
+//! [`Custody`] is the sum type the whole module turns on. A row is either an
+//! account the product minted — self-held, with a shape and the self-held
+//! lifecycle — or a member's mailbox under a scoped-read grant, with that grant
+//! and the delegated lifecycle. The pairing is the representation, so "a
+//! delegated row without a grant", "a self-held row carrying one", and "a
+//! delegated row in Rotating or Quarantine" have no inhabitant to validate
+//! against.
 //!
 //! A `delegated_grant` row is a claim that this device may read a mailbox the
 //! product never minted and does not own. What makes that claim true is a live
@@ -19,7 +27,14 @@ use crate::secret_custody::{
 use crate::store::Store;
 
 use super::address::{AssignmentAddress, ChannelKey};
+use super::auth_mode::ChannelAuthMode;
+use super::binding::ChannelIdentityFulfillment;
+use super::codec::invalid_identity;
+use super::keys::SUBJECT_CLASS_SELF_HELD;
+use super::lifecycle::{ChannelIdentityState, DelegatedLifecycle, IdentityEdge, SelfHeldLifecycle};
+use super::shape::{ChannelIdentityShape, SelfHeldShape};
 use crate::error::{RecordError, SecretError};
+use crate::gate::class_policy::ActPosture;
 
 const MAX_DELEGATED_GRANT_REF_BYTES: usize = 256;
 const MAX_DELEGATED_GRANT_SCOPES: usize = 8;
@@ -82,6 +97,21 @@ impl DelegatedGrant {
         }
     }
 
+    /// Whether the scopes this grant covers include OUTBOUND SEND.
+    ///
+    /// Always false today, and matched exhaustively on purpose:
+    /// [`DelegatedGrantScope`] declares read classes only, so adding a send
+    /// class is a compile error here until someone decides what it answers.
+    /// That is what keeps a manifest row from turning a read-only OAuth grant
+    /// into send authority — the policy row says whether the ACT class may run,
+    /// and this says whether the grant we actually hold carries it.
+    #[must_use]
+    pub(crate) fn covers_outbound_send(&self) -> bool {
+        self.scopes.iter().any(|scope| match scope {
+            DelegatedGrantScope::MailRead | DelegatedGrantScope::MailMetadata => false,
+        })
+    }
+
     /// Validates the grant handle's own bounds.
     ///
     /// # Errors
@@ -109,6 +139,441 @@ impl DelegatedGrant {
         }
         Ok(())
     }
+}
+
+/// WHO holds the account behind a channel identity — and therefore which
+/// lifecycle the row runs on.
+///
+/// This is the module's central representation. A self-held row carries the
+/// shape of an account the product minted plus the self-held machine; a
+/// delegated row carries the grant over a member's mailbox plus the delegated
+/// machine. Because the two travel together, the pairs CID-1 had to re-derive
+/// on every encode, decode and door — a delegated row with no grant, a self-held
+/// row carrying one, a delegated row in `Rotating` or `Quarantine`, a pending
+/// row with no fulfillment lane, a quarantined row with no window — are not
+/// refused. They cannot be spelled.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum Custody {
+    /// An address or handle the product minted, owns, and may recycle.
+    SelfHeld {
+        shape: SelfHeldShape,
+        lifecycle: SelfHeldLifecycle,
+    },
+    /// A member-held mailbox read under a scoped OAuth grant.
+    Delegated {
+        grant: DelegatedGrant,
+        lifecycle: DelegatedLifecycle,
+    },
+}
+
+/// What a row can do for a message arriving NOW.
+///
+/// One projection replaces the three duplicated `(shape, state)` matches CID-1
+/// carried at the inbound router, the lifecycle verb and the export layer. The
+/// router's observable answers are unchanged: a retiring row still delivers with
+/// outbound closed, a tombstone still refuses, and a row that has not been
+/// fulfilled is not yet routable.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[non_exhaustive]
+pub enum InboundDisposition {
+    /// Deliver normally.
+    Deliver,
+    /// Deliver, but the row is retiring: outbound is closed.
+    DeliverRetiring,
+    /// The row exists but has not gone live yet.
+    NotYetRoutable,
+    /// The row is closed out; refuse.
+    Closed,
+}
+
+impl Custody {
+    /// A self-held row at the start of its machine.
+    #[must_use]
+    pub(super) const fn requested_self_held(shape: SelfHeldShape) -> Self {
+        Self::SelfHeld {
+            shape,
+            lifecycle: SelfHeldLifecycle::Requested,
+        }
+    }
+
+    /// A delegated row at the start of its machine.
+    ///
+    /// `pub(super)`: what makes a delegated row TRUE is a verified custody
+    /// proof, and only [`ChannelIdentity::requested_delegated`](super::record::ChannelIdentity::requested_delegated)
+    /// holds one.
+    #[must_use]
+    pub(super) const fn requested_delegated(grant: DelegatedGrant) -> Self {
+        Self::Delegated {
+            grant,
+            lifecycle: DelegatedLifecycle::Requested,
+        }
+    }
+
+    /// The wire shape this custody projects to.
+    #[must_use]
+    pub const fn shape(&self) -> ChannelIdentityShape {
+        match self {
+            Self::SelfHeld { shape, .. } => shape.shape(),
+            Self::Delegated { .. } => ChannelIdentityShape::DelegatedGrant,
+        }
+    }
+
+    /// The wire lifecycle state this custody projects to.
+    #[must_use]
+    pub const fn state(&self) -> ChannelIdentityState {
+        match self {
+            Self::SelfHeld { lifecycle, .. } => lifecycle.state(),
+            Self::Delegated { lifecycle, .. } => lifecycle.state(),
+        }
+    }
+
+    /// The fulfillment lane this row waits on, when it waits on one.
+    #[must_use]
+    pub const fn pending_fulfillment(&self) -> Option<ChannelIdentityFulfillment> {
+        match self {
+            Self::SelfHeld { lifecycle, .. } => lifecycle.pending_fulfillment(),
+            Self::Delegated { lifecycle, .. } => lifecycle.pending_fulfillment(),
+        }
+    }
+
+    /// The never-recycle window, when this row holds one. Only a self-held row
+    /// ever does: the delegated machine has no `Quarantine` to be in.
+    #[must_use]
+    pub const fn quarantine_until(&self) -> Option<u64> {
+        match self {
+            Self::SelfHeld { lifecycle, .. } => lifecycle.quarantine_until(),
+            Self::Delegated { .. } => None,
+        }
+    }
+
+    /// The grant a delegated row reads under.
+    #[must_use]
+    pub const fn grant(&self) -> Option<&DelegatedGrant> {
+        match self {
+            Self::SelfHeld { .. } => None,
+            Self::Delegated { grant, .. } => Some(grant),
+        }
+    }
+
+    /// Whether this row is a member-held mailbox under a scoped-read grant.
+    #[must_use]
+    pub const fn is_delegated(&self) -> bool {
+        matches!(self, Self::Delegated { .. })
+    }
+
+    /// The credential mechanism this custody REQUIRES.
+    ///
+    /// A delegated row is a member's OAuth grant by construction; a self-held
+    /// row's mechanism is the adapter's business, so only the delegated arm
+    /// pins one.
+    #[must_use]
+    pub(super) const fn required_auth_mode(&self) -> Option<ChannelAuthMode> {
+        match self {
+            Self::SelfHeld { .. } => None,
+            Self::Delegated { .. } => Some(ChannelAuthMode::OAuth),
+        }
+    }
+
+    /// Whether this row still OCCUPIES its assignment key.
+    ///
+    /// A self-held row occupies it forever: never-recycle is the whole point of
+    /// releasing an address WE minted, so a quarantined or tombstoned row is
+    /// still holding it back. A delegated row is the opposite case — the mailbox
+    /// was never ours, so once the row is retiring we hold no claim on it at
+    /// all, and lawful re-consent stays open after the close.
+    #[must_use]
+    pub const fn occupies_assignment_key(&self) -> bool {
+        match self {
+            Self::SelfHeld { .. } => true,
+            Self::Delegated { lifecycle, .. } => !matches!(
+                lifecycle,
+                DelegatedLifecycle::Released | DelegatedLifecycle::Tombstone
+            ),
+        }
+    }
+
+    /// The `act_policy` subject class this row resolves under.
+    #[must_use]
+    pub(crate) const fn outbound_subject_class(&self) -> &'static str {
+        match self {
+            Self::SelfHeld { .. } => SUBJECT_CLASS_SELF_HELD,
+            Self::Delegated { .. } => ChannelIdentityShape::DelegatedGrant.as_str(),
+        }
+    }
+
+    /// Whether this row's SUBSTRATE carries the capability an outbound send
+    /// needs, with the act class already permitted by policy.
+    ///
+    /// This is the half that stays in code, and it is a capability question,
+    /// never a class one. A self-held row holds an account the product minted,
+    /// so the capability is its live state. A delegated row holds a grant, and
+    /// [`DelegatedGrant::covers_outbound_send`] asks that grant — which answers
+    /// no for every scope class that exists, because
+    /// [`DelegatedGrantScope`] has no send variant to name. Raising the
+    /// manifest row does not change that answer; it changes which refusal the
+    /// caller reports.
+    #[must_use]
+    pub(crate) fn holds_outbound_capability(&self) -> bool {
+        match self {
+            Self::SelfHeld { lifecycle, .. } => {
+                matches!(lifecycle, SelfHeldLifecycle::Active)
+            }
+            Self::Delegated { grant, lifecycle } => {
+                matches!(lifecycle, DelegatedLifecycle::Active) && grant.covers_outbound_send()
+            }
+        }
+    }
+
+    /// Whether this row may carry an OUTBOUND effect under `posture`.
+    #[must_use]
+    pub(crate) fn may_send_under(&self, posture: ActPosture) -> bool {
+        match posture {
+            ActPosture::Deny => false,
+            ActPosture::RequireCapability => self.holds_outbound_capability(),
+        }
+    }
+
+    /// Capability-only preflight for callers that do not own a policy snapshot.
+    ///
+    /// This NEVER authorizes an effect: the dispatch door must also resolve
+    /// the vault's `act_policy` in its transaction via [`Self::may_send_under`].
+    /// In particular there is no permanent delegated-class ban here. Current
+    /// delegated grants are read-only, so they lack the send capability, but a
+    /// future outbound grant would still need the manifest row and gate.
+    #[must_use]
+    pub fn may_send(&self) -> bool {
+        self.holds_outbound_capability()
+    }
+
+    /// What this row can do for a message arriving now.
+    #[must_use]
+    pub const fn inbound(&self) -> InboundDisposition {
+        match self {
+            Self::SelfHeld { lifecycle, .. } => match lifecycle {
+                SelfHeldLifecycle::Active | SelfHeldLifecycle::Rotating => {
+                    InboundDisposition::Deliver
+                }
+                SelfHeldLifecycle::Released | SelfHeldLifecycle::Quarantine { .. } => {
+                    InboundDisposition::DeliverRetiring
+                }
+                SelfHeldLifecycle::Tombstone => InboundDisposition::Closed,
+                SelfHeldLifecycle::Requested | SelfHeldLifecycle::PendingFulfillment(_) => {
+                    InboundDisposition::NotYetRoutable
+                }
+            },
+            Self::Delegated { lifecycle, .. } => match lifecycle {
+                DelegatedLifecycle::Active => InboundDisposition::Deliver,
+                DelegatedLifecycle::Released => InboundDisposition::DeliverRetiring,
+                DelegatedLifecycle::Tombstone => InboundDisposition::Closed,
+                DelegatedLifecycle::Requested | DelegatedLifecycle::PendingFulfillment(_) => {
+                    InboundDisposition::NotYetRoutable
+                }
+            },
+        }
+    }
+
+    /// Rebuilds custody from a decoded body's wire fields.
+    ///
+    /// THE decode-side door, and the one place every cross-field refusal a
+    /// stored or replicated body can still fail now lives. A body is
+    /// `(shape, state, pending_fulfillment, quarantine_until, grant?)` — five
+    /// independent wire fields — and exactly one combination of them names each
+    /// variant. Everything CID-1 checked in `validate()` and
+    /// `validate_custody()` is therefore checked HERE, once, on the only road
+    /// that can present an inconsistent combination at all:
+    ///
+    /// * a `delegated_grant` shape with no grant keys, or a self-held shape
+    ///   carrying them (the schema version already splits the key sets, so this
+    ///   is the belt to that braces);
+    /// * a delegated body claiming `Rotating` or `Quarantine` — states that
+    ///   assert the product mints and holds back the member's mailbox;
+    /// * `pending_fulfillment` present outside PENDING, or absent inside it;
+    /// * `quarantine_until` present outside QUARANTINE, absent inside it, or
+    ///   naming a window that ends before the stamp it dates from. HOW LONG the
+    ///   hold must run is manifest policy the door resolves, not a decode-side
+    ///   number (see [`WAIT_CLASS_CHANNEL_IDENTITY_QUARANTINE`](super::keys::WAIT_CLASS_CHANNEL_IDENTITY_QUARANTINE)).
+    ///
+    /// # Errors
+    ///
+    /// [`RecordError::InvalidChannelIdentityBody`](crate::error::RecordError::InvalidChannelIdentityBody)
+    /// for any of the above; [`Error::ArithmeticOverflow`] when the quarantine
+    /// floor cannot be computed.
+    pub(super) fn from_wire(
+        shape: ChannelIdentityShape,
+        state: ChannelIdentityState,
+        pending_fulfillment: Option<ChannelIdentityFulfillment>,
+        quarantine_until: Option<u64>,
+        grant: Option<DelegatedGrant>,
+        state_changed_at: u64,
+    ) -> Result<Self> {
+        match (SelfHeldShape::from_shape(shape), grant) {
+            (Some(shape), None) => Ok(Self::SelfHeld {
+                shape,
+                lifecycle: self_held_lifecycle_from_wire(
+                    state,
+                    pending_fulfillment,
+                    quarantine_until,
+                    state_changed_at,
+                )?,
+            }),
+            (None, Some(grant)) => {
+                if quarantine_until.is_some() {
+                    return Err(Error::Record(RecordError::InvalidChannelIdentityBody(
+                        "a delegated_grant identity is never rotated or quarantined: the \
+                         product neither mints nor holds back the member's mailbox",
+                    )));
+                }
+                Ok(Self::Delegated {
+                    grant,
+                    lifecycle: delegated_lifecycle_from_wire(state, pending_fulfillment)?,
+                })
+            }
+            (Some(_), Some(_)) => Err(Error::Record(RecordError::InvalidChannelIdentityBody(
+                "only a delegated_grant identity may carry a delegated grant ref",
+            ))),
+            (None, None) => Err(Error::Record(RecordError::InvalidChannelIdentityBody(
+                "delegated_grant identity requires a delegated grant ref",
+            ))),
+        }
+    }
+
+    /// Whether a delegated row in this state claims a LIVE grant, and so must
+    /// re-prove custody in the transaction that stores it.
+    #[must_use]
+    pub(super) const fn asserts_delegated_custody(&self) -> bool {
+        match self {
+            Self::SelfHeld { .. } => false,
+            Self::Delegated { lifecycle, .. } => lifecycle.asserts_custody(),
+        }
+    }
+
+    /// Applies one edge, on whichever machine this custody runs, with
+    /// `min_quarantine_secs` as the resolved hold floor.
+    ///
+    /// A mismatch is refused HERE rather than by a predicate at the caller: a
+    /// self-held edge handed to a delegated row (and the reverse) is one arm,
+    /// and the edges the delegated machine does not have — `Rotate`,
+    /// `Quarantine` — cannot even be built as a
+    /// [`DelegatedEdge`](super::lifecycle::DelegatedEdge).
+    ///
+    /// # Errors
+    ///
+    /// [`RecordError::InvalidChannelIdentityBody`](crate::error::RecordError::InvalidChannelIdentityBody)
+    /// when the edge belongs to the other machine, or is not on this state's
+    /// table.
+    pub(super) fn step(
+        &self,
+        edge: IdentityEdge<'_>,
+        at: u64,
+        min_quarantine_secs: u64,
+    ) -> Result<Self> {
+        match (self, edge) {
+            (Self::SelfHeld { shape, lifecycle }, IdentityEdge::SelfHeld(edge)) => {
+                Ok(Self::SelfHeld {
+                    shape: *shape,
+                    lifecycle: lifecycle.step(edge, at, min_quarantine_secs)?,
+                })
+            }
+            (Self::Delegated { grant, lifecycle }, IdentityEdge::Delegated(edge)) => {
+                Ok(Self::Delegated {
+                    grant: grant.clone(),
+                    lifecycle: lifecycle.step(edge)?,
+                })
+            }
+            (Self::SelfHeld { .. }, IdentityEdge::Delegated(_)) => {
+                Err(Error::Record(RecordError::InvalidChannelIdentityBody(
+                    "a delegated edge cannot step a self-held identity",
+                )))
+            }
+            (Self::Delegated { .. }, IdentityEdge::SelfHeld(_)) => {
+                Err(Error::Record(RecordError::InvalidChannelIdentityBody(
+                    "a self-held edge cannot step a delegated identity",
+                )))
+            }
+        }
+    }
+}
+
+/// The self-held state a body's `(state, pending_fulfillment, quarantine_until)`
+/// triple names, or a refusal.
+fn self_held_lifecycle_from_wire(
+    state: ChannelIdentityState,
+    pending_fulfillment: Option<ChannelIdentityFulfillment>,
+    quarantine_until: Option<u64>,
+    state_changed_at: u64,
+) -> Result<SelfHeldLifecycle> {
+    let lifecycle = match state {
+        ChannelIdentityState::Requested => SelfHeldLifecycle::Requested,
+        ChannelIdentityState::PendingFulfillment => {
+            SelfHeldLifecycle::PendingFulfillment(pending_fulfillment.ok_or_else(invalid_identity)?)
+        }
+        ChannelIdentityState::Active => SelfHeldLifecycle::Active,
+        ChannelIdentityState::Rotating => SelfHeldLifecycle::Rotating,
+        ChannelIdentityState::Released => SelfHeldLifecycle::Released,
+        // Coherence, not duration: a window that ends before the state change
+        // it dates from means two things at once, and no policy can make it
+        // mean one. HOW LONG the hold must run is the manifest's
+        // `channel_identity.quarantine` wait row, resolved at the door that
+        // holds the snapshot — decode has no snapshot to resolve against, and a
+        // replicated body carries no evidence about the local vault's policy.
+        ChannelIdentityState::Quarantine => {
+            let until = quarantine_until.ok_or_else(invalid_identity)?;
+            if until < state_changed_at {
+                return Err(invalid_identity());
+            }
+            SelfHeldLifecycle::Quarantine { until }
+        }
+        ChannelIdentityState::Tombstone => SelfHeldLifecycle::Tombstone,
+    };
+    check_wire_payload(&lifecycle, pending_fulfillment, quarantine_until)?;
+    Ok(lifecycle)
+}
+
+/// A payload field the named state does not carry is a body that means two
+/// things at once. Refuse rather than drop it: the row would then re-encode to
+/// different bytes than it was read from.
+fn check_wire_payload(
+    lifecycle: &SelfHeldLifecycle,
+    pending_fulfillment: Option<ChannelIdentityFulfillment>,
+    quarantine_until: Option<u64>,
+) -> Result<()> {
+    if lifecycle.pending_fulfillment() != pending_fulfillment
+        || lifecycle.quarantine_until() != quarantine_until
+    {
+        return Err(invalid_identity());
+    }
+    Ok(())
+}
+
+/// The delegated state a body's `(state, pending_fulfillment)` pair names.
+///
+/// `Rotating` and `Quarantine` have no delegated variant to land in, so a body
+/// claiming one is refused here — the same refusal CID-1's `validate_custody`
+/// made, now as an absent arm rather than a predicate.
+fn delegated_lifecycle_from_wire(
+    state: ChannelIdentityState,
+    pending_fulfillment: Option<ChannelIdentityFulfillment>,
+) -> Result<DelegatedLifecycle> {
+    let lifecycle = match state {
+        ChannelIdentityState::Requested => DelegatedLifecycle::Requested,
+        ChannelIdentityState::PendingFulfillment => DelegatedLifecycle::PendingFulfillment(
+            pending_fulfillment.ok_or_else(invalid_identity)?,
+        ),
+        ChannelIdentityState::Active => DelegatedLifecycle::Active,
+        ChannelIdentityState::Released => DelegatedLifecycle::Released,
+        ChannelIdentityState::Tombstone => DelegatedLifecycle::Tombstone,
+        ChannelIdentityState::Rotating | ChannelIdentityState::Quarantine => {
+            return Err(Error::Record(RecordError::InvalidChannelIdentityBody(
+                "a delegated_grant identity is never rotated or quarantined: the product \
+                 neither mints nor holds back the member's mailbox",
+            )));
+        }
+    };
+    if lifecycle.pending_fulfillment() != pending_fulfillment {
+        return Err(invalid_identity());
+    }
+    Ok(lifecycle)
 }
 
 /// The effector whose read binding is what "custody" MEANS for a delegated

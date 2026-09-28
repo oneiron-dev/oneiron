@@ -21,6 +21,11 @@ use super::rendezvous::maybe_fail_live_tombstone_persist;
 #[cfg(feature = "sync")]
 use super::rendezvous::{DeleteRendezvous, signal_delete_rendezvous};
 use super::tombstone::TombstoneValueV2;
+#[cfg(feature = "sync")]
+use super::topology_delete_intent::{
+    TopologyDeletePhase, clear_own_topology_delete_in_txn, may_publish_topology_delete_in_txn,
+    reserve_topology_delete_in_txn,
+};
 // The `pt:` withdrawal helper is part of the sync persistence transaction.
 #[cfg(feature = "sync")]
 use super::tombstone::pending_tombstone_key;
@@ -41,6 +46,45 @@ struct TombstonePersistence<'a> {
 }
 
 impl Vault {
+    #[cfg(feature = "sync")]
+    pub(super) fn write_crdt_tombstone(
+        &self,
+        id: &EntityId,
+        window_ts: u64,
+        value: &TombstoneValueV2,
+        gate_decision: Option<&GateDecisionRecord>,
+        gate: Option<&GatedDeletion<'_>>,
+    ) -> Result<bool> {
+        let mut doc_mutated = false;
+        let outcome = self.write_crdt_tombstone_impl(
+            id,
+            window_ts,
+            value,
+            gate_decision,
+            gate,
+            &mut doc_mutated,
+        );
+        if outcome.is_err() && !doc_mutated {
+            // Pre-CRDT errors have no document mutation to recover: drop
+            // only this request's Prepared marker. Once the shared live doc
+            // changed, recovery may still redeem its staged sidecar despite
+            // a failed LMDB persistence; keep the interlock until replay.
+            self.with_write_txn(|txn| {
+                if let Some(decision) = gate_decision {
+                    self.store.discard_pending_deletion_gate_decision_in_txn(
+                        txn,
+                        decision.decision_id,
+                        id.as_bytes(),
+                        value.reason.wire_byte(),
+                    )?;
+                }
+                clear_own_topology_delete_in_txn(&self.store, txn, id, &value.request_id, true)?;
+                Ok(())
+            })?;
+        }
+        outcome
+    }
+
     /// Writes the ARCH-0038 CRDT tombstone (v2 wire value, ONE-1132) into
     /// the window doc addressed by `window_ts`. In the SAME CRDT commit as
     /// the tombstone insert, the live `entities[id]` copy (an ACTIVE
@@ -84,13 +128,14 @@ impl Vault {
     /// purge transaction, voiding the local receipt and the
     /// `DeleteEntityOutcome` (mirrors `replay_pending_tombstones`).
     #[cfg(feature = "sync")]
-    pub(super) fn write_crdt_tombstone(
+    fn write_crdt_tombstone_impl(
         &self,
         id: &EntityId,
         window_ts: u64,
         value: &TombstoneValueV2,
         gate_decision: Option<&GateDecisionRecord>,
         gate: Option<&GatedDeletion<'_>>,
+        doc_mutated: &mut bool,
     ) -> Result<bool> {
         use crate::sync::bridge::{
             DELETION_TOMBSTONE_ORIGIN, with_deletion_tombstone_observer_a_suppressed,
@@ -143,6 +188,7 @@ impl Vault {
             let delete_update = {
                 let _guard = materializer.lock();
                 let history_free = self.resolve_window_snapshot_mode(&window_key, &window.doc)?;
+                self.prepare_topology_delete(id, window_ts, value)?;
                 self.stage_deletion_gate_recovery(id, value, gate_decision, gate)?;
                 signal_delete_rendezvous(
                     self,
@@ -150,11 +196,18 @@ impl Vault {
                     id,
                     gate_decision.map(|decision| decision.decision_id),
                 );
-                let mut wtxn =
-                    self.begin_tombstone_publish_txn(id, &window_key, value, gate_decision, gate)?;
+                let mut wtxn = self.begin_tombstone_publish_txn(
+                    id,
+                    window_ts,
+                    &window_key,
+                    value,
+                    gate_decision,
+                    gate,
+                )?;
                 let vv_before = window.doc.oplog_vv();
                 let (delete_update, snapshot, vv) =
                     with_deletion_tombstone_observer_a_suppressed(|| -> Result<_> {
+                        *doc_mutated = true;
                         apply_tombstone_to_window_doc(&window.doc, id, &value.encode())?;
                         window
                             .doc
@@ -207,6 +260,7 @@ impl Vault {
             Err(err) => return Err(err),
         };
         let history_free = self.resolve_window_snapshot_mode(&window_key, &doc)?;
+        self.prepare_topology_delete(id, window_ts, value)?;
         self.stage_deletion_gate_recovery(id, value, gate_decision, gate)?;
         signal_delete_rendezvous(
             self,
@@ -217,8 +271,14 @@ impl Vault {
         // Same authority boundary as the live path: the transient doc is
         // mutated only after this txn's re-fold passes, and its bytes reach
         // `d:w:`/`u:w:`/`q:` in that same txn.
-        let mut wtxn =
-            self.begin_tombstone_publish_txn(id, &window_key, value, gate_decision, gate)?;
+        let mut wtxn = self.begin_tombstone_publish_txn(
+            id,
+            window_ts,
+            &window_key,
+            value,
+            gate_decision,
+            gate,
+        )?;
         let vv_before = doc.oplog_vv();
         apply_tombstone_to_window_doc(&doc, id, &value.encode())?;
         doc.commit();
@@ -313,6 +373,7 @@ impl Vault {
     fn begin_tombstone_publish_txn(
         &self,
         id: &EntityId,
+        window_ts: u64,
         window_key: &crate::sync::WindowKey,
         value: &TombstoneValueV2,
         gate_decision: Option<&GateDecisionRecord>,
@@ -331,12 +392,41 @@ impl Vault {
                     )
                 })
                 .and_then(|()| crate::federation::reject_ruling_delete(&self.store, &wtxn, id))
+                .and_then(|()| {
+                    if value.reason.is_hard() {
+                        self.store
+                            .reject_held_gate_partition_in_txn(&wtxn, id.as_bytes())?;
+                        self.reject_held_redirect_shells_in_txn(&wtxn, id)
+                    } else {
+                        Ok(())
+                    }
+                })
+                .and_then(|()| {
+                    if may_publish_topology_delete_in_txn(&self.store, &wtxn, id, value)? {
+                        Ok(())
+                    } else {
+                        Err(crate::error::Error::CorruptedIndex(
+                            "topology delete intent",
+                        ))
+                    }
+                })
         {
             self.discard_staged_deletion_gate_recovery_in_txn(&mut wtxn, id, value, gate_decision)?;
             self.withdraw_own_pending_tombstone_in_txn(&mut wtxn, window_key.as_str(), id, value)?;
+            // A refusal withdrew this request's replayable pt: marker as
+            // well. Its reservation cannot block unrelated topology forever.
+            clear_own_topology_delete_in_txn(&self.store, &mut wtxn, id, &value.request_id, false)?;
             wtxn.commit()?;
             return Err(refusal);
         }
+        reserve_topology_delete_in_txn(
+            &self.store,
+            &mut wtxn,
+            id,
+            value,
+            window_ts,
+            TopologyDeletePhase::Published,
+        )?;
         Ok(wtxn)
     }
 
@@ -428,6 +518,31 @@ impl Vault {
             value.reason.wire_byte(),
         )?;
         Ok(())
+    }
+
+    /// Reserve before any shared CRDT document mutation. Source eligibility
+    /// and the marker are one LMDB writer decision. A failed publish rolls
+    /// back its Prepared marker through the outer wrapper.
+    #[cfg(feature = "sync")]
+    fn prepare_topology_delete(
+        &self,
+        id: &EntityId,
+        window_ts: u64,
+        value: &TombstoneValueV2,
+    ) -> Result<()> {
+        self.with_write_txn(|txn| {
+            if value.reason.is_hard() {
+                self.guard_active_merge_hard_delete_in_txn(txn, id)?;
+            }
+            reserve_topology_delete_in_txn(
+                &self.store,
+                txn,
+                id,
+                value,
+                window_ts,
+                TopologyDeletePhase::Prepared,
+            )
+        })
     }
 
     /// Durably marks a locally gated tombstone as authority-required and

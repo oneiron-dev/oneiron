@@ -149,6 +149,7 @@ impl Memory<'_> {
                         super::super::codec::incoming_turn_speaker(&[state
                             .seed
                             .message(String::new())])?,
+                        super::super::person_author_in_txn(self.vault, txn, state.seed.actor)?,
                     )?;
                     if state.seed.author == crate::memory::WitnessAuthor::System
                         && self
