@@ -202,55 +202,7 @@ pub(in crate::gate) fn decode_policy_manifest(data: &[u8]) -> Option<DecodedPoli
         }
     }
 
-    // A malformed notification row must not silently suppress a promised
-    // holder push. Validation shares the manifest's closed-key admission.
-    match single_map_value(
-        &entries,
-        super::super::constants::POLICY_OWNER_POLICY_NOTIFY_KEY,
-    ) {
-        MapValue::Missing => {}
-        MapValue::Duplicate => return None,
-        MapValue::Present(Value::Array(rows)) => {
-            let mut scopes = std::collections::BTreeSet::new();
-            for row in rows {
-                let Value::Map(fields) = row else { return None };
-                if fields.len() != 3
-                    || fields.iter().any(|(k, _)| {
-                        !matches!(
-                            k.as_str(),
-                            Some("scope" | "delivery" | "digest_interval_seconds")
-                        )
-                    })
-                {
-                    return None;
-                }
-                let scope = single_map_value(fields, "scope");
-                let delivery = single_map_value(fields, "delivery");
-                let (
-                    MapValue::Present(Value::String(scope)),
-                    MapValue::Present(Value::String(delivery)),
-                ) = (scope, delivery)
-                else {
-                    return None;
-                };
-                let (Some(scope), Some(delivery)) = (scope.as_str(), delivery.as_str()) else {
-                    return None;
-                };
-                if !matches!(scope, "vault" | "override")
-                    || !matches!(delivery, "push_other_holders" | "log_only")
-                    || !matches!(single_map_value(fields, "digest_interval_seconds"),
-                        MapValue::Present(value) if value.as_u64().is_some_and(|secs| (1..=31_536_000).contains(&secs)))
-                    || !scopes.insert(scope)
-                {
-                    return None;
-                }
-            }
-            if scopes.len() != 2 {
-                return None;
-            }
-        }
-        MapValue::Present(_) => return None,
-    }
+    validate_owner_policy_notify(&entries)?;
 
     let unsupported_schema = match single_map_value(&entries, POLICY_SCHEMA_VERSION_KEY) {
         MapValue::Missing => true,
@@ -309,38 +261,7 @@ pub(in crate::gate) fn decode_policy_manifest(data: &[u8]) -> Option<DecodedPoli
                 None => (Vec::new(), true),
             },
         };
-    // Invalid policy must not fall back to the permissive scope selection.
-    let owner_policy_precedence =
-        match single_map_value(&entries, POLICY_OWNER_POLICY_PRECEDENCE_KEY) {
-            MapValue::Missing => PolicyOwnerPrecedence::default(),
-            MapValue::Duplicate => return None,
-            MapValue::Present(Value::Map(fields)) => {
-                if fields.len() != 2
-                    || fields
-                        .iter()
-                        .any(|(key, _)| !matches!(key.as_str(), Some("composition" | "vault_cap")))
-                {
-                    return None;
-                }
-                if !matches!(
-                    single_map_value(fields, "vault_cap"),
-                    MapValue::Present(Value::Boolean(true))
-                ) {
-                    return None;
-                }
-                match single_map_value(fields, "composition") {
-                    MapValue::Present(Value::String(value)) => match value.as_str()? {
-                        "nested_narrowing" => PolicyOwnerPrecedence::NestedNarrowing,
-                        "most_specific_vault_capped" => {
-                            PolicyOwnerPrecedence::MostSpecificVaultCapped
-                        }
-                        _ => return None,
-                    },
-                    _ => return None,
-                }
-            }
-            MapValue::Present(_) => return None,
-        };
+    let owner_policy_precedence = decode_owner_policy_precedence(&entries)?;
     let owner_policy_document = match single_map_value(&entries, POLICY_OWNER_POLICY_DOCUMENT_KEY) {
         MapValue::Missing => None,
         MapValue::Duplicate => return None,
@@ -679,6 +600,92 @@ pub(in crate::gate) fn decode_policy_manifest(data: &[u8]) -> Option<DecodedPoli
         engine_version_floor,
         unknown_axis_seen,
     })
+}
+
+/// A malformed notification row must not silently suppress a promised
+/// holder push. Validation shares the manifest's closed-key admission.
+fn validate_owner_policy_notify(entries: &[(Value, Value)]) -> Option<()> {
+    match single_map_value(
+        entries,
+        super::super::constants::POLICY_OWNER_POLICY_NOTIFY_KEY,
+    ) {
+        MapValue::Missing => {}
+        MapValue::Duplicate => return None,
+        MapValue::Present(Value::Array(rows)) => {
+            let mut scopes = std::collections::BTreeSet::new();
+            for row in rows {
+                let Value::Map(fields) = row else { return None };
+                if fields.len() != 3
+                    || fields.iter().any(|(k, _)| {
+                        !matches!(
+                            k.as_str(),
+                            Some("scope" | "delivery" | "digest_interval_seconds")
+                        )
+                    })
+                {
+                    return None;
+                }
+                let scope = single_map_value(fields, "scope");
+                let delivery = single_map_value(fields, "delivery");
+                let (
+                    MapValue::Present(Value::String(scope)),
+                    MapValue::Present(Value::String(delivery)),
+                ) = (scope, delivery)
+                else {
+                    return None;
+                };
+                let (Some(scope), Some(delivery)) = (scope.as_str(), delivery.as_str()) else {
+                    return None;
+                };
+                if !matches!(scope, "vault" | "override")
+                    || !matches!(delivery, "push_other_holders" | "log_only")
+                    || !matches!(single_map_value(fields, "digest_interval_seconds"),
+                        MapValue::Present(value) if value.as_u64().is_some_and(|secs| (1..=31_536_000).contains(&secs)))
+                    || !scopes.insert(scope)
+                {
+                    return None;
+                }
+            }
+            if scopes.len() != 2 {
+                return None;
+            }
+        }
+        MapValue::Present(_) => return None,
+    }
+    Some(())
+}
+
+/// Invalid policy must not fall back to the permissive scope selection.
+fn decode_owner_policy_precedence(entries: &[(Value, Value)]) -> Option<PolicyOwnerPrecedence> {
+    let precedence = match single_map_value(entries, POLICY_OWNER_POLICY_PRECEDENCE_KEY) {
+        MapValue::Missing => PolicyOwnerPrecedence::default(),
+        MapValue::Duplicate => return None,
+        MapValue::Present(Value::Map(fields)) => {
+            if fields.len() != 2
+                || fields
+                    .iter()
+                    .any(|(key, _)| !matches!(key.as_str(), Some("composition" | "vault_cap")))
+            {
+                return None;
+            }
+            if !matches!(
+                single_map_value(fields, "vault_cap"),
+                MapValue::Present(Value::Boolean(true))
+            ) {
+                return None;
+            }
+            match single_map_value(fields, "composition") {
+                MapValue::Present(Value::String(value)) => match value.as_str()? {
+                    "nested_narrowing" => PolicyOwnerPrecedence::NestedNarrowing,
+                    "most_specific_vault_capped" => PolicyOwnerPrecedence::MostSpecificVaultCapped,
+                    _ => return None,
+                },
+                _ => return None,
+            }
+        }
+        MapValue::Present(_) => return None,
+    };
+    Some(precedence)
 }
 
 /// A policy-manifest row. Numeric knobs are positive; unknown/duplicate keys
