@@ -55,6 +55,10 @@ pub(crate) fn default_policy_manifest_id() -> Result<EntityId> {
         .map_err(|_| Error::InvariantViolation("invalid default policy manifest id"))
 }
 
+#[expect(
+    clippy::too_many_lines,
+    reason = "the shipped default manifest is one ordered table of policy rows"
+)]
 pub(crate) fn default_policy_manifest() -> Vec<u8> {
     let first_party_actor_ref = first_party_connector_actor_ref();
     // Per a provisional architectural ruling (owner batch pending): the
@@ -534,7 +538,40 @@ pub(crate) fn default_policy_manifest() -> Vec<u8> {
         // A holder row can narrow this vault row, never widen it.
         (
             Value::from("compilation_policy"),
-            compilation_policy_default_row(),
+            Value::Map(vec![
+                (
+                    Value::from("precedence"),
+                    Value::from("nested_narrowing_holder_capped_at_vault"),
+                ),
+                (
+                    Value::from("order"),
+                    Value::Array(vec![
+                        Value::from("style_rule"),
+                        Value::from("charter_line"),
+                        Value::from("brief_update"),
+                        Value::from("ban"),
+                    ]),
+                ),
+                (
+                    Value::from("rows"),
+                    Value::Array(vec![Value::Map(vec![(
+                        Value::from("routes"),
+                        Value::Array(vec![
+                            compilation_route(
+                                "style_rule",
+                                "expression.style:",
+                                true,
+                                "",
+                                "",
+                                true,
+                            ),
+                            compilation_route("charter_line", "charter:", true, "", "", false),
+                            compilation_route("brief_update", "brief:", true, "", "", false),
+                            compilation_route("ban", "", false, "never ", "never ", false),
+                        ]),
+                    )])]),
+                ),
+            ]),
         ),
         (
             Value::from(POLICY_ATTRIBUTION_LIMITS_KEY),
@@ -708,37 +745,6 @@ fn federation_grant_default_rows() -> Value {
         .map(|row| encode_row(row).expect("default grant policy row"))
         .collect(),
     )
-}
-
-/// OF-379 compilation routes: the shipped vault row that holder rows only narrow.
-fn compilation_policy_default_row() -> Value {
-    Value::Map(vec![
-        (
-            Value::from("precedence"),
-            Value::from("nested_narrowing_holder_capped_at_vault"),
-        ),
-        (
-            Value::from("order"),
-            Value::Array(vec![
-                Value::from("style_rule"),
-                Value::from("charter_line"),
-                Value::from("brief_update"),
-                Value::from("ban"),
-            ]),
-        ),
-        (
-            Value::from("rows"),
-            Value::Array(vec![Value::Map(vec![(
-                Value::from("routes"),
-                Value::Array(vec![
-                    compilation_route("style_rule", "expression.style:", true, "", "", true),
-                    compilation_route("charter_line", "charter:", true, "", "", false),
-                    compilation_route("brief_update", "brief:", true, "", "", false),
-                    compilation_route("ban", "", false, "never ", "never ", false),
-                ]),
-            )])]),
-        ),
-    ])
 }
 
 /// Shipped OF-379 row data. Engines read these selectors through the same
