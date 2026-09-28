@@ -15533,6 +15533,25 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/edit_roundtrip/docx.rs",
+     "purpose": "Native DOCX edit entry",
+     "surface": {
+      "crate-vis": 4,
+      "fn": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/edit_roundtrip/docx_tests.rs",
+     "purpose": "Native DOCX proposal proofs at the public edit door",
+     "surface": {}
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
@@ -15607,9 +15626,9 @@
      "path": "src/edit_roundtrip/mod.rs",
      "purpose": "ARTL-3 (OF-368 D5): agent edit round-trip — code-session pipeline",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 2,
       "mod": 2,
-      "re-export": 7
+      "re-export": 8
      }
     },
     {
@@ -15619,7 +15638,7 @@
      "path": "src/edit_roundtrip/opc.rs",
      "purpose": "Minimal Open Packaging Conventions (OPC) reader/writer for the ARTL-3 edit round-trip pipeline",
      "surface": {
-      "crate-vis": 13
+      "crate-vis": 14
      }
     },
     {
@@ -17394,7 +17413,7 @@
      "path": "src/gate/constants.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 86
+      "crate-vis": 87
      }
     },
     {
@@ -17513,6 +17532,16 @@
      "purpose": "Vault-wide document resource ceilings, decoded from policy manifest data",
      "surface": {
       "crate-vis": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/gate/docx_budget.rs",
+     "purpose": "Native DOCX archive workload policy",
+     "surface": {
+      "crate-vis": 4
      }
     },
     {
@@ -17755,7 +17784,7 @@
      "path": "src/gate/resolution/accessors.rs",
      "purpose": "Read-only resolved-field accessors plus the frontier-hash entry",
      "surface": {
-      "crate-vis": 37
+      "crate-vis": 38
      }
     },
     {
@@ -17982,6 +18011,14 @@
      "notable": [],
      "path": "src/gate/tests/docedit_resource.rs",
      "purpose": "Docedit resource-policy decode, trusted fold and engine-to-organ factory",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/gate/tests/docx_zip_budget.rs",
+     "purpose": "Archive budgets live in trusted policy, not in the DOCX organ's graph",
      "surface": {}
     },
     {
@@ -37242,7 +37279,7 @@
      "purpose": "ED-00 (ARCH-0056 §2–3): the proposal-artifact substrate the edit-distance feedback loop replays, plus the…"
     },
     "edit_roundtrip": {
-     "files": 27,
+     "files": 29,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -37333,7 +37370,7 @@
      "purpose": "—"
     },
     "gate": {
-     "files": 90,
+     "files": 92,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -38021,8 +38058,8 @@
    },
    "over_bar": 5,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2257,
-   "test_files": 774
+   "source_files": 2259,
+   "test_files": 776
   },
   "oneiron-android": {
    "files": [
@@ -39319,10 +39356,31 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "examples/emit_revision.rs",
+     "purpose": "Produce one deterministic tracked-change sample for the external Word oracle",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "examples/resolve_docx.rs",
+     "purpose": "Resolve a DOCX revision in the pinned fork for an application oracle case",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "DoceditError"
+     ],
      "path": "src/lib.rs",
-     "purpose": "Native document editing organ crate and retained OPC substrate",
+     "purpose": "Native document editing organ crate: the retained OPC substrate and native Word revisions over a pinned…",
      "surface": {
-      "mod": 1
+      "enum": 1,
+      "fn": 7,
+      "mod": 1,
+      "re-export": 4
      }
     },
     {
@@ -39422,6 +39480,14 @@
      "path": "tests/identity.rs",
      "purpose": "—",
      "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/revisions.rs",
+     "purpose": "—",
+     "surface": {}
     }
    ],
    "modules": {
@@ -39434,9 +39500,9 @@
     }
    },
    "over_bar": 0,
-   "purpose": "Native document editing organ crate and retained OPC substrate",
-   "source_files": 7,
-   "test_files": 3
+   "purpose": "Native document editing organ crate: the retained OPC substrate and native Word revisions over a pinned…",
+   "source_files": 9,
+   "test_files": 4
   },
   "oneiron-driver": {
    "files": [
