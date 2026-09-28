@@ -52,6 +52,44 @@ pub(super) fn hash_policy_frontier_v0(
     // manifest contributes no decoded rows at all and its malformed-ness is
     // already frontier-relevant through `hash_diagnostics`.
     hash_budget_policy_table(hasher, &resolution.budget_policy);
+    // Default rows and owner-authored overrides both affect admission and its
+    // consent frontier. Absent policy keeps the old frontier unchanged.
+    if let Some(defaults) = resolution.voice_ref_defaults.as_ref() {
+        hash_voice_ref_policy(hasher, "voice_ref_defaults", defaults);
+    }
+    if resolution.voice_ref_limits
+        != crate::voice_identity::ref_limits::VoiceRefLimitPolicy::default()
+    {
+        hash_voice_ref_policy(
+            hasher,
+            "voice_ref_owner_limits",
+            &resolution.voice_ref_limits,
+        );
+    }
+    if let Some(policy) = &resolution.pack_install_policy {
+        hash_str(hasher, "pack_install_policy");
+        let value = policy.encode();
+        hash_opt_value(hasher, Some(&value))?;
+    }
+    // An absent/empty hosted policy changes no decision and keeps the
+    // established frontier bytes for manifests that never named this knob.
+    if !resolution.hosted_tts.rows.is_empty() {
+        hash_str(hasher, "hosted_tts");
+        hash_str(hasher, resolution.hosted_tts.precedence.as_str());
+        hash_len(hasher, resolution.hosted_tts.rows.len());
+        for row in &resolution.hosted_tts.rows {
+            hash_str(hasher, &row.provider);
+            match row.scope {
+                crate::gate::hosted_tts_policy::HostedTtsScope::Vault => hash_str(hasher, "vault"),
+                crate::gate::hosted_tts_policy::HostedTtsScope::Holder(id) => {
+                    hash_str(hasher, "holder");
+                    hash_bytes(hasher, id.as_bytes());
+                }
+            }
+            hash_u64(hasher, row.limits.max_text_bytes as u64);
+            hash_u64(hasher, row.limits.max_pcm_fragment_bytes as u64);
+        }
+    }
     if let Some(bounds) = resolution.diagnostic_bounds {
         hash_str(hasher, "diagnostic_bounds");
         hash_u64(hasher, bounds.window_secs);
@@ -62,6 +100,34 @@ pub(super) fn hash_policy_frontier_v0(
     if let Some(threshold) = resolution.proposal_check_threshold {
         hash_str(hasher, "proposal_check_threshold");
         hash_u64(hasher, threshold);
+    }
+
+    if let Some(policy) = &resolution.weave_correction_policy {
+        hash_str(hasher, "weave_correction_policy");
+        policy.hash_into(hasher);
+    }
+
+    // Hash authored typed selectors/precedence, not an invented fallback.
+    if !resolution.retry_source_policy.is_empty() {
+        hash_str(hasher, "retry_source_policy");
+        hash_len(hasher, resolution.retry_source_policy.len());
+        for row in &resolution.retry_source_policy {
+            match row.selector {
+                crate::gate::retry_source_policy::RetrySelector::Vault => hash_str(hasher, "vault"),
+                crate::gate::retry_source_policy::RetrySelector::Holder(id) => {
+                    hash_str(hasher, "holder");
+                    hash_bytes(hasher, id.as_bytes());
+                }
+                crate::gate::retry_source_policy::RetrySelector::Project(id) => {
+                    hash_str(hasher, "project");
+                    hash_bytes(hasher, id.as_bytes());
+                }
+            }
+            hash_u64(hasher, row.max_sources.get() as u64);
+            if let Some(precedence) = row.precedence {
+                hash_str(hasher, precedence.as_str());
+            }
+        }
     }
 
     hash_len(hasher, resolution.packs.len());
@@ -308,6 +374,28 @@ pub(in crate::gate) fn hash_bool(hasher: &mut Sha256, value: bool) {
 
 fn hash_len(hasher: &mut Sha256, value: usize) {
     hasher.update((value as u64).to_le_bytes());
+}
+
+fn hash_voice_ref_policy(
+    hasher: &mut Sha256,
+    tag: &str,
+    policy: &crate::voice_identity::ref_limits::VoiceRefLimitPolicy,
+) {
+    hash_str(hasher, tag);
+    hash_str(
+        hasher,
+        policy.precedence.map_or("absent", |mode| mode.as_str()),
+    );
+    for value in policy.vault.fields() {
+        hash_u64(hasher, value);
+    }
+    hash_len(hasher, policy.holders.len());
+    for (holder, limits) in &policy.holders {
+        hash_bytes(hasher, holder.as_bytes());
+        for value in limits.fields() {
+            hash_u64(hasher, value);
+        }
+    }
 }
 
 fn hash_u64(hasher: &mut Sha256, value: u64) {

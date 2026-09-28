@@ -46,6 +46,8 @@ pub struct PipelineBuilder<'a> {
     pub(super) type_filter: Option<Vec<u8>>,
     pub(super) criticality: Option<bool>,
     pub(super) authority_filter: Option<crate::gate::ResolvedRetrievalFilter>,
+    /// Only actor-scoped callers may nominate private diary NOTEs in a text channel.
+    pub(super) scoped_note_reader: Option<crate::claim::ScopedReadActorKey>,
     pub(super) since_filter: Option<u64>,
     pub(super) occurred_range: Option<(u64, u64)>,
     pub(super) learned_range: Option<(u64, u64)>,
@@ -64,6 +66,7 @@ pub struct PipelineBuilder<'a> {
     /// Captured only from a host-bound execution capability, never from a
     /// selection's caller-supplied agent id. Bare `Vault::query` has none.
     pub(super) execution_actor: Option<crate::write_envelope::WriteActor>,
+    pub(super) skill_executor: Option<String>,
     pub(super) corpus_scope: CorpusScope,
     pub(super) made_by: crate::provenance::made_by::MadeByPredicate,
     pub(super) context_pack_budget: Option<ContextPackRetrievalBudget>,
@@ -112,6 +115,7 @@ impl<'a> PipelineBuilder<'a> {
             type_filter: None,
             criticality: None,
             authority_filter: None,
+            scoped_note_reader: None,
             since_filter: None,
             occurred_range: None,
             learned_range: None,
@@ -122,6 +126,7 @@ impl<'a> PipelineBuilder<'a> {
             world_scope: WorldScope::All,
             active_world_selection: None,
             execution_actor: None,
+            skill_executor: None,
             corpus_scope: CorpusScope::All,
             made_by: crate::provenance::made_by::MadeByPredicate::All,
             context_pack_budget: None,
@@ -141,6 +146,15 @@ impl<'a> PipelineBuilder<'a> {
             skip_vector_rescore: false,
             session: None,
         }
+    }
+
+    /// Selects the exact executor model@revision for skill reliability ranking.
+    /// Unspecified queries rank the unknown-executor arm, not another model's evidence.
+    pub fn skill_executor(mut self, model: impl Into<String>) -> Result<Self> {
+        let model = model.into();
+        crate::skill_reliability::validate_executor(&model)?;
+        self.skill_executor = Some(model);
+        Ok(self)
     }
 
     /// Resolve the same type gate for graph neighbors that the retrieval run
@@ -188,6 +202,12 @@ impl<'a> PipelineBuilder<'a> {
         self
     }
 
+    /// A scoped read provides the authenticated actor, not a candidate list.
+    pub(crate) fn scoped_note_reader(mut self, key: crate::claim::ScopedReadActorKey) -> Self {
+        self.scoped_note_reader = Some(key);
+        self
+    }
+
     pub(crate) fn result_limit(&self) -> usize {
         self.result_limit
     }
@@ -220,7 +240,7 @@ impl<'a> PipelineBuilder<'a> {
     ///
     /// Each value replaces the class-derived decay factor of that CLAIM
     /// candidate and must be finite and within `[0, 1]`; an inadmissible
-    /// value fails the run closed with [`Error::InvalidConfig`]. Entries
+    /// value fails the run closed with [`crate::error::Error::InvalidConfig`]. Entries
     /// for non-claim entities are inert (non-claims stay at `1.0`), and a
     /// superseded, retracted or validity-expired claim stays at `0.0` — an
     /// override never resurfaces a closed claim.
@@ -572,7 +592,7 @@ impl<'a> PipelineBuilder<'a> {
     /// authority for — a run that has since asked for a different scope.
     /// Setting `ActiveSet` here WITHOUT [`PipelineBuilder::active_worlds`] or
     /// [`PipelineBuilder::default_active_worlds`] leaves no selection behind
-    /// and fails the run closed with [`Error::InvalidConfig`].
+    /// and fails the run closed with [`crate::error::Error::InvalidConfig`].
     pub fn world(mut self, scope: WorldScope) -> Self {
         if !matches!(scope, WorldScope::ActiveSet) {
             self.active_world_selection = None;
@@ -587,7 +607,7 @@ impl<'a> PipelineBuilder<'a> {
     /// The selection is never persisted and never widens: at execution time it
     /// is checked against the owner-granted ALLOWED-SET claims about
     /// `agent_ref` (`core.world_access.allowed_set`), and a member outside that
-    /// grant fails the run closed with [`Error::InvalidConfig`] rather than
+    /// grant fails the run closed with [`crate::error::Error::InvalidConfig`] rather than
     /// falling back to [`WorldScope::All`] or dropping the offending member.
     /// Base reality — base claims and every non-claim entity — survives only
     /// when the selection sets `include_base`.

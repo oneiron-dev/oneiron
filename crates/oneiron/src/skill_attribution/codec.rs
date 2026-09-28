@@ -88,12 +88,44 @@ pub(super) fn validate_evidence(vault: &Vault, evidence: &OutcomeEvidence) -> Re
     if vault.get_raw(&evidence.actor)?.is_none() {
         return Err(invalid("attribution evidence names an unknown actor"));
     }
+    // A caller-chosen actor ID cannot assign an unbound receipt to a
+    // resident. This check precedes the optional skill: shared-skill and
+    // skillless outcomes need the same executor proof as fork outcomes.
+    if crate::skill::resident::receipt_resident(vault, &evidence.receipt_ref)?
+        != Some(evidence.actor)
+    {
+        return Err(invalid("attribution receipt is not bound to its actor"));
+    }
     let Some(skill) = evidence.skill else {
         return Ok(());
     };
     let Some(record) = vault.get_skill_record(&skill)? else {
         return Err(invalid("attribution evidence names an unknown skill"));
     };
+    if let Some(resident) = crate::skill::resident_of(&record)? {
+        if resident != evidence.actor
+            || crate::skill::resident::receipt_resident(vault, &evidence.receipt_ref)?
+                != Some(resident)
+            || !crate::skill::resident::receipt_loaded_skill(vault, &evidence.receipt_ref, &skill)?
+        {
+            return Err(invalid(
+                "resident skill evidence belongs to another actor or attempt",
+            ));
+        }
+        // A resident fork never borrows its shared parent's outcome or an
+        // earlier version's receipt, even if both share the skill family.
+        let Some(manifest) = receipt.pack_manifest_skills() else {
+            return Err(invalid(
+                "resident skill evidence needs a versioned manifest",
+            ));
+        };
+        if !manifest.iter().any(|entry| {
+            ManifestEntry::parse_wire_form(entry)
+                .is_some_and(|(name, version)| name == record.skill_id && version == record.version)
+        }) {
+            return Err(invalid("resident skill evidence needs its exact revision"));
+        }
+    }
     // The receipt's manifest is what the pack ACTUALLY loaded. A skill the
     // attempt never loaded cannot have caused its outcome, so admitting the
     // pair would be attribution by assertion. A receipt stamped before the
