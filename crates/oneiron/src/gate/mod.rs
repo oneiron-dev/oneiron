@@ -43,6 +43,7 @@ pub(crate) use room_thread::{RoomThreadManifest, RoomThreadSettings};
 mod share;
 pub(crate) mod voice_serving;
 mod weave_correction_policy;
+pub(crate) mod weave_policy;
 mod witness_message;
 pub(crate) use weave_correction_policy::WeaveCorrectionPolicy;
 
