@@ -11,9 +11,10 @@ use super::loro_support::{
 use super::pack_sync;
 use super::quarantine::{self, QuarantineContainer};
 use super::reverse::{
-    delete_edges_touching_entities, is_unsyncable_secret_custody,
-    quarantine_outbound_protected_tombstones, remove_entity_crdt_carriers,
-    reverse_remat_skip_redaction_receipt_mirror, skip_companion_register_sync_mirror,
+    delete_edges_touching_entities, is_delegated_channel_identity_carrier,
+    is_unsyncable_secret_custody, quarantine_outbound_protected_tombstones,
+    remove_entity_crdt_carriers, reverse_remat_skip_redaction_receipt_mirror,
+    skip_companion_register_sync_mirror,
 };
 use super::types::WindowKey;
 
@@ -99,7 +100,11 @@ pub fn require_history_free_window(vault: &Vault, key: &WindowKey) -> Result<()>
 /// type byte is not. A malformed key cannot name an entity to scrub by id, so
 /// that row is deleted by its raw key and quarantined as the protocol violation
 /// it is.
-fn scrub_local_only_carriers(vault: &Vault, key: &WindowKey, doc: &LoroDoc) -> Result<bool> {
+pub(super) fn scrub_local_only_carriers(
+    vault: &Vault,
+    key: &WindowKey,
+    doc: &LoroDoc,
+) -> Result<bool> {
     let entities_map = doc.get_map("entities");
     let edges_map = doc.get_map("edges");
     let mut custody_ids = HashSet::new();
@@ -115,14 +120,17 @@ fn scrub_local_only_carriers(vault: &Vault, key: &WindowKey, doc: &LoroDoc) -> R
                 h.entity_type,
                 crate::registry::ENTITY_TYPE_SECRET_CUSTODY
                     | crate::registry::ENTITY_TYPE_DIAGNOSTIC
-            )
+            ) && !is_delegated_channel_identity_carrier(blob)
         }) && !lfs_chunk
         {
             return;
         }
         match EntityId::from_hex(raw_key) {
             Ok(id) if id.to_hex() == raw_key => {
-                if lfs_chunk || is_unsyncable_secret_custody(blob) {
+                if lfs_chunk
+                    || is_unsyncable_secret_custody(blob)
+                    || is_delegated_channel_identity_carrier(blob)
+                {
                     custody_ids.insert(id);
                 } else {
                     portable_ids.push(id);
@@ -149,7 +157,11 @@ fn scrub_local_only_carriers(vault: &Vault, key: &WindowKey, doc: &LoroDoc) -> R
         // Quarantine keeps hashed evidence (never the bytes); the delete is
         // what stops the body from reaching an exported update.
         let blob = map_get_bytes(&entities_map, raw_key).unwrap_or_default();
-        let rejection = if crate::batch::EntityMetadataHeader::parse(&blob)
+        let rejection = if is_delegated_channel_identity_carrier(&blob) {
+            Error::Record(crate::error::RecordError::InvalidChannelIdentityBody(
+                "delegated ChannelIdentity rows are local custody facts and cannot be replicated",
+            ))
+        } else if crate::batch::EntityMetadataHeader::parse(&blob)
             .is_some_and(|header| header.entity_type == crate::registry::ENTITY_TYPE_DIAGNOSTIC)
         {
             Error::InvalidKey
@@ -325,6 +337,7 @@ pub fn replay_pending_mirrors(vault: &Vault, doc: &LoroDoc, window_key: &WindowK
 
         if !claim_sync_allowed(&raw)
             || is_unsyncable_secret_custody(&raw)
+            || is_delegated_channel_identity_carrier(&raw)
             || skip_companion_register_sync_mirror(&raw)
         {
             let wrote_doc = remove_entity_crdt_carriers(&entities_map, &edges_map, id)?;
