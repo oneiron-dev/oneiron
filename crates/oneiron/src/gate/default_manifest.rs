@@ -56,6 +56,8 @@ pub(crate) fn default_policy_manifest_id() -> Result<EntityId> {
         .map_err(|_| Error::InvariantViolation("invalid default policy manifest id"))
 }
 
+// One row per default policy entry: the manifest is a data table, and splitting it would scatter one manifest.
+#[allow(clippy::too_many_lines)]
 pub(crate) fn default_policy_manifest() -> Vec<u8> {
     let first_party_actor_ref = first_party_connector_actor_ref();
     // Per a provisional architectural ruling (owner batch pending): the
