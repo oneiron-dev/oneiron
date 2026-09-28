@@ -132,6 +132,8 @@ fn rule_on_proposal(
     cycle: &SkillEditCycle,
     at: u64,
 ) -> Result<HeldOutVerdict> {
+    let judge_revision = scorer.judge_revision();
+    validate_judge_revision(judge_revision)?;
     // The lock-free pre-read. Sequential, never nested: LMDB allows one read
     // transaction per thread, so a snapshot opened around a call that opens its
     // own is a `BadRslot`, not a consistency win. Nothing here decides
@@ -146,6 +148,7 @@ fn rule_on_proposal(
     race_hook();
 
     let prepared = vault.with_write_txn(|wtxn| {
+        ensure_current_judge_in_txn(vault, &*wtxn, judge_revision)?;
         let staged = vault.read_skill_record_in_txn(&*wtxn, proposal)?;
         require_open_optimizer_proposal(&staged)?;
         let target = target_of(&staged)?;
@@ -195,7 +198,7 @@ fn rule_on_proposal(
                 // would answer differently, because the first ruling has by
                 // then moved the cap the second call is measured against.
                 let standing =
-                    standing_ruling_in_txn(vault, &*wtxn, proposal, &basis, cycle)?;
+                    standing_ruling_in_txn(vault, &*wtxn, proposal, &basis, cycle, judge_revision)?;
                 if let Some(standing) = standing {
                     return Ok(Prepared::Ruled(Box::new(standing)));
                 }
@@ -244,6 +247,9 @@ fn rule_on_proposal(
     )?;
     let before = validate_score(scorer.score(&current_case)?)?;
     let after = validate_score(scorer.score(&proposed_case)?)?;
+    if scorer.judge_revision() != judge_revision {
+        return Err(retry("candidate judge revision moved during scoring"));
+    }
 
     // The scored set has done its work; what the row keeps of it is the bounded
     // display list, and the basis keeps the rest.
@@ -256,11 +262,14 @@ fn rule_on_proposal(
         // Re-read at the write door, exactly as ONE-1448's draft path does: the
         // scorer ran outside this transaction, so the target may have been
         // superseded and either tier may have been re-marked while it thought.
+        ensure_current_judge_in_txn(vault, &*wtxn, judge_revision)?;
         let staged = vault.read_skill_record_in_txn(&*wtxn, proposal)?;
         let current = readable_target(vault.read_skill_record_in_txn(&*wtxn, &target).map(Some))?;
         // The concurrent duplicate: two deliveries that both got past the read
         // above serialize HERE, and the second one finds the first's row.
-        if let Some(standing) = standing_ruling_in_txn(vault, &*wtxn, proposal, &basis, cycle)? {
+        if let Some(standing) =
+            standing_ruling_in_txn(vault, &*wtxn, proposal, &basis, cycle, judge_revision)?
+        {
             return Ok(standing);
         }
         let mut verdict = HeldOutVerdict {
@@ -268,6 +277,8 @@ fn rule_on_proposal(
             after,
             measurements: Some(measurements),
             accepted: false,
+            judge_revision: Some(judge_revision.to_owned()),
+            displaced_by_revision: None,
             id: vault.store.clock.entity_id()?,
             proposal: *proposal,
             skill: target,
@@ -564,6 +575,7 @@ fn accepted_in_cycle_in_txn(
         if verdict.disposition.admits()
             && verdict.cycle == cycle.as_str()
             && verdict.proposal != *spending
+            && verdict.displaced_by_revision.is_none()
         {
             accepted.insert(verdict.proposal);
         }
@@ -597,10 +609,13 @@ fn standing_ruling_in_txn(
     proposal: &EntityId,
     basis: &ScoredBasis,
     cycle: &SkillEditCycle,
+    judge_revision: &str,
 ) -> Result<Option<HeldOutVerdict>> {
     Ok(
         standing_verdict_in_txn(vault, rtxn, proposal)?.filter(|verdict| {
             basis.matches(verdict)
+                && verdict.displaced_by_revision.is_none()
+                && verdict.judge_revision.as_deref() == Some(judge_revision)
                 && (verdict.disposition.admits()
                     || (verdict.disposition == SkillEditDisposition::DeferredCycleCap
                         && verdict.cycle == cycle.as_str()))
@@ -643,6 +658,8 @@ fn refusal(
         after: 0.0,
         measurements: None,
         accepted: false,
+        judge_revision: None,
+        displaced_by_revision: None,
         id,
         proposal: *proposal,
         skill: *skill,

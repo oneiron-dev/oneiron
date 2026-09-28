@@ -22,6 +22,48 @@ use super::read::read_skill;
 /// already recorded re-writes its own row instead of incrementing a counter, so
 /// re-running a pass over the same judgments cannot double-count.
 const OUTCOME_PREFIX: &[u8] = b"skill_reliability:outcome:v1:";
+const PAIRED_OUTCOME_PREFIX: &[u8] = b"skill_reliability:outcome:v2:";
+const DISPLACED_PREFIX: &[u8] = b"skill_reliability:displaced_judge:v1:";
+
+pub(crate) fn mark_displaced_outcome_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    skill: &EntityId,
+    executor: Option<&str>,
+    receipt: &str,
+    old: &str,
+    replacement: &str,
+) -> Result<bool> {
+    let outcome = outcome_key(skill, executor, receipt);
+    let mut key = DISPLACED_PREFIX.to_vec();
+    key.extend_from_slice(&outcome);
+    let mark = Value::Map(vec![
+        (Value::from("displaced"), Value::from(old)),
+        (Value::from("replacement"), Value::from(replacement)),
+    ]);
+    let existed = vault.store.vault_meta.get(txn, &outcome)?.is_some();
+    vault
+        .store
+        .vault_meta
+        .put(txn, &key, &encode_value(&mark)?)?;
+    Ok(existed)
+}
+
+fn is_displaced(vault: &Vault, txn: &heed::RoTxn<'_>, outcome: &[u8]) -> Result<bool> {
+    let mut key = DISPLACED_PREFIX.to_vec();
+    key.extend_from_slice(outcome);
+    Ok(vault.store.vault_meta.get(txn, &key)?.is_some())
+}
+
+/// The immutable model identity on the terminal receipt. Unstamped receipts
+/// remain in the legacy/unknown bucket and cannot train a named model.
+pub(super) fn receipt_executor(receipt: &ReceiptRecord) -> Option<&str> {
+    receipt
+        .fields
+        .get("model")
+        .map(String::as_str)
+        .filter(|id| !id.is_empty())
+}
 
 /// Terminal attempt state that credits a contributing win
 /// (`AttemptState::Completed`'s wire string, as stamped on the pack receipt).
@@ -71,7 +113,17 @@ pub fn record_skill_contributing_win(
             "contributing win names a skill absent from the receipt manifest",
         ));
     }
-    vault.with_write_txn(|wtxn| record_outcome_in_txn(vault, wtxn, skill, receipt_ref, true, at))
+    vault.with_write_txn(|wtxn| {
+        record_outcome_in_txn(
+            vault,
+            wtxn,
+            skill,
+            receipt_executor(&receipt),
+            receipt_ref,
+            true,
+            at,
+        )
+    })
 }
 
 /// Credits a resident fork only from its own attributed outcome. The
@@ -109,7 +161,17 @@ pub fn record_resident_skill_contributing_win(
     }) {
         return Err(invalid("resident win needs its exact revision"));
     }
-    vault.with_write_txn(|txn| record_outcome_in_txn(vault, txn, skill, receipt_ref, true, at))
+    vault.with_write_txn(|txn| {
+        record_outcome_in_txn(
+            vault,
+            txn,
+            skill,
+            receipt_executor(&receipt),
+            receipt_ref,
+            true,
+            at,
+        )
+    })
 }
 
 /// The manifest chokepoint BOTH outcome doors run: did the pack that stamped
@@ -124,23 +186,7 @@ pub(super) fn receipt_manifest_names_skill(receipt: &ReceiptRecord, record: &Ski
     };
     manifest
         .iter()
-        .any(|entry| manifest_entry_names_skill(entry, &record.skill_id, &record.version))
-}
-
-/// A manifest wire form is `reference@version`; a SKILL row's reference is its
-/// `skill_id` and its version is the REVISION the pack loaded.
-/// [`ManifestEntry::parse_wire_form`] owns the split.
-///
-/// The version is compared exactly whenever the entry carries one. A revision
-/// is its own SKILL entity with its own posterior (`supersede_skill_record`
-/// freezes the old one), so a `skill@1` receipt crediting the `skill@2` entity
-/// would move a claim about bytes that attempt never ran. An entry with an
-/// empty version is an absent fact — it names no revision to disagree with —
-/// and still resolves, exactly as an absent manifest does above.
-fn manifest_entry_names_skill(wire_form: &str, skill_id: &str, version: &str) -> bool {
-    ManifestEntry::parse_wire_form(wire_form).is_some_and(|(reference, entry_version)| {
-        reference == skill_id && (entry_version.is_empty() || entry_version == version)
-    })
+        .any(|entry| crate::skill_attribution::manifest_entry_names_skill(entry, record))
 }
 
 /// Writes one outcome row, keyed `(skill, receipt)`.
@@ -155,6 +201,7 @@ pub(super) fn record_outcome_in_txn(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
     skill: &EntityId,
+    executor: Option<&str>,
     receipt_ref: &str,
     win: bool,
     at: u64,
@@ -162,7 +209,10 @@ pub(super) fn record_outcome_in_txn(
     if receipt_ref.is_empty() {
         return Err(invalid("a reliability outcome must cite a receipt"));
     }
-    let key = outcome_key(skill, receipt_ref);
+    if let Some(model) = executor {
+        super::read::validate_executor(model)?;
+    }
+    let key = outcome_key(skill, executor, receipt_ref);
     if win
         && let Some(existing) = vault.store.vault_meta.get(wtxn, &key)?
         && !decode_outcome_win(&existing)?
@@ -182,15 +232,27 @@ pub(super) fn record_outcome_in_txn(
     Ok(())
 }
 
-fn outcome_prefix(skill: &EntityId) -> Vec<u8> {
-    let mut key = Vec::with_capacity(OUTCOME_PREFIX.len() + ENTITY_ID_LEN);
-    key.extend_from_slice(OUTCOME_PREFIX);
+fn outcome_prefix(skill: &EntityId, executor: Option<&str>) -> Vec<u8> {
+    let prefix = if executor.is_some() {
+        PAIRED_OUTCOME_PREFIX
+    } else {
+        OUTCOME_PREFIX
+    };
+    let mut key =
+        Vec::with_capacity(prefix.len() + ENTITY_ID_LEN + executor.map_or(0, str::len) + 2);
+    key.extend_from_slice(prefix);
     key.extend_from_slice(skill.as_bytes());
+    if let Some(executor) = executor {
+        // Length framing keeps model ids with common prefixes disjoint.
+        let length = u16::try_from(executor.len()).expect("receipt model capped at 256 bytes");
+        key.extend_from_slice(&length.to_be_bytes());
+        key.extend_from_slice(executor.as_bytes());
+    }
     key
 }
 
-pub(super) fn outcome_key(skill: &EntityId, receipt_ref: &str) -> Vec<u8> {
-    let mut key = outcome_prefix(skill);
+pub(super) fn outcome_key(skill: &EntityId, executor: Option<&str>, receipt_ref: &str) -> Vec<u8> {
+    let mut key = outcome_prefix(skill, executor);
     key.extend_from_slice(receipt_ref.as_bytes());
     key
 }
@@ -260,16 +322,43 @@ pub(crate) fn attributed_outcome_results(
     rtxn: &heed::RoTxn<'_>,
     skill: &EntityId,
 ) -> Result<Vec<(String, bool)>> {
-    let prefix = outcome_prefix(skill);
+    let prefix = outcome_prefix(skill, None);
     let mut outcomes = Vec::new();
     for row in vault.store.vault_meta.prefix_iter(rtxn, &prefix)? {
         let (key, raw) = row?;
+        if is_displaced(vault, rtxn, &key)? {
+            continue;
+        }
         let receipt = key
             .get(prefix.len()..)
             .and_then(|suffix| std::str::from_utf8(suffix).ok())
             .ok_or(Error::CorruptedIndex("skill reliability outcome key"))?;
         outcomes.push((receipt.to_owned(), decode_outcome_win(&raw)?));
     }
+    // Optimization's split is over receipts, across all executors. Pair
+    // measurements remain separate; this read only supplies the evidence basis.
+    let mut paired_prefix = PAIRED_OUTCOME_PREFIX.to_vec();
+    paired_prefix.extend_from_slice(skill.as_bytes());
+    for row in vault.store.vault_meta.prefix_iter(rtxn, &paired_prefix)? {
+        let (key, raw) = row?;
+        if is_displaced(vault, rtxn, &key)? {
+            continue;
+        }
+        let suffix = key
+            .get(paired_prefix.len()..)
+            .ok_or(Error::CorruptedIndex("skill reliability pair key"))?;
+        let length = suffix
+            .get(..2)
+            .ok_or(Error::CorruptedIndex("skill reliability pair key"))?;
+        let len = usize::from(u16::from_be_bytes([length[0], length[1]]));
+        let receipt = suffix
+            .get(2 + len..)
+            .and_then(|bytes| std::str::from_utf8(bytes).ok())
+            .filter(|id| !id.is_empty())
+            .ok_or(Error::CorruptedIndex("skill reliability pair key"))?;
+        outcomes.push((receipt.to_owned(), decode_outcome_win(&raw)?));
+    }
+    outcomes.sort_by(|a, b| a.0.cmp(&b.0));
     Ok(outcomes)
 }
 
@@ -277,8 +366,9 @@ pub(super) fn tally_outcomes(
     vault: &Vault,
     rtxn: &heed::RoTxn<'_>,
     skill: &EntityId,
+    executor: Option<&str>,
 ) -> Result<OutcomeTally> {
-    let prefix = outcome_prefix(skill);
+    let prefix = outcome_prefix(skill, executor);
     let mut tally = OutcomeTally::default();
     for row in vault.store.vault_meta.prefix_iter(rtxn, &prefix)? {
         let (key, raw) = row?;
@@ -286,6 +376,9 @@ pub(super) fn tally_outcomes(
             .get(prefix.len()..)
             .and_then(|suffix| std::str::from_utf8(suffix).ok())
             .ok_or(Error::CorruptedIndex("skill reliability outcome key"))?;
+        if is_displaced(vault, rtxn, &key)? {
+            continue;
+        }
         if decode_outcome_win(&raw)? {
             tally.wins = tally.wins.saturating_add(1);
         } else {

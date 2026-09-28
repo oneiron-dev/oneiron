@@ -4,7 +4,9 @@ use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::llm::CallPurpose;
 
-use super::types::{AttemptOutcome, AttributionVerdict, OutcomeEvidence};
+use super::types::{
+    AttemptOutcome, AttributionVerdict, DeviationCause, FollowedState, OutcomeEvidence,
+};
 
 /// [`CallPurpose::Other`] name for the LLM classification tier. Ambiguous
 /// evidence rides the EXISTING engine LLM call surface under this purpose —
@@ -26,6 +28,12 @@ pub const ATTRIBUTION_CALL_PURPOSE_NAME: &str = "skill_attribution";
 pub trait AttributionJudge {
     /// Returns the verdict for `evidence`, or `None` to abstain.
     fn judge(&self, evidence: &OutcomeEvidence) -> Result<Option<AttributionVerdict>>;
+
+    /// Exact judge skill revision, if known. Used to mark its old verdicts
+    /// when a replacement is admitted; unstamped verdicts remain unknown.
+    fn judge_revision(&self) -> Option<&str> {
+        None
+    }
 }
 
 /// The [`CallPurpose`] an LLM-tier judge must stamp, so attribution calls are
@@ -43,7 +51,9 @@ pub fn attribution_call_purpose() -> CallPurpose {
 /// | outcome | followed skill | skill covered step | verdict |
 /// |---|---|---|---|
 /// | failed | yes | yes | `SkillDefect` — the content was wrong |
-/// | failed | no | — | `ExecutionLapse` — the executor departed from it |
+/// | failed | ignored | — | `ExecutionLapse` — the executor ignored it |
+/// | failed | partly | — | abstain — assess the partial work |
+/// | failed | deviated with reason | — | resolved cause routes defect, discovery or lapse; otherwise abstain |
 /// | failed | yes | no | `Discovery` — the content was missing |
 /// | succeeded | — | — | abstain — a win attributes nothing here |
 /// | any fact unsettled | | | abstain — the LLM tier's case |
@@ -55,15 +65,40 @@ pub fn attribution_call_purpose() -> CallPurpose {
 pub struct RuleAttributionJudge;
 
 impl AttributionJudge for RuleAttributionJudge {
+    fn judge_revision(&self) -> Option<&str> {
+        Some("rule-attribution@1")
+    }
     fn judge(&self, evidence: &OutcomeEvidence) -> Result<Option<AttributionVerdict>> {
         if evidence.outcome != AttemptOutcome::Failed {
             return Ok(None);
         }
-        let Some(followed_skill) = evidence.followed_skill else {
-            return Ok(None);
-        };
-        if !followed_skill {
-            return Ok(Some(AttributionVerdict::ExecutionLapse));
+        if let Some(state) = &evidence.followed_state {
+            match state {
+                FollowedState::Ignored => return Ok(Some(AttributionVerdict::ExecutionLapse)),
+                FollowedState::Partly => return Ok(None),
+                FollowedState::DeviatedWithReason { cause, .. } => {
+                    return Ok(match cause {
+                        Some(DeviationCause::ExecutorError) => {
+                            Some(AttributionVerdict::ExecutionLapse)
+                        }
+                        Some(DeviationCause::IncorrectInstruction) if evidence.skill.is_some() => {
+                            Some(AttributionVerdict::SkillDefect)
+                        }
+                        Some(DeviationCause::MissingInstruction) if evidence.skill.is_some() => {
+                            Some(AttributionVerdict::Discovery)
+                        }
+                        _ => None,
+                    });
+                }
+                FollowedState::Followed => {}
+            }
+        } else {
+            let Some(followed_skill) = evidence.followed_skill else {
+                return Ok(None);
+            };
+            if !followed_skill {
+                return Ok(Some(AttributionVerdict::ExecutionLapse));
+            }
         }
         // The remaining branches attribute to the SKILL, so an evidence row
         // with no skill in the manifest cannot be routed: fail to the actor's

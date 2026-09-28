@@ -166,6 +166,14 @@ fn stamped_receipt_version_as(
     else {
         panic!("the enqueued attempt is claimable");
     };
+    queue
+        .set_executor_model(
+            attempt.id,
+            "skill-opt-worker",
+            leased.attempt_count,
+            "fixture/model@1",
+        )
+        .expect("stamp model");
     let CompleteOutcome::Completed(_) = queue
         .complete(CompleteAttempt {
             id: attempt.id,
@@ -177,7 +185,10 @@ fn stamped_receipt_version_as(
     else {
         panic!("a leased attempt completes exactly once");
     };
-    attempt_pack_receipt_id(&attempt.id)
+    let receipt_id = attempt_pack_receipt_id(&attempt.id);
+    crate::receipt::make_attempt_receipt_legacy_for_tests(vault, &receipt_id)
+        .expect("emulate historical unknown-executor evidence");
+    receipt_id
 }
 
 /// Attributes SK-04 skill DEFECTS until the DEV partition holds `count` more of
@@ -377,6 +388,7 @@ fn losing_skill_with_proposal(vault: &Vault, skill_id: &str) -> (EntityId, Entit
 struct StubScorer {
     before: f32,
     after: f32,
+    revision: &'static str,
     seen: RefCell<Vec<(String, Vec<String>)>>,
 }
 
@@ -385,6 +397,7 @@ impl StubScorer {
         Self {
             before,
             after,
+            revision: "fixture-judge@1",
             seen: RefCell::new(Vec::new()),
         }
     }
@@ -392,6 +405,11 @@ impl StubScorer {
     /// The proposed text replays better than the text it replaces.
     fn improving() -> Self {
         Self::new(0.40, 0.75)
+    }
+
+    fn with_revision(mut self, revision: &'static str) -> Self {
+        self.revision = revision;
+        self
     }
 
     /// Every held-out list this scorer was handed.
@@ -405,6 +423,9 @@ impl StubScorer {
 }
 
 impl HeldOutReplayScorer for StubScorer {
+    fn judge_revision(&self) -> &str {
+        self.revision
+    }
     fn score(&self, case: &HeldOutReplayCase<'_>) -> Result<f32> {
         self.seen.borrow_mut().push((
             case.instructions.to_owned(),
@@ -441,6 +462,9 @@ impl HeldOutReplayScorer for StubScorer {
 struct UnreachableScorer;
 
 impl HeldOutReplayScorer for UnreachableScorer {
+    fn judge_revision(&self) -> &str {
+        "fixture-judge@1"
+    }
     fn score(&self, _case: &HeldOutReplayCase<'_>) -> Result<f32> {
         panic!("a refused proposal must not reach the replay tier");
     }
@@ -2231,6 +2255,9 @@ struct RacingScorer<'a> {
 }
 
 impl HeldOutReplayScorer for RacingScorer<'_> {
+    fn judge_revision(&self) -> &str {
+        "fixture-judge@1"
+    }
     fn score(&self, case: &HeldOutReplayCase<'_>) -> Result<f32> {
         *self.scored.borrow_mut() += 1;
         if !self.raced.replace(true) {
@@ -2280,6 +2307,9 @@ struct DuplicatingScorer<'a> {
 }
 
 impl HeldOutReplayScorer for DuplicatingScorer<'_> {
+    fn judge_revision(&self) -> &str {
+        "fixture-judge@1"
+    }
     fn score(&self, case: &HeldOutReplayCase<'_>) -> Result<f32> {
         *self.scored.borrow_mut() += 1;
         if !self.delivered.replace(true) {
@@ -2319,6 +2349,9 @@ impl HeldOutReplayScorer for DuplicatingScorer<'_> {
 struct HostScorer;
 
 impl HeldOutReplayScorer for HostScorer {
+    fn judge_revision(&self) -> &str {
+        "fixture-judge@1"
+    }
     fn score(&self, case: &HeldOutReplayCase<'_>) -> Result<f32> {
         Ok(if case.instructions == TARGET_DESC {
             0.25
@@ -2676,10 +2709,13 @@ fn evidence_arriving_mid_flight_aborts_retryably_and_writes_nothing() -> Result<
 
 #[test]
 fn a_terminal_reason_that_stops_holding_aborts_instead_of_refusing() -> Result<()> {
-    let (_tmp, vault) = temp_vault();
+    let (tmp, vault) = temp_vault();
     // Leaked so the race hook — a `'static` thread-local, because the gate that
     // fires it holds no test state — can reach this exact vault. The temp dir
-    // still drops with the test; only the handle outlives it.
+    // is leaked with it: the handle keeps its root registered as open, so
+    // deleting the files would free their inodes for a later test's vault and
+    // fail that open with DuplicateOpenRoot.
+    let _tmp: &'static tempfile::TempDir = Box::leak(Box::new(tmp));
     let vault: &'static Vault = Box::leak(Box::new(vault));
     let (skill, _) = put_standard_active(vault, "oneiron.skill.losing");
     attribute_defects_across_split(vault, &skill, "oneiron.skill.losing");
@@ -3771,7 +3807,7 @@ fn set_row_field(entries: &mut [(Value, Value)], key: &str, value: &Value) {
 }
 
 #[test]
-fn a_verdict_row_is_schema_v4_and_every_older_row_fails_closed() -> Result<()> {
+fn a_verdict_row_is_schema_v5_and_every_older_row_fails_closed() -> Result<()> {
     let (_tmp, vault) = temp_vault();
     let (_, proposal) = losing_skill_with_proposal(&vault, "oneiron.skill.losing");
     let scorer = StubScorer::improving();
@@ -3785,7 +3821,7 @@ fn a_verdict_row_is_schema_v4_and_every_older_row_fails_closed() -> Result<()> {
     assert_eq!(
         skill_edit_verdict(&vault, &proposal)?.expect("a standing verdict"),
         accepted,
-        "a v4 row round-trips with measurements and bound proposal tier"
+        "a v5 row round-trips with measurements and judge provenance"
     );
     assert_eq!(accepted.proposal_tier, Some(SkillGovernanceTier::Standard));
 
@@ -3815,7 +3851,7 @@ fn a_verdict_row_is_schema_v4_and_every_older_row_fails_closed() -> Result<()> {
 
     // …and so is the retired disposition, whatever schema claims to carry it.
     rewrite_verdict_row(&vault, |entries: &mut [(Value, Value)]| {
-        set_row_field(entries, "v", &Value::from(4u64));
+        set_row_field(entries, "v", &Value::from(5u64));
         set_row_field(
             entries,
             "disposition",
@@ -3831,9 +3867,9 @@ fn a_verdict_row_is_schema_v4_and_every_older_row_fails_closed() -> Result<()> {
     rewrite_verdict_row(&vault, |entries: &mut [(Value, Value)]| {
         set_row_field(entries, "disposition", &Value::from("accepted"));
     });
-    // A judged v4 verdict cannot carry an absent or nil audit pair.
+    // A judged v5 verdict cannot carry an absent or nil audit pair.
     rewrite_verdict_row(&vault, |entries: &mut [(Value, Value)]| {
-        set_row_field(entries, "v", &Value::from(4u64));
+        set_row_field(entries, "v", &Value::from(5u64));
         set_row_field(entries, "measurements", &Value::Nil);
     });
     assert_eq!(
@@ -3994,6 +4030,9 @@ struct ProposalEditingScorer<'a> {
 const RE_EDITED_DESC: &str = "A second author rewrote this while the judge read.";
 
 impl HeldOutReplayScorer for ProposalEditingScorer<'_> {
+    fn judge_revision(&self) -> &str {
+        "fixture-judge@1"
+    }
     fn score(&self, case: &HeldOutReplayCase<'_>) -> Result<f32> {
         if !self.edited.replace(true) {
             let mut edited = stored(self.vault, &self.proposal);
@@ -4435,6 +4474,9 @@ struct MeasuredScorer {
 }
 
 impl HeldOutReplayScorer for MeasuredScorer {
+    fn judge_revision(&self) -> &str {
+        "fixture-judge@1"
+    }
     fn score(&self, case: &HeldOutReplayCase<'_>) -> Result<f32> {
         self.phases.borrow_mut().push("score");
         Ok(if case.instructions == TARGET_DESC {
@@ -4565,6 +4607,9 @@ fn decoevo_audits_are_receipted_measurements_and_world_scores_follow_labels() ->
 fn a_missing_auditor_does_not_write_a_judged_verdict() -> Result<()> {
     struct ScalarOnly;
     impl HeldOutReplayScorer for ScalarOnly {
+        fn judge_revision(&self) -> &str {
+            "fixture-judge@1"
+        }
         fn score(&self, _: &HeldOutReplayCase<'_>) -> Result<f32> {
             Ok(0.75)
         }
@@ -4590,6 +4635,9 @@ fn a_missing_auditor_does_not_write_a_judged_verdict() -> Result<()> {
 fn a_contrastive_audit_without_frozen_preference_cannot_write_a_verdict() -> Result<()> {
     struct NoPairs;
     impl HeldOutReplayScorer for NoPairs {
+        fn judge_revision(&self) -> &str {
+            "fixture-judge@1"
+        }
         fn score(&self, _: &HeldOutReplayCase<'_>) -> Result<f32> {
             panic!("rubric-aware scoring must not run before a blind preference")
         }
@@ -4736,6 +4784,53 @@ fn a_large_outcome_history_keeps_world_labels_aligned_at_all_gate_doors() -> Res
         stored(&vault, &proposal).lifecycle_status,
         SkillLifecycle::Active
     );
+    Ok(())
+}
+
+#[test]
+fn replacing_candidate_judge_retains_scores_but_removes_standing_acceptance() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    let (_skill, proposal) = losing_skill_with_proposal(&vault, "judge.swap.fixture");
+    let first = StubScorer::improving();
+    let accepted = score_gate_skill_edit_with_scorer(&vault, &proposal, &first)?;
+    assert!(accepted.accepted);
+    assert_eq!(accepted.judge_revision.as_deref(), Some("fixture-judge@1"));
+    assert_eq!(
+        verdict_receipt(&vault, &accepted).fields["skill_edit_judge_revision"],
+        "fixture-judge@1"
+    );
+    let marked = supersede_skill_edit_judge(&vault, "fixture-judge@1", "fixture-judge@2")?;
+    assert!(marked.contains(&accepted.id));
+    let historical = skill_edit_verdict(&vault, &proposal)?.unwrap();
+    assert_eq!(
+        (historical.before, historical.after),
+        (accepted.before, accepted.after)
+    );
+    assert_eq!(
+        historical.displaced_by_revision.as_deref(),
+        Some("fixture-judge@2")
+    );
+    let receipt = verdict_receipt(&vault, &accepted);
+    assert_eq!(
+        receipt.fields["skill_edit_judge_displaced_by"],
+        "fixture-judge@2"
+    );
+    assert!(admit_optimized_skill_revision(&vault, &proposal, t(999), 999).is_err());
+    assert_eq!(
+        stored(&vault, &proposal).lifecycle_status,
+        SkillLifecycle::Candidate
+    );
+    let replacement = StubScorer::improving().with_revision("fixture-judge@2");
+    let ruled = score_gate_skill_edit_with_scorer(&vault, &proposal, &replacement)?;
+    assert_ne!(ruled.id, accepted.id);
+    assert!(ruled.accepted);
+    assert_eq!(ruled.judge_revision.as_deref(), Some("fixture-judge@2"));
+    assert_eq!(replacement.evidence().len(), 2);
+    assert_eq!(
+        supersede_skill_edit_judge(&vault, "fixture-judge@1", "fixture-judge@2")?,
+        marked
+    );
+    assert!(supersede_skill_edit_judge(&vault, "fixture-judge@1", "fixture-judge@3").is_err());
     Ok(())
 }
 
@@ -5073,4 +5168,62 @@ fn goal_axes_refuse_another_skills_evidence_before_any_measurement() {
     assert!(judge.events.borrow().is_empty());
     assert!(bandit.events.borrow().is_empty());
 }
+
+#[test]
+fn displaced_candidate_judge_cannot_commit_a_score_started_before_replacement() -> Result<()> {
+    struct SlowOld<'a> {
+        vault: &'a Vault,
+        displaced: std::cell::Cell<bool>,
+    }
+    impl HeldOutReplayScorer for SlowOld<'_> {
+        fn judge_revision(&self) -> &str {
+            "old-candidate@1"
+        }
+        fn score(&self, case: &HeldOutReplayCase<'_>) -> Result<f32> {
+            if !self.displaced.replace(true) {
+                // The scorer runs outside the write txn. Replacement commits
+                // before this callback hands its stale answer back.
+                supersede_skill_edit_judge(self.vault, "old-candidate@1", "new-candidate@2")?;
+            }
+            Ok(if case.instructions == TARGET_DESC {
+                0.4
+            } else {
+                0.8
+            })
+        }
+        fn structural_audit(&self, _: &str, _: &str) -> Result<f32> {
+            Ok(0.5)
+        }
+        fn blind_preference(&self, _: &str, _: &[String]) -> Result<Vec<BlindPreference>> {
+            Ok(vec![BlindPreference {
+                pair_ref: "race".into(),
+                preferred: PreferredResponse::First,
+            }])
+        }
+        fn contrastive_audit(
+            &self,
+            _: &HeldOutReplayCase<'_>,
+            _: &[BlindPreference],
+        ) -> Result<f32> {
+            Ok(0.5)
+        }
+        fn predict_task_success(&self, case: &HeldOutReplayCase<'_>) -> Result<Vec<f32>> {
+            Ok(vec![0.5; case.held_out_receipts.len()])
+        }
+    }
+    let (_tmp, vault) = temp_vault();
+    let (_skill, proposal) = losing_skill_with_proposal(&vault, "judge.inflight");
+    let old = SlowOld {
+        vault: &vault,
+        displaced: std::cell::Cell::new(false),
+    };
+    assert!(score_gate_skill_edit_with_scorer(&vault, &proposal, &old).is_err());
+    assert!(skill_edit_verdict(&vault, &proposal)?.is_none());
+    assert!(admit_optimized_skill_revision(&vault, &proposal, t(900), 900).is_err());
+    assert!(score_gate_skill_edit_with_scorer(&vault, &proposal, &old).is_err());
+    let new = StubScorer::improving().with_revision("new-candidate@2");
+    assert!(score_gate_skill_edit_with_scorer(&vault, &proposal, &new)?.accepted);
+    Ok(())
+}
+
 mod resident;
