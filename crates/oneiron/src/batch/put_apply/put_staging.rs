@@ -251,8 +251,7 @@ pub(super) fn validate_put_carriers(
         store,
         txn,
         &id,
-        context.entity_type,
-        context.occurred,
+        (context.entity_type, context.occurred, context.learned_at),
         data,
         context.replicated,
     )?;
@@ -341,6 +340,7 @@ pub(super) fn stage_task_and_turn_post_put(
     }
     if entity_type == crate::registry::ENTITY_TYPE_TURN {
         crate::conversation_dag::stage_session_carrier(store, wtxn, *id, data)?;
+        crate::conversation_dag::invalidate_thread_meta_for_turn_put(store, wtxn, *id)?;
     }
     Ok(())
 }

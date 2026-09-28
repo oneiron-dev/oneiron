@@ -1902,8 +1902,10 @@ fn endpoint_census_arguments(verb: McpGeneratedVerbTool) -> Value {
             json!({"spec":{"handle":{"group_ref":ACTOR_ID},"step_key":"step-one"}})
         }
         "rooms.list" => json!({}),
-        "rooms.messages" => json!({"room_ref":ACTOR_ID}),
-        "rooms.claim" => json!({"room_ref":ACTOR_ID,"turn_ref":ACTOR_ID}),
+        "rooms.messages" | "rooms.find" | "rooms.render" => json!({"room_ref":ACTOR_ID}),
+        "rooms.claim" | "rooms.get" | "rooms.trunk" => {
+            json!({"room_ref":ACTOR_ID,"turn_ref":ACTOR_ID})
+        }
         "rooms.speak" => json!({"room_ref":ACTOR_ID,"spec":{}}),
         "board.expand" => json!({ "key": "TASKS" }),
         "board.refresh" | "describe" => json!({}),

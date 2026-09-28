@@ -36,6 +36,18 @@ impl Memory<'_> {
                 "Propose the ask through the authority surface.",
             ));
         }
+        if let Some(TaskAskTarget::Guests(guests)) = &effective.who {
+            for (person, guest) in guests {
+                super::ask_guest::check_disclosure(
+                    self.vault(),
+                    &txn,
+                    *person,
+                    self.actor(),
+                    guest,
+                    &effective,
+                )?;
+            }
+        }
         let seats = effective
             .need
             .of

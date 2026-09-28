@@ -176,6 +176,10 @@ pub struct HeldOutVerdict {
     pub measurements: Option<JudgeMeasurements>,
     /// `after > before`, and nothing refused or deferred it.
     pub accepted: bool,
+    /// Immutable candidate-scoring skill revision; absent only before scoring.
+    pub judge_revision: Option<String>,
+    /// Replacement that retired this judge's score. Stored as a separate marker.
+    pub displaced_by_revision: Option<String>,
     /// Ledger row id; the receipt's id is derived from it.
     pub id: EntityId,
     /// The gated proposal this ruling is about.

@@ -26,6 +26,12 @@ pub const ATTRIBUTION_CALL_PURPOSE_NAME: &str = "skill_attribution";
 pub trait AttributionJudge {
     /// Returns the verdict for `evidence`, or `None` to abstain.
     fn judge(&self, evidence: &OutcomeEvidence) -> Result<Option<AttributionVerdict>>;
+
+    /// Exact judge skill revision, if known. Used to mark its old verdicts
+    /// when a replacement is admitted; unstamped verdicts remain unknown.
+    fn judge_revision(&self) -> Option<&str> {
+        None
+    }
 }
 
 /// The [`CallPurpose`] an LLM-tier judge must stamp, so attribution calls are
@@ -55,6 +61,9 @@ pub fn attribution_call_purpose() -> CallPurpose {
 pub struct RuleAttributionJudge;
 
 impl AttributionJudge for RuleAttributionJudge {
+    fn judge_revision(&self) -> Option<&str> {
+        Some("rule-attribution@1")
+    }
     fn judge(&self, evidence: &OutcomeEvidence) -> Result<Option<AttributionVerdict>> {
         if evidence.outcome != AttemptOutcome::Failed {
             return Ok(None);

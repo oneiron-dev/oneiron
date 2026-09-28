@@ -130,7 +130,20 @@ impl ScopedRead<'_> {
             )?,
         };
         let Some(mut raw) = raw else { return Ok(None) };
-        if !self.is_entity_raw_readable_with_filter_in(txn, policy, id, &raw, filter)? {
+        // ASSET_TEXT has a fixed intrinsic record scope for a given kind and
+        // entity id. A live body edit restamps the current digest while the
+        // indexed body deliberately remains behind; requiring that *current*
+        // stamp to match the retained bytes would delete an authorized
+        // subscription result during index lag. The current row was admitted
+        // above, and the revision reader selected only retained vault bytes.
+        // CLAIM and NOTE keep their per-body historical admission below.
+        let stable_text_scope = mode != ReadMode::Live
+            && EntityMetadataHeader::parse(&raw).is_some_and(|header| {
+                header.entity_type == crate::registry::ENTITY_TYPE_ASSET_TEXT
+            });
+        if !stable_text_scope
+            && !self.is_entity_raw_readable_with_filter_in(txn, policy, id, &raw, filter)?
+        {
             return Ok(None);
         }
         if mode == ReadMode::Live {

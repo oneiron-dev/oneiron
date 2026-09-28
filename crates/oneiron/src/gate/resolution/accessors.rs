@@ -21,6 +21,15 @@ use crate::gate::grants::{PolicyScopedGrant, scoped_read_grant_has_read_effector
 
 #[cfg_attr(not(test), allow(dead_code))]
 impl PolicyManifestResolution {
+    /// Fully resolved, trusted install policy. Missing or malformed policy
+    /// never becomes a permissive empty rule set.
+    pub(crate) fn pack_install_policy(&self) -> Option<&crate::gate::PackInstallPolicy> {
+        if self.diagnostics.is_fail_closed() {
+            return None;
+        }
+        self.pack_install_policy.as_ref()
+    }
+
     pub(crate) fn is_single_valued_predicate(&self, predicate: &str) -> bool {
         !self.is_fail_closed() && self.single_valued_predicates.contains(predicate)
     }
@@ -42,10 +51,69 @@ impl PolicyManifestResolution {
         self.diagnostics.manifest_count > 0 || self.diagnostics.loaded_manifest_forces_fail_closed()
     }
 
+    /// Effective correction quota from the resolved manifest, never from a
+    /// caller-supplied request. Malformed policy cannot authorize a label.
+    pub(crate) fn weave_correction_limit(&self, holder: &str) -> Option<usize> {
+        if self.diagnostics.loaded_manifest_forces_fail_closed() {
+            return None;
+        }
+        self.weave_correction_policy
+            .as_ref()
+            .map(|policy| policy.limit_for(holder))
+    }
+
+    /// Shipped manifest rows or the same bootstrap default if no ask row
+    /// exists; an invalid loaded manifest never silently supplies authority.
+    pub(crate) fn ask_operational_policy(&self) -> Option<crate::gate::AskOperationalPolicy> {
+        (!self.diagnostics.loaded_manifest_forces_fail_closed())
+            .then(|| self.ask_policy.clone().unwrap_or_default())
+    }
+
+    /// Resolve the required vault ceiling and every matching actor/scope row.
+    pub(crate) fn retry_budget_for(
+        &self,
+        actor: crate::EntityId,
+        scope: Option<&crate::llm::Scope>,
+    ) -> crate::Result<crate::gate::retry_source_policy::ResolvedRetryBudget> {
+        crate::gate::retry_source_policy::resolve(&self.retry_source_policy, actor, scope)
+    }
+
+    /// Only trusted policy rows select the room working set. A malformed
+    /// loaded manifest refuses reads rather than silently restoring defaults.
+    pub(crate) fn room_thread_settings(
+        &self,
+        actor: crate::EntityId,
+    ) -> Result<crate::gate::RoomThreadSettings> {
+        if self.diagnostics.loaded_manifest_forces_fail_closed() {
+            return Err(crate::Error::InvalidConfig(
+                "invalid room thread policy".into(),
+            ));
+        }
+        Ok(self
+            .room_thread
+            .clone()
+            .unwrap_or_default()
+            .effective(actor))
+    }
+
     #[must_use]
     pub(crate) fn proposal_check_threshold(&self) -> u64 {
         self.proposal_check_threshold
             .unwrap_or(crate::gate::proposal_observation::DEFAULT_PROPOSAL_CHECK_THRESHOLD)
+    }
+
+    /// Trusted vault policy narrowed by the holder's own limits and shipped defaults.
+    pub(crate) fn voice_ref_limits(
+        &self,
+        owner: &crate::EntityId,
+    ) -> Option<crate::voice_identity::ref_limits::VoiceRefLimits> {
+        if self.diagnostics.loaded_manifest_forces_fail_closed() {
+            None
+        } else {
+            self.voice_ref_defaults
+                .as_ref()
+                .and_then(|defaults| self.voice_ref_limits.effective(defaults, owner))
+        }
     }
 
     #[must_use]

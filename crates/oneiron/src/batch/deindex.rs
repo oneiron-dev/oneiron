@@ -94,6 +94,14 @@ pub(super) fn deindex_entity_without_lexical_query_hint_cascade(
     id: &EntityId,
 ) -> Result<(bool, bool, bool, Vec<EntityId>)> {
     crate::federation::reject_ruling_delete(store, wtxn, id)?;
+    // The shared physical tear is reached by facade deletes, public batch
+    // deletes and lexical-hint cascades. Every one must erase claim decisions
+    // and the pending tray before the entity bytes leave this transaction.
+    store.redact_gate_decisions_for_claim_in_txn(
+        wtxn,
+        id.as_bytes(),
+        store.clock.now_recorded_at(),
+    )?;
     #[cfg(feature = "sync")]
     crate::entity_doc::erase_in_txn(store, wtxn, id)?;
     store
@@ -150,6 +158,7 @@ pub(super) fn deindex_entity_without_lexical_query_hint_cascade(
     store.clear_pending_embedding(wtxn, id)?;
     had_vector |= store.vectors.delete(wtxn, id.as_bytes())?;
     crate::hnsw::hnsw_deindex(store, wtxn, id)?;
+    crate::conversation_dag::invalidate_thread_meta_for_turn_put(store, wtxn, *id)?;
     let related_neighbors = delete_related_edges(store, wtxn, id)?;
     had_graph_mutation |= !related_neighbors.is_empty();
     neighbors.extend(related_neighbors);

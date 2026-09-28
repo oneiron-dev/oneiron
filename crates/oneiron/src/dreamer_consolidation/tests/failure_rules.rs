@@ -15,7 +15,7 @@ fn rows(subject: EntityId, turn: EntityId, eligible: bool) -> Vec<u8> {
                     }], "candidates":[{
                         "subject":subject.to_hex(), "predicate":"profile.name",
                         "value":"from declared fallback", "confidence":0.7,
-                        "evidence_turn_refs":[turn.to_hex()]
+                        "evidence_refs":[{"source_id":turn.to_hex(),"byte_range":[0,1]}]
                     }]})),
                 ),
                 ("conflict", "fatal") => (
@@ -147,6 +147,8 @@ fn resident_failure_rules_route_fatal_extraction_and_clamp_promotion() -> Result
                 deadline: &deadline,
                 budget_id: "wake",
                 now_ms: 21_000,
+                prepared_wake: None,
+                prepared_attempt: None,
             },
         ))?;
         assert!(matches!(
