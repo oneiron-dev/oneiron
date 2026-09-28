@@ -282,7 +282,11 @@ pub(super) fn optimize_brief_bound_at(
             proposal: verdict.proposal,
             desc: proposal.desc,
             author_rationale: author_rationale.to_owned(),
-            rejection_reason: if verdict.after == verdict.before {
+            rejection_reason: if verdict
+                .goal_axes
+                .values()
+                .all(|axis| axis.after == axis.before)
+            {
                 RejectedSkillEditReason::Tie
             } else {
                 RejectedSkillEditReason::Regression

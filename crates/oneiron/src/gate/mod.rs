@@ -45,6 +45,7 @@ mod room_thread;
 pub use room_thread::RoomThreadFill;
 pub(crate) use room_thread::{RoomThreadManifest, RoomThreadSettings};
 mod share;
+mod skill_edit_goal_policy;
 pub(crate) mod voice_serving;
 mod weave_correction_policy;
 pub(crate) mod weave_policy;
@@ -145,6 +146,7 @@ pub(crate) use self::room_policy::{RoomAction, allows as room_policy_allows};
 pub(crate) use self::share::check_share_create_policy;
 #[cfg(test)]
 pub(crate) use self::share::share_create_effect;
+pub(crate) use self::skill_edit_goal_policy::SkillEditGoalPolicy;
 pub(crate) use self::voice_serving::VoiceServingLimits;
 #[cfg(test)]
 pub(crate) use self::witness_message::canonical_witness_message_body_for_test;

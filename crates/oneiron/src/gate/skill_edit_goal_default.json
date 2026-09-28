@@ -1,0 +1,7 @@
+{
+  "precedence": "nested_narrowing",
+  "holder_max_scope": "vault",
+  "axes": [
+    { "name": "held_out", "kind": "primary" }
+  ]
+}

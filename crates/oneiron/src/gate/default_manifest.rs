@@ -26,10 +26,10 @@ use super::constants::{
     POLICY_OWNER_POLICY_PRECEDENCE_KEY, POLICY_OWNER_POLICY_ROWS_KEY, POLICY_PACK_ID_KEY,
     POLICY_PACK_VERSION_KEY, POLICY_PPTX_COMMENT_LIMITS_KEY, POLICY_RULES_KEY,
     POLICY_SCHEMA_VERSION, POLICY_SCHEMA_VERSION_KEY, POLICY_SHEET_ANSWER_LIMITS_KEY,
-    POLICY_SHEET_ANSWER_PRECEDENCE_KEY, POLICY_SIGNATURES_KEY, POLICY_SLIDE_REVIEW_KEY,
-    POLICY_SOURCE_TRUST_KEY, POLICY_TEACHER_PROBE_KEY, POLICY_WAIT_POLICY_KEY,
-    POLICY_WEAVE_CORRECTION_POLICY_KEY, RULE_AXES_KEY, RULE_EXACT_KEY, RULE_PREFIX_KEY,
-    SIGNATURE_ALG_KEY, SIGNATURE_KEY_ID_KEY, SIGNATURE_SIG_KEY,
+    POLICY_SHEET_ANSWER_PRECEDENCE_KEY, POLICY_SIGNATURES_KEY, POLICY_SKILL_EDIT_GOAL_KEY,
+    POLICY_SLIDE_REVIEW_KEY, POLICY_SOURCE_TRUST_KEY, POLICY_TEACHER_PROBE_KEY,
+    POLICY_WAIT_POLICY_KEY, POLICY_WEAVE_CORRECTION_POLICY_KEY, RULE_AXES_KEY, RULE_EXACT_KEY,
+    RULE_PREFIX_KEY, SIGNATURE_ALG_KEY, SIGNATURE_KEY_ID_KEY, SIGNATURE_SIG_KEY,
     SOURCE_TRUST_MAX_AUTO_SENSITIVITY_KEY, SOURCE_TRUST_RECEIPTED_KEY, SOURCE_TRUST_WARNED_KEY,
     WAIT_POLICY_CLASS_KEY, WAIT_POLICY_MIN_SECS_KEY,
 };
@@ -166,6 +166,7 @@ pub(crate) fn default_policy_manifest() -> Vec<u8> {
             ]),
         ),
         (Value::from(POLICY_PACK_VERSION_KEY), Value::from("v1")),
+        skill_edit_goal_entry(),
         (
             Value::from(super::voice_serving::KEY),
             super::voice_serving::VoiceServingRows::seeded(),
@@ -856,6 +857,16 @@ fn room_thread_default_row() -> Value {
         ),
         (Value::from("holder_rows"), Value::Array(Vec::new())),
     ])
+}
+
+/// The shipped skill-edit goal policy row, kept as data beside this file.
+fn skill_edit_goal_entry() -> (Value, Value) {
+    let policy = rmpv::ext::to_value(
+        serde_json::from_str::<serde_json::Value>(include_str!("skill_edit_goal_default.json"))
+            .expect("shipped skill edit goal policy parses"),
+    )
+    .expect("shipped skill edit goal policy encodes");
+    (Value::from(POLICY_SKILL_EDIT_GOAL_KEY), policy)
 }
 
 /// The shipped attribution limits: precedence and the two byte/count caps.

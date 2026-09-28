@@ -23,6 +23,7 @@ use super::dials::{invalid, validate_text};
 use super::gate::SkillEditCycle;
 use super::selection::{affirm_candidates, optimize_candidates};
 use super::tier::{SkillTierVerdict, tier_verdict_in_txn};
+use super::{GOAL_ID_KEY, SkillGoalId};
 
 /// The [`PROVENANCE_BIRTH_KEY`] value stamped on a drafted proposal.
 pub const SKILL_OPTIMIZE_BIRTH_PATH: &str = "skill_optimize";
@@ -272,6 +273,11 @@ fn run_skill_optimize_bound(
         let Value::Map(provenance) = &mut record.provenance else {
             return Err(invalid("invalid optimizer provenance"));
         };
+        let goal_id = SkillGoalId::of(&candidate.skill, &target)?;
+        provenance.push((
+            Value::from(GOAL_ID_KEY),
+            Value::from(goal_id.entity().to_hex()),
+        ));
         provenance.extend([
             (
                 Value::from("actor_entity_ref"),

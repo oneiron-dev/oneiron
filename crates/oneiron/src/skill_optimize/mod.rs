@@ -134,6 +134,7 @@ mod brief;
 mod dials;
 mod gate;
 mod goal_axes;
+mod goal_binding;
 mod job;
 mod labels;
 pub(crate) mod policy;
@@ -172,14 +173,16 @@ pub use self::selection::{
 };
 pub use self::tier::{SkillTierVerdict, skill_governance_tier};
 pub use gate::{
-    AuditPair, BlindPreference, DEFAULT_SKILL_EDIT_CYCLE_CAP, HELD_OUT_REPLAY_SCORER,
-    HELD_OUT_RESERVE_DIVISOR, HeldOutReplayCase, HeldOutReplayScorer, HeldOutVerdict,
-    JudgeMeasurements, PreferredResponse, SKILL_EDIT_CYCLE_CAP_KEY, SKILL_EDIT_CYCLE_MAX_BYTES,
-    SKILL_EDIT_SCORE_CALL_PURPOSE_NAME, SkillEditCycle, SkillEditDisposition, WorldAxisScore,
+    AuditPair, BlindPreference, DEFAULT_SKILL_EDIT_CYCLE_CAP, GoalAxisKind, GoalAxisScore,
+    GoalAxisSpec, HELD_OUT_REPLAY_SCORER, HELD_OUT_RESERVE_DIVISOR, HeldOutReplayCase,
+    HeldOutReplayScorer, HeldOutVerdict, JudgeMeasurements, PreferredResponse,
+    SKILL_EDIT_CYCLE_CAP_KEY, SKILL_EDIT_CYCLE_MAX_BYTES, SKILL_EDIT_SCORE_CALL_PURPOSE_NAME,
+    SkillEditCycle, SkillEditDisposition, TradeoffChoice, TradeoffResolution, WorldAxisScore,
     admit_optimized_skill_revision, dev_receipts, held_out_receipt_set_digest, held_out_receipts,
     is_skill_edit_verdict_receipt, receipt_is_held_out, register_held_out_replay_scorer,
-    score_gate_skill_edit, score_gate_skill_edit_in_cycle, score_gate_skill_edit_with_scorer,
-    set_skill_edit_cycle_cap, skill_body_binding_digest, skill_edit_cycle_cap,
+    resolve_skill_edit_tradeoff, resolve_skill_edit_tradeoff_in_cycle, score_gate_skill_edit,
+    score_gate_skill_edit_in_cycle, score_gate_skill_edit_with_scorer, set_skill_edit_cycle_cap,
+    set_skill_edit_goal_axes, skill_body_binding_digest, skill_edit_cycle_cap,
     skill_edit_score_call_purpose, skill_edit_verdict, skill_edit_verdicts,
     skill_edit_verdicts_for_proposal, supersede_skill_edit_judge,
 };
@@ -189,6 +192,8 @@ pub(crate) use gate::{
     with_optimized_skill_admission,
 };
 
+pub(crate) use self::goal_binding::validate_goal_birth_in_txn;
+use self::goal_binding::{GOAL_ID_KEY, SkillGoalId};
 pub(crate) use self::job::{SKILL_EDIT_CYCLE_RUN_PREFIX, proven_cycle};
 
 use self::dials::invalid;

@@ -7,8 +7,8 @@
 //!        ├─ score gate ─┬─ held-out receipts, recomputed HERE
 //!        │              ├─ a standing acceptance over the same basis is
 //!        │              │  RETURNED, not re-scored (retries are free)
-//!        │              ├─ judged replay: score(current) vs score(proposed)
-//!        │              ├─ strict  after > before  (ties reject)
+//!        │              ├─ judged replay: score both bodies on each goal axis
+//!        │              ├─ vector dominance (ties and floor regressions reject; tradeoffs await a decision)
 //!        │              ├─ commit-time: held-out set recomputed and compared
 //!        │              ├─ accept-time governance_tier recheck
 //!        │              └─ per-cycle ACCEPT cap, counted in PROPOSALS
@@ -39,12 +39,11 @@
 //! ONE-1448 skips any skill with an open `candidate + proposed` revision,
 //! because an unanswered proposal is a question already put to a human. So a
 //! ruling that ANSWERS a proposal — a rejection, a tie, any refusal — moves it
-//! to `approval: rejected` in the same transaction as the verdict row. Exactly
-//! ONE durable disposition leaves the record open, and it is the cap deferral
-//! ([`SkillEditDisposition::DeferredCycleCap`]): the budget was spent, which
-//! says nothing about the proposal, so a later cycle picks it up. A terminal
-//! answer that left the record open would wedge that skill out of the
-//! optimization loop permanently on one tie.
+//! to `approval: rejected` in the same transaction as the verdict row. A cap
+//! deferral leaves the proposal open for a later cycle; a mixed non-floor
+//! tradeoff leaves it open for an external preference decision. The gate never
+//! auto-admits that tradeoff or pretends it is a terminal rejection. A terminal
+//! answer left open would wedge the skill on one tie.
 //!
 //! When the WORLD moves under an in-flight call instead — the reserved
 //! evidence changes while the scorer is thinking, or a terminal reason read
@@ -107,9 +106,10 @@ use rmpv::Value;
 use sha2::{Digest, Sha256};
 
 use super::{
-    PROVENANCE_OPTIMIZE_CYCLE_KEY, PROVENANCE_OPTIMIZE_OF_ENTITY_KEY, PROVENANCE_OPTIMIZE_OF_KEY,
-    PROVENANCE_OPTIMIZE_OF_VERSION_KEY, SKILL_OPTIMIZE_BIRTH_PATH,
-    SKILL_OPTIMIZE_MAX_BRIEF_EVIDENCE, invalid, proven_cycle, tier_verdict_in_txn,
+    GOAL_ID_KEY, PROVENANCE_OPTIMIZE_CYCLE_KEY, PROVENANCE_OPTIMIZE_OF_ENTITY_KEY,
+    PROVENANCE_OPTIMIZE_OF_KEY, PROVENANCE_OPTIMIZE_OF_VERSION_KEY, SKILL_OPTIMIZE_BIRTH_PATH,
+    SKILL_OPTIMIZE_MAX_BRIEF_EVIDENCE, SkillGoalId, invalid, proven_cycle, tier_verdict_in_txn,
+    validate_goal_birth_in_txn,
 };
 use crate::Vault;
 use crate::attempt_queue::AttemptId;
@@ -119,12 +119,12 @@ use crate::error::{Error, ErrorKind, Result};
 use crate::llm::CallPurpose;
 use crate::receipt::{
     FIELD_SKILL_EDIT_ACCEPTED_VERDICT, FIELD_SKILL_EDIT_CYCLE, FIELD_SKILL_EDIT_DISPOSITION,
-    FIELD_SKILL_EDIT_HELD_OUT_COUNT, FIELD_SKILL_EDIT_HELD_OUT_DIGEST,
+    FIELD_SKILL_EDIT_GOAL_AXES, FIELD_SKILL_EDIT_HELD_OUT_COUNT, FIELD_SKILL_EDIT_HELD_OUT_DIGEST,
     FIELD_SKILL_EDIT_HELD_OUT_RECEIPTS, FIELD_SKILL_EDIT_HELD_OUT_TRUNCATED,
     FIELD_SKILL_EDIT_MEASUREMENTS, FIELD_SKILL_EDIT_MISSING_SOURCES, FIELD_SKILL_EDIT_PROPOSAL,
     FIELD_SKILL_EDIT_PROPOSAL_DIGEST, FIELD_SKILL_EDIT_SCORE_AFTER, FIELD_SKILL_EDIT_SCORE_BEFORE,
-    FIELD_SKILL_EDIT_SKILL, FIELD_SKILL_EDIT_TARGET_DIGEST, ReceiptKind, ReceiptQuery,
-    ReceiptRecord, retain_newest_receipt,
+    FIELD_SKILL_EDIT_SKILL, FIELD_SKILL_EDIT_TARGET_DIGEST, FIELD_SKILL_EDIT_TRADEOFF_RESOLUTION,
+    ReceiptKind, ReceiptQuery, ReceiptRecord, retain_newest_receipt,
 };
 use crate::skill::{
     SkillGovernanceTier, SkillLifecycle, SkillRecord, encode_skill_record, validate_skill_update,
@@ -136,11 +136,15 @@ use crate::temporal::TimeRange;
 mod admission;
 mod basis;
 mod decision;
+mod goal_axis;
 mod ledger;
 mod measurement;
 mod verdict;
 
-pub use admission::admit_optimized_skill_revision;
+pub use admission::{
+    admit_optimized_skill_revision, resolve_skill_edit_tradeoff,
+    resolve_skill_edit_tradeoff_in_cycle,
+};
 pub use basis::{
     HELD_OUT_REPLAY_SCORER, HeldOutReplayCase, HeldOutReplayScorer, SkillEditCycle, dev_receipts,
     held_out_receipt_set_digest, held_out_receipts, receipt_is_held_out,
@@ -150,6 +154,7 @@ pub use basis::{
 pub use decision::{
     score_gate_skill_edit, score_gate_skill_edit_in_cycle, score_gate_skill_edit_with_scorer,
 };
+pub use goal_axis::{GoalAxisKind, GoalAxisScore, GoalAxisSpec, set_skill_edit_goal_axes};
 pub use ledger::{
     is_skill_edit_verdict_receipt, skill_edit_verdict, skill_edit_verdicts,
     skill_edit_verdicts_for_proposal, supersede_skill_edit_judge,
@@ -157,7 +162,9 @@ pub use ledger::{
 pub use measurement::{
     AuditPair, BlindPreference, JudgeMeasurements, PreferredResponse, WorldAxisScore,
 };
-pub use verdict::{HeldOutVerdict, SkillEditDisposition};
+pub use verdict::{HeldOutVerdict, SkillEditDisposition, TradeoffChoice, TradeoffResolution};
+
+pub(in crate::skill_optimize) use admission::retained_optimizer_parent_goal_in_txn;
 
 pub(crate) use admission::{
     check_optimizer_admission_in_txn, optimizer_birth_marker_for_create_in_txn,
@@ -183,7 +190,14 @@ use basis::{
     ScoredBasis, cycle_cap_in_txn, evidence_identity, held_out_outcome_results_in_txn,
     held_out_receipts_in_txn, host_replay_scorer, validate_score,
 };
-use decision::{close_answered_proposal_in_txn, readable_target, standing_verdict_in_txn};
+use decision::{
+    accepted_in_cycle_in_txn, close_answered_proposal_in_txn, readable_target,
+    standing_verdict_in_txn,
+};
+use goal_axis::{
+    GoalDefinition, dominates, floor_regressed, goal_definition_in_txn, is_tradeoff,
+    score_goal_axes, validate_goal_vector,
+};
 use ledger::{record_verdict_in_txn, verdict_rows_in_txn};
 use measurement::{measure, validate_measurements, world_labels_digest};
 
@@ -227,7 +241,9 @@ const SPLIT_DOMAIN: &[u8] = b"skill_optimize:heldout:v1\0";
 /// data rather than ordering (the `edit_distance::escalation` posture).
 pub(super) const VERDICT_PREFIX: &[u8] = b"skill_optimize/verdict/v1\0";
 
-/// Bumped by OF-214 (v3 → v4: audited measurements and bound world labels).
+/// Bumped by ONE-2114 (v5 → v6: goal vectors, dominance and the portable
+/// goal identity). ONE-2014 introduced v5 judge revisions.
+/// OF-214 introduced v4 audited measurements and bound world labels.
 /// Earlier repairs: MATERIAL-10 (v1 → v2: a v1 row carries no binding
 /// digests, so a reader that accepted one would be trusting an acceptance
 /// nobody can check the body of) and again by the MATERIAL-6 repair (v2 → v3: a
@@ -236,9 +252,9 @@ pub(super) const VERDICT_PREFIX: &[u8] = b"skill_optimize/verdict/v1\0";
 /// `deferred_evidence_changed` disposition).
 ///
 /// Prerelease, and the honest answer to an unbindable row is to refuse it
-/// rather than to grow a second code path for it: every v1/v2/v3 row decodes as
+/// rather than to grow a second code path for it: every v1 through v5 row decodes as
 /// [`Error::CorruptedIndex`]. There is no shim and no migration.
-const VERDICT_SCHEMA_VERSION: u64 = 5;
+const VERDICT_SCHEMA_VERSION: u64 = 6;
 const KEY_SCHEMA_VERSION: &str = "v";
 const KEY_PROPOSAL: &str = "proposal";
 const KEY_SKILL: &str = "skill";
@@ -257,6 +273,10 @@ const KEY_ACCEPTED_VERDICT: &str = "accepted_verdict";
 const KEY_MISSING_SOURCES: &str = "missing_sources";
 const KEY_AT: &str = "at";
 const KEY_MEASUREMENTS: &str = "measurements";
+const KEY_GOAL_AXES: &str = "goal_axes";
+const KEY_GOAL_REVISION: &str = "goal_revision";
+const KEY_GOAL_ID: &str = "goal_id";
+const KEY_TRADEOFF_RESOLUTION: &str = "tradeoff_resolution";
 const KEY_JUDGE_REVISION: &str = "judge_revision";
 const FIELD_SKILL_EDIT_JUDGE_REVISION: &str = "skill_edit_judge_revision";
 const FIELD_SKILL_EDIT_JUDGE_DISPLACED_BY: &str = "skill_edit_judge_displaced_by";
