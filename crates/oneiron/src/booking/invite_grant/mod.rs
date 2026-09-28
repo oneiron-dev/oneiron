@@ -49,7 +49,7 @@ pub(super) use self::dispatch::{
 mod tests;
 
 #[cfg(test)]
-use self::{mint::*, types::*};
+use self::mint::*;
 #[cfg(test)]
 use crate::Vault;
 #[cfg(test)]
