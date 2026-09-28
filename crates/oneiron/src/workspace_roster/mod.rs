@@ -111,9 +111,9 @@ mod tests;
 
 mod project;
 pub use project::{
-    GoalAxis, GoalExplorationBudget, GoalInterviewTurns, GoalPreference, GoalRecord,
+    GoalAxis, GoalExplorationBudget, GoalInterviewTurns, GoalPreference, GoalRecord, MessageHangs,
     PROJECT_TYPE_BYTE, ProjectBudgetShare, ProjectGoalRecord, ProjectMintReceipt, ProjectRecord,
-    ProjectRole, ProjectRoom, ProjectRoomChange,
+    ProjectRole, ProjectRoom, ProjectRoomChange, RoomOriginCard,
 };
 pub(crate) use project::{
     GoalLimits, HUB_BELONGS_TO_LAMBDA, deindex_project_room, guard_goal_claim_put,
@@ -127,8 +127,8 @@ mod rooms;
 pub(crate) use rooms::admit_witness as admit_room_witness;
 pub use rooms::{
     RoomClaimOutcome, RoomClaimReceipt, RoomPage, RoomThread, RoomThreadList, RoomThreadPage,
-    RoomThreadPolicy, RoomThreadWait, RoomThreads, RoomTrunk, RoomTrunkHeader, RoomTurn,
-    RoomWaitKind,
+    RoomThreadPolicy, RoomThreadWait, RoomThreads, RoomTrunk, RoomTrunkHeader, RoomTrunkItem,
+    RoomTurn, RoomWaitKind,
 };
 
 pub(crate) use rooms::RoomThreadTask;

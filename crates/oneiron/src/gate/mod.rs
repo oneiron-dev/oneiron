@@ -28,6 +28,7 @@ mod grants;
 mod hosted_tts_policy;
 mod input;
 mod pack_install_policy;
+mod project_conversion;
 pub(crate) mod proposal_observation;
 mod repair;
 mod resolution;
@@ -114,6 +115,9 @@ pub(crate) use self::hosted_tts_policy::{HostedTtsLimits, resolve_hosted_tts_lim
 pub(crate) use self::input::{
     ConsentGateContext, ExternalEffectGateInput, ExternalEffectPolicyRisk, GateActor,
     GateProvenanceHandles, consent_gate_reason_codes,
+};
+pub(crate) use self::project_conversion::{
+    LeaderFallback, ProjectConversionPolicy, RosterSelection, TaskHolderFallback,
 };
 pub(crate) use self::repair::{evaluate_repair_consent, repair_criticality};
 pub(crate) use self::resolution::{PolicyManifestResolution, resolve_policy_manifest};

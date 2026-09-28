@@ -91,6 +91,40 @@ pub(crate) use create_validation::{
 };
 pub(crate) use rate_limit::task_create_owner;
 
+/// A terminal typed TASK cannot be newly bound to a room thread.
+pub(crate) fn thread_task_is_open_in(
+    vault: &crate::Vault,
+    txn: &heed::RoTxn<'_>,
+    task: crate::EntityId,
+) -> crate::Result<bool> {
+    let body =
+        wire_decode::task_verb_body_in(vault, txn, task)?.ok_or(crate::Error::EntityNotFound)?;
+    Ok(body.terminal().is_none())
+}
+
+/// Stored execution holder of a live typed TASK, if one exists.
+pub(crate) fn open_thread_task_holder_in(
+    vault: &crate::Vault,
+    txn: &heed::RoTxn<'_>,
+    task: crate::EntityId,
+    fallback: crate::gate::TaskHolderFallback,
+) -> crate::Result<Option<crate::EntityId>> {
+    let body =
+        wire_decode::task_verb_body_in(vault, txn, task)?.ok_or(crate::Error::EntityNotFound)?;
+    if body.terminal().is_some() {
+        return Ok(None);
+    }
+    match body.assignee.and_then(TaskAssignee::entity_ref) {
+        Some(holder) => Ok(Some(holder)),
+        None => match fallback {
+            crate::gate::TaskHolderFallback::AssigneeThenOwner => {
+                Ok(Some(crate::EntityId::from_hex(&body.owner_ref)?))
+            }
+            crate::gate::TaskHolderFallback::AssigneeOnly => Ok(None),
+        },
+    }
+}
+
 pub(crate) use owner_index::index_owner_fact;
 
 #[cfg(test)]

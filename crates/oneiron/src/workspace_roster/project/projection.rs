@@ -54,6 +54,17 @@ pub(crate) fn validate_project_body(id: EntityId, bytes: &[u8]) -> Result<Vec<En
         return Err(invalid());
     }
     refs.extend(&body.parents);
+    // A card mint on a message carries only `born_from`. A converted thread
+    // also names its origin room, thread and position: all of them or none.
+    match (&body.origin_room, &body.origin_thread, body.origin_at) {
+        (None, None, None) => {}
+        (Some(room), Some(thread), Some(_))
+            if body.born_from.is_some() && !body.parents.is_empty() =>
+        {
+            refs.extend([room, thread]);
+        }
+        _ => return Err(invalid()),
+    }
     refs.extend(body.goal.iter());
     refs.extend(body.born_from.iter());
     refs.extend(body.budget.iter());
@@ -112,6 +123,7 @@ pub(crate) fn reconcile_project_rooms(
         return Ok(());
     };
     let mut room_ops = Vec::new();
+    let mut origins = Vec::new();
     for id in touched {
         let Some(raw) = store.entities.get(txn, id.as_bytes())? else {
             continue;
@@ -165,6 +177,7 @@ pub(crate) fn reconcile_project_rooms(
             )?;
             pending.extend(parent_body.parents);
         }
+        origins.push((*id, body.clone()));
         // The body is the authority for the project DAG. Materialize its
         // `belongs_to` links in the same batch as the home room, so PPR and
         // graph readers see both parents (or neither on a rejected write).
@@ -211,6 +224,7 @@ pub(crate) fn reconcile_project_rooms(
             project_id: id.to_hex(),
             member_ids: body.roster.clone(),
             claims_scope_ref: body.claims_scope_ref.clone(),
+            origin: body.origin_card(),
         };
         let previous: Option<ProjectRoom> =
             match record(store, txn, room_id, ENTITY_TYPE_CONVERSATION) {
@@ -293,9 +307,16 @@ pub(crate) fn reconcile_project_rooms(
             || project.home_room != id.to_hex()
             || project.roster != room.member_ids
             || project.claims_scope_ref != room.claims_scope_ref
+            || project.origin_card() != room.origin
         {
             return Err(invalid_room());
         }
+    }
+    // Origins are proved against the batch's final state: every derived room
+    // above has landed, so a source roster edit in the same batch is seen.
+    for (id, body) in &origins {
+        origin::validate_binding(store, txn, body)?;
+        origin::index_origin(store, txn, *id, body)?;
     }
     Ok(())
 }

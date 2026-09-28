@@ -82,6 +82,8 @@ pub(super) const ATTRIBUTION_HOLDER_MAX_BYTES_KEY: &str = "max_bytes";
 /// floors only narrow it, and independent trusted packs compose by max.
 pub(super) const POLICY_TEACHER_PROBE_KEY: &str = "teacher_probe";
 pub(super) const POLICY_BUDGET_POLICY_KEY: &str = "budget_policy";
+/// Complete typed conversion policy map; an absent row keeps the default.
+pub(super) const POLICY_PROJECT_CONVERSION_KEY: &str = "project_conversion";
 /// Per-format edit resource budgets; precedence is a required manifest row.
 pub(crate) const POLICY_PPTX_COMMENT_LIMITS_KEY: &str = "pptx_comment_limits";
 /// Ordered restrict-only rows: vault, artifact, and named sheet caps compose
