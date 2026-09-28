@@ -15561,6 +15561,31 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
+      "SheetAnswerBundle",
+      "SheetCellAnswer"
+     ],
+     "path": "src/edit_roundtrip/judgment.rs",
+     "purpose": "Typed sheet answers: one ask over a bounded range becomes one retained edit",
+     "surface": {
+      "crate-vis": 1,
+      "fn": 2,
+      "struct": 2
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/edit_roundtrip/judgment_cells.rs",
+     "purpose": "Independent OOXML reads for typed sheet answers",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
       "EditManifest",
       "EditWarning",
       "MutationMode",
@@ -15582,8 +15607,9 @@
      "path": "src/edit_roundtrip/mod.rs",
      "purpose": "ARTL-3 (OF-368 D5): agent edit round-trip — code-session pipeline",
      "surface": {
+      "crate-vis": 1,
       "mod": 1,
-      "re-export": 6
+      "re-export": 7
      }
     },
     {
@@ -15792,7 +15818,7 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "XL",
      "kind": "test",
      "notable": [],
      "path": "src/edit_roundtrip/tests.rs",
@@ -15806,7 +15832,7 @@
      "path": "src/edit_roundtrip/xml.rs",
      "purpose": "Namespace-aware OPC and worksheet XML reads for the edit gate",
      "surface": {
-      "crate-vis": 7
+      "crate-vis": 10
      }
     },
     {
@@ -15827,7 +15853,7 @@
      "purpose": "Pinned ledger keys and receipt fields",
      "surface": {
       "const": 4,
-      "crate-vis": 34
+      "crate-vis": 37
      }
     },
     {
@@ -15862,7 +15888,8 @@
       "SettleReceiptDoor",
       "SettleSelectOutcome",
       "SettledAnchor",
-      "SettlementRecord"
+      "SettlementRecord",
+      "SheetAnswerReceipt"
      ],
      "path": "src/edit_settle/records.rs",
      "purpose": "Consent, outcome and settlement records",
@@ -15870,7 +15897,7 @@
       "crate-vis": 1,
       "enum": 2,
       "fn": 2,
-      "struct": 6
+      "struct": 7
      }
     },
     {
@@ -15880,7 +15907,7 @@
      "path": "src/edit_settle/settle.rs",
      "purpose": "Settle Vault transactions",
      "surface": {
-      "fn": 5
+      "fn": 6
      }
     },
     {
@@ -17337,7 +17364,7 @@
      "path": "src/gate/constants.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 82
+      "crate-vis": 84
      }
     },
     {
@@ -17678,7 +17705,7 @@
      "path": "src/gate/resolution/accessors.rs",
      "purpose": "Read-only resolved-field accessors plus the frontier-hash entry",
      "surface": {
-      "crate-vis": 33
+      "crate-vis": 34
      }
     },
     {
@@ -17719,7 +17746,7 @@
      "path": "src/gate/resolution/manifest_types.rs",
      "purpose": "Resolved-view types plus the `PolicyManifestResolution` struct definition",
      "surface": {
-      "crate-vis": 8
+      "crate-vis": 10
      }
     },
     {
@@ -37132,8 +37159,8 @@
      "purpose": "ED-00 (ARCH-0056 §2–3): the proposal-artifact substrate the edit-distance feedback loop replays, plus the…"
     },
     "edit_roundtrip": {
-     "files": 23,
-     "impl_vault": false,
+     "files": 25,
+     "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
      "purpose": "ARTL-3 (OF-368 D5): agent edit round-trip — code-session pipeline"
@@ -37911,7 +37938,7 @@
    },
    "over_bar": 5,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2251,
+   "source_files": 2253,
    "test_files": 771
   },
   "oneiron-android": {
